@@ -1,0 +1,28 @@
+warning: 'quantem.gpu': found 1 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    <repo>/src/quantem/gpu/swift/Benchmarks/MetalImageFFTBenchmark/__pycache__/compare_torch_fft.cpython-312.pyc
+[0/1] Planning build
+Building for production...
+[0/4] Write sources
+[1/4] Copying Resources
+[2/4] Write swift-version--1AB21518FC5DEDBE.txt
+[4/5] Compiling Metal4DSTEMKernels Metal4DSTEMExactBinner.swift
+[4/8] Write sources
+[7/9] Compiling Metal4DSTEMStreamingIO CompactDetectorRegions.swift
+<repo>/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift:406:13: error: initializer for conditional binding must have Optional type, not 'any MTLFunction'
+ 404 |     detectorPacketOwner4Pipeline = try device.makeComputePipelineState(function: detectorPacketOwner4)
+ 405 |     if ProcessInfo.processInfo.environment["QGPU_PAIRED_RUNTIME_SPARSE_SPLIT"] == "1" {
+ 406 |       guard let detectorSparseScatter = library.makeFunction(
+     |             `- error: initializer for conditional binding must have Optional type, not 'any MTLFunction'
+ 407 |         name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorSparseScatterFunction,
+ 408 |         constantValues: makeFunctionConstants())
+
+<repo>/src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift:406:41: error: call can throw but is not marked with 'try'
+ 404 |     detectorPacketOwner4Pipeline = try device.makeComputePipelineState(function: detectorPacketOwner4)
+ 405 |     if ProcessInfo.processInfo.environment["QGPU_PAIRED_RUNTIME_SPARSE_SPLIT"] == "1" {
+ 406 |       guard let detectorSparseScatter = library.makeFunction(
+     |                                         |- error: call can throw but is not marked with 'try'
+     |                                         |- note: did you mean to use 'try'?
+     |                                         |- note: did you mean to handle error as optional value?
+     |                                         `- note: did you mean to disable error propagation?
+ 407 |         name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorSparseScatterFunction,
+ 408 |         constantValues: makeFunctionConstants())

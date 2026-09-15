@@ -1,0 +1,39 @@
+{
+  "experiment_id": "20260913-apple-m5-ans-leaf-prefix-census",
+  "status": "refuted",
+  "measurement_class": "CPU-only planner and algebraic screen; not a GPU measurement",
+  "sources": 7,
+  "transition": "adf-center-8-to-adf-center-20",
+  "current_plan": {
+    "root_terms": 5,
+    "leaf_correction_terms": 366,
+    "total_field_queries": 371,
+    "residual_pixels": 1067,
+    "changed_pixels": 6269
+  },
+  "candidate": {
+    "nonzero_equal_correction_intervals": 128,
+    "distinct_prefix_field_queries_after_endpoint_aggregation": 231,
+    "query_reduction_fraction": 0.37735849056603776,
+    "packed_index_bytes_proven_not_to_grow": false
+  },
+  "parity": {
+    "modulo_uint32_dot_product_reconstruction": "exact on seven independent synthetic arbitrary-UInt32 frames, including wraparound",
+    "actual_source_full_map_parity": "not tested"
+  },
+  "current_index_bytes_per_source": [
+    349664676,
+    352030900,
+    372216908,
+    375412428,
+    390939520,
+    373976340,
+    389162988
+  ],
+  "confirmed_metadata_bytes_per_source": {
+    "current": 12244,
+    "candidate": 11524,
+    "saved": 720
+  },
+  "decision": "Do not run on GPU: executed field-query count is above the strict 185-query gate, and exact candidate ANS repack bytes are unavailable."
+}

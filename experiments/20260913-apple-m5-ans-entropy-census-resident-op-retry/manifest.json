@@ -1,0 +1,378 @@
+{
+  "code": {
+    "diff_sha256": "22f2de78d6faadbb4c35347d5ae61b55b1481b31ade147dd3215462b6b9154ac",
+    "dirty": true,
+    "fingerprint_policy": "The runner snapshots the dirty worktree, tested executable, resident, shader, benchmark protocol, and census runner before execution.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "3b88da60bab0ea966289fcb1eca0de1fa49f12e2257f45639910713f913b0784",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "37cbc0b3f5fd3718183dbff01129c9092a5a5192692aadd306b10d2f87b6f322"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0cb11d2a256e479dc1f0250d2ac57bcac2582ba41b7d9c3b44ca2159c84470ab"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "e272b40710a5676aa7e0a162fc373818c6618910e0f9fe91bc9e7ff31f5bdcd0"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "9876948745cd102f9688d68987c50cdaeec91e69c97e31f20ae4c12b2a1b93c9"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "d6350939fbe22b40f755592d4938b119eb3025d7467ce272a59372d83c83b2ae"
+    },
+    "worktree_status_sha256": "6c2c2063fd2d0830ac550b5f22ee77424325f280268da2750d66516dbd59634a"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": null,
+    "processes": 1,
+    "release": {
+      "all_released": true,
+      "event": "ans_resident_loop_end",
+      "metal_after_release_bytes": 5701632,
+      "metal_before_release_bytes": 11636195328,
+      "resident_count": 7,
+      "sequence": 2
+    },
+    "timing_boundary": "Resident-loop entropy_census diagnostic after seven-source readiness; no detector-update timing is measured."
+  },
+  "experiment_id": "20260913-apple-m5-ans-entropy-census-resident-op-retry",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op-retry/results/raw.jsonl",
+      "result": "Benchmark protocol output and explicit release record.",
+      "retention": "durable",
+      "sha256": "f25fc257be48c8039513e4a5fdb33850bff90c21b3829cb010d8fe7a747882a5",
+      "size_bytes": 9329
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op-retry/results/ready.json",
+      "result": "Seven source identities and exact resident allocation.",
+      "retention": "durable",
+      "sha256": "c73640f26e6b8524e54588a9946ed83ac0671647f5eefe9137867d882249e0d8",
+      "size_bytes": 2301
+    },
+    {
+      "artifact_id": "entropy_counts",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op-retry/results/entropy_counts.json",
+      "result": "Exact entropy stream totals and checkpoint byte estimates.",
+      "retention": "durable",
+      "sha256": "ff84e5b3f8be8c708f44839bae1b3b3ae7cd9cdedc9f7a602e60d13f6dadbec0",
+      "size_bytes": 10864
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op-retry/results/stderr.log",
+      "result": "Benchmark diagnostic output.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": true,
+    "census_diagnostic_metal_allocation_max_bytes": 11636342784,
+    "checkpoint_counts": [
+      1,
+      3
+    ],
+    "checkpoint_entry_bytes": [
+      3,
+      4
+    ],
+    "checkpoint_estimates": {
+      "adf-center-8-to-20-delta": {
+        "entropy_stream_count": 22357445,
+        "one_u24_bytes": 67072335,
+        "one_u32_bytes": 89429780,
+        "sampled_metal_headroom_after_one_u32_estimate": 158148844,
+        "sampled_metal_headroom_after_three_u32_estimate": -20710716,
+        "three_u24_bytes": 201217005,
+        "three_u32_bytes": 268289340,
+        "total_stream_count": 22468096
+      },
+      "all-valid-detector-pixels": {
+        "entropy_stream_count": 131061170,
+        "one_u24_bytes": 393183510,
+        "one_u32_bytes": 524244680,
+        "sampled_metal_headroom_after_one_u32_estimate": -276666056,
+        "sampled_metal_headroom_after_three_u32_estimate": -1325155416,
+        "three_u24_bytes": 1179550530,
+        "three_u32_bytes": 1572734040,
+        "total_stream_count": 132106240
+      }
+    },
+    "compact_offsets": true,
+    "dtype": "uint16",
+    "host": "apple-m5-24gb",
+    "index": "leaf16-radial1",
+    "mask_counts": [
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3186248,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 0,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3187969,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 1,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3193317,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 2,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3193133,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 3,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3201405,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 4,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3194125,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 5,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636228096,
+        "effective_mask_sha256": "2cfd7d81cb58b9a88582119e312485fce9170ab3d46d80919fbdfcdf2d9fbfa4",
+        "entropy_stream_count": 3201248,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 2,
+        "mask": "adf-center-8-to-20-delta",
+        "requested_mask_sha256": "6e8b08f87eaf70349c8d207794004f8ac83f38e1872ac7b47e07a098c1aed16b",
+        "requested_pixels": 6271,
+        "selected_pixels": 6269,
+        "sequence": 1,
+        "source": 6,
+        "total_stream_count": 3209728,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18688343,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 0,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18691523,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 1,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18726166,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 2,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18717163,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 3,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18759957,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 4,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18718889,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 5,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      },
+      {
+        "diagnostic_metal_allocated_bytes": 11636342784,
+        "effective_mask_sha256": "11d46e86d544107d556b0f8b492461ee2005c5a44619edcd2d3fff146e171fbd",
+        "entropy_stream_count": 18759129,
+        "event": "ans_opt_entropy_mode_counts",
+        "excluded_pixels": 4,
+        "mask": "all-valid-detector-pixels",
+        "requested_mask_sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161",
+        "requested_pixels": 36864,
+        "selected_pixels": 36860,
+        "sequence": 1,
+        "source": 6,
+        "total_stream_count": 18872320,
+        "validity_policy": "requested_mask_and_source_detectorValidityMask"
+      }
+    ],
+    "mask_names": [
+      "adf-center-8-to-20-delta",
+      "all-valid-detector-pixels"
+    ],
+    "metal_byte_cap": 11883921408,
+    "metal_current_allocated_bytes": 11636195328,
+    "query_path": "packet-groups",
+    "resident_byte_cap": 11877814048,
+    "series_resident_bytes": 11630087982,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_identity_sha256": [
+      "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    ],
+    "sources": 7
+  },
+  "question": "How many seven-source entropy-coded streams would one- and three-checkpoint sidecars need to cover, and do their byte estimates fit under the sampled Metal allocation ceiling?",
+  "schema_version": 1,
+  "status": "completed",
+  "timestamps": {
+    "finished": "2026-09-13T10:15:57Z",
+    "started": "2026-09-13T10:15:32Z"
+  }
+}

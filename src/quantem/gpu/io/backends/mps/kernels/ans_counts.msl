@@ -152,6 +152,33 @@ kernel void ans_counts_reduce(device const uchar *counts [[buffer(0)]],
     if (lane == 0) output[parameters.z + scan] = partials[0];
 }
 
+kernel void ans_counts_reduce_many(device const uchar *counts [[buffer(0)]],
+    device const uchar *masks [[buffer(1)]], device ulong *output [[buffer(2)]],
+    constant ulong *parameters [[buffer(3)]], uint2 group [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]]) {
+    const uint scan = group.x;
+    const uint mask_index = group.y;
+    if (mask_index >= parameters[3]) return;
+    ulong subtotal = 0;
+    const ulong mask_offset = ulong(mask_index) * parameters[0];
+    for (uint pixel = lane; pixel < parameters[0]; pixel += 128) {
+        ulong index = ulong(scan) * parameters[0] + pixel;
+        uint value = parameters[1] == 1 ? counts[index]
+            : reinterpret_cast<device const ushort *>(counts)[index];
+        if (masks[mask_offset + pixel]) subtotal += value;
+    }
+    threadgroup ulong partials[128];
+    partials[lane] = subtotal;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = 64; stride > 0; stride /= 2) {
+        if (lane < stride) partials[lane] += partials[lane + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (lane == 0) {
+        output[ulong(mask_index) * parameters[4] + parameters[2] + scan] = partials[0];
+    }
+}
+
 kernel void ans_counts_measure_packed(ANS_INPUTS,
     device uchar *widths [[buffer(10)]], device ulong *lengths [[buffer(11)]],
     uint position [[thread_position_in_grid]]) {

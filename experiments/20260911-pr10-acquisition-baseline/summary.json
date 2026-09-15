@@ -1,0 +1,100 @@
+{
+  "schema": "quantem-gpu-pr10-benchmark/v1",
+  "local": {
+    "host_class": "apple-m5-24gb",
+    "baseline_revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "candidate_revision": "5be9ceb01992e0de2d3ec144af6495330a819daa",
+    "timing_boundary": "indexed source open through complete packed-resident load return",
+    "acquisition_a": {
+      "source_identity": "99ff0cc1080aa78dc8ee5d1cb348df903cb7476a8b6182ed76fea77dc0b59194",
+      "baseline_p50_s": 1.049965978,
+      "baseline_first_or_max_s": 2.332597971,
+      "candidate_p50_s": 0.991501093,
+      "candidate_first_or_max_s": 2.885802031,
+      "candidate_resident_bytes": 2788897848,
+      "sample_hashes_stable": true
+    },
+    "acquisition_b": {
+      "source_identity": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "baseline_p50_s": 0.974398017,
+      "baseline_first_or_max_s": 2.277336955,
+      "candidate_p50_s": 0.975557923,
+      "candidate_first_or_max_s": 2.212533951,
+      "candidate_resident_bytes": 2909338000,
+      "sample_hashes_stable": true
+    },
+    "six_acquisition_folder": {
+      "loads": 12,
+      "baseline_p50_s": 1.551975012,
+      "baseline_first_or_max_s": 2.367369056,
+      "candidate_p50_s": 1.503989995,
+      "candidate_first_or_max_s": 2.424623013,
+      "sample_hashes_stable": true
+    },
+    "seven_tilt_sequential": {
+      "loads": 14,
+      "baseline_p50_s": 1.485218584,
+      "baseline_first_or_max_s": 2.174476981,
+      "candidate_p50_s": 1.518659472,
+      "candidate_first_or_max_s": 2.18144703,
+      "sample_hashes_stable": true
+    },
+    "twin_acquisition_a_acquisition_b": {
+      "candidate_acquisition_a_p50_s": 1.46273303,
+      "candidate_acquisition_a_max_s": 2.890607,
+      "baseline_acquisition_a_p50_s": 1.632266045,
+      "baseline_acquisition_a_max_s": 3.365327954,
+      "candidate_acquisition_b_p50_s": 1.440853953,
+      "candidate_acquisition_b_max_s": 4.613813043,
+      "baseline_acquisition_b_p50_s": 1.633836031,
+      "baseline_acquisition_b_max_s": 3.699703932,
+      "sample_hashes_stable": true
+    },
+    "seven_resident_series_candidate": {
+      "source_count": 7,
+      "resident_bytes": 14752175312,
+      "load_seconds": [2.187844038, 2.195721984, 2.286849022, 2.397291064, 2.451164007, 2.413313032, 2.612112045],
+      "detector_maps": 210,
+      "detector_gpu_ms_p50": {"BF": 5.589, "ABF": 65.242, "ADF": 89.591},
+      "boundary_parity": true
+    }
+  },
+  "remote": {
+    "host_class": "apple-m2-8gb",
+    "candidate_revision": "5be9ceb01992e0de2d3ec144af6495330a819daa",
+    "current_main_revision": "2eb4f6d4e506fe0e9d8b6db122f8164f1311d608",
+    "acquisition_a": {
+      "source_identity": "99ff0cc1080aa78dc8ee5d1cb348df903cb7476a8b6182ed76fea77dc0b59194",
+      "candidate_p50_s": 4.502629042,
+      "candidate_first_or_max_s": 11.502802968,
+      "main_p50_s": 3.625847936,
+      "main_first_or_max_s": 9.24605298,
+      "resident_bytes": 2788897848,
+      "sample_hashes_stable": true
+    },
+    "acquisition_b": {
+      "source_identity": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768",
+      "candidate_p50_s": 3.687902927,
+      "candidate_first_or_max_s": 7.780914068,
+      "main_p50_s": 3.570930004,
+      "main_first_or_max_s": 8.14447999,
+      "resident_bytes": 2909338000,
+      "sample_hashes_stable": true
+    },
+    "tilt_series_a": {
+      "source_identity": "1be810b96fdff8e384ad4cb6ebd49adff9b4ab0a6503cd5fed9106e09f5aa286",
+      "main_p50_s": 3.570930004,
+      "main_first_or_max_s": 7.986492038,
+      "resident_bytes": 2930326860,
+      "sample_hashes_stable": true
+    },
+    "seven_tilt_data_available": false
+  },
+  "gates": {
+    "full_shape_and_dtype": true,
+    "sampled_count_parity": true,
+    "cold_io_claim": false,
+    "ui_present_measured": false,
+    "promotion_decision": "report-only; no PR #10 code promoted by this run"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "failure": {
+    "message": "The operation couldn\u2019t be completed. (resident loop polar_query_variant must be packet-groups, scan512, scan512-stripe2, scan512-stripe4, or scan512-stripe8 error 1.)",
+    "type": "RuntimeError"
+  },
+  "release": {
+    "all_released": true,
+    "event": "ans_resident_loop_end",
+    "metal_after_release_bytes": 5701632,
+    "metal_before_release_bytes": 11883921408,
+    "resident_count": 7,
+    "sequence": 4
+  },
+  "status": "failed"
+}

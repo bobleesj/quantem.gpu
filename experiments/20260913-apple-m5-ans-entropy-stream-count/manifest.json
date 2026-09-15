@@ -1,0 +1,121 @@
+{
+  "code": {
+    "diff_sha256": "01782d6ee1f8c2470cbf45fbda628ec4e48ea6cb20b62df7d7d91701824ca470",
+    "dirty": true,
+    "fingerprint_policy": "Runner snapshots the worktree, tested executable, benchmark, resident, shader, and entropy-census runner.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "b97a751bcb62cb06a9f33b6e2d6194689693910a7ebbbfe77b490dac6cedc118",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "d4eaa7ca80d1cff11ca15ebf520cc067b37827797dd5b96727782d95add2f816"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0cb11d2a256e479dc1f0250d2ac57bcac2582ba41b7d9c3b44ca2159c84470ab"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "60ab9d0800786499f5c504745b281c258bc3f0de369322f584fb2ac02abcffd3"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "9876948745cd102f9688d68987c50cdaeec91e69c97e31f20ae4c12b2a1b93c9"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "32c8b4a4bdc867c83d21f1c0251ecb9e37b215e79add11a12df1fba36273a18f"
+    },
+    "worktree_status_sha256": "f4736b42eaecf324927f9812985f3242290e3d29fda47dc0a1e158ae5235df45"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "type": "KeyboardInterrupt",
+      "message": "Operator interrupted while waiting for ans_resident_loop_ready after no stdout records arrived. No census counts or performance measurements were produced; the resident-release state was not verified."
+    },
+    "processes": 1,
+    "release": null,
+    "timing_boundary": "Threadgroup-reduced Metal mode count after resident load; no detector-update timing is measured."
+  },
+  "experiment_id": "20260913-apple-m5-ans-entropy-stream-count",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "path": "experiments/20260913-apple-m5-ans-entropy-stream-count/results/raw.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Empty stdout log; no protocol records were received."
+    },
+    {
+      "artifact_id": "stderr",
+      "path": "experiments/20260913-apple-m5-ans-entropy-stream-count/results/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Empty stderr log."
+    },
+    {
+      "artifact_id": "failure",
+      "path": "experiments/20260913-apple-m5-ans-entropy-stream-count/results/failure.json",
+      "sha256": "cf09b9d5ce18d33ebbafdab01edfa8665f193833deb9ec371df1df73f877e0ae",
+      "size_bytes": 293,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Interrupted before resident-loop readiness; no count or performance result."
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": false,
+    "checkpoint_counts": [
+      1,
+      3
+    ],
+    "checkpoint_entry_bytes": [
+      3,
+      4
+    ],
+    "compact_offsets": true,
+    "dtype": "uint16",
+    "failure_status": "failed",
+    "host": "apple-m5-24gb",
+    "index": "leaf16-radial1",
+    "mask_counts": [],
+    "mask_names": [
+      "adf-center-8-to-20-delta",
+      "all-valid-detector-pixels"
+    ],
+    "metal_byte_cap": 11883921408,
+    "query_path": "packet-groups",
+    "resident_byte_cap": 11877814048,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7
+  },
+  "question": "How many seven-source entropy-coded streams would one- and three-checkpoint sidecars need to cover?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T10:09:17Z",
+    "started": "2026-09-13T10:04:29Z"
+  }
+}

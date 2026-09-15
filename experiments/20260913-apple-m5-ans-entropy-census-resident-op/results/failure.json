@@ -1,0 +1,14 @@
+{
+  "failure": {
+    "message": "unsupported operand type(s) for +: 'float' and 'str'",
+    "type": "TypeError"
+  },
+  "release": {
+    "all_released": true,
+    "event": "ans_resident_loop_end",
+    "metal_after_release_bytes": 5701632,
+    "metal_before_release_bytes": 11636195328,
+    "resident_count": 7,
+    "sequence": 2
+  }
+}

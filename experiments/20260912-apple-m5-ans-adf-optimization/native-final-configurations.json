@@ -1,0 +1,37 @@
+{
+  "schema": "quantem-gpu-ans-adf-native-final-configurations/v1",
+  "scope": "Anonymized seven-tile native presentation evidence on Apple M5 24 GB",
+  "rate_definition": "Distinct detector generations presented by all seven visible tiles during the trajectory; per-input-second uses the input interval denominator.",
+  "configurations": [
+    {"name": "windowed-pool-polar16", "layout": "polar", "leaf_pixels": 16,
+      "all_seven_adf_center_per_second": 29.9, "adf_center_per_input_second": 30.0,
+      "all_seven_adf_resize_per_second": 49.0, "adf_resize_per_input_second": 49.0,
+      "resident_count": 7, "comparison_resident_bytes": 11885154080,
+      "valid_visible_run": true, "strict_120_gate": "failed"},
+    {"name": "windowed-pool-radialhalf16", "layout": "radialhalf", "leaf_pixels": 16,
+      "all_seven_adf_center_per_second": 20.4, "adf_center_per_input_second": 20.2,
+      "all_seven_adf_resize_per_second": 66.3, "adf_resize_per_input_second": 65.9,
+      "resident_count": 7, "valid_visible_run": true, "strict_120_gate": "failed"}
+  ],
+  "comparison_rule": "Configurations are separate runs; do not combine their maxima.",
+  "default_policy": "Polar index remains disabled by default.",
+  "shared_plan_cache": "Optional and not validated; no gain claimed.",
+  "shared_plan_native_probe": {
+    "all_seven_adf_center_per_second": 27.0,
+    "all_seven_adf_resize_per_second": 48.7,
+    "incomplete_center_generations": 1,
+    "strict_120_gate": "failed",
+    "interpretation": "No improvement over the matched non-cache polar16 run"
+  },
+  "shared_plan_cpu_probe": "passed 10 fixtures and 160 concurrent calls",
+  "choose_base_cpu_probe": "passed 45 differing cases plus unchanged zero",
+  "resident_concurrency_probe": "passed",
+  "choose_base_native_probe": {
+    "all_seven_adf_center_per_second": 30.6,
+    "all_seven_adf_resize_per_second": 50.7,
+    "incomplete_generations_per_trajectory": 1,
+    "strict_120_gate": "failed",
+    "interpretation": "First exact reference-base port; no improvement claimed from one native run"
+  },
+  "functional_validation": "passed in separate anonymized native artifact"
+}

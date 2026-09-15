@@ -1,0 +1,27 @@
+{
+  "experiment_id": "20260911-mps-ans-multi-mask",
+  "host": "Apple M5 24 GB",
+  "scope": "MPS exact count-rANS detector reductions for multiple binary masks",
+  "fixture": {
+    "source": "tests/parity/ans_counts_fixture.py",
+    "shape": [64, 64, 2, 3],
+    "dtype": "uint16",
+    "masks": 3,
+    "note": "Independent exact fixture; this is a kernel comparison, not a full-acquisition, seven-tilt, or 120 Hz qualification."
+  },
+  "measurements": {
+    "separate_masks_p50_seconds": 0.000892771000508219,
+    "separate_masks_p95_seconds": 0.003908062803020585,
+    "batched_masks_p50_seconds": 0.00028487499912444036,
+    "batched_masks_p95_seconds": 0.0015243937501509216,
+    "p50_speedup": 3.1339043554265524,
+    "samples": 20
+  },
+  "parity": {
+    "mask_count": 3,
+    "output_dtype": "uint64",
+    "exact": true,
+    "separate_and_batched_equal": true
+  },
+  "qualification": "exact implementation and independent-fixture timing evidence only; real seven-tilt ANS throughput and 120 Hz remain unqualified"
+}

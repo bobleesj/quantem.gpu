@@ -1,5 +1,22 @@
 #include <metal_stdlib>
 using namespace metal;
+// Each group integrates one complete detector frame in restored intensity units.
+kernel void calibrated_detector_sum(
+    device const float *values [[buffer(0)]], device const float *weights [[buffer(1)]],
+    device float *output [[buffer(2)]], constant uint *p [[buffer(3)]],
+    uint frame [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    threadgroup float partial[128];
+    float sum = 0;
+    for (uint pixel = lane; pixel < p[0]; pixel += 128)
+        sum += values[ulong(frame) * p[0] + pixel] * weights[pixel];
+    partial[lane] = sum;
+    threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+    for (uint stride = 64; stride > 0; stride >>= 1) {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        threadgroup_barrier(metal::mem_flags::mem_threadgroup);
+    }
+    if (lane == 0) output[p[1] + frame] = partial[0];
+}
 constant float PI = 3.14159265358979323846f;
 kernel void complex_image(device const float *a [[buffer(0)]],device float2 *out [[buffer(1)]],
     constant uint &n [[buffer(2)]],uint i [[thread_position_in_grid]]) {if(i<n)out[i]=float2(a[i],0);}

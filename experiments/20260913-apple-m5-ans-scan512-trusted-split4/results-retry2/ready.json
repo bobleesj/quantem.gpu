@@ -1,0 +1,104 @@
+{
+  "acquisition_load_seconds": [
+    2.9463239908218384,
+    2.881066083908081,
+    2.933917999267578,
+    2.978173017501831,
+    2.986631989479065,
+    3.017575979232788,
+    3.5068230628967285
+  ],
+  "compact_offset_bytes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "compact_offsets_enabled": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "compact_offsets_requested": false,
+  "concurrent_loads": 1,
+  "event": "ans_resident_loop_ready",
+  "indexed_mode_available": true,
+  "indexed_resident_index_bytes": [
+    349664676,
+    352030900,
+    372216908,
+    375412428,
+    390939520,
+    373976340,
+    389162988
+  ],
+  "logical_dtype": "uint16",
+  "macro_lookahead_bits_prepared": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "macro_table_bytes_by_source": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "metal_current_allocated_bytes": 11883921408,
+  "polar_query_scan512_ab_a1_b_a2": true,
+  "polar_query_scan512_pipeline_prepared": [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true
+  ],
+  "polar_query_variant": "packet-groups",
+  "protocol": "JSON lines: set, run, quit; run responses include exact A1 hashes and full-map parity",
+  "recommended_working_set_bytes": 19069665280,
+  "resident_bytes_by_source": [
+    1563785764,
+    1572895024,
+    1691873232,
+    1731162264,
+    1819121980,
+    1709002796,
+    1789972988
+  ],
+  "resident_count": 7,
+  "schema": "quantem-gpu-paired-runtime-tans-resident-loop/v1",
+  "series_load_seconds": 21.297945976257324,
+  "series_resident_bytes": 11877814048,
+  "shape": [
+    512,
+    512,
+    192,
+    192
+  ],
+  "simd_entropy_fast_path_pipeline_prepared": false,
+  "source_identity_sha256": [
+    "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+    "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+    "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+    "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+    "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+    "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+    "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+  ]
+}

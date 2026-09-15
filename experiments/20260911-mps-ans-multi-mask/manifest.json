@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260911-mps-ans-multi-mask",
+  "status": "succeeded",
+  "question": "Can one exact MPS count-rANS decode produce several binary detector products without repeating source decode work?",
+  "paper": {
+    "authoritative_host": "Apple M5 24 GB",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260911-mps-ans-multi-mask/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "entrypoint": "PYTHONPATH=src python -m pytest tests/hardware/mps/test_mps_ans_counts.py tests/contracts/io/test_ans_detector_adapter.py -q",
+    "dirty": true,
+    "diff_sha256": "875be1c2a4f80a9f098b0b4988dc268266060841734251ecd6e3f30bb08b7f25",
+    "snapshot_path": "local-evidence://quantem-gpu-20260911/mps-ans-multi-mask"
+  },
+  "inputs": [
+    {
+      "dataset_id": "bounded-independent-count-rans-fixture-v1",
+      "path": "tests/parity/ans_counts_fixture.py",
+      "sha256": "77a5d1af94eaad9835a1aa31cc3d10991b2ff9277e346395706bd6e791616d8e"
+    }
+  ],
+  "parameters": {
+    "shape": [64, 64, 2, 3],
+    "source_dtype": "uint16",
+    "mask_count": 3,
+    "arithmetic": "exact native counts and uint64 mask sums",
+    "comparison": "three individually decoded masks versus one shared decode/reduce dispatch"
+  },
+  "execution": {
+    "host": "Apple M5 24 GB",
+    "backend": "mps",
+    "gpu_ids": [],
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "mps-ans-multi-mask",
+      "path": "experiments/20260911-mps-ans-multi-mask/result.json",
+      "sha256": "6474e6378e4851edef6dbb76a37367fefa4c172eeb7ca29a066208695a7a6069",
+      "size_bytes": 1018,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Three exact mask reductions matched separate decoding; shared decode/reduce was 3.1339x faster at p50 on the independent fixture."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T06:15:00Z",
+    "started": "2026-09-12T06:15:00Z",
+    "finished": "2026-09-12T06:15:00Z"
+  }
+}

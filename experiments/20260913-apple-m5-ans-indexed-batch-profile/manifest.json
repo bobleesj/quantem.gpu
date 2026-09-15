@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-indexed-batch-profile",
+  "status": "refuted",
+  "question": "Does batched all-seven indexed detector submission reduce the actual large-ADF update wall, and where is time spent outside GPU execution?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "589a50d5c60a7c5c5db7fcfbc10112bee92cf4fdea7513c692ae9ee858b1f3cb"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "sources": 7,
+    "previous": "adf-center-8",
+    "target": "adf-center-20",
+    "crop": null,
+    "binning": 1,
+    "resident_default_changed": false,
+    "cache_path_is_metadata_only": true,
+    "batch_sequence": [
+      {
+        "arm": "A1",
+        "batch": false
+      },
+      {
+        "arm": "B",
+        "batch": true
+      },
+      {
+        "arm": "A2",
+        "batch": false
+      }
+    ],
+    "profiled_repeats_per_arm": 20,
+    "unprofiled_repeats_per_arm": 20,
+    "measured_source_transitions": 1680,
+    "exact_parity": "full detector arrays against the frozen A1 maps",
+    "unprofiled_all_seven_wall_ms_median": {
+      "A1_unbatched": 70.9415078163147,
+      "B_batched": 76.7979621887207,
+      "A2_unbatched": 70.48052549362183
+    },
+    "profiled_command_interval_union_median_ms": {
+      "A1_unbatched": 68.46,
+      "B_batched": 68.64,
+      "A2_unbatched": 68.59
+    },
+    "promotion": "rejected; batched path is slower and does not reduce GPU work"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "exact indexed all-seven detector update including planning, preparation, submission, wait, and readback; source load and UI excluded"
+  },
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "path": "experiments/20260913-apple-m5-ans-indexed-batch-profile/results/raw.jsonl",
+      "sha256": "e70d39f7fb2aa460e7dcf0629396a786fb0af34daca77f5b03ddfad09a310d97",
+      "size_bytes": 1475824,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw benchmark JSON-lines responses for all resident updates"
+    },
+    {
+      "artifact_id": "trials",
+      "path": "experiments/20260913-apple-m5-ans-indexed-batch-profile/results/trials.jsonl",
+      "sha256": "0df0c7358dc713e315c3f9180cc866bc6f1576d5dc563a48464d524063b4a74a",
+      "size_bytes": 703844,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Profiled and unprofiled exact A/B/A transition records"
+    },
+    {
+      "artifact_id": "ready",
+      "path": "experiments/20260913-apple-m5-ans-indexed-batch-profile/results/ready.json",
+      "sha256": "ca6ee9487c6107a5290322f1f5692bd0124f4f17ffb810275208f7dd1b7ae564",
+      "size_bytes": 1667,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Seven distinct full uint16 residents and allocation"
+    },
+    {
+      "artifact_id": "summaries",
+      "path": "experiments/20260913-apple-m5-ans-indexed-batch-profile/results/summaries.json",
+      "sha256": "6707ca2064aee1b30931841ac8c6c1fbc4e9a39a2566594bb397208e228bddec",
+      "size_bytes": 956561,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Validated per-setting timing, parity, and profile samples"
+    },
+    {
+      "artifact_id": "stderr",
+      "path": "experiments/20260913-apple-m5-ans-indexed-batch-profile/results/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Benchmark process diagnostics"
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T07:05:12Z",
+    "finished": "2026-09-13T07:06:07Z"
+  },
+  "tested_binary_sha256": "1c39a58db85f58e894a3019d5f6f1cdef3a6300f4634d4b91ffcd6ccadaab7ef",
+  "tested_benchmark_source_sha256": "97b996be3fa2fca77f95d52f978f6e949ea2556fb1755bca9b454f110e16db77",
+  "tested_resident_source_sha256": "ddff4d4b797f4db385dad2f6040dd8b77a1319a7a84730a7e5676aa3f92c9263",
+  "tested_shader_sha256": "25df86f1e34825a9a5e72b851f6ab581672143bbec7d845f308f4405f048f1f8"
+}

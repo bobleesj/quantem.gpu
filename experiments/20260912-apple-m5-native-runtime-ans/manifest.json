@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-native-runtime-ans",
+  "status": "failed",
+  "question": "Does native automatic original-HDF5 to runtime-rANS preserve exact counts and sustain complete seven-acquisition 120 Hz interaction on Apple M5?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260912-apple-m5-native-runtime-ans/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "c05326ce97b168e1ba804b534705532db1398e88303132caf63ed04f191fb2d9",
+    "entrypoint": "metal-runtime-ans-benchmark",
+    "snapshot_path": "local-evidence://quantem-gpu-20260912/apple-m5-native-runtime-ans"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "acquisitions": 7,
+    "representation": "native-runtime-column-rans-spatial-v1",
+    "stream_interval": 512,
+    "source_window_scans": 32768,
+    "interaction_updates": 60,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "saved_ans_file": false,
+    "frame_gate_ms": 8.3333333333
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "gpu_model": "Apple M5",
+    "operating_system": "macOS 26.6.2"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-runtime-ans-result",
+      "path": "experiments/20260912-apple-m5-native-runtime-ans/result.json",
+      "sha256": "7aeaa89438fa4ede8ce38db78d2a89fc49b41e704b6db83f8528d8a7742b5414",
+      "size_bytes": 2803,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Exact sampled parity and selected-first 120 Hz gates pass; all-seven wide ADF, large jumps, series load, and native app integration remain failed gates."
+    },
+    {
+      "artifact_id": "native-runtime-ans-runbook",
+      "path": "experiments/20260912-apple-m5-native-runtime-ans/RUN-COMMANDS.md",
+      "sha256": "4d8919a6238a93bfd67d2dd0afd20c458fdf01846659215fab67e5aa41ec5c75",
+      "size_bytes": 1017,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Reproduction commands and timing-scope disclosure."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T17:00:00Z",
+    "started": "2026-09-12T15:40:00Z",
+    "finished": "2026-09-12T17:00:00Z"
+  }
+}

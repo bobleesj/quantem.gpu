@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260914-ans-to-packed",
+  "status": "completed",
+  "question": "Can retained paired ANS convert directly to the existing bit-plane resident without HDF5 rereads, within 1-2 seconds for seven acquisitions, preserving exact detector maps?",
+  "paper": {"repository": "quantem.gpu", "authority": "user-directed local Metal experiment"},
+  "code": {
+    "repository": "quantem.gpu", "revision": "b13e8679d43021cc21567e5526e61b20068b1007", "dirty": true,
+    "diff_sha256": "4f9e893b29ce8291545356fcd00cdee7cfd20127138764f0977eebb94b7e6195",
+    "snapshot_path": "local-evidence://sep14-ans-to-packed/sources-final.tar.gz",
+    "snapshot_sha256": "1f063f039ebdb6f9235a6ad1b513048762b15971788e8dd8d1c14f7b52aaa41d",
+    "executable_sha256": "7a622e06b96a99cd4cff6900b4e0f049def011dd02c59bd5d31cc3539d0ad8f5",
+    "synthetic_executable_sha256": "897368afae91c9b0cb5f95d622cbcb4256fa6818eaafccd880beaf70bd6976f9",
+    "entrypoint": "experiments/20260914-ans-to-packed/probe.swift"
+  },
+  "inputs": [{"dataset_id": "reference-seven-acquisitions", "path": "private-fixture://sep14-drag-bench/reference-seven", "sha256": "787a8f377c83c1f7629ae19e1be20cc407f41296bb3182d60d108e4df27d83cc"}],
+  "parameters": {
+    "shape": [512,512,192,192], "source_dtype": "uint16", "crop": false, "binning": false,
+    "budget_bytes": 17162698752,
+    "conversion": "two-pass direct ANS decode into block32 bit planes; reuse exact DPC summaries; host prefix only compact length index",
+    "target_met": false, "ui_integrated": false, "reverse_implemented": false,
+    "artifact_results": {
+      "single-baseline": "Dynamic private array: 1.355 s conversion, 0.309 s GPU measure, 0.794 s write; 3 maps and 11 DPs exact. Single exploratory run.",
+      "single-low-width": "Fixed low-width registers: 1.062 s, 0.313 s measure, 0.617 s write; same parity checks. Single exploratory run.",
+      "seven-vector": "Fixed vectors: 6.476 s summed conversion with parity between sources, 21 maps and 77 DPs exact. Not continuous seven-source wall timer.",
+      "seven-contiguous": "6.578 s wall including source acceptance/read/release; 6.573 s summed conversion. 12.046 GB final packed residency, 13.029 GB maximum post-conversion Metal sample (not true peak). 21 full maps and 77 DPs exact to ANS. Early/mid cancellation and zero budget rejection pass. Target 1-2 s refuted; no native UI or independent full original-HDF5 oracle.",
+      "synthetic-parity": "524288 source counts exact across plain/compact offsets and reversed detector permutation; zero, constant, raw16, sparse, compact, entropy models 82 and 84-93; high values 32767,32768,65535; unknown/interleaved mode rejected. Not exhaustive entropy/malformed coverage."
+    }
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "native Swift/Metal", "gpu_model": "Apple M5", "gpu_ids": ["default"]},
+  "outputs": [
+    {"artifact_id":"single-baseline","path":"local-evidence://sep14-ans-to-packed/ans-to-packed-single.jsonl","sha256":"188daaefb9dfbf1e61d14e5112ecde10e879bff372bd097693a1664edba2e286","size_bytes":1496,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"single-low-width","path":"local-evidence://sep14-ans-to-packed/ans-to-packed-low-width.jsonl","sha256":"e906538fb1704287c738012a59da6e9b2292683138c55af84dedfc2de7deada2","size_bytes":1507,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"seven-vector","path":"local-evidence://sep14-ans-to-packed/ans-to-packed-seven-vector.jsonl","sha256":"4e2c57e19ebdb1dbded9a39ef952db72410062e494f3796f0ab3267953585020","size_bytes":9818,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"seven-contiguous","path":"local-evidence://sep14-ans-to-packed/ans-to-packed-seven-contiguous.jsonl","sha256":"48a732604861f4ca7e41170c08f6f8b43dd3bf6d778da393943326998ce73d02","size_bytes":9963,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"synthetic-parity","path":"local-evidence://sep14-ans-to-packed/ans-to-packed-synthetic.jsonl","sha256":"04e7de37fddb5736bbf44b1511663e354b1b7978651a544110d405754d4674c5","size_bytes":387,"retention":"durable","consuming_figures":[]}
+  ],
+  "timestamps": {"created": "2026-09-14", "started": "2026-09-14", "finished": "2026-09-14"}
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-mps-ans-series-fixture",
+  "status": "succeeded",
+  "question": "Can seven independently resident MPS count-rANS sources provide exact point patterns and detector products without a dense stack?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260912-mps-ans-series-fixture/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "3a6a56d70fdcc521c8bf0a3c374905b479a63b5144bd239b1c47ffabd6849608",
+    "entrypoint": "PYTHONPATH=src python - <<'PY' (physical MPS series timing harness)",
+    "snapshot_path": "local-evidence://quantem-gpu-20260912/mps-ans-series-fixture"
+  },
+  "inputs": [
+    {
+      "dataset_id": "bounded-independent-count-rans-fixture-v1",
+      "path": "tests/parity/ans_counts_fixture.py",
+      "sha256": "77a5d1af94eaad9835a1aa31cc3d10991b2ff9277e346395706bd6e791616d8e"
+    }
+  ],
+  "parameters": {
+    "shape": [3, 5, 2, 3],
+    "source_dtype": "uint16",
+    "acquisitions": 7,
+    "masks": 3,
+    "arithmetic": "exact native point patterns and uint64 detector sums",
+    "comparison": "seven source owners queried concurrently; no dense stack"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "mps",
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "mps-ans-series-fixture-result",
+      "path": "experiments/20260912-mps-ans-series-fixture/result.json",
+      "sha256": "c65d11d8152a095db9569917ff96758d999675d005a4478b9a93208f3b6cc4cd",
+      "size_bytes": 1026,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Exact parity passed for seven-source point patterns and three detector masks; timing is synthetic-fixture evidence only."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T06:58:04Z",
+    "started": "2026-09-12T06:58:04Z",
+    "finished": "2026-09-12T06:58:04Z"
+  }
+}

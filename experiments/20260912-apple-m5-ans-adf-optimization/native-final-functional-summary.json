@@ -1,0 +1,27 @@
+{
+  "schema": "quantem-gpu-ans-adf-native-functional/v1",
+  "scope": "Anonymized final seven-source native functional journey",
+  "exit": 0,
+  "problems": [],
+  "resident_count": 7,
+  "final_comparison_visible": true,
+  "navigation": {
+    "forward_loads": 6,
+    "backward_resident_switches": 6,
+    "rapid_navigation_settled_to_requested_dataset": true,
+    "receipts_sent": 15,
+    "receipts_received": 15,
+    "receipts_applied_once": 15,
+    "retries": 0
+  },
+  "products_checked": ["BF", "ABF", "ADF", "iDPC"],
+  "fft_ready": true,
+  "scan_drag_settled": true,
+  "custom_detector_drag_settled": true,
+  "image_contrast_drag_passed": true,
+  "seven_tile_comparison_ready": true,
+  "comparison_custom_drag_settled": true,
+  "comparison_scan_drag_settled": true,
+  "comparison_contrast_drag_passed": true,
+  "performance_gate": "not requested; this artifact is functional evidence"
+}

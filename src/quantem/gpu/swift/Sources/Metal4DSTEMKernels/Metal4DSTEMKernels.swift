@@ -200,6 +200,11 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "ans_counts", device: device)
   }
 
+  /// Compile exact original-count runtime ANS encoding and interaction kernels.
+  public static func makeRuntimeANSLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "runtime_ans", device: device)
+  }
+
   /// Compile exact paired tANS archive diffraction queries.
   @_spi(EntropySeriesPrototype)
   public static func makeTANSLibrary(device: MTLDevice) throws -> MTLLibrary {

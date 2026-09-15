@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-adf-optimization",
+  "status": "refuted",
+  "question": "Can exact compact ANS detector reduction approach an 8.33 ms seven-source frame budget without dense duplicate storage?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "cc3177d745f49a1811ce8cf80703b933302fad14", "dirty": true, "diff_sha256": "c55ee5d004a14932680f058c78473da24cea16953851b8f58f2ece91e9963936", "app_revision": "f6dd65975346399b0efb7ab33be77929cefb7e56", "baseline_executable_sha256": "cff8d1441ceb890ae2df5a2a4635b48a6e69a35386f224c724abd4fae7131a9e", "final_executable_sha256": "d92f5e659386b066cc3542d800b295f2e26917f390b987a83b4fe2d92a466c5c", "final_shader_sha256": "abfa11d6072e247c6eef34fee1415d4b854a5e2f4f953d765eef3de2666deccf"},
+  "inputs": [{"dataset_id": "tilt-series-seven-native-v1", "path": "private-fixture://tilt-series-seven-native-v1", "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19", "shape_per_acquisition": [512,512,192,192], "dtype": "uint16", "acquisitions": 7}],
+  "parameters": {"representation": "paired-runtime-tans", "scan_bin": 1, "detector_bin": 1, "crop": null, "exact_integer_parity": true, "statistics_during_motion": true},
+  "execution": {"host": "apple-m5-24gb", "backend": "metal", "display_refresh_hz": 120},
+  "outputs": [
+    {
+      "artifact_id": "final-backend-aga",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/ans-adf-opt-final-windowpool-aga.jsonl",
+      "sha256": "25799a9944a4f5f98ac87a2824c61ffd2050f6af1f674178f49a7a8f95648268",
+      "size_bytes": 232119,
+      "retention": "durable",
+      "result": "420 full maps exact against A1 and 140 independent runtime-rANS references passed; process completed successfully.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "final-backend-stderr",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/ans-adf-opt-final-windowpool-aga.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "result": "Empty stderr from the completed final backend A/G/A run.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "final-native-configurations",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/native-final-configurations.json",
+      "sha256": "0ce12b1afae670165a9bf6ee28ac11da65e1ad0b2b42ac8fd7376c71f6324fe1",
+      "size_bytes": 2136,
+      "retention": "durable",
+      "result": "Separate polar16 and radial-half16 native configurations both failed the strict 120 complete-seven-tile-generations/s gate.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "native-policy-history",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/native-polar64-mask-policy-summary.json",
+      "sha256": "5e3b34d4ad300855646184d403a22590e6a97bb93b8bd95d144513188b53aa7d",
+      "size_bytes": 3895,
+      "retention": "durable",
+      "result": "Per-source invalid-pixel masking unlocked indexed native queries; retained configuration history remains below 120/s.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "final-native-functional",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/native-final-functional-summary.json",
+      "sha256": "86f84f1f5560c6fdfba7f1cec3e85579dcb1490dc56cf0b837a40e12f7151b25",
+      "size_bytes": 887,
+      "retention": "durable",
+      "result": "Anonymized seven-source functional journey exited zero with no reported problems; navigation, products, FFT, detector motion, contrast, and comparison journeys passed.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "choose-base-backend-aga",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/ans-adf-opt-choosebase-aga.jsonl",
+      "sha256": "412425221ba4511dfc6242179c11c0c54329074a13fb5e37ebafc9368de7bd40",
+      "size_bytes": 232088,
+      "retention": "durable",
+      "result": "First exact zero-versus-previous-base A/G/A port completed with 420 exact full maps and 140 passing independent references.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "choose-base-backend-stderr",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/ans-adf-opt-choosebase-aga.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "result": "Empty stderr from the completed choose-base backend A/G/A run.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "choose-base-native-summary",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/native-choosebase-summary.json",
+      "sha256": "6c3e8e0419f45f83aa03c78498aca979ff91c3522372cbdfe612d312346cda48",
+      "size_bytes": 798,
+      "retention": "durable",
+      "result": "Opt-in first reference-base native observation reached 30.6/s center and 50.7/s resize, included one incomplete generation per trajectory, and failed the strict 120/s gate.",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "choose-base-concurrency",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/ans-final-choosebase-concurrency.log",
+      "sha256": "ffeacd69e7a1d76a2e4446997c62a5e4ce35a599c4eaf1fda0bb752c0a600706",
+      "size_bytes": 98,
+      "retention": "durable",
+      "result": "Passed same-resident serialization, polar-only update, and release-race coverage with update-before-release.",
+      "consuming_figures": []
+    }
+  ],
+  "result": {
+    "backend_full_maps_exact": 420,
+    "independent_reference_maps_exact": 140,
+    "polar16_all_seven_adf_center_per_second": 29.9,
+    "polar16_all_seven_adf_resize_per_second": 49.0,
+    "radialhalf16_all_seven_adf_center_per_second": 20.4,
+    "radialhalf16_all_seven_adf_resize_per_second": 66.3,
+    "target_complete_generations_per_second": 120,
+    "target_met": false,
+    "default_index_enabled": false
+  },
+  "limitations": [
+    "Native configurations are separate runs and their maxima must not be combined.",
+    "Optional shared planner cache showed no native improvement and has no claimed gain.",
+    "Final functional evidence is separate from the performance measurements and does not establish the 120/s target."
+  ],
+  "timestamps": {"started": "2026-09-12T22:33:07Z", "finished": "2026-09-13T00:15:43Z"}
+}

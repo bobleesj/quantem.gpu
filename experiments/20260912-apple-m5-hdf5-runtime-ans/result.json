@@ -1,0 +1,117 @@
+{
+  "experiment_id": "20260912-apple-m5-hdf5-runtime-ans",
+  "host": "apple-m5-24gb",
+  "scope": "Automatic original-HDF5 to exact runtime-rANS residency and seven-acquisition interaction",
+  "input": {
+    "dataset_id": "tilt-series-seven-native-v1",
+    "combined_content_sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+    "files": 28,
+    "source_bytes": 15859738411,
+    "acquisitions": 7,
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null
+  },
+  "representation": {
+    "profile": "runtime-column-rans-spatial-v2",
+    "saved_intermediate_file": false,
+    "physical_resident_bytes": 9669686782,
+    "explicit_residency_set_bytes": 9671245824
+  },
+  "measurements": {
+    "seven_hdf5_to_resident_seconds": {
+      "samples": 3,
+      "p50": 24.7068,
+      "p95": 25.7267,
+      "max": 25.84,
+      "cache_state": "operating-system source pages unspecified; not cold I/O"
+    },
+    "priority_dp_with_explicit_residency_ms": {
+      "samples": 60,
+      "p50": 1.2395,
+      "p95": 2.5551,
+      "max": 3.2159
+    },
+    "remaining_six_dp_catch_up_ms": {
+      "samples": 60,
+      "p50": 5.6831,
+      "p95": 8.4259,
+      "max": 8.9633
+    },
+    "bf_one_pixel_center_drag_ms": {
+      "changed_detector_pixels": 72,
+      "samples": 42,
+      "p50": 2.5052,
+      "p95": 4.0234,
+      "max": 4.5836
+    },
+    "wide_adf_one_pixel_center_drag_before_branch_hoist_ms": {
+      "changed_detector_pixels": 532,
+      "samples": 42,
+      "p50": 8.7282,
+      "p95": 11.8123,
+      "max": 13.1280
+    },
+    "wide_adf_one_pixel_center_drag_after_branch_hoist_ms": {
+      "changed_detector_pixels": 532,
+      "samples": 80,
+      "p50": 7.0092,
+      "p95": 8.8397,
+      "max": 9.7590
+    },
+    "process_memory": {
+      "maximum_resident_set_bytes": 1466597376,
+      "peak_memory_footprint_bytes": 17985767224,
+      "swap_events": 0
+    }
+  },
+  "parity": {
+    "small_hdf5_workflow_tests": "12 focused ANS tests passed",
+    "independent_source_checks": 42,
+    "independent_source_check_policy": "six scan positions per acquisition, including block boundaries and rare 65535 counts",
+    "independent_source_checks_passed": true,
+    "full_volume_sha256": "not run; selected-position parity is not a complete-volume audit"
+  },
+  "candidates": [
+    {
+      "name": "smaller source windows",
+      "status": "refuted",
+      "result": "32768 scans was fastest at 2.67 s for one warm source; 4096, 8192 and 16384 took 3.52, 2.77 and 2.69 s"
+    },
+    {
+      "name": "threadgroup subtotal reduction",
+      "status": "refuted",
+      "result": "p95 worsened from 11.82 ms to 12.69-13.21 ms"
+    },
+    {
+      "name": "two entropy streams per lane",
+      "status": "refuted",
+      "result": "p50/p95 did not improve in paired exact trials"
+    },
+    {
+      "name": "partial-image reduction",
+      "status": "refuted",
+      "result": "no p95 gain and a full ADF seed could reserve about 591 MB scratch"
+    },
+    {
+      "name": "explicit Metal residency set",
+      "status": "accepted",
+      "result": "priority DP p95 improved from 22.80 ms with residency stalls to 2.56 ms without a separate warm-up"
+    },
+    {
+      "name": "hoist common entropy model dispatch",
+      "status": "accepted-bounded",
+      "result": "wide ADF p95 improved from 11.81 ms to 8.84 ms; strict 8.33 ms p95 target remains unmet"
+    }
+  ],
+  "qualification": {
+    "automatic_hdf5_to_ans_backend": "implemented and focused parity-tested on physical MPS",
+    "selected_dp_120_hz": "passed",
+    "bf_120_hz": "passed",
+    "wide_adf_120_hz": "failed by p95 gate",
+    "one_second_first_load": "failed",
+    "native_live4dstem_integration": "not implemented; Python MPS backend evidence is not native-app acceptance"
+  }
+}

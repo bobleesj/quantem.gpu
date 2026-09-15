@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260914-ans-to-packed-parallel",
+  "status": "completed",
+  "question": "Does bounded concurrent native ANS-to-packed conversion reduce seven-source wall time toward 1-2 seconds without raising the 17.16 GB device ceiling or changing counts?",
+  "paper": {"repository":"quantem.gpu","authority":"user-directed native Metal experiment"},
+  "code": {"repository":"quantem.gpu","revision":"b13e8679d43021cc21567e5526e61b20068b1007","dirty":true,"diff_sha256":"b70c17b3e4e68f18e3862f1dd5262328d7bab198aab0ef55a756b61eb85f96e2","backend_snapshot_path":"local-evidence://sep14-ans-to-packed/sources-final.tar.gz","backend_snapshot_sha256":"1f063f039ebdb6f9235a6ad1b513048762b15971788e8dd8d1c14f7b52aaa41d","harness_snapshot_path":"local-evidence://sep14-ans-conversion-followup/sources-final.tar.gz","harness_snapshot_sha256":"5fcab95070a3c4e6f46581e04b260dfb86143060b17607216f7b3a707a01c43e","entrypoint":"experiments/20260914-ans-to-packed-parallel/probe.swift"},
+  "inputs": [{"dataset_id":"reference-seven-acquisitions","path":"private-fixture://sep14-drag-bench/reference-seven","sha256":"787a8f377c83c1f7629ae19e1be20cc407f41296bb3182d60d108e4df27d83cc"}],
+  "parameters": {"shape":[512,512,192,192],"source_dtype":"uint16","crop":false,"binning":false,"budget_bytes":17162698752,"workers":[1,2,4,1],"reference":"three full detector maps and eleven full DPs per source before conversion; same counts afterward","baseline_experiment":"20260914-ans-to-packed","cache":"resident sources loaded once before each trial timer; no source reads during conversion","artifact_results":{"a1":"Sequential 6.607 s wall, 13.029 GB sampled; exact maps/DP.","b2":"Two workers 5.959 s wall, 13.144 GB sampled; exact maps/DP; 1-2 s target unmet.","c4":"Four workers 6.665 s wall, 14.743 GB sampled; exact maps/DP; no speedup.","a2":"Sequential repeat 6.307 s wall, 13.029 GB sampled; exact maps/DP."}},
+  "execution": {"host":"apple-m5-24gb","backend":"native Swift/Metal","gpu_model":"Apple M5","gpu_ids":["default"]},
+  "outputs": [
+    {"artifact_id":"a1","path":"local-evidence://sep14-ans-conversion-followup/ans-concurrent-a1.jsonl","sha256":"87873b827c10592acbe726e6434b7e8c823ec013a7fb56960258e0a11e221f99","size_bytes":10019,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"b2","path":"local-evidence://sep14-ans-conversion-followup/ans-concurrent-b2.jsonl","sha256":"f74c88355ac17d5a428fecc8d8229b75b9b391a1e140ccad2eab6ccb62c471ba","size_bytes":10020,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"c4","path":"local-evidence://sep14-ans-conversion-followup/ans-concurrent-c4.jsonl","sha256":"36c75da924e5998739c197152dad621427ef922d56bccd388c3e58e49c031eb8","size_bytes":10026,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"a2","path":"local-evidence://sep14-ans-conversion-followup/ans-concurrent-a2.jsonl","sha256":"e318edad9c17c13aa80cb70d52ac4ccb03feb8afef2e92cab36f7cdc9003a9df","size_bytes":10030,"retention":"durable","consuming_figures":[]}
+  ],
+  "timestamps": {"created":"2026-09-14","started":"2026-09-14","finished":"2026-09-14"}
+}

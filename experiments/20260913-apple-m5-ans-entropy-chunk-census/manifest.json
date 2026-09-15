@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-entropy-chunk-census",
+  "status": "completed",
+  "question": "Do the exact 64-stream decoder chunks or 32-lane SIMD chunks contain enough uniformly entropy-coded work to justify a branch-specialized decoder?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb",
+    "manifest_path": "experiments/20260913-apple-m5-ans-entropy-chunk-census/manifest.json"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "606b948fe9694bea2901febc852ea296bdbddc411b3930ef71a755332f8d1ed2",
+    "repository": "quantem.gpu",
+    "entrypoint": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+    "working_files_sha256": {
+      "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift": "01a9c40bf17f9c0bd907c05e67e0debcb5584026fde3dbf7f22aec41b8652538",
+      "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal": "b97ef981a109381b72a1a9449b9e67aaaf1b3d33c68d4174510a04f2811de541",
+      "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift": "3bcd9b5c568b8f3c38a8e3993585090f63bc247454f8176da59cc7bb6e58206b",
+      "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift": "d29c5c44c9ba4bbd9192ac107d776058b59cf334410b38c0d2ba52ecd9d98f16",
+      "experiments/20260913-apple-m5-ans-entropy-chunk-census/run.py": "55ba57569548a82cd70914bc6aa5357257467894c21b4ecebee414a82ea15264"
+    }
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "sources": 7,
+    "transition": "adf-center-8 -> adf-center-20",
+    "detector_map_allocated": false,
+    "mode_buffer_cpu_readback": false,
+    "residual_streams_per_source": 1067,
+    "scan_packets": 512,
+    "complete_streams_per_chunk": 64,
+    "full_chunks_per_packet": 16,
+    "eligible_full_chunk_denominator_per_source": 8192,
+    "eligible_full_chunk_denominator_all_sources": 57344,
+    "tail_partial_chunk_denominator_per_source": 512,
+    "tail_partial_chunk_denominator_all_sources": 3584,
+    "simd_width": 32,
+    "full_simd_chunks_per_packet": 33,
+    "eligible_full_simd_chunk_denominator_per_source": 16896,
+    "eligible_full_simd_chunk_denominator_all_sources": 118272,
+    "simd_tail_streams_per_packet": 11,
+    "simd_tail_partial_chunk_denominator_per_source": 512,
+    "simd_tail_partial_chunk_denominator_all_sources": 3584,
+    "tail_streams_per_source": 43,
+    "diagnostic_transient_requested_bytes_per_source": 4304,
+    "crop": null,
+    "binning": 1,
+    "exactness": "diagnostic predicate only; no scientific output is replaced",
+    "promotion": "diagnostic only; subsequent parity and timing experiment required",
+    "cache_path_is_metadata_only": true,
+    "fresh_cache_path": true,
+    "all_entropy_full_chunks_all_sources": 51437,
+    "mixed_full_chunks_all_sources": 5907,
+    "all_entropy_full_chunk_fraction": 0.8969900948660714,
+    "all_entropy_full_simd_chunks_all_sources": 110722,
+    "mixed_full_simd_chunks_all_sources": 7550,
+    "all_entropy_full_simd_chunk_fraction": 0.9361640963203464,
+    "resident_bytes_by_source": [
+      1563785764,
+      1572895024,
+      1691873232,
+      1731162264,
+      1819121980,
+      1709002796,
+      1789972988
+    ],
+    "metal_allocated_bytes_during_census_max_sampled": 11883921408,
+    "release_all_sources": true
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "GPU census dispatch plus tiny count readback; excludes loading and detector image computation"
+  },
+  "results": {
+    "eligible_full_chunk_denominator_per_source": 8192,
+    "eligible_full_chunk_denominator_all_sources": 57344,
+    "all_entropy_full_chunks_all_sources": 51437,
+    "mixed_full_chunks_all_sources": 5907,
+    "all_entropy_full_chunk_fraction": 0.8969900948660714,
+    "tail_partial_chunk_denominator_per_source": 512,
+    "tail_partial_chunk_denominator_all_sources": 3584,
+    "all_entropy_tail_chunks_all_sources_not_eligible": 3282,
+    "mixed_tail_chunks_all_sources_not_eligible": 302,
+    "eligible_full_simd_chunk_denominator_per_source": 16896,
+    "eligible_full_simd_chunk_denominator_all_sources": 118272,
+    "all_entropy_full_simd_chunks_all_sources": 110722,
+    "mixed_full_simd_chunks_all_sources": 7550,
+    "all_entropy_full_simd_chunk_fraction": 0.9361640963203464,
+    "simd_tail_partial_chunk_denominator_per_source": 512,
+    "simd_tail_partial_chunk_denominator_all_sources": 3584,
+    "all_entropy_simd_tail_chunks_all_sources_not_eligible": 3501,
+    "mixed_simd_tail_chunks_all_sources_not_eligible": 83,
+    "diagnostic_transient_requested_bytes_per_source": 4304,
+    "per_source_counts": [
+      {
+        "source": 0,
+        "source_identity_sha256": "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+        "all_entropy_full_chunks": 6998,
+        "mixed_full_chunks": 1194,
+        "all_entropy_tail_chunks_not_eligible": 450,
+        "mixed_tail_chunks_not_eligible": 62,
+        "all_entropy_full_simd_chunks": 15339,
+        "mixed_full_simd_chunks": 1557,
+        "all_entropy_simd_tail_chunks_not_eligible": 496,
+        "mixed_simd_tail_chunks_not_eligible": 16
+      },
+      {
+        "source": 1,
+        "source_identity_sha256": "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+        "all_entropy_full_chunks": 7007,
+        "mixed_full_chunks": 1185,
+        "all_entropy_tail_chunks_not_eligible": 452,
+        "mixed_tail_chunks_not_eligible": 60,
+        "all_entropy_full_simd_chunks": 15386,
+        "mixed_full_simd_chunks": 1510,
+        "all_entropy_simd_tail_chunks_not_eligible": 493,
+        "mixed_simd_tail_chunks_not_eligible": 19
+      },
+      {
+        "source": 2,
+        "source_identity_sha256": "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+        "all_entropy_full_chunks": 7338,
+        "mixed_full_chunks": 854,
+        "all_entropy_tail_chunks_not_eligible": 464,
+        "mixed_tail_chunks_not_eligible": 48,
+        "all_entropy_full_simd_chunks": 15818,
+        "mixed_full_simd_chunks": 1078,
+        "all_entropy_simd_tail_chunks_not_eligible": 496,
+        "mixed_simd_tail_chunks_not_eligible": 16
+      },
+      {
+        "source": 3,
+        "source_identity_sha256": "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+        "all_entropy_full_chunks": 7352,
+        "mixed_full_chunks": 840,
+        "all_entropy_tail_chunks_not_eligible": 470,
+        "mixed_tail_chunks_not_eligible": 42,
+        "all_entropy_full_simd_chunks": 15819,
+        "mixed_full_simd_chunks": 1077,
+        "all_entropy_simd_tail_chunks_not_eligible": 503,
+        "mixed_simd_tail_chunks_not_eligible": 9
+      },
+      {
+        "source": 4,
+        "source_identity_sha256": "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+        "all_entropy_full_chunks": 7719,
+        "mixed_full_chunks": 473,
+        "all_entropy_tail_chunks_not_eligible": 500,
+        "mixed_tail_chunks_not_eligible": 12,
+        "all_entropy_full_simd_chunks": 16307,
+        "mixed_full_simd_chunks": 589,
+        "all_entropy_simd_tail_chunks_not_eligible": 508,
+        "mixed_simd_tail_chunks_not_eligible": 4
+      },
+      {
+        "source": 5,
+        "source_identity_sha256": "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+        "all_entropy_full_chunks": 7360,
+        "mixed_full_chunks": 832,
+        "all_entropy_tail_chunks_not_eligible": 462,
+        "mixed_tail_chunks_not_eligible": 50,
+        "all_entropy_full_simd_chunks": 15818,
+        "mixed_full_simd_chunks": 1078,
+        "all_entropy_simd_tail_chunks_not_eligible": 498,
+        "mixed_simd_tail_chunks_not_eligible": 14
+      },
+      {
+        "source": 6,
+        "source_identity_sha256": "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b",
+        "all_entropy_full_chunks": 7663,
+        "mixed_full_chunks": 529,
+        "all_entropy_tail_chunks_not_eligible": 484,
+        "mixed_tail_chunks_not_eligible": 28,
+        "all_entropy_full_simd_chunks": 16235,
+        "mixed_full_simd_chunks": 661,
+        "all_entropy_simd_tail_chunks_not_eligible": 507,
+        "mixed_simd_tail_chunks_not_eligible": 5
+      }
+    ]
+  },
+  "outputs": [
+    {
+      "artifact_id": "result-json",
+      "path": "experiments/20260913-apple-m5-ans-entropy-chunk-census/results/result.json",
+      "sha256": "33cfaf1ba9aed902cb217748bc0da05ae80964473602ea21f2c8883baa550896",
+      "size_bytes": 13528,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Seven-source exact chunk-mode census and resident release evidence."
+    },
+    {
+      "artifact_id": "raw-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-entropy-chunk-census/results/raw.jsonl",
+      "sha256": "c256a693a2b143d7459e742c34c88200856465f9ab52f5c5bc802ee317ceba6e",
+      "size_bytes": 10189,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw resident-loop ready, census, and release events."
+    },
+    {
+      "artifact_id": "stderr-log",
+      "path": "experiments/20260913-apple-m5-ans-entropy-chunk-census/results/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Benchmark process diagnostics."
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T07:45:14Z",
+    "finished": "2026-09-13T07:45:41Z"
+  },
+  "tested_binary_sha256": "ac5f25e97b855d66cc4c398803654f64bc56bb0a4c31e8e3dcfbbf8ecc8f837b"
+}

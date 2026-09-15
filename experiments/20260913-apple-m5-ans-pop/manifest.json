@@ -1,0 +1,15 @@
+{"schema_version":1,"experiment_id":"20260913-apple-m5-ans-pop","status":"completed",
+"question":"Does removing the redundant zero-bit branch in the eager64-bit ANS pop reduce residual latency?",
+"paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+"code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"af9e4cd84c4f6fd7d1abbd36d5bb67dbe6058e42ad706e5ede3645043ae27572"},
+"inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"}],
+"parameters":{"shape":[512,512,192,192],"dtype":"uint16","sources":7,"function_constant":16,"default":false,"index_unchanged":true},
+"execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"isolated exact signed residual and combined contributions, full return including preparation; no IO or UI"},
+"tested_binary_sha256":"f7c8810a6bc59814bb0f08add09e3ebefa905f37ef81b9e0c256de43e3e7ae5f",
+"tested_shader_sha256":"80ae5272ee96b5fa215ea0084733630f1dcfdae40a69510b52c143d2e665b991",
+"tested_source_sha256":"69a54bb86eb7bf87b64f0bfbd9529d472815de79efb30cc223fcb2f4d094e03c",
+"tested_benchmark_sha256":"8d46b8a4561b8e655aff1f19662895c6ec8e83560008aeb64ad6ac52383db659",
+"outputs":[
+{"artifact_id":"samples","path":"experiments/20260913-apple-m5-ans-pop/results.jsonl","sha256":"40b9690689279bb02e67b2f2df4d89e5470a54e232e7467043e1c7874b8b4399","size_bytes":70647,"retention":"durable","consuming_figures":[],"result":"175 exact source transitions; timing inconclusive; no promotion"},
+{"artifact_id":"fixture","path":"experiments/20260913-apple-m5-ans-pop/adversarial.log","sha256":"4e99db330f48708783eddf424ab7d549b86bb2c6a15aa057b48df95f6fa43f13","size_bytes":2165,"retention":"durable","consuming_figures":[],"result":"FC16 signed high count fixture passed; malformed checks cover prior pipelines only"},
+{"artifact_id":"summary","path":"experiments/20260913-apple-m5-ans-pop/summary.jsonl","sha256":"dc345e573acadac40cf76d562f4392d64bf7ed31ab81d4ddae4f0dc954898e08","size_bytes":1734,"retention":"durable","consuming_figures":[],"result":"off/on/off/on/off; first repeat per arm excluded"}],"timestamps":{"started":"2026-09-13T05:43:20Z","finished":"2026-09-13T05:44:49Z"}}

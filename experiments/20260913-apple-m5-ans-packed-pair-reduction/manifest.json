@@ -1,0 +1,198 @@
+{
+  "code": {
+    "diff_scope": "Shared tracked worktree diff at plan creation; refresh candidate and source fingerprints when the Metal pipeline is wired.",
+    "diff_sha256": "6adb8cec6548f5aab6cfd52bffe28289b44fcfd39649966fc23993f71f26bd4d",
+    "dirty": true,
+    "entrypoint": "experiments/20260913-apple-m5-ans-packed-pair-reduction/oracle_one_ulong.py",
+    "note": "Metal rejected the UInt64 SIMD reduction intrinsic and literal; a separate uint2 experiment follows.",
+    "pipeline_status": "rejected by MSL compile; retained as a failed-run record",
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "833b6efa427427c5537d1a67d33cbc6a54ed084d9ec27d398c9b380eb735765c",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "67e10e4e30a0b6ed37f717c5f404f2b441abbb2e89590800cabd79d39807a411"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "6624e8bbaae678d9b1cd04f9e97aa64926d9eebade983d0036473c41bcee6800"
+      },
+      "packed_pair_oracle": {
+        "path": "experiments/20260913-apple-m5-ans-packed-pair-reduction/oracle_one_ulong.py",
+        "sha256": "6f2636a7a5b204cf4e4e8ae9786e0da6a158bc1a58a64ef92f673e71e33d01ac"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "2d9d8513b2fbc7da9dd2a6d876986b79898bc81ff50017e59f51672489f9613c"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "6cf1c83733d94048848f9bf1f84809f55dce3a5568a46f01af2280273344ad51"
+      },
+      "trusted_table_factory": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSTables.swift",
+        "sha256": "3800a0f1b68ea5293e13237fcf5ccce7f99f94fb2c4ce1678721f21efc7e8922"
+      },
+      "trusted_table_tests": {
+        "path": "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/PairedRuntimeTANSTablesTests.swift",
+        "sha256": "a3c6bb37f3d7f27da5375d9bd7f4727254f71e526914c5a863512ba210e99c04"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "a6a530f99f05d19268e359280e5baa03890148d7bc81ff9e745d1c944c018a36"
+    },
+    "worktree_status_sha256": "9276cd22115b9a4274e3cf5bdb758561c81774ae3c01f8e72672bb69225fcc16"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "benchmark exited before ans_resident_loop_ready: -5",
+      "type": "RuntimeError"
+    },
+    "host": "apple-m5-24gb",
+    "launch_preflight_attempts": [
+      {
+        "corrected_executable_path": ".build/release/metal-paired-runtime-tans-series-benchmark",
+        "provided_executable_path": "src/quantem/gpu/swift/.build/release/metal-paired-runtime-tans-series-benchmark",
+        "reason": "The runner rejected a nonexistent nested SwiftPM output path before launching the benchmark; no Metal work started.",
+        "status": "failed_before_gpu"
+      }
+    ],
+    "plan_only": false,
+    "processes": 1,
+    "release": null,
+    "timing_boundary": "Unprofiled all-seven indexed detector update including planning, submission, wait, and readback; source loading and UI presentation excluded."
+  },
+  "experiment_id": "20260913-apple-m5-ans-packed-pair-reduction",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-packed-pair-reduction/results/raw.jsonl",
+      "result": "All benchmark stdout JSON-line records, including ready, A/B/A responses, and release.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "summary",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-packed-pair-reduction/results/summary.json",
+      "result": "Exact arm samples, per-cycle hash checks, allocation, and all-seven wall summaries.",
+      "retention": "durable",
+      "sha256": "516ab829943abd5b0cc2995fe538f197cffd0d19c3750df85a06666993b428e7",
+      "size_bytes": 24
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-packed-pair-reduction/results/stderr.log",
+      "result": "Benchmark process diagnostics.",
+      "retention": "durable",
+      "sha256": "8575a4cb8e39a7b97916336efd9c1049eba6a34651fb97352822ae94b92bfd44",
+      "size_bytes": 1272
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-packed-pair-reduction/results/failure.json",
+      "result": "Structured failure and release-cleanup evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "0df28412304b25939a96b0c225191aafd34dc73840187345b2452fc59fb5f3b3",
+      "size_bytes": 161
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "arm_samples": [],
+    "arms": [
+      {
+        "label": "A1",
+        "reduction": "two simd_sum(uint) calls"
+      },
+      {
+        "label": "B",
+        "reduction": "one bias-packed simd_sum(ulong) call"
+      },
+      {
+        "label": "A2",
+        "reduction": "two simd_sum(uint) calls"
+      }
+    ],
+    "candidate_resident_growth_bytes": 0,
+    "cpu_oracle_preflight": {
+      "cases": 1310,
+      "coefficient_domain": [
+        -2,
+        -1,
+        0,
+        1,
+        2
+      ],
+      "four_stream_worst_case_biased_channel_sum": 33553920,
+      "largest_observed_biased_channel_sum": 22806180,
+      "low_to_high_carry": false,
+      "status": "pass",
+      "streams_per_lane": [
+        1,
+        2,
+        4
+      ],
+      "uint16_domain": [
+        0,
+        1,
+        32767,
+        32768,
+        65534,
+        65535
+      ]
+    },
+    "experiment_status_note": "CPU arithmetic preflight and Swift package build passed; seven-source Metal A/B/A is running.",
+    "failure_status": "failed",
+    "fixed_configuration": {
+      "compact_offsets": false,
+      "kernel": "packet-owner2",
+      "packet_splits": 1,
+      "polar_query_variant": "scan512",
+      "streams_per_lane": 2,
+      "trusted_table": true
+    },
+    "full_map_hash_anchor": "experiments/20260913-apple-m5-ans-scan512-trusted-table-compose/manifest.json",
+    "logical_dtype": "uint16",
+    "masks": [
+      "adf-center-8",
+      "adf-center-20"
+    ],
+    "measured_cycles_per_arm": 20,
+    "metal_allocation_ceiling_bytes": 11883921408,
+    "resident_ceiling_bytes": 11877814048,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_count": 7,
+    "warmup_cycles_per_arm": 1,
+    "warmup_samples": []
+  },
+  "question": "Does replacing two per-pair simd_sum(uint) reductions with one bias-packed simd_sum(ulong) in packet-owner2 improve exact seven-source large-ADF latency with scan512 and trusted-table fixed on, without changing full-map hashes or memory ceilings?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T13:39:21Z",
+    "started": "2026-09-13T13:39:17Z"
+  }
+}

@@ -1,0 +1,175 @@
+{
+  "code": {
+    "diff_sha256": "5ee6d2590a0563d52bf9a7ce4eb1d575896f3fbac3375811ebbeac3a189f8003",
+    "dirty": true,
+    "fingerprint_policy": "Fresh release executable and current worktree sources, experiment runner, source identities, exact maps, and memory gates are recorded before and during the run.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "818f941886797df6d49a7b3037c7b59fc54d38dd72eb859b7070a95a5a0ea5db",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "22f5ad838eec81af0f1dd2f629edf149e2dfcba50376e4150a777f9233a8f29d"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "6d0a1fba5210e85da9c08827c378b7b306cf3a87760e71d842d167ea99a90d31"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "de9a6537cd629bc94df9629cc1f67524d133deaa4e4d97de8687cc3429dae89f"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "9b5cedf8f0f776fd789efc59638b2336b919a953552425e2a85eb346af74ab83"
+      },
+      "trusted_table_factory": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSTables.swift",
+        "sha256": "3800a0f1b68ea5293e13237fcf5ccce7f99f94fb2c4ce1678721f21efc7e8922"
+      },
+      "trusted_table_tests": {
+        "path": "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/PairedRuntimeTANSTablesTests.swift",
+        "sha256": "a3c6bb37f3d7f27da5375d9bd7f4727254f71e526914c5a863512ba210e99c04"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "bb3b975e8dbfd5e3d3d5e4ebf769a866f87a40f388412045633d50762ce3395b"
+    },
+    "worktree_status_sha256": "c197056026c01adb9b2b41db0f89ac017b891387947f0f451ea5888dbc5b3b0a"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "effective configuration mismatch in A1: {'batch': False, 'bounded_concurrency': 7, 'choose_base': False, 'history': False, 'history_base': False, 'joint_plan': False, 'kernel': 'packet-owner2', 'lazy_refill': False, 'mode': 'indexed', 'packet_splits': 1, 'partial_groups': 8, 'partial_stores': False, 'plain_sums': False, 'polar_query_variant': 'scan512', 'profile': False, 'register_sums': False, 'reuse_word': False, 'simd_entropy_fast_path': False, 'streams_per_lane': 2, 'trusted_table': False}",
+      "type": "RuntimeError"
+    },
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {
+      "all_released": true,
+      "event": "ans_resident_loop_end",
+      "metal_after_release_bytes": 5701632,
+      "metal_before_release_bytes": 11883921408,
+      "resident_count": 7,
+      "sequence": 2
+    },
+    "timing_boundary": "Unprofiled indexed detector update including planning, submission, wait, and readback; source loading and UI rendering excluded."
+  },
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-current-source-reproduction",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-current-source-reproduction/results/raw.jsonl",
+      "result": "All benchmark stdout JSON-line records, including ready, A/B/A responses, and release.",
+      "retention": "durable",
+      "sha256": "32fe68b6f34788db46a661b88909396b9875af698c2ef6b2c339ec3428bbbb5c",
+      "size_bytes": 10664
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-current-source-reproduction/results/ready.json",
+      "result": "Seven-source identities, shape, allocation, and scan512 pipeline preparation evidence.",
+      "retention": "durable",
+      "sha256": "350d5746bc52472ff59cab95a2746828f583a39c8b8f798ca4f0294ce8a2d8d3",
+      "size_bytes": 2249
+    },
+    {
+      "artifact_id": "summary",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-current-source-reproduction/results/summary.json",
+      "result": "Exact arm samples, per-cycle hash checks, allocation, and all-seven wall summaries.",
+      "retention": "durable",
+      "sha256": "516ab829943abd5b0cc2995fe538f197cffd0d19c3750df85a06666993b428e7",
+      "size_bytes": 24
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-current-source-reproduction/results/stderr.log",
+      "result": "Benchmark process diagnostics.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-current-source-reproduction/results/failure.json",
+      "result": "Structured failure and release-cleanup evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "010328b1d097c8f2d02defe2c6161f28f623a42fb8d7702373a8bee0b03643da",
+      "size_bytes": 805
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": true,
+    "arm_samples": [],
+    "failure_status": "failed",
+    "latency_summary": {},
+    "layout": "radial1",
+    "leaf_pixels": 16,
+    "logical_dtype": "uint16",
+    "masks": [
+      "adf-center-8",
+      "adf-center-20"
+    ],
+    "measured_cycles_per_arm": 20,
+    "metal_ceiling_bytes": 11883921408,
+    "polar_query_variant": "scan512",
+    "ready_metal_current_allocated_bytes": 11883921408,
+    "resident_bytes_by_source": [
+      1563785764,
+      1572895024,
+      1691873232,
+      1731162264,
+      1819121980,
+      1709002796,
+      1789972988
+    ],
+    "resident_ceiling_bytes": 11877814048,
+    "series_resident_bytes": 11877814048,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_count": 7,
+    "source_identity_sha256": [
+      "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    ],
+    "trusted_table_arms": [
+      "off",
+      "on",
+      "off"
+    ],
+    "warmup_cycles_per_arm": 1,
+    "warmup_samples": []
+  },
+  "question": "Does the current dirty checkout reproduce the established exact scan512 plus trusted-table seven-source large-ADF result within the existing resident and Metal-allocation ceilings?",
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T14:58:22Z",
+    "started": "2026-09-13T14:57:54Z"
+  }
+}

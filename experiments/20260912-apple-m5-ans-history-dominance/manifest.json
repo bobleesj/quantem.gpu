@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-history-dominance",
+  "status": "completed",
+  "question": "Does requiring no increase in residual pixels or indexed fields preserve fresh-reversal gains and avoid the scalar-cost large-move regression?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "ec1c75b888e6490b735bfeaaf80b54f64364d01c8d22f51d1e3123b663c59fb0"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+      "shape_per_acquisition": [
+        512,
+        512,
+        192,
+        192
+      ],
+      "dtype": "uint16",
+      "acquisitions": 7
+    }
+  ],
+  "parameters": {
+    "representation": "paired-runtime-tans",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "default": false,
+    "history": true,
+    "history_base": true,
+    "precomputed_adf_atlas": false,
+    "additional_gpu_bytes_over_history": 0,
+    "history_base_policy": "componentwise-dominance"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "all-seven synchronized update excluding IO, parity and UI; cache hits separated from fresh work"
+  },
+  "outputs": [
+    {
+      "artifact_id": "samples",
+      "path": "experiments/20260912-apple-m5-ans-history-dominance/resident-loop.jsonl",
+      "size_bytes": 2174944,
+      "sha256": "5a0e81399e67b52bd28f59bcaa7a8c726c753495a63d376984cc6b6c77e3a03b",
+      "result": "13 arms, 5075 exact maps",
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "summary",
+      "path": "experiments/20260912-apple-m5-ans-history-dominance/summary.jsonl",
+      "size_bytes": 8822,
+      "sha256": "603e3794a17705e440f4aeced9f8c5e9412852224ff1e3f86c3c606760814eb1",
+      "result": "Reversal speedup retained; bad field tradeoff rejected",
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "fresh",
+      "path": "experiments/20260912-apple-m5-ans-history-dominance/fresh-summary.jsonl",
+      "size_bytes": 2114,
+      "sha256": "8ad1e4fd664de0f1525e5d48f33f92fa9bafc2010b2c058f437d495a728d4b03",
+      "result": "Zero exact hits for all measured C reversals; p95 and medians",
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "tested_binary_sha256": "1595ee4c86b3dc94c15a1911711b9502c51ba8353d3b49e47ad43df31e087263",
+  "tested_shader_sha256": "a3b166e39aee0e6581435484bd0f1a25ecb88fd17740bca6ab7380c77b1b1d1e",
+  "tested_resident_source_sha256": "69cb6519d2a136a3b634a53fabb38724d4d3feb17703ed2df8ab2699219e420d",
+  "timestamps": {
+    "started": "2026-09-13T02:03:02Z",
+    "finished": "2026-09-13T02:05:00Z"
+  },
+  "limitations": [
+    "Exact return hits are separate from fresh residual work.",
+    "History adds 7MiB versus history-disabled resident; this change adds no third buffer.",
+    "System-wide swap was5557.19MiB after run; allocation stability does not prove no memory pressure.",
+    "UI and GPU failure injection pending; default off."
+  ]
+}

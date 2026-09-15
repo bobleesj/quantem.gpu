@@ -1,0 +1,48 @@
+{
+  "experiment_id": "20260912-apple-m5-native-ans-live-statistics",
+  "host": "apple-m5-24gb",
+  "representation": "quantem.gpu.native-paired-runtime-tans/v1",
+  "input": {
+    "acquisitions": 7,
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null
+  },
+  "optimization": {
+    "changed": "Skip shared image-statistics reduction on live detector frames; copy the last validated range/histogram and refresh on release.",
+    "exact_source_data_changed": false,
+    "default_path_changed": false
+  },
+  "single_view": {
+    "selected_dp_fps": 119.7,
+    "large_abf_center_fps": 119.2,
+    "large_abf_resize_fps": 119.0,
+    "large_adf_center_fps": 118.0,
+    "large_adf_resize_fps": 119.0,
+    "p95_presentation_interval_ms": 8.33,
+    "metal_gpu_median_ms": {
+      "large_abf_center": 3.78,
+      "large_abf_resize": 2.22,
+      "large_adf_center": 4.07,
+      "large_adf_resize": 2.77
+    },
+    "gate": "pass"
+  },
+  "seven_way": {
+    "resident_physical_gb": 9.27,
+    "resident_allocated_gb": 9.35,
+    "large_abf_center_fps": 6.3,
+    "large_abf_resize_fps": 27.6,
+    "large_adf_center_fps": 6.4,
+    "large_adf_resize_fps": 15.3,
+    "gate": "not_120_hz"
+  },
+  "parity": {
+    "full_scan": true,
+    "exact_hashes_stable": true,
+    "native_problems": [],
+    "console_errors": 0
+  }
+}

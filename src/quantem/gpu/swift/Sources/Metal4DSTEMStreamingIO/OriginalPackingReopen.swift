@@ -436,7 +436,7 @@ extension OriginalHDF5Packing {
       shards: residentShards, moments: residentMomentData, detectorSum: detectorSum,
       maximum: maximum,
       maximumWidths: maximumWidths,
-      calibration: measuredDetector(
+      calibration: Self.measuredDetector(
         detectorSum, rows: dataset.detectorRows, columns: dataset.detectorCols,
         excludedFromEstimate: dataset.badPixelIndices), stagingBytes: peakStaging,
       readSeconds: profile.read, decodeSeconds: profile.decodeGPU,

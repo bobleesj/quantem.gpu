@@ -1,0 +1,8 @@
+Building for production...
+[0/2] Write swift-version--1AB21518FC5DEDBE.txt
+[1/4] Write sources
+[3/5] Compiling Metal4DSTEMStreamingIO CompactDetectorRegions.swift
+[4/6] Compiling MetalPairedRuntimeTANSSeriesBenchmark main.swift
+[4/6] Write Objects.LinkFileList
+[5/6] Linking metal-paired-runtime-tans-series-benchmark
+Build of product 'metal-paired-runtime-tans-series-benchmark' complete! (29.16s)

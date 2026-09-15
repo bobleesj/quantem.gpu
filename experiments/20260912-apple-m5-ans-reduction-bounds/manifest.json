@@ -1,0 +1,21 @@
+{
+  "schema_version":1,
+  "experiment_id":"20260912-apple-m5-ans-reduction-bounds",
+  "status":"refuted",
+  "question":"Can removing dense threadgroup atomic reductions or bounding simultaneous source submissions improve exact seven-source detector latency without growing resident storage?",
+  "paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+  "code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"090bb50cf478f143383f3c4a536d46f8b9d7a7d967440728f110a21faf8f1470"},
+  "inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19","shape_per_acquisition":[512,512,192,192],"dtype":"uint16","acquisitions":7}],
+  "parameters":{"representation":"paired-runtime-tans","scan_bin":1,"detector_bin":1,"crop":null,"precomputed_adf_atlas":false,"function_constant":11,"default":false,"bounded_concurrency":[1,2,4,7]},
+  "execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"all-seven synchronized update excluding IO, parity and UI"},
+  "outputs":[
+    {"artifact_id":"samples","path":"experiments/20260912-apple-m5-ans-reduction-bounds/resident-loop.jsonl","sha256":"b6a552d7be52cbe7ab7db7c0eee4af992be11b9a8591afa9cf25ce9b8ef8e47c","size_bytes":2628357,"retention":"durable","result":"11 arms, 6860 exact maps; variants slower","consuming_figures":[]},
+    {"artifact_id":"summary","path":"experiments/20260912-apple-m5-ans-reduction-bounds/summary.jsonl","sha256":"29ec501158d7a4c05c93b6ad394078911742c555a9cfc0fa8e510dfb6ba6ece2","size_bytes":10061,"retention":"durable","result":"Warm matched controls and batch-size results","consuming_figures":[]},
+    {"artifact_id":"adversarial","path":"experiments/20260912-apple-m5-ans-reduction-bounds/adversarial.log","sha256":"964f06182752c6a8563b0ba2e44be5fe992b34f730b404aa7f48509431ff50f9","size_bytes":1497,"retention":"durable","result":"Mixed signed uint16 and malformed streams pass","consuming_figures":[]}
+  ],
+  "tested_binary_sha256":"2e745b2d525ac5494bcbb74d7d22cbbc1d3a66acbeff32a269d5199830dafc6e",
+  "tested_shader_sha256":"7fb1c327b9fbbdc27ec05615d16e271d5f7f891e198ad7c3ee64cb9ad296f702",
+  "tested_resident_source_sha256":"e5dae4c1f8ad0603a3abe2d327fbf51f92f5ab525b0df97227d9457ccc9c2968",
+  "timestamps":{"started":"2026-09-13T01:23:46Z","finished":"2026-09-13T01:28:49Z"},
+  "limitations":["Initial code hash refers to preceding tracked state; build hashes recorded before measurements.","Register allocation and stalls cannot be measured using available timestamp-only counters."]
+}

@@ -1,0 +1,136 @@
+{
+  "code": {
+    "diff_sha256": "6265a4452070b630bc11558b4c3e81e03ed5e915b77be1188abf76fecc5a09c7",
+    "dirty": true,
+    "fingerprint_policy": "The runner snapshots the dirty worktree, tested executable, resident, shader, benchmark protocol, and census runner before execution.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "cc345e6125d07dd25179d07fd3ae9f44e01a0c33556c7a8650bd940044a0dc78",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "37cbc0b3f5fd3718183dbff01129c9092a5a5192692aadd306b10d2f87b6f322"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0cb11d2a256e479dc1f0250d2ac57bcac2582ba41b7d9c3b44ca2159c84470ab"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "e272b40710a5676aa7e0a162fc373818c6618910e0f9fe91bc9e7ff31f5bdcd0"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "9876948745cd102f9688d68987c50cdaeec91e69c97e31f20ae4c12b2a1b93c9"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "d6350939fbe22b40f755592d4938b119eb3025d7467ce272a59372d83c83b2ae"
+    },
+    "worktree_status_sha256": "9e4123891331c124271681e5cdef958a274d01692bc584aaf83fac05bdf45039"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "unsupported operand type(s) for +: 'float' and 'str'",
+      "type": "TypeError"
+    },
+    "processes": 1,
+    "release": {
+      "all_released": true,
+      "event": "ans_resident_loop_end",
+      "metal_after_release_bytes": 5701632,
+      "metal_before_release_bytes": 11636195328,
+      "resident_count": 7,
+      "sequence": 2
+    },
+    "timing_boundary": "Resident-loop entropy_census diagnostic after seven-source readiness; no detector-update timing is measured."
+  },
+  "experiment_id": "20260913-apple-m5-ans-entropy-census-resident-op",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op/results/raw.jsonl",
+      "result": "Benchmark protocol output and explicit release record.",
+      "retention": "durable",
+      "sha256": "71f31a2166edb85775269f4f41cb95963e8f5cc0e71d6efa763b647b59101e47",
+      "size_bytes": 9326
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op/results/ready.json",
+      "result": "Seven source identities and exact resident allocation.",
+      "retention": "durable",
+      "sha256": "6a1b5c6cc4a205cab23cd5c5ab666e379af87e63fa2bcbb932ecef2d2d52f78f",
+      "size_bytes": 2296
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op/results/stderr.log",
+      "result": "Benchmark diagnostic output.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-entropy-census-resident-op/results/failure.json",
+      "result": "Failure and release evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "a14091a4d1b51ed345e23a03faade3a641491a0fbde49b45e7df1184f955b76a",
+      "size_bytes": 334
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": true,
+    "checkpoint_counts": [
+      1,
+      3
+    ],
+    "checkpoint_entry_bytes": [
+      3,
+      4
+    ],
+    "compact_offsets": true,
+    "dtype": "uint16",
+    "host": "apple-m5-24gb",
+    "index": "leaf16-radial1",
+    "mask_counts": [],
+    "mask_names": [
+      "adf-center-8-to-20-delta",
+      "all-valid-detector-pixels"
+    ],
+    "metal_byte_cap": 11883921408,
+    "query_path": "packet-groups",
+    "resident_byte_cap": 11877814048,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7
+  },
+  "question": "How many seven-source entropy-coded streams would one- and three-checkpoint sidecars need to cover, and do their byte estimates fit under the sampled Metal allocation ceiling?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T10:12:36Z",
+    "started": "2026-09-13T10:12:11Z"
+  }
+}

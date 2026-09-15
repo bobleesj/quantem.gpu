@@ -1,0 +1,125 @@
+{
+  "code": {
+    "diff_sha256": "b51a5b9f14a8ec519ce9f45f66117c32bcc1beb32fd6620e1efa89f397b9564f",
+    "dirty": true,
+    "fingerprint_policy": "Runner snapshots the worktree, tested executable, benchmark, resident, shader, and experiment runner before the mode census.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "8a4f3d6ee917dc30f012f99f4b2c4650170edf557de64ab35b0372f429a55528",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "14e6c2801e5753abf4d0e72a6322772004ac3e4aba41d195c127d5dcf4244566"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0cb11d2a256e479dc1f0250d2ac57bcac2582ba41b7d9c3b44ca2159c84470ab"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "ea773b01a4fc15b3cdcb0a66f5ff31eb1cba077909a078d3293795f6c398e6f4"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "260f38a96fe0c03c4502d284bfeb0c7c468e34b810c3428631b1d42e8256a2f8"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "67f145a4b98634f5987b405ef1905e1feb257192f6f40086656eecea3a88a432"
+    },
+    "worktree_status_sha256": "8d23296e44ee795107efa267541e5434ee4b6b697dc7f05d2088b502da036f96"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "benchmark exited before ans_opt_mode_counts: -2",
+      "type": "RuntimeError"
+    },
+    "processes": 1,
+    "release": null,
+    "timing_boundary": "Metal mode histogram after seven-source resident load; no detector update timing is measured."
+  },
+  "experiment_id": "20260913-apple-m5-ans-all-stream-mode-census",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-all-stream-mode-census/results/raw.jsonl",
+      "result": "Benchmark protocol records including source identities, mode counts, and release.",
+      "retention": "durable",
+      "sha256": "6870019e38c6ab742637a3ebbf7a2c6a3b6d171b56077a7ff9c63b88c908f874",
+      "size_bytes": 1836
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-all-stream-mode-census/results/ready.json",
+      "result": "Seven-source identities, full shape/dtype, and compact resident allocation.",
+      "retention": "durable",
+      "sha256": "35b828e688cac6d1ea10eea1812b36cef3ec74eb804222100cc273dbc6888774",
+      "size_bytes": 2299
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-all-stream-mode-census/results/stderr.log",
+      "result": "Benchmark diagnostics.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-all-stream-mode-census/results/failure.json",
+      "result": "Structured failure and release evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "d9e9853a07db3d20aea303bbc1b3c352fd890f1b2764bc57f24e8ce5893b53c1",
+      "size_bytes": 135
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": false,
+    "allocation_byte_cap": 11883921408,
+    "checkpoint_counts": [
+      1,
+      3
+    ],
+    "checkpoint_entry_bytes": [
+      3,
+      4
+    ],
+    "compact_offsets": true,
+    "dtype": "uint16",
+    "failure_status": "failed",
+    "host": "apple-m5-24gb",
+    "index": "leaf16-radial1",
+    "mode_counts": [],
+    "query_path": "packet-groups",
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "sources": 7
+  },
+  "question": "How many seven-source entropy-coded streams would a checkpoint sidecar need to cover, and what is its byte cost under the current compact-offset layout?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T09:58:06Z",
+    "started": "2026-09-13T09:55:58Z"
+  }
+}

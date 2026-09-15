@@ -1,0 +1,7 @@
+{
+  "failure": {
+    "type": "KeyboardInterrupt",
+    "message": "Operator interrupted while waiting for ans_resident_loop_ready after no stdout records arrived. No census counts or performance measurements were produced; the resident-release state was not verified."
+  },
+  "release": null
+}

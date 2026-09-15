@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-batch-split",
+  "status": "refuted",
+  "question": "Can coordinated seven-source submission and split-packet ANS reduction lower synchronized ADF compute latency without additional decoded storage?",
+  "paper": {"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+  "code": {"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"2fdb18fb1f19fe99f3cf7da8a3a3abc524c816a70fe8dd162ddb9addd9ba865f"},
+  "inputs": [{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19","shape_per_acquisition":[512,512,192,192],"dtype":"uint16","acquisitions":7}],
+  "parameters":{"representation":"paired-runtime-tans","scan_bin":1,"detector_bin":1,"crop":null,"precomputed_adf_atlas":false,"raw_and_indexed_separate":true},
+  "execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"all-seven synchronized detector update excluding IO, parity and UI"},
+  "outputs":[
+    {"artifact_id":"samples","path":"experiments/20260912-apple-m5-ans-batch-split/resident-loop.jsonl","sha256":"3aca87317a4926472a92b4b14f30dd02429373279fb7c51d59cc6d055c62a158","size_bytes":4528722,"retention":"durable","result":"20 arms; 11760 exact full-map hashes","consuming_figures":[]},
+    {"artifact_id":"summary","path":"experiments/20260912-apple-m5-ans-batch-split/summary.jsonl","sha256":"34ed338eea7e62515961b60e62e5535de466bea8df06ad3dc2df6dcaec70ff51","size_bytes":16489,"retention":"durable","result":"Warm medians; configurations separated","consuming_figures":[]},
+    {"artifact_id":"adversarial","path":"experiments/20260912-apple-m5-ans-batch-split/adversarial.log","sha256":"2b742c9695e1dc3b46591500e8e1b9c15f2b932115c8154a3f6d87c3686af309","size_bytes":1116,"retention":"durable","result":"Mixed uint16 and malformed-stream probes passed","consuming_figures":[]}
+  ],
+  "tested_binary_sha256":"fcf5494b742c8402dc9058ef8447ba0f4d96b4046be17f8b19fee51568276bc4",
+  "tested_shader_sha256":"f8d95394cca05d5c115f51b6a416701a98ec6fff1e40596b04304a2f4aef1d07",
+  "tested_resident_source_sha256":"28827e74e408380ab44c4017029908bafdf25dd1b83932e0094d9c1613ec394e",
+  "timestamps":{"started":"2026-09-13T00:52:15Z","finished":"2026-09-13T01:04:18Z"},
+  "limitations":["Code diff hash names preceding state; explicit binary, shader and resident-source hashes identify tested implementation.","No theoretical floor or presented FPS claim.","Base-choice gains apply to specific ordered large transitions, not general fourfold dragging."]
+}

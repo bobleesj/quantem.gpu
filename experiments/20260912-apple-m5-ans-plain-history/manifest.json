@@ -1,0 +1,22 @@
+{
+  "schema_version":1,
+  "experiment_id":"20260912-apple-m5-ans-plain-history",
+  "status":"completed",
+  "question":"Can single-writer plain accumulation speed fresh exact detector updates, and can one bounded previous image independently accelerate immediate backtracking?",
+  "paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+  "code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"ec1c75b888e6490b735bfeaaf80b54f64364d01c8d22f51d1e3123b663c59fb0"},
+  "inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19","shape_per_acquisition":[512,512,192,192],"dtype":"uint16","acquisitions":7}],
+  "parameters":{"representation":"paired-runtime-tans","scan_bin":1,"detector_bin":1,"crop":null,"precomputed_adf_atlas":false,"function_constant":12,"default":false,"history_slots_per_source":1},
+  "execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"all-seven synchronized update excluding IO, parity and UI; cache hits separated from fresh work"},
+  "outputs":[
+    {"artifact_id":"samples","path":"experiments/20260912-apple-m5-ans-plain-history/resident-loop.jsonl","size_bytes":3711542,"retention":"durable","consuming_figures":[],"result":"15 arms; 9520 exact maps","sha256":"0a414d0894d3d4f45394ef50e2fb6701e359ac45e453dca8d891f88c60c170c2"},
+    {"artifact_id":"adversarial","path":"experiments/20260912-apple-m5-ans-plain-history/adversarial.log","size_bytes":1767,"retention":"durable","consuming_figures":[],"result":"GPU adversarial probe passes","sha256":"6dab7625dd405fe0aa74cfabe15ed4fd05e65c227db536f24b938e0ae1550e97"},
+    {"artifact_id":"reuse","path":"experiments/20260912-apple-m5-ans-plain-history/reuse-summary.json","size_bytes":7385,"retention":"durable","consuming_figures":[],"result":"Hits separated from fresh work","sha256":"93707985fd2450bc9d25c0e736f723dc722259471f0ac6f1c5710f332f61f234"},
+    {"artifact_id":"summary","path":"experiments/20260912-apple-m5-ans-plain-history/summary.json","size_bytes":11971,"retention":"durable","consuming_figures":[],"result":"Matched fresh controls; plain sums refuted","sha256":"b8a754185565d5de1284e706b56c57d99b5ecaa2846cf411bbe09a7008369ec4"}
+  ],
+  "tested_binary_sha256":"4d2593c44a24d9c4fb1cc03a906d66aecab98cde6aa1a27ae98a5a24a5877293",
+  "tested_shader_sha256":"76552f1b5f4887859b547b00abb58b418910fa30da111327a740fba238592683",
+  "tested_resident_source_sha256":"8b710bd95902e494782588515d7974e135ad552de7e161b9ad29c9c31e3eb75d",
+  "timestamps":{"started":"2026-09-13T01:33:08Z","finished":"2026-09-13T01:37:52Z"},
+  "limitations":["Initial diff hash identifies preceding tracked state; explicit build identities follow.","History hits are reuse, not newly computed ADF frames."]
+}

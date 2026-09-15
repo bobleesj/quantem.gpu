@@ -63,6 +63,38 @@ encoded buffers and produces device results without constructing a full dense
 acquisition. See [the container contract](../developer/count-ans.md) for dtype, checksums,
 invalid pixels, conversion, and lifetime rules.
 
+On Python MPS, exact binary-mask reductions decode into a bounded shared staging
+buffer and queue the decode/reduce pairs in groups of 128 before waiting. This
+removes the former per-chunk command-buffer synchronization while preserving
+the same native-count decode, `uint64` output, scan order, and error checks. The
+queue change is covered by the 2026-09-11 exact queue-stress record; it is an
+implementation improvement, not evidence of full-acquisition or 120 Hz ANS
+throughput. When several binary detector products are requested together,
+`detector_sums_device` uses one decode per source chunk and a bounded multi-mask
+reduction kernel, so BF/ABF/ADF-style products share the decoded counts without
+an additional dense 4D buffer. Exact `uint64` parity is covered by the
+2026-09-11 multi-mask record. A real multi-acquisition ANS archive is still
+required before seven-tilt or 120 Hz claims can be qualified.
+
+Compatible ANS acquisitions can be retained independently on MPS and queried
+as one detector session without dense stacking:
+
+```python
+from quantem.gpu import detector, io
+
+loaded = io.load(paths, backend="mps", representation="ans", stack=False)
+session = detector.prepare(loaded)
+patterns = session.frame(scan_row * scan_columns + scan_column)
+images = session.masked_sums_exact(masks)  # (mask, acquisition, scan_row, scan_column)
+```
+
+All files must declare the same complete scan and detector geometry. The series
+adapter overlaps independent Metal queues and returns only the requested point
+patterns or detector products; each `FourDSTEMData` owner remains caller-owned
+and must be closed after the session is finished. This is the supported
+multi-file ANS API, not a claim that arbitrary HDF5 folders are encoded as ANS
+automatically.
+
 ## Show4DSTEM WebGPU
 
 The widget package supplies the browser export, using the same package reader:

@@ -1,0 +1,17 @@
+{"schema_version":1,"experiment_id":"20260913-apple-m5-ans-phased-readers","status":"completed",
+"question":"Does issuing independent entropy table reads before advancing either reader reduce seven-source residual latency?",
+"paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+"code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"dd468c8eafaab8639c685f817aeac2c6d67b3dddea13ff5d0dbf42797f2615fc"},
+"inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"}],
+"parameters":{"shape":[512,512,192,192],"dtype":"uint16","sources":7,"trials_per_arm":20,"warmups_per_arm":1,"seed":1709,"function_constant":18,"default":false,"scratch_reused":true,"index_unchanged":true},
+"execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"signed stage isolation all-seven return; not IO or UI"},
+"tested_binary_sha256":"f65b1cb7e647aa44ee99efaa6e58a499e0c77f7486a18f1fb74107d30033a612",
+"tested_shader_sha256":"d8665326d416d6ce4a58a9c3917807dbce8afabac486150de4acd5528765645e",
+"tested_source_sha256":"05ed85d6ef24b4e1fd149d1a28d90eca80718c8e4d1aade087ea02ac4b4aa663",
+"tested_benchmark_sha256":"71a48ff17f6ddfc1409d519b5b65bea89740beb9888b7df1ea9ecf5f2b1ca432",
+"outputs":[
+{"artifact_id":"raw","path":"experiments/20260913-apple-m5-ans-phased-readers/raw.jsonl","sha256":"a06b5f56fc7d94f226d3165e1031e99b894a05085bf3168c1b4173f909ed1c65","size_bytes":196118,"retention":"durable","consuming_figures":[],"result":"294 exact source transitions including warmups"},
+{"artifact_id":"trials","path":"experiments/20260913-apple-m5-ans-phased-readers/trials.jsonl","sha256":"694cc9cc5754aa38102189de43aa9dca154e9a01800763da6aebe211841a0524","size_bytes":213464,"retention":"durable","consuming_figures":[],"result":"20 repeats per arm"},
+{"artifact_id":"summary","path":"experiments/20260913-apple-m5-ans-phased-readers/summary.jsonl","sha256":"ee47d7433f78c03a93023c8ff1ab448662006180d2d72cb04e269fda511870a4","size_bytes":9173,"retention":"durable","consuming_figures":[],"result":"residual median45.86 to44.03ms; combined paired ratio1.003, no qualified overall gain"},
+{"artifact_id":"fixture","path":"experiments/20260913-apple-m5-ans-phased-readers/adversarial.log","sha256":"7c2b17c17a635ae08e310865506cfee8ff999690a456c66ec18ff467ead821d0","size_bytes":2915,"retention":"durable","consuming_figures":[],"result":"FC18 signed high count and malformed fixtures pass"}],
+"timestamps":{"started":"2026-09-13T05:53:00Z","finished":"2026-09-13T05:55:03Z"}}

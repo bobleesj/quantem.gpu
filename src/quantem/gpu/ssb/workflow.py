@@ -196,7 +196,7 @@ def _series_sort_key(path: Path) -> tuple[object, ...]:
 
 def _series_paths(source_root: Path) -> tuple[Path, tuple[Path, ...]]:
     """Return every raw or screened acquisition in natural order."""
-    results_root = source_root / "quantem" / "screen"
+    results_root = source_root / "live" / "screen"
     masters = tuple(sorted(source_root.glob("*_master.h5"), key=_series_sort_key))
     datasets = {
         master.name.removesuffix("_master.h5")
@@ -463,7 +463,7 @@ class SSB:
     ) -> SSBSeriesResult:
         """Reconstruct an SSB series with independent or fixed-probe fitting.
 
-        Existing QuantEM Live products under ``<source>/quantem/screen`` are
+        Existing QuantEM Live products under ``<source>/live/screen`` are
         discovered and reused automatically. Missing products run through
         :class:`SSB` and are saved to the same standard location. When no Live
         screening exists, physical settings are read from ``dataset.yaml`` or

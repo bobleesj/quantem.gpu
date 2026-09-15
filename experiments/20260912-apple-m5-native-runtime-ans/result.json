@@ -1,0 +1,69 @@
+{
+  "experiment_id": "20260912-apple-m5-native-runtime-ans",
+  "host": "apple-m5-24gb",
+  "scope": "Native original-HDF5 to in-memory runtime-rANS residency and seven-acquisition interaction",
+  "input": {
+    "dataset_id": "tilt-series-seven-native-v1",
+    "combined_content_sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+    "acquisitions": 7,
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null
+  },
+  "representation": {
+    "profile": "native-runtime-column-rans-spatial-v1",
+    "saved_intermediate_file": false,
+    "resident_bytes": 9668337406,
+    "interactive_product_bytes": 9404416,
+    "diffraction_output_dtype": "uint32"
+  },
+  "measurements": {
+    "seven_hdf5_to_resident_seconds": 19.808390021324158,
+    "selected_dp_p95_milliseconds": 1.4330148696899414,
+    "all_seven_dp_p95_milliseconds": 6.727099418640137,
+    "small_bf_changed_pixels": 22,
+    "small_bf_wall_p95_milliseconds": 6.106019020080566,
+    "small_bf_gpu_p95_milliseconds": 5.250875001365785,
+    "selected_wide_adf_wall_p95_milliseconds": 6.070971488952637,
+    "selected_wide_adf_gpu_p95_milliseconds": 5.9193749984842725,
+    "all_seven_wide_adf_changed_pixels": 440,
+    "all_seven_wide_adf_wall_p95_milliseconds": 41.52202606201172,
+    "all_seven_wide_adf_gpu_p95_milliseconds": 40.09024999686517,
+    "large_jump_changed_pixels": 13095,
+    "large_jump_wall_p95_milliseconds": 1218.1010246276855,
+    "large_jump_gpu_p95_milliseconds": 1216.958875003911,
+    "timing_samples_per_interaction": 60,
+    "cache_state": "operating-system source pages unspecified; not cold I/O"
+  },
+  "parity": {
+    "detector_sample_parity": true,
+    "diffraction_sample_hashes": 21,
+    "diffraction_sample_hashes_unchanged": true,
+    "focused_tests": "12 passed",
+    "full_volume_sha256": "not run; sampled parity is not a complete-volume audit"
+  },
+  "accepted_changes": [
+    "fused HDF5 decode and ANS size encoding",
+    "explicit Metal residency set",
+    "single concurrent seven-source diffraction submission",
+    "SIMD-uniform entropy-model dispatch",
+    "direct sparse-event detector accumulation",
+    "mode-aware packet-owner wide-detector kernel",
+    "priority selected-tile detector submission",
+    "bounded transient-memory admission"
+  ],
+  "qualification": {
+    "automatic_original_hdf5_to_ans": "passed",
+    "exact_sampled_parity": "passed",
+    "selected_dp_120_hz": "passed",
+    "all_seven_dp_120_hz": "passed",
+    "small_bf_120_hz": "passed",
+    "selected_wide_adf_120_hz": "passed",
+    "all_seven_wide_adf_120_hz": "failed",
+    "large_detector_jump_120_hz": "failed",
+    "five_to_seven_second_series_load": "failed",
+    "native_live4dstem_integration": "not implemented"
+  }
+}

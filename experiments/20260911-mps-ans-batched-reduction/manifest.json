@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260911-mps-ans-batched-reduction",
+  "status": "succeeded",
+  "question": "Can exact MPS count-rANS detector reductions remove per-chunk command-buffer waits while preserving native counts and uint64 mask sums?",
+  "paper": {
+    "authoritative_host": "Apple M5 24 GB",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260911-mps-ans-batched-reduction/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "entrypoint": "PYTHONPATH=src python -m pytest tests/hardware/mps/test_mps_ans_counts.py tests/contracts/io/test_ans_detector_adapter.py -q",
+    "dirty": true,
+    "diff_sha256": "fef64b9aa379edaa7ede59456391898d4180604af923f5aa7750efbcac0fbff1",
+    "snapshot_path": "local-evidence://quantem-gpu-20260911/mps-ans-batched-reduction"
+  },
+  "inputs": [
+    {
+      "dataset_id": "bounded-independent-count-rans-fixture-v1",
+      "path": "tests/parity/ans_counts_fixture.py",
+      "sha256": "77a5d1af94eaad9835a1aa31cc3d10991b2ff9277e346395706bd6e791616d8e"
+    }
+  ],
+  "parameters": {
+    "shape": [64, 64, 2, 3],
+    "source_dtype": "uint16",
+    "block_frames": 4,
+    "staging_capacity_frames": 2,
+    "command_chunk_batch": 128,
+    "arithmetic": "exact native counts and uint64 mask sums",
+    "artifact_results": {
+      "mps-ans-batched-reduction": "Exact detector sums matched repeated source output; 2048 decode/reduce chunks were submitted in 16 bounded command buffers per call."
+    }
+  },
+  "execution": {
+    "host": "Apple M5 24 GB",
+    "backend": "mps",
+    "gpu_ids": [],
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "mps-ans-batched-reduction",
+      "path": "experiments/20260911-mps-ans-batched-reduction/result.json",
+      "sha256": "c6354d186304b2def54c7af32fc30965cd0a5fd8323706cf7b718197def1064a",
+      "size_bytes": 1043,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Exact detector sums matched repeated source output; the bounded queue reduced waits from one per chunk to one per 128 chunks."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T06:09:49Z",
+    "started": "2026-09-12T06:09:49Z",
+    "finished": "2026-09-12T06:09:49Z"
+  }
+}

@@ -1,0 +1,18 @@
+{"schema_version":1,"experiment_id":"20260913-apple-m5-ans-pair-unroll","status":"refuted",
+"question":"Can small pair-loop unrolling expose independent work without larger accumulators or resident buffers?",
+"paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+"code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"da369f05298915d8a9fde0df4c69942a7a0f05648a8b11fc52ce57066451d6f4"},
+"inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"}],
+"parameters":{"shape":[512,512,192,192],"dtype":"uint16","sources":7,"trials_per_arm":20,"warmups_per_arm":1,"seed":1709,"function_constant":19,"factors":[1,2,4,8],"default":1,"scratch_reused":true,"index_unchanged":true},
+"execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"signed stage isolation all-seven return; not IO or UI"},
+"tested_binary_sha256":"3e011ba91f89685841ad0da951131530c6edd5c84d1b64fb8af1604c3de3dde0",
+"tested_shader_sha256":"4ae5355847ab1032ec0e2b2393dbb74a3fbb4b849374d3bbcb06bb38ad245649",
+"tested_source_sha256":"15f8ceb5458f745ac0a8b06955e5ebf01dd22e77bc41ed51c535324f943d272d",
+"tested_benchmark_sha256":"78807d37b37814ed301cef14370018705f44e280045314ba4996cdd78bd3c452",
+"outputs":[
+{"artifact_id":"raw","path":"experiments/20260913-apple-m5-ans-pair-unroll/raw.jsonl","sha256":"41bfef9868a1beaf59dfc9d3f4d03df052a2ccb1c12c9aacc6490365534818a4","size_bytes":523289,"retention":"durable","consuming_figures":[],"result":"588 exact transitions plus ordinary default regression"},
+{"artifact_id":"trials","path":"experiments/20260913-apple-m5-ans-pair-unroll/trials.jsonl","sha256":"8e7aeb42e3e6e4c13e2bf888a64d12c69bb37c900d6dd902198a5f4ecb59c34c","size_bytes":428312,"retention":"durable","consuming_figures":[],"result":"20 repeats each factor1/2/4/8"},
+{"artifact_id":"summary","path":"experiments/20260913-apple-m5-ans-pair-unroll/summary.jsonl","sha256":"d01ba19a66bb00afcb6bd77686560007706aa53d6fb66cf00f65ef745e34b976","size_bytes":18448,"retention":"durable","consuming_figures":[],"result":"combined medians64.06/70.03/66.42/66.76ms; no qualified improvement"},
+{"artifact_id":"fixture","path":"experiments/20260913-apple-m5-ans-pair-unroll/adversarial.log","sha256":"1d47f13a677f1b2cd476e49f58bdf5caff2dcd879d856e9c16107b674e75570d","size_bytes":3458,"retention":"durable","consuming_figures":[],"result":"all new shader variants pass signed high-count and malformed cases"},
+{"artifact_id":"frozen-parity","path":"experiments/20260913-apple-m5-ans-pair-unroll/frozen-parity.json","sha256":"834bb7b0bb04e5b21b3fd5bd4bffa7e307a0115b08b3ff04dcba5eb3b2e7f60b","size_bytes":83,"retention":"durable","consuming_figures":[],"result":"280 complete maps match140 frozen independent references"}],
+"timestamps":{"started":"2026-09-13T05:55:03Z","finished":"2026-09-13T05:58:04Z"}}

@@ -1,0 +1,8 @@
+{
+  "failure": {
+    "message": "benchmark exited before ans_resident_loop_ready: -5",
+    "type": "RuntimeError"
+  },
+  "release": null,
+  "status": "failed"
+}

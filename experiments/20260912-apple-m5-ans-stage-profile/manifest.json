@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-stage-profile",
+  "status": "completed",
+  "question": "Where does all-seven detector latency occur: CPU planning/locking, submission and host output copy, or GPU indexed-field and ANS residual stages?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "ec1c75b888e6490b735bfeaaf80b54f64364d01c8d22f51d1e3123b663c59fb0"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+      "shape_per_acquisition": [
+        512,
+        512,
+        192,
+        192
+      ],
+      "dtype": "uint16",
+      "acquisitions": 7
+    }
+  ],
+  "parameters": {
+    "representation": "paired-runtime-tans",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "history": false,
+    "history_base": false,
+    "trusted_table": false,
+    "profile": true,
+    "algorithm_changes": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "all-seven synchronized update excluding IO, parity and UI; cache hits separated from fresh work"
+  },
+  "outputs": [
+    {"artifact_id":"stage-samples","path":"experiments/20260912-apple-m5-ans-stage-profile/results.jsonl","sha256":"75e0784709e046fa8544d60a3145609c33fb25bcc9191b2a6109186c79667dfb","size_bytes":4260601,"result":"4060 exact full-map hashes; seven profiling/control arms","retention":"durable","consuming_figures":[]},
+    {"artifact_id":"stage-summary","path":"experiments/20260912-apple-m5-ans-stage-profile/summary.jsonl","sha256":"fb21e655a0ca3a003bb1211d5c75871262ef3c1624c30bb3cdd1d2e19edc85c4","size_bytes":120336,"result":"Overlapping CPU/GPU interval unions, not additive wall-time attribution","retention":"durable","consuming_figures":[]}
+  ],
+  "tested_binary_sha256": "170b580f35fdccbb868827f04ae52d3c18e130880cf41062cd385555de592624",
+  "tested_resident_source_sha256": "8b073be29eb28ff6b0950b0296950df06d746e19e6a489a7ecd2672d02e387bd",
+  "tested_profiler_sha256": "fff924e886f33374affa96c0107733df9581ec797306b71983fdc1ee353277b3",
+  "timestamps": {
+    "started": "2026-09-13T03:33:50Z",
+    "finished": "2026-09-13T04:18:02Z"
+  },
+  "limitations": [
+    "Diagnostic sampling may perturb scheduling; matched off/on/off controls required.",
+    "Only timestamp counters available; no measured cache misses or occupancy.",
+    "GPU intervals overlap across sources; do not sum them as all-seven wall time."
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-constant-stream-census",
+  "status": "refuted",
+  "question": "How much scan-axis polar work is exactly removable by skipping zero streams or hoisting packet-constant values for seven-source ADF 8-to-20?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "ea75995abdac47750b96b03f6498d29ca287000ef3fddda2f709ab2d543fdf0e"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "sources": 7,
+    "transition": "adf-center-8-to-adf-center-20",
+    "selected_fields_per_source": 371,
+    "packets_per_field": 512,
+    "acceptance": "Count only exact zero and packet-constant tagged streams; report arithmetic ceiling; reject below 10% estimated polar-work reduction"
+  },
+  "execution": {
+    "host": "cpu-screen-on-apple-m5-24gb",
+    "backend": "cpu-reference",
+    "timing_boundary": "No GPU timing; actual tag census and algebraic work ceiling only"
+  },
+  "outputs": [
+    {
+      "artifact_id": "census",
+      "path": "experiments/20260913-apple-m5-ans-constant-stream-census/results/census.json",
+      "sha256": "28c751f6e7ee862787f072efae841f6575729686fb03240c82cbbebc4be58d9a",
+      "size_bytes": 968,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "All 1,329,664 selected field/packet descriptors had nonzero width; exact zero-stream or packet-constant shortcut removes no work."
+    },
+    {
+      "artifact_id": "summary",
+      "path": "experiments/20260913-apple-m5-ans-constant-stream-census/README.md",
+      "sha256": "f704d70ae50ac7391ba5fad56039a54d730c1afb45e193e2d12872df21378906",
+      "size_bytes": 978,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Human-readable CPU-only census and refuted decision."
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T15:29:18Z",
+    "finished": "2026-09-13T15:59:40Z"
+  }
+}

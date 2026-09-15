@@ -1,0 +1,14 @@
+{
+  "schema_version":1,"experiment_id":"20260914-ans-to-packed-staging","status":"completed",
+  "question":"Can one ANS decode plus a bounded reusable 302 MB GPU window outperform two decodes without count changes?",
+  "paper":{"repository":"quantem.gpu","authority":"user-directed native Metal experiment"},
+  "code":{"repository":"quantem.gpu","revision":"b13e8679d43021cc21567e5526e61b20068b1007","dirty":true,"diff_sha256":"e91b61d57fa331d710503d335fdbd9647e724d696cdfb461bb8f778405344de1","snapshot_path":"local-evidence://sep14-ans-conversion-followup/sources-final.tar.gz","snapshot_sha256":"5fcab95070a3c4e6f46581e04b260dfb86143060b17607216f7b3a707a01c43e","entrypoint":"experiments/20260914-packed-to-ans/probe.swift","snapshot_scope":"final rank-order variant; earlier pixel-order staging differs at the three scratch index expressions documented in the report"},
+  "inputs":[{"dataset_id":"reference-seven-acquisitions","path":"private-fixture://sep14-drag-bench/reference-seven","sha256":"787a8f377c83c1f7629ae19e1be20cc407f41296bb3182d60d108e4df27d83cc"}],
+  "parameters":{"shape":[512,512,192,192],"source_dtype":"uint16","crop":false,"binning":false,"budget_bytes":17162698752,"staging_bytes_per_worker":301989888,"environment":{"QGPU_PAIRED_CONVERSION_STAGING":"1"},"artifact_results":{"pixel":"Two workers, pixel-order staging: 5.345 s forward wall, 13.925 GB sampled allocation; 21 maps and 77 DPs exact, 12.046 GB final resident. Target unmet.","rank":"Two workers, rank-order staging: 5.363 s forward wall, 13.939 GB sampled allocation; same parity and residency. No additional ordering speedup established.","synthetic":"1048576 counts exact in four offset/staging combinations, plus reverse decode; high uint16 values and malformed mode rejection; bounded synthetic coverage."}},
+  "execution":{"host":"apple-m5-24gb","backend":"native Swift/Metal","gpu_model":"Apple M5","gpu_ids":["default"]},
+  "outputs":[
+    {"artifact_id":"pixel","path":"local-evidence://sep14-ans-conversion-followup/ans-roundtrip-staged-seven.jsonl","sha256":"02feef30d26d1aef51459694cebe8ae2ee18447f278ec1157dccaaaaa38a45c7","size_bytes":11506,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"rank","path":"local-evidence://sep14-ans-conversion-followup/ans-roundtrip-rank-seven.jsonl","sha256":"a3709b0cb166eb41172c373e7e7a6bdee3b40d7b6ce282a03736043e108bbe5f","size_bytes":12714,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"synthetic","path":"local-evidence://sep14-ans-conversion-followup/ans-roundtrip-synthetic-final.jsonl","sha256":"fa8d4f3f085f04c241aecd5714879a6fd55b8a5cdda9c168d9644290b19ab4cb","size_bytes":944,"retention":"durable","consuming_figures":[]}
+  ],"timestamps":{"created":"2026-09-14","started":"2026-09-14","finished":"2026-09-14"}
+}

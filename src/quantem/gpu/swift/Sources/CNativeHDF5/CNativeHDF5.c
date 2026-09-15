@@ -1604,7 +1604,7 @@ void qh5_chunk_writer_abort(qh5_chunk_writer *writer) {
 char *qh5_read_root_attribute(const char *path, const char *name) {
   pthread_mutex_lock(&qh5_hdf5_lock);
   hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
-  hid_t attribute = file >= 0 ? H5Aopen(file, name, H5P_DEFAULT) : -1;
+  hid_t attribute = file >= 0 && H5Aexists(file, name) > 0 ? H5Aopen(file, name, H5P_DEFAULT) : -1;
   hid_t type = attribute >= 0 ? H5Aget_type(attribute) : -1;
   char *result = NULL;
   if (type >= 0 && H5Tget_class(type) == H5T_STRING) {

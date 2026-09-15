@@ -1,0 +1,7 @@
+experiments/20260913-apple-m5-ans-reuse-first/compact_offset_probe.swift:68:3: error: the compiler is unable to type-check this expression in reasonable time; try breaking up the expression into distinct sub-expressions
+ 66 |
+ 67 | private func entropyStream(_ phase: Int) -> [UInt16] {
+ 68 |   (0..<interval).map { UInt16(($0 * 17 + $0 / 7 + phase) % 31) }
+    |   `- error: the compiler is unable to type-check this expression in reasonable time; try breaking up the expression into distinct sub-expressions
+ 69 | }
+ 70 |

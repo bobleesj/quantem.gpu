@@ -1,0 +1,30 @@
+{"arm": "control-a1", "ready": {"acquisition_load_seconds": [3.5990949869155884, 2.8281770944595337, 2.926811933517456, 3.032554030418396, 3.0404940843582153, 3.380758047103882, 3.358675003051758], "compact_offset_bytes": [0, 0, 0, 0, 0, 0, 0], "compact_offsets_enabled": [false, false, false, false, false, false, false], "compact_offsets_requested": false, "concurrent_loads": 1, "event": "ans_resident_loop_ready", "indexed_mode_available": true, "indexed_resident_index_bytes": [349664676, 352030900, 372216908, 375412428, 390939520, 373976340, 389162988], "logical_dtype": "uint16", "metal_current_allocated_bytes": 11883921408, "protocol": "JSON lines: set, run, quit; run responses include exact A1 hashes and full-map parity", "recommended_working_set_bytes": 19069665280, "resident_count": 7, "schema": "quantem-gpu-paired-runtime-tans-resident-loop/v1", "series_load_seconds": 22.208742022514343, "series_resident_bytes": 11877814048, "shape": [512, 512, 192, 192], "source_identity_sha256": ["532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350", "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3", "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1", "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f", "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71", "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4", "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"]}}
+control-a1: repeat 0, exact stage outputs
+control-a1: repeat 5, exact stage outputs
+control-a1: repeat 10, exact stage outputs
+control-a1: repeat 15, exact stage outputs
+control-a1: joint=False, 280 frozen maps exact
+control-a1: joint=True, 280 frozen maps exact
+control-a1: joint=False, 280 frozen maps exact
+{"arm": "compact", "ready": {"acquisition_load_seconds": [3.568315029144287, 2.8654589653015137, 2.9165090322494507, 3.047976016998291, 2.988389015197754, 3.039820075035095, 3.282775044441223], "compact_offset_bytes": [40108038, 40108038, 40108038, 40108038, 40108038, 40108038, 40108038], "compact_offsets_enabled": [true, true, true, true, true, true, true], "compact_offsets_requested": true, "concurrent_loads": 1, "event": "ans_resident_loop_ready", "indexed_mode_available": true, "indexed_resident_index_bytes": [349664676, 352030900, 372216908, 375412428, 390939520, 373976340, 389162988], "logical_dtype": "uint16", "metal_current_allocated_bytes": 11636195328, "protocol": "JSON lines: set, run, quit; run responses include exact A1 hashes and full-map parity", "recommended_working_set_bytes": 19069665280, "resident_count": 7, "schema": "quantem-gpu-paired-runtime-tans-resident-loop/v1", "series_load_seconds": 21.756106972694397, "series_resident_bytes": 11630087982, "shape": [512, 512, 192, 192], "source_identity_sha256": ["532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350", "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3", "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1", "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f", "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71", "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4", "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"]}}
+compact: repeat 0, exact stage outputs
+compact: repeat 5, exact stage outputs
+compact: repeat 10, exact stage outputs
+compact: repeat 15, exact stage outputs
+compact: joint=False, 280 frozen maps exact
+compact: joint=True, 280 frozen maps exact
+compact: joint=False, 280 frozen maps exact
+{"arm": "control-a2", "ready": {"acquisition_load_seconds": [2.901278018951416, 2.8666419982910156, 2.9141210317611694, 3.004523992538452, 3.011443018913269, 2.974842071533203, 3.278680920600891], "compact_offset_bytes": [0, 0, 0, 0, 0, 0, 0], "compact_offsets_enabled": [false, false, false, false, false, false, false], "compact_offsets_requested": false, "concurrent_loads": 1, "event": "ans_resident_loop_ready", "indexed_mode_available": true, "indexed_resident_index_bytes": [349664676, 352030900, 372216908, 375412428, 390939520, 373976340, 389162988], "logical_dtype": "uint16", "metal_current_allocated_bytes": 11883921408, "protocol": "JSON lines: set, run, quit; run responses include exact A1 hashes and full-map parity", "recommended_working_set_bytes": 19069665280, "resident_count": 7, "schema": "quantem-gpu-paired-runtime-tans-resident-loop/v1", "series_load_seconds": 20.99587094783783, "series_resident_bytes": 11877814048, "shape": [512, 512, 192, 192], "source_identity_sha256": ["532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350", "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3", "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1", "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f", "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71", "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4", "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"]}}
+control-a2: repeat 0, exact stage outputs
+control-a2: repeat 5, exact stage outputs
+control-a2: repeat 10, exact stage outputs
+control-a2: repeat 15, exact stage outputs
+control-a2: joint=False, 280 frozen maps exact
+control-a2: joint=True, 280 frozen maps exact
+control-a2: joint=False, 280 frozen maps exact
+Traceback (most recent call last):
+  File "<repo>/experiments/20260913-apple-m5-ans-reuse-first/run.py", line 251, in <module>
+    main()
+  File "<repo>/experiments/20260913-apple-m5-ans-reuse-first/run.py", line 245, in main
+    binary_sha256 = hashlib.file_digest(executable, "sha256").hexdigest()
+AttributeError: module 'hashlib' has no attribute 'file_digest'

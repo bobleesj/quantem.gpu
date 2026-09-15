@@ -5119,8 +5119,11 @@ def load(
     ``"encoded"`` automatically on CUDA and MPS. Pass
     ``representation="dense"`` explicitly when an unpacked array is required.
 
-    Self-contained encoded files default to ``representation="encoded"`` and retain
-    stored native counts. ``representation="paired"`` streams complete uint16
+    Self-contained ANS files default to ``representation="encoded"`` and retain
+    stored native counts. On MPS, pass ``stack=False`` with a list of compatible
+    ANS files to keep each acquisition independently resident; preparing that
+    list exposes one detector session without materializing a dense stack.
+    ``representation="paired"`` streams complete uint16
     acquisitions (one path or a list, each returned as its own source) into
     the CUDA paired-count tANS resident layout, and a saved paired resident
     form reopens under the same name without decoding. ``representation="packed"`` requests an explicit
@@ -5447,54 +5450,84 @@ def load(
     if any(DataRepresentation.detect_source(path) is DataRepresentation.ENCODED for path in paths):
         from ._ans_dispatch import _load_ans
 
-        if len(paths) != 1:
-            raise ValueError("Load one encoded source at a time; mixed-source stacking is not implemented.")
+        if not all(DataRepresentation.detect_source(path) is DataRepresentation.ENCODED for path in paths):
+            raise ValueError(
+                "ANS and non-ANS sources cannot be loaded as one series; "
+                "load each representation separately."
+            )
+        if len(paths) > 1 and stack:
+            raise ValueError(
+                "ANS acquisitions remain independently resident; pass stack=False "
+                "to load a compatible series without dense stacking."
+            )
         if any(value is not None for value in (
             dataset_path, scan_shape, scan_region, detector_region, target_scan_region,
             scan_shift_row_col, scan_indices, random_positions, drift, devices,
-        )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
-            raise NotImplementedError("Encoded loading preserves its full declared geometry; selection/binning/reordering controls are not implemented yet.")
+        )) or detector_bin != 1 or output != "native" or scan_order != "row-major":
+            raise NotImplementedError("ANS loading preserves its full declared geometry; selection/binning/reordering controls are not implemented yet.")
         if dtype not in {None, "native"}:
             raise ValueError("Encoded loading preserves its native integer dtype; remove dtype=.")
         if source_integrity is not None:
             raise NotImplementedError("Encoded loading uses expected_source_sha256 for whole-file authentication; the existing chunked integrity receipt describes another format.")
         if apply_mask:
-            raise ValueError("Encoded loading retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
-        return _load_ans(paths[0], backend=backend, representation=selected_representation,
-                         expected_sha256=expected_source_sha256, device=device)
+            raise ValueError("ANS retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
+        if len(paths) == 1:
+            return _load_ans(paths[0], backend=backend, representation=selected_representation,
+                             expected_sha256=expected_source_sha256, device=device)
+        if expected_source_sha256 is not None:
+            raise ValueError(
+                "expected_source_sha256 authenticates one ANS file; authenticate "
+                "each series member separately before loading the series."
+            )
+        from ._ans_dispatch import _load_ans_series
+
+        return _load_ans_series(
+            paths,
+            backend=backend,
+            representation=selected_representation,
+            device=device,
+        )
     if selected_representation is DataRepresentation.ENCODED:
         from .backends import resolve_backend
         from ._streamed import load_h5_ans
 
         ans_backend = resolve_backend(backend)
         if ans_backend not in {"cuda", "mps"}:
-            raise NotImplementedError("H5-to-encoded loading requires CUDA or MPS.")
-        if len(paths) != 1:
-            raise ValueError("Load each complete H5 acquisition separately, then use detector.prepare(list).")
+            raise NotImplementedError("H5-to-ANS loading requires CUDA or MPS.")
         if any(value is not None for value in (
             scan_region, detector_region, target_scan_region, scan_shift_row_col,
             scan_indices, random_positions, drift, devices, expected_source_sha256,
             source_integrity,
-        )) or detector_bin != 1 or output != "native" or not stack or scan_order != "row-major":
-            raise ValueError("H5-to-encoded preserves complete native acquisitions; remove selection, conversion and multi-device options.")
-        if dtype not in {None, "native"} or apply_mask:
+        )) or detector_bin != 1 or output != "native" or scan_order != "row-major":
+            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection, conversion and multi-device options.")
+        if len(paths) > 1 and stack:
             raise ValueError(
-                "H5-to-encoded preserves native count dtype; use dtype='native' and "
-                "apply_mask=False. Control stored detector-mask pixels with "
-                "hot_pixel_correction."
+                "Use stack=False to keep each ANS acquisition independently resident."
             )
+        if dtype not in {None, "native"} or apply_mask:
+            raise ValueError("H5-to-ANS preserves raw native counts; use dtype='native' and apply_mask=False.")
         if ans_backend == "mps" and device is not None:
-            raise ValueError("Metal encoded loading uses device='mps'; omit device selection.")
-        return load_h5_ans(
-            paths[0],
-            scan_shape=scan_shape,
-            dataset_path=dataset_path,
-            device=device,
-            verbose=verbose,
-            backend=ans_backend,
-            hot_pixel_correction=hot_pixel_correction,
-        )
-    # HDF5/prepared-packed loads use their declared working-mask contract. Encoded files
+            raise ValueError("Metal ANS uses device='mps'; omit device selection.")
+        results = []
+        try:
+            for path in paths:
+                results.append(
+                    load_h5_ans(
+                        path,
+                        scan_shape=scan_shape,
+                        dataset_path=dataset_path,
+                        device=device,
+                        verbose=verbose,
+                        backend=ans_backend,
+                        hot_pixel_correction=hot_pixel_correction,
+                    )
+                )
+        except BaseException:
+            for result in results:
+                result.close()
+            raise
+        return results[0] if isinstance(source, (str, os.PathLike)) else results
+    # HDF5/prepared-packed loads use their declared working-mask contract. ANS files
     # retain original counts by default; detector masks are product controls.
     if apply_mask is None:
         apply_mask = True

@@ -1,0 +1,15 @@
+{
+  "failure": {
+    "message": "The scan512 polar-query experiment requires its prepared pipeline, a prepared index, and a 512\u00d7512 scan, and the indexed packet-owner2 baseline (2 streams/lane, 1 packet split, joint plan/history and other detector specializations off)",
+    "type": "RuntimeError"
+  },
+  "release": {
+    "all_released": true,
+    "event": "ans_resident_loop_end",
+    "metal_after_release_bytes": 5701632,
+    "metal_before_release_bytes": 11883921408,
+    "resident_count": 7,
+    "sequence": 4
+  },
+  "status": "failed"
+}

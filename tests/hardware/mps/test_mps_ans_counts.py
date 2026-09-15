@@ -76,6 +76,20 @@ def test_ans_native_counts_selected_patterns_and_detector_masks(dtype, monkeypat
             expected = (counts * mask).sum(axis=(2, 3), dtype=np.uint64)
             np.testing.assert_array_equal(actual, expected)
             assert actual.dtype == np.dtype("uint64")
+        masks = np.stack(
+            [
+                np.ones((2, 3), dtype=np.uint8),
+                np.eye(2, 3, dtype=np.uint8),
+                np.zeros((2, 3), dtype=np.uint8),
+            ]
+        )
+        batched = _read(source.detector_sums_device(masks))
+        np.testing.assert_array_equal(
+            batched,
+            np.stack([(counts * mask).sum(axis=(2, 3), dtype=np.uint64)
+                      for mask in masks]),
+        )
+        assert batched.dtype == np.dtype("uint64")
         assert source.logical_nbytes == counts.nbytes
         assert (
             source.resident_bytes

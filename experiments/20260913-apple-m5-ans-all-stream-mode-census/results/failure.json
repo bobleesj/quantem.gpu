@@ -1,0 +1,7 @@
+{
+  "failure": {
+    "message": "benchmark exited before ans_opt_mode_counts: -2",
+    "type": "RuntimeError"
+  },
+  "release": null
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-leaf-prefix-census",
+  "status": "refuted",
+  "question": "Can an exact 16-leaf block-local cumulative prefix transform reduce polar field-query count for seven-source ADF 8-to-20 without increasing packed index bytes?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "ea75995abdac47750b96b03f6498d29ca287000ef3fddda2f709ab2d543fdf0e"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "sources": 7,
+    "transition": "adf-center-8-to-adf-center-20",
+    "leaf_block_width": 16,
+    "acceptance": "exact full signed-delta reconstruction for every source; interval terms <=185; packed index bytes <= current"
+  },
+  "execution": {
+    "host": "cpu-screen-on-apple-m5-24gb",
+    "backend": "cpu-reference",
+    "timing_boundary": "No GPU timing; exact planner reconstruction, interval count, and repacked index-byte comparison only"
+  },
+  "outputs": [
+    {
+      "artifact_id": "cpu-screen",
+      "path": "experiments/20260913-apple-m5-ans-leaf-prefix-census/results/cpu_screen.json",
+      "sha256": "9ed926226f51d78de7979eb3809cff52dfe6bc9250d55a253f77bc26df5ab888",
+      "size_bytes": 1265,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "371 to 231 distinct prefix-field queries with exact algebraic synthetic parity; query threshold failed and resident byte non-growth remains unproven"
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T15:29:18Z",
+    "finished": "2026-09-13T15:35:38Z"
+  }
+}

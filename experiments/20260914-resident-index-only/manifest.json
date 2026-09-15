@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260914-resident-index-only",
+  "status": "completed",
+  "question": "Can a resident-only fine detector index avoid original-file reloads while preserving exact maps and releasing its added memory?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authority": "user-directed local Metal experiment"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "b13e8679d43021cc21567e5526e61b20068b1007",
+    "dirty": true,
+    "diff_sha256": "d1f5da86ca4348a22d9482d34d89ab17f55b380740eddb45e1ed2779f9daa763",
+    "snapshot_path": "local-evidence://sep14-resident-index-only/sources-final.tar.gz",
+    "snapshot_sha256": "2bf35877eed1eb3a69346422899961b928f710fbe61d769433e5d43896b960bd",
+    "executable_sha256": "5db2e7f8aab5fc5f8b21774964e0c62a87cc3b923d8b239f07e4c3da34f33a08",
+    "entrypoint": "experiments/20260914-resident-index-only/probe.swift"
+  },
+  "inputs": [
+    {
+      "dataset_id": "reference-seven-acquisitions",
+      "path": "private-fixture://sep14-drag-bench/reference-seven",
+      "sha256": "787a8f377c83c1f7629ae19e1be20cc407f41296bb3182d60d108e4df27d83cc"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_dtype": "uint16",
+    "crop": false,
+    "binning": false,
+    "budget_bytes": 17162698752,
+    "upgrade": "Normal payload unchanged; radial1fine4 index only; not full Fast event encoding",
+    "reference": "five exact full GPU maps per resident before index; selected DP; same masks after adding and removing index",
+    "cache": "warm local source; seven loaded once before index timer",
+    "artifact_results": {
+      "resident-index-trial": "PASS one seven-resident trial: add fine indexes in 7.7406 s without file IO or payload re-encoding. 7.08499 to 10.93829 GB resident, 70 exact full-map comparisons, seven selected raw DPs; early cancellation, idempotent add and index removal restore residency. Not full Fast compact-event profile; no UI/FPS, independent original-file oracle, true peak-memory or universal speedup qualification."
+    }
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "native Swift/Metal",
+    "gpu_model": "Apple M5",
+    "gpu_ids": [
+      "default"
+    ]
+  },
+  "outputs": [
+    {
+      "artifact_id": "resident-index-trial",
+      "path": "local-evidence://sep14-resident-index-only/run.jsonl",
+      "sha256": "f69047c92439e7ec43c8efb08e516f2b2e1222d1b8599a14a4c4390b9d75c95b",
+      "size_bytes": 2957,
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-14",
+    "started": "2026-09-14",
+    "finished": "2026-09-14"
+  }
+}

@@ -1,0 +1,4 @@
+validateWithDevice:1530: failed assertion `Compute Pipeline Descriptor Validation
+function paired_runtime_tans_decode cannot be used to build a pipeline state. Use newFunctionWithName:constantValues:... to get the specialized function
+'
+experiments/20260913-apple-m5-ans-reuse-first/run_compact_offset_probe.sh: line 29: 17622 Abort trap: 6           "$build_dir/compact-offset-probe"

@@ -927,43 +927,6 @@ kernel void ssb_transpose_half_to_row_major(
     ];
 }
 
-// Produce one complete corrected complex64 Fourier plane per BF term. The
-// source contains a contiguous local batch from the resident Hermitian cache;
-// bf_offset identifies the matching geometry in the full CUDA-selected BF set.
-kernel void ssb_correct_half_for_phase_loss(
-    device const float2 *half_g [[buffer(0)]],
-    device const float4 *bf_geometry [[buffer(1)]],
-    device const float *q_row [[buffer(2)]],
-    device const float *q_col [[buffer(3)]],
-    device float2 *corrected [[buffer(4)]],
-    constant SSBParams &params [[buffer(5)]],
-    uint index [[thread_position_in_grid]]) {
-    const uint plane = params.n * params.n;
-    const uint total = params.batch * plane;
-    if (index >= total) return;
-    const uint local_bf = index / plane;
-    const uint pixel = index - local_bf * plane;
-    const uint row = pixel / params.n;
-    const uint col = pixel - row * params.n;
-    const uint half_cols = params.n / 2u + 1u;
-    const uint half_plane = params.n * half_cols;
-    float2 value;
-    if (col <= params.n / 2u) {
-        value = half_g[(size_t)local_bf * half_plane +
-            (size_t)row * half_cols + col];
-    } else {
-        const uint mirror_row = row == 0u ? 0u : params.n - row;
-        const uint mirror_col = params.n - col;
-        value = half_g[(size_t)local_bf * half_plane +
-            (size_t)mirror_row * half_cols + mirror_col];
-        value.y = -value.y;
-    }
-    corrected[index] = ssb_corrected_value(
-        value, row, col, params.bf_offset + local_bf,
-        bf_geometry, q_row, q_col, params
-    );
-}
-
 // Equivalent exact path for a freshly transformed resident uint8 BF batch.
 // This keeps hybrid-cache datasets correct without persisting another G cache.
 kernel void ssb_correct_full_for_phase_loss(

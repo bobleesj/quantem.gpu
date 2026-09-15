@@ -1,0 +1,15 @@
+{
+  "failure": {
+    "message": "resident bytes changed in B",
+    "type": "RuntimeError"
+  },
+  "release": {
+    "all_released": true,
+    "event": "ans_resident_loop_end",
+    "metal_after_release_bytes": 5701632,
+    "metal_before_release_bytes": 11760975872,
+    "resident_count": 7,
+    "sequence": 4
+  },
+  "status": "failed"
+}

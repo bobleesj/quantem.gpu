@@ -61,6 +61,60 @@ kernel void h5unshuffle_u16_transpose_qh5idx(
     }
 }
 
+inline uint h5_hot_read(device const uchar *values, ulong index, uint bytes) {
+    if (bytes == 1u) return uint(values[index]);
+    if (bytes == 2u) return uint(reinterpret_cast<device const ushort *>(values)[index]);
+    return reinterpret_cast<device const uint *>(values)[index];
+}
+
+inline void h5_hot_write(device uchar *values, ulong index, uint bytes, uint value) {
+    if (bytes == 1u) values[index] = uchar(value);
+    else if (bytes == 2u) reinterpret_cast<device ushort *>(values)[index] = ushort(value);
+    else reinterpret_cast<device uint *>(values)[index] = value;
+}
+
+// Replace source-marked detector pixels in a decoded working window. Reads are
+// always from the unmodified neighbors, and marked neighbors never contribute.
+kernel void h5hot_pixel_median_qh5idx(
+    device uchar *values [[buffer(0)]],
+    device const uchar *marked [[buffer(1)]],
+    device const uint *indices [[buffer(2)]],
+    constant uint *p [[buffer(3)]],
+    uint position [[thread_position_in_grid]]) {
+    uint frames = p[0], rows = p[1], columns = p[2], bytes = p[3], count = p[4];
+    if (position >= frames * count || bytes < 1u || bytes > 4u) return;
+    uint frame = position / count;
+    uint pixel = indices[position % count];
+    uint pixels = rows * columns;
+    if (pixel >= pixels || (bytes != 1u && bytes != 2u && bytes != 4u)) return;
+    int row = int(pixel / columns), column = int(pixel % columns);
+    uint neighbors[8];
+    uint found = 0;
+    for (int dr = -1; dr <= 1; ++dr) {
+        for (int dc = -1; dc <= 1; ++dc) {
+            if (dr == 0 && dc == 0) continue;
+            int rr = row + dr, cc = column + dc;
+            if (rr < 0 || cc < 0 || rr >= int(rows) || cc >= int(columns)) continue;
+            uint neighbor = uint(rr) * columns + uint(cc);
+            if (!marked[neighbor]) {
+                uint value = h5_hot_read(values, ulong(frame) * pixels + neighbor, bytes);
+                uint at = found++;
+                while (at > 0u && neighbors[at - 1u] > value) {
+                    neighbors[at] = neighbors[at - 1u];
+                    --at;
+                }
+                neighbors[at] = value;
+            }
+        }
+    }
+    uint median = 0;
+    if (found & 1u) median = neighbors[found / 2u];
+    else if (found > 0u) {
+        median = uint((ulong(neighbors[found / 2u - 1u]) + neighbors[found / 2u]) / 2u);
+    }
+    h5_hot_write(values, ulong(frame) * pixels + pixel, bytes, median);
+}
+
 // Ported from quantem.gpu.io.backends.mps.kernels/bslz4.msl. The native entry
 // point consumes QH5IDX01 block metadata, so compressed bytes remain in the
 // original HDF5 file instead of being repackaged into an extracted raw file.
@@ -3286,6 +3340,81 @@ kernel void h5lz4dc_unshuffle_u16_audited_low8_bin4_u16_word_major_qh5idx(
     }
 }
 
+// Diagnostic four-block decode topology. Four SIMD groups independently
+// expand four compressed blocks in one 128-thread group, then each group
+// performs the exact uint16 bitshuffle inverse for its own block. This keeps
+// the LZ4 streams independent while removing the idle SIMD groups present in
+// the single-block fused probe during token expansion. It is intentionally
+// diagnostic-only until matched real-data A/B/A screens prove both exact
+// parity and a consistent wall-time win.
+kernel void h5lz4dc_unshuffle_u16_quad_block_qh5idx(
+    const device uchar *h5File [[buffer(0)]],
+    const device uint2 *blockMetadata [[buffer(1)]],
+    constant ulong &rangeStart [[buffer(2)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device ushort *output [[buffer(5)]],
+    constant uint &metadataFrameOffset [[buffer(6)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = threadgroupPosition.x;
+    uint block = threadgroupPosition.z * 4u + simdgroup;
+    threadgroup uchar shuffledBlocks[4][kBslz4BlockBytes];
+
+    if (simdgroup < 4u && block < blocksPerFrame) {
+        uint2 metadata = blockMetadata[
+            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
+        ];
+        bslz4DecompressStreamDirectToThreadgroup(
+            shuffledBlocks[simdgroup],
+            h5File + rangeStart + ulong(metadata.x),
+            metadata.y,
+            lane
+        );
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    uint localMaximum = 0u;
+    uint localAbove255 = 0u;
+    if (simdgroup < 4u && block < blocksPerFrame) {
+        const threadgroup uint *planes =
+            (const threadgroup uint *)shuffledBlocks[simdgroup];
+        // One SIMD group owns one block. Every lane participates in each word
+        // column so its lane bit selects the corresponding detector pixel.
+        for (uint group = 0u; group < 128u; ++group) {
+            ushort value = 0u;
+            for (uint bit = 0u; bit < 16u; ++bit) {
+                if (planes[bit * 128u + group] & (1u << lane)) {
+                    value |= ushort(1u << bit);
+                }
+            }
+            uint detectorIndex = block * 4096u + group * 32u + lane;
+            if (detectorIndex < frameElements) {
+                ushort stored = badPixelMask[detectorIndex] ? ushort(0) : value;
+                output[ulong(frame) * frameElements + detectorIndex] = stored;
+                localMaximum = max(localMaximum, uint(stored));
+                localAbove255 += stored > ushort(255) ? 1u : 0u;
+            }
+        }
+        localMaximum = simd_max(localMaximum);
+        localAbove255 = simd_sum(localAbove255);
+        if (lane == 0u) {
+            uint frameAudit = 2u * (globalFrameOffset + frame);
+            atomic_fetch_max_explicit(
+                &countAudit[frameAudit], localMaximum, memory_order_relaxed
+            );
+            atomic_fetch_add_explicit(
+                &countAudit[frameAudit + 1u], localAbove255, memory_order_relaxed
+            );
+        }
+    }
+}
+
 // Companion to the scalar decoder. It consumes only the transient shuffled
 // low-plane batch and writes the same explicit detector-bin-4 uint16 result as
 // the accepted fused kernel.
@@ -4072,80 +4201,5 @@ kernel void h5lz4dc_bin_u16_audited_low8_scalar_u16_word_major_frame_owned_row8_
             atomic_load_explicit(&groupColumnMoment, memory_order_relaxed),
             memory_order_relaxed
         );
-    }
-}
-
-// Diagnostic four-block decode topology. Four SIMD groups independently
-// expand four compressed blocks in one 128-thread group, then each group
-// performs the exact uint16 bitshuffle inverse for its own block. This keeps
-// the LZ4 streams independent while removing the idle SIMD groups present in
-// the single-block fused probe during token expansion. It is intentionally
-// diagnostic-only until matched real-data A/B/A screens prove both exact
-// parity and a consistent wall-time win.
-kernel void h5lz4dc_unshuffle_u16_quad_block_qh5idx(
-    const device uchar *h5File [[buffer(0)]],
-    const device uint2 *blockMetadata [[buffer(1)]],
-    constant ulong &rangeStart [[buffer(2)]],
-    constant uint &blocksPerFrame [[buffer(3)]],
-    constant uint &frameElements [[buffer(4)]],
-    device ushort *output [[buffer(5)]],
-    constant uint &metadataFrameOffset [[buffer(6)]],
-    const device uchar *badPixelMask [[buffer(7)]],
-    device atomic_uint *countAudit [[buffer(8)]],
-    constant uint &globalFrameOffset [[buffer(9)]],
-    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]]
-) {
-    uint frame = threadgroupPosition.x;
-    uint block = threadgroupPosition.z * 4u + simdgroup;
-    threadgroup uchar shuffledBlocks[4][kBslz4BlockBytes];
-
-    if (simdgroup < 4u && block < blocksPerFrame) {
-        uint2 metadata = blockMetadata[
-            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
-        ];
-        bslz4DecompressStreamDirectToThreadgroup(
-            shuffledBlocks[simdgroup],
-            h5File + rangeStart + ulong(metadata.x),
-            metadata.y,
-            lane
-        );
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    uint localMaximum = 0u;
-    uint localAbove255 = 0u;
-    if (simdgroup < 4u && block < blocksPerFrame) {
-        const threadgroup uint *planes =
-            (const threadgroup uint *)shuffledBlocks[simdgroup];
-        // One SIMD group owns one block. Every lane participates in each word
-        // column so its lane bit selects the corresponding detector pixel.
-        for (uint group = 0u; group < 128u; ++group) {
-            ushort value = 0u;
-            for (uint bit = 0u; bit < 16u; ++bit) {
-                if (planes[bit * 128u + group] & (1u << lane)) {
-                    value |= ushort(1u << bit);
-                }
-            }
-            uint detectorIndex = block * 4096u + group * 32u + lane;
-            if (detectorIndex < frameElements) {
-                ushort stored = badPixelMask[detectorIndex] ? ushort(0) : value;
-                output[ulong(frame) * frameElements + detectorIndex] = stored;
-                localMaximum = max(localMaximum, uint(stored));
-                localAbove255 += stored > ushort(255) ? 1u : 0u;
-            }
-        }
-        localMaximum = simd_max(localMaximum);
-        localAbove255 = simd_sum(localAbove255);
-        if (lane == 0u) {
-            uint frameAudit = 2u * (globalFrameOffset + frame);
-            atomic_fetch_max_explicit(
-                &countAudit[frameAudit], localMaximum, memory_order_relaxed
-            );
-            atomic_fetch_add_explicit(
-                &countAudit[frameAudit + 1u], localAbove255, memory_order_relaxed
-            );
-        }
     }
 }

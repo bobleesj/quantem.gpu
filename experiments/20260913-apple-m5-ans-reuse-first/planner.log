@@ -1,0 +1,15 @@
+RANDOM_TOTAL leaf=16 cost=756269 indexed_cases=100
+RANDOM_TOTAL leaf=32 cost=689713 indexed_cases=100
+RANDOM_TOTAL leaf=64 cost=653143 indexed_cases=100
+RANDOM_TOTAL leaf=16 cost=756269 indexed_cases=100
+RANDOM_TOTAL leaf=32 cost=689713 indexed_cases=100
+RANDOM_TOTAL leaf=64 cost=653143 indexed_cases=100
+PLAN tie-16 indexed=true fields=288 residuals=1152 cost=4896
+PLAN tie-32 indexed=true fields=144 residuals=1152 cost=4752
+PLAN tie-64 indexed=true fields=72 residuals=1152 cost=4680
+PLAN tie-16 indexed=true fields=144 residuals=1152 cost=4752
+PLAN tie-32 indexed=true fields=72 residuals=1152 cost=4680
+PLAN tie-64 indexed=true fields=36 residuals=1152 cost=4644
+PASS planner parity joint=false
+PASS planner parity joint=true
+PASS exact parity and seeded cost non-regression (300 cases)

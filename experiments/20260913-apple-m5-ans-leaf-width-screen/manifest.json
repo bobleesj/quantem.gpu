@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-leaf-width-screen",
+  "status": "succeeded",
+  "question": "On the same 18 exact BF/ABF/ADF mask transitions, does reducing detector-index leafPixels from the current 64 to 32 or 16 lower aggregate and ADF center-8-to-20 estimated planner cost without increasing the worst-transition cost?",
+  "paper": {
+    "authoritative_host": "apple-m5-max-128gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260913-apple-m5-ans-leaf-width-screen/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "entrypoint": "experiments/20260913-apple-m5-ans-leaf-width-screen/main.swift",
+    "dirty": true,
+    "diff_sha256": "ba0c8920ae89e4aa83970c306357c0b106353ffce36fb579b590acd6e1f1f392",
+    "snapshot_path": "experiments/20260913-apple-m5-ans-leaf-width-screen"
+  },
+  "inputs": [
+    {
+      "dataset_id": "all-valid-detector-validity-mask-192x192-v1",
+      "path": "synthetic-geometry://192x192-all-valid",
+      "sha256": "357480255fddd5c0111a4b8682cb465bfb4bf3ed7824f1c24887ce8b0fb22161"
+    }
+  ],
+  "parameters": {
+    "detector_shape": [192, 192],
+    "layout_kind": "polar",
+    "leaf_pixels": [16, 32, 64],
+    "transition_count": 18,
+    "transitions_source": "experiments/20260913-apple-m5-ans-layout-census/main.swift",
+    "validity": "explicit all-valid geometry; no real-source bad-pixel masks",
+    "exact_reconstruction_required": true,
+    "reported_case_fields": ["fields", "residuals", "estimated_cost", "used_index"],
+    "estimated_cost_definition": "selected field count + 4 * residual pixel count; planner operation proxy, not wall time",
+    "promotion_gate": "Metal A/B is warranted only for a changed width that improves aggregate and ADF center-8-to-20 proxy cost without increasing the worst transition cost versus leaf64",
+    "source_fingerprints": {
+      "runner_sha256": "55588709d13580c1e91ade56bd547aed2a08f878cd6611c0262b72127871bc4f",
+      "planner_snapshot_sha256": "932da14f1381c6c42232dc23ff15bf2962b5a041781e28c57cdebe9d695f292e",
+      "tested_binary_sha256": "d8e26b2229b74ec0da96528f608674ebdbbc9a7f76a543a7aae1d87c19c450c3"
+    },
+    "exact_reconstruction_count": 54,
+    "leaf_width_summary": [
+      {"leaf_pixels": 16, "total_fields": 973, "total_residuals": 12394, "total_estimated_cost": 50549, "worst_case": {"transition": "adf-center-8", "fields": 147, "residuals": 1501, "estimated_cost": 6151}, "adf_center_8_to_20": {"fields": 218, "residuals": 1335, "estimated_cost": 5558}},
+      {"leaf_pixels": 32, "total_fields": 697, "total_residuals": 12836, "total_estimated_cost": 52041, "worst_case": {"transition": "adf-center-8", "fields": 103, "residuals": 1553, "estimated_cost": 6315}, "adf_center_8_to_20": {"fields": 168, "residuals": 1443, "estimated_cost": 5940}},
+      {"leaf_pixels": 64, "total_fields": 452, "total_residuals": 13664, "total_estimated_cost": 55108, "worst_case": {"transition": "adf-center-8-to-20", "fields": 88, "residuals": 1783, "estimated_cost": 7220}, "adf_center_8_to_20": {"fields": 88, "residuals": 1783, "estimated_cost": 7220}}
+    ],
+    "aggregate_cost_reduction_percent_vs_leaf64": {"leaf16": 8.272846, "leaf32": 5.565435},
+    "adf_8_to_20_cost_reduction_percent_vs_leaf64": {"leaf16": 23.01939, "leaf32": 17.728532},
+    "gpu_timing_performed": false,
+    "wall_speed_claim": false,
+    "screening_decision": "Leaf16 and leaf32 both pass the CPU proxy gate for an actual Metal A/B versus leaf64; leaf16 has the lowest planner proxy, but this does not establish GPU speed or memory behavior.",
+    "artifact_results": {
+      "leaf-width-screen": "54/54 exact; aggregate estimated costs for leaf16/32/64 are 50,549/52,041/55,108; ADF center-8-to-20 costs are 5,558/5,940/7,220; leaf16 and leaf32 merit Metal A/B screening by proxy only.",
+      "tested-runner-binary": "Swift CPU-only planner-screen executable, 177,240 bytes; compiled and run without invoking Metal or GPU work."
+    }
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "CPU-only Swift exact geometry planner",
+    "gpu_ids": [],
+    "gpu_model": null
+  },
+  "outputs": [
+    {
+      "artifact_id": "leaf-width-screen",
+      "path": "experiments/20260913-apple-m5-ans-leaf-width-screen/results/leaf-width-screen.json",
+      "sha256": "a21d4905b718dca8c475845c1271111e70a6a34c6d1b76e4776878860d77e768",
+      "size_bytes": 15292,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "tested-runner-binary",
+      "path": "experiments/20260913-apple-m5-ans-leaf-width-screen/build/ans-leaf-width-screen",
+      "sha256": "d8e26b2229b74ec0da96528f608674ebdbbc9a7f76a543a7aae1d87c19c450c3",
+      "size_bytes": 177240,
+      "retention": "recomputable",
+      "consuming_figures": []
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-13T13:14:34Z",
+    "started": "2026-09-13T13:14:34Z",
+    "finished": "2026-09-13T13:17:04Z"
+  }
+}

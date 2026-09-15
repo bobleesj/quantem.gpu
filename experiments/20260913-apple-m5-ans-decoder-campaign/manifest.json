@@ -1,0 +1,18 @@
+{"schema_version":1,"experiment_id":"20260913-apple-m5-ans-decoder-campaign","status":"completed",
+"question":"Do retained diagnostic scratch and moderate fixed refill thresholds reduce exact seven-source residual decode latency reproducibly?",
+"paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+"code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"f8cf69b349b14b15307e805f60895b874c7b0eb4af8929914efac03d1b8047da"},
+"inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"}],
+"parameters":{"shape":[512,512,192,192],"dtype":"uint16","sources":7,"trials_per_arm":20,"warmups_per_arm":1,"seed":1709,"arms":["allocation-control","reuse-control","branchless-pop","refill-16","refill-24"],"index_unchanged":true,"default_unchanged":true},
+"execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"isolated exact signed index, residual and combined contributions including host preparation and readback; excludes IO and UI"},
+"tested_binary_sha256":"f45cf8e0bacef8dfc6f4d37bc3b2fa08e8a7ff15415961fb6e813d5506e4654b",
+"tested_shader_sha256":"7d91ae6a50318261a58850fbd9f2aacb6fe4ad6f9a3d0f975f4a75a347fd08aa",
+"tested_source_sha256":"c51b64e923268903a00b384cbfc43607ae673b3087f1b956dbdc162d11e72c19",
+"tested_index_sha256":"09f89962ba9170113f43626a80ec1d823c919d9342a6038f1ba100077ea10d0b",
+"tested_benchmark_sha256":"9ab4aa3557b19de8eb3c235eea4f476a9bc8bb26fa15835c35784d6a5c836a24",
+"outputs":[
+{"artifact_id":"raw","path":"experiments/20260913-apple-m5-ans-decoder-campaign/raw.jsonl","sha256":"409fb20c628a283e2fbd0c6912f6ce5dcbadb13ee905648a86fd1e2e41e9cd16","size_bytes":485462,"retention":"durable","consuming_figures":[],"result":"105 trials including five warmups,735 exact source transitions"},
+{"artifact_id":"trials","path":"experiments/20260913-apple-m5-ans-decoder-campaign/trials.jsonl","sha256":"115c0849536cb0610d90d561a2909435007d9c2aa390173baa917423c8a7888d","size_bytes":529308,"retention":"durable","consuming_figures":[],"result":"20 measured repeats per arm"},
+{"artifact_id":"summary","path":"experiments/20260913-apple-m5-ans-decoder-campaign/summary.jsonl","sha256":"1b5f0b0bf78bec43f5d4c63bb458367bc91fa419253af9edaf6635c6d49572aa","size_bytes":23109,"retention":"durable","consuming_figures":[],"result":"no qualified combined speedup; scratch reuse removes repeated buffer allocations"},
+{"artifact_id":"fixture","path":"experiments/20260913-apple-m5-ans-decoder-campaign/adversarial.log","sha256":"b041a559548adaf11e86b2108d981c0d33fe9b70c51781750cb32319759266f5","size_bytes":2716,"retention":"durable","consuming_figures":[],"result":"FC16 and FC17 exact signed high-count and malformed cases pass"}],
+"timestamps":{"started":"2026-09-13T05:49:18Z","finished":"2026-09-13T05:52:36Z"}}

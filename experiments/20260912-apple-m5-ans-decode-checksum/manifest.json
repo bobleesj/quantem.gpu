@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-decode-checksum",
+  "status": "completed",
+  "question": "Does removing per-pair SIMD reduction and packet-local accumulation materially lower full selected-count ANS decoding latency?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "cc3177d745f49a1811ce8cf80703b933302fad14", "dirty": true, "diff_sha256": "5280938c1568535c787560a1ae568c9f46ed02da5853d16b19774643e6560380"},
+  "inputs": [{"dataset_id": "tilt-series-seven-native-v1", "path": "private-fixture://tilt-series-seven-native-v1", "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19", "shape_per_acquisition": [512,512,192,192], "dtype": "uint16", "acquisitions": 7}],
+  "parameters": {"diagnostic_not_image": true, "representation": "paired-runtime-tans", "scan_bin": 1, "detector_bin": 1, "crop": null, "checksum": "per-512-scan-packet modulo uint32 sum", "count_policy": "same selected counts and exclusions as ordinary detector reference"},
+  "execution": {"host": "apple-m5-24gb", "backend": "metal", "timing_boundary": "seven concurrent checksum returns; reference generation and parity excluded"},
+  "outputs": [
+    {"artifact_id":"samples","path":"experiments/20260912-apple-m5-ans-decode-checksum/results.jsonl","sha256":"f004f10d09c8f92c994dc3a21ee91243c41daca5b45800c660957273ba465a27","size_bytes":244134,"retention":"durable","consuming_figures":[],"result":"71680 packet checks and 140 repeated image comparisons passed; 280 independent frozen-map checks passed"},
+    {"artifact_id":"summary","path":"experiments/20260912-apple-m5-ans-decode-checksum/summary.json","sha256":"7ebccbbd4cac9bf7a6f13115df4e89fff2afb92c92a03e2997e4aea37387760e","size_bytes":2349,"retention":"durable","consuming_figures":[],"result":"Small ADF image controls 25.01/22.99 ms vs checksum21.88 ms; diagnostic only"}
+  ],
+  "tested_binary_sha256": "a0b1aba984aff9980fbbd7aae383085d1b4b37f8744ca5ebd6823ce4dee68036",
+  "tested_source_sha256": "4b0baa1ba2f5b06d83a5141845c1e42dada599102d5945ac6a5f28663916da4e",
+  "tested_shader_sha256": "5bc2a564a043ad4fbf0f2f7fbb877eb3b30464d87d68ec2d543a53fe412c9917",
+  "tested_benchmark_sha256": "f62b72e154728fc70971c9c8ee78f164e357e056c97f782c387bcd2d0b834602",
+  "timestamps": {"started": "2026-09-13T04:18:02Z", "finished": "2026-09-13T04:23:24Z"},
+  "limitations": ["Diagnostic checksum is not an image and cannot qualify a production speedup.", "Compiler scheduling and register allocation may change, so timing subtraction is not an exact decomposition.", "Checksum parity is weaker than full image parity; normal image path retains full-map checks."]
+}

@@ -1,0 +1,28 @@
+{
+  "experiment_id": "20260911-mps-ans-batched-reduction",
+  "host": "Apple M5 24 GB",
+  "scope": "MPS exact count-rANS detector reduction queue submission",
+  "fixture": {
+    "source": "tests/parity/ans_counts_fixture.py",
+    "shape": [64, 64, 2, 3],
+    "dtype": "uint16",
+    "block_frames": 4,
+    "staging_capacity_frames": 2,
+    "chunks_per_call": 2048,
+    "note": "The source repeats independent fixture blocks to stress command submission; this is not a full-acquisition or seven-tilt performance qualification."
+  },
+  "measurements": {
+    "per_chunk_wait_p50_seconds": 0.520297,
+    "batched_128_chunk_wait_p50_seconds": 0.040003,
+    "batched_128_chunk_wait_p95_seconds": 0.041827,
+    "speedup_p50": 13.006,
+    "command_waits_per_call": 16
+  },
+  "parity": {
+    "detector_mask": "all detector pixels",
+    "output_dtype": "uint64",
+    "exact": true,
+    "repeated_calls_equal": true
+  },
+  "qualification": "implementation and queue-stress evidence only; real MPS seven-tilt ANS throughput and 120 Hz remain unqualified"
+}

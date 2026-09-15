@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-ssb-independent-verification",
+  "status": "completed",
+  "question": "Does the current blocked-four-row SSB implementation reproduce the reported full-aperture objective and 200-trial fit timing?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"repository": "quantem.gpu", "revision": "cc3177d745f49a1811ce8cf80703b933302fad14", "dirty": true, "diff_sha256": "3c653aa5bb3f7a81a22c91f3f6222c510d457af2a33cf06672a34ab1c95b3faf", "entrypoint": "experiments/20260910-ssb-full-bf-scheduling/probe.swift"},
+  "inputs": [{"dataset_id": "reference-512-original-master", "path": "private-fixture://reference-512-original/master.h5", "sha256": "c9c0d968fae70b8911ae925d676b90007886970fa99fe296a47cfe07844bbfe9"}],
+  "parameters": {"scan_shape": [512,512], "detector_shape": [192,192], "bf_selected": 8937, "bf_active": 8937, "fit_trials": 200, "precision": "float32/complex64, exact packed uint32 counts", "bin": 1, "crop": null},
+  "execution": {"host": "apple-m5-24gb", "backend": "swift-metal", "gpu_ids": ["Apple M5"]},
+  "outputs": [
+    {"artifact": "local-evidence://ssb-independent-20260913/run1/report.json", "sha256": "622991e63594df99707105bd4cd0e2e7e9ef575f09b73673ab594302650c8697", "result": "Initial full-BF objective p50 263.224 ms; fit 58.866 s; historical optimum reproduced."},
+    {"artifact": "local-evidence://ssb-independent-20260913/cleaned/report.json", "sha256": "6ea099a70ca9334be830491095919f27d56d1b5d4b2987834d5465a6c042ae3c", "result": "Cleaned full-BF objective p50 235.745 ms; fit 55.891 s; object relative L2 and loss absolute error 0.0 versus initial run. Added cached/streamed loss gate failed at relative error 0.0010632381 versus limit 0.00005. Not scientific release signoff."}
+  ],
+  "results": {"speedup_verified": false, "cleanup_real_data_parity": "passed", "cached_streamed_loss_parity": "failed", "historical_timing_reproduced": false, "cleaned_source_diff_sha256": "ff9cf0d4a30b0b1fd714f2fb0f66f3c9e189bdcdb5d1638401dd8daeffbee58f"},
+  "timestamps": {"created": "2026-09-13", "started": "2026-09-13", "finished": "2026-09-13"}
+}

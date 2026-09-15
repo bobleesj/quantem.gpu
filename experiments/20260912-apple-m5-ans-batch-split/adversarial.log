@@ -1,0 +1,19 @@
+PASS packet split 2: 512 exact signed-delta outputs, mixed uint16 modes
+PASS packet split 4: 512 exact signed-delta outputs, mixed uint16 modes
+PASS packet split 8: 512 exact signed-delta outputs, mixed uint16 modes
+PASS owner2: 512 exact signed-delta outputs
+PASS owner2+sparse: 512 exact signed-delta outputs
+PASS dense_compaction+sparse: 512 exact signed-delta outputs
+PASS dense_plain+sparse: 512 exact signed-delta outputs
+PASS macro_owner2: 512 exact signed-delta outputs
+PASS macro_owner2+sparse: 512 exact signed-delta outputs
+PASS partials+finish: two groups, 512 exact signed-delta outputs
+PASS reader32_owner2: 512 exact signed-delta outputs
+PASS reader32_owner2+sparse: 512 exact signed-delta outputs
+PASS cooperative+sparse: 512 exact signed-delta outputs
+PASS partials rejected malformed dense entropy stream
+PASS macro malformed entropy truncation/tail/terminal checks
+PASS reader32 cross-32-bit alignment and malformed tail checks
+PASS cooperative malformed entropy truncation check
+PASS malformed sparse stream sets failure
+PASS modes=[77, 78, 79, 92, 93, 252, 253, 254, 255] streams=67 selected=67

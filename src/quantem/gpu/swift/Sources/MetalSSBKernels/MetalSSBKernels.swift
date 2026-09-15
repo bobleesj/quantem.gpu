@@ -175,6 +175,10 @@ public final class MetalSSBEngine {
   private static let halfPlane = size * halfColumns
   private static let batchCapacity = 32
   private static let phaseBatchCapacity = 8
+  // Streamed phase-loss batches reuse raw/FFT scratch and ordered phase sums.
+  // Queue a bounded window before waiting so command-buffer synchronization
+  // does not dominate the full-BF objective while avoiding an unbounded buffer.
+  private static let phaseCommandBatchCapacity = 32
   private var cacheChunkCapacity = 512
   private var cacheChunkShift: UInt32 = 9
   private static let maximumCacheChunks = 12
@@ -231,7 +235,6 @@ public final class MetalSSBEngine {
   private let halfAccumulatePipeline: MTLComputePipelineState
   private let finalizePipeline: MTLComputePipelineState
   private let halfExtractPipeline: MTLComputePipelineState
-  private let halfLossCorrectionPipeline: MTLComputePipelineState
   private let fullLossCorrectionPipeline: MTLComputePipelineState
   private let phaseMomentPipeline: MTLComputePipelineState
   private let chiTrigPipeline: MTLComputePipelineState
@@ -334,11 +337,6 @@ public final class MetalSSBEngine {
       device: device,
       library: library,
       name: "extract_hermitian_half"
-    )
-    halfLossCorrectionPipeline = try Self.makePipeline(
-      device: device,
-      library: library,
-      name: "ssb_correct_half_for_phase_loss"
     )
     fullLossCorrectionPipeline = try Self.makePipeline(
       device: device,
@@ -889,6 +887,8 @@ public final class MetalSSBEngine {
     try commitAndWait(cacheCommands)
     gpuSeconds += gpuDuration(cacheCommands)
 
+    var streamedCommands: MTLCommandBuffer?
+    var streamedBatchCount = 0
     for offset in stride(
       from: globalOffset,
       to: activeBrightfieldIndices.count,
@@ -898,9 +898,16 @@ public final class MetalSSBEngine {
         Self.batchCapacity,
         activeBrightfieldIndices.count - offset
       )
-      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
-      try encodeBrightfield(
-        Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
+      if streamedCommands == nil {
+        guard let commands = queue.makeCommandBuffer() else {
+          throw MetalSSBError.commandQueue
+        }
+        streamedCommands = commands
+      }
+      guard let commands = streamedCommands else {
+        throw MetalSSBError.commandQueue
+      }
+      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + batch)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: batch)
       let params = parameters(
         batch: batch,
@@ -911,7 +918,6 @@ public final class MetalSSBEngine {
         commands,
         source: fftA,
         sourceOffset: 0,
-        sourceIsHermitianHalf: false,
         params: params
       )
       encodeFFT(
@@ -927,6 +933,15 @@ public final class MetalSSBEngine {
         )
       )
       encodePhaseMoments(commands, batch: batch)
+      streamedBatchCount += 1
+      if streamedBatchCount == Self.phaseCommandBatchCapacity {
+        try commitAndWait(commands)
+        gpuSeconds += gpuDuration(commands)
+        streamedCommands = nil
+        streamedBatchCount = 0
+      }
+    }
+    if let commands = streamedCommands {
       try commitAndWait(commands)
       gpuSeconds += gpuDuration(commands)
     }
@@ -1509,7 +1524,7 @@ public final class MetalSSBEngine {
     rows.endEncoding()
 
     var mutableBatch = UInt32(batch)
-    var dc = paramsDC(params)
+    var dc = SIMD2<Float>(params.dcReal, params.dcImaginary)
     let columns = commands.makeComputeCommandEncoder()!
     columns.setComputePipelineState(fusedLossMomentPipeline)
     columns.setBuffer(fftA, offset: 0, index: 0)
@@ -1535,24 +1550,15 @@ public final class MetalSSBEngine {
     columns.endEncoding()
   }
 
-  private func paramsDC(_ params: SSBParams) -> SIMD2<Float> {
-    SIMD2<Float>(params.dcReal, params.dcImaginary)
-  }
-
   private func encodeLossCorrection(
     _ commands: MTLCommandBuffer,
     source: MTLBuffer,
     sourceOffset: Int,
-    sourceIsHermitianHalf: Bool,
     params: SSBParams
   ) {
     var mutable = params
     let encoder = commands.makeComputeCommandEncoder()!
-    encoder.setComputePipelineState(
-      sourceIsHermitianHalf
-        ? halfLossCorrectionPipeline
-        : fullLossCorrectionPipeline
-    )
+    encoder.setComputePipelineState(fullLossCorrectionPipeline)
     encoder.setBuffer(source, offset: sourceOffset, index: 0)
     encoder.setBuffer(activeGeometryBuffer, offset: 0, index: 1)
     encoder.setBuffer(qxBuffer, offset: 0, index: 2)

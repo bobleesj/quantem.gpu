@@ -1,0 +1,13 @@
+{
+  "schema": "quantem-gpu-ans-adf-native-choosebase/v1",
+  "scope": "Anonymized seven-tile native presentation evidence for the first exact reference-base selection port",
+  "configuration": {"layout": "polar", "leaf_pixels": 16, "choose_base": true, "default_enabled": false},
+  "resident_count": 7,
+  "comparison_resident_bytes": 11885154080,
+  "catalog_seconds": 3.82,
+  "comparison_ready_seconds": 17.60,
+  "all_seven_adf_center": {"per_second": 30.6, "per_input_second": 30.5, "incomplete_generations": 1},
+  "all_seven_adf_resize": {"per_second": 50.7, "per_input_second": 50.4, "incomplete_generations": 1},
+  "strict_120_gate": "failed",
+  "interpretation": "First exact reference-base selection port; this single native run does not establish improvement over matched polar16 evidence"
+}

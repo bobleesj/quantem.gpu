@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-selective-prefix-overlay",
+  "status": "refuted",
+  "hypothesis": "Can a 25-leaf selected exact prefix overlay reduce residual pixels by at least 20% on a held-out large ADF center move without changing any detector counts?",
+  "question": "Can a bounded per-leaf exact prefix basis, selected from other BF/ABF/ADF transitions, reduce residual pixels by at least 20% on the held-out ADF center-(5,8)-to-(12,20) move?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb",
+    "manifest_path": "experiments/20260913-apple-m5-ans-selective-prefix-overlay/manifest.json"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "5893ae1ce0dcf070bb0e90b3686efad1f925c38f7622d6938a48b286040dad1a",
+    "worktree_status_sha256": "c9c72e81b5e0a16533ac4389d95b4a4e6de543a357948e802b133c478dd69a73",
+    "source_fingerprints": {
+      "planner": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSPolarPlan.swift",
+        "sha256": "932da14f1381c6c42232dc23ff15bf2962b5a041781e28c57cdebe9d695f292e"
+      },
+      "mask_geometry": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "22f5ad838eec81af0f1dd2f629edf149e2dfcba50376e4150a777f9233a8f29d"
+      },
+      "experiment": {
+        "path": "experiments/20260913-apple-m5-ans-selective-prefix-overlay/main.swift",
+        "sha256": "b4ff59cb89b57f22bdb9f58aedb43c791b5c66792a4b583ae968ba0dc1200c27"
+      },
+      "common_source_validity": {
+        "path": "experiments/20260913-apple-m5-ans-radial1-leafwidth-cpu-screen/results/screen.json",
+        "sha256": "776eb629a071425d8b5e096e449b58170262c689e231793fa514a978a1614c22"
+      }
+    },
+    "tested_binary": {
+      "path": "ans-selective-prefix-overlay-cpu",
+      "sha256": "d57afc81a65ef4f46be86dd6e15308d18724f4f72f1bec37c89a389940ecb268"
+    },
+    "runner_sha256": "dc19c015ba0134c3866c6e670d7a5b045934fdf58dacd95fbfa4e34573f8b768"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    },
+    {
+      "dataset_id": "independently-checked-20mask-seven-source-reference",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/polar16-radial1-aga.jsonl",
+      "sha256": "9975e9903626df0ae6952983e1cc3bf54da7acf8953fd9c750153b1fcbfa1c57"
+    },
+    {
+      "dataset_id": "existing-radial1-transition-census",
+      "path": "experiments/20260913-apple-m5-ans-layout-census/results/layout-census.json",
+      "sha256": "605e3227f2d7373034c97ce63d081dc8b59c046772e40e82dba8f8203448eb15"
+    },
+    {
+      "dataset_id": "common-validity-mask-for-seven-sources",
+      "path": "experiments/20260913-apple-m5-ans-radial1-leafwidth-cpu-screen/results/screen.json",
+      "sha256": "776eb629a071425d8b5e096e449b58170262c689e231793fa514a978a1614c22"
+    }
+  ],
+  "parameters": {
+    "detector_shape": [192, 192],
+    "source_full_shape": [512, 512, 192, 192],
+    "logical_dtype": "uint16",
+    "sources": 7,
+    "base_leaf_pixels": 16,
+    "base_layout": "radial1",
+    "prefix_width": 4,
+    "prefix_ranks": [4, 8, 12],
+    "max_selected_leaves": 25,
+    "max_prefix_fields_per_source": 75,
+    "max_prefix_fields_all_sources": 525,
+    "transition_count": 17,
+    "training_transition_count": 16,
+    "held_out_transition": "adf-center-8-to-20",
+    "validity_scope": "same four catalog bad-pixel detector indices applied to all seven masters",
+    "required_exact_map_reconstruction": true,
+    "gpu_benchmark": false,
+    "result_summary": {
+      "baseline_target_residuals_per_source": 1067,
+      "broad_training_target_residuals_per_source": 1045,
+      "adf_only_training_target_residuals_per_source": 1011,
+      "target_only_oracle_residuals_per_source": 921,
+      "adf_only_training_residual_reduction_fraction": 0.05248359887535145,
+      "adf_only_training_proxy_cost_before_per_source": 4639,
+      "adf_only_training_proxy_cost_after_per_source": 4438,
+      "maps_exact": true,
+      "synthetic_u16_scalar_parity_all_seven": true
+    }
+  },
+  "execution": {
+    "backend": "CPU Swift planner and synthetic scalar oracle",
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {
+      "gpu_workload": false,
+      "reason": "Planner-only exactness/utility screen; no Metal or allocation changes"
+    },
+    "timing_boundary": "No GPU or UI latency measured",
+    "wall_seconds_compile_and_cpu_screen": 22.3
+  },
+  "outputs": [
+    {
+      "artifact_id": "README",
+      "path": "experiments/20260913-apple-m5-ans-selective-prefix-overlay/README.md",
+      "sha256": "e61b50bc02e80b040cfe9e2d5730825c563a35fa049337eee4f263e2a6a265ec",
+      "size_bytes": 3723,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "CPU-only exact-prefix overlay screen; hypothesis refuted for the held-out large ADF move."
+    },
+    {
+      "artifact_id": "prefix-overlay-results",
+      "path": "experiments/20260913-apple-m5-ans-selective-prefix-overlay/results/prefix-overlay.json",
+      "sha256": "2be763d47c0f3e729a8bdd6409a768cd0cf58443eec66d3c9365a122f23ce70e",
+      "size_bytes": 257300,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Exact map reconstruction and seven-source synthetic uint16 scalar checks passed; ADF-only training reduced held-out residuals by 5.2%."
+    },
+    {
+      "artifact_id": "prototype-source",
+      "path": "experiments/20260913-apple-m5-ans-selective-prefix-overlay/main.swift",
+      "sha256": "b4ff59cb89b57f22bdb9f58aedb43c791b5c66792a4b583ae968ba0dc1200c27",
+      "size_bytes": 26715,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Isolated CPU-only exact prefix planner; no production Metal files changed."
+    },
+    {
+      "artifact_id": "runner",
+      "path": "experiments/20260913-apple-m5-ans-selective-prefix-overlay/run.sh",
+      "sha256": "dc19c015ba0134c3866c6e670d7a5b045934fdf58dacd95fbfa4e34573f8b768",
+      "size_bytes": 881,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Reproducible local Swift compile and CPU-only planner run."
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T15:03:26Z",
+    "finished": "2026-09-13T15:05:00Z"
+  }
+}

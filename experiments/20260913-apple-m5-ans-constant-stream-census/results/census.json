@@ -1,0 +1,22 @@
+{
+  "experiment_id": "20260913-apple-m5-ans-constant-stream-census",
+  "dataset_id": "tilt-series-seven-native-v1",
+  "host": "apple-m5-24gb",
+  "shape": [512, 512, 192, 192],
+  "dtype": "uint16",
+  "source_count": 7,
+  "transition": "adf-center-8-to-adf-center-20",
+  "layout": "radial1-leaf16",
+  "selected_fields_per_source": 371,
+  "residual_detector_pixels_per_source": 1067,
+  "packets_per_source": 512,
+  "field_packet_descriptors": 1329664,
+  "descriptor_width_zero_base_zero": 0,
+  "descriptor_width_zero_base_nonzero": 0,
+  "descriptors_with_nonzero_width": 1329664,
+  "exactly_removable_scan_terms": 0,
+  "maximum_arithmetic_reduction_fraction": 0.0,
+  "decision": "refuted",
+  "reason": "The measured plan contains no zero-width descriptor, so neither exact zero-stream skipping nor packet-constant hoisting can remove any selected scan-axis field term.",
+  "scope": "CPU/source census only; no GPU dispatch, update timing, or scientific-output change."
+}

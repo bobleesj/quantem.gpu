@@ -251,6 +251,33 @@ class DetectorSession:
             return result
         return _exact_to_numpy(result).reshape((*self.series_shape, *self.scan_shape))
 
+    def masked_sums_exact(self, masks) -> np.ndarray:
+        """Return exact uint64 virtual-detector images for several masks.
+
+        ``masks`` is an array in ``(mask, detector_row, detector_column)``
+        order. Count-ANS MPS sources decode each source chunk once and reduce
+        all masks in one bounded Metal submission; other backends retain exact
+        behavior with their available detector reducer.
+        """
+        values = np.asarray(masks)
+        if values.ndim == 2:
+            values = values[None, ...]
+        if values.ndim != 3 or values.shape[1:] != self.detector_shape:
+            raise ValueError(
+                "Detector masks must have shape "
+                f"(mask, {self.detector_shape[0]}, {self.detector_shape[1]})."
+            )
+        if len(values) < 1 or not np.all((values == 0) | (values == 1)):
+            raise ValueError("Exact detector masks must be binary.")
+        operation = getattr(self._backend, "masked_sums_exact", None)
+        if operation is None:
+            result = np.stack([self.masked_sum_exact(mask) for mask in values], axis=0)
+        else:
+            result = operation(values.astype(np.uint8, copy=False))
+        return np.asarray(result, dtype=np.uint64).reshape(
+            (len(values), *self.series_shape, *self.scan_shape)
+        )
+
     def masked_sum_batch_exact(self, mask) -> np.ndarray:
         """Return all acquisition images as one exact integer batch.
 
@@ -703,6 +730,12 @@ def _resolve_backend(data):
 
         sources = [item.data if hasattr(item, "_fields") and "data" in item._fields else item for item in data]
         from quantem.gpu.io.backends.cuda._ans import CudaANSResidentCounts, CudaPackedResidentCounts
+        from quantem.gpu.io.backends.mps._ans import MPSANSResidentCounts, MPSPackedResidentCounts
+
+        if sources and all(isinstance(source, (MPSANSResidentCounts, MPSPackedResidentCounts)) for source in sources):
+            from .backends.mps.ans_series import MPSANSSeriesCompute
+
+            return MPSANSSeriesCompute(data)
 
         from quantem.gpu._compact.paired import PairedCounts, PairedSeriesCompute
 

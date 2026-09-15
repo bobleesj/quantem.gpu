@@ -180,7 +180,7 @@ def test_reconstruct_series_reuses_only_exact_results(
     from quantem.gpu import SSB, SSBResult
 
     raw = tmp_path / "raw"
-    screen = raw / "quantem" / "screen"
+    screen = raw / "live" / "screen"
     raw.mkdir()
     screen.mkdir(parents=True)
     reference = "91mm_30mrad_151"
@@ -321,7 +321,7 @@ def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
     from quantem.gpu import SSB
 
     raw = tmp_path / "raw"
-    screen = raw / "quantem" / "screen"
+    screen = raw / "live" / "screen"
     raw.mkdir()
     screen.mkdir(parents=True)
 
@@ -344,7 +344,7 @@ def test_series_discovery_keeps_raw_acquisitions_after_partial_screening(
     raw.mkdir()
     for frame in (52, 53, 54):
         (raw / f"scan_{frame}_master.h5").touch()
-    screened = raw / "quantem" / "screen" / "scan_52"
+    screened = raw / "live" / "screen" / "scan_52"
     screened.mkdir(parents=True)
     (screened / "config.json").write_text("{}", encoding="utf-8")
 
@@ -363,7 +363,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
     from quantem.gpu import SSB, SSBResult
 
     raw = tmp_path / "raw"
-    screen = raw / "quantem" / "screen"
+    screen = raw / "live" / "screen"
     screen.mkdir(parents=True)
     for index, frame in enumerate((100, 250, 900), start=1):
         (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
@@ -514,7 +514,7 @@ files:
     assert result.master_names == ("scan_1_master.h5",)
     assert result.probe_reference_frame is None
     assert result.records[0]["result"] == "computed"
-    config = raw / "quantem" / "screen" / "scan_1" / "config.json"
+    config = raw / "live" / "screen" / "scan_1" / "config.json"
     assert config.is_file()
     assert (config.parent / "bf.npy").is_file()
     assert (config.parent / "df.npy").is_file()
@@ -553,7 +553,7 @@ def test_ssb_series_show_starts_with_companion_views_hidden(monkeypatch) -> None
         probe_reference_dataset="a",
         records=(),
         source_directory=Path("raw"),
-        results_directory=Path("raw/quantem/screen"),
+        results_directory=Path("raw/live/screen"),
         requested_backend="cuda",
         trials=200,
         refinement="nelder-mead",

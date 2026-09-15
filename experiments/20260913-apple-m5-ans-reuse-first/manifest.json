@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-reuse-first",
+  "status": "completed",
+  "question": "Can compact source offsets reduce retained memory without slowing exact seven-source queries, and can joint hierarchy selection reuse more existing sums?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb",
+    "manifest_path": "experiments/20260913-apple-m5-ans-reuse-first/manifest.json"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "db55a7e27e6991ced0226f0b09daf2214b0374b6e10c390979616a9f64c66919",
+    "repository": "quantem.gpu",
+    "entrypoint": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+    "snapshot_path": "experiments/20260913-apple-m5-ans-reuse-first/tested-source-final.tar.gz"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    },
+    {
+      "dataset_id": "independently-checked-20mask-seven-source-reference",
+      "path": "experiments/20260912-apple-m5-ans-adf-optimization/polar16-radial1-aga.jsonl",
+      "sha256": "9975e9903626df0ae6952983e1cc3bf54da7acf8953fd9c750153b1fcbfa1c57"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "sources": 7,
+    "trials_per_arm": 20,
+    "leaf_pixels": 16,
+    "layout": "radial1",
+    "seed": 1713,
+    "default_unchanged": true,
+    "conclusion": "247726066 resident bytes saved (2.09%); compact greedy combined68.73ms versus controls67.86/67.00ms. Joint plan370 fields vs371, unchanged1067residuals. No speed promotion.",
+    "measured_trials_per_planner_per_arm": 20,
+    "full_map_observations": 2520,
+    "unique_cross_arm_dp_positions": 245,
+    "exact_source_transitions_including_warmups": 882,
+    "no_ui_fps_or_peak_memory_claim": true,
+    "reporting_repair": "All GPU arms completed and released; final Python3.9 hashlib.file_digest print failed. Streaming SHA256 repair and strict post-run validation used existing outputs; no GPU rerun."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "all-seven backend return and isolated stages; no UI or cold IO claim",
+    "gpu_ids": [
+      "0"
+    ],
+    "gpu_model": "Apple M5"
+  },
+  "tested_binary_sha256": "1c39a58db85f58e894a3019d5f6f1cdef3a6300f4634d4b91ffcd6ccadaab7ef",
+  "tested_shader_sha256": "25df86f1e34825a9a5e72b851f6ab581672143bbec7d845f308f4405f048f1f8",
+  "tested_source_snapshot": "experiments/20260913-apple-m5-ans-reuse-first/tested-source-final.tar.gz",
+  "outputs": [
+    {
+      "artifact_id": "README-md",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/README.md",
+      "sha256": "67d3230046ad8adccf32bb21f78a21f03c4433a080775ecbf45440419c53e198",
+      "size_bytes": 7943,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Measured results and limits; no promotion."
+    },
+    {
+      "artifact_id": "summary-json",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/summary.json",
+      "sha256": "300cf7f4a683fb588815a8132845a5f9774c906c9ff67839dd66f9d95955c8b9",
+      "size_bytes": 85002,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Strict complete A/B/A summary: exact memory saving, no speed win."
+    },
+    {
+      "artifact_id": "run-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/run.log",
+      "sha256": "30506a8de2ffa346405fa58e88969d99c96e6e35b6347d8723b3fd055ee3aa36",
+      "size_bytes": 5803,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "All arms completed; final Python 3.9 reporting exception retained."
+    },
+    {
+      "artifact_id": "run-py",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/run.py",
+      "sha256": "1e49389b39fdda28cee82fd26962878cda48a856b915981600e613bcdb4c25df",
+      "size_bytes": 11859,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Driver with post-run Python 3.9 hash-reporting repair."
+    },
+    {
+      "artifact_id": "summarize-py",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/summarize.py",
+      "sha256": "209aee8e8d715c6aa76119f7a2c20e2d5ac20e6c3cd49ffc6407d53a65e107f0",
+      "size_bytes": 16431,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Post-run strict coverage, frozen-reference and identity validator."
+    },
+    {
+      "artifact_id": "planner-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/planner.log",
+      "sha256": "057c46ce2060026329e0fa244f7d324354ea857ef49fad0e82dc08ba35453369",
+      "size_bytes": 793,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "316 exact CPU decomposition cases; random proxy cost unchanged."
+    },
+    {
+      "artifact_id": "planner-main-swift",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/planner/main.swift",
+      "sha256": "df22e130d8e929ed290bd20cd724e8753124044b7c6fe8ed27f712ec384a690f",
+      "size_bytes": 9982,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "CPU decomposition and signed-sum parity harness."
+    },
+    {
+      "artifact_id": "planner-run-sh",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/planner/run.sh",
+      "sha256": "8911dc27712a869af093fb01478c2f27401c04eb3a0ba9bbcd7fed8ef3d5676a",
+      "size_bytes": 2187,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "CPU harness entry point."
+    },
+    {
+      "artifact_id": "compact-fixture-final-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/compact-fixture-final.log",
+      "sha256": "5ac5854391aaba41d928ca921403e510a44ebe5259d90bf6aeb6eed12ba86ec6",
+      "size_bytes": 510,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Final successful GPU exact-count and malformed-offset fixture."
+    },
+    {
+      "artifact_id": "compact_offset_probe-swift",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/compact_offset_probe.swift",
+      "sha256": "f5d68a8636062fc2752ec403ee66fd703c05d3fe70f7b86c48412530990d8258",
+      "size_bytes": 21730,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Independent synthetic GPU fixture source."
+    },
+    {
+      "artifact_id": "run_compact_offset_probe-sh",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/run_compact_offset_probe.sh",
+      "sha256": "216ed2116d760705c90bc084d0b08fa74a437b9aeff91e52410700872c11e1f3",
+      "size_bytes": 1044,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Synthetic GPU fixture entry point."
+    },
+    {
+      "artifact_id": "build-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/build.log",
+      "sha256": "52a41f5b32eb3c600da27bc1756bc3c50edf1c5d868ad0d9e564899f7d82ef33",
+      "size_bytes": 2307,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Initial failed preflight build retained."
+    },
+    {
+      "artifact_id": "build-retry-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/build-retry.log",
+      "sha256": "9fec4397853ee3827a8ed0db42d2ac83507a03b00b752c5d4f8147d19dfaee16",
+      "size_bytes": 399,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Successful first rebuild before synthetic specialization fix."
+    },
+    {
+      "artifact_id": "build-specialization-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/build-specialization.log",
+      "sha256": "b140ed8a547922bfbad7ed90fa6bff2588ea9c593f02f6b8b8fa60e152f02b86",
+      "size_bytes": 334,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Successful final benchmark build used by all three arms."
+    },
+    {
+      "artifact_id": "compact-fixture-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/compact-fixture.log",
+      "sha256": "a22b92d0bd3a13896f9659e11ba2f2d7b7d9222f54f7b0502174e534359fce72",
+      "size_bytes": 526,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Initial fixture type-check failure retained."
+    },
+    {
+      "artifact_id": "compact-fixture-retry-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/compact-fixture-retry.log",
+      "sha256": "9bb2262f582ad186d3e2a9357b93d04f7c67ea026f12b99779fd13c246def778",
+      "size_bytes": 385,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Unspecialized Metal function preflight failure retained."
+    },
+    {
+      "artifact_id": "tested-source-final-tar-gz",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/tested-source-final.tar.gz",
+      "sha256": "ab7ffc06fcb7be73c6e27f545c1309d294c5442211d85a0a0aa246b81a8f495c",
+      "size_bytes": 56912,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Exact final tested Swift/Metal source snapshot, including untracked files."
+    },
+    {
+      "artifact_id": "results-control-a1-raw-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/control-a1/raw.jsonl",
+      "sha256": "4bdcfb0a922e00ec515874cf5c5b7328f4460f06e1c5f1096fc7a6a3b9cb902a",
+      "size_bytes": 625033,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "control-a1: raw GPU events, 840 maps, 245 DP positions, clean release."
+    },
+    {
+      "artifact_id": "results-control-a1-trials-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/control-a1/trials.jsonl",
+      "sha256": "a385ef8df78aa589670aabfb4854e765e043fbe617b15fe0a28542296cb838ea",
+      "size_bytes": 218702,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "control-a1: 42 isolated-stage trials including warmups."
+    },
+    {
+      "artifact_id": "results-control-a1-stderr-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/control-a1/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "control-a1: retained process stderr."
+    },
+    {
+      "artifact_id": "results-compact-raw-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/compact/raw.jsonl",
+      "sha256": "476731f41af579d895cc3801f2be1a19812029c28acfd9f9e0301299b5fa1c1f",
+      "size_bytes": 625058,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "compact: raw GPU events, 840 maps, 245 DP positions, clean release."
+    },
+    {
+      "artifact_id": "results-compact-trials-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/compact/trials.jsonl",
+      "sha256": "5fcf55fd7a93dfe96e912fbb7b5d2f8911b85e96ed617d587e1e1caf619008f0",
+      "size_bytes": 218688,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "compact: 42 isolated-stage trials including warmups."
+    },
+    {
+      "artifact_id": "results-compact-stderr-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/compact/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "compact: retained process stderr."
+    },
+    {
+      "artifact_id": "results-control-a2-raw-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/control-a2/raw.jsonl",
+      "sha256": "81a7b8383015c0ca4e3a120a6229109ccc95962e164e12cd18e92ae6ab26ff01",
+      "size_bytes": 624987,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "control-a2: raw GPU events, 840 maps, 245 DP positions, clean release."
+    },
+    {
+      "artifact_id": "results-control-a2-trials-jsonl",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/control-a2/trials.jsonl",
+      "sha256": "6c0d875c72c1801e0f54be380125a96f620a6f2adbf1c3b717a0152dbfe8f8c3",
+      "size_bytes": 218727,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "control-a2: 42 isolated-stage trials including warmups."
+    },
+    {
+      "artifact_id": "results-control-a2-stderr-log",
+      "path": "experiments/20260913-apple-m5-ans-reuse-first/results/control-a2/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "control-a2: retained process stderr."
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T06:18:01Z",
+    "finished": "2026-09-13T06:37:38Z",
+    "created": "2026-09-13T06:18:01Z"
+  }
+}

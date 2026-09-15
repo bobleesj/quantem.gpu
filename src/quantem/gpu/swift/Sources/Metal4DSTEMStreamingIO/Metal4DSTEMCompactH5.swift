@@ -3,6 +3,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Metal
+import Native4DSTEMIO
 import Metal4DSTEMKernels
 
 // Alternate kernel policies exist only in instrumented benchmark builds.
@@ -608,6 +609,8 @@ private final class CompactResidencyLease {
 /// succeeds. The logical order is always
 /// `(scan_row, scan_column, detector_row, detector_column)`.
 public final class MetalCompactH5ResidentSource {
+  var originalDataset: Native4DSTEMDataset?
+  private var conversionDecodePipeline: MTLComputePipelineState?
   // Source mask provenance is separate from the active detector exclusion mask.
   var sourceHotPixelIndices: [Int] = []
   public let metadata: MetalCompactH5Metadata
@@ -654,6 +657,44 @@ public final class MetalCompactH5ResidentSource {
   public private(set) var isReleased = false
 
   fileprivate func markOriginalDetectorSumReady() { detectorSumReady = true }
+
+  /// Internal bounded raw-count window for conversion, without display exclusions.
+  /// Caller serializes encoding with interactions and release and commits commands.
+  func encodeConversionWindow(firstScan: Int, count: Int, into output: MTLBuffer,
+    commands: MTLCommandBuffer, bytesPerValue: Int) throws {
+    guard !isReleased, firstScan >= 0, count > 0,
+      firstScan + count <= metadata.scanCount, firstScan % metadata.scansPerShard == 0,
+      count % metadata.scansPerShard == 0, headerEncoding != 3,
+      bytesPerValue == 1 || bytesPerValue == 2,
+      output.length >= count * metadata.detectorPixelCount * bytesPerValue,
+      output.device.registryID == device.registryID else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest("Conversion requires an aligned, bounded uint8/uint16 scan window on the resident device")
+    }
+    if conversionDecodePipeline == nil {
+      let library = try Metal4DSTEMKernels.makeCompactH5Library(device: device)
+      guard let function = library.makeFunction(name:"compact_h5_conversion_window") else {
+        throw Metal4DSTEMStreamingIOError.metalUnavailable("Missing packed conversion-window kernel; rebuild matching Metal resources")
+      }
+      conversionDecodePipeline = try device.makeComputePipelineState(function:function)
+    }
+    guard let encoder = commands.makeComputeCommandEncoder(), let pipeline = conversionDecodePipeline else {
+      throw Metal4DSTEMStreamingIOError.metalUnavailable("Cannot encode packed conversion window")
+    }
+    encoder.setComputePipelineState(pipeline)
+    for offset in stride(from:0,to:count,by:metadata.scansPerShard) {
+      let shard = shards[(firstScan+offset)/metadata.scansPerShard]
+      var parameters: [UInt32] = [UInt32(metadata.scansPerShard),UInt32(metadata.detectorPixelCount),
+        UInt32((metadata.scansPerShard+metadata.scanTile-1)/metadata.scanTile),UInt32(metadata.scanTile),
+        headerWordsPerPixel,headerEncoding,UInt32(bytesPerValue),payloadLayout]
+      encoder.setBuffer(shard.payload,offset:0,index:0)
+      encoder.setBuffer(shard.descriptors,offset:0,index:1)
+      encoder.setBuffer(output,offset:offset*metadata.detectorPixelCount*bytesPerValue,index:2)
+      encoder.setBytes(&parameters,length:parameters.count*4,index:3)
+      encoder.dispatchThreads(MTLSize(width:metadata.scansPerShard*metadata.detectorPixelCount,height:1,depth:1),
+        threadsPerThreadgroup:MTLSize(width:128,height:1,depth:1))
+    }
+    encoder.endEncoding()
+  }
 
   private struct PendingDetectorUpdate {
     let normalizedMask: [UInt8]
@@ -2167,7 +2208,7 @@ public enum MetalCompactH5Loader {
         "schema": "original-hdf5-resident/v1", "source_identity": identity,
         "shape": [dataset.scanRows, dataset.scanCols, dataset.detectorRows, dataset.detectorCols],
         "source_dtype": dataset.sourceDtype, "working_dtype": working,
-        "every_count_roundtrip_verified": true, "logical_hash_computed": false,
+        "every_count_roundtrip_verified": packed.countsRoundtripVerified, "logical_hash_computed": false,
         "bad_pixel_policy": "preserve_all_source_counts", "scan_bin": 1, "detector_bin": 1,
       ], options: [.sortedKeys])
     let prepared = MetalCompactH5PreparedDPCMoments(
@@ -2365,7 +2406,7 @@ public enum MetalCompactH5Loader {
       )
     }
     var metrics = MetalCompactH5LoadMetrics(
-      nativeCacheStatus: "originalDirect", nativeCacheBytes: 0,
+      nativeCacheStatus: packed.origin, nativeCacheBytes: 0,
       nativeCacheDescriptorSHA256Checks: 0,
       plannedAdditionalBytes: planned, sourceReadPolicy: "systemDefault", maximumInFlightShards: 1,
       shardPipelineMilliseconds: milliseconds(from: started), metadataMilliseconds: 0,
@@ -2407,6 +2448,7 @@ public enum MetalCompactH5Loader {
       resident.releaseResidentStorage()
       throw Metal4DSTEMStreamingIOError.cancelled
     }
+    resident.originalDataset = dataset
     resident.markOriginalDetectorSumReady()
     return resident
   }

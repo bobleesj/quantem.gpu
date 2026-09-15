@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-hdf5-runtime-ans",
+  "status": "succeeded",
+  "question": "Can ordinary seven-acquisition HDF5 input convert automatically to exact runtime ANS on Apple M5 and sustain complete 120 Hz scientific interaction without saving an intermediate ANS file?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260912-apple-m5-hdf5-runtime-ans/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "030bead69b268756b9c479cc860eff78d12d80cba397ebc606546bf7537cd9e9",
+    "entrypoint": "public io.load(..., backend='mps', stack=False, apply_mask=False) plus MPSStreamedSeries",
+    "snapshot_path": "local-evidence://quantem-gpu-20260912/apple-m5-hdf5-runtime-ans"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "acquisitions": 7,
+    "representation": "runtime-column-rans-spatial-v2",
+    "stream_interval": 512,
+    "source_window_scans": 32768,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "saved_ans_file": false,
+    "frame_gate_ms": 8.3333333333
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "mps",
+    "gpu_model": "Apple M5",
+    "operating_system": "macOS 26.6.2"
+  },
+  "outputs": [
+    {
+      "artifact_id": "hdf5-runtime-ans-result",
+      "path": "experiments/20260912-apple-m5-hdf5-runtime-ans/result.json",
+      "sha256": "25843f03ad67b75708c9093a829724f75700e4d311beadef1cad151a83c187d0",
+      "size_bytes": 3835,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Automatic exact HDF5-to-ANS works; selected DP and BF pass 120 Hz, wide ADF and one-second first load remain failed gates. Native app integration remains open."
+    },
+    {
+      "artifact_id": "hdf5-runtime-ans-runbook",
+      "path": "experiments/20260912-apple-m5-hdf5-runtime-ans/RUN-COMMANDS.md",
+      "sha256": "7ac0422a4fa9224877b74e94328eb71dc3a07d0caf0f65204e4f067d1836310c",
+      "size_bytes": 1079,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Reproduction commands and measurement scope."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T15:33:58Z",
+    "started": "2026-09-12T14:30:00Z",
+    "finished": "2026-09-12T15:33:58Z"
+  }
+}

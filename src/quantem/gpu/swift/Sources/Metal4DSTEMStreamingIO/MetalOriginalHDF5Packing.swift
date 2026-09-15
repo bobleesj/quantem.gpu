@@ -5,6 +5,14 @@ import Metal
 import Metal4DSTEMKernels
 import Native4DSTEMIO
 
+/// Policy for source-marked detector pixels while building a working resident.
+public enum NativeHotPixelPolicy: String, Sendable {
+  /// Replace each marked pixel with its valid local 3x3 median on Metal.
+  case median
+  /// Keep the source value unchanged.
+  case preserve
+}
+
 extension MetalCompactH5Loader {
   /// Prepare an original indexed Arina acquisition for exact compact residency.
   ///
@@ -104,6 +112,8 @@ extension MetalCompactH5Loader {
 
 /// Internal ownership transfer, never a persisted cache or public result type.
 struct OriginalPackedBuffers {
+  var origin = "originalDirect"
+  var countsRoundtripVerified = true
   var payloadLayout: UInt32 = 0
   let dataset: Native4DSTEMDataset
   let frames: Int
@@ -246,6 +256,7 @@ final class OriginalHDF5Packing {
   let scalarDecodeThreads: Int
   let bitshufflePackingThreads: Int
   let standardPackingThreads: Int
+  let hotPixelMedian: MTLComputePipelineState
 
   init(device: MTLDevice, cachePlans: Bool = false) throws {
     self.device = device
@@ -307,6 +318,7 @@ final class OriginalHDF5Packing {
       fusedDecode
         && OriginalPackingDiagnostics.enabled("FUSED_DECODE_FRAME_COOP", byDefault: false)
       ? try pipeline(decode, Metal4DSTEMKernels.decodeU16FrameCooperativeFunction) : nil
+    hotPixelMedian = try pipeline(decode, "h5hot_pixel_median_qh5idx")
     alignedRepeatFill = OriginalPackingDiagnostics.enabled("ALIGNED_FILL", byDefault: true)
     alignedHistoryCopy = OriginalPackingDiagnostics.enabled("ALIGNED_COPY", byDefault: false)
     let fastDecode =
@@ -584,6 +596,7 @@ final class OriginalHDF5Packing {
     source: Native4DSTEMIndexedSource, destination: URL?, maximumAdditionalBytes: UInt64?,
     preparedDPC: MetalCompactH5ExactDPCMoments? = nil,
     packingPlanURL: URL? = nil, ignoreCachedPlan: Bool = false, priorProfile: Profile? = nil,
+    hotPixelPolicy: NativeHotPixelPolicy = .median,
     shouldCancel: () -> Bool, progress: (Int, Int) -> Void
   ) throws -> OriginalPackedBuffers? {
     let dataset = source.dataset
@@ -672,8 +685,10 @@ final class OriginalHDF5Packing {
         && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) * 4096 == pixels })
     let scratchBytes =
       source.sourceBytesPerValue == 4 ? frames * pixels * 4 : (useScalar ? frames * pixels * 2 : 0)
-    let cachedDPC = destination == nil ? validatedDPC(preparedDPC, source: source) : nil
-    if destination == nil, !ignoreCachedPlan,
+    let hasHotPixels = hotPixelPolicy == .median && !dataset.badPixelIndices.isEmpty
+    let cachedDPC = destination == nil && !hasHotPixels
+      ? validatedDPC(preparedDPC, source: source) : nil
+    if destination == nil, !ignoreCachedPlan, !hasHotPixels,
       cachedDPC != nil || bitshuffleDPC != nil, let packingPlanURL,
       let direct = try packBitshufflePlan(
         source: source, windows: windows, frames: frames,
@@ -880,7 +895,11 @@ final class OriginalHDF5Packing {
     let directPartialMaximums =
       directScratch ? try buffer(pixels * checkpoints * 4, privateStorage: true) : nil
     memset(widths.contents(), 0, widths.length)
-    memset(mask.contents(), 0, mask.length)  // Preserve even source-marked hot pixels.
+    memset(mask.contents(), 0, mask.length)
+    if hasHotPixels {
+      let maskValues = mask.contents().assumingMemoryBound(to: UInt8.self)
+      for pixel in dataset.badPixelIndices { maskValues[pixel] = 1 }
+    }
     var maximum: UInt32 = 0
     var residentShards: [(payload: MTLBuffer, headers: MTLBuffer)] = []
     var residentMomentData = cachedDPC ?? Data()
@@ -1097,7 +1116,7 @@ final class OriginalHDF5Packing {
             preparedInput: preparedInput,
             zeroTails: directZeroTails,
             commandBufferOverride: batchedDecodeCommand,
-            headersAfterDecode: fuseDecodeHeaders && sliceIndex == window.slices.count - 1
+            headersAfterDecode: fuseDecodeHeaders && !hasHotPixels && sliceIndex == window.slices.count - 1
               ? (buffers: [dense, headers, sizes, sums, widths], shape: shape) : nil,
             forceScalar: directScratch, skipUnshuffle: directScratch,
             fusedDirect: fusedDirect,
@@ -1125,6 +1144,20 @@ final class OriginalHDF5Packing {
               "Invalid compressed original counts; reopen an intact acquisition. No resident was published"
             )
           }
+        }
+        if hasHotPixels {
+          let correctionCommand = try commandBuffer()
+          try encodeHotPixelMedian(
+            correctionCommand,
+            dense: dense,
+            mask: mask,
+            indices: dataset.badPixelIndices,
+            frames: frames,
+            detectorRows: dataset.detectorRows,
+            detectorColumns: dataset.detectorCols,
+            sourceBytes: source.sourceBytesPerValue
+          )
+          profile.productsGPU += try finish(correctionCommand)
         }
         // In the two-queue diagnostic pipeline, decode for this window was
         // allowed to overlap packing of the previous one. Reclaim the shared
@@ -1607,7 +1640,7 @@ final class OriginalHDF5Packing {
         dataset: dataset, frames: frames, headerStride: headerStride,
         shards: residentShards, moments: residentMomentData, detectorSum: detectorSum,
         maximum: maximum, maximumWidths: maximumWidths,
-        calibration: measuredDetector(
+        calibration: Self.measuredDetector(
           detectorSum, rows: dataset.detectorRows, columns: dataset.detectorCols,
           excludedFromEstimate: dataset.badPixelIndices), stagingBytes: peakStaging,
         readSeconds: profile.read, decodeSeconds: profile.decodeGPU,
@@ -1660,7 +1693,7 @@ final class OriginalHDF5Packing {
       "file_offset": momentOffset, "file_bytes": momentData.count,
       "sha256": Self.digest(momentData),
     ]
-    let calibration = measuredDetector(
+    let calibration = Self.measuredDetector(
       detectorSum, rows: dataset.detectorRows, columns: dataset.detectorCols,
       excludedFromEstimate: dataset.badPixelIndices)
     let manifest: [String: Any] = [
@@ -2068,7 +2101,7 @@ final class OriginalHDF5Packing {
     return words.withUnsafeBytes { Data($0) }
   }
 
-  func measuredDetector(_ sums: [UInt64], rows: Int, columns: Int, excludedFromEstimate: [Int]) -> (
+  static func measuredDetector(_ sums: [UInt64], rows: Int, columns: Int, excludedFromEstimate: [Int]) -> (
     Double, Double, Double
   ) {
     let excluded = Set(excludedFromEstimate)
@@ -2104,6 +2137,42 @@ final class OriginalHDF5Packing {
       throw Self.invalid("Cannot create decode command")
     }
     return command
+  }
+  func encodeHotPixelMedian(
+    _ command: MTLCommandBuffer,
+    dense: MTLBuffer,
+    mask: MTLBuffer,
+    indices: [Int],
+    frames: Int,
+    detectorRows: Int,
+    detectorColumns: Int,
+    sourceBytes: Int
+  ) throws {
+    guard !indices.isEmpty, sourceBytes == 1 || sourceBytes == 2 || sourceBytes == 4,
+      let indexBuffer = device.makeBuffer(
+        bytes: indices.map(UInt32.init),
+        length: indices.count * MemoryLayout<UInt32>.stride,
+        options: .storageModeShared
+      )
+    else { return }
+    guard let encoder = command.makeComputeCommandEncoder() else {
+      throw Self.invalid("Cannot encode hot-pixel median correction")
+    }
+    encoder.setComputePipelineState(hotPixelMedian)
+    encoder.setBuffer(dense, offset: 0, index: 0)
+    encoder.setBuffer(mask, offset: 0, index: 1)
+    encoder.setBuffer(indexBuffer, offset: 0, index: 2)
+    var parameters: [UInt32] = [
+      UInt32(frames), UInt32(detectorRows), UInt32(detectorColumns),
+      UInt32(sourceBytes), UInt32(indices.count),
+    ]
+    encoder.setBytes(&parameters, length: parameters.count * MemoryLayout<UInt32>.stride, index: 3)
+    let count = frames * indices.count
+    encoder.dispatchThreads(
+      MTLSize(width: count, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(
+        width: min(128, hotPixelMedian.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+    encoder.endEncoding()
   }
   func copiedBuffer(_ bytes: UnsafeRawBufferPointer) throws -> MTLBuffer {
     guard !bytes.isEmpty, bytes.count <= device.maxBufferLength,

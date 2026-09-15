@@ -1,0 +1,662 @@
+{
+  "cases" : [
+    {
+      "changed_pixels_after_validity_mask" : 568,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-base",
+      "target_mask" : "adf-center-1",
+      "transition" : "adf-center-1",
+      "widths" : [
+        {
+          "estimated_cost" : 1696,
+          "exact_signed_reconstruction" : true,
+          "fields" : 24,
+          "leaf_pixels" : 16,
+          "residuals" : 418
+        },
+        {
+          "estimated_cost" : 1842,
+          "exact_signed_reconstruction" : true,
+          "fields" : 10,
+          "leaf_pixels" : 32,
+          "residuals" : 458
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 4937,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-base",
+      "target_mask" : "adf-center-8",
+      "transition" : "adf-center-8",
+      "widths" : [
+        {
+          "estimated_cost" : 2834,
+          "exact_signed_reconstruction" : true,
+          "fields" : 254,
+          "leaf_pixels" : 16,
+          "residuals" : 645
+        },
+        {
+          "estimated_cost" : 4140,
+          "exact_signed_reconstruction" : true,
+          "fields" : 152,
+          "leaf_pixels" : 32,
+          "residuals" : 997
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 6269,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-center-8",
+      "target_mask" : "adf-center-20",
+      "transition" : "adf-center-8-to-20",
+      "widths" : [
+        {
+          "estimated_cost" : 4639,
+          "exact_signed_reconstruction" : true,
+          "fields" : 371,
+          "leaf_pixels" : 16,
+          "residuals" : 1067
+        },
+        {
+          "estimated_cost" : 7997,
+          "exact_signed_reconstruction" : true,
+          "fields" : 185,
+          "leaf_pixels" : 32,
+          "residuals" : 1953
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 616,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-base",
+      "target_mask" : "adf-radius-1",
+      "transition" : "adf-radius-1",
+      "widths" : [
+        {
+          "estimated_cost" : 1375,
+          "exact_signed_reconstruction" : true,
+          "fields" : 31,
+          "leaf_pixels" : 16,
+          "residuals" : 336
+        },
+        {
+          "estimated_cost" : 1402,
+          "exact_signed_reconstruction" : true,
+          "fields" : 18,
+          "leaf_pixels" : 32,
+          "residuals" : 346
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 3854,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-base",
+      "target_mask" : "adf-radius-8",
+      "transition" : "adf-radius-8",
+      "widths" : [
+        {
+          "estimated_cost" : 1070,
+          "exact_signed_reconstruction" : true,
+          "fields" : 54,
+          "leaf_pixels" : 16,
+          "residuals" : 254
+        },
+        {
+          "estimated_cost" : 1101,
+          "exact_signed_reconstruction" : true,
+          "fields" : 29,
+          "leaf_pixels" : 32,
+          "residuals" : 268
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 7097,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-base",
+      "target_mask" : "adf-radius-20",
+      "transition" : "adf-radius-20",
+      "widths" : [
+        {
+          "estimated_cost" : 906,
+          "exact_signed_reconstruction" : true,
+          "fields" : 58,
+          "leaf_pixels" : 16,
+          "residuals" : 212
+        },
+        {
+          "estimated_cost" : 980,
+          "exact_signed_reconstruction" : true,
+          "fields" : 28,
+          "leaf_pixels" : 32,
+          "residuals" : 238
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 568,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-0",
+      "target_mask" : "adf-drag-column-1",
+      "transition" : "adf-drag-column-1",
+      "widths" : [
+        {
+          "estimated_cost" : 1696,
+          "exact_signed_reconstruction" : true,
+          "fields" : 24,
+          "leaf_pixels" : 16,
+          "residuals" : 418
+        },
+        {
+          "estimated_cost" : 1842,
+          "exact_signed_reconstruction" : true,
+          "fields" : 10,
+          "leaf_pixels" : 32,
+          "residuals" : 458
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 567,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-1",
+      "target_mask" : "adf-drag-column-2",
+      "transition" : "adf-drag-column-2",
+      "widths" : [
+        {
+          "estimated_cost" : 1717,
+          "exact_signed_reconstruction" : true,
+          "fields" : 25,
+          "leaf_pixels" : 16,
+          "residuals" : 423
+        },
+        {
+          "estimated_cost" : 1839,
+          "exact_signed_reconstruction" : true,
+          "fields" : 11,
+          "leaf_pixels" : 32,
+          "residuals" : 457
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 541,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-2",
+      "target_mask" : "adf-drag-column-3",
+      "transition" : "adf-drag-column-3",
+      "widths" : [
+        {
+          "estimated_cost" : 1681,
+          "exact_signed_reconstruction" : true,
+          "fields" : 21,
+          "leaf_pixels" : 16,
+          "residuals" : 415
+        },
+        {
+          "estimated_cost" : 1783,
+          "exact_signed_reconstruction" : true,
+          "fields" : 11,
+          "leaf_pixels" : 32,
+          "residuals" : 443
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 529,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-3",
+      "target_mask" : "adf-drag-column-4",
+      "transition" : "adf-drag-column-4",
+      "widths" : [
+        {
+          "estimated_cost" : 1586,
+          "exact_signed_reconstruction" : true,
+          "fields" : 22,
+          "leaf_pixels" : 16,
+          "residuals" : 391
+        },
+        {
+          "estimated_cost" : 1821,
+          "exact_signed_reconstruction" : true,
+          "fields" : 9,
+          "leaf_pixels" : 32,
+          "residuals" : 453
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 521,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-4",
+      "target_mask" : "adf-drag-column-5",
+      "transition" : "adf-drag-column-5",
+      "widths" : [
+        {
+          "estimated_cost" : 1552,
+          "exact_signed_reconstruction" : true,
+          "fields" : 20,
+          "leaf_pixels" : 16,
+          "residuals" : 383
+        },
+        {
+          "estimated_cost" : 1772,
+          "exact_signed_reconstruction" : true,
+          "fields" : 8,
+          "leaf_pixels" : 32,
+          "residuals" : 441
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 513,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-5",
+      "target_mask" : "adf-drag-column-6",
+      "transition" : "adf-drag-column-6",
+      "widths" : [
+        {
+          "estimated_cost" : 1629,
+          "exact_signed_reconstruction" : true,
+          "fields" : 17,
+          "leaf_pixels" : 16,
+          "residuals" : 403
+        },
+        {
+          "estimated_cost" : 1773,
+          "exact_signed_reconstruction" : true,
+          "fields" : 9,
+          "leaf_pixels" : 32,
+          "residuals" : 441
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 507,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-6",
+      "target_mask" : "adf-drag-column-7",
+      "transition" : "adf-drag-column-7",
+      "widths" : [
+        {
+          "estimated_cost" : 1600,
+          "exact_signed_reconstruction" : true,
+          "fields" : 20,
+          "leaf_pixels" : 16,
+          "residuals" : 395
+        },
+        {
+          "estimated_cost" : 1801,
+          "exact_signed_reconstruction" : true,
+          "fields" : 5,
+          "leaf_pixels" : 32,
+          "residuals" : 449
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 501,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-7",
+      "target_mask" : "adf-drag-column-8",
+      "transition" : "adf-drag-column-8",
+      "widths" : [
+        {
+          "estimated_cost" : 1635,
+          "exact_signed_reconstruction" : true,
+          "fields" : 15,
+          "leaf_pixels" : 16,
+          "residuals" : 405
+        },
+        {
+          "estimated_cost" : 1792,
+          "exact_signed_reconstruction" : true,
+          "fields" : 4,
+          "leaf_pixels" : 32,
+          "residuals" : 447
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 497,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-8",
+      "target_mask" : "adf-drag-column-9",
+      "transition" : "adf-drag-column-9",
+      "widths" : [
+        {
+          "estimated_cost" : 1604,
+          "exact_signed_reconstruction" : true,
+          "fields" : 16,
+          "leaf_pixels" : 16,
+          "residuals" : 397
+        },
+        {
+          "estimated_cost" : 1799,
+          "exact_signed_reconstruction" : true,
+          "fields" : 3,
+          "leaf_pixels" : 32,
+          "residuals" : 449
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 493,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-9",
+      "target_mask" : "adf-drag-column-10",
+      "transition" : "adf-drag-column-10",
+      "widths" : [
+        {
+          "estimated_cost" : 1649,
+          "exact_signed_reconstruction" : true,
+          "fields" : 13,
+          "leaf_pixels" : 16,
+          "residuals" : 409
+        },
+        {
+          "estimated_cost" : 1840,
+          "exact_signed_reconstruction" : true,
+          "fields" : 4,
+          "leaf_pixels" : 32,
+          "residuals" : 459
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 486,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-10",
+      "target_mask" : "adf-drag-column-11",
+      "transition" : "adf-drag-column-11",
+      "widths" : [
+        {
+          "estimated_cost" : 1680,
+          "exact_signed_reconstruction" : true,
+          "fields" : 12,
+          "leaf_pixels" : 16,
+          "residuals" : 417
+        },
+        {
+          "estimated_cost" : 1807,
+          "exact_signed_reconstruction" : true,
+          "fields" : 3,
+          "leaf_pixels" : 32,
+          "residuals" : 451
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 483,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-11",
+      "target_mask" : "adf-drag-column-12",
+      "transition" : "adf-drag-column-12",
+      "widths" : [
+        {
+          "estimated_cost" : 1658,
+          "exact_signed_reconstruction" : true,
+          "fields" : 14,
+          "leaf_pixels" : 16,
+          "residuals" : 411
+        },
+        {
+          "estimated_cost" : 1871,
+          "exact_signed_reconstruction" : true,
+          "fields" : 3,
+          "leaf_pixels" : 32,
+          "residuals" : 467
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 479,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-12",
+      "target_mask" : "adf-drag-column-13",
+      "transition" : "adf-drag-column-13",
+      "widths" : [
+        {
+          "estimated_cost" : 1662,
+          "exact_signed_reconstruction" : true,
+          "fields" : 10,
+          "leaf_pixels" : 16,
+          "residuals" : 413
+        },
+        {
+          "estimated_cost" : 1791,
+          "exact_signed_reconstruction" : true,
+          "fields" : 3,
+          "leaf_pixels" : 32,
+          "residuals" : 447
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 477,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-13",
+      "target_mask" : "adf-drag-column-14",
+      "transition" : "adf-drag-column-14",
+      "widths" : [
+        {
+          "estimated_cost" : 1678,
+          "exact_signed_reconstruction" : true,
+          "fields" : 10,
+          "leaf_pixels" : 16,
+          "residuals" : 417
+        },
+        {
+          "estimated_cost" : 1814,
+          "exact_signed_reconstruction" : true,
+          "fields" : 2,
+          "leaf_pixels" : 32,
+          "residuals" : 453
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 473,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-14",
+      "target_mask" : "adf-drag-column-15",
+      "transition" : "adf-drag-column-15",
+      "widths" : [
+        {
+          "estimated_cost" : 1655,
+          "exact_signed_reconstruction" : true,
+          "fields" : 11,
+          "leaf_pixels" : 16,
+          "residuals" : 411
+        },
+        {
+          "estimated_cost" : 1798,
+          "exact_signed_reconstruction" : true,
+          "fields" : 2,
+          "leaf_pixels" : 32,
+          "residuals" : 449
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 469,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-15",
+      "target_mask" : "adf-drag-column-16",
+      "transition" : "adf-drag-column-16",
+      "widths" : [
+        {
+          "estimated_cost" : 1702,
+          "exact_signed_reconstruction" : true,
+          "fields" : 10,
+          "leaf_pixels" : 16,
+          "residuals" : 423
+        },
+        {
+          "estimated_cost" : 1798,
+          "exact_signed_reconstruction" : true,
+          "fields" : 2,
+          "leaf_pixels" : 32,
+          "residuals" : 449
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 467,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-16",
+      "target_mask" : "adf-drag-column-17",
+      "transition" : "adf-drag-column-17",
+      "widths" : [
+        {
+          "estimated_cost" : 1715,
+          "exact_signed_reconstruction" : true,
+          "fields" : 7,
+          "leaf_pixels" : 16,
+          "residuals" : 427
+        },
+        {
+          "estimated_cost" : 1798,
+          "exact_signed_reconstruction" : true,
+          "fields" : 2,
+          "leaf_pixels" : 32,
+          "residuals" : 449
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 463,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-17",
+      "target_mask" : "adf-drag-column-18",
+      "transition" : "adf-drag-column-18",
+      "widths" : [
+        {
+          "estimated_cost" : 1730,
+          "exact_signed_reconstruction" : true,
+          "fields" : 6,
+          "leaf_pixels" : 16,
+          "residuals" : 431
+        },
+        {
+          "estimated_cost" : 1774,
+          "exact_signed_reconstruction" : true,
+          "fields" : 2,
+          "leaf_pixels" : 32,
+          "residuals" : 443
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 461,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-18",
+      "target_mask" : "adf-drag-column-19",
+      "transition" : "adf-drag-column-19",
+      "widths" : [
+        {
+          "estimated_cost" : 1643,
+          "exact_signed_reconstruction" : true,
+          "fields" : 7,
+          "leaf_pixels" : 16,
+          "residuals" : 409
+        },
+        {
+          "estimated_cost" : 1742,
+          "exact_signed_reconstruction" : true,
+          "fields" : 2,
+          "leaf_pixels" : 32,
+          "residuals" : 435
+        }
+      ]
+    },
+    {
+      "changed_pixels_after_validity_mask" : 457,
+      "exact_signed_reconstruction" : true,
+      "previous_mask" : "adf-drag-column-19",
+      "target_mask" : "adf-drag-column-20",
+      "transition" : "adf-drag-column-20",
+      "widths" : [
+        {
+          "estimated_cost" : 1659,
+          "exact_signed_reconstruction" : true,
+          "fields" : 7,
+          "leaf_pixels" : 16,
+          "residuals" : 413
+        },
+        {
+          "estimated_cost" : 1749,
+          "exact_signed_reconstruction" : true,
+          "fields" : 1,
+          "leaf_pixels" : 32,
+          "residuals" : 437
+        }
+      ]
+    }
+  ],
+  "cost_definition" : "selected field count + 4 * residual pixel count; operation proxy, not a timing model",
+  "detector_shape" : [
+    192,
+    192
+  ],
+  "exact_reconstruction_count" : 52,
+  "gpu_timing_performed" : false,
+  "layout_kind" : "radial1",
+  "leaf_widths" : [
+    16,
+    32
+  ],
+  "schema" : "quantem-gpu-ans-radial1-leafwidth-cpu-screen\/v1",
+  "summaries" : [
+    {
+      "adf_center_8_to_20" : {
+        "estimated_cost" : 4639,
+        "exact_signed_reconstruction" : true,
+        "fields" : 371,
+        "leaf_pixels" : 16,
+        "residuals" : 1067
+      },
+      "leaf_pixels" : 16,
+      "total_estimated_cost" : 45651,
+      "total_fields" : 1079,
+      "total_residuals" : 11143,
+      "transition_count" : 26,
+      "worst_estimated_cost" : 4639,
+      "worst_transition" : "adf-center-8-to-20"
+    },
+    {
+      "adf_center_8_to_20" : {
+        "estimated_cost" : 7997,
+        "exact_signed_reconstruction" : true,
+        "fields" : 185,
+        "leaf_pixels" : 32,
+        "residuals" : 1953
+      },
+      "leaf_pixels" : 32,
+      "total_estimated_cost" : 53466,
+      "total_fields" : 518,
+      "total_residuals" : 13237,
+      "transition_count" : 26,
+      "worst_estimated_cost" : 7997,
+      "worst_transition" : "adf-center-8-to-20"
+    }
+  ],
+  "transition_count" : 26,
+  "validity" : {
+    "bad_pixel_indices_common_to_all_sources" : [
+      5319,
+      15050,
+      21710,
+      29965
+    ],
+    "detector_mask_sha256" : "33f5b1988e3f4360e9578a8855884e5bdcb2cbc2b6b25c0c830d65bec6c69b47",
+    "source" : "seven-source maped-seven-tilts master HDF5 metadata",
+    "source_count" : 7,
+    "valid_pixel_count" : 36860
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "schema": "quantem-gpu-native-polar64-mask-policy/v1",
+  "scope": "Seven-source native diagnostic summary; dataset identities and private paths omitted",
+  "configuration": {
+    "detector_shape": [192, 192],
+    "index": "exact polar64",
+    "native_input_repeats": 2,
+    "tiles": 7
+  },
+  "no_debug_native_presentations_per_input_second": {
+    "before_per_source_bad_pixel_masking": {
+      "adf_center": 6.5,
+      "adf_resize": 13.4
+    },
+    "after_per_source_bad_pixel_masking": {
+      "adf_center": 14.3,
+      "adf_resize": 21.7
+    }
+  },
+  "diagnostic_run": {
+    "adf_center": {
+      "accepted_generations": 31,
+      "generations_with_index_on_all_seven_sources": 30,
+      "generations_using_direct_fallback": 1,
+      "all_tiles_presented_generations": 30,
+      "presented_per_input_second": 14.3,
+      "reduction_ms": {"p50": 60.42, "p95": 66.29, "max": 67.88},
+      "backend_group_wall_ms": {"p50": 59.94, "p95": 65.791, "max": 67.38},
+      "per_source_changed_pixels": {"p50": 4997, "p95": 5443, "max": 5453},
+      "per_source_polar_fields": {"p50": 72, "p95": 78, "max": 81},
+      "per_source_polar_residuals": {"p50": 1455, "p95": 1534, "max": 1738},
+      "per_generation_max_source_gpu_ms": {"p50": 17.721, "p95": 21.981, "max": 24.978},
+      "wall_residual_correlation": 0.957
+    },
+    "adf_resize": {
+      "accepted_generations": 45,
+      "generations_with_index_on_all_seven_sources": 23,
+      "generations_using_direct_fallback": 22,
+      "all_tiles_presented_generations": 44,
+      "presented_per_input_second": 21.0,
+      "reduction_ms": {"p50": 38.32, "p95": 53.86, "max": 59.33},
+      "backend_group_wall_ms": {"p50": 37.835, "p95": 53.366, "max": 58.769},
+      "per_source_changed_pixels": {"p50": 1236, "p95": 1952, "max": 1956},
+      "per_source_polar_fields": {"p50": 9, "p95": 13, "max": 25},
+      "per_source_polar_residuals": {"p50": 964, "p95": 1392, "max": 1550},
+      "per_generation_max_source_gpu_ms": {"p50": 12.307, "p95": 17.53, "max": 18.72},
+      "wall_residual_correlation": 0.987
+    }
+  },
+  "subsequent_valid_native_runs": {
+    "no_index_mask_fixed_control": {
+      "adf_center_all_seven_per_second": 6.7,
+      "adf_center_per_input_second": 6.7,
+      "adf_resize_all_seven_per_second": 14.0,
+      "adf_resize_per_input_second": 14.1
+    },
+    "scratchless_polar32": {
+      "catalog_seconds": 3.58,
+      "comparison_ready_seconds": 18.78,
+      "comparison_resident_bytes": 10723749864,
+      "adf_center_all_seven_per_second": 14.1,
+      "adf_center_per_input_second": 14.0,
+      "adf_resize_all_seven_per_second": 63.6,
+      "adf_resize_per_input_second": 63.4
+    },
+    "windowed_pool_polar16_visible": {
+      "catalog_seconds": 3.03,
+      "comparison_ready_seconds": 17.04,
+      "comparison_resident_bytes": 11885154080,
+      "adf_center_all_seven_per_second": 29.9,
+      "adf_center_per_input_second": 30.0,
+      "adf_resize_all_seven_per_second": 49.0,
+      "adf_resize_per_input_second": 49.0
+    }
+  },
+  "excluded_run": {
+    "configuration": "windowed-pool polar16",
+    "load_completed": true,
+    "presentation_measurement_valid": false,
+    "reason": "Display was occluded by another application; no presentation rate is counted"
+  },
+  "rate_definition": "all_seven_per_second counts distinct generations presented by every one of the seven visible tiles during the measured trajectory; per_input_second divides that count by the input interval.",
+  "strict_120_gate": "failed for every retained ADF native run",
+  "timing_note": "Seven source queues overlap. Per-source GPU durations must not be summed as elapsed batch time; the maximum is only a lower bound without absolute GPU intervals.",
+  "conclusion": "Per-source bad-pixel masking unlocks the exact index. The remaining measured bottleneck is inside the seven-source resident update group, not post-update publication."
+}

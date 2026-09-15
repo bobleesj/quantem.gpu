@@ -1,0 +1,67 @@
+{
+  "experiment_id": "20260912-apple-m5-native-paired-ans-integration",
+  "host": "apple-m5-24gb",
+  "scope": "Direct original-HDF5 to exact paired-tANS residency in the native application",
+  "input": {
+    "dataset_id": "tilt-series-seven-native-v1",
+    "combined_content_sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+    "acquisitions": 7,
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null
+  },
+  "representation": {
+    "profile": "quantem.gpu.native-paired-runtime-tans/v1",
+    "saved_intermediate_file": false,
+    "physical_resident_bytes": 9274410288,
+    "application_allocated_bytes": 9350000000
+  },
+  "measurements": {
+    "single_backend_load_seconds": [2.1986, 2.4808],
+    "native_first_visible_seconds": 3.79,
+    "native_subsequent_first_load_seconds": [2.90, 2.90, 2.88, 3.06, 3.09, 3.09],
+    "native_return_visit_seconds": [0.09, 0.08, 0.11, 0.07, 0.07, 0.07],
+    "native_comparison_ready_seconds": 0.86,
+    "native_selected_dp_presented_per_second": [119.7, 118.6],
+    "native_all_seven_large_abf_presented_per_second": [7.2, 17.3],
+    "native_all_seven_large_adf_presented_per_second": [6.3, 11.5],
+    "source_page_state": "operating-system source pages unspecified; not cold I/O"
+  },
+  "parity": {
+    "sample_diffraction_patterns": true,
+    "sample_virtual_detector_sums": true,
+    "sample_dpc_moments": true,
+    "cpu_oracle_tests": "3 passed",
+    "full_volume_sha256": "not run; sampled parity is not a complete-volume audit"
+  },
+  "native_journey": {
+    "problems": 0,
+    "console_errors": 0,
+    "covered": [
+      "seven direct HDF5 opens",
+      "return visits",
+      "rapid switching",
+      "BF",
+      "ABF",
+      "ADF",
+      "iDPC",
+      "FFT",
+      "scan drag",
+      "large custom-detector drag",
+      "seven-way comparison",
+      "comparison detector drag",
+      "comparison scan drag"
+    ]
+  },
+  "qualification": {
+    "native_default_for_supported_shape": "passed",
+    "exact_no_crop_no_bin_no_clip": "passed",
+    "derived_dpc_without_dense_residency": "passed",
+    "one_second_first_load": "not met",
+    "all_seven_large_detector_120_hz": "not met",
+    "full_volume_audit": "pending",
+    "publication": "pending review and explicit push authorization"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-trusted-table",
+  "status": "completed",
+  "question": "Does validating immutable decode-table transitions once reduce fresh seven-source detector latency by removing redundant per-pair state checks?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "ec1c75b888e6490b735bfeaaf80b54f64364d01c8d22f51d1e3123b663c59fb0"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+      "shape_per_acquisition": [
+        512,
+        512,
+        192,
+        192
+      ],
+      "dtype": "uint16",
+      "acquisitions": 7
+    }
+  ],
+  "parameters": {
+    "representation": "paired-runtime-tans",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "function_constant": 13,
+    "default": false,
+    "history": false,
+    "precomputed_adf_atlas": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "all-seven synchronized update excluding IO, parity and UI; cache hits separated from fresh work"
+  },
+  "outputs": [
+    {
+      "artifact_id": "samples",
+      "path": "experiments/20260912-apple-m5-ans-trusted-table/resident-loop.jsonl",
+      "size_bytes": 3573609,
+      "sha256": "1f1b1aadb190f1f07dc57dfc49fa1d4f58ce4ccd38fbc0d1eed52b7018a9395d",
+      "result": "15 arms, 8820 full maps exact",
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "adversarial",
+      "path": "experiments/20260912-apple-m5-ans-trusted-table/adversarial.log",
+      "size_bytes": 1943,
+      "sha256": "503349d42536ddaa3a1a504c296006d2334596ebbc1d196f13f9c060cea142cf",
+      "result": "High count signed parity and malformed entropy pass",
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "summary",
+      "path": "experiments/20260912-apple-m5-ans-trusted-table/summary.jsonl",
+      "size_bytes": 14584,
+      "sha256": "d918258df0710d3644956ef31c6e01f3becc2e51fdfce65afef310200f1a8274",
+      "result": "Repeated raw ADF small move 8-11% faster; indexed small move no reliable gain",
+      "retention": "durable",
+      "consuming_figures": []
+    }
+  ],
+  "tested_binary_sha256": "d41f86ec19405449925f48cf929472b80efca0480038fc0260bc3b74e52834ce",
+  "tested_shader_sha256": "a3b166e39aee0e6581435484bd0f1a25ecb88fd17740bca6ab7380c77b1b1d1e",
+  "tested_resident_source_sha256": "3f54a73d85240f418c4e4566ef4e79ce3d57324f371ae34d2ba20c2ac0327987",
+  "timestamps": {
+    "started": "2026-09-13T01:50:48Z",
+    "finished": "2026-09-13T01:57:57Z"
+  },
+  "limitations": [
+    "No UI or release promotion; not 120 FPS.",
+    "Raw and regional-index-assisted paths separated.",
+    "Host source edited for next experiment after recorded executable build; executable hashes identify this test."
+  ]
+}

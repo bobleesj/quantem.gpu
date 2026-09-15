@@ -57,6 +57,18 @@ let package = Package(
       targets: ["MetalANSFileBenchmark"]
     ),
     .executable(
+      name: "metal-runtime-ans-benchmark",
+      targets: ["MetalRuntimeANSBenchmark"]
+    ),
+    .executable(
+      name: "metal-paired-runtime-tans-benchmark",
+      targets: ["MetalPairedRuntimeTANSBenchmark"]
+    ),
+    .executable(
+      name: "metal-paired-runtime-tans-series-benchmark",
+      targets: ["MetalPairedRuntimeTANSSeriesBenchmark"]
+    ),
+    .executable(
       name: "metal-4dstem-dpc-benchmark",
       targets: ["Metal4DSTEMDPCBenchmark"]
     ),
@@ -191,6 +203,21 @@ let package = Package(
       path: "src/quantem/gpu/swift/Benchmarks/MetalANSFileBenchmark"
     ),
     .executableTarget(
+      name: "MetalRuntimeANSBenchmark",
+      dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalRuntimeANSBenchmark"
+    ),
+    .executableTarget(
+      name: "MetalPairedRuntimeTANSBenchmark",
+      dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSBenchmark"
+    ),
+    .executableTarget(
+      name: "MetalPairedRuntimeTANSSeriesBenchmark",
+      dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark"
+    ),
+    .executableTarget(
       name: "Metal4DSTEMDPCBenchmark",
       dependencies: ["Metal4DSTEMKernels"],
       path: "src/quantem/gpu/swift/Benchmarks/Metal4DSTEMDPCBenchmark"
@@ -221,8 +248,14 @@ let package = Package(
       path: "src/quantem/gpu/swift/Tests/MetalSSBKernelsTests"
     ),
     .testTarget(
+      name: "MetalScientificNumericsTests",
+      dependencies: ["MetalScientificNumerics", "Metal4DSTEMStreamingIO"],
+      path: "src/quantem/gpu/swift/Tests/MetalScientificNumericsTests",
+      resources: [.copy("Fixtures")]
+    ),
+    .testTarget(
       name: "Native4DSTEMIOTests",
-      dependencies: ["Metal4DSTEMStreamingIO", "Native4DSTEMIO"],
+      dependencies: ["Metal4DSTEMStreamingIO", "Native4DSTEMIO", "MetalScientificNumerics"],
       path: "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests",
       resources: [.copy("Fixtures")]
     ),

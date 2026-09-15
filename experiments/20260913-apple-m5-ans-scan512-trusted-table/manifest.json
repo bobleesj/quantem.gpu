@@ -1,0 +1,183 @@
+{
+  "code": {
+    "diff_sha256": "b51f4e10cda59ff9abe88b2fca2027cfb3080adcb1367c4a62319ca788054575",
+    "dirty": true,
+    "fingerprint_policy": "Runner records the shared worktree snapshot, executable, benchmark, resident, table factory, shader, and experiment runner before launch.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "db2fcfad2c38deb9c07eee1315601e9e018250f0182e7a4ad257b188ff4f5811",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "1f27646dd8ab8a450f8ee4fa72f5b0565ea4bd20177f3c42c819032bd33773ec"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0cb11d2a256e479dc1f0250d2ac57bcac2582ba41b7d9c3b44ca2159c84470ab"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "3128f78eeaedb3933877eff13df960eb19cdf6f1d2d0441d0c8d641fb78543cd"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "260f38a96fe0c03c4502d284bfeb0c7c468e34b810c3428631b1d42e8256a2f8"
+      },
+      "trusted_table_factory": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSTables.swift",
+        "sha256": "3800a0f1b68ea5293e13237fcf5ccce7f99f94fb2c4ce1678721f21efc7e8922"
+      },
+      "trusted_table_tests": {
+        "path": "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/PairedRuntimeTANSTablesTests.swift",
+        "sha256": "a3c6bb37f3d7f27da5375d9bd7f4727254f71e526914c5a863512ba210e99c04"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "047af53884a7da69e9f339b4601a9224725bbdffcb94bbd51da86d17597a6e15"
+    },
+    "worktree_status_sha256": "42cb935f718e25983398e9221fa1ccf154560fb12aba0c1a6d2a5d230314ed71"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "effective configuration mismatch in A1: {'batch': False, 'bounded_concurrency': 7, 'choose_base': False, 'history': False, 'history_base': False, 'joint_plan': False, 'kernel': 'packet-owner2', 'lazy_refill': False, 'macro': False, 'mode': 'indexed', 'packet_splits': 1, 'partial_groups': 8, 'partial_stores': False, 'plain_sums': False, 'polar_query_variant': 'scan512', 'profile': False, 'register_sums': False, 'reuse_word': False, 'simd_entropy_fast_path': False, 'streams_per_lane': 2, 'trusted_table': False}",
+      "type": "RuntimeError"
+    },
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {
+      "all_released": true,
+      "event": "ans_resident_loop_end",
+      "metal_after_release_bytes": 5701632,
+      "metal_before_release_bytes": 11883921408,
+      "resident_count": 7,
+      "sequence": 2
+    },
+    "timing_boundary": "Unprofiled indexed detector update including planning, submission, wait, and readback; resident load and pipeline validation excluded."
+  },
+  "experiment_id": "20260913-apple-m5-ans-scan512-trusted-table",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-scan512-trusted-table/results/raw.jsonl",
+      "result": "All benchmark stdout JSON-line records, including ready, A/B/A responses, and release.",
+      "retention": "durable",
+      "sha256": "8c098ec8b406d77caa8c8eec2a963ddb2b9e0868c343d42414128af2dde8cccc",
+      "size_bytes": 10660
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-scan512-trusted-table/results/ready.json",
+      "result": "Seven-source identities, shape, allocation, and scan512 pipeline preparation evidence.",
+      "retention": "durable",
+      "sha256": "2d5a020357ad1c8de1196e14ef2d350df1d4a5fed87f24af763cb2b334bc7c63",
+      "size_bytes": 2249
+    },
+    {
+      "artifact_id": "summary",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-scan512-trusted-table/results/summary.json",
+      "result": "Exact arm samples, per-cycle hash checks, allocation, and all-seven wall summaries.",
+      "retention": "durable",
+      "sha256": "516ab829943abd5b0cc2995fe538f197cffd0d19c3750df85a06666993b428e7",
+      "size_bytes": 24
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-scan512-trusted-table/results/stderr.log",
+      "result": "Benchmark process diagnostics.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-scan512-trusted-table/results/failure.json",
+      "result": "Structured failure and release-cleanup evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "9facd55c9d7d88986618f6ebc211a770a3596cb855a2c4c798a8e7f0fa507765",
+      "size_bytes": 821
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": true,
+    "allocation_bytes_by_arm": {},
+    "arm_samples": [],
+    "arms": [
+      {
+        "label": "A1",
+        "trusted_table": false
+      },
+      {
+        "label": "B",
+        "trusted_table": true
+      },
+      {
+        "label": "A2",
+        "trusted_table": false
+      }
+    ],
+    "failure_status": "failed",
+    "latency_summary": {},
+    "logical_dtype": "uint16",
+    "masks": [
+      "adf-center-8",
+      "adf-center-20"
+    ],
+    "measured_cycles_per_arm": 20,
+    "metal_ceiling_bytes": 11883921408,
+    "polar_query_variant": "scan512",
+    "ready_metal_current_allocated_bytes": 11883921408,
+    "resident_bytes_by_source": [
+      1563785764,
+      1572895024,
+      1691873232,
+      1731162264,
+      1819121980,
+      1709002796,
+      1789972988
+    ],
+    "resident_ceiling_bytes": 11877814048,
+    "series_resident_bytes": 11877814048,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_count": 7,
+    "source_identity_sha256": [
+      "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    ],
+    "warmup_cycles_per_arm": 1,
+    "warmup_samples": []
+  },
+  "question": "Does the validated-table fast path improve the exact indexed seven-source large-ADF update when combined with the best scan512 polar query while preserving the existing resident-memory ceiling?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T09:25:44Z",
+    "started": "2026-09-13T09:25:15Z"
+  }
+}

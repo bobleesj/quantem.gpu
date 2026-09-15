@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-fourway-checkpoint-prototype",
+  "status": "planned",
+  "question": "Can exact 64-pair restart checkpoints support an opt-in selected-stream vector decode diagnostic without changing the default route?",
+  "paper": "Paired runtime tANS reverse-reader checkpointing proof",
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "e93c1961b918beb310226a532672e5bc9d8367f85433ccf2f5af09af20608237",
+    "fingerprint_policy": "diff_sha256 is the earlier CPU/MSL-only prototype snapshot and predates this SPI bridge; refresh the source fingerprint against the exact root-controlled candidate before runtime compilation or dispatch. No GPU command was run in this phase."
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "segment_pairs": 64,
+    "segment_count": 4,
+    "checkpoint_count": 3,
+    "checkpoint_bytes": 3,
+    "checkpoint_fields": "10-bit tANS state and 14-bit unread meaningful bit position",
+    "supported_modes": "64..95 only; fallback modes retain the production route",
+    "execution_scope": "one selected packet-0 stream from source 0 in the full seven-source resident; exact comparison against 512 original indexed-HDF5 counts; no default-path changes",
+    "selected_stream_limit": 4096,
+    "output": "exact UInt16 values in selected-stream order; every returned count must equal the original-HDF5 count",
+    "fallback_policy": "try at most eight residual packet-0 candidates; skip only explicitly reported fallback/unsupported modes; fail on any capture, segment, or parity error",
+    "timing_stages": "whole diagnostic call, runtime compile, mode inspection, separate checkpoint capture pass, and four-way segment decode; original-HDF5 parity timing excluded",
+    "performance_acceptance": "none; this only tests exact decode correctness for one stream and includes an extra serial capture pass",
+    "memory_acceptance": "remain below the existing seven-resident allocation ceiling; report explicit diagnostic buffers and before/after Metal allocation"
+  },
+  "execution": {
+    "backend": "Metal runtime MSL on apple-m5-24gb",
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "timing_boundary": "full seven-source resident load; one selected stream; diagnostic includes MSL compilation, mode inspection, serial checkpoint capture, and parallel four-way decode; original indexed-HDF5 parity reads excluded"
+  },
+  "outputs": [],
+  "timestamps": {
+    "started": "2026-09-13T15:17:17Z"
+  }
+}

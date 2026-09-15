@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-native-ans-live-statistics",
+  "status": "succeeded",
+  "question": "Does deferring image-statistics reduction during live detector motion restore 120 Hz single-acquisition BF/ABF/ADF interaction without changing exact resident data?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260912-apple-m5-native-ans-live-statistics/manifest.json"
+  },
+  "code": {
+    "app_repository": "Live4DSTEM",
+    "app_revision": "f6dd65975346399b0efb7ab33be77929cefb7e56",
+    "backend_repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "backend_revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "c55ee5d004a14932680f058c78473da24cea16953851b8f58f2ece91e9963936",
+    "entrypoint": "SessionController live detector publication plus paired-runtime ANS resident interaction group",
+    "snapshot_path": "local-evidence://live4dstem-20260912/apple-m5-native-ans-live-statistics"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19",
+      "shape_per_acquisition": [512, 512, 192, 192],
+      "dtype": "uint16",
+      "acquisitions": 7
+    }
+  ],
+  "parameters": {
+    "resident_representation": "quantem.gpu.native-paired-runtime-tans/v1",
+    "resident_mode": "compact-ans",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "statistics_during_live_motion": false,
+    "statistics_on_release": true,
+    "environment_tuning": null
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "gpu_model": "Apple M5",
+    "operating_system": "macOS 26.6.2",
+    "display_refresh_hz": 120
+  },
+  "measurements": {
+    "single_view_gate": {
+      "minimum_presented_fps": 110,
+      "large_abf_center_presented_fps": 119.2,
+      "large_abf_resize_presented_fps": 119.0,
+      "large_adf_center_presented_fps": 118.0,
+      "large_adf_resize_presented_fps": 119.0,
+      "all_p95_presentation_interval_ms": 8.33,
+      "selected_diffraction_presented_fps": 119.7,
+      "status": "passed"
+    },
+    "single_view_gpu_stage_median_ms": {
+      "large_abf_center": 3.78,
+      "large_abf_resize": 2.22,
+      "large_adf_center": 4.07,
+      "large_adf_resize": 2.77
+    },
+    "seven_way_comparison": {
+      "resident_physical_gb": 9.27,
+      "resident_allocated_gb": 9.35,
+      "large_abf_center_presented_fps": 6.3,
+      "large_abf_resize_presented_fps": 27.6,
+      "large_adf_center_presented_fps": 6.4,
+      "large_adf_resize_presented_fps": 15.3,
+      "status": "not_120_hz"
+    },
+    "native_journey": {
+      "full_scan": true,
+      "comparison_tiles": 7,
+      "return_visits_seconds": "0.06-0.13",
+      "problems": [],
+      "console_errors": 0,
+      "exact_hashes_stable": true
+    }
+  },
+  "interpretation": {
+    "result": "Live image-statistics recomputation was the avoidable foreground bottleneck for a single resident. Deferring it until detector release restores the 120 Hz presentation budget while preserving the previous validated percentile window during motion.",
+    "limitation": "Seven independent paired-ANS detector reductions still saturate the Apple GPU for broad masks; this experiment does not claim 120 Hz seven-tile comparison.",
+    "exactness": "No source counts, detector masks, scan positions, binning, cropping, or clipping were changed."
+  },
+  "outputs": [
+    {
+      "artifact_id": "single-view-presentation-gate",
+      "path": "local-evidence://drive-seven-compact-ans-single-120-20260912-b/drive.json",
+      "sha256": "1c04101cc310fe82ad723baa4893f6e942f10587fb297c7c2cfdddd85ea8271b",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Single-view BF/ABF/ADF and selected-DP gate passed."
+    },
+    {
+      "artifact_id": "single-view-diagnostics",
+      "path": "local-evidence://drive-seven-compact-ans-single-diag-20260912/drive.json",
+      "sha256": "cacf1800ca55d95430c7e168ddf5003840e1fe97b99c7f4df2d42c8269eb9e0e",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Metal GPU stage timings and exact native journey passed."
+    },
+    {
+      "artifact_id": "seven-way-comparison-diagnostics",
+      "path": "local-evidence://profile-seven-compact-ans-stats-skip-20260912/summary.json",
+      "sha256": "641c50d463b17a93c5beff10e657098ce4a0639be28adbef56496e0eddc48f00",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Seven-way comparison remains exact and complete but is GPU-bound for broad detector masks."
+    }
+  ],
+  "timestamps": {
+    "finished": "2026-09-12T20:52:36Z"
+  }
+}

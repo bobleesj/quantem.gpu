@@ -1,0 +1,186 @@
+{
+  "code": {
+    "diff_sha256": "db276c2f9139e3c605b6b84f8ddf31856f8f662f52456abbaaceb088efef4c2a",
+    "dirty": true,
+    "fingerprint_policy": "The runner refreshes this working-tree snapshot and hashes the tested binary plus benchmark, resident, kernel API, shader, and runner sources before launch.",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "29add77b6ee514b5fe93e693815fb19ecf9b262b08d829d24118385dbbc65a96",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "35a023f120f55b77fa7909846221651b136331e168c39ce1e413ce78a12e359e"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0cb11d2a256e479dc1f0250d2ac57bcac2582ba41b7d9c3b44ca2159c84470ab"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "b493b4831a5349caecaeb5d780dd03c572d4610c11af21df1443079f83c6abbd"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "3a8fd745aaf23775f2b677e0fa4ed6903097dd4078ad7522e09b83d8899b8052"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "ce947ce2280b51953c41bac2d2efb4136eb8047bd99d0c77cad27a07912e78b1"
+    },
+    "worktree_status_sha256": "ff58f95a54c431854b2248eebc5969ba365e531ab624080dff79a3c3f39bc9b7"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "each center-20 update must follow center-8 in A1",
+      "type": "RuntimeError"
+    },
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {
+      "all_released": true,
+      "event": "ans_resident_loop_end",
+      "metal_after_release_bytes": 5701632,
+      "metal_before_release_bytes": 11883921408,
+      "resident_count": 7,
+      "sequence": 2
+    },
+    "timing_boundary": "Unprofiled indexed detector update for each mask, including planning, preparation, submission, wait, and readback; source load and UI excluded."
+  },
+  "experiment_id": "20260913-apple-m5-ans-polar-scan512-warmup",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-polar-scan512-warmup/results/raw.jsonl",
+      "result": "All benchmark stdout JSON-line records, including ready, A/B/A responses, and release.",
+      "retention": "durable",
+      "sha256": "29153ca9b746dc08539d8892d8e34d372e72bd1598d786a1ae9e7b4980a7cc4e",
+      "size_bytes": 10541
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-polar-scan512-warmup/results/ready.json",
+      "result": "Seven-source identities, shape, allocation, and scan512 pipeline preparation evidence.",
+      "retention": "durable",
+      "sha256": "047f0d2bb2a3c815578108ee6e7f001e51ad273ccfd94456335962f840f8cb89",
+      "size_bytes": 2072
+    },
+    {
+      "artifact_id": "summary",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-polar-scan512-warmup/results/summary.json",
+      "result": "Exact arm samples, per-cycle hash checks, allocation, and all-seven wall summaries.",
+      "retention": "durable",
+      "sha256": "516ab829943abd5b0cc2995fe538f197cffd0d19c3750df85a06666993b428e7",
+      "size_bytes": 24
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-polar-scan512-warmup/results/stderr.log",
+      "result": "Benchmark process diagnostics.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-polar-scan512-warmup/results/failure.json",
+      "result": "Structured failure and release-cleanup evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "350a522b0bf1cd28296b75c467845aa3d6fe215fbb5c469ebf247feda94918cc",
+      "size_bytes": 355
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": true,
+    "allocation_bytes_by_arm": {},
+    "arm_samples": [],
+    "arm_sequence": [
+      {
+        "arm": "A1",
+        "polar_query_variant": "packet-groups"
+      },
+      {
+        "arm": "B",
+        "polar_query_variant": "scan512"
+      },
+      {
+        "arm": "A2",
+        "polar_query_variant": "packet-groups"
+      }
+    ],
+    "batch": false,
+    "binning": 1,
+    "bounded_concurrency": 7,
+    "crop": null,
+    "dtype": "uint16",
+    "failure_status": "failed",
+    "kernel": "packet-owner2",
+    "latency_summary": null,
+    "mask_names": [
+      "adf-center-8",
+      "adf-center-20"
+    ],
+    "measured_cycles_per_arm": 20,
+    "mode": "indexed",
+    "packet_splits": 1,
+    "per_cycle_hashes_match_across_arms": null,
+    "previous": "adf-center-8",
+    "profile": false,
+    "ready_metal_current_allocated_bytes": 11883921408,
+    "resident_bytes_by_source": [
+      1563785764,
+      1572895024,
+      1691873232,
+      1731162264,
+      1819121980,
+      1709002796,
+      1789972988
+    ],
+    "resident_bytes_unchanged": null,
+    "series_resident_bytes": 11877814048,
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "source_identities_unchanged": null,
+    "source_identity_sha256": [
+      "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    ],
+    "sources": 7,
+    "streams_per_lane": 2,
+    "target": "adf-center-20",
+    "warmup_cycles_per_arm": 1,
+    "warmup_samples": []
+  },
+  "question": "Does scan512 reproduce the initial 13.6% all-seven center-20 ADF p50 reduction after matched per-arm warmup, with exact maps and unchanged seven-resident memory?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T08:32:23Z",
+    "started": "2026-09-13T08:31:58Z"
+  }
+}

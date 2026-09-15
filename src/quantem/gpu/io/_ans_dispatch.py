@@ -157,3 +157,24 @@ def _load_ans(source, *, backend, representation, expected_sha256, device):
             if owner is not None:
                 _release_owned_storage(owner, failure=error)
             raise
+
+
+def _load_ans_series(paths, *, backend, representation, device):
+    """Load compatible ANS acquisitions independently without dense stacking."""
+    loaded = []
+    try:
+        for path in paths:
+            loaded.append(
+                _load_ans(
+                    path,
+                    backend=backend,
+                    representation=representation,
+                    expected_sha256=None,
+                    device=device,
+                )
+            )
+        return loaded
+    except BaseException:
+        for result in loaded:
+            result.close()
+        raise

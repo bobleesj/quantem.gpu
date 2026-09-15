@@ -1,0 +1,335 @@
+{
+  "detector_shape" : [
+    192,
+    192
+  ],
+  "leaf_pixels" : 16,
+  "schema" : "quantem-gpu-ans-layout-census\/v1",
+  "transitions" : [
+    {
+      "changed_pixels" : 186,
+      "estimated_cost" : 567,
+      "exact_reconstruction" : true,
+      "fields" : 7,
+      "layout" : "radial1",
+      "residuals" : 140,
+      "transition" : "bf-center-1"
+    },
+    {
+      "changed_pixels" : 1730,
+      "estimated_cost" : 987,
+      "exact_reconstruction" : true,
+      "fields" : 107,
+      "layout" : "radial1",
+      "residuals" : 220,
+      "transition" : "bf-center-8"
+    },
+    {
+      "changed_pixels" : 2542,
+      "estimated_cost" : 2091,
+      "exact_reconstruction" : true,
+      "fields" : 147,
+      "layout" : "radial1",
+      "residuals" : 486,
+      "transition" : "bf-center-8-to-20"
+    },
+    {
+      "changed_pixels" : 296,
+      "estimated_cost" : 656,
+      "exact_reconstruction" : true,
+      "fields" : 16,
+      "layout" : "radial1",
+      "residuals" : 160,
+      "transition" : "bf-radius-1"
+    },
+    {
+      "changed_pixels" : 2520,
+      "estimated_cost" : 752,
+      "exact_reconstruction" : true,
+      "fields" : 32,
+      "layout" : "radial1",
+      "residuals" : 180,
+      "transition" : "bf-radius-8"
+    },
+    {
+      "changed_pixels" : 7048,
+      "estimated_cost" : 871,
+      "exact_reconstruction" : true,
+      "fields" : 55,
+      "layout" : "radial1",
+      "residuals" : 204,
+      "transition" : "bf-radius-20"
+    },
+    {
+      "changed_pixels" : 352,
+      "estimated_cost" : 1071,
+      "exact_reconstruction" : true,
+      "fields" : 15,
+      "layout" : "radial1",
+      "residuals" : 264,
+      "transition" : "abf-center-1"
+    },
+    {
+      "changed_pixels" : 3308,
+      "estimated_cost" : 2174,
+      "exact_reconstruction" : true,
+      "fields" : 190,
+      "layout" : "radial1",
+      "residuals" : 496,
+      "transition" : "abf-center-8"
+    },
+    {
+      "changed_pixels" : 4860,
+      "estimated_cost" : 4373,
+      "exact_reconstruction" : true,
+      "fields" : 285,
+      "layout" : "radial1",
+      "residuals" : 1022,
+      "transition" : "abf-center-8-to-20"
+    },
+    {
+      "changed_pixels" : 420,
+      "estimated_cost" : 904,
+      "exact_reconstruction" : true,
+      "fields" : 24,
+      "layout" : "radial1",
+      "residuals" : 220,
+      "transition" : "abf-radius-1"
+    },
+    {
+      "changed_pixels" : 3388,
+      "estimated_cost" : 969,
+      "exact_reconstruction" : true,
+      "fields" : 49,
+      "layout" : "radial1",
+      "residuals" : 230,
+      "transition" : "abf-radius-8"
+    },
+    {
+      "changed_pixels" : 9280,
+      "estimated_cost" : 1091,
+      "exact_reconstruction" : true,
+      "fields" : 75,
+      "layout" : "radial1",
+      "residuals" : 254,
+      "transition" : "abf-radius-20"
+    },
+    {
+      "changed_pixels" : 568,
+      "estimated_cost" : 1696,
+      "exact_reconstruction" : true,
+      "fields" : 24,
+      "layout" : "radial1",
+      "residuals" : 418,
+      "transition" : "adf-center-1"
+    },
+    {
+      "changed_pixels" : 4937,
+      "estimated_cost" : 2834,
+      "exact_reconstruction" : true,
+      "fields" : 254,
+      "layout" : "radial1",
+      "residuals" : 645,
+      "transition" : "adf-center-8"
+    },
+    {
+      "changed_pixels" : 6271,
+      "estimated_cost" : 4639,
+      "exact_reconstruction" : true,
+      "fields" : 371,
+      "layout" : "radial1",
+      "residuals" : 1067,
+      "transition" : "adf-center-8-to-20"
+    },
+    {
+      "changed_pixels" : 616,
+      "estimated_cost" : 1375,
+      "exact_reconstruction" : true,
+      "fields" : 31,
+      "layout" : "radial1",
+      "residuals" : 336,
+      "transition" : "adf-radius-1"
+    },
+    {
+      "changed_pixels" : 3854,
+      "estimated_cost" : 1070,
+      "exact_reconstruction" : true,
+      "fields" : 54,
+      "layout" : "radial1",
+      "residuals" : 254,
+      "transition" : "adf-radius-8"
+    },
+    {
+      "changed_pixels" : 7098,
+      "estimated_cost" : 906,
+      "exact_reconstruction" : true,
+      "fields" : 58,
+      "layout" : "radial1",
+      "residuals" : 212,
+      "transition" : "adf-radius-20"
+    },
+    {
+      "changed_pixels" : 186,
+      "estimated_cost" : 441,
+      "exact_reconstruction" : true,
+      "fields" : 9,
+      "layout" : "radialhalf",
+      "residuals" : 108,
+      "transition" : "bf-center-1"
+    },
+    {
+      "changed_pixels" : 1730,
+      "estimated_cost" : 1520,
+      "exact_reconstruction" : true,
+      "fields" : 112,
+      "layout" : "radialhalf",
+      "residuals" : 352,
+      "transition" : "bf-center-8"
+    },
+    {
+      "changed_pixels" : 2542,
+      "estimated_cost" : 3625,
+      "exact_reconstruction" : true,
+      "fields" : 137,
+      "layout" : "radialhalf",
+      "residuals" : 872,
+      "transition" : "bf-center-8-to-20"
+    },
+    {
+      "changed_pixels" : 296,
+      "estimated_cost" : 399,
+      "exact_reconstruction" : true,
+      "fields" : 15,
+      "layout" : "radialhalf",
+      "residuals" : 96,
+      "transition" : "bf-radius-1"
+    },
+    {
+      "changed_pixels" : 2520,
+      "estimated_cost" : 465,
+      "exact_reconstruction" : true,
+      "fields" : 25,
+      "layout" : "radialhalf",
+      "residuals" : 110,
+      "transition" : "bf-radius-8"
+    },
+    {
+      "changed_pixels" : 7048,
+      "estimated_cost" : 534,
+      "exact_reconstruction" : true,
+      "fields" : 46,
+      "layout" : "radialhalf",
+      "residuals" : 122,
+      "transition" : "bf-radius-20"
+    },
+    {
+      "changed_pixels" : 352,
+      "estimated_cost" : 753,
+      "exact_reconstruction" : true,
+      "fields" : 17,
+      "layout" : "radialhalf",
+      "residuals" : 184,
+      "transition" : "abf-center-1"
+    },
+    {
+      "changed_pixels" : 3308,
+      "estimated_cost" : 3127,
+      "exact_reconstruction" : true,
+      "fields" : 199,
+      "layout" : "radialhalf",
+      "residuals" : 732,
+      "transition" : "abf-center-8"
+    },
+    {
+      "changed_pixels" : 4860,
+      "estimated_cost" : 7072,
+      "exact_reconstruction" : true,
+      "fields" : 264,
+      "layout" : "radialhalf",
+      "residuals" : 1702,
+      "transition" : "abf-center-8-to-20"
+    },
+    {
+      "changed_pixels" : 420,
+      "estimated_cost" : 496,
+      "exact_reconstruction" : true,
+      "fields" : 24,
+      "layout" : "radialhalf",
+      "residuals" : 118,
+      "transition" : "abf-radius-1"
+    },
+    {
+      "changed_pixels" : 3388,
+      "estimated_cost" : 531,
+      "exact_reconstruction" : true,
+      "fields" : 43,
+      "layout" : "radialhalf",
+      "residuals" : 122,
+      "transition" : "abf-radius-8"
+    },
+    {
+      "changed_pixels" : 9280,
+      "estimated_cost" : 614,
+      "exact_reconstruction" : true,
+      "fields" : 70,
+      "layout" : "radialhalf",
+      "residuals" : 136,
+      "transition" : "abf-radius-20"
+    },
+    {
+      "changed_pixels" : 568,
+      "estimated_cost" : 1048,
+      "exact_reconstruction" : true,
+      "fields" : 32,
+      "layout" : "radialhalf",
+      "residuals" : 254,
+      "transition" : "adf-center-1"
+    },
+    {
+      "changed_pixels" : 4937,
+      "estimated_cost" : 3479,
+      "exact_reconstruction" : true,
+      "fields" : 291,
+      "layout" : "radialhalf",
+      "residuals" : 797,
+      "transition" : "adf-center-8"
+    },
+    {
+      "changed_pixels" : 6271,
+      "estimated_cost" : 7785,
+      "exact_reconstruction" : true,
+      "fields" : 357,
+      "layout" : "radialhalf",
+      "residuals" : 1857,
+      "transition" : "adf-center-8-to-20"
+    },
+    {
+      "changed_pixels" : 616,
+      "estimated_cost" : 680,
+      "exact_reconstruction" : true,
+      "fields" : 32,
+      "layout" : "radialhalf",
+      "residuals" : 162,
+      "transition" : "adf-radius-1"
+    },
+    {
+      "changed_pixels" : 3854,
+      "estimated_cost" : 613,
+      "exact_reconstruction" : true,
+      "fields" : 45,
+      "layout" : "radialhalf",
+      "residuals" : 142,
+      "transition" : "adf-radius-8"
+    },
+    {
+      "changed_pixels" : 7098,
+      "estimated_cost" : 548,
+      "exact_reconstruction" : true,
+      "fields" : 52,
+      "layout" : "radialhalf",
+      "residuals" : 124,
+      "transition" : "adf-radius-20"
+    }
+  ],
+  "validity" : "all-valid geometry-only; real-source masks are not represented"
+}

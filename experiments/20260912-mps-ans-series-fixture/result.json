@@ -1,0 +1,26 @@
+{
+  "experiment_id": "20260912-mps-ans-series-fixture",
+  "host": "Apple M5 24 GB",
+  "scope": "MPS exact count-rANS queries over seven independently resident sources",
+  "fixture": {
+    "source": "tests/parity/ans_counts_fixture.py",
+    "shape": [3, 5, 2, 3],
+    "dtype": "uint16",
+    "acquisitions": 7,
+    "note": "Synthetic conformance fixture only; not a real seven-tilt archive or a 120 Hz qualification."
+  },
+  "measurements": {
+    "frame_ms_p50": 1.426687500497792,
+    "frame_ms_p95": 4.026879349839873,
+    "three_mask_ms_p50": 3.9848750002420275,
+    "three_mask_ms_p95": 6.934903950605076,
+    "frame_hz_from_p50": 700.9243437340591,
+    "samples": 30,
+    "method": "physical MPS; synchronous detector.prepare(...).frame and masked_sums_exact"
+  },
+  "parity": {
+    "exact": true,
+    "output_dtype": "uint64 for detector products; uint16 for point patterns"
+  },
+  "qualification": "API and synthetic-fixture timing evidence only; real seven-tilt ANS throughput and sustained 120 Hz remain unqualified"
+}

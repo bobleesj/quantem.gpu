@@ -1,0 +1,22 @@
+{
+  "schema_version":1,
+  "experiment_id":"20260912-apple-m5-ans-word-reuse",
+  "status":"refuted",
+  "question":"Does reusing the overlapping reverse-reader word reduce exact seven-source ANS detector latency without additional resident memory?",
+  "paper":{"repository":"quantem.gpu","authoritative_host":"apple-m5-24gb"},
+  "code":{"revision":"cc3177d745f49a1811ce8cf80703b933302fad14","dirty":true,"diff_sha256":"090bb50cf478f143383f3c4a536d46f8b9d7a7d967440728f110a21faf8f1470"},
+  "inputs":[{"dataset_id":"tilt-series-seven-native-v1","path":"private-fixture://tilt-series-seven-native-v1","sha256":"ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19","shape_per_acquisition":[512,512,192,192],"dtype":"uint16","acquisitions":7}],
+  "parameters":{"representation":"paired-runtime-tans","scan_bin":1,"detector_bin":1,"crop":null,"precomputed_adf_atlas":false,"function_constant":10,"default":false},
+  "execution":{"host":"apple-m5-24gb","backend":"metal","timing_boundary":"all-seven synchronized update excluding IO, parity and UI"},
+  "outputs":[
+    {"artifact_id":"samples","path":"experiments/20260912-apple-m5-ans-word-reuse/resident-loop.jsonl","sha256":"5c9706e9cfbb3bbe7b51020a6ff0cd5e939b6d0fe45d89fc383b269300993a6c","size_bytes":1593300,"retention":"durable","result":"Six arms; 4200 exact full-map hashes","consuming_figures":[]},
+    {"artifact_id":"summary","path":"experiments/20260912-apple-m5-ans-word-reuse/summary.jsonl","sha256":"f3736411405160b0c80c58542cf34c03237cbc62b4df286eb7125c4b28f9ae92","size_bytes":5456,"retention":"durable","result":"No repeatable ADF improvement","consuming_figures":[]},
+    {"artifact_id":"adversarial","path":"experiments/20260912-apple-m5-ans-word-reuse/adversarial.log","sha256":"f14014ba23b4d66405b44bf2d4c94be72e4f1ba35b618d48e3829f7a6eac4d5d","size_bytes":1305,"retention":"durable","result":"Mixed uint16 and malformed streams passed","consuming_figures":[]}
+  ],
+  "tested_binary_sha256":"dd5532ce90303a1a0d5fc65123a167785124b24353a886808183208ae487e39a",
+  "tested_shader_sha256":"afa83d7d7aef5c87562f3956c772e016e9dc933f6145b482ed47df778d9b3037",
+  "tested_resident_source_sha256":"3139cc3eaffabfd881db23232ba352fef066f16c3db08861bc68c1616219392c",
+  "timestamps":{"started":"2026-09-13T01:05:34Z","finished":"2026-09-13T01:08:21Z"},
+  "result":{"arms":6,"seven_source_updates":600,"exact_full_maps":4200,"default_promoted":false,"native_ui_tested":false,"resident_bytes":11877814048},
+  "limitations":["No measured cache counters or theoretical floor.","Source diff hash excludes untracked prototype files; tested binary and explicit shader/resident hashes identify this run.","UI deferred by request; compute time is not displayed FPS."]
+}

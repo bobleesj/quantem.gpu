@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-stage-profile-normal",
+  "status": "completed",
+  "question": "With the timestamp profiler enabled before resident construction, can the normal indexed seven-source update provide valid per-encoder stage timings?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-24gb"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "2489fbdb9db9bae0695c992fed14df2043db180fb1b3510a0ef22d96e849a600"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512,
+      192,
+      192
+    ],
+    "dtype": "uint16",
+    "sources": 7,
+    "previous": "adf-center-8",
+    "target": "adf-center-20",
+    "crop": null,
+    "binning": 1,
+    "resident_default_changed": false,
+    "cache_path_is_metadata_only": true,
+    "profile_environment_set_before_resident_creation": true,
+    "profiled_repeats_per_arm": 20,
+    "unprofiled_repeats_per_arm": 20,
+    "exact_parity": "full detector arrays against the frozen A1 maps",
+    "promotion": "diagnostic only; no production defaults changed",
+    "stage_profile_valid_target_source_updates": 420,
+    "stage_profile_invalid_target_source_updates": 0,
+    "unprofiled_all_seven_wall_median_ms": {
+      "A1_unbatched": 71.0100531578064,
+      "B_batched": 76.835036277771,
+      "A2_unbatched": 70.7554817199707
+    },
+    "profiled_all_seven_interval_union_median_ms": {
+      "A1_polar": 40.58,
+      "A1_residual": 50.74,
+      "A1_combined": 68.40,
+      "B_polar": 32.02,
+      "B_residual": 48.18,
+      "B_combined": 68.79,
+      "A2_polar": 35.37,
+      "A2_residual": 49.79,
+      "A2_combined": 67.01
+    },
+    "batch_sequence": [
+      {
+        "arm": "A1",
+        "batch": false
+      },
+      {
+        "arm": "B",
+        "batch": true
+      },
+      {
+        "arm": "A2",
+        "batch": false
+      }
+    ],
+    "measured_source_transitions": 840
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "timing_boundary": "normal indexed detector update including planning, preparation, submission, wait, and readback; source load and UI excluded",
+    "harness": "experiments/20260913-apple-m5-ans-indexed-batch-profile/run.py"
+  },
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "path": "experiments/20260913-apple-m5-ans-stage-profile-normal/results/raw.jsonl",
+      "sha256": "c9659c7107c0998fa4c31543590f420acb7843fe56d3cbdb63d12a0c64078b6f",
+      "size_bytes": 1973121,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw benchmark JSON-lines responses for all resident updates"
+    },
+    {
+      "artifact_id": "trials",
+      "path": "experiments/20260913-apple-m5-ans-stage-profile-normal/results/trials.jsonl",
+      "sha256": "123248ccfdd2eeba106194f8e003ce7287dcc3d8b3aba1d7d5021952819de341",
+      "size_bytes": 929838,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Profiled and unprofiled exact A/B/A transition records"
+    },
+    {
+      "artifact_id": "ready",
+      "path": "experiments/20260913-apple-m5-ans-stage-profile-normal/results/ready.json",
+      "sha256": "63cf3a99ba63d8edae84c9c7ab43ea24d8b0eb986715dbd148c75c7e111fae35",
+      "size_bytes": 1668,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Seven distinct full uint16 residents and allocation"
+    },
+    {
+      "artifact_id": "summaries",
+      "path": "experiments/20260913-apple-m5-ans-stage-profile-normal/results/summaries.json",
+      "sha256": "1f4846636af6fd05bd6096ea356b3b27f2777291ff894fb96d0c431fa596c293",
+      "size_bytes": 1243035,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Validated per-setting timing, parity, and profile samples"
+    },
+    {
+      "artifact_id": "stderr",
+      "path": "experiments/20260913-apple-m5-ans-stage-profile-normal/results/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Benchmark process diagnostics"
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-13T07:17:14Z",
+    "finished": "2026-09-13T07:18:08Z"
+  },
+  "tested_binary_sha256": "1c39a58db85f58e894a3019d5f6f1cdef3a6300f4634d4b91ffcd6ccadaab7ef",
+  "tested_benchmark_source_sha256": "97b996be3fa2fca77f95d52f978f6e949ea2556fb1755bca9b454f110e16db77",
+  "tested_resident_source_sha256": "ddff4d4b797f4db385dad2f6040dd8b77a1319a7a84730a7e5676aa3f92c9263",
+  "tested_shader_sha256": "25df86f1e34825a9a5e72b851f6ab581672143bbec7d845f308f4405f048f1f8"
+}

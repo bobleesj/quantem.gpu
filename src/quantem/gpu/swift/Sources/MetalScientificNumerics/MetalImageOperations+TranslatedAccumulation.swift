@@ -1,7 +1,6 @@
 import Foundation
 import Metal
 import Metal4DSTEMStreamingIO
-import Native4DSTEMIO
 
 struct TranslatedSamplingPlan {
   let signature: [UInt32]
@@ -12,17 +11,14 @@ struct TranslatedSamplingPlan {
 }
 
 extension MetalImageOperations {
-  /// Load the original files through the existing native indexed HDF5 reader.
-  public func loadEncoded(files: [URL], indexDirectory: URL) throws -> [MetalEncodedSource] {
-    let catalog = Native4DSTEMCatalogBuilder(cacheDirectory: indexDirectory)
-    return try files.map { file in
-      let prepared = try catalog.prepare(input: file)
-      guard prepared.datasets.count == 1 else {
-        throw Self.invalid("Each file must identify one 4D acquisition.")
-      }
-      return try MetalEncodedSource.load(
-        source: Native4DSTEMIndexedSource.open(dataset: prepared.datasets[0]), device: device)
-    }
+  /// Compatibility entry point for existing native workflow benchmarks.
+  /// New callers should use `MetalEncodedSource.load(files:indexDirectory:device:)`.
+  @available(*, deprecated, message: "Use MetalEncodedSource.load(files:indexDirectory:device:shouldCancel:progress:).")
+  public func loadEncoded(files: [URL], indexDirectory: URL,
+    shouldCancel: () -> Bool = { false }, progress: (Int, Int) -> Void = { _, _ in }
+  ) throws -> [MetalEncodedSource] {
+    try MetalEncodedSource.load(files: files, indexDirectory: indexDirectory, device: device,
+      shouldCancel: shouldCancel, progress: progress)
   }
   public func interiorWindow(rows: Int, columns: Int) throws -> GPUImage {
     let result = try allocate(rows, columns)

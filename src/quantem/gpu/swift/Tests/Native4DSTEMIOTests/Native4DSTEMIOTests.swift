@@ -7,6 +7,23 @@ import XCTest
 @testable import Native4DSTEMIO
 
 final class Native4DSTEMIOTests: XCTestCase {
+  func testSourceMarkedPixelsUseTheSharedMedianPolicy() {
+    let values: [UInt32] = [
+      1, 2, 3,
+      4, 10_000, 6,
+      7, 8, 9,
+    ]
+    XCTAssertEqual(
+      NativeHotPixelCorrection.median3x3(
+        values: values,
+        detectorRows: 3,
+        detectorColumns: 3,
+        markedPixels: [4]
+      ),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    )
+  }
+
   func testBenchmarkSourcePageControlKeepsRawStateAligned() {
     let unspecified = Native4DSTEMBenchmarkSourcePageControl(
       uncachedSourceReads: false

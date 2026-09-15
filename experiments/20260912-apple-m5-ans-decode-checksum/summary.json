@@ -1,0 +1,88 @@
+{
+  "diagnostic_not_image": true,
+  "commands": 5,
+  "packet_checksums_checked": 71680,
+  "repeated_full_images_checked": 140,
+  "masks": {
+    "bf-base": {
+      "reference_all_seven_wall_ms": {
+        "median": 331.9529891014099,
+        "min": 325.73401927948,
+        "max": 335.237979888916,
+        "samples": 4
+      },
+      "all_seven_wall_ms": {
+        "median": 299.96049404144287,
+        "min": 289.8750305175781,
+        "max": 304.49604988098145,
+        "samples": 4
+      },
+      "repeated_reference_all_seven_wall_ms": {
+        "median": 332.2294354438782,
+        "min": 325.37102699279785,
+        "max": 341.05396270751953,
+        "samples": 4
+      }
+    },
+    "bf-center-1-delta": {
+      "reference_all_seven_wall_ms": {
+        "median": 9.91600751876831,
+        "min": 8.900046348571777,
+        "max": 12.549996376037598,
+        "samples": 4
+      },
+      "all_seven_wall_ms": {
+        "median": 7.615447044372559,
+        "min": 6.404995918273926,
+        "max": 8.864045143127441,
+        "samples": 4
+      },
+      "repeated_reference_all_seven_wall_ms": {
+        "median": 9.201526641845703,
+        "min": 8.372068405151367,
+        "max": 10.061025619506836,
+        "samples": 4
+      }
+    },
+    "adf-base": {
+      "reference_all_seven_wall_ms": {
+        "median": 831.1899304389954,
+        "min": 819.6929693222046,
+        "max": 851.1960506439209,
+        "samples": 4
+      },
+      "all_seven_wall_ms": {
+        "median": 728.4539937973022,
+        "min": 715.3909206390381,
+        "max": 739.1740083694458,
+        "samples": 4
+      },
+      "repeated_reference_all_seven_wall_ms": {
+        "median": 814.6644830703735,
+        "min": 808.6789846420288,
+        "max": 815.9899711608887,
+        "samples": 4
+      }
+    },
+    "adf-center-1-delta": {
+      "reference_all_seven_wall_ms": {
+        "median": 25.007009506225586,
+        "min": 23.69105815887451,
+        "max": 25.385022163391113,
+        "samples": 4
+      },
+      "all_seven_wall_ms": {
+        "median": 21.87502384185791,
+        "min": 16.978025436401367,
+        "max": 22.467970848083496,
+        "samples": 4
+      },
+      "repeated_reference_all_seven_wall_ms": {
+        "median": 22.98903465270996,
+        "min": 20.08497714996338,
+        "max": 27.41396427154541,
+        "samples": 4
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ import os
 public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
   case dense
   case packed
+
   case encoded
 }
 
@@ -552,6 +553,161 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       residentReceipt: receipt,
       products: productCapabilities
     )
+  }
+
+  /// Describe an exact original-HDF5 acquisition retained as in-memory runtime ANS.
+  ///
+  /// Runtime ANS currently exposes raw diffraction and binary BF/ABF/ADF
+  /// reductions. Products that require detector moments remain explicit as
+  /// unavailable instead of being falsely advertised to native frontends.
+  @available(macOS 15.0, iOS 18.0, *)
+  public static func runtimeANS(
+    _ source: MetalRuntimeANSResidentSource
+  ) throws -> Self {
+    guard !source.isReleased else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Runtime ANS resident storage was released. Reload it before requesting capabilities.")
+    }
+    let shape = source.shape
+    let dtype = source.logicalDtype.rawValue
+    let logicalBytes = try Metal4DSTEMResidentReceipt.logicalBytes(
+      shape: shape, bytesPerValue: UInt64(source.logicalDtype.bytesPerValue))
+    let excluded = source.detectorValidityMask.indices.filter {
+      source.detectorValidityMask[$0] == 0
+    }
+    let maskSHA256 = Metal4DSTEMResidentReceipt.detectorMaskSHA256(excluded)
+    let storageSchema = "quantem.gpu.native-runtime-column-rans/v1"
+    let receipt = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema,
+      representation: .encoded,
+      sourceIdentitySHA256: source.sourceIdentitySHA256,
+      sourceShape: shape,
+      workingShape: shape,
+      sourceDtype: dtype,
+      workingDtype: dtype,
+      sourceLogicalTensorBytes: logicalBytes,
+      workingLogicalTensorBytes: logicalBytes,
+      physicalResidentBytes: source.loadMetrics.residentBytes,
+      containerBytes: nil,
+      storageSchema: storageSchema,
+      losslessExact: true,
+      scanBin: 1,
+      detectorBin: 1,
+      crop: nil,
+      detectorMaskCount: excluded.count,
+      detectorMaskSHA256: maskSHA256,
+      detectorMaskSchema: maskSHA256 == nil
+        ? nil : "quantem.gpu.detector-mask-identity/opaque-v1",
+      calibrationSchema: nil,
+      calibrationSHA256: nil,
+      provenanceSchema: "quantem.gpu.original-hdf5-runtime-ans/v1",
+      provenanceSHA256: source.sourceIdentitySHA256,
+      sourceRawLogicalSHA256: nil,
+      workingLogicalSHA256: nil,
+      implementationRevision: nil)
+    try receipt.validate()
+    let available: Set<Metal4DSTEMResidentProduct> = [
+      .diffractionPattern, .brightField, .annularBrightField, .annularDarkField,
+    ]
+    let products = Metal4DSTEMResidentProduct.allCases.map { product in
+      capability(
+        product,
+        available.contains(product) ? .residentOnDemand : .unavailable,
+        available.contains(product) ? .exactInteger : .frozenFloat32)
+    }
+    return Self(
+      schema: currentSchema,
+      representation: .encoded,
+      sourceIdentitySHA256: source.sourceIdentitySHA256,
+      scanRows: shape[0],
+      scanColumns: shape[1],
+      detectorRows: shape[2],
+      detectorColumns: shape[3],
+      storageSchema: storageSchema,
+      workingDtype: dtype,
+      exactIntegerBits: source.logicalDtype.bytesPerValue * 8,
+      logicalTensorBytes: logicalBytes,
+      completeSourceResident: true,
+      residentBytes: source.loadMetrics.residentBytes,
+      residentStorageBytes: source.loadMetrics.residentBytes,
+      lossless: true,
+      residentReceipt: receipt,
+      products: products)
+  }
+
+  /// Describe an exact original-HDF5 acquisition retained as paired runtime tANS.
+  public static func pairedRuntimeTANS(
+    _ source: MetalPairedRuntimeTANSResidentSource
+  ) throws -> Self {
+    guard !source.isReleased else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Paired runtime ANS resident storage was released. Reload it before requesting capabilities.")
+    }
+    let shape = source.shape
+    let dtype = source.logicalDtype.rawValue
+    let logicalBytes = try Metal4DSTEMResidentReceipt.logicalBytes(
+      shape: shape, bytesPerValue: UInt64(source.logicalDtype.bytesPerValue))
+    let excluded = source.detectorValidityMask.indices.filter {
+      source.detectorValidityMask[$0] == 0
+    }
+    let maskSHA256 = Metal4DSTEMResidentReceipt.detectorMaskSHA256(excluded)
+    let storageSchema = "quantem.gpu.native-paired-runtime-tans/v1"
+    let receipt = Metal4DSTEMResidentReceipt(
+      schema: Metal4DSTEMResidentReceipt.currentSchema,
+      representation: .encoded,
+      sourceIdentitySHA256: source.sourceIdentitySHA256,
+      sourceShape: shape,
+      workingShape: shape,
+      sourceDtype: dtype,
+      workingDtype: dtype,
+      sourceLogicalTensorBytes: logicalBytes,
+      workingLogicalTensorBytes: logicalBytes,
+      physicalResidentBytes: source.residentBytes,
+      containerBytes: nil,
+      storageSchema: storageSchema,
+      losslessExact: true,
+      scanBin: 1,
+      detectorBin: 1,
+      crop: nil,
+      detectorMaskCount: excluded.count,
+      detectorMaskSHA256: maskSHA256,
+      detectorMaskSchema: maskSHA256 == nil
+        ? nil : "quantem.gpu.detector-mask-identity/opaque-v1",
+      calibrationSchema: nil,
+      calibrationSHA256: nil,
+      provenanceSchema: "quantem.gpu.original-hdf5-paired-runtime-tans/v1",
+      provenanceSHA256: source.sourceIdentitySHA256,
+      sourceRawLogicalSHA256: nil,
+      workingLogicalSHA256: nil,
+      implementationRevision: nil)
+    try receipt.validate()
+    let available: Set<Metal4DSTEMResidentProduct> = [
+      .diffractionPattern, .brightField, .annularBrightField, .annularDarkField,
+    ]
+    let products = Metal4DSTEMResidentProduct.allCases.map { product in
+      capability(
+        product,
+        available.contains(product) ? .residentOnDemand : .unavailable,
+        available.contains(product) ? .exactInteger : .frozenFloat32)
+    }
+    return Self(
+      schema: currentSchema,
+      representation: .encoded,
+      sourceIdentitySHA256: source.sourceIdentitySHA256,
+      scanRows: shape[0],
+      scanColumns: shape[1],
+      detectorRows: shape[2],
+      detectorColumns: shape[3],
+      storageSchema: storageSchema,
+      workingDtype: dtype,
+      exactIntegerBits: source.logicalDtype.bytesPerValue * 8,
+      logicalTensorBytes: logicalBytes,
+      completeSourceResident: true,
+      residentBytes: source.residentBytes,
+      residentStorageBytes: source.residentBytes,
+      lossless: true,
+      residentReceipt: receipt,
+      products: products)
   }
 
   private static func capability(

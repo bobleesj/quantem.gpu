@@ -1,0 +1,504 @@
+{
+  "detector_shape" : [
+    192,
+    192
+  ],
+  "leaf_pixels" : 16,
+  "leaves_per_root" : 16,
+  "schema" : "quantem-gpu-ans-superroot-census\/v1",
+  "summary" : {
+    "added_index_bytes_upper_bound" : {
+      "current_radial1_leaf16_permutation_bytes" : 147456,
+      "extra_selected_superroot_id_and_coefficient_payload_for_seven_sources_group4" : 2016,
+      "extra_selected_superroot_id_and_coefficient_payload_for_seven_sources_group16" : 504,
+      "optional_root_to_superroot_map_replicated_for_seven_sources" : 4032,
+      "persistent_mapping" : "0 bytes when superroot = root \/ groupRoots is computed arithmetically"
+    },
+    "all_54_plans_exact" : true,
+    "scope" : "all-valid geometry only; not actual source validity, image counts, GPU timing, or measured GPU memory",
+    "target_adf_center_8_to_20" : {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 6271,
+        "exact_reconstruction" : true,
+        "fields" : 371,
+        "proxy_cost" : 4639,
+        "residuals" : 1067
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 6271,
+        "exact_reconstruction" : true,
+        "fields" : 371,
+        "proxy_cost" : 4639,
+        "residuals" : 1067
+      },
+      "transition" : "adf-center-8-to-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 6271,
+        "exact_reconstruction" : true,
+        "fields" : 371,
+        "proxy_cost" : 4639,
+        "residuals" : 1067
+      }
+    },
+    "three_level_superroot4_roots" : {
+      "total_fields" : 1705,
+      "total_proxy_cost" : 28937,
+      "total_residuals" : 6808,
+      "worst_proxy_cost" : 4639,
+      "worst_residuals" : 1067
+    },
+    "three_level_superroot16_roots" : {
+      "total_fields" : 1722,
+      "total_proxy_cost" : 28954,
+      "total_residuals" : 6808,
+      "worst_proxy_cost" : 4639,
+      "worst_residuals" : 1067
+    },
+    "two_level_leaf16_radial1" : {
+      "total_fields" : 1794,
+      "total_proxy_cost" : 29026,
+      "total_residuals" : 6808,
+      "worst_proxy_cost" : 4639,
+      "worst_residuals" : 1067
+    }
+  },
+  "superroot_group_sizes_in_roots" : [
+    4,
+    16
+  ],
+  "transitions" : [
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 186,
+        "exact_reconstruction" : true,
+        "fields" : 7,
+        "proxy_cost" : 567,
+        "residuals" : 140
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 186,
+        "exact_reconstruction" : true,
+        "fields" : 7,
+        "proxy_cost" : 567,
+        "residuals" : 140
+      },
+      "transition" : "bf-center-1",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 186,
+        "exact_reconstruction" : true,
+        "fields" : 7,
+        "proxy_cost" : 567,
+        "residuals" : 140
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 1730,
+        "exact_reconstruction" : true,
+        "fields" : 107,
+        "proxy_cost" : 987,
+        "residuals" : 220
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 1730,
+        "exact_reconstruction" : true,
+        "fields" : 107,
+        "proxy_cost" : 987,
+        "residuals" : 220
+      },
+      "transition" : "bf-center-8",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 1730,
+        "exact_reconstruction" : true,
+        "fields" : 107,
+        "proxy_cost" : 987,
+        "residuals" : 220
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 2542,
+        "exact_reconstruction" : true,
+        "fields" : 147,
+        "proxy_cost" : 2091,
+        "residuals" : 486
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 2542,
+        "exact_reconstruction" : true,
+        "fields" : 147,
+        "proxy_cost" : 2091,
+        "residuals" : 486
+      },
+      "transition" : "bf-center-8-to-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 2542,
+        "exact_reconstruction" : true,
+        "fields" : 147,
+        "proxy_cost" : 2091,
+        "residuals" : 486
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 296,
+        "exact_reconstruction" : true,
+        "fields" : 16,
+        "proxy_cost" : 656,
+        "residuals" : 160
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 296,
+        "exact_reconstruction" : true,
+        "fields" : 16,
+        "proxy_cost" : 656,
+        "residuals" : 160
+      },
+      "transition" : "bf-radius-1",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 296,
+        "exact_reconstruction" : true,
+        "fields" : 16,
+        "proxy_cost" : 656,
+        "residuals" : 160
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 2520,
+        "exact_reconstruction" : true,
+        "fields" : 26,
+        "proxy_cost" : 746,
+        "residuals" : 180
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 2520,
+        "exact_reconstruction" : true,
+        "fields" : 32,
+        "proxy_cost" : 752,
+        "residuals" : 180
+      },
+      "transition" : "bf-radius-8",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 2520,
+        "exact_reconstruction" : true,
+        "fields" : 32,
+        "proxy_cost" : 752,
+        "residuals" : 180
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 7048,
+        "exact_reconstruction" : true,
+        "fields" : 37,
+        "proxy_cost" : 853,
+        "residuals" : 204
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 7048,
+        "exact_reconstruction" : true,
+        "fields" : 40,
+        "proxy_cost" : 856,
+        "residuals" : 204
+      },
+      "transition" : "bf-radius-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 7048,
+        "exact_reconstruction" : true,
+        "fields" : 55,
+        "proxy_cost" : 871,
+        "residuals" : 204
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 352,
+        "exact_reconstruction" : true,
+        "fields" : 15,
+        "proxy_cost" : 1071,
+        "residuals" : 264
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 352,
+        "exact_reconstruction" : true,
+        "fields" : 15,
+        "proxy_cost" : 1071,
+        "residuals" : 264
+      },
+      "transition" : "abf-center-1",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 352,
+        "exact_reconstruction" : true,
+        "fields" : 15,
+        "proxy_cost" : 1071,
+        "residuals" : 264
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 3308,
+        "exact_reconstruction" : true,
+        "fields" : 190,
+        "proxy_cost" : 2174,
+        "residuals" : 496
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 3308,
+        "exact_reconstruction" : true,
+        "fields" : 190,
+        "proxy_cost" : 2174,
+        "residuals" : 496
+      },
+      "transition" : "abf-center-8",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 3308,
+        "exact_reconstruction" : true,
+        "fields" : 190,
+        "proxy_cost" : 2174,
+        "residuals" : 496
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 4860,
+        "exact_reconstruction" : true,
+        "fields" : 285,
+        "proxy_cost" : 4373,
+        "residuals" : 1022
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 4860,
+        "exact_reconstruction" : true,
+        "fields" : 285,
+        "proxy_cost" : 4373,
+        "residuals" : 1022
+      },
+      "transition" : "abf-center-8-to-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 4860,
+        "exact_reconstruction" : true,
+        "fields" : 285,
+        "proxy_cost" : 4373,
+        "residuals" : 1022
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 420,
+        "exact_reconstruction" : true,
+        "fields" : 24,
+        "proxy_cost" : 904,
+        "residuals" : 220
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 420,
+        "exact_reconstruction" : true,
+        "fields" : 24,
+        "proxy_cost" : 904,
+        "residuals" : 220
+      },
+      "transition" : "abf-radius-1",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 420,
+        "exact_reconstruction" : true,
+        "fields" : 24,
+        "proxy_cost" : 904,
+        "residuals" : 220
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 3388,
+        "exact_reconstruction" : true,
+        "fields" : 40,
+        "proxy_cost" : 960,
+        "residuals" : 230
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 3388,
+        "exact_reconstruction" : true,
+        "fields" : 38,
+        "proxy_cost" : 958,
+        "residuals" : 230
+      },
+      "transition" : "abf-radius-8",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 3388,
+        "exact_reconstruction" : true,
+        "fields" : 49,
+        "proxy_cost" : 969,
+        "residuals" : 230
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 9280,
+        "exact_reconstruction" : true,
+        "fields" : 50,
+        "proxy_cost" : 1066,
+        "residuals" : 254
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 9280,
+        "exact_reconstruction" : true,
+        "fields" : 49,
+        "proxy_cost" : 1065,
+        "residuals" : 254
+      },
+      "transition" : "abf-radius-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 9280,
+        "exact_reconstruction" : true,
+        "fields" : 75,
+        "proxy_cost" : 1091,
+        "residuals" : 254
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 568,
+        "exact_reconstruction" : true,
+        "fields" : 24,
+        "proxy_cost" : 1696,
+        "residuals" : 418
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 568,
+        "exact_reconstruction" : true,
+        "fields" : 24,
+        "proxy_cost" : 1696,
+        "residuals" : 418
+      },
+      "transition" : "adf-center-1",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 568,
+        "exact_reconstruction" : true,
+        "fields" : 24,
+        "proxy_cost" : 1696,
+        "residuals" : 418
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 4937,
+        "exact_reconstruction" : true,
+        "fields" : 254,
+        "proxy_cost" : 2834,
+        "residuals" : 645
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 4937,
+        "exact_reconstruction" : true,
+        "fields" : 254,
+        "proxy_cost" : 2834,
+        "residuals" : 645
+      },
+      "transition" : "adf-center-8",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 4937,
+        "exact_reconstruction" : true,
+        "fields" : 254,
+        "proxy_cost" : 2834,
+        "residuals" : 645
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 6271,
+        "exact_reconstruction" : true,
+        "fields" : 371,
+        "proxy_cost" : 4639,
+        "residuals" : 1067
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 6271,
+        "exact_reconstruction" : true,
+        "fields" : 371,
+        "proxy_cost" : 4639,
+        "residuals" : 1067
+      },
+      "transition" : "adf-center-8-to-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 6271,
+        "exact_reconstruction" : true,
+        "fields" : 371,
+        "proxy_cost" : 4639,
+        "residuals" : 1067
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 616,
+        "exact_reconstruction" : true,
+        "fields" : 31,
+        "proxy_cost" : 1375,
+        "residuals" : 336
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 616,
+        "exact_reconstruction" : true,
+        "fields" : 31,
+        "proxy_cost" : 1375,
+        "residuals" : 336
+      },
+      "transition" : "adf-radius-1",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 616,
+        "exact_reconstruction" : true,
+        "fields" : 31,
+        "proxy_cost" : 1375,
+        "residuals" : 336
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 3854,
+        "exact_reconstruction" : true,
+        "fields" : 44,
+        "proxy_cost" : 1060,
+        "residuals" : 254
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 3854,
+        "exact_reconstruction" : true,
+        "fields" : 49,
+        "proxy_cost" : 1065,
+        "residuals" : 254
+      },
+      "transition" : "adf-radius-8",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 3854,
+        "exact_reconstruction" : true,
+        "fields" : 54,
+        "proxy_cost" : 1070,
+        "residuals" : 254
+      }
+    },
+    {
+      "three_level_superroot4_roots" : {
+        "changed_pixels" : 7098,
+        "exact_reconstruction" : true,
+        "fields" : 37,
+        "proxy_cost" : 885,
+        "residuals" : 212
+      },
+      "three_level_superroot16_roots" : {
+        "changed_pixels" : 7098,
+        "exact_reconstruction" : true,
+        "fields" : 43,
+        "proxy_cost" : 891,
+        "residuals" : 212
+      },
+      "transition" : "adf-radius-20",
+      "two_level_leaf16_radial1" : {
+        "changed_pixels" : 7098,
+        "exact_reconstruction" : true,
+        "fields" : 58,
+        "proxy_cost" : 906,
+        "residuals" : 212
+      }
+    }
+  ],
+  "validity" : "all-valid geometry-only; actual per-source validity masks are not represented"
+}

@@ -1,0 +1,6 @@
+PASS GPU block32 conversion: two records, 64 streams, all starts and final sentinel exact
+PASS rejected malformed block32 offsets: block span 32769 bytes, status=4
+PASS rejected malformed block32 offsets: record terminal disagrees with receipt, status=2
+PASS generic decode compact accessor: all 32768 uint16 values and terminal sentinel exact
+PASS selected-DP compact accessor: signed high-u16 and all modes at packet boundaries
+PASS detector and polar-index field kernels: exact signed sums for both packets

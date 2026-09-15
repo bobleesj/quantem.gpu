@@ -24,7 +24,28 @@ var calibration = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
 try calibration.matchApertureToBrightfieldDisk()
 let setup = try calibration.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: mean.detectorSum)
 precondition(setup.pixels.count == 8937)
-let engine = try MetalSSBEngine(device: device, geometry: setup.geometry)
+if ProcessInfo.processInfo.environment["SSB_PROBE_EXPORT_BF"] == "1" {
+  let positions = [0, 127, 1024, 3000, 4468, 6000, 8000, 8936]
+  let buffer = device.makeBuffer(length: positions.count * 512 * 512 * 4, options: .storageModeShared)!
+  let commands = device.makeCommandQueue()!.makeCommandBuffer()!
+  try source.encodeDetectorColumns(pixels: positions.map { setup.pixels[$0] }, into: buffer, commands: commands)
+  commands.commit()
+  commands.waitUntilCompleted()
+  precondition(commands.status == .completed)
+  try Data(bytes: buffer.contents(), count: buffer.length).write(to: output.appendingPathComponent("counts.u32"))
+  let g = setup.geometry
+  let record: [String: Any] = ["positions": positions, "pixels": setup.pixels,
+    "kr": g.brightfieldKX, "kc": g.brightfieldKY, "qrow": g.qxByRow, "qcol": g.qyByColumn,
+    "wavelength": g.wavelengthAngstroms, "semiangle": g.semiangleRadians,
+    "sampling": g.angularSamplingXRadians, "dc": g.dcValue.x]
+  try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).write(to: output.appendingPathComponent("geometry.json"))
+  print("Exported eight full-scan BF columns and complete geometry")
+  exit(0)
+}
+let cacheBudget = ProcessInfo.processInfo.environment["SSB_PROBE_CACHE_BUDGET_BYTES"].map {
+  Int($0)!
+}
+let engine = try MetalSSBEngine(device: device, geometry: setup.geometry, cacheBudgetBytes: cacheBudget)
 let prepareStart = Date()
 try engine.prepare(countType: .uint32) { indices, destination, commands in
   try source.encodeDetectorColumns(pixels: indices.map { setup.pixels[$0] }, into: destination, commands: commands)
@@ -56,6 +77,7 @@ for repetition in 0..<3 {
   }
 }
 var report: [String: Any] = ["device": device.name, "source": args[1], "bf": 8937,
+  "cache_budget_bytes": cacheBudget as Any? ?? "default",
   "load_seconds": loadSeconds, "prepare_seconds": prepareSeconds,
   "redraws": redraws, "losses": losses, "sampled_allocated_bytes": device.currentAllocatedSize]
 if args.count > 3 && args[3] == "fit" {

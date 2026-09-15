@@ -13,6 +13,10 @@ from .packed import _allocate_shared, _buffer_view, _complete, _metal_module, _r
 
 _PIPELINES = {}
 _REDUCTION_STAGING_BYTES = 32 * 1024 * 1024
+# Keep command buffers bounded for small entropy blocks. Each item adds one
+# decode and one reduction encoder; this cap avoids building an unbounded
+# command buffer for a source with many tiny blocks.
+_REDUCTION_COMMAND_CHUNK_BATCH = 128
 
 
 def _pipelines(device, metal):
@@ -29,6 +33,7 @@ def _pipelines(device, metal):
             "decode",
             "gather",
             "reduce",
+            "reduce_many",
             "measure_packed",
             "write_packed",
             "packed_decode",
@@ -331,15 +336,51 @@ class _MPSResidentCounts:
         return output
 
     def detector_sum_device(self, mask):
-        """Sum a binary mask exactly with bounded native-count decode staging."""
+        """Sum one binary mask exactly with bounded native-count staging."""
+        result = self.detector_sums_device(np.asarray(mask)[None, ...])
+        result.shape = self.shape[:2]
+        return result
+
+    def detector_sums_device(self, masks):
+        """Sum several binary masks with one decode pass per source chunk.
+
+        Parameters
+        ----------
+        masks
+            Binary detector masks with shape ``(mask, detector_row,
+            detector_column)``. A two-dimensional mask is accepted as one
+            mask for symmetry with :meth:`detector_sum_device`.
+
+        Returns
+        -------
+        MPSANSArray
+            Caller-owned exact ``uint64`` counts with shape
+            ``(mask, scan_row, scan_column)``.
+
+        Notes
+        -----
+        The decoder and all reductions stay on the same Metal device. Each
+        bounded command buffer contains at most
+        ``_REDUCTION_COMMAND_CHUNK_BATCH`` decoded chunks, so memory use and
+        error publication remain bounded while BF/ABF/ADF products share the
+        expensive entropy decode.
+        """
         self._require_resident()
-        values = np.asarray(mask)
-        if values.shape != self.shape[2:] or not np.all((values == 0) | (values == 1)):
+        values = np.asarray(masks)
+        if values.ndim == 2:
+            values = values[None, ...]
+        if values.ndim != 3 or values.shape[1:] != self.shape[2:]:
             raise ValueError(
-                f"mask must have detector shape {self.shape[2:]} and contain only zero or one."
+                "masks must have shape (mask, detector_row, detector_column) "
+                f"with detector shape {self.shape[2:]}."
             )
+        if len(values) < 1 or not np.all((values == 0) | (values == 1)):
+            raise ValueError("masks must contain only zero or one.")
+        mask_count = int(values.shape[0])
         mask_values = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
-        output = MPSANSArray(self._device, self._metal, self.shape[:2], np.uint64)
+        output = MPSANSArray(
+            self._device, self._metal, (mask_count, *self.shape[:2]), np.uint64
+        )
         staging = mask_buffer = None
         capacity = min(
             self.block_frames,
@@ -360,14 +401,22 @@ class _MPSResidentCounts:
                 self._device, self._metal, mask_values.nbytes, "ANS detector mask"
             )
             _buffer_view(mask_buffer)[:] = memoryview(mask_values).cast("B")
+            # Every decode writes the same bounded staging range and the
+            # following reduction consumes it.  Keeping both encoders in one
+            # command buffer preserves that ordering on Metal while removing
+            # one commit/wait and error read per chunk.  The output range is
+            # disjoint for each scan, so reductions remain exact and ordered.
+            command = None
+            pending_chunks = 0
             for block in range(self._block_count):
                 block_count = min(
                     self.block_frames, self._scan_count - block * self.block_frames
                 )
                 for first in range(0, block_count, capacity):
                     count = min(capacity, block_count - first)
-                    _buffer_view(self._errors)[:] = b"\0" * 4
-                    command = self._queue.commandBuffer()
+                    if command is None:
+                        _buffer_view(self._errors)[:] = b"\0" * 4
+                        command = self._queue.commandBuffer()
                     self._encode(
                         command,
                         "decode",
@@ -376,7 +425,7 @@ class _MPSResidentCounts:
                         output=staging,
                     )
                     encoder = command.computeCommandEncoder()
-                    encoder.setComputePipelineState_(self._pipelines["reduce"])
+                    encoder.setComputePipelineState_(self._pipelines["reduce_many"])
                     for index, buffer in enumerate(
                         (staging, mask_buffer, output.buffer)
                     ):
@@ -386,18 +435,26 @@ class _MPSResidentCounts:
                             self._detector_count,
                             self.dtype.itemsize,
                             block * self.block_frames + first,
-                            0,
+                            mask_count,
+                            self._scan_count,
                         ],
                         dtype=np.uint64,
                     ).tobytes()
                     encoder.setBytes_length_atIndex_(parameters, len(parameters), 3)
                     encoder.dispatchThreadgroups_threadsPerThreadgroup_(
-                        self._metal.MTLSizeMake(count, 1, 1),
+                        self._metal.MTLSizeMake(count, mask_count, 1),
                         self._metal.MTLSizeMake(128, 1, 1),
                     )
                     encoder.endEncoding()
-                    _complete(command, "ANS detector sum")
-                    self._check()
+                    pending_chunks += 1
+                    if pending_chunks == _REDUCTION_COMMAND_CHUNK_BATCH:
+                        _complete(command, "ANS detector sum")
+                        self._check()
+                        command = None
+                        pending_chunks = 0
+            if command is not None:
+                _complete(command, "ANS detector sum")
+                self._check()
             return output
         except BaseException:
             output.release()

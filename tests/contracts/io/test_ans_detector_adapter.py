@@ -34,12 +34,31 @@ def test_adapter_owns_only_small_returned_outputs(monkeypatch):
         "detector_sum_device",
         lambda mask: Output((expected * mask).sum(axis=(2, 3), dtype=np.uint64)),
     )
+    monkeypatch.setattr(
+        source,
+        "detector_sums_device",
+        lambda masks: Output(
+            np.stack(
+                [(expected * mask).sum(axis=(2, 3), dtype=np.uint64)
+                 for mask in masks],
+                axis=0,
+            )
+        ),
+    )
     session = detector.prepare(source)
     np.testing.assert_array_equal(session.frame(5), expected[1, 2])
     assert calls == [(1, 2)]
     mask = np.ones((4, 5), dtype=bool)
     np.testing.assert_array_equal(
         session.masked_sum_exact(mask), expected.sum(axis=(2, 3), dtype=np.uint64)
+    )
+    masks = np.stack([mask, np.eye(4, 5, dtype=bool)])
+    np.testing.assert_array_equal(
+        session.masked_sums_exact(masks),
+        np.stack([
+            expected.sum(axis=(2, 3), dtype=np.uint64),
+            (expected * masks[1]).sum(axis=(2, 3), dtype=np.uint64),
+        ]),
     )
     assert all(output.released for output in outputs)
     with pytest.raises(NotImplementedError, match="not qualified"):

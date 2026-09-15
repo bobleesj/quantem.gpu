@@ -779,6 +779,34 @@ kernel void compact_h5_detector_columns(
             p[7], pixel, position.x, p[8]);
 }
 
+// Exact bounded conversion window: display exclusions never change source counts.
+inline uint compactTransposeBits(uint value, uint lane);
+kernel void compact_h5_conversion_window(
+    device const uint *payload [[buffer(0)]], device const uint *headers [[buffer(1)]],
+    device uchar *output [[buffer(2)]], constant uint *p [[buffer(3)]],
+    uint sample [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    if (sample>=p[0]*p[1]) return;
+    if (p[3]==32u && p[7]==1u) {
+        // One group owns one bit-plane cell. Decode its header once, then
+        // transpose the shared planes into 32 exact counts in registers.
+        uint cell=sample/32u, pixel=cell%p[1], tile=cell/p[1];
+        uint descriptor=0u;
+        if (lane==0u) descriptor=compactDescriptorFor(headers,p[2],p[4],p[5],pixel,tile);
+        descriptor=simd_shuffle(descriptor,0u);
+        uint width=descriptor&31u, offset=descriptor>>5u;
+        uint plane=lane<width ? payload[offset+lane] : 0u;
+        uint value=compactTransposeBits(plane,lane);
+        uint destination=(tile*32u+lane)*p[1]+pixel;
+        if (p[6]==1u) output[destination]=uchar(value);
+        else reinterpret_cast<device ushort *>(output)[destination]=ushort(value);
+        return;
+    }
+    uint scan=sample/p[1], pixel=sample%p[1];
+    uint value=compactSampleValue(payload,headers,p[2],p[3],p[4],p[5],pixel,scan,p[7]);
+    if (p[6]==1u) output[sample]=uchar(value);
+    else reinterpret_cast<device ushort *>(output)[sample]=ushort(value);
+}
+
 kernel void compact_h5_full_decode_u8(
     device const uint *payload [[buffer(0)]],
     device const uint *descriptors [[buffer(1)]],

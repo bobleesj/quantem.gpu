@@ -67,8 +67,35 @@ class CountDetectorCompute:
             )
         return _copy_output(self.source.detector_sum_device(mask.astype(np.uint8)))
 
+    def masked_sums_exact(self, masks):
+        """Return exact uint64 images for several binary masks in one decode pass.
+
+        MPS ANS sources use their bounded multi-mask Metal reduction. Other
+        resident backends retain exact behavior by issuing one mask request at
+        a time when they do not provide that optional primitive.
+        """
+        values = np.asarray(masks)
+        if values.ndim == 2:
+            values = values[None, ...]
+        if values.ndim != 3 or values.shape[1:] != self.det_shape:
+            raise ValueError(
+                "Exact detector masks must have shape "
+                f"(mask, {self.det_shape[0]}, {self.det_shape[1]})."
+            )
+        if len(values) < 1 or not np.all((values == 0) | (values == 1)):
+            raise ValueError("Exact detector masks must be binary.")
+        batch = getattr(self.source, "detector_sums_device", None)
+        if batch is not None:
+            return _copy_output(batch(values.astype(np.uint8, copy=False)))
+        return np.stack(
+            [self.masked_sum_exact(mask) for mask in values], axis=0
+        )
+
     def masked_sum(self, mask):
         return self.masked_sum_exact(mask).astype(np.float32)
+
+    def masked_sums(self, masks):
+        return self.masked_sums_exact(masks).astype(np.float32)
 
     def _unsupported(self, operation):
         return NotImplementedError(

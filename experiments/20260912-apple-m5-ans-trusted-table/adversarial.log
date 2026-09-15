@@ -1,0 +1,33 @@
+PASS packet split 2: 512 exact signed-delta outputs, mixed uint16 modes
+PASS packet split 4: 512 exact signed-delta outputs, mixed uint16 modes
+PASS packet split 8: 512 exact signed-delta outputs, mixed uint16 modes
+PASS owner2: 512 exact signed-delta outputs
+PASS owner2+sparse: 512 exact signed-delta outputs
+PASS dense_compaction+sparse: 512 exact signed-delta outputs
+PASS dense_plain+sparse: 512 exact signed-delta outputs
+PASS macro_owner2: 512 exact signed-delta outputs
+PASS macro_owner2+sparse: 512 exact signed-delta outputs
+PASS partials+finish: two groups, 512 exact signed-delta outputs
+PASS reader32_owner2: 512 exact signed-delta outputs
+PASS reader32_owner2+sparse: 512 exact signed-delta outputs
+PASS pending_reuse_owner2: 512 exact signed-delta outputs
+PASS pending_reuse_owner2+sparse: 512 exact signed-delta outputs
+PASS register_reuse_owner2: 512 exact signed-delta outputs
+PASS register_reuse_owner2+sparse: 512 exact signed-delta outputs
+PASS dense_batch_owner2: 512 exact signed-delta outputs
+PASS dense_batch_owner2+sparse: 512 exact signed-delta outputs
+PASS trusted_table_owner2: 512 exact signed-delta outputs
+PASS trusted_table_owner2+sparse: 512 exact signed-delta outputs
+PASS dense batch packet split 2: 67 mixed streams
+PASS dense batch packet split 4: 67 mixed streams
+PASS cooperative+sparse: 512 exact signed-delta outputs
+PASS partials rejected malformed dense entropy stream
+PASS macro malformed entropy truncation/tail/terminal checks
+PASS reader32 cross-32-bit alignment and malformed tail checks
+PASS pending reuse cross-word alignment and malformed tail checks
+PASS register reuse cross-word alignment and malformed tail checks
+PASS dense batch malformed entropy terminal checks
+PASS trusted table malformed entropy terminal checks
+PASS cooperative malformed entropy truncation check
+PASS malformed sparse stream sets failure
+PASS modes=[77, 78, 79, 92, 93, 252, 253, 254, 255] streams=67 selected=67

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260914-native-fast-preference",
+  "status": "failed",
+  "question": "Does a persistent native Fast interaction toggle preserve ANS storage and exact images, and how does seven-source residency compare with bit-packed storage?",
+  "paper": {"repository": "quantem.gpu", "authority": "user-directed native integration"},
+  "code": {"repository": "quantem.gpu", "revision": "b13e8679d43021cc21567e5526e61b20068b1007", "dirty": true, "diff_sha256": "d0078fcac0993f320176efbef3a3e790005cfb4ae1b55e2f6296e5998f1ca901", "snapshot_path": "local-evidence://sep14-fast-preference/native-sources.tar.gz", "snapshot_sha256": "ca3513f7a075fa7ef28a8689e9c6784d0369e66a589457f8ad71f7ac49ae29d7", "executable_sha256": "87e2864c86f9f9eea08a33ef57970ff1edd8d23f113986d0f8d322262684b63e", "entrypoint": "Live4DSTEM native preference and conversion checks"},
+  "inputs": [{"dataset_id": "reference-seven-acquisitions", "path": "private-fixture://sep14-drag-bench/reference-seven", "sha256": "787a8f377c83c1f7629ae19e1be20cc407f41296bb3182d60d108e4df27d83cc"}],
+  "parameters": {"shape": [512,512,192,192], "source_dtype": "uint16", "crop": false, "binning": false, "memory": "production admission; no budget override", "cache": "warm local original HDF5, not cold I/O", "result": "Native preference persistence and Normal/Fast exact maps/DP pass. Cross-storage preset hash gate fails because ANS uses centered radius-32 defaults while bit-packed fits the probe. These are different masks; cross-storage parity requires a matched-mask retry. Fast 12.3085 GB, Normal 7.0850 GB, bit-packed 12.0317 GB. Original preferences restored.", "artifact_results": {"failed-unmatched-presets": "Preference and Normal/Fast gates pass; cross-storage preset hash comparison failed with different apertures. Full failed receipt retained; matched-mask retry required."}},
+  "execution": {"host": "apple-m5-24gb", "backend": "native Swift/Metal", "gpu_model": "Apple M5", "gpu_ids": ["default"]},
+  "outputs": [{"artifact_id": "failed-unmatched-presets", "path": "local-evidence://sep14-fast-preference/acceptance/result.json", "sha256": "a0d52187e8d912ec561f898362343cb459f361e9f777d09c85ab477ba621969e", "size_bytes": 145550, "retention": "durable", "consuming_figures": []}],
+  "timestamps": {"created": "2026-09-14", "started": "2026-09-14", "finished": "2026-09-14"}
+}

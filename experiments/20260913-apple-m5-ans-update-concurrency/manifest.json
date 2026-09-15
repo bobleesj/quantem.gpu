@@ -1,0 +1,176 @@
+{
+  "code": {
+    "diff_sha256": "bc1cbc31d20dd9e462d94ca6604bd03ec96e8dce126ab22cf84a77d585533dc9",
+    "dirty": true,
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "runner_sha256": "0da08880e35fe443f30644593f9c54245178a697bb122258122bc91402e81e80",
+    "source_fingerprints": {
+      "benchmark": {
+        "path": "src/quantem/gpu/swift/Benchmarks/MetalPairedRuntimeTANSSeriesBenchmark/main.swift",
+        "sha256": "8c9970369fc3ba40231841a0a595540ba2a38e53f83eb88e54b73a217c872c0b"
+      },
+      "kernel_api": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/MetalPairedRuntimeTANSKernels.swift",
+        "sha256": "0fbb657fa1af7b8d0243a02d29da7911753071d8bc4e9f640372f377cf2de124"
+      },
+      "resident": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPairedRuntimeTANSResidentSource.swift",
+        "sha256": "a794fcbc8c934b238642288664c9beea86e79be79dde41b0013b748d9b9620be"
+      },
+      "shader": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/paired_runtime_tans.metal",
+        "sha256": "be22a8f38c2ce533fb0325c8098b45145ee6fcfd301496088682efc0604774c4"
+      },
+      "trusted_table_factory": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSTables.swift",
+        "sha256": "3800a0f1b68ea5293e13237fcf5ccce7f99f94fb2c4ce1678721f21efc7e8922"
+      },
+      "trusted_table_tests": {
+        "path": "src/quantem/gpu/swift/Tests/Native4DSTEMIOTests/PairedRuntimeTANSTablesTests.swift",
+        "sha256": "a3c6bb37f3d7f27da5375d9bd7f4727254f71e526914c5a863512ba210e99c04"
+      }
+    },
+    "tested_binary": {
+      "path": "metal-paired-runtime-tans-series-benchmark",
+      "sha256": "de8b1efd34c7c1fcb3e9767cefccaa9c5c3f7d9ea55b4a2404fca97bb8c5e793"
+    },
+    "worktree_status_sha256": "428a9219e833daf4db38b3139ee82fcc68047ac9fe88e0465dde97fbd64a4edd"
+  },
+  "execution": {
+    "backend": "metal",
+    "failure": {
+      "message": "trusted-table decode must remain enabled in A1",
+      "type": "RuntimeError"
+    },
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {
+      "all_released": true,
+      "event": "ans_resident_loop_end",
+      "metal_after_release_bytes": 5701632,
+      "metal_before_release_bytes": 11883921408,
+      "resident_count": 7,
+      "sequence": 2
+    },
+    "timing_boundary": "Unprofiled indexed detector update including planning, submission, wait, and readback; resident load and table validation excluded."
+  },
+  "experiment_id": "20260913-apple-m5-ans-update-concurrency",
+  "hypothesis": "Does limiting ordinary unbatched seven-source ANS detector updates to four simultaneous submissions reduce the exact all-seven large-ADF wall time without increasing resident memory?",
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "raw",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-update-concurrency/results/raw.jsonl",
+      "result": "All benchmark stdout JSON-line records, including ready, A/B/A responses, and release.",
+      "retention": "durable",
+      "sha256": "00b85de48481fa6bece7d8e32c812c8b270a3878b52064fcf8595899a9f66e34",
+      "size_bytes": 10659
+    },
+    {
+      "artifact_id": "ready",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-update-concurrency/results/ready.json",
+      "result": "Seven-source identities, shape, allocation, and scan512 pipeline preparation evidence.",
+      "retention": "durable",
+      "sha256": "d4909ad8b361e9593e13e61296d2e7c95fa190241ec69d7b47f12db305763143",
+      "size_bytes": 2246
+    },
+    {
+      "artifact_id": "summary",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-update-concurrency/results/summary.json",
+      "result": "Exact arm samples, per-cycle hash checks, allocation, and all-seven wall summaries.",
+      "retention": "durable",
+      "sha256": "516ab829943abd5b0cc2995fe538f197cffd0d19c3750df85a06666993b428e7",
+      "size_bytes": 24
+    },
+    {
+      "artifact_id": "stderr",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-update-concurrency/results/stderr.log",
+      "result": "Benchmark process diagnostics.",
+      "retention": "durable",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size_bytes": 0
+    },
+    {
+      "artifact_id": "failure",
+      "consuming_figures": [],
+      "path": "experiments/20260913-apple-m5-ans-update-concurrency/results/failure.json",
+      "result": "Structured failure and release-cleanup evidence, when a run fails.",
+      "retention": "durable",
+      "sha256": "e8edf63dc3bdd6d2a5c911536c91bc86a865a535f2d127700de42ec8f666a164",
+      "size_bytes": 353
+    }
+  ],
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "all_residents_released": true,
+    "arm_samples": [],
+    "arms": [
+      {
+        "bounded_concurrency": 7,
+        "label": "A1"
+      },
+      {
+        "bounded_concurrency": 4,
+        "label": "B"
+      },
+      {
+        "bounded_concurrency": 7,
+        "label": "A2"
+      }
+    ],
+    "batch": false,
+    "cycles": 20,
+    "failure_status": "failed",
+    "masks": [
+      "adf-center-8",
+      "adf-center-20"
+    ],
+    "metal_allocation_bytes_limit": 11883921408,
+    "mode": "indexed",
+    "polar_query_variant": "scan512",
+    "ready_metal_current_allocated_bytes": 11883921408,
+    "resident_bytes_by_source": [
+      1563785764,
+      1572895024,
+      1691873232,
+      1731162264,
+      1819121980,
+      1709002796,
+      1789972988
+    ],
+    "resident_bytes_limit": 11877814048,
+    "series_resident_bytes": 11877814048,
+    "source_identity_sha256": [
+      "532d00ffbb084bf32c96f5a53cde99e9085e91f0490e925c530d92bfdba4b350",
+      "8b006c84044f4c7d6842ab1c896359d7c5fe0e331d76dcf7a7a1f7be429523e3",
+      "aa18159030e03a756f7a057e9422ce645dfbe4bb0df7bc9eac6c6aeee2d55db1",
+      "6f94694a3d63c41edca118a74aae1384b1f61316699154a8dda0e8ac5e1af64f",
+      "446d2751716a5985e417f29cc19feea81b4dcf2bcbbf428578b6965e16d26f71",
+      "fe15c891bb065252242350728162e60320860f4c9dfbe2b6c21bb983ccd879c4",
+      "88907d90d0be36cce51ed15cfc82e0967c5641e190c0428e2e9ceb8aaf23c59b"
+    ],
+    "trusted_table": true,
+    "warmup_cycles": 1,
+    "warmup_samples": []
+  },
+  "question": "Does limiting ordinary unbatched seven-source ANS detector updates to four simultaneous submissions reduce the exact all-seven large-ADF wall time without increasing resident memory?",
+  "schema_version": 1,
+  "status": "failed",
+  "timestamps": {
+    "finished": "2026-09-13T11:20:17Z",
+    "started": "2026-09-13T11:19:51Z"
+  }
+}

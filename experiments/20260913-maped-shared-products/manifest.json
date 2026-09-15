@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-maped-shared-products",
+  "status": "completed",
+  "question": "Can merged calibrated ANS results reuse all fixed virtual products without repeated decode and meet a 120 Hz presentation budget?",
+  "paper": {"repository": "quantem.gpu", "authority": "user-directed local native app checkouts"},
+  "code": {
+    "repository": "quantem.gpu", "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true, "diff_sha256": "23b227fa8a790daa42170d53954d3970f8f478fea4128dd8b8c7edbf122c8a25",
+    "snapshot_path": "local-evidence://maped-integration-20260913/shared-products-gpu.patch",
+    "native_gpu_sources_sha256": "022b40b9fc72f3467910fd477a868ce9ab48c519f62a0bceb2f2ef5f7212352d",
+    "app_base": "f6dd65975346399b0efb7ab33be77929cefb7e56",
+    "app_patch_sha256": "90d4955783e2ede2fb09a1a3f13aee2fdb2e9ae8db503246b56f6f43b748b8bb",
+    "quantem_base": "27f22168db0382ca8587b2f1a65c326df32b0ae3",
+    "executable_sha256": "b25161fb878a1fd9dc0a708e7ad81ea58280169a98be8f3cc7699eb557f76616",
+    "source_state": "Dirty development checkouts; private patches and native GPU file hashes retained. App patch covers this integration, not unrelated pre-existing edits. No release qualification.",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_maped_display.py"
+  },
+  "inputs": [
+    {"dataset_id": "reference-seven-source-manifest", "path": "private-fixture://reference-seven-tilts", "sha256": "b56fcf5c5fd8e30530c2b6f040e6920694d2d11460ac0b6b256283c45925c55c"},
+    {"dataset_id": "reference-merged-result", "path": "private-fixture://reference-seven-tilts/merged-result", "sha256": "de3a525200d4d9aefc2173a7415df452733d396502015dfda4cf3b3d68d1b614"}
+  ],
+  "parameters": {
+    "shape": [512,512,192,192], "crop": false, "binning": false,
+    "representation": "ANS regional scaled uint16; restored float32 reductions",
+    "products": ["Mean","BF","ABF","ADF","CoM row","CoM col","DPC row","DPC col","iDPC"],
+    "first_run": "shared-products passed all product/display gates; 35/36 product and 9/10 DP timing receipts captured. Timing qualification incomplete.",
+    "repeat": "shared-products-repeat failed the added complete-receipt gate; all product and image hash checks passed. Failure retained.",
+    "correction": "Reuse bounded shared float-canvas presentation confirmation; assign each scientific image a presentation ID; configure initial contrast and palette before publishing the surface. Never treat zero drawable presentation time as visible.",
+    "intermediate": "shared-products-confirmed captured all 36 product receipts but only 9/10 DP receipts; retained as failed. Configure-before-publication fixed the remaining first-DP receipt on the final run.",
+    "parity": "520-frame two-calibration-region independent Double reference; scalar/batch bit equality; zero-total/signed normalization; cancellation. Signed near-zero mask uses seven-operation float32 forward-error bound; positive mask tolerance unchanged. Maximum signed near-zero relative error 2.765655517578125e-05 is within that bound, not a universal relative-tolerance claim.",
+    "cache": {"products": 9, "bytes": 9437184, "builds": 1, "source_traversals_for_fixed_products": 1},
+    "display_latency_ms": {
+      "definition": "Native-hook request to positive CAMetalDrawable presentedTime; isolated requests, not continuous FPS or cold I/O",
+      "product": {"receipts": 36, "requests": 36, "p50": 26.690708327805623, "p95_nearest_rank": 31.88795832102187, "max": 51.17462499765679},
+      "dp": {"receipts": 10, "requests": 10, "p50": 35.152541648130864, "p95_nearest_rank": 61.101875005988404, "max": 61.101875005988404}
+    },
+    "saved_result": {"reopen_and_products_seconds": 12.18906307220459, "resident_bytes": 6585496466, "peak_metal_bytes": 7771652096},
+    "fresh_merge": {"executable_sha256": "c3d6b033e65d76400a15e33f17e15d422904b1f14b61dc6d4a9630dd9426d62f", "merge_and_products_seconds": 50.69285595417023, "resident_bytes": 14110204222, "peak_metal_bytes": 15910649856, "scope": "Same product calculations before the final presentation-only fixes; initial folder/comparison loading excluded."},
+    "limits": "120 Hz is not established and the measured isolated latency exceeds 8.33 ms. No arbitrary merged-detector dragging, full XCTest, EMPAD/SSB regression, cold-I/O or distribution signoff. Fixed detector defaults are geometric; existing DPC orientation uses small 2D CPU work. Scaled uint16 intensity conversion is approximate; ANS codes exact.",
+    "artifact_results": {
+      "shared-ui": "Passed all nine products over 36 selections, eight hover/restores, all 15 colormaps, live percentile previews, ten DP positions, complete presentation receipts, regular-viewer restoration and clean quit. No 120 FPS claim.",
+      "fresh-merge": "Full seven-acquisition merge, cancellation/retry, nine cached products, scan changes and regular comparison restoration passed. Mean matches the saved result exactly; 7 single-read sources; no crop/bin/clip.",
+      "receipt-failure": "Retained failed repeat: all scientific/display checks passed, but only 35/36 product and 9/10 DP presentation receipts.",
+      "first-dp-failure": "Retained intermediate failure: 36/36 product and 9/10 DP receipts. Superseded by passing configure-before-publication run, not deleted.",
+      "adf-screenshot": "Actual native merged ADF and DP populated; visually reviewed with light-mode and iDPC captures. Percentile saturation is intentional in this 25-75 percent test."
+    }
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "native Swift/Metal", "gpu_model": "Apple M5", "gpu_ids": ["default"]},
+  "outputs": [
+    {"artifact_id": "shared-ui", "path": "local-evidence://maped-integration-20260913/shared-products-atomic/result.json", "sha256": "aad26f8266f3db2d3e4c64056764baaff00025e95c7d8bdcfb8f42402b578dc6", "size_bytes": 117126, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "fresh-merge", "path": "local-evidence://maped-integration-20260913/shared-products-fresh-merge/result.json", "sha256": "f3d2fc9aacf702e20807c9bb7414538d69ffbc2f0bd3a46236b026ea9a7f1499", "size_bytes": 116344, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "receipt-failure", "path": "local-evidence://maped-integration-20260913/shared-products-repeat/result.json", "sha256": "b263143a227858af423be3e760bfd4457fa43ce96327528cc0e09b8f5b5cfd47", "size_bytes": 58234, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "first-dp-failure", "path": "local-evidence://maped-integration-20260913/shared-products-confirmed/result.json", "sha256": "b94490af5fddf8e9262baf62e61ce81b0933d92033be97b8f0a933f6fbded2f4", "size_bytes": 58293, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "adf-screenshot", "path": "local-evidence://maped-integration-20260913/shared-products-atomic/product-ADF.png", "sha256": "90bf66bc6d9e33d156ba549dc2e71c9c085ff357277bde315da12ad987d61f68", "size_bytes": 1087239, "retention": "durable", "consuming_figures": []}
+  ],
+  "timestamps": {"created": "2026-09-13", "started": "2026-09-13", "finished": "2026-09-13"}
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "remove_nyquist": false,
+    "dc": 0,
+    "full_loss": 0.17309585066305894,
+    "projected_loss": 0.1732799756800009,
+    "relative_difference": 0.00106371710377024,
+    "maximum_object_difference": 0.7699916933452818
+  },
+  {
+    "remove_nyquist": false,
+    "dc": 100000000,
+    "full_loss": 0.003552807340869578,
+    "projected_loss": 0.0035528899782881485,
+    "relative_difference": 2.3259752258382795e-05,
+    "maximum_object_difference": 0.7699916933452818
+  },
+  {
+    "remove_nyquist": true,
+    "dc": 0,
+    "full_loss": 0.17251861805425234,
+    "projected_loss": 0.17251861805425225,
+    "relative_difference": 4.826535697190761e-16,
+    "maximum_object_difference": 1.3385050364849284e-13
+  },
+  {
+    "remove_nyquist": true,
+    "dc": 100000000,
+    "full_loss": 0.00355212671058731,
+    "projected_loss": 0.00355212671058731,
+    "relative_difference": 0.0,
+    "maximum_object_difference": 1.3385050364849284e-13
+  }
+]

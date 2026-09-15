@@ -1,0 +1,15 @@
+{
+  "failure": {
+    "message": "effective configuration mismatch in A1: {'batch': False, 'bounded_concurrency': 7, 'choose_base': False, 'history': False, 'history_base': False, 'joint_plan': False, 'kernel': 'packet-owner2', 'lazy_refill': False, 'mode': 'indexed', 'packet_splits': 1, 'partial_groups': 8, 'partial_stores': False, 'plain_sums': False, 'polar_query_variant': 'scan512', 'profile': False, 'register_sums': False, 'reuse_word': False, 'simd_entropy_fast_path': False, 'streams_per_lane': 2, 'trusted_table': False}",
+    "type": "RuntimeError"
+  },
+  "release": {
+    "all_released": true,
+    "event": "ans_resident_loop_end",
+    "metal_after_release_bytes": 5701632,
+    "metal_before_release_bytes": 11883921408,
+    "resident_count": 7,
+    "sequence": 2
+  },
+  "status": "failed"
+}

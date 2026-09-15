@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-layout-census",
+  "status": "refuted",
+  "hypothesis": "Does the existing static radialhalf layout reduce exact indexed planner work across representative BF/ABF/ADF interactions versus radial1 without worsening large ADF or neighboring cases?",
+  "question": "Does the existing static radialhalf layout reduce exact indexed planner work across representative BF/ABF/ADF interactions versus radial1 without worsening large ADF or neighboring cases?",
+  "code": {},
+  "execution": {
+    "backend": "cpu-only Swift planner",
+    "failure": null,
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {"gpu_workload": false, "reason": "CPU-only geometry census"},
+    "timing_boundary": "Exact CPU mask-planner census only; no dataset decode, GPU work, or image update timing."
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1-detector-geometry",
+      "path": "synthetic-geometry://192x192-all-valid",
+      "sha256": "fc740ee832426557af711d5ae195bc8240fd6a94e810005c6736abb136b3e8c0"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "layout-census",
+      "path": "experiments/20260913-apple-m5-ans-layout-census/results/layout-census.json",
+      "sha256": "605e3227f2d7373034c97ce63d081dc8b59c046772e40e82dba8f8203448eb15",
+      "size_bytes": 8282,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "36 exact plans across two static layouts; radialhalf worsened aggregate and large ADF center-shift work."
+    }
+  ],
+  "summary": {
+    "radial1": {"total_proxy_cost": 29026, "total_fields": 1794, "total_residuals": 6808, "worst_proxy_cost": 4639},
+    "radialhalf": {"total_proxy_cost": 33730, "total_fields": 1770, "total_residuals": 7990, "worst_proxy_cost": 7785},
+    "adf_center_8_to_20": {
+      "changed_pixels": 6271,
+      "radial1_fields": 371,
+      "radial1_residuals": 1067,
+      "radial1_proxy_cost": 4639,
+      "radialhalf_fields": 357,
+      "radialhalf_residuals": 1857,
+      "radialhalf_proxy_cost": 7785
+    },
+    "all_36_plans_exact": true,
+    "gpu_timing_performed": false,
+    "gpu_memory_measured": false
+  },
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "bc1cbc31d20dd9e462d94ca6604bd03ec96e8dce126ab22cf84a77d585533dc9",
+    "worktree_status_sha256": "fd278ba2930d5c213af2c10b9afd87497bc080fee5dce44fef999c28661a6e35",
+    "tested_binary": {"path": "/tmp/ans-layout-census", "sha256": "8305e1fda5713d3030301d2e64fbbadfeede7a5ab0d4e91395f3a0a7be115057"},
+    "source_fingerprints": {
+      "planner": {"path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSPolarPlan.swift", "sha256": "932da14f1381c6c42232dc23ff15bf2962b5a041781e28c57cdebe9d695f292e"},
+      "census": {"path": "experiments/20260913-apple-m5-ans-layout-census/main.swift", "sha256": "dcec2d173d001431f92a9f736ac882725ef279a4e0361a1995ed2be5607102fa"}
+    },
+    "runner_sha256": "dcec2d173d001431f92a9f736ac882725ef279a4e0361a1995ed2be5607102fa"
+  },
+  "parameters": {
+    "detector_shape": [192, 192],
+    "leaf_pixels": 16,
+    "layouts": ["radial1", "radialhalf"],
+    "transition_count": 18,
+    "exact_reconstruction_required": true
+  },
+  "timestamps": {
+    "started": "2026-09-13T11:14:00Z",
+    "finished": "2026-09-13T11:15:47Z"
+  }
+}

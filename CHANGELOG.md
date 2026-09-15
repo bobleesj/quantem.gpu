@@ -6,6 +6,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Share exact SSB phase and calibration as versioned JSON/NumPy pairs, with
+  Python and native Swift readers, source-content matching, checksum validation
+  and non-overwriting publication. No reconstruction buffers are exported.
+
 - Recognize EMPAD-G1/G2 float32 exports and supported EMD 1 datacubes with
   versioned metadata provenance; optionally apply a confirmed mean-dark reference
   on Metal without changing original packed measurements.

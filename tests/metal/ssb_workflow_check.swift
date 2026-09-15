@@ -129,8 +129,18 @@ private func require(
         let result = try candidate.reconstruct(aberrations: aberrations)
         let relativeError = error(read(result.object), reference, scale: scale)
         require(relativeError < 1e-4, "Source count scaling parity failed: \(relativeError)")
+        let candidateLoss = try candidate.phaseVariance(aberrations: aberrations).loss
+        let lossRelativeError = abs(candidateLoss - referenceLoss)
+          / max(abs(referenceLoss), 1e-12)
+        if lossRelativeError >= 5e-5 {
+          FileHandle.standardError.write(Data(
+            "Loss parity failed: type=\(type), cacheBudget=\(String(describing: budget)), reference=\(referenceLoss), actual=\(candidateLoss), relative_error=\(lossRelativeError), limit=5e-5. Investigate cached/streamed objective semantics; do not rebase the tolerance.\n".utf8))
+        }
+        // Match the existing cached/streamed XCTest tolerance; do not rebase it.
+        require(lossRelativeError < 5e-5,
+          "Source count scaling loss parity failed: \(lossRelativeError)")
         print(
-          "PASS type=\(type) cache=\(budget == nil ? "full" : "streamed") relative_l2=\(relativeError)"
+          "PASS type=\(type) cache=\(budget == nil ? "full" : "streamed") relative_l2=\(relativeError) loss_relative_error=\(lossRelativeError)"
         )
       }
     }

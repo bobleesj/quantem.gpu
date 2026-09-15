@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-ans-resident-compute",
+  "status": "refuted",
+  "question": "Can resident-only exact seven-source ANS ADF computation improve fourfold without a precomputed ADF-image atlas?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-24gb"},
+  "code": {"revision": "cc3177d745f49a1811ce8cf80703b933302fad14", "dirty": true, "diff_sha256": "2fdb18fb1f19fe99f3cf7da8a3a3abc524c816a70fe8dd162ddb9addd9ba865f"},
+  "inputs": [{"dataset_id": "tilt-series-seven-native-v1", "path": "private-fixture://tilt-series-seven-native-v1", "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19", "shape_per_acquisition": [512,512,192,192], "dtype": "uint16", "acquisitions": 7}],
+  "parameters": {"representation": "paired-runtime-tans", "scan_bin": 1, "detector_bin": 1, "crop": null, "exact_integer_parity": true, "retain_seven_between_trials": true, "precomputed_adf_atlas": false},
+  "execution": {"host": "apple-m5-24gb", "backend": "metal", "timing_boundary": "all-seven synchronized detector update; excludes loading, hashes and UI"},
+  "outputs": [
+    {"artifact_id":"resident-samples","path":"experiments/20260912-apple-m5-ans-resident-compute/resident-loop.jsonl","sha256":"523860963d1230cb04ab11178ded363e51fdbe32d694690326bef9fec8a35950","size_bytes":2462722,"retention":"durable","result":"13 arms, 6300 full-map checks passed; fourfold target not met","consuming_figures":[]},
+    {"artifact_id":"summary","path":"experiments/20260912-apple-m5-ans-resident-compute/summary.jsonl","sha256":"8ebb1d5281119358210cf468fa0f686870c3ea21ff3993090f5c71469db8cda6","size_bytes":10457,"retention":"durable","result":"Warm per-mask medians with configurations separated","consuming_figures":[]}
+  ],
+  "tested_binary_sha256":"b82a6d260541c2cbf197d910d964a0968b20e7ec4059801f142b113503dbdc77",
+  "tested_shader_sha256":"1c6e65fbed75b7193f8f780f395ae18dc2fec9cc4104ab9022c3f9573076fc89",
+  "tested_resident_source_sha256":"7d912556d9e02a3e569a6e32ea15138584420a4aab1f5b7d92545d4125fbfb6f",
+  "result":{"arms":13,"seven_source_updates":900,"full_map_hashes_exact":6300,"fourfold_target_met":false,"native_ui_tested":false,"default_promoted":false},
+  "timestamps": {"started": "2026-09-13T00:39:43Z", "finished": "2026-09-13T00:48:40Z"},
+  "limitations": ["Raw/incremental ANS and regional-index-assisted results must be reported separately.", "Compute milliseconds do not establish presented FPS.", "Fourfold improvement is a target, not an established result."]
+}

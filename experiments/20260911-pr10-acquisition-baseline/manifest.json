@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260911-pr10-acquisition-baseline",
+  "status": "completed",
+  "question": "Does PR #10 improve complete original-HDF5 packed-resident loading on full acquisition_a, acquisition_b, and a six-acquisition folder without changing the exact resident contract?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260911-pr10-acquisition-baseline/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "5be9ceb01992e0de2d3ec144af6495330a819daa",
+    "baseline_revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "candidate_revision": "5be9ceb",
+    "entrypoint": "metal-original-hdf5-benchmark",
+    "dirty": false
+  },
+  "inputs": [
+    {"dataset_id": "original-acquisition_a", "path": "private-fixture://acquisition_a/master.h5", "sha256": "99ff0cc1080aa78dc8ee5d1cb348df903cb7476a8b6182ed76fea77dc0b59194", "shape": [512, 512, 192, 192], "source_dtype": "uint16"},
+    {"dataset_id": "original-acquisition_b", "path": "private-fixture://acquisition_b/master.h5", "sha256": "9f0ddb932c631b63cb573c38d747fa41941ee585c5389d33bdafb4add962b768", "shape": [512, 512, 192, 192], "source_dtype": "uint16"},
+    {"dataset_id": "original-six-acquisition-folder", "path": "private-fixture://six-acquisition-folder", "sha256": "baecb27d3a5efc864655b9e1bf0c3a26814a03e294cd667a5ecf756170d72b60", "sha256_kind": "sha256 over sorted member source identities", "shape": [512, 512, 192, 192], "source_dtype": "uint16"}
+  ],
+  "parameters": {
+    "repeats": 3,
+    "reuse_products": true,
+    "budget_bytes": 8000000000,
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "timing_boundary": "indexed source open through complete packed resident load return",
+    "parity_gate": "resident receipt plus stable first/middle/last diffraction digests; no independent full-count oracle in this run",
+    "cold_io_claim": false,
+    "os_pages": "uncontrolled",
+    "qualification": "timing comparison only; exact sampled hashes and full-shape/dtype gates passed; no universal speed promotion",
+    "result_summary": "apple-m5-24gb PR #10 candidate p50: acquisition_a 0.992 s, acquisition_b 0.976 s, six-acquisition folder 1.504 s, seven-source sequential 1.519 s; seven-source candidate series resident 14.752 GB. apple-m2-8gb M2 candidate p50: acquisition_a 4.503 s and acquisition_b 3.688 s; current apple-m2-8gb main 2eb4f6d p50: 3.626 s and 3.571 s."
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_model": "Apple M5, 10 GPU cores, 24 GB unified memory"
+  },
+  "outputs": [
+    {
+      "artifact_id": "summary.json",
+      "path": "experiments/20260911-pr10-acquisition-baseline/summary.json",
+      "sha256": "8e830dc91aa544789c9365bc7f585525f4dca9e296bbc73dd5644fa449ee9213",
+      "size_bytes": 3771,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Matched apple-m5-24gb baseline/candidate, seven-resident series, and exact PR #10 versus current-main acquisition_a/acquisition_b checks on the reachable M2 host; no cold-I/O or UI-present claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-11T00:00:00Z",
+    "started": "2026-09-11T05:00:00Z",
+    "finished": "2026-09-11T06:00:00Z"
+  }
+}

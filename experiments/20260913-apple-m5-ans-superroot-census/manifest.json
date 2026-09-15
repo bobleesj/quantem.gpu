@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-apple-m5-ans-superroot-census",
+  "status": "refuted",
+  "question": "Does an exact third polar hierarchy level grouped by 4 or 16 roots reduce aggregate and target ADF center-8-to-20 planner proxy work relative to the current two-level leaf16/radial1 plan?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu"
+  },
+  "code": {
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "e6e3fa147d391bccbbad33af8d95cf9b859dd2bbe0c33ca857de7c61e1322cf0",
+    "tested_binary": {
+      "path": "/tmp/ans-superroot-census",
+      "sha256": "201dfd4d20367cd93b513c2b951b79ae61aec8535c1a7f5f65cf0d0aaeec402b"
+    },
+    "source_fingerprints": {
+      "planner": {
+        "path": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/PairedRuntimeTANSPolarPlan.swift",
+        "sha256": "932da14f1381c6c42232dc23ff15bf2962b5a041781e28c57cdebe9d695f292e"
+      },
+      "census": {
+        "path": "experiments/20260913-apple-m5-ans-superroot-census/main.swift",
+        "sha256": "290dbde2dccf87b0cbed83aa1d801db87b06372b32c76c434ae2f3f27f2c8aea"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1-detector-geometry",
+      "path": "synthetic-geometry://192x192-all-valid",
+      "sha256": "96d6b6e45313a145f4cd8601980ee13e1a45c7b2b045211e27cbc2ef3cc2ecb9"
+    }
+  ],
+  "parameters": {
+    "detector_shape": [192, 192],
+    "leaf_pixels": 16,
+    "leaves_per_root": 16,
+    "superroot_group_sizes_in_roots": [4, 16],
+    "transition_count": 18,
+    "validity": "all-valid geometry only; not actual source validity",
+    "exact_reconstruction_required": true,
+    "planner_proxy": "nonzero selected fields + 4 * nonzero residual pixels",
+    "cpu_promotion_gate": "aggregate and target ADF center-8-to-20 proxy improve without worsening worst-case proxy"
+  },
+  "execution": {
+    "backend": "CPU-only Swift geometry census",
+    "host": "apple-m5-24gb",
+    "processes": 1,
+    "release": {
+      "gpu_workload": false,
+      "reason": "geometry-only exact planner census"
+    },
+    "timing_boundary": "CPU geometry planning and exact signed-delta reconstruction only; no GPU timing or application build"
+  },
+  "outputs": [
+    {
+      "artifact_id": "superroot-census",
+      "path": "experiments/20260913-apple-m5-ans-superroot-census/results/census.json",
+      "sha256": "0f922e859168a8cf363a017f4af2e65d96a0a12c57cc75c1a33676c05f6ce3d4",
+      "size_bytes": 13890,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "54/54 plans reconstructed exactly; superroot4 and superroot16 reduced proxy cost by 0.31% and 0.25% in aggregate but did not change target ADF center-8-to-20 cost, so the GPU-promotion gate was refuted."
+    }
+  ],
+  "summary": {
+    "all_54_plans_exact": true,
+    "two_level_leaf16_radial1": {
+      "total_fields": 1794,
+      "total_residuals": 6808,
+      "total_proxy_cost": 29026,
+      "worst_proxy_cost": 4639
+    },
+    "three_level_superroot4_roots": {
+      "total_fields": 1705,
+      "total_residuals": 6808,
+      "total_proxy_cost": 28937,
+      "worst_proxy_cost": 4639,
+      "aggregate_proxy_reduction_percent": 0.306625094
+    },
+    "three_level_superroot16_roots": {
+      "total_fields": 1722,
+      "total_residuals": 6808,
+      "total_proxy_cost": 28954,
+      "worst_proxy_cost": 4639,
+      "aggregate_proxy_reduction_percent": 0.248054125
+    },
+    "target_adf_center_8_to_20": {
+      "two_level": {"fields": 371, "residuals": 1067, "proxy_cost": 4639},
+      "superroot4": {"fields": 371, "residuals": 1067, "proxy_cost": 4639},
+      "superroot16": {"fields": 371, "residuals": 1067, "proxy_cost": 4639}
+    },
+    "added_index_bytes_upper_bound": {
+      "persistent_mapping_when_arithmetic": 0,
+      "root_to_superroot_map_replicated_for_seven_sources": 4032,
+      "query_payload_seven_sources_superroot4": 2016,
+      "query_payload_seven_sources_superroot16": 504
+    },
+    "gpu_timing_performed": false,
+    "gpu_memory_measured": false
+  },
+  "timestamps": {
+    "started": "2026-09-13T12:04:46Z",
+    "finished": "2026-09-13T12:06:25Z"
+  }
+}

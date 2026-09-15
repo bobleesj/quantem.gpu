@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260914-native-fast-interaction",
+  "status": "failed",
+  "question": "Can the frozen extra-index configuration safely convert seven original acquisitions from Normal to Fast in the current viewer and reproduce exact interactive output and the reported 12.3 GB working set?",
+  "paper": {"repository": "quantem.gpu", "authority": "user-directed local native app checkouts"},
+  "code": {
+    "repository": "quantem.gpu", "revision": "b13e8679d43021cc21567e5526e61b20068b1007",
+    "dirty": true, "diff_sha256": "695ff5bcbf232a54f4be355c08ce6a29c655e8c956080ecd74a095851b3021aa",
+    "snapshot_path": "local-evidence://sep14-fast-integration/native-sources.tar.gz",
+    "snapshot_sha256": "9776af337e32ffc193ff2834083c03a2a9c8d2458e3d1d3e4409aa8ae378cfd0",
+    "app_base": "f6dd65975346399b0efb7ab33be77929cefb7e56",
+    "app_diff_sha256": "cee3ce596aa037cbcb593ea19aa16f36e01376d7780a209ebedf45a4cd91b423",
+    "executable_sha256": "520c832a60084d3bfb1182a00df4110d56691cab08bb1552852f84dd6e4f5e93",
+    "entrypoint": "Live4DSTEM native AX Normal/Fast menu plus Tests/NativeUI/profile_seven_tilts.py trajectories"
+  },
+  "inputs": [{"dataset_id": "reference-seven-acquisitions", "path": "private-fixture://sep14-drag-bench/reference-seven", "sha256": "787a8f377c83c1f7629ae19e1be20cc407f41296bb3182d60d108e4df27d83cc", "hash_definition": "SHA256 of sorted shasum output covering all 28 original HDF5 master and shard files, including canonical paths"}],
+  "parameters": {
+    "shape": [512,512,192,192], "source_dtype": "uint16", "crop": false, "binning": false,
+    "normal": "existing paired ANS configuration without additional region indexes",
+    "fast": "frozen interactive-speed: radial streams, compact offsets, trusted decode, core and ring fine indexes, exact compact events T192",
+    "memory": "production admission budget, old resident retained until replacement ready; no headroom override",
+    "timing": "native foreground full trajectories; positive drawable presentedTime, not kernel throughput or timer ticks",
+    "parity": "full virtual-image hashes and exact DP switch/return; independent original-file reduction remains a required gate",
+    "cache": "source files hashed immediately before launch; explicitly warm-source, not cold I/O",
+    "artifact_results": {
+      "native-fast": "12.3085 GB resident; 114.0 all-seven ADF center, 90.6 ABF center, 117.5/118.5 resize updates per second. Exact preset maps, selected DP round trips and custom endpoints match Normal. One AX confirmation action returned an error despite delivery; failed attempt retained.",
+      "independent-maps": "All seven full 262144-pixel uint32 ADF maps match independent bounded HDF5/NumPy UInt64 sums, with the four file-marked bad pixels excluded. No intermediate-trajectory oracle claim.",
+      "return-failure": "Fast-to-Normal failed safely before replacing a resident: buffered encoding stage needed 3755163648 bytes but only 3673849856 additional bytes admitted. Superseded by bounded-return experiment."
+    }
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "native Swift/Metal", "gpu_model": "Apple M5", "gpu_ids": ["default"]},
+  "outputs": [
+    {"artifact_id":"native-fast","path":"local-evidence://sep14-fast-integration/native/fast-check/result.json","sha256":"66e1d1ab39a0354d8467e2c8ee8da7a162401b9406e327d52c3cdea571caaba5","size_bytes":91393,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"independent-maps","path":"local-evidence://sep14-fast-integration/original-map-parity.json","sha256":"f1765397297c7fc41e8eda47a949bfd747b85a8566c571a0556356452f57c750","size_bytes":3348,"retention":"durable","consuming_figures":[]},
+    {"artifact_id":"return-failure","path":"local-evidence://sep14-fast-integration/native/conversion-check/result.json","sha256":"0fab36d71e57605c760205a0bd3307f71b5e38b041b83b193ec4894bf1128f59","size_bytes":368,"retention":"durable","consuming_figures":[]}
+  ],
+  "timestamps": {"created": "2026-09-14", "started": "2026-09-14", "finished": "2026-09-14"}
+}

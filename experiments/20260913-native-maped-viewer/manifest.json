@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260913-native-maped-viewer",
+  "status": "succeeded",
+  "question": "Can the native viewer merge seven complete ANS tilts within 24 GB and restore calibrated uint16 intensities for viewing and saved-result reopening?",
+  "paper": {"repository": "quantem.gpu", "authority": "current local native macOS checkouts, user-directed"},
+  "code": {
+    "repository": "quantem.gpu", "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true, "diff_sha256": "f6067724f1194e3aa65d40187d7c5fc31da58306c6cb3b5b9dbfb81a73276405",
+    "diff_scope": "Tracked Package.swift and src changes; complete consumed native source-file hashes retained separately.",
+    "native_gpu_sources_sha256": "48bc32eb23c493c3f67c5330bcafdde74f39b2fb7954b3ee13edb6a9e871d21d",
+    "native_app_sources_sha256": "0ac715d7161a8b533e7ce0e2a2e824f57fbf1dccd24075473191de5bb2106038",
+    "native_quantem_sources_sha256": "55ca7b3411ce76608b68f119ea33aaaaec9cdcc636edbd36177a8313bc63aab3",
+    "executable_sha256": "1fcb7a32d557fcb1805279daebe68795fd256e416c02a01ae4849414cb8ef473",
+    "entrypoint": "Live4DSTEM/Tests/NativeUI/drive_maped.py",
+    "quantem_base": "27f22168db0382ca8587b2f1a65c326df32b0ae3",
+    "app_base": "f6dd65975346399b0efb7ab33be77929cefb7e56",
+    "source_state": "Dirty development integration; includes existing unrelated ANS/SSB edits. Not release-qualified."
+  },
+  "inputs": [
+    {"dataset_id": "tilt-1-master", "path": "private-fixture://tilt-series-seven/1", "sha256": "4b193525246c3fceeee9edbc8fce83a76b3adbfa65baf2d031a60ecddf6c6144"},
+    {"dataset_id": "tilt-2-master", "path": "private-fixture://tilt-series-seven/2", "sha256": "09a1a093bca8a1234ea82ffeafe1e3f87fa516e72e3eb8d706ca93297e65a123"},
+    {"dataset_id": "tilt-3-master", "path": "private-fixture://tilt-series-seven/3", "sha256": "7b9a58202bd9251e843e255668689968f1fec49da3e19c5883584342cb96a476"},
+    {"dataset_id": "tilt-4-master", "path": "private-fixture://tilt-series-seven/4", "sha256": "fe34acc72d659b9d94a578ba5191224c7461488be96ea8d7bba98aec4c35b1e0"},
+    {"dataset_id": "tilt-5-master", "path": "private-fixture://tilt-series-seven/5", "sha256": "4c5597ac5eb804cee7e01e1874ab69ad7f16c36e7eb9fa147083ac6d9dbedc65"},
+    {"dataset_id": "tilt-6-master", "path": "private-fixture://tilt-series-seven/6", "sha256": "047f589fb4b94e070793e23ebaa3c41ddc4efe71e7dc2f9048d2caa25dc079af"},
+    {"dataset_id": "tilt-7-master", "path": "private-fixture://tilt-series-seven/7", "sha256": "ac9d184644ab526a86137ad7d37e714b9fc1b521a6efe80d6a0ae324ae88de91"}
+  ],
+  "parameters": {
+    "shape_per_tilt": [512, 512, 192, 192], "source_dtype": "uint16",
+    "input_representation": "native-count ANS", "output": "regional scaled uint16, ANS",
+    "sigma": 1, "diffraction_edge_blend": 2, "scan_iterations": 20,
+    "scan_edge_blend": 5, "padding": 2, "hanning_filter": true,
+    "intensity_precision": "Approximate scaled uint16, measured error; ANS codes are exact.",
+    "input_hash_scope": "Master files only; payload identities retained in private catalog evidence.",
+    "run2": "46.733 s merge through initial image preparation; 15.33 GiB retained and 17.01 GiB peak Metal; 7 single-read ANS sources; cancel/retry and clean exit passed.",
+    "run1": "Scientific workflow completed; harness teardown failed and overall run failed. Run2 fixes close-before-quit and verifies presentation receipts.",
+    "saved_ui_initial": "Failed: opening saved result from welcome silently skipped missing loader; fixed with asynchronous initialization; retry pending.",
+    "run3": "47.054 s initial images; workflow and teardown passed. Screenshot review found linear DP histogram interpreted in logarithmic display space; application now requests shared GPU log histograms. Scientific values unchanged. Final rerun pending.",
+    "run4": "Passed native seven-tilt workflow, 7 single-read ANS sources, cancellation/retry, all four image products, percentile redraw with unchanged scientific values, presented drawables, clean quit. 47.742 s through initial images; 15.33 GiB retained, 17.01 GiB peak Metal; clipped=0. Display settings restored.",
+    "saved_ui_final": "Passed welcome-screen reopen, regional DP/scale change, save, close/reopen with identical image/DP hashes and precision metadata, and raw-count ingestion safeguard.",
+    "checks": "31 evidence-parser unit tests; frozen NumPy/MPS fixtures; calibrated weighted GPU display vs Double reference; exact restored bits and provenance across saved regional boundary.",
+    "limits": "No new full-data CUDA/MPS comparison, full XCTest suite, full-size export roundtrip, FPS gate, cold-I/O claim or release signoff. Product recomputation remains about 5-7 s. Menu/pointer zoom/pan/resize not driven in this hook-only run.",
+    "artifact_results": {
+      "seven-tilt-ui": "All hook-driven integration gates passed; 47.742 s includes fresh MAPED input preparation but excludes initial folder/comparison loading.",
+      "saved-result-ui": "Calibrated reopen and re-save preserve exact scientific image/DP hashes; raw-count loading rejected.",
+      "native-screenshot": "Actual final executable showing populated restored DP and merged image, selected regional scale, and error report."
+    }
+  },
+  "execution": {"host": "apple-m5-24gb", "backend": "native Swift/Metal", "gpu_model": "Apple M5", "gpu_ids": ["default"]},
+  "outputs": [
+    {"artifact_id": "seven-tilt-ui", "path": "local-evidence://maped-integration-20260913/run4/result.json", "sha256": "6462c416751c761f0cd640d7e784f11fa7c34f21c3caea8ce52d46fcf42f1755", "size_bytes": 113817, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "saved-result-ui", "path": "local-evidence://maped-integration-20260913/saved-ui-final/result.json", "sha256": "3c478d06f69e56261604e4da777073f8ee3dd28e7152e36f52027ecb6c73b0de", "size_bytes": 4010, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "native-screenshot", "path": "local-evidence://maped-integration-20260913/run4/merged.png", "sha256": "865ceb2f87cbcd8a72e55e95bed27c6fb4c161865e47d72db04110935911f093", "size_bytes": 1368728, "retention": "durable", "consuming_figures": []}
+  ],
+  "timestamps": {"created": "2026-09-13", "started": "2026-09-13", "finished": "2026-09-13"}
+}

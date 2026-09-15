@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260912-apple-m5-native-paired-ans-integration",
+  "status": "succeeded",
+  "question": "Can the native application open seven original HDF5 acquisitions directly into exact paired ANS, preserve all core products, and reduce resident memory without a saved ANS file?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260912-apple-m5-native-paired-ans-integration/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cc3177d745f49a1811ce8cf80703b933302fad14",
+    "dirty": true,
+    "diff_sha256": "284d265048714cf3ad21a0310cd216481559b0e7ddff25457a57a8595d071edd",
+    "entrypoint": "MetalPairedRuntimeTANSResidentSource.load plus the native resident interaction adapter",
+    "snapshot_path": "local-evidence://quantem-gpu-20260912/apple-m5-native-paired-ans-integration"
+  },
+  "inputs": [
+    {
+      "dataset_id": "tilt-series-seven-native-v1",
+      "path": "private-fixture://tilt-series-seven-native-v1",
+      "sha256": "ee1eccfc9a5e87330d21d711780e3c71dab425b93f8099f13e392652a9889f19"
+    }
+  ],
+  "parameters": {
+    "shape_per_acquisition": [512, 512, 192, 192],
+    "source_dtype": "uint16",
+    "acquisitions": 7,
+    "representation": "quantem.gpu.native-paired-runtime-tans/v1",
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "saved_ans_file": false
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "metal",
+    "gpu_model": "Apple M5",
+    "operating_system": "macOS 26.6.2"
+  },
+  "outputs": [
+    {
+      "artifact_id": "native-paired-ans-result",
+      "path": "experiments/20260912-apple-m5-native-paired-ans-integration/result.json",
+      "sha256": "5a36b698eb44adc4338003a7c7fabc4a6b934d5f4933808727cb862f1864a9e0",
+      "size_bytes": 2342,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Seven exact originals retained in 9.27 GB; the full hook-driven native journey passed with zero problems and console errors."
+    },
+    {
+      "artifact_id": "native-paired-ans-runbook",
+      "path": "experiments/20260912-apple-m5-native-paired-ans-integration/RUN-COMMANDS.md",
+      "sha256": "0461c570069e50fb067460789b8f5e0c70b4507676162eb9c1ab2ab0f1e0f863",
+      "size_bytes": 1099,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Backend parity and native UI reproduction commands."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-12T19:27:08Z",
+    "started": "2026-09-12T18:40:00Z",
+    "finished": "2026-09-12T19:27:08Z"
+  }
+}

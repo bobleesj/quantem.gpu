@@ -64,7 +64,15 @@ public final class MetalPackedSource {
     self.shape = shape
     self.precision = precision
   }
-  public static func load(path: URL, device: MTLDevice, indexDirectory: URL) throws
+  /// Detect calibrated display codes without interpreting them as detector counts.
+  public static func hasCalibration(at path: URL) -> Bool {
+    guard let text = qh5_read_root_attribute(path.path, "quantem_precision_v1") else { return false }
+    qh5_free_error(text)
+    return true
+  }
+
+  public static func load(path: URL, device: MTLDevice, indexDirectory: URL,
+    shouldCancel: () -> Bool = { false }) throws
     -> MetalPackedSource
   {
     guard let text = qh5_read_root_attribute(path.path, "quantem_precision_v1") else {
@@ -108,7 +116,7 @@ public final class MetalPackedSource {
       let coefficients = try JSONDecoder().decode(Envelope.self, from: bytes).regions
       var index = 0
       var first = 0
-      try MetalHDF5Reader.read(source: input, device: device) { buffer, frames in
+      try MetalHDF5Reader.read(source: input, device: device, shouldCancel: shouldCancel) { buffer, frames in
         var cursor = 0
         while cursor < frames.count {
           guard index < regions.count,
@@ -147,6 +155,7 @@ public final class MetalPackedSource {
         throw MetalPrecision.invalid("Saved regional calibration is incomplete.")
       }
       output.savedMetadata = metadata
+      output.attributes = savedAttributes(at: path)
       return output
     }
     // JSONSerialization bridges decimal numbers through NSNumber, which can
@@ -178,8 +187,19 @@ public final class MetalPackedSource {
         "The saved precision shape or uint16 storage does not match its metadata.")
     }
     let result = try MetalPackedSource(shape: shape, precision: precision)
-    try MetalHDF5Reader.read(source: source, device: device) { codes, frames in
+    try MetalHDF5Reader.read(source: source, device: device, shouldCancel: shouldCancel) { codes, frames in
       try result.append(codes, frames: frames.count)
+    }
+    result.attributes = savedAttributes(at: path)
+    return result
+  }
+  private static func savedAttributes(at path: URL) -> [String: String] {
+    var result: [String: String] = [:]
+    for key in ["quantem_maped_merge_v1", "quantem_maped_summary_v1"] {
+      if let text = qh5_read_root_attribute(path.path, key) {
+        result[key] = String(cString: text)
+        qh5_free_error(text)
+      }
     }
     return result
   }
