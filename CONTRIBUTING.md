@@ -24,6 +24,23 @@ Swift/Metal changes require Xcode command-line tools.
 
 ## Preserve the scientific contract
 
+### Disposable test outputs
+
+Pytest now discards `tmp_path` outputs on both success and failure instead of
+retaining several large export runs. Its session fixture also redirects Python
+and subprocess temporary loading files (`TMPDIR`, `TMP`, `TEMP`) into that
+session's owned directory. Normal completion, test failure, Ctrl-C and catchable
+SIGTERM clean those temporary files. Keep original acquisitions read-only and
+write `.qem`, HDF5, NumPy exports and test indexes to `tmp_path`, never beside
+originals. Explicit paths outside test scratch are not removed. Keep small
+timing/parity reports separately if needed, not copies of the input arrays.
+
+An uncatchable kill or power failure cannot run teardown; pytest's subsequent
+temporary-directory housekeeping handles abandoned pytest roots. This does not
+sweep arbitrary benchmark folders, user caches or Codex history. Standalone
+benchmarks and UI scripts must use their own managed lifecycle; Live4DSTEM's
+`scripts/run_test.py` provides a supervisor for those commands.
+
 Every backend uses `(row, col)` coordinates and the same source geometry,
 mask, bin, dtype, precision, and result meaning. A contribution must not
 silently:
