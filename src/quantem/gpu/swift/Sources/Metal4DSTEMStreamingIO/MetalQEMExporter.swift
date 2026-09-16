@@ -24,7 +24,6 @@ public enum MetalQEMExporter {
   public enum Source {
     case counts(any NativeCountArray)
     case indexed(Native4DSTEMIndexedSource)
-    case snapshot(NativeANSSnapshot)
     case empad(NativeEMPADSource, background: NativeEMPADSource?, alreadyCorrected: Bool)
   }
 
@@ -99,8 +98,6 @@ public enum MetalQEMExporter {
       resident = try .load(
         source: indexed, device: device, includeSpatialIndex: true,
         maximumAdditionalBytes: budget, shouldCancel: shouldCancel)
-    case .snapshot(let snapshot):
-      resident = try .load(snapshot: snapshot, device: device, maximumAdditionalBytes: budget)
     case .empad:
       preconditionFailure("EMPAD conversion is handled above")
     }

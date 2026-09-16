@@ -16,7 +16,6 @@ public struct NativeANSSnapshot {
   }
   public let metadata: [String: Any]
   public let scientificMetadata: [String: Any]
-  public let isQEM: Bool
   public let url: URL
   public let shape: [Int]
   public let dtype: String
@@ -32,8 +31,7 @@ public struct NativeANSSnapshot {
   public static func matches(_ url: URL) -> Bool {
     guard let file = try? FileHandle(forReadingFrom: url) else { return false }
     defer { try? file.close() }
-    let signature = try? file.read(upToCount: 8)
-    return signature == Data("QGPUSTRM".utf8) || signature == NativeQEMMetadata.magic
+    return (try? file.read(upToCount: 8)) == NativeQEMMetadata.magic
   }
 
   public init(url: URL) throws {
@@ -41,9 +39,8 @@ public struct NativeANSSnapshot {
     let file = try FileHandle(forReadingFrom: url)
     defer { try? file.close() }
     let prefix = try file.read(upToCount: 56) ?? Data()
-    isQEM = prefix.prefix(8) == NativeQEMMetadata.magic
-    guard prefix.count == 56, isQEM || prefix.prefix(8) == Data("QGPUSTRM".utf8) else {
-      throw Self.invalid("Choose a complete QuantEM data file or legacy compressed snapshot.")
+    guard prefix.count == 56, prefix.prefix(8) == NativeQEMMetadata.magic else {
+      throw Self.invalid("Choose a complete .qem data file.")
     }
     let rawLength = prefix.withUnsafeBytes {
       $0.loadUnaligned(fromByteOffset: 8, as: UInt64.self).littleEndian
@@ -74,7 +71,7 @@ public struct NativeANSSnapshot {
       let checksums = header["sha256"] as? [String],
       let entries = header["chunks"] as? [[String: Any]]
     else { throw Self.invalid("Invalid ANS header or checksum; recopy the snapshot.") }
-    if isQEM { try NativeQEMMetadata.validate(header, shape: shape) }
+    try NativeQEMMetadata.validate(header, shape: shape)
     scientificMetadata = header["scientific_metadata"] as? [String: Any] ?? [:]
     self.shape = shape
     self.dtype = dtype
@@ -156,11 +153,9 @@ public struct NativeANSSnapshot {
         rowSamplingAngstrom: scan![0], columnSamplingAngstrom: scan![1],
         origin: .sourceMetadata, evidence: "ANS snapshot original acquisition calibration") : nil
     var nativeMetadata = metadata["source_metadata"] as? [String: String] ?? [:]
-    if isQEM {
-      nativeMetadata[NativeQEMCalibration.metadataKey] = String(
-        decoding: try NativeQEMCalibration.encoded(
-          NativeQEMCalibration.read(scientific: scientificMetadata)), as: UTF8.self)
-    }
+    nativeMetadata[NativeQEMCalibration.metadataKey] = String(
+      decoding: try NativeQEMCalibration.encoded(
+        NativeQEMCalibration.read(scientific: scientificMetadata)), as: UTF8.self)
     // CUDA/Python snapshots store normalized camera fields beside source_metadata;
     // native snapshots retain them inside it. Both describe the same acquisition.
     for key in ["camera_model", "camera_id", "acquisition_processing"]
@@ -190,7 +185,7 @@ public struct NativeANSSnapshot {
       kPixelUnit: detector == nil ? nil : detectorUnit,
       acquisitionDate: metadata["acquisition_date"] as? String,
       metadata: nativeMetadata,
-      schemaIdentity: isQEM ? "quantem.qem/v1" : "QGPUSTRM/v1", sourceIdentitySHA256: identity,
+      schemaIdentity: "quantem.qem/v1", sourceIdentitySHA256: identity,
       sourceScanCalibration: calibration)
   }
 

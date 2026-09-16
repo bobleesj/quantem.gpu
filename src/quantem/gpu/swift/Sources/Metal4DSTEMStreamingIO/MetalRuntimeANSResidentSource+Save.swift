@@ -5,10 +5,11 @@ import Metal
 import Native4DSTEMIO
 
 extension MetalRuntimeANSResidentSource {
-  /// Save unchanged encoded counts and indexes as a portable runtime snapshot.
+  /// Save unchanged encoded counts and indexes as a portable `.qem` file.
   ///
-  /// The destination is published atomically and never replaces an existing file.
-  /// Call from a worker while the source remains exclusively owned and live.
+  /// Counts are stored as-is; nothing is re-encoded. The destination is published
+  /// atomically and never replaces an existing file. Call from a worker while the
+  /// source remains exclusively owned and live.
   /// Example: `try source.saveSnapshot(to: destination)`.
   public func saveSnapshot(
     to destination: URL,
@@ -20,9 +21,9 @@ extension MetalRuntimeANSResidentSource {
     let overrides =
       try calibrationOverrides ?? NativeQEMCalibration.read(metadata: dataset.metadata ?? [:])
     try NativeQEMCalibration.validate(overrides)
-    guard destination.pathExtension.lowercased() == "qem" || overrides.isEmpty else {
+    guard destination.pathExtension.lowercased() == "qem" else {
       throw Self.invalid(
-        "Save as .qem to preserve calibration overrides; legacy .ans files do not carry them.")
+        "\(Self.self) writes .qem files only; nothing else carries calibration overrides.")
     }
     guard !chunks.isEmpty, chunks.allSatisfy({ $0.spatial.count == 3 }) else {
       throw Self.invalid(
@@ -171,20 +172,17 @@ extension MetalRuntimeANSResidentSource {
       "valid": packedValid.map { String(format: "%02x", $0) }.joined(),
       "chunks": table, "bytes": cursor, "sha256": checksums, "metadata": metadata,
     ]
-    let qem = destination.pathExtension.lowercased() == "qem"
-    if qem {
-      header["container"] = NativeQEMMetadata.container
-      header["container_version"] = 1
-      header["codec"] = "runtime-column-rans-spatial-v2"
-      header["scientific_metadata"] = try NativeQEMCalibration.applying(
-        overrides,
-        to: NativeQEMMetadata.acquisition(dataset))
-    }
+    header["container"] = NativeQEMMetadata.container
+    header["container_version"] = 1
+    header["codec"] = "runtime-column-rans-spatial-v2"
+    header["scientific_metadata"] = try NativeQEMCalibration.applying(
+      overrides,
+      to: NativeQEMMetadata.acquisition(dataset))
     let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
     guard json.count <= 16 << 20 else {
       throw Self.invalid("Source metadata exceeds the compressed header limit.")
     }
-    var prefix = qem ? NativeQEMMetadata.magic : Data("QGPUSTRM".utf8)
+    var prefix = NativeQEMMetadata.magic
     for size in [json.count, 56 + json.count] {
       var value = UInt64(size).littleEndian
       withUnsafeBytes(of: &value) { prefix.append(contentsOf: $0) }

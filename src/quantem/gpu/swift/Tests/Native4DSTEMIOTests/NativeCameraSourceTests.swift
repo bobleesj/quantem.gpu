@@ -20,7 +20,7 @@ final class NativeCameraSourceTests: XCTestCase {
 
   func testSnapshotChecksEncodedBytesBeforeConsumption() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-      UUID().uuidString + ".ans")
+      UUID().uuidString + ".qem")
     defer { try? FileManager.default.removeItem(at: url) }
     var body = Data(repeating: 0, count: 58)
     body.replaceSubrange(24..<28, with: [UInt8](repeating: 253, count: 4))
@@ -34,9 +34,18 @@ final class NativeCameraSourceTests: XCTestCase {
       "chunks": [["first": 0, "scans": 2, "arrays": arrays]], "bytes": body.count,
       "sha256": [checksum],
       "metadata": ["scan_sampling_A": [2.5, 2.5], "detector_sampling_inv_A": [0.025, 0.025]],
+      "container": "quantem.qem", "container_version": 1,
+      "codec": "runtime-column-rans-spatial-v2",
+      "scientific_metadata": [
+        "schema": "quantem.scientific-metadata/1",
+        "axes": [
+          ["name": "scan_row", "size": 1], ["name": "scan_column", "size": 2],
+          ["name": "detector_row", "size": 2], ["name": "detector_column", "size": 2],
+        ],
+      ],
     ]
     let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
-    var file = Data("QGPUSTRM".utf8)
+    var file = Data(NativeQEMMetadata.magic)
     for size in [json.count, json.count + 56] {
       var value = UInt64(size).littleEndian
       withUnsafeBytes(of: &value) { file.append(contentsOf: $0) }
@@ -127,7 +136,7 @@ final class NativeCameraSourceTests: XCTestCase {
     guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal required") }
     let resident = try MetalRuntimeANSResidentSource.load(camera: source, device: device)
     defer { resident.releaseResidentStorage() }
-    let saved = directory.appendingPathComponent("camera.compressed.ans")
+    let saved = directory.appendingPathComponent("camera.compressed.qem")
     try resident.saveSnapshot(to: saved)
     let snapshot = try NativeANSSnapshot(url: saved)
     XCTAssertEqual(snapshot.dataset.sourceBytes, snapshot.dataStart + snapshot.bodyBytes)
@@ -143,7 +152,7 @@ final class NativeCameraSourceTests: XCTestCase {
     let preserved = try Data(contentsOf: saved)
     XCTAssertThrowsError(try resident.saveSnapshot(to: saved))
     XCTAssertEqual(try Data(contentsOf: saved), preserved)
-    let cancelled = directory.appendingPathComponent("cancelled.ans")
+    let cancelled = directory.appendingPathComponent("cancelled.qem")
     XCTAssertThrowsError(try resident.saveSnapshot(to: cancelled, shouldCancel: { true }))
     XCTAssertFalse(FileManager.default.fileExists(atPath: cancelled.path))
   }
