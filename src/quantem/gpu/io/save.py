@@ -1842,11 +1842,12 @@ def save(
     """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
 
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
-    HDF5 master/shard set. It requires a complete encoded CUDA or MPS/Metal
-    resident, so the exact encoded bytes and spatial indexes are stored as they
-    already exist and nothing is re-encoded. Calibration is retained and an
+    HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
+    its existing bytes without re-encoding. Explicit ``backend="cpu"`` accepts
+    a 4D NumPy uint8/uint16 array, or float32 with a 128x128 detector, using the
+    portable reference encoder. Calibration is retained and an
     existing destination is never replaced. Saved copies reopen on CUDA or
-    MPS/Metal; reopening preserves encoded counts and offers no CPU conversion.
+    MPS/Metal as encoded counts, or explicitly on CPU as original dense measurements.
     The HDF5-specific options and discussion below do not apply to ``.qem``.
     ``compression="auto"`` preserves the existing default encoding: ANS for
     QuantEM files and bitshuffle/LZ4 for Arina files.
@@ -2059,6 +2060,11 @@ def save(
             data = data.data
         if dtype is not None or scan_shape is not None or source_master is not None:
             raise ValueError("Saving a native 4D acquisition preserves its own geometry; remove dtype, scan_shape, and source_master controls.")
+        if backend == "cpu" and isinstance(data, np.ndarray):
+            from ._qem_reference import save_array
+
+            save_array(filepath, data, metadata, chunk_scans=512 if batch_size is None else batch_size)
+            return SaveResult(str(filepath), "cpu", complete=True)
         from quantem.gpu._compact.streamed import StreamedCounts
 
         from .backends.mps._streamed import MPSStreamedCounts

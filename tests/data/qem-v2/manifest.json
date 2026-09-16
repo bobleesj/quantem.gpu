@@ -1,0 +1,340 @@
+{
+  "license": "MIT",
+  "origin": "synthetic",
+  "specification": "0.0.1",
+  "entries": [
+    {
+      "name": "u8-interval-boundary",
+      "shape": [
+        3,
+        179,
+        2,
+        3
+      ],
+      "dtype": "uint8",
+      "sha256": "beac6155386b245e3446636e8a40e2a59ccc19b88d9606694c9b2bc1940787bc",
+      "counts_sha256": "d4ada0aa00fe8cee8aa6aab16498105188fd36479bbfde68154b98003bb05569",
+      "scientific_metadata": {
+        "axes": [
+          {
+            "name": "scan_row",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "angstrom",
+              "value": 0.4
+            },
+            "size": 3
+          },
+          {
+            "name": "scan_column",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "angstrom",
+              "value": 0.6
+            },
+            "size": 179
+          },
+          {
+            "name": "detector_row",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "1/angstrom",
+              "value": 0.02
+            },
+            "size": 2
+          },
+          {
+            "name": "detector_column",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "1/angstrom",
+              "value": 0.03
+            },
+            "size": 3
+          }
+        ],
+        "calibration_overrides": {},
+        "electron_microscope": {
+          "electron_source/accelerating_voltage": {
+            "provenance": "source_metadata",
+            "unit": "kV",
+            "value": 300.0
+          },
+          "scan_controller/regular_scan/pixel_size_x": {
+            "provenance": "source_metadata",
+            "unit": "angstrom",
+            "value": 0.6
+          },
+          "scan_controller/regular_scan/pixel_size_y": {
+            "provenance": "source_metadata",
+            "unit": "angstrom",
+            "value": 0.4
+          }
+        },
+        "processing": [
+          {
+            "changes_measurements": false,
+            "operation": "lossless_storage"
+          }
+        ],
+        "schema": "quantem.scientific-metadata/2",
+        "source_format": "unknown",
+        "source_metadata": {
+          "data_origin": "deterministic synthetic",
+          "fixture": "u8-interval-boundary"
+        },
+        "source_metadata_coverage": "reader-retained"
+      },
+      "validation": {
+        "container_version": 1,
+        "codec": "runtime-column-rans-spatial-v2",
+        "shape": [
+          3,
+          179,
+          2,
+          3
+        ],
+        "dtype": "uint8",
+        "file_bytes": 5035,
+        "integrity": "verified",
+        "codec_layout": "verified",
+        "decoded_parity": "not_checked",
+        "metadata_coverage": "reader-retained",
+        "calibrated_axes": [
+          "scan_row",
+          "scan_column",
+          "detector_row",
+          "detector_column"
+        ],
+        "normalized_fields": [
+          "electron_source/accelerating_voltage",
+          "scan_controller/regular_scan/pixel_size_x",
+          "scan_controller/regular_scan/pixel_size_y"
+        ],
+        "override_fields": []
+      }
+    },
+    {
+      "name": "u16-multiple-chunks",
+      "shape": [
+        3,
+        179,
+        9,
+        9
+      ],
+      "dtype": "uint16",
+      "sha256": "89da6f3c19a0d8df81693a4d552a94568d1c23918b884e0619b0481956fa5333",
+      "counts_sha256": "5bd973f86a36d5a5c7f2ffa1b7db70f4f2e2c0dd6a70ec0017657827841aeb7d",
+      "scientific_metadata": {
+        "axes": [
+          {
+            "name": "scan_row",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "angstrom",
+              "value": 0.4
+            },
+            "size": 3
+          },
+          {
+            "name": "scan_column",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "angstrom",
+              "value": 0.6
+            },
+            "size": 179
+          },
+          {
+            "name": "detector_row",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "1/angstrom",
+              "value": 0.02
+            },
+            "size": 9
+          },
+          {
+            "name": "detector_column",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "1/angstrom",
+              "value": 0.03
+            },
+            "size": 9
+          }
+        ],
+        "calibration_overrides": {},
+        "electron_microscope": {
+          "electron_source/accelerating_voltage": {
+            "provenance": "source_metadata",
+            "unit": "kV",
+            "value": 300.0
+          },
+          "scan_controller/regular_scan/pixel_size_x": {
+            "provenance": "source_metadata",
+            "unit": "angstrom",
+            "value": 0.6
+          },
+          "scan_controller/regular_scan/pixel_size_y": {
+            "provenance": "source_metadata",
+            "unit": "angstrom",
+            "value": 0.4
+          }
+        },
+        "processing": [
+          {
+            "changes_measurements": false,
+            "operation": "lossless_storage"
+          }
+        ],
+        "schema": "quantem.scientific-metadata/2",
+        "source_format": "unknown",
+        "source_metadata": {
+          "data_origin": "deterministic synthetic",
+          "fixture": "u16-multiple-chunks"
+        },
+        "source_metadata_coverage": "reader-retained"
+      },
+      "validation": {
+        "container_version": 1,
+        "codec": "runtime-column-rans-spatial-v2",
+        "shape": [
+          3,
+          179,
+          9,
+          9
+        ],
+        "dtype": "uint16",
+        "file_bytes": 35506,
+        "integrity": "verified",
+        "codec_layout": "verified",
+        "decoded_parity": "not_checked",
+        "metadata_coverage": "reader-retained",
+        "calibrated_axes": [
+          "scan_row",
+          "scan_column",
+          "detector_row",
+          "detector_column"
+        ],
+        "normalized_fields": [
+          "electron_source/accelerating_voltage",
+          "scan_controller/regular_scan/pixel_size_x",
+          "scan_controller/regular_scan/pixel_size_y"
+        ],
+        "override_fields": []
+      }
+    },
+    {
+      "name": "float32-special-bits",
+      "shape": [
+        1,
+        2,
+        128,
+        128
+      ],
+      "dtype": "float32",
+      "sha256": "7006fefc72e6977bd242ea464d60d65fdb75bb83679d087ff52e504149851c2c",
+      "counts_sha256": "f5ba1ba38f5de59213cea754729a287049e95639bfb91379165bd1effac80d43",
+      "scientific_metadata": {
+        "axes": [
+          {
+            "name": "scan_row",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "angstrom",
+              "value": 0.4
+            },
+            "size": 1
+          },
+          {
+            "name": "scan_column",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "angstrom",
+              "value": 0.6
+            },
+            "size": 2
+          },
+          {
+            "name": "detector_row",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "1/angstrom",
+              "value": 0.02
+            },
+            "size": 128
+          },
+          {
+            "name": "detector_column",
+            "sampling": {
+              "provenance": "source_metadata",
+              "unit": "1/angstrom",
+              "value": 0.03
+            },
+            "size": 128
+          }
+        ],
+        "calibration_overrides": {},
+        "electron_microscope": {
+          "electron_source/accelerating_voltage": {
+            "provenance": "source_metadata",
+            "unit": "kV",
+            "value": 300.0
+          },
+          "scan_controller/regular_scan/pixel_size_x": {
+            "provenance": "source_metadata",
+            "unit": "angstrom",
+            "value": 0.6
+          },
+          "scan_controller/regular_scan/pixel_size_y": {
+            "provenance": "source_metadata",
+            "unit": "angstrom",
+            "value": 0.4
+          }
+        },
+        "processing": [
+          {
+            "changes_measurements": false,
+            "operation": "lossless_storage"
+          }
+        ],
+        "schema": "quantem.scientific-metadata/2",
+        "source_format": "unknown",
+        "source_metadata": {
+          "data_origin": "deterministic synthetic",
+          "fixture": "float32-special-bits"
+        },
+        "source_metadata_coverage": "reader-retained"
+      },
+      "validation": {
+        "container_version": 1,
+        "codec": "empad-xor-row-packed-v1",
+        "shape": [
+          1,
+          2,
+          128,
+          128
+        ],
+        "dtype": "float32",
+        "file_bytes": 137322,
+        "integrity": "verified",
+        "codec_layout": "verified",
+        "decoded_parity": "not_checked",
+        "metadata_coverage": "reader-retained",
+        "calibrated_axes": [
+          "scan_row",
+          "scan_column",
+          "detector_row",
+          "detector_column"
+        ],
+        "normalized_fields": [
+          "electron_source/accelerating_voltage",
+          "scan_controller/regular_scan/pixel_size_x",
+          "scan_controller/regular_scan/pixel_size_y"
+        ],
+        "override_fields": []
+      }
+    }
+  ]
+}

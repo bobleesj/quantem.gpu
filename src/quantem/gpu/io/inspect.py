@@ -64,19 +64,24 @@ def inspect(
     >>> info.scan_shape, info.detector_shape  # doctest: +SKIP
     """
     path = Path(filepath)
-    from ._streamed_file import is_streamed_file, read_header
+    from ._streamed_file import is_streamed_file
+    from ._qem_reference import read_envelope
+    from ._qem_metadata import effective_metadata
 
     if is_streamed_file(path):
-        header, _ = read_header(path)
+        header, _ = read_envelope(path)
         shape = tuple(header["shape"])
         matches = scan_shape is None or tuple(scan_shape) == shape[:2]
-        metadata = dict(header["metadata"], resident_bytes=header["bytes"],
+        metadata = dict(effective_metadata(header.get("metadata", {}), header["scientific_metadata"]), resident_bytes=header["bytes"],
                         source_kind="resident", representation="encoded")
-        valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))
-        mask = (valid[:math.prod(shape[2:])] == 0).astype(np.uint32).reshape(shape[2:])
+        metadata["scientific_metadata"] = header["scientific_metadata"]
+        mask = None
+        if "valid" in header:
+            valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))
+            mask = (valid[:math.prod(shape[2:])] == 0).astype(np.uint32).reshape(shape[2:])
         return Inspection(
             matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
-            "Load to verify the saved ANS streams and spatial indexes.",
+            "Load to verify and decode the saved measurements.",
             metadata, mask, "resident", math.prod(shape[:2]), math.prod(shape[:2]),
             shape[:2], shape[2:], header["dtype"], {"path": str(path.resolve())},
         )

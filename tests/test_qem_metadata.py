@@ -168,7 +168,9 @@ def test_existing_reference_migrates_units_without_changing_source_metadata():
     assert scan["unit"] == "angstrom"
     assert scan["value"] == pytest.approx(0.4)
     assert override["imaging_system/reciprocal_pixel_size_y"]["unit"] == "1/angstrom"
-    assert effective_metadata({}, normalized) == effective_metadata({}, original)
+    upgraded = effective_metadata({}, normalized)
+    for key, value in effective_metadata({}, original).items():
+        assert upgraded[key] == value
     assert microscopy_metadata(normalized) == normalized
     assert original == before
 
@@ -186,3 +188,28 @@ def test_diffraction_units_keep_angular_and_reciprocal_sampling_distinct():
         sampling = metadata["axes"][2]["sampling"]
         assert sampling["unit"] == expected_unit
         assert sampling["value"] == pytest.approx(expected, rel=1e-14)
+
+
+def test_public_calibration_is_authoritative_for_independent_writers():
+    scientific = acquisition_metadata((2, 3, 16, 16), {
+        "scan_sampling_A": [1, 2], "voltage_kV": 300,
+    })
+    for private in ({}, {"scan_sampling_A": [8, 9], "voltage_kV": 80}):
+        restored = effective_metadata(private, scientific)
+        assert restored["scan_sampling_A"] == [1, 2]
+        assert restored["voltage_kV"] == 300
+    header = dict(container="quantem.qem", container_version=1,
+                  codec="example", profile="example", shape=[2, 3, 16, 16],
+                  scientific_metadata=scientific)
+    validate_header(header)
+    for change in ("conflict", "provenance", "coverage"):
+        invalid = copy.deepcopy(header)
+        record = invalid["scientific_metadata"]
+        if change == "conflict":
+            record["electron_microscope"]["scan_controller/regular_scan/pixel_size_y"]["value"] = 99
+        elif change == "provenance":
+            del record["axes"][0]["sampling"]["provenance"]
+        else:
+            del record["source_metadata_coverage"]
+        with pytest.raises(ValueError):
+            validate_header(invalid)

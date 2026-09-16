@@ -5293,6 +5293,24 @@ def load(
                 "it as .qem."
             )
     snapshots = [is_streamed_file(path) for path in precision_sources]
+    array_sources = [isinstance(path, (str, os.PathLike))
+                     and Path(path).suffix.lower() in {".npy", ".xml", ".raw"}
+                     for path in precision_sources]
+    if any(array_sources):
+        if not all(array_sources) or backend != "cpu" or representation not in (None, "dense"):
+            raise NotImplementedError("NumPy/EMPAD reference loading requires backend='cpu', representation='dense'; load these separately from other formats.")
+        if (any(value is not None for value in (dataset_path, scan_region, detector_region,
+                target_scan_region, scan_shift_row_col, scan_indices, random_positions,
+                drift, devices, expected_source_sha256, source_integrity))
+                or detector_bin != 1 or det_bin not in (None, 1) or dtype not in (None, "native")
+                or output != "native" or apply_mask or scan_order != "row-major"):
+            raise ValueError("Reference loading preserves original measurements; remove selection, dtype, correction and binning options.")
+        from ._array_sources import load_array_source
+
+        results = [load_array_source(path, scan_shape) for path in precision_sources]
+        if len(results) > 1 and stack:
+            raise ValueError("Use stack=False for independently calibrated acquisitions.")
+        return results[0] if isinstance(source, (str, os.PathLike)) else results
     dm_sources = [isinstance(path, (str, os.PathLike))
                   and Path(path).suffix.lower() in {".dm3", ".dm4"}
                   for path in precision_sources]

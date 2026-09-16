@@ -1,0 +1,643 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QEM scientific metadata schema 2",
+  "description": "Structural validation. Readers additionally check calibration consistency, finite numbers, supported codecs, array coverage and checksums.",
+  "type": "object",
+  "required": [
+    "schema",
+    "axes",
+    "source_metadata",
+    "source_metadata_coverage"
+  ],
+  "properties": {
+    "schema": {
+      "const": "quantem.scientific-metadata/2"
+    },
+    "axes": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {
+          "type": "object",
+          "required": [
+            "name",
+            "size"
+          ],
+          "properties": {
+            "name": {
+              "const": "scan_row"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sampling": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": [
+            "name",
+            "size"
+          ],
+          "properties": {
+            "name": {
+              "const": "scan_column"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sampling": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": [
+            "name",
+            "size"
+          ],
+          "properties": {
+            "name": {
+              "const": "detector_row"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sampling": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "mrad",
+                        "1/angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "required": [
+            "name",
+            "size"
+          ],
+          "properties": {
+            "name": {
+              "const": "detector_column"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "sampling": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "mrad",
+                        "1/angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "source_metadata": {
+      "type": "object"
+    },
+    "source_metadata_coverage": {
+      "enum": [
+        "reader-retained",
+        "exhaustive",
+        "unknown"
+      ]
+    },
+    "source_format": {
+      "type": "string"
+    },
+    "electron_microscope": {
+      "type": "object",
+      "properties": {
+        "scan_controller/regular_scan/pixel_size_y": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "angstrom"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "scan_controller/regular_scan/pixel_size_x": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "angstrom"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "imaging_system/reciprocal_pixel_size_y": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "mrad",
+                    "1/angstrom"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "imaging_system/reciprocal_pixel_size_x": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "mrad",
+                    "1/angstrom"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "electron_source/accelerating_voltage": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "kV"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "electron_source/beam_energy": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "keV"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "illumination_system/semi_convergence_angle": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "mrad"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "scan_controller/regular_scan/dwell_time": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "us"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "imaging_system/camera_length": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/quantity"
+            },
+            {
+              "properties": {
+                "unit": {
+                  "enum": [
+                    "mm"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/quantity"
+      }
+    },
+    "calibration_overrides": {
+      "type": "object",
+      "properties": {
+        "scan_controller/regular_scan/pixel_size_y": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "scan_controller/regular_scan/pixel_size_x": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "imaging_system/reciprocal_pixel_size_y": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "mrad",
+                        "1/angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "imaging_system/reciprocal_pixel_size_x": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "mrad",
+                        "1/angstrom"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "electron_source/accelerating_voltage": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "kV"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "illumination_system/semi_convergence_angle": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "mrad"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "scan_controller/regular_scan/dwell_time": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "us"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "imaging_system/camera_length": {
+          "allOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/quantity"
+                },
+                {
+                  "properties": {
+                    "unit": {
+                      "enum": [
+                        "mm"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "provenance": {
+                  "const": "user_override"
+                },
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "processing": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "extensions": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "quantity": {
+      "type": "object",
+      "required": [
+        "value",
+        "unit",
+        "provenance"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

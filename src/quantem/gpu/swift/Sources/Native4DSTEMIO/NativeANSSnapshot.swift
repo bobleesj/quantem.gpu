@@ -140,7 +140,16 @@ public struct NativeANSSnapshot {
       throw Self.invalid("Incomplete ANS snapshot; recopy the complete file.")
     }
     self.chunks = chunks
-    let metadata = header["metadata"] as? [String: Any] ?? [:]
+    var metadata = header["metadata"] as? [String: Any] ?? [:]
+    if scientificMetadata["schema"] as? String == NativeQEMMetadataUnits.schema {
+      for field in [
+        "scan_sampling_A", "detector_sampling", "detector_sampling_inv_A",
+        "detector_sampling_unit", "voltage_kV",
+      ] { metadata.removeValue(forKey: field) }
+      metadata.merge(
+        try NativeQEMMetadataUnits.recordedMetadata(scientificMetadata),
+        uniquingKeysWith: { _, publicValue in publicValue })
+    }
     self.metadata = metadata
     let scan = metadata["scan_sampling_A"] as? [Double]
     let detector =
@@ -153,6 +162,9 @@ public struct NativeANSSnapshot {
         rowSamplingAngstrom: scan![0], columnSamplingAngstrom: scan![1],
         origin: .sourceMetadata, evidence: "ANS snapshot original acquisition calibration") : nil
     var nativeMetadata = metadata["source_metadata"] as? [String: String] ?? [:]
+    if scientificMetadata["schema"] as? String == NativeQEMMetadataUnits.schema {
+      nativeMetadata = try NativeQEMMetadataUnits.microscopeMetadata(scientificMetadata)
+    }
     nativeMetadata[NativeQEMCalibration.metadataKey] = String(
       decoding: try NativeQEMCalibration.encoded(
         NativeQEMCalibration.read(scientific: scientificMetadata)), as: UTF8.self)

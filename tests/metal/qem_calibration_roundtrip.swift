@@ -1,9 +1,27 @@
+import CryptoKit
 import Foundation
 import Metal
 import Metal4DSTEMStreamingIO
 import Native4DSTEMIO
 
 @main struct QEMCalibrationRoundtrip {
+  static func mutate(_ value: Any, path: ArraySlice<Any>, replacement: Any?) -> Any {
+    guard let key = path.first else { return replacement as Any }
+    if let index = key as? Int {
+      var array = value as! [Any]
+      array[index] = mutate(array[index], path: path.dropFirst(), replacement: replacement)
+      return array
+    }
+    var object = value as! [String: Any]
+    let name = key as! String
+    if path.count == 1 {
+      object[name] = replacement
+    } else {
+      object[name] = mutate(object[name]!, path: path.dropFirst(), replacement: replacement)
+    }
+    return object
+  }
+
   static func main() throws {
     guard CommandLine.arguments.count == 3, let device = MTLCreateSystemDefaultDevice() else {
       fatalError("Usage: qem-calibration-roundtrip counts.npy new-copy.qem")
@@ -11,6 +29,17 @@ import Native4DSTEMIO
     let original = try NativeNPYSource(url: URL(fileURLWithPath: CommandLine.arguments[1]))
     precondition(original.dataset.sourceDtype == "uint16", "This exact-count fixture requires uint16 input")
     let output = URL(fileURLWithPath: CommandLine.arguments[2])
+    let fixtures = URL(fileURLWithPath: "tests/data/qem-v2")
+    let reference = try NativeQEMFile(url: fixtures.appendingPathComponent("u16-multiple-chunks.qem"))
+    let invalidCases = try JSONSerialization.jsonObject(with:
+      Data(contentsOf: fixtures.appendingPathComponent("invalid-metadata.json"))) as! [[String: Any]]
+    for item in invalidCases {
+      let changed = mutate(reference.header["scientific_metadata"]!,
+        path: (item["path"] as! [Any])[...], replacement: item["value"]) as! [String: Any]
+      var rejected = false
+      do { try NativeQEMMetadataUnits.validateScientific(changed) } catch { rejected = true }
+      precondition(rejected, "Shared invalid metadata accepted: \(item["name"]!)")
+    }
     for invalid in [true, "300", -1.0] as [Any] {
       var rejected = false
       do {
@@ -105,6 +134,46 @@ import Native4DSTEMIO
         "Resaving changed the physical calibration at \(path)")
     }
     precondition(resetValues.isEmpty)
+    let file = try NativeQEMFile(url: output)
+    var independent = file.header
+    var record = independent["scientific_metadata"] as! [String: Any]
+    var axes = record["axes"] as! [[String: Any]]
+    for index in 0..<2 {
+      axes[index]["sampling"] = ["value": Double(index + 1), "unit": "angstrom",
+        "provenance": "synthetic_reference"]
+    }
+    record["axes"] = axes
+    record["electron_microscope"] = ["electron_source/accelerating_voltage": [
+      "value": 300.0, "unit": "kV", "provenance": "synthetic_reference",
+    ]]
+    independent["scientific_metadata"] = record
+    let originalBytes = try Data(contentsOf: output)
+    for stale in [false, true] {
+      independent["metadata"] = stale
+        ? ["scan_sampling_A": [8.0, 9.0], "voltage_kV": 80.0] : [:]
+      let blob = try JSONSerialization.data(withJSONObject: independent, options: [.sortedKeys])
+      var bytes = NativeQEMMetadata.magic
+      for size in [blob.count, 56 + blob.count] {
+        var value = UInt64(size).littleEndian
+        withUnsafeBytes(of: &value) { bytes.append(contentsOf: $0) }
+      }
+      bytes.append(contentsOf: SHA256.hash(data: blob))
+      bytes.append(blob)
+      bytes.append(originalBytes.suffix(from: file.bodyStart))
+      let path = output.deletingPathExtension().appendingPathExtension("public-\(stale).qem")
+      try bytes.write(to: path)
+      let checked = try NativeANSSnapshot(url: path)
+      precondition(checked.dataset.sourceScanCalibration?.rowSamplingAngstrom == 1)
+      precondition(checked.dataset.sourceScanCalibration?.columnSamplingAngstrom == 2)
+      precondition(NativeMicroscopeMetadata(metadata: checked.dataset.metadata ?? [:]).beamEnergyKeV == 300)
+    }
+    var contradictory = record
+    var microscope = record["electron_microscope"] as! [String: Any]
+    microscope[NativeQEMCalibration.scanRow] = ["value": 99.0, "unit": "angstrom", "provenance": "synthetic_reference"]
+    contradictory["electron_microscope"] = microscope
+    var rejected = false
+    do { try NativeQEMMetadataUnits.validateScientific(contradictory) } catch { rejected = true }
+    precondition(rejected, "Contradictory public calibration accepted")
     print("PASS: microscopy units, physical calibration, late-bound identity, every raw DP exact, preserve and explicit clear")
   }
 }

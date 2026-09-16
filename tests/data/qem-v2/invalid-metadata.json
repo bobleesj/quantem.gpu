@@ -1,0 +1,8 @@
+[
+  {"name": "conflicting-scan-step", "path": ["axes", 0, "sampling", "value"], "value": 99},
+  {"name": "wrong-scan-unit", "path": ["axes", 0, "sampling", "unit"], "value": "m"},
+  {"name": "missing-provenance", "path": ["axes", 0, "sampling", "provenance"], "delete": true},
+  {"name": "missing-coverage", "path": ["source_metadata_coverage"], "delete": true},
+  {"name": "invalid-microscope-section", "path": ["electron_microscope"], "value": []},
+  {"name": "boolean-scan-step", "path": ["axes", 0, "sampling", "value"], "value": true}
+]

@@ -8,6 +8,12 @@ public enum NativeQEMMetadata {
 
   public static func acquisition(_ dataset: Native4DSTEMDataset) throws -> [String: Any] {
     let original = dataset.metadata ?? [:]
+    if let saved = original[NativeQEMMetadataUnits.metadataKey],
+      let scientific = try JSONSerialization.jsonObject(with: Data(saved.utf8)) as? [String: Any]
+    {
+      try NativeQEMMetadataUnits.validateScientific(scientific)
+      return try NativeQEMMetadataUnits.normalized(scientific)
+    }
     let microscope = NativeMicroscopeMetadata(metadata: original)
     var quantities = [String: Any]()
     func quantity(_ path: String, _ value: Double?, _ unit: String) {
@@ -83,6 +89,7 @@ public enum NativeQEMMetadata {
         throw Native4DSTEMIOError.invalidData("Schema-2 QEM quantities require microscopy units.")
       }
     }
+    try NativeQEMMetadataUnits.validateScientific(scientific)
     _ = try NativeQEMCalibration.read(scientific: scientific)
   }
 }

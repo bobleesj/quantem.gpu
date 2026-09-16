@@ -38,7 +38,10 @@ import Native4DSTEMIO
       let manifest =
         try JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as! [String: Any]
       let entries = manifest["entries"] as! [[String: Any]]
-      let entry = entries.first { $0["name"] as? String == source.dataset.sourceDtype }!
+      let entry = entries.first {
+        $0["name"] as? String == source.url.deletingPathExtension().lastPathComponent
+          || $0["name"] as? String == source.dataset.sourceDtype
+      }!
       let frozenMetadata = entry["scientific_metadata"] as! [String: Any]
       let expectedMetadata = snapshot.scientificMetadata["schema"] as? String
         == NativeQEMMetadataUnits.schema

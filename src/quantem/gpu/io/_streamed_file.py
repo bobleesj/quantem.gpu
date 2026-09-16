@@ -180,6 +180,15 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     from .models import FourDSTEMData
     from quantem.gpu._compact.streamed import Chunk, StreamedCounts
 
+    if backend == "cpu":
+        if representation not in (None, "dense"):
+            raise ValueError("CPU QEM reference loading returns dense data; use representation='dense'.")
+        from ._qem_reference import load_array
+
+        data, metadata = load_array(path)
+        if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
+            raise ValueError("scan_shape disagrees with the saved QEM file.")
+        return FourDSTEMData(data, metadata)
     selected_backend = resolve_backend(backend)
     if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
         raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")

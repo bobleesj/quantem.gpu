@@ -258,7 +258,91 @@ def validate_header(header: dict) -> None:
         canonical = microscopy_metadata(scientific)
         if canonical != scientific:
             raise ValueError("Schema-2 QEM quantities require canonical microscopy units.")
+    _validate_scientific(scientific)
     _legacy_overrides(scientific)
+
+
+def _validate_scientific(scientific: dict) -> None:
+    """Check provenance and one unambiguous physical calibration at the boundary."""
+    normalized = microscopy_metadata(scientific)
+    quantities = normalized.get("electron_microscope", {})
+    if not isinstance(scientific.get("source_metadata"), dict):
+        raise ValueError("QEM source_metadata must be an object, including when empty.")
+    if scientific.get("source_metadata_coverage") not in (
+        "reader-retained", "exhaustive", "unknown"
+    ):
+        raise ValueError("Declare QEM source_metadata_coverage explicitly.")
+    paths = [
+        "scan_controller/regular_scan/pixel_size_y",
+        "scan_controller/regular_scan/pixel_size_x",
+        "imaging_system/reciprocal_pixel_size_y",
+        "imaging_system/reciprocal_pixel_size_x",
+    ]
+    for axis, path in zip(normalized["axes"], paths):
+        sampling = axis.get("sampling")
+        if sampling is not None:
+            _require_provenance(sampling)
+        duplicate = quantities.get(path)
+        if scientific["schema"] == SCHEMA and duplicate is not None:
+            if (sampling is None or sampling["unit"] != duplicate["unit"]
+                    or not math.isclose(sampling["value"], duplicate["value"], rel_tol=1e-14)):
+                raise ValueError(f"Conflicting QEM axis and microscope calibration at {path}.")
+    for path, quantity in quantities.items():
+        if (not isinstance(quantity, dict)
+                or not isinstance(quantity.get("unit"), str) or not quantity["unit"]
+                or isinstance(quantity.get("value"), bool)
+                or not isinstance(quantity.get("value"), (int, float))
+                or not math.isfinite(quantity["value"]) or quantity["value"] <= 0):
+            raise ValueError(f"Invalid QEM microscope quantity at {path}.")
+        _require_provenance(quantity)
+
+
+def _require_provenance(quantity: dict) -> None:
+    """Require an explicit origin for a calibrated quantity."""
+    if not isinstance(quantity.get("provenance"), str) or not quantity["provenance"].strip():
+        raise ValueError("Calibrated QEM quantities require nonempty provenance.")
+
+
+def recorded_metadata(scientific: dict) -> dict:
+    """Derive calculation conveniences exclusively from public recorded quantities.
+
+    Parameters
+    ----------
+    scientific : dict
+        Validated scientific metadata, with explicit quantities and units.
+
+    Returns
+    -------
+    dict
+        Recorded calibration in the existing Python calculation API units.
+
+    Examples
+    --------
+    >>> record = acquisition_metadata((1, 1, 2, 2), {"scan_sampling_A": [0.4, 0.6]})
+    >>> recorded_metadata(record)["scan_sampling_A"]
+    [0.4, 0.6]
+    """
+    normalized = microscopy_metadata(scientific)
+    result = {"source_metadata": copy.deepcopy(normalized.get("source_metadata", {}))}
+    axes = normalized.get("axes", [])
+    for first, field in ((0, "scan_sampling_A"), (2, "detector_sampling")):
+        pair = [axis.get("sampling") for axis in axes[first:first + 2]]
+        if len(pair) == 2 and all(pair):
+            if pair[0]["unit"] != pair[1]["unit"]:
+                raise ValueError("QEM row and column sampling require the same unit.")
+            result[field] = [quantity["value"] for quantity in pair]
+            if first == 2:
+                result["detector_sampling_unit"] = pair[0]["unit"]
+    for path, field in (
+        ("electron_source/accelerating_voltage", "voltage_kV"),
+        ("illumination_system/semi_convergence_angle", "semiangle_mrad"),
+        ("scan_controller/regular_scan/dwell_time", "dwell_time_us"),
+        ("imaging_system/camera_length", "camera_length_mm"),
+    ):
+        quantity = normalized.get("electron_microscope", {}).get(path)
+        if quantity is not None:
+            result[field] = quantity["value"]
+    return result
 
 
 def _validate_overrides(overrides: dict) -> None:
@@ -306,6 +390,12 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     """
     overrides = _legacy_overrides(scientific)
     result = dict(metadata)
+    if scientific.get("schema") == SCHEMA:
+        for field in ("scan_sampling_A", "detector_sampling", "detector_sampling_unit",
+                      "detector_sampling_inv_A", "voltage_kV", "semiangle_mrad",
+                      "dwell_time_us", "camera_length_mm"):
+            result.pop(field, None)
+        result.update(recorded_metadata(scientific))
     for prefix, field, factor in (
         ("scan_controller/regular_scan/pixel_size_", "scan_sampling_A", 1e10),
         ("imaging_system/reciprocal_pixel_size_", "detector_sampling", 1),
@@ -318,4 +408,11 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     voltage = overrides.get("electron_source/accelerating_voltage")
     if voltage is not None:
         result["voltage_kV"] = voltage["value"] / 1000
+    for path, field, factor in (
+        ("illumination_system/semi_convergence_angle", "semiangle_mrad", 1),
+        ("scan_controller/regular_scan/dwell_time", "dwell_time_us", 1e6),
+        ("imaging_system/camera_length", "camera_length_mm", 1000),
+    ):
+        if path in overrides:
+            result[field] = overrides[path]["value"] * factor
     return result

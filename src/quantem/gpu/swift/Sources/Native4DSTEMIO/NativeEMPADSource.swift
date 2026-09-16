@@ -51,13 +51,30 @@ public struct NativeEMPADSource: Sendable {
       let name = description["format_name"] as? String,
       var metadata = description["microscope_metadata"] as? [String: String]
     else { throw EMPADError("Unsupported EMPAD QEM geometry or metadata; update the reader.") }
-    let calibration = try description["scan_calibration"].map {
+    var calibration = try description["scan_calibration"].map {
       try JSONDecoder().decode(
         Native4DSTEMScanCalibration.self,
         from: JSONSerialization.data(withJSONObject: $0))
     }
     if let calibration, !calibration.isValid {
       throw EMPADError("Invalid saved scan calibration; restore a valid QEM copy.")
+    }
+    var diffraction = description["diffraction_sampling_inv_nm"] as? Double
+    if let scientific = file.header["scientific_metadata"] as? [String: Any],
+      scientific["schema"] as? String == NativeQEMMetadataUnits.schema
+    {
+      let recorded = try NativeQEMMetadataUnits.recordedMetadata(scientific)
+      let scan = recorded["scan_sampling_A"] as? [Double]
+      calibration = scan.map {
+        Native4DSTEMScanCalibration(
+          rowSamplingAngstrom: $0[0], columnSamplingAngstrom: $0[1],
+          origin: .sourceMetadata, evidence: "QEM recorded public calibration")
+      }
+      let detector = recorded["detector_sampling"] as? [Double]
+      diffraction =
+        recorded["detector_sampling_unit"] as? String == "1/angstrom"
+          && detector?.count == 2 && detector?[0] == detector?[1] ? detector![0] * 10 : nil
+      metadata = try NativeQEMMetadataUnits.microscopeMetadata(scientific)
     }
     let evidence = try (description["supplier_background_statement"] as? String).map {
       try NativeBackgroundSubtractionEvidence.restored(statement: $0, container: url)
@@ -74,7 +91,7 @@ public struct NativeEMPADSource: Sendable {
     return NativeEMPADSource(
       rawURL: url, metadataURL: nil,
       scanRows: shape[0], scanColumns: shape[1], scanCalibration: calibration,
-      diffractionSamplingInverseNanometers: description["diffraction_sampling_inv_nm"] as? Double,
+      diffractionSamplingInverseNanometers: diffraction,
       acquisitionDate: description["acquisition_date"] as? String,
       formatIdentifier: format, formatName: name, microscopeMetadata: metadata,
       backgroundSubtractionEvidence: evidence, recordBytes: 65536,

@@ -13,11 +13,49 @@ import os
 from pathlib import Path
 import struct
 
+import numpy as np
+
 from . import _qem_metadata
 
 _BLOCK_BYTES = 64 << 20
 _INTEGER_CODEC = "runtime-column-rans-spatial-v2"
 _EMPAD_CODEC = "empad-xor-row-packed-v1"
+
+
+def _validate_float_layout(handle, header: dict, start: int) -> None:
+    """Check every row descriptor before any float payload is decoded."""
+    if (header.get("version") != 1 or header.get("dtype") != "float32"
+            or header["shape"][2:] != [128, 128]
+            or not isinstance(header.get("logical_sha256"), str)
+            or len(header["logical_sha256"]) != 64
+            or not isinstance(header.get("empad"), dict)):
+        raise ValueError("Invalid QEM float32 codec description.")
+    cursor = first = 0
+    frames = header["shape"][0] * header["shape"][1]
+    for chunk in header["chunks"]:
+        count, length = chunk["scans"], chunk["payload_bytes"]
+        if (type(count) is not int or not 1 <= count <= min(512, frames - first)
+                or chunk["first"] != first or chunk["payload_offset"] != cursor
+                or type(length) is not int or length < 4 or length % 4
+                or chunk["descriptor_offset"] != cursor + length
+                or chunk["descriptor_bytes"] != count * 128 * 16
+                or cursor + length + count * 128 * 16 > header["bytes"]):
+            raise ValueError("Invalid QEM float32 chunk coverage.")
+        handle.seek(start + chunk["descriptor_offset"])
+        blob = handle.read(count * 128 * 16)
+        descriptors = np.frombuffer(blob, "<u4").reshape(-1, 4)
+        words = 0
+        for _, width, shift, offset in descriptors:
+            width, shift, offset = int(width), int(shift), int(offset)
+            if width > 32 or shift > 32 - width or offset != words:
+                raise ValueError("Invalid QEM float32 row descriptor.")
+            words += width * 4
+        if max(4, words * 4) != length:
+            raise ValueError("Invalid QEM float32 packed length.")
+        first += count
+        cursor += length + count * 128 * 16
+    if first != frames or cursor != header["bytes"]:
+        raise ValueError("Incomplete QEM float32 chunk coverage.")
 
 
 def _unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -112,6 +150,9 @@ def validate_qem(path: str | Path) -> dict[str, object]:
             read_header(
                 path
             )  # Same geometry/span validator used by production loaders.
+            layout = "verified"
+        elif codec == _EMPAD_CODEC:
+            _validate_float_layout(handle, header, start)
             layout = "verified"
         after = path.stat()
         if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
