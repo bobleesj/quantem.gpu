@@ -202,6 +202,42 @@ def _exact_pair_row_storage_bf_512(
     )
 
 
+def _exact_pair_row_allocation_bf_512(
+    pack_bf: int,
+    storage_classes: tuple[int, ...] | None = None,
+) -> int:
+    """Return one exact pair pack's row allocation in BF planes.
+
+    The retained storage classes only exist so repeated packs reuse one
+    allocation shape. A single logical pair boundary is never split, so a
+    pack can legitimately be wider than every retained class on hardware
+    whose measured policy was tuned for narrower boundaries. In that case the
+    pack still runs at its own width: the row kernel allocates
+    ``max(pack, class)`` and only the written prefix is consumed, so falling
+    back to the pack width changes allocation size alone, never the BF
+    boundaries, the reduction order, or the arithmetic.
+
+    Parameters
+    ----------
+    pack_bf : int
+        BF planes actually written by one packed pair slice.
+    storage_classes : tuple of int, optional
+        Retained allocation classes; defaults to the measured 512 policy.
+
+    Returns
+    -------
+    int
+        BF planes to allocate for the packed row intermediate.
+    """
+    pack_bf = int(pack_bf)
+    if storage_classes is None:
+        _pack_limit, storage_classes = _exact_pair_row_policy_512()
+    for storage_class in storage_classes:
+        if pack_bf <= storage_class:
+            return storage_class
+    return pack_bf
+
+
 class _ArrayFrames:
     """Flat detector-column view over a 4D crop-first array.
 
@@ -4968,9 +5004,11 @@ def _reconstruct_prepared_batch_exact_loss(
             sin2phi12=sin2phi12_values,
             pk_override=pk_all[:, start:stop],
             # Reuse bounded allocation sizes instead of retaining every real
-            # sparse-pack shape. Only the written prefix is consumed.
+            # sparse-pack shape. A pack that is wider than every retained
+            # class still runs at its own width because one logical boundary
+            # is never split; only the written prefix is consumed.
             storage_bf=(
-                _exact_pair_row_storage_bf_512(
+                _exact_pair_row_allocation_bf_512(
                     stop - start,
                     row_storage_classes,
                 )
