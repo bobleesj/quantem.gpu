@@ -290,5 +290,3 @@ def test_decode_failure_keeps_host_lease_until_fence(io_contexts, monkeypatch, u
     assert actions == (["decode", "fence"] if unfinished else ["decode", "fence", "release"])
     if unfinished:
         assert loader._FAILED_DECOMPRESSIONS[0][0] is prepared
-
-
