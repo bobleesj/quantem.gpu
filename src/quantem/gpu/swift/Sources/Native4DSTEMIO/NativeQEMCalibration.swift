@@ -40,18 +40,23 @@ public enum NativeQEMCalibration {
         units[path]?.contains(quantity.unit) == true,
         quantity.provenance == "user_override", !quantity.evidence.isEmpty
       else {
-        throw Native4DSTEMIOError.invalidData("Invalid calibration override for \(path); supply a positive value, supported unit and evidence.")
+        throw Native4DSTEMIOError.invalidData(
+          "Invalid calibration override for \(path); supply a positive value, supported unit and evidence."
+        )
       }
     }
     for (row, column) in [(scanRow, scanColumn), (detectorRow, detectorColumn)] {
       guard (overrides[row] == nil) == (overrides[column] == nil),
-        overrides[row]?.unit == overrides[column]?.unit else {
-        throw Native4DSTEMIOError.invalidData("Calibration requires both row and column values in the same units.")
+        overrides[row]?.unit == overrides[column]?.unit
+      else {
+        throw Native4DSTEMIOError.invalidData(
+          "Calibration requires both row and column values in the same units.")
       }
     }
     if let row = overrides[scanRow], let column = overrides[scanColumn] {
       guard (1e-14...1e-6).contains(row.value), (1e-14...1e-6).contains(column.value) else {
-        throw Native4DSTEMIOError.invalidData("Scan sampling must be between 0.0001 and 10000 angstrom per pixel.")
+        throw Native4DSTEMIOError.invalidData(
+          "Scan sampling must be between 0.0001 and 10000 angstrom per pixel.")
       }
     }
   }
@@ -72,13 +77,16 @@ public enum NativeQEMCalibration {
 
   public static func read(scientific: [String: Any]) throws -> Overrides {
     guard let record = scientific["calibration_overrides"] else { return [:] }
-    let overrides = try JSONDecoder().decode(Overrides.self, from: JSONSerialization.data(withJSONObject: record))
+    let overrides = try JSONDecoder().decode(
+      Overrides.self, from: JSONSerialization.data(withJSONObject: record))
     try validate(overrides)
     return overrides
   }
 
   /// Replace overrides without changing the recorded source quantities or axes.
-  public static func applying(_ overrides: Overrides, to scientific: [String: Any]) throws -> [String: Any] {
+  public static func applying(_ overrides: Overrides, to scientific: [String: Any]) throws
+    -> [String: Any]
+  {
     var result = scientific
     result["calibration_overrides"] = try JSONSerialization.jsonObject(with: encoded(overrides))
     return result

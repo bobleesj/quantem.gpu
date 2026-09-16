@@ -10,8 +10,10 @@ public enum MetalQEMExporter {
     public let originalSourceIdentitySHA256: String
     public let metadata: [String: String]
 
-    public init(sourceIdentitySHA256: String, originalSourceIdentitySHA256: String,
-                metadata: [String: String]) {
+    public init(
+      sourceIdentitySHA256: String, originalSourceIdentitySHA256: String,
+      metadata: [String: String]
+    ) {
       self.sourceIdentitySHA256 = sourceIdentitySHA256
       self.originalSourceIdentitySHA256 = originalSourceIdentitySHA256
       self.metadata = metadata
@@ -39,7 +41,8 @@ public enum MetalQEMExporter {
     _ source: Source, to destination: URL, device: MTLDevice,
     maximumAdditionalBytes: UInt64? = nil,
     calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
-    resolveCalibration: (CalibrationIdentity) throws -> NativeQEMCalibration.Overrides? = { _ in nil },
+    resolveCalibration: (CalibrationIdentity) throws -> NativeQEMCalibration.Overrides? = { _ in nil
+    },
     shouldCancel: () -> Bool = { false },
     progress: (String) -> Void = { _ in }
   ) throws {
@@ -67,10 +70,13 @@ public enum MetalQEMExporter {
         original, device: device,
         memoryBudgetBytes: budget, subtracting: background, shouldCancel: shouldCancel)
       defer { resident.releaseResidentStorage() }
-      let overrides = try calibrationOverrides ?? resolveCalibration(.init(
-        sourceIdentitySHA256: resident.sourceIdentitySHA256,
-        originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
-        metadata: original.microscopeMetadata))
+      let overrides =
+        try calibrationOverrides
+        ?? resolveCalibration(
+          .init(
+            sourceIdentitySHA256: resident.sourceIdentitySHA256,
+            originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
+            metadata: original.microscopeMetadata))
       progress("Writing .qem file…")
       try resident.saveQEM(
         to: destination, userConfirmedBackgroundCorrected: alreadyCorrected,
@@ -101,11 +107,15 @@ public enum MetalQEMExporter {
     defer { resident.releaseResidentStorage() }
     let metadata = resident.dataset.metadata ?? [:]
     let originalIdentity = metadata["originalSourceIdentity"].flatMap { $0.isEmpty ? nil : $0 }
-    let overrides = try calibrationOverrides ?? resolveCalibration(.init(
-      sourceIdentitySHA256: resident.sourceIdentitySHA256,
-      originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
-      metadata: metadata))
+    let overrides =
+      try calibrationOverrides
+      ?? resolveCalibration(
+        .init(
+          sourceIdentitySHA256: resident.sourceIdentitySHA256,
+          originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
+          metadata: metadata))
     progress("Writing .qem file…")
-    try resident.saveSnapshot(to: destination, calibrationOverrides: overrides, shouldCancel: shouldCancel)
+    try resident.saveSnapshot(
+      to: destination, calibrationOverrides: overrides, shouldCancel: shouldCancel)
   }
 }

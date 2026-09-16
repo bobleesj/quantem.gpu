@@ -158,7 +158,8 @@ public struct NativeANSSnapshot {
     var nativeMetadata = metadata["source_metadata"] as? [String: String] ?? [:]
     if isQEM {
       nativeMetadata[NativeQEMCalibration.metadataKey] = String(
-        decoding: try NativeQEMCalibration.encoded(NativeQEMCalibration.read(scientific: scientificMetadata)), as: UTF8.self)
+        decoding: try NativeQEMCalibration.encoded(
+          NativeQEMCalibration.read(scientific: scientificMetadata)), as: UTF8.self)
     }
     // CUDA/Python snapshots store normalized camera fields beside source_metadata;
     // native snapshots retain them inside it. Both describe the same acquisition.

@@ -17,10 +17,12 @@ extension MetalRuntimeANSResidentSource {
     progress: (Int, Int) -> Void = { _, _ in }
   ) throws {
     try requireLive()
-    let overrides = try calibrationOverrides ?? NativeQEMCalibration.read(metadata: dataset.metadata ?? [:])
+    let overrides =
+      try calibrationOverrides ?? NativeQEMCalibration.read(metadata: dataset.metadata ?? [:])
     try NativeQEMCalibration.validate(overrides)
     guard destination.pathExtension.lowercased() == "qem" || overrides.isEmpty else {
-      throw Self.invalid("Save as .qem to preserve calibration overrides; legacy .ans files do not carry them.")
+      throw Self.invalid(
+        "Save as .qem to preserve calibration overrides; legacy .ans files do not carry them.")
     }
     guard !chunks.isEmpty, chunks.allSatisfy({ $0.spatial.count == 3 }) else {
       throw Self.invalid(

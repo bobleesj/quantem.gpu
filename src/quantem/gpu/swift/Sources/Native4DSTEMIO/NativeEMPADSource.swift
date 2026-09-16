@@ -64,8 +64,9 @@ public struct NativeEMPADSource: Sendable {
     }
     metadata["qem_storage"] = file.codec
     metadata[NativeQEMCalibration.metadataKey] = String(
-      decoding: try NativeQEMCalibration.encoded(NativeQEMCalibration.read(
-        scientific: file.header["scientific_metadata"] as? [String: Any] ?? [:])), as: UTF8.self)
+      decoding: try NativeQEMCalibration.encoded(
+        NativeQEMCalibration.read(
+          scientific: file.header["scientific_metadata"] as? [String: Any] ?? [:])), as: UTF8.self)
     if description["user_confirmed_background_corrected"] as? Bool == true {
       metadata["qem_user_confirmed_background_corrected"] = "true"
     }

@@ -14,7 +14,8 @@ extension MetalEMPADResidentSource {
     guard !isReleased, !chunks.isEmpty else {
       throw qemError("Reload the acquisition before saving.")
     }
-    let overrides = try calibrationOverrides ?? NativeQEMCalibration.read(metadata: source.microscopeMetadata)
+    let overrides =
+      try calibrationOverrides ?? NativeQEMCalibration.read(metadata: source.microscopeMetadata)
     try NativeQEMCalibration.validate(overrides)
     let writer = try NativeQEMWriter(destination: destination)
     guard let queue = device.makeCommandQueue() else {
