@@ -120,6 +120,10 @@ enum MetalPairedRuntimeTANSHDF5Builder {
     let receipt = try PairedRuntimeTANSProducerReceipt(
       sourceIdentitySHA256: [identity], recordExtents: extents,
       completedCommand: finalCommand, failureFlag: resources.failure)
+    if ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_PROFILE"] == "1" {
+      resources.logProfile(
+        logicalBytes: UInt64(source.logicalFrameCount) * source.decodedBytesPerFrame)
+    }
     let provider = try PairedRuntimeTANSRecordProvider(
       descriptor: descriptor, decodingTable: resources.decoding,
       records: records, receipt: receipt)
@@ -192,6 +196,29 @@ enum MetalPairedRuntimeTANSHDF5Builder {
     let scratch: MTLBuffer
     let sizes: MTLBuffer
     let stagingOffsets: MTLBuffer
+    /// Command-buffer waits split into device execution and queue/stall time.
+    private var encodeGPUSeconds = 0.0
+    private var encodeStallSeconds = 0.0
+    private var compactGPUSeconds = 0.0
+    private var compactStallSeconds = 0.0
+    private var encodeRecords = 0
+
+    func logProfile(logicalBytes: UInt64) {
+      let record: [String: Any] = [
+        "record": "paired_runtime_encode_profile",
+        "encode_records": encodeRecords,
+        "encode_gpu_seconds": encodeGPUSeconds,
+        "encode_stall_seconds": encodeStallSeconds,
+        "compact_gpu_seconds": compactGPUSeconds,
+        "compact_stall_seconds": compactStallSeconds,
+        "logical_bytes": logicalBytes,
+      ]
+      guard
+        let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+        let line = String(data: data, encoding: .utf8)
+      else { return }
+      FileHandle.standardError.write(Data(("QGPU_PAIRED_ENCODE_PROFILE " + line + "\n").utf8))
+    }
 
     init(
       device: MTLDevice, descriptor: PairedRuntimeTANSSeriesDescriptor,
@@ -373,6 +400,10 @@ enum MetalPairedRuntimeTANSHDF5Builder {
         decodeCommand, failure: failure,
         message: "Paired-runtime decode and size encoding failed")
       let fusedSeconds = CFAbsoluteTimeGetCurrent() - fusedStarted
+      encodeRecords += 1
+      let fusedGPU = max(0, decodeCommand.gpuEndTime - decodeCommand.gpuStartTime)
+      encodeGPUSeconds += fusedGPU
+      encodeStallSeconds += max(0, fusedSeconds - fusedGPU)
       if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
 
       let prefixStarted = CFAbsoluteTimeGetCurrent()
@@ -502,6 +533,9 @@ enum MetalPairedRuntimeTANSHDF5Builder {
         compactCommand, failure: failure,
         message: "Paired-runtime compaction failed")
       let compactSeconds = CFAbsoluteTimeGetCurrent() - compactStarted
+      let compactGPU = max(0, compactCommand.gpuEndTime - compactCommand.gpuStartTime)
+      compactGPUSeconds += compactGPU
+      compactStallSeconds += max(0, compactSeconds - compactGPU)
       return EncodedRecord(
         record: PairedRuntimeTANSRecordBuffers(
           acquisitionIndex: 0, recordInAcquisition: recordIndex,

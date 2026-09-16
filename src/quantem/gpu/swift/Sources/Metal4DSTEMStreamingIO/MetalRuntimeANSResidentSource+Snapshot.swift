@@ -61,6 +61,9 @@ extension MetalRuntimeANSResidentSource {
     let built = try RuntimeANSEncoder.Output(
       chunks: chunks, decoding: decoding, fusedDecodeAndEncodeSeconds: 0,
       prefixSeconds: 0, compactSeconds: 0,
+      // Snapshot restore reuses the saved payload; there is no encode pass.
+      encodeGPUSeconds: 0, encodeStallSeconds: 0,
+      compactGPUSeconds: 0, compactStallSeconds: 0, encodeWindows: 0,
       decodePipeline: pipeline(
         ProcessInfo.processInfo.environment["QGPU_K3_FRAME_PREFIX"] == "0"
           ? "streamed_counts_decode_range" : "camera_frame"),

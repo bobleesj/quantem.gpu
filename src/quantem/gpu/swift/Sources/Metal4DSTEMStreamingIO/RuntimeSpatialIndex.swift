@@ -4,6 +4,16 @@ import Metal4DSTEMKernels
 
 /// Build the CUDA-compatible compact spatial fields while each native chunk is available.
 final class RuntimeSpatialIndex {
+  /// Opt-in stage counters, reported once per load by the caller.
+  private(set) var allocationSeconds = 0.0
+  private(set) var reductionWallSeconds = 0.0
+  private(set) var reductionGPUSeconds = 0.0
+  private(set) var prefixCPUSeconds = 0.0
+  private(set) var packWallSeconds = 0.0
+  private(set) var packGPUSeconds = 0.0
+  private(set) var buildCalls = 0
+  private(set) var packPayloadBytes: UInt64 = 0
+
   let queue: MTLCommandQueue
   let device: MTLDevice
   let shape: [Int]
@@ -33,7 +43,9 @@ final class RuntimeSpatialIndex {
   func build(raw: MTLBuffer, scans: Int, itemBytes: Int) throws -> [MTLBuffer] {
     let streams = ((scans + 511) / 512) * fields
     func buffer(_ bytes: Int) throws -> MTLBuffer {
-      try MetalRuntimeANSResidentSource.sharedBuffer(
+      let started = CFAbsoluteTimeGetCurrent()
+      defer { allocationSeconds += CFAbsoluteTimeGetCurrent() - started }
+      return try MetalRuntimeANSResidentSource.sharedBuffer(
         device: device, bytes: max(4, bytes), label: "camera spatial index")
     }
     let values = try buffer(scans * fields * 4)
@@ -61,15 +73,21 @@ final class RuntimeSpatialIndex {
       MTLSize(width: streams, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     encoder.endEncoding()
+    let reductionStarted = CFAbsoluteTimeGetCurrent()
     command.commit()
     command.waitUntilCompleted()
+    reductionWallSeconds += CFAbsoluteTimeGetCurrent() - reductionStarted
+    let reductionGPU = max(0, command.gpuEndTime - command.gpuStartTime)
+    reductionGPUSeconds += reductionGPU
     guard command.status == .completed else {
       throw MetalRuntimeANSResidentSource.invalid("Camera index reduction failed.")
     }
     let sizes = lengths.contents().assumingMemoryBound(to: UInt32.self)
     let offsets = starts.contents().assumingMemoryBound(to: UInt64.self)
+    let prefixStarted = CFAbsoluteTimeGetCurrent()
     offsets[0] = 0
     for i in 0..<streams { offsets[i + 1] = offsets[i] + UInt64(sizes[i]) }
+    prefixCPUSeconds += CFAbsoluteTimeGetCurrent() - prefixStarted
     let words = try buffer(Int(offsets[streams]) * 4)
     guard let pack = queue.makeCommandBuffer(), let encoding = pack.makeComputeCommandEncoder()
     else {
@@ -84,11 +102,16 @@ final class RuntimeSpatialIndex {
       MTLSize(width: streams, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     encoding.endEncoding()
+    let packStarted = CFAbsoluteTimeGetCurrent()
     pack.commit()
     pack.waitUntilCompleted()
+    packWallSeconds += CFAbsoluteTimeGetCurrent() - packStarted
+    packGPUSeconds += max(0, pack.gpuEndTime - pack.gpuStartTime)
     guard pack.status == .completed else {
       throw MetalRuntimeANSResidentSource.invalid("Camera index packing failed.")
     }
+    buildCalls += 1
+    packPayloadBytes += UInt64(words.length)
     return [words, starts, widths]
   }
 }

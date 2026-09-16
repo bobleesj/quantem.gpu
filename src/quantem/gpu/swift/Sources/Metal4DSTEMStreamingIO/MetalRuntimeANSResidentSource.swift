@@ -138,6 +138,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       throw invalid("Runtime ANS did not retain the complete scan")
     }
     let built = try encoder.finish()
+    RuntimeANSEncoder.logProfile(
+      built, logicalBytes: UInt64(source.logicalFrameCount) * source.decodedBytesPerFrame)
     return try MetalRuntimeANSResidentSource(
       source: source, identity: identity, built: built,
       totalSeconds: CFAbsoluteTimeGetCurrent() - started, device: device)
@@ -746,6 +748,12 @@ final class RuntimeANSEncoder {
     let fusedDecodeAndEncodeSeconds: Double
     let prefixSeconds: Double
     let compactSeconds: Double
+    /// Command-buffer wait split into GPU execution and queue/stall time.
+    let encodeGPUSeconds: Double
+    let encodeStallSeconds: Double
+    let compactGPUSeconds: Double
+    let compactStallSeconds: Double
+    let encodeWindows: Int
     let decodePipeline: MTLComputePipelineState
     let detectorDeltaPipeline: MTLComputePipelineState
     let detectorPacketPipeline: MTLComputePipelineState
@@ -771,6 +779,11 @@ final class RuntimeANSEncoder {
   private var fusedDecodeAndEncodeSeconds = 0.0
   private var prefixSeconds = 0.0
   private var compactSeconds = 0.0
+  private var encodeGPUSeconds = 0.0
+  private var encodeStallSeconds = 0.0
+  private var compactGPUSeconds = 0.0
+  private var compactStallSeconds = 0.0
+  private var encodeWindows = 0
   private var reusableScratch: MTLBuffer?
   private var reusableSizes: MTLBuffer?
   private var reusableStates: MTLBuffer?
@@ -913,7 +926,15 @@ final class RuntimeANSEncoder {
     encoder.endEncoding()
     let fusedStarted = CFAbsoluteTimeGetCurrent()
     try Self.finish(command, message: "Runtime ANS size encoding failed")
-    fusedDecodeAndEncodeSeconds += CFAbsoluteTimeGetCurrent() - fusedStarted
+    let fusedWall = CFAbsoluteTimeGetCurrent() - fusedStarted
+    fusedDecodeAndEncodeSeconds += fusedWall
+    encodeWindows += 1
+    // gpuStartTime/gpuEndTime separate real device execution from the time the
+    // caller spent waiting on scheduling, so an idle GPU is never mistaken for
+    // kernel cost.
+    let encodeGPU = max(0, command.gpuEndTime - command.gpuStartTime)
+    encodeGPUSeconds += encodeGPU
+    encodeStallSeconds += max(0, fusedWall - encodeGPU)
 
     let prefixStarted = CFAbsoluteTimeGetCurrent()
     let offsets =
@@ -976,7 +997,11 @@ final class RuntimeANSEncoder {
     blit.endEncoding()
     let compactStarted = CFAbsoluteTimeGetCurrent()
     try Self.finish(compactCommand, message: "Runtime ANS compaction failed")
-    compactSeconds += CFAbsoluteTimeGetCurrent() - compactStarted
+    let compactWall = CFAbsoluteTimeGetCurrent() - compactStarted
+    compactSeconds += compactWall
+    let compactGPU = max(0, compactCommand.gpuEndTime - compactCommand.gpuStartTime)
+    compactGPUSeconds += compactGPU
+    compactStallSeconds += max(0, compactWall - compactGPU)
     chunks.append(
       MetalRuntimeANSResidentSource.Chunk(
         firstScan: firstScan, scanCount: scanCount, payload: payload,
@@ -984,11 +1009,36 @@ final class RuntimeANSEncoder {
     readyScans += scanCount
   }
 
+  /// Opt-in: split the encode/compact waits into device execution and stall so an
+  /// idle GPU is never mistaken for kernel cost.
+  static func logProfile(_ output: Output, logicalBytes: UInt64) {
+    guard ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_PROFILE"] == "1" else { return }
+    let record: [String: Any] = [
+      "record": "runtime_ans_encode_profile",
+      "encode_windows": output.encodeWindows,
+      "encode_wall_seconds": output.fusedDecodeAndEncodeSeconds,
+      "encode_gpu_seconds": output.encodeGPUSeconds,
+      "encode_stall_seconds": output.encodeStallSeconds,
+      "compact_wall_seconds": output.compactSeconds,
+      "compact_gpu_seconds": output.compactGPUSeconds,
+      "compact_stall_seconds": output.compactStallSeconds,
+      "cpu_prefix_seconds": output.prefixSeconds,
+      "logical_bytes": logicalBytes,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+      let line = String(data: data, encoding: .utf8)
+    else { return }
+    FileHandle.standardError.write(Data(("QGPU_ENCODE_PROFILE " + line + "\n").utf8))
+  }
+
   func finish() throws -> Output {
     Output(
       chunks: chunks, decoding: decoding,
       fusedDecodeAndEncodeSeconds: fusedDecodeAndEncodeSeconds,
       prefixSeconds: prefixSeconds, compactSeconds: compactSeconds,
+      encodeGPUSeconds: encodeGPUSeconds, encodeStallSeconds: encodeStallSeconds,
+      compactGPUSeconds: compactGPUSeconds, compactStallSeconds: compactStallSeconds,
+      encodeWindows: encodeWindows,
       decodePipeline: decodePipeline,
       detectorDeltaPipeline: detectorDeltaPipeline,
       detectorPacketPipeline: detectorPacketPipeline,
