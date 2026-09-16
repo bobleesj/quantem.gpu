@@ -65,6 +65,24 @@ struct CameraCheck {
     }
     try checkCameraMetadataPlacement()
     let original = try NativeDM4Source(url: URL(fileURLWithPath: CommandLine.arguments[1]))
+    // Cancel with the next window queued, then reopen through the same reader.
+    // Teardown must finish all reads before releasing staging storage or fd.
+    if ProcessInfo.processInfo.environment["K3_VERIFY_CANCELLATION"] == "1" {
+      for boundary in 2...5 {
+        var checks = 0
+        var cancelled = false
+        do {
+          let unexpected = try MetalRuntimeANSResidentSource.load(
+            array: original, device: device,
+            shouldCancel: { checks += 1; return checks >= boundary })
+          unexpected.releaseResidentStorage()
+        } catch {
+          cancelled = error.localizedDescription.lowercased().contains("cancelled")
+        }
+        try require(cancelled, "Load did not cancel at read boundary \(boundary)")
+      }
+      print("PASS cancellation at four overlapped read boundaries")
+    }
     let itemBytes = original.dataset.sourceDtype == "uint8" ? 1 : 2
     try require(original.dataset.sourceBytes == original.fileBytes, "Original source size differs")
     print("source_format=\(original.dataset.metadata?["sourceFormat"] ?? "unknown") camera=\(original.dataset.metadata?["camera_model"] ?? "unknown")")

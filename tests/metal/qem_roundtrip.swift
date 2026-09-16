@@ -108,6 +108,23 @@ struct QEMRoundtrip {
     let empad = ["xml", "raw"].contains(input.pathExtension.lowercased()) || NativeEMPADSource.isEMDFloatAcquisition(input)
     if empad {
       let original = try NativeEMPADSource.open(input)
+      if ProcessInfo.processInfo.environment["QEM_VERIFY_CANCELLATION"] == "1" {
+        for boundary in [2, 5, 8, 11] {
+          var checks = 0
+          var cancelled = false
+          do {
+            let unexpected = try MetalEMPADResidentSource.load(
+              original, device: device,
+              memoryBudgetBytes: UInt64(device.recommendedMaxWorkingSetSize),
+              shouldCancel: { checks += 1; return checks >= boundary })
+            unexpected.releaseResidentStorage()
+          } catch {
+            cancelled = error.localizedDescription.lowercased().contains("cancel")
+          }
+          try require(cancelled, "EMPAD did not cancel at boundary \(boundary)")
+        }
+        print("PASS EMPAD cancellation at four read/pack boundaries")
+      }
       let source = try MetalEMPADResidentSource.load(original, device: device,
         memoryBudgetBytes: UInt64(device.recommendedMaxWorkingSetSize))
       let loaded = CFAbsoluteTimeGetCurrent()
@@ -181,7 +198,7 @@ struct QEMRoundtrip {
       let saved = CFAbsoluteTimeGetCurrent()
       source.releaseResidentStorage()
       let file = try NativeANSSnapshot(url: output)
-      try require(file.isQEM, "Writer did not produce QEM")
+      try require(NativeANSSnapshot.matches(output), "Writer did not produce QEM")
       let restored = try MetalRuntimeANSResidentSource.load(snapshot: file, device: device)
       defer { restored.releaseResidentStorage() }
       let reopened = CFAbsoluteTimeGetCurrent()

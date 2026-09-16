@@ -9,8 +9,7 @@ from quantem.gpu import io
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
-@pytest.mark.parametrize("extension", ["ans", "qem"])
-def test_native_camera_spatial_roundtrip(tmp_path, dtype, extension):
+def test_native_camera_spatial_roundtrip(tmp_path, dtype):
     """Retain tails, saturated counts and validity through encode/save/reopen."""
     pytest.importorskip("Metal")
     from quantem.gpu.io.backends.mps._spatial import build_index
@@ -42,14 +41,16 @@ def test_native_camera_spatial_roundtrip(tmp_path, dtype, extension):
                 resident.spatial_chunks.append(build_index(resident, buffer, len(raw)))
             finally:
                 _release(buffer)
-        path = tmp_path / f"camera.{extension}"
+        with pytest.raises(ValueError, match=".qem extension"):
+            io.save(tmp_path / "camera.ans", resident, format="quantem", backend="mps")
+        assert not (tmp_path / "camera.ans").exists()
+        path = tmp_path / "camera.qem"
         io.save(path, resident, format="quantem", backend="mps")
         reopened = io.load(path, backend="mps")
         try:
-            if extension == "qem":
-                assert reopened.metadata["container"] == "quantem.qem"
-                axes = reopened.metadata["scientific_metadata"]["axes"]
-                assert [axis["size"] for axis in axes] == list(shape)
+            assert reopened.metadata["container"] == "quantem.qem"
+            axes = reopened.metadata["scientific_metadata"]["axes"]
+            assert [axis["size"] for axis in axes] == list(shape)
             for source in (resident, reopened.data):
                 decoded = source.decode_scan_range_device(0, 519)
                 try:

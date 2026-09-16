@@ -244,6 +244,8 @@ public final class MetalEMPADResidentSource {
       pipelinedHash == nil
       && ProcessInfo.processInfo.environment["QGPU_EMPAD_READ_OVERLAP"] != "0"
     let readQueue = DispatchQueue(label: "org.quantem.gpu.empad-read", qos: .userInitiated)
+    // Cancellation and GPU failures must not leave a read writing after return.
+    defer { readQueue.sync {} }
     var inputRing: [MTLBuffer?] = [nil, nil]
     var ringSlot = 0
     var prefetched: (first: Int, frameCount: Int, buffer: MTLBuffer, status: EMPADReadStatus)?

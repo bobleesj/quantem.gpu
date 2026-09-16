@@ -31,9 +31,12 @@ func startEMPADRead(
   status: EMPADReadStatus, queue: DispatchQueue
 ) {
   let bytes = frames.count * 16384 * 4
-  let destination = UnsafeMutableRawBufferPointer(start: buffer.contents(), count: bytes)
+  let retained = MetalInputReadBuffer(buffer: buffer)
   let indices = Array(frames)
   queue.async {
+    // Retain the allocation, not just its raw destination pointer.
+    defer { withExtendedLifetime(retained) {} }
+    let destination = UnsafeMutableRawBufferPointer(start: retained.buffer.contents(), count: bytes)
     let started = CFAbsoluteTimeGetCurrent()
     do {
       try source.readFrames(indices, into: destination)

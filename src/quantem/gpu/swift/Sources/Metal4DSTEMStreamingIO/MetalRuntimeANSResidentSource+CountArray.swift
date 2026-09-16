@@ -115,12 +115,14 @@ extension MetalRuntimeANSResidentSource {
       // One pread is in flight at a time; the semaphore also publishes a short
       // read to the loading thread before its buffer is encoded.
       let queued = DispatchQueue(label: "org.quantem.gpu.count-read", qos: .userInitiated)
+      // Drain even when cancellation or encoding throws, before closing fd.
+      defer { queued.sync {} }
       let status = UnsafeReadStatus()
       let incompleteWindow = incomplete
       func readAhead(_ first: Int, into buffer: MTLBuffer) {
         let count = min(windowStride, scans - first)
         let bytes = count * pixels * itemBytes
-        let target = buffer.contents()
+        let retained = MetalInputReadBuffer(buffer: buffer)
         let offset = camera.dataOffset + first * pixels * itemBytes
         // Cancellation is still sampled on the loading thread; a cancel is
         // honoured at the next window boundary exactly as it was before.
@@ -128,6 +130,9 @@ extension MetalRuntimeANSResidentSource {
         let done = DispatchSemaphore(value: 0)
         status.begin(done)
         queued.async {
+          // A contents pointer does not retain its Metal allocation.
+          defer { withExtendedLifetime(retained) {} }
+          let target = retained.buffer.contents()
           defer { done.signal() }
           let started = CFAbsoluteTimeGetCurrent()
           var read = 0
