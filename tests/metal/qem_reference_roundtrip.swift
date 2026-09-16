@@ -39,7 +39,10 @@ import Native4DSTEMIO
         try JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as! [String: Any]
       let entries = manifest["entries"] as! [[String: Any]]
       let entry = entries.first { $0["name"] as? String == source.dataset.sourceDtype }!
-      let expectedMetadata = entry["scientific_metadata"] as! [String: Any]
+      let frozenMetadata = entry["scientific_metadata"] as! [String: Any]
+      let expectedMetadata = snapshot.scientificMetadata["schema"] as? String
+        == NativeQEMMetadataUnits.schema
+        ? try NativeQEMMetadataUnits.normalized(frozenMetadata) : frozenMetadata
       precondition(
         NSDictionary(dictionary: snapshot.scientificMetadata).isEqual(to: expectedMetadata),
         "Scientific metadata differs from the frozen reference")

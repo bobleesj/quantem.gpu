@@ -9,6 +9,7 @@ import pytest
 
 from quantem.gpu import io
 from quantem.gpu.io.qem_validation import validate_qem
+from quantem.gpu.io._qem_metadata import microscopy_metadata
 
 REFERENCES = Path(__file__).parent / "data" / "qem-v1"
 BACKEND = os.environ.get("QEM_TEST_BACKEND")
@@ -49,7 +50,7 @@ def test_counts_and_metadata_across_writers(name, tmp_path):
     restored = io.load(saved, backend=BACKEND, verbose=False)
     try:
         np.testing.assert_array_equal(_counts(restored.data), expected)
-        assert restored.metadata["scientific_metadata"] == entry["scientific_metadata"]
+        assert restored.metadata["scientific_metadata"] == microscopy_metadata(entry["scientific_metadata"])
         if name == "uint16":
             assert restored.metadata["scan_sampling_A"] == pytest.approx([0.4, 0.6])
             assert restored.metadata["voltage_kV"] == 200

@@ -65,7 +65,9 @@ bash scripts/check_qem_reference.sh tests/data/qem-v1/uint16.npy tests/data/qem-
 
 The explicit backend test compares every decoded count with the original NumPy
 array, re-exports through the production Python writer, moves the saved copy,
-then compares counts and the complete scientific metadata again. No CPU fallback
+then compares counts and the complete scientific metadata again, with schema-1
+units converted to the specified schema-2 units on new export. The frozen
+schema-1 files are never regenerated to make a test pass. No CPU fallback
 is permitted. Without `QEM_TEST_BACKEND`, hardware tests skip; an explicitly
 requested but unavailable backend fails. Supply its Python-written file to the
 native command to test the reverse direction as well.

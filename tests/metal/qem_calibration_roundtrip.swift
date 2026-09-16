@@ -11,6 +11,18 @@ import Native4DSTEMIO
     let original = try NativeNPYSource(url: URL(fileURLWithPath: CommandLine.arguments[1]))
     precondition(original.dataset.sourceDtype == "uint16", "This exact-count fixture requires uint16 input")
     let output = URL(fileURLWithPath: CommandLine.arguments[2])
+    for invalid in [true, "300", -1.0] as [Any] {
+      var rejected = false
+      do {
+        _ = try NativeQEMMetadataUnits.normalized([
+          "schema": NativeQEMMetadataUnits.schema,
+          "electron_microscope": ["electron_source/accelerating_voltage": [
+            "value": invalid, "unit": "kV",
+          ]],
+        ])
+      } catch { rejected = true }
+      precondition(rejected, "Invalid physical quantity accepted")
+    }
     let overrides: NativeQEMCalibration.Overrides = [
       NativeQEMCalibration.scanRow: .init(value: 0.45e-10, unit: "m", evidence: "measured scan row"),
       NativeQEMCalibration.scanColumn: .init(value: 0.55e-10, unit: "m", evidence: "measured scan column"),
@@ -18,6 +30,8 @@ import Native4DSTEMIO
       NativeQEMCalibration.detectorColumn: .init(value: 0.32, unit: "1/Å", evidence: "diffraction standard"),
       "electron_source/accelerating_voltage": .init(value: 200000, unit: "V", evidence: "microscope setting"),
       "illumination_system/semi_convergence_angle": .init(value: 24.75, unit: "mrad", evidence: "aperture calibration"),
+      "scan_controller/regular_scan/dwell_time": .init(value: 50e-6, unit: "s", evidence: "scan timing"),
+      "imaging_system/camera_length": .init(value: 0.23, unit: "m", evidence: "camera setting"),
     ]
     var resolvedIdentity: MetalQEMExporter.CalibrationIdentity?
     try MetalQEMExporter.save(.counts(original), to: output, device: device,
@@ -27,11 +41,36 @@ import Native4DSTEMIO
         return overrides
       })
     let snapshot = try NativeANSSnapshot(url: output)
+    precondition(snapshot.scientificMetadata["schema"] as? String == "quantem.scientific-metadata/2")
+    let saved = snapshot.scientificMetadata["calibration_overrides"] as! [String: [String: Any]]
+    let expectedUnits = [
+      NativeQEMCalibration.scanRow: "angstrom", NativeQEMCalibration.scanColumn: "angstrom",
+      NativeQEMCalibration.detectorRow: "1/angstrom", NativeQEMCalibration.detectorColumn: "1/angstrom",
+      "electron_source/accelerating_voltage": "kV",
+      "illumination_system/semi_convergence_angle": "mrad",
+      "scan_controller/regular_scan/dwell_time": "us", "imaging_system/camera_length": "mm",
+    ]
+    let expectedValues = [
+      NativeQEMCalibration.scanRow: 0.45, NativeQEMCalibration.scanColumn: 0.55,
+      NativeQEMCalibration.detectorRow: 0.31, NativeQEMCalibration.detectorColumn: 0.32,
+      "electron_source/accelerating_voltage": 200.0,
+      "illumination_system/semi_convergence_angle": 24.75,
+      "scan_controller/regular_scan/dwell_time": 50.0, "imaging_system/camera_length": 230.0,
+    ]
+    for (path, value) in expectedValues {
+      precondition(saved[path]?["unit"] as? String == expectedUnits[path])
+      precondition(abs((saved[path]?["value"] as! Double) - value) < abs(value) * 1e-14)
+    }
     precondition(resolvedIdentity?.sourceIdentitySHA256 == original.dataset.sourceIdentitySHA256,
       "Resolve calibration using the acquisition identity, not the new file header hash")
     precondition(resolvedIdentity?.originalSourceIdentitySHA256 == original.dataset.sourceIdentitySHA256)
     let restored = try NativeQEMCalibration.read(metadata: snapshot.dataset.metadata ?? [:])
-    precondition(restored == overrides, "Overrides must survive without local preferences")
+    for (path, expected) in overrides {
+      let actual = restored[path]!
+      precondition(actual.unit == expected.unit && actual.evidence == expected.evidence)
+      precondition(abs(actual.value - expected.value) < abs(expected.value) * 1e-14,
+        "Physical calibration must survive without local preferences")
+    }
     precondition(snapshot.dataset.sourceScanCalibration == original.dataset.sourceScanCalibration,
       "User calibration must not replace recorded calibration")
     let resident = try MetalRuntimeANSResidentSource.load(snapshot: snapshot, device: device)
@@ -48,7 +87,7 @@ import Native4DSTEMIO
     let preserved = output.deletingPathExtension().appendingPathExtension("preserved.qem")
     let reset = output.deletingPathExtension().appendingPathExtension("reset.qem")
     try resident.saveSnapshot(to: preserved)
-    try MetalQEMExporter.save(.snapshot(snapshot), to: reset, device: device,
+    try MetalQEMExporter.save(.counts(original), to: reset, device: device,
       calibrationOverrides: [:], resolveCalibration: { _ in
         preconditionFailure("Explicit queued calibration must take priority over saved edits")
       })
@@ -56,8 +95,16 @@ import Native4DSTEMIO
     let resetSnapshot = try NativeANSSnapshot(url: reset)
     let preservedValues = try NativeQEMCalibration.read(metadata: preservedSnapshot.dataset.metadata ?? [:])
     let resetValues = try NativeQEMCalibration.read(metadata: resetSnapshot.dataset.metadata ?? [:])
-    precondition(preservedValues == overrides)
+    precondition(Set(preservedValues.keys) == Set(restored.keys))
+    for (path, expected) in restored {
+      let actual = preservedValues[path]!
+      precondition(actual.unit == expected.unit && actual.evidence == expected.evidence
+        && actual.provenance == expected.provenance)
+      // Unit conversion can round the final Double bit; measured counts stay exact.
+      precondition(abs(actual.value - expected.value) < abs(expected.value) * 1e-14,
+        "Resaving changed the physical calibration at \(path)")
+    }
     precondition(resetValues.isEmpty)
-    print("PASS: late-bound source identity, explicit override priority, every raw DP exact, preserve and reset")
+    print("PASS: microscopy units, physical calibration, late-bound identity, every raw DP exact, preserve and explicit clear")
   }
 }

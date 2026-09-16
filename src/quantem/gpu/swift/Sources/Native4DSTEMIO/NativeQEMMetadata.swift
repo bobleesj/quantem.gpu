@@ -1,12 +1,12 @@
 import Foundation
 
 /// Shared scientific vocabulary, independent of the compressed payload codec.
-/// Example: `NativeQEMMetadata.acquisition(dataset)` before writing a QEM header.
+/// Example: `try NativeQEMMetadata.acquisition(dataset)` before writing a QEM header.
 public enum NativeQEMMetadata {
   public static let magic = Data("QEMDATA1".utf8)
   public static let container = "quantem.qem"
 
-  public static func acquisition(_ dataset: Native4DSTEMDataset) -> [String: Any] {
+  public static func acquisition(_ dataset: Native4DSTEMDataset) throws -> [String: Any] {
     let original = dataset.metadata ?? [:]
     let microscope = NativeMicroscopeMetadata(metadata: original)
     var quantities = [String: Any]()
@@ -49,14 +49,14 @@ public enum NativeQEMMetadata {
         axes[axis + 2]["sampling"] = ["value": step, "unit": unit, "provenance": "source_metadata"]
       }
     }
-    return [
+    return try NativeQEMMetadataUnits.normalized([
       "schema": "quantem.scientific-metadata/1", "axes": axes,
       "electron_microscope": quantities, "source_metadata": original,
       "source_metadata_coverage": "reader-retained",
       "calibration_overrides": [:] as [String: String],
       "processing": [["operation": "lossless_storage", "changes_measurements": false]],
       "source_format": original["sourceFormat"] ?? dataset.schemaIdentity ?? "unknown",
-    ]
+    ])
   }
 
   /// Reject incompatible envelopes without interpreting codec bytes.
@@ -65,7 +65,8 @@ public enum NativeQEMMetadata {
       header["container_version"] as? Int == 1,
       header["codec"] as? String == header["profile"] as? String,
       let scientific = header["scientific_metadata"] as? [String: Any],
-      scientific["schema"] as? String == "quantem.scientific-metadata/1",
+      let schema = scientific["schema"] as? String,
+      [NativeQEMMetadataUnits.legacySchema, NativeQEMMetadataUnits.schema].contains(schema),
       let axes = scientific["axes"] as? [[String: Any]],
       axes.compactMap({ $0["size"] as? Int }) == shape,
       axes.compactMap({ $0["name"] as? String }) == [
@@ -75,6 +76,12 @@ public enum NativeQEMMetadata {
       throw Native4DSTEMIOError.invalidData(
         "Unsupported or inconsistent QEM metadata. Update the reader or re-export the original acquisition."
       )
+    }
+    if schema == NativeQEMMetadataUnits.schema {
+      let canonical = try NativeQEMMetadataUnits.normalized(scientific)
+      guard NSDictionary(dictionary: canonical).isEqual(to: scientific) else {
+        throw Native4DSTEMIOError.invalidData("Schema-2 QEM quantities require microscopy units.")
+      }
     }
     _ = try NativeQEMCalibration.read(scientific: scientific)
   }

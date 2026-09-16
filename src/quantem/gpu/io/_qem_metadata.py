@@ -8,8 +8,108 @@ import numpy as np
 MAGIC = b"QEMDATA1"
 CONTAINER = "quantem.qem"
 CONTAINER_VERSION = 1
-SCHEMA = "quantem.scientific-metadata/1"
+LEGACY_SCHEMA = "quantem.scientific-metadata/1"
+SCHEMA = "quantem.scientific-metadata/2"
 AXIS_NAMES = ("scan_row", "scan_column", "detector_row", "detector_column")
+
+# Conversion factors are source unit -> public scientific-metadata unit.
+_LENGTH = ("angstrom", {"m": 1e10, "nm": 10, "angstrom": 1, "Å": 1})
+_DETECTOR = {
+    "rad": ("mrad", 1000), "mrad": ("mrad", 1),
+    "1/nm": ("1/angstrom", 0.1), "1/Å": ("1/angstrom", 1),
+    "1/angstrom": ("1/angstrom", 1),
+}
+_QUANTITIES = {
+    "electron_source/accelerating_voltage": ("kV", {"V": 0.001, "kV": 1}),
+    "electron_source/beam_energy": ("keV", {"eV": 0.001, "keV": 1}),
+    "illumination_system/semi_convergence_angle": ("mrad", {"rad": 1000, "mrad": 1}),
+    "scan_controller/regular_scan/dwell_time": ("us", {"s": 1e6, "ms": 1000, "us": 1}),
+    "imaging_system/camera_length": ("mm", {"m": 1000, "cm": 10, "mm": 1}),
+    "scan_controller/regular_scan/pixel_size_y": _LENGTH,
+    "scan_controller/regular_scan/pixel_size_x": _LENGTH,
+}
+
+
+def _microscopy_quantity(quantity: dict, path: str) -> dict:
+    """Convert a known quantity without altering its evidence or source record."""
+    if not isinstance(quantity, dict) or not isinstance(quantity.get("unit"), str):
+        raise ValueError(f"Invalid QEM quantity at {path}; supply a value and unit.")
+    result = dict(quantity)
+    unit = quantity.get("unit")
+    if path == "detector" or path.startswith("imaging_system/reciprocal_pixel_size_"):
+        conversion = _DETECTOR.get(unit)
+    else:
+        if path != "scan" and path not in _QUANTITIES:
+            raise ValueError(f"Unknown QEM calibration quantity {path!r}; update the reader.")
+        target, factors = _LENGTH if path == "scan" else _QUANTITIES[path]
+        factor = factors.get(unit)
+        conversion = None if factor is None else (target, factor)
+    value = quantity.get("value")
+    if (conversion is None or isinstance(value, bool)
+            or not isinstance(value, (int, float)) or not math.isfinite(value)
+            or value <= 0 or not math.isfinite(value * conversion[1])):
+        raise ValueError(f"Invalid QEM quantity {path}: {quantity!r}; check value and unit.")
+    result.update(value=value * conversion[1], unit=conversion[0])
+    return result
+
+
+def microscopy_metadata(scientific: dict) -> dict:
+    """Convert saved metadata to schema 2 without modifying source fields.
+
+    Parameters
+    ----------
+    scientific : dict
+        Schema-1 or schema-2 scientific metadata from a validated header.
+
+    Returns
+    -------
+    dict
+        Independent metadata with microscopy units and unchanged source fields.
+
+    Raises
+    ------
+    ValueError
+        A known quantity has an unsupported unit or invalid physical value.
+
+    Examples
+    --------
+    >>> microscopy_metadata({"schema": LEGACY_SCHEMA})["schema"] == SCHEMA
+    True
+    """
+    result = copy.deepcopy(scientific)
+    if result.get("schema") not in (LEGACY_SCHEMA, SCHEMA):
+        raise ValueError("Unsupported QEM metadata schema; update the reader.")
+    for axis in result.get("axes", []):
+        if "sampling" in axis:
+            kind = "scan" if axis["name"].startswith("scan_") else "detector"
+            axis["sampling"] = _microscopy_quantity(axis["sampling"], kind)
+    for section in ("electron_microscope", "calibration_overrides"):
+        if not isinstance(result.get(section, {}), dict):
+            raise ValueError(f"QEM {section} must contain named quantities.")
+        for path, quantity in result.get(section, {}).items():
+            if path in _QUANTITIES or path.startswith("imaging_system/reciprocal_pixel_size_"):
+                result[section][path] = _microscopy_quantity(quantity, path)
+    result["schema"] = SCHEMA
+    return result
+
+
+def _legacy_overrides(scientific: dict) -> dict:
+    """Adapt public schema-2 units to the existing calculation boundary."""
+    overrides = copy.deepcopy(scientific.get("calibration_overrides", {}))
+    if scientific.get("schema") == SCHEMA:
+        for path, quantity in overrides.items():
+            unit = quantity.get("unit")
+            target, factor = {
+                "angstrom": ("m", 1e-10), "kV": ("V", 1000),
+                "us": ("s", 1e-6), "mm": ("m", 0.001),
+                "1/angstrom": ("1/Å", 1), "mrad": ("mrad", 1),
+            }.get(unit, (unit, 1))
+            canonical = _microscopy_quantity(quantity, path)
+            if canonical["unit"] != unit:
+                raise ValueError(f"Invalid schema-2 calibration override unit at {path}: {unit!r}.")
+            quantity.update(value=quantity["value"] * factor, unit=target)
+    _validate_overrides(overrides)
+    return overrides
 
 
 def json_metadata(value):
@@ -45,7 +145,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         validate_header(dict(container=CONTAINER, container_version=CONTAINER_VERSION,
                              codec="retained", profile="retained", shape=list(shape),
                              scientific_metadata=saved))
-        return saved
+        return microscopy_metadata(saved)
     source = dict(metadata.get("source_metadata", {}))
     quantities = {}
 
@@ -117,8 +217,8 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                 axis["sampling"] = dict(
                     value=value, unit=unit, provenance="source_metadata"
                 )
-    return dict(
-        schema=SCHEMA,
+    return microscopy_metadata(dict(
+        schema=LEGACY_SCHEMA,
         axes=axes,
         electron_microscope=quantities,
         source_metadata=source,
@@ -128,7 +228,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         source_format=source.get(
             "sourceFormat", metadata.get("source_kind", "unknown")
         ),
-    )
+    ))
 
 
 def validate_header(header: dict) -> None:
@@ -147,14 +247,18 @@ def validate_header(header: dict) -> None:
         header.get("container") != CONTAINER
         or header.get("container_version") != CONTAINER_VERSION
         or header.get("codec") != header.get("profile")
-        or scientific.get("schema") != SCHEMA
+        or scientific.get("schema") not in (LEGACY_SCHEMA, SCHEMA)
         or [axis.get("size") for axis in axes] != header.get("shape")
         or [axis.get("name") for axis in axes] != list(AXIS_NAMES)
     ):
         raise ValueError(
             "Unsupported or inconsistent QEM metadata; update the reader or re-export the original."
         )
-    _validate_overrides(scientific.get("calibration_overrides", {}))
+    if scientific["schema"] == SCHEMA:
+        canonical = microscopy_metadata(scientific)
+        if canonical != scientific:
+            raise ValueError("Schema-2 QEM quantities require canonical microscopy units.")
+    _legacy_overrides(scientific)
 
 
 def _validate_overrides(overrides: dict) -> None:
@@ -200,8 +304,7 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     >>> effective_metadata({}, {"calibration_overrides": {}})
     {}
     """
-    overrides = scientific.get("calibration_overrides", {})
-    _validate_overrides(overrides)
+    overrides = _legacy_overrides(scientific)
     result = dict(metadata)
     for prefix, field, factor in (
         ("scan_controller/regular_scan/pixel_size_", "scan_sampling_A", 1e10),

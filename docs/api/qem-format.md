@@ -1,5 +1,37 @@
 # QuantEM data (.qem), container version 1
 
+## QEM specification 0.0.1: microscopy-friendly metadata
+
+New writers use `quantem.scientific-metadata/2`. The binary container and
+measurement codecs remain unchanged. Readers accept metadata schemas 1 and 2;
+older schema-1-only readers must reject schema 2 rather than reinterpret units.
+Existing files are not rewritten. The previously shared Live4DSTEM 0.0.15 build
+is a schema-1 reader and needs an updated backend before opening schema-2 files.
+
+Schema 2 stores normalized quantities and calibration overrides in these units:
+
+| Quantity | JSON unit | Typical display |
+| --- | --- | --- |
+| Scan-axis sampling | `angstrom` | Å |
+| Reciprocal-length detector sampling | `1/angstrom` | Å⁻¹ |
+| Angular detector sampling and convergence semi-angle | `mrad` | mrad |
+| Accelerating voltage | `kV` | kV |
+| Beam energy, when explicitly supplied | `keV` | keV |
+| Scan dwell time | `us` | µs |
+| Camera length | `mm` | mm |
+
+For example, `{"value": 0.42, "unit": "angstrom"}` means 0.42 Å per scan
+step. Applications may display another convenient unit, but must read the unit,
+not infer it from a field name. Exposure, dwell and frame interval are not
+synonyms; angular and reciprocal-length sampling are not interchangeable.
+Original `source_metadata`, evidence and provenance are preserved. Codec-private
+restoration metadata and internal calculation APIs keep their existing units;
+the public scientific metadata is the authoritative human-readable unit layer.
+Measurement bytes remain exact. Calibration conversion uses floating-point
+arithmetic without display-style rounding; physical equivalence is tested to a
+relative tolerance of `1e-14`. Exposure and frame-interval mappings are not
+implemented by this revision.
+
 Open an acquisition, preserve its scientific measurements and calibration, save
 one portable file, then restore the same measurements without the source folder.
 The extension names quantitative electron microscopy, not dimensionality or a
@@ -110,7 +142,7 @@ not accepted as float32 merely because an XML label says float32.
   every diffraction pattern and three detector masks against the input counts,
   plus metadata preservation. Add `--reject=unsupported.npy` for negative cases.
 - Shared Metal conversion: `MetalQEMExporter.save(_:to:device:)` accepts
-  validated count-array, indexed HDF5, compressed-snapshot, or EMPAD readers.
+  validated count-array, indexed HDF5, or EMPAD readers.
   It owns bounded conversion and atomic output; the calling app owns scheduling,
   progress presentation, and explicit dark-reference/already-corrected choices.
   It has no dependency on app preferences, dialogs, or a particular viewer.
@@ -121,11 +153,14 @@ not accepted as float32 merely because an XML label says float32.
 `scientific_metadata.calibration_overrides` stores explicit user edits separately
 from recorded quantities and axis sampling. Each entry uses the same microscope
 path with `value`, `unit`, `provenance: "user_override"`, and nonempty `evidence`.
-Scan sampling uses metres; beam voltage uses volts; dwell time uses seconds;
-camera length uses metres; semi-angle uses mrad. Detector row/column sampling
-uses a shared unit of mrad, 1/nm, or 1/Å. Both members of each sampling pair are
+In schema 2, scan sampling uses `angstrom`; beam voltage uses `kV`; dwell time
+uses `us`; camera length uses `mm`; semi-angle uses `mrad`. Detector row/column
+sampling uses a shared unit of `mrad` or `1/angstrom`. Both members of each sampling pair are
 required. Invalid or incomplete calibration is rejected, not guessed.
 
+The native `calibrationOverrides` API retains its existing calculation units
+(m, V, s, m, mrad, and detector mrad/1/nm/1/Å). Conversion happens only at the
+scientific-metadata boundary. Schema-1 files retain their original unit meanings.
 Native exporters accept `calibrationOverrides`. Omitting it preserves existing
 saved edits; supplying a complete dictionary replaces them in the new copy;
 supplying `[:]` clears them. `NativeQEMCalibration` validates and reads these
@@ -164,6 +199,7 @@ local testing collection, removes only its own temporary copies, and reports
 rejections separately in its output. It never changes the original acquisitions.
 
 Run `bash scripts/check_qem_calibration_roundtrip.sh counts-uint16.npy new-copy.qem`
-to compare every original DP count, restore overrides without local preferences,
-and check re-export preservation and explicit clearing. The command also creates
+to compare every original DP count, assert microscopy-friendly saved units,
+restore overrides without local preferences, and check resident-save preservation
+and an explicitly uncalibrated copy of the original. The command also creates
 `new-copy.preserved.qem` and `new-copy.reset.qem`; all destinations must be new.

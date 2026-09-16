@@ -76,7 +76,7 @@ public enum NativeQEMCalibration {
   }
 
   public static func read(scientific: [String: Any]) throws -> Overrides {
-    guard let record = scientific["calibration_overrides"] else { return [:] }
+    let record = try NativeQEMMetadataUnits.calculationOverrides(scientific)
     let overrides = try JSONDecoder().decode(
       Overrides.self, from: JSONSerialization.data(withJSONObject: record))
     try validate(overrides)
@@ -88,7 +88,12 @@ public enum NativeQEMCalibration {
     -> [String: Any]
   {
     var result = scientific
-    result["calibration_overrides"] = try JSONSerialization.jsonObject(with: encoded(overrides))
+    let record = try JSONSerialization.jsonObject(with: encoded(overrides))
+    let normalized = try NativeQEMMetadataUnits.normalized([
+      "schema": NativeQEMMetadataUnits.legacySchema, "calibration_overrides": record,
+    ])
+    result["calibration_overrides"] = scientific["schema"] as? String == NativeQEMMetadataUnits.schema
+      ? normalized["calibration_overrides"] : record
     return result
   }
 }

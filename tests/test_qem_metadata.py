@@ -5,8 +5,19 @@ import copy
 import pytest
 
 from quantem.gpu.io._qem_metadata import acquisition_metadata, validate_header
-from quantem.gpu.io._qem_metadata import effective_metadata
+from quantem.gpu.io._qem_metadata import effective_metadata, microscopy_metadata, SCHEMA
 from quantem.gpu.io.representation import DataRepresentation
+
+
+@pytest.mark.parametrize("value", [True, "300", -1, float("nan"), float("inf")])
+def test_microscopy_units_reject_invalid_quantities(value):
+    with pytest.raises(ValueError, match="Invalid QEM quantity"):
+        microscopy_metadata({
+            "schema": SCHEMA,
+            "electron_microscope": {
+                "electron_source/accelerating_voltage": {"value": value, "unit": "kV"},
+            },
+        })
 
 
 def test_ncem_quantities_and_axis_conventions():
@@ -28,14 +39,18 @@ def test_ncem_quantities_and_axis_conventions():
         ),
     )
     quantities = metadata["electron_microscope"]
-    assert quantities["electron_source/accelerating_voltage"]["value"] == 300000
+    assert quantities["electron_source/accelerating_voltage"]["value"] == 300
+    assert quantities["electron_source/accelerating_voltage"]["unit"] == "kV"
     assert "illumination_system/semi_convergence_angle" not in quantities
     assert quantities["scan_controller/regular_scan/dwell_time"][
         "value"
-    ] == pytest.approx(50e-6)
-    assert quantities["imaging_system/camera_length"]["value"] == pytest.approx(0.23)
-    assert metadata["axes"][0]["sampling"]["value"] == pytest.approx(2e-10)
-    assert metadata["axes"][1]["sampling"]["value"] == pytest.approx(3e-10)
+    ] == pytest.approx(50)
+    assert quantities["scan_controller/regular_scan/dwell_time"]["unit"] == "us"
+    assert quantities["imaging_system/camera_length"]["value"] == pytest.approx(230)
+    assert quantities["imaging_system/camera_length"]["unit"] == "mm"
+    assert metadata["axes"][0]["sampling"]["value"] == pytest.approx(2)
+    assert metadata["axes"][1]["sampling"]["value"] == pytest.approx(3)
+    assert metadata["axes"][0]["sampling"]["unit"] == "angstrom"
     assert metadata["axes"][2]["sampling"]["unit"] == "mrad"
     assert metadata["source_metadata"] == source
     assert metadata["source_metadata_coverage"] == "reader-retained"
@@ -66,7 +81,7 @@ def test_arina_incident_energy_maps_to_same_vocabulary():
     )
     assert (
         result["electron_microscope"]["electron_source/accelerating_voltage"]["value"]
-        == 300000
+        == 300
     )
 
 
@@ -118,9 +133,9 @@ def test_saved_user_calibration_restores_without_replacing_recorded_values():
     scientific["calibration_overrides"] = {
         path: dict(value=value, unit=unit, provenance="user_override", evidence="measured standard")
         for path, value, unit in (
-            ("scan_controller/regular_scan/pixel_size_y", 0.4e-10, "m"),
-            ("scan_controller/regular_scan/pixel_size_x", 0.6e-10, "m"),
-            ("electron_source/accelerating_voltage", 200000, "V"),
+            ("scan_controller/regular_scan/pixel_size_y", 0.4, "angstrom"),
+            ("scan_controller/regular_scan/pixel_size_x", 0.6, "angstrom"),
+            ("electron_source/accelerating_voltage", 200, "kV"),
         )
     }
     restored = effective_metadata(original, scientific)
@@ -130,8 +145,44 @@ def test_saved_user_calibration_restores_without_replacing_recorded_values():
     restored["scientific_metadata"] = scientific
     exported = acquisition_metadata(shape, restored)
     assert exported == scientific
-    assert exported["axes"][0]["sampling"]["value"] == 1e-10
+    assert exported["axes"][0]["sampling"]["value"] == 1
     invalid = copy.deepcopy(scientific)
-    invalid["calibration_overrides"]["electron_source/accelerating_voltage"]["unit"] = "kV"
+    invalid["calibration_overrides"]["electron_source/accelerating_voltage"]["unit"] = "V"
     with pytest.raises(ValueError, match="calibration override"):
         effective_metadata(original, invalid)
+
+
+def test_existing_reference_migrates_units_without_changing_source_metadata():
+    """An existing file keeps its physical calibration when saved with readable units."""
+    import json
+    from pathlib import Path
+
+    manifest = json.loads((Path(__file__).parent / "data/qem-v1/manifest.json").read_text())
+    original = manifest["entries"][1]["scientific_metadata"]
+    before = copy.deepcopy(original)
+    normalized = microscopy_metadata(original)
+    assert normalized["schema"] == SCHEMA
+    assert normalized["source_metadata"] == original["source_metadata"]
+    override = normalized["calibration_overrides"]
+    scan = override["scan_controller/regular_scan/pixel_size_y"]
+    assert scan["unit"] == "angstrom"
+    assert scan["value"] == pytest.approx(0.4)
+    assert override["imaging_system/reciprocal_pixel_size_y"]["unit"] == "1/angstrom"
+    assert effective_metadata({}, normalized) == effective_metadata({}, original)
+    assert microscopy_metadata(normalized) == normalized
+    assert original == before
+
+
+def test_diffraction_units_keep_angular_and_reciprocal_sampling_distinct():
+    """Equivalent reciprocal units normalize, while angular sampling stays angular."""
+    for source_unit, expected_unit, expected in (
+        ("1/nm", "1/angstrom", 0.02),
+        ("1/Å", "1/angstrom", 0.2),
+        ("rad", "mrad", 200),
+    ):
+        metadata = acquisition_metadata((2, 3, 16, 16), {
+            "detector_sampling": [0.2, 0.3], "detector_sampling_unit": source_unit,
+        })
+        sampling = metadata["axes"][2]["sampling"]
+        assert sampling["unit"] == expected_unit
+        assert sampling["value"] == pytest.approx(expected, rel=1e-14)
