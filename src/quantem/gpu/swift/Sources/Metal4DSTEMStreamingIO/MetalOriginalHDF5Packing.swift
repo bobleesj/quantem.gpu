@@ -49,12 +49,15 @@ extension MetalCompactH5Loader {
   /// `packingPlanURL` optionally saves bounded, disposable layout metadata,
   /// never count payloads. Every reopen still reads and decodes original counts.
   /// Invalid plans trigger one fresh-plan retry; the caller owns cache eviction.
+  /// Counts are unchanged by default. A viewer may explicitly request `.median`
+  /// for source-marked hot pixels; that is a corrected working representation.
   /// Example: `let resident = try MetalCompactH5Loader.load(source: indexed, device: device)`.
   public static func load(
     source: Native4DSTEMIndexedSource, device: MTLDevice,
     maximumAdditionalBytes: UInt64? = nil,
     preparedDPC: MetalCompactH5ExactDPCMoments? = nil,
     packingPlanURL: URL? = nil,
+    hotPixelPolicy: NativeHotPixelPolicy = .preserve,
     shouldCancel: () -> Bool = { false },
     progress: (Int, Int) -> Void = { _, _ in }
   ) throws -> MetalCompactH5ResidentSource {
@@ -68,7 +71,8 @@ extension MetalCompactH5Loader {
       result = try packing.pack(
         source: source, destination: nil,
         maximumAdditionalBytes: maximumAdditionalBytes, preparedDPC: preparedDPC,
-        packingPlanURL: planURL, shouldCancel: shouldCancel, progress: progress)
+        packingPlanURL: planURL, hotPixelPolicy: hotPixelPolicy,
+        shouldCancel: shouldCancel, progress: progress)
     } catch let mismatch as OriginalHDF5Packing.CacheMismatch {
       // A metadata hint is never count truth. Discard all partial residents and
       // rebuild once from original counts, including the failed attempt in metrics.
@@ -81,6 +85,7 @@ extension MetalCompactH5Loader {
         maximumAdditionalBytes: maximumAdditionalBytes, preparedDPC: preparedDPC,
         packingPlanURL: mismatch.retryWithoutPlan ? nil : planURL,
         ignoreCachedPlan: true, priorProfile: mismatch.profile,
+        hotPixelPolicy: hotPixelPolicy,
         shouldCancel: shouldCancel, progress: progress)
     }
     guard let packed = result
@@ -596,7 +601,7 @@ final class OriginalHDF5Packing {
     source: Native4DSTEMIndexedSource, destination: URL?, maximumAdditionalBytes: UInt64?,
     preparedDPC: MetalCompactH5ExactDPCMoments? = nil,
     packingPlanURL: URL? = nil, ignoreCachedPlan: Bool = false, priorProfile: Profile? = nil,
-    hotPixelPolicy: NativeHotPixelPolicy = .median,
+    hotPixelPolicy: NativeHotPixelPolicy = .preserve,
     shouldCancel: () -> Bool, progress: (Int, Int) -> Void
   ) throws -> OriginalPackedBuffers? {
     let dataset = source.dataset

@@ -203,6 +203,7 @@ def _run(executable, folder, mode, count=1):
         "default",
         "plan-baseline",
         "tight-baseline",
+        "planar",
     }
     env = {
         **os.environ,
@@ -211,6 +212,9 @@ def _run(executable, folder, mode, count=1):
         "QGPU_ORIGINAL_CPU_PLAN": "1",
         "QGPU_ORIGINAL_DIRECT_BITSHUFFLE": "1",
         "QGPU_ORIGINAL_SCALAR_DECODE": "1",
+        # Regional sums target the row-packed codec. Verify the production
+        # planar codec separately against exactly the same raw-count oracle.
+        "QGPU_ORIGINAL_STANDARD_PLANES": "1" if mode == "planar" else "0",
         "COMPACT_UPDATE_HOST_PROFILE": "1",
         "COMPACT_UPDATE_PHASE_PROFILE": "0",
     }
@@ -240,14 +244,19 @@ def _run(executable, folder, mode, count=1):
         assert all(sum(stage["aggregate_entries"]) == 0 for stage in stages)
     elif mode == "budget":
         assert len(records) == count, records
+        profiles = [json.loads(line.split(" ", 1)[1]) for line in result.stderr.splitlines()
+                    if line.startswith("ORIGINAL_PACK_PROFILE ")]
+        planar_reopen = profiles and all(profile["packed_payload_layout"] == 1 for profile in profiles)
         # Scratch from the finished decode phase is no longer live. Optional
         # sums may fit beneath that same peak, otherwise they must be skipped.
         assert all(
-            record["status"] in {"built", "budgetSkipped"} for record in records
+            record["status"] in {"built", "budgetSkipped"}
+            or planar_reopen and record["status"] == "unsupportedGeometry"
+            for record in records
         ), records
         assert all(
             (record["resident_bytes"] == 0 and record["verified_values"] == 0)
-            if record["status"] == "budgetSkipped"
+            if record["status"] != "built"
             else record["resident_bytes"] > 0 and record["verified_values"] > 0
             for record in records
         )
@@ -316,6 +325,7 @@ def test_original_detectors_and_budget_are_exact(
     before = {file: hashlib.sha256(file.read_bytes()).hexdigest() for file in files}
     baseline = _run(detector_regions_executable, tmp_path, "baseline")
     default = _run(detector_regions_executable, tmp_path, "default")
+    _run(detector_regions_executable, tmp_path, "planar")
 
     def load_lines(run):
         return [
