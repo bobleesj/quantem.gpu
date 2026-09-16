@@ -52,7 +52,8 @@ public struct MetalSSBSavedRun: Codable, Sendable {
     reconstructionWallSeconds = result.wallSeconds
     reconstructionGPUSeconds = result.gpuSeconds
     guard [128, 256, 512].contains(provenance.scanRows),
-      provenance.scanColumns == provenance.scanRows else {
+      provenance.scanColumns == provenance.scanRows
+    else {
       throw SavedRunError.invalid("Unsupported native SSB scan dimensions.")
     }
     let bytes = provenance.scanRows * provenance.scanColumns * MemoryLayout<SIMD2<Float>>.stride
@@ -123,7 +124,8 @@ public struct MetalSSBSavedRun: Codable, Sendable {
         "Saved SSB coefficients must be finite. Recompute or restore a valid result.")
     }
     guard [128, 256, 512].contains(provenance.scanRows),
-      provenance.scanColumns == provenance.scanRows else {
+      provenance.scanColumns == provenance.scanRows
+    else {
       throw SavedRunError.invalid("Unsupported native SSB scan dimensions.")
     }
     let bytes = provenance.scanRows * provenance.scanColumns * MemoryLayout<SIMD2<Float>>.stride

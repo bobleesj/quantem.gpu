@@ -61,7 +61,8 @@ public struct MetalSSBCalibration: Codable, Equatable, Sendable {
   {
     guard [128, 256, 512].contains(scanRows), scanColumns == scanRows else {
       throw MetalSSBError.invalidGeometry(
-        "Native Metal SSB requires a square 128, 256, or 512 scan. Keep the original sampling; do not bin or crop to fit.")
+        "Native Metal SSB requires a square 128, 256, or 512 scan. Keep the original sampling; do not bin or crop to fit."
+      )
     }
     let positive = [
       beamEnergyKeV, semiangleMrad, scanStepRowAngstroms,

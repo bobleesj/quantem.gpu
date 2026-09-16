@@ -74,7 +74,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
 
   func indexedDetector(mask: [UInt8], output: MTLBuffer) throws -> MetalRuntimeANSDetectorMetrics {
     if spatialQuery == nil {
-      spatialQuery = try RuntimeSpatialQuery(device: device, shape: Array(shape[2...]), validity: validPixels)
+      spatialQuery = try RuntimeSpatialQuery(
+        device: device, shape: Array(shape[2...]), validity: validPixels)
     }
     return try spatialQuery!.update(mask, source: self, output: output)
   }
@@ -112,9 +113,14 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       maximumAdditionalBytes: maximumAdditionalBytes)
     let maximumFrames = try RuntimeANSEncoder.maximumWindowFrames(
       source: source, maximumAdditionalBytes: maximumAdditionalBytes)
-    let spatial = try includeSpatialIndex ? RuntimeSpatialIndex(device: device,
-      shape: [source.dataset.detectorRows, source.dataset.detectorCols],
-      validity: (0..<source.dataset.detectorRows * source.dataset.detectorCols).map { source.dataset.badPixelIndices.contains($0) ? 0 : 1 }) : nil
+    let spatial =
+      try includeSpatialIndex
+      ? RuntimeSpatialIndex(
+        device: device,
+        shape: [source.dataset.detectorRows, source.dataset.detectorCols],
+        validity: (0..<source.dataset.detectorRows * source.dataset.detectorCols).map {
+          source.dataset.badPixelIndices.contains($0) ? 0 : 1
+        }) : nil
     try packing.forEachExactDecodedWindow(
       source: source, maximumFrames: includeSpatialIndex ? min(512, maximumFrames) : maximumFrames,
       shouldCancel: shouldCancel, progress: progress
@@ -123,7 +129,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
         dense: dense, firstScan: range.lowerBound, scanCount: range.count,
         afterDecode: command)
       if let spatial {
-        try encoder.addSpatialIndex(spatial.build(raw: dense, scans: range.count, itemBytes: source.sourceBytesPerValue))
+        try encoder.addSpatialIndex(
+          spatial.build(raw: dense, scans: range.count, itemBytes: source.sourceBytesPerValue))
       }
     }
     guard encoder.readyScans == source.logicalFrameCount else {
@@ -139,12 +146,15 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     source: Native4DSTEMIndexedSource, identity: String,
     built: RuntimeANSEncoder.Output, totalSeconds: Double, device: MTLDevice
   ) throws {
-    try self.init(dataset: source.dataset, identity: identity, built: built,
-                  totalSeconds: totalSeconds, device: device)
+    try self.init(
+      dataset: source.dataset, identity: identity, built: built,
+      totalSeconds: totalSeconds, device: device)
   }
 
-  init(dataset: Native4DSTEMDataset, identity: String,
-       built: RuntimeANSEncoder.Output, totalSeconds: Double, device: MTLDevice) throws {
+  init(
+    dataset: Native4DSTEMDataset, identity: String,
+    built: RuntimeANSEncoder.Output, totalSeconds: Double, device: MTLDevice
+  ) throws {
     self.dataset = dataset
     shape = [dataset.scanRows, dataset.scanCols, dataset.detectorRows, dataset.detectorCols]
     logicalDtype = dataset.sourceDtype == "uint8" ? .uint8 : .uint16
@@ -268,7 +278,8 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     try requireLive()
     guard changed > 0, let failure, let decodingTable else { return }
     let pixels = shape[2] * shape[3]
-    let cameraColumns = usesSpatialIndex && chunks.allSatisfy { $0.scanCount <= interval }
+    let cameraColumns =
+      usesSpatialIndex && chunks.allSatisfy { $0.scanCount <= interval }
       && ProcessInfo.processInfo.environment["QGPU_K3_PACKET"] != "1"
     let usePacketOwner = changed > 32 && !cameraColumns
     let width = changed <= 32 ? 32 : 128
@@ -514,7 +525,8 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       selectedFromZero += value == 1 ? 1 : 0
     }
     if source.usesSpatialIndex && (forceRebase || min(selectedFromZero, deltaFromCurrent) > 4096) {
-      let metrics = try source.indexedDetector(mask: next, output: virtualDetectorOutputs[priorityIndex])
+      let metrics = try source.indexedDetector(
+        mask: next, output: virtualDetectorOutputs[priorityIndex])
       detectorMasks[priorityIndex] = next
       return (virtualDetectorOutputs[priorityIndex], metrics)
     }
@@ -599,15 +611,24 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     }
     let wallStarted = CFAbsoluteTimeGetCurrent()
     if sources.allSatisfy({ $0.usesSpatialIndex }) {
-      var milliseconds = 0.0, changed = 0, submissions = 0
+      var milliseconds = 0.0
+      var changed = 0
+      var submissions = 0
       for index in sources.indices {
-        let (_, metrics) = try updatePriorityVirtualDetectorBuffer(mask: mask, priorityIndex: index, forceRebase: forceRebase)
-        milliseconds += metrics.gpuMilliseconds; changed = max(changed, metrics.changedDetectorPixels)
+        let (_, metrics) = try updatePriorityVirtualDetectorBuffer(
+          mask: mask, priorityIndex: index, forceRebase: forceRebase)
+        milliseconds += metrics.gpuMilliseconds
+        changed = max(changed, metrics.changedDetectorPixels)
         submissions += metrics.submissionCount
       }
-      return (virtualDetectorOutputs, MetalRuntimeANSDetectorMetrics(changedDetectorPixels: changed,
-        gpuMilliseconds: milliseconds, wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
-        acquisitionCount: sources.count, submissionCount: submissions))
+      return (
+        virtualDetectorOutputs,
+        MetalRuntimeANSDetectorMetrics(
+          changedDetectorPixels: changed,
+          gpuMilliseconds: milliseconds,
+          wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
+          acquisitionCount: sources.count, submissionCount: submissions)
+      )
     }
     var nextMasks = detectorMasks
     var changedCounts = [Int](repeating: 0, count: sources.count)
@@ -760,13 +781,16 @@ final class RuntimeANSEncoder {
     allocatedBefore: UInt64,
     maximumAdditionalBytes: UInt64?
   ) throws {
-    try self.init(device: device, pixels: source.dataset.detectorRows * source.dataset.detectorCols,
-                  bytesPerValue: source.sourceBytesPerValue, allocatedBefore: allocatedBefore,
-                  maximumAdditionalBytes: maximumAdditionalBytes)
+    try self.init(
+      device: device, pixels: source.dataset.detectorRows * source.dataset.detectorCols,
+      bytesPerValue: source.sourceBytesPerValue, allocatedBefore: allocatedBefore,
+      maximumAdditionalBytes: maximumAdditionalBytes)
   }
 
-  init(device: MTLDevice, pixels: Int, bytesPerValue: Int, allocatedBefore: UInt64,
-       maximumAdditionalBytes: UInt64?, singleFrameQueries: Bool = false) throws {
+  init(
+    device: MTLDevice, pixels: Int, bytesPerValue: Int, allocatedBefore: UInt64,
+    maximumAdditionalBytes: UInt64?, singleFrameQueries: Bool = false
+  ) throws {
     self.device = device
     self.allocatedBefore = allocatedBefore
     self.maximumAdditionalBytes = maximumAdditionalBytes
@@ -789,8 +813,9 @@ final class RuntimeANSEncoder {
       detectorPacketSIMDs == 4
       ? "streamed_counts_detector_packet4" : "streamed_counts_detector_packet"
     // Match camera snapshot queries: stop decoding once the selected frame is reached.
-    let decodeName = singleFrameQueries
-      && ProcessInfo.processInfo.environment["QGPU_K3_FRAME_PREFIX"] != "0"
+    let decodeName =
+      singleFrameQueries
+        && ProcessInfo.processInfo.environment["QGPU_K3_FRAME_PREFIX"] != "0"
       ? "camera_frame" : "streamed_counts_decode_range"
     guard let encode = library.makeFunction(name: "streamed_counts_encode"),
       let compact = library.makeFunction(name: "streamed_counts_compact"),
@@ -809,7 +834,9 @@ final class RuntimeANSEncoder {
   }
 
   func addSpatialIndex(_ buffers: [MTLBuffer]) throws {
-    guard !chunks.isEmpty else { throw MetalRuntimeANSResidentSource.invalid("Encode counts before indexing.") }
+    guard !chunks.isEmpty else {
+      throw MetalRuntimeANSResidentSource.invalid("Encode counts before indexing.")
+    }
     chunks[chunks.count - 1].spatial = buffers
   }
 

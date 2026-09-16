@@ -115,9 +115,12 @@ extension MetalSSBSavedRun {
   public func savePhasePair(to url: URL, phase: Data) throws {
     guard let calibration else { throw PairError.invalid("Cannot export SSB without calibration.") }
     let padded = calibrationProvenance?["scanPadding"] == "zero-bottom-right-v1"
-    let rows = padded ? Int(calibrationProvenance?["sourceScanRows"] ?? "") ?? 0 : provenance.scanRows
-    let columns = padded ? Int(calibrationProvenance?["sourceScanColumns"] ?? "") ?? 0 : provenance.scanColumns
-    guard rows > 0, columns > 0, rows <= provenance.scanRows, columns <= provenance.scanColumns else {
+    let rows =
+      padded ? Int(calibrationProvenance?["sourceScanRows"] ?? "") ?? 0 : provenance.scanRows
+    let columns =
+      padded ? Int(calibrationProvenance?["sourceScanColumns"] ?? "") ?? 0 : provenance.scanColumns
+    guard rows > 0, columns > 0, rows <= provenance.scanRows, columns <= provenance.scanColumns
+    else {
       throw PairError.invalid("The saved padding description lacks the original scan dimensions.")
     }
     let artifact = SSBPhaseArtifact(

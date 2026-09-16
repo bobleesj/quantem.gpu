@@ -9,7 +9,12 @@
     {"dataset_id": "cuda-parity-count-generator", "path": "local-evidence://ssb-native-size-verification/source/export_ssb_scan_size_reference.py", "sha256": "f49be3393d97ec80b415c0589fd086411e2c83a93b55c463bb499f0a8037166e"},
     {"dataset_id": "full-disk-native-count-generator", "path": "experiments/20260915-metal-ssb-native-sizes/performance.swift", "sha256": "2c1ef191a50c6e79c2febc5e4bcaf02dee540df01ee2beb4387cb4263979cd57"}
   ],
-  "parameters": {"scan_sizes": [128, 256, 512], "parity_bf": 95, "scaling_bf": 8937, "warmups": 3, "repeats": 20, "dtype": "uint8 counts, complex64 Fourier/object, float32 phase", "crop": null, "bin": 1, "objective": "full-IFFT phase variance, not sparse-row CUDA variance_loss", "data_scope": "Synthetic counts; not real-data UI performance"},
+  "parameters": {"scan_sizes": [128, 256, 512], "parity_bf": 95, "scaling_bf": 8937, "warmups": 3, "repeats": 20, "dtype": "uint8 counts, complex64 Fourier/object, float32 phase", "crop": null, "bin": 1, "objective": "full-IFFT phase variance, not sparse-row CUDA variance_loss", "data_scope": "Synthetic counts; not real-data UI performance", "artifact_results": {
+    "generic-baseline": "Retained 20-repeat native-count baseline for 128/256/512 scans with all 8937 bright-field terms, wall/device timings and sampled Metal allocations.",
+    "fused-measurement": "Retained 20-repeat fused-objective measurement on the same synthetic configurations; not a real-acquisition or end-to-end UI benchmark.",
+    "independent-cuda-parity": "Native 128/256/512 cached, streamed and hybrid reconstructions passed CUDA and independent-equation parity, including saved results.",
+    "existing-workflow": "Retained existing native scientific-workflow verification log; thresholds and recorded numerical outputs are unchanged."
+  }},
   "execution": {"host": "apple-m5-native-development", "backend": "native-swift-metal", "gpu_ids": ["Apple M5"], "gpu_model": "Apple M5 24 GB"},
   "outputs": [
     {"artifact_id": "generic-baseline", "path": "experiments/20260915-metal-ssb-native-sizes/baseline.json", "sha256": "129da901871018bd050772e63e5f9bce8001bc9b595cb0ae993f5a3f21b38882", "size_bytes": 2695, "retention": "durable", "consuming_figures": []},

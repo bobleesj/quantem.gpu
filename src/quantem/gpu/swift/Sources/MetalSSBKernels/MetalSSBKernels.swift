@@ -372,12 +372,14 @@ public final class MetalSSBEngine {
     fusedLossRowPipeline = try Self.makePipeline(
       device: device,
       library: library,
-      name: size == 512 ? "ssb_correct_half_column_ifft512_hermitian" : "ssb_correct_half_ifft_small"
+      name: size == 512
+        ? "ssb_correct_half_column_ifft512_hermitian" : "ssb_correct_half_ifft_small"
     )
     fusedLossMomentPipeline = try Self.makePipeline(
       device: device,
       library: library,
-      name: size == 512 ? "ssb_ifft512_rows_hermitian_phase_moments" : "ssb_ifft_small_phase_moments"
+      name: size == 512
+        ? "ssb_ifft512_rows_hermitian_phase_moments" : "ssb_ifft_small_phase_moments"
     )
     nyquistCorrectionPipeline = try Self.makePipeline(
       device: device, library: library, name: "ssb_ifft512_nyquist_correction")
@@ -788,9 +790,11 @@ public final class MetalSSBEngine {
   /// Convert an owned complex object to its scalar phase, in radians, on Metal.
   public func phase(of result: MetalSSBResult) throws -> MTLBuffer {
     guard result.provenance.scanRows == size, result.provenance.scanColumns == size,
-      result.object.length >= plane * MemoryLayout<SIMD2<Float>>.stride else {
+      result.object.length >= plane * MemoryLayout<SIMD2<Float>>.stride
+    else {
       throw MetalSSBError.invalidGeometry(
-        "This result is \(result.provenance.scanRows) by \(result.provenance.scanColumns), but the engine is \(size) by \(size). Restore it with matching scan geometry before converting phase.")
+        "This result is \(result.provenance.scanRows) by \(result.provenance.scanColumns), but the engine is \(size) by \(size). Restore it with matching scan geometry before converting phase."
+      )
     }
     if objectPhasePipeline == nil {
       objectPhasePipeline = try Self.makePipeline(
@@ -826,14 +830,17 @@ public final class MetalSSBEngine {
       throw MetalSSBError.notPrepared
     }
     if objectiveSampling?.fraction != brightfieldFraction {
-      objectiveSampling = try SSBBrightfieldSampling(totalCount: geometry.logicalBrightfieldCount,
+      objectiveSampling = try SSBBrightfieldSampling(
+        totalCount: geometry.logicalBrightfieldCount,
         fraction: brightfieldFraction)
     }
     let sampling = objectiveSampling!
     if sampling.indices.count < geometry.logicalBrightfieldCount {
       let included = Set(sampling.indices)
       guard activeBrightfieldIndices.contains(where: { included.contains($0) }) else {
-        throw MetalSSBError.invalidGeometry("The sampled BF pixels have no active aperture contribution. Increase BF pixels for optimization.")
+        throw MetalSSBError.invalidGeometry(
+          "The sampled BF pixels have no active aperture contribution. Increase BF pixels for optimization."
+        )
       }
     }
     guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeNanometers != 0 }) else {
@@ -899,8 +906,10 @@ public final class MetalSSBEngine {
       // The fused 512 path uses eight-plane tiles. Smaller scans reuse the
       // full allocated scratch batch; each pixel still accumulates BF in order.
       let phaseBatch = size == 512 ? Self.phaseBatchCapacity : Self.batchCapacity
-      for range in sampling.ranges(activeIndices: activeBrightfieldIndices,
-        within: globalOffset..<(globalOffset + cacheCount), batchSize: phaseBatch) {
+      for range in sampling.ranges(
+        activeIndices: activeBrightfieldIndices,
+        within: globalOffset..<(globalOffset + cacheCount), batchSize: phaseBatch)
+      {
         let localOffset = range.lowerBound - globalOffset
         let batch = range.count
         let params = parameters(
@@ -923,8 +932,10 @@ public final class MetalSSBEngine {
 
     var streamedCommands: MTLCommandBuffer?
     var streamedBatchCount = 0
-    for range in sampling.ranges(activeIndices: activeBrightfieldIndices,
-      within: globalOffset..<activeBrightfieldIndices.count, batchSize: Self.batchCapacity) {
+    for range in sampling.ranges(
+      activeIndices: activeBrightfieldIndices,
+      within: globalOffset..<activeBrightfieldIndices.count, batchSize: Self.batchCapacity)
+    {
       let offset = range.lowerBound
       let batch = range.count
       if streamedCommands == nil {
@@ -998,7 +1009,8 @@ public final class MetalSSBEngine {
       loss: Float(loss),
       wallSeconds: Date().timeIntervalSince(started),
       gpuSeconds: gpuSeconds,
-      provenance: currentProvenance(sampling: sampling.indices.count == geometry.logicalBrightfieldCount ? nil : sampling),
+      provenance: currentProvenance(
+        sampling: sampling.indices.count == geometry.logicalBrightfieldCount ? nil : sampling),
       brightfieldSampling: sampling
     )
   }
@@ -1014,7 +1026,8 @@ public final class MetalSSBEngine {
     isCancelled: () -> Bool = { false }
   ) throws -> SSBOptimizationResult {
     let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
-    let sampling = try SSBBrightfieldSampling(totalCount: geometry.logicalBrightfieldCount,
+    let sampling = try SSBBrightfieldSampling(
+      totalCount: geometry.logicalBrightfieldCount,
       fraction: brightfieldFraction)
     var result = try SSBOptimizer(globalTrials: globalTrials, seed: seed).run(
       start: SSBOptimizationPoint(
@@ -1111,9 +1124,14 @@ public final class MetalSSBEngine {
   private func currentProvenance(sampling: SSBBrightfieldSampling? = nil) -> MetalSSBProvenance {
     let selected = sampling.map { Set($0.indices) }
     let logical = sampling?.indices.count ?? geometry.logicalBrightfieldCount
-    let executed = selected.map { selected in activeBrightfieldIndices.filter { selected.contains($0) }.count }
+    let executed =
+      selected.map { selected in activeBrightfieldIndices.filter { selected.contains($0) }.count }
       ?? activeBrightfieldIndices.count
-    let cached = selected.map { selected in activeBrightfieldIndices.prefix(cachedBrightfieldCount).filter { selected.contains($0) }.count }
+    let cached =
+      selected.map { selected in
+        activeBrightfieldIndices.prefix(cachedBrightfieldCount).filter { selected.contains($0) }
+          .count
+      }
       ?? cachedBrightfieldCount
     return MetalSSBProvenance(
       scanRows: size,
@@ -1131,7 +1149,8 @@ public final class MetalSSBEngine {
       scanBin: 1,
       scanCrop: "none",
       brightfieldSelection: logical == geometry.logicalBrightfieldCount
-        ? "exact-zero-aperture-pruning" : "optimization-\(sampling!.policy):\(logical)/\(geometry.logicalBrightfieldCount)"
+        ? "exact-zero-aperture-pruning"
+        : "optimization-\(sampling!.policy):\(logical)/\(geometry.logicalBrightfieldCount)"
     )
   }
 
@@ -1578,7 +1597,8 @@ public final class MetalSSBEngine {
       moments.setBuffer(phaseSumBuffer, offset: 0, index: 2)
       moments.setBuffer(phaseSumSquaredBuffer, offset: 0, index: 3)
       moments.setBytes(&mutable, length: MemoryLayout<SSBParams>.stride, index: 4)
-      moments.dispatchThreadgroups(MTLSize(width: size, height: 1, depth: 1),
+      moments.dispatchThreadgroups(
+        MTLSize(width: size, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
       moments.endEncoding()
       return
@@ -1595,7 +1615,8 @@ public final class MetalSSBEngine {
     boundary.setBytes(&mutable, length: MemoryLayout<SSBParams>.stride, index: 6)
     boundary.setBuffer(chiTrigBuffer, offset: 0, index: 7)
     boundary.setBuffer(crossTrigBuffer, offset: 0, index: 8)
-    boundary.dispatchThreadgroups(MTLSize(width: 2, height: batch, depth: 1),
+    boundary.dispatchThreadgroups(
+      MTLSize(width: 2, height: batch, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
     boundary.endEncoding()
 

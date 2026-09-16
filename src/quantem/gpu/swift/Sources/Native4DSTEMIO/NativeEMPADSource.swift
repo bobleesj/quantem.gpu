@@ -52,7 +52,8 @@ public struct NativeEMPADSource: Sendable {
       var metadata = description["microscope_metadata"] as? [String: String]
     else { throw EMPADError("Unsupported EMPAD QEM geometry or metadata; update the reader.") }
     let calibration = try description["scan_calibration"].map {
-      try JSONDecoder().decode(Native4DSTEMScanCalibration.self,
+      try JSONDecoder().decode(
+        Native4DSTEMScanCalibration.self,
         from: JSONSerialization.data(withJSONObject: $0))
     }
     if let calibration, !calibration.isValid {
@@ -66,7 +67,8 @@ public struct NativeEMPADSource: Sendable {
       metadata["qem_user_confirmed_background_corrected"] = "true"
     }
     if description["background"] != nil { metadata["qem_background"] = "mean-dark" }
-    return NativeEMPADSource(rawURL: url, metadataURL: nil,
+    return NativeEMPADSource(
+      rawURL: url, metadataURL: nil,
       scanRows: shape[0], scanColumns: shape[1], scanCalibration: calibration,
       diffractionSamplingInverseNanometers: description["diffraction_sampling_inv_nm"] as? Double,
       acquisitionDate: description["acquisition_date"] as? String,
@@ -89,7 +91,8 @@ public struct NativeEMPADSource: Sendable {
     let source = input.standardizedFileURL
     if NativeQEMFile.matches(source) {
       let restored = try openQEM(source)
-      if let scanShape, scanShape.row != restored.scanRows || scanShape.col != restored.scanColumns {
+      if let scanShape, scanShape.row != restored.scanRows || scanShape.col != restored.scanColumns
+      {
         throw EMPADError("Scan shape disagrees with the QEM acquisition; omit the override.")
       }
       return restored
@@ -352,7 +355,9 @@ public struct NativeEMPADSource: Sendable {
   // It has the same ordered selection and source snapshot checks as readFrames.
   package func readFrames(_ indices: [Int], into output: UnsafeMutableRawBufferPointer) throws {
     guard !hasQEMStorage else {
-      throw EMPADError("This QEM stores compressed measurements. Use MetalEMPADResidentSource.load to read its diffraction patterns.")
+      throw EMPADError(
+        "This QEM stores compressed measurements. Use MetalEMPADResidentSource.load to read its diffraction patterns."
+      )
     }
     try validateUnchanged()
     guard indices.allSatisfy({ (0..<frameCount).contains($0) }) else {

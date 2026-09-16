@@ -28,8 +28,12 @@ public struct NativeQEMFile {
     guard prefix.count == 56, prefix.prefix(8) == NativeQEMMetadata.magic else {
       throw Native4DSTEMIOError.invalidData("Choose a complete QuantEM (.qem) file.")
     }
-    let length = prefix.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 8, as: UInt64.self).littleEndian }
-    let start = prefix.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 16, as: UInt64.self).littleEndian }
+    let length = prefix.withUnsafeBytes {
+      $0.loadUnaligned(fromByteOffset: 8, as: UInt64.self).littleEndian
+    }
+    let start = prefix.withUnsafeBytes {
+      $0.loadUnaligned(fromByteOffset: 16, as: UInt64.self).littleEndian
+    }
     guard length > 0, length <= 16 << 20, start == 56 + length else {
       throw Native4DSTEMIOError.invalidData("Invalid QEM header size; recopy the complete file.")
     }
@@ -44,9 +48,15 @@ public struct NativeQEMFile {
       let checksums = header["sha256"] as? [String],
       checksums.count == (bytes - 1) / Self.blockBytes + 1,
       try file.seekToEnd() == UInt64(bytes) + start
-    else { throw Native4DSTEMIOError.invalidData("Invalid QEM header or file length; recopy the complete file.") }
+    else {
+      throw Native4DSTEMIOError.invalidData(
+        "Invalid QEM header or file length; recopy the complete file.")
+    }
     try NativeQEMMetadata.validate(header, shape: shape)
-    self.header = header; self.codec = codec; bodyBytes = bytes; bodyStart = Int(start)
+    self.header = header
+    self.codec = codec
+    bodyBytes = bytes
+    bodyStart = Int(start)
     self.checksums = checksums
     identity = digest.map { String(format: "%02x", $0) }.joined()
   }
@@ -58,7 +68,9 @@ public struct NativeQEMFile {
     }
     // Same bounded parallel verification as the integer snapshot reader. No
     // decode or unchecked byte is submitted to Metal before all workers join.
-    let expected = checksums, start = bodyStart, length = bodyBytes
+    let expected = checksums
+    let start = bodyStart
+    let length = bodyBytes
     try data.withUnsafeBytes { bytes in
       nonisolated(unsafe) let pointer = bytes.baseAddress!
       nonisolated(unsafe) var failedBlock: Int?
@@ -68,16 +80,20 @@ public struct NativeQEMFile {
         for number in stride(from: worker, to: expected.count, by: workers) {
           let offset = number * Self.blockBytes
           let count = min(Self.blockBytes, length - offset)
-          let view = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: pointer.advanced(by: start + offset)),
-                          count: count, deallocator: .none)
+          let view = Data(
+            bytesNoCopy: UnsafeMutableRawPointer(mutating: pointer.advanced(by: start + offset)),
+            count: count, deallocator: .none)
           let digest = SHA256.hash(data: view).map { String(format: "%02x", $0) }.joined()
           if digest != expected[number] {
-            lock.lock(); failedBlock = number; lock.unlock()
+            lock.lock()
+            failedBlock = number
+            lock.unlock()
           }
         }
       }
       if let failedBlock {
-        throw Native4DSTEMIOError.invalidData("QEM checksum mismatch in block \(failedBlock); recopy the file.")
+        throw Native4DSTEMIOError.invalidData(
+          "QEM checksum mismatch in block \(failedBlock); recopy the file.")
       }
     }
     return data
@@ -98,16 +114,21 @@ public final class NativeQEMWriter {
   public init(destination: URL) throws {
     self.destination = destination
     guard !FileManager.default.fileExists(atPath: destination.path) else {
-      throw Native4DSTEMIOError.invalidData("\(destination.lastPathComponent) already exists; choose another name.")
+      throw Native4DSTEMIOError.invalidData(
+        "\(destination.lastPathComponent) already exists; choose another name.")
     }
-    bodyURL = destination.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).qem-body")
+    bodyURL = destination.deletingLastPathComponent().appendingPathComponent(
+      ".\(UUID().uuidString).qem-body")
     guard FileManager.default.createFile(atPath: bodyURL.path, contents: nil) else {
       throw Native4DSTEMIOError.invalidData("Cannot create a QEM copy; choose a writable folder.")
     }
     file = try FileHandle(forUpdating: bodyURL)
   }
 
-  deinit { try? file.close(); try? FileManager.default.removeItem(at: bodyURL) }
+  deinit {
+    try? file.close()
+    try? FileManager.default.removeItem(at: bodyURL)
+  }
 
   @discardableResult
   public func append(_ bytes: Data, shouldCancel: () -> Bool = { false }) throws -> Int {
@@ -117,11 +138,15 @@ public final class NativeQEMWriter {
       if shouldCancel() { throw CancellationError() }
       let count = min(NativeQEMFile.blockBytes - blockCount, bytes.count - offset)
       let part = bytes.subdata(in: offset..<offset + count)
-      try file.write(contentsOf: part); digest.update(data: part)
-      offset += count; blockCount += count; bodyBytes += count
+      try file.write(contentsOf: part)
+      digest.update(data: part)
+      offset += count
+      blockCount += count
+      bodyBytes += count
       if blockCount == NativeQEMFile.blockBytes {
         checksums.append(digest.finalize().map { String(format: "%02x", $0) }.joined())
-        digest = SHA256(); blockCount = 0
+        digest = SHA256()
+        blockCount = 0
       }
     }
     return first
@@ -130,25 +155,35 @@ public final class NativeQEMWriter {
   public func finish(header: [String: Any], shouldCancel: () -> Bool = { false }) throws {
     if shouldCancel() { throw CancellationError() }
     var header = header
-    if blockCount > 0 { checksums.append(digest.finalize().map { String(format: "%02x", $0) }.joined()) }
-    header["container"] = NativeQEMMetadata.container; header["container_version"] = 1
-    header["bytes"] = bodyBytes; header["sha256"] = checksums
+    if blockCount > 0 {
+      checksums.append(digest.finalize().map { String(format: "%02x", $0) }.joined())
+    }
+    header["container"] = NativeQEMMetadata.container
+    header["container_version"] = 1
+    header["bytes"] = bodyBytes
+    header["sha256"] = checksums
     let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
-    guard json.count <= 16 << 20 else { throw Native4DSTEMIOError.invalidData("QEM metadata exceeds 16 MiB; no copy was published.") }
+    guard json.count <= 16 << 20 else {
+      throw Native4DSTEMIOError.invalidData("QEM metadata exceeds 16 MiB; no copy was published.")
+    }
     var prefix = NativeQEMMetadata.magic
     for number in [json.count, json.count + 56] {
       var value = UInt64(number).littleEndian
       withUnsafeBytes(of: &value) { prefix.append(contentsOf: $0) }
     }
-    prefix.append(contentsOf: SHA256.hash(data: json)); prefix.append(json)
-    let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).qem-partial")
+    prefix.append(contentsOf: SHA256.hash(data: json))
+    prefix.append(json)
+    let temporary = destination.deletingLastPathComponent().appendingPathComponent(
+      ".\(UUID().uuidString).qem-partial")
     defer { try? FileManager.default.removeItem(at: temporary) }
     guard FileManager.default.createFile(atPath: temporary.path, contents: nil) else {
-      throw Native4DSTEMIOError.invalidData("Cannot write QEM output; check free space and folder permissions.")
+      throw Native4DSTEMIOError.invalidData(
+        "Cannot write QEM output; check free space and folder permissions.")
     }
     let output = try FileHandle(forWritingTo: temporary)
     defer { try? output.close() }
-    try output.write(contentsOf: prefix); try file.seek(toOffset: 0)
+    try output.write(contentsOf: prefix)
+    try file.seek(toOffset: 0)
     while let block = try file.read(upToCount: NativeQEMFile.blockBytes), !block.isEmpty {
       if shouldCancel() { throw CancellationError() }
       try output.write(contentsOf: block)
@@ -156,7 +191,8 @@ public final class NativeQEMWriter {
     try output.synchronize()
     if shouldCancel() { throw CancellationError() }
     guard link(temporary.path, destination.path) == 0 else {
-      throw Native4DSTEMIOError.invalidData("Cannot publish QEM output: \(String(cString: strerror(errno))). Existing files were kept.")
+      throw Native4DSTEMIOError.invalidData(
+        "Cannot publish QEM output: \(String(cString: strerror(errno))). Existing files were kept.")
     }
   }
 }

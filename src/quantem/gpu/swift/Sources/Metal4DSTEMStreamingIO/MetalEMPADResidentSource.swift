@@ -141,10 +141,13 @@ public final class MetalEMPADResidentSource {
   ) throws -> MetalEMPADResidentSource {
     if source.hasQEMStorage {
       guard background == nil else {
-        throw failure("A QEM file restores its saved background state. Do not apply another dark during loading.")
+        throw failure(
+          "A QEM file restores its saved background state. Do not apply another dark during loading."
+        )
       }
-      return try restoreQEM(source, device: device, memoryBudgetBytes: memoryBudgetBytes,
-                            shouldCancel: shouldCancel)
+      return try restoreQEM(
+        source, device: device, memoryBudgetBytes: memoryBudgetBytes,
+        shouldCancel: shouldCancel)
     }
     let started = CFAbsoluteTimeGetCurrent()
     let profile = ProcessInfo.processInfo.environment["QGPU_EMPAD_LOAD_PROFILE"] == "1"
@@ -530,7 +533,10 @@ public final class MetalEMPADResidentSource {
       selectedRows.lowerBound >= 0, selectedRows.upperBound <= source.scanRows,
       selectedColumns.lowerBound >= 0, selectedColumns.upperBound <= source.scanColumns,
       shape != .circle || selectedRows.count == selectedColumns.count
-    else { throw Self.failure("Mean DP requires a nonempty region inside the loaded scan; circle bounds must be square.") }
+    else {
+      throw Self.failure(
+        "Mean DP requires a nonempty region inside the loaded scan; circle bounds must be square.")
+    }
     guard !isReleased, output.length >= 16384 * 4,
       output.device.registryID == device.registryID,
       command.commandQueue.device.registryID == device.registryID,
@@ -543,7 +549,8 @@ public final class MetalEMPADResidentSource {
     bindBackground(encoder, fallback: output)
     encoder.setBuffer(accumulator, offset: 0, index: 2)
     encoder.setBuffer(output, offset: 0, index: 3)
-    var region = SIMD4<UInt32>(UInt32(selectedRows.lowerBound), UInt32(selectedRows.upperBound),
+    var region = SIMD4<UInt32>(
+      UInt32(selectedRows.lowerBound), UInt32(selectedRows.upperBound),
       UInt32(selectedColumns.lowerBound), UInt32(selectedColumns.upperBound))
     var scanColumns = UInt32(source.scanColumns)
     encoder.setBytes(&region, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 5)

@@ -1081,13 +1081,21 @@ public final class MetalCompactH5ResidentSource {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Mean DP requires a nonempty region inside the loaded scan; circle bounds must be square.")
     }
-    let regional = shape == .circle || selectedRows != 0..<metadata.scanRows || selectedColumns != 0..<metadata.scanColumns
+    let regional =
+      shape == .circle || selectedRows != 0..<metadata.scanRows
+      || selectedColumns != 0..<metadata.scanColumns
     let output: MTLBuffer
     if regional {
-      guard let buffer = device.makeBuffer(length: detectorSumOutput.length, options: .storageModeShared)
-      else { throw Metal4DSTEMStreamingIOError.commandFailed("Could not allocate the region mean DP.") }
+      guard
+        let buffer = device.makeBuffer(
+          length: detectorSumOutput.length, options: .storageModeShared)
+      else {
+        throw Metal4DSTEMStreamingIOError.commandFailed("Could not allocate the region mean DP.")
+      }
       output = buffer
-    } else { output = detectorSumOutput }
+    } else {
+      output = detectorSumOutput
+    }
     var wallMilliseconds = 0.0
     var gpuMilliseconds = 0.0
     var dispatchCount = 0
@@ -1115,7 +1123,8 @@ public final class MetalCompactH5ResidentSource {
           scanColumns: regional ? UInt32(metadata.scanColumns) : 0,
           firstScan: UInt32(shardIndex * metadata.scansPerShard),
           rowStart: UInt32(selectedRows.lowerBound), rowStop: UInt32(selectedRows.upperBound),
-          columnStart: UInt32(selectedColumns.lowerBound), columnStop: UInt32(selectedColumns.upperBound),
+          columnStart: UInt32(selectedColumns.lowerBound),
+          columnStop: UInt32(selectedColumns.upperBound),
           regionShape: shape.rawValue
         )
         encoder.setComputePipelineState(detectorSumPipeline)
@@ -1147,7 +1156,8 @@ public final class MetalCompactH5ResidentSource {
       output,
       count: metadata.detectorPixelCount
     )
-    let divisor = Float(shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count))
+    let divisor = Float(
+      shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count))
     return MetalCompactH5MeanDiffraction(
       detectorSum: detectorSum,
       mean: detectorSum.map { Float($0) / divisor },
