@@ -83,34 +83,40 @@ func checkFrozenImageOperations(directory: URL) throws {
       values: (0..<(rows * columns)).map { Float(($0 * 37) % 251 - 125) * 0.03125 }, rows: rows,
       columns: columns)
   }
-  func check(_ image: GPUImage, _ observation: [String: Any]) throws {
+  func check(_ image: GPUImage, _ observation: [String: Any], operation: String) throws {
     let values = image.values()
     let indices = observation["indices"] as! [Int]
     if image.isComplex {
       for (index, expected) in zip(indices, observation["values"] as! [[Double]]) {
         try require(
           values[2 * index] == Float(expected[0]) && values[2 * index + 1] == Float(expected[1]),
-          "Frozen MPS Fourier mismatch")
+          "Frozen MPS \(operation) mismatch at \(index): \(values[2 * index]), \(values[2 * index + 1]); expected \(expected)"
+        )
       }
     } else {
       for (index, expected) in zip(indices, observation["values"] as! [Double]) {
-        try require(values[index] == Float(expected), "Frozen MPS operation mismatch")
+        try require(
+          values[index] == Float(expected),
+          "Frozen MPS \(operation) mismatch at \(index): \(values[index]); expected \(Float(expected))"
+        )
       }
     }
   }
   let full = try generated(512, 512)
   for (sigma, observation) in torch["gradient"] as! [String: [String: Any]] {
-    try check(ops.gradientMagnitude(full, sigma: Double(sigma)!), observation)
+    try check(
+      ops.gradientMagnitude(full, sigma: Double(sigma)!), observation,
+      operation: "gradient sigma=\(sigma)")
   }
-  try check(ops.fourier(generated(520, 520)), torch["fft"] as! [String: Any])
+  try check(ops.fourier(generated(520, 520)), torch["fft"] as! [String: Any], operation: "fft")
   for (edge, observation) in torch["windows"] as! [String: [String: Any]] {
     try check(
       ops.window(ops.image(rows: 192, columns: 192, value: 1), kind: 1, edge_blend: Double(edge)!),
-      observation)
+      observation, operation: "window edge=\(edge)")
   }
   try check(
     ops.centered(full, window: ops.image(rows: 512, columns: 512, value: 1)),
-    torch["centered"] as! [String: Any])
+    torch["centered"] as! [String: Any], operation: "centered")
   print(
     "FROZEN_IMAGE_OPERATIONS_PASS numpy_counts_median_means=true gaussian=true correlation=true grid=true torch_mps=true"
   )

@@ -4,13 +4,6 @@ This record freezes the extraction of reusable native SSB compute from the
 earlier iOS implementation into QuantEM.GPU. It does not migrate application
 UI, session state, navigation, plots, or cache-policy presentation.
 
-**2026-09-15 update:** the native engine now supports square 128, 256, and 512
-scans. Calibration and saved-run buffers retain the native dimensions. A
-Nyquist-boundary correction also fixes a previously exposed 512 cached/streamed
-loss mismatch. See the [native-size verification record](../../experiments/20260915-metal-ssb-native-sizes/README.md)
-for current tests, synthetic scaling measurements, and application-integration
-limits. The dated acceptance tables below remain historical evidence.
-
 ## Source lineage
 
 | Role | Repository state |
@@ -31,8 +24,8 @@ into a SwiftPM library while leaving all UIKit and application ownership behind.
 |---|---|
 | `MetalSSBGeometry` | Complete calibrated BF geometry in logical source order; row and column reciprocal arrays remain explicitly named |
 | `MetalSSBAberrations` | `C10` and `C12` in nm; `phi12` in radians |
-| `MetalSSBEngine.prepare(brightfield:countType:)` | Plane-major unsigned counts shaped `[logical_brightfield, scan_rows, scan_columns]`; uint8, uint16, or uint32 |
-| `reconstruct(aberrations:rotationDegrees:)` | Row-major native-size complex64 object and Fourier sum; dimensions in result provenance |
+| `MetalSSBEngine.prepare(brightfield:)` | Plane-major lossless `uint8` BF buffer shaped `[logical_brightfield, 512, 512]` |
+| `reconstruct(aberrations:rotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum |
 | `phaseVariance(aberrations:rotationDegrees:)` | Exact full-logical-BF phase-variance objective |
 | `optimize(start:rotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead |
 | `MetalSSBProvenance` | Source/compute dtype, no crop, scan bin 1, logical/executed/proven-zero BF counts, cached/streamed BF counts, and exact cache bytes |
@@ -112,11 +105,8 @@ the focused gate limits cached-versus-streamed loss relative error to `5e-5`.
 
 ## Limits and next gates
 
-- Native square scan sizes 128, 256, and 512 are supported. Pass actual
-  `scanRows` and `scanColumns` into `MetalSSBCalibration.geometry`; the default
-  remains 512 for existing clients. Allocate/display outputs from result
-  provenance rather than hard-coded image dimensions. Other scan sizes remain
-  unsupported, not inferred from Python MPS/CUDA implementations.
+- The native engine currently supports a 512×512 scan. Other scan sizes remain
+  unsupported, not inferred from the Python MPS/CUDA implementations.
 - The benchmark starts from an exact precomputed BF-column source. Raw HDF5
   selection and BF-column construction are a separate IO/preparation stage.
 - No storage-cache reset was performed, so the preparation number is warm

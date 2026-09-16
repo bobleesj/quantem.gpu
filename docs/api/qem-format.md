@@ -88,9 +88,6 @@ not accepted as float32 merely because an XML label says float32.
 
 ### Supported entry points
 
-- Live4DSTEM: **File → Save Compressed Copy** (or batch **Save Compressed Copies**)
-  writes `.qem`. Reopen through the normal file picker. Integer K3/ARINA and native
-  EMPAD float32 readers preserve the original detector identity.
 - Python: `io.save("copy.qem", encoded_resident, backend="mps")`, then
   `io.load("copy.qem", backend="mps")`. The shared integer codec also has a CUDA
   reader, but CUDA execution must be qualified independently. Python EMPAD QEM
