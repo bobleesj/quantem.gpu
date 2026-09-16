@@ -60,7 +60,12 @@ struct QEMRoundtrip {
     let background = try MetalEMPADBackground.load(dark, device: device, memoryBudgetBytes: budget)
     let resident = try MetalEMPADResidentSource.load(sample, device: device, memoryBudgetBytes: budget, subtracting: background)
     let path = directory.appendingPathComponent("sample.qem")
-    try resident.saveQEM(to: path)
+    let calibration: NativeQEMCalibration.Overrides = [
+      NativeQEMCalibration.scanRow: .init(value: 0.4e-10, unit: "m", evidence: "manual row calibration"),
+      NativeQEMCalibration.scanColumn: .init(value: 0.6e-10, unit: "m", evidence: "manual column calibration"),
+      "electron_source/accelerating_voltage": .init(value: 300000, unit: "V", evidence: "microscope setting"),
+    ]
+    try resident.saveQEM(to: path, calibrationOverrides: calibration)
     let expected = try sample.readFrames([1]).map { ($0 - 0.5).bitPattern }
     resident.releaseResidentStorage()
     // Remove only these generated fixtures, proving saved correction never
@@ -68,6 +73,8 @@ struct QEMRoundtrip {
     try FileManager.default.removeItem(at: sample.rawURL)
     try FileManager.default.removeItem(at: dark.rawURL)
     let restored = try MetalEMPADResidentSource.load(NativeEMPADSource.open(path), device: device, memoryBudgetBytes: budget)
+    let restoredCalibration = try NativeQEMCalibration.read(metadata: restored.source.microscopeMetadata)
+    try require(restoredCalibration == calibration, "Saved user calibration was lost")
     defer { restored.releaseResidentStorage() }
     try require(restored.background?.identitySHA256 == background.identitySHA256, "Saved dark identity changed")
     let output = device.makeBuffer(length: 65536, options: .storageModeShared)!

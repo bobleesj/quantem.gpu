@@ -12,10 +12,16 @@ extension MetalRuntimeANSResidentSource {
   /// Example: `try source.saveSnapshot(to: destination)`.
   public func saveSnapshot(
     to destination: URL,
+    calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
     shouldCancel: () -> Bool = { false },
     progress: (Int, Int) -> Void = { _, _ in }
   ) throws {
     try requireLive()
+    let overrides = try calibrationOverrides ?? NativeQEMCalibration.read(metadata: dataset.metadata ?? [:])
+    try NativeQEMCalibration.validate(overrides)
+    guard destination.pathExtension.lowercased() == "qem" || overrides.isEmpty else {
+      throw Self.invalid("Save as .qem to preserve calibration overrides; legacy .ans files do not carry them.")
+    }
     guard !chunks.isEmpty, chunks.allSatisfy({ $0.spatial.count == 3 }) else {
       throw Self.invalid(
         "Reload the original with spatial indexes before saving a compressed copy.")
@@ -168,7 +174,9 @@ extension MetalRuntimeANSResidentSource {
       header["container"] = NativeQEMMetadata.container
       header["container_version"] = 1
       header["codec"] = "runtime-column-rans-spatial-v2"
-      header["scientific_metadata"] = NativeQEMMetadata.acquisition(dataset)
+      header["scientific_metadata"] = try NativeQEMCalibration.applying(
+        overrides,
+        to: NativeQEMMetadata.acquisition(dataset))
     }
     let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
     guard json.count <= 16 << 20 else {

@@ -8,11 +8,14 @@ extension MetalEMPADResidentSource {
   /// Example: `try resident.saveQEM(to: destination)`; no original is overwritten.
   public func saveQEM(
     to destination: URL, userConfirmedBackgroundCorrected: Bool = false,
+    calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
     shouldCancel: () -> Bool = { false }
   ) throws {
     guard !isReleased, !chunks.isEmpty else {
       throw qemError("Reload the acquisition before saving.")
     }
+    let overrides = try calibrationOverrides ?? NativeQEMCalibration.read(metadata: source.microscopeMetadata)
+    try NativeQEMCalibration.validate(overrides)
     let writer = try NativeQEMWriter(destination: destination)
     guard let queue = device.makeCommandQueue() else {
       throw qemError("Metal queue unavailable; retry saving.")
@@ -94,7 +97,9 @@ extension MetalEMPADResidentSource {
       metadata: source.microscopeMetadata.merging(
         ["sourceFormat": source.formatName], uniquingKeysWith: { _, new in new }),
       sourceScanCalibration: source.scanCalibration)
-    var scientific = NativeQEMMetadata.acquisition(dataset)
+    var scientific = try NativeQEMCalibration.applying(
+      overrides,
+      to: NativeQEMMetadata.acquisition(dataset))
     if background != nil {
       scientific["processing"] = [
         ["operation": "lossless_storage", "changes_measurements": false],

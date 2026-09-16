@@ -1,5 +1,6 @@
 """Scientific metadata shared by QEM readers, independent of payload codecs."""
 
+import copy
 import math
 
 MAGIC = b"QEMDATA1"
@@ -9,6 +10,12 @@ AXIS_NAMES = ("scan_row", "scan_column", "detector_row", "detector_column")
 
 def acquisition_metadata(shape, metadata: dict) -> dict:
     """Normalize recorded calibration without replacing source fields."""
+    if "scientific_metadata" in metadata:
+        saved = copy.deepcopy(metadata["scientific_metadata"])
+        validate_header(dict(container="quantem.qem", container_version=1,
+                             codec="retained", profile="retained", shape=list(shape),
+                             scientific_metadata=saved))
+        return saved
     source = dict(metadata.get("source_metadata", {}))
     quantities = {}
 
@@ -117,3 +124,65 @@ def validate_header(header: dict) -> None:
         raise ValueError(
             "Unsupported or inconsistent QEM metadata; update the reader or re-export the original."
         )
+    _validate_overrides(scientific.get("calibration_overrides", {}))
+
+
+def _validate_overrides(overrides: dict) -> None:
+    units = {
+        "electron_source/accelerating_voltage": {"V"},
+        "illumination_system/semi_convergence_angle": {"mrad"},
+        "scan_controller/regular_scan/dwell_time": {"s"},
+        "imaging_system/camera_length": {"m"},
+    }
+    pairs = [
+        ("scan_controller/regular_scan/pixel_size_", {"m"}),
+        ("imaging_system/reciprocal_pixel_size_", {"mrad", "1/nm", "1/Å"}),
+    ]
+    for prefix, allowed in pairs:
+        units.update({prefix + axis: allowed for axis in ("y", "x")})
+    if not isinstance(overrides, dict):
+        raise ValueError("QEM calibration overrides must be named quantities.")
+    for path, quantity in overrides.items():
+        if not isinstance(quantity, dict):
+            raise ValueError(f"Invalid QEM calibration quantity at {path}.")
+        value = quantity.get("value")
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0
+                or quantity.get("unit") not in units.get(path, set())
+                or quantity.get("provenance") != "user_override"
+                or not isinstance(quantity.get("evidence"), str)
+                or not quantity["evidence"]):
+            raise ValueError(f"Invalid QEM calibration override at {path}; check value, units and evidence.")
+        if path.startswith("scan_controller/regular_scan/pixel_size_") and not 1e-14 <= value <= 1e-6:
+            raise ValueError("Scan sampling must be between 0.0001 and 10000 angstrom per pixel.")
+    for prefix, _ in pairs:
+        row, column = overrides.get(prefix + "y"), overrides.get(prefix + "x")
+        if ((row is None) != (column is None)
+                or row is not None and row["unit"] != column["unit"]):
+            raise ValueError("QEM calibration requires both row and column in the same units.")
+
+
+def effective_metadata(metadata: dict, scientific: dict) -> dict:
+    """Restore explicit user calibration without overwriting its recorded source.
+
+    Examples
+    --------
+    >>> effective_metadata({}, {"calibration_overrides": {}})
+    {}
+    """
+    overrides = scientific.get("calibration_overrides", {})
+    _validate_overrides(overrides)
+    result = dict(metadata)
+    for prefix, field, factor in (
+        ("scan_controller/regular_scan/pixel_size_", "scan_sampling_A", 1e10),
+        ("imaging_system/reciprocal_pixel_size_", "detector_sampling", 1),
+    ):
+        if prefix + "y" in overrides:
+            result[field] = [overrides[prefix + axis]["value"] * factor for axis in ("y", "x")]
+            if field == "detector_sampling":
+                result["detector_sampling_unit"] = overrides[prefix + "y"]["unit"]
+                result.pop("detector_sampling_inv_A", None)
+    voltage = overrides.get("electron_source/accelerating_voltage")
+    if voltage is not None:
+        result["voltage_kV"] = voltage["value"] / 1000
+    return result

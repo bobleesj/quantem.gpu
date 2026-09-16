@@ -234,6 +234,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
             source.ready_scans = math.prod(shape[:2])
             metadata = dict(header["metadata"])
             if "scientific_metadata" in header:
+                metadata = _qem_metadata.effective_metadata(metadata, header["scientific_metadata"])
                 metadata["scientific_metadata"] = header["scientific_metadata"]
                 metadata["container"] = header["container"]
                 metadata["container_version"] = header["container_version"]

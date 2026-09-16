@@ -114,10 +114,29 @@ not accepted as float32 merely because an XML label says float32.
   have QEM export codecs. Unsupported exports fail rather than writing another
   container under a `.qem` filename.
 
-`calibration_overrides` is reserved and currently empty. App-local manual edits
-are not yet exported. Reader-retained source metadata is preserved, not a full
-archive of every HDF5 object or vendor binary tag. Neither limitation should be
-described to users as complete original-file preservation.
+`scientific_metadata.calibration_overrides` stores explicit user edits separately
+from recorded quantities and axis sampling. Each entry uses the same microscope
+path with `value`, `unit`, `provenance: "user_override"`, and nonempty `evidence`.
+Scan sampling uses metres; beam voltage uses volts; dwell time uses seconds;
+camera length uses metres; semi-angle uses mrad. Detector row/column sampling
+uses a shared unit of mrad, 1/nm, or 1/Å. Both members of each sampling pair are
+required. Invalid or incomplete calibration is rejected, not guessed.
+
+Native exporters accept `calibrationOverrides`. Omitting it preserves existing
+saved edits; supplying a complete dictionary replaces them in the new copy;
+supplying `[:]` clears them. `NativeQEMCalibration` validates and reads these
+quantities. Native readers expose the serialized dictionary under
+`qem_calibration_overrides`; applications apply it ahead of recorded calibration.
+Legacy `.ans` export rejects nonempty overrides rather than silently losing them.
+Python integer readers expose effective scan sampling, detector sampling and
+beam voltage in acquisition metadata while retaining the complete scientific
+metadata, including original values and every override. CUDA execution still
+requires independent hardware qualification.
+
+Reader-retained source metadata is preserved, not a full archive of every HDF5
+object or vendor binary tag. Do not describe this as complete original-file
+preservation. This populates the existing optional field in container version 1;
+the binary envelope and codec are unchanged.
 
 ## Verification gates
 
@@ -139,3 +158,8 @@ subtraction, negative values and rejection of corrupted headers/bodies.
 `scripts/check_qem_collection.sh` visits supported acquisition entry points in a
 local testing collection, removes only its own temporary copies, and reports
 rejections separately in its output. It never changes the original acquisitions.
+
+Run `bash scripts/check_qem_calibration_roundtrip.sh counts-uint16.npy new-copy.qem`
+to compare every original DP count, restore overrides without local preferences,
+and check re-export preservation and explicit clearing. The command also creates
+`new-copy.preserved.qem` and `new-copy.reset.qem`; all destinations must be new.

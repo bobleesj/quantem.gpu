@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from quantem.gpu.io._qem_metadata import acquisition_metadata, validate_header
+from quantem.gpu.io._qem_metadata import effective_metadata
 from quantem.gpu.io.representation import DataRepresentation
 
 
@@ -108,3 +109,29 @@ def test_unsupported_precision_never_writes_another_format_as_qem(tmp_path):
     with pytest.raises(NotImplementedError, match="QEM precision codecs"):
         io.save(destination, np.ones((1, 1, 2, 2), np.float32), dtype="scaled_uint16")
     assert not destination.exists()
+
+
+def test_saved_user_calibration_restores_without_replacing_recorded_values():
+    shape = [2, 3, 128, 128]
+    original = dict(scan_sampling_A=[1, 2], voltage_kV=300)
+    scientific = acquisition_metadata(shape, original)
+    scientific["calibration_overrides"] = {
+        path: dict(value=value, unit=unit, provenance="user_override", evidence="measured standard")
+        for path, value, unit in (
+            ("scan_controller/regular_scan/pixel_size_y", 0.4e-10, "m"),
+            ("scan_controller/regular_scan/pixel_size_x", 0.6e-10, "m"),
+            ("electron_source/accelerating_voltage", 200000, "V"),
+        )
+    }
+    restored = effective_metadata(original, scientific)
+    assert restored["scan_sampling_A"] == pytest.approx([0.4, 0.6])
+    assert restored["voltage_kV"] == 200
+    assert original == dict(scan_sampling_A=[1, 2], voltage_kV=300)
+    restored["scientific_metadata"] = scientific
+    exported = acquisition_metadata(shape, restored)
+    assert exported == scientific
+    assert exported["axes"][0]["sampling"]["value"] == 1e-10
+    invalid = copy.deepcopy(scientific)
+    invalid["calibration_overrides"]["electron_source/accelerating_voltage"]["unit"] = "kV"
+    with pytest.raises(ValueError, match="calibration override"):
+        effective_metadata(original, invalid)

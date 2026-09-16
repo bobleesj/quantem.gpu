@@ -76,5 +76,6 @@ public enum NativeQEMMetadata {
         "Unsupported or inconsistent QEM metadata. Update the reader or re-export the original acquisition."
       )
     }
+    _ = try NativeQEMCalibration.read(scientific: scientific)
   }
 }

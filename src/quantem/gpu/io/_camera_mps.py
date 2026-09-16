@@ -117,6 +117,9 @@ def load_snapshot_mps(path, header, start, *, verbose=False):
             source_path=str(path),
         )
         if "scientific_metadata" in header:
+            from ._qem_metadata import effective_metadata
+
+            metadata = effective_metadata(metadata, header["scientific_metadata"])
             metadata["scientific_metadata"] = header["scientific_metadata"]
             metadata["container"] = header["container"]
             metadata["container_version"] = header["container_version"]

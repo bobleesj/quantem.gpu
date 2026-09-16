@@ -17,12 +17,16 @@ public enum MetalQEMExporter {
   /// Example: `try MetalQEMExporter.save(.counts(NativeNPYSource(url: input)),
   /// to: output, device: device)`. The caller owns scheduling and cancellation.
   /// Existing destinations are never overwritten. Readers retain source metadata.
+  /// Omit calibrationOverrides to preserve saved edits; pass a complete dictionary
+  /// to replace them, or an empty dictionary to clear them in the new copy.
   public static func save(
     _ source: Source, to destination: URL, device: MTLDevice,
     maximumAdditionalBytes: UInt64? = nil,
+    calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
     shouldCancel: () -> Bool = { false },
     progress: (String) -> Void = { _ in }
   ) throws {
+    if let calibrationOverrides { try NativeQEMCalibration.validate(calibrationOverrides) }
     guard !FileManager.default.fileExists(atPath: destination.path) else {
       throw Native4DSTEMIOError.invalidData(
         "\(destination.lastPathComponent) already exists; choose another destination.")
@@ -49,6 +53,7 @@ public enum MetalQEMExporter {
       progress("Writing .qem file…")
       try resident.saveQEM(
         to: destination, userConfirmedBackgroundCorrected: alreadyCorrected,
+        calibrationOverrides: calibrationOverrides,
         shouldCancel: shouldCancel)
       return
     }
@@ -74,6 +79,6 @@ public enum MetalQEMExporter {
     }
     defer { resident.releaseResidentStorage() }
     progress("Writing .qem file…")
-    try resident.saveSnapshot(to: destination, shouldCancel: shouldCancel)
+    try resident.saveSnapshot(to: destination, calibrationOverrides: calibrationOverrides, shouldCancel: shouldCancel)
   }
 }
