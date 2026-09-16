@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260916-metal-region-mean",
+  "status": "completed",
+  "question": "Can shared scan membership and sparse stream reduction remove redundant decoder work without changing regional diffraction means?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authority": "user-directed native Metal optimization"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "43f6105e5dc24ec72c4e28ef1b563e01de983c0a",
+    "dirty": false,
+    "entrypoint": "scripts/check_metal_region_mean.sh"
+  },
+  "inputs": [
+    {
+      "dataset_id": "k3-reduced",
+      "path": "private-fixture://k3/reduced.compressed.ans",
+      "sha256": "269fa328da425b39b98bcdc83bf43c915ea2050dfc5fc98c8aaaf8de919a8603"
+    },
+    {
+      "dataset_id": "k3-full",
+      "path": "private-fixture://k3/full.compressed.ans",
+      "sha256": "afc41d68ae6bab1912d2ed56feb7ed8fab230225651d89ea80c17eb16a32982a"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      100,
+      100,
+      864,
+      864
+    ],
+    "dtype": "uint8",
+    "crop": false,
+    "binning": false,
+    "regions": [
+      6,
+      12,
+      26
+    ],
+    "repeats": 20,
+    "warmup": 2,
+    "target_ms": 8.333,
+    "parity": "Exact UInt64 sums and Float32 mean versus original raw counts",
+    "target_met": false,
+    "app_revision": "f910948b2be39b34164c02e2eee591a61725aed8",
+    "rejected_probe": "16-position decoder checkpoints exceed 128 MiB per-block admission; no real-data cache entries; code removed"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "native Swift/Metal",
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "full",
+      "path": "experiments/20260916-metal-region-mean/results/full.log",
+      "sha256": "4de35dfa80ff744e104e2f7ce731b755ba047d2b1840783b145828f755a944a4",
+      "size_bytes": 7209,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw parity and timing evidence; no presentation FPS claim."
+    },
+    {
+      "artifact_id": "rejected-checkpoints",
+      "path": "experiments/20260916-metal-region-mean/results/rejected-checkpoints.log",
+      "sha256": "5197813278bf35994bca7192429c88617f2f21559cfc8e374f20d92cfe95edf8",
+      "size_bytes": 7171,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw parity and timing evidence; no presentation FPS claim."
+    },
+    {
+      "artifact_id": "baseline",
+      "path": "experiments/20260916-metal-region-mean/results/baseline.log",
+      "sha256": "0eb4939db4aa86983fadc9afc9bfee510c50414c751c40f1534accae9c15716a",
+      "size_bytes": 6422,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw parity and timing evidence; no presentation FPS claim."
+    },
+    {
+      "artifact_id": "control-repeat",
+      "path": "experiments/20260916-metal-region-mean/results/control-repeat.log",
+      "sha256": "c08f9247a312780aa46a72098422cca9b949c2e286b43d5eaae2169d03094c18",
+      "size_bytes": 7245,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw parity and timing evidence; no presentation FPS claim."
+    },
+    {
+      "artifact_id": "reduced",
+      "path": "experiments/20260916-metal-region-mean/results/reduced.log",
+      "sha256": "a657c9119430a8160663014d4fa81c237f2e7980b060e61da9ec9acc0026698a",
+      "size_bytes": 7175,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw parity and timing evidence; no presentation FPS claim."
+    },
+    {
+      "artifact_id": "synthetic",
+      "path": "experiments/20260916-metal-region-mean/results/synthetic.log",
+      "sha256": "dd4722da8ed4aee93fb8305e583beec69abc435f3f4ea57b5aac5c18405869f5",
+      "size_bytes": 3601,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Raw parity and timing evidence; no presentation FPS claim."
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-16",
+    "started": "2026-09-16",
+    "finished": "2026-09-16"
+  }
+}

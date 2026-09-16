@@ -1,0 +1,36 @@
+device=Apple M5, shape=[17, 33, 4, 5], dtype=uint8 resident_bytes=282052
+PASS rectangle rows=0..<1 columns=0..<1 samples=1 repeat=0 gpu_ms=0.6825833115726709 wall_ms=2.0210742950439453
+PASS rectangle rows=0..<1 columns=0..<1 samples=1 repeat=1 gpu_ms=0.6693333270959556 wall_ms=0.8429288864135742
+PASS rectangle rows=1..<3 columns=2..<7 samples=10 repeat=0 gpu_ms=0.6677083438262343 wall_ms=0.9070634841918945
+PASS rectangle rows=1..<3 columns=2..<7 samples=10 repeat=1 gpu_ms=0.6677916389890015 wall_ms=1.073002815246582
+PASS circle rows=2..<8 columns=2..<8 samples=32 repeat=0 gpu_ms=0.667458341922611 wall_ms=1.0989904403686523
+PASS circle rows=2..<8 columns=2..<8 samples=32 repeat=1 gpu_ms=0.6666666595265269 wall_ms=0.8890628814697266
+PASS circle rows=12..<17 columns=28..<33 samples=21 repeat=0 gpu_ms=0.6950833485461771 wall_ms=0.9369850158691406
+PASS circle rows=12..<17 columns=28..<33 samples=21 repeat=1 gpu_ms=1.774333301000297 wall_ms=2.0020008087158203
+PASS rectangle rows=2..<8 columns=2..<8 samples=36 repeat=0 gpu_ms=0.9008333436213434 wall_ms=1.0199546813964844
+PASS rectangle rows=2..<8 columns=2..<8 samples=36 repeat=1 gpu_ms=0.9593750000931323 wall_ms=1.0650157928466797
+PASS circle rows=0..<1 columns=0..<1 samples=1 repeat=0 gpu_ms=1.2855416280217469 wall_ms=1.401066780090332
+PASS circle rows=0..<1 columns=0..<1 samples=1 repeat=1 gpu_ms=0.6671666633337736 wall_ms=0.8929967880249023
+PASS rectangle rows=0..<17 columns=0..<33 samples=561 repeat=0 gpu_ms=0.6945416680537164 wall_ms=0.9239912033081055
+PASS rectangle rows=0..<17 columns=0..<33 samples=561 repeat=1 gpu_ms=0.7610833272337914 wall_ms=1.09100341796875
+PASS exact sums and correctly rounded means for every detector pixel; capabilities=10
+MEMORY query_cache_bytes=0 allocated_bytes=983040
+RELEASE_PASS
+device=Apple M5, shape=[17, 33, 4, 5], dtype=uint16 resident_bytes=283412
+PASS rectangle rows=0..<1 columns=0..<1 samples=1 repeat=0 gpu_ms=0.34858332946896553 wall_ms=1.6690492630004883
+PASS rectangle rows=0..<1 columns=0..<1 samples=1 repeat=1 gpu_ms=0.6480833399109542 wall_ms=0.7510185241699219
+PASS rectangle rows=1..<3 columns=2..<7 samples=10 repeat=0 gpu_ms=0.4076249897480011 wall_ms=0.5019903182983398
+PASS rectangle rows=1..<3 columns=2..<7 samples=10 repeat=1 gpu_ms=0.45612500980496407 wall_ms=0.5511045455932617
+PASS circle rows=2..<8 columns=2..<8 samples=32 repeat=0 gpu_ms=0.4783750046044588 wall_ms=0.5789995193481445
+PASS circle rows=2..<8 columns=2..<8 samples=32 repeat=1 gpu_ms=0.3491666866466403 wall_ms=0.4400014877319336
+PASS circle rows=12..<17 columns=28..<33 samples=21 repeat=0 gpu_ms=0.22158335195854306 wall_ms=0.3420114517211914
+PASS circle rows=12..<17 columns=28..<33 samples=21 repeat=1 gpu_ms=0.19024999346584082 wall_ms=0.4140138626098633
+PASS rectangle rows=2..<8 columns=2..<8 samples=36 repeat=0 gpu_ms=0.16941665671765804 wall_ms=0.37801265716552734
+PASS rectangle rows=2..<8 columns=2..<8 samples=36 repeat=1 gpu_ms=0.16945833340287209 wall_ms=0.3889799118041992
+PASS circle rows=0..<1 columns=0..<1 samples=1 repeat=0 gpu_ms=0.16945833340287209 wall_ms=0.38695335388183594
+PASS circle rows=0..<1 columns=0..<1 samples=1 repeat=1 gpu_ms=0.16950001008808613 wall_ms=0.38301944732666016
+PASS rectangle rows=0..<17 columns=0..<33 samples=561 repeat=0 gpu_ms=0.19008328672498465 wall_ms=0.3809928894042969
+PASS rectangle rows=0..<17 columns=0..<33 samples=561 repeat=1 gpu_ms=0.19004166824743152 wall_ms=0.4140138626098633
+PASS exact sums and correctly rounded means for every detector pixel; capabilities=10
+MEMORY query_cache_bytes=0 allocated_bytes=1048576
+RELEASE_PASS
