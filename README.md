@@ -168,13 +168,18 @@ MPS can decode directly into a packed resident without a full dense intermediate
 ```python
 from quantem.gpu import detector, io
 
-with io.load("experiment.qgpu", backend="mps", representation="packed") as data:
+with io.load("experiment.qem", backend="mps", representation="packed") as data:
     # Step 1. Keep an operation handle to the existing resident buffers.
     session = detector.prepare(data)
 
     # Step 2. Read one diffraction pattern, in scan-row-major order.
     diffraction = session.frame(0)
 ```
+
+For portable conversion, metadata inspection and lossless round trips, see
+the [QEM Python guide](docs/api/qem-python.md) and
+[synthetic notebook](docs/examples/qem_portable.ipynb). The reference CPU path
+is explicit; supported dtypes and detector geometries are documented there.
 
 `session.masked_sum_exact(mask)` computes a scan-shaped uint64 image from a
 binary mask with the working detector shape. Saving ANS currently uses the

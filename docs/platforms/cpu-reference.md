@@ -1,5 +1,12 @@
 # CPU reference
 
+For QEM archival portability, `io.load("acquisition.qem", backend="cpu")`
+explicitly decodes original measurements. `io.save("copy.qem", array,
+backend="cpu")` accepts supported 4D NumPy data. The readable implementation in
+`src/quantem/gpu/io/_qem_reference.py` imports no accelerated codec code and uses
+frozen integer entropy tables. It is a correctness reference, not a performance
+fallback. See [QEM Python workflows](../api/qem-python.md).
+
 The CPU path is an explicit independent reference for small deterministic
 fixtures and portable IO checks. It is not a silent production fallback.
 

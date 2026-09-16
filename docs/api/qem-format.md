@@ -5,8 +5,8 @@
 New writers use `quantem.scientific-metadata/2`. The binary container and
 measurement codecs remain unchanged. Readers accept metadata schemas 1 and 2;
 older schema-1-only readers must reject schema 2 rather than reinterpret units.
-Existing files are not rewritten. The previously shared Live4DSTEM 0.0.15 build
-is a schema-1 reader and needs an updated backend before opening schema-2 files.
+Existing files are not rewritten. Previously distributed schema-1 consumers
+need an updated backend before opening schema-2 files.
 
 Schema 2 stores normalized quantities and calibration overrides in these units:
 
@@ -40,6 +40,24 @@ standard or formal NeXus compliance.
 
 See the [field-by-field metadata map](qem-metadata-mapping.md) and the
 [portable references and validation workflow](qem-interoperability.md).
+
+### Calibration ownership and independent readers
+
+For schema 2, `scientific_metadata` is the sole calibration authority. Recorded
+axis `sampling` owns the scan/detector step; duplicate microscope step fields
+must agree within `1e-14` relative tolerance. Explicit `calibration_overrides`
+take precedence for calculations, never for rewriting the recorded values.
+Private restoration fields are derived conveniences, not a second authority.
+Missing public calibration means unknown; a reader must not revive a stale
+private value. Schema 1 retains its historical restoration contract.
+Reciprocal lengths use cycles per distance, not radians per distance: there is
+no implicit factor of `2π`. Angular sampling in mrad is a distinct quantity.
+Known calibrated quantities require nonempty provenance. Source coverage is
+explicit; unknown vendor fields may be retained but must not be guessed.
+
+The reference CPU path is explicit (`backend="cpu"`), not a silent replacement
+for an accelerated backend. It preserves exact measurements and is intended
+for portability, small examples and independent verification, not speed claims.
 
 ## Scientific contract
 
@@ -126,8 +144,11 @@ not accepted as float32 merely because an XML label says float32.
 
 - Python: `io.save("copy.qem", encoded_resident, backend="mps")`, then
   `io.load("copy.qem", backend="mps")`. The shared integer codec also has a CUDA
-  reader, but CUDA execution must be qualified independently. Python EMPAD QEM
-  decoding is not implemented and reports that limitation explicitly.
+  reader, but CUDA execution must be qualified independently. Explicit
+  `backend="cpu"` reads both integer and EMPAD float32 codecs as original dense
+  measurements, and writes supported NumPy arrays. Python GPU EMPAD-QEM
+  decoding remains unsupported. See the [Python workflow](qem-python.md) and
+  [normative codec specification](qem-codecs.md).
   Normalized quantities are available as `acquisition.metadata["scientific_metadata"]`.
 - Native Swift: `NativeNPYSource(url:)` followed by
   `MetalRuntimeANSResidentSource.load(array:device:)` and `saveSnapshot(to:)`

@@ -51,7 +51,7 @@ contract, but runtime/source-reader qualification remains separate.
 | --- | --- | --- |
 | K3 DM4 | Native uint8/uint16 4D counts, calibrated reciprocal-nm detector axes, retained selected-image tags | Arbitrary DM4 images/dtypes, every vendor object, inferred scan calibration from sensor pitch |
 | ARINA/NCEM HDF5 | Reader-qualified counts and companion microscope vocabulary | Archiving every HDF5 object, every acquisition variant, or every private tag |
-| EMPAD | Qualified native float32 row codec, calibration and explicit correction recipe | Treating encoded EMPAD2 words as corrected float32; Python decoding of EMPAD QEM is not implemented |
+| EMPAD | Native float32 codec; explicit Python CPU reference encode/decode and float-export XML/RAW import | Treating encoded EMPAD2 words as corrected float32; Python GPU QEM float decoding remains unsupported |
 | NumPy | Native little-endian C-order 4D uint8/uint16, retained NumPy header | Microscope metadata that was not supplied; signed/float/Fortran-order export through this count codec |
 | Derived/scaled results | Separate result contracts | Arbitrary scaled uint16, uint32, 3D/5D or reconstruction export as QEM is not yet qualified |
 

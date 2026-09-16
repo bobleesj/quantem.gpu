@@ -28,7 +28,7 @@ with io.load("acquisition.h5", backend="cuda", representation="encoded") as resi
 
 `io._streamed_file` validates the `quantem.qem` container and returns one
 backend-neutral array contract.
-`io.backends.cuda._ans.CudaANSResidentCounts` owns the CUDA decoder. It copies
+`quantem.gpu._compact.streamed.StreamedCounts` owns the saved integer CUDA decoder. It copies
 encoded arrays into owned device buffers and checks every stream's terminal
 state before publication. Its block decode, point-pattern gather and binary
 mask sum retain integer exactness; mask sums are uint64. No full dense source

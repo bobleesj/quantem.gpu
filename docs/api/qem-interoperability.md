@@ -16,9 +16,9 @@ encoded the right scientific values. Checksums detect damage, not authorship.
 
 `integrity=verified` covers envelope length, metadata version/axes/override
 contract and checksums. The integer codec additionally runs the production
-array-span validator (`codec_layout=verified`). Native EMPAD files receive
-envelope integrity checks but `codec_layout=not_checked`; their structural and
-decoded checks require the native reader. Unknown codecs are rejected explicitly.
+array-span validator (`codec_layout=verified`). EMPAD float files also receive
+chunk/row-descriptor bounds checks with `codec_layout=verified`. Neither check
+decodes measurements. Unknown codecs are rejected explicitly.
 `decoded_parity=not_checked` is always reported by this command.
 
 See the [metadata map](qem-metadata-mapping.md) for fields normalized by readers,
@@ -75,8 +75,36 @@ native command to test the reverse direction as well.
 CPU integrity tests are portable to macOS, Linux and Windows; configuring CI for
 those systems does not itself mean all have executed successfully. Native Metal,
 Python-hosted Metal and CUDA execution must each have their own recorded result.
-Windows Metal is not supported. Python EMPAD decoding, WebGPU QEM decoding and
+Windows Metal is not supported. Python GPU EMPAD decoding, WebGPU QEM decoding and
 arbitrary 3D/5D codecs are not implied by these integer-reference tests.
+
+## Portable schema-2 conformance bundle
+
+The additional MIT-licensed `tests/data/qem-v2/` bundle is entirely synthetic:
+
+- {download}`uint8 interval boundary <../../tests/data/qem-v2/u8-interval-boundary.qem>`
+  and {download}`original counts <../../tests/data/qem-v2/u8-interval-boundary.npy>`;
+- {download}`uint16 multiple chunks <../../tests/data/qem-v2/u16-multiple-chunks.qem>`
+  and {download}`original counts <../../tests/data/qem-v2/u16-multiple-chunks.npy>`;
+- {download}`float32 special bits <../../tests/data/qem-v2/float32-special-bits.qem>`
+  and {download}`original bits <../../tests/data/qem-v2/float32-special-bits.npy>`;
+- {download}`frozen manifest <../../tests/data/qem-v2/manifest.json>` and
+  {download}`invalid metadata mutations <../../tests/data/qem-v2/invalid-metadata.json>`.
+
+The integer examples cross 512 scans and include detector edge tiles and extreme
+counts. Float examples retain signed zero, infinities, NaN payloads and subnormals.
+Compare floats by their uint32 bits. The explicit CPU reference tests require no
+GPU and compare every decoded measurement, not just the header:
+
+```sh
+pytest -q tests/test_qem_reference.py tests/test_qem_metadata.py tests/test_qem_validation.py
+bash scripts/check_qem_float_reference.sh tests/data/qem-v2/float32-special-bits.npy tests/data/qem-v2/float32-special-bits.qem
+```
+
+CI is configured for the portable tests on Linux, macOS and Windows. A configured
+job is not evidence that a run has completed. GPU checks still require real
+hardware and explicit opt-in. Generate proposed new fixtures in a new directory
+with `scripts/build_qem_conformance.py`; never silently replace frozen files.
 
 For real source qualification, also run `scripts/check_qem_roundtrip.sh`,
 `scripts/check_qem_collection.sh` and `scripts/check_qem_calibration_roundtrip.sh`.
