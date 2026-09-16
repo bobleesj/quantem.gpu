@@ -46,11 +46,15 @@ part of this correctness gate.
 
 ## Canonical count-ANS files in the browser
 
-Create fixtures using the public reference encoder:
-
-```bash
-PYTHONPATH=src python tests/webgpu/make_count_ans_fixture.py /tmp/count-ans-fixtures
-```
+**Fixture source removed.** This gate previously used
+`tests/webgpu/make_count_ans_fixture.py`, which encoded fixtures through the legacy
+`.ans` container (`io.save(..., compression="ans")` / `ANSFile`). Both the container
+and that generator were removed, so there is currently **no shipped way to produce a
+count-ANS fixture for this gate**. The harness below is unchanged and still expects
+the canonical count-ANS layout; re-establishing a fixture source is outstanding work,
+not a silent pass. Saved `.qem` copies are the supported artefact, but whether
+`RansResidentSet.loadCountANS` accepts the `.qem` layout has not been re-qualified
+since that change.
 
 Bundle `count-ans-browser.ts` with `--global-name=CountANSBrowserParity`, serve the
 fixture directory, and call:

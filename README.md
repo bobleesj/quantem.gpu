@@ -162,7 +162,7 @@ Automatic original-HDF5-to-packed conversion is not implemented by Python
 `io.load` yet. Source-native representation is separate from dtype selection;
 use `dtype="native"` when loading original counts.
 
-For a file already saved with `format="quantem", compression="ans"`, Python
+For an existing `.qem` saved copy (`io.save(..., format="quantem")`), Python
 MPS can decode directly into a packed resident without a full dense intermediate:
 
 ```python
@@ -231,7 +231,7 @@ domain/backend combination:
 src/quantem/gpu/
 ├── device/                         # explicit backend selection
 ├── io/                             # load.py, save.py, models.py, representation.py
-│   ├── _ans.py, _ans_dispatch.py    # shared count-ANS envelope and dispatch
+│   ├── _ans_contract.py, _ans_dispatch.py  # count-rANS validation and dispatch
 │   └── backends/{cpu,cuda,mps,webgpu}/
 ├── screening/                      # bounded load/reduction orchestration
 ├── detector/backends/{cuda,mps,webgpu}/

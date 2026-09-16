@@ -15,7 +15,7 @@ justifies combining them.
 | Input and purpose | Entry point | Retained implementation | Boundary |
 |---|---|---|---|
 | Ordinary complete uint8/uint16 H5 into an indexed resident | `io.load(path, backend="cuda", representation="encoded", apply_mask=False)` | Runtime encoded streams in `_compact/streamed.py`; H5 loading in `io/_streamed.py` | No qualified archive writer or resident conversion |
-| Portable QuantEM/ANS file | `io.load(path, backend="cuda", expected_source_sha256=seal)` | Portable rANS in `io/_ans.py`, GPU readers in `io/backends/` | Different format/model from historical storage experiments; MPS also supports its documented subset |
+| Portable QuantEM/ANS file | `io.load(path, backend="cuda", expected_source_sha256=seal)` | Portable rANS in `io/_ans_contract.py`, GPU readers in `io/backends/{cuda,mps}/_ans.py` | Different format/model from historical storage experiments; MPS also supports its documented subset |
 | Completed query-ready series folder | `io.load(path, backend="cuda", representation="encoded", device=0)` | Fixed prepared paired-tANS/sparse layout in `_compact/`; IO result adapter in `io/_prepared_series.py` | Fixed complete native shape, prebuilt indexes; no arbitrary source encoder |
 | Authenticated prepared packed source | `io.load(path, backend="cuda", representation="packed", expected_source_sha256=seal)` | Profile-specific readers in `io/backends/` | Check the [representation contract](../api/representations.md) for device and format coverage |
 | Original HDF5 into native Metal integer packing | Native Swift `MetalOriginalHDF5Packing` workflow | Swift/Metal sources in the same package repository | Separate native lifecycle; not an automatic Python H5-to-packed conversion |
