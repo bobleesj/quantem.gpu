@@ -77,6 +77,8 @@ parts:
           - file: api/native_4dstem_io
           - file: api/native-acquisition-formats
           - file: api/qem-format
+          - file: api/qem-metadata-mapping
+          - file: api/qem-interoperability
           - file: api/experimental_metal_entropy_series
             title: Experimental Metal entropy series (2026-09-08)
           - file: api/native_lossless_pack_v1_producer

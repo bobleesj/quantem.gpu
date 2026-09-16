@@ -6,6 +6,9 @@ The extension names quantitative electron microscopy, not dimensionality or a
 compression algorithm. This is a project format, not a claim of an industry
 standard or formal NeXus compliance.
 
+See the [field-by-field metadata map](qem-metadata-mapping.md) and the
+[portable references and validation workflow](qem-interoperability.md).
+
 ## Scientific contract
 
 No implicit crop, binning, masking, background subtraction, integer narrowing or
