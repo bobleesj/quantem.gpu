@@ -1,0 +1,149 @@
+{
+  "bundle_version": 1,
+  "synthetic": true,
+  "license": "MIT",
+  "generator": "scripts/build_qem_references.py",
+  "entries": [
+    {
+      "name": "uint8",
+      "shape": [
+        3,
+        5,
+        16,
+        16
+      ],
+      "dtype": "uint8",
+      "counts_sha256": "ffa3f5cddce8a1b88052c5d6313ddc9660680d94ebad7e2bed9793e74103817f",
+      "scientific_metadata": {
+        "axes": [
+          {
+            "name": "scan_row",
+            "size": 3
+          },
+          {
+            "name": "scan_column",
+            "size": 5
+          },
+          {
+            "name": "detector_row",
+            "size": 16
+          },
+          {
+            "name": "detector_column",
+            "size": 16
+          }
+        ],
+        "calibration_overrides": {},
+        "electron_microscope": {},
+        "processing": [
+          {
+            "changes_measurements": false,
+            "operation": "lossless_storage"
+          }
+        ],
+        "schema": "quantem.scientific-metadata/1",
+        "source_format": "NumPy",
+        "source_metadata": {
+          "axisOrder": "scan_row,scan_col,detector_row,detector_col",
+          "calibration_status": "not_recorded",
+          "median_correction_applied": "false",
+          "numpy.header": "{'descr': '|u1', 'fortran_order': False, 'shape': (3, 5, 16, 16), }                                                  \n",
+          "sourceFormat": "NumPy",
+          "sourceFormatVersion": "1.0",
+          "sourceKind": "numpy"
+        },
+        "source_metadata_coverage": "reader-retained"
+      },
+      "files": {
+        "uint8.npy": "5a0f635de887858f1c5f984b3d19b491220564b60ad6d57b339f3b4efe374ef8",
+        "uint8.qem": "0798dc4531b61298b0850fc066eecce98819092e0d523cd48cbde044d6817a87"
+      }
+    },
+    {
+      "name": "uint16",
+      "shape": [
+        3,
+        5,
+        16,
+        16
+      ],
+      "dtype": "uint16",
+      "counts_sha256": "c2823a014737b272b661fd36c3e8ddf2a765af01742cc06b167849873566b4f2",
+      "scientific_metadata": {
+        "axes": [
+          {
+            "name": "scan_row",
+            "size": 3
+          },
+          {
+            "name": "scan_column",
+            "size": 5
+          },
+          {
+            "name": "detector_row",
+            "size": 16
+          },
+          {
+            "name": "detector_column",
+            "size": 16
+          }
+        ],
+        "calibration_overrides": {
+          "electron_source/accelerating_voltage": {
+            "evidence": "synthetic reference",
+            "provenance": "user_override",
+            "unit": "V",
+            "value": 200000
+          },
+          "imaging_system/reciprocal_pixel_size_x": {
+            "evidence": "synthetic reference",
+            "provenance": "user_override",
+            "unit": "1/\u00c5",
+            "value": 0.3
+          },
+          "imaging_system/reciprocal_pixel_size_y": {
+            "evidence": "synthetic reference",
+            "provenance": "user_override",
+            "unit": "1/\u00c5",
+            "value": 0.2
+          },
+          "scan_controller/regular_scan/pixel_size_x": {
+            "evidence": "synthetic reference",
+            "provenance": "user_override",
+            "unit": "m",
+            "value": 6e-11
+          },
+          "scan_controller/regular_scan/pixel_size_y": {
+            "evidence": "synthetic reference",
+            "provenance": "user_override",
+            "unit": "m",
+            "value": 4e-11
+          }
+        },
+        "electron_microscope": {},
+        "processing": [
+          {
+            "changes_measurements": false,
+            "operation": "lossless_storage"
+          }
+        ],
+        "schema": "quantem.scientific-metadata/1",
+        "source_format": "NumPy",
+        "source_metadata": {
+          "axisOrder": "scan_row,scan_col,detector_row,detector_col",
+          "calibration_status": "not_recorded",
+          "median_correction_applied": "false",
+          "numpy.header": "{'descr': '<u2', 'fortran_order': False, 'shape': (3, 5, 16, 16), }                                                  \n",
+          "sourceFormat": "NumPy",
+          "sourceFormatVersion": "1.0",
+          "sourceKind": "numpy"
+        },
+        "source_metadata_coverage": "reader-retained"
+      },
+      "files": {
+        "uint16.npy": "00e6419f2d67929b1946f3f17f0274c7a82908bc12443f927d06b534082f8a94",
+        "uint16.qem": "2d1555e1d17e6cde2c463073c3c0075c5c905e5d87185cfe7cf85fc79e337a4b"
+      }
+    }
+  ]
+}
