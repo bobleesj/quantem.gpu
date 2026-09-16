@@ -33,7 +33,7 @@ import hdf5plugin  # noqa: F401 - registers bitshuffle filter
 import numpy as np
 from numba import njit, prange
 
-from quantem.gpu.io.representation import DataRepresentation
+from quantem.gpu.io.representation import DataRepresentation, retired_snapshot_magic
 from quantem.gpu.io.uint4 import is_packed_uint4, pack_uint4_cupy
 
 from .constants import BLOCK_SIZE
@@ -5285,6 +5285,13 @@ def load(
     precision_sources = [source] if isinstance(source, (str, os.PathLike)) or (precision and hasattr(source, "shape")) else list(source)
     from ._streamed_file import is_streamed_file, load_streamed
 
+    for candidate in precision_sources:
+        if isinstance(candidate, (str, os.PathLike)) and retired_snapshot_magic(candidate):
+            raise ValueError(
+                f"{Path(candidate).name} is a retired compressed snapshot. Legacy .ans "
+                "files are no longer supported: open the original acquisition and save "
+                "it as .qem."
+            )
     snapshots = [is_streamed_file(path) for path in precision_sources]
     dm_sources = [isinstance(path, (str, os.PathLike))
                   and Path(path).suffix.lower() in {".dm3", ".dm4"}
@@ -5535,46 +5542,6 @@ def load(
             loaded = load_h5_paired(paths, scan_shape=scan_shape, device=device,
                                     verbose=verbose, hot_pixel_correction=hot_pixel_correction)
         return loaded[0] if isinstance(source, (str, os.PathLike)) else loaded
-    if any(DataRepresentation.detect_source(path) is DataRepresentation.ENCODED for path in paths):
-        from ._ans_dispatch import _load_ans
-
-        if not all(DataRepresentation.detect_source(path) is DataRepresentation.ENCODED for path in paths):
-            raise ValueError(
-                "ANS and non-ANS sources cannot be loaded as one series; "
-                "load each representation separately."
-            )
-        if len(paths) > 1 and stack:
-            raise ValueError(
-                "ANS acquisitions remain independently resident; pass stack=False "
-                "to load a compatible series without dense stacking."
-            )
-        if any(value is not None for value in (
-            dataset_path, scan_shape, scan_region, detector_region, target_scan_region,
-            scan_shift_row_col, scan_indices, random_positions, drift, devices,
-        )) or detector_bin != 1 or output != "native" or scan_order != "row-major":
-            raise NotImplementedError("ANS loading preserves its full declared geometry; selection/binning/reordering controls are not implemented yet.")
-        if dtype not in {None, "native"}:
-            raise ValueError("Encoded loading preserves its native integer dtype; remove dtype=.")
-        if source_integrity is not None:
-            raise NotImplementedError("Encoded loading uses expected_source_sha256 for whole-file authentication; the existing chunked integrity receipt describes another format.")
-        if apply_mask:
-            raise ValueError("ANS retains original counts. Pass apply_mask=False and apply detector masks explicitly when computing products.")
-        if len(paths) == 1:
-            return _load_ans(paths[0], backend=backend, representation=selected_representation,
-                             expected_sha256=expected_source_sha256, device=device)
-        if expected_source_sha256 is not None:
-            raise ValueError(
-                "expected_source_sha256 authenticates one ANS file; authenticate "
-                "each series member separately before loading the series."
-            )
-        from ._ans_dispatch import _load_ans_series
-
-        return _load_ans_series(
-            paths,
-            backend=backend,
-            representation=selected_representation,
-            device=device,
-        )
     if selected_representation is DataRepresentation.ENCODED:
         from .backends import resolve_backend
         from ._streamed import load_h5_ans

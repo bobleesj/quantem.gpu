@@ -3,16 +3,46 @@
 import copy
 import math
 
+import numpy as np
+
 MAGIC = b"QEMDATA1"
+CONTAINER = "quantem.qem"
+CONTAINER_VERSION = 1
 SCHEMA = "quantem.scientific-metadata/1"
 AXIS_NAMES = ("scan_row", "scan_column", "detector_row", "detector_column")
+
+
+def json_metadata(value):
+    """Preserve NumPy metadata without arbitrary-object serialization."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(
+        f"QEM metadata must contain JSON values, not {type(value).__name__}."
+    )
+
+
+def no_duplicate_keys(pairs):
+    """Reject repeated manifest fields instead of silently keeping the last one."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate QEM manifest field: {key}.")
+        result[key] = value
+    return result
+
+
+def reject_constant(value):
+    """Reject NaN and infinity so a manifest always round-trips exactly."""
+    raise ValueError(f"QEM metadata cannot contain nonfinite number {value}.")
 
 
 def acquisition_metadata(shape, metadata: dict) -> dict:
     """Normalize recorded calibration without replacing source fields."""
     if "scientific_metadata" in metadata:
         saved = copy.deepcopy(metadata["scientific_metadata"])
-        validate_header(dict(container="quantem.qem", container_version=1,
+        validate_header(dict(container=CONTAINER, container_version=CONTAINER_VERSION,
                              codec="retained", profile="retained", shape=list(shape),
                              scientific_metadata=saved))
         return saved
@@ -114,8 +144,8 @@ def validate_header(header: dict) -> None:
     if not isinstance(axes, list) or not all(isinstance(axis, dict) for axis in axes):
         raise ValueError("Invalid QEM axes; re-export the original acquisition.")
     if (
-        header.get("container") != "quantem.qem"
-        or header.get("container_version") != 1
+        header.get("container") != CONTAINER
+        or header.get("container_version") != CONTAINER_VERSION
         or header.get("codec") != header.get("profile")
         or scientific.get("schema") != SCHEMA
         or [axis.get("size") for axis in axes] != header.get("shape")

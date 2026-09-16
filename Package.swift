@@ -53,10 +53,6 @@ let package = Package(
       targets: ["MetalOriginalHDF5Benchmark"]
     ),
     .executable(
-      name: "metal-ans-file-benchmark",
-      targets: ["MetalANSFileBenchmark"]
-    ),
-    .executable(
       name: "metal-runtime-ans-benchmark",
       targets: ["MetalRuntimeANSBenchmark"]
     ),
@@ -196,11 +192,6 @@ let package = Package(
       name: "MetalOriginalHDF5Benchmark",
       dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
       path: "src/quantem/gpu/swift/Benchmarks/MetalOriginalHDF5Benchmark"
-    ),
-    .executableTarget(
-      name: "MetalANSFileBenchmark",
-      dependencies: ["Metal4DSTEMStreamingIO"],
-      path: "src/quantem/gpu/swift/Benchmarks/MetalANSFileBenchmark"
     ),
     .executableTarget(
       name: "MetalRuntimeANSBenchmark",

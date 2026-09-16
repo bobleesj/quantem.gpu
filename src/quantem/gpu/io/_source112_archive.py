@@ -1,13 +1,15 @@
-"""Bounded migration of the preserved source112 archive, independent of viewers."""
+"""Bounded reads of the preserved source112 archive, independent of viewers.
+
+This module only decodes retained archive records. Converting an acquisition
+into a portable saved copy is the ordinary ``.qem`` path: load the original
+acquisition with ``representation="encoded"`` and save that resident.
+"""
 
 import hashlib
 import json
 from pathlib import Path
 
 import numpy as np
-
-from ._ans import _write_ans_blocks
-
 
 def _sha(values) -> str:
     return hashlib.sha256(memoryview(values).cast("B")).hexdigest()
@@ -155,31 +157,17 @@ class _Source112Archive:
 
 
 def _convert_source112_acquisition(path, output, *, acquisition: int, device: int = 0):
-    """Convert one entire acquisition with bounded native buffers and no data reduction."""
+    """Refuse the removed conversion instead of writing an unsupported container.
+
+    The conversion used to emit the legacy ``.ans`` container. That container is
+    no longer supported, and re-encoding this archive through a different codec
+    would change its stored bytes. Nothing is written.
+    """
     if not 0 <= acquisition < 66:
         raise ValueError("Select an acquisition index from 0 to 65.")
-    reader = _Source112Archive(path, device=device)
-
-    def blocks():
-        for chunk in range(acquisition * 16, (acquisition + 1) * 16):
-            for first in range(0, 16384, 512):
-                window = reader.decode_window(chunk, first)
-                yield window[:256]
-                yield window[256:]
-
-    metadata = {
-        "legacy_format": "quantem-resident-source112-index180-v1",
-        "legacy_archive": str(Path(path).resolve()),
-        "legacy_acquisition": reader.manifest["original_acquisitions"]["acquisitions"][acquisition],
-        "source_shape": [512, 512, 192, 192],
-        "working_shape": [512, 512, 192, 192],
-        "lossless_exact": True,
-        "detector_mask_policy": "preserve-stored-counts",
-    }
-    try:
-        return _write_ans_blocks(
-            output, blocks(), shape=(512, 512, 192, 192), dtype=np.uint16,
-            metadata=metadata, block_frames=256, scale=15,
-        )
-    finally:
-        reader.close()
+    raise NotImplementedError(
+        "Converting a retained source112 archive to a saved copy is not available: "
+        "the legacy .ans container was removed and this archive has no .qem encoder. "
+        f"Read {Path(path).name} with _Source112Archive, or convert the original "
+        "acquisition instead. Nothing was written."
+    )

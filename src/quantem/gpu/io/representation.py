@@ -10,6 +10,17 @@ __all__ = ["DataRepresentation"]
 
 _LOSSLESS_PACK_CONTAINER_MAGIC = b"QGPUH5\0\x01"
 _PAIRED_RESIDENT_MAGIC = b"QGPUPAIR"
+_RETIRED_SNAPSHOT_MAGICS = (b"QGPUSTRM", b"QGANS\0\1\0")
+
+
+def retired_snapshot_magic(path) -> bytes | None:
+    """Report a retired compressed-snapshot magic, or ``None`` for other files."""
+    try:
+        with open(path, "rb") as stream:
+            magic = stream.read(8)
+    except OSError:
+        return None
+    return magic if magic in _RETIRED_SNAPSHOT_MAGICS else None
 
 
 class DataRepresentation(str, Enum):
@@ -110,7 +121,7 @@ class DataRepresentation(str, Enum):
                 magic = stream.read(len(_LOSSLESS_PACK_CONTAINER_MAGIC))
         except OSError:
             return cls.DENSE
-        if magic in (b"QGANS\0\1\0", b"QGPUSTRM", b"QEMDATA1"):
+        if magic == b"QEMDATA1":
             return cls.ENCODED
         if magic == _PAIRED_RESIDENT_MAGIC:
             return cls.PAIRED

@@ -145,7 +145,7 @@ def test_dm4_mps_preserves_counts_and_saved_calibration(tmp_path, dtype):
     counts[22, 24, 3, 5] = np.iinfo(dtype).max
     path = write_dm4(tmp_path / "camera.dm4", counts)
     with io.load(path, backend="mps", verbose=False) as loaded:
-        saved = tmp_path / "camera.ans"
+        saved = tmp_path / "camera.qem"
         io.save(saved, loaded, format="quantem", backend="mps")
     with io.load(saved, backend="mps", verbose=False) as loaded:
         assert loaded.metadata["scan_sampling_A"] == [2.5, 2.5]

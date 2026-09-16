@@ -1,13 +1,9 @@
-"""Bounded native retained source112 archive conversion compared with original acquisitions."""
+"""Bounded native retained source112 archive decode compared with original acquisitions."""
 
 import os
 
 import numpy as np
 import pytest
-
-from quantem.gpu.io import load
-from quantem.gpu.io._ans import _write_ans_blocks
-
 
 def _original_window(path, first, count):
     import h5py
@@ -31,7 +27,7 @@ def _original_window(path, first, count):
     return np.concatenate(blocks)
 
 
-def test_source112_archive_native_counts_and_canonical_conversion(tmp_path):
+def test_source112_archive_native_counts_match_original_acquisitions():
     archive = os.environ.get("QUANTEM_SOURCE112_ARCHIVE")
     if os.environ.get("QUANTEM_CUDA_ANS_TEST") != "1" or not archive:
         pytest.skip("Set the CUDA gate and preserved retained source112 source112 archive path.")
@@ -47,23 +43,3 @@ def test_source112_archive_native_counts_and_canonical_conversion(tmp_path):
                 chunk % 16 * 16384 + first, 512,
             )
             np.testing.assert_array_equal(decoded, expected)
-            if chunk != 0:
-                continue
-            # This is an explicitly labeled validation window, not a reduced
-            # substitute for the full-acquisition production converter.
-            path = _write_ans_blocks(
-                tmp_path / "validation-window.ans",
-                iter((decoded[:256], decoded[256:])),
-                shape=(1, 512, 192, 192), dtype=decoded.dtype,
-                metadata={"legacy_validation_window": {"chunk": chunk, "first_scan": first}},
-                block_frames=256, scale=15,
-            )
-            with cp.cuda.Device(0):
-                migrated = load(path, backend="cuda", representation="encoded", device=0).data
-                try:
-                    actual = np.concatenate([
-                        migrated.decode_block_device(block).get() for block in range(2)
-                    ])
-                    np.testing.assert_array_equal(actual, expected)
-                finally:
-                    migrated.release()

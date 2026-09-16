@@ -1841,23 +1841,21 @@ def save(
 ) -> SaveResult:
     """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
 
-    ``format="quantem", compression="ans"`` instead writes one self-contained
-    file, not an HDF5 master/shard set. Native NumPy uint8/uint16 counts require
-    ``backend="cpu"`` explicitly for the bounded portable reference encoder.
-    A native streamed CUDA ANS resident with ``backend="cuda"`` or ``"auto"``
-    instead saves a CUDA snapshot containing its exact encoded bytes and spatial
-    indexes, so reopening needs no encoding. Both retain calibration and reject
-    existing destinations. Runtime snapshots reopen on CUDA or MPS/Metal;
-    reopening preserves encoded counts and does not support a CPU conversion.
-    The HDF5-specific options and discussion below do not apply to ANS files.
+    ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
+    HDF5 master/shard set. It requires a complete encoded CUDA or MPS/Metal
+    resident, so the exact encoded bytes and spatial indexes are stored as they
+    already exist and nothing is re-encoded. Calibration is retained and an
+    existing destination is never replaced. Saved copies reopen on CUDA or
+    MPS/Metal; reopening preserves encoded counts and offers no CPU conversion.
+    The HDF5-specific options and discussion below do not apply to ``.qem``.
     ``compression="auto"`` preserves the existing default encoding: ANS for
     QuantEM files and bitshuffle/LZ4 for Arina files.
-    Loading detects compression from the file, not its extension; select only
-    the desired in-memory ``representation`` when calling ``io.load``::
+    ``io.load`` detects the format from the file, not its extension; select only
+    the desired in-memory ``representation``::
 
-        save("experiment.qgpu", native_counts, format="quantem",
-             compression="ans", backend="cpu")
-        # Later: io.load("experiment.qgpu", representation="packed", backend="mps")
+        with io.load("acquisition.h5", backend="mps", representation="encoded") as acquisition:
+            io.save("acquisition.qem", acquisition, format="quantem", backend="mps")
+        # Later: io.load("acquisition.qem", representation="packed", backend="mps")
 
     Output: a master HDF5 file pointing to ``*_data_NNNNNN.h5`` external files
     with per-frame HDF5 chunks. Matches Arina row/column native chunking. The
@@ -1986,13 +1984,11 @@ def save(
         Frames compressed per GPU pass. ``None`` uses the backend default.
     format : {"arina", "quantem"}
         Output file layout. ``"arina"`` writes the QuantEM/Arina-style
-        master/data layout. ``"quantem"`` writes the standalone exact count
-        container; currently only ANS compression with the explicitly requested
-        CPU reference encoder is implemented.
+        master/data layout. ``"quantem"`` writes the standalone ``.qem`` copy of
+        an encoded resident.
     backend : {"auto", "cuda", "mps", "cpu"}
         Compression/write backend. ``"auto"`` keeps CUDA CuPy arrays on CUDA
-        and MPS tensors or chunk-backed MPS loads on Metal. It never selects
-        the CPU reference writer silently.
+        and MPS tensors or chunk-backed MPS loads on Metal.
     compression : {"auto", "ans", "lz4", "bslz4", "bitshuffle_lz4"}
         File compression, independent of the loaded resident representation.
         ``"auto"`` uses ANS for QuantEM or bitshuffle/LZ4 for Arina, preserving
@@ -2035,13 +2031,17 @@ def save(
         raise ValueError(
             f"Unsupported save format {format!r}; use format='arina' or 'quantem'."
         )
+    if normalized_format == "quantem" and Path(filepath).suffix.lower() != ".qem":
+        raise ValueError(
+            "format='quantem' writes saved copies with the .qem extension; "
+            f"got {Path(filepath).name!r}. Legacy .ans files are no longer supported."
+        )
     if isinstance(compression, str):
         compression = compression.lower()
     if compression == "auto":
         compression = "ans" if normalized_format == "quantem" else "lz4"
 
     if normalized_format == "quantem":
-        from ._ans import write_ans_reference
         from .models import FourDSTEMData
 
         if compression != "ans":
@@ -2058,7 +2058,7 @@ def save(
             metadata = dict(data.metadata) if metadata is None else metadata
             data = data.data
         if dtype is not None or scan_shape is not None or source_master is not None:
-            raise ValueError("ANS reference saving preserves a native 4D array; remove dtype, scan_shape, and source_master controls.")
+            raise ValueError("Saving a native 4D acquisition preserves its own geometry; remove dtype, scan_shape, and source_master controls.")
         from quantem.gpu._compact.streamed import StreamedCounts
 
         from .backends.mps._streamed import MPSStreamedCounts
@@ -2071,13 +2071,10 @@ def save(
                 raise ValueError(f"Save resident ANS with backend='{resident_backend}' and no batch_size; its exact chunk layout is retained.")
             save_streamed(filepath, data, metadata)
             return SaveResult(str(filepath), resident_backend, complete=True)
-        if Path(filepath).suffix.lower() == ".qem":
-            raise NotImplementedError("QEM saving currently requires a supported encoded resident. Load with representation='encoded' first; no alternate format was written.")
-        if backend != "cpu":
-            raise NotImplementedError("The portable ANS reference encoder requires backend='cpu'; pass a CUDA ANS resident to save its encoded snapshot.")
-        write_ans_reference(filepath, data, metadata=metadata,
-                            block_frames=256 if batch_size is None else batch_size)
-        return SaveResult(str(filepath), "cpu", complete=True)
+        raise NotImplementedError(
+            "Writing a .qem copy requires a complete encoded CUDA or Metal resident. "
+            "Load the acquisition with representation='encoded' first; nothing was written."
+        )
 
     t0 = time.perf_counter()
     if compression == "ans":

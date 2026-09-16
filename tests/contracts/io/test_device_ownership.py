@@ -292,37 +292,3 @@ def test_decode_failure_keeps_host_lease_until_fence(io_contexts, monkeypatch, u
         assert loader._FAILED_DECOMPRESSIONS[0][0] is prepared
 
 
-def test_ans_load_and_conversion_stay_on_selected_device(io_contexts, monkeypatch, tmp_path):
-    """Load an encoded acquisition on another device and retain that ownership."""
-    loader, _, contexts = io_contexts
-    from quantem.gpu.io._ans import write_ans_reference
-    ans_backend = import_module("quantem.gpu.io.backends.cuda._ans")
-    monkeypatch.setitem(sys.modules, "cupy", contexts.cupy())
-    calls = []
-
-    class Counts:
-        nbytes = 64
-
-        def __init__(self, **_encoded):
-            self.owner = contexts.key()
-            calls.append(("load", self.owner))
-
-        def to_packed(self):
-            assert contexts.key() == self.owner
-            calls.append(("pack", self.owner))
-            return SimpleNamespace(nbytes=32, release=self.release)
-
-        def release(self):
-            assert contexts.key() == self.owner
-            calls.append(("release", self.owner))
-
-    monkeypatch.setattr(ans_backend, "CudaANSResidentCounts", Counts)
-    path = write_ans_reference(tmp_path / "counts.ans", np.zeros((2, 3, 4, 5), np.uint16))
-    contexts.select(0)
-    loaded = loader.load(path, backend="cuda", representation="packed", device=1)
-    assert contexts.key() == (0, 100)
-    assert loaded.representation.value == "packed"
-    assert calls == [("load", (1, 101)), ("pack", (1, 101)), ("release", (1, 101))]
-    with contexts.device(1):
-        loaded.close()
-    assert calls[-1] == ("release", (1, 101))

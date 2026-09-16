@@ -60,7 +60,7 @@ def inspect(
 
     Examples
     --------
-    >>> info = inspect("acquisition.ans")  # doctest: +SKIP
+    >>> info = inspect("acquisition.qem")  # doctest: +SKIP
     >>> info.scan_shape, info.detector_shape  # doctest: +SKIP
     """
     path = Path(filepath)
@@ -118,8 +118,6 @@ def inspect(
                           shape[1:3], shape[3:], np.dtype(layout["source_dtype"]).name,
                           {"path": str(path.resolve())})
     representation = DataRepresentation.detect_source(filepath)
-    if representation is DataRepresentation.ENCODED:
-        return _inspect_ans(path, scan_shape)
     if representation is DataRepresentation.PAIRED:
         return _inspect_paired(path, scan_shape)
     if representation is DataRepresentation.PACKED:
@@ -191,41 +189,6 @@ def inspect(
         ),
         source_signature=readiness.source_signature,
     )
-
-
-def _inspect_ans(path: Path, scan_shape) -> Inspection:
-    """Read bounded declared geometry; payload admission remains the loader's job."""
-    from ._ans import MAGIC, _DATA_START, _HEADER, _no_duplicate_keys, _reject_constant
-
-    with path.open("rb") as stream:
-        header = stream.read(_HEADER.size)
-        if len(header) != _HEADER.size:
-            raise ValueError("Truncated encoded header; choose a complete encoded file.")
-        magic, length, start = _HEADER.unpack(header)
-        if magic != MAGIC or start != _DATA_START or not 0 < length <= start - _HEADER.size:
-            raise ValueError("Invalid encoded header; choose a supported encoded file.")
-        document = json.loads(stream.read(length), object_pairs_hook=_no_duplicate_keys,
-                              parse_constant=_reject_constant)
-    shape = document.get("shape", ())
-    if (len(shape) != 4 or any(type(size) is not int or size < 1 for size in shape)
-            or document.get("dtype") not in ("uint8", "uint16")):
-        raise ValueError("Encoded header must declare four positive dimensions and native integer counts.")
-    shape = tuple(shape)
-    matches = scan_shape is None or tuple(scan_shape) == shape[:2]
-    metadata = dict(document.get("metadata", {}), representation="encoded", working_shape=shape,
-                    scan_shape=shape[:2], detector_shape=shape[2:], dtype=document["dtype"],
-                    encoded_bytes=sum(section["count"] * np.dtype(section["dtype"]).itemsize
-                                      for section in document["sections"].values()))
-    mask = np.zeros(shape[2:], np.uint32)
-    excluded = metadata.get("excluded_detector_pixels", ())
-    if len(excluded):
-        mask.reshape(-1)[np.asarray(excluded, dtype=np.intp)] = 1
-    return Inspection(matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
-                      "Load to validate all encoded streams.", metadata, mask, "encoded",
-                      shape[0] * shape[1],
-                      int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1],
-                      shape[:2], shape[2:], document["dtype"],
-                      {"path": str(path.resolve()), "size": path.stat().st_size})
 
 
 def _inspect_paired(path: Path, scan_shape) -> Inspection:

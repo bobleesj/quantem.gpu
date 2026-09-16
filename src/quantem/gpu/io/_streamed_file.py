@@ -1,4 +1,4 @@
-"""Checksummed snapshots of native GPU ANS streams and their spatial indexes."""
+"""Checksummed ``.qem`` snapshots of native GPU encoded streams and their indexes."""
 
 from __future__ import annotations
 
@@ -16,19 +16,19 @@ import numpy as np
 
 from . import _qem_metadata
 
-MAGIC = b"QGPUSTRM"
 PROFILE = "runtime-column-rans-spatial-v2"
 BLOCK = 64 << 20
 DTYPES = ("uint8", "uint32", "uint8", "uint32", "uint64", "uint8")
+_EXTENSION = ".qem"
 
 
 def is_streamed_file(path) -> bool:
-    """Identify a snapshot without reading detector payloads."""
+    """Identify a saved ``.qem`` copy without reading detector payloads."""
     if not isinstance(path, (str, os.PathLike)):
         return False
     try:
         with open(path, "rb") as handle:
-            return handle.read(8) in (MAGIC, _qem_metadata.MAGIC)
+            return handle.read(8) == _qem_metadata.MAGIC
     except (OSError, TypeError):
         return False
 
@@ -39,24 +39,23 @@ def read_header(path) -> tuple[dict, int]:
 
     with open(path, "rb") as handle:
         prefix = handle.read(24)
-        if len(prefix) != 24 or prefix[:8] not in (MAGIC, _qem_metadata.MAGIC):
-            raise ValueError("Not a CUDA ANS snapshot; choose a file saved by io.save.")
+        if len(prefix) != 24 or prefix[:8] != _qem_metadata.MAGIC:
+            raise ValueError("Not a saved .qem copy; choose a file written by io.save.")
         length, start = struct.unpack("<QQ", prefix[8:])
         size = os.fstat(handle.fileno()).st_size
         if not 0 < length <= 16 << 20 or start != 56 + length or start > size:
-            raise ValueError("Invalid ANS snapshot header length; recopy the file.")
+            raise ValueError("Invalid .qem header length; recopy the file.")
         digest = handle.read(32)
         blob = handle.read(length)
         if hashlib.sha256(blob).digest() != digest:
-            raise ValueError("ANS snapshot header checksum mismatch; recopy the file.")
+            raise ValueError(".qem header checksum mismatch; recopy the file.")
         header = json.loads(blob)
-        if prefix[:8] == _qem_metadata.MAGIC:
-            _qem_metadata.validate_header(header)
-            if header.get("codec") != PROFILE:
-                raise NotImplementedError(
-                    f"This Python reader does not support QEM codec {header.get('codec')!r}. "
-                    "Open EMPAD float32 QEM files in Live4DSTEM, or use the original acquisition."
-                )
+        _qem_metadata.validate_header(header)
+        if header.get("codec") != PROFILE:
+            raise NotImplementedError(
+                f"This Python reader does not support QEM codec {header.get('codec')!r}. "
+                "Open EMPAD float32 QEM files in Live4DSTEM, or use the original acquisition."
+            )
     try:
         shape = header["shape"]
         if (header["profile"] != PROFILE or header["version"] != 1
@@ -98,7 +97,7 @@ def read_header(path) -> tuple[dict, int]:
 
 
 def save_streamed(path, source, metadata: dict | None = None) -> None:
-    """Atomically save exact encoded arrays; never decode or overwrite a file."""
+    """Atomically save exact encoded arrays as ``.qem``; never decode or overwrite."""
     from quantem.gpu._compact.streamed import StreamedCounts
 
     from .backends.mps._streamed import MPSStreamedCounts
@@ -110,6 +109,11 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
     if source.is_released or source.ready_scans != math.prod(source.shape[:2]):
         raise ValueError("Save a complete, live CUDA source; reload the acquisition first.")
     path = Path(path)
+    if path.suffix.lower() != _EXTENSION:
+        raise ValueError(
+            f"Saved copies use the {_EXTENSION} extension; got {path.name!r}. "
+            "Choose a name ending in .qem."
+        )
     if path.exists():
         raise FileExistsError(f"{path} already exists; choose a new destination.")
     table, cursor = [], 0
@@ -138,21 +142,28 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
                       valid=np.packbits(source.valid_pixels.ravel()).tobytes().hex(),
                       chunks=table, bytes=cursor, sha256=checksums,
                       metadata={} if metadata is None else metadata)
-        from ._ans import _json_metadata
+        header.update(
+            container=_qem_metadata.CONTAINER,
+            container_version=_qem_metadata.CONTAINER_VERSION,
+            codec=PROFILE,
+            scientific_metadata=_qem_metadata.acquisition_metadata(
+                source.shape, header["metadata"]
+            ),
+        )
 
-        qem = path.suffix.lower() == ".qem"
-        if qem:
-            header.update(container="quantem.qem", container_version=1, codec=PROFILE,
-                          scientific_metadata=_qem_metadata.acquisition_metadata(source.shape, header["metadata"]))
-
-        blob = json.dumps(header, default=_json_metadata, allow_nan=False).encode()
+        blob = json.dumps(
+            header,
+            default=_qem_metadata.json_metadata,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
         if len(blob) > 16 << 20:
             raise ValueError("Acquisition metadata exceeds the 16 MiB snapshot header limit.")
         fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         try:
             with os.fdopen(fd, "wb") as output:
-                signature = _qem_metadata.MAGIC if qem else MAGIC
-                output.write(signature + struct.pack("<QQ", len(blob), 56 + len(blob)) + hashlib.sha256(blob).digest() + blob)
+                output.write(_qem_metadata.MAGIC + struct.pack("<QQ", len(blob), 56 + len(blob)) + hashlib.sha256(blob).digest() + blob)
                 body.seek(0)
                 while block := body.read(BLOCK):
                     output.write(block)

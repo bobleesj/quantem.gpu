@@ -139,7 +139,7 @@ def test_saved_camera_ans_reopens_without_original_or_encoder(tmp_path, dtype, m
     values = np.random.default_rng(17).poisson(0.7, (23, 25, 24, 32)).astype(dtype)
     values[0, 0, 0, 0] = np.iinfo(dtype).max
     path = write_dm4(tmp_path / "camera.dm4", values)
-    saved = tmp_path / "camera.ans"
+    saved = tmp_path / "camera.qem"
     with io.load(path, backend="cuda") as original:
         expected_arrays = [[array.get() for array in chunk.arrays] for chunk in original.data.chunks]
         io.save(saved, original, format="quantem", backend="cuda")
@@ -199,7 +199,7 @@ def test_snapshot_retains_multiblock_chunks_and_validity(tmp_path):
     valid[2, 3] = False
     resident = StreamedCounts(shape, values.dtype, valid)
     resident.append(cp.asarray(values.reshape(-1, 8, 12)))
-    path = tmp_path / "multiblock.ans"
+    path = tmp_path / "multiblock.qem"
     io.save(path, resident, format="quantem", backend="cuda")
     resident.release()
     assert io.inspect(path).pixel_mask[2, 3] == 1

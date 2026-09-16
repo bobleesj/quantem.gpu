@@ -31,15 +31,24 @@ struct CameraCheck {
         "interval": 512, "shape": [1, 2, 2, 2], "dtype": "uint8", "valid": "f0",
         "chunks": [["first": 0, "scans": 2, "arrays": arrays]], "bytes": body.count,
         "sha256": [SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()],
+        "container": "quantem.qem", "container_version": 1,
+        "codec": "runtime-column-rans-spatial-v2",
+        "scientific_metadata": [
+          "schema": "quantem.scientific-metadata/1",
+          "axes": [
+            ["name": "scan_row", "size": 1], ["name": "scan_column", "size": 2],
+            ["name": "detector_row", "size": 2], ["name": "detector_column", "size": 2]
+          ]
+        ],
         "metadata": item.0]
       let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
-      var file = Data("QGPUSTRM".utf8)
+      var file = Data("QEMDATA1".utf8)
       for length in [json.count, json.count + 56] {
         var value = UInt64(length).littleEndian
         withUnsafeBytes(of: &value) { file.append(contentsOf: $0) }
       }
       file.append(contentsOf: SHA256.hash(data: json)); file.append(json); file.append(body)
-      let url = directory.appendingPathComponent("case-\(index).ans")
+      let url = directory.appendingPathComponent("case-\(index).qem")
       try file.write(to: url)
       let restored = try NativeANSSnapshot(url: url)
       try require(restored.dataset.metadata?["sourceFormat"] == item.1,
@@ -52,7 +61,7 @@ struct CameraCheck {
     guard CommandLine.arguments.count == 3 || CommandLine.arguments.count == 4,
       let device = MTLCreateSystemDefaultDevice()
     else {
-      fatalError("Usage: k3-camera-check original.dm4 existing.ans [new-copy.ans]; Metal required")
+      fatalError("Usage: k3-camera-check original.dm4 existing.qem [new-copy.qem]; Metal required")
     }
     try checkCameraMetadataPlacement()
     let original = try NativeDM4Source(url: URL(fileURLWithPath: CommandLine.arguments[1]))
