@@ -1190,5 +1190,19 @@ extension OriginalHDF5Packing {
     guard try Self.inputStamps(source) == initialInputs else {
       throw Self.invalid("Original data changed while building runtime ANS; reopen and retry")
     }
+    // Opt-in only; the counters above are collected unconditionally, so this
+    // costs one environment lookup per load when disabled.
+    if ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_PROFILE"] == "1" {
+      var json = profile.json
+      json["record"] = "runtime_ans_window_profile"
+      json["windows"] = windows.count
+      json["maximum_frames_per_window"] = frames
+      if let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+        let line = String(data: data, encoding: .utf8)
+      {
+        FileHandle.standardError.write(
+          Data(("QGPU_WINDOW_PROFILE " + line + "\n").utf8))
+      }
+    }
   }
 }
