@@ -35,6 +35,7 @@ from ..io.resident_contract import (
     metadata_sha256,
 )
 from .maped_api import MAPEDProtocolError, MAPEDProtocolService
+from .saved_ssb import SavedSSBResults
 from .ssb_api import (
     SSBPayloadNotReady,
     SSBPayloadUnavailable,
@@ -1985,12 +1986,7 @@ class BrowseService:
                 compact = entry.get("compact_source")
                 if compact is not None:
                     return np.asarray(compact.extract_diffraction(row, column))
-                frame = entry["data"][row, column]
-                if hasattr(frame, "get"):
-                    frame = frame.get()
-                elif hasattr(frame, "detach"):
-                    frame = frame.detach().cpu().numpy()
-                return np.asarray(frame)
+                return np.asarray(entry["compute"].frame(row * scan_columns + column))
 
     def cached_image(self, key: tuple) -> np.ndarray | None:
         with self._image_lock:
@@ -2036,6 +2032,7 @@ def create_app(
         gpus=gpus,
         compact_sources=compact_sources,
     )
+    saved_ssb = SavedSSBResults(Path(data_folder))
     resolved_revision = (
         implementation_revision
         or getattr(ssb_service, "implementation_revision", None)
@@ -2232,6 +2229,14 @@ def create_app(
             return maped.cancel_run(run_id)
         except MAPEDProtocolError as exc:
             raise maped_http_error(exc) from exc
+
+    @app.get("/api/ssb/saved-results")
+    async def ssb_saved_results(session: str, file: str) -> dict:
+        try:
+            master = await asyncio.to_thread(browse.resolve_master, session, file)
+            return await asyncio.to_thread(saved_ssb.read, master)
+        except (ValueError, OSError, KeyError) as exc:
+            raise HTTPException(409, "Could not verify saved SSB results: " + str(exc)) from exc
 
     @app.get("/api/ssb/source-identity")
     async def ssb_source_identity(master_path: str) -> dict[str, Any]:

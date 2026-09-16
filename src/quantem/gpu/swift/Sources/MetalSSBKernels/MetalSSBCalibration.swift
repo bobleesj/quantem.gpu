@@ -54,10 +54,15 @@ public struct MetalSSBCalibration: Codable, Equatable, Sendable {
   /// The small detector sum is already reduced from the full original scan.
   public func geometry(
     detectorRows: Int, detectorColumns: Int,
-    detectorSum: [UInt64], excludedPixels: Set<Int> = []
+    detectorSum: [UInt64], excludedPixels: Set<Int> = [],
+    scanRows: Int = 512, scanColumns: Int = 512
   ) throws
     -> (geometry: MetalSSBGeometry, pixels: [Int])
   {
+    guard [128, 256, 512].contains(scanRows), scanColumns == scanRows else {
+      throw MetalSSBError.invalidGeometry(
+        "Native Metal SSB requires a square 128, 256, or 512 scan. Keep the original sampling; do not bin or crop to fit.")
+    }
     let positive = [
       beamEnergyKeV, semiangleMrad, scanStepRowAngstroms,
       scanStepColumnAngstroms, detectorStepRowMrad, detectorStepColumnMrad,
@@ -128,16 +133,18 @@ public struct MetalSSBCalibration: Codable, Equatable, Sendable {
         "The calibrated aperture contains no measured counts. Check the beam center and angular sampling."
       )
     }
-    func frequencies(_ step: Double) -> [Float] {
-      (0..<512).map { Float(Double($0 < 256 ? $0 : $0 - 512) / (512 * step)) }
+    func frequencies(_ step: Double, count: Int) -> [Float] {
+      (0..<count).map {
+        Float(Double($0 < count / 2 ? $0 : $0 - count) / (Double(count) * step))
+      }
     }
     return (
       MetalSSBGeometry(
         brightfieldKX: row, brightfieldKY: column,
         brightfieldAlphaSquared: alpha2, brightfieldAperture: aperture,
         brightfieldCos2Phi: cos2, brightfieldSin2Phi: sin2,
-        qxByRow: frequencies(scanStepRowAngstroms),
-        qyByColumn: frequencies(scanStepColumnAngstroms),
+        qxByRow: frequencies(scanStepRowAngstroms, count: scanRows),
+        qyByColumn: frequencies(scanStepColumnAngstroms, count: scanColumns),
         wavelengthAngstroms: Float(wavelength), semiangleRadians: Float(angle),
         angularSamplingYRadians: Float(stepRow), angularSamplingXRadians: Float(stepColumn),
         dcValue: SIMD2(Float(dc / Double(pixels.count)), 0), referenceRotationDegrees: 0), pixels

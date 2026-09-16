@@ -36,6 +36,44 @@ public struct NativeEMPADSource: Sendable {
   private let metadataIdentity: NativeFileIdentity?
   public var frameCount: Int { scanRows * scanColumns }
   public var sourceBytes: Int { frameCount * recordBytes }
+  public var hasQEMStorage: Bool { microscopeMetadata["qem_storage"] == "empad-xor-row-packed-v1" }
+
+  /// Restore an EMPAD acquisition description without requiring its original folder.
+  /// Example: `try NativeEMPADSource.openQEM(url)`.
+  public static func openQEM(_ url: URL) throws -> NativeEMPADSource {
+    let file = try NativeQEMFile(url: url)
+    guard file.codec == "empad-xor-row-packed-v1",
+      file.header["dtype"] as? String == "float32",
+      let shape = file.header["shape"] as? [Int], shape.count == 4,
+      shape[2...] == [128, 128], shape[0] <= Int(UInt32.max) / shape[1],
+      let description = file.header["empad"] as? [String: Any],
+      let format = description["format_identifier"] as? String,
+      let name = description["format_name"] as? String,
+      var metadata = description["microscope_metadata"] as? [String: String]
+    else { throw EMPADError("Unsupported EMPAD QEM geometry or metadata; update the reader.") }
+    let calibration = try description["scan_calibration"].map {
+      try JSONDecoder().decode(Native4DSTEMScanCalibration.self,
+        from: JSONSerialization.data(withJSONObject: $0))
+    }
+    if let calibration, !calibration.isValid {
+      throw EMPADError("Invalid saved scan calibration; restore a valid QEM copy.")
+    }
+    let evidence = try (description["supplier_background_statement"] as? String).map {
+      try NativeBackgroundSubtractionEvidence.restored(statement: $0, container: url)
+    }
+    metadata["qem_storage"] = file.codec
+    if description["user_confirmed_background_corrected"] as? Bool == true {
+      metadata["qem_user_confirmed_background_corrected"] = "true"
+    }
+    if description["background"] != nil { metadata["qem_background"] = "mean-dark" }
+    return NativeEMPADSource(rawURL: url, metadataURL: nil,
+      scanRows: shape[0], scanColumns: shape[1], scanCalibration: calibration,
+      diffractionSamplingInverseNanometers: description["diffraction_sampling_inv_nm"] as? Double,
+      acquisitionDate: description["acquisition_date"] as? String,
+      formatIdentifier: format, formatName: name, microscopeMetadata: metadata,
+      backgroundSubtractionEvidence: evidence, recordBytes: 65536,
+      rawIdentity: try nativeFileIdentity(for: url), metadataIdentity: nil)
+  }
 
   /// Resolve XML/RAW input and verify the complete acquisition length.
   ///
@@ -49,6 +87,13 @@ public struct NativeEMPADSource: Sendable {
     _ input: URL, scanShape: (row: Int, col: Int)? = nil
   ) throws -> NativeEMPADSource {
     let source = input.standardizedFileURL
+    if NativeQEMFile.matches(source) {
+      let restored = try openQEM(source)
+      if let scanShape, scanShape.row != restored.scanRows || scanShape.col != restored.scanColumns {
+        throw EMPADError("Scan shape disagrees with the QEM acquisition; omit the override.")
+      }
+      return restored
+    }
     if ["h5", "hdf5", "emd"].contains(source.pathExtension.lowercased()) {
       return try openEMD(source, scanShape: scanShape)
     }
@@ -306,6 +351,9 @@ public struct NativeEMPADSource: Sendable {
   // Backend-only destination form avoids a second staging allocation/copy.
   // It has the same ordered selection and source snapshot checks as readFrames.
   package func readFrames(_ indices: [Int], into output: UnsafeMutableRawBufferPointer) throws {
+    guard !hasQEMStorage else {
+      throw EMPADError("This QEM stores compressed measurements. Use MetalEMPADResidentSource.load to read its diffraction patterns.")
+    }
     try validateUnchanged()
     guard indices.allSatisfy({ (0..<frameCount).contains($0) }) else {
       throw EMPADError("EMPAD frame selection is outside 0..<\(frameCount).")

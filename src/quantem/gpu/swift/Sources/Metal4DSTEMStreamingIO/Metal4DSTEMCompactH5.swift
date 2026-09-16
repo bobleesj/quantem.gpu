@@ -401,6 +401,13 @@ private struct CompactDetectorSumParameters {
   var headerWordsPerPixel: UInt32
   var headerEncoding: UInt32
   var payloadLayout: UInt32 = 0
+  var scanColumns: UInt32 = 0
+  var firstScan: UInt32 = 0
+  var rowStart: UInt32 = 0
+  var rowStop: UInt32 = 0
+  var columnStart: UInt32 = 0
+  var columnStop: UInt32 = 0
+  var regionShape: UInt32 = 0
 }
 
 struct CompactResidentShard {
@@ -1051,17 +1058,41 @@ public final class MetalCompactH5ResidentSource {
   /// A validated sum prepared during original loading is reused immediately.
   /// Otherwise the first call performs one complete resident pass and later
   /// calls reuse that u64 result. No dense 4D tensor is decoded or allocated.
-  public func meanDiffractionPattern() throws -> MetalCompactH5MeanDiffraction {
+  /// Optional half-open `rows` and `columns` bound a region in the loaded scan.
+  /// Circle bounds must be square; pixel centers inside or on the circle count
+  /// equally. Regional sums use a separate DP-sized output and never replace
+  /// the cached full-scan sum. Omit ranges and shape for the full-scan mean.
+  public func meanDiffractionPattern(
+    rows: Range<Int>? = nil, columns: Range<Int>? = nil,
+    shape: MetalScanRegionShape = .rectangle
+  ) throws -> MetalCompactH5MeanDiffraction {
     guard !isReleased, let excluded, let detectorSumOutput else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "The compact resident source has been released. Load it again before reading mean diffraction."
       )
     }
+    let selectedRows = rows ?? 0..<metadata.scanRows
+    let selectedColumns = columns ?? 0..<metadata.scanColumns
+    guard !selectedRows.isEmpty, !selectedColumns.isEmpty,
+      selectedRows.lowerBound >= 0, selectedRows.upperBound <= metadata.scanRows,
+      selectedColumns.lowerBound >= 0, selectedColumns.upperBound <= metadata.scanColumns,
+      shape != .circle || selectedRows.count == selectedColumns.count
+    else {
+      throw Metal4DSTEMStreamingIOError.invalidRequest(
+        "Mean DP requires a nonempty region inside the loaded scan; circle bounds must be square.")
+    }
+    let regional = shape == .circle || selectedRows != 0..<metadata.scanRows || selectedColumns != 0..<metadata.scanColumns
+    let output: MTLBuffer
+    if regional {
+      guard let buffer = device.makeBuffer(length: detectorSumOutput.length, options: .storageModeShared)
+      else { throw Metal4DSTEMStreamingIOError.commandFailed("Could not allocate the region mean DP.") }
+      output = buffer
+    } else { output = detectorSumOutput }
     var wallMilliseconds = 0.0
     var gpuMilliseconds = 0.0
     var dispatchCount = 0
-    if !detectorSumReady {
-      memset(detectorSumOutput.contents(), 0, detectorSumOutput.length)
+    if regional || !detectorSumReady {
+      memset(output.contents(), 0, output.length)
       guard let command = queue.makeCommandBuffer(),
         let encoder = command.makeComputeCommandEncoder()
       else {
@@ -1070,7 +1101,7 @@ public final class MetalCompactH5ResidentSource {
         )
       }
       let started = ContinuousClock.now
-      for shard in shards {
+      for (shardIndex, shard) in shards.enumerated() {
         var parameters = CompactDetectorSumParameters(
           scanCount: UInt32(metadata.scansPerShard),
           tileCount: UInt32(
@@ -1080,13 +1111,18 @@ public final class MetalCompactH5ResidentSource {
           scanTile: UInt32(metadata.scanTile),
           headerWordsPerPixel: headerWordsPerPixel,
           headerEncoding: headerEncoding,
-          payloadLayout: payloadLayout
+          payloadLayout: payloadLayout,
+          scanColumns: regional ? UInt32(metadata.scanColumns) : 0,
+          firstScan: UInt32(shardIndex * metadata.scansPerShard),
+          rowStart: UInt32(selectedRows.lowerBound), rowStop: UInt32(selectedRows.upperBound),
+          columnStart: UInt32(selectedColumns.lowerBound), columnStop: UInt32(selectedColumns.upperBound),
+          regionShape: shape.rawValue
         )
         encoder.setComputePipelineState(detectorSumPipeline)
         encoder.setBuffer(shard.payload, offset: 0, index: 0)
         encoder.setBuffer(shard.descriptors, offset: 0, index: 1)
         encoder.setBuffer(excluded, offset: 0, index: 2)
-        encoder.setBuffer(detectorSumOutput, offset: 0, index: 3)
+        encoder.setBuffer(output, offset: 0, index: 3)
         encoder.setBytes(
           &parameters,
           length: MemoryLayout<CompactDetectorSumParameters>.stride,
@@ -1105,13 +1141,13 @@ public final class MetalCompactH5ResidentSource {
       gpuMilliseconds =
         command.gpuEndTime > command.gpuStartTime
         ? (command.gpuEndTime - command.gpuStartTime) * 1_000 : 0
-      detectorSumReady = true
+      if !regional { detectorSumReady = true }
     }
     let detectorSum = Self.u64Values(
-      detectorSumOutput,
+      output,
       count: metadata.detectorPixelCount
     )
-    let divisor = Float(metadata.scanCount)
+    let divisor = Float(shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count))
     return MetalCompactH5MeanDiffraction(
       detectorSum: detectorSum,
       mean: detectorSum.map { Float($0) / divisor },

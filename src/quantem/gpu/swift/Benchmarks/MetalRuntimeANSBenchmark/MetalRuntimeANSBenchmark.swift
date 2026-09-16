@@ -10,6 +10,10 @@ import Native4DSTEMIO
 enum MetalRuntimeANSBenchmark {
   static func main() throws {
     let arguments = Array(CommandLine.arguments.dropFirst())
+    if arguments.count == 2 && arguments[0] == "--camera" {
+      try CameraBenchmark.run(URL(fileURLWithPath: arguments[1]))
+      return
+    }
     guard arguments.count == 2 else {
       throw failure("Usage: metal-runtime-ans-benchmark INPUT INDEX_DIRECTORY")
     }

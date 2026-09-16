@@ -39,6 +39,7 @@ public struct SSBOptimizationResult: Codable, Sendable {
   public let globalTrials: Int
   public let refinementEvaluations: Int
   public let elapsedSeconds: Double
+  public var brightfieldSampling: SSBBrightfieldSampling? = nil
 }
 
 public enum SSBOptimizationError: LocalizedError {

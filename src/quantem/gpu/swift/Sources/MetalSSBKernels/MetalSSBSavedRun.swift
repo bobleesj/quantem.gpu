@@ -51,7 +51,11 @@ public struct MetalSSBSavedRun: Codable, Sendable {
     provenance = result.provenance
     reconstructionWallSeconds = result.wallSeconds
     reconstructionGPUSeconds = result.gpuSeconds
-    let bytes = 512 * 512 * MemoryLayout<SIMD2<Float>>.stride
+    guard [128, 256, 512].contains(provenance.scanRows),
+      provenance.scanColumns == provenance.scanRows else {
+      throw SavedRunError.invalid("Unsupported native SSB scan dimensions.")
+    }
+    let bytes = provenance.scanRows * provenance.scanColumns * MemoryLayout<SIMD2<Float>>.stride
     guard result.object.length >= bytes, result.fourierSum.length >= bytes else {
       throw SavedRunError.invalid(
         "The reconstruction buffers are incomplete. Run SSB again before saving.")
@@ -118,8 +122,13 @@ public struct MetalSSBSavedRun: Codable, Sendable {
       throw SavedRunError.invalid(
         "Saved SSB coefficients must be finite. Recompute or restore a valid result.")
     }
-    let bytes = 512 * 512 * MemoryLayout<SIMD2<Float>>.stride
-    guard provenance.scanRows == 512, provenance.scanColumns == 512,
+    guard [128, 256, 512].contains(provenance.scanRows),
+      provenance.scanColumns == provenance.scanRows else {
+      throw SavedRunError.invalid("Unsupported native SSB scan dimensions.")
+    }
+    let bytes = provenance.scanRows * provenance.scanColumns * MemoryLayout<SIMD2<Float>>.stride
+    guard geometry.qxByRow.count == provenance.scanRows,
+      geometry.qyByColumn.count == provenance.scanColumns,
       object.count == bytes, fourierSum.count == bytes,
       Self.digest(object) == objectSHA256, Self.digest(fourierSum) == fourierSHA256
     else {

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260915-metal-ssb-native-sizes",
+  "status": "succeeded",
+  "question": "Do native 128/256 Metal scans match CUDA full-IFFT SSB and retain fast full-aperture evaluation?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-native-development", "manifest_path": "experiments/20260915-metal-ssb-native-sizes/manifest.json"},
+  "code": {"repository": "quantem.gpu", "revision": "e0a0abcab89f923adfc8059e6e08c9a1d491bd9f", "dirty": true, "entrypoint": "experiments/20260915-metal-ssb-native-sizes/performance.swift", "diff_sha256": "83b5866f8058dadffc37759d77a3fe32f132231808b5cf76ddd58be9a98f6e16", "snapshot_path": "local-evidence://ssb-native-size-verification/source"},
+  "inputs": [
+    {"dataset_id": "cuda-parity-count-generator", "path": "local-evidence://ssb-native-size-verification/source/export_ssb_scan_size_reference.py", "sha256": "f49be3393d97ec80b415c0589fd086411e2c83a93b55c463bb499f0a8037166e"},
+    {"dataset_id": "full-disk-native-count-generator", "path": "experiments/20260915-metal-ssb-native-sizes/performance.swift", "sha256": "2c1ef191a50c6e79c2febc5e4bcaf02dee540df01ee2beb4387cb4263979cd57"}
+  ],
+  "parameters": {"scan_sizes": [128, 256, 512], "parity_bf": 95, "scaling_bf": 8937, "warmups": 3, "repeats": 20, "dtype": "uint8 counts, complex64 Fourier/object, float32 phase", "crop": null, "bin": 1, "objective": "full-IFFT phase variance, not sparse-row CUDA variance_loss", "data_scope": "Synthetic counts; not real-data UI performance"},
+  "execution": {"host": "apple-m5-native-development", "backend": "native-swift-metal", "gpu_ids": ["Apple M5"], "gpu_model": "Apple M5 24 GB"},
+  "outputs": [
+    {"artifact_id": "generic-baseline", "path": "experiments/20260915-metal-ssb-native-sizes/baseline.json", "sha256": "129da901871018bd050772e63e5f9bce8001bc9b595cb0ae993f5a3f21b38882", "size_bytes": 2695, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "fused-measurement", "path": "experiments/20260915-metal-ssb-native-sizes/fused.json", "sha256": "c39ce7715e22ade40f2857470602b9e27c3818956e56f08ab5b812d65f87c63d", "size_bytes": 2696, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "independent-cuda-parity", "path": "experiments/20260915-metal-ssb-native-sizes/parity-independent.log", "sha256": "69b0933b60609d8f4cb9a4b4ffc326653df1ba8f46a66429828dd8a4bc2a8aa1", "size_bytes": 4305, "retention": "durable", "consuming_figures": []},
+    {"artifact_id": "existing-workflow", "path": "experiments/20260915-metal-ssb-native-sizes/workflow-independent.log", "sha256": "38af424cbf5832505403baca0622b5ad8be7e67ec07cfb0cee355110aa91ce93", "size_bytes": 1352, "retention": "durable", "consuming_figures": []}
+  ],
+  "timestamps": {"created": "2026-09-15", "started": "2026-09-15", "finished": "2026-09-15"}
+}

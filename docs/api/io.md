@@ -84,9 +84,57 @@ of equally shaped acquisitions for joint native DP and detector queries:
 
 The runtime H5 resident uses a separate internal encoded profile from the portable
 encoded file format. Its `resident_profile`, `physical_resident_bytes`, `index_bytes`
-and `load_timings` metadata describe the actual loaded representation. Saving
-or transcoding this new resident is not yet implemented. Complete-series
+and `load_timings` metadata describe the actual loaded representation. Native
+streamed residents can be saved as CUDA snapshots using the workflow below;
+transcoding to portable ANS is not implemented. Complete-series
 120 Hz throughput is not established by the bounded CUDA parity tests.
+
+### Open native DigitalMicrograph camera counts
+
+Install the `dm` extra (`pip install "quantem.gpu[dm]"`) to read DM3/DM4
+metadata. Open a complete calibrated 4D diffraction image directly:
+
+```python
+from quantem.gpu import detector, io
+
+loaded = io.load("STEM SI.dm4", backend="cuda")
+session = detector.prepare(loaded)
+pattern = session.frame(0, output="native")
+mask = detector.detector_mask((431.5, 431.5), 0, 126, loaded.shape[-2:])
+bright_field = session.masked_sum(mask, output="native")
+# Finish using the session before releasing its source.
+session.close()
+loaded.close()
+```
+
+The reader selects the unique 4D image and excludes embedded thumbnails and
+survey images. Native uint8/uint16 counts stream through bounded pinned staging
+into lossless CUDA ANS residency with exact spatial sums. Scan tails need not
+be multiples of 512. No crop, binning, clipping, detector masking, or intensity
+normalization is applied. Geometry and calibration use `(row, col)` order;
+metadata retains axis units, sampling, pixel origins and microscope voltage.
+Unsupported axis layouts and ambiguous multiple 4D images raise actionable
+errors. `backend="cpu", representation="dense"` explicitly opens a read-only
+memory map for reference access.
+
+Save this encoded CUDA resident once to reopen it without re-encoding counts
+or rebuilding spatial indexes:
+
+```python
+loaded = io.load("STEM SI.dm4", backend="cuda")
+io.save("STEM SI.ans", loaded, format="quantem", backend="cuda")
+loaded.close()
+reopened = io.load("STEM SI.ans", backend="cuda")
+```
+
+This writes a versioned `QGPUSTRM` snapshot of the exact ANS bytes, spatial
+indexes, detector validity and calibration. Reopening verifies the header and
+every 64 MiB block with SHA-256 while uploading through two bounded pinned
+buffers. It does not require the original DM file. Writes are atomic and reject
+existing destinations. Snapshots currently support CUDA only; they are distinct
+from portable QGANS files and are detected by magic regardless of extension.
+DM selection/conversion options and MPS residency are currently unsupported. Load differently shaped acquisitions separately; a list can use
+`stack=False` to return independent residents.
 
 ### Load an existing encoded file directly into native Metal
 
@@ -334,7 +382,8 @@ For example, save an ANS-compressed QuantEM file, then use bitpacking in memory:
 
 ```python
 # Step 1. Write native four-dimensional NumPy uint8/uint16 counts exactly.
-# The CPU encoder is an explicit reference; accelerated ANS saving is pending.
+# Portable QGANS uses the explicit CPU reference encoder.
+# CUDA resident snapshots use the separate workflow above.
 io.save(
     "experiment.qgpu", native_counts,
     format="quantem", compression="ans", backend="cpu",

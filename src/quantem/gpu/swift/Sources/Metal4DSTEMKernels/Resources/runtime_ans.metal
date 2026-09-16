@@ -280,6 +280,34 @@ kernel void streamed_counts_decode_range(
         atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
 
+// Decode selected detector columns directly to plane-major scan storage. Padding
+// is initialized separately; every original scan sample retains its position.
+kernel void streamed_counts_detector_columns(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device uint *output [[buffer(5)]],
+    constant uint *p [[buffer(6)]],
+    device const uint *selected [[buffer(7)]],
+    device const uchar *valid [[buffer(8)]],
+    uint job [[thread_position_in_grid]]) {
+    uint scans = p[0], pixels = p[1], interval = p[2], columns = p[3];
+    uint blocks = (scans + interval - 1) / interval;
+    if (job >= blocks * columns) return;
+    uint ordinal = job % columns, block = job / columns;
+    uint pixel = selected[ordinal], first = block * interval;
+    if (!valid[pixel]) return;
+    StreamReader reader(payload, offsets, models, decoding, block * pixels + pixel);
+    for (uint i = 0; i < min(interval, scans - first); ++i) {
+        uint scan = p[4] + first + i;
+        uint value = reader.next();
+        output[ulong(ordinal) * p[6] * p[7] + (scan / p[5]) * p[7] + scan % p[5]] = value;
+    }
+    if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
 kernel void streamed_counts_detector_total(
     device const uchar *payload [[buffer(0)]],
     device const uint *offsets [[buffer(1)]],
@@ -358,7 +386,7 @@ kernel void streamed_counts_detector_delta(
         }
     }
     if (sparse) {
-        bool firapple-m2-8gbnt = true;
+        bool firstEvent = true;
         uint previousPosition = 0;
         while (reader.cursor < reader.end) {
             if (reader.end - reader.cursor < 2) {
@@ -369,12 +397,12 @@ kernel void streamed_counts_detector_delta(
                 | (uint(reader.payload[reader.cursor + 1]) << 8);
             reader.cursor += 2;
             uint position = event >> 7;
-            if (position >= count || (!firapple-m2-8gbnt && position <= previousPosition)) {
+            if (position >= count || (!firstEvent && position <= previousPosition)) {
                 reader.valid = false;
                 break;
             }
             previousPosition = position;
-            firapple-m2-8gbnt = false;
+            firstEvent = false;
             int contribution = int((event & 127u) + 1u) * coefficient;
             atomic_fetch_add_explicit(
                 output + output_first + first + position,
@@ -435,7 +463,7 @@ kernel void streamed_counts_detector_packet(
             }
         }
         if (sparse) {
-            bool firapple-m2-8gbnt = true;
+            bool firstEvent = true;
             uint previousPosition = 0;
             while (reader.cursor < reader.end) {
                 if (reader.end - reader.cursor < 2) {
@@ -446,12 +474,12 @@ kernel void streamed_counts_detector_packet(
                     | (uint(reader.payload[reader.cursor + 1]) << 8);
                 reader.cursor += 2;
                 uint position = event >> 7;
-                if (position >= count || (!firapple-m2-8gbnt && position <= previousPosition)) {
+                if (position >= count || (!firstEvent && position <= previousPosition)) {
                     reader.valid = false;
                     break;
                 }
                 previousPosition = position;
-                firapple-m2-8gbnt = false;
+                firstEvent = false;
                 int contribution = int((event & 127u) + 1u) * coefficient;
                 atomic_fetch_add_explicit(
                     partials + position, contribution, memory_order_relaxed);
@@ -521,7 +549,7 @@ kernel void streamed_counts_detector_packet4(
             }
         }
         if (sparse) {
-            bool firapple-m2-8gbnt = true;
+            bool firstEvent = true;
             uint previousPosition = 0;
             while (reader.cursor < reader.end) {
                 if (reader.end - reader.cursor < 2) {
@@ -532,12 +560,12 @@ kernel void streamed_counts_detector_packet4(
                     | (uint(reader.payload[reader.cursor + 1]) << 8);
                 reader.cursor += 2;
                 uint position = event >> 7;
-                if (position >= count || (!firapple-m2-8gbnt && position <= previousPosition)) {
+                if (position >= count || (!firstEvent && position <= previousPosition)) {
                     reader.valid = false;
                     break;
                 }
                 previousPosition = position;
-                firapple-m2-8gbnt = false;
+                firstEvent = false;
                 int contribution = int((event & 127u) + 1u) * coefficient;
                 atomic_fetch_add_explicit(
                     partials + position, contribution, memory_order_relaxed);

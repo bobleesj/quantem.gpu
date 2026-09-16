@@ -8,6 +8,10 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
   public let statement: String
   private let identity: NativeFileIdentity
 
+  static func restored(statement: String, container: URL) throws -> Self {
+    Self(documentURL: container, statement: statement, identity: try nativeFileIdentity(for: container))
+  }
+
   func validateUnchanged() throws {
     guard identity == (try nativeFileIdentity(for: documentURL)) else {
       throw EMPADError(

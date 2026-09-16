@@ -30,6 +30,7 @@ public struct MetalRuntimeANSDetectorMetrics: Sendable {
 /// and immediately encodes every original count into ANS. It never creates a
 /// dense full-volume allocation or a derived ANS file.
 public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
+  public let dataset: Native4DSTEMDataset
   public let shape: [Int]
   public let logicalDtype: Metal4DSTEMIntegerDType
   public let sourceIdentitySHA256: String
@@ -42,30 +43,47 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     let payload: MTLBuffer
     let offsets: MTLBuffer
     let models: MTLBuffer
+    var spatial: [MTLBuffer] = []
 
     var bytes: UInt64 {
-      UInt64(payload.length + offsets.length + models.length)
+      UInt64(payload.length + offsets.length + models.length + spatial.reduce(0) { $0 + $1.length })
     }
   }
 
-  fileprivate let device: MTLDevice
-  fileprivate let queue: MTLCommandQueue
-  fileprivate let decodePipeline: MTLComputePipelineState
-  fileprivate let detectorDeltaPipeline: MTLComputePipelineState
-  fileprivate let detectorPacketPipeline: MTLComputePipelineState
-  fileprivate let detectorPacketSIMDs: Int
-  fileprivate var decodingTable: MTLBuffer?
-  fileprivate var chunks: [Chunk]
-  fileprivate var failure: MTLBuffer?
-  fileprivate var diffraction: MTLBuffer?
-  fileprivate let validPixels: [UInt8]
-  fileprivate let interval = 512
+  let device: MTLDevice
+  let queue: MTLCommandQueue
+  let decodePipeline: MTLComputePipelineState
+  let detectorDeltaPipeline: MTLComputePipelineState
+  let detectorPacketPipeline: MTLComputePipelineState
+  let detectorPacketSIMDs: Int
+  var decodingTable: MTLBuffer?
+  var chunks: [Chunk]
+  var failure: MTLBuffer?
+  var diffraction: MTLBuffer?
+  let validPixels: [UInt8]
+  let interval = 512
+  var spatialQuery: RuntimeSpatialQuery?
+  var detectorColumnsPipeline: MTLComputePipelineState?
+  var detectorTotalsPipeline: MTLComputePipelineState?
+  var detectorColumnsValidity: MTLBuffer?
+
+  var usesSpatialIndex: Bool {
+    ProcessInfo.processInfo.environment["QGPU_K3_SPATIAL_INDEX"] != "0"
+      && !chunks.isEmpty && chunks.allSatisfy { $0.spatial.count == 3 }
+  }
+
+  func indexedDetector(mask: [UInt8], output: MTLBuffer) throws -> MetalRuntimeANSDetectorMetrics {
+    if spatialQuery == nil {
+      spatialQuery = try RuntimeSpatialQuery(device: device, shape: Array(shape[2...]), validity: validPixels)
+    }
+    return try spatialQuery!.update(mask, source: self, output: output)
+  }
 
   public var residentBytes: UInt64 {
     guard !isReleased else { return 0 }
-    return UInt64(
-      (decodingTable?.length ?? 0) + (failure?.length ?? 0)
-        + (diffraction?.length ?? 0)) + chunks.reduce(0) { $0 + $1.bytes }
+    let buffers = [decodingTable, failure, diffraction, detectorColumnsValidity]
+    let queryBytes = buffers.reduce(UInt64(0)) { $0 + UInt64($1?.length ?? 0) }
+    return queryBytes + chunks.reduce(UInt64(0)) { $0 + $1.bytes }
   }
 
   /// Binary detector-validity mask used by derived products; raw DPs stay untouched.
@@ -75,6 +93,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   public static func load(
     source: Native4DSTEMIndexedSource,
     device: MTLDevice,
+    includeSpatialIndex: Bool = false,
     maximumAdditionalBytes: UInt64? = nil,
     shouldCancel: () -> Bool = { false },
     progress: (Int, Int) -> Void = { _, _ in }
@@ -93,13 +112,19 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       maximumAdditionalBytes: maximumAdditionalBytes)
     let maximumFrames = try RuntimeANSEncoder.maximumWindowFrames(
       source: source, maximumAdditionalBytes: maximumAdditionalBytes)
+    let spatial = try includeSpatialIndex ? RuntimeSpatialIndex(device: device,
+      shape: [source.dataset.detectorRows, source.dataset.detectorCols],
+      validity: (0..<source.dataset.detectorRows * source.dataset.detectorCols).map { source.dataset.badPixelIndices.contains($0) ? 0 : 1 }) : nil
     try packing.forEachExactDecodedWindow(
-      source: source, maximumFrames: maximumFrames,
+      source: source, maximumFrames: includeSpatialIndex ? min(512, maximumFrames) : maximumFrames,
       shouldCancel: shouldCancel, progress: progress
     ) { dense, _, range, command in
       try encoder.append(
         dense: dense, firstScan: range.lowerBound, scanCount: range.count,
         afterDecode: command)
+      if let spatial {
+        try encoder.addSpatialIndex(spatial.build(raw: dense, scans: range.count, itemBytes: source.sourceBytesPerValue))
+      }
     }
     guard encoder.readyScans == source.logicalFrameCount else {
       throw invalid("Runtime ANS did not retain the complete scan")
@@ -110,15 +135,19 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       totalSeconds: CFAbsoluteTimeGetCurrent() - started, device: device)
   }
 
-  private init(
+  private convenience init(
     source: Native4DSTEMIndexedSource, identity: String,
     built: RuntimeANSEncoder.Output, totalSeconds: Double, device: MTLDevice
   ) throws {
-    shape = [
-      source.dataset.scanRows, source.dataset.scanCols,
-      source.dataset.detectorRows, source.dataset.detectorCols,
-    ]
-    logicalDtype = source.sourceBytesPerValue == 1 ? .uint8 : .uint16
+    try self.init(dataset: source.dataset, identity: identity, built: built,
+                  totalSeconds: totalSeconds, device: device)
+  }
+
+  init(dataset: Native4DSTEMDataset, identity: String,
+       built: RuntimeANSEncoder.Output, totalSeconds: Double, device: MTLDevice) throws {
+    self.dataset = dataset
+    shape = [dataset.scanRows, dataset.scanCols, dataset.detectorRows, dataset.detectorCols]
+    logicalDtype = dataset.sourceDtype == "uint8" ? .uint8 : .uint16
     sourceIdentitySHA256 = identity
     self.device = device
     guard let queue = device.makeCommandQueue() else {
@@ -132,12 +161,12 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     decodingTable = built.decoding
     chunks = built.chunks
     failure = try Self.sharedBuffer(device: device, bytes: 4, label: "runtime ANS failure")
-    let pixels = source.dataset.detectorRows * source.dataset.detectorCols
+    let pixels = dataset.detectorRows * dataset.detectorCols
     diffraction = try Self.sharedBuffer(
       device: device, bytes: pixels * 4,
       label: "runtime ANS diffraction")
     var valid = [UInt8](repeating: 1, count: pixels)
-    for pixel in source.dataset.badPixelIndices where valid.indices.contains(pixel) {
+    for pixel in dataset.badPixelIndices where valid.indices.contains(pixel) {
       valid[pixel] = 0
     }
     validPixels = valid
@@ -150,7 +179,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       prefixSeconds: built.prefixSeconds,
       compactSeconds: built.compactSeconds,
       residentBytes: retained,
-      logicalBytes: source.logicalDecodedBytes)
+      logicalBytes: UInt64(shape.reduce(1, *)) * (logicalDtype == .uint8 ? 1 : 2))
   }
 
   /// Return one original diffraction pattern exactly, widened only for the API.
@@ -176,13 +205,13 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     return diffractionValues(from: diffraction)
   }
 
-  fileprivate var stableBuffers: [MTLBuffer] {
+  var stableBuffers: [MTLBuffer] {
     guard let decodingTable, let failure else { return [] }
     return [decodingTable, failure]
-      + chunks.flatMap { [$0.payload, $0.offsets, $0.models] }
+      + chunks.flatMap { [$0.payload, $0.offsets, $0.models] + $0.spatial }
   }
 
-  fileprivate func encodeDiffraction(
+  func encodeDiffraction(
     scan: Int, output: MTLBuffer, command: MTLCommandBuffer
   ) throws {
     guard let encoder = command.makeComputeCommandEncoder() else {
@@ -192,7 +221,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     encoder.endEncoding()
   }
 
-  fileprivate func encodeDiffraction(
+  func encodeDiffraction(
     scan: Int, output: MTLBuffer, encoder: MTLComputeCommandEncoder
   ) throws {
     try requireLive()
@@ -224,7 +253,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
       threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
   }
 
-  fileprivate func diffractionValues(from buffer: MTLBuffer) -> [UInt32] {
+  func diffractionValues(from buffer: MTLBuffer) -> [UInt32] {
     let pixels = shape[2] * shape[3]
     return Array(
       UnsafeBufferPointer(
@@ -232,14 +261,16 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     )
   }
 
-  fileprivate func encodeDetectorDelta(
+  func encodeDetectorDelta(
     selected: MTLBuffer, coefficients: MTLBuffer, changed: Int,
     output: MTLBuffer, encoder: MTLComputeCommandEncoder
   ) throws {
     try requireLive()
     guard changed > 0, let failure, let decodingTable else { return }
     let pixels = shape[2] * shape[3]
-    let usePacketOwner = changed > 32
+    let cameraColumns = usesSpatialIndex && chunks.allSatisfy { $0.scanCount <= interval }
+      && ProcessInfo.processInfo.environment["QGPU_K3_PACKET"] != "1"
+    let usePacketOwner = changed > 32 && !cameraColumns
     let width = changed <= 32 ? 32 : 128
     encoder.setComputePipelineState(usePacketOwner ? detectorPacketPipeline : detectorDeltaPipeline)
     for chunk in chunks {
@@ -267,7 +298,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     }
   }
 
-  fileprivate func checkFailure(_ command: MTLCommandBuffer) throws {
+  func checkFailure(_ command: MTLCommandBuffer) throws {
     guard let failure, command.status == .completed,
       failure.contents().load(as: UInt32.self) == 0
     else {
@@ -279,13 +310,17 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
 
   public func releaseResidentStorage() {
     chunks.removeAll(keepingCapacity: false)
+    spatialQuery = nil
     decodingTable = nil
     failure = nil
     diffraction = nil
+    detectorColumnsValidity = nil
+    detectorColumnsPipeline = nil
+    detectorTotalsPipeline = nil
     isReleased = true
   }
 
-  private func requireLive() throws {
+  func requireLive() throws {
     guard !isReleased, decodingTable != nil, failure != nil, diffraction != nil else {
       throw Self.invalid("The runtime ANS source was released; load it again")
     }
@@ -478,6 +513,11 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
       deltaFromCurrent += value == detectorMasks[priorityIndex][pixel] ? 0 : 1
       selectedFromZero += value == 1 ? 1 : 0
     }
+    if source.usesSpatialIndex && (forceRebase || min(selectedFromZero, deltaFromCurrent) > 4096) {
+      let metrics = try source.indexedDetector(mask: next, output: virtualDetectorOutputs[priorityIndex])
+      detectorMasks[priorityIndex] = next
+      return (virtualDetectorOutputs[priorityIndex], metrics)
+    }
     let rebaseFromZero = forceRebase || selectedFromZero < deltaFromCurrent
     let previous =
       rebaseFromZero
@@ -558,6 +598,17 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
         "A runtime ANS detector mask must match the detector and contain only zero or one")
     }
     let wallStarted = CFAbsoluteTimeGetCurrent()
+    if sources.allSatisfy({ $0.usesSpatialIndex }) {
+      var milliseconds = 0.0, changed = 0, submissions = 0
+      for index in sources.indices {
+        let (_, metrics) = try updatePriorityVirtualDetectorBuffer(mask: mask, priorityIndex: index, forceRebase: forceRebase)
+        milliseconds += metrics.gpuMilliseconds; changed = max(changed, metrics.changedDetectorPixels)
+        submissions += metrics.submissionCount
+      }
+      return (virtualDetectorOutputs, MetalRuntimeANSDetectorMetrics(changedDetectorPixels: changed,
+        gpuMilliseconds: milliseconds, wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
+        acquisitionCount: sources.count, submissionCount: submissions))
+    }
     var nextMasks = detectorMasks
     var changedCounts = [Int](repeating: 0, count: sources.count)
     var rebaseFromZero = [Bool](repeating: forceRebase, count: sources.count)
@@ -665,7 +716,7 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
   }
 }
 
-private final class RuntimeANSEncoder {
+final class RuntimeANSEncoder {
   struct Output {
     let chunks: [MetalRuntimeANSResidentSource.Chunk]
     let decoding: MTLBuffer
@@ -704,16 +755,23 @@ private final class RuntimeANSEncoder {
   private var reusableOffsets: MTLBuffer?
   private let interval = 512
 
-  init(
+  convenience init(
     device: MTLDevice, source: Native4DSTEMIndexedSource,
     allocatedBefore: UInt64,
     maximumAdditionalBytes: UInt64?
   ) throws {
+    try self.init(device: device, pixels: source.dataset.detectorRows * source.dataset.detectorCols,
+                  bytesPerValue: source.sourceBytesPerValue, allocatedBefore: allocatedBefore,
+                  maximumAdditionalBytes: maximumAdditionalBytes)
+  }
+
+  init(device: MTLDevice, pixels: Int, bytesPerValue: Int, allocatedBefore: UInt64,
+       maximumAdditionalBytes: UInt64?, singleFrameQueries: Bool = false) throws {
     self.device = device
     self.allocatedBefore = allocatedBefore
     self.maximumAdditionalBytes = maximumAdditionalBytes
-    pixels = source.dataset.detectorRows * source.dataset.detectorCols
-    bytesPerValue = source.sourceBytesPerValue
+    self.pixels = pixels
+    self.bytesPerValue = bytesPerValue
     guard let queue = device.makeCommandQueue() else {
       throw MetalRuntimeANSResidentSource.invalid("Metal could not create a runtime ANS encoder")
     }
@@ -730,9 +788,13 @@ private final class RuntimeANSEncoder {
     let detectorPacketName =
       detectorPacketSIMDs == 4
       ? "streamed_counts_detector_packet4" : "streamed_counts_detector_packet"
+    // Match camera snapshot queries: stop decoding once the selected frame is reached.
+    let decodeName = singleFrameQueries
+      && ProcessInfo.processInfo.environment["QGPU_K3_FRAME_PREFIX"] != "0"
+      ? "camera_frame" : "streamed_counts_decode_range"
     guard let encode = library.makeFunction(name: "streamed_counts_encode"),
       let compact = library.makeFunction(name: "streamed_counts_compact"),
-      let decode = library.makeFunction(name: "streamed_counts_decode_range"),
+      let decode = library.makeFunction(name: decodeName),
       let detectorDelta = library.makeFunction(name: "streamed_counts_detector_delta"),
       let detectorPacket = library.makeFunction(name: detectorPacketName)
     else { throw MetalRuntimeANSResidentSource.invalid("Runtime ANS encoder kernels are missing") }
@@ -744,6 +806,11 @@ private final class RuntimeANSEncoder {
     let tables = Self.tables()
     encoding = try Self.upload(tables.encoding, device: device, label: "runtime ANS encoding")
     decoding = try Self.upload(tables.decoding, device: device, label: "runtime ANS decoding")
+  }
+
+  func addSpatialIndex(_ buffers: [MTLBuffer]) throws {
+    guard !chunks.isEmpty else { throw MetalRuntimeANSResidentSource.invalid("Encode counts before indexing.") }
+    chunks[chunks.count - 1].spatial = buffers
   }
 
   func append(
@@ -980,7 +1047,7 @@ private final class RuntimeANSEncoder {
         + encodeMetadataBytes + worstPayloadBytes + tableBytes)
   }
 
-  private static func tables() -> (encoding: [UInt32], decoding: [UInt32]) {
+  static func tables() -> (encoding: [UInt32], decoding: [UInt32]) {
     var encoding = [UInt32](repeating: 0, count: 64 * 33)
     var decoding = [UInt32](repeating: 0, count: 64 * 1024)
     let low = log(0.002)

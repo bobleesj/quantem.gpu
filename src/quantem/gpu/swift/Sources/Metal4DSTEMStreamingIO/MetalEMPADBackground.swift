@@ -16,7 +16,7 @@ public final class MetalEMPADBackground {
   public let identitySHA256: String
   package let values: MTLBuffer
 
-  private init(source: NativeEMPADSource, values: MTLBuffer, identity: String) {
+  init(source: NativeEMPADSource, values: MTLBuffer, identity: String) {
     self.source = source
     self.values = values
     self.identitySHA256 = identity

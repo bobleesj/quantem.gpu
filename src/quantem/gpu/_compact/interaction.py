@@ -205,6 +205,13 @@ class StreamedSeriesCompute(CudaSeriesCompute):
 
     def _plan(self, values):
         """Decompose a signed mask into index fields plus residual pixels."""
+        if self.pixels >= 512 * 512:
+            if not hasattr(self, "_mask_planner"):
+                from .mask_plan import CudaMaskPlanner
+
+                self._mask_planner = CudaMaskPlanner(self.det_shape)
+                self.backend_metadata["mask_plan_backend"] = "cuda"
+            return self._mask_planner(values)
         return plan(values)
 
     def _cost(self, selection):

@@ -361,12 +361,26 @@ kernel void empad_mean_diffraction(device const uint* packed [[buffer(0)]],
                                    device float2* accumulator [[buffer(2)]],
                                    device float* output [[buffer(3)]],
                                    constant uint3& dimensions [[buffer(4)]],
+                                   constant uint4& region [[buffer(5)]],
+                                   constant uint& scanColumns [[buffer(6)]],
+                                   constant uint& regionShape [[buffer(7)]],
                                    uint pixel [[thread_position_in_grid]]) {
     float2 previous = dimensions.x == 0 ? float2(0) : accumulator[pixel];
     float sum = previous.x, correction = previous.y;
-    for (uint frame = 0; frame < dimensions.y; ++frame) {
-        float value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected);
-        empad_add(value / float(dimensions.z), sum, correction);
+    for (uint row = region.x; row < region.y; ++row) {
+        uint first = max(row * scanColumns + region.z, dimensions.x);
+        uint stop = min(row * scanColumns + region.w, dimensions.x + dimensions.y);
+        for (uint frame = first; frame < stop; ++frame) {
+            if (regionShape == 1u) {
+                long diameter = long(region.y - region.x);
+                long dr = 2 * (long(row) - long(region.x)) + 1 - diameter;
+                long dc = 2 * (long(frame % scanColumns) - long(region.z)) + 1 - diameter;
+                if (dr * dr + dc * dc > diameter * diameter) continue;
+            }
+            float value = empad_value(packed, descriptors,
+                (frame - dimensions.x) * 16384 + pixel, background, corrected);
+            empad_add(value / float(dimensions.z), sum, correction);
+        }
     }
     accumulator[pixel] = float2(sum, correction);
     output[pixel] = sum;

@@ -238,6 +238,68 @@ kernel void counts_to_complex(
 
 // 512 = 8^3. This is the parity-checked radix-8 kernel retained from the
 // native-device FFT implementation. One threadgroup transforms one row.
+// Combine two radix-2 stages in registers between barriers. Input is already
+// bit-reversed; 128 uses an initial radix-2 stage followed by three radix-4
+// stages, while 256 uses four radix-4 stages. One group has 64 threads.
+inline void fft_small_inplace(threadgroup float2 *work,
+    device const float2 *twiddle, uint n, uint log2n, bool inverse, uint tid) {
+    if (log2n & 1u) {
+        const uint a = 2u * tid;
+        const float2 x = work[a];
+        const float2 y = work[a + 1u];
+        work[a] = x + y;
+        work[a + 1u] = x - y;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint width = (log2n & 1u) ? 8u : 4u; width <= n; width *= 4u) {
+        if (tid < n / 4u) {
+            const uint quarter = width / 4u;
+            const uint j = tid % quarter;
+            const uint a = (tid / quarter) * width + j;
+            float2 w1 = twiddle[j * (2u * n / width)];
+            float2 w2 = twiddle[j * (n / width)];
+            if (inverse) { w1.y = -w1.y; w2.y = -w2.y; }
+            const float2 w3 = inverse ? float2(-w2.y, w2.x) : float2(w2.y, -w2.x);
+            const float2 x0 = work[a];
+            const float2 x1 = complex_mul(w1, work[a + quarter]);
+            const float2 x2 = work[a + 2u * quarter];
+            const float2 x3 = complex_mul(w1, work[a + 3u * quarter]);
+            const float2 u = x0 + x1;
+            const float2 v = x0 - x1;
+            const float2 p = complex_mul(w2, x2 + x3);
+            const float2 q = complex_mul(w3, x2 - x3);
+            work[a] = u + p;
+            work[a + quarter] = v + q;
+            work[a + 2u * quarter] = u - p;
+            work[a + 3u * quarter] = v - q;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+// Native 128/256 row FFT. A group owns one row; butterfly pairs are disjoint
+// at each stage. Keep the independently tuned radix-8 512 implementation below.
+kernel void fft_rows_small_mixed_radix(
+    device const float2 *input [[buffer(0)]],
+    device float2 *output [[buffer(1)]],
+    device const float2 *twiddle [[buffer(2)]],
+    constant FFTParams &params [[buffer(3)]],
+    threadgroup float2 *work [[threadgroup(0)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint3 group [[threadgroup_position_in_grid]],
+    uint3 threads [[threads_per_threadgroup]]) {
+    const uint n = params.n;
+    const size_t base = (size_t)group.x * n;
+    for (uint i = tid; i < n; i += threads.x) {
+        const uint reversed = reverse_bits(i) >> (32u - params.log2n);
+        work[reversed] = input[base + i];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    fft_small_inplace(work, twiddle, n, params.log2n, params.inverse != 0u, tid);
+    const float scale = params.inverse ? 1.0f / float(n) : 1.0f;
+    for (uint i = tid; i < n; i += threads.x) output[base + i] = work[i] * scale;
+}
+
 kernel void fft_rows_radix8(
     device const float2 *input [[buffer(0)]],
     device float2 *output [[buffer(1)]],
@@ -663,9 +725,9 @@ kernel void ssb_gamma_accumulate_half(
         const float aperture_m = bg.w * aperture_at(qx - bg.x, qy - bg.y, params);
         const float aperture_p = bg.w * aperture_at(qx + bg.x, qy + bg.y, params);
         if (aperture_m <= 0.0f && aperture_p <= 0.0f) continue;
-        const size_t cross_base = (size_t)bf * 1024u;
+        const size_t cross_base = (size_t)bf * (2u * params.n);
         const float2 row_cross = cross_trig[cross_base + row];
-        const float2 col_cross = cross_trig[cross_base + 512u + col];
+        const float2 col_cross = cross_trig[cross_base + params.n + col];
         const float cosine_cross = row_cross.x * col_cross.x - row_cross.y * col_cross.y;
         const float sine_cross = row_cross.y * col_cross.x + row_cross.x * col_cross.y;
         const float bracket_r = (aperture_m - aperture_p) * cosine_q;
@@ -810,12 +872,12 @@ inline float2 ssb_corrected_value_precomputed_chi(
     const float aperture_p = bg.w * aperture_at(qx + bg.x, qy + bg.y, params);
     if (aperture_m <= 0.0f && aperture_p <= 0.0f) return float2(0.0f);
 
-    const float2 cached_chi = chi_trig[row * 512u + col];
+    const float2 cached_chi = chi_trig[row * params.n + col];
     const float cosine_q = cached_chi.x;
     const float sine_q = cached_chi.y;
-    const size_t cross_base = (size_t)bf * 1024u;
+    const size_t cross_base = (size_t)bf * (2u * params.n);
     const float2 row_cross = cross_trig[cross_base + row];
-    const float2 col_cross = cross_trig[cross_base + 512u + col];
+    const float2 col_cross = cross_trig[cross_base + params.n + col];
     const float cosine_cross =
         row_cross.x * col_cross.x - row_cross.y * col_cross.y;
     const float sine_cross =
@@ -836,13 +898,13 @@ inline float2 ssb_corrected_value_precomputed_chi(
     );
 }
 
-kernel void ssb_precompute_chi_trig512(
+kernel void ssb_precompute_chi_trig(
     device const float *q_row [[buffer(0)]],
     device const float *q_col [[buffer(1)]],
     device float2 *chi_trig [[buffer(2)]],
     constant SSBParams &params [[buffer(3)]],
     uint pixel [[thread_position_in_grid]]) {
-    constexpr uint n = 512u;
+    const uint n = params.n;
     if (pixel >= n * n) return;
     const uint row = pixel / n;
     const uint col = pixel - row * n;
@@ -860,14 +922,92 @@ kernel void ssb_precompute_chi_trig512(
     chi_trig[pixel] = float2(cosine_q, sine_q);
 }
 
-kernel void ssb_precompute_cross_trig512(
+// Fused exact native-size phase/loss: consume only the Hermitian source, but
+// apply gamma at every full-plane frequency. No corrected-spectrum projection.
+// The first inverse pass writes transposed rows so the second pass is contiguous.
+kernel void ssb_correct_half_ifft_small(
+    device const float2 *half_g [[buffer(0)]],
+    device const float4 *bf_geometry [[buffer(1)]],
+    device const float *q_row [[buffer(2)]],
+    device const float *q_col [[buffer(3)]],
+    device const float2 *twiddle [[buffer(4)]],
+    device float2 *intermediate [[buffer(5)]],
+    constant SSBParams &params [[buffer(6)]],
+    device const float2 *chi_trig [[buffer(7)]],
+    device const float2 *cross_trig [[buffer(8)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint2 group [[threadgroup_position_in_grid]]) {
+    const uint n = params.n;
+    const uint log2n = n == 128u ? 7u : 8u;
+    const uint row = group.x;
+    const uint local_bf = group.y;
+    const uint hc = n / 2u + 1u;
+    threadgroup float2 work[256];
+    for (uint col = tid; col < n; col += 64u) {
+        const bool mirrored = col > n / 2u;
+        const uint sr = mirrored ? (n - row) % n : row;
+        const uint sc = mirrored ? n - col : col;
+        float2 value = half_g[(size_t)local_bf * n * hc + sr * hc + sc];
+        if (mirrored) value.y = -value.y;
+        work[reverse_bits(col) >> (32u - log2n)] = ssb_corrected_value_precomputed_chi(
+            value, row, col, params.bf_offset + local_bf, bf_geometry, q_row, q_col,
+            chi_trig, cross_trig, params);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    fft_small_inplace(work, twiddle, n, log2n, true, tid);
+    for (uint col = tid; col < n; col += 64u) {
+        intermediate[(size_t)local_bf * n * n + col * n + row] = work[col] / float(n);
+    }
+}
+
+kernel void ssb_ifft_small_phase_moments(
+    device const float2 *intermediate [[buffer(0)]],
+    device const float2 *twiddle [[buffer(1)]],
+    device float *phase_sum [[buffer(2)]],
+    device float *phase_sumsq [[buffer(3)]],
+    constant SSBParams &params [[buffer(4)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint col [[threadgroup_position_in_grid]]) {
+    const uint n = params.n;
+    const uint log2n = n == 128u ? 7u : 8u;
+    threadgroup float2 work[256];
+    float sum[4], sumsq[4];
+    for (uint lane = 0u; lane < n / 64u; ++lane) {
+        const uint pixel = (tid + 64u * lane) * n + col;
+        sum[lane] = phase_sum[pixel];
+        sumsq[lane] = phase_sumsq[pixel];
+    }
+    for (uint bf = 0u; bf < params.batch; ++bf) {
+        for (uint row = tid; row < n; row += 64u) {
+            work[reverse_bits(row) >> (32u - log2n)] =
+                intermediate[(size_t)bf * n * n + col * n + row];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        fft_small_inplace(work, twiddle, n, log2n, true, tid);
+        for (uint lane = 0u; lane < n / 64u; ++lane) {
+            const float2 value = work[tid + lane * 64u];
+            // Positive normalization does not change the complex phase.
+            const float phase = atan2(value.y, value.x);
+            sum[lane] += phase;
+            sumsq[lane] += phase * phase;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint lane = 0u; lane < n / 64u; ++lane) {
+        const uint pixel = (tid + 64u * lane) * n + col;
+        phase_sum[pixel] = sum[lane];
+        phase_sumsq[pixel] = sumsq[lane];
+    }
+}
+
+kernel void ssb_precompute_cross_trig(
     device const float4 *bf_geometry [[buffer(0)]],
     device const float *q_row [[buffer(1)]],
     device const float *q_col [[buffer(2)]],
     device float2 *cross_trig [[buffer(3)]],
     constant SSBParams &params [[buffer(4)]],
     uint index [[thread_position_in_grid]]) {
-    constexpr uint n = 512u;
+    const uint n = params.n;
     const uint active_bf = params.batch;
     const uint values_per_bf = 2u * n;
     if (index >= active_bf * values_per_bf) return;
@@ -957,8 +1097,8 @@ kernel void ssb_accumulate_phase_moments(
     device float *phase_sum [[buffer(1)]],
     device float *phase_sumsq [[buffer(2)]],
     constant uint &batch [[buffer(3)]],
+    constant uint &plane [[buffer(4)]],
     uint pixel [[thread_position_in_grid]]) {
-    constexpr uint plane = 512u * 512u;
     if (pixel >= plane) return;
     float sum = phase_sum[pixel];
     float sumsq = phase_sumsq[pixel];
@@ -973,10 +1113,10 @@ kernel void ssb_accumulate_phase_moments(
 }
 
 
-// The corrected non-DC spectrum obeys F(-q) = -conj(F(q)). Multiplying by
-// -i makes it Hermitian, so only the native 512x257 half-plane is transformed
-// along the first dimension. The real/complex DC value is restored after the
-// second transform. This is an exact symmetry reduction, not BF subsampling.
+// Away from the signed Nyquist axes, the corrected non-DC spectrum obeys
+// F(-q) = -conj(F(q)). Multiplying by -i makes that interior Hermitian.
+// Transform the native 512x257 half-plane, then restore DC and the exact
+// Nyquist-boundary residual below. No BF terms or Fourier axes are discarded.
 //
 // The intermediate between the two transforms is stored in four-row blocks,
 // [bf][row / 4][col 0..256][row % 4], so this pass writes contiguous 32-byte
@@ -1053,6 +1193,62 @@ kernel void ssb_correct_half_column_ifft512_hermitian(
 #undef STORE_BLOCKED
 }
 
+// The signed Nyquist coordinate equals its own wrapped negative. The usual
+// F(-q)=-conj(F(q)) identity therefore does not hold on those two axes. Restore
+// their exact complex contribution with two 1D transforms, rather than a full
+// complex inverse FFT for every BF. The intersection belongs to the row only.
+kernel void ssb_ifft512_nyquist_correction(
+    device const float2 *half_g [[buffer(0)]],
+    device const float4 *bf_geometry [[buffer(1)]],
+    device const float *q_row [[buffer(2)]],
+    device const float *q_col [[buffer(3)]],
+    device const float2 *twiddle [[buffer(4)]],
+    device float2 *correction [[buffer(5)]],
+    constant SSBParams &params [[buffer(6)]],
+    device const float2 *chi_trig [[buffer(7)]],
+    device const float2 *cross_trig [[buffer(8)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint2 group [[threadgroup_position_in_grid]]) {
+    constexpr uint n = 512u;
+    const uint axis = group.x;
+    const uint local_bf = group.y;
+    const uint bf = params.bf_offset + local_bf;
+    const size_t base = (size_t)local_bf * n * 257u;
+    threadgroup float2 scratch[512];
+    float2 values[8];
+    for (uint lane = 0u; lane < 8u; ++lane) {
+        const uint coordinate = octal_reverse_512(tid * 8u + lane);
+        const uint row = axis == 0u ? n / 2u : coordinate;
+        const uint col = axis == 0u ? coordinate : n / 2u;
+        float2 delta = float2(0.0f);
+        if ((axis == 0u && (col == 0u || col >= n / 2u)) ||
+            (axis == 1u && row != n / 2u)) {
+            const uint mr = (n - row) % n;
+            const uint mc = (n - col) % n;
+            float2 source = col <= n / 2u
+                ? half_g[base + (size_t)col * n + row]
+                : half_g[base + (size_t)mc * n + mr];
+            if (col > n / 2u) source.y = -source.y;
+            const float2 actual = ssb_corrected_value_precomputed_chi(
+                source, row, col, bf, bf_geometry, q_row, q_col,
+                chi_trig, cross_trig, params);
+            const float2 mirror_source = half_g[base + (size_t)mc * n + mr];
+            const float2 mirror = ssb_corrected_value_precomputed_chi(
+                mirror_source, mr, mc, bf, bf_geometry, q_row, q_col,
+                chi_trig, cross_trig, params);
+            delta = actual + float2(mirror.x, -mirror.y);
+            if (col == 0u || col == n / 2u) delta *= 0.5f;
+        }
+        values[lane] = delta;
+    }
+    ifft512_radix8_registers(values[0], values[1], values[2], values[3],
+        values[4], values[5], values[6], values[7], tid, twiddle, scratch);
+    for (uint lane = 0u; lane < 8u; ++lane) {
+        correction[((size_t)local_bf * 2u + axis) * n + tid + lane * 64u] =
+            values[lane] * (1.0f / (512.0f * 512.0f));
+    }
+}
+
 // Row-pass threadgroup tile: row-in-block g lives at g * 324, half-plane
 // column c at c + 2 * (c >> 3). The padding keeps both the cooperative block
 // writes and the octal-reversed FFT operand reads free of bank conflicts.
@@ -1076,10 +1272,9 @@ inline void ssb_fetch_row_block(
     }
 }
 
-// Complete the Hermitian inverse transform along x and accumulate the phase
-// of DC/(512^2) + i*h. h is real by construction; its tiny numerical imaginary
-// residue is intentionally ignored because the exact Hermitian transform is
-// real-valued. One threadgroup owns four consecutive rows: FFT group
+// Complete the Hermitian interior transform and accumulate the phase of
+// DC/(512^2) + i*h + the complex Nyquist residual. One threadgroup owns four
+// consecutive rows: FFT group
 // g = thread_index / 64 (two whole SIMD groups) transforms row 4 * block + g.
 [[max_total_threads_per_threadgroup(256)]]
 kernel void ssb_ifft512_rows_hermitian_phase_moments(
@@ -1089,6 +1284,7 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
     device float *phase_sumsq [[buffer(3)]],
     constant uint &batch [[buffer(4)]],
     constant float2 &dc [[buffer(5)]],
+    device const float2 *nyquist_correction [[buffer(6)]],
     uint thread_index [[thread_index_in_threadgroup]],
     uint threads_per_group [[threads_per_threadgroup]],
     uint row_block [[threadgroup_position_in_grid]]) {
@@ -1122,9 +1318,6 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
                       0.0f, 0.0f, 0.0f, 0.0f};
     constexpr float scale = 1.0f / 512.0f;
     const float2 dc_spatial = dc * (scale * scale);
-    const bool positive_dc = dc_spatial.x > 0.0f;
-    const float inverse_dc_real = positive_dc
-        ? 1.0f / dc_spatial.x : 0.0f;
 
     device const float2 *block0 =
         column_ifft_half + (size_t)row_block * block_float2;
@@ -1162,10 +1355,12 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
         );
         for (uint lane = 0u; lane < 8u; ++lane) {
             const float h = r[lane].x * scale;
-            const float imaginary = dc_spatial.y + h;
-            const float phase = positive_dc
-                ? metal::atan(imaginary * inverse_dc_real)
-                : metal::atan2(imaginary, dc_spatial.x);
+            const uint col = tid + lane * 64u;
+            const size_t boundary_base = (size_t)local_bf * 2u * n;
+            const float2 delta =
+                (row & 1u ? -1.0f : 1.0f) * nyquist_correction[boundary_base + col] +
+                (col & 1u ? -1.0f : 1.0f) * nyquist_correction[boundary_base + n + row];
+            const float phase = metal::atan2(dc_spatial.y + h + delta.y, dc_spatial.x + delta.x);
             sum[lane] += phase;
             sumsq[lane] += phase * phase;
         }

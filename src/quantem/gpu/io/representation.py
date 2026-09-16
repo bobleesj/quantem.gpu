@@ -110,7 +110,7 @@ class DataRepresentation(str, Enum):
                 magic = stream.read(len(_LOSSLESS_PACK_CONTAINER_MAGIC))
         except OSError:
             return cls.DENSE
-        if magic == b"QGANS\0\1\0":
+        if magic in (b"QGANS\0\1\0", b"QGPUSTRM", b"QEMDATA1"):
             return cls.ENCODED
         if magic == _PAIRED_RESIDENT_MAGIC:
             return cls.PAIRED

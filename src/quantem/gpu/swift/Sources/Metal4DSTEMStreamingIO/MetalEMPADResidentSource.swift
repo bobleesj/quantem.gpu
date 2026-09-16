@@ -29,7 +29,7 @@ public final class MetalEMPADResidentSource {
   /// Optional calibrated product transform; original packed measurements remain intact.
   public private(set) var background: MetalEMPADBackground?
   public private(set) var isReleased = false
-  private let device: MTLDevice
+  let device: MTLDevice
   private let diffractionPipeline: MTLComputePipelineState
   private let detectorPipeline: MTLComputePipelineState
   private let serialDetector: Bool
@@ -43,9 +43,9 @@ public final class MetalEMPADResidentSource {
   private var priorDetectorMask: [UInt8]?
   private var priorDetectorCommand: MTLCommandBuffer?
   private var incrementalUpdates = 0
-  private var chunks: [Chunk]
+  var chunks: [Chunk]
 
-  private struct Chunk {
+  struct Chunk {
     let firstFrame: Int
     let frameCount: Int
     let payload: MTLBuffer
@@ -84,7 +84,7 @@ public final class MetalEMPADResidentSource {
     }
   }
 
-  private init(
+  init(
     source: NativeEMPADSource, device: MTLDevice,
     diffraction: MTLComputePipelineState, detector: MTLComputePipelineState, chunks: [Chunk],
     logicalSHA256: String, centerOfMass: MTLComputePipelineState, mean: MTLComputePipelineState,
@@ -139,6 +139,13 @@ public final class MetalEMPADResidentSource {
     subtracting background: MetalEMPADBackground? = nil,
     shouldCancel: () -> Bool = { false }
   ) throws -> MetalEMPADResidentSource {
+    if source.hasQEMStorage {
+      guard background == nil else {
+        throw failure("A QEM file restores its saved background state. Do not apply another dark during loading.")
+      }
+      return try restoreQEM(source, device: device, memoryBudgetBytes: memoryBudgetBytes,
+                            shouldCancel: shouldCancel)
+    }
     let started = CFAbsoluteTimeGetCurrent()
     let profile = ProcessInfo.processInfo.environment["QGPU_EMPAD_LOAD_PROFILE"] == "1"
     var readSeconds = 0.0
@@ -509,7 +516,21 @@ public final class MetalEMPADResidentSource {
   /// Encode the arithmetic mean of every scan position, with compensated sums.
   /// Output is a 128×128 float32 DP. Temporary compensation is only one DP,
   /// retained by the command until completion; no dense 4D array is allocated.
-  public func encodeMeanDiffraction(into output: MTLBuffer, command: MTLCommandBuffer) throws {
+  /// Optional half-open scan `rows` and `columns` restrict the mean to a
+  /// rectangle or circle with square bounds. Circle pixel centers inside or on
+  /// the boundary count equally. Background correction and signed values are preserved.
+  public func encodeMeanDiffraction(
+    into output: MTLBuffer, command: MTLCommandBuffer,
+    rows: Range<Int>? = nil, columns: Range<Int>? = nil,
+    shape: MetalScanRegionShape = .rectangle
+  ) throws {
+    let selectedRows = rows ?? 0..<source.scanRows
+    let selectedColumns = columns ?? 0..<source.scanColumns
+    guard !selectedRows.isEmpty, !selectedColumns.isEmpty,
+      selectedRows.lowerBound >= 0, selectedRows.upperBound <= source.scanRows,
+      selectedColumns.lowerBound >= 0, selectedColumns.upperBound <= source.scanColumns,
+      shape != .circle || selectedRows.count == selectedColumns.count
+    else { throw Self.failure("Mean DP requires a nonempty region inside the loaded scan; circle bounds must be square.") }
     guard !isReleased, output.length >= 16384 * 4,
       output.device.registryID == device.registryID,
       command.commandQueue.device.registryID == device.registryID,
@@ -522,9 +543,17 @@ public final class MetalEMPADResidentSource {
     bindBackground(encoder, fallback: output)
     encoder.setBuffer(accumulator, offset: 0, index: 2)
     encoder.setBuffer(output, offset: 0, index: 3)
+    var region = SIMD4<UInt32>(UInt32(selectedRows.lowerBound), UInt32(selectedRows.upperBound),
+      UInt32(selectedColumns.lowerBound), UInt32(selectedColumns.upperBound))
+    var scanColumns = UInt32(source.scanColumns)
+    encoder.setBytes(&region, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 5)
+    encoder.setBytes(&scanColumns, length: 4, index: 6)
+    var regionShape = shape.rawValue
+    encoder.setBytes(&regionShape, length: 4, index: 7)
     for chunk in chunks {
       var dimensions = SIMD3<UInt32>(
-        UInt32(chunk.firstFrame), UInt32(chunk.frameCount), UInt32(source.frameCount))
+        UInt32(chunk.firstFrame), UInt32(chunk.frameCount),
+        UInt32(shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count)))
       encoder.setBuffer(chunk.payload, offset: 0, index: 0)
       encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
       encoder.setBytes(&dimensions, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 4)

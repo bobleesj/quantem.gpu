@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from functools import lru_cache
-import math
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +52,13 @@ def _runtime():
         (root / name).read_text()
         for name in ("streamed_counts.msl", "count_tables.msl")
     )
+    source += (
+        "\n"
+        + (
+            Path(__file__).parents[3]
+            / "swift/Sources/Metal4DSTEMKernels/Resources/runtime_spatial.metal"
+        ).read_text()
+    )
     library, error = device.newLibraryWithSource_options_error_(source, options, None)
     if library is None:
         raise RuntimeError(f"Runtime count-ANS Metal compilation failed: {error}")
@@ -73,6 +80,23 @@ def _runtime():
         )
         if pipeline is None:
             raise RuntimeError(f"Runtime count-ANS {name} pipeline failed: {error}")
+        pipelines[name] = pipeline
+    for name in (
+        "camera_mask_leaves",
+        "camera_mask_roots",
+        "camera_index_sum_u64_simd",
+        "camera_delta_u64",
+        "camera_frame_native",
+        "camera_fields",
+        "camera_field_widths",
+        "camera_pack_fields",
+    ):
+        function = library.newFunctionWithName_(name)
+        pipeline, error = device.newComputePipelineStateWithFunction_error_(
+            function, None
+        )
+        if pipeline is None:
+            raise RuntimeError(f"Camera Metal pipeline {name} failed: {error}")
         pipelines[name] = pipeline
     return device, metal, device.newCommandQueue(), pipelines
 
@@ -160,7 +184,12 @@ class MPSStreamedCounts:
             for buffer in (self._encoding, self._decoding, self._valid, self._errors)
             if buffer is not None
         )
-        return shared + sum(chunk.nbytes for chunk in self.chunks)
+        spatial = sum(
+            int(buffer.length())
+            for chunk in getattr(self, "spatial_chunks", [])
+            for buffer in chunk
+        )
+        return shared + sum(chunk.nbytes for chunk in self.chunks) + spatial
 
     @property
     def nbytes(self) -> int:
@@ -216,8 +245,12 @@ class MPSStreamedCounts:
             scratch = _allocate_shared(
                 self._device, self._metal, scratch_bytes, "ANS encoding scratch"
             )
-            sizes = _allocate_shared(self._device, self._metal, streams * 4, "ANS sizes")
-            states = _allocate_shared(self._device, self._metal, streams * 4, "ANS states")
+            sizes = _allocate_shared(
+                self._device, self._metal, streams * 4, "ANS sizes"
+            )
+            states = _allocate_shared(
+                self._device, self._metal, streams * 4, "ANS states"
+            )
             models = _allocate_shared(self._device, self._metal, streams, "ANS models")
             parameters = np.asarray(
                 [scans, pixels, self.interval, streams, self.dtype.itemsize],
@@ -296,10 +329,10 @@ class MPSStreamedCounts:
             dtype=np.uint64,
         ).tobytes()
         encoder = command.computeCommandEncoder()
-        encoder.setComputePipelineState_(self._pipelines["decode_range"])
-        for index, buffer in enumerate(
-            (*chunk.buffers, self._decoding, self._errors)
-        ):
+        encoder.setComputePipelineState_(
+            self._pipelines["camera_frame_native" if count == 1 else "decode_range"]
+        )
+        for index, buffer in enumerate((*chunk.buffers, self._decoding, self._errors)):
             encoder.setBuffer_offset_atIndex_(buffer, 0, index)
         encoder.setBuffer_offset_atIndex_(output, int(output_offset_bytes), 5)
         encoder.setBytes_length_atIndex_(parameters, len(parameters), 6)
@@ -331,6 +364,18 @@ class MPSStreamedCounts:
             output.release()
             raise
 
+    def extract_diffraction_device(self, scan_row: int, scan_column: int):
+        """Return one exact native-count pattern in caller-owned Metal storage."""
+        self._check_resident()
+        if not 0 <= scan_row < self.shape[0] or not 0 <= scan_column < self.shape[1]:
+            raise IndexError(
+                "Choose a scan row and column inside the loaded acquisition."
+            )
+        first = scan_row * self.shape[1] + scan_column
+        output = self.decode_scan_range_device(first, first + 1)
+        output.shape = self.shape[2:]
+        return output
+
     def _decode_scan_range_torch(self, first: int, stop: int):
         """Decode directly into independently owned Torch accelerator storage."""
         import ctypes
@@ -342,10 +387,13 @@ class MPSStreamedCounts:
         first, stop = int(first), int(stop)
         scan_count = math.prod(self.shape[:2])
         if not 0 <= first < stop <= scan_count:
-            raise ValueError(f"Scan range must be nonempty and inside [0, {scan_count}).")
+            raise ValueError(
+                f"Scan range must be nonempty and inside [0, {scan_count})."
+            )
         output = torch.empty(
             (stop - first, *self.shape[2:]),
-            dtype=getattr(torch, self.dtype.name), device="mps",
+            dtype=getattr(torch, self.dtype.name),
+            device="mps",
         )
         # Torch storage holds the MTLBuffer object, as in ATen's
         # getMTLBufferStorage. This wrapper borrows it; never release it here.
@@ -355,11 +403,12 @@ class MPSStreamedCounts:
         buffer = objc.objc_object(
             c_void_p=ctypes.c_void_p(output.untyped_storage().data_ptr())
         )
-        if (
-            int(buffer.length()) < output.numel() * output.element_size()
-            or int(buffer.device().registryID()) != int(self._device.registryID())
-        ):
-            raise RuntimeError("Torch storage must belong to the same Metal device as the resident.")
+        if int(buffer.length()) < output.numel() * output.element_size() or int(
+            buffer.device().registryID()
+        ) != int(self._device.registryID()):
+            raise RuntimeError(
+                "Torch storage must belong to the same Metal device as the resident."
+            )
         command = self._queue.commandBuffer()
         self._encode_scan_range_into(command, first, stop, buffer)
         _complete(command, "ANS Torch range read")
@@ -450,6 +499,10 @@ class MPSStreamedCounts:
             raise ValueError(
                 f"mask must have detector shape {self.shape[2:]} and be binary."
             )
+        if len(getattr(self, "spatial_chunks", [])) == len(self.chunks) and self.chunks:
+            from ._spatial import detector_sum
+
+            return detector_sum(self, values)
         pixels = math.prod(self.shape[2:])
         mask_buffer = _upload(
             self._device,
@@ -457,9 +510,7 @@ class MPSStreamedCounts:
             (values.astype(bool) & self.valid_pixels).astype(np.uint8).reshape(-1),
             "ANS detector mask",
         )
-        output = MPSANSArray(
-            self._device, self._metal, self.shape[:2], np.uint64
-        )
+        output = MPSANSArray(self._device, self._metal, self.shape[:2], np.uint64)
         decoded = MPSANSArray(
             self._device,
             self._metal,
@@ -502,6 +553,15 @@ class MPSStreamedCounts:
             decoded.release()
             _release(mask_buffer)
 
+    def detector_delta_device(self, mask, previous=None, output=None):
+        """Update an exact uint64 detector image from changed mask membership."""
+        self._check_resident()
+        if previous is None or output is None:
+            return self.detector_sum_device(mask)
+        from ._spatial import detector_delta
+
+        return detector_delta(self, mask, previous, output)
+
     def detector_mean_device(self):
         """Return the per-scan mean over valid detector pixels as float32."""
         sums = self.detector_sum_device(np.ones(self.shape[2:], dtype=bool))
@@ -529,6 +589,10 @@ class MPSStreamedCounts:
 
     def release(self) -> None:
         """Release every retained ANS buffer immediately."""
+        for chunk in getattr(self, "spatial_chunks", []):
+            for buffer in chunk:
+                _release(buffer)
+        self.spatial_chunks = []
         chunks, self.chunks = self.chunks, []
         for chunk in chunks:
             for buffer in chunk.buffers:

@@ -1,0 +1,94 @@
+{
+  "bin" : 1,
+  "crop" : "none",
+  "data" : "synthetic uint8 native scans; real full-aperture calibration, not real acquisition counts",
+  "device" : "Apple M5",
+  "repeats" : 20,
+  "results" : [
+    {
+      "active_bf" : 8937,
+      "cache_bytes" : 594846720,
+      "object_gpu" : {
+        "mean_ms" : 8.0477625044295564,
+        "p50_ms" : 8.0559166963212192,
+        "p95_ms" : 8.1358750467188656
+      },
+      "object_wall" : {
+        "mean_ms" : 8.4601461887359619,
+        "p50_ms" : 8.4840059280395508,
+        "p95_ms" : 8.5539817810058594
+      },
+      "objective_gpu" : {
+        "mean_ms" : 36.253441669396125,
+        "p50_ms" : 36.1317916540429,
+        "p95_ms" : 38.670583337079734
+      },
+      "objective_wall" : {
+        "mean_ms" : 36.762744188308716,
+        "p50_ms" : 36.653995513916016,
+        "p95_ms" : 39.188027381896973
+      },
+      "prepare_seconds" : 0.21454000473022461,
+      "sampled_metal_allocated_bytes" : 769998848,
+      "scan_size" : 128,
+      "selected_bf" : 8937
+    },
+    {
+      "active_bf" : 8937,
+      "cache_bytes" : 2361083904,
+      "object_gpu" : {
+        "mean_ms" : 24.191641670768149,
+        "p50_ms" : 24.241041683126241,
+        "p95_ms" : 25.186083337757736
+      },
+      "object_wall" : {
+        "mean_ms" : 24.78213906288147,
+        "p50_ms" : 24.807929992675781,
+        "p95_ms" : 25.886058807373047
+      },
+      "objective_gpu" : {
+        "mean_ms" : 156.01325833122246,
+        "p50_ms" : 156.68258332880214,
+        "p95_ms" : 160.24666663724929
+      },
+      "objective_wall" : {
+        "mean_ms" : 156.62358999252319,
+        "p50_ms" : 157.23097324371338,
+        "p95_ms" : 161.00597381591797
+      },
+      "prepare_seconds" : 0.52599501609802246,
+      "sampled_metal_allocated_bytes" : 3022143488,
+      "scan_size" : 256,
+      "selected_bf" : 8937
+    },
+    {
+      "active_bf" : 8937,
+      "cache_bytes" : 9407729664,
+      "object_gpu" : {
+        "mean_ms" : 83.317179162986577,
+        "p50_ms" : 82.391041680239141,
+        "p95_ms" : 94.389083271380514
+      },
+      "object_wall" : {
+        "mean_ms" : 83.863300085067749,
+        "p50_ms" : 82.902073860168457,
+        "p95_ms" : 94.909906387329102
+      },
+      "objective_gpu" : {
+        "mean_ms" : 293.88251666678116,
+        "p50_ms" : 291.39658331405371,
+        "p95_ms" : 318.26783332508057
+      },
+      "objective_wall" : {
+        "mean_ms" : 295.5266535282135,
+        "p50_ms" : 292.92798042297363,
+        "p95_ms" : 319.68092918395996
+      },
+      "prepare_seconds" : 3.1759079694747925,
+      "sampled_metal_allocated_bytes" : 11975753728,
+      "scan_size" : 512,
+      "selected_bf" : 8937
+    }
+  ],
+  "warmups" : 3
+}

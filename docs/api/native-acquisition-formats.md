@@ -1,5 +1,11 @@
 # Native acquisition formats and metadata
 
+For portable copies, use the versioned [QuantEM data (.qem) contract](qem-format.md).
+It reuses the microscope vocabulary documented below, preserves reader-retained
+source fields, and distinguishes scientific metadata from the payload codec.
+Native `.qem` exports support integer K3/ARINA and calibrated EMPAD float32;
+the codec table and explicit limitations are documented in that contract.
+
 `Native4DSTEMIO` owns source identification, layout validation, calibration and
 microscope metadata parsing for native clients. Applications should reuse these
 readers, not duplicate HDF5 paths or infer physical units from filenames.
@@ -10,10 +16,12 @@ products**. Header and metadata parsing run on the host; that is not CPU
 decompression of the scientific volume. This page describes native Swift/Metal
 support, not a promise that Python, CUDA, WebGPU or iOS supports the same files.
 
-## Layout protocol v1
+## Layout protocol v1.1
 
-This section is the **native acquisition layout protocol, version 1**: a written
-contract for interpreting existing vendor files. It does not introduce a new
+This section is the **native acquisition layout protocol, version 1.1**: a written
+contract for interpreting existing vendor files. Revision 1.1 adds K3 DM4 and
+compressed acquisition snapshots to version 1 without changing existing reader
+contracts. It does not introduce a new
 on-disk file format or claim an official vendor version. `R` means required
 for the shown layout; `O` means optional. Optional physical quantities need
 valid units and values before being promoted to calibration.
@@ -139,6 +147,95 @@ dataset must have valid in-file storage bounds and exactly the expected byte
 count; external storage, soft/external links and compressed/chunked layouts
 are rejected. A Velox scalar-image EMD does not satisfy this 4D contract.
 
+### K3 DigitalMicrograph DM4
+
+K3 is a detector identity, DM4 is its acquisition container, and `.ans` is a
+saved compressed representation. These are separate properties. A `.dm4`
+extension alone is not evidence of K3. `NativeDM4Source` validates the DM4 v4
+header and selects the unique rank-four image; a survey image is not selected.
+`sourceFormat` becomes `K3 DM4` only when the selected image's recorded
+`Source Model`, after trimming and case normalization, equals `K3`. Other or
+missing models remain `DigitalMicrograph DM4`.
+
+```text
+acquisition.dm4
+└── ImageList/<selected image>
+    ├── ImageData
+    │   ├── DataType                         R: 6 (uint8) or 10 (uint16)
+    │   ├── Dimensions/<axis>                R: four positive dimensions
+    │   ├── Data                             R: complete little-endian counts
+    │   └── Calibrations/Dimension/<axis>
+    │       ├── Scale                        R: recorded axis sampling
+    │       └── Units                        R: detector axes "1/nm"
+    └── ImageTags
+        ├── Acquisition/Device/Source Model  O: "K3" identifies this detector
+        ├── Acquisition/Device/Source ID     O: recorded device identifier
+        ├── Acquisition/Parameters/High Level/Processing  O: vendor description
+        ├── Microscope Info/Voltage          O: positive accelerating voltage, V
+        └── SI/Acquisition/Date               O: original date string
+```
+
+DM4 dimensions and calibrations are reversed together into public
+`(scan_row, scan_col, detector_row, detector_col)` order. There is no spatial
+transpose, crop, binning, count rescaling or automatic median correction.
+Native loading rejects ambiguous four-dimensional images, unsupported dtypes,
+endianness, missing reciprocal-axis calibration and incomplete payloads.
+
+| Recorded quantity | Native metadata or dataset field | Units / missing behavior |
+| --- | --- | --- |
+| Device model | `camera_model`, derived `sourceFormat` | Recorded text; absent model does not imply K3 |
+| Device identifier | `camera_id` | Original text; optional |
+| Acquisition processing | `acquisition_processing` | Original text, e.g. `Gain Normalized`; not evidence of background subtraction |
+| Reader interpretation | `sourceFormatVersion` | `digitalmicrograph/native-counts-v1`; not a vendor software version |
+| Scan axis scales | `sourceScanCalibration` | Row/column Å per pixel: nm × 10, µm/um × 10,000, A/Å unchanged; unsupported units leave scan calibration absent |
+| Detector axis scales | `kPixelSizeRow`, `kPixelSizeCol`, `kPixelUnit` | Recorded 1/nm divided by 10 into 1/angstrom |
+| Voltage | `electron_microscope/electron_source/accelerating_voltage` and `@units` | Positive V in originals; snapshots may normalize to kV |
+| Acquisition date | `acquisitionDate` | Original text, not filesystem modification time |
+| Source file size | `sourceBytes` | Total bytes of the currently opened DM4 or compressed file, not bytes per scalar; original logical volume size follows shape and dtype |
+| Selected-image metadata | `dm4.<relative tag path>` | Scalar/string values; unrecognized typed tags retain descriptors and base64 bytes |
+
+Native detector products use uint32 accumulation on this path. A uint16 camera
+geometry whose possible detector sum exceeds UInt32.max is rejected rather than
+overflowing; Python MPS provides a separate uint64 product path. Successfully
+opening a K3 file does not imply SSB supports its scan size: native SSB currently
+accepts 128×128, 256×256 and 512×512, not arbitrary 100×100 or 210×210 scans.
+
+### Saved compressed acquisitions (`.ans`)
+
+Identify the supported snapshot by `QGPUSTRM` magic, container `version=1`,
+and `profile=runtime-column-rans-spatial-v2`, not extension alone. The native
+reader does not interpret every `.ans` file as this profile.
+
+```text
+acquisition.compressed.ans
+├── 56-byte prefix: magic, JSON byte count, body offset, JSON SHA-256
+├── UTF-8 JSON header
+│   ├── version, profile, interval=512, shape, dtype
+│   ├── valid, chunks (encoded-array offsets and lengths)
+│   ├── bytes, sha256 (64 MiB body-block checksums)
+│   └── metadata
+│       ├── scan_sampling_A, detector_sampling_inv_A, voltage_kV
+│       ├── acquisition_date
+│       └── source_metadata: retained source tags and native format identity
+└── body: encoded detector streams and reusable spatial indexes
+```
+
+CUDA/Python writers also store normalized `camera_model`, `camera_id`,
+`acquisition_processing` and `source_kind` directly in `metadata`. Native
+readers accept that placement as well as the native `source_metadata` placement;
+recorded DM4 device tags remain a fallback. An original K3 acquisition therefore
+retains `sourceFormat=K3 DM4` after reopening, while `sourceKind=ans-snapshot`
+and `storageSchema=runtime-column-rans-spatial-v2` identify its current storage.
+Unknown non-DM4 sources are never relabeled K3 by this reader.
+
+Metadata inspection reads only the bounded header; resident loading verifies
+all compressed body checksums before GPU use, restores existing encoded streams
+and indexes, and does not re-encode or require the original DM4. Native saving
+preserves source metadata and original counts, refuses overwrite, and publishes
+atomically. No conversion of existing files is required for this protocol
+revision. See [K3 opening, saving and verification](../integrations/k3-dm4-ans.md)
+for APIs and timing boundaries.
+
 ### Conformance and evolution
 
 1. Identify from validated contents, never from a filename alone.
@@ -167,6 +264,9 @@ detectorColumn)`; preserve recorded EMD axis order without implicit transpose.
 | EMPAD-G2 processed XML/RAW | Processed float32 export with `sensor/type=EMPAD2`, 128×128 sensor and raster shape; no G1 footer; encoded acquisition words are unsupported | G2 XML |
 | EMD 1 HDF5 datacube | `authoring_program=emdfile`, major version 1, `/datacube_root/datacube/data`, contiguous little-endian float32, shape `(scan0, scan1, 128, 128)` | EMD calibration and supported SoM2k fields |
 | Velox EMD scalar image | Separate catalog image/calibration path | Supported Velox metadata; not proof of a 4D acquisition |
+| K3 DM4 | Validated DM4 v4, unique native-count 4D image, recorded camera model K3 | Selected-image DM4 calibration and device tags |
+| DigitalMicrograph DM4, other/unknown camera | Same native-count reader without assuming K3 | Recorded calibration; camera identity optional |
+| Compressed acquisition | QGPUSTRM v1 and runtime-column-rans-spatial-v2, uint8/uint16 | Checksummed header and retained original source metadata |
 
 The two ARINA labels distinguish metadata availability; they are **not official
 ARINA v1/v2 file-format versions**. See [original HDF5 packed loading](original-hdf5-metal-packing.md)

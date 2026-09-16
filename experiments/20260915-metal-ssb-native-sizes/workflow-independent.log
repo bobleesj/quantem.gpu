@@ -1,0 +1,21 @@
+Building for production...
+[0/2] Write swift-version--1AB21518FC5DEDBE.txt
+Build of product 'metal-ssb-benchmark' complete! (0.08s)
+PASS type=uint16 cache=full relative_l2=0.0 loss_relative_error=0.0
+PASS type=uint16 cache=streamed relative_l2=1.0230483726928754e-06 loss_relative_error=5.16517e-07
+PASS type=uint32 cache=full relative_l2=0.0 loss_relative_error=0.0
+PASS type=uint32 cache=streamed relative_l2=1.0230483726928754e-06 loss_relative_error=5.16517e-07
+PASS live C21 cache/stream relative_l2=4.016813245401535e-07
+PASS live C23 cache/stream relative_l2=4.0032748192895724e-07
+PASS live C30 cache/stream relative_l2=4.045983033258728e-07
+PASS live C32 cache/stream relative_l2=4.175104544781072e-07
+PASS live C34 cache/stream relative_l2=4.096173070453295e-07
+PASS live C41 cache/stream relative_l2=4.170326600983241e-07
+PASS live C43 cache/stream relative_l2=4.1234588785148714e-07
+PASS live C45 cache/stream relative_l2=4.1133840954243575e-07
+PASS live C50 cache/stream relative_l2=4.049687567324538e-07
+PASS live C52 cache/stream relative_l2=4.2049449336029554e-07
+PASS live C54 cache/stream relative_l2=4.2516964145531786e-07
+PASS live C56 cache/stream relative_l2=4.147934249004386e-07
+PASS 200-trial fit and saved-run exact round trip; refinement_evaluations=62
+PASS native Metal SSB uint8/uint16/uint32 count parity; device=Apple M5

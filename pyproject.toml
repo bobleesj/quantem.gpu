@@ -44,6 +44,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dm = [
+    "ncempy>=1.11",
+]
 cuda = [
     "cuda-python",
     "cupy-cuda12x[ctk]>=12.0",

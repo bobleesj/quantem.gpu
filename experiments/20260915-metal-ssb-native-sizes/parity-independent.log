@@ -1,0 +1,55 @@
+warning: 'quantem.gpu': found 1 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
+    <repository>/src/quantem/gpu/swift/Benchmarks/MetalImageFFTBenchmark/__pycache__/compare_torch_fft.cpython-312.pyc
+[0/1] Planning build
+Building for production...
+[0/2] Write swift-version--1AB21518FC5DEDBE.txt
+Build of product 'metal-ssb-benchmark' complete! (0.20s)
+Metal device: Apple M5; deterministic native-count controls, not a real-data benchmark
+128x128, full disk 95 BF, CUDA 3b61354ef9ad7e3c8d059e43ca3cf08106da3dbe
+cached prepare=7.225 ms
+cached candidate=0 objectL2=7.799746471670296e-08 phaseMax=8.940697e-08 lossError=1.043081283569336e-07
+cached candidate=1 objectL2=8.566300685539805e-08 phaseMax=1.0151416e-07 lossError=8.940696716308594e-08
+cached candidate=2 objectL2=8.634163857213877e-08 phaseMax=1.3783574e-07 lossError=7.450580596923828e-08
+128 200-trial fit wall=0.21475791931152344 seconds; refine=43
+128 cached object mean=0.506 p50=0.506 p95=0.546 ms
+128 cached objective mean=0.833 p50=0.822 p95=1.310 ms
+streamed prepare=-0.000 ms
+streamed candidate=0 objectL2=7.57431359859741e-08 phaseMax=8.195639e-08 lossError=1.043081283569336e-07
+streamed candidate=1 objectL2=8.362963504289055e-08 phaseMax=8.568168e-08 lossError=8.940696716308594e-08
+streamed candidate=2 objectL2=8.357572327819726e-08 phaseMax=1.215376e-07 lossError=7.450580596923828e-08
+hybrid prepare=1.348 ms
+hybrid candidate=0 objectL2=7.591563405432098e-08 phaseMax=6.7055225e-08 lossError=1.043081283569336e-07
+hybrid candidate=1 objectL2=8.38627583216315e-08 phaseMax=8.568168e-08 lossError=8.940696716308594e-08
+hybrid candidate=2 objectL2=8.502540811339558e-08 phaseMax=1.1641532e-07 lossError=7.450580596923828e-08
+256x256, full disk 95 BF, CUDA 3b61354ef9ad7e3c8d059e43ca3cf08106da3dbe
+cached prepare=6.048 ms
+cached candidate=0 objectL2=3.7207482716114183e-07 phaseMax=9.3877316e-07 lossError=7.450580596923828e-08
+cached candidate=1 objectL2=3.6239749481547634e-07 phaseMax=7.4505806e-07 lossError=1.043081283569336e-07
+cached candidate=2 objectL2=9.524627374234211e-08 phaseMax=1.7136335e-07 lossError=1.1920928955078125e-07
+256 200-trial fit wall=0.5420619249343872 seconds; refine=51
+256 cached object mean=0.671 p50=0.675 p95=0.695 ms
+256 cached objective mean=2.060 p50=2.014 p95=2.660 ms
+streamed prepare=0.001 ms
+streamed candidate=0 objectL2=3.577156105129885e-07 phaseMax=7.4505806e-07 lossError=7.450580596923828e-08
+streamed candidate=1 objectL2=3.6058533934699034e-07 phaseMax=6.92904e-07 lossError=1.043081283569336e-07
+streamed candidate=2 objectL2=9.238641334187538e-08 phaseMax=1.5087426e-07 lossError=1.043081283569336e-07
+hybrid prepare=3.142 ms
+hybrid candidate=0 objectL2=3.655993079955217e-07 phaseMax=8.3073974e-07 lossError=7.450580596923828e-08
+hybrid candidate=1 objectL2=3.631400803595529e-07 phaseMax=6.92904e-07 lossError=1.043081283569336e-07
+hybrid candidate=2 objectL2=9.332690416915631e-08 phaseMax=1.6496051e-07 lossError=1.1920928955078125e-07
+512x512, full disk 95 BF, CUDA 3b61354ef9ad7e3c8d059e43ca3cf08106da3dbe
+cached prepare=22.040 ms
+cached candidate=0 objectL2=6.830816949738278e-07 phaseMax=1.3187528e-06 lossError=1.043081283569336e-07
+cached candidate=1 objectL2=6.83271519112857e-07 phaseMax=1.3897661e-06 lossError=1.043081283569336e-07
+cached candidate=2 objectL2=1.0786767131889341e-07 phaseMax=2.682209e-07 lossError=8.940696716308594e-08
+512 cached object mean=1.520 p50=1.491 p95=1.824 ms
+512 cached objective mean=3.688 p50=3.601 p95=4.254 ms
+streamed prepare=0.001 ms
+streamed candidate=0 objectL2=2.4501151621627736e-07 phaseMax=4.0233135e-07 lossError=1.043081283569336e-07
+streamed candidate=1 objectL2=2.465724322069026e-07 phaseMax=5.066395e-07 lossError=1.043081283569336e-07
+streamed candidate=2 objectL2=1.1754476473318925e-07 phaseMax=3.017485e-07 lossError=8.940696716308594e-08
+hybrid prepare=9.241 ms
+hybrid candidate=0 objectL2=2.4920745731025793e-07 phaseMax=4.4330955e-07 lossError=1.043081283569336e-07
+hybrid candidate=1 objectL2=2.4754310274305466e-07 phaseMax=5.5134296e-07 lossError=1.043081283569336e-07
+hybrid candidate=2 objectL2=1.1878130681281521e-07 phaseMax=2.9802322e-07 lossError=8.940696716308594e-08
+PASS: native 128/256/512 CUDA + independent equation parity, saved results, cache modes

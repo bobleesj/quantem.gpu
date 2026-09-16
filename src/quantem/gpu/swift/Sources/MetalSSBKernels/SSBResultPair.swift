@@ -99,25 +99,37 @@ extension SSBPhaseArtifact {
 }
 
 extension MetalSSBSavedRun {
-  /// Export the displayed scientific phase, with calibration and fit provenance.
-  /// The two private reconstruction buffers are not part of the portable result.
-  public func savePhasePair(to url: URL, phase: Data) throws {
-    guard let calibration else { throw PairError.invalid("Cannot export SSB without calibration.") }
+  /// Numerical run metadata shared by native bookmarks and portable phase pairs.
+  /// Reconstruction buffers remain private to the native saved run.
+  public func portableRunMetadata() throws -> Data {
     var metadata =
       try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as! [String: Any]
     for key in ["object", "fourierSum", "objectSHA256", "fourierSHA256"] {
       metadata.removeValue(forKey: key)
     }
+    return try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys])
+  }
+
+  /// Export the displayed scientific phase, with calibration and fit provenance.
+  /// The two private reconstruction buffers are not part of the portable result.
+  public func savePhasePair(to url: URL, phase: Data) throws {
+    guard let calibration else { throw PairError.invalid("Cannot export SSB without calibration.") }
+    let padded = calibrationProvenance?["scanPadding"] == "zero-bottom-right-v1"
+    let rows = padded ? Int(calibrationProvenance?["sourceScanRows"] ?? "") ?? 0 : provenance.scanRows
+    let columns = padded ? Int(calibrationProvenance?["sourceScanColumns"] ?? "") ?? 0 : provenance.scanColumns
+    guard rows > 0, columns > 0, rows <= provenance.scanRows, columns <= provenance.scanColumns else {
+      throw PairError.invalid("The saved padding description lacks the original scan dimensions.")
+    }
     let artifact = SSBPhaseArtifact(
       schemaVersion: 1, sourceIdentity: sourceIdentity,
-      rows: provenance.scanRows, columns: provenance.scanColumns,
+      rows: rows, columns: columns,
       phaseEncoding: "float32-le-row-major", phaseUnits: "rad", phase: phase,
       phaseSHA256: SSBPhaseArtifact.digest(phase), calibration: calibration,
       c10Nanometers: Double(aberrations.c10Nanometers),
       c12Nanometers: Double(aberrations.c12Nanometers),
       phi12Radians: Double(aberrations.phi12Radians), rotationDegrees: Double(rotationDegrees),
       provenance: ["producer": "Live4DSTEM", "backendRevision": backendRevision],
-      runMetadata: try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]))
+      runMetadata: try portableRunMetadata())
     try artifact.savePair(to: url)
   }
 }

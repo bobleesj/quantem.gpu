@@ -26,6 +26,7 @@ those generated files are not an independently maintained codec.
 
 | Input | Package implementation | Client route |
 | --- | --- | --- |
+| [K3 runtime ANS snapshots](k3-dm4-ans.md), `QGPUSTRM` | CUDA and Metal encoding, checksummed reopening, spatial queries | Python CUDA/MPS and native Live4DSTEM macOS |
 | Canonical count-ANS v1 `.ans` files | `io.save`, `io.load`, private `_ans` modules, CUDA count decoder, WebGPU `count-ans.ts` | CUDA resident queries; Show4DSTEM WebGPU export |
 | Retained detector-rANS manifest | Validated legacy adapter and WebGPU `rans.ts` | Existing resident CUDA owner or Show4DSTEM WebGPU export |
 | Retained source112 tANS archive | Package exporter and WebGPU `source112.ts` | Experimental progressive Show4DSTEM resident series |

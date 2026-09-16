@@ -250,6 +250,9 @@ public enum Metal4DSTEMKernels {
     }
     do {
       var source = try String(contentsOf: url, encoding: .utf8)
+      if resource == "runtime_ans" {
+        source += "\n" + (try String(contentsOf: url.deletingLastPathComponent().appendingPathComponent("runtime_spatial.metal"), encoding: .utf8))
+      }
       if resource == "packed_h5" {
         let regions = url.deletingLastPathComponent()
           .appendingPathComponent("compact_detector_regions.metal")

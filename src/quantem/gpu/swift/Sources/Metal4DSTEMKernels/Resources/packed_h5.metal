@@ -211,6 +211,13 @@ struct CompactDetectorSumParameters {
     uint headerWordsPerPixel;
     uint headerEncoding;
     uint payloadLayout;
+    uint scanColumns;
+    uint firstScan;
+    uint rowStart;
+    uint rowStop;
+    uint columnStart;
+    uint columnStop;
+    uint regionShape;
 };
 
 inline uint compactReadByte(
@@ -1553,6 +1560,26 @@ kernel void compact_h5_detector_sum_u64(
 ) {
     if (pixel >= parameters.pixelCount || excluded[pixel] != 0u) return;
     ulong total = 0ul;
+    if (parameters.scanColumns != 0u) {
+        for (uint row = parameters.rowStart; row < parameters.rowStop; ++row) {
+            uint first = max(row * parameters.scanColumns + parameters.columnStart, parameters.firstScan);
+            uint stop = min(row * parameters.scanColumns + parameters.columnStop,
+                            parameters.firstScan + parameters.scanCount);
+            for (uint scan = first; scan < stop; ++scan) {
+                if (parameters.regionShape == 1u) {
+                    long diameter = long(parameters.rowStop - parameters.rowStart);
+                    long dr = 2 * (long(row) - long(parameters.rowStart)) + 1 - diameter;
+                    long dc = 2 * (long(scan % parameters.scanColumns) - long(parameters.columnStart)) + 1 - diameter;
+                    if (dr * dr + dc * dc > diameter * diameter) continue;
+                }
+                total += ulong(compactSampleValue(payload, descriptors, parameters.tileCount,
+                    parameters.scanTile, parameters.headerWordsPerPixel, parameters.headerEncoding,
+                    pixel, scan - parameters.firstScan, parameters.payloadLayout));
+            }
+        }
+        detectorSum[pixel] += total;
+        return;
+    }
     if (parameters.payloadLayout == 1u) {
         for (uint tile = 0u; tile < parameters.tileCount; ++tile) {
             uint descriptor = compactDescriptorFor(

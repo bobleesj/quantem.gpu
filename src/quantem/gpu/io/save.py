@@ -1842,11 +1842,13 @@ def save(
     """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
 
     ``format="quantem", compression="ans"`` instead writes one self-contained
-    file, not an HDF5 master/shard set. This new path currently requires
-    ``backend="cpu"`` explicitly for the bounded reference encoder and accepts
-    native four-dimensional NumPy uint8/uint16 counts without dtype conversion.
-    It preserves provided metadata and never overwrites an existing destination.
-    Accelerated ANS saving and resident reverse conversions remain pending.
+    file, not an HDF5 master/shard set. Native NumPy uint8/uint16 counts require
+    ``backend="cpu"`` explicitly for the bounded portable reference encoder.
+    A native streamed CUDA ANS resident with ``backend="cuda"`` or ``"auto"``
+    instead saves a CUDA snapshot containing its exact encoded bytes and spatial
+    indexes, so reopening needs no encoding. Both retain calibration and reject
+    existing destinations. Runtime snapshots reopen on CUDA or MPS/Metal;
+    reopening preserves encoded counts and does not support a CPU conversion.
     The HDF5-specific options and discussion below do not apply to ANS files.
     ``compression="auto"`` preserves the existing default encoding: ANS for
     QuantEM files and bitshuffle/LZ4 for Arina files.
@@ -2016,12 +2018,19 @@ def save(
     from .models import FourDSTEMData
 
     if precision_name(dtype) or (isinstance(data, FourDSTEMData) and "precision" in data.metadata):
+        if Path(filepath).suffix.lower() == ".qem":
+            raise NotImplementedError(
+                "QEM precision codecs are not implemented. Save this scaled/quantized "
+                "result as HDF5, or save an exact supported acquisition as .qem."
+            )
         return save_precision(filepath, data, dtype=dtype, scan_shape=scan_shape,
             metadata=metadata, backend=backend, format=format, compression=compression,
             frames_per_file=frames_per_file, verbose=verbose, wait=wait,
             source_master=source_master)
 
     normalized_format = str(format).lower()
+    if Path(filepath).suffix.lower() == ".qem":
+        normalized_format = "quantem"
     if normalized_format not in {"arina", "quantem"}:
         raise ValueError(
             f"Unsupported save format {format!r}; use format='arina' or 'quantem'."
@@ -2045,13 +2054,27 @@ def save(
                 f"ANS has no compression_level control; got {compression_level!r}. "
                 "Remove compression_level to preserve the exact codec contract."
             )
-        if backend != "cpu":
-            raise NotImplementedError("ANS saving currently requires backend='cpu' explicitly for the exact reference encoder; accelerated encoding is pending.")
         if isinstance(data, FourDSTEMData):
             metadata = dict(data.metadata) if metadata is None else metadata
             data = data.data
         if dtype is not None or scan_shape is not None or source_master is not None:
             raise ValueError("ANS reference saving preserves a native 4D array; remove dtype, scan_shape, and source_master controls.")
+        from quantem.gpu._compact.streamed import StreamedCounts
+
+        from .backends.mps._streamed import MPSStreamedCounts
+
+        if isinstance(data, (StreamedCounts, MPSStreamedCounts)):
+            from ._streamed_file import save_streamed
+
+            resident_backend = "mps" if isinstance(data, MPSStreamedCounts) else "cuda"
+            if backend not in ("auto", resident_backend) or batch_size is not None:
+                raise ValueError(f"Save resident ANS with backend='{resident_backend}' and no batch_size; its exact chunk layout is retained.")
+            save_streamed(filepath, data, metadata)
+            return SaveResult(str(filepath), resident_backend, complete=True)
+        if Path(filepath).suffix.lower() == ".qem":
+            raise NotImplementedError("QEM saving currently requires a supported encoded resident. Load with representation='encoded' first; no alternate format was written.")
+        if backend != "cpu":
+            raise NotImplementedError("The portable ANS reference encoder requires backend='cpu'; pass a CUDA ANS resident to save its encoded snapshot.")
         write_ans_reference(filepath, data, metadata=metadata,
                             block_frames=256 if batch_size is None else batch_size)
         return SaveResult(str(filepath), "cpu", complete=True)

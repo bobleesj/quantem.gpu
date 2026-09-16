@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,41 @@ def inspect(
     >>> info.scan_shape, info.detector_shape  # doctest: +SKIP
     """
     path = Path(filepath)
+    from ._streamed_file import is_streamed_file, read_header
+
+    if is_streamed_file(path):
+        header, _ = read_header(path)
+        shape = tuple(header["shape"])
+        matches = scan_shape is None or tuple(scan_shape) == shape[:2]
+        metadata = dict(header["metadata"], resident_bytes=header["bytes"],
+                        source_kind="resident", representation="encoded")
+        valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))
+        mask = (valid[:math.prod(shape[2:])] == 0).astype(np.uint32).reshape(shape[2:])
+        return Inspection(
+            matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
+            "Load to verify the saved ANS streams and spatial indexes.",
+            metadata, mask, "resident", math.prod(shape[:2]), math.prod(shape[:2]),
+            shape[:2], shape[2:], header["dtype"], {"path": str(path.resolve())},
+        )
+    if path.suffix.lower() in {".dm3", ".dm4"}:
+        from ._digitalmicrograph import NoDiffractionImage, read_dm_source
+
+        try:
+            source = read_dm_source(path, scan_shape)
+        except NoDiffractionImage:
+            return Inspection(
+                False, "not_4dstem", "Choose the 4D diffraction image, not a survey image.",
+                {}, None, "digitalmicrograph", None, None, None, None, None,
+                {"path": str(path.resolve())},
+            )
+        shape = source.shape
+        return Inspection(
+            True, "complete_dataset", "Load the complete DigitalMicrograph acquisition.",
+            source.metadata, None, "digitalmicrograph", shape[0] * shape[1],
+            shape[0] * shape[1], shape[:2], shape[2:], source.dtype.name,
+            {"path": str(source.path), "size": source.signature[0],
+             "mtime_ns": source.signature[1], "data_offset": source.offset},
+        )
     if path.is_dir() and (path / "checkpoint.json").is_file():
         document = json.loads((path / "checkpoint.json").read_text())
         layout = document["layout"]

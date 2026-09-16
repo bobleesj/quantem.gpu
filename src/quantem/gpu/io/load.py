@@ -5283,6 +5283,42 @@ def load(
 
     precision = precision_name(dtype)
     precision_sources = [source] if isinstance(source, (str, os.PathLike)) or (precision and hasattr(source, "shape")) else list(source)
+    from ._streamed_file import is_streamed_file, load_streamed
+
+    snapshots = [is_streamed_file(path) for path in precision_sources]
+    dm_sources = [isinstance(path, (str, os.PathLike))
+                  and Path(path).suffix.lower() in {".dm3", ".dm4"}
+                  for path in precision_sources]
+    if any(dm_sources) or any(snapshots):
+        from ._digitalmicrograph import load_dm
+
+        if not all(dm_sources) and not all(snapshots):
+            raise ValueError("Load DigitalMicrograph acquisitions separately from other source formats.")
+        if (any(value is not None for value in (
+            dataset_path, scan_region, detector_region, target_scan_region,
+            scan_shift_row_col, scan_indices, random_positions, drift, devices,
+            expected_source_sha256, source_integrity,
+        )) or detector_bin != 1 or det_bin not in (None, 1)
+                or output != "native" or scan_order != "row-major" or apply_mask):
+            raise NotImplementedError(
+                "DM loading preserves the complete acquisition; remove selection, "
+                "conversion, masking, integrity-receipt and multi-device options."
+            )
+        if dtype not in (None, "native"):
+            raise ValueError("DM loading preserves stored counts; omit dtype for lossless loading.")
+        if len(precision_sources) > 1 and stack:
+            raise ValueError("Use stack=False to keep DM acquisitions independently resident.")
+        loaded = []
+        try:
+            for path in precision_sources:
+                loader = load_streamed if all(snapshots) else load_dm
+                loaded.append(loader(path, backend=backend, representation=representation,
+                                      scan_shape=scan_shape, device=device, verbose=verbose))
+        except BaseException:
+            for item in loaded:
+                item.close()
+            raise
+        return loaded[0] if isinstance(source, (str, os.PathLike)) else loaded
     saved = [saved_precision(path) for path in precision_sources if isinstance(path, (str, os.PathLike)) and Path(path).is_file()]
     if precision or any(saved):
         if any(saved) and dtype not in (None, "native") and precision is None:

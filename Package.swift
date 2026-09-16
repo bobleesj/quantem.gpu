@@ -114,7 +114,7 @@ let package = Package(
       name: "MetalCountResources",
       path: "src/quantem/gpu/io/backends/mps",
       exclude: [
-        "__pycache__", "__init__.py", "_ans.py", "_streamed.py",
+        "__pycache__", "__init__.py", "_ans.py", "_streamed.py", "_spatial.py",
         "compact_v3.py", "consumer.py", "decoder.py", "dense.py", "hot_pixels.py",
         "packed.py", "precision.py", "qh5.py", "resident_dpc.py", "series.py",
       ],

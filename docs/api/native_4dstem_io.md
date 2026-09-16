@@ -8,7 +8,7 @@ admission or eviction, or application state.
 ## Products and dependencies
 
 See [Native acquisition formats and metadata](native-acquisition-formats.md)
-for ARINA/NXem, EMPAD-G1/G2 and EMD layout detection, reader versions, exact
+for ARINA/NXem, EMPAD-G1/G2, EMD, K3 DM4 and compressed-snapshot detection, reader versions, exact
 metadata paths, units, missing-field behavior and native-client integration.
 
 Native clients compose three products for local 4D-STEM loading:
