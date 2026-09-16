@@ -26,8 +26,8 @@ those generated files are not an independently maintained codec.
 
 | Input | Package implementation | Client route |
 | --- | --- | --- |
-| [K3 runtime ANS snapshots](k3-dm4-ans.md), `QGPUSTRM` | CUDA and Metal encoding, checksummed reopening, spatial queries | Python CUDA/MPS and native Live4DSTEM macOS |
-| Canonical count-ANS v1 `.ans` files | `io.save`, `io.load`, private `_ans` modules, CUDA count decoder, WebGPU `count-ans.ts` | CUDA resident queries; Show4DSTEM WebGPU export |
+| [K3 saved copies](k3-dm4-qem.md), `quantem.qem` | CUDA and Metal encoding, checksummed reopening, spatial queries | Python CUDA/MPS and native Live4DSTEM macOS |
+| Saved `.qem` copies | `io.save`, `io.load`, `_streamed_file`, CUDA count decoder, native reader | CUDA/MPS resident queries; native Live4DSTEM macOS |
 | Retained detector-rANS manifest | Validated legacy adapter and WebGPU `rans.ts` | Existing resident CUDA owner or Show4DSTEM WebGPU export |
 | Retained source112 tANS archive | Package exporter and WebGPU `source112.ts` | Experimental progressive Show4DSTEM resident series |
 
@@ -48,7 +48,7 @@ not establish that support.
 from quantem.gpu import io
 
 # counts: native uint8/uint16, (scan_row, scan_col, detector_row, detector_col)
-saved = io.save("acquisition.ans", counts, format="quantem", compression="ans", backend="cpu")
+io.save("acquisition.qem", resident, format="quantem", backend="auto")
 source = io.load(saved.path, backend="cuda", representation="encoded", device=0).data
 try:
     pattern = source.extract_diffraction_device(0, 0)
@@ -104,7 +104,7 @@ The widget package supplies the browser export, using the same package reader:
 from quantem.widget.show4dstem_webgpu_export import export_show4dstem_rans_viewer
 
 html = export_show4dstem_rans_viewer(
-    ["acquisition.ans", "next-acquisition.ans"],
+    ["acquisition.qem", "next-acquisition.qem"],
     "ans-viewer",
     frame_labels=["First", "Second"],
 )

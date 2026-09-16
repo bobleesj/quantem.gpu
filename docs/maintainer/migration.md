@@ -82,7 +82,7 @@ original versions; do not rewrite old evidence to make it look like a new run.
 
 Consumers of the earlier Python MPS representation enum must use
 `DataRepresentation.DENSE`, `.PACKED`, or `.ANS`. Swift clients use `.dense`,
-`.packed`, or `.ans`. The former `ResidentStorageEncoding` and
+`.packed`, or `.encoded`. The former `ResidentStorageEncoding` and
 `MPSResidentRepresentation` type aliases and the
 `lossless_packed` selector are removed. Update receipt parsers deliberately;
 unknown schema versions must fail closed. Apple capability records are v4 and

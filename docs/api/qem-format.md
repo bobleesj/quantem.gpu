@@ -61,10 +61,11 @@ has an implemented decoder.
 
 ## Migration and implementation status
 
-Legacy `QGPUSTRM` files remain readable by content signature. New `.qem` exports
-use the new envelope and metadata schema. Renaming a legacy file does not migrate
-its header. Migration must write a new file, verify it, and keep the original.
-Publishing a destination is atomic and must not overwrite an existing file.
+The retired `.ans` containers (`QGPUSTRM` and `QGANS`) are no longer supported.
+Open the original acquisition and save a new `.qem` copy; renaming a legacy file
+does not migrate its header, and the readers reject those magics instead of
+guessing a codec. Publishing a destination is atomic and must not overwrite an
+existing file.
 
 Native Swift and Python share the envelope and stream codec. Hardware parity,
 source-format qualification, floating-point codecs and actual application UI
@@ -130,7 +131,7 @@ saved edits; supplying a complete dictionary replaces them in the new copy;
 supplying `[:]` clears them. `NativeQEMCalibration` validates and reads these
 quantities. Native readers expose the serialized dictionary under
 `qem_calibration_overrides`; applications apply it ahead of recorded calibration.
-Legacy `.ans` export rejects nonempty overrides rather than silently losing them.
+Only `.qem` carries calibration overrides; no other destination is accepted.
 Python integer readers expose effective scan sampling, detector sampling and
 beam voltage in acquisition metadata while retaining the complete scientific
 metadata, including original values and every override. CUDA execution still

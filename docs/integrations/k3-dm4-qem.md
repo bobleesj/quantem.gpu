@@ -1,4 +1,4 @@
-# K3 DM4 and GPU ANS snapshots
+# K3 DM4 and saved .qem copies
 
 Calibrated DigitalMicrograph DM4 acquisitions can be opened directly on CUDA,
 Python MPS and native Swift/Metal. The loader selects the unique four-dimensional
@@ -9,8 +9,8 @@ no scan binning, detector binning, crop or intensity scaling is introduced.
 The shared [native acquisition layout protocol v1.1](../api/native-acquisition-formats.md)
 defines K3 identification, exact tag paths, normalized fields, units and snapshot
 metadata placement. K3 is identified from the camera model, not a filename;
-generic DM4 remains generic. In Live4DSTEM, **Save Compressed Copy…** creates an
-`.ans` copy; reopening retains the K3 identity, recorded acquisition processing,
+generic DM4 remains generic. In Live4DSTEM, **Save Compressed Copy…** creates a
+`.qem` copy; reopening retains the K3 identity, recorded acquisition processing,
 scan sampling, reciprocal sampling and voltage. No original file is modified.
 
 ## Save once and reopen
@@ -19,21 +19,21 @@ scan sampling, reciprocal sampling and voltage. No original file is modified.
 from quantem.gpu import io
 
 with io.load("STEM SI.dm4", backend="mps") as acquisition:
-    io.save("acquisition.ans", acquisition, format="quantem", backend="mps")
+    io.save("acquisition.qem", acquisition, format="quantem", backend="mps")
 
-with io.load("acquisition.ans", backend="mps") as acquisition:
+with io.load("acquisition.qem", backend="mps") as acquisition:
     print(acquisition.shape, acquisition.dtype)
 ```
 
 Use `backend="cuda"` on NVIDIA. Both backends write and read the same
-`QGPUSTRM` container with profile `runtime-column-rans-spatial-v2`.
+`quantem.qem` container with codec `runtime-column-rans-spatial-v2`.
 Reopening restores encoded bytes and spatial indexes directly, with header and
 body SHA-256 verification; it does not re-encode the original acquisition.
 Saving refuses to overwrite an existing destination. The original DM4 is not
 needed for reopening a complete snapshot.
 
-This runtime snapshot is distinct from the portable `QGANS` reference container.
-The `.ans` extension alone does not identify a codec. These source changes need a
+The only accepted saved-copy extension is `.qem`; the retired `.ans` containers
+are rejected with guidance to re-save from the original acquisition. These source changes need a
 matching development revision; they are not a claim about an older PyPI release.
 Python DM4 metadata reading needs the `dm` extra (`ncempy`); native Swift does not.
 
@@ -43,7 +43,7 @@ Python DM4 metadata reading needs the `dm` extra (`ncempy`); native Swift does n
 import numpy as np
 from quantem.gpu import detector, io
 
-with io.load("acquisition.ans", backend="mps") as acquisition:
+with io.load("acquisition.qem", backend="mps") as acquisition:
     session = detector.prepare(acquisition)
     try:
         row, column = np.indices(acquisition.shape[2:])
@@ -75,14 +75,14 @@ Call `release()` on the series and `releaseResidentStorage()` on its source when
 finished. The UI owns selection, scheduling and presentation; the package owns
 IO, codecs and scientific kernels.
 
-The Live4DSTEM macOS integration discovers HDF5, DM4 and runtime ANS files in
-mixed folders. Finder/Open With can open `.dm4` and `.ans` documents directly.
+The Live4DSTEM macOS integration discovers HDF5, DM4 and saved `.qem` copies in
+mixed folders. Finder/Open With can open `.dm4` and `.qem` documents directly.
 HDF5 keeps its existing original/packed loading routes and correction policy.
 
 ## Reproduce correctness and performance
 
 On an Apple Silicon Mac, build the existing `metal-runtime-ans-benchmark` product
-and run it with `--camera /absolute/path/acquisition.ans` or a DM4 path.
+and run it with `--camera /absolute/path/acquisition.qem` or a DM4 path.
 `K3_AUDIT_DM4=/absolute/path/original.dm4` additionally compares every decoded
 count with native file bytes. This exhaustive audit is separate from timing a
 single interactive request. `K3_BENCH_TRIALS` controls translated-mask trials.
@@ -98,9 +98,9 @@ first-use compilation and unrelated GPU work can have different costs.
 For the bounded native workflow check, run:
 
 ```sh
-K3_REOPEN_TRIALS=5 bash scripts/check_metal_camera.sh original.dm4 saved.ans
+K3_REOPEN_TRIALS=5 bash scripts/check_metal_camera.sh original.dm4 saved.qem
 # Also encode, save and verify every retained native metadata field:
-bash scripts/check_metal_camera.sh original.dm4 saved.ans new-copy.ans
+bash scripts/check_metal_camera.sh original.dm4 saved.qem new-copy.qem
 ```
 
 The first command reports header-through-resident wall time, including body

@@ -149,7 +149,7 @@ are rejected. A Velox scalar-image EMD does not satisfy this 4D contract.
 
 ### K3 DigitalMicrograph DM4
 
-K3 is a detector identity, DM4 is its acquisition container, and `.ans` is a
+K3 is a detector identity, DM4 is its acquisition container, and `.qem` is a
 saved compressed representation. These are separate properties. A `.dm4`
 extension alone is not evidence of K3. `NativeDM4Source` validates the DM4 v4
 header and selects the unique rank-four image; a survey image is not selected.
@@ -200,19 +200,20 @@ overflowing; Python MPS provides a separate uint64 product path. Successfully
 opening a K3 file does not imply SSB supports its scan size: native SSB currently
 accepts 128×128, 256×256 and 512×512, not arbitrary 100×100 or 210×210 scans.
 
-### Saved compressed acquisitions (`.ans`)
+### Saved compressed acquisitions (`.qem`)
 
-Identify the supported snapshot by `QGPUSTRM` magic, container `version=1`,
-and `profile=runtime-column-rans-spatial-v2`, not extension alone. The native
-reader does not interpret every `.ans` file as this profile.
+Identify the saved copy by `QEMDATA1` magic, container `quantem.qem`, and
+`codec=runtime-column-rans-spatial-v2`, not extension alone. The retired `.ans`
+containers are rejected; open the original acquisition instead.
 
 ```text
-acquisition.compressed.ans
-├── 56-byte prefix: magic, JSON byte count, body offset, JSON SHA-256
+acquisition.qem
+├── 56-byte prefix: QEMDATA1 magic, JSON byte count, body offset, JSON SHA-256
 ├── UTF-8 JSON header
-│   ├── version, profile, interval=512, shape, dtype
+│   ├── container, container_version, codec, version, interval=512, shape, dtype
 │   ├── valid, chunks (encoded-array offsets and lengths)
 │   ├── bytes, sha256 (64 MiB body-block checksums)
+│   ├── scientific_metadata (axes, acquisition metadata, overrides)
 │   └── metadata
 │       ├── scan_sampling_A, detector_sampling_inv_A, voltage_kV
 │       ├── acquisition_date
@@ -233,7 +234,7 @@ all compressed body checksums before GPU use, restores existing encoded streams
 and indexes, and does not re-encode or require the original DM4. Native saving
 preserves source metadata and original counts, refuses overwrite, and publishes
 atomically. No conversion of existing files is required for this protocol
-revision. See [K3 opening, saving and verification](../integrations/k3-dm4-ans.md)
+revision. See [K3 opening, saving and verification](../integrations/k3-dm4-qem.md)
 for APIs and timing boundaries.
 
 ### Conformance and evolution
@@ -266,7 +267,7 @@ detectorColumn)`; preserve recorded EMD axis order without implicit transpose.
 | Velox EMD scalar image | Separate catalog image/calibration path | Supported Velox metadata; not proof of a 4D acquisition |
 | K3 DM4 | Validated DM4 v4, unique native-count 4D image, recorded camera model K3 | Selected-image DM4 calibration and device tags |
 | DigitalMicrograph DM4, other/unknown camera | Same native-count reader without assuming K3 | Recorded calibration; camera identity optional |
-| Compressed acquisition | QGPUSTRM v1 and runtime-column-rans-spatial-v2, uint8/uint16 | Checksummed header and retained original source metadata |
+| Saved copy (`.qem`) | QEMDATA1 container `quantem.qem` and runtime-column-rans-spatial-v2, uint8/uint16 | Checksummed header, scientific metadata schema and calibration overrides |
 
 The two ARINA labels distinguish metadata availability; they are **not official
 ARINA v1/v2 file-format versions**. See [original HDF5 packed loading](original-hdf5-metal-packing.md)

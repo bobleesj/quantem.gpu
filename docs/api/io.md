@@ -122,28 +122,29 @@ or rebuilding spatial indexes:
 
 ```python
 loaded = io.load("STEM SI.dm4", backend="cuda")
-io.save("STEM SI.ans", loaded, format="quantem", backend="cuda")
+io.save("STEM SI.qem", loaded, format="quantem", backend="cuda")
 loaded.close()
-reopened = io.load("STEM SI.ans", backend="cuda")
+reopened = io.load("STEM SI.qem", backend="cuda")
 ```
 
-This writes a versioned `QGPUSTRM` snapshot of the exact ANS bytes, spatial
+This writes a `QEMDATA1` (`quantem.qem`) copy of the exact ANS bytes, spatial
 indexes, detector validity and calibration. Reopening verifies the header and
 every 64 MiB block with SHA-256 while uploading through two bounded pinned
 buffers. It does not require the original DM file. Writes are atomic and reject
-existing destinations. Snapshots currently support CUDA only; they are distinct
-from portable QGANS files and are detected by magic regardless of extension.
+existing destinations. Saved copies are detected by magic regardless of
+extension; the only accepted extension is `.qem`.
 DM selection/conversion options and MPS residency are currently unsupported. Load differently shaped acquisitions separately; a list can use
 `stack=False` to return independent residents.
 
-### Load an existing encoded file directly into native Metal
+### Load an existing saved copy directly into native Metal
 
-The native Swift reader accepts the same canonical QGANS v1 files used by the
-Python MPS/CUDA encoded adapters:
+The native Swift reader accepts the same `quantem.qem` files written by the
+Python MPS/CUDA and native exporters:
 
 ```swift
-let source = try MetalANSResidentSource(
-  sourceURL: ansURL, device: device, expectedSHA256: sealedSHA256
+let snapshot = try NativeANSSnapshot(url: qemURL)
+let source = try MetalRuntimeANSResidentSource.load(
+  snapshot: snapshot, device: device, maximumAdditionalBytes: budget
 )
 let pattern = try source.extractRawDiffraction(scanRow: 0, scanColumn: 0)
 ```
@@ -215,7 +216,7 @@ internal bitpacking or block-compression profile through this argument.
 
 The new encoded-to-packed file workflow is available on Python MPS and CUDA, with
 bounded physical integer-parity evidence. Native Swift/Metal can now reopen a
-canonical QGANS file directly, with the same bounded physical geometry gate.
+saved `.qem` copy directly, with the same bounded physical geometry gate.
 These results do not qualify complete-series loading, peak memory, or
 interactive throughput. The explicit CPU reference can decode encoded data to dense.
 GPU dense materialization, reverse conversions, and accelerated cold
@@ -381,16 +382,12 @@ These are independent decisions, not different names for the same setting:
 For example, save an ANS-compressed QuantEM file, then use bitpacking in memory:
 
 ```python
-# Step 1. Write native four-dimensional NumPy uint8/uint16 counts exactly.
-# Portable QGANS uses the explicit CPU reference encoder.
-# CUDA resident snapshots use the separate workflow above.
-io.save(
-    "experiment.qgpu", native_counts,
-    format="quantem", compression="ans", backend="cpu",
-)
+# Step 1. Save a copy of a complete encoded CUDA or Metal resident.
+# Nothing is re-encoded; the resident's exact bytes and indexes are stored.
+io.save("experiment.qem", resident, format="quantem", backend="auto")
 
-# Step 2. Load the file and select the representation used by GPU operations.
-with io.load("experiment.qgpu", representation="packed", backend="mps") as data:
+# Step 2. Load the copy and select the representation used by GPU operations.
+with io.load("experiment.qem", representation="packed", backend="mps") as data:
     print(data.shape, data.dtype, data.representation)
 ```
 

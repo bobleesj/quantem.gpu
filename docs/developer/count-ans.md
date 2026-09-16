@@ -22,11 +22,12 @@ correctness reference, not an accelerated full-acquisition encoder.
 ```python
 from quantem.gpu import io
 
-saved = io.save("counts.ans", counts, format="quantem", compression="ans", backend="cpu")
+with io.load("acquisition.h5", backend="cuda", representation="encoded") as resident:
+    io.save("acquisition.qem", resident, format="quantem", backend="cuda")
 ```
 
-The private `io._ans.ANSFile` reader validates the self-contained container and
-returns one backend-neutral array contract through `runtime_arguments()`.
+`io._streamed_file` validates the `quantem.qem` container and returns one
+backend-neutral array contract.
 `io.backends.cuda._ans.CudaANSResidentCounts` owns the CUDA decoder. It copies
 encoded arrays into owned device buffers and checks every stream's terminal
 state before publication. Its block decode, point-pattern gather and binary
@@ -34,9 +35,9 @@ mask sum retain integer exactness; mask sums are uint64. No full dense source
 is constructed. A direct packed conversion is also retained and tested.
 
 The container contract is shared with the existing CUDA and MPS implementations.
-The native Swift/Metal `MetalANSResidentSource(sourceURL:device:)` reader now
-accepts the same QGANS v1 file directly. It validates the manifest and typed
-section bounds, streams bounded `pread` chunks into private Metal buffers, and
+The native `MetalRuntimeANSResidentSource.load(snapshot:device:)` reader accepts
+the same `quantem.qem` file directly. It validates the envelope and typed
+section bounds, streams bounded ranges into private Metal buffers, and
 validates every encoded stream before publication. It is geometry-general and
 does not allocate the logical dense cube. This is a file-load and parity
 qualification; it is not a claim that a cold HDF5 source has already been
@@ -66,12 +67,12 @@ finally:
 reference_counts = io.load(saved.path, backend="cpu", representation="dense").data
 ```
 
-Downstream browser viewers can consume canonical files through the package WebGPU
+Downstream browser viewers consume canonical files through the package WebGPU
 count codec. Direct CUDA resident-owner adapters remain a separate protocol.
 Existing HDF5 loading defaults are unchanged.
 
 Section checksums detect corruption. Supply an independently retained
-`expected_sha256` to `ANSFile` when source authentication is required. A valid
+`expected_source_sha256` when source authentication is required. A valid
 container checksum alone does not establish acquisition identity.
 
 ## Compatibility is explicit
@@ -105,17 +106,10 @@ decoded window are needed at a time; no full dense acquisition is constructed.
 This explicit archival conversion requires host staging for the CPU reference
 encoder. It is not the interactive viewer or a zero-upload display path.
 
-```python
-from quantem.gpu.io._source112_archive import _convert_source112_acquisition
-
-# Explicit migration utility; original archive stays immutable.
-_convert_source112_acquisition(
-    source254_archive, "acquisition-0.ans", acquisition=0, device=0,
-)
-```
-
-The converter retains source identity and full native geometry in the new
-container. Output publication is atomic and refuses existing destinations.
+The retained source112 archive is read-only. Its former conversion utility only
+wrote the legacy `.ans` container, which is no longer supported, so it now
+refuses and writes nothing. Convert the original acquisition instead: load it
+with `representation="encoded"` and save that resident as `.qem`.
 There is no implicit crop, binning, clipping or invalid-pixel replacement. All
 66 full-acquisition reencodes have not been run in this validation session;
 the preserved-archive gate below checks bounded windows against original HDF5
@@ -188,19 +182,19 @@ let pattern = try source.extractRawDiffraction(scanRow: 0, scanColumn: 0)
 source.releaseResidentStorage()
 ```
 
-The native Metal smoke harness is `metal-ans-file-benchmark`. The current
+The native Metal smoke harness is `metal-runtime-ans-benchmark`. The current
 physical gate covers 512×512×1×1 uint16, 1024×1024×1×1 uint16, and a non-square
-63×512×2×3 uint8 file. Full BTO-sized QGANS generation and cold HDF5→ANS
-encoding remain separate work: the canonical writer is still a bounded CPU
-reference, and the macOS original HDF5 path remains the exact bitshuffle/LZ4
-decoder for first load.
+63×512×2×3 uint8 file. Cold HDF5→`.qem` encoding remains separate work: `io.save`
+copies an encoded resident byte-for-byte, so the first load still builds the
+resident from the source, and the macOS original HDF5 path remains the exact
+bitshuffle/LZ4 decoder.
 
 For production, select the path by source state rather than by detector size:
 
 ```text
 HDF5 first open  → exact indexed BSLZ4 decode → packed Metal resident
-sidecar build    → bounded exact encoder → authenticated QGANS file
-QGANS reopen     → bounded pread/upload → private Metal ANS resident
+copy build      → encoded CUDA/Metal resident → saved .qem copy, no re-encoding
+.qem reopen     → bounded pread/upload → private Metal encoded resident
 ```
 
 The same metadata-driven contract covers 512×512, 1024×1024, and non-square
