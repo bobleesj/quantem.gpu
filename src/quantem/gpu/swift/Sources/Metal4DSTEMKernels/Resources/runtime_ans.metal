@@ -337,6 +337,43 @@ kernel void streamed_counts_detector_total(
     output[pixel] = total;
 }
 
+// Exact raw-count mean-DP numerator. One lane owns one detector pixel; chunks
+// are ordered with a buffer barrier, so UInt64 sums need no atomic operations.
+kernel void streamed_counts_region_total(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device ulong *output [[buffer(5)]],
+    constant ulong *p [[buffer(6)]],
+    uint pixel [[thread_position_in_grid]]) {
+    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
+    if (pixel >= pixels) return;
+    ulong total = output[pixel];
+    ulong region_first = p[5] * p[4] + p[7];
+    ulong region_stop = (p[6] - 1) * p[4] + p[8];
+    for (uint block = 0; block < (scans + interval - 1) / interval; ++block) {
+        uint first = block * interval, count = min(interval, scans - first);
+        if (p[3] + first >= region_stop || p[3] + first + count <= region_first) continue;
+        StreamReader reader(payload, offsets, models, decoding, block * pixels + pixel);
+        for (uint i = 0; i < count; ++i) {
+            uint value = reader.next();
+            ulong scan = p[3] + first + i, row = scan / p[4], col = scan % p[4];
+            bool inside = row >= p[5] && row < p[6] && col >= p[7] && col < p[8];
+            if (inside && p[9] == 1) {
+                long dr = 2 * long(row) + 1 - long(p[5] + p[6]);
+                long dc = 2 * long(col) + 1 - long(p[7] + p[8]);
+                long diameter = long(p[6] - p[5]);
+                inside = dr * dr + dc * dc <= diameter * diameter;
+            }
+            if (inside) total += ulong(value);
+        }
+        if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    }
+    output[pixel] = total;
+}
+
 // Apply only detector pixels whose binary membership changed. One lane owns one
 // entropy stream; SIMD reduction turns 32 competing per-scan atomics into one.
 // UInt32 is exact for one uint16 192x192 detector sum (maximum 2,415,882,240).

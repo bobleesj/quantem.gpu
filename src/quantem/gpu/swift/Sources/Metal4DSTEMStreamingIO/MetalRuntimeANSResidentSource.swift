@@ -65,6 +65,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   var spatialQuery: RuntimeSpatialQuery?
   var detectorColumnsPipeline: MTLComputePipelineState?
   var detectorTotalsPipeline: MTLComputePipelineState?
+  var regionMeanPipeline: MTLComputePipelineState?
   var detectorColumnsValidity: MTLBuffer?
 
   var usesSpatialIndex: Bool {
@@ -328,6 +329,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     detectorColumnsValidity = nil
     detectorColumnsPipeline = nil
     detectorTotalsPipeline = nil
+    regionMeanPipeline = nil
     isReleased = true
   }
 
