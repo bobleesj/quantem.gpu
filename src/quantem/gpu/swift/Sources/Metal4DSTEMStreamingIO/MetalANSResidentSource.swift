@@ -119,7 +119,6 @@ public final class MetalANSResidentSource {
     try complete(command)
   }
 
-
   /// Read one full raw DP exactly, preserving original counts including rare high values.
   ///
   /// The small result is widened exactly to UInt32 for the native interaction API.

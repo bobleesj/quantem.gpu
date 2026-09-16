@@ -19,8 +19,16 @@ final class EMPADReadStatus: @unchecked Sendable {
 
   func wait() { completion.wait() }
 
-  var seconds: Double { lock.lock(); defer { lock.unlock() }; return elapsed }
-  var failure: Error? { lock.lock(); defer { lock.unlock() }; return error }
+  var seconds: Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return elapsed
+  }
+  var failure: Error? {
+    lock.lock()
+    defer { lock.unlock() }
+    return error
+  }
 }
 
 /// Read one EMPAD window on the reader queue so the GPU can pack the previous

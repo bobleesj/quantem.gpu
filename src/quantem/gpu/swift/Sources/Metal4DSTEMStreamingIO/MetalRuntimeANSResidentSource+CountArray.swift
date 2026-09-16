@@ -251,8 +251,24 @@ private final class UnsafeReadStatus: @unchecked Sendable {
     lock.unlock()
     semaphore.wait()
   }
-  var failed: Bool { lock.lock(); defer { lock.unlock() }; return failedRead }
-  var seconds: Double { lock.lock(); defer { lock.unlock() }; return totalSeconds }
-  var bytes: UInt64 { lock.lock(); defer { lock.unlock() }; return totalBytes }
-  var calls: Int { lock.lock(); defer { lock.unlock() }; return totalCalls }
+  var failed: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return failedRead
+  }
+  var seconds: Double {
+    lock.lock()
+    defer { lock.unlock() }
+    return totalSeconds
+  }
+  var bytes: UInt64 {
+    lock.lock()
+    defer { lock.unlock() }
+    return totalBytes
+  }
+  var calls: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return totalCalls
+  }
 }
