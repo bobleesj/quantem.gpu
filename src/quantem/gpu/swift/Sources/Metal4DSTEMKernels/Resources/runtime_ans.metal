@@ -347,6 +347,7 @@ kernel void streamed_counts_region_total(
     device atomic_uint *errors [[buffer(4)]],
     device ulong *output [[buffer(5)]],
     constant ulong *p [[buffer(6)]],
+    device const uchar *membership [[buffer(7)]],
     uint pixel [[thread_position_in_grid]]) {
     uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
     if (pixel >= pixels) return;
@@ -357,17 +358,38 @@ kernel void streamed_counts_region_total(
         uint first = block * interval, count = min(interval, scans - first);
         if (p[3] + first >= region_stop || p[3] + first + count <= region_first) continue;
         StreamReader reader(payload, offsets, models, decoding, block * pixels + pixel);
-        for (uint i = 0; i < count; ++i) {
-            uint value = reader.next();
-            ulong scan = p[3] + first + i, row = scan / p[4], col = scan % p[4];
-            bool inside = row >= p[5] && row < p[6] && col >= p[7] && col < p[8];
-            if (inside && p[9] == 1) {
-                long dr = 2 * long(row) + 1 - long(p[5] + p[6]);
-                long dc = 2 * long(col) + 1 - long(p[7] + p[8]);
-                long diameter = long(p[6] - p[5]);
-                inside = dr * dr + dc * dc <= diameter * diameter;
+        if (reader.model == 253) {
+            // A validated zero stream contributes nothing to any scan region.
+        } else if (reader.model == 252) {
+            uint previous = 0;
+            bool first_event = true;
+            while (reader.valid && reader.cursor < reader.end) {
+                uint event = uint(payload[reader.cursor]) | (uint(payload[reader.cursor + 1]) << 8);
+                reader.cursor += 2;
+                uint position = event >> 7;
+                if (position >= count || (!first_event && position <= previous)) {
+                    reader.valid = false;
+                    break;
+                }
+                first_event = false;
+                previous = position;
+                if (membership[first + position]) total += ulong((event & 127u) + 1u);
             }
-            if (inside) total += ulong(value);
+        } else if (reader.model < SC_MODELS) {
+            uint subtotal = 0;
+            for (uint i = 0; i < count && reader.valid; ++i) {
+                uint value = reader.next_entropy();
+                if (membership[first + i]) subtotal += value;
+            }
+            // One block has at most 512 uint16 values, safely within UInt32.
+            total += ulong(subtotal);
+        } else {
+            uint subtotal = 0;
+            for (uint i = 0; i < count; ++i) {
+                uint value = reader.next();
+                if (membership[first + i]) subtotal += value;
+            }
+            total += ulong(subtotal);
         }
         if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
     }

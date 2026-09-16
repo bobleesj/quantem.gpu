@@ -19,7 +19,15 @@ import Native4DSTEMIO
       var data = Data([0x93, 78, 85, 77, 80, 89, 1, 0, UInt8(header.utf8.count & 255), UInt8(header.utf8.count >> 8)])
       data.append(contentsOf: header.utf8)
       for index in 0..<(17 * 33 * 4 * 5) {
-        let value = index % 20 == 0 ? 0 : (index % 20 == 1 ? (width == 1 ? 255 : 65535) : (index * 37) % (width == 1 ? 256 : 65536))
+        let pixel = index % 20, position = (index / 20) % 512
+        let value: Int
+        switch pixel {
+        case 0: value = 0
+        case 1: value = width == 1 ? 255 : 65535
+        case 2: value = position == 17 ? 5 : 0
+        case 3: value = position == 10 || position == 27 ? 128 : 0
+        default: value = (index * 37) % (width == 1 ? 256 : 65536)
+        }
         data.append(UInt8(value & 255))
         if width == 2 { data.append(UInt8(value >> 8)) }
       }
@@ -50,7 +58,12 @@ import Native4DSTEMIO
       (2..<8, 2..<8, .rectangle), (0..<1, 0..<1, .circle),
     ]
     if pixels <= 1024 { cases.append((0..<shape[0], 0..<shape[1], .rectangle)) }
-    print("device=\(device.name), shape=\(shape), dtype=\(original.dataset.sourceDtype)")
+    if shape[0] >= 40 && shape[1] >= 40 {
+      cases += [(10..<22, 11..<23, .circle), (12..<38, 13..<39, .rectangle),
+        (12..<38, 13..<39, .circle)]
+    }
+    let originalResidentBytes = source.residentBytes
+    print("device=\(device.name), shape=\(shape), dtype=\(original.dataset.sourceDtype) resident_bytes=\(originalResidentBytes)")
     for (rows, columns, regionShape) in cases {
       var expected = [UInt64](repeating: 0, count: pixels), count = 0
       raw.withUnsafeBytes { bytes in
@@ -76,5 +89,24 @@ import Native4DSTEMIO
     }
     let caps = try Metal4DSTEMResidentCapabilities.runtimeANS(source)
     print("PASS exact sums and correctly rounded means for every detector pixel; capabilities=\(caps.products.count)")
+    if ProcessInfo.processInfo.environment["QGPU_REGION_BENCHMARK"] == "1" {
+      for diameter in [6, 12, 26] where diameter < min(shape[0], shape[1]) {
+        for selection in [MetalScanRegionShape.rectangle, .circle] {
+          var wall: [Double] = [], gpu: [Double] = []
+          for step in 0..<22 {
+            let offset = 10 + step % 5
+            let result = try source.meanDiffractionPattern(
+              rows: offset..<offset + diameter, columns: offset..<offset + diameter,
+              shape: selection)
+            if step >= 2 { wall.append(result.wallMilliseconds); gpu.append(result.gpuMilliseconds) }
+          }
+          print("BENCH shape=\(selection) diameter=\(diameter) wall_ms=\(wall) gpu_ms=\(gpu)")
+        }
+      }
+    }
+    print("MEMORY query_cache_bytes=\(source.residentBytes - originalResidentBytes) allocated_bytes=\(device.currentAllocatedSize)")
+    source.releaseResidentStorage()
+    precondition(source.residentBytes == 0)
+    print("RELEASE_PASS")
   }
 }

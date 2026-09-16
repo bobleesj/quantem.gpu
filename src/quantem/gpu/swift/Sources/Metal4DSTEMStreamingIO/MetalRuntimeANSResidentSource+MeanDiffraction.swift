@@ -40,6 +40,22 @@ extension MetalRuntimeANSResidentSource {
     let pixels = shape[2] * shape[3]
     let output = try Self.sharedBuffer(
       device: device, bytes: pixels * 8, label: "Region diffraction sums")
+    // Membership is identical for every detector pixel. Compute it once per
+    // scan, instead of doing integer division and circle geometry in each
+    // decoder lane for every symbol.
+    let membership = try Self.sharedBuffer(
+      device: device, bytes: shape[0] * shape[1], label: "Region scan membership")
+    memset(membership.contents(), 0, membership.length)
+    let selected = membership.contents().assumingMemoryBound(to: UInt8.self)
+    for row in rows {
+      for column in columns {
+        let dr = 2 * row + 1 - rows.lowerBound - rows.upperBound
+        let dc = 2 * column + 1 - columns.lowerBound - columns.upperBound
+        if selectionShape == .rectangle || dr * dr + dc * dc <= rows.count * rows.count {
+          selected[row * shape[1] + column] = 1
+        }
+      }
+    }
     guard let pipeline = regionMeanPipeline, let failure, let decodingTable,
       let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder()
     else {
@@ -64,6 +80,7 @@ extension MetalRuntimeANSResidentSource {
         Int(selectionShape.rawValue),
       ].map(UInt64.init)
       encoder.setBytes(&parameters, length: parameters.count * 8, index: 6)
+      encoder.setBuffer(membership, offset: chunk.firstScan, index: 7)
       encoder.dispatchThreads(
         MTLSize(width: pixels, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
