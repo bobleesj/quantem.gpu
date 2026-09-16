@@ -19,8 +19,17 @@ import Native4DSTEMIO
       "electron_source/accelerating_voltage": .init(value: 200000, unit: "V", evidence: "microscope setting"),
       "illumination_system/semi_convergence_angle": .init(value: 24.75, unit: "mrad", evidence: "aperture calibration"),
     ]
-    try MetalQEMExporter.save(.counts(original), to: output, device: device, calibrationOverrides: overrides)
+    var resolvedIdentity: MetalQEMExporter.CalibrationIdentity?
+    try MetalQEMExporter.save(.counts(original), to: output, device: device,
+      resolveCalibration: { identity in
+        precondition(resolvedIdentity == nil, "Resolve once after the normal load")
+        resolvedIdentity = identity
+        return overrides
+      })
     let snapshot = try NativeANSSnapshot(url: output)
+    precondition(resolvedIdentity?.sourceIdentitySHA256 == original.dataset.sourceIdentitySHA256,
+      "Resolve calibration using the acquisition identity, not the new file header hash")
+    precondition(resolvedIdentity?.originalSourceIdentitySHA256 == original.dataset.sourceIdentitySHA256)
     let restored = try NativeQEMCalibration.read(metadata: snapshot.dataset.metadata ?? [:])
     precondition(restored == overrides, "Overrides must survive without local preferences")
     precondition(snapshot.dataset.sourceScanCalibration == original.dataset.sourceScanCalibration,
@@ -39,13 +48,16 @@ import Native4DSTEMIO
     let preserved = output.deletingPathExtension().appendingPathExtension("preserved.qem")
     let reset = output.deletingPathExtension().appendingPathExtension("reset.qem")
     try resident.saveSnapshot(to: preserved)
-    try resident.saveSnapshot(to: reset, calibrationOverrides: [:])
+    try MetalQEMExporter.save(.snapshot(snapshot), to: reset, device: device,
+      calibrationOverrides: [:], resolveCalibration: { _ in
+        preconditionFailure("Explicit queued calibration must take priority over saved edits")
+      })
     let preservedSnapshot = try NativeANSSnapshot(url: preserved)
     let resetSnapshot = try NativeANSSnapshot(url: reset)
     let preservedValues = try NativeQEMCalibration.read(metadata: preservedSnapshot.dataset.metadata ?? [:])
     let resetValues = try NativeQEMCalibration.read(metadata: resetSnapshot.dataset.metadata ?? [:])
     precondition(preservedValues == overrides)
     precondition(resetValues.isEmpty)
-    print("PASS: all raw diffraction counts exact; saved calibration preserved by default and cleared only explicitly")
+    print("PASS: late-bound source identity, explicit override priority, every raw DP exact, preserve and reset")
   }
 }

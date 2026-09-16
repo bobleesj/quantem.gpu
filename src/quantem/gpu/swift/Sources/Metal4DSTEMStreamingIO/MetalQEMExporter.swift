@@ -4,6 +4,20 @@ import Native4DSTEMIO
 
 /// Lossless file conversion, independent of app dialogs, preferences and queues.
 public enum MetalQEMExporter {
+  /// Content identities established by the normal load, without an extra source read.
+  public struct CalibrationIdentity {
+    public let sourceIdentitySHA256: String
+    public let originalSourceIdentitySHA256: String
+    public let metadata: [String: String]
+
+    public init(sourceIdentitySHA256: String, originalSourceIdentitySHA256: String,
+                metadata: [String: String]) {
+      self.sourceIdentitySHA256 = sourceIdentitySHA256
+      self.originalSourceIdentitySHA256 = originalSourceIdentitySHA256
+      self.metadata = metadata
+    }
+  }
+
   /// Supply a validated reader and explicit correction policy, never inferred UI state.
   public enum Source {
     case counts(any NativeCountArray)
@@ -19,10 +33,13 @@ public enum MetalQEMExporter {
   /// Existing destinations are never overwritten. Readers retain source metadata.
   /// Omit calibrationOverrides to preserve saved edits; pass a complete dictionary
   /// to replace them, or an empty dictionary to clear them in the new copy.
+  /// For unopened batch inputs, resolveCalibration can retrieve source-bound
+  /// edits after loading establishes the identity. Explicit overrides take precedence.
   public static func save(
     _ source: Source, to destination: URL, device: MTLDevice,
     maximumAdditionalBytes: UInt64? = nil,
     calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
+    resolveCalibration: (CalibrationIdentity) throws -> NativeQEMCalibration.Overrides? = { _ in nil },
     shouldCancel: () -> Bool = { false },
     progress: (String) -> Void = { _ in }
   ) throws {
@@ -50,10 +67,14 @@ public enum MetalQEMExporter {
         original, device: device,
         memoryBudgetBytes: budget, subtracting: background, shouldCancel: shouldCancel)
       defer { resident.releaseResidentStorage() }
+      let overrides = try calibrationOverrides ?? resolveCalibration(.init(
+        sourceIdentitySHA256: resident.sourceIdentitySHA256,
+        originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
+        metadata: original.microscopeMetadata))
       progress("Writing .qem file…")
       try resident.saveQEM(
         to: destination, userConfirmedBackgroundCorrected: alreadyCorrected,
-        calibrationOverrides: calibrationOverrides,
+        calibrationOverrides: overrides,
         shouldCancel: shouldCancel)
       return
     }
@@ -78,7 +99,13 @@ public enum MetalQEMExporter {
       preconditionFailure("EMPAD conversion is handled above")
     }
     defer { resident.releaseResidentStorage() }
+    let metadata = resident.dataset.metadata ?? [:]
+    let originalIdentity = metadata["originalSourceIdentity"].flatMap { $0.isEmpty ? nil : $0 }
+    let overrides = try calibrationOverrides ?? resolveCalibration(.init(
+      sourceIdentitySHA256: resident.sourceIdentitySHA256,
+      originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
+      metadata: metadata))
     progress("Writing .qem file…")
-    try resident.saveSnapshot(to: destination, calibrationOverrides: calibrationOverrides, shouldCancel: shouldCancel)
+    try resident.saveSnapshot(to: destination, calibrationOverrides: overrides, shouldCancel: shouldCancel)
   }
 }
