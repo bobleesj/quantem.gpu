@@ -235,6 +235,67 @@ public final class MetalEMPADResidentSource {
       ProcessInfo.processInfo.environment["QGPU_EMPAD_WINDOW"]
       ?? (pipelinedHash == nil ? "512" : "256")
     let window = requestedWindow == "64" ? 64 : requestedWindow == "256" ? 256 : 512
+    // Two bounded input windows alternate so the read of window N+1 runs while
+    // the GPU analyses and packs window N. A window is refilled only after the
+    // command buffer that consumed it has completed. The pipelined source hash
+    // reads its window later on another queue, so recycling is enabled only
+    // when nothing else still holds a reference.
+    let overlapReads =
+      pipelinedHash == nil
+      && ProcessInfo.processInfo.environment["QGPU_EMPAD_READ_OVERLAP"] != "0"
+    let readQueue = DispatchQueue(label: "org.quantem.gpu.empad-read", qos: .userInitiated)
+    var inputRing: [MTLBuffer?] = [nil, nil]
+    var ringSlot = 0
+    var prefetched: (first: Int, frameCount: Int, buffer: MTLBuffer, status: EMPADReadStatus)?
+
+    /// Exact pixel data for one bounded window, in a destination buffer.
+    ///
+    /// Without overlap the original fresh allocation and synchronous read are
+    /// kept. With overlap the two ring slots alternate, and any in-flight
+    /// prefetch is drained before a slot is refilled so a buffer is never
+    /// overwritten while a read still owns it.
+    func windowInput(first: Int, frameCount: Int, bytes: Int) throws -> MTLBuffer {
+      guard overlapReads else {
+        guard let buffer = device.makeBuffer(length: bytes, options: .storageModeShared) else {
+          throw failure("Metal could not allocate the bounded EMPAD input window.")
+        }
+        let started = CFAbsoluteTimeGetCurrent()
+        try source.readFrames(
+          Array(first..<(first + frameCount)),
+          into: UnsafeMutableRawBufferPointer(start: buffer.contents(), count: bytes))
+        readSeconds += CFAbsoluteTimeGetCurrent() - started
+        return buffer
+      }
+      if let pending = prefetched {
+        prefetched = nil
+        pending.status.wait()
+        if let error = pending.status.failure { throw error }
+        if pending.first == first, pending.frameCount == frameCount {
+          readSeconds += pending.status.seconds
+          return pending.buffer
+        }
+      }
+      let slot = ringSlot
+      let buffer: MTLBuffer
+      if let reused = inputRing[slot], reused.length == bytes {
+        buffer = reused
+      } else {
+        guard let made = device.makeBuffer(length: bytes, options: .storageModeShared) else {
+          throw failure("Metal could not allocate the bounded EMPAD input window.")
+        }
+        inputRing[slot] = made
+        buffer = made
+      }
+      let status = EMPADReadStatus()
+      startEMPADRead(
+        source: source, frames: first..<(first + frameCount), into: buffer,
+        status: status, queue: readQueue)
+      status.wait()
+      if let error = status.failure { throw error }
+      readSeconds += status.seconds
+      return buffer
+    }
+
     var first = 0
     while first < source.frameCount {
       try checkCancellation(shouldCancel)
@@ -273,13 +334,8 @@ public final class MetalEMPADResidentSource {
         )
       }
       try autoreleasepool {
-        let readStarted = CFAbsoluteTimeGetCurrent()
-        guard let input = device.makeBuffer(length: sourceBytes, options: .storageModeShared) else {
-          throw failure("Metal could not allocate the bounded EMPAD input window.")
-        }
-        let inputBytes = UnsafeMutableRawBufferPointer(start: input.contents(), count: sourceBytes)
-        try source.readFrames(Array(first..<(first + frameCount)), into: inputBytes)
-        readSeconds += CFAbsoluteTimeGetCurrent() - readStarted
+        let input = try windowInput(
+          first: first, frameCount: frameCount, bytes: sourceBytes)
         let analyzeStarted = CFAbsoluteTimeGetCurrent()
         guard
           let descriptors = device.makeBuffer(length: descriptorBytes, options: .storageModeShared),
@@ -304,7 +360,9 @@ public final class MetalEMPADResidentSource {
         if let pipelinedHash {
           pipelinedHash.append(input)
         } else if cachedHash == nil {
-          logicalDigest.update(bufferPointer: UnsafeRawBufferPointer(inputBytes))
+          logicalDigest.update(
+            bufferPointer: UnsafeRawBufferPointer(
+              start: input.contents(), count: sourceBytes))
         }
         let hashElapsed = CFAbsoluteTimeGetCurrent() - hashStarted
         if pipelinedHash != nil {
@@ -367,7 +425,34 @@ public final class MetalEMPADResidentSource {
             firstFrame: first, frameCount: frameCount,
             payload: payload, descriptors: residentDescriptors))
       }
-      first += frameCount
+      let nextFirst = first + frameCount
+      if overlapReads {
+        // Probe the next window with the same budget arithmetic the loop uses,
+        // so a prefetch never asks for more memory than the synchronous path.
+        let nextSlot = 1 - ringSlot
+        let nextAllocated = UInt64(device.currentAllocatedSize)
+        let nextAvailable =
+          memoryBudgetBytes > nextAllocated ? memoryBudgetBytes - nextAllocated : 0
+        let nextHeadroom = UInt64(getpagesize()) * 3
+        let nextBudget = nextAvailable > nextHeadroom ? nextAvailable - nextHeadroom : 0
+        let nextCount = min(
+          Int(min(UInt64(window), nextBudget / peakBytesPerFrame)),
+          source.frameCount - nextFirst)
+        let nextBytes = nextCount * 16384 * 4
+        let nextDescriptors = nextCount * 128 * MemoryLayout<SIMD4<UInt32>>.stride
+        if nextCount > 0, nextFirst < source.frameCount,
+          UInt64(nextBytes * 2 + nextDescriptors * 2) <= nextAvailable,
+          let buffer = inputRing[nextSlot], buffer.length == nextBytes
+        {
+          let status = EMPADReadStatus()
+          prefetched = (nextFirst, nextCount, buffer, status)
+          startEMPADRead(
+            source: source, frames: nextFirst..<(nextFirst + nextCount), into: buffer,
+            status: status, queue: readQueue)
+        }
+        ringSlot = nextSlot
+      }
+      first = nextFirst
     }
     let hashFinishStarted = CFAbsoluteTimeGetCurrent()
     let completedHash = pipelinedHash?.finish()
