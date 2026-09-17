@@ -1,0 +1,233 @@
+{
+  "code": {
+    "dirty": false,
+    "entrypoint": "experiments/20260916-ssb-mps-2pass-price/two_pass_price.py",
+    "note": "Nothing was landed: the engine under test is the unchanged HEAD, engine.py sha256 06058d32bf03947dec395845dfbff80fb8fa87563840a3242e204675e75e5114, against the frozen 32ba29b reference 200e906b3d7d87b6a2b7cbf330d03e389b181c702cb1688a8ec431a33c10c677.",
+    "repository": "quantem.gpu",
+    "revision": "4ea971dede370f54d89c59bddbcde21a07f84569"
+  },
+  "execution": {
+    "artifact_root": "~ private perf-lab scratch (untracked): perf-lab/ssb-audit/mps-runs/20260916-ssb-mps-2pass-price",
+    "backend": "MLX/MPS (mlx 0.32.0, gpu device)",
+    "gpu_model": "Apple M5",
+    "host": "apple-m5-24gb, macOS 26.6.2",
+    "note": "Both probes ran under the shared gpurun lock at load averages 2.5-3.5 with no ssb512 screen session active; the Metal agent's 11.9 GB parity job held the lock for 167 s before the first session and 15-59 s before the reruns, and every number here is from a session that also measured its own copy control."
+  },
+  "experiment_id": "20260916-ssb-mps-2pass-price",
+  "findings": {
+    "accepted": [
+      "Nothing. No engine change was landed: the 2-pass target is blocked by hardware and every re-decomposition moves the pinned value."
+    ],
+    "bottleneck_verdict": "The 8937-BF fit is co-limited, not purely memory bound. The objective moves 87.01 GB of modelled traffic in 643.4 ms = 135.2 GB/s against a 131.1 GB/s same-session 1:1 copy control, but the stage ablations show device_memory is not what binds: removing the row stage's 2,147 MB plane write saves only 1.71 ms of 20.38 ms and removing the column stage's 2,147 MB plane read saves 4.56 ms of 17.82 ms. The row stage's mixed ceiling is 196.2 GB/s (1:4 write-heavy control) yet it runs at 131.8 GB/s, so roughly 60-70% of each stage's time is non-device_memory cost (correction ALU, butterfly issue/barriers at 32 KB threadgroup occupancy). The intermediate round trip is still the largest single byte item - 4,295 MB of 4,834 MB per pack, 88.9% - and it is worth about 17% of the fit wall, but it is not removable: fusion needs the whole plane on chip, and moving the sum is refuted by the objective's own nonlinearity.",
+    "fit_change_verdict": "f357069 (tiled scalar row IFFT, bit-exact, 1.093x end-to-end on the scalar loss and 1.081x on the isolated stage pair) does not touch the fit path and must not be quoted as a fit result: the fit calls _reconstruct_prepared_batch_exact_loss, a 4-trial fit calls _reconstruct_prepared 0 times and the batched row IFFT 1944 times (18 packs x 108 objectives), and the batched path was already tiled in the frozen 32ba29b tree (tiled_output=batch<=2 and tiled_input=batch<=2 at engine.py:3005-3010 and 5042). Tiling is a lossless address permutation, so there is no byte saving to apply there. The paired fit A/B delta (79.28 -> 77.72 s p50) is host drift.",
+    "next_levers_if_the_pinned_value_may_move": "Only two, and both need a recapture decision: (a) a fused single-kernel row+column stage, which this hardware cannot host (64x over the measured 32,768 B threadgroup limit) and which would be worth about 17% of the fit wall as an upper bound on its device_memory share; (b) any other butterfly ordering, priced at 8e-7 relative on the pack loss against the engine's own 1.2e-7 float32 floor.",
+    "ranking": [
+      "1. engine.py:4975 pack loop -> engine.py:2626 tiled row store -> engine.py:2337 tiled column load: the intermediate round trip, 4,295 MB of the 4,834 MB moved per 512-BF pair pack (88.9%) and, by ablation, 6.27 ms of the ~35.7 ms per pack (17% of the 79.0 s fit). Blocked, not recoverable.",
+      "2. engine.py:2660/2712 G_qk read inside the row kernel: 539 MB per pack shared across the pair, 11.2% of a pack's bytes and 20.1% of a single candidate's.",
+      "3. engine.py:5080 Nelder-Mead: 31 sequential batch-1 evaluations, 14.4% of the fit, unamortisable because the simplex is sequential; the 200-trial loop (83.4%) is already batch-2.",
+      "4. Row-stage non-device_memory cost: 18.67 ms of 20.38 ms survives with the plane write folded; the row stage's own mix ceiling is 196 GB/s against 131.8 GB/s achieved.",
+      "5. Column-stage non-device_memory cost: 13.26 ms of 17.82 ms survives with the plane read pinned; atan2 ablation was already measured at 5%."
+    ],
+    "rejected": [
+      "Accumulating the candidate-weighted BF planes in the frequency domain and transforming once (IFFT linearity, proposed as IFFT2(sum_bf c_bf G_bf) == sum_bf IFFT2(c_bf G_bf)): refuted on the objective, not on precision. The loss is mean_pixel(Var_bf(phi)), a variance of the phase across BF terms, so a phase must exist per BF term; the atan2 sits between the transform and the sum and sum_bf phi_bf != phi(sum_bf z_bf). A second independent barrier is that the Nyquist boundary correction is added inside the atan2 argument and is indexed by BF term. The redraw path legitimately accumulates first because its output really is linear; that is why the idea looked general. Independently refuted by the Metal agent.",
+      "Fusing the row and column stages into one kernel so the intermediate round trip disappears (4,295 MB of the 4,834 MB per 512-BF pair pack): blocked by on-chip capacity, measured here rather than assumed. The threadgroup ceiling on this host is 32,768 B (33,792 B refuses to load with 'Threadgroup memory size (33792) exceeds the maximum threadgroup memory allowed (32768)') and both engine kernels already reserve exactly 32,768 B, while the transformed plane is 2,097,152 B = 64x that. The only tile that fits, 512 rows x 8 columns, needs 64 threadgroups each re-reading the full input: 64x input amplification. A hypothetical version that removed the intermediate's device_memory traffic entirely would save 6.27 ms of the ~35.7-37.0 ms per pack (17%), i.e. 79.0 s -> about 65.6 s at 8937 BF, and it would change the butterfly ordering and move the pinned loss by about 8e-7 relative."
+    ]
+  },
+  "inputs": [
+    {
+      "dataset_id": "bf-column-companion-512-17p0x-0p0y",
+      "note": "Same calibrated 8937-plane companion used by the hot-path experiment; G cache 9,407,729,664 B = 8937 x 512 x 257 complex64. Re-verified in this session: sha256 e8ed586fad2b404a4392b9fb4f06da3f3fd3a096d1cdc2200ea39f3972a46121, 4,685,561,856 B, identical to the hot-path experiment input. Calibration snapshot sha256 990e90be17324cbe5aec810634d6d1fabdef7c7fa4591ed265f7d0a8236f70f9.",
+      "path": "private-fixture://mps-runs/fixture-512-a",
+      "sha256": "e8ed586fad2b404a4392b9fb4f06da3f3fd3a096d1cdc2200ea39f3972a46121"
+    },
+    {
+      "dataset_id": "frozen-reference-engine-32ba29b",
+      "path": "private-fixture://mps-runs/ref-src-32ba29b/src/quantem/gpu/ssb/backends/mps/engine.py",
+      "sha256": "200e906b3d7d87b6a2b7cbf330d03e389b181c702cb1688a8ec431a33c10c677"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "threadgroup-limit",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/threadgroup_limit.jsonl",
+      "result": "Threadgroup ceiling measured on this host: 4096-32768 B all load; 33792 B fails with 'Threadgroup memory size (33792) exceeds the maximum threadgroup memory allowed (32768)'. The batch-2 row kernel (shared_rows[4][2][512]) and the column stage (shared_cols[8][512]) both reserve exactly 32768 B today.",
+      "retention": "durable",
+      "sha256": "049acf548f4cd84e270e799ac335a6fcec35bbd2283c88f51041a08d9978d77c",
+      "size_bytes": 6665
+    },
+    {
+      "artifact_id": "two-pass-price",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/two_pass_price.jsonl",
+      "result": "Frozen objective on the calibrated fixture: p50 643.4 ms (5 reps, 640.2-665.5) for 87.01 GB modelled = 135.2 GB/s with loss[0] = 0.13769753277301788 exactly and 11.56 GB peak. Row stage 20.381 ms (131.8 GB/s), column stage 17.820 ms (120.5 GB/s).",
+      "retention": "durable",
+      "sha256": "34c8be8a8f0c183a63a0279101b1049d936768d66a13f791e496e3200ada2d38",
+      "size_bytes": 4927
+    },
+    {
+      "artifact_id": "ablations",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/two_pass_price.jsonl",
+      "result": "Timing-only variants on the same pack: folding the row stage's plane store into four planes 20.381 to 18.674 ms; pinning the column stage's read to one plane 17.820 to 13.261 ms. The intermediate's device_memory round trip is therefore worth 6.27 ms of the ~35.7-37.0 ms per 512-BF pair pack.",
+      "retention": "durable",
+      "sha256": "34c8be8a8f0c183a63a0279101b1049d936768d66a13f791e496e3200ada2d38",
+      "size_bytes": 4927
+    },
+    {
+      "artifact_id": "mix-controls",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/mix_control.jsonl",
+      "result": "Same-session streaming ceiling per access mix at the intermediate's byte scale: 1:1 copy 131.1 GB/s, write-only 132.1 GB/s, read-only 127.0 GB/s, 1:4 write-heavy 196.2 GB/s. The row stage's write-heavy mix allows 196 GB/s but it runs at 131.8 GB/s, so the row stage is not at its own device_memory ceiling.",
+      "retention": "durable",
+      "sha256": "f64c36bc91369f94848517bfb717889df6d70a6d343842f3639229d8a98e18a0",
+      "size_bytes": 596
+    },
+    {
+      "artifact_id": "alt-decomposition",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/alt_decomp.jsonl",
+      "result": "Different second-stage decompositions on the de-tiled intermediate (32 BF pack, batch 2): engine radix-8 k_bf=32 4.301 ms vs MLX mx.fft.ifft along the same axis 4.934 ms, i.e. the built-in FFT is 1.15x slower on the same work.",
+      "retention": "durable",
+      "sha256": "cf17390eb6351a3d4fb85ca4a82ac1c5582202b7051b73e85ef33ddfdc012f04",
+      "size_bytes": 520
+    },
+    {
+      "artifact_id": "deviation",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/deviation_final.jsonl",
+      "result": "Pack-loss deviation versus the engine on identical values: in-path float32 regrouping 1.01e-7 relative, numpy float32 pocketfft 1.86e-7, MLX complex64 FFT 7.89e-7, and the engine's own distance from float64 1.23e-7. Pure summation-order floor on identical float32 phases: max abs spread 1.97e-6.",
+      "retention": "durable",
+      "sha256": "bf81642f71726ae50a1cf6c85923929e1221bf1d07cbab0174b82466c11ea661",
+      "size_bytes": 2133
+    },
+    {
+      "artifact_id": "focused-tests",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/focused_tests.log",
+      "result": "56 passed, 4 skipped in 2.63 s on the unchanged tree (engine.py sha256 06058d32bf03947d...).",
+      "retention": "durable",
+      "sha256": "e4d90560c189b6c58479d06c51842ca858d188df72c04e946e4e305d9dac5abb",
+      "size_bytes": 110
+    },
+    {
+      "artifact_id": "superseded-first-deviation",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-2pass-price/deviation_superseded_tiled_axis.jsonl",
+      "result": "First deviation pass, superseded: it fed the tiled store layout to a plain FFT axis and therefore measured a permutation, not a decomposition. Kept as a record of the error.",
+      "retention": "durable",
+      "sha256": "fc659657a6bf05116200f688b3f57f9ccd6de8c187560107331c2390ae0feba1",
+      "size_bytes": 2372
+    }
+  ],
+  "paper": {
+    "claim": "The 8937-BF exact-objective fit on MLX/MPS moves 87 GB per batch-2 objective at the machine's streaming ceiling and is co-limited by non-device_memory stage cost; the row-IFFT intermediate is its largest byte item but cannot be removed on this hardware or by reordering the linear sum.",
+    "evidence": [
+      "threadgroup_limit.jsonl",
+      "two_pass_price.jsonl",
+      "mix_control.jsonl",
+      "alt_decomp.jsonl",
+      "deviation_final.jsonl"
+    ]
+  },
+  "parameters": {
+    "ablations": {
+      "column_read_pinned_to_one_plane_ms": 13.261,
+      "column_read_saving_ms": 4.559,
+      "implied_fit_seconds_if_recoverable": 65.6,
+      "intermediate_device_memory_prize_ms_per_pack": 6.266,
+      "note": "A strict lower bound on the fused prize: the variants keep every store and load instruction and only remove the device_memory traffic, so a real fused kernel would save this much or more - but it cannot be built on this hardware.",
+      "pack_cost_ms": 35.7,
+      "prize_share": 0.17,
+      "row_store_folded_to_four_planes_ms": 18.674,
+      "row_store_saving_ms": 1.707
+    },
+    "active_bf_planes": 8937,
+    "alternative_decomposition": {
+      "engine_column_stage_ms_per_32bf_pack": 4.301,
+      "mlx_ifft_same_axis_ms_per_32bf_pack": 4.934,
+      "numpy_float32_ms": "off-GPU reference only",
+      "ratio": 1.15
+    },
+    "approximation": "none; the target was strictly fewer bytes at identical semantics, and no change was landed",
+    "batch": 2,
+    "chunk_bf": 512,
+    "engine_threadgroup_reservation_bytes": {
+      "phase_cols512": 32768,
+      "row_ifft512_batch2": 32768
+    },
+    "fit_split_at_8937_bf": "79.03 s = 200-trial loop 65.9 s (83.4%, 100 batch-2 calls at p50 653.3 ms = 3.06 candidates/s) + Nelder-Mead 11.4 s (14.4%, 31 batch-1 calls at p50 367.6 ms = 2.72 evals/s) + initial loss 0.44 s + final object/phase 0.52 s + optuna 0.4 s, from the hot-path experiment's paired fit runs. A 17% byte prize would move those to about 54.7 s and 9.5 s respectively.",
+    "frozen_objective_session": {
+      "gb_per_s": 135.2,
+      "loss": [
+        0.13769753277301788,
+        0.13826602697372437
+      ],
+      "modelled_bytes": 87010836480,
+      "note": "modelled bytes = 18 packs x (2 candidates x 512 planes x 512x512x8 B write + read) + 18 shared half-plane G reads",
+      "p50_ms": 643.366,
+      "peak_active_bytes": 11560420189,
+      "range_ms": [
+        640.202,
+        665.451
+      ],
+      "reps": 5
+    },
+    "fused_kernel_requirement": {
+      "argument": "A single fused row+column kernel must hold the transformed plane per threadgroup (2,097,152 B against a measured 32,768 B limit). Splitting the second stage by output columns fits exactly at 512 rows x 8 columns x 8 B = 32,768 B, but each of the 64 groups then has to transform 8 output columns of every one of the 512 rows, so it reads the full 2,097,152 B input instead of 1/64 of it: 64x the current per-plane input traffic.",
+      "groups_needed_for_512_columns": 64,
+      "input_read_amplification": 64,
+      "plane_bytes": 2097152,
+      "plane_over_limit": 64.0,
+      "smallest_self_contained_column_tile_bytes": 32768
+    },
+    "mix_controls": {
+      "broadcast_1r4w_2.68GB_gb_per_s": 196.2,
+      "copy_1r1w_2.15GB_gb_per_s": 131.1,
+      "note": "The row stage's read:write mix allows 196 GB/s but it runs at 131.8 GB/s, so the row stage is not at its own device_memory ceiling; the column stage (read-heavy, ceiling 127.0 GB/s) runs at 120.5 GB/s and is closer to it.",
+      "read_only_2.15GB_gb_per_s": 127.0,
+      "write_only_2.15GB_gb_per_s": 132.1
+    },
+    "precision": "float32 / complex64, math_mode fast, unchanged",
+    "stages_isolated": {
+      "column_stage_gb_per_s": 120.5,
+      "column_stage_ms": 17.82,
+      "row_stage_gb_per_s": 131.8,
+      "row_stage_ms": 20.381
+    },
+    "threadgroup_limit_first_failure": {
+      "bytes": 33792,
+      "error": "RuntimeError: [metal::Device] Unable to load kernel: Threadgroup memory size (33792) exceeds the maximum threadgroup memory allowed (32768)"
+    },
+    "threadgroup_limit_measured_bytes": 32768
+  },
+  "parity": {
+    "bit_exact_evidence": "The frozen objective reproduces the pinned loss 0.13769753277301788 exactly in this session on the unchanged engine, and the focused gate passes 56 with 4 skipped. No engine source was modified by this experiment, so the pinned trajectory is untouched.",
+    "deviation_table_pack_of_32_bf_batch2": {
+      "engine_k8_regroup_pack_loss_rel": 1.0083439877559536e-07,
+      "float64_reference_pack_loss_rel": 1.2334517511941626e-07,
+      "mlx_ifft_complex64_pack_loss_rel": 7.892073300473728e-07,
+      "note": "Same float32 phases, different summation orders, spread by 1.97e-6 absolute; the engine's own distance from float64 is 1.23e-7 relative on the pack loss, a different FFT implementation moves it 7.89e-7 relative, i.e. about 6x the float32 floor but still inside the repository's 1e-5 cross-implementation gate.",
+      "numpy_float32_pocketfft_pack_loss_rel": 1.8630798592456299e-07,
+      "pure_summation_order_floor_max_abs": 1.9690294745799974e-06,
+      "reference": "engine radix-8 column stage, k_bf=32, on the tiled intermediate",
+      "sum_field_max_abs": {
+        "engine_k8_regroup": 1.9073486328125e-06,
+        "float64": 2.0213587852424553e-06,
+        "mlx_ifft_complex64": 2.86102294921875e-06,
+        "numpy_float32": 1.9073486328125e-06
+      }
+    },
+    "gate": "tests/hardware/mps/test_ssb_mps_cuda_reference.py, tests/hardware/mps/test_ssb_mps_compact_object.py, tests/contracts/test_ssb_mps_close.py, tests/contracts/test_ssb_batch_optuna.py, tests/parity/test_ssb_cold_preview.py",
+    "gate_note": "The repository's own cross-implementation tolerance in tests/hardware/mps/test_ssb_mps_cuda_reference.py is rtol/atol 1e-5 (2e-5/2e-4 for sums); a different butterfly ordering lands inside it while moving the pinned value, which is why the decision is a recapture decision rather than a test failure.",
+    "gate_result": "56 passed, 4 skipped in 2.63 s"
+  },
+  "question": "Can the row-IFFT intermediate be reduced from four global passes to two on the MLX/MPS 8937-BF fit path - by accumulating in the frequency domain before the transform, or by fusing the row and column stages - and what would that cost in parity?",
+  "schema_version": 1,
+  "status": "refuted",
+  "timestamps": {
+    "created": "2026-09-16",
+    "finished": "2026-09-16",
+    "started": "2026-09-16"
+  }
+}
