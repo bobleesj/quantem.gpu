@@ -164,10 +164,62 @@ extension MetalRuntimeANSResidentSource {
     guard let pipeline, let decodingTable else {
       throw Self.invalid("Metal could not prepare the exact runtime ANS moments kernel.")
     }
+    if exactMomentCombinePipeline == nil {
+      let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
+      guard
+        let function = library.makeFunction(name: "streamed_counts_exact_moments_combine")
+      else {
+        throw Self.invalid("Missing exact runtime ANS moment combine kernel. Rebuild the backend resources.")
+      }
+      exactMomentCombinePipeline = try device.makeComputePipelineState(function: function)
+    }
+    guard let combinePipeline = exactMomentCombinePipeline else {
+      throw Self.invalid("Metal could not prepare the exact runtime ANS moment combine kernel.")
+    }
+    // One reusable per-packet slice of stripe partials. Peak occupancy is
+    // `units` slots of `interval` scans, so a single packet's worth is enough
+    // when the packets are folded one at a time.
+    let stripeWidth = 32 * Self.exactMomentStreams
+    let stripesPerPacket = (pixels + stripeWidth - 1) / stripeWidth
+    let maximumUnits =
+      chunks.map { chunk -> Int in
+        let blocks = (chunk.scanCount + interval - 1) / interval
+        let groups =
+          groupsPerBlock > 0
+          ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripesPerPacket)
+        return blocks * groups
+      }.max() ?? 1
+    // Every packet in a command buffer holds its own slice so the two passes meet
+    // at a single barrier per buffer instead of one per packet: a barrier per
+    // packet drains the pipeline and measured slower than the atomics it removed.
+    let batchSize = 16
+    let partialWords = maximumUnits * interval * Self.exactMomentWordsPerScan
+    let partialStride = partialWords * MemoryLayout<UInt32>.stride
+    guard
+      let partials = device.makeBuffer(
+        length: partialStride * batchSize, options: .storageModePrivate)
+    else {
+      throw Self.invalid("Metal could not allocate the exact DPC moment partials.")
+    }
+    partials.label = "runtime ANS exact DPC moment partials"
     let words = diagnostics.contents().bindMemory(to: UInt32.self, capacity: 4)
     let simdGroups = Self.exactMomentSIMDGroups
-    let batchSize = 16
     var completed = 0
+    if ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_MOMENT_DEBUG"] == "1" {
+      fputs(
+        "MOMENT_DEBUG chunks=\(chunks.count) interval=\(interval) scans=\(scanCount) "
+          + "pixels=\(pixels) stripes=\(stripesPerPacket) maximumUnits=\(maximumUnits) "
+          + "groupsPerBlock=\(groupsPerBlock) simdGroups=\(simdGroups)\n", stderr)
+      for (index, chunk) in chunks.enumerated() where index < 3 || index == chunks.count - 1 {
+        let blocks = (chunk.scanCount + interval - 1) / interval
+        let groups =
+          groupsPerBlock > 0
+          ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripesPerPacket)
+        fputs(
+          "MOMENT_DEBUG chunk=\(index) first=\(chunk.firstScan) scans=\(chunk.scanCount) "
+            + "blocks=\(blocks) groups=\(groups) units=\(blocks * groups)\n", stderr)
+      }
+    }
     while completed < chunks.count {
       if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
       let stop = min(chunks.count, completed + batchSize)
@@ -178,16 +230,32 @@ extension MetalRuntimeANSResidentSource {
       words[1] = UInt32.max
       words[2] = UInt32.max
       words[3] = UInt32.max
+      // The slots accumulate, so the batch starts from zero. A blit encoder
+      // always runs before the compute encoders of the same command buffer.
+      guard let clear = command.makeBlitCommandEncoder() else {
+        throw Self.invalid("Metal could not clear the exact DPC moment partials.")
+      }
+      clear.fill(
+        buffer: partials,
+        range: 0..<((stop - completed) * partialStride),
+        value: 0)
+      clear.endEncoding()
       guard let encoder = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
         throw Self.invalid("Metal could not encode exact DPC moments.")
       }
       command.label = "Exact DPC moments \(completed)..<\(stop)"
-      // Stored packets own disjoint scan ranges, so their dispatches share this
-      // encoder without a barrier between them.
+      // The decode and the fold cannot share an encoder: under a concurrent
+      // encoder a memory barrier makes earlier writes visible without ordering
+      // the dispatches, and a fold that starts early reads unwritten partials.
+      // Two encoders in one command buffer run in creation order and keep the
+      // parallelism inside each pass.
+      // Each packet decodes into its own stripe partials and is then folded by
+      // the combine pass, so the packets stay independent but the shared slice
+      // has to be re-read before the next packet overwrites it.
+      var pending: [(chunk: Chunk, blocks: Int, groups: Int)] = []
       for chunk in chunks[completed..<stop] {
         let blocks = (chunk.scanCount + interval - 1) / interval
-        let stripeWidth = 32 * Self.exactMomentStreams
-        let stripes = (pixels + stripeWidth - 1) / stripeWidth
+        let stripes = stripesPerPacket
         let groups =
           groupsPerBlock > 0
           ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripes)
@@ -207,11 +275,33 @@ extension MetalRuntimeANSResidentSource {
           encoder.setBuffer(totals, offset: 0, index: 7)
           encoder.setBuffer(validity, offset: 0, index: 8)
         }
+        let sliceOffset = pending.count * partialStride
+        encoder.setBuffer(partials, offset: sliceOffset, index: 9)
         encoder.dispatchThreadgroups(
           MTLSize(width: (units + simdGroups - 1) / simdGroups, height: 1, depth: 1),
           threadsPerThreadgroup: MTLSize(width: 32 * simdGroups, height: 1, depth: 1))
+        pending.append((chunk, blocks, groups))
       }
       encoder.endEncoding()
+      guard !pending.isEmpty else { continue }
+      guard let fold = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
+        throw Self.invalid("Metal could not encode the exact DPC moment fold.")
+      }
+      for (index, entry) in pending.enumerated() {
+        var combine: [UInt64] = [
+          UInt64(entry.chunk.scanCount), UInt64(interval), UInt64(entry.groups),
+          UInt64(entry.chunk.firstScan), 0,
+        ]
+        fold.setComputePipelineState(combinePipeline)
+        fold.setBuffer(partials, offset: index * partialStride, index: 0)
+        fold.setBuffer(output, offset: 0, index: 1)
+        fold.setBytes(&combine, length: combine.count * 8, index: 2)
+        fold.dispatchThreads(
+          MTLSize(width: entry.chunk.scanCount, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(
+            width: min(256, max(1, entry.chunk.scanCount)), height: 1, depth: 1))
+      }
+      fold.endEncoding()
       command.commit()
       command.waitUntilCompleted()
       if words[0] != 0 { throw Self.momentFailure(words) }

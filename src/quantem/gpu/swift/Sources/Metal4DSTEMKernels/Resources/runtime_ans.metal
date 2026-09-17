@@ -818,7 +818,7 @@ inline void sc_exact_moments_body(
     device const uchar *payload, device const uint *offsets, device const uchar *models,
     device const uint *decoding, device atomic_uint *errors, device atomic_uint *output,
     constant ulong *p, uint job, uint localIndex,
-    device atomic_uint *totals, device const uchar *valid) {
+    device atomic_uint *totals, device const uchar *valid, device uint *partials) {
     uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
     uint firstScan = uint(p[3]), columns = uint(p[4]), outputFirst = uint(p[5]);
     uint stripeGroups = max(1u, uint(p[6]));
@@ -831,8 +831,14 @@ inline void sc_exact_moments_body(
     uint block = unit / stripeGroups, stripeGroup = unit % stripeGroups;
     uint localFirst = block * interval;
     uint count = min(interval, scans - localFirst);
-    device atomic_uint *slots =
-        output + (ulong(outputFirst + firstScan + localFirst) * SC_MOMENT_WORDS);
+    // A stripe's partial is folded into this unit's own slice of `partials`
+    // rather than added to the shared per-scan slot. That slot is the same
+    // address for every stripe of a packet, so an atomic add there serializes a
+    // whole detector on one word and costs more than the decode it publishes.
+    // The slice is private to this unit, so the fold is a plain read, add and
+    // write: no atomic, no contention, and the combine pass resolves the slices
+    // afterwards. The host zeroes the slice before every use.
+    device uint *slice = partials + ulong(unit) * ulong(interval) * SC_MOMENT_WORDS;
     uint width = 32u * SC_MOMENT_STREAMS;
     uint stripes = (pixels + width - 1) / width;
     for (uint stripe = stripeGroup; stripe < stripes; stripe += stripeGroups) {
@@ -885,10 +891,19 @@ inline void sc_exact_moments_body(
                 summedColumn = sc_reduce_u64(lane_totals.column, 32u);
             }
             if (lane == 0) {
-                device atomic_uint *slot = slots + ulong(scan) * SC_MOMENT_WORDS;
-                sc_atomic_add_u64(slot, ulong(summedTotal));
-                sc_atomic_add_u64(slot + 2, summedRow);
-                sc_atomic_add_u64(slot + 4, summedColumn);
+                device uint *slot = slice + ulong(scan) * SC_MOMENT_WORDS;
+                // Split-word accumulation: each stripe adds its partial to the
+                // words and carries the 32-bit overflow into the next word. A
+                // stripe total always fits in 32 bits, so the carry is one bit.
+                uint totalSum = slot[0] + summedTotal;
+                slot[1] += uint(ulong(summedTotal) >> 32) + (totalSum < slot[0] ? 1u : 0u);
+                slot[0] = totalSum;
+                uint rowLow = slot[2] + uint(summedRow);
+                slot[3] += uint(summedRow >> 32) + (rowLow < slot[2] ? 1u : 0u);
+                slot[2] = rowLow;
+                uint columnLow = slot[4] + uint(summedColumn);
+                slot[5] += uint(summedColumn >> 32) + (columnLow < slot[4] ? 1u : 0u);
+                slot[4] = columnLow;
             }
         }
         if (EmitTotals) {
@@ -920,9 +935,10 @@ kernel void streamed_counts_exact_moments(
     device atomic_uint *output [[buffer(5)]],
     constant ulong *p [[buffer(6)]],
     uint job [[threadgroup_position_in_grid]],
+    device uint *partials [[buffer(9)]],
     uint localIndex [[thread_index_in_threadgroup]]) {
     sc_exact_moments_body<false, false>(
-        payload, offsets, models, decoding, errors, output, p, job, localIndex, nullptr, nullptr);
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, nullptr, nullptr, partials);
 }
 
 // Same basis for count ranges whose lanes stay inside 32 bits: the host selects
@@ -937,9 +953,41 @@ kernel void streamed_counts_exact_moments_narrow(
     device atomic_uint *output [[buffer(5)]],
     constant ulong *p [[buffer(6)]],
     uint job [[threadgroup_position_in_grid]],
+    device uint *partials [[buffer(9)]],
     uint localIndex [[thread_index_in_threadgroup]]) {
     sc_exact_moments_body<true, false>(
-        payload, offsets, models, decoding, errors, output, p, job, localIndex, nullptr, nullptr);
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, nullptr, nullptr, partials);
+}
+
+// Folds one packet's per-unit stripe partials into the per-scan basis. Each scan
+// position is written by exactly one thread, so this pass needs no atomics, and
+// it runs after the decode has finished rather than inside it.
+kernel void streamed_counts_exact_moments_combine(
+    device const uint *partials [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant ulong *p [[buffer(2)]],
+    uint i [[thread_position_in_grid]]) {
+    uint scans = uint(p[0]), interval = uint(p[1]), groups = uint(p[2]);
+    uint firstScan = uint(p[3]), outputFirst = uint(p[4]);
+    if (i >= scans) return;
+    uint block = i / interval, within = i % interval;
+    if (within >= min(interval, scans - block * interval)) return;
+    ulong total = 0ul, row = 0ul, column = 0ul;
+    device const uint *slice =
+        partials + (ulong(block) * ulong(groups) * ulong(interval) + ulong(within)) * SC_MOMENT_WORDS;
+    for (uint group = 0; group < groups; ++group) {
+        total += ulong(slice[0]) | (ulong(slice[1]) << 32);
+        row += ulong(slice[2]) | (ulong(slice[3]) << 32);
+        column += ulong(slice[4]) | (ulong(slice[5]) << 32);
+        slice += ulong(interval) * SC_MOMENT_WORDS;
+    }
+    device uint *slot = output + ulong(outputFirst + firstScan + i) * SC_MOMENT_WORDS;
+    slot[0] = uint(total);
+    slot[1] = uint(total >> 32);
+    slot[2] = uint(row);
+    slot[3] = uint(row >> 32);
+    slot[4] = uint(column);
+    slot[5] = uint(column >> 32);
 }
 
 // Same basis, and in the same pass the exact sum of stored counts over every
@@ -956,9 +1004,10 @@ kernel void streamed_counts_exact_moments_totals(
     device atomic_uint *totals [[buffer(7)]],
     device const uchar *valid [[buffer(8)]],
     uint job [[threadgroup_position_in_grid]],
+    device uint *partials [[buffer(9)]],
     uint localIndex [[thread_index_in_threadgroup]]) {
     sc_exact_moments_body<false, true>(
-        payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid);
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid, partials);
 }
 
 kernel void streamed_counts_exact_moments_totals_narrow(
@@ -972,7 +1021,8 @@ kernel void streamed_counts_exact_moments_totals_narrow(
     device atomic_uint *totals [[buffer(7)]],
     device const uchar *valid [[buffer(8)]],
     uint job [[threadgroup_position_in_grid]],
+    device uint *partials [[buffer(9)]],
     uint localIndex [[thread_index_in_threadgroup]]) {
     sc_exact_moments_body<true, true>(
-        payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid);
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid, partials);
 }

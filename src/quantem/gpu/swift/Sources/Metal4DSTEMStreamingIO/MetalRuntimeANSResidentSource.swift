@@ -69,6 +69,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   var exactMomentsPipeline: MTLComputePipelineState?
   var exactMomentsPipelineNarrow = false
   var exactMomentTotalsPipeline: MTLComputePipelineState?
+  var exactMomentCombinePipeline: MTLComputePipelineState?
   var exactMomentTotalsPipelineNarrow = false
   var detectorColumnsValidity: MTLBuffer?
 
@@ -339,6 +340,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     exactMomentsPipeline = nil
     exactMomentsPipelineNarrow = false
     exactMomentTotalsPipeline = nil
+    exactMomentCombinePipeline = nil
     exactMomentTotalsPipelineNarrow = false
     isReleased = true
   }
