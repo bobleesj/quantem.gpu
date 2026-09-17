@@ -14,6 +14,7 @@ import gc
 import hashlib
 import json
 import math
+import os
 import platform
 import statistics
 import sys
@@ -23,7 +24,8 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
+SRC = Path(os.environ.get("SSB_SRC", str(ROOT / "src")))
+sys.path.insert(0, str(SRC))
 
 FIXTURE = "/path/to/local/perf-lab/ssb-audit/mps-runs/fixture-512-a"
 DET_SAMPLING_MRAD = 0.5622196476170719
