@@ -38,6 +38,8 @@ final class NativeCameraSourceTests: XCTestCase {
       "codec": "runtime-column-rans-spatial-v2",
       "scientific_metadata": [
         "schema": "quantem.scientific-metadata/1",
+        "source_metadata": [String: Any](),
+        "source_metadata_coverage": "unknown",
         "axes": [
           ["name": "scan_row", "size": 1], ["name": "scan_column", "size": 2],
           ["name": "detector_row", "size": 2], ["name": "detector_column", "size": 2],
