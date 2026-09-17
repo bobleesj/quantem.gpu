@@ -26,7 +26,11 @@ def _encode(resident, command, name, buffers, parameters, count, *, groups=False
 
 
 def _allocate(resident, size, label):
-    return _allocate_shared(resident._device, resident._metal, max(4, size), label)
+    # Metal rejects zero-length buffers, but every non-empty array must keep its
+    # exact logical byte count: read_header validates the saved width array as
+    # ceil(scans/512)*fields bytes, so a 4-byte floor silently breaks saved .qem
+    # files for detectors with fewer than four fields (e.g. 6x8).
+    return _allocate_shared(resident._device, resident._metal, size or 4, label)
 
 
 def _geometry(resident):
