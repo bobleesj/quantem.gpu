@@ -668,6 +668,13 @@ def main(argv: list[str] | None = None) -> int:
 
     use_metal = not args.no_metal
     use_mps = not args.metal_only
+    if args.metal_only:
+        print(
+            "NOTE: --metal-only - the MPS implementation is NOT measured in "
+            "this run. A PASS below is the native Metal acceptance signal "
+            "only; it is not a pass of the full parity gate, which is red on "
+            "this artifact because of the recorded MPS findings."
+        )
     if args.reference_only:
         use_metal = False
     elif args.metal_only and metal_harness_path() is None:
@@ -705,7 +712,13 @@ def main(argv: list[str] | None = None) -> int:
             encoding="utf-8",
         )
         print(f"\nreport: {args.json}")
-    print("\n" + ("PASS: strict float32 parity" if passed else "FAIL: parity gate"))
+    if passed and not use_mps:
+        print(
+            "\nPASS: strict float32 parity (Metal pairs only, MPS not "
+            "measured - not a full-gate pass)"
+        )
+    else:
+        print("\n" + ("PASS: strict float32 parity" if passed else "FAIL: parity gate"))
     return 0 if passed else 1
 
 
