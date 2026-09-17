@@ -38,6 +38,8 @@ def _write_synthetic_qem(path, *, shape, excluded):
         codec="runtime-column-rans-spatial-v2",
         scientific_metadata=dict(
             schema=_qem_metadata.SCHEMA,
+            source_metadata={},
+            source_metadata_coverage="unknown",
             axes=[dict(name=name, size=size)
                   for name, size in zip(_qem_metadata.AXIS_NAMES, shape)],
         ),
