@@ -38,6 +38,13 @@ scripts/check_ssb_fit_trajectory.sh          # fast fit gate: trajectory + batch
 scripts/check_ssb_fit_trajectory.sh --full   # adds the full 512x512 acquisition
 
 python scripts/ssb_parity_summary.py parity-runs/gate-fast.json
+
+# pytest against the recorded report (fast, no GPU work; finding F10)
+QUANTEM_SSB_PARITY_REPORT=parity-runs/gate-fast.json PYTHONPATH=src \
+  ~/miniforge3/bin/python3.12 -m pytest tests/parity/test_ssb_strict_parity.py -q
+
+# pytest that re-measures; needs a previous `check_ssb_parity.sh` run for the
+# recorded-C10 case, otherwise one test fails on the missing case (F10)
 ~/miniforge3/bin/python3.12 -m pytest tests/parity/test_ssb_strict_parity.py -q
 ```
 
@@ -584,3 +591,14 @@ Reading, in the order the protocol asks:
   The production path is the sequential one, which is *not* the Python
   reference's default (`optuna_batch_size = 2`). Reproduce with
   `scripts/check_ssb_fit_trajectory.sh`.
+- **F10 (harness, open, not a precision finding).** `pytest
+  tests/parity/test_ssb_strict_parity.py -q` with no environment fails one test,
+  `test_recorded_c10_settings_no_longer_disagree`, with `case
+  arina-128-recorded-c10 is missing from the report`. Cause: the pytest fixtures
+  measure `FAST_CASES` (the two 128x128 cases) while the recorded-C10 case
+  exists only in the report `scripts/check_ssb_parity.sh` writes, so the gate
+  must have run once for the suite to be green. Workaround: set
+  `QUANTEM_SSB_PARITY_REPORT=parity-runs/gate-fast.json` (14 passed, 1 skipped,
+  1.4 s, no GPU). Recommendation: make the fixture measure the missing case
+  itself, so the documented one-line command is self-contained; the exit status
+  of the suite is not the Metal acceptance signal until then.
