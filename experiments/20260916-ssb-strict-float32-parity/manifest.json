@@ -112,18 +112,20 @@
     {
       "artifact_id": "fit-trajectory-128",
       "path": "local-evidence://parity-runs/fit-arina-128-full-disk.json",
-      "sha256": "aa07b7578175b3f2267abf6e193e150856806ca05d23cb377cfc583d649a92f1",
-      "size_bytes": 107377,
+      "sha256": "afed3252efeff252791840da370affd1e4b9589348c905f8a8e5ac9d6fb128d6",
+      "size_bytes": 107375,
       "retention": "local-evidence",
-      "consuming_figures": []
+      "consuming_figures": [],
+      "note": "the harness JSON embeds wall-clock elapsedSeconds for each stage, so its file digest is not a scientific invariant; the stable invariant is the sequential trajectory digest 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b recorded inside the file and pinned in tests/parity/fixtures/ssb_fit_trajectory_128.json"
     },
     {
       "artifact_id": "fit-trajectory-512",
       "path": "local-evidence://parity-runs/fit-arina-512-full-disk.json",
-      "sha256": "c0ff473509c0838003058c2e86cc5d10b2358e1fa54790e80319c1b251fe625d",
-      "size_bytes": 146642,
+      "sha256": "703f56ed21d35923bbf20990b73607f7636c1ba5e22a26650b7ee1d002da8798",
+      "size_bytes": 146643,
       "retention": "local-evidence",
-      "consuming_figures": []
+      "consuming_figures": [],
+      "note": "the harness JSON embeds wall-clock elapsedSeconds for each stage, so its file digest is not a scientific invariant; the stable invariant is the sequential trajectory digest 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b recorded inside the file and pinned in tests/parity/fixtures/ssb_fit_trajectory_128.json"
     },
     {
       "artifact_id": "fit-reference-128",
@@ -160,8 +162,8 @@
     {
       "artifact_id": "experiment-record",
       "path": "experiments/20260916-ssb-strict-float32-parity/README.md",
-      "sha256": "c82163f7ed44f4b48a4a29ddb7f189d3b7125c98fe1d2210169a3e98d59ea853",
-      "size_bytes": 21466,
+      "sha256": "079441e577d3f96d4bef5d7ca7cc86b43c8097c6dc09f3bb6bd9803030eb6a3a",
+      "size_bytes": 21845,
       "retention": "durable",
       "consuming_figures": []
     }
