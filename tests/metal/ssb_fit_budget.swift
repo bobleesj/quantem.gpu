@@ -18,7 +18,18 @@
 // whole sequence forward and then in reverse (ABBA pairing for wall time) and
 // records both, so the losses double as an order-independence control.
 //
-// Usage: ssb-fit-budget <case-dir> <out-dir> <warm-start.json>
+// Usage: ssb-fit-budget <case-dir> <out-dir> <warm-start.json|-> [seed]
+//
+// Pass "-" as the warm-start file to derive the refinement-only arm from the
+// forward pass's own 200-trial best point instead of a recorded file. That is
+// the only self-consistent option for a case with no recorded production
+// optimum (the aperture-matched 8937-active selection); it changes no
+// objective, evaluator, start point, range or search arithmetic.
+//
+// The optional seed defaults to 42 (the recorded production seed) so the
+// original control run is unchanged; passing a different seed only changes the
+// TPE draw. The objective, evaluator, start point, ranges and refinement are
+// untouched.
 
 import CryptoKit
 import Foundation
@@ -93,11 +104,12 @@ private func sha256Hex(_ data: Data) -> String {
   static func main() throws {
     let arguments = CommandLine.arguments
     guard arguments.count >= 4 else {
-      fail("usage: ssb-fit-budget <case-dir> <out-dir> <warm-start.json>")
+      fail("usage: ssb-fit-budget <case-dir> <out-dir> <warm-start.json> [seed]")
     }
     let caseDirectory = URL(fileURLWithPath: arguments[1])
     let outDirectory = URL(fileURLWithPath: arguments[2])
-    let warmStartPath = URL(fileURLWithPath: arguments[3])
+    let warmStartArgument = arguments[3]
+    let warmStartPath = URL(fileURLWithPath: warmStartArgument)
     try? FileManager.default.createDirectory(at: outDirectory, withIntermediateDirectories: true)
 
     let caseData = try Data(contentsOf: caseDirectory.appendingPathComponent("case.json"))
@@ -118,22 +130,28 @@ private func sha256Hex(_ data: Data) -> String {
       device: device, geometry: payload.metal_geometry, cacheBudgetBytes: nil)
     try engine.prepare(brightfield: source, countType: .uint16)
 
-    // Warm start: the recorded 8937-BF 200-trial optimum of the production fit.
-    let warmData = try Data(contentsOf: warmStartPath)
-    guard
-      let warmRoot = try JSONSerialization.jsonObject(with: warmData) as? [String: Any],
-      let warmSequential = warmRoot["sequential"] as? [String: Any],
-      let warmC10 = warmSequential["bestC10Nanometers"] as? Double,
-      let warmC12 = warmSequential["bestC12Nanometers"] as? Double,
-      let warmPhi = warmSequential["bestPhi12Radians"] as? Double
-    else {
-      fail("warm-start file has no sequential.best* point")
+    // Warm start for the refinement-only arm: either the recorded 8937-BF
+    // 200-trial optimum of the production fit, or (warmStartPath == "-") the
+    // forward pass's own 200-trial best point, derived below.
+    let autoWarmStart = warmStartArgument == "-"
+    var warmStart = SSBOptimizationPoint(c10Nanometers: 0, c12Nanometers: 0, phi12Radians: 0)
+    if !autoWarmStart {
+      let warmData = try Data(contentsOf: warmStartPath)
+      guard
+        let warmRoot = try JSONSerialization.jsonObject(with: warmData) as? [String: Any],
+        let warmSequential = warmRoot["sequential"] as? [String: Any],
+        let warmC10 = warmSequential["bestC10Nanometers"] as? Double,
+        let warmC12 = warmSequential["bestC12Nanometers"] as? Double,
+        let warmPhi = warmSequential["bestPhi12Radians"] as? Double
+      else {
+        fail("warm-start file has no sequential.best* point")
+      }
+      warmStart = SSBOptimizationPoint(
+        c10Nanometers: warmC10, c12Nanometers: warmC12, phi12Radians: warmPhi)
     }
 
     let start = SSBOptimizationPoint(c10Nanometers: 0, c12Nanometers: 50, phi12Radians: 0)
-    let warmStart = SSBOptimizationPoint(
-      c10Nanometers: warmC10, c12Nanometers: warmC12, phi12Radians: warmPhi)
-    let seed: UInt64 = 42
+    let seed: UInt64 = arguments.count >= 5 ? UInt64(arguments[4]) ?? 42 : 42
 
     func loss(_ point: SSBOptimizationPoint) throws -> Double {
       Double(
@@ -191,10 +209,29 @@ private func sha256Hex(_ data: Data) -> String {
       ("tpe200", 200, start),
       ("nmWarm", 0, warmStart),
     ]
-    for (name, trials, point) in forward {
-      arms.append(try runArm(name: name, trials: trials, startPoint: point, pass: "forward"))
+    for (name, trials, point) in forward.dropLast(autoWarmStart ? 1 : 0) {
+      let arm = try runArm(name: name, trials: trials, startPoint: point, pass: "forward")
+      arms.append(arm)
+      if autoWarmStart && name == "tpe200" {
+        warmStart = SSBOptimizationPoint(
+          c10Nanometers: arm.bestC10Nanometers,
+          c12Nanometers: arm.bestC12Nanometers,
+          phi12Radians: arm.bestPhi12Radians)
+        print(
+          String(
+            format: "auto warm start from tpe200 forward: C10 %.12g C12 %.12g phi12 %.12g",
+            warmStart.c10Nanometers, warmStart.c12Nanometers, warmStart.phi12Radians))
+        fflush(stdout)
+      }
     }
-    for (name, trials, point) in forward.reversed() {
+    if autoWarmStart {
+      let (name, trials, _) = forward[forward.count - 1]
+      arms.append(try runArm(name: name, trials: trials, startPoint: warmStart, pass: "forward"))
+    }
+    let forwardLast = forward[forward.count - 1]
+    var reverse: [(String, Int, SSBOptimizationPoint)] = forward
+    reverse[reverse.count - 1] = (forwardLast.0, forwardLast.1, warmStart)
+    for (name, trials, point) in reverse.reversed() {
       arms.append(try runArm(name: name, trials: trials, startPoint: point, pass: "reverse"))
     }
     let loadAtEnd = loadAverage()
