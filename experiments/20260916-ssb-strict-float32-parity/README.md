@@ -252,9 +252,14 @@ different source file (finding F8). Nothing in the repository verifies that hash
 documentary pin with no executable check.
 
 The executable QuantEM/Python reference in this tree is the public MPS fit. It
-defaults to `optuna_batch_size: int = 2`, i.e. the **same-history pair draw**,
-while the native production path is sequential. Measured on the same 128x128
-artifact and seed (`parity-runs/fit-reference-128.json`):
+defaults to `optuna_batch_size: int = 2`, i.e. the **same-history pair draw**:
+`Study.ask()` registers a trial in state RUNNING, Optuna 4.6.0's `TPESampler`
+builds its history from `COMPLETE`/`PRUNED` trials only
+(`samplers/_tpe/sampler.py:447,531`), so both asks of one step see the same
+completed history - exactly the semantics `SSBOptimizer.run` implements for
+`batchCount = 2`. The native production path is sequential, so the native
+engine and its own reference disagree about the sampling contract. Measured on
+the same 128x128 artifact and seed (`parity-runs/fit-reference-128.json`):
 
 | reference run | best optuna loss | C10 (nm) | C12 (nm) | phi12 (deg) | loss after refinement |
 | --- | ---: | ---: | ---: | ---: | ---: |
