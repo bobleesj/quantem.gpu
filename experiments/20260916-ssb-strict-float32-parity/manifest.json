@@ -10,13 +10,13 @@
   },
   "code": {
     "repository": "quantem.gpu",
-    "revision": "cdfa229a615ffef2532f87d9e5743e3c934f4a7f",
+    "revision": "6cb281e2304925db9d0fbc2e070f0f226ec5a95e",
     "dirty": false,
     "entrypoint": "scripts/check_ssb_parity.sh",
     "secondary_entrypoint": "scripts/check_ssb_fit_trajectory.sh",
     "diff_sha256": "c33b351ff1972b87af39b76309241c6ad0219d5485c9439c0cb4c759bb90b1eb",
     "snapshot_path": "local-evidence://ssb-strict-float32-parity/source",
-    "diff_scope": "git diff 597b566..8df3864 -- tests scripts"
+    "diff_scope": "git diff 597b566..fdaea16 -- tests scripts"
   },
   "inputs": [
     {

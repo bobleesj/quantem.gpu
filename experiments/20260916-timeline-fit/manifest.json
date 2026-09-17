@@ -3,7 +3,7 @@
     "dirty": false,
     "entrypoint": "experiments/20260916-timeline-fit/run.sh",
     "repository": "quantem.gpu",
-    "revision": "fa2c3eb2b1daeb6acca522b87ebaac0ac0afb5f5"
+    "revision": "c69a5b6c0a205169386e9971bbc399e9af4ef557"
   },
   "execution": {
     "device": "Apple M5",

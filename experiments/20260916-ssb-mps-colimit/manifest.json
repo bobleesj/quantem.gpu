@@ -4,7 +4,7 @@
     "entrypoint": "experiments/20260916-ssb-mps-colimit/alu_roofline.py",
     "note": "Nothing was landed. The engine under test is the unchanged working tree, engine.py sha256 06058d32bf03947dec395845dfbff80fb8fa87563840a3242e204675e75e5114, bit-identical to the f357069 tree the earlier MPS experiments measured. This experiment supersedes the 'co-limited' reading recorded in experiments/20260916-ssb-mps-2pass-price.",
     "repository": "quantem.gpu",
-    "revision": "ef173f837ebbfb3699321ad1260f9947ff48c97b"
+    "revision": "c4a5fd0bd57f810be155c5499f51c0b478f69dbe"
   },
   "execution": {
     "artifact_root": "~ private perf-lab scratch (untracked): perf-lab/ssb-audit/mps-runs/20260916-ssb-mps-colimit",
@@ -61,7 +61,7 @@
       "Halving the row-IFFT intermediate by storing a Hermitian half-plane: the intermediate is not Hermitian. Measured joint-mirror residual 45,715 against max_abs 954,211 (4.8%), row-mirror 4.5%, column-mirror 7.1%, against float32 rounding near 1e-7 relative. Analytically the per-BF correction couples (row,col) with bf through the minus and plus branches, so phi(512-r,512-c) != conj(phi(r,c)) and the relation does not survive.",
       "Reading the 3.6% imaginary-to-real ratio of the intermediate as licence to store real-only or narrower: it is an approximation and moves the pinned loss."
     ],
-    "revision_note": "code.revision records the branch tip at the time of the sessions (ef173f8, the commit that registered the 2-pass pricing). The engine bytes under test are identified by sha256 and are unchanged from f357069."
+    "revision_note": "code.revision records the branch tip at the time of the sessions (c4a5fd0, the commit that registered the 2-pass pricing). The engine bytes under test are identified by sha256 and are unchanged from f357069."
   },
   "inputs": [
     {

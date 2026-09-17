@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO_ROOT / "tests" / "parity"))
 
 from ssb_parity_case import CASES, ensure_case_directory, load_case_declaration  # noqa: E402
 
-DEFAULT_RUNS = Path("/path/to/local/perf-lab/ssb-audit/parity-runs")
+DEFAULT_RUNS = Path.home() / "perf-lab/ssb-audit/parity-runs"
 
 
 def record(session, *, trials: int, seed: int, batch: int) -> dict:

@@ -7,7 +7,7 @@ that Nelder-Mead rather than the trial count is the binding constraint, and that
 an NM-only arm warm-started from the best point beats the from-scratch search.
 
 Branch `ssb-budget2`, worktree `~/perf-lab/ssb-audit/budget2`, base
-`ssb-audit-parity@1e74924`. Nothing pushed; `quantem.gpu` untouched.
+`ssb-audit-parity@7372d93`. Nothing pushed; `quantem.gpu` untouched.
 
 ## The one thing that changed the test design
 
@@ -178,7 +178,7 @@ to the original recorded run, row by row.
 
 ### MPS/MLX (`optimizer.optimize`, 8937 aperture-active BF)
 
-Runs on `ssb-audit-mps@37e4efe` because `origin/main` cannot run this path at
+Runs on `ssb-audit-mps@f7a2bb6` because `origin/main` cannot run this path at
 all (see the blocker below). `objective evals` counts the optimizer's objective
 calls; `NM evals` is `refine_nfev`.
 

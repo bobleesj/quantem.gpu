@@ -2,9 +2,9 @@
   "code": {
     "dirty": false,
     "entrypoint": "experiments/20260916-ssb-mps-hotpath/stage_probe.py",
-    "note": "Measured engine bytes equal f357069 (scalar tiled row IFFT on top of 32ba29b); engine.py sha256 06058d32bf03947d... under test against the frozen 200e906b3d7d87b6... reference tree. The follow-up fit harness (fit_ab.sh, intermediate_probe.py, path_probe.py, SSB_SRC support in profile_mps.py) landed in dfd61c5.",
+    "note": "Measured engine bytes equal f357069 (scalar tiled row IFFT on top of 32ba29b); engine.py sha256 06058d32bf03947d... under test against the frozen 200e906b3d7d87b6... reference tree. The follow-up fit harness (fit_ab.sh, intermediate_probe.py, path_probe.py, SSB_SRC support in profile_mps.py) landed in 93bd2ea.",
     "repository": "quantem.gpu",
-    "revision": "dfd61c5b376c9dcdb9fa42de763769719d99cb0e"
+    "revision": "93bd2eabc4d9fd7a14422240efb5972d532f1eda"
   },
   "execution": {
     "artifact_root": "~ private perf-lab scratch (untracked): perf-lab/ssb-audit/mps-runs/20260916-ssb-mps-hotpath",

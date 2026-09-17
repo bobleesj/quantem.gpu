@@ -4,7 +4,7 @@
     "entrypoint": "experiments/20260916-ssb-mps-2pass-price/two_pass_price.py",
     "note": "Nothing was landed: the engine under test is the unchanged HEAD, engine.py sha256 06058d32bf03947dec395845dfbff80fb8fa87563840a3242e204675e75e5114, against the frozen 32ba29b reference 200e906b3d7d87b6a2b7cbf330d03e389b181c702cb1688a8ec431a33c10c677.",
     "repository": "quantem.gpu",
-    "revision": "4ea971dede370f54d89c59bddbcde21a07f84569"
+    "revision": "c8d00f40ea991f1f64fea770f9f84dcd8618ebb8"
   },
   "execution": {
     "artifact_root": "~ private perf-lab scratch (untracked): perf-lab/ssb-audit/mps-runs/20260916-ssb-mps-2pass-price",

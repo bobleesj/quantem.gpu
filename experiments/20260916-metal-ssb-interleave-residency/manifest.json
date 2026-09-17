@@ -12,7 +12,7 @@
  "code": {
   "repository": "quantem.gpu",
   "revision": "c88fab5c5a40eba7c151614348659106deed09e9",
-  "revision_note": "Measured tree is this revision: branch ssb-interleave, base 1c66dee, plus the env-gated SSB_PHASE_BATCH override and SSB_PROFILE_SKIP_* pass-ablation gates. All gates default off; with SSB_PHASE_BATCH unset the binary is the production path.",
+  "revision_note": "Measured tree is this revision: branch ssb-interleave, base 5203623, plus the env-gated SSB_PHASE_BATCH override and SSB_PROFILE_SKIP_* pass-ablation gates. All gates default off; with SSB_PHASE_BATCH unset the binary is the production path.",
   "dirty": false,
   "entrypoints": [
    "experiments/20260916-metal-ssb-objective-profile/probe3.swift (real loss path, 6 timed evaluations)",

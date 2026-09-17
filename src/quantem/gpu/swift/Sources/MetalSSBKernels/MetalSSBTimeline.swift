@@ -26,8 +26,9 @@ public struct SSBEvaluationTimeline: Sendable {
 
 /// Measurement-only recorder. The engine appends one command-buffer record per
 /// commit/wait and one evaluation record per objective call. The loss math is
-/// untouched: with no recorder installed the engine does one optional-chaining
-/// check per commit and nothing else.
+/// untouched. With no recorder installed, no records are retained; the engine
+/// still reads two monotonic timestamps and checks the optional recorder per
+/// command-buffer commit.
 ///
 /// Thread-safety: the SSB loss path evaluates one objective at a time on the
 /// calling thread; this helper is not a synchronization primitive.

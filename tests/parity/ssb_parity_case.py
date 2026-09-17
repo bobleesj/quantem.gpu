@@ -55,10 +55,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Real acquisition retained by the MAPED/ARINA reference set.
 ARINA_MASTER = Path(
-    "/path/to/local/data/Live4DSTEM Testing/ARINA/"
-    "arina-fixture-b_master.h5"
-    ""
-)
+    os.environ.get("QUANTEM_SSB_PARITY_SOURCE", "arina-fixture-b_master.h5")
+).expanduser()
 
 #: Frozen documented geometry of the retained Reference-512 disk.
 DOCUMENTED_CENTER = (94.88451385498047, 96.35952758789062)
@@ -68,7 +66,7 @@ DOCUMENTED_BF_COUNT = 8937
 #: (``tests/parity/fixtures/ssb_reference_512_mps.json``).
 DOCUMENTED_DET_SAMPLING_MRAD = 1.0909090909090908
 
-DEFAULT_RUNS_ROOT = Path("/path/to/local/perf-lab/ssb-audit/parity-runs")
+DEFAULT_RUNS_ROOT = Path.home() / "perf-lab/ssb-audit/parity-runs"
 
 
 def detector_dead_pixels(source: Path) -> np.ndarray:

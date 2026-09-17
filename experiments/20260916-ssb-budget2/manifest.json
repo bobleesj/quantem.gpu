@@ -9,7 +9,7 @@
   },
   "code": {
     "repository": "quantem.gpu",
-    "revision": "1e749244bd23e9e94934e8bc79ea7ac4be46beb7",
+    "revision": "7372d936ac5f66176fb9075ac5aa44f9f19f9731",
     "dirty": true,
     "diff_sha256": "c38bbc8f85a0845914114750e0b3b7aeb81af9d1ab9c41433d804843e4c8f1b5",
     "dirty_scope": "tests/metal/ssb_fit_budget.swift only (seed argument, in-process warm start); no objective, evaluator, range or arithmetic change",
