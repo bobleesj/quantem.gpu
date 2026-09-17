@@ -41,6 +41,7 @@ from ssb_parity_case import (  # noqa: E402
     SSBParityCase,
     case_root,
     compare_products,
+    ensure_case_directory,
     export_case,
     load_case_declaration,
     reference_products,
@@ -59,10 +60,16 @@ __all__ = ["GATES", "main", "run_case"]
 #:     faithful float32 evaluation lands in the ``1e-6`` decade. The
 #:     ``object_max_abs_error_relative`` bound is 1e-5 for the same reason.
 #:     ``phase_max_error_radians`` is the worst case implied by the object
-#:     bound at the core ratio: a pixel carrying at least ``core_ratio = 0.1``
-#:     of the object's magnitude can rotate by at most
-#:     ``object_max_abs_error_relative / core_ratio = 1e-5 / 0.1 = 1e-4``
-#:     radians. ``loss_relative_error`` is set at 1e-5: the loss is a phase
+#:     bound at a conservative amplitude floor: a pixel carrying at least 0.1 of
+#:     the object's peak magnitude can rotate by at most
+#:     ``object_max_abs_error_relative / 0.1 = 1e-4`` radians. The phase metric
+#:     itself is evaluated over the implemented core set (``core_ratio = 1e-3``
+#:     of the peak), and every gated setting measures a minimum core amplitude
+#:     of 0.876 or above (recorded per entry as ``object_magnitude_ratio_min``),
+#:     so the 0.1 floor is conservative by 8.8x and the bound implied by the
+#:     observations is 1.14e-5 radians. In practice both sizes are governed by
+#:     the tighter ``2x`` measured floor term (6.5e-6 to 1.2e-5 radians), and
+#:     this absolute value only acts as a backstop. ``loss_relative_error`` is set at 1e-5: the loss is a phase
 #:     variance whose spread is ``sqrt(loss)``, so a per-sample phase error of
 #:     ``eps32`` perturbs it by about ``2 * eps32`` relative; 1e-5 is two
 #:     orders below the 1.06e-3 relative error of the retired half-plane
@@ -81,6 +88,14 @@ GATES: dict[str, dict[str, float]] = {
     "object_max_abs_error_relative": {"absolute": 1.0e-5, "floor_multiple": 2.0},
     "phase_max_error_radians": {"absolute": 1.0e-4, "floor_multiple": 2.0},
     "loss_relative_error": {"absolute": 1.0e-5, "floor_multiple": 2.0},
+    #: The objective is a variance of phases that live on the unit circle. A
+    #: float32 phase carries at most ``eps32`` of absolute error for a
+    #: well-conditioned argument, so a squared phase carries at most
+    #: ``2*pi*eps32`` and the variance of such terms at most ``4*pi*eps32 =
+    #: 7.5e-7``. The absolute bound is the next round decade above that, which
+    #: is also ten times tighter than the 1e-5 relative bound at the observed
+    #: loss magnitude of about 0.1.
+    "loss_absolute_error": {"absolute": 1.0e-6, "floor_multiple": 2.0},
 }
 
 #: Where the measured floor is zero, only the absolute bound applies.
@@ -89,6 +104,7 @@ GATE_FLOOR_METRIC = {
     "object_max_abs_error_relative": "object_max_abs_error_relative",
     "phase_max_error_radians": "phase_max_error_radians_core",
     "loss_relative_error": "loss_relative_error",
+    "loss_absolute_error": "loss_absolute_error",
 }
 
 
@@ -117,6 +133,7 @@ def _floor_metrics(oracle, floor) -> dict[str, float]:
         "object_max_abs_error_relative": metrics["object_max_abs_error_relative"],
         "phase_max_error_radians_core": metrics["object_phase_max_error_radians_core"],
         "loss_relative_error": metrics["loss_relative_error"],
+        "loss_absolute_error": metrics["loss_abs_error"],
     }
 
 
@@ -179,6 +196,9 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
                 "index": index,
                 "object_wave": np.asarray(result.object_wave, dtype=np.complex128),
                 "mean_phase": None if phase is None else np.asarray(phase, dtype=np.float64),
+                "object_phase": np.angle(
+                    np.asarray(result.object_wave, dtype=np.complex128)
+                ),
                 "loss": None if loss is None else float(loss),
                 "object_seconds": object_seconds,
                 "preview_seconds": preview_seconds,
@@ -225,7 +245,10 @@ def run_metal(case: SSBParityCase, meta: dict[str, object]) -> list[dict]:
             object_wave = np.fromfile(
                 out_dir / f"object-{index}-{variant['name']}.f32", dtype=np.float32
             )
-            mean_phase = np.fromfile(
+            # The native engine's ``phase(of:)`` runs the ``ssb_object_phase``
+            # kernel, so this artifact is the phase of the complex object, not
+            # the objective's mean bright-field phase.
+            object_phase = np.fromfile(
                 out_dir / f"phase-{index}-{variant['name']}.f32", dtype=np.float32
             )
             variants[variant["name"]] = {
@@ -233,7 +256,8 @@ def run_metal(case: SSBParityCase, meta: dict[str, object]) -> list[dict]:
                     object_wave.reshape(-1, 2)[:, 0]
                     + 1j * object_wave.reshape(-1, 2)[:, 1]
                 ).astype(np.complex128).reshape(side, side),
-                "mean_phase": mean_phase.astype(np.float64).reshape(side, side),
+                "mean_phase": None,
+                "object_phase": object_phase.astype(np.float64).reshape(side, side),
                 "loss": float(variant["loss"]),
                 "provenance": {
                     key: variant[key]
@@ -271,6 +295,12 @@ def run_case(
 
     if export:
         export_case(case)
+    root = ensure_case_directory(case)
+    if not (root / "source" / "bf_columns.u16").is_file():
+        raise FileNotFoundError(
+            f"Case {case.name!r} has no exported exact inputs at {root}. Run "
+            f"`scripts/check_ssb_parity.sh --export` first."
+        )
     meta = _case_meta(case)
     report: dict[str, object] = {
         "case": case.name,
@@ -320,6 +350,7 @@ def run_case(
                 mps["object_wave"],
                 mps["loss"],
                 mps["mean_phase"],
+                object_phase=mps["object_phase"],
             ) | {
                 "object_seconds": mps["object_seconds"],
                 "preview_seconds": mps["preview_seconds"],
@@ -335,18 +366,40 @@ def run_case(
                     variant["object_wave"],
                     variant["loss"],
                     variant["mean_phase"],
+                    object_phase=variant["object_phase"],
                 )
                 | {"provenance": variant["provenance"]}
                 for name, variant in variants.items()
             }
+            # Direct topology comparison: the cached objective was the one
+            # the retired half-plane endpoint defect corrupted, so cached
+            # versus hybrid/streamed is stated on its own rather than through
+            # either backend's agreement with the oracle.
             for name in sorted(variants):
-                entry[f"mps_vs_metal_{name}"] = compare_products(
+                if name == "cached":
+                    continue
+                entry[f"metal_cached_vs_{name}"] = compare_products(
+                    variants["cached"]["object_wave"],
+                    variants["cached"]["loss"],
+                    variants["cached"]["mean_phase"],
                     variants[name]["object_wave"],
                     variants[name]["loss"],
                     variants[name]["mean_phase"],
+                    object_phase=variants[name]["object_phase"],
+                )
+            for name in sorted(variants):
+                # Both backends are measured implementations here, so the
+                # oracle's phase roles are filled by the native Metal
+                # products; the object-phase metric compares Metal's own
+                # phase kernel against the phase of the MPS object.
+                entry[f"mps_vs_metal_{name}"] = compare_products(
                     mps["object_wave"],
                     mps["loss"],
                     mps["mean_phase"],
+                    variants[name]["object_wave"],
+                    variants[name]["loss"],
+                    variants[name]["mean_phase"],
+                    object_phase=variants[name]["object_phase"],
                 )
         report["aberrations"].append(entry)
     for offset, setting in enumerate(case.diagnostic_aberrations):
@@ -431,12 +484,21 @@ def _gate_rows(report: dict[str, object]) -> list[tuple[str, str, float, float, 
                 backends.append(
                     (f"mps-vs-metal:{key.removeprefix('mps_vs_metal_')}", metrics, floor)
                 )
+            elif key.startswith("metal_cached_vs_"):
+                backends.append(
+                    (
+                        f"metal cached-vs-{key.removeprefix('metal_cached_vs_')}",
+                        metrics,
+                        floor,
+                    )
+                )
         for label, metrics, floor_metrics in backends:
             for metric, key in (
                 ("object_relative_l2", "object_relative_l2"),
                 ("object_max_abs_error_relative", "object_max_abs_error_relative"),
                 ("phase_max_error_radians", "object_phase_max_error_radians_core"),
                 ("loss_relative_error", "loss_relative_error"),
+                ("loss_absolute_error", "loss_abs_error"),
             ):
                 value = float(metrics[key])
                 bound, passed = _gate(metric, value, floor_metrics)
@@ -507,7 +569,24 @@ def print_report(report: dict[str, object], use_metal: bool) -> bool:
             )
         for key, metrics in sorted(entry.items()):
             if key.startswith("mps_vs_metal_"):
-                print(_metric_line(f"mps vs metal:{key.removeprefix('mps_vs_metal_')}", metrics))
+                print(
+                    _metric_line(
+                        f"mps vs metal:{key.removeprefix('mps_vs_metal_')}", metrics
+                    )
+                )
+            elif key.startswith("metal_cached_vs_"):
+                print(
+                    _metric_line(
+                        f"metal cached vs {key.removeprefix('metal_cached_vs_')}",
+                        metrics,
+                    )
+                )
+        if "metal" in entry:
+            print(
+                "      note: the native engine exposes no mean bright-field "
+                "phase product, so metal rows report the ssb_object_phase "
+                "kernel against the oracle object phase."
+            )
     rows = _gate_rows(report)
     failures = [row for row in rows if not row[4]]
     print("    gates:")
@@ -564,6 +643,12 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown cases {unknown}; known: {list(CASES)}")
 
+    if args.force_export and not args.export:
+        raise SystemExit(
+            "--force-export only rewrites an existing artifact when --export is "
+            "also given; pass --export --force-export (or use "
+            "`scripts/check_ssb_parity.sh --export --force-export`)."
+        )
     use_metal = not args.no_metal
     if args.reference_only:
         use_metal = False
