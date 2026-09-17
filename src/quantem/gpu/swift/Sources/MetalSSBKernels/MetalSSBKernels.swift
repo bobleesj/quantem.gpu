@@ -186,6 +186,9 @@ public final class MetalSSBEngine {
   private static let maximumCacheChunks = 12
   private static let fftThreads = 64
   private static let intermediateBlockRows = 4
+  // Must match ssb_column_group in ssb.metal: one threadgroup owns this many
+  // adjacent intermediate columns so each store fills a full 128-byte line.
+  private static let columnGroupColumns = 4
 
   private struct FFTParams {
     var n: UInt32
@@ -1584,8 +1587,19 @@ public final class MetalSSBEngine {
     rows.setBuffer(chiTrigBuffer, offset: 0, index: 7)
     rows.setBuffer(crossTrigBuffer, offset: 0, index: 8)
     rows.dispatchThreadgroups(
-      MTLSize(width: size == 512 ? halfColumns : size, height: batch, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+      MTLSize(
+        width: size == 512
+          ? (halfColumns + Self.columnGroupColumns - 1) / Self.columnGroupColumns
+          : size,
+        height: batch,
+        depth: 1
+      ),
+      threadsPerThreadgroup: MTLSize(
+        width: Self.fftThreads
+          * (size == 512 ? Self.columnGroupColumns : 1),
+        height: 1,
+        depth: 1
+      )
     )
     rows.endEncoding()
 
