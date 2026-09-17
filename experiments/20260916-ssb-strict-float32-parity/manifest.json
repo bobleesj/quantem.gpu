@@ -10,11 +10,11 @@
   },
   "code": {
     "repository": "quantem.gpu",
-    "revision": "5f698db77affcab6a73c681d0837ff88019ae918",
+    "revision": "434ae07d9de19afbd782ced2dd8db84b07230b44",
     "dirty": false,
     "entrypoint": "scripts/check_ssb_parity.sh",
     "secondary_entrypoint": "scripts/check_ssb_fit_trajectory.sh",
-    "diff_sha256": "0507d3404948ff46250bdfa09d8c106d7fdaa0fc0a697df47d239c2a60c0b905",
+    "diff_sha256": "c33b351ff1972b87af39b76309241c6ad0219d5485c9439c0cb4c759bb90b1eb",
     "snapshot_path": "local-evidence://ssb-strict-float32-parity/source",
     "diff_scope": "git diff 597b566..8df3864 -- tests scripts"
   },
@@ -76,7 +76,8 @@
     "fit_trajectory": "deterministic across processes (sha256 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b); production optimize reproduces it exactly; the batched pair draw moves the optimum and is not the production path",
     "recorded_cached_vs_streamed_defect": "closed in-tree by the ssb_ifft512_nyquist_correction; the cached half-plane path was the wrong one",
     "f1_attribution": "one lever per process at 512x512 setting #0: per-BF weighting construction is the line (pk-inline 3.8184e-06, -11.6%); accumulation re-order/chunk <=0.4%; Kahan 0.07%; metal::fast::sincos vs metal::sincos bitwise identical over 18,302,976 real chi samples; SciPy float32 and float64 forward transforms leave the object unchanged; error field diffuse (median 1.26e-05, max 3.96e-05). The MPS loss passes structurally, not by luck: it is a phase-moment computation, agreeing with metal:cached to 0-2.0 float32 ulp on all 9 gated rows.",
-    "trial_budget": "512x512 / 8937 BF / seed 42, Metal production path, no arithmetic change: tpe50 = tpe100 = tpe200 to the last bit (optimum 52.871296844577195, 52.878826420320394, 0.0021567655543952434; loss 0.096058391034603119); trials 50-200 buy exactly 0.0 (150 trials, 12.1 s of 20.4 s); 25 trials is not enough (1.17e-03 worse); a second Nelder-Mead from the recorded optimum buys 1.532e-03 more than the whole search bought, so NM termination, not the trial budget, is the binding constraint. Forward/reverse traces bit-identical; the tpe200 trace reproduces the recorded fit bit for bit."
+    "trial_budget": "512x512 / 8937 BF / seed 42, Metal production path, no arithmetic change: tpe50 = tpe100 = tpe200 to the last bit (optimum 52.871296844577195, 52.878826420320394, 0.0021567655543952434; loss 0.096058391034603119); trials 50-200 buy exactly 0.0 (150 trials, 12.1 s of 20.4 s); 25 trials is not enough (1.17e-03 worse); a second Nelder-Mead from the recorded optimum buys 1.532e-03 more than the whole search bought, so NM termination, not the trial budget, is the binding constraint. Forward/reverse traces bit-identical; the tpe200 trace reproduces the recorded fit bit for bit.",
+    "gate_harness": "the --metal-only exit status is the Metal acceptance signal and the run now says so in its own output: 'NOTE: --metal-only - the MPS implementation is NOT measured in this run' plus a final 'PASS: strict float32 parity (Metal pairs only, MPS not measured - not a full-gate pass)'. Verified end to end: 185 gated rows ok, 0 FAIL, 0 MPS rows, exit 0. Documented pytest command needs QUANTEM_SSB_PARITY_REPORT=parity-runs/gate-fast.json when not re-measuring (finding F10)."
   },
   "outputs": [
     {
@@ -164,8 +165,8 @@
     {
       "artifact_id": "experiment-record",
       "path": "experiments/20260916-ssb-strict-float32-parity/README.md",
-      "sha256": "ca81f6beb8d6190c6b3ad2041ef494ac38630f8b83fd1dd8d8b1620e8233e1d2",
-      "size_bytes": 36999,
+      "sha256": "d4865378d5b514eb997c0acc3731f6be6f5fda3977c0af913fffb1b4e1d8b4b9",
+      "size_bytes": 38172,
       "retention": "durable",
       "consuming_figures": []
     },
@@ -375,6 +376,24 @@
       "retention": "local-evidence",
       "consuming_figures": [],
       "note": "reference-fit variant runner (supports --precise and --pk-inline)"
+    },
+    {
+      "artifact_id": "metal-only-annotated-report",
+      "path": "local-evidence://parity-runs/scratch/gate-fast-metal-only-annotated.json",
+      "sha256": "c648b7069753e9093001461a7a8c3bac6a231eb64e88e0624b740f2f5cd0b0c9",
+      "size_bytes": 43152,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "the annotated --metal-only acceptance run: exit 0, 185 gated rows ok, 0 FAIL, 0 measured MPS rows"
+    },
+    {
+      "artifact_id": "metal-only-annotated-log",
+      "path": "local-evidence://parity-runs/logs/metal-only-annotated.log",
+      "sha256": "abb9ef4c92286875daa2a8445d7fd9d0ea2d79d3ec277a22201ad0b9cc165853",
+      "size_bytes": 34542,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "stdout of that run: the omission NOTE at the top and the Metal-only PASS wording at the end"
     }
   ],
   "timestamps": {
