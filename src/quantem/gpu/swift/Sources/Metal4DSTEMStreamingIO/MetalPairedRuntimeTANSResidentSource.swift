@@ -1119,7 +1119,14 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       let started = CFAbsoluteTimeGetCurrent()
       let candidate: MetalPairedRuntimeTANSPolarIndex
       do {
-        candidate = try buildResidentDetectorIndex(request, shouldCancel: shouldCancel)
+        // The build's packing chunks each end in `waitUntilCompleted`. On the
+        // resident's own queue an interaction command lands behind whichever
+        // chunk is in flight, which measured as a 107 ms hitch. A dedicated
+        // queue lets Metal schedule the two independently, and every buffer the
+        // index keeps is queue-agnostic.
+        candidate = try buildResidentDetectorIndex(
+          request, queue: request.device.makeCommandQueue(),
+          shouldCancel: shouldCancel)
       } catch {
         completion(.failed(String(describing: error)))
         return
@@ -1202,11 +1209,12 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
 
   /// The expensive half. Runs with no `stateLock` held.
   private func buildResidentDetectorIndex(
-    _ request: ResidentDetectorIndexBuildRequest, shouldCancel: () -> Bool
+    _ request: ResidentDetectorIndexBuildRequest, queue: MTLCommandQueue? = nil,
+    shouldCancel: () -> Bool
   ) throws -> MetalPairedRuntimeTANSPolarIndex {
     try autoreleasepool {
       try MetalPairedRuntimeTANSPolarIndex(
-        device: request.device, library: request.library, queue: request.queue,
+        device: request.device, library: request.library, queue: queue ?? request.queue,
         payload: request.payload, offsets: request.offsets, modes: request.modes,
         decoding: request.decoding, validPixels: request.validPixels,
         packets: request.packets, leafPixels: 16, layoutKind: "radial1fine4",
