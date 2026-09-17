@@ -167,6 +167,7 @@ class MPSStreamedCounts:
         )
         self._errors = _allocate_shared(self._device, self._metal, 4, "ANS errors")
         self.chunks: list[_Chunk] = []
+        self.spatial_chunks: list[tuple] = []
         self.ready_scans = 0
         self.is_released = False
         self.load_metrics = {"encode_seconds": 0.0}
