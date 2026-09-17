@@ -1186,6 +1186,97 @@ extension OriginalHDF5Packing {
   static let probeFusedDirect =
     ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_FUSED_DECODE"] == "1"
 
+  /// Bounded compressed-input read-ahead for the direct ANS load.
+  ///
+  /// While the GPU decodes window N the next window's slices are already being
+  /// read from the source disk on a background queue, so the SSD is not idle
+  /// during Metal execution. Decoded values, stream order, extents and
+  /// checksums are unchanged; only the scheduling of the read moves. The
+  /// in-flight set is bounded to one window so residency accounting is
+  /// unaffected beyond a single extra compressed window.
+  final class CompressedWindowReadAhead: @unchecked Sendable {
+    private let device: MTLDevice
+    private let queue = DispatchQueue(
+      label: "qgpu.paired-runtime.read-ahead", qos: .userInitiated)
+    private let lock = NSLock()
+    private var cancelled = false
+    private var storage: [Int: [Result<CompressedReadInput, Error>]] = [:]
+    private var signals: [Int: DispatchSemaphore] = [:]
+
+    init(device: MTLDevice) { self.device = device }
+
+    func cancel() {
+      lock.lock()
+      cancelled = true
+      lock.unlock()
+    }
+
+    private var isCancelled: Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return cancelled
+    }
+
+    func start(window: Int, plans: [CompressedReadPlan]) {
+      lock.lock()
+      guard signals[window] == nil, !cancelled else {
+        lock.unlock()
+        return
+      }
+      let signal = DispatchSemaphore(value: 0)
+      signals[window] = signal
+      lock.unlock()
+      queue.async { [device] in
+        var results: [Result<CompressedReadInput, Error>] = []
+        for plan in plans {
+          if self.isCancelled { break }
+          do {
+            results.append(
+              .success(
+                try OriginalHDF5Packing.readCompressed(
+                  plan, device: device, isCancelled: { self.isCancelled })))
+          } catch {
+            results.append(.failure(error))
+          }
+        }
+        self.lock.lock()
+        self.storage[window] = results
+        self.lock.unlock()
+        signal.signal()
+      }
+    }
+
+    /// Returns nil when this window was never started, in which case the caller
+    /// reads the slice synchronously exactly as before.
+    func take(window: Int) throws -> [CompressedReadInput]? {
+      lock.lock()
+      guard let signal = signals[window] else {
+        lock.unlock()
+        return nil
+      }
+      lock.unlock()
+      signal.wait()
+      lock.lock()
+      let results = storage.removeValue(forKey: window)
+      signals.removeValue(forKey: window)
+      lock.unlock()
+      guard let results else { return nil }
+      return try results.map { try $0.get() }
+    }
+
+    /// Blocks until every started read has finished so no escaped work outlives
+    /// the load, including on the cancellation and failure paths.
+    func drain() {
+      lock.lock()
+      let pending = Array(signals.values)
+      lock.unlock()
+      for signal in pending { signal.wait() }
+    }
+  }
+
+  static let readAheadEnabled =
+    ProcessInfo.processInfo.environment["QGPU_PAIRED_READ_AHEAD"] != "0"
+
   /// Decode every original count in bounded private windows for a direct GPU consumer.
   func forEachExactDecodedWindow(
     source: Native4DSTEMIndexedSource,
@@ -1227,20 +1318,39 @@ extension OriginalHDF5Packing {
     }
     memset(mask.contents(), 0, mask.length)
     var profile = Profile()
+    let readAhead = Self.readAheadEnabled ? CompressedWindowReadAhead(device: device) : nil
+    func prefetch(_ index: Int) {
+      guard let readAhead, windows.indices.contains(index) else { return }
+      do {
+        readAhead.start(
+          window: index,
+          plans: try windows[index].slices.map { try compressedReadPlan($0, source: source) })
+      } catch {
+        // Fall through to the synchronous read for this window.
+      }
+    }
+    prefetch(0)
+    defer { readAhead?.drain() }
     for (ordinal, window) in windows.enumerated() {
       try autoreleasepool {
-        if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+        if shouldCancel() {
+          readAhead?.cancel()
+          throw Metal4DSTEMStreamingIOError.cancelled
+        }
         memset(audit.contents(), 0, audit.length)
         memset(errors.contents(), 0, errors.length)
+        let prepared = try readAhead?.take(window: ordinal) ?? []
+        prefetch(ordinal + 1)
         let command = try commandBuffer()
-        for slice in window.slices {
+        for (sliceIndex, slice) in window.slices.enumerated() {
           _ = try decodeSlice(
             slice, source: source, firstFrame: window.globalFrameRange.lowerBound,
             dense: dense, mask: mask, audit: audit, scratch: scratch, errors: errors,
             partialDPC: nil, moments: moments,
+            preparedInput: prepared.indices.contains(sliceIndex) ? prepared[sliceIndex] : nil,
             commandBufferOverride: command,
             skipUnshuffle: probeSkipUnshuffle,
-            fusedDirect: Self.probeFusedDirect,
+            fusedDirect: Self.probeFusedDirect && fusedDecodeUnshuffle != nil,
             shouldCancel: shouldCancel, profile: &profile)
         }
         if includeDPCMoments {
