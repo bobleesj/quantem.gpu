@@ -39,6 +39,7 @@ enum MetalPairedRuntimeTANSHDF5Builder {
     let started = CFAbsoluteTimeGetCurrent()
     let allocatedBefore = UInt64(device.currentAllocatedSize)
     try validate(source: source)
+    let stageValidate = CFAbsoluteTimeGetCurrent()
     guard let identity = source.dataset.sourceIdentitySHA256 else {
       throw invalid("Paired-runtime loading requires an exact source identity")
     }
@@ -59,11 +60,14 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       ],
       logicalDtype: logicalDtype,
       detectorValidity: validity)
+    let stageValidity = CFAbsoluteTimeGetCurrent()
     let resources = try Resources(
       device: device, descriptor: descriptor,
       allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes,
       configuration: configuration)
+    let stageResources = CFAbsoluteTimeGetCurrent()
     let packing = try OriginalHDF5Packing(device: device)
+    let stagePacking = CFAbsoluteTimeGetCurrent()
 
     var records: [PairedRuntimeTANSRecordBuffers] = []
     var extents: [PairedRuntimeTANSRecordExtent] = []
@@ -112,6 +116,7 @@ enum MetalPairedRuntimeTANSHDF5Builder {
         momentColumns.append(words[scan * 4 + 2])
       }
     }
+    let stageLoop = CFAbsoluteTimeGetCurrent()
     guard records.count == PairedRuntimeTANSRecordABI.recordsPerAcquisition,
       let finalCommand
     else {
@@ -121,6 +126,11 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       sourceIdentitySHA256: [identity], recordExtents: extents,
       completedCommand: finalCommand, failureFlag: resources.failure)
     if ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_PROFILE"] == "1" {
+      let stageProvider = CFAbsoluteTimeGetCurrent()
+      fputs(String(format: "QGPU_STAGE_PROFILE validate=%.4f validity=%.4f resources=%.4f packing=%.4f loop=%.4f provider=%.4f total=%.4f\n",
+        stageValidate-started, stageValidity-stageValidate, stageResources-stageValidity,
+        stagePacking-stageResources, stageLoop-stagePacking, stageProvider-stageLoop,
+        stageProvider-started), stderr)
       resources.logProfile(
         logicalBytes: UInt64(source.logicalFrameCount) * source.decodedBytesPerFrame)
     }
