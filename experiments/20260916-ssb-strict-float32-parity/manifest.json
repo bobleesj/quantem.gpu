@@ -1,0 +1,404 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260916-ssb-strict-float32-parity",
+  "status": "reported",
+  "question": "At byte-identical inputs, do the MPS and native Metal SSB paths stay inside a strict float32/complex64 bound of an independent double-precision evaluation, does the frozen fit trajectory survive enabling the batched pair draw, and how much of the 200-trial fit budget is load-bearing?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authoritative_host": "apple-m5-native-development",
+    "manifest_path": "experiments/20260916-ssb-strict-float32-parity/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "cdfa229a615ffef2532f87d9e5743e3c934f4a7f",
+    "dirty": false,
+    "entrypoint": "scripts/check_ssb_parity.sh",
+    "secondary_entrypoint": "scripts/check_ssb_fit_trajectory.sh",
+    "diff_sha256": "c33b351ff1972b87af39b76309241c6ad0219d5485c9439c0cb4c759bb90b1eb",
+    "snapshot_path": "local-evidence://ssb-strict-float32-parity/source",
+    "diff_scope": "git diff 597b566..8df3864 -- tests scripts"
+  },
+  "inputs": [
+    {
+      "dataset_id": "arina-logic-pmos-master",
+      "path": "/path/to/local/data/Live4DSTEM Testing/ARINA/arina-fixture-b_master.h5",
+      "sha256": null,
+      "note": "512x512 x 192x192 uint16 real acquisition; the export proves every selected value against an independent h5py read (0 mismatches in 2,342,780,928 values)"
+    },
+    {
+      "dataset_id": "mps-reference-trajectory",
+      "path": "src/quantem/gpu/ssb/backends/mps/optimizer.py",
+      "sha256": null,
+      "note": "the executable QuantEM/Python reference; defaults to optuna_batch_size = 2"
+    }
+  ],
+  "parameters": {
+    "cases": [
+      "arina-128-full-disk",
+      "arina-128-inner-disk",
+      "arina-128-recorded-c10",
+      "arina-512-full-disk"
+    ],
+    "brightfield_policy": "documented full disk minus one hardware dead pixel (78, 74): 8937 logical, 2464 aperture-active",
+    "precision": "exact uint16 raw counts, float32 real, complex64 complex, no binning, no crop, no fast-math path, no CPU fallback in any measured path",
+    "gated_metrics": [
+      "object_relative_l2",
+      "object_max_abs_error_relative",
+      "phase_max_error_radians",
+      "loss_relative_error",
+      "loss_absolute_error"
+    ],
+    "gate_rule": "min(absolute float32 bound, 2x the measured single-precision floor of the identical formula evaluated with SciPy pocketfft)",
+    "fit_gate": {
+      "global_trials": 200,
+      "seed": 42,
+      "refinement": "nelder-mead",
+      "pin": "tests/parity/fixtures/ssb_fit_trajectory_128.json",
+      "pin_basis": "sha256 over (float32 point, float64 loss, stage) of all 220 recorded evaluations"
+    }
+  },
+  "execution": {
+    "host": "apple-m5-native-development",
+    "backends": [
+      "mlx-mps",
+      "native-swift-metal"
+    ],
+    "gpu_ids": [
+      "Apple M5"
+    ],
+    "gpu_model": "Apple M5 24 GB",
+    "gpu_lock": "~/perf-lab/ssb-audit/gpurun (GPU_RUN_LABEL=parity)"
+  },
+  "outcomes": {
+    "metal": "passes every gated metric at 128x128 and 512x512; best object relL2 5.618e-07",
+    "mps": "deterministic failures at 512x512 (object relL2 4.317e-06 against a 2.196e-06 bound; mps-vs-metal 4.179e-06) and at one recorded 128x128 setting (loss 2.875e-07 against a 2.24e-07 bound)",
+    "mps_root_cause": "named line: the per-BF weighting construction. Rebuilding the probe term in-kernel at identical accumulation moves the 512x512 object relL2 from 4.3173e-06 to 3.8184e-06 (15% of the excess over the 1.0981e-06 floor); accumulation order/depth (<=0.4% over 18-140 groups, Kahan compensation 0.07%, bit-identical under math_mode fast) and the trig spelling/FMA mode and the forward transform are all excluded by measurement. The object fix provably cannot move a fit: the fit never builds the object kernel, and a patched 200-trial reference fit reproduces digest 227cb1f4 bit for bit.",
+    "fit_trajectory": "deterministic across processes (sha256 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b); production optimize reproduces it exactly; the batched pair draw moves the optimum and is not the production path",
+    "recorded_cached_vs_streamed_defect": "closed in-tree by the ssb_ifft512_nyquist_correction; the cached half-plane path was the wrong one",
+    "f1_attribution": "one lever per process at 512x512 setting #0: per-BF weighting construction is the line (pk-inline 3.8184e-06, -11.6%); accumulation re-order/chunk <=0.4%; Kahan 0.07%; metal::fast::sincos vs metal::sincos bitwise identical over 18,302,976 real chi samples; SciPy float32 and float64 forward transforms leave the object unchanged; error field diffuse (median 1.26e-05, max 3.96e-05). The MPS loss passes structurally, not by luck: it is a phase-moment computation, agreeing with metal:cached to 0-2.0 float32 ulp on all 9 gated rows.",
+    "trial_budget": "512x512 / 8937 BF / seed 42, Metal production path, no arithmetic change: tpe50 = tpe100 = tpe200 to the last bit (optimum 52.871296844577195, 52.878826420320394, 0.0021567655543952434; loss 0.096058391034603119); trials 50-200 buy exactly 0.0 (150 trials, 12.1 s of 20.4 s); 25 trials is not enough (1.17e-03 worse); a second Nelder-Mead from the recorded optimum buys 1.532e-03 more than the whole search bought, so NM termination, not the trial budget, is the binding constraint. Forward/reverse traces bit-identical; the tpe200 trace reproduces the recorded fit bit for bit.",
+    "gate_harness": "the --metal-only exit status is the Metal acceptance signal and the run now says so in its own output: 'NOTE: --metal-only - the MPS implementation is NOT measured in this run' plus a final 'PASS: strict float32 parity (Metal pairs only, MPS not measured - not a full-gate pass)'. Verified end to end: 185 gated rows ok, 0 FAIL, 0 MPS rows, exit 0. Documented pytest command needs QUANTEM_SSB_PARITY_REPORT=parity-runs/gate-fast.json when not re-measuring (finding F10)."
+  },
+  "outputs": [
+    {
+      "artifact_id": "gate-fast-report",
+      "path": "local-evidence://parity-runs/gate-fast.json",
+      "sha256": "77bda3e820c33f65acce29384326df70d563767d31b56c9bfa70bbc08a77ef5c",
+      "size_bytes": 67094,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "gate-512-report",
+      "path": "local-evidence://parity-runs/gate-512-run2.json",
+      "sha256": "a3353f7201e9b5d0868eff3b2faed3354b3ffff2a986da787b45368d484a40f9",
+      "size_bytes": 19243,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "gate-fast-tables",
+      "path": "local-evidence://parity-runs/summary-fast.txt",
+      "sha256": "7df748131d191f5581c331f2197d95a363c54a9f48840c353da521c1dd31fc97",
+      "size_bytes": 8751,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "gate-512-tables",
+      "path": "local-evidence://parity-runs/summary-512.txt",
+      "sha256": "70a64534b9fe5a3a999cd62975cf040dd3894dbcdc3233ee2362641c5942720e",
+      "size_bytes": 2549,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "fit-trajectory-128",
+      "path": "local-evidence://parity-runs/fit-arina-128-full-disk.json",
+      "sha256": "afed3252efeff252791840da370affd1e4b9589348c905f8a8e5ac9d6fb128d6",
+      "size_bytes": 107375,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "the harness JSON embeds wall-clock elapsedSeconds for each stage, so its file digest is not a scientific invariant; the stable invariant is the sequential trajectory digest 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b recorded inside the file and pinned in tests/parity/fixtures/ssb_fit_trajectory_128.json"
+    },
+    {
+      "artifact_id": "fit-trajectory-512",
+      "path": "local-evidence://parity-runs/fit-arina-512-full-disk.json",
+      "sha256": "703f56ed21d35923bbf20990b73607f7636c1ba5e22a26650b7ee1d002da8798",
+      "size_bytes": 146643,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "the harness JSON embeds wall-clock elapsedSeconds for each stage, so its file digest is not a scientific invariant; the stable invariant is the sequential trajectory digest 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b recorded inside the file and pinned in tests/parity/fixtures/ssb_fit_trajectory_128.json"
+    },
+    {
+      "artifact_id": "fit-reference-128",
+      "path": "local-evidence://parity-runs/fit-reference-128.json",
+      "sha256": "ba8635718a08f8a8060a3095e2275d2a07cc81bcc635f0d469fad8765b1d6462",
+      "size_bytes": 99266,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mps-math-mode-probe",
+      "path": "local-evidence://parity-runs/strict-parity/arina-512-full-disk/math-mode-probe-0.json",
+      "sha256": "12f8238ad388d28b5b71d0d97e1fcbb13835fd9ffcf63e8480350bab4eb93edf",
+      "size_bytes": 1449,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "mlx-fft-fidelity",
+      "path": "local-evidence://parity-runs/logs/parity-gpu-batch.log",
+      "sha256": "8ba6e853d63dfc4739e0dba80faa3ad0da4a52ffdc79fc3724de14c40b6665ad",
+      "size_bytes": 6031,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "arithmetic-budget-512",
+      "path": "local-evidence://parity-runs/logs/budget-512.log",
+      "sha256": "a14e35c7188538eddb89675aa2c34d7802b905eb0e87857b54e03f168058e79e",
+      "size_bytes": 4954,
+      "retention": "local-evidence",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "experiment-record",
+      "path": "experiments/20260916-ssb-strict-float32-parity/README.md",
+      "sha256": "c6a0659234ab763149f85c1df68f868697cd40486b297c2fe15f15115dea2105",
+      "size_bytes": 38630,
+      "retention": "durable",
+      "consuming_figures": []
+    },
+    {
+      "artifact_id": "gate-fast-confirm",
+      "path": "local-evidence://parity-runs/scratch/gate-fast-confirm.json",
+      "sha256": "b82ffcb080422ca0be580377d7dab0600ec5fba6926b379df791e629227edbc2",
+      "size_bytes": 67094,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "fourth fast-gate run after every commit of this record; structural diff vs gate-fast.json is 56 leaves, all timing fields, with the same verdict (FAIL, exit 1, the two recorded-C10 MPS loss checks)"
+    },
+    {
+      "artifact_id": "gate-fast-metal-only",
+      "path": "local-evidence://parity-runs/scratch/gate-fast-metal-only.json",
+      "sha256": "0f9adb336333a6fce25818b1ffaa595e666907dc4a17e843dd1da1ec44b11d2e",
+      "size_bytes": 43157,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "the --metal-only confirmation: 185 gated rows all ok, zero FAIL, zero MPS rows, exit 0; 272 shared scientific values against the recorded full run, 0 mismatches"
+    },
+    {
+      "artifact_id": "f1-512-base",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.base.json",
+      "sha256": "a238f600e1605d3ddbd96bd19e6def31a52fc55ea30a51a50db0d538b5f2f6b7",
+      "size_bytes": 2179,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "production reference point for the F1 bisection"
+    },
+    {
+      "artifact_id": "f1-512-obj-precise",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-precise.json",
+      "sha256": "957077543a3acf1c86218edd9804eec366199a81f83fbd12e1b3a5241502d9eb",
+      "size_bytes": 2276,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "object kernel trig spelled metal::sincos: object unchanged"
+    },
+    {
+      "artifact_id": "f1-512-obj-chunk64",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-chunk64.json",
+      "sha256": "1453be0c9a104e05113312ea67918656b3aa4b9000a8879beefdac9726ab1ad3",
+      "size_bytes": 2179,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "accumulation regrouped to 140 groups: object unchanged within 0.4%"
+    },
+    {
+      "artifact_id": "f1-512-obj-chunk512",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-chunk512.json",
+      "sha256": "4a2c3984ccf180b4c4cc962eeb46d3434617f6303deb782d7238e0ea4f4d271a",
+      "size_bytes": 2178,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "accumulation regrouped to 18 groups: object unchanged within 0.4%"
+    },
+    {
+      "artifact_id": "f1-512-obj-kahan",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-kahan.json",
+      "sha256": "bc1e4fbcf05074fb5797f412e1f021f30052aa578168c53a578203f8fb041e97",
+      "size_bytes": 2319,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "Kahan-compensated accumulation under fast math: bit-identical to base"
+    },
+    {
+      "artifact_id": "f1-512-obj-kahan-safe",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-kahan-safe.json",
+      "sha256": "f6ee3c9412084f0219420f8ddd62e1dfa8cea204b5a01b73a41192d6ff21027e",
+      "size_bytes": 2326,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "Kahan compensation under safe math: 5.8261e-06, worse (FMA loss)"
+    },
+    {
+      "artifact_id": "f1-512-obj-accurate",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-accurate.json",
+      "sha256": "2de69f3e12da9ff8d325835910faf5b34971062e22d980084396456d6cbe5767",
+      "size_bytes": 2234,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "safe mode, uncompensated control: 5.8218e-06"
+    },
+    {
+      "artifact_id": "f1-512-obj-precise-accurate",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-precise-accurate.json",
+      "sha256": "57cd77d2d5dc7d2d19af5ac6bbe0f9a7fe79e7c51f60a1ccc3e4a1fc57fe8f36",
+      "size_bytes": 2335,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "precise trig plus safe mode control"
+    },
+    {
+      "artifact_id": "f1-512-obj-precise-chunk64",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-precise-chunk64.json",
+      "sha256": "fc59b99b1a0e65e433dcd2c0c0cdece3f8cc713533cb7483d05a3a21b9de824b",
+      "size_bytes": 2279,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "precise trig plus chunk 64"
+    },
+    {
+      "artifact_id": "f1-512-obj-kahan-pk-inline",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-kahan-pk-inline.json",
+      "sha256": "834f9c100bd092505468ce30b42e77a81587ecf38f78af3361e841b76f6754de",
+      "size_bytes": 2331,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "compensation plus in-kernel pk: object unchanged from pk-inline"
+    },
+    {
+      "artifact_id": "f1-512-fwd-scipy32",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.fwd-scipy32.json",
+      "sha256": "bd50a942f47dfaa9beeb37473f6ac6524084928264a99dc8befeaf5a7599417c",
+      "size_bytes": 2234,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "forward BF transform recomputed by SciPy float32: object unchanged"
+    },
+    {
+      "artifact_id": "f1-512-fwd-f64",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.fwd-f64.json",
+      "sha256": "0a5bbb58c0eef5afc0b9929f73c99dea2bb7746fac71c1340a5a0e57015a6f6e",
+      "size_bytes": 2225,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "forward BF transform recomputed in float64 then rounded: object unchanged"
+    },
+    {
+      "artifact_id": "f1-512-obj-pk-inline",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-512-full-disk-s0.obj-pk-inline.json",
+      "sha256": "2a25acce759ef749d0b7b61691a4bd0921ce2a5e3c6074144f57e9f756d3aa7c",
+      "size_bytes": 2323,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "THE LINE: in-kernel pk at identical accumulation, 3.8184e-06 vs base 4.3173e-06"
+    },
+    {
+      "artifact_id": "f1-128-loss-precise",
+      "path": "local-evidence://parity-runs/scratch/f1/arina-128-recorded-c10-s2.loss-precise.json",
+      "sha256": "25dae612fc6fa61a2e21bb38e7b3ebe0c09b09768fa31049fe9b9f1dac7ede04",
+      "size_bytes": 3454,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "loss/phase kernels with precise trig at the failing recorded 128x128 setting"
+    },
+    {
+      "artifact_id": "f1-intrinsic-sincos",
+      "path": "local-evidence://parity-runs/scratch/f1/intrinsic-sincos-s0.json",
+      "sha256": "b2fde1874b727c4f0e7a5591a339152f8bb65c932ecee374fe188d20d3c131b9",
+      "size_bytes": 1314,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "18,302,976 real chi samples: metal::fast::sincos and metal::sincos are bitwise identical"
+    },
+    {
+      "artifact_id": "f1-fit-ref-control",
+      "path": "local-evidence://parity-runs/scratch/f1/fit-ref-128-control.json",
+      "sha256": "26f74261f8fbd8529c3fc813a713bca4287e23b8da33fbcd64db961ededd02bb",
+      "size_bytes": 42442,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "unpatched 200-trial reference fit control: reproduces the recorded reference trajectory bit for bit"
+    },
+    {
+      "artifact_id": "f1-fit-ref-pk-inline",
+      "path": "local-evidence://parity-runs/scratch/f1/fit-ref-128-pk-inline.json",
+      "sha256": "92bb8c73f8621d2f06e3f90e5184450c126a1151e44e786c6b66aa5d7c3d41e3",
+      "size_bytes": 42532,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "same fit with the pk fix installed (one object kernel rewritten): identical digest 227cb1f4, 0 of 200 losses differ"
+    },
+    {
+      "artifact_id": "trial-budget-512",
+      "path": "local-evidence://parity-runs/budget-arina-512-full-disk/fit-budget.json",
+      "sha256": "31d66024f50b0284a58d7691410f40cd80d67439ed6150997906475e8a213ef3",
+      "size_bytes": 402741,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "arms tpe25/50/100/200 + NM-warm from the recorded optimum, forward and reverse passes, load averages"
+    },
+    {
+      "artifact_id": "budget-analysis",
+      "path": "local-evidence://parity-runs/scratch/22_budget_report.py",
+      "sha256": "19fb5a22a193b54d245db8030408e6acfc232d8a16d981c3063c90bc5c8fdfb2",
+      "size_bytes": 3798,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "regenerates the budget table and the per-25-trial block curve"
+    },
+    {
+      "artifact_id": "f1-variant-script",
+      "path": "local-evidence://parity-runs/scratch/19_f1_variants.py",
+      "sha256": "d9ead216a09530c91836366e30c7132e9b526ac7f6589b46bee6a2dd7b81dea0",
+      "size_bytes": 14207,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "one-lever-per-process F1 bisection driver"
+    },
+    {
+      "artifact_id": "f1-fit-variant-script",
+      "path": "local-evidence://parity-runs/scratch/21_f1_fit_variant.py",
+      "sha256": "475d4d4c7a9b897e61d06351629f27ec5f69fd3bfc8517ca175230779fcd0093",
+      "size_bytes": 3824,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "reference-fit variant runner (supports --precise and --pk-inline)"
+    },
+    {
+      "artifact_id": "metal-only-annotated-report",
+      "path": "local-evidence://parity-runs/scratch/gate-fast-metal-only-annotated.json",
+      "sha256": "c648b7069753e9093001461a7a8c3bac6a231eb64e88e0624b740f2f5cd0b0c9",
+      "size_bytes": 43152,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "the annotated --metal-only acceptance run: exit 0, 185 gated rows ok, 0 FAIL, 0 measured MPS rows"
+    },
+    {
+      "artifact_id": "metal-only-annotated-log",
+      "path": "local-evidence://parity-runs/logs/metal-only-annotated.log",
+      "sha256": "abb9ef4c92286875daa2a8445d7fd9d0ea2d79d3ec277a22201ad0b9cc165853",
+      "size_bytes": 34542,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "stdout of that run: the omission NOTE at the top and the Metal-only PASS wording at the end"
+    }
+  ],
+  "timestamps": {
+    "created": "2026-09-16",
+    "started": "2026-09-16",
+    "finished": "2026-09-16"
+  }
+}
