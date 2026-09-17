@@ -4611,7 +4611,9 @@ def _reconstruct_prepared(
                     # threadgroup.  Storing the row IFFT in the tiled layout
                     # keeps those eight loads inside one 64-byte granule
                     # instead of striding 4 KB apart.  Same values, permuted
-                    # addresses: 8.9% of the stage pair, bit-exact.
+                    # addresses: 22.767 to 21.055 ms on the stage pair and
+                    # 404.0 to 369.5 ms end-to-end, bit-exact
+                    # (experiments/20260916-ssb-mps-hotpath).
                     return_active=True,
                     tiled_output=True,
                 )
