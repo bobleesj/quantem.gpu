@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260916-ssb-strict-float32-parity",
+  "status": "reported",
+  "question": "At byte-identical inputs, do the MPS and native Metal SSB paths stay inside a strict float32/complex64 bound of an independent double-precision evaluation, and does the frozen fit trajectory survive enabling the batched pair draw?",
+  "paper": {"repository": "quantem.gpu", "authoritative_host": "apple-m5-native-development", "manifest_path": "experiments/20260916-ssb-strict-float32-parity/manifest.json"},
+  "code": {"repository": "quantem.gpu", "revision": "8df3864500f58d742edd37182c55359d131dde7e", "dirty": true, "entrypoint": "scripts/check_ssb_parity.sh", "secondary_entrypoint": "scripts/check_ssb_fit_trajectory.sh", "diff_sha256": "799f05ea347172282619bcf5a48af5e40e8fd7dd461f5de21153d236ac1a6d26", "snapshot_path": "local-evidence://ssb-strict-float32-parity/source", "diff_scope": "git diff 597b566..8df3864 -- tests scripts"},
+  "inputs": [
+    {"dataset_id": "arina-logic-pmos-master", "path": "/path/to/local/data/Live4DSTEM Testing/ARINA/arina-fixture-b_master.h5", "sha256": null, "note": "512x512 x 192x192 uint16 real acquisition; the export proves every selected value against an independent h5py read (0 mismatches in 2,342,780,928 values)"},
+    {"dataset_id": "mps-reference-trajectory", "path": "src/quantem/gpu/ssb/backends/mps/optimizer.py", "sha256": null, "note": "the executable QuantEM/Python reference; defaults to optuna_batch_size = 2"}
+  ],
+  "parameters": {
+    "cases": ["arina-128-full-disk", "arina-128-inner-disk", "arina-128-recorded-c10", "arina-512-full-disk"],
+    "brightfield_policy": "documented full disk minus one hardware dead pixel (78, 74): 8937 logical, 2464 aperture-active",
+    "precision": "exact uint16 raw counts, float32 real, complex64 complex, no binning, no crop, no fast-math path, no CPU fallback in any measured path",
+    "gated_metrics": ["object_relative_l2", "object_max_abs_error_relative", "phase_max_error_radians", "loss_relative_error", "loss_absolute_error"],
+    "gate_rule": "min(absolute float32 bound, 2x the measured single-precision floor of the identical formula evaluated with SciPy pocketfft)",
+    "fit_gate": {"global_trials": 200, "seed": 42, "refinement": "nelder-mead", "pin": "tests/parity/fixtures/ssb_fit_trajectory_128.json", "pin_basis": "sha256 over (float32 point, float64 loss, stage) of all 220 recorded evaluations"}
+  },
+  "execution": {"host": "apple-m5-native-development", "backends": ["mlx-mps", "native-swift-metal"], "gpu_ids": ["Apple M5"], "gpu_model": "Apple M5 24 GB", "gpu_lock": "~/perf-lab/ssb-audit/gpurun (GPU_RUN_LABEL=parity)"},
+  "outcomes": {
+    "metal": "passes every gated metric at 128x128 and 512x512; best object relL2 5.618e-07",
+    "mps": "deterministic failures at 512x512 (object relL2 4.317e-06 against a 2.196e-06 bound; mps-vs-metal 4.179e-06) and at one recorded 128x128 setting (loss 2.875e-07 against a 2.24e-07 bound)",
+    "mps_root_cause": "fused math_mode and the MLX FFT realization are excluded by measurement; the excess is in the summed spectrum (per-BF weighting and complex64 accumulation). Line-level attribution unresolved.",
+    "fit_trajectory": "deterministic across processes (sha256 74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b); production optimize reproduces it exactly; the batched pair draw moves the optimum and is not the production path",
+    "recorded_cached_vs_streamed_defect": "closed in-tree by the ssb_ifft512_nyquist_correction; the cached half-plane path was the wrong one"
+  },
+  "outputs": [
+    {"artifact_id": "gate-fast-report", "path": "local-evidence://parity-runs/gate-fast.json", "sha256": "77bda3e820c33f65acce29384326df70d563767d31b56c9bfa70bbc08a77ef5c", "size_bytes": 67094, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "gate-512-report", "path": "local-evidence://parity-runs/gate-512-run2.json", "sha256": "a3353f7201e9b5d0868eff3b2faed3354b3ffff2a986da787b45368d484a40f9", "size_bytes": 19243, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "gate-fast-tables", "path": "local-evidence://parity-runs/summary-fast.txt", "sha256": "7df748131d191f5581c331f2197d95a363c54a9f48840c353da521c1dd31fc97", "size_bytes": 8751, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "gate-512-tables", "path": "local-evidence://parity-runs/summary-512.txt", "sha256": "70a64534b9fe5a3a999cd62975cf040dd3894dbcdc3233ee2362641c5942720e", "size_bytes": 2549, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "fit-trajectory-128", "path": "local-evidence://parity-runs/fit-arina-128-full-disk.json", "sha256": "aa07b7578175b3f2267abf6e193e150856806ca05d23cb377cfc583d649a92f1", "size_bytes": 107377, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "fit-trajectory-512", "path": "local-evidence://parity-runs/fit-arina-512-full-disk.json", "sha256": "c0ff473509c0838003058c2e86cc5d10b2358e1fa54790e80319c1b251fe625d", "size_bytes": 146642, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "fit-reference-128", "path": "local-evidence://parity-runs/fit-reference-128.json", "sha256": "ba8635718a08f8a8060a3095e2275d2a07cc81bcc635f0d469fad8765b1d6462", "size_bytes": 99266, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "mps-math-mode-probe", "path": "local-evidence://parity-runs/strict-parity/arina-512-full-disk/math-mode-probe-0.json", "sha256": "12f8238ad388d28b5b71d0d97e1fcbb13835fd9ffcf63e8480350bab4eb93edf", "size_bytes": 1449, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "mlx-fft-fidelity", "path": "local-evidence://parity-runs/logs/parity-gpu-batch.log", "sha256": "8ba6e853d63dfc4739e0dba80faa3ad0da4a52ffdc79fc3724de14c40b6665ad", "size_bytes": 6031, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "arithmetic-budget-512", "path": "local-evidence://parity-runs/logs/budget-512.log", "sha256": "a14e35c7188538eddb89675aa2c34d7802b905eb0e87857b54e03f168058e79e", "size_bytes": 4954, "retention": "local-evidence", "consuming_figures": []},
+    {"artifact_id": "experiment-record", "path": "experiments/20260916-ssb-strict-float32-parity/README.md", "sha256": null, "size_bytes": null, "retention": "durable", "consuming_figures": []}
+  ],
+  "timestamps": {"created": "2026-09-16", "started": "2026-09-16", "finished": "2026-09-16"}
+}
