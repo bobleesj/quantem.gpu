@@ -85,6 +85,9 @@ enum MetalPairedRuntimeTANSBenchmark {
     }
 
     let values = try resident.updateVirtualDetector(mask: wideMasks[0]).values
+    let momentWords =
+      resident.dpcMoments.total + resident.dpcMoments.detectorRowMoment
+      + resident.dpcMoments.detectorColumnMoment
     var detectorSampleParity = true
     for frame in sampleFrames {
       let dp = try resident.extractRawDiffraction(
@@ -109,6 +112,8 @@ enum MetalPairedRuntimeTANSBenchmark {
       "sample_hashes_u32_le": sampleHashes,
       "sample_dp_parity": sampleParity,
       "dpc_moment_sample_parity": dpcMomentSampleParity,
+      "dpc_moments_digest_u64_le": hash(momentWords),
+      "dpc_moments_scan_count": resident.dpcMoments.total.count,
       "detector_sample_parity": detectorSampleParity,
       "selected_dp_p50_milliseconds": percentile(dpMilliseconds, 0.50),
       "selected_dp_p95_milliseconds": percentile(dpMilliseconds, 0.95),
@@ -385,6 +390,15 @@ enum MetalPairedRuntimeTANSBenchmark {
   }
 
   static func hash(_ values: [UInt32]) -> String {
+    values.withUnsafeBytes {
+      SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
+    }
+  }
+
+  /// Digest of every exact DPC moment the load published, so a change to the way
+  /// the moments are derived is compared over the whole acquisition and not only
+  /// over the sampled diffraction patterns.
+  static func hash(_ values: [UInt64]) -> String {
     values.withUnsafeBytes {
       SHA256.hash(data: Data($0)).map { String(format: "%02x", $0) }.joined()
     }

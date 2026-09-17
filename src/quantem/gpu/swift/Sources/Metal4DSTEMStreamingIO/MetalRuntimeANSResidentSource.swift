@@ -1277,6 +1277,12 @@ extension OriginalHDF5Packing {
   static let readAheadEnabled =
     ProcessInfo.processInfo.environment["QGPU_PAIRED_READ_AHEAD"] != "0"
 
+  /// Fold the exact DPC moments into the transpose unshuffle. The unshuffle
+  /// already holds every count in a register, so the dense window is read once
+  /// instead of twice; `=0` restores the standalone moments pass.
+  static let fusedMomentsEnabled =
+    ProcessInfo.processInfo.environment["QGPU_PAIRED_FUSED_MOMENTS"] != "0"
+
   /// Decode every original count in bounded private windows for a direct GPU consumer.
   func forEachExactDecodedWindow(
     source: Native4DSTEMIndexedSource,
@@ -1306,6 +1312,25 @@ extension OriginalHDF5Packing {
     // still terminates; only the decode-only timing from this run is meaningful.
     let probeSkipUnshuffle =
       ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_SKIP_UNSHUFFLE"] == "1"
+    // One partial per (scan, block) when the moments ride the transpose
+    // unshuffle. The standalone moments pass needs the dense window resident;
+    // the fused one reuses the counts the unshuffle already has in registers.
+    let fusedBlocks = pixels / 4096
+    let fusedMoments =
+      includeDPCMoments && Self.fusedMomentsEnabled && !probeSkipUnshuffle
+      && !(Self.probeFusedDirect && fusedDecodeUnshuffle != nil)
+      && source.sourceBytesPerValue == 2
+      && pixels % 4096 == 0
+      && scalarDecode != nil && scalarUnshuffle != nil && transposeUnshuffle
+      && transposeDPCUnshuffle != nil && dpcReduce != nil
+      && source.shards.allSatisfy { Int($0.index.metadata.nBlocksPerFrame) == fusedBlocks }
+    let partialDPC = fusedMoments ? try buffer(frames * fusedBlocks * 32) : nil
+    // Only slices long enough for the scalar transpose unshuffle carry the
+    // moments; shorter ones decode straight into the dense window and still
+    // need the standalone pass below.
+    func fusesMoments(_ slice: Native4DSTEMIndexedSlice) -> Bool {
+      partialDPC != nil && slice.globalFrameRange.count >= 2048
+    }
     if probeSkipUnshuffle {
       let zeroCommand = try commandBuffer()
       guard let zeroBlit = zeroCommand.makeBlitCommandEncoder() else {
@@ -1346,7 +1371,8 @@ extension OriginalHDF5Packing {
           _ = try decodeSlice(
             slice, source: source, firstFrame: window.globalFrameRange.lowerBound,
             dense: dense, mask: mask, audit: audit, scratch: scratch, errors: errors,
-            partialDPC: nil, moments: moments,
+            partialDPC: partialDPC, moments: moments,
+            transposeDPC: fusesMoments(slice),
             preparedInput: prepared.indices.contains(sliceIndex) ? prepared[sliceIndex] : nil,
             commandBufferOverride: command,
             skipUnshuffle: probeSkipUnshuffle,
@@ -1354,6 +1380,7 @@ extension OriginalHDF5Packing {
             shouldCancel: shouldCancel, profile: &profile)
         }
         if includeDPCMoments {
+          if partialDPC == nil {
           guard let encoder = command.makeComputeCommandEncoder() else {
             throw Self.invalid("Cannot encode exact runtime-ANS DPC moments")
           }
@@ -1369,6 +1396,29 @@ extension OriginalHDF5Packing {
             MTLSize(width: window.globalFrameRange.count * 32, height: 1, depth: 1),
             threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
           encoder.endEncoding()
+          } else {
+            for slice in window.slices where !fusesMoments(slice) {
+              let sliceFrames = slice.globalFrameRange.count
+              let sliceStart =
+                slice.globalFrameRange.lowerBound - window.globalFrameRange.lowerBound
+              guard sliceFrames > 0, sliceStart >= 0,
+                let encoder = command.makeComputeCommandEncoder()
+              else { continue }
+              var shape = Shape(
+                scans: UInt32(sliceFrames), pixels: UInt32(pixels),
+                columns: UInt32(source.dataset.detectorCols),
+                sourceBytes: UInt32(source.sourceBytesPerValue))
+              encoder.setComputePipelineState(momentsPipeline)
+              encoder.setBuffer(
+                dense, offset: sliceStart * Int(source.decodedBytesPerFrame), index: 0)
+              encoder.setBuffer(moments, offset: sliceStart * 32, index: 1)
+              encoder.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
+              encoder.dispatchThreads(
+                MTLSize(width: sliceFrames * 32, height: 1, depth: 1),
+                threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+              encoder.endEncoding()
+            }
+          }
         }
         try consume(
           dense, includeDPCMoments ? moments : nil,

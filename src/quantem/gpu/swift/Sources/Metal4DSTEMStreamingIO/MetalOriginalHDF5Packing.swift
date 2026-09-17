@@ -244,6 +244,7 @@ final class OriginalHDF5Packing {
   let alignedHistoryCopy: Bool
   let transposeUnshuffle: Bool
   let dpcUnshuffle, dpcUnshuffle32, dpcReduce: MTLComputePipelineState?
+  let transposeDPCUnshuffle: MTLComputePipelineState?
   let planDecode, summaryValues, summaryReduce: MTLComputePipelineState?
   let tokenPlanBuild, tokenPlanExpand: MTLComputePipelineState?
   let cpuPlanDecode: Bool
@@ -384,10 +385,14 @@ final class OriginalHDF5Packing {
       dpcUnshuffle = try pipeline(decode, "h5unshuffle_u16_dpc_qh5idx")
       dpcUnshuffle32 = try pipeline(decode, "h5unshuffle_u32_dpc_qh5idx")
       dpcReduce = try pipeline(decode, "h5reduce_u16_dpc_qh5idx")
+      transposeDPCUnshuffle =
+        transposeUnshuffle
+        ? try pipeline(decode, "h5unshuffle_u16_transpose_dpc_qh5idx") : nil
     } else {
       dpcUnshuffle = nil
       dpcUnshuffle32 = nil
       dpcReduce = nil
+      transposeDPCUnshuffle = nil
     }
     checkpointPacking =
       cachePlans || OriginalPackingDiagnostics.enabled("CHECKPOINT_PACK", byDefault: true)
@@ -1808,6 +1813,7 @@ final class OriginalHDF5Packing {
     firstFrame: Int, dense: MTLBuffer, mask: MTLBuffer, audit: MTLBuffer,
     scratch: MTLBuffer?, errors: MTLBuffer,
     partialDPC: MTLBuffer?, moments: MTLBuffer,
+    transposeDPC: Bool = false,
     preparedInput: CompressedReadInput? = nil,
     zeroTails: MTLBuffer? = nil,
     commandBufferOverride: MTLCommandBuffer? = nil,
@@ -1992,10 +1998,17 @@ final class OriginalHDF5Packing {
         throw Self.invalid("Cannot encode exact unshuffle")
       }
       if partialDPC != nil {
-        guard let dpcUnshuffle = is32 ? dpcUnshuffle32 : dpcUnshuffle else {
-          throw Self.invalid("Missing exact uint32 DPC unshuffle kernel")
+        if transposeDPC, !is32 {
+          guard let transposeDPCUnshuffle else {
+            throw Self.invalid("Missing exact transpose DPC unshuffle kernel")
+          }
+          unshuffle.setComputePipelineState(transposeDPCUnshuffle)
+        } else {
+          guard let dpcUnshuffle = is32 ? dpcUnshuffle32 : dpcUnshuffle else {
+            throw Self.invalid("Missing exact uint32 DPC unshuffle kernel")
+          }
+          unshuffle.setComputePipelineState(dpcUnshuffle)
         }
-        unshuffle.setComputePipelineState(dpcUnshuffle)
       } else {
         unshuffle.setComputePipelineState(selectedUnshuffle)
       }
@@ -2016,7 +2029,9 @@ final class OriginalHDF5Packing {
       unshuffle.dispatchThreadgroups(
         MTLSize(width: Int(frameCount), height: 1, depth: Int(blocks)),
         threadsPerThreadgroup: MTLSize(
-          width: is32 || (transposeUnshuffle && partialDPC == nil) ? 128 : 64, height: 1, depth: 1))
+          width: is32 || (partialDPC != nil ? transposeDPC : (transposeUnshuffle && partialDPC == nil))
+            ? 128 : 64,
+          height: 1, depth: 1))
       unshuffle.endEncoding()
       if let partialDPC, let dpcReduce {
         guard let reduction = command.makeComputeCommandEncoder() else {

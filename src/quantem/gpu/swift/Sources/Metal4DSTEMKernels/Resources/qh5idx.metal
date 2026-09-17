@@ -3193,6 +3193,99 @@ kernel void h5reduce_u16_dpc_qh5idx(
     moments[frame] = dpc;
 }
 
+// The exact transpose unshuffle above, plus the exact DPC moments of the same
+// counts while each one is still in a register. One partial per (scan, block) is
+// written so the dense window is never re-read for a second pass, and
+// h5reduce_u16_dpc_qh5idx folds the partials into the per-scan moments.
+kernel void h5unshuffle_u16_transpose_dpc_qh5idx(
+    const device uchar *scratch [[buffer(0)]],
+    constant uint &blocksPerFrame [[buffer(3)]],
+    constant uint &frameElements [[buffer(4)]],
+    device ushort *output [[buffer(5)]],
+    const device uchar *badPixelMask [[buffer(7)]],
+    device atomic_uint *countAudit [[buffer(8)]],
+    constant uint &globalFrameOffset [[buffer(9)]],
+    device atomic_uint *errors [[buffer(10)]],
+    constant uint &frameCount [[buffer(11)]],
+    device ulong4 *partialDPC [[buffer(12)]],
+    constant uint &detectorColumns [[buffer(13)]],
+    uint3 position [[threadgroup_position_in_grid]],
+    uint3 threads [[threads_per_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint simdgroup [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame = position.x, block = position.z;
+    if (atomic_load_explicit(errors, memory_order_relaxed) || frame >= frameCount || block >= blocksPerFrame) return;
+    uint totalThreads = threads.x * threads.y * threads.z, groups = totalThreads / 32u;
+    if (totalThreads % 32u || groups < 1u || groups > 4u
+        || detectorColumns == 0u
+        || blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
+        atomic_fetch_or_explicit(errors, 2u, memory_order_relaxed);
+        return;
+    }
+    threadgroup uint maxima[4], above[4];
+    threadgroup ulong4 dpcByGroup[4];
+    const device uint *planes = (const device uint *)(scratch
+        + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul);
+    uint maximum = 0u, above255 = 0u;
+    ulong total = 0ul, row = 0ul, column = 0ul;
+    // A lane's pixel advances by a fixed stride, so its detector row and column
+    // advance by fixed steps plus a carry. That keeps the per-count weights at
+    // two adds instead of two integer divisions.
+    uint stride = groups * 32u;
+    uint firstPixel = block * 4096u + simdgroup * 32u + lane;
+    uint rowIndex = firstPixel / detectorColumns;
+    uint columnIndex = firstPixel - rowIndex * detectorColumns;
+    uint rowStep = stride / detectorColumns, columnStep = stride % detectorColumns;
+    for (uint group = simdgroup; group < 128u; group += groups) {
+        uint value = lane < 16u ? planes[lane * 128u + group] : 0u;
+        // Swap each row-address bit with its column-address bit. The input
+        // contains 16 bit-plane rows; the output lane holds one exact count.
+        #pragma unroll
+        for (uint shift = 1u; shift <= 16u; shift *= 2u) {
+            uint mask = 0xffffffffu / ((1u << shift) + 1u);
+            uint other = simd_shuffle_xor(value, shift);
+            value = (lane & shift)
+                ? (value & ~mask) | ((other & ~mask) >> shift)
+                : (value & mask) | ((other & mask) << shift);
+        }
+        uint pixel = block * 4096u + group * 32u + lane;
+        ushort stored = badPixelMask[pixel] ? ushort(0) : ushort(value);
+        output[ulong(frame) * frameElements + pixel] = stored;
+        total += ulong(stored);
+        row += ulong(stored) * rowIndex;
+        column += ulong(stored) * columnIndex;
+        maximum = max(maximum, uint(stored));
+        above255 += stored > ushort(255) ? 1u : 0u;
+        columnIndex += columnStep;
+        rowIndex += rowStep;
+        while (columnIndex >= detectorColumns) { columnIndex -= detectorColumns; rowIndex += 1u; }
+    }
+    uint groupMaximum = simd_max(maximum), groupAbove = simd_sum(above255);
+    total = qh5DPCSumUInt64(total);
+    row = qh5DPCSumUInt64(row);
+    column = qh5DPCSumUInt64(column);
+    if (lane == 0u) {
+        maxima[simdgroup] = groupMaximum;
+        above[simdgroup] = groupAbove;
+        dpcByGroup[simdgroup] = ulong4(total, row, column, 0ul);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simdgroup == 0u && lane == 0u) {
+        uint maximumBlock = 0u, count = 0u;
+        ulong4 dpc(0ul);
+        for (uint group = 0u; group < groups; ++group) {
+            maximumBlock = max(maximumBlock, maxima[group]);
+            count += above[group];
+            dpc += dpcByGroup[group];
+        }
+        uint audit = 2u * (globalFrameOffset + frame);
+        atomic_fetch_max_explicit(&countAudit[audit], maximumBlock, memory_order_relaxed);
+        atomic_fetch_add_explicit(&countAudit[audit + 1u], count, memory_order_relaxed);
+        partialDPC[ulong(frame) * blocksPerFrame + block] = dpc;
+    }
+}
+
 kernel void h5lz4dc_u16_audited_low8_scalar_qh5idx(
     const device uchar *h5File [[buffer(0)]],
     const device uint2 *blockMetadata [[buffer(1)]],
