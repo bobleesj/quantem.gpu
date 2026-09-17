@@ -132,3 +132,59 @@ def test_native_gpu_probability_tables_match_numpy():
         )
     finally:
         source.release()
+
+
+def test_h5_ans_resident_carries_spatial_index_and_reopens(tmp_path):
+    """An encoded H5 load owns its spatial index, so it can be saved and reopened.
+
+    Without the index the resident still decodes, but ``detector_sum_device``
+    silently falls back to a full decode and ``io.save`` refuses the snapshot.
+    """
+    raw = (np.arange(2 * 5 * 6 * 8).reshape(2, 5, 6, 8) * 7 % 251).astype(
+        np.uint16
+    )
+    path = tmp_path / "indexed.h5"
+    with h5py.File(path, "w") as handle:
+        data = handle.require_group("entry/data")
+        data.create_dataset(
+            "data_000001",
+            data=raw.reshape(-1, 6, 8),
+            chunks=(1, 6, 8),
+            **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"),
+        )
+        detector = handle.require_group("entry/instrument/detector")
+        detector_specific = detector.require_group("detectorSpecific")
+        detector_specific["ntrigger"] = 10
+        detector_specific["y_pixels_in_detector"] = 6
+        detector_specific["x_pixels_in_detector"] = 8
+
+    loaded = io.load(path, backend="mps", scan_shape=(2, 5), verbose=False)
+    saved = tmp_path / "indexed.qem"
+    try:
+        source = loaded.data
+        assert len(source.spatial_chunks) == len(source.chunks)
+        assert loaded.metadata["index_bytes"] > 0
+        io.save(saved, loaded, format="quantem", backend="mps")
+    finally:
+        loaded.close()
+
+    mask = np.zeros((6, 8), np.float32)
+    mask[1:5, 2:6] = 1.0
+    expected = (raw * mask).sum(axis=(2, 3), dtype=np.uint64)
+    reopened = io.load(saved, backend="mps", verbose=False)
+    try:
+        assert len(reopened.data.spatial_chunks) == len(reopened.data.chunks)
+        decoded = reopened.data.decode_scan_range_device(0, 10)
+        try:
+            np.testing.assert_array_equal(decoded.to_numpy().reshape(raw.shape), raw)
+        finally:
+            decoded.release()
+        from quantem.gpu import detector
+
+        session = detector.prepare(reopened)
+        try:
+            np.testing.assert_array_equal(session.masked_sum_exact(mask), expected)
+        finally:
+            session.close()
+    finally:
+        reopened.close()
