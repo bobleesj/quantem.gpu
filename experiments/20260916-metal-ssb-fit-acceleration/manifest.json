@@ -232,6 +232,36 @@
    "aborted_launches": "Two launch attempts produced no data and no arm: an initial background launch (2 s) and one using setsid, which does not exist on macOS ('command not found: setsid'). Both predate the successful run and only mean a retry, not a dropped arm.",
    "deliberately_killed": "A queued probe4 job (k4b) was killed while waiting behind three other agents and replaced by an equivalent run (k4c) with the same inputs; k4c completed all three footprint arms.",
    "superseded": "The first K=4 probe (metal-runs/lowload/k4, 3 rounds, unbalanced arm order, host load 2.95) gives speedups 1.127, 0.752, 1.015, 0.906, 0.974, 0.996 with 0 bit mismatches, median 0.94x. It agrees with the balanced ppc=8 arm (0.908x) and is superseded by it because the arm order was not counterbalanced."
+  },
+  "intermediate_pass_count": {
+   "proposed_target": "Reduce the blocked intermediate round trip from 4 passes to 2 with a four-step / two-stage 512x512 decomposition, for a predicted ~38% cut in fit wall time (61.97 s -> high 30s).",
+   "verdict": "not achievable, and the target does not exist: the loss intermediate is already written once and read once, i.e. exactly 2 passes. No GPU time was spent because the premise fails on inspection and the measurement that distinguishes a 2-pass from a 4-pass model already exists.",
+   "where_the_2_10_MB_figure_comes_from": "Swift `plane = size * size` = 262144 elements = 2097152 B for complex64. That is the full-plane allocation unit, and it sizes accumulator, finalTemporary, fftA (32 planes = 67.1 MB) and the two phase-sum buffers. It is NOT the loss intermediate's per-bright-field traffic. The intermediate is halfPlane = size * (size / 2 + 1) = 512 * 257 = 131584 elements = 1052672 B, which is the stride the Swift side passes as `halfBytes` for the bright-field cache and which the kernel uses as `constexpr uint plane = n * half_cols`.",
+   "code_level_count": "The column pass stores exactly 64 threads * 8 slots * 257 columns = 131584 float2 per bright-field term, each element once, and the row pass loads exactly 1028 float2 * 128 row blocks = 131584 float2 per term, each element once. There is no separate transpose kernel in the loss path: the column pass writes directly into the transposed blocked-4-row layout and the row pass reads that layout directly, so the transpose is fused into the two passes.",
+   "measured_traffic_and_closure": {
+    "g_cache_read_bytes": 9407729664,
+    "intermediate_write_bytes": 9407729664,
+    "intermediate_read_bytes": 9407729664,
+    "device_total_bytes": 28223188992,
+    "phase_sum_rmw_bytes_l2_resident": 4696000000,
+    "measured_full_loss_gpu_p50_ms": [
+     267.1,
+     250.5
+    ],
+    "two_pass_model_prediction_ms": 266,
+    "four_pass_model_floor_ms": [
+     339,
+     406
+    ],
+    "conclusion": "The 2-pass model predicts 28.23 GB at the observed 105.7 GB/s aggregate, i.e. 266 ms against 267.1 ms measured. A 4-pass round trip would need at least 9.41 + 4*9.41 = 47.0 GB, i.e. 339 ms at the column pass's demonstrated 138.8 GB/s and 406 ms at the row pass's 115.7 GB/s. The measurement sits 27-36% below the 4-pass floor, far outside the +-10% host-load sensitivity, so it excludes the 4-pass model.",
+    "per_pass_checks": {
+     "column_pass": "9.41 GB read + 9.41 GB write in 135.6 ms = 138.8 GB/s",
+     "row_pass": "9.41 GB read + 4.69 GB L2-resident read-modify-write in 120.1 ms = 115.7 GB/s",
+     "nyquist": "9.4 ms"
+    }
+   },
+   "why_no_factorization_beats_two_passes": "The axis separation IS the transpose: stage 1 transforms the 512-element row axis from a contiguous 4 KB column, and stage 2 needs all 257 columns for every output row. The intermediate's size is invariant under the transform, so a four-step, six-step or tiled factorization all still materialise a full 1052672 B plane between their stages, and tiling it into the 32768 B threadgroup budget adds passes rather than removing them. The only way to reach zero passes is to hold the plane on chip, which the threadgroup budget refutes.",
+   "residual_headroom": "The row pass runs at 115.7 GB/s against the column pass's 138.8 GB/s, worth about 20 ms per evaluation, roughly 4 s of a 62 s fit (~7%). It is not trajectory-neutral to attack: splitting the row pass's bright-field range across more threadgroups changes the float32 accumulation order of the phase sums, which this experiment measured to matter at the 1.49e-08 level."
   }
  },
  "timestamps": {
