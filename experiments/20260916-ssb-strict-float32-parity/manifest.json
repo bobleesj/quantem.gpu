@@ -162,10 +162,28 @@
     {
       "artifact_id": "experiment-record",
       "path": "experiments/20260916-ssb-strict-float32-parity/README.md",
-      "sha256": "079441e577d3f96d4bef5d7ca7cc86b43c8097c6dc09f3bb6bd9803030eb6a3a",
-      "size_bytes": 21845,
+      "sha256": "211d41379286d27c3a88d3405e35135ed40e611da64506af2a2d943e27c711f2",
+      "size_bytes": 23401,
       "retention": "durable",
       "consuming_figures": []
+    },
+    {
+      "artifact_id": "gate-fast-confirm",
+      "path": "local-evidence://parity-runs/scratch/gate-fast-confirm.json",
+      "sha256": "b82ffcb080422ca0be580377d7dab0600ec5fba6926b379df791e629227edbc2",
+      "size_bytes": 67094,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "fourth fast-gate run after every commit of this record; structural diff vs gate-fast.json is 56 leaves, all timing fields, with the same verdict (FAIL, exit 1, the two recorded-C10 MPS loss checks)"
+    },
+    {
+      "artifact_id": "gate-fast-metal-only",
+      "path": "local-evidence://parity-runs/scratch/gate-fast-metal-only.json",
+      "sha256": "0f9adb336333a6fce25818b1ffaa595e666907dc4a17e843dd1da1ec44b11d2e",
+      "size_bytes": 43157,
+      "retention": "local-evidence",
+      "consuming_figures": [],
+      "note": "the --metal-only confirmation: 185 gated rows all ok, zero FAIL, zero MPS rows, exit 0; 272 shared scientific values against the recorded full run, 0 mismatches"
     }
   ],
   "timestamps": {
