@@ -53,6 +53,13 @@ MPS simply not measured - which makes the exit status of a Metal-only change
 mean what its author needs it to mean: 0 if the native path kept its
 precision, non-zero if it lost it.
 
+The pytest suite follows the same split at 512x512.
+`QUANTEM_SSB_PARITY_FULL=1` measures the native Metal pairs alone and asserts
+them, and `test_full_512_mps_finding_stays_open` re-applies the unchanged bounds
+to the recorded full report. That second test passes while F1 is open and fails
+loudly the day MPS stops failing, so the finding cannot be retired by quietly
+deleting a test or raising a bound.
+
 Every GPU command runs under the shared `gpurun` lock
 (`GPU_RUN_LABEL=parity ~/perf-lab/ssb-audit/gpurun <cmd>`), so concurrent agents
 cannot corrupt each other's measurements. Generated data goes to
@@ -186,6 +193,15 @@ across runs; only the recorded wall-clock timings differ.** The failures below
 are therefore deterministic biases, not measurement noise: per the parity-test
 skill's diagnosis checklist this is "bit-equal runs, off pin", i.e. a property
 of the implementation, not of the host.
+
+A fourth fast-gate run was measured after every commit of this record, on a
+contended GPU (`parity-runs/scratch/gate-fast-confirm.json`). A structural
+comparison against the recorded `gate-fast.json` finds 56 differing leaves and
+**every one of them is a timing field** (`mps/object_seconds`,
+`mps/preview_seconds`, and each variant's `gpuSeconds`/`wallSeconds`); no
+scientific value moved. That run also reproduced the recorded verdict exactly:
+`FAIL: parity gate`, exit 1, with the two `arina-128-recorded-c10#2` MPS loss
+checks as the only failures - the same two rows the recorded report flags.
 
 ## Fit trajectory: the fit, not just the objective
 
