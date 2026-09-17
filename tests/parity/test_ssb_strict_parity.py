@@ -487,3 +487,217 @@ def test_full_512_matches_double_reference(full_reports: list[dict]) -> None:
                 f"metal {variant}", "loss_relative_error", metal["loss_relative_error"], floor
             )
 
+# --------------------------------------------------------------------------
+# Fit-trajectory parity: the objective gate above proves that one loss is
+# right; these tests prove that the *search* that consumes it is pinned, is
+# deterministic, and that the batched pair draw is a different trajectory.
+# --------------------------------------------------------------------------
+
+FIT_HARNESS = REPO_ROOT / "build" / "ssb-fit-trajectory"
+FIT_PIN = Path(__file__).resolve().parent / "fixtures" / "ssb_fit_trajectory_128.json"
+FIT_CASE = "arina-128-full-disk"
+
+
+def _fit_runs_root() -> Path:
+    return Path(
+        os.environ.get(
+            "QUANTEM_SSB_PARITY_RUNS", "/path/to/local/perf-lab/ssb-audit/parity-runs"
+        )
+    )
+
+
+def _requires_fit_harness() -> None:
+    if not FIT_HARNESS.is_file():
+        pytest.skip(
+            "the fit-trajectory harness is not built; run "
+            "`scripts/check_ssb_fit_trajectory.sh --build-metal`"
+        )
+
+
+def _float32_key(point: dict) -> str:
+    import struct
+
+    return "-".join(
+        str(struct.unpack("<I", struct.pack("<f", float(point[key])))[0])
+        for key in ("c10Nanometers", "c12Nanometers", "phi12Radians")
+    )
+
+
+def _trajectory_digest(trials: list[dict]) -> str:
+    import hashlib
+    import struct
+
+    digest = hashlib.sha256()
+    for trial in trials:
+        digest.update(_float32_key(trial).encode())
+        digest.update(struct.pack("<d", float(trial["loss"])))
+        digest.update(str(trial["stage"]).encode())
+    return digest.hexdigest()
+
+
+def _run_fit_harness(destination: Path) -> dict:
+    """Run the native fit harness twice under the shared GPU lock."""
+
+    _requires_fit_harness()
+    _requires_artifact(FIT_CASE)
+    case_directory = case_root(CASES[FIT_CASE])
+    out_directory = destination / "fit-run"
+    repeat_directory = destination / "fit-repeat"
+    environment = dict(os.environ)
+    environment["GPU_RUN_LABEL"] = "parity"
+    gpurun = _gpurun()
+    for run_directory in (out_directory, repeat_directory):
+        command = [
+            str(FIT_HARNESS), str(case_directory), str(run_directory), "closure",
+        ]
+        completed = subprocess.run(
+            [*([str(gpurun)] if gpurun.is_file() and os.access(gpurun, os.X_OK) else []), *command],
+            cwd=REPO_ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            pytest.fail(
+                f"the fit-trajectory harness failed:\n{completed.stdout}\n{completed.stderr}"
+            )
+    return {
+        "run": json.loads((out_directory / "fit-trajectory.json").read_text(encoding="utf-8")),
+        "repeat": json.loads((repeat_directory / "fit-trajectory.json").read_text(encoding="utf-8")),
+    }
+
+
+@pytest.fixture(scope="session")
+def fit_trajectory() -> dict:
+    """The measured fit report, reused when ``QUANTEM_SSB_PARITY_FIT_REPORT`` is set."""
+
+    _requires_source()
+    cached = os.environ.get("QUANTEM_SSB_PARITY_FIT_REPORT")
+    if cached:
+        path = Path(cached)
+        run = json.loads(path.read_text(encoding="utf-8"))
+        repeat_path = path.with_name(path.name.replace(".json", "-repeat.json"))
+        repeat = (
+            json.loads(repeat_path.read_text(encoding="utf-8"))
+            if repeat_path.is_file()
+            else run
+        )
+        return {"run": run, "repeat": repeat}
+    existing = _fit_runs_root() / f"fit-{FIT_CASE}.json"
+    if existing.is_file() and not os.environ.get("QUANTEM_SSB_PARITY_REMEASURE"):
+        run = json.loads(existing.read_text(encoding="utf-8"))
+        repeat_path = _fit_runs_root() / f"fit-{FIT_CASE}-repeat.json"
+        repeat = (
+            json.loads(repeat_path.read_text(encoding="utf-8"))
+            if repeat_path.is_file()
+            else run
+        )
+        return {"run": run, "repeat": repeat}
+    with tempfile.TemporaryDirectory(prefix="ssb-fit-parity-") as directory:
+        return _run_fit_harness(Path(directory))
+
+
+def test_fit_trajectory_is_deterministic(fit_trajectory: dict) -> None:
+    """Two processes, same artifact and seed, give the same fit trajectory.
+
+    A pin is meaningless without this: if the search were not reproducible the
+    frozen digest below would only record one sampling of a distribution.
+    """
+
+    run = fit_trajectory["run"]
+    repeat = fit_trajectory["repeat"]
+    first = _trajectory_digest(run["sequential"]["trials"])
+    second = _trajectory_digest(repeat["sequential"]["trials"])
+    assert first == second, (
+        "the production fit is not deterministic across processes: "
+        f"{first} != {second}. Do not pin a non-reproducible trajectory; find "
+        "the nondeterminism first."
+    )
+
+
+def test_production_fit_matches_frozen_trajectory_pin(fit_trajectory: dict) -> None:
+    """The unbatched production trajectory and optimum still match the pin.
+
+    ``MetalSSBEngine.optimize`` passes no ``evaluateBatch`` closure today, so
+    ``SSBOptimizer.run`` takes ``batchCount = 1``. That is the fit the product
+    ships; this pin freezes all 200 trials plus the Nelder-Mead refinement. A
+    mismatch is a finding about the sampler, the objective or the engine cache,
+    never a reason to rewrite the fixture.
+    """
+
+    if not FIT_PIN.is_file():
+        pytest.skip(f"the fit pin is absent: {FIT_PIN}")
+    pin = json.loads(FIT_PIN.read_text(encoding="utf-8"))
+    run = fit_trajectory["run"]
+    sequential = run["sequential"]
+    digest = _trajectory_digest(sequential["trials"])
+    assert run["productionOptimizeAlwaysMatchesSequential"], (
+        "the production `optimize` entry point no longer reproduces the plain "
+        "sequential draw; the fit path changed"
+    )
+    assert digest == pin["sequential"]["trajectorySha256"], (
+        "the production fit trajectory moved. Do not rewrite the pin; investigate "
+        f"what changed. measured {digest}, pinned {pin['sequential']['trajectorySha256']}"
+    )
+    measured_optimum = [
+        float(sequential["bestC10Nanometers"]),
+        float(sequential["bestC12Nanometers"]),
+        float(sequential["bestPhi12Radians"]),
+    ]
+    assert measured_optimum == [float(value) for value in pin["sequential"]["best"]]
+    assert float(sequential["bestLoss"]) == float(pin["sequential"]["bestLoss"])
+    assert int(sequential["totalEvaluations"]) == int(pin["sequential"]["totalEvaluations"])
+
+
+def test_objective_is_a_pure_function_of_the_float32_point(fit_trajectory: dict) -> None:
+    """Repeated, fresh-engine and float32-alias evaluations are bit-identical."""
+
+    purity = fit_trajectory["run"]["objectivePurity"]
+    assert purity["repeatSameEngineBitwiseMismatches"] == 0
+    assert purity["freshEngineBitwiseMismatches"] == 0
+    assert purity["float32AliasBitwiseMismatches"] == 0
+
+
+def test_batched_pair_draw_is_a_different_trajectory(fit_trajectory: dict) -> None:
+    """Batching changes the search, not just the arithmetic.
+
+    With ``evaluateBatch`` supplied, ``SSBOptimizer.run`` draws two candidates
+    from the *same* history instead of drawing trial t+1 after telling trial t.
+    On identical inputs and one seed that is a different search, so the frozen
+    divergence below is the size of the trap the user asked about: it is a
+    characterisation, not a tolerance.
+    """
+
+    run = fit_trajectory["run"]
+    comparison = run.get("comparison")
+    if comparison is None:
+        pytest.skip("this report was recorded without a batched trajectory")
+    sequential = run["sequential"]
+    batched = run["batched"]
+    assert comparison["sharedCandidateLossMismatches"] == 0, (
+        "a candidate evaluated by both draws got a different loss; the objective "
+        "is not a pure function of the point any more"
+    )
+    assert comparison["trialsWithDifferentFloat32Point"] > 0, (
+        "the batched draw is expected to be a different search on this artifact; "
+        "if batching is now history-correct, record that change instead of "
+        "deleting this test"
+    )
+    assert comparison["maxLossDifferenceAtSameIndex"] > 0.0
+    assert [
+        float(batched["bestC10Nanometers"]),
+        float(batched["bestC12Nanometers"]),
+        float(batched["bestPhi12Radians"]),
+    ] != [
+        float(sequential["bestC10Nanometers"]),
+        float(sequential["bestC12Nanometers"]),
+        float(sequential["bestPhi12Radians"]),
+    ], "the batched draw must not silently land on the sequential optimum"
+    pin = json.loads(FIT_PIN.read_text(encoding="utf-8")) if FIT_PIN.is_file() else None
+    if pin and "batched" in pin:
+        assert comparison["trialsWithDifferentFloat32Point"] == int(
+            pin["batched"]["divergenceFromSequential"]["trialsWithDifferentFloat32Point"]
+        ), "the measured batch divergence moved; this is a finding, not a pin to edit"
+        assert float(comparison["maxLossDifferenceAtSameIndex"]) == float(
+            pin["batched"]["divergenceFromSequential"]["maxLossDifferenceAtSameIndex"]
+        )
