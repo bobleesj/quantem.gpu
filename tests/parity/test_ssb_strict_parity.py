@@ -575,7 +575,7 @@ FIT_CASE = "arina-128-full-disk"
 def _fit_runs_root() -> Path:
     return Path(
         os.environ.get(
-            "QUANTEM_SSB_PARITY_RUNS", "/path/to/local/perf-lab/ssb-audit/parity-runs"
+            "QUANTEM_SSB_PARITY_RUNS", Path.home() / "perf-lab/ssb-audit/parity-runs"
         )
     )
 
