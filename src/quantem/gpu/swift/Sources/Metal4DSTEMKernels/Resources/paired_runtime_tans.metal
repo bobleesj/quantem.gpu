@@ -272,6 +272,7 @@ kernel void paired_runtime_tans_encode(
     }
 
     uint model = prt_model(clipped_sum, count);
+    // Declared here because the header written after the walk reads both states.
     uint states[2];
     states[0] = 0u;
     states[1] = 0u;
@@ -279,58 +280,127 @@ kernel void paired_runtime_tans_encode(
     bool entropy_overflow = false;
     ulong bit_buffer = 0u;
     uint pairs = (count + 1u) / 2u;
-    for (uint reverse_pair = pairs; reverse_pair > 0u; --reverse_pair) {
-        uint pair_index = reverse_pair - 1u;
-        uint state_index = prt_interleaved_states ? (pair_index & 1u) : 0u;
-        uint state = states[state_index];
-        uint index = pair_index * 2u;
-        uint a = prt_raw(raw, ulong(first + index) * pixels + pixel, item_bytes);
-        uint b = index + 1u < count
-            ? prt_raw(raw, ulong(first + index + 1u) * pixels + pixel, item_bytes)
-            : 0u;
-        uint symbol = a < 32u && b < 32u ? a * 33u + b : PRT_ESCAPE;
-        uint frequency_start = frequency_starts[model * PRT_SYMBOLS + symbol];
-        uint frequency = frequency_start >> 16u;
-        if (symbol == PRT_ESCAPE || frequency == 0u) {
-            symbol = PRT_ESCAPE;
-            frequency_start = frequency_starts[model * PRT_SYMBOLS + symbol];
-            frequency = frequency_start >> 16u;
-            if (a < 64u && b < 64u) {
-                prt_append_bits(
-                    scratch, streams, stream, bit_buffer, available, emitted,
-                    entropy_overflow, scratch_stride, header_bytes,
-                    direct_offsets, direct_write,
-                    a | (b << 6u), 13u);
-                total_bits += 13u;
-            } else {
-                prt_append_bits(
-                    scratch, streams, stream, bit_buffer, available, emitted,
-                    entropy_overflow, scratch_stride, header_bytes,
-                    direct_offsets, direct_write, b, 16u);
-                prt_append_bits(
-                    scratch, streams, stream, bit_buffer, available, emitted,
-                    entropy_overflow, scratch_stride, header_bytes,
-                    direct_offsets, direct_write, a, 16u);
-                prt_append_bits(
-                    scratch, streams, stream, bit_buffer, available, emitted,
-                    entropy_overflow, scratch_stride, header_bytes,
-                    direct_offsets, direct_write, 4096u, 13u);
-                total_bits += 45u;
+    if (item_bytes == 2u && !prt_interleaved_states) {
+        // Software-pipelined reverse walk: the next pair's two loads are issued
+        // before the current pair's coder runs, so each warp keeps more lines in
+        // flight than the plain backward loop. Coding order, emitted bytes, and
+        // state updates are unchanged.
+        uint state = 0u;
+        device const ushort *rows = reinterpret_cast<device const ushort *>(raw)
+            + ulong(first + 2u * (pairs - 1u)) * pixels + pixel;
+        uint a = uint(rows[0]);
+        uint b = 2u * (pairs - 1u) + 1u < count ? uint(rows[pixels]) : 0u;
+        for (uint reverse_pair = pairs; reverse_pair > 0u; --reverse_pair) {
+            uint next_a = 0u, next_b = 0u;
+            if (reverse_pair > 1u) {
+                device const ushort *next_rows = rows - 2u * pixels;
+                uint next_index = 2u * reverse_pair - 4u;
+                next_a = uint(next_rows[0]);
+                next_b = next_index + 1u < count ? uint(next_rows[pixels]) : 0u;
+                rows = next_rows;
             }
+            uint symbol = a < 32u && b < 32u ? a * 33u + b : PRT_ESCAPE;
+            uint frequency_start = frequency_starts[model * PRT_SYMBOLS + symbol];
+            uint frequency = frequency_start >> 16u;
+            if (symbol == PRT_ESCAPE || frequency == 0u) {
+                symbol = PRT_ESCAPE;
+                frequency_start = frequency_starts[model * PRT_SYMBOLS + symbol];
+                frequency = frequency_start >> 16u;
+                if (a < 64u && b < 64u) {
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write,
+                        a | (b << 6u), 13u);
+                    total_bits += 13u;
+                } else {
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write, b, 16u);
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write, a, 16u);
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write, 4096u, 13u);
+                    total_bits += 45u;
+                }
+            }
+            uint start = frequency_start & 65535u;
+            uint y = PRT_STATES + state;
+            uint bits = 10u - (31u - clz(frequency));
+            if (y < (frequency << bits)) --bits;
+            uint rank = (y >> bits) - frequency;
+            uint low = bits == 0u ? 0u : y & ((1u << bits) - 1u);
+            prt_append_bits(
+                scratch, streams, stream, bit_buffer, available, emitted,
+                entropy_overflow, scratch_stride, header_bytes,
+                direct_offsets, direct_write, low, bits);
+            total_bits += bits;
+            state = uint(encoding[model * PRT_STATES + start + rank]);
+            if (entropy_overflow) break;
+            a = next_a;
+            b = next_b;
         }
-        uint start = frequency_start & 65535u;
-        uint y = PRT_STATES + state;
-        uint bits = 10u - (31u - clz(frequency));
-        if (y < (frequency << bits)) --bits;
-        uint rank = (y >> bits) - frequency;
-        uint low = bits == 0u ? 0u : y & ((1u << bits) - 1u);
-        prt_append_bits(
-            scratch, streams, stream, bit_buffer, available, emitted,
-            entropy_overflow, scratch_stride, header_bytes,
-            direct_offsets, direct_write, low, bits);
-        total_bits += bits;
-        states[state_index] = uint(encoding[model * PRT_STATES + start + rank]);
-        if (entropy_overflow) break;
+        // Publish the single-stream chain state for the non-interleaved header.
+        states[0] = state;
+    } else {
+        for (uint reverse_pair = pairs; reverse_pair > 0u; --reverse_pair) {
+            uint pair_index = reverse_pair - 1u;
+            uint state_index = prt_interleaved_states ? (pair_index & 1u) : 0u;
+            uint state = states[state_index];
+            uint index = pair_index * 2u;
+            uint a = prt_raw(raw, ulong(first + index) * pixels + pixel, item_bytes);
+            uint b = index + 1u < count
+                ? prt_raw(raw, ulong(first + index + 1u) * pixels + pixel, item_bytes)
+                : 0u;
+            uint symbol = a < 32u && b < 32u ? a * 33u + b : PRT_ESCAPE;
+            uint frequency_start = frequency_starts[model * PRT_SYMBOLS + symbol];
+            uint frequency = frequency_start >> 16u;
+            if (symbol == PRT_ESCAPE || frequency == 0u) {
+                symbol = PRT_ESCAPE;
+                frequency_start = frequency_starts[model * PRT_SYMBOLS + symbol];
+                frequency = frequency_start >> 16u;
+                if (a < 64u && b < 64u) {
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write,
+                        a | (b << 6u), 13u);
+                    total_bits += 13u;
+                } else {
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write, b, 16u);
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write, a, 16u);
+                    prt_append_bits(
+                        scratch, streams, stream, bit_buffer, available, emitted,
+                        entropy_overflow, scratch_stride, header_bytes,
+                        direct_offsets, direct_write, 4096u, 13u);
+                    total_bits += 45u;
+                }
+            }
+            uint start = frequency_start & 65535u;
+            uint y = PRT_STATES + state;
+            uint bits = 10u - (31u - clz(frequency));
+            if (y < (frequency << bits)) --bits;
+            uint rank = (y >> bits) - frequency;
+            uint low = bits == 0u ? 0u : y & ((1u << bits) - 1u);
+            prt_append_bits(
+                scratch, streams, stream, bit_buffer, available, emitted,
+                entropy_overflow, scratch_stride, header_bytes,
+                direct_offsets, direct_write, low, bits);
+            total_bits += bits;
+            states[state_index] = uint(encoding[model * PRT_STATES + start + rank]);
+            if (entropy_overflow) break;
+        }
     }
     if (!entropy_overflow && available != 0u) {
         if (header_bytes + emitted >= scratch_stride) {
