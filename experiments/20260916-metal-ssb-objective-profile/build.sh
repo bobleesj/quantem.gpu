@@ -24,3 +24,4 @@ build() {
 }
 build experiments/20260916-metal-ssb-objective-profile/probe2.swift ssb-objective-probe2
 build experiments/20260916-metal-ssb-objective-profile/probe3.swift ssb-objective-probe3
+build experiments/20260916-metal-ssb-objective-profile/probe5.swift ssb-objective-probe5
