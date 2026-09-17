@@ -807,11 +807,18 @@ inline void sc_moment_check(
     }
 }
 
-template <bool Narrow>
+// `EmitTotals` additionally sums the same decoded counts over every scan
+// position of every detector pixel, which is exactly the quantity the detector
+// column pass derives on its own. Folding it in here means one decode of the
+// stored payload produces both products, so an acquisition that wants both
+// never pays for the counts twice. The flag is a template constant, so the
+// moment-only instantiation keeps the code it had.
+template <bool Narrow, bool EmitTotals>
 inline void sc_exact_moments_body(
     device const uchar *payload, device const uint *offsets, device const uchar *models,
     device const uint *decoding, device atomic_uint *errors, device atomic_uint *output,
-    constant ulong *p, uint job, uint localIndex) {
+    constant ulong *p, uint job, uint localIndex,
+    device atomic_uint *totals, device const uchar *valid) {
     uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
     uint firstScan = uint(p[3]), columns = uint(p[4]), outputFirst = uint(p[5]);
     uint stripeGroups = max(1u, uint(p[6]));
@@ -842,12 +849,29 @@ inline void sc_exact_moments_body(
             payload, offsets, models, decoding, origin + 64u, base + 64u, pixels, columns);
         SCMomentStream s3 = sc_moment_stream(
             payload, offsets, models, decoding, origin + 96u, base + 96u, pixels, columns);
+        uint pixelTotal0 = 0u, pixelTotal1 = 0u, pixelTotal2 = 0u, pixelTotal3 = 0u;
         for (uint scan = 0; scan < count; ++scan) {
             SCMomentLane lane_totals = SCMomentLane{0u, 0u, 0u, 0ul, 0ul};
-            if (s0.active) sc_moment_take<Narrow>(&lane_totals, &s0, sc_moment_next(&s0));
-            if (s1.active) sc_moment_take<Narrow>(&lane_totals, &s1, sc_moment_next(&s1));
-            if (s2.active) sc_moment_take<Narrow>(&lane_totals, &s2, sc_moment_next(&s2));
-            if (s3.active) sc_moment_take<Narrow>(&lane_totals, &s3, sc_moment_next(&s3));
+            if (s0.active) {
+                uint value = sc_moment_next(&s0);
+                sc_moment_take<Narrow>(&lane_totals, &s0, value);
+                if (EmitTotals) pixelTotal0 += value;
+            }
+            if (s1.active) {
+                uint value = sc_moment_next(&s1);
+                sc_moment_take<Narrow>(&lane_totals, &s1, value);
+                if (EmitTotals) pixelTotal1 += value;
+            }
+            if (s2.active) {
+                uint value = sc_moment_next(&s2);
+                sc_moment_take<Narrow>(&lane_totals, &s2, value);
+                if (EmitTotals) pixelTotal2 += value;
+            }
+            if (s3.active) {
+                uint value = sc_moment_next(&s3);
+                sc_moment_take<Narrow>(&lane_totals, &s3, value);
+                if (EmitTotals) pixelTotal3 += value;
+            }
             // Every lane reaches the reductions: a stripe with no pixel for a
             // lane is skipped by marking the stream inactive, never by leaving
             // the loop.
@@ -867,6 +891,19 @@ inline void sc_exact_moments_body(
                 sc_atomic_add_u64(slot + 4, summedColumn);
             }
         }
+        if (EmitTotals) {
+            // One lane owns these four pixels for this stripe and no other lane
+            // touches them in this dispatch, so only the cross-chunk sum needs
+            // to be atomic. A bad pixel keeps the zero the caller pre-filled.
+            if (base < pixels && valid[base])
+                sc_atomic_add_u64(totals + ulong(base) * 2, ulong(pixelTotal0));
+            if (base + 32u < pixels && valid[base + 32u])
+                sc_atomic_add_u64(totals + ulong(base + 32u) * 2, ulong(pixelTotal1));
+            if (base + 64u < pixels && valid[base + 64u])
+                sc_atomic_add_u64(totals + ulong(base + 64u) * 2, ulong(pixelTotal2));
+            if (base + 96u < pixels && valid[base + 96u])
+                sc_atomic_add_u64(totals + ulong(base + 96u) * 2, ulong(pixelTotal3));
+        }
         sc_moment_check(errors, &s0, origin);
         sc_moment_check(errors, &s1, origin + 32u);
         sc_moment_check(errors, &s2, origin + 64u);
@@ -884,7 +921,8 @@ kernel void streamed_counts_exact_moments(
     constant ulong *p [[buffer(6)]],
     uint job [[threadgroup_position_in_grid]],
     uint localIndex [[thread_index_in_threadgroup]]) {
-    sc_exact_moments_body<false>(payload, offsets, models, decoding, errors, output, p, job, localIndex);
+    sc_exact_moments_body<false, false>(
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, nullptr, nullptr);
 }
 
 // Same basis for count ranges whose lanes stay inside 32 bits: the host selects
@@ -900,6 +938,41 @@ kernel void streamed_counts_exact_moments_narrow(
     constant ulong *p [[buffer(6)]],
     uint job [[threadgroup_position_in_grid]],
     uint localIndex [[thread_index_in_threadgroup]]) {
-    sc_exact_moments_body<true>(payload, offsets, models, decoding, errors, output, p, job, localIndex);
+    sc_exact_moments_body<true, false>(
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, nullptr, nullptr);
 }
 
+// Same basis, and in the same pass the exact sum of stored counts over every
+// scan position of every detector pixel. `totals` is held as split-word
+// atomic pairs so the UInt64 per-pixel sum stays exact on Apple GPUs.
+kernel void streamed_counts_exact_moments_totals(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device atomic_uint *output [[buffer(5)]],
+    constant ulong *p [[buffer(6)]],
+    device atomic_uint *totals [[buffer(7)]],
+    device const uchar *valid [[buffer(8)]],
+    uint job [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_index_in_threadgroup]]) {
+    sc_exact_moments_body<false, true>(
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid);
+}
+
+kernel void streamed_counts_exact_moments_totals_narrow(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device atomic_uint *output [[buffer(5)]],
+    constant ulong *p [[buffer(6)]],
+    device atomic_uint *totals [[buffer(7)]],
+    device const uchar *valid [[buffer(8)]],
+    uint job [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_index_in_threadgroup]]) {
+    sc_exact_moments_body<true, true>(
+        payload, offsets, models, decoding, errors, output, p, job, localIndex, totals, valid);
+}

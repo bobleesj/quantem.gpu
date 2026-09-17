@@ -2,6 +2,14 @@ import Foundation
 import Metal
 import Metal4DSTEMKernels
 
+/// Exact per-scan DPC moments together with the exact sum of stored counts over
+/// every scan position of every detector pixel, both produced by one decode of
+/// the resident payload.
+public struct MetalRuntimeANSExactMomentsAndTotals {
+  public let moments: MetalCompactH5ExactDPCMoments
+  public let detectorTotals: [UInt64]
+}
+
 extension MetalRuntimeANSResidentSource {
   /// Exact total and detector row/column moments for every scan position.
   ///
@@ -24,6 +32,56 @@ extension MetalRuntimeANSResidentSource {
     shouldCancel: () -> Bool = { false },
     progress: ((Int, Int) -> Void)? = nil
   ) throws -> MetalCompactH5ExactDPCMoments {
+    try deriveExactDependencies(
+      maximumAdditionalBytes: maximumAdditionalBytes,
+      groupsPerBlock: groupsPerBlock,
+      shouldCancel: shouldCancel,
+      progress: progress,
+      includeDetectorTotals: false
+    ).moments
+  }
+
+  /// Exact per-scan DPC moments and the exact per-pixel detector totals, derived
+  /// together from a single decode of the stored counts.
+  ///
+  /// `detectorTotals` is the same quantity `detectorColumnSums()` returns, so a
+  /// caller that needs both no longer decodes the acquisition twice: the stored
+  /// payload is read once and both products fall out of that one pass. The
+  /// moments are bit-for-bit the values `exactDPCMoments()` returns.
+  ///
+  /// Deriving the totals alongside the moments costs a little more than the
+  /// moments alone, so a caller that only wants the totals should keep using
+  /// `detectorColumnSums()`.
+  ///
+  /// Example: `let both = try source.exactDPCMomentsAndDetectorTotals()`.
+  public func exactDPCMomentsAndDetectorTotals(
+    maximumAdditionalBytes: UInt64? = nil,
+    groupsPerBlock: Int = 0,
+    shouldCancel: () -> Bool = { false },
+    progress: ((Int, Int) -> Void)? = nil
+  ) throws -> MetalRuntimeANSExactMomentsAndTotals {
+    let derived = try deriveExactDependencies(
+      maximumAdditionalBytes: maximumAdditionalBytes,
+      groupsPerBlock: groupsPerBlock,
+      shouldCancel: shouldCancel,
+      progress: progress,
+      includeDetectorTotals: true)
+    guard let totals = derived.totals else {
+      throw Self.invalid("Metal did not return the exact detector totals.")
+    }
+    return MetalRuntimeANSExactMomentsAndTotals(moments: derived.moments, detectorTotals: totals)
+  }
+
+  /// Shared derivation. `includeDetectorTotals` selects the kernel that also
+  /// publishes per-pixel totals, which is the only difference between the two
+  /// public entry points.
+  private func deriveExactDependencies(
+    maximumAdditionalBytes: UInt64?,
+    groupsPerBlock: Int,
+    shouldCancel: () -> Bool,
+    progress: ((Int, Int) -> Void)?,
+    includeDetectorTotals: Bool
+  ) throws -> (moments: MetalCompactH5ExactDPCMoments, totals: [UInt64]?) {
     try requireLive()
     let scanCount = shape[0] * shape[1]
     let pixels = shape[2] * shape[3]
@@ -41,11 +99,14 @@ extension MetalRuntimeANSResidentSource {
       throw Self.invalid(
         "The exact DPC basis for \(scanCount) scan positions exceeds the resident memory budget.")
     }
+    let totalsBytes = includeDetectorTotals ? UInt64(pixels) * 8 : 0
+    let validityBytes = includeDetectorTotals ? UInt64(pixels) : 0
+    let extraBytes = outputBytes + totalsBytes + validityBytes
     if let budget = maximumAdditionalBytes,
-      UInt64(device.currentAllocatedSize) + outputBytes > budget
+      UInt64(device.currentAllocatedSize) + extraBytes > budget
     {
       throw Self.invalid(
-        "Exact DPC moments need \(outputBytes / (1 << 20)) MB beyond the current resident; "
+        "Exact DPC moments need \(extraBytes / (1 << 20)) MB beyond the current resident; "
           + "release another dataset to derive them.")
     }
     guard
@@ -55,22 +116,52 @@ extension MetalRuntimeANSResidentSource {
     }
     output.label = "runtime ANS exact DPC moments"
     memset(output.contents(), 0, output.length)
+    var totals: MTLBuffer?
+    var validity: MTLBuffer?
+    if includeDetectorTotals {
+      guard
+        let totalsBuffer = device.makeBuffer(
+          length: pixels * 8, options: .storageModeShared),
+        let validityBuffer = device.makeBuffer(length: pixels, options: .storageModeShared)
+      else {
+        throw Self.invalid("Metal could not allocate the exact detector totals.")
+      }
+      totalsBuffer.label = "runtime ANS exact detector totals"
+      validityBuffer.label = "runtime ANS exact moment detector validity"
+      memset(totalsBuffer.contents(), 0, totalsBuffer.length)
+      validPixels.withUnsafeBytes {
+        validityBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+      }
+      totals = totalsBuffer
+      validity = validityBuffer
+    }
     guard let diagnostics = device.makeBuffer(length: 16, options: .storageModeShared) else {
       throw Self.invalid("Metal could not allocate the exact DPC moments diagnostics.")
     }
     diagnostics.label = "runtime ANS exact DPC moments diagnostics"
     let narrow = Self.exactMomentsFitUInt32(
       rows: shape[2], columns: shape[3], maximumValue: Self.exactMomentValueCeiling(logicalDtype))
-    if exactMomentsPipeline == nil || exactMomentsPipelineNarrow != narrow {
+    var pipeline = includeDetectorTotals ? exactMomentTotalsPipeline : exactMomentsPipeline
+    let cachedNarrow =
+      includeDetectorTotals ? exactMomentTotalsPipelineNarrow : exactMomentsPipelineNarrow
+    if pipeline == nil || cachedNarrow != narrow {
       let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
-      let name = narrow ? "streamed_counts_exact_moments_narrow" : "streamed_counts_exact_moments"
+      let name =
+        "streamed_counts_exact_moments" + (includeDetectorTotals ? "_totals" : "")
+        + (narrow ? "_narrow" : "")
       guard let function = library.makeFunction(name: name) else {
         throw Self.invalid("Missing exact runtime ANS moments kernel. Rebuild the backend resources.")
       }
-      exactMomentsPipeline = try device.makeComputePipelineState(function: function)
-      exactMomentsPipelineNarrow = narrow
+      pipeline = try device.makeComputePipelineState(function: function)
+      if includeDetectorTotals {
+        exactMomentTotalsPipeline = pipeline
+        exactMomentTotalsPipelineNarrow = narrow
+      } else {
+        exactMomentsPipeline = pipeline
+        exactMomentsPipelineNarrow = narrow
+      }
     }
-    guard let pipeline = exactMomentsPipeline, let decodingTable else {
+    guard let pipeline, let decodingTable else {
       throw Self.invalid("Metal could not prepare the exact runtime ANS moments kernel.")
     }
     let words = diagnostics.contents().bindMemory(to: UInt32.self, capacity: 4)
@@ -112,6 +203,10 @@ extension MetalRuntimeANSResidentSource {
           encoder.setBuffer(buffer, offset: 0, index: slot)
         }
         encoder.setBytes(&parameters, length: parameters.count * 8, index: 6)
+        if let totals, let validity {
+          encoder.setBuffer(totals, offset: 0, index: 7)
+          encoder.setBuffer(validity, offset: 0, index: 8)
+        }
         encoder.dispatchThreadgroups(
           MTLSize(width: (units + simdGroups - 1) / simdGroups, height: 1, depth: 1),
           threadsPerThreadgroup: MTLSize(width: 32 * simdGroups, height: 1, depth: 1))
@@ -133,11 +228,16 @@ extension MetalRuntimeANSResidentSource {
       row[scan] = UInt64(basis[base + 2]) | (UInt64(basis[base + 3]) << 32)
       column[scan] = UInt64(basis[base + 4]) | (UInt64(basis[base + 5]) << 32)
     }
-    return MetalCompactH5ExactDPCMoments(
+    let moments = MetalCompactH5ExactDPCMoments(
       total: total,
       detectorRowMoment: row,
       detectorColumnMoment: column,
       sourceIdentitySHA256: sourceIdentitySHA256)
+    guard let totals else { return (moments, nil) }
+    let sums = Array(
+      UnsafeBufferPointer(
+        start: totals.contents().assumingMemoryBound(to: UInt64.self), count: pixels))
+    return (moments, sums)
   }
 
   private static func momentFailure(_ words: UnsafeMutablePointer<UInt32>) -> Error {
