@@ -1,0 +1,130 @@
+diff --git a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+index caa9093..a5f8b51 100644
+--- a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
++++ b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+@@ -176,7 +176,14 @@ public final class MetalSSBEngine {
+   private let halfColumns: Int
+   private let halfPlane: Int
+   private static let batchCapacity = 32
+-  private static let phaseBatchCapacity = 8
++  private static let phaseBatchCapacity: Int = {
++    if let raw = getenv("SSB_PHASE_BATCH"), let value = Int(String(cString: raw)),
++      value > 0
++    {
++      return value
++    }
++    return 8
++  }()
+   // Streamed phase-loss batches reuse raw/FFT scratch and ordered phase sums.
+   // Queue a bounded window before waiting so command-buffer synchronization
+   // does not dominate the full-BF objective while avoiding an unbounded buffer.
+@@ -868,7 +875,7 @@ public final class MetalSSBEngine {
+       value: 0
+     )
+     clear.endEncoding()
+-    if cachedBrightfieldCount > 0 {
++    if cachedBrightfieldCount > 0, Self.profileEvery("SSB_PROFILE_TRIG_EVERY") > 0 {
+       guard let chiTrigBuffer, let crossTrigBuffer else {
+         throw MetalSSBError.allocation("exact phase-loss tables")
+       }
+@@ -902,6 +909,7 @@ public final class MetalSSBEngine {
+     guard let cacheCommands = queue.makeCommandBuffer() else {
+       throw MetalSSBError.commandQueue
+     }
++    var dispatchIndex = 0
+     for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
+       // The fused 512 path uses eight-plane tiles. Smaller scans reuse the
+       // full allocated scratch batch; each pixel still accumulates BF in order.
+@@ -922,8 +930,10 @@ public final class MetalSSBEngine {
+           source: cache,
+           sourceOffset: localOffset * halfBytes,
+           batch: batch,
+-          params: params
++          params: params,
++          dispatchIndex: dispatchIndex
+         )
++        dispatchIndex += 1
+       }
+       globalOffset += cacheCount
+     }
+@@ -1562,12 +1572,20 @@ public final class MetalSSBEngine {
+     source: MTLBuffer,
+     sourceOffset: Int,
+     batch: Int,
+-    params: SSBParams
++    params: SSBParams,
++    dispatchIndex: Int
+   ) throws {
+     guard let chiTrigBuffer, let crossTrigBuffer else {
+       throw MetalSSBError.allocation("exact phase-loss tables")
+     }
++    let skipColumn = Self.profileSkipsPass(
++      "SSB_PROFILE_COLUMN_EVERY", dispatchIndex: dispatchIndex)
++    let skipNyquist = Self.profileSkipsPass(
++      "SSB_PROFILE_NYQUIST_EVERY", dispatchIndex: dispatchIndex)
++    let skipRows = Self.profileSkipsPass(
++      "SSB_PROFILE_ROWS_EVERY", dispatchIndex: dispatchIndex)
+     var mutable = params
++    if !skipColumn {
+     let rows = commands.makeComputeCommandEncoder()!
+     rows.setComputePipelineState(fusedLossRowPipeline)
+     rows.setBuffer(source, offset: sourceOffset, index: 0)
+@@ -1588,6 +1606,7 @@ public final class MetalSSBEngine {
+       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+     )
+     rows.endEncoding()
++    }
+ 
+     if size != 512 {
+       let moments = commands.makeComputeCommandEncoder()!
+@@ -1604,6 +1623,7 @@ public final class MetalSSBEngine {
+       return
+     }
+ 
++    if !skipNyquist {
+     let boundary = commands.makeComputeCommandEncoder()!
+     boundary.setComputePipelineState(nyquistCorrectionPipeline)
+     boundary.setBuffer(source, offset: sourceOffset, index: 0)
+@@ -1619,9 +1639,11 @@ public final class MetalSSBEngine {
+       MTLSize(width: 2, height: batch, depth: 1),
+       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+     boundary.endEncoding()
++    }
+ 
+     var mutableBatch = UInt32(batch)
+     var dc = SIMD2<Float>(params.dcReal, params.dcImaginary)
++    if !skipRows {
+     let columns = commands.makeComputeCommandEncoder()!
+     columns.setComputePipelineState(fusedLossMomentPipeline)
+     columns.setBuffer(fftA, offset: 0, index: 0)
+@@ -1646,6 +1668,7 @@ public final class MetalSSBEngine {
+         width: Self.fftThreads * Self.intermediateBlockRows, height: 1, depth: 1)
+     )
+     columns.endEncoding()
++    }
+   }
+ 
+   private func encodeLossCorrection(
+@@ -1702,6 +1725,22 @@ public final class MetalSSBEngine {
+     encoder.endEncoding()
+   }
+ 
++  // MARK: Experimental traffic-audit gates (measurement only, not production).
++  //
++  // SSB_PROFILE_<PASS>_EVERY=K runs the pass only on every K-th cached batch
++  // dispatch; K<=0 skips it entirely. The passes that do run are byte-for-byte
++  // the production ones, so the arms differ only in how much work is encoded.
++  private static func profileEvery(_ name: String) -> Int {
++    guard let raw = getenv(name) else { return 1 }
++    return Int(String(cString: raw)) ?? 1
++  }
++
++  private static func profileSkipsPass(_ name: String, dispatchIndex: Int) -> Bool {
++    let every = profileEvery(name)
++    if every <= 0 { return true }
++    return dispatchIndex % every != 0
++  }
++
+   private func commitAndWait(_ commands: MTLCommandBuffer) throws {
+     commands.commit()
+     commands.waitUntilCompleted()
