@@ -40,7 +40,8 @@ if [ "$FULL" = 1 ]; then
   CASE_ARGS=(--all-cases)
   REPORT="$RUNS_ROOT/gate-full.json"
 else
-  CASE_ARGS=(--case arina-128-full-disk --case arina-128-inner-disk)
+  CASE_ARGS=(--case arina-128-full-disk --case arina-128-inner-disk \
+    --case arina-128-recorded-c10)
   REPORT="$RUNS_ROOT/gate-fast.json"
 fi
 

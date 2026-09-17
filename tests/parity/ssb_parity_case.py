@@ -34,6 +34,7 @@ from ssb_double_reference import (
 
 __all__ = [
     "ARINA_MASTER",
+    "artifact_root",
     "CASES",
     "DOCUMENTED_BF_COUNT",
     "DOCUMENTED_CENTER",
@@ -43,6 +44,7 @@ __all__ = [
     "case_root",
     "compare_products",
     "detector_dead_pixels",
+    "ensure_case_directory",
     "export_case",
     "load_case_declaration",
     "reference_products",
@@ -119,6 +121,12 @@ class SSBParityCase:
     diagnostic_aberrations: tuple[tuple[float, float, float], ...] = (
         (0.0, 50.0, 0.0),
     )
+    #: Name of the case whose exported artifact this case measures, when the
+    #: two share the same acquisition region and bright-field selection and
+    #: differ only in aberration settings. ``None`` means "use this case's own
+    #: name". Sharing never duplicates or regenerates the payload, so two cases
+    #: can never disagree about the bytes they measure.
+    artifact_name: str | None = None
     source: Path = ARINA_MASTER
 
     @property
@@ -191,6 +199,26 @@ CASES: dict[str, SSBParityCase] = {
         scan_region=(0, 128, 0, 128),
         bf_radius=24.0,
     ),
+    "arina-128-recorded-c10": SSBParityCase(
+        name="arina-128-recorded-c10",
+        description=(
+            "128x128 real ARINA crop sweeping the C10 values of the recorded "
+            "cached-versus-streamed loss disagreement "
+            "(experiments/20260913-ssb-loss-diagnosis: C10 = 0, 55, "
+            "155.96977). C12 and phi12 are zero here: the record names only "
+            "C10 and does not state its scan region, so this case reproduces "
+            "the recorded configuration family rather than the recorded loss "
+            "values themselves. Reuses the full-disk artifact, so the only "
+            "variable is the aberration phase."
+        ),
+        scan_region=(0, 128, 0, 128),
+        artifact_name="arina-128-full-disk",
+        aberrations=(
+            (0.0, 0.0, 0.0),
+            (55.0, 0.0, 0.0),
+            (155.96977, 0.0, 0.0),
+        ),
+    ),
     "arina-512-full-disk": SSBParityCase(
         name="arina-512-full-disk",
         description=(
@@ -206,6 +234,19 @@ def case_root(case: SSBParityCase) -> Path:
     """Return the generated case directory."""
 
     return runs_root() / "strict-parity" / case.name
+
+
+def artifact_root(case: SSBParityCase) -> Path:
+    """Return the directory holding this case's exported exact inputs.
+
+    A case may reuse another case's artifact when only its aberration settings
+    differ, so the measured bytes are identical by construction rather than by
+    re-extraction.
+    """
+
+    return case_root(case) if case.artifact_name is None else (
+        runs_root() / "strict-parity" / case.artifact_name
+    )
 
 
 def _source_dir(case: SSBParityCase) -> Path:
@@ -231,6 +272,42 @@ def _declaration(case: SSBParityCase) -> dict[str, object]:
     }
 
 
+def ensure_case_directory(case: SSBParityCase) -> Path:
+    """Return a case directory that holds ``case.json`` and the exact ``source``.
+
+    A case that reuses another case's artifact gets its own ``case.json``
+    (identical scientific inputs, its own aberration settings) and a symlink to
+    the owner's ``source`` directory, so every consumer - the public MPS path
+    and the standalone native harness alike - reads one copy of the bytes and
+    the settings that belong to the case under test.
+    """
+
+    root = case_root(case)
+    if case.artifact_name is None:
+        return root
+    owner = artifact_root(case)
+    payload = owner / "source" / "bf_columns.u16"
+    if not payload.is_file():
+        raise FileNotFoundError(
+            f"Case {case.name!r} reuses the artifact of {case.artifact_name!r}, "
+            f"but {payload} does not exist. Export that case first: "
+            f"python tests/parity/ssb_parity_gate.py --case {case.artifact_name} "
+            "--export"
+        )
+    root.mkdir(parents=True, exist_ok=True)
+    link = root / "source"
+    if not link.exists():
+        link.symlink_to(owner / "source")
+    declaration = json.loads((owner / "case.json").read_text(encoding="utf-8"))
+    declaration["name"] = case.name
+    declaration["description"] = case.description
+    declaration["aberrations"] = [list(values) for values in case.aberrations]
+    (root / "case.json").write_text(
+        json.dumps(declaration, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return root
+
+
 def export_case(
     case: SSBParityCase,
     *,
@@ -247,6 +324,9 @@ def export_case(
     it (see :func:`verify_counts_against_hdf5`).
     """
 
+    if case.artifact_name is not None:
+        # A sharing case never re-extracts: its exact inputs are the owner's.
+        return ensure_case_directory(case)
     root = case_root(case)
     source = _source_dir(case)
     snapshots = source / "snapshots"
@@ -278,6 +358,15 @@ def export_case(
             f"Case {case.name!r} selected {zero_columns} BF pixels with zero "
             "counts across the whole scan; the documented policy keeps only "
             "positive-count pixels."
+        )
+    exactness = verify_counts_against_hdf5(case, counts, rows, cols)
+    if not exactness["exact"]:
+        raise ValueError(
+            f"Case {case.name!r} exported counts that are not the acquisition's "
+            f"raw uint16 values: {exactness['mismatching_scan_positions']} scan "
+            f"positions differ from a direct h5py read (first: "
+            f"{exactness['first_mismatches']}). The gate must measure exact "
+            "counts; fix the extraction instead of loosening the check."
         )
     (source / "bf_columns.u16").write_bytes(
         np.ascontiguousarray(counts).tobytes(order="C")
@@ -339,6 +428,7 @@ def export_case(
         "brightfield_policy": "documented_full_disk_minus_hardware_dead_pixels",
     }
     scientific.update(shared_geometry(case, source))
+    scientific["counts_exactness"] = exactness
     scientific["metal_geometry"] = metal_geometry(scientific)
     scientific["metal_geometry_unrotated"] = {
         "brightfieldKX": scientific["brightfield_kx_unrotated"],
@@ -354,6 +444,34 @@ def export_case(
     return root
 
 
+def acquisition_scan_shape(case: SSBParityCase) -> tuple[int, int] | None:
+    """Return the source acquisition's native scan shape, if discoverable."""
+
+    from quantem.gpu.io import inspect
+
+    info = inspect(str(case.source))
+    shape = getattr(info, "scan_shape", None)
+    if shape is None:
+        return None
+    return (int(shape[0]), int(shape[1]))
+
+
+def scan_region_is_whole_acquisition(case: SSBParityCase) -> bool:
+    """Return whether the case region covers the complete native acquisition.
+
+    The native (encoded/H5-to-ANS) loader preserves whole acquisitions only, so
+    a case that asks for the entire scan must not pass a selection. Deciding
+    this from the file's own scan shape keeps the exported bytes identical to a
+    full-acquisition load instead of silently narrowing it.
+    """
+
+    native = acquisition_scan_shape(case)
+    if native is None:
+        return False
+    row0, row1, col0, col1 = (int(v) for v in case.scan_region)
+    return (row0, row1, col0, col1) == (0, native[0], 0, native[1])
+
+
 def extract_bf_columns(
     case: SSBParityCase,
     rows: np.ndarray,
@@ -367,23 +485,31 @@ def extract_bf_columns(
 
     row0, row1, col0, col1 = (int(v) for v in case.scan_region)
     side = case.scan_side
+    whole = scan_region_is_whole_acquisition(case)
     loaded = load(
         str(case.source),
         backend="mps",
         representation="encoded" if side >= 256 else "dense",
         detector_bin=1,
-        scan_region=(row0, row1, col0, col1),
+        scan_region=None if whole else (row0, row1, col0, col1),
         dtype=None,
+        hot_pixel_correction="none",
         verbose=verbose,
     )
     data = loaded.data
     if side >= 256:
-        out = np.empty((rows.size, side * side), dtype=np.uint16)
-        for start in range(0, side, 32):
-            stop = min(start + 32, side)
-            chunk = data.decode_scan_range_device(start, stop).to_numpy()
-            block = np.asarray(chunk).reshape(-1, 192, 192)[:, rows, cols]
-            out[:, start * side : stop * side] = block.T
+        # ``decode_scan_range_device`` addresses contiguous *flat scan
+        # positions*, not scan rows, and returns ``(stop - first, 192, 192)``.
+        # The payload is stored ``(BF, scan)``, so each decoded block
+        # transposes into its own flat slice.
+        scan_count = side * side
+        out = np.empty((rows.size, scan_count), dtype=np.uint16)
+        step = 32 * side
+        for first in range(0, scan_count, step):
+            stop = min(first + step, scan_count)
+            chunk = data.decode_scan_range_device(first, stop).to_numpy()
+            block = np.asarray(chunk).reshape(stop - first, 192, 192)[:, rows, cols]
+            out[:, first:stop] = block.T
         columns = out.reshape(rows.size, side, side)
     else:
         dense = np.asarray(data).reshape(-1, 192, 192)
@@ -394,6 +520,84 @@ def extract_bf_columns(
     if callable(release):
         release()
     return np.ascontiguousarray(columns)
+
+
+def verify_counts_against_hdf5(
+    case: SSBParityCase,
+    columns: np.ndarray,
+    rows: np.ndarray,
+    cols: np.ndarray,
+) -> dict[str, object]:
+    """Verify exported counts byte-exactly against raw HDF5 frames.
+
+    This reads the master acquisition with h5py alone - no ``quantem.gpu``
+    loader, no hot-pixel correction, no conversion - and compares the raw
+    uint16 detector values of the pinned BF pixels at every scan position with
+    the payload the gate measures. It is the independent proof that the gate's
+    inputs are the acquisition's exact raw counts.
+
+    The scan is raster order over the acquisition's own scan width, so one scan
+    row of a region is one contiguous frame range and can be read in bulk.
+    """
+
+    import h5py
+    import hdf5plugin  # noqa: F401 - registers the acquisition's bitshuffle filter
+
+    side = case.scan_side
+    row0, _row1, col0, col1 = (int(v) for v in case.scan_region)
+    native_rows, native_cols = acquisition_scan_shape(case) or (side, side)
+    if col1 > native_cols:
+        raise ValueError(
+            f"Case {case.name!r} asks for columns {col0}:{col1}, beyond the "
+            f"acquisition width {native_cols}."
+        )
+    expected = columns.reshape(rows.size, side, side)
+    mismatching_positions = 0
+    first_mismatch: list[int] | None = None
+    with h5py.File(str(case.source), "r") as handle:
+        group = handle["/entry/data"]
+        datasets = []
+        offset = 0
+        for name in sorted(group):
+            dataset = group[name]
+            if not hasattr(dataset, "shape"):
+                continue
+            datasets.append((offset, offset + int(dataset.shape[0]), dataset))
+            offset += int(dataset.shape[0])
+        total_frames = offset
+        for scan_row in range(side):
+            absolute_row = row0 + scan_row
+            first = absolute_row * native_cols + col0
+            last = absolute_row * native_cols + col1
+            if last > total_frames:
+                raise ValueError(
+                    f"Case {case.name!r} needs frames {first}:{last} but the "
+                    f"acquisition holds {total_frames}."
+                )
+            block = np.empty((last - first, 192, 192), dtype=np.uint16)
+            for low, high, dataset in datasets:
+                take_low, take_high = max(first, low), min(last, high)
+                if take_high <= take_low:
+                    continue
+                block[take_low - first : take_high - first] = dataset[
+                    take_low - low : take_high - low
+                ]
+            measured = np.ascontiguousarray(block[:, rows, cols].T)
+            reference = expected[:, scan_row, :]
+            if not np.array_equal(measured, reference):
+                differing = np.flatnonzero((measured != reference).any(axis=1))
+                mismatching_positions += int(differing.size)
+                if first_mismatch is None:
+                    first_mismatch = [int(value) for value in differing[:8]]
+    return {
+        "exact": mismatching_positions == 0,
+        "mismatching_scan_positions": int(mismatching_positions),
+        "first_mismatches": first_mismatch,
+        "source": str(case.source),
+        "read": "h5py_raw_uint16_no_loader_full_scan",
+        "frames_compared": int(side * side),
+        "values_compared": int(side * side * rows.size),
+    }
 
 
 def _reciprocal_geometry(
@@ -636,6 +840,7 @@ def compare_products(
     loss: float | None,
     mean_phase: np.ndarray | None,
     *,
+    object_phase: np.ndarray | None = None,
     core_ratio: float = 1e-3,
 ) -> dict[str, float]:
     """Return the strict error metrics of one product set against the oracle.
@@ -645,12 +850,15 @@ def compare_products(
 
     ``object_phase_*`` is the phase image a reconstruction displays, the
     argument of the complex object. Every backend's object supports it, so it
-    is the cross-backend phase metric.
+    is the cross-backend phase metric. Pass ``object_phase`` to measure a
+    backend's own phase kernel (the native Metal ``ssb_object_phase`` output);
+    omit it to derive the phase from ``object_wave``.
 
     ``mean_phase_*`` is the objective's own phase product, the mean over the
     bright-field set of the per-BF inverse-transform phase. The MPS public
     ``preview`` returns it; the native Metal API exposes its variance (loss)
-    but not the mean itself.
+    but not the mean itself, so Metal entries leave ``mean_phase`` as ``None``
+    rather than comparing a different quantity under the same name.
     """
 
     reference_object = np.asarray(reference_object, dtype=np.complex128)
@@ -689,8 +897,13 @@ def compare_products(
         )
     magnitude = np.abs(reference_object)
     core = magnitude >= core_ratio * scale
+    measured_object_phase = (
+        np.angle(object_wave)
+        if object_phase is None
+        else np.asarray(object_phase, dtype=np.float64)
+    )
     object_phase_difference = np.angle(
-        np.exp(1j * (np.angle(object_wave) - np.angle(reference_object)))
+        np.exp(1j * (measured_object_phase - np.angle(reference_object)))
     )
     metrics.update(
         {
