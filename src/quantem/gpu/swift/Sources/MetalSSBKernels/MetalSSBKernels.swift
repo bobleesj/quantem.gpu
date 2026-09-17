@@ -186,6 +186,9 @@ public final class MetalSSBEngine {
   private static let maximumCacheChunks = 12
   private static let fftThreads = 64
   private static let intermediateBlockRows = 4
+  // Must match ssb_column_group in ssb.metal: one threadgroup owns this many
+  // adjacent intermediate columns so each store fills a full 128-byte line.
+  private static let columnGroupColumns = 4
 
   private struct FFTParams {
     var n: UInt32
@@ -272,6 +275,10 @@ public final class MetalSSBEngine {
   private var chiTrigBuffer: MTLBuffer?
   private var crossTrigBuffer: MTLBuffer?
   private var prepared = false
+
+  /// Optional per-evaluation GPU timeline recorder. Measurement only: when
+  /// `nil` (the default) the loss path is unchanged.
+  public var timelineRecorder: SSBTimelineRecorder?
 
   /// Create a reusable SSB engine.
   ///
@@ -853,6 +860,7 @@ public final class MetalSSBEngine {
     try rebuildGeometry(rotationDegrees: rotation)
     let started = Date()
     var gpuSeconds = 0.0
+    timelineRecorder?.beginEvaluation()
 
     guard let clearCommands = queue.makeCommandBuffer(),
       let clear = clearCommands.makeBlitCommandEncoder()
@@ -888,7 +896,7 @@ public final class MetalSSBEngine {
         output: crossTrigBuffer
       )
     }
-    try commitAndWait(clearCommands)
+    try commitAndWait(clearCommands, label: "clear")
     gpuSeconds += gpuDuration(clearCommands)
 
     let halfBytes = halfPlane * MemoryLayout<SIMD2<Float>>.stride
@@ -927,7 +935,7 @@ public final class MetalSSBEngine {
       }
       globalOffset += cacheCount
     }
-    try commitAndWait(cacheCommands)
+    try commitAndWait(cacheCommands, label: "cache")
     gpuSeconds += gpuDuration(cacheCommands)
 
     var streamedCommands: MTLCommandBuffer?
@@ -976,14 +984,14 @@ public final class MetalSSBEngine {
       encodePhaseMoments(commands, batch: batch)
       streamedBatchCount += 1
       if streamedBatchCount == Self.phaseCommandBatchCapacity {
-        try commitAndWait(commands)
+        try commitAndWait(commands, label: "streamed")
         gpuSeconds += gpuDuration(commands)
         streamedCommands = nil
         streamedBatchCount = 0
       }
     }
     if let commands = streamedCommands {
-      try commitAndWait(commands)
+      try commitAndWait(commands, label: "streamed")
       gpuSeconds += gpuDuration(commands)
     }
 
@@ -1005,6 +1013,11 @@ public final class MetalSSBEngine {
       squareOfMeans += mean * mean
     }
     let loss = sumOfSquares / (logical * pixels) - squareOfMeans / pixels
+    timelineRecorder?.finishEvaluation(
+      wallEnd: SSBTimelineRecorder.now(),
+      gpuSeconds: gpuSeconds,
+      brightfieldCount: sampling.indices.count
+    )
     return MetalSSBPhaseVarianceResult(
       loss: Float(loss),
       wallSeconds: Date().timeIntervalSince(started),
@@ -1584,8 +1597,19 @@ public final class MetalSSBEngine {
     rows.setBuffer(chiTrigBuffer, offset: 0, index: 7)
     rows.setBuffer(crossTrigBuffer, offset: 0, index: 8)
     rows.dispatchThreadgroups(
-      MTLSize(width: size == 512 ? halfColumns : size, height: batch, depth: 1),
-      threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+      MTLSize(
+        width: size == 512
+          ? (halfColumns + Self.columnGroupColumns - 1) / Self.columnGroupColumns
+          : size,
+        height: batch,
+        depth: 1
+      ),
+      threadsPerThreadgroup: MTLSize(
+        width: Self.fftThreads
+          * (size == 512 ? Self.columnGroupColumns : 1),
+        height: 1,
+        depth: 1
+      )
     )
     rows.endEncoding()
 
@@ -1702,12 +1726,26 @@ public final class MetalSSBEngine {
     encoder.endEncoding()
   }
 
-  private func commitAndWait(_ commands: MTLCommandBuffer) throws {
+  private func commitAndWait(
+    _ commands: MTLCommandBuffer,
+    label: String = ""
+  ) throws {
+    let wallStart = SSBTimelineRecorder.now()
     commands.commit()
     commands.waitUntilCompleted()
+    let wallEnd = SSBTimelineRecorder.now()
     if let error = commands.error {
       throw MetalSSBError.commandExecution(error.localizedDescription)
     }
+    timelineRecorder?.recordCommandBuffer(
+      label: label,
+      wallStart: wallStart,
+      wallEnd: wallEnd,
+      gpuStart: commands.gpuStartTime,
+      gpuEnd: commands.gpuEndTime,
+      kernelStart: commands.kernelStartTime,
+      kernelEnd: commands.kernelEndTime
+    )
   }
 
   private func gpuDuration(_ commands: MTLCommandBuffer) -> Double {

@@ -107,7 +107,11 @@ class CountDetectorCompute:
         operation = getattr(self.source, "mean_dp_device", None)
         if operation is None:
             raise self._unsupported("Mean diffraction")
-        return operation()
+        # ``mean_dp_device`` returns a privately owned device buffer, exactly like
+        # ``detector_sum_device`` and ``extract_diffraction_device`` above. Read it
+        # through ``_copy_output`` so the owner is released and the caller receives
+        # a NumPy mean pattern instead of the unreleased Metal owner object.
+        return _copy_output(operation())
 
     def center_of_mass(self, mask=None):
         raise self._unsupported("Center of mass")

@@ -1124,7 +1124,19 @@ kernel void ssb_accumulate_phase_moments(
 // reads each (BF, row block) as one contiguous 257*4 float2 run. Only data
 // movement differs from a row-major intermediate; every value sees the same
 // arithmetic.
+//
+// A four-row block only fills 32 of the 128 bytes in a cache line, so one
+// threadgroup owns ssb_column_group adjacent columns at once and the thread
+// index is laid out to put the column in the SIMD lane's third and fourth bits.
+// Each store instruction then covers four columns by four rows, which is 128
+// contiguous bytes: exactly one full line, instead of 32 useful bytes in each
+// of four lines. The radix-8 shuffles need the lane's low three bits to match
+// the logical index's low three bits, so the column cannot be widened past four
+// without changing the arithmetic, and widening it is not beneficial anyway
+// because the row ownership fixes the rest of the address.
 constant constexpr uint ssb_intermediate_block_rows = 4u;
+constant constexpr uint ssb_column_group = 4u;
+constant constexpr uint ssb_column_group_bits = 2u;
 
 kernel void ssb_correct_half_column_ifft512_hermitian(
     device const float2 *half_g [[buffer(0)]],
@@ -1137,23 +1149,41 @@ kernel void ssb_correct_half_column_ifft512_hermitian(
     device const float2 *chi_trig [[buffer(7)]],
     device const float2 *cross_trig [[buffer(8)]],
     uint tid [[thread_index_in_threadgroup]],
+    // Declared as a vector so it matches the vector threadgroup position type:
+    // the compiler rejects mixing scalar and vector thread attributes.
+    uint2 threads_per_group [[threads_per_threadgroup]],
     uint2 group [[threadgroup_position_in_grid]]) {
     constexpr uint n = 512u;
     constexpr uint half_cols = 257u;
     constexpr uint block_rows = ssb_intermediate_block_rows;
-    const uint col = group.x;
+    constexpr uint columns = ssb_column_group;
     const uint local_bf = group.y;
-    if (tid >= 64u || col >= half_cols || local_bf >= params.batch) return;
+    // Threadgroup-uniform, so no thread skips a barrier another one reaches.
+    if (threads_per_group.x != 64u * columns || local_bf >= params.batch) return;
 
-    threadgroup float2 scratch[512];
-    const uint src0 = octal_reverse_512(tid * 8u + 0u);
-    const uint src1 = octal_reverse_512(tid * 8u + 1u);
-    const uint src2 = octal_reverse_512(tid * 8u + 2u);
-    const uint src3 = octal_reverse_512(tid * 8u + 3u);
-    const uint src4 = octal_reverse_512(tid * 8u + 4u);
-    const uint src5 = octal_reverse_512(tid * 8u + 5u);
-    const uint src6 = octal_reverse_512(tid * 8u + 6u);
-    const uint src7 = octal_reverse_512(tid * 8u + 7u);
+    // Bits [2:0] of tid are the position inside the 64-thread column group and
+    // bits [4:3] select the column, so a SIMD lane's low three bits still equal
+    // the low three bits of the index the transform expects. The remaining tid
+    // bits [7:5] carry column-group bits [5:3]. Every (column, position) pair
+    // occurs exactly once.
+    const uint sub = (tid >> 3u) & (columns - 1u);
+    const uint local = ((tid >> (3u + ssb_column_group_bits)) << 3u) | (tid & 7u);
+    // The final threadgroup covers columns past the half-plane. Those threads
+    // recompute the last valid column and drop the result, because the
+    // transform below already executed a threadgroup barrier.
+    const uint raw_col = group.x * columns + sub;
+    const uint col = raw_col < half_cols ? raw_col : half_cols - 1u;
+    const bool store_column = raw_col < half_cols;
+
+    threadgroup float2 scratch[columns * 512u];
+    const uint src0 = octal_reverse_512(local * 8u + 0u);
+    const uint src1 = octal_reverse_512(local * 8u + 1u);
+    const uint src2 = octal_reverse_512(local * 8u + 2u);
+    const uint src3 = octal_reverse_512(local * 8u + 3u);
+    const uint src4 = octal_reverse_512(local * 8u + 4u);
+    const uint src5 = octal_reverse_512(local * 8u + 5u);
+    const uint src6 = octal_reverse_512(local * 8u + 6u);
+    const uint src7 = octal_reverse_512(local * 8u + 7u);
     const size_t half_base = (size_t)local_bf * n * half_cols;
     const uint bf = params.bf_offset + local_bf;
 #define LOAD_HERMITIAN(slot) \
@@ -1173,24 +1203,28 @@ kernel void ssb_correct_half_column_ifft512_hermitian(
     LOAD_HERMITIAN(6); LOAD_HERMITIAN(7);
 #undef LOAD_HERMITIAN
     ifft512_radix8_registers(
-        r0, r1, r2, r3, r4, r5, r6, r7, tid, twiddle, scratch
+        r0, r1, r2, r3, r4, r5, r6, r7, local, twiddle, scratch + sub * 512u
     );
 
-    // Thread tid owns rows tid + 64 * slot. The block height divides 64, so
-    // row / 4 = tid / 4 + 16 * slot and row % 4 = tid % 4.
+    // Thread "local" owns rows local + 64 * slot. The block height divides 64,
+    // so row / 4 = local / 4 + 16 * slot and row % 4 = local % 4. Within one
+    // store instruction the lanes then span four columns by four rows at a
+    // fixed block, which is one full 128-byte line.
     constexpr float scale = 1.0f / 512.0f;
     const size_t store_base = half_base + (size_t)col * block_rows +
-        (tid % block_rows);
+        (local % block_rows);
     constexpr size_t block_stride = (size_t)half_cols * block_rows;
+    if (store_column) {
 #define STORE_BLOCKED(slot) \
     column_ifft_half[store_base + \
-        (size_t)((tid + 64u * slot##u) / block_rows) * block_stride] = \
+        (size_t)((local + 64u * slot##u) / block_rows) * block_stride] = \
         r##slot * scale
     STORE_BLOCKED(0); STORE_BLOCKED(1);
     STORE_BLOCKED(2); STORE_BLOCKED(3);
     STORE_BLOCKED(4); STORE_BLOCKED(5);
     STORE_BLOCKED(6); STORE_BLOCKED(7);
 #undef STORE_BLOCKED
+    }
 }
 
 // The signed Nyquist coordinate equals its own wrapped negative. The usual

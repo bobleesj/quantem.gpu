@@ -1,0 +1,235 @@
+{
+  "code": {
+    "dirty": false,
+    "entrypoint": "experiments/20260916-ssb-mps-hotpath/stage_probe.py",
+    "note": "Measured engine bytes equal f357069 (scalar tiled row IFFT on top of 32ba29b); engine.py sha256 06058d32bf03947d... under test against the frozen 200e906b3d7d87b6... reference tree. The follow-up fit harness (fit_ab.sh, intermediate_probe.py, path_probe.py, SSB_SRC support in profile_mps.py) landed in dfd61c5.",
+    "repository": "quantem.gpu",
+    "revision": "dfd61c5b376c9dcdb9fa42de763769719d99cb0e"
+  },
+  "execution": {
+    "artifact_root": "~ private perf-lab scratch (untracked): perf-lab/ssb-audit/mps-runs/20260916-ssb-mps-hotpath",
+    "backend": "MLX/MPS (mlx 0.32.0, gpu device)",
+    "gpu_model": "Apple M5",
+    "host": "apple-m5-24gb",
+    "note": "Several agents share one M5 GPU; bandwidth_control readings are reported per artifact to expose contention."
+  },
+  "experiment_id": "20260916-ssb-mps-hotpath",
+  "findings": {
+    "accepted": [
+      "Tiled row-IFFT store for the scalar 512 loss path (engine.py:4607-4636 with plumbing at engine.py:2041 and engine.py:2917): 22.767 to 21.055 ms on the isolated stage pair, 404.0 to 369.5 ms end-to-end, bit-exact on three parameter triples.",
+      "Nothing new was accepted for the fit path: both named levers are closed by measurement (see leverage_ceilings)."
+    ],
+    "accumulate_first_verdict": "Refuted for the objective by the atan2/variance nonlinearity (see rejected), so the loss cannot be rewritten as a single transform of a summed frequency-domain plane; the redraw path is the only place where accumulate-first is valid.",
+    "bottleneck_verdict": "The 8937-BF fit is device_memory-limited at the machine's streaming ceiling, with a large overlapped non-device_memory component: the batch-2 objective moves 84.376 GB in 647.0 ms = 130.4 GB/s against a same-session mx.array copy control of 126.3-132.3 GB/s, and the row stage alone moves 2,686,451,712 B in 20.347 ms = 132.0 GB/s. Removing its 538,968,064 B G read recovers 3.913 ms of 20.347 ms, exactly the read's 19.2% byte share. An intermediate 'co-limited' reading was recorded here and then withdrawn; the replacement measurement is in experiments/20260916-ssb-mps-colimit, which halves the row stage's write bytes with no aliasing and recovers 54.5% of the device_memory prediction, and which disproves the threadgroup-occupancy hypothesis with an order-balanced sweep (8 KB 24.846 ms, 16 KB 23.168 ms, 32 KB shipped 22.534 ms, all byte-identical).",
+    "bottleneck_verdict_superseded": "The 8937-BF fit is device_memory-traffic bound at the machine's streaming ceiling: the batch-2 objective moves 84.376 GB in 647.0 ms = 130.4 GB/s and the batch-1 objective 46.892 GB in 360.8 ms = 130.0 GB/s, against a same-session mx.array copy control of 126.3-132.3 GB/s. No sync, host round-trip, geometry or chunk-size term is measurable above noise.",
+    "bottleneck_verdict_superseded_by_colimit": "The 8937-BF fit is co-limited, not purely device_memory-bound. The byte accounting stands: the batch-2 objective moves 84.376 GB in 647.0 ms = 130.4 GB/s and the batch-1 objective 46.892 GB in 360.8 ms = 130.0 GB/s, against a same-session mx.array copy control of 126.3-132.3 GB/s, and no sync, host round-trip, geometry or chunk-size term is measurable above noise. But same-session stage ablations in experiments/20260916-ssb-mps-2pass-price show device_memory is not what binds: folding the row stage's plane write saves 1.71 ms of 20.38 ms and pinning the column stage's plane read saves 4.56 ms of 17.82 ms, while the row stage's own read:write mix allows 196.2 GB/s (1:4 broadcast control) against 131.8 GB/s achieved. Roughly 60-70% of each stage is therefore non-device_memory (correction ALU, butterfly issue and barriers at the 32 KB threadgroup occupancy), which supersedes this experiment's earlier 'at the streaming ceiling' reading.",
+    "fit_change_verdict": "f357069 (tiled scalar row IFFT) does not touch the fit objective path: a 4-trial fit calls _reconstruct_prepared 0 times and the batched row IFFT 1944 times (= 18 packs x 108 objectives), and the batched path was already tiled in the frozen tree. The paired fit A/B therefore shows only host drift (79.28 -> 77.72 s p50) while both objective paths are equal within noise (batch2 648.3 vs 647.0 ms, batch1 360.8 vs 359.2 ms). The change is an interactive redraw/scalar-loss win, not a fit win.",
+    "fit_split_at_8937_bf": "Fit wall 79.03 s = 200-trial loop 65.9 s (83.4%, 100 batch-2 calls at p50 653.3 ms = 3.06 candidates/s) + Nelder-Mead 11.4 s (14.4%, 31 batch-1 calls at p50 367.6 ms = 2.72 evals/s) + initial loss 0.44 s (0.6%) + final object/phase 0.52 s (0.7%); optuna bookkeeping adds 0.4 s (0.6%).",
+    "leverage_ceilings": {
+      "batch_the_200_trials": "Already batch-2 (engine.py:4924). Wider batches are re-tiled into pairs (engine.py:4955-4966) and the code records a measured 2.8x per-candidate regression at batch 4, so K=4 buys 0%. The arithmetic ceiling is the G share: 11.1% of per-candidate traffic at K=2, so K=4 would cap at 5.6% and K=infinite at 11.1% of the trial loop, i.e. 9.2% of the fit.",
+      "reduce_intermediate_bytes": "Measured closed in experiments/20260916-ssb-mps-2pass-price. Two independent reasons. (1) The plane carries no exact redundancy: 4.5-7.1% mirror residuals and |imag|/|real| = 0.036 on real 8937-BF data, so it cannot be stored smaller. (2) It cannot be avoided: fusion would have to hold the whole 2,097,152 B plane per threadgroup against a measured 32,768 B limit (64x), and the only tile that fits re-reads the input 64x. Ablating the intermediate's device_memory traffic entirely (row store folded to four planes, column read pinned to one plane) saves 1.71 ms of 20.38 ms and 4.56 ms of 17.82 ms, i.e. 6.27 ms of the ~35.7 ms per pack, 17% of the 79.0 s fit - an upper bound that is unreachable, not a lever."
+    },
+    "ranked_bottlenecks": [
+      "engine.py:4975 (pair pack loop) -> engine.py:2626 (tiled row store) -> engine.py:2337 (tiled column load): the row-IFFT intermediate round trip is 4.295 GB of the 4.834 GB moved per 512-BF pair pack (88.9%), i.e. 37.48 GB of the 42.19 GB per candidate at batch 2. That is a byte share, not a time share: experiments/20260916-ssb-mps-2pass-price ablates its device_memory traffic at 6.27 ms of the ~35.7 ms per pack, about 17% of the 79.0 s fit, and the round trip is not removable on this hardware.",
+      "engine.py:2660/2712 (G_qk read inside the row kernel) + engine.py:4834 (_pk_batch_from_prepared): the 9.408 GB half-plane G cache is 20.1% of a batch-1 candidate (9.41 GB) and 11.1% at batch 2 (4.70 GB/candidate).",
+      "engine.py:5080 (_nelder_mead_refine): 31 sequential batch-1 evaluations = 14.4% of the fit; each is one 46.89 GB objective, so the G read cannot be amortised across the simplex.",
+      "engine.py:3013 (per-element geometry) and engine.py:2438 (atan2 column stage): ablating sqrt+sincos from the row IFFT moves that stage 8% and ablating atan2 from the column stage moves it 5%, so compute is exposed but small.",
+      "engine.py:2958 (mx.eval per pack in the pair loop): 18 syncs per objective, required to bound the 2.15 GB pack buffers; measured depth A/B shows deeper pipelining is slower (391.5/397.5/399.5/481.5 ms at k=1..4)."
+    ],
+    "ranked_bottlenecks_superseded_0": "engine.py:4975 (pair pack loop) -> engine.py:2626 (tiled row store) -> engine.py:2337 (tiled column load): the row-IFFT intermediate round trip is 4.295 GB of the 4.834 GB moved per 512-BF pair pack (88.9%), i.e. 37.48 GB of the 42.19 GB per candidate at batch 2. It is 86% of the fit wall.",
+    "rejected": [
+      "Accumulating the candidate-weighted BF planes in the frequency domain before the transform (IFFT2(sum_bf c_bf(q) G_bf(q)) == sum_bf IFFT2(c_bf(q) G_bf(q))): refuted on the objective, not on precision. The loss is mean_pixel(Var_bf(phi)), a variance of the phase across BF terms, so a phase has to exist per BF term; the atan2 nonlinearity sits between the transform and the sum and sum_bf phi_bf != phi(sum_bf z_bf), so linearity does not apply. A second, independent barrier is that the Nyquist boundary correction is added inside the atan2 argument and is indexed by BF term. The redraw path really does accumulate first because its output is linear, which is why the idea looked general; it does not generalise to the loss.",
+      "Fusing the row and column stages so the intermediate round trip disappears (4,295 MB of the 4,834 MB per 512-BF pair pack): blocked by on-chip capacity, measured on this host in experiments/20260916-ssb-mps-2pass-price. The MLX/Metal threadgroup ceiling is 32,768 B (33,792 B refuses to load: 'Threadgroup memory size (33792) exceeds the maximum threadgroup memory allowed (32768)'), both engine kernels already reserve exactly 32,768 B, and the transformed plane is 2,097,152 B, 64x that. The only tile that fits, 512 rows x 8 columns, needs 64 threadgroups that each re-read the full input: 64x input amplification. Priced by ablation: removing the intermediate's device_memory traffic is worth 6.27 ms of the ~35.7-37.0 ms per pack, 17% of the fit wall (79.0 s -> about 65.6 s at 8937 BF), and any re-decomposition moves the pinned loss by about 8e-7 relative against the engine's own 1.2e-7 float32 floor.",
+      "Enabling the SIMD register transpose column stage on non-M5-Max hardware: bit-exact and 4.3% faster on that stage, but it changes a hardware-gated kernel path for devices that cannot be measured on this host.",
+      "Smaller or larger phase-loss chunk (512 to 256/1024): changes the float32 reduction grouping and is not bit-exact; measured 388-437 ms against 370-402 ms at 512.",
+      "Removing the per-chunk mx.eval: measured slower and higher peak memory.",
+      "Reducing the pair pack eval depth or re-packing BF boundaries: no peak-memory saving (MLX caches freed buffers) and slower batch2 (1028.1 ms at depth 1 vs 697.8 ms at depth 5).",
+      "Hoisting the per-element geometry into a table like the native Metal ssb_precompute_cross_trig: a per-(bf, row, col) table is 75 GB, and the separable form is a different float32 expression, so it cannot be bit-exact.",
+      "Hoisting the per-candidate geometry into a Metal-style cross_trig table: indexed by (row, col, bf) it is ~75 GB; a (dx, dy)-indexed table would need new per-element index arithmetic and still only recovers part of the measured 8%/5% ablation, so the payoff does not survive the bit-exactness cost.",
+      "Batching Nelder-Mead evaluations: the simplex is sequential and speculative reflect+expand batching would add wasted candidates for a <=5.6% amortisation of the smallest term in the fit."
+    ],
+    "verdict_on_suspected_causes": {
+      "chunk_size_cliff": "not on this 24 GB host: 512 BF is the measured optimum, and 1024 is not bit-exact.",
+      "fit_host_round_trips": "negligible: 7 evals and one host read per objective out of ~350 ms; the fit is 131 objective calls and nothing else.",
+      "memory_or_compute_bound": "memory bound at the ceiling (129-134 GB/s of a 125-130 GB/s copy ceiling), unlike the native Metal probe at 42 GB/s.",
+      "per_chunk_sync": "refuted twice: fewer syncs are slower and use more memory.",
+      "repeated_geometry": "real in the native Metal sense but not hoistable here without changing the float32 expression."
+    }
+  },
+  "inputs": [
+    {
+      "dataset_id": "bf-column-companion-512-17p0x-0p0y",
+      "note": "Exact BF-column companion of the ARINA acquisition private-fixture://arina/arina-fixture-a_master.h5; 8937 planes x 262144 uint16, max raw count 1873, dc=953607.6875+0j. Calibration snapshot sha256 990e90be17324cbe5aec810634d6d1fabdef7c7fa4591ed265f7d0a8236f70f9.",
+      "path": "private-fixture://mps-runs/fixture-512-a/source/bf_columns.u16",
+      "sha256": "e8ed586fad2b404a4392b9fb4f06da3f3fd3a096d1cdc2200ea39f3972a46121"
+    },
+    {
+      "dataset_id": "frozen-reference-engine-32ba29b",
+      "note": "Unmodified engine.py from 32ba29b, the A side of every A/B in this experiment.",
+      "path": "private-fixture://mps-runs/ref-src-32ba29b/src/quantem/gpu/ssb/backends/mps/engine.py",
+      "sha256": "200e906b3d7d87b6a2b7cbf330d03e389b181c702cb1688a8ec431a33c10c677"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "stage-probe-final",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/stage_probe_tiled.jsonl",
+      "result": "Final engine, clean session (bandwidth_control 124.0/118.8 GB/s): pair batch1 p50 363.4 ms, pair batch2 p50 654.8 ms, tiled row IFFT 12.52 ms, tiled column stage 9.12 ms, scalar loss 371.6 ms, redraw 124.5 ms, simd column transpose bit-exact at 8.25 ms.",
+      "retention": "durable",
+      "sha256": "4277669cd0eb321ea18e018cfebea172d834ef1ea7507773500bc2f0c7864690",
+      "size_bytes": 4548
+    },
+    {
+      "artifact_id": "stage-probe-frozen",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/stage_probe_ref.jsonl",
+      "result": "Frozen 32ba29b engine, two sessions (bandwidth_control 132.1/117.6 and 106.3/104.7 GB/s): the same pair objective measured 351.3 ms then 428.1 ms, which is why all conclusions use paired A/B.",
+      "retention": "durable",
+      "sha256": "31fe5b775fa5825ba6c27fe22f17ec1a00f1f5c00bc0f8cb2d359cee5a85fcb9",
+      "size_bytes": 6814
+    },
+    {
+      "artifact_id": "interleaved-ab",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/ab_interleaved.jsonl",
+      "result": "Paired A/B (bandwidth_control 129.9/124.3 GB/s): flat row+column stage pair 22.767 ms vs tiled 21.055 ms (1.081x), end-to-end scalar loss 404.0 ms vs 369.5 ms (1.093x), both bit-exact; column-stage simd transpose 8.635 ms vs 9.026 ms (1.043x) and bit-exact; pair objective with simd 351.97 ms vs 360.93 ms.",
+      "retention": "durable",
+      "sha256": "2deb87fc6605d9e79c23615098a62ad5e73770d11f1310365ee8aacfa179d89b",
+      "size_bytes": 2925
+    },
+    {
+      "artifact_id": "eval-depth",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/ab_eval_depth.jsonl",
+      "result": "Suppressing the per-chunk mx.eval costs time and memory: k=1 391.5 ms/10.49 GB, k=2 397.5/10.49, k=3 399.5/12.64, k=4 481.5/11.56 GB. The per-chunk sync is not a slowdown.",
+      "retention": "durable",
+      "sha256": "5fd0fa49931f09dcefbe9a0189d2078c00b2c75a03b82282150531ff4fe6f3dc",
+      "size_bytes": 1314
+    },
+    {
+      "artifact_id": "baseline-fit",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/baseline.jsonl",
+      "result": "Frozen 32ba29b baseline: pair p50 391.7 ms, redraw p50 129.5 ms, fit wall 168.1 s in a contended session (first objective call 49.4 s), loss 0.13769753277301788, phase sha256 e6b3d3015ee0d6db3a19a57c872f8a83d423eaa0ee06927dc2ea2cc49343eb8c.",
+      "retention": "durable",
+      "sha256": "3db403cda451257b7bb7f56c42911efaaa887650730404b98a73ad28c8b4779d",
+      "size_bytes": 5170
+    },
+    {
+      "artifact_id": "final-fit",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/fit_tiled.jsonl",
+      "result": "Final engine, clean session (bandwidth_control 129.6 GB/s): 200 trials plus 30 Nelder-Mead nfev in 79.0 s wall, optuna 66.3 s, refinement 11.4 s, 131 objective calls (100 batch2, 31 batch1), loss/phase/object sha256 and aberrations identical to the frozen baseline.",
+      "retention": "durable",
+      "sha256": "e658320312b0b3f6b8d12c8a4b8f58661eeb7fdcab5fb825bccf0885143f1ec3",
+      "size_bytes": 3188
+    },
+    {
+      "artifact_id": "depth-ab",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/depth_ab.json",
+      "result": "Pair pack eval depth 5 beats 4/3/2/1 with identical peak bytes (batch1 378.7 ms at depth 5 vs 395.7 at depth 1; batch2 697.8 vs 1028.1).",
+      "retention": "durable",
+      "sha256": "e9621a2cae0636e8e6f79f5c5f96cc62ca82e1bc3db64bafff63549f6e26eee9",
+      "size_bytes": 796
+    },
+    {
+      "artifact_id": "sanctioned-pair-gate",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/sanctioned_gate.jsonl",
+      "result": "scripts/benchmark_ssb_mps_scaling.py --skip-fit with --reference-engine: 8/8 randomized candidate pairs bit-exact against the frozen 32ba29b engine on real data by np.testing.assert_array_equal; pair p50 166.6 ms for the harness default geometry (8937 logical, 2319 stored BF planes), which scales to 642 ms for 8937 stored planes and reproduces the 654.8 ms batch-2 objective measured here within 2%.",
+      "retention": "durable",
+      "sha256": "e55976970c16c58835ede7a3d10973ba98022bc9f0fd74b1f896e9139334066b",
+      "size_bytes": 1397
+    },
+    {
+      "artifact_id": "fit-ab-paired",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/fit_ab.jsonl",
+      "retention": "durable",
+      "sha256": "60131eda2445631b81aaa163ebfc1a22091da9e2c4dd5fb7a81dcb6aa5d030fb",
+      "size_bytes": 25519
+    },
+    {
+      "artifact_id": "intermediate-redundancy",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/intermediate_probe.jsonl",
+      "retention": "durable",
+      "sha256": "249e67fc3369185009d1f5650dc16e17f002f1b1b338663ea8dd8a7dadf41f06",
+      "size_bytes": 5322
+    },
+    {
+      "artifact_id": "fit-path-counts",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/path_probe.jsonl",
+      "retention": "durable",
+      "sha256": "ddd91686d4848127bb49a9ec522e8a5673128cb2babea7b6e790eee32ec42a50",
+      "size_bytes": 1326
+    }
+  ],
+  "paper": {
+    "authority": "user-directed MLX/MPS SSB hot-path audit",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "active_bf_planes": 8937,
+    "approximation": "none; every change must keep float32/complex64 bit identity",
+    "artifact_results": {
+      "fit-ab-paired": "Paired 8937-BF fit, order-balanced ABBA, 4 fits per engine: frozen 32ba29b p50 79.28 s (mean 79.27, range 77.31-81.22) vs HEAD p50 77.72 s (mean 77.79, range 76.98-78.74); per-call p50 batch2 648.3 vs 647.0 ms, batch1 360.8 vs 359.2 ms - equal within host drift, because the changed scalar path is never called by the fit.",
+      "fit-path-counts": "4-trial 8937-BF fit: _reconstruct_prepared_batch_exact_loss 108 calls (41.69 s), _row_ifft512_batch_from_dynamic_geometry 1944 calls = 18 packs x 108 objectives, _reconstruct_prepared 0 calls, scalar row IFFT 18 calls (final object redraw only).",
+      "intermediate-redundancy": "Real 512x512 complex64 row-IFFT plane, 2,097,152 B: no exact redundancy. Joint (q,c)->(512-q,512-c) mirror residual 45,715 = 4.8% of peak 954,211, row mirror 4.5%, column mirror 7.1%, max|imag|/max|real| 0.0356, so the plane cannot be halved or stored as real without approximation. De-tiled copy of the tiled store equals the flat store bit-exactly (max abs err 0.0) and the flat plane sha256 is identical across engines."
+    },
+    "binning": false,
+    "chunk_bf": 512,
+    "complex_dtype": "complex64",
+    "cropping": false,
+    "cross_session_drift": "22% (351.3 ms vs 428.1 ms for the identical frozen pair objective), so effects are measured by interleaved in-process A/B",
+    "det_sampling_mrad": 0.5622196476170719,
+    "detector_shape": [
+      192,
+      192
+    ],
+    "g_qk_bytes": 9407729664,
+    "g_qk_shape": [
+      8937,
+      512,
+      257
+    ],
+    "gpu_serialization": "GPU_RUN_LABEL=mps and the shared gpurun exclusive lock for every GPU measurement",
+    "logical_bf_terms": 8937,
+    "phase_col_k_bf": 4096,
+    "raw_dtype": "uint16",
+    "real_dtype": "float32",
+    "refinement": "nelder-mead",
+    "repeats": 5,
+    "rotation_angle_deg": 158.88268568029937,
+    "scan_sampling_A": 0.264,
+    "scan_shape": [
+      512,
+      512
+    ],
+    "seed": 42,
+    "semiangle_mrad": 30.0,
+    "stored_bf_planes": 8937,
+    "trials": 200,
+    "voltage_kV": 300.0,
+    "warmup": 2
+  },
+  "parity": {
+    "bit_exact_evidence": "All 8 paired fits (4 frozen 32ba29b, 4 HEAD) return identical loss 0.13769753277301788, phase sha256 e6b3d3015ee0d6db3a19a57c872f8a83d423eaa0ee06927dc2ea2cc49343eb8c, object sha256 1773d7c35abf56a6db1c12e854c82a0c98f8195b8d8e60bbe18cf9c96ec1fe2a, aberrations C10=7.017120839737006, C12=0.0, phi12=-0.15393969519675116, refine_nfev=30 and peak 14.784 GB. The row-IFFT intermediate is bit-exact between engines on real 8937-BF data: flat plane sha256 972548e4ba3c951537bc610d... for both engine sha256 200e906b3d7d87b6... and 06058d32bf03947d..., and de-tiling the HEAD tiled store reproduces the flat store with max abs error 0.0.",
+    "gate": "tests/hardware/mps/test_ssb_mps_cuda_reference.py, tests/hardware/mps/test_ssb_mps_compact_object.py, tests/contracts/test_ssb_mps_close.py, tests/contracts/test_ssb_batch_optuna.py, tests/parity/test_ssb_cold_preview.py",
+    "gate_note": "The sanctioned harness cannot express this audit's calibrated geometry: it has no det-sampling or rotation override, calls backend.cache_rotation(0.0), and stores 2319 of the 8937 companion planes, so its absolute pair time is not comparable to the 8937-plane numbers above without the plane-count scaling noted in the artifact.",
+    "pre_existing_failures": "8 failures in the wider sweep (tests/hardware/mps, tests/contracts) are pre-existing and unrelated: test_ans_file_workflow.py (3), test_mps_buffer_release.py (3) and test_streamed_h5_ans.py (2) fail identically at base 597b566 (8 failed, 48 passed, 1 skipped in the base tree) and touch only io/save.py (.ans removal in 80ffdc9) and the removed MPSStreamedSeries symbol; none of them import the SSB engine, and the audit diff touches only ssb/backends/mps/engine.py.",
+    "result": "56 passed, 4 skipped in 2.29 s",
+    "sanctioned_gate": "scripts/benchmark_ssb_mps_scaling.py --skip-fit --pair-iters 6 --parity-pairs 8 --reference-engine <32ba29b engine.py>: parity_pairs_bit_exact 8 of 8, reference_engine_sha256 200e906b3d7d87b6a2b7cbf330d03e389b181c702cb1688a8ec431a33c10c677."
+  },
+  "question": "Which stage of the MLX/MPS SSB 512 full-aperture path dominates the fit, is that stage memory- or compute-bound, and which of the suspected slowdowns survive measurement?",
+  "schema_version": 1,
+  "status": "completed",
+  "timestamps": {
+    "created": "2026-09-16",
+    "finished": "2026-09-16",
+    "started": "2026-09-16"
+  }
+}

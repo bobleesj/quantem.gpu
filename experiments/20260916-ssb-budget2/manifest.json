@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260916-ssb-budget2",
+  "status": "completed",
+  "question": "At 512^2 / 8937-BF on the native Metal SSB fit, are 50, 100 and 200 TPE trials bit-identical in optimum and loss (i.e. is the TPE trial budget not load-bearing), and does that survive other seeds (7, 123) and the MPS backend?",
+  "paper": {
+    "repository": "quantem.gpu",
+    "authority": "user-directed local validation of the recorded trial-budget finding"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "1e749244bd23e9e94934e8bc79ea7ac4be46beb7",
+    "dirty": true,
+    "diff_sha256": "c38bbc8f85a0845914114750e0b3b7aeb81af9d1ab9c41433d804843e4c8f1b5",
+    "dirty_scope": "tests/metal/ssb_fit_budget.swift only (seed argument, in-process warm start); no objective, evaluator, range or arithmetic change",
+    "executable_sha256": "81e019e4cd6904c28507e7ff6a3d667b3b168e6c2a41f53d7ebfb5bb840dfaa9",
+    "executable_rebuild_sha256": "4d441b6d6f13f9889f00c67f18daabd4e834013764828619564604e11a211578",
+    "entrypoint": "experiments/20260916-ssb-budget2/run_metal_budget.sh",
+    "mps_entrypoint": "experiments/20260916-ssb-budget2/run_mps_budget.sh"
+  },
+  "inputs": [
+    {
+      "dataset_id": "arina-512-full-disk-case",
+      "path": "private-fixture://ssb-audit/parity-runs/strict-parity/arina-512-full-disk/case.json",
+      "sha256": "f4a2a7a0ac208f0f0c391282db6716319f97fb38726438cdf51e08ff6f71af9b"
+    },
+    {
+      "dataset_id": "arina-512-full-disk-bf-columns",
+      "path": "private-fixture://ssb-audit/parity-runs/strict-parity/arina-512-full-disk/source/bf_columns.u16",
+      "sha256": "6b8b6f2df8c65bbde8feb666289a22374dbb364e48f2fa9b7be011a067d1f3d5"
+    },
+    {
+      "dataset_id": "arina-512-aperture-matched-8937-case",
+      "path": "local-evidence://budget2-runs/strict-parity/arina-512-aperture-matched-8937/case.json",
+      "sha256": "69e2ca09e17bca434bfb4333922842e72fcc91cafac6a40a636275a919444f4b"
+    },
+    {
+      "dataset_id": "arina-512-17p0x-production-8937-case",
+      "path": "local-evidence://budget2-runs/strict-parity/arina-512-17p0x-production-8937/case.json",
+      "sha256": "afb368b939f13114d542a742825317b036b8a9c5e38acca9374f82e4ab811007"
+    },
+    {
+      "dataset_id": "recorded-production-fit-optimum",
+      "path": "private-fixture://ssb-audit/metal-runs/final-fit/report.json",
+      "sha256": "3b53c7467622af00588365d66e95366ac123488c2fa2e7f6156d49996ce750f9"
+    }
+  ],
+  "parameters": {
+    "shape": [
+      512,
+      512
+    ],
+    "logical_brightfield": 8937,
+    "active_brightfield": {
+      "basis_a": 2464,
+      "basis_b": 8937,
+      "basis_c": 8937
+    },
+    "detector_sampling_mrad": {
+      "basis_a": 1.0909090909090908,
+      "basis_b_c": 0.5622196476170719
+    },
+    "precision": "float32 / complex64, exact uint16 counts, full disk, no binning or cropping",
+    "arms": [
+      "tpe25",
+      "tpe50",
+      "tpe100",
+      "tpe200",
+      "nmWarm"
+    ],
+    "seeds": [
+      42,
+      7,
+      123
+    ],
+    "backends": [
+      "metal",
+      "mps"
+    ],
+    "hypothesis_under_test": "50 = 100 = 200 TPE trials are bit-identical and Nelder-Mead, not the trial count, binds",
+    "artifact_results": {}
+  },
+  "execution": {
+    "host": "Apple M5, 24 GB unified memory, macOS 26.6.2",
+    "serialization": "single GPU lock shared across agents; load average quoted per arm",
+    "peak_device_bytes_mps": 14784117697,
+    "cold_warm": "warm process, per-arm process isolation; warm start from recorded optima"
+  },
+  "outputs": [
+    {
+      "artifact_id": "metal-budget-tables",
+      "path": "local-evidence://budget2-runs/metal-tables.md",
+      "sha256": "24f86a76c6093510e1cc5e7a8a81b734ef248b6f8ca48e3aa497485856401002",
+      "size_bytes": 8329,
+      "retention": "recomputable",
+      "consuming_figures": [],
+      "result": "Basis A (2464-active) reproduces the original finding and holds for seeds 7/42/123; basis C (8937-active production) falsifies it: seed 42 differs by 1 ulp at 50 trials and seed 123 by 333415 ulp (a different basin)."
+    },
+    {
+      "artifact_id": "mps-budget-tables",
+      "path": "local-evidence://budget2-runs/mps-tables.md",
+      "sha256": "60e65a65f0c195b5c473de85eb7d6c767d3dff6e5bff5681ce3236c8596dad1f",
+      "size_bytes": 1337,
+      "retention": "recomputable",
+      "consuming_figures": [],
+      "result": "On MPS 50 vs 200 trials differ by -1762 ulp (seed 7) and -8 ulp (seed 123); both arms reproduce bit-for-bit across processes."
+    },
+    {
+      "artifact_id": "basis-c-seed42-fit-record",
+      "path": "local-evidence://budget2-runs/metal-budget-C-seed42/fit-budget.json",
+      "sha256": "3d271f57e78e58c1736fdd21d7bdfdcf4879d74b67dc9aeb5dd94f0ec661a2ba",
+      "size_bytes": 274440,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "tpe100/tpe200/nmWarm reproduce the recorded production optimum 0.1376979947090149 bit-for-bit; tpe50 sits 1 ulp above it at 0.1376980096101761."
+    },
+    {
+      "artifact_id": "basis-a-seed42-replay",
+      "path": "local-evidence://budget2-runs/metal-budget-A-seed42/fit-budget.json",
+      "sha256": "b19a5e9d582bc39aab970c4c60f31cb0aff863fe498c0187ef1dd8aea45fae5f",
+      "size_bytes": 402749,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Replay of the original recorded run: all 10 arms and all 1548 evaluations bit-identical, so the harness is not the source of the disagreement."
+    },
+    {
+      "artifact_id": "origin-main-mps-blocker-probe",
+      "path": "local-evidence://budget2-runs/blocker-probe-qgpu-pristine.log",
+      "sha256": "ad5e6df8b42f51ec69099822ec194cd424923dc7df484d0a517463e5f7b38fc0",
+      "size_bytes": 1480,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Pristine origin/main (597b566) raises ValueError 'Exact 512 pair pack of 512 BF planes exceeds the 320-plane storage class' on the first objective call of a 512^2 MPS fit."
+    },
+    {
+      "artifact_id": "mps-fit-arm-records",
+      "path": "local-evidence://budget2-runs/mps-fit-arm.jsonl",
+      "sha256": "e4d1766e799739690c049a3395c62d8e635c2285587353054225ee712967b527",
+      "size_bytes": 97508,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Ten MPS arm records including the two determinism repeats per seed; all repeats reproduced their losses bit-for-bit."
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-16T19:44:00Z",
+    "finished": "2026-09-17T04:05:00Z"
+  }
+}

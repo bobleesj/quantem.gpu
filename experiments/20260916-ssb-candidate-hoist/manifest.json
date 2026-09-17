@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260916-ssb-candidate-hoist",
+  "status": "refuted",
+  "question": "Is any buffer of the per-evaluation Metal SSB phase-loss pipeline byte-identical across different aberration triples, so that the work producing it could be hoisted out of the fit's 228 evaluations for a bit-exact speedup?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260916-ssb-candidate-hoist/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "597b5664f22347771f6c385390602f9750fd9d75",
+    "dirty": true,
+    "diff_sha256": "88a3c153b0738b77c82826a731e80340bb2cd2937f48cd3316f7311c60d5ee77",
+    "entrypoints": [
+      "experiments/20260916-ssb-candidate-hoist/probe_hoist.swift (driver: real loss path, two candidates, one engine)",
+      "experiments/20260916-ssb-candidate-hoist/hoist-table.py (renders the candidate-independence table from a report)"
+    ],
+    "profiling_patch": "experiments/20260916-ssb-candidate-hoist/probe-digest.patch",
+    "note": "probe-digest.patch adds an env-gated (SSB_PROBE_DIGEST=1) device digest kernel plus probeDumpDigests()/probeDigestKnownAnswer() accessors and records one digest per buffer write in the fused 512 loss path. It is scratch instrumentation and is NOT applied to the committed tree; the measured revision is 597b566 plus that patch."
+  },
+  "inputs": [
+    {
+      "dataset_id": "arina-logic-pmos-master",
+      "path": "private-fixture://ARINA/arina-fixture-a_master.h5",
+      "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b"
+    }
+  ],
+  "parameters": {
+    "brightfield_terms": 8937,
+    "scan_size": 512,
+    "detector_size": 192,
+    "half_plane_bytes_per_bf": 1052672,
+    "g_cache_bytes": 9407729664,
+    "cache_chunks": 9,
+    "phase_batch": 8,
+    "loss_batches_per_evaluation": 1118,
+    "candidate_a": {
+      "c10_nm": 6.603671591975075,
+      "c12_nm": 0.09848762314231685,
+      "phi12_rad": 1.1341200767509283
+    },
+    "candidate_b": {
+      "c10_nm": 5.0,
+      "c12_nm": 0.5,
+      "phi12_rad": 0.0
+    },
+    "rotation_degrees": 158.88268568029937,
+    "digest": "per-thread FNV-1a over 16 consecutive uint32 followed by a commutative 32-bit low/high pair reduction; validated against a host implementation of the same fold (known answer and mutation) and against an all-zero region",
+    "traffic_model_bytes_per_evaluation": {
+      "candidate_independent_g_read": 9407729664,
+      "candidate_dependent_intermediate_write": 9407729664,
+      "candidate_dependent_intermediate_read": 9407729664,
+      "candidate_dependent_tables_and_moments": 301120512,
+      "total": 28524539648
+    },
+    "artifact_results": {
+      "hoist-c1": "Run 1: 21 buffer groups digested over 2 candidates. G cache (9 chunks), bfGeometry, twiddle, qRow, qCol identical across candidates; chiTrig, crossTrig, column-pass output (1118/1118 batches), Nyquist correction (1068/1118) and both moment accumulators differ. Losses 0.1376979947090149 (pinned optimum) and 0.13769979774951935. prepare 2.164 s, 11.37 GB allocated.",
+      "hoist-c2": "Run 2 repeats run 1 in a fresh process: all 21 digest groups and both losses bit-identical, which is the reproducibility control for the table. prepare 2.256 s.",
+      "table": "Rendered table plus the per-evaluation traffic split: 9.408 GB (33.0%) candidate-independent, 19.117 GB (67.0%) candidate-dependent, hoistable saving 0 B per evaluation.",
+      "log-c1": "gpurun wrapper log for run 1: waited 78.2 s for the GPU lock, exit 0.",
+      "log-c2": "gpurun wrapper log for run 2: waited 59.6 s for the GPU lock, exit 0."
+    }
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "load_average_before": "1.71 1.85 2.22 (run 1), 1.51 2.27 2.71 (run 2)",
+    "serialization": "~/perf-lab/ssb-audit/gpurun exclusive GPU lock",
+    "commands": [
+      "SSB_PROBE_DIGEST=1 gpurun .build/arm64-apple-macosx/release/ssb-hoist-probe <master.h5> hoist-runs/hoist-c1 6.603671591975075 0.09848762314231685 1.1341200767509283 pinned-vs-5.0",
+      "SSB_PROBE_DIGEST=1 gpurun .build/arm64-apple-macosx/release/ssb-hoist-probe <master.h5> hoist-runs/hoist-c2 6.603671591975075 0.09848762314231685 1.1341200767509283 pinned-vs-5.0",
+      "python3 experiments/20260916-ssb-candidate-hoist/hoist-table.py hoist-runs/hoist-c{1,2}/hoist-report.json"
+    ],
+    "peak_metal_allocated_bytes": 11367612416,
+    "timing_caveat": "digest dispatches add about 9.5 GB of device reads per evaluation, so the probe's wall seconds are not a timing result; use 267 ms/evaluation from the objective-profile experiment for timing."
+  },
+  "outputs": [
+    {
+      "artifact": "local-evidence://ssb-audit/hoist-runs/hoist-c1/hoist-report.json",
+      "sha256": "283f3f5911d1e46228f4c19c18ae54e6d061558a363292bfeac291cf979818e3",
+      "result": "Run 1 digests: G/geometry/twiddle identical, chi/cross/intermediate/Nyquist/moments differ. Losses 0.1376979947090149 and 0.13769979774951935."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/hoist-runs/hoist-c2/hoist-report.json",
+      "sha256": "6693e762926db2b0a4df009f40f95494e0a2666d94df156bd6f66dd20d76edf3",
+      "result": "Run 2 in a fresh process: every digest group and both losses bit-identical to run 1."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/hoist-runs/hoist-table.txt",
+      "sha256": "df6a29d8c9d6d1488a8a78fa56e738f01af5464dc075fbdcfa38448123a109ad",
+      "result": "Buffer-by-buffer table and traffic split; 50 of 1118 Nyquist batches are an all-zero correction in both runs (host-side digest of a zero region matches exactly)."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/hoist-runs/hoist-c1.log",
+      "sha256": "f6afe802cfc9f170602c7d8192bbcbc4e6222a2bb40d67b1d6eec818947206ca",
+      "result": "Run 1 wrapper log: waited 78.2 s for the GPU lock, source identity 57cb9490..., exit 0."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/hoist-runs/hoist-c2.log",
+      "sha256": "45637ccae1aaa648ef9cfeeac5b968131dd293bfe36e637a1c3670df8297d142",
+      "result": "Run 2 wrapper log: waited 59.6 s for the GPU lock, source identity 57cb9490..., exit 0."
+    }
+  ],
+  "timestamps": {
+    "started": "2026-09-16T19:41:00-07:00",
+    "finished": "2026-09-16T19:55:07-07:00"
+  }
+}

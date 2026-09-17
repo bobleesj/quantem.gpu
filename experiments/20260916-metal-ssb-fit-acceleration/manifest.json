@@ -1,0 +1,334 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260916-metal-ssb-fit-acceleration",
+ "status": "completed",
+ "question": "Can the wall time of the full 8937-bright-field fit - 200 TPE global trials plus Nelder-Mead refinement - be reduced on Apple M5 by (A) keeping the 9.41 GB blocked phase-loss intermediate on chip, or (B) evaluating several independent candidates per cached bright-field read, while preserving the frozen objective exactly?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260916-metal-ssb-fit-acceleration/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "597b5664f22347771f6c385390602f9750fd9d75",
+  "dirty": false,
+  "entrypoints": [
+   "experiments/20260916-metal-ssb-objective-profile/probe5.swift (fit A/B with timestamped stage split)",
+   "experiments/20260916-metal-ssb-objective-profile/probe4.swift (multi-candidate parity/timing record, retained but not built)",
+   "experiments/20260916-metal-ssb-objective-profile/probe3.swift (loss-only pass ablation)",
+   "experiments/20260916-metal-ssb-objective-profile/l2bench.swift (device limits and access-pattern ceilings)"
+  ],
+  "temporary_instrumentation": "All source changes used for these arms were reverted; the landed source is exactly 597b566. The instrumentation was: (1) the round-1 env gates SSB_PROFILE_SKIP_{COLUMN,ROWS,NYQUIST} and SSB_PHASE_BATCH, retained as profile-gates.patch; (2) three profiling-only kernels in Resources/ssb.metal with deliberately broken parity - ssb_correct_half_column_ifft512_hermitian_linear (coalesced-store ceiling), ssb_correct_half_column_ifft512_hermitian_nofft and ssb_ifft512_rows_hermitian_phase_moments_nofft (transform removed, global traffic unchanged); (3) MetalSSBEngine.phaseVarianceBatch plus the PhaseLossTargets/batchTargets plumbing and the SSB_MULTI_BATCH_PLANES per-candidate chunk knob; (4) MetalSSBOptimizer batchTrialLimit (SSB_BATCH_TRIALS) and the SSB_OPTIMIZE_BATCH wiring of evaluateBatch in MetalSSBEngine.optimize. The single-candidate path is byte-for-byte unaffected by all of (1)-(4), which is why the control arm reproduces the frozen loss.",
+  "note": "The frozen reference is fit loss 0.1376979947090149 at 597b566. Every arm here re-derives it from the single-candidate path; only the batched arms differ."
+ },
+ "inputs": [
+  {
+   "dataset_id": "arina-logic-pmos-master",
+   "path": "private-fixture://ARINA/arina-fixture-a_master.h5",
+   "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "bf_selected": 8937,
+  "bf_active": 8937,
+  "bf_cached": 8937,
+  "bf_streamed": 0,
+  "precision": "complex64/float32; exact packed uint32 counts",
+  "fit_trials": 200,
+  "fit_seed": 42,
+  "fit_start": {
+   "c10_nm": 0.0,
+   "c12_nm": 50.0,
+   "phi12_rad": 0.0
+  },
+  "refinement_evaluations": 27,
+  "controls": {
+   "c10_nm": [
+    0,
+    55,
+    155.96977
+   ],
+   "c12_nm": 42.96961,
+   "phi12_rad": 0.293384,
+   "rotation_deg": 158.88268568029937
+  },
+  "tolerances": {
+   "object_relative_l2": 1e-05,
+   "loss_absolute": 1e-06
+  },
+  "scope": "Fit wall time at the native 8937-BF full-disk objective on one machine. Not a frame-rate or application claim."
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory",
+  "contention_note": "Every run was taken under the shared GPU lock. Host load is stated with every timing set because it moves the objective by ~10%: the same fit measures 61.97 s at load 1.86 and 67.99 s at load 3.28, and the loss p50 moves 279 ms (load 0.6-2.8) to 309 ms (load 2.3-2.6). The A/B arms were interleaved in balanced order (the arm that runs first alternates with the round and group index) so neither arm owns a fixed position. The probes record load_average from /proc/loadavg, which does not exist on macOS and reads back as n/a; the load averages quoted here were taken from uptime in the driving shell immediately before and after each run."
+ },
+ "results": {
+  "headline": {
+   "fit_wall_seconds_before": 61.97,
+   "fit_wall_seconds_after": 61.97,
+   "change": "none landed; both levers measured as regressions and were reverted",
+   "host_load_average": 1.86,
+   "breakdown_seconds": {
+    "global_trials_201_evaluations": 54.18,
+    "nelder_mead_27_evaluations": 7.19
+   },
+   "per_evaluation_ms": 295,
+   "fitted_loss": 0.1376979947090149,
+   "frozen_reference_loss": 0.1376979947090149,
+   "frozen_reference_reproduced": true,
+   "representative_optimum": {
+    "c10_nm": 6.603671591975075,
+    "c12_nm": 0.09848762314231685,
+    "phi12_rad": 1.1341200767509283
+   },
+   "load_average_note": "This is the low-load headline. Host load average is stated with every timing set: fit 61.97 s at load 1.86, 67.99 s at load 3.28. Loss p50 279.0 ms at load 0.6-2.8, 309.0 ms at load 2.3-2.6."
+  },
+  "lever_a_intermediate": {
+   "verdict": "not achievable on this hardware; the blocked intermediate is a full-plane transpose buffer that cannot fit on chip at any granularity",
+   "intermediate_bytes_per_brightfield_term": 1052672,
+   "intermediate_bytes_per_evaluation": 9407729664,
+   "share_of_evaluation_device_memory_traffic": 0.667,
+   "measured_traffic_bytes_per_evaluation": {
+    "g_cache_read": 9407729664,
+    "intermediate_write": 9407729664,
+    "intermediate_read": 9407729664,
+    "phase_sum_read_modify_write_l2_resident": 4494000000,
+    "device_memory_total_after_removing_l2_resident_phase_sums": 28223188992
+   },
+   "obstruction": [
+    "maxThreadgroupMemoryLength is 32768 bytes on this device. One bright-field plane of the intermediate is 512 x 257 complex64 = 1052672 bytes, 32x the whole threadgroup memory budget.",
+    "The two passes are transposed relative to each other: every output row of the row pass needs all 257 columns of the intermediate, and the column pass produces one column at a time. A threadgroup can hold one input column (4 KB) or one 4-row output block (8.2 KB), but the producer data for a 4-row block is spread over all 257 column tasks.",
+    "No per-dispatch batch makes the round trip cache-resident. Round 1 measured loss p50 272.6/273.3/273.2/283.4 ms at 4/8/16/32 planes per dispatch, i.e. a 4.2 MB to 33.6 MB live intermediate, with the smallest footprint 1.1% slower than the default. If residency were reachable at any of those sizes, the 4.2 MB arm would have won.",
+    "The access pattern is not the cause either: the coalesced-store variant of the column pass measured 155.3 ms against 157.7 ms for the blocked 4-row store, so rewriting the output layout is neutral, and the column pass already runs at 138.8 GB/s of combined read+write against the ~139 GB/s mixed-stream ceiling measured on this device."
+   ],
+   "would_have_been_worth_ms_per_evaluation": 150
+  },
+  "lever_b_batching": {
+   "verdict": "rejected; measured slower than the single-candidate path at every footprint, and it changes the search trajectory",
+   "fit_seconds": {
+    "unbatched": 67.99,
+    "k2": 74.86,
+    "k4": 74.62,
+    "host_load_average": 3.28
+   },
+   "speedup": {
+    "k2": 0.908,
+    "k4": 0.911
+   },
+   "trial_stage_seconds": {
+    "unbatched": 59.29,
+    "k2": 66.21,
+    "k4": 65.92
+   },
+   "refinement_stage_seconds": {
+    "unbatched": 8.01,
+    "k2": 8.04,
+    "k4": 8.08
+   },
+   "predicted_but_refuted": "Batching 2 should have amortized the 9.41 GB bright-field read to 0.86x and batching 4 to 0.785x if the shared chunk were served from cache. Measured 0.908x and 0.911x, i.e. 10% slower rather than 14-21% faster.",
+   "objective_exactness": {
+    "method": "all 200 K=4 trial points re-evaluated through the single-candidate path",
+    "max_absolute_deviation": 0.0,
+    "max_relative_deviation": 0.0,
+    "bit_mismatches": 0
+   },
+   "trajectory": {
+    "k2_shared_trial_points": "11 of 200, first divergence at trial index 11",
+    "k4_shared_trial_points": "10 of 200, first divergence at trial index 10",
+    "cause": "SSBOptimizer.run draws each candidate from the trial history, and the history is appended only after the whole batch returns, so a batch of 2 or 4 draws every candidate from the same history snapshot. This is a behaviour change, not just a speed change.",
+    "effect": "fitted loss 0.13769800961017609 versus 0.13769799470901489 (+1.49e-08, relative 1.1e-07), and the reported optimum moves from c12 0.0985 nm to 0.0 nm and phi12 1.134 rad to -1.465 rad. The scientific conclusion is unchanged but the published numbers are not."
+   },
+   "footprint_sweep_speedup_median": {
+    "8_planes_per_candidate": 0.908,
+    "4_planes": 0.773,
+    "2_planes": 0.541
+   },
+   "peak_allocated_bytes": {
+    "single_candidate_engine": 11363418112,
+    "k2": 11518377984,
+    "k4": 11673337856,
+    "per_candidate_overhead_bytes": 77471744,
+    "note": "Measured device.currentAllocatedSize after the fit. Each extra candidate adds one chi table (2097152 B), one cross table (73211904 B), one Nyquist table (65536 B) and two phase-sum planes (1048576 B each) = 77471744 B, so K=4 adds 309.9 MB to an 11.36 GB engine, 2.7%. The register/occupancy cost is not directly observable without Metal counters; what is observable is that the batched path is slower at every footprint."
+   }
+  },
+  "ranked_bottlenecks_ms_per_evaluation": [
+   "155 ms - blocked intermediate write + read, 18.82 GB of the 28.2 GB device traffic. Not removable: see lever_a_intermediate.",
+   "78 ms - bright-field G read, 9.41 GB at the measured 121 GB/s streaming ceiling. Mandatory.",
+   "25.6 ms - both 512-point inverse transforms, already at peak float32 throughput. Measured by removing them at identical traffic.",
+   "~20 ms - row-pass efficiency gap: 120.1 ms for 13.9 GB (115.7 GB/s) against 138.8 GB/s for the column pass. The row pass enumerates only 128 threadgroups of 256 threads, so wave packing is a plausible cause, but splitting its bright-field range changes the float32 accumulation order of the phase sums and is therefore not trajectory-neutral.",
+   "9.4 ms - Nyquist boundary correction.",
+   "1.5-1.7 ms - wall-minus-GPU time at low host load. This is CPU encode contention, not synchronization: it rises to 23-24 ms only when three agents share the host."
+  ],
+  "load_sensitivity": {
+   "loss_p50_ms": {
+    "load_0.6_to_2.8": 279.0,
+    "load_2.3_to_2.6": 309.0
+   },
+   "fit_seconds": {
+    "load_1.86": 61.97,
+    "load_3.28": 67.99
+   }
+  },
+  "accepted_changes": [],
+  "rejected_arms": [
+   {
+    "arm": "multi-candidate batched objective (lever B)",
+    "change": "Wire MetalSSBEngine.phaseVarianceBatch into SSBOptimizer through evaluateBatch, with K candidates evaluated per cached bright-field sweep.",
+    "aba": "Balanced-order interleaved A/B at 8 planes per candidate: batched/sequential 1.120, 0.905, 0.898, 0.952, 0.910, 0.905; full fit 74.62-74.86 s against 67.99 s.",
+    "reason": "Slower at every footprint, and result-changing. Reverted."
+   },
+   {
+    "arm": "smaller per-candidate chunk to force cache residency",
+    "change": "SSB_MULTI_BATCH_PLANES 8 -> 4 -> 2.",
+    "measured": {
+     "8": 0.908,
+     "4": 0.773,
+     "2": 0.541
+    },
+    "reason": "Monotonically worse, which refutes the residency explanation of the K=4 null result and shows the shared bright-field chunk is never served from cache. The 2-plane arm additionally breaks the bit-identical contract (maxabs 1.490e-08) because the per-dispatch plane count sets the register accumulation depth of the phase sums."
+   },
+   {
+    "arm": "unified cache layout / single-command-buffer transpose (round 1, re-confirmed here)",
+    "change": "Make the redraw read the column-major layout so the 334-447 ms per-switch transpose disappears.",
+    "measured": "Redraw-pattern read bandwidth over the same 9.43 GB: 102.0 GB/s row-major against 13.6 GB/s column-major.",
+    "reason": "Rejected. Reading the loss's blocked layout from the redraw costs 0.693 s instead of 0.092 s, which is 600 ms of new redraw time against at most 335-447 ms of saved transpose. Also out of scope: the optimizer never alternates layouts, so a real fit pays the transpose at most once per workflow, not once per evaluation."
+   },
+   {
+    "arm": "coalesced-store column pass",
+    "change": "Replace the blocked 4-row store with a linear store (ssb_correct_half_column_ifft512_hermitian_linear).",
+    "measured": "Column-only 155.3 ms against 157.7 ms for the blocked store, i.e. neutral.",
+    "reason": "The store pattern is not the limiter; the intermediate round trip is real device traffic at the machine's mixed-stream ceiling. Reverted."
+   },
+   {
+    "arm": "FFT arithmetic reduction",
+    "change": "Remove the 512-point inverse transforms from both loss kernels at identical global traffic (timing only, parity intentionally broken).",
+    "measured": "gpu p50 224.9 and 222.4 ms against 250.5, 256.1 and 249.4 ms.",
+    "reason": "The entire transform work of both passes is worth 25.6 ms of a 250 ms evaluation and is already at peak float32 throughput, so there is no arithmetic headroom. Recorded as a bound, not a candidate."
+   }
+  ],
+  "what_would_be_needed": "The evaluation is 295 ms against a hardware floor of roughly 235 ms made of 9.41 GB of mandatory bright-field reads plus 18.82 GB of intermediate traffic at the measured 121-139 GB/s. The only large win left would be an algorithm that does not need a 512x512 complex64 transpose buffer per bright-field term - for example folding the aberration-dependent correction into a form whose 2D transform is candidate-independent. The correction is not factorable that way: ssb_corrected_value_precomputed_chi multiplies each cached value by a unit complex number built from a per-candidate per-pixel chi table and a per-candidate per-bright-field per-coordinate cross table, so the transform input genuinely depends on the candidate at every pixel.",
+  "accumulate_first_variant": {
+   "question": "IFFT2 is linear, so could the per-bright-field corrected planes be summed in the q domain first and a single transform performed per candidate, removing the 18.82 GB intermediate round trip?",
+   "verdict": "not available for this objective; the constraint is structural, not numerical",
+   "constraint": "The per-pixel quantity is the variance of the phase ACROSS bright-field terms, so a phase has to exist per bright-field term. ssb_ifft512_rows_hermitian_phase_moments accumulates `float sum[8]`/`sumsq[8]` over local_bf through `phase = atan2(dc_spatial.y + h + delta.y, dc_spatial.x + delta.x)` and only then writes phase_sum[pixel] += sum[lane]; phaseVariance assembles sumOfSquares/(logical*pixels) - squareOfMeans/pixels, which is mean over pixels of (mean over bright field of phase^2 minus (mean over bright field of phase)^2). The nonlinearity sits between the transform and the sum, and the sum is over phases, not over complex amplitudes, so IFFT2 linearity has no sum to commute with.",
+   "second_barrier": "The Nyquist boundary correction is added inside the atan2 argument and is indexed by the bright-field term: boundary_base = local_bf * 2n, delta = +/-nyquist_correction[boundary_base + col] +/- nyquist_correction[boundary_base + n + row]. It is not the transform of any accumulated spectrum, so even a complex-plane accumulator would still need a per-bright-field term inside the atan2.",
+   "already_implemented_elsewhere": "The accumulate-first structure does exist in this engine, and is used exactly where the output IS linear: reconstruct() calls setCacheColumnMajor(false), clears `accumulator`, and runs ssb_gamma_accumulate_half(..., device float2 *accumulator [[buffer(15)]], ...) to sum the corrected bright-field planes into one 512x512 complex64 q-domain accumulator before a single transform. It reads the same 9.41 GB of G in 71-84 ms, i.e. 120-132 GB/s, which is the measured G-read floor. That is the structure the loss cannot use.",
+   "price_if_the_user_redefines_the_objective": "Device traffic would fall from 28.2 GB to about 9.4 GB per evaluation, removing roughly 155 ms of the 295 ms evaluation and taking the fit from 61.97 s to roughly 30 s. It is not a float32-epsilon change: the current per-pixel quantity is a sum of 8937 phases, whereas the variant's per-pixel quantity is a single angle in [-pi, pi], so the loss would move by O(1), not O(1e-7). Landing it would be a different objective that needs its own scientific validation and a recaptured frozen gate, so it is recorded as a decision for the user and was not built."
+  },
+  "arm_inventory_audit": {
+   "purpose": "Confirm no measurement arm silently failed and was dropped from the tables.",
+   "referenced_artifacts_present": 12,
+   "missing": 0,
+   "aborted_launches": "Two launch attempts produced no data and no arm: an initial background launch (2 s) and one using setsid, which does not exist on macOS ('command not found: setsid'). Both predate the successful run and only mean a retry, not a dropped arm.",
+   "deliberately_killed": "A queued probe4 job (k4b) was killed while waiting behind three other agents and replaced by an equivalent run (k4c) with the same inputs; k4c completed all three footprint arms.",
+   "superseded": "The first K=4 probe (metal-runs/lowload/k4, 3 rounds, unbalanced arm order, host load 2.95) gives speedups 1.127, 0.752, 1.015, 0.906, 0.974, 0.996 with 0 bit mismatches, median 0.94x. It agrees with the balanced ppc=8 arm (0.908x) and is superseded by it because the arm order was not counterbalanced."
+  },
+  "intermediate_pass_count": {
+   "proposed_target": "Reduce the blocked intermediate round trip from 4 passes to 2 with a four-step / two-stage 512x512 decomposition, for a predicted ~38% cut in fit wall time (61.97 s -> high 30s).",
+   "verdict": "not achievable, and the target does not exist: the loss intermediate is already written once and read once, i.e. exactly 2 passes. No GPU time was spent because the premise fails on inspection and the measurement that distinguishes a 2-pass from a 4-pass model already exists.",
+   "where_the_2_10_MB_figure_comes_from": "Swift `plane = size * size` = 262144 elements = 2097152 B for complex64. That is the full-plane allocation unit, and it sizes accumulator, finalTemporary, fftA (32 planes = 67.1 MB) and the two phase-sum buffers. It is NOT the loss intermediate's per-bright-field traffic. The intermediate is halfPlane = size * (size / 2 + 1) = 512 * 257 = 131584 elements = 1052672 B, which is the stride the Swift side passes as `halfBytes` for the bright-field cache and which the kernel uses as `constexpr uint plane = n * half_cols`.",
+   "code_level_count": "The column pass stores exactly 64 threads * 8 slots * 257 columns = 131584 float2 per bright-field term, each element once, and the row pass loads exactly 1028 float2 * 128 row blocks = 131584 float2 per term, each element once. There is no separate transpose kernel in the loss path: the column pass writes directly into the transposed blocked-4-row layout and the row pass reads that layout directly, so the transpose is fused into the two passes.",
+   "measured_traffic_and_closure": {
+    "g_cache_read_bytes": 9407729664,
+    "intermediate_write_bytes": 9407729664,
+    "intermediate_read_bytes": 9407729664,
+    "device_total_bytes": 28223188992,
+    "phase_sum_rmw_bytes_l2_resident": 4696000000,
+    "measured_full_loss_gpu_p50_ms": [
+     267.1,
+     250.5
+    ],
+    "two_pass_model_prediction_ms": 266,
+    "four_pass_model_floor_ms": [
+     339,
+     406
+    ],
+    "conclusion": "The 2-pass model predicts 28.23 GB at the observed 105.7 GB/s aggregate, i.e. 266 ms against 267.1 ms measured. A 4-pass round trip would need at least 9.41 + 4*9.41 = 47.0 GB, i.e. 339 ms at the column pass's demonstrated 138.8 GB/s and 406 ms at the row pass's 115.7 GB/s. The measurement sits 27-36% below the 4-pass floor, far outside the +-10% host-load sensitivity, so it excludes the 4-pass model.",
+    "per_pass_checks": {
+     "column_pass": "9.41 GB read + 9.41 GB write in 135.6 ms = 138.8 GB/s",
+     "row_pass": "9.41 GB read + 4.69 GB L2-resident read-modify-write in 120.1 ms = 115.7 GB/s",
+     "nyquist": "9.4 ms"
+    }
+   },
+   "why_no_factorization_beats_two_passes": "The axis separation IS the transpose: stage 1 transforms the 512-element row axis from a contiguous 4 KB column, and stage 2 needs all 257 columns for every output row. The intermediate's size is invariant under the transform, so a four-step, six-step or tiled factorization all still materialise a full 1052672 B plane between their stages, and tiling it into the 32768 B threadgroup budget adds passes rather than removing them. The only way to reach zero passes is to hold the plane on chip, which the threadgroup budget refutes.",
+   "residual_headroom": "The row pass runs at 115.7 GB/s against the column pass's 138.8 GB/s, worth about 20 ms per evaluation, roughly 4 s of a 62 s fit (~7%). It is not trajectory-neutral to attack: splitting the row pass's bright-field range across more threadgroups changes the float32 accumulation order of the phase sums, which this experiment measured to matter at the 1.49e-08 level."
+  }
+ },
+ "timestamps": {
+  "created": "2026-09-16",
+  "started": "2026-09-16",
+  "finished": "2026-09-16"
+ },
+ "outputs": [
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/fit/pristine/report.json",
+   "sha256": "3500ad12afda092423fe9c34196fd7be43297f6efb52fd5c096ca09e24c23ee6",
+   "result": "Pristine 597b566 (exact frozen source) fit at 8937 BF: 61.97 s = 54.18 s of 201 global-trial evaluations plus 7.19 s of 27 Nelder-Mead refinements at host load 1.86; fitted loss 0.13769799470901489, bit-identical to the frozen reference 0.1376979947090149. This is the headline before/after number: unchanged."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/fit/base/report.json",
+   "sha256": "3f2426baab8e5a28f7a6eca1e0de71d0f8b0f0c3b3c0a75e130b64273878092d",
+   "result": "Unbatched control arm of the A/B (identical source path, temporary evaluateBatch wiring compiled in but not enabled): 67.99 s = 59.29 s trials + 8.01 s refinement at host load 3.28, fitted loss 0.13769799470901489. The 6.0 s spread against the 61.97 s quiet run is host load, not a code difference."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/fit/k2/report.json",
+   "sha256": "36c85d32f88c91e5a8abbbcbca8ee8b620cbe716c9d8572b9b7104300fdffd70",
+   "result": "Batched arm K=2 via evaluateBatch: 74.86 s = 66.21 s trials + 8.04 s refinement at host load 3.28, i.e. 0.908x (10% slower). Fitted loss 0.13769800961017609, +1.49e-08 versus the control. Only 11 of 200 trial points are shared with the control; the TPE trajectory diverges at trial index 11."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/fit/k4/report.json",
+   "sha256": "a75a2e2c7aca03d794d9d6e029345d7ec3bae3e7bacc75dd9209a04acee36ab8",
+   "result": "Batched arm K=4 via evaluateBatch: 74.62 s = 65.92 s trials + 8.08 s refinement at host load 3.28, i.e. 0.911x (9% slower). Fitted loss 0.13769800961017609, +1.49e-08 versus the control; only 10 of 200 trial points are shared, divergence at trial index 10. All 200 trial points re-evaluated through the single-candidate path give max absolute deviation 0.000e+00, max relative deviation 0.000e+00 and 0 bit mismatches, so the objective itself is exact and the loss difference is purely a search-trajectory effect."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/k4c/ppc8/report.json",
+   "sha256": "3fb370ce8341124384af5d8fdc43c7303ecb618f3b2c19930cb94ce16cf39a9d",
+   "result": "Multi-candidate objective at the default 8-plane per-candidate chunk, 3 balanced-order rounds of 2 groups of 4 candidates: batched/sequential 1.120, 0.905, 0.898, 0.952, 0.910, 0.905 (median 0.908x). Per-candidate losses bit-identical (maxabs 0.000e+00) in all six comparisons. Host load 0.70."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/k4c/ppc4/report.json",
+   "sha256": "1da19ca803fc46a7ea1383388c4a7bf998091d8b944a64ebfb44da083a15d246",
+   "result": "Same arm with a 4-plane per-candidate chunk so the shared bright-field read is at most 4.2 MB: 0.961, 0.775, 0.772, 0.797, 0.771, 0.768 (median 0.773x). Halving the footprint makes batching worse, refuting the L2-residency explanation of the K=4 null result."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/k4c/ppc2/report.json",
+   "sha256": "4600f147d07a5dc00b7c2a587b2ef7c1ba45f7db1538013b8ffe341fe55e6f76",
+   "result": "Same arm with a 2-plane per-candidate chunk: 0.666, 0.554, 0.527, 0.528, 0.561, 0.528 (median 0.541x). Dispatch overhead dominates; also breaks the bit-identical contract (maxabs 1.490e-08 on the group-0 comparisons), because the per-dispatch plane count sets the register accumulation depth of the phase sums."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/l2c/l2.json",
+   "sha256": "066abdba07b483b1ccdf544990e286dda48483cff3dc65f1249f42ce9e4e1ef9",
+   "result": "Device limits measured on the M5: maxThreadgroupMemoryLength 32768 bytes, recommendedMaxWorkingSetSize 19.07 GB. L2-resident read peaks at 2957 GB/s at a 24 MB working set and has collapsed to 159 GB/s by 256 MB. The blocked 4-row store pattern (32 bytes per 8224-byte stride, the column pass's output layout) measures 73 GB/s at an 8.4 MB working set - the worst pattern in the suite. Redraw-pattern reads measure 102 GB/s row-major versus 13.6 GB/s column-major over the same 9.43 GB."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/ab3-full1/report.json",
+   "sha256": "a296f68a91caec32702643217a3862a1f615d9f8f8fa55c17ff0ca139e1fbaf7",
+   "result": "Loss-only pass ablation with the round-1 SSB_PROFILE_SKIP_* gates at host load 2.3: full loss gpu p50 267.1 ms; column-only 135.6 ms, row-only 120.1 ms, nyquist-only 9.4 ms, additive 265.1 ms. Every pass is separately throughput-limited and they do not overlap."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/nf-both-nofft/report.json",
+   "sha256": "ceb397e27d4bdcad7aec54db8f2adb7fa5ab1343a5a7dc300e5cabfb0a120b94",
+   "result": "Timing-only arm with both 512-point inverse transforms removed from the two loss kernels at identical global traffic (parity intentionally broken): gpu p50 224.9 and 222.4 ms against 250.5, 256.1 and 249.4 ms for the full kernels. The complete FFT arithmetic of both passes is worth only ~11%, so the objective is not FFT-bound."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/nf-col-nofft/report.json",
+   "sha256": "75a61f8d7656b948a390eac940eed85360b70181d6fed4caa1f382300f3ac9b0",
+   "result": "Column-pass-only variant of the same arm: 241.1 and 246.9 ms, i.e. the 512-point transform inside the column pass costs ~9 ms of the 250 ms evaluation."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/lowload/nf-row-nofft/report.json",
+   "sha256": "4e486a1c14bcfd28639adf04ed2b04aaadea2e408533be51708e3621cdcc66bc",
+   "result": "Row-pass-only variant: gpu p50 230.8 ms, so the row pass's transform costs ~20 ms. The two transforms are additive and together account for the 25.6 ms measured by the both-nofft arm."
+  }
+ ]
+}

@@ -210,6 +210,7 @@ def _load_h5_ans_mps(
     path, *, scan_shape, dataset_path, verbose, hot_pixel_correction="median"
 ):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal."""
+    from .backends.mps._spatial import build_index
     from .backends.mps._streamed import MPSStreamedCounts
     from .backends.mps.dense import load_prepared_frames, _release_metal_buffer
     from .load import (
@@ -283,6 +284,18 @@ def _load_h5_ans_mps(
                 try:
                     corrector.apply(raw)
                     source.append(raw)
+                    # Pack the exact spatial index from the same staging window so
+                    # detector products and .qem saving stay available after the
+                    # counts are encoded; the buffer handle is consumed in-place.
+                    index_started = time.perf_counter()
+                    source.spatial_chunks.append(
+                        build_index(source, raw._mtl, int(raw.shape[0]))
+                    )
+                    source.load_metrics["index_seconds"] = (
+                        source.load_metrics.get("index_seconds", 0.0)
+                        + time.perf_counter()
+                        - index_started
+                    )
                 finally:
                     buffer, raw._mtl = raw._mtl, None
                     _release_metal_buffer(buffer)
@@ -310,7 +323,11 @@ def _load_h5_ans_mps(
         source_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
         working_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
         physical_resident_bytes=source.nbytes,
-        index_bytes=0,
+        index_bytes=sum(
+            int(buffer.length())
+            for chunk in source.spatial_chunks
+            for buffer in chunk
+        ),
         pixel_mask=info.pixel_mask,
         lossless_exact=not corrector.record["applied"],
         file_counts_exact=not corrector.record["applied"],

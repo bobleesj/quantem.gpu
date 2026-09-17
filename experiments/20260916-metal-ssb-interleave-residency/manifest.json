@@ -1,0 +1,303 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260916-metal-ssb-interleave-residency",
+ "status": "refuted",
+ "question": "Can the loss path's 512x257 complex intermediate round trip be removed from device memory by shrinking its working set below the cache threshold? Concretely: is the ~268 ms evaluation residency-limited (the intermediate reaching device_memory because an 8-plane tile is too large) or pattern-limited (the 32-byte-per-8224-byte-stride blocked store and its matching read)?",
+ "hypothesis": "If residency were the governing variable, phase batches of 2 or 4 BF terms (a 2.11 MB or 4.21 MB reused ring, far inside the measured cache range) would let the intermediate be written and read at cache rates, dropping the evaluation well below the 267-272 ms production baseline. The alternative is that the cost is fixed by the access pattern and independent of footprint.",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260916-metal-ssb-interleave-residency/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "c88fab5c5a40eba7c151614348659106deed09e9",
+  "revision_note": "Measured tree is this revision: branch ssb-interleave, base 1c66dee, plus the env-gated SSB_PHASE_BATCH override and SSB_PROFILE_SKIP_* pass-ablation gates. All gates default off; with SSB_PHASE_BATCH unset the binary is the production path.",
+  "dirty": false,
+  "entrypoints": [
+   "experiments/20260916-metal-ssb-objective-profile/probe3.swift (real loss path, 6 timed evaluations)",
+   "src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift (encodeFusedCachedPhaseLoss, phaseBatch)"
+  ]
+ },
+ "inputs": [
+  {
+   "dataset_id": "arina-logic-pmos-master",
+   "path": "private-fixture://ARINA/arina-fixture-a_master.h5",
+   "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b",
+   "sha256_source": "inherited from experiments/20260916-metal-ssb-floor-verification/manifest.json (same fixture)"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "bf_selected": 8937,
+  "bf_active": 8937,
+  "bf_cached": 8937,
+  "bf_streamed": 0,
+  "precision": "complex64/float32; exact packed uint32 counts",
+  "intermediate_bytes_per_bf": 1052672,
+  "intermediate_block_rows": 4,
+  "row_threadgroup_bytes": 26752,
+  "max_threadgroup_memory_bytes": 32768,
+  "traffic_bytes_per_evaluation": {
+   "g_read": 9407729664,
+   "intermediate_write": 9407729664,
+   "intermediate_read": 9407729664
+  },
+  "frozen_probe_losses": [
+   0.14511984586715698,
+   0.1386488974094391,
+   0.1380811184644699
+  ]
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory",
+  "protocol": "3 repetitions per arm, arm order rotated per repetition (rep1 8/4/16/2/32, rep2 32/16/4/8/2, rep3 4/8/2/32/16); every run serialized through the shared GPU lock with GPU_RUN_LABEL=interleave-pb<N>; 5 measured evaluations per run after dropping the first (allocation/JIT warm-up); load recorded at every arm boundary.",
+  "load_range": "0.99-2.36 at arm boundaries (4.17 at sweep start, the tail of a release build)",
+  "wall_clock": "20:33-20:51 local"
+ },
+ "results": {
+  "verdict": "REFUTED. Footprint is not the governing variable. Across an 8x change in the reused intermediate ring (2.11 MB to 16.84 MB, phase batches 2/4/8/16) the per-evaluation GPU time is flat: p50 274.9 / 271.6 / 273.4 ms for batches 4/8/16, and the smallest, most cache-friendly ring (2.11 MB) is the SLOWEST of the three at 347.0 ms. A 33.69 MB ring is 307.6 ms p50, dominated by one loaded repetition (per-rep p50 375.5 / 307.6 / 277.4). The measured cache range of this device is 4-24 MB for read-modify-write and 8-24 MB for reads, so 2-4 MB tiles are unambiguously inside it; making them resident buys nothing.",
+  "table": {
+   "2": {
+    "phase_batch": 2,
+    "intermediate_bytes_per_bf": 1052672,
+    "ring_mb": 2.11,
+    "samples": 15,
+    "gpu_ms_p50": 347.0,
+    "gpu_ms_min": 331.0,
+    "gpu_ms_p95": 355.8,
+    "gpu_ms_max": 361.9,
+    "wall_ms_p50": 442.3,
+    "per_rep_gpu_p50": {
+     "1": 334.0,
+     "2": 348.7,
+     "3": 347.7
+    },
+    "prepare_s_median": 2.05,
+    "achieved_gbs_if_28_223_GB_per_eval": 81.3
+   },
+   "4": {
+    "phase_batch": 4,
+    "intermediate_bytes_per_bf": 1052672,
+    "ring_mb": 4.21,
+    "samples": 15,
+    "gpu_ms_p50": 274.9,
+    "gpu_ms_min": 269.2,
+    "gpu_ms_p95": 293.0,
+    "gpu_ms_max": 293.9,
+    "wall_ms_p50": 322.4,
+    "per_rep_gpu_p50": {
+     "1": 274.0,
+     "2": 287.7,
+     "3": 270.9
+    },
+    "prepare_s_median": 2.09,
+    "achieved_gbs_if_28_223_GB_per_eval": 102.7
+   },
+   "8": {
+    "phase_batch": 8,
+    "intermediate_bytes_per_bf": 1052672,
+    "ring_mb": 8.42,
+    "samples": 15,
+    "gpu_ms_p50": 271.6,
+    "gpu_ms_min": 265.7,
+    "gpu_ms_p95": 279.4,
+    "gpu_ms_max": 300.3,
+    "wall_ms_p50": 296.1,
+    "per_rep_gpu_p50": {
+     "1": 276.2,
+     "2": 271.6,
+     "3": 268.2
+    },
+    "prepare_s_median": 2.1,
+    "achieved_gbs_if_28_223_GB_per_eval": 103.9
+   },
+   "16": {
+    "phase_batch": 16,
+    "intermediate_bytes_per_bf": 1052672,
+    "ring_mb": 16.84,
+    "samples": 15,
+    "gpu_ms_p50": 273.4,
+    "gpu_ms_min": 267.9,
+    "gpu_ms_p95": 285.3,
+    "gpu_ms_max": 294.2,
+    "wall_ms_p50": 289.4,
+    "per_rep_gpu_p50": {
+     "1": 268.7,
+     "2": 274.4,
+     "3": 274.6
+    },
+    "prepare_s_median": 2.06,
+    "achieved_gbs_if_28_223_GB_per_eval": 103.2
+   },
+   "32": {
+    "phase_batch": 32,
+    "intermediate_bytes_per_bf": 1052672,
+    "ring_mb": 33.69,
+    "samples": 15,
+    "gpu_ms_p50": 307.6,
+    "gpu_ms_min": 272.5,
+    "gpu_ms_p95": 377.3,
+    "gpu_ms_max": 388.8,
+    "wall_ms_p50": 314.3,
+    "per_rep_gpu_p50": {
+     "1": 375.5,
+     "2": 307.6,
+     "3": 277.4
+    },
+    "prepare_s_median": 2.32,
+    "achieved_gbs_if_28_223_GB_per_eval": 91.7
+   }
+  },
+  "bit_exactness": {
+   "verdict": "PASS",
+   "detail": "All 15 runs (5 arms x 3 repetitions) produced exactly the frozen probe loss set {0.14511984586715698, 0.1386488974094391, 0.1380811184644699}; no value moved at any phase batch. The moments accumulate per BF term in index order, so the tile size does not reorder any float32 addition."
+  },
+  "why_the_smallest_arm_is_confounded": "Batch 2 issues 4469 batches of 3-4 compute encoders (about 17.9k encoders) against 1118 batches at batch 8 (about 3.4k). Host wall time rises from 296.1 ms to 442.3 ms, i.e. the small-ring arm pays a large CPU-side encoder cost, so it cannot isolate a residency gain on its own. It is therefore reported as a regression, not as evidence about cache behaviour.",
+  "pattern_evidence": {
+   "source": "local-evidence://ssb-audit/metal-runs/lowload/l2b/l2.json and l2c/l2.json (three independent runs)",
+   "blocked_write_gbs_at_plans": {
+    "8_planes_8.42_MB": 160.0,
+    "16_planes_16.84_MB": 136.9,
+    "64_planes_67.37_MB": 97.7,
+    "512_planes_538.97_MB": 23.8
+   },
+   "coalesced_float4_write_gbs_at_8_MB": [
+    640.5,
+    645.6
+   ],
+   "read_gbs_at_8_16_24_MB": [
+    2566.3,
+    2882.2,
+    2958.9
+   ],
+   "rmw_gbs_at_4_8_24_MB": [
+    1320.1,
+    1373.2,
+    1348.2
+   ],
+   "read_gbs_at_96_256_MB": [
+    227.9,
+    159.1
+   ],
+   "reading": "The intermediate's own store layout runs at 160 GB/s at an 8.42 MB footprint while a coalesced store of the same volume at the same footprint runs at 640 GB/s; the store pattern, not device_memory versus cache, is what caps the round trip."
+  },
+  "achieved_aggregate_gbs": {
+   "batch_2": 81.3,
+   "batch_4": 102.7,
+   "batch_8": 103.9,
+   "batch_16": 103.2,
+   "batch_32": 91.7,
+   "basis": "28.223188992 GB modelled per-evaluation traffic / measured p50"
+  },
+  "does_the_round_trip_leave_device_memory": "The footprint sweep cannot count device_memory bytes (Metal exposes no memory counters), but it falsifies the residency hypothesis: the round trip's cost is pattern-limited, and shrinking its working set by 8x neither removes it nor improves the evaluation. Combined with the floor-verification headroom of 5-14 ms per evaluation (2-5%), no bit-exact route to a 2x evaluation exists.",
+  "structural_bound": "The intermediate cannot be eliminated in principle: a 2D 512x512 complex transform must materialise a plane-sized array (1052672 B per BF term) between its two 1D passes, which exceeds the 32768 B threadgroup budget by 32x, so that array necessarily lives in device memory. block_rows cannot be raised from 4 to 8 either: the row kernel's scratch (4x512 float2) plus bank-conflict-padded tile (4x324 float2) already use 26752 B of the 32768 B budget, and block_rows=8 would need 53504 B."
+ },
+ "conclusion": "No source change landed beyond measurement gates. The prior single-shot phase-batch sweep that suggested batch 4 was ~4% faster than batch 8 does not survive repetition: batch 8 p50 271.6 ms against batch 4 p50 274.9 ms, with batch 4's repetitions spread 270.9-287.7 ms.",
+ "timestamps": {
+  "created": "2026-09-16",
+  "started": "2026-09-16",
+  "finished": "2026-09-16"
+ },
+ "outputs": [
+  {
+   "artifact": "experiments/20260916-metal-ssb-interleave-residency/run_pb_aba.sh",
+   "sha256": "294decce9f1cc36cb099b7b7057a0e749f7c512a1c599a23a0f9bcb6cd0b0fff",
+   "result": "3-repetition rotated A/B driver over phase batches 2/4/8/16/32"
+  },
+  {
+   "artifact": "experiments/20260916-metal-ssb-interleave-residency/results.json",
+   "sha256": "7ab113318f07d927600ac144b034aafb18c71c293ff1fd585bb80a1834363d5d",
+   "result": "per-arm p50/min/p95/max GPU ms, per-repetition p50, achieved GB/s"
+  },
+  {
+   "artifact": "experiments/20260916-metal-ssb-interleave-residency/run.log",
+   "sha256": "48fa7a2f326a14973a19db72c28dc689436f5cd8034113a52d9cf3e528de46ee",
+   "result": "arm-by-arm timestamps and load averages"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-16-r1/report.json",
+   "sha256": "31b8a54bfe893e7ab0bf4b100a8b790fae17f1c968f4343c2841774b2c11ec8f",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-16-r2/report.json",
+   "sha256": "fc3e5ce56b5c58573d8328e6234776b2a757665f06bc088509a3d7e8c43f07b8",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-16-r3/report.json",
+   "sha256": "f245949f62adcbb439da76cd11ab43823b19a61fdff2861232d16f589d4c6256",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-2-r1/report.json",
+   "sha256": "17fb6c6392bf8f206e4f1a150ea1de0848cdc0a9c61a190a4e1d564d9f39b153",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-2-r2/report.json",
+   "sha256": "30f41ff5c435ae5ffb2d9811d9fcbce87f3f0376ced214a8660a55437f07c297",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-2-r3/report.json",
+   "sha256": "09f36eb069ab5a455d96b9371ed9a20ce47e69e01b12c8a238c525ac3cecbf46",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-32-r1/report.json",
+   "sha256": "ad610fd9e6099e766182cab6171473f8b277309db61fe2a462eee038208373fa",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-32-r2/report.json",
+   "sha256": "d603611bfb0c9d69bbcc9b501e4ceb1da41c26652fea065303fbbda25c95e032",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-32-r3/report.json",
+   "sha256": "a09023d300287991c92aa50703d5f6cc901e62446d177fb9b19fc17535e5dbda",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-4-r1/report.json",
+   "sha256": "35791e640fc7c87c72b72f78febcde13ab4f87ab79754ad15407b3a0ea8ad31d",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-4-r2/report.json",
+   "sha256": "2de8f4d4189f36d29846a15c764a3f8334e96f311b7c1b66c1347f3d5509dd95",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-4-r3/report.json",
+   "sha256": "c2c9496d3b98e22fa05d484e8b3d755ade44edfe575eb93befd96ca62e3474b7",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-8-r1/report.json",
+   "sha256": "d5e15631fbf1b26d1ea71937a5d07362bf7f03f7293e4bfbdf001fb656faf0e8",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-8-r2/report.json",
+   "sha256": "b41de70304b286ae1ac74852b5f25ee15a6789e0f4089543feb72e0722da32d9",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/interleave-runs/pb-8-r3/report.json",
+   "sha256": "9dfe2c667c7b254f610cb4448fbf9570fbb756a63f605fb44f6e562e448f9114",
+   "result": "raw probe report (loss, gpu ms, wall ms, allocation)"
+  }
+ ]
+}

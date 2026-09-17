@@ -1,0 +1,127 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260916-ssb-traffic-attribution",
+ "status": "completed",
+ "question": "Where does one production 8937-term SSB evaluation actually spend its time, does the pass-level ablation compose, was the +90 ms no-Nyquist result real, and is the evaluation device_memory-bandwidth-bound?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260916-ssb-traffic-attribution/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "597b5664f22347771f6c385390602f9750fd9d75",
+  "dirty": true,
+  "diff_sha256": "5312acd38bdeb38bab83be766decf4efb1620957dcbbe83703b3f3072568665e",
+  "entrypoints": [
+   "experiments/20260916-ssb-traffic-attribution/probe_traffic.swift (interleaved fractional ablation)",
+   "experiments/20260916-ssb-traffic-attribution/ghost_traffic.swift (pattern-pricing skeleton)"
+  ],
+  "note": "traffic-gates.patch is measurement-only instrumentation in the working tree; no production kernel arithmetic was changed."
+ },
+ "inputs": [
+  {
+   "dataset_id": "arina-logic-pmos-master",
+   "path": "private-fixture://ARINA/arina-fixture-a_master.h5",
+   "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "bf_selected": 8937,
+  "precision": "complex64/float32; exact packed uint32 counts",
+  "sessions": [
+   "r1",
+   "r2",
+   "r6",
+   "pb",
+   "load"
+  ],
+  "paired_samples_per_main_arm": 17,
+  "arms": [
+   "full",
+   "col_half",
+   "col_none",
+   "nyq_half",
+   "nyq_none",
+   "row_half",
+   "row_none",
+   "trig_none",
+   "floor",
+   "pb16",
+   "pb32"
+  ],
+  "controls": {
+   "c10_nm": [
+    0,
+    55,
+    155.96977
+   ],
+   "c12_nm": 42.96961,
+   "phi12_rad": 0.293384
+  },
+  "result": {
+   "full_p50_ms": 265.9,
+   "column_pass_ms": 147.8,
+   "row_pass_ms": 121.7,
+   "nyquist_pass_ms": 10.4,
+   "trig_rebuild_ms": 0.0,
+   "framework_ms": 8.2,
+   "inter_pass_overlap_ms": -22,
+   "stream_read_ceiling_gb_s": 143.4,
+   "stream_write_ceiling_gb_s": 143.9,
+   "production_read_pattern_gb_s": 117.7,
+   "blocked_store_in_situ_gb_s": 159.5,
+   "pb32_minus_pb8_ms": -0.2,
+   "cpu_load_8_hogs_delta_ms": 7.1,
+   "device_memory_bound": false
+  }
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "gpu_lock": "~/perf-lab/ssb-audit/gpurun with GPU_RUN_LABEL=traffic",
+  "load1_range": [
+   1.42,
+   4.85
+  ],
+  "notes": "Every arm cycled round-robin inside one process per session; the machine also hosted a coalesced-store agent, serialized by the GPU lock."
+ },
+ "outputs": [
+  {
+   "artifact": "experiments/20260916-ssb-traffic-attribution/traffic-gates.patch",
+   "sha256": "5312acd38bdeb38bab83be766decf4efb1620957dcbbe83703b3f3072568665e",
+   "result": "Experimental gates (SSB_PROFILE_{COLUMN,NYQUIST,ROWS,TRIG}_EVERY, SSB_PHASE_BATCH); applied to the working tree only, reverted before any production commit"
+  },
+  {
+   "artifact": "experiments/20260916-ssb-traffic-attribution/probe_traffic.swift",
+   "sha256": "bd98066e4faa953a0e84a0db191ebe07ce2a30828a803bea98798732daad3143",
+   "result": "Interleaved fractional-ablation probe; reproduces the frozen losses bit-for-bit at c10 0/55/155.96977"
+  },
+  {
+   "artifact": "experiments/20260916-ssb-traffic-attribution/ghost_traffic.swift",
+   "sha256": "266f12ba7f77addbdb168fd85ce903710a4b51b578b0bd58b3df2302264ddbcf",
+   "result": "Pattern-pricing skeleton at production geometry; streaming ceilings 143.4/143.9 GB/s, production read pattern 117.7 GB/s, blocked store 159.5 GB/s"
+  },
+  {
+   "artifact": "experiments/20260916-ssb-traffic-attribution/analyze_traffic.py",
+   "sha256": "1209885c303cc0c6d7e46c7710b1798412c041ccfd3025c885a54e1d70060c76",
+   "result": "Paired-delta and per-pass regression analyzer for the probe sessions"
+  },
+  {
+   "artifact": "experiments/20260916-ssb-traffic-attribution/REPORT.md",
+   "sha256": "c9b8338eeb8614ffbb27334cc360843ceebacc0a43e193e3480c27758a44b190",
+   "result": "Corrected cost split, Nyquist verdict, device_memory-bound verdict, ranked measured headroom"
+  }
+ ],
+ "timestamps": {
+  "started": "2026-09-16T21:04:00-07:00",
+  "finished": "2026-09-16T21:16:00-07:00"
+ }
+}

@@ -202,6 +202,42 @@ def _exact_pair_row_storage_bf_512(
     )
 
 
+def _exact_pair_row_allocation_bf_512(
+    pack_bf: int,
+    storage_classes: tuple[int, ...] | None = None,
+) -> int:
+    """Return one exact pair pack's row allocation in BF planes.
+
+    The retained storage classes only exist so repeated packs reuse one
+    allocation shape. A single logical pair boundary is never split, so a
+    pack can legitimately be wider than every retained class on hardware
+    whose measured policy was tuned for narrower boundaries. In that case the
+    pack still runs at its own width: the row kernel allocates
+    ``max(pack, class)`` and only the written prefix is consumed, so falling
+    back to the pack width changes allocation size alone, never the BF
+    boundaries, the reduction order, or the arithmetic.
+
+    Parameters
+    ----------
+    pack_bf : int
+        BF planes actually written by one packed pair slice.
+    storage_classes : tuple of int, optional
+        Retained allocation classes; defaults to the measured 512 policy.
+
+    Returns
+    -------
+    int
+        BF planes to allocate for the packed row intermediate.
+    """
+    pack_bf = int(pack_bf)
+    if storage_classes is None:
+        _pack_limit, storage_classes = _exact_pair_row_policy_512()
+    for storage_class in storage_classes:
+        if pack_bf <= storage_class:
+            return storage_class
+    return pack_bf
+
+
 class _ArrayFrames:
     """Flat detector-column view over a 4D crop-first array.
 
@@ -2005,6 +2041,7 @@ def _phase_cols512_sum_from_row_ifft(
     *,
     k_bf: int = 32,
     active_bf=None,
+    tiled_input: bool = False,
 ):
     """Fuse masked radix-8 column IFFT and phase accumulation."""
     shape = tuple(int(x) for x in row_ifft.shape)
@@ -2015,6 +2052,7 @@ def _phase_cols512_sum_from_row_ifft(
         row_ifft[None, ...],
         k_bf=k_bf,
         active_bf=active_bf,
+        tiled_input=tiled_input,
     )
     return batch_sum[0]
 
@@ -2879,6 +2917,7 @@ def _row_ifft512_from_dynamic_geometry(
     cos2phi12,
     sin2phi12,
     return_active: bool = False,
+    tiled_output: bool = False,
 ):
     """Fused dynamic correction + 512 row IFFT for exact MPS phase/loss."""
     mx = prepared.mx
@@ -2891,7 +2930,7 @@ def _row_ifft512_from_dynamic_geometry(
         1,
         chunk,
         int(prepared.g_qk.shape[-1]),
-        False,
+        bool(tiled_output),
     )
     scalars = mx.array(
         [
@@ -4568,7 +4607,15 @@ def _reconstruct_prepared(
                     c12=c12_values,
                     cos2phi12=cos2phi12_values,
                     sin2phi12=sin2phi12_values,
+                    # The column stage reads eight rows of one column per
+                    # threadgroup.  Storing the row IFFT in the tiled layout
+                    # keeps those eight loads inside one 64-byte granule
+                    # instead of striding 4 KB apart.  Same values, permuted
+                    # addresses: 22.767 to 21.055 ms on the stage pair and
+                    # 404.0 to 369.5 ms end-to-end, bit-exact
+                    # (experiments/20260916-ssb-mps-hotpath).
                     return_active=True,
+                    tiled_output=True,
                 )
                 if compute_loss:
                     batch_sum, batch_sumsq = (
@@ -4577,6 +4624,7 @@ def _reconstruct_prepared(
                             row_ifft[None, ...],
                             k_bf=phase_col_k_bf,
                             active_bf=active_bf,
+                            tiled_input=True,
                         )
                     )
                     chunk_sum = batch_sum[0]
@@ -4587,6 +4635,7 @@ def _reconstruct_prepared(
                         row_ifft,
                         k_bf=phase_col_k_bf,
                         active_bf=active_bf,
+                        tiled_input=True,
                     )
                     chunk_sumsq = None
             else:
@@ -4968,9 +5017,11 @@ def _reconstruct_prepared_batch_exact_loss(
             sin2phi12=sin2phi12_values,
             pk_override=pk_all[:, start:stop],
             # Reuse bounded allocation sizes instead of retaining every real
-            # sparse-pack shape. Only the written prefix is consumed.
+            # sparse-pack shape. A pack that is wider than every retained
+            # class still runs at its own width because one logical boundary
+            # is never split; only the written prefix is consumed.
             storage_bf=(
-                _exact_pair_row_storage_bf_512(
+                _exact_pair_row_allocation_bf_512(
                     stop - start,
                     row_storage_classes,
                 )

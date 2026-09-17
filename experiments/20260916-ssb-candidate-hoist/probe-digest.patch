@@ -1,0 +1,214 @@
+diff --git a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+index caa9093..f2cbdc1 100644
+--- a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
++++ b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+@@ -273,6 +273,16 @@ public final class MetalSSBEngine {
+   private var crossTrigBuffer: MTLBuffer?
+   private var prepared = false
+ 
++  // SCRATCH(hoist-probe): candidate-dependence digests. Remove with the
++  // experiment; nothing in the production path reads these.
++  private let probeDigestPipeline: MTLComputePipelineState
++  private let probeDigestOut: MTLBuffer
++  private var probeSlots: [String: [Int]] = [:]
++  private var probeCursor = 0
++  private var probeEnabled: Bool {
++    ProcessInfo.processInfo.environment["SSB_PROBE_DIGEST"] == "1"
++  }
++
+   /// Create a reusable SSB engine.
+   ///
+   /// - Parameters:
+@@ -483,9 +493,79 @@ public final class MetalSSBEngine {
+       values: placeholderTrig,
+       purpose: "active BF angle table"
+     )
++    probeDigestPipeline = try Self.makePipeline(
++      device: device, library: library, name: "ssb_probe_digest")
++    probeDigestOut = try Self.allocate(
++      device: device,
++      length: 4 * 1024 * 1024,
++      options: .storageModeShared,
++      purpose: "probe digest accumulator"
++    )
+     try rebuildGeometry(rotationDegrees: geometry.referenceRotationDegrees)
+   }
+ 
++  /// SCRATCH(hoist-probe): digest `length` bytes at `offset` of `buffer` into a
++  /// fresh slot, recording the slot under `name`.
++  private func probeDigest(
++    _ commands: MTLCommandBuffer,
++    _ name: String,
++    buffer: MTLBuffer,
++    offset: Int = 0,
++    length: Int
++  ) {
++    guard probeEnabled else { return }
++    let words = length / 4
++    guard words > 0, probeCursor * 8 + 8 <= probeDigestOut.length else { return }
++    let slot = probeCursor
++    probeCursor += 1
++    probeSlots[name, default: []].append(slot)
++    if let blit = commands.makeBlitCommandEncoder() {
++      blit.fill(
++        buffer: probeDigestOut, range: (slot * 8)..<((slot + 1) * 8), value: 0)
++      blit.endEncoding()
++    }
++    guard let encoder = commands.makeComputeCommandEncoder() else { return }
++    encoder.setComputePipelineState(probeDigestPipeline)
++    encoder.setBuffer(buffer, offset: offset, index: 0)
++    encoder.setBuffer(probeDigestOut, offset: slot * 8, index: 1)
++    var count = UInt32(words)
++    encoder.setBytes(&count, length: MemoryLayout<UInt32>.stride, index: 2)
++    encoder.dispatchThreads(
++      MTLSize(width: (words + 15) / 16, height: 1, depth: 1),
++      threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1)
++    )
++    encoder.endEncoding()
++  }
++
++  /// SCRATCH(hoist-probe): every digest recorded so far, keyed by buffer name.
++  public func probeDumpDigests() -> [String: [UInt64]] {
++    guard probeEnabled, probeCursor > 0 else { return [:] }
++    let base = probeDigestOut.contents().bindMemory(
++      to: UInt64.self, capacity: probeCursor)
++    var output: [String: [UInt64]] = [:]
++    for (name, slots) in probeSlots {
++      output[name] = slots.map { base[$0] }
++    }
++    return output
++  }
++
++  /// SCRATCH(hoist-probe): known-answer path for the digest kernel, so the
++  /// device hash can be checked against a host implementation of the same fold.
++  public func probeDigestKnownAnswer(_ words: [UInt32]) throws -> UInt64 {
++    let length = words.count * 4
++    let staging = try Self.makeBuffer(
++      device: device, values: words, purpose: "probe known answer")
++    guard let commands = queue.makeCommandBuffer() else {
++      throw MetalSSBError.commandQueue
++    }
++    probeDigest(commands, "knownAnswer", buffer: staging, length: length)
++    try commitAndWait(commands)
++    guard let value = probeDumpDigests()["knownAnswer"]?.last else {
++      throw MetalSSBError.allocation("probe known answer")
++    }
++    return value
++  }
++
+   /// Number of exact nonzero-aperture terms executed by this session.
+   public var executedBrightfieldCount: Int {
+     activeBrightfieldIndices.count
+@@ -659,6 +739,18 @@ public final class MetalSSBEngine {
+       progress(offset + batch, cachedCount)
+     }
+     cachedBrightfieldCount = cachedCount
++    if probeEnabled, !cacheBuffers.isEmpty {
++      guard let probeCommands = queue.makeCommandBuffer() else {
++        throw MetalSSBError.commandQueue
++      }
++      let chunkBytes = halfBytes
++      for (index, cache) in cacheBuffers.enumerated() {
++        probeDigest(
++          probeCommands, "Gchunk\(index)", buffer: cache,
++          length: cacheCounts[index] * chunkBytes)
++      }
++      try commitAndWait(probeCommands)
++    }
+     prepared = true
+   }
+ 
+@@ -887,7 +979,22 @@ public final class MetalSSBEngine {
+         params: baseParams,
+         output: crossTrigBuffer
+       )
++      probeDigest(
++        clearCommands, "chiTrig", buffer: chiTrigBuffer, length: chiTrigBuffer.length)
++      probeDigest(
++        clearCommands, "chiTrigRepeat", buffer: chiTrigBuffer,
++        length: chiTrigBuffer.length)
++      probeDigest(
++        clearCommands, "crossTrig", buffer: crossTrigBuffer,
++        length: crossTrigBuffer.length)
+     }
++    probeDigest(
++      clearCommands, "bfGeometry", buffer: activeGeometryBuffer,
++      length: activeGeometryBuffer.length)
++    probeDigest(
++      clearCommands, "twiddle", buffer: twiddleBuffer, length: twiddleBuffer.length)
++    probeDigest(clearCommands, "qRow", buffer: qxBuffer, length: qxBuffer.length)
++    probeDigest(clearCommands, "qCol", buffer: qyBuffer, length: qyBuffer.length)
+     try commitAndWait(clearCommands)
+     gpuSeconds += gpuDuration(clearCommands)
+ 
+@@ -987,6 +1094,17 @@ public final class MetalSSBEngine {
+       gpuSeconds += gpuDuration(commands)
+     }
+ 
++    guard let probeCommands = queue.makeCommandBuffer() else {
++      throw MetalSSBError.commandQueue
++    }
++    probeDigest(
++      probeCommands, "phaseSum", buffer: phaseSumBuffer,
++      length: phaseSumBuffer.length)
++    probeDigest(
++      probeCommands, "phaseSumSquared", buffer: phaseSumSquaredBuffer,
++      length: phaseSumSquaredBuffer.length)
++    try commitAndWait(probeCommands)
++
+     let sums = phaseSumBuffer.contents().bindMemory(
+       to: Float.self,
+       capacity: plane
+@@ -1588,6 +1706,9 @@ public final class MetalSSBEngine {
+       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+     )
+     rows.endEncoding()
++    probeDigest(
++      commands, "columnPassOutput", buffer: fftA,
++      length: batch * halfPlane * MemoryLayout<SIMD2<Float>>.stride)
+ 
+     if size != 512 {
+       let moments = commands.makeComputeCommandEncoder()!
+@@ -1619,6 +1740,9 @@ public final class MetalSSBEngine {
+       MTLSize(width: 2, height: batch, depth: 1),
+       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+     boundary.endEncoding()
++    probeDigest(
++      commands, "nyquistCorrection", buffer: nyquistCorrectionBuffer,
++      length: batch * 2 * size * MemoryLayout<SIMD2<Float>>.stride)
+ 
+     var mutableBatch = UInt32(batch)
+     var dc = SIMD2<Float>(params.dcReal, params.dcImaginary)
+diff --git a/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal b/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal
+index 67babb9..10d6667 100644
+--- a/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal
++++ b/src/quantem/gpu/swift/Sources/MetalSSBKernels/Resources/ssb.metal
+@@ -1372,3 +1372,28 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
+         phase_sumsq[pixel] += sumsq[lane];
+     }
+ }
++
++// SCRATCH(hoist-probe): candidate-dependence digest. Reads a buffer region and
++// folds it into a single 64-bit value with an order-independent reduction, so
++// two runs of the same pipeline stage can be compared byte-for-byte without a
++// host round trip. Not part of any production path.
++kernel void ssb_probe_digest(
++    device const uint *words [[buffer(0)]],
++    device atomic_uint *out [[buffer(1)]],
++    constant uint &count [[buffer(2)]],
++    uint gid [[thread_position_in_grid]]) {
++    const uint start = gid * 16u;
++    if (start >= count) return;
++    const uint end = min(start + 16u, count);
++    ulong h = 1469598103934665603ul;
++    for (uint i = start; i < end; ++i) {
++        h ^= (ulong)words[i];
++        h *= 1099511628211ul;
++        h ^= (ulong)(i + 1u);
++    }
++    // 64-bit RMW is unavailable on this target, so fold the two halves into two
++    // independent 32-bit accumulators. Addition is commutative, so the result is
++    // deterministic regardless of thread scheduling.
++    atomic_fetch_add_explicit(out, (uint)h, memory_order_relaxed);
++    atomic_fetch_add_explicit(out + 1u, (uint)(h >> 32u), memory_order_relaxed);
++}

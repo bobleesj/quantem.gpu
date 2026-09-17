@@ -1,0 +1,56 @@
+{
+  "batched": {
+    "best": [
+      9.663990384938845,
+      7.323468400946136,
+      1.7569089257461865
+    ],
+    "bestLoss": 0.08557865023612976,
+    "divergenceFromSequential": {
+      "bestSoFarDifferentCount": 208,
+      "finalBestLossDelta": -1.3440847396850586e-05,
+      "finalBestPointDeltaC10": -3.1785204058093157,
+      "finalBestPointDeltaC12": 7.323468400946136,
+      "finalBestPointDeltaPhi12": 0.6108868622623227,
+      "maxLossDifferenceAtSameIndex": 0.0060675740242004395,
+      "sharedCandidateLossMismatches": 0,
+      "trialsCompared": 220,
+      "trialsWithDifferentFloat32Point": 208,
+      "trialsWithDifferentLossAtSameIndex": 206
+    },
+    "totalEvaluations": 248,
+    "trajectorySha256": "9ead8766ecc3571f4a3434ffa4d6e807d8f1989c1a04f258ed95227cba760ea3"
+  },
+  "case": "arina-128-full-disk",
+  "case_json_sha256": "c9a2f0c4d1ba2fef126ce46f8abc212ebf1966f3c891e49c09980262c921f738",
+  "global_trials": 200,
+  "name": "SSB native fit trajectory (Metal unbatched production path)",
+  "note": "Frozen trajectory of the production fit on one exported exact artifact. A mismatch is a finding: investigate the sampler, the objective or the engine cache before touching this file.",
+  "objectivePurity": {
+    "firstProbeLoss": 0.08834638446569443,
+    "float32AliasBitwiseMismatches": 0,
+    "freshEngineBitwiseMismatches": 0,
+    "lossMaxUlpDifference": 0,
+    "probes": 5,
+    "repeatSameEngineBitwiseMismatches": 0
+  },
+  "productionOptimizeMatchesSequential": true,
+  "schema_version": 1,
+  "seed": 42,
+  "sequential": {
+    "best": [
+      12.842510790748161,
+      0.0,
+      1.1460220634838638
+    ],
+    "bestLoss": 0.08559209108352661,
+    "refinementEvaluations": 18,
+    "totalEvaluations": 220,
+    "trajectorySha256": "74cc777234a5ec107647ba0be60580c9abb58d0eca1ca3e6fd6b2cbeab93d72b"
+  },
+  "start": {
+    "C10": 0,
+    "C12": 50,
+    "phi12": 0
+  }
+}

@@ -1,0 +1,33 @@
+load_start 4.17 2.69 2.17
+arm pb=8 rep=1 start 20:33:33 load 4.17 2.69 2.17
+arm pb=8 rep=1 done  20:37:27
+arm pb=4 rep=1 start 20:37:27 load 0.99 1.92 1.96
+arm pb=4 rep=1 done  20:46:01
+arm pb=16 rep=1 start 20:46:01 load 1.74 1.39 1.59
+arm pb=16 rep=1 done  20:46:54
+arm pb=2 rep=1 start 20:46:54 load 2.07 1.53 1.63
+arm pb=2 rep=1 done  20:48:19
+arm pb=32 rep=1 start 20:48:19 load 1.08 1.35 1.55
+arm pb=32 rep=1 done  20:49:57
+arm pb=32 rep=2 start 20:49:57 load 1.62 1.54 1.60
+arm pb=32 rep=2 done  20:50:04
+arm pb=16 rep=2 start 20:50:04 load 1.57 1.53 1.60
+arm pb=16 rep=2 done  20:50:11
+arm pb=4 rep=2 start 20:50:11 load 1.40 1.50 1.59
+arm pb=4 rep=2 done  20:50:18
+arm pb=8 rep=2 start 20:50:18 load 1.45 1.50 1.59
+arm pb=8 rep=2 done  20:50:24
+arm pb=2 rep=2 start 20:50:24 load 1.57 1.53 1.60
+arm pb=2 rep=2 done  20:50:31
+arm pb=4 rep=3 start 20:50:31 load 1.48 1.51 1.59
+arm pb=4 rep=3 done  20:50:38
+arm pb=8 rep=3 start 20:50:38 load 1.52 1.52 1.59
+arm pb=8 rep=3 done  20:50:44
+arm pb=2 rep=3 start 20:50:44 load 2.36 1.69 1.65
+arm pb=2 rep=3 done  20:50:52
+arm pb=32 rep=3 start 20:50:52 load 2.00 1.64 1.63
+arm pb=32 rep=3 done  20:50:58
+arm pb=16 rep=3 start 20:50:58 load 1.92 1.62 1.63
+arm pb=16 rep=3 done  20:51:05
+load_end 1.84 1.61 1.62
+pb-aba-done

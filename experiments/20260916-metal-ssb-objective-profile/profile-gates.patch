@@ -1,0 +1,68 @@
+diff --git a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+index caa9093..05edf96 100644
+--- a/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
++++ b/src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift
+@@ -176,7 +176,17 @@ public final class MetalSSBEngine {
+   private let halfColumns: Int
+   private let halfPlane: Int
+   private static let batchCapacity = 32
+-  private static let phaseBatchCapacity = 8
++  // Temporary profiling override: the loss intermediate is 1.05 MB per BF, so
++  // the per-dispatch batch fixes how much of the blocked fftA working set has
++  // to survive a device-memory round trip.
++  private static let phaseBatchCapacity: Int = {
++    if let raw = ProcessInfo.processInfo.environment["SSB_PHASE_BATCH"],
++      let value = Int(raw), value > 0
++    {
++      return value
++    }
++    return 8
++  }()
+   // Streamed phase-loss batches reuse raw/FFT scratch and ordered phase sums.
+   // Queue a bounded window before waiting so command-buffer synchronization
+   // does not dominate the full-BF objective while avoiding an unbounded buffer.
+@@ -1568,6 +1578,8 @@ public final class MetalSSBEngine {
+       throw MetalSSBError.allocation("exact phase-loss tables")
+     }
+     var mutable = params
++    let profile = ProcessInfo.processInfo.environment
++    if profile["SSB_PROFILE_SKIP_COLUMN"] != "1" {
+     let rows = commands.makeComputeCommandEncoder()!
+     rows.setComputePipelineState(fusedLossRowPipeline)
+     rows.setBuffer(source, offset: sourceOffset, index: 0)
+@@ -1588,6 +1600,7 @@ public final class MetalSSBEngine {
+       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1)
+     )
+     rows.endEncoding()
++    }
+ 
+     if size != 512 {
+       let moments = commands.makeComputeCommandEncoder()!
+@@ -1604,6 +1617,7 @@ public final class MetalSSBEngine {
+       return
+     }
+ 
++    if profile["SSB_PROFILE_SKIP_NYQUIST"] != "1" {
+     let boundary = commands.makeComputeCommandEncoder()!
+     boundary.setComputePipelineState(nyquistCorrectionPipeline)
+     boundary.setBuffer(source, offset: sourceOffset, index: 0)
+@@ -1619,9 +1633,11 @@ public final class MetalSSBEngine {
+       MTLSize(width: 2, height: batch, depth: 1),
+       threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+     boundary.endEncoding()
++    }
+ 
+     var mutableBatch = UInt32(batch)
+     var dc = SIMD2<Float>(params.dcReal, params.dcImaginary)
++    if profile["SSB_PROFILE_SKIP_ROWS"] != "1" {
+     let columns = commands.makeComputeCommandEncoder()!
+     columns.setComputePipelineState(fusedLossMomentPipeline)
+     columns.setBuffer(fftA, offset: 0, index: 0)
+@@ -1646,6 +1662,7 @@ public final class MetalSSBEngine {
+         width: Self.fftThreads * Self.intermediateBlockRows, height: 1, depth: 1)
+     )
+     columns.endEncoding()
++    }
+   }
+ 
+   private func encodeLossCorrection(

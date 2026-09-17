@@ -1,0 +1,102 @@
+{
+  "code": {
+    "dirty": false,
+    "entrypoint": "experiments/20260916-timeline-fit/run.sh",
+    "repository": "quantem.gpu",
+    "revision": "fa2c3eb2b1daeb6acca522b87ebaac0ac0afb5f5"
+  },
+  "execution": {
+    "device": "Apple M5",
+    "measurements": "228 evaluations in each of two arms, identical input and executable",
+    "notes": "kernelStartTime/kernelEndTime returned ~0 on this device, so no per-kernel split from timestamps",
+    "runner": "experiments/20260916-timeline-fit/run.sh under the shared GPU lock",
+    "sessions": 1
+  },
+  "experiment_id": "20260916-timeline-fit",
+  "inputs": [
+    {
+      "dataset_id": "arina-logic-pmos-8937bf",
+      "hash_scope": "aggregate over the master and three data members",
+      "path": "private-fixture://arina/arina-fixture-a_master.h5",
+      "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "timeline-jsonl",
+      "consuming_figures": [],
+      "path": "perf-lab/ssb-audit/metal-runs/timeline-fit/timeline.jsonl",
+      "retention": "durable",
+      "sha256": "7aa4ac453ed20b6a153727aa6ebe5bf13030d245e298421352e76bf08f96a23e",
+      "size_bytes": 124935
+    },
+    {
+      "artifact_id": "summary-timeline",
+      "consuming_figures": [],
+      "path": "perf-lab/ssb-audit/metal-runs/timeline-fit/summary-timeline.json",
+      "retention": "recomputable",
+      "sha256": "f7d4c3201745cb7d86ad87c8461305dd7b717ebebafa035129b9df0a5a121b7e",
+      "size_bytes": 512
+    },
+    {
+      "artifact_id": "summary-plain",
+      "consuming_figures": [],
+      "path": "perf-lab/ssb-audit/metal-runs/timeline-fit/summary-plain.json",
+      "retention": "recomputable",
+      "sha256": "9cd1235e618733b4ef18884b865c020749838b49badb4ad9728b61ba2096bcc5",
+      "size_bytes": 511
+    },
+    {
+      "artifact_id": "timeline-analysis",
+      "consuming_figures": [],
+      "path": "perf-lab/ssb-audit/timeline-runs/timeline-analysis.json",
+      "retention": "recomputable",
+      "sha256": "0fe79ca6157811ce410e2532889d29ea18f41d6bda1adc29d8f7350d5581adfe",
+      "size_bytes": 49855
+    }
+  ],
+  "paper": {
+    "authority": "user-directed native Metal fit verification",
+    "repository": "quantem.gpu"
+  },
+  "parameters": {
+    "arms": [
+      "timeline-on",
+      "timeline-off"
+    ],
+    "artifact_results": {
+      "summary-plain": "bit-identical loss and best, fit 62.349 s",
+      "summary-timeline": "loss 0.13769799470901489, best 6.6036715919750746 / 0.098487623142316849 / 1.1341200767509283, fit 62.184 s",
+      "timeline-analysis": "no category above 5% outside GPU execution; floor verdict corroborated",
+      "timeline-jsonl": "228 evaluations, 2 command buffers each; GPU busy 61.023 s of 61.403 s = 99.4%; largest non-GPU category 0.6%"
+    },
+    "brightfield_terms": 8937,
+    "count_dtype": "uint16",
+    "detector_shape": [
+      192,
+      192
+    ],
+    "global_trials": 200,
+    "host_load_end": 1.24,
+    "host_load_start": 4.99,
+    "refinement": "nelder-mead",
+    "rotation_degrees": 158.88268568029937,
+    "scan_shape": [
+      512,
+      512
+    ],
+    "seed": 42,
+    "start_point": [
+      0.0,
+      50.0,
+      0.0
+    ]
+  },
+  "question": "Does a GPU-timestamp measurement of the 8937-BF Metal fit corroborate that its per-evaluation cost sits within 2-5% of the achievable floor, or expose a host-side category (gaps, synchronization stalls) above 5% hidden inside the quoted rate?",
+  "schema_version": 1,
+  "status": "completed",
+  "timestamps": {
+    "finished": "2026-09-16T19:55:30-07:00",
+    "started": "2026-09-16T19:47:00-07:00"
+  }
+}

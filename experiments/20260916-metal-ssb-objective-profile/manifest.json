@@ -1,0 +1,293 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260916-metal-ssb-objective-profile",
+ "status": "completed",
+ "question": "Where does the 512x512 full-aperture Metal SSB phase-variance objective actually spend its time, what is the practical bandwidth ceiling it runs against, and which of the proposed accelerations (cache-layout transpose, phase-batch retuning, multi-candidate fusion) survive an interleaved A/B/A measurement on real ARINA data?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260916-metal-ssb-objective-profile/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "597b5664f22347771f6c385390602f9750fd9d75",
+  "dirty": false,
+  "entrypoints": [
+   "experiments/20260910-ssb-full-bf-scheduling/probe.swift (baseline, unchanged)",
+   "experiments/20260916-metal-ssb-objective-profile/probe2.swift (redraw/loss alternation)",
+   "experiments/20260916-metal-ssb-objective-profile/probe3.swift (loss-only pass ablation)"
+  ],
+  "profiling_patch": "experiments/20260916-metal-ssb-objective-profile/profile-gates.patch",
+  "note": "profile-gates.patch adds env-gated SSB_PROFILE_SKIP_{COLUMN,ROWS,NYQUIST} and SSB_PHASE_BATCH. It is temporary instrumentation only; it is NOT present in the landed source and was reverted before any commit."
+ },
+ "inputs": [
+  {
+   "dataset_id": "arina-logic-pmos-master",
+   "path": "private-fixture://ARINA/arina-fixture-a_master.h5",
+   "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "bf_selected": 8937,
+  "bf_active": 8937,
+  "bf_cached": 8937,
+  "bf_streamed": 0,
+  "precision": "complex64/float32; exact packed uint32 counts",
+  "crop": null,
+  "bin": 1,
+  "semiangle_mrad": 30,
+  "scan_step_angstrom": 0.264,
+  "energy_keV": 300,
+  "controls": {
+   "c10_nm": [
+    0,
+    55,
+    155.96977
+   ],
+   "c12_nm": 42.96961,
+   "phi12_rad": 0.293384,
+   "rotation_deg": 158.88268568029937
+  },
+  "fit_trials": 200,
+  "cache_budget_bytes": null,
+  "tolerances": {
+   "object_relative_l2": 1e-05,
+   "loss_absolute": 1e-06
+  },
+  "scope": "Kernel-level real-data measurement through the scheduling probe. Not a frame-rate or application claim.",
+  "limits": ""
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory",
+  "contention_note": "The host was shared with two other agents running swift-frontend compiles and a Python fixture build during the first half of this session (load average 4.3-7.4). All accepted/rejected comparisons are interleaved A/B/A so both arms see the same conditions. The final baseline was re-measured at load average 2.3-2.6. Separately, runs made while three agents each held ~11 GB on a 24 GB machine show 20-69 s stalls concentrated in the first calls of a phase (seq-c pure_loss gpu_ms 37702,61847,64155,38296,38183,68800,31062,38642,31240,1218 then 254-269 ms for the remainder; aba-c2 59407,42060,49655,49015,41072,50318,23554 then 252-299 ms). These are host memory-pressure stalls, not a property of the kernels: they are absent from the quiet runs, where every loss call lands in 262-283 ms."
+ },
+ "results": {
+  "baseline_quiet_gpu_ms": {
+   "redraw_p50": [
+    84.42,
+    85.53,
+    87.19
+   ],
+   "redraw_p95": [
+    207.22,
+    797.22,
+    114.88
+   ],
+   "redraw_first_call_note": "The first reconstruct after prepare costs 207-797 ms (lazy pipeline creation and first-touch); the p95 above is that first call. Steady-state redraw min is 79.3-79.8 ms.",
+   "loss_p50": [
+    271.64,
+    269.37,
+    278.93
+   ],
+   "loss_p95": [
+    283.26,
+    275.21,
+    281.7
+   ],
+   "loss_min": [
+    262.27,
+    260.01,
+    269.48
+   ]
+  },
+  "baseline_quiet_other": {
+   "load_seconds": [
+    2.16,
+    2.43,
+    2.36
+   ],
+   "prepare_seconds": [
+    2.15,
+    3.01,
+    2.28
+   ],
+   "fit_seconds": 64.54,
+   "fit_refinement_evaluations": 27,
+   "fit_loss": 0.1376979947090149,
+   "sampled_allocated_bytes": 11368785920
+  },
+  "loss_values_bit_identical_across_runs": [
+   0.14511984586715698,
+   0.1380811184644699,
+   0.1386488974094391
+  ],
+  "loss_pass_ablation_ratio": {
+   "method": "SSB_PROFILE_SKIP_COLUMN / SSB_PROFILE_SKIP_ROWS / both, with SSB_PROFILE_SKIP_NYQUIST as the floor",
+   "measured_consistent_run_loss_p50_ms": {
+    "full": 390.59,
+    "full_repeat": 374.49,
+    "no_column": 177.47,
+    "no_rows": 212.98,
+    "no_nyquist": 362.46,
+    "nyquist_only": 11.11
+   },
+   "derived_ms": {
+    "nyquist": 11.11,
+    "column_pass": 201.87,
+    "row_pass": 166.39
+   },
+   "additive_check_ms": 379.37,
+   "ratio_column_rows_nyquist": [
+    0.718,
+    0.592,
+    0.04
+   ],
+   "note": "A second ablation on the quieter machine had full p50 309.97 vs its own repeat 248.51 ms (25% spread), so only the internally consistent first run is used for the ratio. Absolute values scale with host load; the ordering is stable across both runs."
+  },
+  "bandwidth_verdict": {
+   "verdict": "device-memory-bandwidth-bound, not compute- or latency-bound",
+   "loss_traffic_bytes": {
+    "g_cache_read": 9407729664,
+    "intermediate_write": 9407729664,
+    "intermediate_read": 9407729664,
+    "phase_sum_read_modify_write": 4494000000,
+    "total": 32706600000
+   },
+   "achieved_gbps_at_loss_p50_270_ms": 121.1,
+   "pure_read_reference_gbps": 121.0,
+   "pure_read_reference": "9.39 GB G-cache read in 77.58 ms, recorded in 20260911-ssb-fft-intermediate; independently re-derived here from redraw 9.41 GB / 79.3 ms = 118.7 GB/s",
+   "flops_bound": false,
+   "note": "Byte accounting and achieved GB/s agree within 10% with the machine's streaming-read ceiling, so the objective spends its time moving bytes rather than in arithmetic."
+  },
+  "accepted_changes": [],
+  "rejected_arms": [
+   {
+    "arm": "single-command-buffer cache transpose",
+    "change": "setCacheColumnMajor encoded one command buffer per cache chunk instead of one per 32-term batch (288 CPU/GPU waits removed).",
+    "aba_untracked_p50_ms": {
+     "base": [
+      333.4,
+      349.4
+     ],
+     "candidate": [
+      337.4,
+      341.2
+     ]
+    },
+    "reason": "Neutral. The transpose is not synchronization-bound: 37.6 GB (9.41 read + 9.41 kernel write + 9.41 blit read + 9.41 blit write) at the machine's ~121 GB/s streaming rate predicts 311 ms, matching the measured 335 ms. The arm was reverted."
+   },
+   {
+    "arm": "phaseBatchCapacity 8 -> 4",
+    "change": "Smaller blocked-fftA working set per dispatch (4.2 MB instead of 8.4 MB) to try to keep the intermediate nearer the cache.",
+    "aba_loss_p50_ms": {
+     "pb8": [
+      273.33,
+      269.44,
+      269.73
+     ],
+     "pb4": [
+      272.6,
+      276.02,
+      268.83
+     ]
+    },
+    "median_delta_ms": 2.87,
+    "reason": "pb4 is 1.1% slower than pb8 once interleaved. An earlier single-pass sweep that showed pb4 264.9 vs pb8 276.0 ms was run-to-run drift. Reverted."
+   },
+   {
+    "arm": "phaseBatchCapacity sweep 2/8/16/32",
+    "loss_p50_ms": {
+     "pb2": 343.56,
+     "pb8": 276.0,
+     "pb16": 273.18,
+     "pb32": 283.38
+    },
+    "parity": "Losses are bit-identical to pb8 at all of 2, 4, 8, 16 and 32 (max absolute difference 0.0 across all six evaluations).",
+    "reason": "pb2 loses 24% to dispatch count; pb16/pb32 gain no time despite removing up to 3.4 GB of phase-sum traffic, confirming the limit is streaming bandwidth rather than phase-sum writes. No change."
+   },
+   {
+    "arm": "phaseBatchCapacity 64",
+    "loss_values": [
+     0.14435891807079315,
+     0.13794215023509315
+    ],
+    "reason": "Invalid configuration, not a candidate: 64 terms need 67.4 MB of blocked fftA but the engine allocates 67.1 MB (batchCapacity 32 x 512 x 512 x 8), so the intermediate overruns the workspace and the loss changes by 7.6e-4. Recorded so the ceiling is explicit."
+   },
+   {
+    "arm": "multi-candidate fused objective (K candidates per pass)",
+    "implemented": false,
+    "reason": "Bounded, not refuted, and not attempted. The objective is bandwidth-bound, so the only gain is the K-fold amortization of the 9.41 GB G-cache read: traffic falls from 32.71 GB to 23.31 + 9.41/K GB, i.e. 0.785x at K=4 and 0.749x at K=8 in the ideal limit, and the intermediate and phase-sum traffic (23.3 GB) cannot be amortized at all because both are candidate-specific. That bounds the fit saving at roughly 64.5 s -> 50.6 s at K=4, before the register and occupancy cost of K live intermediates. Implementing a K-way fused column pass with exact per-candidate parity needs K chi/cross tables, K blocked intermediates and K phase-sum buffers, and could not be validated inside this session."
+   },
+   {
+    "arm": "unified single cache layout (remove the transpose)",
+    "implemented": false,
+    "reason": "This is the largest measured single cost and the recommended next step. setCacheColumnMajor re-lays out the whole 9.41 GB cache because ssb_correct_half_column_ifft512_hermitian reads [bf][col][row] while ssb_gamma_accumulate_half reads [bf][row][col]. Measured cost is ~335 ms of untracked time on every redraw<->loss switch, i.e. more than the loss kernel itself. Removing it requires re-indexing the redraw accumulator's orbit enumeration (ssb.metal:648) so consecutive threads advance in row, which is a delicate rewrite of the paired/boundary enumeration and was not attempted without a full parity campaign."
+   },
+   {
+    "arm": "hoist the per-chunk switch out of load_g_cache_chunk",
+    "implemented": false,
+    "reason": "Not supported by the profile. The switch operand is uniform across a threadgroup (it depends only on the bright-field index), so it is a uniform, predicted branch; the row pass already runs within 5-10% of the streaming ceiling. No evidence of a branch cost worth removing."
+   },
+   {
+    "arm": "streamed reconstruct windowing",
+    "implemented": false,
+    "reason": "Not exercised by this workload. With cache_budget_bytes unset the engine admits all 8937 terms, so cachedBrightfieldCount == activeBrightfieldIndices.count and the streamed loop at MetalSSBKernels.swift:710 never runs. The phaseVariance streamed path already windows 32 command buffers (MetalSSBKernels.swift:183). The per-batch commitAndWait at MetalSSBKernels.swift:732 is real but is on the non-cached path only."
+   }
+  ],
+  "historical_discrepancy": {
+   "recorded": {
+    "20260911-ssb-fft-intermediate_blocked4_loss_p50_ms": 222.73,
+    "20260913-ssb-independent-verification_objective_p50_ms": 235.745
+   },
+   "measured_here_loss_p50_ms": [
+    271.64,
+    269.37,
+    278.93
+   ],
+   "verdict": "Partially stale, and the remainder is explained by source drift plus host contention. Same-machine same-input comparison against these runs was not possible because the recorded entrypoint is a probe run whose code revision 31717e6 does not contain the accepted blocked-4 scheduler (git grep shows no ssb_intermediate_block_rows at that revision), so the 222.73 ms figure is a dirty-tree prototype measurement. Between 31717e6 and 597b566 both hot kernels changed: the row pass moved from the pre-blocked row-major enumeration to the blocked 4-row tile with prefetch, and it lost the positive-DC fast path (atan of a precomputed reciprocal, ssb.metal old revision) in favour of unconditional atan2 (ssb.metal:1363). The nyquist-correction kernel (ssb.metal:1200, ~11 ms) was also added. The residual gap is host load: the same pristine binary measured loss p50 310 ms at load average 4.3-7.4 and 269-279 ms at load average 2.3-2.6."
+  },
+  "limits": "No binning, cropping, BF reduction, reduced precision, fast-math, or CPU fallback. The loss path never crosses the host: all sums are accumulated in device buffers and reduced on the host only at the end. The fit is 200 sequential single-candidate objective evaluations. XCTest is not runnable on this host (no XCTest module), so the swift test gate was not executed."
+ },
+ "timestamps": {
+  "created": "2026-09-16",
+  "started": "2026-09-16",
+  "finished": "2026-09-16"
+ },
+ "outputs": [
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/final-base1/report.json",
+   "sha256": "35e624fc909d305ea20f72777bb0a1ee51063dd89b553aeb9a9d1d7da926cc83",
+   "result": "Pristine 597b566 probe: redraw gpu p50 84.42 ms, loss gpu p50 271.64 / p95 283.26 ms, prepare 2.15 s, load 2.16 s, 11.37 GB allocated; losses bit-identical to every other run."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/final-base2/report.json",
+   "sha256": "7247febc975a12abb1e7dd9b98147d6233afe40b40e5eb582440e2d04b72d33e",
+   "result": "Pristine probe repeat: redraw gpu p50 85.53 ms, loss gpu p50 269.37 ms; confirms the baseline is reproducible and that the first redraw after prepare (207-797 ms) is a warm-up outlier."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/final-fit/report.json",
+   "sha256": "3b53c7467622af00588365d66e95366ac123488c2fa2e7f6156d49996ce750f9",
+   "result": "Pristine probe with fit: 64.54 s for 200 global trials plus 27 Nelder-Mead refinements, best loss 0.1376979947090149; 200 trials x ~272 ms accounts for the search time."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/ablate-*/report.json",
+   "sha256": "eb13869f93a3af2b640f3f7955be06e652e8a3dbbf53ff4a70b3b995e2b9fd68",
+   "result": "Pass ablation (SSB_PROFILE_SKIP_* gates from profile-gates.patch): full 390.59, no-column 177.47, no-rows 212.98, no-nyquist 362.46, nyquist-only 11.11 ms p50. Derived split column 201.9 / row 166.4 / nyquist 11.1 ms, additive check 379.4 ms."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/aba-b1,b2,c1,c2/report.json",
+   "sha256": "ddeb5dbc39cb64b0436c94bbdd08e4078d4dae49ed78f8bac5b2033fa2f94b3a",
+   "result": "Interleaved A/B/A/B of the single-command-buffer transpose: untracked p50 base 333.4 and 349.4 ms vs candidate 337.4 and 341.2 ms. Neutral, arm reverted."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/pbaba-*/report.json",
+   "sha256": "eef476b6f5459ea3cb14a4051d3aaf3aaea713e26a30095bb571b16ee762a7da",
+   "result": "Interleaved A/B/A phaseBatch 8 vs 4: loss p50 pb8 273.33/269.44/269.73, pb4 272.60/276.02/268.83 ms; pb4 is 1.1% slower. Losses bit-identical at 0.14511984586715698."
+  },
+  {
+   "artifact": "local-evidence://ssb-audit/metal-runs/seq-b,seq-c/report.json",
+   "sha256": "a98d91701aa83c74734229b9a6e611bcae2205b0702f5cd9f3b3000390707131",
+   "result": "Alternation probe. With the cache layout stable, wall-minus-command-buffer time is 1.5 ms; on every redraw<->loss switch it is 334-447 ms, isolating the 9.41 GB cache-layout transpose as a real per-switch cost. The 20-69 s entries in some runs are host memory-pressure stalls in the first calls of a phase, not per-batch synchronization; that was tested separately and refuted."
+  }
+ ]
+}

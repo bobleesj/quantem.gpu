@@ -1,0 +1,160 @@
+{
+  "code": {
+    "dirty": false,
+    "entrypoint": "experiments/20260916-ssb-mps-colimit/alu_roofline.py",
+    "note": "Nothing was landed. The engine under test is the unchanged working tree, engine.py sha256 06058d32bf03947dec395845dfbff80fb8fa87563840a3242e204675e75e5114, bit-identical to the f357069 tree the earlier MPS experiments measured. This experiment supersedes the 'co-limited' reading recorded in experiments/20260916-ssb-mps-2pass-price.",
+    "repository": "quantem.gpu",
+    "revision": "ef173f837ebbfb3699321ad1260f9947ff48c97b"
+  },
+  "execution": {
+    "artifact_root": "~ private perf-lab scratch (untracked): perf-lab/ssb-audit/mps-runs/20260916-ssb-mps-colimit",
+    "backend": "MLX/MPS (mlx 0.32.0, gpu device)",
+    "gpu_model": "Apple M5",
+    "host": "apple-m5-24gb, macOS 26.6.2",
+    "lock": "every session ran under the shared gpurun lock with GPU_RUN_LABEL=volta-mps-colimit; no ssb512 screen session was active",
+    "note": "Host load 3.0-4.1 throughout (the brief specified ~3.6). Every ratio in this manifest is a within-session difference; cross-session levels drift by up to 15%, so session levels are quoted but never compared across sessions."
+  },
+  "experiment_id": "20260916-ssb-mps-colimit",
+  "findings": {
+    "accounting_correction": "The 'co-limited, ~75% non-device_memory' framing recorded in experiments/20260916-ssb-mps-2pass-price was a residual, not a decomposition, and the ablation that produced it was unsound. That ablation folded the row stage's plane store into four addresses; it does remove the device_memory write traffic, but it redirects 512 planes into 4 buffers, so the store pipe serialises on the aliased addresses and the stage becomes store-issue-bound at 18.674 ms - which cannot be read as a device_memory share. Re-measured without aliasing (row_store_width.py, same instruction count, same tiled order, only the stored element width changed) halving the write bytes recovers 4.531 ms of 20.755 ms, i.e. 54.5% of the pure-device_memory prediction, so the write traffic is real but half-overlapped. The earlier '6.27 ms intermediate device_memory prize (17% of the fit)' is withdrawn.",
+    "artifact_erratum": "row_occupancy.jsonl carried a miscomputed derived field: threadgroup_bytes was computed as 64*8*r*2 ({1: 1024, 2: 2048, 4: 4096}) and omitted the FUSED_CANDIDATES dimension of the declaration threadgroup float2 shared_rows[ROWS_PER_GROUP][FUSED_CANDIDATES][512] at engine.py:2712. With batch==2, FUSED_CANDIDATES==2, so the reservation is r*2*512*8 B = {1: 8192, 2: 16384, 4: 32768}. The field was corrected in place, the old values are preserved under threadgroup_bytes_erratum in the artifact, and its sha256 and size_bytes here were updated. This is a label fix only: the recorded timings, byte counts and the byte-identical-plane result are untouched, and the corrected values now agree with column_roofline.jsonl and with the independently measured 32,768 B ceiling in experiments/20260916-ssb-mps-2pass-price. The row-occupancy result string also misstated host load as 2.5-3.5; the artifact recorded 3.65-4.26 and is corrected above.",
+    "bitexact_verdict": "No bit-exact change removes meaningful work from the 8937-BF fit. The only structural degree of freedom that is bit-exact - the row kernel's threadgroup reservation, via ROWS_PER_GROUP - was built and tested and is a dead end: all three widths produce byte-identical output, and the shipped 32 KB configuration is the fastest. Everything else that remains is bytes the algorithm must move or arithmetic the exact objective defines.",
+    "category_shares_row_stage": {
+      "baseline_ms": 20.347,
+      "buckets": [
+        "Write traffic, exposed: 4.531 ms, 21.8% - row_store_width.py, marginal cost of removing 1,073,741,824 B of the 2,147,483,648 B plane write with the instruction count, arithmetic and tiled order unchanged (54.5% of the 8.322 ms a fully serialised remove would save, so the other 45% is overlapped).",
+        "Read traffic, exposed: 3.913 ms, 19.2% - row_ablation.py, constant-G variant; the G read is 538,968,064 B of 2,686,451,712 B, so the saving is exactly proportional to the byte share (19.2%).",
+        "Per-element ALU, instruction-level: 8.005 ms, 39.3% - alu_roofline.py, a no-memory replica of the exact correction block and per-candidate arithmetic from engine.py:2740-2824, driven over the same 134,217,728 evaluations. This is an upper bound on the ALU's cost, not its exposed cost: removing the correction block from the real kernel makes the stage 1.314 ms SLOWER (21.660 ms), because forcing ap_m = ap_p = 1 disables the aperture early-out and sends every element down the candidate path.",
+        "Non-device_memory floor: about 12.0 ms, 58% - remainder, corroborated independently: the float32-store variant still takes 16.223 ms moving only 1,612,709,888 B, i.e. 99.4 GB/s against a 129.0 GB/s copy control, so at reduced bytes the stage does not saturate device_memory.",
+        "The buckets deliberately overlap, because the stage partially overlaps ALU and device_memory; they are not additive."
+      ],
+      "note": "The shares are not additive by construction and are reported as measured marginal costs plus one measured instruction-level cost plus one remainder."
+    },
+    "lane_verdicts": {
+      "alu_is_not_the_lever": "The instruction-level ALU is large (8.005 ms, 39.3%) but hidden behind the streaming: the only way to expose it is to remove the aperture early-out, which makes the kernel slower.",
+      "occupancy_hypothesis_disproved": "Threadgroup memory is not the limiter. Order-balanced sweep (4,2,1,1,2,4), same session, load 3.1-3.8, copy control 128.4 GB/s: 32 KB (shipped) p50 22.534 ms, 16 KB 23.168 ms (+2.8%), 8 KB 24.846 ms (+10.3%). Reducing the 32,768 B reservation makes the stage monotonically worse, so latency stalls from low threadgroup occupancy are not what costs the row stage its time.",
+      "python_and_dispatch_overhead": "Not measurable and not a category worth carrying: the objective runs 18 packs inside one eval at 36.006 ms/pack, while the two stages timed in isolation sum to 40.939 ms/pack. The isolated sum EXCEEDS the in-situ per-pack time by 4.933 ms, so per-call launch and eval round trips are amortised, not additive, and any prize computed from isolated-stage ablations must be scaled down by that overlap.",
+      "sync_is_required": "The 18 per-objective mx.eval calls bound the 2.15 GB pack buffers; the earlier depth A/B measured deeper pipelining as slower."
+    },
+    "measured_decomposition": {
+      "atan2_throughput_ops_per_s": 622284763418.4707,
+      "column_alu_replica": "1.196 ms for 1,073,741,824 atan2 - the column stage's 2.68e8 atan2 are about 0.43 ms of its 18.283 ms (2.4%), consistent with the earlier 5% atan2 ablation.",
+      "column_stage_ms": 16.635,
+      "column_stage_note": "16.635 ms isolated in the order-balanced session, 18.283 ms in the basis session; 2,147,483,648 B read = 117.5 GB/s against a 127.0 GB/s read-only control (92.5%). The stage is read-limited in aggregate with a 13.261 ms compute floor underneath (earlier read-pinned ablation), so removal of the read recovers only its overlapped share.",
+      "fma_ops_per_s": 7170634716628.464,
+      "rcp_ops_per_s": 3857326487304.824,
+      "row_stage_ms": 20.347,
+      "sincos_ops_per_s": 923649402445.0858,
+      "sqrt_ops_per_s": 3273359475202.9756
+    },
+    "next_levers": "None that are bit-exact. The residual paths all move a pinned value: a different butterfly ordering (8e-7 relative on the pack loss against the engine's own 1.2e-7 float32 floor), a fused row+column stage (64x over the measured 32,768 B threadgroup limit), or a different objective. Each is a user recapture decision, not an audit change.",
+    "ranking": [
+      "1. Row stage write traffic (engine.py:2626 tiled store): 2,147,483,648 B of the 2,686,451,712 B the row stage moves, 4.531 ms of its 20.755 ms exposed (21.8%). Required output of the algorithm; no exact symmetry to halve it (joint-mirror residual 45,715 against max_abs 954,211 = 4.8%).",
+      "2. Row stage read traffic (engine.py:2660/2712 G read): 538,968,064 B, 3.913 ms exposed (19.2%) and fully proportional.",
+      "3. Row stage per-element ALU (engine.py:2740-2824): 8.005 ms instruction-level (39.3%), overlapped in the real kernel and not removable without disabling the aperture early-out.",
+      "4. Row stage non-device_memory floor: about 12.0 ms (58%), not threadgroup occupancy (disproved by the order-balanced sweep), not Python or dispatch (disproved by the in-situ vs isolated accounting).",
+      "5. Column stage read traffic (engine.py:2337 tiled load): 2,147,483,648 B at 117.5 GB/s against a 127.0 GB/s read-only ceiling; the atan2 term is only about 0.43 ms of 18.283 ms."
+    ],
+    "rejected": [
+      "Reducing the row kernel's threadgroup reservation to raise occupancy (ROWS_PER_GROUP 4 to 2 or 1, i.e. 32768 B to 16384 B or 8192 B): bit-exact and built, but measured slower in an order-balanced same-session sweep - 23.168 ms and 24.846 ms against the shipped 22.534 ms. Refuted by measurement, not by argument.",
+      "The 'co-limited, ~75% non-device_memory' reading and the 6.27 ms intermediate device_memory prize reported in experiments/20260916-ssb-mps-2pass-price: withdrawn. The ablation behind it aliased 512 plane writes into 4 addresses and measured a store-issue bound, not a device_memory share. The non-aliasing replacement recovers 54.5% of the device_memory prediction.",
+      "Halving the row-IFFT intermediate by storing a Hermitian half-plane: the intermediate is not Hermitian. Measured joint-mirror residual 45,715 against max_abs 954,211 (4.8%), row-mirror 4.5%, column-mirror 7.1%, against float32 rounding near 1e-7 relative. Analytically the per-BF correction couples (row,col) with bf through the minus and plus branches, so phi(512-r,512-c) != conj(phi(r,c)) and the relation does not survive.",
+      "Reading the 3.6% imaginary-to-real ratio of the intermediate as licence to store real-only or narrower: it is an approximation and moves the pinned loss."
+    ],
+    "revision_note": "code.revision records the branch tip at the time of the sessions (ef173f8, the commit that registered the 2-pass pricing). The engine bytes under test are identified by sha256 and are unchanged from f357069."
+  },
+  "inputs": [
+    {
+      "dataset_id": "bf-column-companion-512-17p0x-0p0y",
+      "note": "Same calibrated 8937-plane companion as the other MPS experiments; G cache 9,407,729,664 B = 8937 x 512 x 257 complex64. Re-used unchanged; no fixture was edited.",
+      "path": "private-fixture://mps-runs/fixture-512-a",
+      "sha256": "e8ed586fad2b404a4392b9fb4f06da3f3fd3a096d1cdc2200ea39f3972a46121"
+    }
+  ],
+  "outputs": [
+    {
+      "artifact_id": "row-occupancy",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-colimit/row_occupancy.jsonl",
+      "result": "ROWS_PER_GROUP 1/2/4 produce byte-identical row-IFFT planes (max_abs_diff 0.0, sha256 4ff48df86b559a985aadf93f1360e11101589e5f90ede3cd6826be82d589f028 for all three). Order-naive timing at load 3.65-4.26 (the highest-load probe of the six): 8 KB 28.054 ms, 16 KB 23.837 ms, 32 KB 23.585 ms. The field threadgroup_bytes was corrected after this run (see findings.artifact_erratum); timings and bit-exactness are unaffected.",
+      "retention": "durable",
+      "sha256": "9e567e6a8380243cf349a5018d97c937f0bc8b427b53345e5977213e55fcd936",
+      "size_bytes": 2097
+    },
+    {
+      "artifact_id": "alu-roofline",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-colimit/alu_roofline.jsonl",
+      "result": "Load 3.5-4.1, copy control 129.6 GB/s. fma 7.17e12/s, sqrt 3.27e12/s, reciprocal 3.86e12/s, fast::sincos 9.24e11/s. No-memory replica of the exact correction block 1.774 ms; correction plus per-candidate arithmetic 8.005 ms; same-session row stage 20.520 ms.",
+      "retention": "durable",
+      "sha256": "eccb46e428044e6da58652af98dbfb046b563a31a223752919b1b3aa2ae50a82",
+      "size_bytes": 1696
+    },
+    {
+      "artifact_id": "column-roofline",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-colimit/column_roofline.jsonl",
+      "result": "Load 3.1-3.8, copy control 128.4 GB/s. atan2 6.22e11/s; column ALU replica 1.196 ms for 1.07e9 atan2. Order-balanced row sweep 22.534 / 23.168 / 24.846 ms at 32 / 16 / 8 KB. Column stage 16.635 ms.",
+      "retention": "durable",
+      "sha256": "65ec106e8f608c3b686b305f619984bce5c120dc16e75ea183b53b99fc11e858",
+      "size_bytes": 1553
+    },
+    {
+      "artifact_id": "basis-check",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-colimit/basis_check.jsonl",
+      "result": "Load 3.0-3.7, copy control 125.9 GB/s. Frozen objective p50 648.117 ms (640.768-724.825) with loss[0] = 0.13769753277301788 exactly and 11,560,420,157 B peak. Per pack 36.006 ms. Row stage isolated 22.656 ms, column stage isolated 18.283 ms, sum 40.939 ms, so isolated timings overstate the in-situ stage cost by 4.933 ms per pack.",
+      "retention": "durable",
+      "sha256": "9543bcb5a743bf4e3cb72a0a3d3e9e522153a5bfb17191a487b3954b71e9b571",
+      "size_bytes": 1317
+    },
+    {
+      "artifact_id": "row-ablation",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-colimit/row_ablation.jsonl",
+      "result": "Load 3.0-3.5, copy control 130.7 GB/s, order baseline/no_corr/no_g/no_g_no_corr/no_corr_fold_store/baseline. Baseline 20.347 ms; constant-G 16.433 ms (-3.913, -19.2%); constant-G plus no correction 16.206 ms; no correction alone 21.660 ms (+1.314, slower, because ap=1 disables the aperture early-out); fold-store with no correction 19.575 ms.",
+      "retention": "durable",
+      "sha256": "55557f77a50414a0aeca6c4445e6e4da9bd53e6bee1dc1a0ef3764e7da21f1a0",
+      "size_bytes": 2128
+    },
+    {
+      "artifact_id": "row-store-width",
+      "consuming_figures": [],
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-colimit/row_store_width.jsonl",
+      "result": "Load 3.3-3.5, copy control 129.0 GB/s, order c64/f32/f32/c64. Complex64 store 20.755 ms moving 2,686,451,712 B (129.4 GB/s); float32 store 16.223 ms moving 1,612,709,888 B (99.4 GB/s). Removing 1,073,741,824 B of write saves 4.531 ms, 54.5% of the 8.322 ms a fully serialised removal would save. Same instruction count, same tiled order, no aliasing.",
+      "retention": "durable",
+      "sha256": "7c3314275c44af133c97eac155604b03097ecf4ce9fffff224baa8ecdd141c65",
+      "size_bytes": 1072
+    }
+  ],
+  "paper": {
+    "consuming_figures": [],
+    "notes": "No paper figure consumes this experiment."
+  },
+  "parameters": {
+    "batch": 2,
+    "chunk_bf": 512,
+    "fit_objective": "_reconstruct_prepared_batch_exact_loss (engine.py:4883)",
+    "packs_per_objective": 18,
+    "pinned_loss": 0.13769753277301788,
+    "pinned_optimum": {
+      "C10": 7.017120839737006,
+      "C12": 0.0,
+      "phi12": -0.15393969519675116
+    }
+  },
+  "parity": {
+    "bit_exact_evidence": "The frozen objective reproduces the pinned loss 0.13769753277301788 exactly in this session (loss_pinned_match true) and the pack forward reproduces 0.13769753277301788 in the basis session. No engine source was modified, so the pinned trajectory is untouched: engine.py sha256 06058d32bf03947dec395845dfbff80fb8fa87563840a3242e204675e75e5114.",
+    "gate": "not re-run in this experiment; the engine bytes are identical to the tree whose gate result was 56 passed / 4 skipped, so that result carries unchanged.",
+    "note": "The bit-exactness claims in this experiment are about the ablation variants, not the shipped path: ROWS_PER_GROUP 1/2/4 were shown byte-identical to each other and to the shipped kernel's output, and they are a real candidate that was measured and rejected. The other variants produce wrong values by design and are timing-only.",
+    "peak_memory_bytes": 11560420157
+  },
+  "question": "Decompose the 79.0 s 8937-BF fit's two FFT stages into device_memory, ALU, latency/occupancy, sync and host-overhead shares with stated provenance, and decide whether any bit-exact change removes meaningful work.",
+  "schema_version": 1,
+  "status": "refuted",
+  "timestamps": {
+    "created": "2026-09-16",
+    "finished": "2026-09-16",
+    "started": "2026-09-16"
+  }
+}
