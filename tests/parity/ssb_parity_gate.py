@@ -300,7 +300,7 @@ def run_case(
     if not (root / "source" / "bf_columns.u16").is_file():
         raise FileNotFoundError(
             f"Case {case.name!r} has no exported exact inputs at {root}. Run "
-            f"`scripts/check_ssb_parity.sh --export` first."
+            f"`scripts/check_ssb_parity.sh --cpu-oracle --export` first."
         )
     meta = _case_meta(case)
     report: dict[str, object] = {
@@ -606,6 +606,10 @@ def print_report(report: dict[str, object], use_metal: bool) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--cpu-oracle", action="store_true",
+        help="explicitly enable the expensive CPU reconstruction reference",
+    )
+    parser.add_argument(
         "--case",
         action="append",
         default=None,
@@ -645,6 +649,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", default=None, help="write the full report as JSON")
     args = parser.parse_args(argv)
 
+    if not args.cpu_oracle:
+        parser.error(
+            "CPU reconstruction is opt-in; use scripts/check_ssb_parity.sh "
+            "for frozen GPU parity, or explicitly pass --cpu-oracle for diagnosis"
+        )
+
     if args.all_cases:
         names = list(CASES)
     elif args.case:
@@ -659,7 +669,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             "--force-export only rewrites an existing artifact when --export is "
             "also given; pass --export --force-export (or use "
-            "`scripts/check_ssb_parity.sh --export --force-export`)."
+            "`scripts/check_ssb_parity.sh --cpu-oracle --export --force-export`)."
         )
     if args.metal_only and args.no_metal:
         parser.error("--metal-only and --no-metal are mutually exclusive")

@@ -60,7 +60,7 @@ if [ "$FULL" = 1 ]; then
 fi
 for directory in "${CASE_DIRS[@]}"; do
   if [ ! -f "$directory/case.json" ]; then
-    echo "check_ssb_fit_trajectory: $directory/case.json is missing; run scripts/check_ssb_parity.sh --export" >&2
+    echo "check_ssb_fit_trajectory: $directory/case.json is missing; run scripts/check_ssb_parity.sh --cpu-oracle --export" >&2
     exit 2
   fi
 done

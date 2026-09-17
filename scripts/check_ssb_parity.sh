@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Strict float32/complex64 SSB parity gate.
+# GPU-first SSB parity gate.
 #
-#   scripts/check_ssb_parity.sh                 # fast: 128x128 real crops
-#   scripts/check_ssb_parity.sh --full          # adds the full 512x512 acquisition
+#   scripts/check_ssb_parity.sh                 # frozen GPU fit and repeat
+#   scripts/check_ssb_parity.sh --full          # adds the 512x512 GPU fit
 #   scripts/check_ssb_parity.sh --build-metal   # build the native harness first
-#   scripts/check_ssb_parity.sh --metal-only    # gate the native Metal pairs alone
+#   scripts/check_ssb_parity.sh --cpu-oracle --metal-only  # expensive opt-in
 #
-# The unmodified gate reports the MPS findings of this experiment as failures,
+# The optional CPU oracle reports the MPS findings of this experiment as failures,
 # so its exit status is not the native Metal acceptance signal. Use
 # `--metal-only` when the change under test is in the Metal path: every bound is
 # unchanged, only the MPS measurement is skipped.
@@ -25,15 +25,29 @@ GPURUN="${QUANTEM_SSB_PARITY_GPURUN:-$HOME/perf-lab/ssb-audit/gpurun}"
 REPORT_OVERRIDE="${QUANTEM_SSB_PARITY_REPORT_PATH:-}"
 BUILD_METAL=0
 FULL=0
+CPU_ORACLE=0
 EXTRA=()
 for argument in "$@"; do
   case "$argument" in
     --build-metal) BUILD_METAL=1 ;;
     --full) FULL=1 ;;
+    --cpu-oracle) CPU_ORACLE=1 ;;
     --export|--force-export|--no-metal|--metal-only|--all-cases) EXTRA+=("$argument") ;;
     *) echo "check_ssb_parity: unknown argument $argument" >&2; exit 2 ;;
   esac
 done
+
+if [ "$CPU_ORACLE" = 0 ]; then
+  if [ "${#EXTRA[@]}" -gt 0 ]; then
+    echo "check_ssb_parity: oracle-specific flags require explicit --cpu-oracle; the default is frozen GPU parity" >&2
+    exit 2
+  fi
+  GPU_ARGS=(scripts/check_ssb_fit_trajectory.sh)
+  if [ "$BUILD_METAL" = 1 ]; then GPU_ARGS+=(--build-metal); fi
+  if [ "$FULL" = 1 ]; then GPU_ARGS+=(--full); fi
+  echo "GPU acceptance: frozen fit trajectory, repeat determinism, and MPS GPU comparison; no CPU oracle."
+  exec bash "${GPU_ARGS[@]}"
+fi
 
 # The native harness is a standalone binary: `swift test` needs Xcode, which
 # this host does not have.
@@ -65,8 +79,8 @@ mkdir -p "$RUNS_ROOT"
 
 if [ "${#EXTRA[@]}" -gt 0 ]; then
   GPU_RUN_LABEL=parity "$GPURUN" "$PYTHON" tests/parity/ssb_parity_gate.py \
-    "${CASE_ARGS[@]}" "${EXTRA[@]}" --json "$REPORT"
+    --cpu-oracle "${CASE_ARGS[@]}" "${EXTRA[@]}" --json "$REPORT"
 else
   GPU_RUN_LABEL=parity "$GPURUN" "$PYTHON" tests/parity/ssb_parity_gate.py \
-    "${CASE_ARGS[@]}" --json "$REPORT"
+    --cpu-oracle "${CASE_ARGS[@]}" --json "$REPORT"
 fi

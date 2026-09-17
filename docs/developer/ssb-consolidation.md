@@ -39,9 +39,29 @@ directory. Do not overwrite an earlier experiment's arrays or reports.
 
 ```sh
 bash scripts/check_metal_ssb.sh
-bash scripts/check_ssb_parity.sh --build-metal --full --metal-only
-bash scripts/check_ssb_fit_trajectory.sh --build-metal
+bash scripts/check_ssb_parity.sh --build-metal
 ```
+
+The default parity command checks the existing frozen **GPU** fitting trajectory,
+repeats it for determinism, and reports the MPS GPU comparison. It does not run a
+CPU reconstruction oracle or recapture any baseline. Add `--full` only when a
+512-sized GPU fit is relevant. Reconstruction and saved-result checks remain in
+`check_metal_ssb.sh`; the frozen-fit gate alone is not a full reconstruction
+golden and does not waive the 16-fixture requirement for accumulation changes.
+
+Routine optimization compares a known-good GPU revision with its candidate on
+identical inputs, calibration, precision, backend, and hardware. Freeze object,
+phase, and loss outputs for the changed path, as well as the relevant fitting
+trajectory. Record the source revision and input hashes. Bit-exact optimization
+claims require bit-exact comparisons; cross-backend tolerance checks remain
+separate. Never regenerate expected results just because a candidate fails.
+
+CPU numerical references are optional, tiny diagnostics, not routine acceptance
+work. The retained full-size oracle is deliberately expensive and requires an
+explicit user request. Its command now requires `--cpu-oracle`; `--metal-only`
+alone does **not** enable it. Pytest also requires `QUANTEM_SSB_CPU_ORACLE=1`
+before making fresh oracle measurements. Previously saved reports can still be
+read without recomputing them. No scientific thresholds were relaxed.
 
 These are backend workflow checks, not proof that an already-installed viewer
 has been rebuilt against this revision. Timings require a separate controlled

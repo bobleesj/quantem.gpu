@@ -761,7 +761,7 @@ def load_case_declaration(case: SSBParityCase) -> dict[str, object]:
     if not path.is_file():
         raise FileNotFoundError(
             f"Case {case.name!r} has no exported inputs at {path}. Run "
-            "`scripts/check_ssb_parity.sh --export` or call export_case()."
+            "`scripts/check_ssb_parity.sh --cpu-oracle --export` or call export_case()."
         )
     return json.loads(path.read_text(encoding="utf-8"))
 

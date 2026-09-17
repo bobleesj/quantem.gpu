@@ -47,6 +47,28 @@ def optimum(run: dict) -> tuple[float, float, float]:
     )
 
 
+def production_checks_pass(native: dict, repeat: dict | None = None) -> bool:
+    """Require deterministic production evaluation without CPU reconstruction."""
+    purity_fields = (
+        "repeatSameEngineBitwiseMismatches",
+        "freshEngineBitwiseMismatches",
+        "float32AliasBitwiseMismatches",
+    )
+    for report in (native,) if repeat is None else (native, repeat):
+        if not report["productionOptimizeAlwaysMatchesSequential"]:
+            return False
+        if any(report["objectivePurity"][field] != 0 for field in purity_fields):
+            return False
+    if repeat is not None:
+        first, second = native["sequential"], repeat["sequential"]
+        return (
+            trial_digest(first["trials"]) == trial_digest(second["trials"])
+            and optimum(first) == optimum(second)
+            and first["bestLoss"] == second["bestLoss"]
+        )
+    return True
+
+
 def _format_optimum(run: dict) -> str:
     c10, c12, phi12 = optimum(run)
     return f"{c10:<19.12g} {c12:<19.12g} {phi12:<19.12g} {run['bestLoss']:.12g}"
@@ -175,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"    fresh engine, bitwise mismatches           {purity['freshEngineBitwiseMismatches']}")
     print(f"    same float32 triple from another double    {purity['float32AliasBitwiseMismatches']}")
 
+    repeat = None
     if args.repeat:
         repeat = json.loads(Path(args.repeat).read_text(encoding="utf-8"))
         print("\n  determinism (same command, second process)")
@@ -188,7 +211,9 @@ def main(argv: list[str] | None = None) -> int:
             second_batch = trial_digest(repeat["batched"]["trials"])
             print(f"    batched trajectory identical               {first_batch == second_batch}")
 
-    status = 0
+    status = 0 if production_checks_pass(native, repeat) else 1
+    if status:
+        print("    FAIL: production consistency, objective purity, or repeat determinism changed")
     if args.reference:
         reference = json.loads(Path(args.reference).read_text(encoding="utf-8"))
         print("\n  Python/QuantEM reference fit on the same artifact")

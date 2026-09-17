@@ -11,11 +11,14 @@ acquisition), so they are generated once, outside the repository, by::
 
     GPU_RUN_LABEL=parity ~/perf-lab/ssb-audit/gpurun \\
       PYTHONPATH=src python tests/parity/ssb_parity_gate.py \\
-      --case arina-128-full-disk --case arina-128-inner-disk --export
+      --cpu-oracle --case arina-128-full-disk --case arina-128-inner-disk --export
 
 These tests only read that artifact. Set ``QUANTEM_SSB_PARITY_REPORT`` to reuse
 an existing report JSON instead of measuring again, and
 ``QUANTEM_SSB_PARITY_FULL=1`` to include the full 512x512 acquisition.
+Fresh CPU oracle measurements additionally require
+``QUANTEM_SSB_CPU_ORACLE=1``. Normal tests may inspect saved evidence but do not
+launch the expensive CPU reference automatically.
 """
 
 from __future__ import annotations
@@ -67,7 +70,7 @@ def _requires_artifact(case_name: str) -> None:
     if not (case_root(CASES[case_name]) / "case.json").is_file():
         pytest.skip(
             f"case {case_name} is not exported yet; run "
-            "`scripts/check_ssb_parity.sh --export` (see this module's docstring)"
+            "`scripts/check_ssb_parity.sh --cpu-oracle --export` (see this module's docstring)"
         )
 
 
@@ -100,10 +103,16 @@ def _measure(
 ) -> list[dict]:
     """Run the gate for ``cases`` under the shared GPU lock and parse it."""
 
+    if os.environ.get("QUANTEM_SSB_CPU_ORACLE") != "1":
+        pytest.skip(
+            "CPU oracle is opt-in; use frozen GPU parity or explicitly set "
+            "QUANTEM_SSB_CPU_ORACLE=1 for diagnosis"
+        )
     report_path = case_root(CASES[cases[0]]).parent / f"{tag}-report.json"
     command = [
         str(_python()),
         str(REPO_ROOT / "tests/parity/ssb_parity_gate.py"),
+        "--cpu-oracle",
         *[value for name in cases for value in ("--case", name)],
         "--json",
         str(report_path),
