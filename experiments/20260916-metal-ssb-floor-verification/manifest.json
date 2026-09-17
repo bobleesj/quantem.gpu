@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260916-metal-ssb-floor-verification",
+  "status": "completed",
+  "question": "Is the 267 ms per-evaluation loss time at 8937 bright-field terms a hardware floor for the exact objective, or merely the current implementation's number? Specifically: (a) what is the best achievable time for the loss path's device_memory traffic measured independently of the engine, (b) was the previously reported 266 ms two-pass prediction derived independently or circularly, and (c) if pure-traffic time is materially below 267 ms, where is the exposed time and is there a bit-exact fix?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260916-metal-ssb-floor-verification/manifest.json"
+  },
+  "code": {
+    "repository": "quantem.gpu",
+    "revision": "597b5664f22347771f6c385390602f9750fd9d75",
+    "dirty": false,
+    "entrypoints": [
+      "experiments/20260916-metal-ssb-objective-profile/probe3.swift (real loss path, 6 timed evaluations)",
+      "experiments/20260916-metal-ssb-objective-profile/probe3.swift gated build (SSB_PROFILE_SKIP_COLUMN/ROWS/NYQUIST pass ablation)",
+      "local-evidence://ssb-audit/metal-runs/floor-20260916/ceiling.swift (independent traffic-only harness)"
+    ]
+  },
+  "inputs": [
+    {
+      "dataset_id": "arina-logic-pmos-master",
+      "path": "private-fixture://ARINA/arina-fixture-a_master.h5",
+      "sha256": "57cb94904ffcf7a5b2470174b6e3b9d819a80b96e565b69772ce4fdf0a5cf95b"
+    }
+  ],
+  "parameters": {
+    "scan_shape": [
+      512,
+      512
+    ],
+    "detector_shape": [
+      192,
+      192
+    ],
+    "bf_selected": 8937,
+    "bf_active": 8937,
+    "bf_cached": 8937,
+    "bf_streamed": 0,
+    "precision": "complex64/float32; exact packed uint32 counts",
+    "half_plane_elements": 131584,
+    "half_bytes": 1052672,
+    "phase_batch": 8,
+    "intermediate_block_rows": 4,
+    "max_threadgroup_memory_bytes": 32768,
+    "traffic_bytes_per_evaluation": {
+      "g_read": 9407729664,
+      "intermediate_write": 9407729664,
+      "intermediate_read": 9407729664,
+      "phase_sum_rmw": 2097152000
+    },
+    "frozen_loss": 0.1376979947090149,
+    "frozen_gates": {
+      "object_rel_l2": 1e-05,
+      "loss_abs": 1e-06
+    },
+    "host_load_range": "3.1-4.9; every timing set is paired against the other arm in the same lock hold",
+    "artifact_results": {}
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory",
+    "contention_note": "All runs taken under the shared GPU lock with GPU_RUN_LABEL=anscombe-metal-floor. Host load is quoted with every timing set; the real loss and the traffic ceiling were interleaved ABBA in the same lock hold so that load drift cancels."
+  },
+  "results": {
+    "verdict": "CONFIRMED, with the previous wording corrected. The 267 ms objective is not merely the current implementation's number, but the real headroom is 5-14 ms per evaluation (2-5%), not the 26% (16 s) implied by comparing the circular 105.7 GB/s aggregate against a per-pass best rate. The 26% prize does not exist.",
+    "circularity_check": {
+      "finding": "CIRCULAR. The 266 ms two-pass prediction is algebraically identical to the 267.1 ms measurement it was said to validate.",
+      "arithmetic": "105.7 GB/s = 28.223188992 GB / 0.2671 s, and 266 ms = 28.223188992 GB / 105.7 GB/s = 0.26701 s. The 'prediction' is the measurement restated to three significant figures.",
+      "quoted_source": "experiments/20260916-metal-ssb-fit-acceleration/manifest.json:251 (\"two_pass_model_prediction_ms\": 266) and the same file's conclusion string at line 256 (\"The 2-pass model predicts 28.23 GB at the observed 105.7 GB/s aggregate, i.e. 266 ms against 267.1 ms measured.\")",
+      "what_survives": "The independent part of that earlier argument is the 4-pass exclusion: 47.04 GB floors at 339 ms (column rate 138.8 GB/s) or 406 ms (row rate 115.7 GB/s), both well above the measured 267.1 ms. That exclusion uses per-pass rates from a different measurement and is not circular. The error was only in presenting the 2-pass restatement as a confirmation."
+    },
+    "independent_traffic_ceiling_ms_best_of_five": {
+      "load_range": "3.1-4.9",
+      "read_only_G_9407729664B": 78.95,
+      "write_only_ring": 57.35,
+      "column_stream_18815459328B": 153.31,
+      "row_stream_11752345600B": 76.23,
+      "full_three_stream_30567804928B": 226.98,
+      "full_range_across_sessions": [
+        226.98,
+        228.56,
+        229.17,
+        229.58,
+        231.27,
+        232.11,
+        232.21,
+        234.39
+      ],
+      "note": "Never below 226.98 ms in eight independent best-of-five sets. This is the floor for the loss path's memory traffic with trivial compute, which no bit-exact implementation of the objective can beat."
+    },
+    "real_loss_ms": {
+      "paired_abba_load_4_0_4_9": {
+        "min": 263.9,
+        "p50": 268.0,
+        "max": 288.3,
+        "n": 20
+      },
+      "gated_full_p50": [
+        268.3,
+        275.6
+      ],
+      "loss_values_bit_identical_across_runs": true,
+      "gap_vs_traffic_only_ceiling_ms": 37.8
+    },
+    "exposed_time_budget_ms": {
+      "method": "Each category isolated by adding exactly one real feature to the traffic kernel and re-measuring best-of-five in the same lock hold.",
+      "dispatch_gaps": {
+        "value": 1.9,
+        "evidence": "2236 empty dispatches = 1.58 ms, 3354 = 1.93 ms (~0.6 us/dispatch); full3 with three dispatches per batch (232.95) is within noise of full with two (228.56-234.39). REFUTED as a contributor."
+      },
+      "row_threadgroup_memory_occupancy": {
+        "value": 0.1,
+        "evidence": "rowtg adds the real kernel's 26752 B of threadgroup memory (scratch 4x512 + tile 4x324 of the 32768 B budget) and the same staged access pattern: 77.11 ms vs row 76.41 ms. REFUTED as a contributor."
+      },
+      "row_fft_arithmetic": {
+        "value": 6.3,
+        "evidence": "rowfft 82.49 ms (real radix-8 inverse FFT, helper copied verbatim from ssb.metal) vs row 76.23 ms."
+      },
+      "atan2_transcendental": {
+        "value": 10.9,
+        "evidence": "rowatan2 93.42 ms (8 variable-argument atan2 per thread per bright-field term = 2.34e9 per evaluation) vs rowfft 82.49 ms. A cheaper probe using a constant denominator was strength-reduced by the compiler and is not valid evidence."
+      },
+      "nyquist_boundary_loads_and_phase_accumulators": {
+        "value": 10.8,
+        "evidence": "rowfull 104.25 ms (adds the Nyquist boundary loads, Hermitian mirror and eight sum/sumsq accumulators) vs rowatan2 93.42 ms."
+      },
+      "row_pass_total_exposed": {
+        "value": 33.5,
+        "real": 109.7,
+        "replica": 104.25,
+        "note": "A faithful replica of the row kernel's mandatory instruction mix reaches 104.25 ms, within 5.5 ms of the real row pass, so the row pass is within 5% of the cost of its own necessary computation."
+      },
+      "column_pass": {
+        "value": -3.8,
+        "real": 149.5,
+        "replica": 153.31,
+        "note": "The real column pass is FASTER than the trivial traffic replica, so 149.5 ms is the better estimate and there is no column headroom to claim."
+      },
+      "nyquist_pass": {
+        "value": 9.1,
+        "evidence": "Ablation-derived 9.1 ms; run in isolation it costs 9.0 ms, i.e. the pass is 100% serialized and overlaps with nothing. 1118 dispatches of only 16 threadgroups of 64 threads = 1024 threads in flight, roughly 10% occupancy, so it is latency- rather than throughput-bound."
+      }
+    },
+    "achievable_floor": {
+      "column_real": 149.5,
+      "row_faithful_replica": 104.25,
+      "nyquist_irreducible_work_estimate": 1.0,
+      "floor_ms": 254.8,
+      "real_ms": 268.3,
+      "headroom_ms": 13.5,
+      "headroom_fraction": 0.05,
+      "fit_impact_seconds": 3.1,
+      "statement": "At most 13.5 ms per evaluation, essentially all of it the Nyquist pass's latency-bound serialization, against the 16 s (26%) the circular arithmetic suggested."
+    },
+    "bit_exact_fix_attempt": {
+      "arm": "Fold the Nyquist dispatch into the column dispatch grid (grid 257x8 -> 259x8, branch on group.x), which is bit-exact by construction: identical per-element arithmetic, same command buffer, no summation-order change, no row bright-field split.",
+      "measured": {
+        "nyqsep_three_dispatches": 230.05,
+        "full_two_dispatches": 231.42,
+        "nyqfused": [
+          235.36,
+          235.73
+        ]
+      },
+      "result": "REJECTED on measurement - the fused grid is 5.3-5.7 ms SLOWER than the separate-dispatch form.",
+      "caveat": "The probe carried trivial work in the Nyquist-shaped dispatch, so it priced the grid-shape cost of fusion rather than the real Nyquist work. It therefore does not falsify Nyquist batching; it does show that folding the dispatch in without changing its parallelism buys nothing.",
+      "remaining_priced_option": "Batch the Nyquist dispatch across 32 bright-field terms instead of 8 (4x the threadgroups per dispatch, bit-exact per bright-field term) to restore parallelism; expected recovery ~6-7 ms, i.e. ~1.5 s of a 62 s fit (2.5%). Requires a source change to encodeFusedCachedPhaseLoss and a 4x Nyquist buffer; NOT attempted, because a 2.5% gain does not justify touching a frozen-precision path.",
+      "conclusion": "No bit-exact route to a meaningful saving exists. The atan2 (10.9 ms), FFT (6.3 ms) and Nyquist epilogue (10.8 ms) are the objective's own arithmetic and cannot be reduced without changing what is computed."
+    }
+  },
+  "timestamps": {
+    "created": "2026-09-16",
+    "started": "2026-09-16",
+    "finished": "2026-09-16"
+  },
+  "outputs": [
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/ceiling.swift",
+      "sha256": "665756e14dad25f13afbecca1240269725ea3d49d8237e840e87c0f022a44bf5",
+      "result": "Independent traffic-only ceiling harness (standalone Metal, no engine): streams the exact loss geometry - 8937 bright-field terms, G read 1052672 B/BF, blocked-4-row ring write, ring read, phase-sum RMW - with trivial compute. Modes: read/write/col/row/full plus rowfft/rowatan2/rowfull instruction-mix replicas, null2236/null3354 dispatch-overhead probes, rowtg threadgroup-memory probe and nyqsep/nyqfused Nyquist-shape probes."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/run2.log",
+      "sha256": "f354eecbc88fc6c8df6b77346a5b731b9e3c1cadbae8f0d971c4752df7469d96",
+      "result": "Dispatch-shape and pass decomposition under the lock at load 3.4-4.9: null2236 1.58 ms and null3354 1.93 ms for 2236/3354 empty dispatches; full3 (three dispatches per batch) 232.95 ms vs full (two dispatches) 228.56-234.39 ms; read 78.95-84.64, write 57.35, col 153.31-158.30, row 76.23-77.33, full best 228.56 ms. Paired ABBA against the real loss path."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/run3.log",
+      "sha256": "a351c0223712bba6782c88472f81f075b1d24029a968bb809782480f80da4736",
+      "result": "Gated pass ablation at matched load plus paired ceiling: real loss p50 268.3 ms; nyquist 9.1, column 149.5, rows 109.7 ms derived additively; ceiling col 153.31, row 77.33, full 231.27 ms."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/run6.log",
+      "sha256": "565c31b71f6248073aa0f1b18916667927e3554e88f859e9431ad1ffe67beeda",
+      "result": "Row-pass attribution at load 3.7-4.1: row 76.41, rowfft (real radix-8 inverse FFT) 82.27, rowfull (faithful replica of the row kernel instruction mix) 104.83, rowatan 76.99, rowtg (26752 B threadgroup memory) 77.11 ms."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/run7.log",
+      "sha256": "a4f23210f11d4f892bfb5f0d6c6bbfc4200f17b8601369c8afd93fdf2abfaecc",
+      "result": "Atan2 split and Nyquist fusion probe at load 3.9: row 76.23, rowfft 82.49, rowatan2 (real variable-argument atan2) 93.42, rowfull 104.25 ms; full 231.42, nyqsep 230.05, nyqfused 235.36/235.73 ms."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/run8.log",
+      "sha256": "d2efd1e322a275b0bd9ec5832d9a137d8da667f6eea74283639b23dbcd1bebbe",
+      "result": "Nyquist pass in isolation at load 3.1-3.3: nyquist-only 9.0 ms p50 versus its 9.1 ms in-situ contribution, i.e. the pass is fully serialized; gated full 270.4-275.6 ms; paired ceiling full 226.98 ms."
+    },
+    {
+      "artifact": "local-evidence://ssb-audit/metal-runs/floor-20260916/real-r1a/report.json",
+      "sha256": "712203b542c7d05709c6e7597716c52e8f2dfb4dfca68e6ba5f352ad0a3f782f",
+      "result": "Real loss path, four paired ABBA runs at load 4.0-4.9: 20 warm samples min 263.9, p50 268.0, max 288.3 ms; loss values bit-identical across all runs; prepare 2.00-2.09 s; allocated 11.36 GB."
+    }
+  ]
+}
