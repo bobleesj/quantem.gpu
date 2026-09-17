@@ -3,6 +3,21 @@ import Metal
 @_spi(PairedRuntimeTANSPrototype) import Metal4DSTEMKernels
 import Native4DSTEMIO
 
+/// What a scheduled polar-index preparation did, so a caller can charge memory
+/// exactly for the state the resident ended in.
+@_spi(PairedRuntimeTANSPrototype)
+public enum ResidentDetectorIndexPreparationOutcome: Sendable, Equatable {
+  /// The index is installed and costs `addedBytes` more device memory.
+  case installed(addedBytes: UInt64, buildSeconds: Double)
+  /// An index was already present; nothing was allocated.
+  case alreadyPrepared
+  /// The build completed while the resident or its index was being torn down.
+  case superseded
+  case cancelled
+  /// The build failed; the resident keeps serving the exact un-indexed path.
+  case failed(String)
+}
+
 /// Exact original-HDF5 resident backed by the paired runtime tANS ABI.
 public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private let configuration: PairedRuntimeConfiguration
@@ -10,6 +25,13 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private let sourceLibrary: MTLLibrary
   public var interactionMode: MetalResidentInteractionMode? { configuration.mode }
   private var residentIndexPrepared = false
+  /// Bumped whenever the resident or its index is torn down. A build that
+  /// started under an older generation refuses to install its result, which is
+  /// what makes an index build safe to run with `stateLock` released.
+  private var residentIndexGeneration: UInt64 = 0
+  /// Background queue for index builds that must not extend a load or a frame.
+  private static let residentDetectorIndexQueue = DispatchQueue(
+    label: "quantem.gpu.paired-runtime-polar-index", qos: .utility)
   private func runtimeOption(_ name: String) -> String? {
     if residentIndexPrepared {
       if name == "QGPU_PAIRED_RUNTIME_POLAR_INDEX" { return "1" }
@@ -1038,14 +1060,126 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   /// Build only a fine detector index from existing encoded buffers, without file IO.
   /// This experiment preserves Normal encoding; it is not the full Fast profile.
   /// Failure or cancellation leaves the resident and its current image unchanged.
+  ///
+  /// The build runs with `stateLock` released: the lock is only taken to
+  /// snapshot the resident state and again to install the finished index. That
+  /// matters because `stateLock` also serializes `extractRawDiffraction` and
+  /// every virtual-detector update, so holding it for the ~0.9 s build would
+  /// freeze all interaction for the duration of the build.
   @_spi(PairedRuntimeTANSPrototype)
   public func prepareResidentDetectorIndex(
     maximumAdditionalBytes: UInt64, shouldCancel: () -> Bool = { false }
   ) throws {
+    guard
+      let request = try makeResidentDetectorIndexRequest(
+        maximumAdditionalBytes: maximumAdditionalBytes)
+    else { return }
+    if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+    let candidate = try buildResidentDetectorIndex(request, shouldCancel: shouldCancel)
+    if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+    guard installResidentDetectorIndex(candidate, request: request) else {
+      throw Self.invalid(
+        "The paired-runtime ANS source changed while its polar index was built")
+    }
+  }
+
+  /// Build the same index without blocking the caller.
+  ///
+  /// The load path uses this so opening a folder never waits for an
+  /// interaction accelerator. Until the index is installed, every query takes
+  /// the shipped un-indexed path, which is already exact; the completion runs
+  /// on the private build queue and reports which of those two states a caller
+  /// should charge memory for.
+  @_spi(PairedRuntimeTANSPrototype)
+  public func scheduleResidentDetectorIndexPreparation(
+    maximumAdditionalBytes: UInt64,
+    shouldCancel: @escaping @Sendable () -> Bool = { false },
+    completion: @escaping @Sendable (ResidentDetectorIndexPreparationOutcome) -> Void = { _ in }
+  ) {
+    let request: ResidentDetectorIndexBuildRequest
+    do {
+      guard
+        let snapshot = try makeResidentDetectorIndexRequest(
+          maximumAdditionalBytes: maximumAdditionalBytes)
+      else {
+        completion(.alreadyPrepared)
+        return
+      }
+      request = snapshot
+    } catch {
+      completion(.failed(String(describing: error)))
+      return
+    }
+    Self.residentDetectorIndexQueue.async { [self] in
+      if shouldCancel() {
+        completion(.cancelled)
+        return
+      }
+      let allocatedBefore = UInt64(request.device.currentAllocatedSize)
+      let started = CFAbsoluteTimeGetCurrent()
+      let candidate: MetalPairedRuntimeTANSPolarIndex
+      do {
+        candidate = try buildResidentDetectorIndex(request, shouldCancel: shouldCancel)
+      } catch {
+        completion(.failed(String(describing: error)))
+        return
+      }
+      let seconds = CFAbsoluteTimeGetCurrent() - started
+      if shouldCancel() {
+        completion(.cancelled)
+        return
+      }
+      let allocatedAfter = UInt64(request.device.currentAllocatedSize)
+      let added = allocatedAfter > allocatedBefore ? allocatedAfter - allocatedBefore : 0
+      guard installResidentDetectorIndex(candidate, request: request) else {
+        completion(.superseded)
+        return
+      }
+      completion(.installed(addedBytes: added, buildSeconds: seconds))
+    }
+  }
+
+  /// True once an index has been installed, whether built inline or scheduled.
+  @_spi(PairedRuntimeTANSPrototype)
+  public var residentDetectorIndexPrepared: Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return residentIndexPrepared
+  }
+
+  /// Every input a polar-index build reads after `stateLock` is released.
+  ///
+  /// The buffer references are strong, so the build keeps its own inputs alive
+  /// even if the resident is released while it runs. `generation` is rechecked
+  /// before the result is installed, so a build that outlives its resident, or
+  /// one that races an explicit index release, is dropped instead of installed.
+  private struct ResidentDetectorIndexBuildRequest: @unchecked Sendable {
+    let generation: UInt64
+    let device: MTLDevice
+    let queue: MTLCommandQueue
+    let library: MTLLibrary
+    let payload: MTLBuffer
+    let offsets: MTLBuffer
+    let modes: MTLBuffer
+    let decoding: MTLBuffer
+    let validPixels: [UInt8]
+    let packets: Int
+    let streamRankOfPixel: [UInt32]?
+    let compactOffsetsEnabled: Bool
+    let allocationLimit: UInt64
+  }
+
+  /// Validate and snapshot under `stateLock`, then release it before any build
+  /// work. Returns `nil` when an index already exists, which keeps the shipped
+  /// silent no-op. Reuses the library the load already compiled instead of
+  /// recompiling it under the lock.
+  private func makeResidentDetectorIndexRequest(
+    maximumAdditionalBytes: UInt64
+  ) throws -> ResidentDetectorIndexBuildRequest? {
     stateLock.lock()
     defer { stateLock.unlock() }
     try requireLive()
-    if residentIndexPrepared { return }
+    if residentIndexPrepared { return nil }
     guard configuration.mode == .normal, polarIndex == nil else {
       throw Self.invalid(
         "Index-only preparation requires a Normal resident without an existing index")
@@ -1056,22 +1190,49 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     guard !limit.overflow else {
       throw Self.invalid("Additional index budget exceeds addressable memory")
     }
-    if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
-    let library = try Metal4DSTEMKernels.makePairedRuntimeTANSLibrary(device: device)
-    let candidate = try autoreleasepool {
+    return ResidentDetectorIndexBuildRequest(
+      generation: residentIndexGeneration,
+      device: device, queue: queue, library: sourceLibrary,
+      payload: payload, offsets: offsets, modes: modes, decoding: decodingTable,
+      validPixels: validPixels, packets: shape[0] * shape[1] / 512,
+      streamRankOfPixel: streamRankOfPixel,
+      compactOffsetsEnabled: compactOffsetsEnabled,
+      allocationLimit: min(limit.partialValue, device.recommendedMaxWorkingSetSize))
+  }
+
+  /// The expensive half. Runs with no `stateLock` held.
+  private func buildResidentDetectorIndex(
+    _ request: ResidentDetectorIndexBuildRequest, shouldCancel: () -> Bool
+  ) throws -> MetalPairedRuntimeTANSPolarIndex {
+    try autoreleasepool {
       try MetalPairedRuntimeTANSPolarIndex(
-        device: device, library: library, queue: queue,
-        payload: payload, offsets: offsets, modes: modes, decoding: decodingTable,
-        validPixels: validPixels, packets: shape[0] * shape[1] / 512,
-        leafPixels: 16, layoutKind: "radial1fine4", streamRankOfPixel: streamRankOfPixel,
-        compactOffsetsEnabled: compactOffsetsEnabled, prepareScan512QueryPipeline: true,
-        allocationLimit: min(limit.partialValue, device.recommendedMaxWorkingSetSize),
+        device: request.device, library: request.library, queue: request.queue,
+        payload: request.payload, offsets: request.offsets, modes: request.modes,
+        decoding: request.decoding, validPixels: request.validPixels,
+        packets: request.packets, leafPixels: 16, layoutKind: "radial1fine4",
+        streamRankOfPixel: request.streamRankOfPixel,
+        compactOffsetsEnabled: request.compactOffsetsEnabled,
+        prepareScan512QueryPipeline: true,
+        allocationLimit: request.allocationLimit,
         shouldCancel: shouldCancel)
     }
-    if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+  }
+
+  /// Install a finished index under `stateLock`, rejecting stale generations.
+  private func installResidentDetectorIndex(
+    _ candidate: MetalPairedRuntimeTANSPolarIndex,
+    request: ResidentDetectorIndexBuildRequest
+  ) -> Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    guard !released, residentIndexGeneration == request.generation,
+      !residentIndexPrepared, polarIndex == nil,
+      let livePayload = payload, livePayload === request.payload
+    else { return false }
     polarIndex = candidate
     residentIndexPrepared = true
     refreshMetadataSnapshot()
+    return true
   }
 
   /// Drop only the optional resident-built index; encoded counts remain allocated.
@@ -1079,6 +1240,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   public func releaseResidentDetectorIndex() {
     stateLock.lock()
     defer { stateLock.unlock() }
+    // Invalidate any build that is still running, including one scheduled by
+    // `scheduleResidentDetectorIndexPreparation`, so it cannot reinstall.
+    residentIndexGeneration &+= 1
     guard residentIndexPrepared else { return }
     polarIndex = nil
     residentIndexPrepared = false
@@ -3251,6 +3415,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   public func releaseResidentStorage() {
     stateLock.lock()
     defer { stateLock.unlock() }
+    // Invalidate any index build still running against these buffers.
+    residentIndexGeneration &+= 1
     payload = nil
     offsets = nil
     modes = nil
