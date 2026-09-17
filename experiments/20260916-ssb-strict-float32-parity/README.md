@@ -32,6 +32,7 @@ final optimum on both artifacts.
 scripts/check_ssb_parity.sh              # fast objective gate: real 128x128 ARINA crops
 scripts/check_ssb_parity.sh --full       # adds the full 512x512 acquisition
 scripts/check_ssb_parity.sh --build-metal   # rebuild the native harness first
+scripts/check_ssb_parity.sh --metal-only    # gate the native Metal pairs alone
 
 scripts/check_ssb_fit_trajectory.sh          # fast fit gate: trajectory + batched draw
 scripts/check_ssb_fit_trajectory.sh --full   # adds the full 512x512 acquisition
@@ -43,6 +44,14 @@ python scripts/ssb_parity_summary.py parity-runs/gate-fast.json
 The two gates are independent: the first proves one loss is right, the second
 proves the search that consumes it is pinned and that batching is a different
 search. Both exit non-zero on any failure and never rewrite a number.
+
+The unmodified objective gate is red on this artifact because the **MPS**
+finding above is real, so its exit status is not the native Metal acceptance
+signal. `--metal-only` measures and gates the `metal:*` and
+`metal cached vs streamed` pairs alone - identical bounds, identical oracle,
+MPS simply not measured - which makes the exit status of a Metal-only change
+mean what its author needs it to mean: 0 if the native path kept its
+precision, non-zero if it lost it.
 
 Every GPU command runs under the shared `gpurun` lock
 (`GPU_RUN_LABEL=parity ~/perf-lab/ssb-audit/gpurun <cmd>`), so concurrent agents

@@ -288,6 +288,7 @@ def run_case(
     *,
     export: bool,
     use_metal: bool,
+    use_mps: bool = True,
     geometry: str = "exact",
     reference_only: bool = False,
 ) -> dict[str, object]:
@@ -318,8 +319,10 @@ def run_case(
         mps_products = None
         metal_products = None
     else:
-        session = open_mps_session(case, meta)
-        mps_products = run_mps(case, meta, session=session)
+        mps_products = None
+        if use_mps:
+            session = open_mps_session(case, meta)
+            mps_products = run_mps(case, meta, session=session)
         metal_products = run_metal(case, meta) if use_metal else None
     for index, setting in enumerate(settings):
         c10, c12, phi12 = (float(value) for value in setting)
@@ -356,7 +359,7 @@ def run_case(
                 "preview_seconds": mps["preview_seconds"],
                 "num_bf": mps["num_bf"],
             }
-        if metal_products is not None and mps_products is not None:
+        if metal_products is not None:
             variants = metal_products[index]["variants"]
             entry["metal"] = {
                 name: compare_products(
@@ -387,20 +390,21 @@ def run_case(
                     variants[name]["mean_phase"],
                     object_phase=variants[name]["object_phase"],
                 )
-            for name in sorted(variants):
-                # Both backends are measured implementations here, so the
-                # oracle's phase roles are filled by the native Metal
-                # products; the object-phase metric compares Metal's own
-                # phase kernel against the phase of the MPS object.
-                entry[f"mps_vs_metal_{name}"] = compare_products(
-                    mps["object_wave"],
-                    mps["loss"],
-                    mps["mean_phase"],
-                    variants[name]["object_wave"],
-                    variants[name]["loss"],
-                    variants[name]["mean_phase"],
-                    object_phase=variants[name]["object_phase"],
-                )
+            if mps_products is not None:
+                for name in sorted(variants):
+                    # Both backends are measured implementations here, so the
+                    # oracle's phase roles are filled by the native Metal
+                    # products; the object-phase metric compares Metal's own
+                    # phase kernel against the phase of the MPS object.
+                    entry[f"mps_vs_metal_{name}"] = compare_products(
+                        mps["object_wave"],
+                        mps["loss"],
+                        mps["mean_phase"],
+                        variants[name]["object_wave"],
+                        variants[name]["loss"],
+                        variants[name]["mean_phase"],
+                        object_phase=variants[name]["object_phase"],
+                    )
         report["aberrations"].append(entry)
     for offset, setting in enumerate(case.diagnostic_aberrations):
         c10, c12, phi12 = (float(value) for value in setting)
@@ -620,6 +624,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-metal", action="store_true", help="skip the native Metal path")
     parser.add_argument(
+        "--metal-only",
+        action="store_true",
+        help=(
+            "measure and gate only the native Metal pairs; skips the MPS path "
+            "so a Metal-only change gets an unambiguous exit status"
+        ),
+    )
+    parser.add_argument(
         "--reference-only",
         action="store_true",
         help="compute only the oracle and its float32 floor (no GPU work)",
@@ -649,9 +661,20 @@ def main(argv: list[str] | None = None) -> int:
             "also given; pass --export --force-export (or use "
             "`scripts/check_ssb_parity.sh --export --force-export`)."
         )
+    if args.metal_only and args.no_metal:
+        parser.error("--metal-only and --no-metal are mutually exclusive")
+    if args.metal_only and args.reference_only:
+        parser.error("--metal-only and --reference-only are mutually exclusive")
+
     use_metal = not args.no_metal
+    use_mps = not args.metal_only
     if args.reference_only:
         use_metal = False
+    elif args.metal_only and metal_harness_path() is None:
+        raise SystemExit(
+            "--metal-only needs the native harness. Build it first with "
+            "`scripts/check_ssb_parity.sh --build-metal`."
+        )
     elif use_metal and metal_harness_path() is None:
         print(
             "note: native Metal harness not built; measuring MPS against the "
@@ -670,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
             case,
             export=False,
             use_metal=use_metal,
+            use_mps=use_mps,
             geometry=args.geometry,
             reference_only=args.reference_only,
         )
