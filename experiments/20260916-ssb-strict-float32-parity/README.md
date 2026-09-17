@@ -553,12 +553,17 @@ Reading, in the order the protocol asks:
   diagnosis recorded 4.43e-05 / 3.46e-05 / 5.79e-05 relative disagreement
   between the cached and streamed objective on a synthetic 512x512 fixture,
   the last exceeding the 5e-5 gate of the time. On the real artifact today the
-  same three settings agree to <= 1.16e-07 relative (object relL2 <= 1.85e-06,
-  absolute loss <= 1.01e-08), and both agree with the double oracle. The wrong
+  same three settings (`arina-128-recorded-c10`, C10 = 0 / 55 / 155.96977) agree
+  to 0.0 / 8.665e-08 / 0.0 relative with object relL2 <= 2.14e-07 and absolute
+  loss <= 7.45e-09, and across all nine gated cached-vs-streamed rows of both
+  recorded reports the worst is 8.665e-08 relative and 3.731e-06 object relL2
+  (512x512 setting #1); every row also agrees with the double oracle. The wrong
   path was the cached, half-plane-projected one; the streamed full-plane path
-  was right; `4e0f8ab` (Nyquist correction) is the fix. The
-  `experiments/20260913-ssb-loss-diagnosis/README.md` claim that no fix was
-  applied is stale.
+  was right; `4e0f8ab` (Nyquist correction) is the fix. What is stale in
+  `experiments/20260913-ssb-loss-diagnosis/README.md` is its *status*: the
+  record still presents the defect and its "account exactly for the exceptional
+  endpoint contribution" recommendation as outstanding, and it never notes the
+  fix that landed; its diagnosis, numbers and fixture are not stale.
 - **F6 (BF policy).** The documented 8,937 logical pixels are the 8,938
   geometric disk pixels at center `(94.88451385498047, 96.35952758789062)` and
   radius `53.35992814757164` minus exactly one hardware dead pixel `(78, 74)`.
