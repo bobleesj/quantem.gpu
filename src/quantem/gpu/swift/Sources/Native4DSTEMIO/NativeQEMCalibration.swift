@@ -92,7 +92,8 @@ public enum NativeQEMCalibration {
     let normalized = try NativeQEMMetadataUnits.normalized([
       "schema": NativeQEMMetadataUnits.legacySchema, "calibration_overrides": record,
     ])
-    result["calibration_overrides"] = scientific["schema"] as? String == NativeQEMMetadataUnits.schema
+    result["calibration_overrides"] =
+      scientific["schema"] as? String == NativeQEMMetadataUnits.schema
       ? normalized["calibration_overrides"] : record
     return result
   }
