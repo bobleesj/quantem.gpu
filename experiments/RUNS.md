@@ -231,6 +231,7 @@ complete provenance.
 | 20260908-empad-native-cooperative | Cooperative compensated EMPAD apertures improve native presentation | Original full64x64x128x128 float32; serial/cooperative/serial; identical resident bytes | ok | ABF116–120 vs8.8–9.4updates/s; ADF81.8–82.2 vs6.0–6.5; all67.1M samples exact; native FFT round-trip regression fixed, not release-qualified | [manifest](20260908-empad-native-cooperative/manifest.json) |
 
 | 20260908-empad-frame-budget | Fit native EMPAD gestures within8.33ms without added resident storage | Original64² and256² EMPAD float32; topology controls, billion-word parity, mixed-folder native tests | ok (experiment complete; larger speed gate failed) | Small scan118–120updates/s; larger DP120 but wide apertures16–24 fail speed gate. Signed-sum precision and mixed-size cursor regressions fixed; not release-qualified | [manifest](20260908-empad-frame-budget/manifest.json) |
+| 20260916-timeline-fit | Verify the 8937-BF fit floor with command-buffer GPU timestamps instead of a streaming model | Two arms (recorder on/off), 228 evaluations each, ARINA 8937 BF, bit-identical loss and optimum | ok | GPU busy 99.4% of the fit span; largest non-GPU category 0.6%; optimizer bookkeeping 0.04%; no category above 5%; kernelStart/End unusable, so no timestamp per-kernel split | [manifest](20260916-timeline-fit/manifest.json) |
 
 Before launching a new profile, add its row with status `running` and create
 `experiments/<id>/manifest.json`. On completion, change the row to `ok`,
