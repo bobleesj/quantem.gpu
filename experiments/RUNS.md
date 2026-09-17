@@ -237,6 +237,8 @@ Before launching a new profile, add its row with status `running` and create
 `failed`, `refuted`, or `superseded`, retain the run-level artifact hashes, and
 run:
 
+| 20260916-metal-ssb-objective-profile | Where does the 512x512 full-aperture Metal SSB phase-variance objective spend its time, and do the proposed cache-layout, phase-batch and multi-candidate accelerations survive an interleaved A/B/A measurement? | Apple M5 24 GB; real ARINA original master.h5; 512x512 scan, 192x192 detector, 8937 selected = 8937 active = 8937 cached BF, no streaming; exact uint32 counts, complex64/float32; pristine 597b566 plus a reverted profiling patch; redraw/loss alternation probe and loss-only pass ablation, all under the shared GPU lock | ok | Baseline at load 2.3-2.6: redraw p50 84.4-87.2 ms, loss p50 269.4-278.9 ms, prepare 2.15-3.01 s, fit 64.54 s / 27 refinements; loss values bit-identical across runs. Verdict: device-memory-bandwidth-bound at 121 GB/s against a 121 GB/s streaming ceiling. Pass split column 201.9 / row 166.4 / nyquist 11.1 ms. Largest single cost is the 9.41 GB cache-layout transpose at ~335 ms on every redraw<->loss switch. Rejected on measurement: single-command-buffer transpose (neutral), phaseBatch 4 (1.1% slower), phaseBatch 2/16/32 (no gain). No source change landed. | [manifest](20260916-metal-ssb-objective-profile/manifest.json) |
+
 ```bash
 python scripts/check_profile_registry.py
 ```
