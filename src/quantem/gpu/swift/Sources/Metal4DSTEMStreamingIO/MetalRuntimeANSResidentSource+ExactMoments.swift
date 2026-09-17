@@ -59,17 +59,22 @@ extension MetalRuntimeANSResidentSource {
       throw Self.invalid("Metal could not allocate the exact DPC moments diagnostics.")
     }
     diagnostics.label = "runtime ANS exact DPC moments diagnostics"
-    if exactMomentsPipeline == nil {
+    let narrow = Self.exactMomentsFitUInt32(
+      rows: shape[2], columns: shape[3], maximumValue: Self.exactMomentValueCeiling(logicalDtype))
+    if exactMomentsPipeline == nil || exactMomentsPipelineNarrow != narrow {
       let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
-      guard let function = library.makeFunction(name: "streamed_counts_exact_moments") else {
+      let name = narrow ? "streamed_counts_exact_moments_narrow" : "streamed_counts_exact_moments"
+      guard let function = library.makeFunction(name: name) else {
         throw Self.invalid("Missing exact runtime ANS moments kernel. Rebuild the backend resources.")
       }
       exactMomentsPipeline = try device.makeComputePipelineState(function: function)
+      exactMomentsPipelineNarrow = narrow
     }
     guard let pipeline = exactMomentsPipeline, let decodingTable else {
       throw Self.invalid("Metal could not prepare the exact runtime ANS moments kernel.")
     }
     let words = diagnostics.contents().bindMemory(to: UInt32.self, capacity: 4)
+    let simdGroups = Self.exactMomentSIMDGroups
     let batchSize = 16
     var completed = 0
     while completed < chunks.count {
@@ -92,10 +97,13 @@ extension MetalRuntimeANSResidentSource {
         let blocks = (chunk.scanCount + interval - 1) / interval
         let stripeWidth = 32 * Self.exactMomentStreams
         let stripes = (pixels + stripeWidth - 1) / stripeWidth
-        let groups = groupsPerBlock > 0 ? groupsPerBlock : Self.exactMomentGroups(stripes: stripes)
+        let groups =
+          groupsPerBlock > 0
+          ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripes)
+        let units = blocks * groups
         var parameters: [UInt64] = [
           UInt64(chunk.scanCount), UInt64(pixels), UInt64(interval), UInt64(chunk.firstScan),
-          UInt64(shape[3]), 0, UInt64(groups),
+          UInt64(shape[3]), 0, UInt64(groups), UInt64(simdGroups),
         ]
         encoder.setComputePipelineState(pipeline)
         for (slot, buffer) in [
@@ -105,8 +113,8 @@ extension MetalRuntimeANSResidentSource {
         }
         encoder.setBytes(&parameters, length: parameters.count * 8, index: 6)
         encoder.dispatchThreadgroups(
-          MTLSize(width: blocks * groups, height: 1, depth: 1),
-          threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+          MTLSize(width: (units + simdGroups - 1) / simdGroups, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 32 * simdGroups, height: 1, depth: 1))
       }
       encoder.endEncoding()
       command.commit()
@@ -152,14 +160,47 @@ extension MetalRuntimeANSResidentSource {
     return words.overflow ? nil : words.partialValue
   }
 
-  /// Threadgroups per stored packet. Enough parallelism to keep the GPU busy
-  /// without letting the per-group publish dominate short packets.
-  static func exactMomentGroups(stripes: Int) -> Int {
-    max(1, min(64, (stripes + 15) / 16))
+  /// Stripe units per stored packet. Narrow detectors hold few stripes, so aim
+  /// for a fixed dispatch size instead: enough units to fill the GPU, few enough
+  /// that per-unit setup never dominates.
+  static func exactMomentGroups(blocks: Int, stripes: Int) -> Int {
+    max(1, min(stripes, exactMomentTargetUnits / max(1, blocks)))
+  }
+
+  /// SIMD groups per threadgroup. Decoding a stored stream is a serial chain, so
+  /// this kernel needs many resident threads rather than wide arithmetic, and a
+  /// wider threadgroup reaches that with less dispatch cost.
+  static var exactMomentSIMDGroups: Int {
+    let raw = ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_MOMENT_SIMD"] ?? ""
+    guard let value = Int(raw), [1, 2, 4, 8].contains(value) else { return 4 }
+    return value
+  }
+
+  static let exactMomentTargetUnits = 512
+
+  /// Whether every lane partial stays inside 32 bits, which lets the kernel use
+  /// 32-bit products and 16-bit split reductions instead of 64-bit arithmetic.
+  /// Each lane sums at most `exactMomentStreams` stored counts, so the bound is
+  /// streams x largest stored count x largest row or column index.
+  static func exactMomentsFitUInt32(rows: Int, columns: Int, maximumValue: UInt64) -> Bool {
+    let weight = UInt64(max(max(rows, columns) - 1, 0))
+    let digits = UInt64(exactMomentStreams).multipliedReportingOverflow(by: maximumValue)
+    guard !digits.overflow else { return false }
+    let bound = digits.partialValue.multipliedReportingOverflow(by: weight)
+    return !bound.overflow && bound.partialValue <= UInt64(UInt32.max)
+  }
+
+  /// Largest stored count the resident can decode for its logical dtype.
+  static func exactMomentValueCeiling(_ dtype: Metal4DSTEMIntegerDType) -> UInt64 {
+    switch dtype {
+    case .uint8: 255
+    case .uint16: 65535
+    case .uint32: UInt64(UInt32.max)
+    }
   }
 
   static let exactMomentWordsPerScan = 6
   static let exactMomentStreams = 4
-  /// Scans per stored packet, matching `SC_MOMENT_SCANS` in `runtime_ans.metal`.
+  /// Scans per stored packet, matching the runtime ANS stream interval.
   static let exactMomentScans = 512
 }

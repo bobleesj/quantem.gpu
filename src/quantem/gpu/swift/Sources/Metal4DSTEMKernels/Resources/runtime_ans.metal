@@ -677,28 +677,34 @@ kernel void streamed_counts_reduce(
 
 
 // Exact per-scan DPC moments (total, row moment, column moment) over every
-// stored original count, for the runtime ANS representation. One SIMD group
-// owns one stored packet and walks the detector in stripes: lane l decodes the
-// streams of pixels {stripe * 32 * S + lane + 32 * i} for i < S, so consecutive
-// lanes touch consecutive streams. Every reader consumes its stream exactly
-// once, which keeps the terminal-state check in StreamReader::finished
-// meaningful for the whole pass.
+// stored original count, for the runtime ANS representation.
 //
-// Per-scan partials live in threadgroup memory that only lane 0 writes, so the
-// inner loop needs no atomics; the single publish per threadgroup uses
-// split-word atomic adds, which keep UInt64 sums exact on Apple GPUs that have
-// no 64-bit atomics. Values come from the stored payload through the same
-// StreamReader the decode path uses, so the basis is the exact integer quantity
-// of the retained counts, never an approximation.
+// One SIMD group owns one stored packet and walks the detector in stripes:
+// lane l decodes the streams of pixels {stripe * 32 * S + lane + 32 * i} for
+// i < S, so consecutive lanes touch consecutive streams. Every reader consumes
+// its stream exactly once, which keeps the terminal-state check in
+// StreamReader::finished meaningful for a whole pass. The S streams of a lane
+// are unrolled into scalars rather than arrays: this loop is the whole cost of
+// the pass, and the indexed form was measurably slower than the plain decode.
+//
+// Per-scan moments are reduced across the lanes and published straight to the
+// output with split-word atomic adds, which keep UInt64 sums exact on Apple
+// GPUs that have no 64-bit atomics. No threadgroup memory and no barriers are
+// used, so the serial rANS decode is the only critical path. Values come from
+// the stored payload through the same StreamReader the decode path uses, so the
+// basis is the exact integer quantity of the retained counts. Nothing is
+// written into the `.qem` payload and no dense copy of the acquisition is made.
 //
 // errors[0] records failure, errors[1..3] the first failing stream index, its
 // model, and a reason code, all through atomic min so a diagnosis survives.
-constant uint SC_MOMENT_WORDS = 6;
-constant uint SC_MOMENT_STREAMS = 4;
-constant uint SC_MOMENT_SCANS = 512;
-constant uint SC_MOMENT_REASON_INVALID = 1;
-constant uint SC_MOMENT_REASON_UNCONSUMED = 2;
-constant uint SC_MOMENT_REASON_STATE = 3;
+// Compile-time constants: `constant uint` is a runtime value, which leaves the
+// reader loop below with a non-constant trip count and forces its state into
+// thread-local memory. These must be macros to stay in registers.
+#define SC_MOMENT_WORDS 6
+#define SC_MOMENT_STREAMS 4
+#define SC_MOMENT_REASON_INVALID 1
+#define SC_MOMENT_REASON_UNCONSUMED 2
+#define SC_MOMENT_REASON_STATE 3
 
 inline void sc_atomic_add_u64(device atomic_uint *target, ulong value) {
     uint add = uint(value), carry = uint(value >> 32);
@@ -718,12 +724,154 @@ inline ulong sc_reduce_u64(ulong value, uint width) {
     return value;
 }
 
+// The narrow path keeps every lane partial inside 32 bits, which the host
+// guarantees by only selecting it when `streams * maximumValue * maximumWeight`
+// fits UInt32. Splitting into 16-bit halves keeps each `simd_sum` inside 21 bits
+// and the recombination happens in 64 bits, so the cross-lane sum is exact.
+inline ulong sc_reduce_u32_split(uint value) {
+    return (ulong(simd_sum(value >> 16)) << 16) + ulong(simd_sum(value & 0xffffu));
+}
+
 inline void sc_moment_failure(
     device atomic_uint *errors, uint stream, uint model, uint reason) {
     atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
     atomic_fetch_min_explicit(errors + 1, stream, memory_order_relaxed);
     atomic_fetch_min_explicit(errors + 2, model, memory_order_relaxed);
     atomic_fetch_min_explicit(errors + 3, reason, memory_order_relaxed);
+}
+
+// One stored stream of one detector pixel. `active` is false for a validated
+// zero stream, which contributes nothing to any scan position and needs no
+// decoding; `entropy` hoists the model test out of the scan loop.
+struct SCMomentStream {
+    StreamReader reader;
+    bool active;
+    bool entropy;
+    bool report;
+    uint rowWeight;
+    uint columnWeight;
+};
+
+inline SCMomentStream sc_moment_stream(
+    device const uchar *payload, device const uint *offsets, device const uchar *models,
+    device const uint *decoding, uint stream, uint pixel, uint pixels, uint columns) {
+    SCMomentStream state;
+    state.reader = StreamReader(payload, offsets, models, decoding, stream);
+    state.report = pixel < pixels;
+    state.active = state.report && state.reader.model != 253;
+    state.entropy = state.reader.model < SC_MODELS;
+    state.rowWeight = pixel / columns;
+    state.columnWeight = pixel % columns;
+    return state;
+}
+
+// The accumulator is a scalar triple; the wide and narrow variants differ only
+// in whether a lane's partial fits UInt32.
+struct SCMomentLane {
+    uint total;
+    uint smallRow;
+    uint smallColumn;
+    ulong row;
+    ulong column;
+};
+
+template <bool Narrow>
+inline void sc_moment_take(
+    thread SCMomentLane *lane, thread const SCMomentStream *stream, uint value) {
+    lane->total += value;
+    if (Narrow) {
+        lane->smallRow += value * stream->rowWeight;
+        lane->smallColumn += value * stream->columnWeight;
+    } else {
+        lane->row += ulong(value) * ulong(stream->rowWeight);
+        lane->column += ulong(value) * ulong(stream->columnWeight);
+    }
+}
+
+inline uint sc_moment_next(thread SCMomentStream *stream) {
+    return stream->entropy ? stream->reader.next_entropy() : stream->reader.next();
+}
+
+// Every reader of a validated stream must have consumed its payload exactly and
+// finished in the canonical state; anything else is reported through `errors`.
+inline void sc_moment_check(
+    device atomic_uint *errors, thread const SCMomentStream *stream, uint streamIndex) {
+    if (!stream->report) return;
+    StreamReader reader = stream->reader;
+    if (!reader.valid) {
+        sc_moment_failure(errors, streamIndex, uint(reader.model), SC_MOMENT_REASON_INVALID);
+    } else if (reader.cursor != reader.end) {
+        sc_moment_failure(errors, streamIndex, uint(reader.model), SC_MOMENT_REASON_UNCONSUMED);
+    } else if (reader.model < SC_MODELS && reader.state != SC_LOWER) {
+        sc_moment_failure(errors, streamIndex, uint(reader.model), SC_MOMENT_REASON_STATE);
+    }
+}
+
+template <bool Narrow>
+inline void sc_exact_moments_body(
+    device const uchar *payload, device const uint *offsets, device const uchar *models,
+    device const uint *decoding, device atomic_uint *errors, device atomic_uint *output,
+    constant ulong *p, uint job, uint localIndex) {
+    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
+    uint firstScan = uint(p[3]), columns = uint(p[4]), outputFirst = uint(p[5]);
+    uint stripeGroups = max(1u, uint(p[6]));
+    // A threadgroup may carry several SIMD groups; each owns its own stripe run.
+    uint unitsPerGroup = max(1u, uint(p[7]));
+    uint lane = localIndex % 32u;
+    uint unit = job * unitsPerGroup + localIndex / 32u;
+    uint blocks = (scans + interval - 1) / interval;
+    if (unit >= blocks * stripeGroups) return;
+    uint block = unit / stripeGroups, stripeGroup = unit % stripeGroups;
+    uint localFirst = block * interval;
+    uint count = min(interval, scans - localFirst);
+    device atomic_uint *slots =
+        output + (ulong(outputFirst + firstScan + localFirst) * SC_MOMENT_WORDS);
+    uint width = 32u * SC_MOMENT_STREAMS;
+    uint stripes = (pixels + width - 1) / width;
+    for (uint stripe = stripeGroup; stripe < stripes; stripe += stripeGroups) {
+        uint base = stripe * width + lane;
+        // The four stored streams of this lane are named rather than held in an
+        // array: an indexed reader set lands in thread-local memory and costs
+        // roughly 3x the plain decode loop. This is the hot path of the pass.
+        uint origin = block * pixels + base;
+        SCMomentStream s0 = sc_moment_stream(
+            payload, offsets, models, decoding, origin, base, pixels, columns);
+        SCMomentStream s1 = sc_moment_stream(
+            payload, offsets, models, decoding, origin + 32u, base + 32u, pixels, columns);
+        SCMomentStream s2 = sc_moment_stream(
+            payload, offsets, models, decoding, origin + 64u, base + 64u, pixels, columns);
+        SCMomentStream s3 = sc_moment_stream(
+            payload, offsets, models, decoding, origin + 96u, base + 96u, pixels, columns);
+        for (uint scan = 0; scan < count; ++scan) {
+            SCMomentLane lane_totals = SCMomentLane{0u, 0u, 0u, 0ul, 0ul};
+            if (s0.active) sc_moment_take<Narrow>(&lane_totals, &s0, sc_moment_next(&s0));
+            if (s1.active) sc_moment_take<Narrow>(&lane_totals, &s1, sc_moment_next(&s1));
+            if (s2.active) sc_moment_take<Narrow>(&lane_totals, &s2, sc_moment_next(&s2));
+            if (s3.active) sc_moment_take<Narrow>(&lane_totals, &s3, sc_moment_next(&s3));
+            // Every lane reaches the reductions: a stripe with no pixel for a
+            // lane is skipped by marking the stream inactive, never by leaving
+            // the loop.
+            uint summedTotal = simd_sum(lane_totals.total);
+            ulong summedRow = 0ul, summedColumn = 0ul;
+            if (Narrow) {
+                summedRow = sc_reduce_u32_split(lane_totals.smallRow);
+                summedColumn = sc_reduce_u32_split(lane_totals.smallColumn);
+            } else {
+                summedRow = sc_reduce_u64(lane_totals.row, 32u);
+                summedColumn = sc_reduce_u64(lane_totals.column, 32u);
+            }
+            if (lane == 0) {
+                device atomic_uint *slot = slots + ulong(scan) * SC_MOMENT_WORDS;
+                sc_atomic_add_u64(slot, ulong(summedTotal));
+                sc_atomic_add_u64(slot + 2, summedRow);
+                sc_atomic_add_u64(slot + 4, summedColumn);
+            }
+        }
+        sc_moment_check(errors, &s0, origin);
+        sc_moment_check(errors, &s1, origin + 32u);
+        sc_moment_check(errors, &s2, origin + 64u);
+        sc_moment_check(errors, &s3, origin + 96u);
+    }
 }
 
 kernel void streamed_counts_exact_moments(
@@ -735,86 +883,23 @@ kernel void streamed_counts_exact_moments(
     device atomic_uint *output [[buffer(5)]],
     constant ulong *p [[buffer(6)]],
     uint job [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_threadgroup]]) {
-    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
-    uint firstScan = uint(p[3]), columns = uint(p[4]), outputFirst = uint(p[5]);
-    uint stripeGroups = max(1u, uint(p[6]));
-    uint blocks = (scans + interval - 1) / interval;
-    if (lane >= 32u || job >= blocks * stripeGroups) return;
-    uint block = job / stripeGroups, stripeGroup = job % stripeGroups;
-    uint localFirst = block * interval;
-    uint count = min(interval, scans - localFirst);
-    threadgroup ulong partialTotal[SC_MOMENT_SCANS];
-    threadgroup ulong partialRow[SC_MOMENT_SCANS];
-    threadgroup ulong partialColumn[SC_MOMENT_SCANS];
-    for (uint i = lane; i < count; i += 32u) {
-        partialTotal[i] = 0ul;
-        partialRow[i] = 0ul;
-        partialColumn[i] = 0ul;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint width = 32u * SC_MOMENT_STREAMS;
-    uint stripes = (pixels + width - 1) / width;
-    for (uint stripe = stripeGroup; stripe < stripes; stripe += stripeGroups) {
-        uint base = stripe * width;
-        uint pixel[SC_MOMENT_STREAMS];
-        uint rowWeight[SC_MOMENT_STREAMS];
-        uint columnWeight[SC_MOMENT_STREAMS];
-        bool active[SC_MOMENT_STREAMS];
-        bool entropy[SC_MOMENT_STREAMS];
-        StreamReader reader[SC_MOMENT_STREAMS];
-        for (uint i = 0; i < SC_MOMENT_STREAMS; ++i) {
-            uint candidate = base + lane + 32u * i;
-            active[i] = candidate < pixels;
-            pixel[i] = active[i] ? candidate : 0u;
-            rowWeight[i] = pixel[i] / columns;
-            columnWeight[i] = pixel[i] % columns;
-            reader[i] = StreamReader(
-                payload, offsets, models, decoding, block * pixels + pixel[i]);
-            entropy[i] = active[i] && reader[i].model < SC_MODELS;
-        }
-        for (uint scan = 0; scan < count; ++scan) {
-            uint total = 0;
-            ulong row = 0ul, column = 0ul;
-            for (uint i = 0; i < SC_MOMENT_STREAMS; ++i) {
-                if (!active[i]) continue;
-                uint value = entropy[i] ? reader[i].next_entropy() : reader[i].next();
-                total += value;
-                row += ulong(value) * ulong(rowWeight[i]);
-                column += ulong(value) * ulong(columnWeight[i]);
-            }
-            // Every lane reaches both reductions: a stripe with no pixels for a
-            // lane is handled by marking it inactive, never by leaving the loop.
-            uint summedTotal = simd_sum(total);
-            ulong summedRow = sc_reduce_u64(row, 32u);
-            ulong summedColumn = sc_reduce_u64(column, 32u);
-            if (lane == 0) {
-                partialTotal[scan] += ulong(summedTotal);
-                partialRow[scan] += summedRow;
-                partialColumn[scan] += summedColumn;
-            }
-        }
-        for (uint i = 0; i < SC_MOMENT_STREAMS; ++i) {
-            if (!active[i]) continue;
-            uint stream = block * pixels + pixel[i];
-            if (!reader[i].valid) {
-                sc_moment_failure(errors, stream, uint(reader[i].model),
-                    SC_MOMENT_REASON_INVALID);
-            } else if (reader[i].cursor != reader[i].end) {
-                sc_moment_failure(errors, stream, uint(reader[i].model),
-                    SC_MOMENT_REASON_UNCONSUMED);
-            } else if (reader[i].model < SC_MODELS && reader[i].state != SC_LOWER) {
-                sc_moment_failure(errors, stream, uint(reader[i].model),
-                    SC_MOMENT_REASON_STATE);
-            }
-        }
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint i = lane; i < count; i += 32u) {
-        device atomic_uint *slot =
-            output + (ulong(outputFirst + firstScan + localFirst + i) * SC_MOMENT_WORDS);
-        sc_atomic_add_u64(slot, partialTotal[i]);
-        sc_atomic_add_u64(slot + 2, partialRow[i]);
-        sc_atomic_add_u64(slot + 4, partialColumn[i]);
-    }
+    uint localIndex [[thread_index_in_threadgroup]]) {
+    sc_exact_moments_body<false>(payload, offsets, models, decoding, errors, output, p, job, localIndex);
 }
+
+// Same basis for count ranges whose lanes stay inside 32 bits: the host selects
+// this entry point only when streams * maximumValue * maximumWeight fits
+// UInt32, so every product and every lane partial is exact by construction.
+kernel void streamed_counts_exact_moments_narrow(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device atomic_uint *output [[buffer(5)]],
+    constant ulong *p [[buffer(6)]],
+    uint job [[threadgroup_position_in_grid]],
+    uint localIndex [[thread_index_in_threadgroup]]) {
+    sc_exact_moments_body<true>(payload, offsets, models, decoding, errors, output, p, job, localIndex);
+}
+
