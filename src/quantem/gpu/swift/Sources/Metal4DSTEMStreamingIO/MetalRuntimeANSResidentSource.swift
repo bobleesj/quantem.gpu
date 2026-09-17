@@ -1181,6 +1181,11 @@ final class RuntimeANSEncoder {
 }
 
 extension OriginalHDF5Packing {
+  /// Measurement only: route the direct ANS load through the fused
+  /// decode+unshuffle kernels when the caller asks for the experiment.
+  static let probeFusedDirect =
+    ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_FUSED_DECODE"] == "1"
+
   /// Decode every original count in bounded private windows for a direct GPU consumer.
   func forEachExactDecodedWindow(
     source: Native4DSTEMIndexedSource,
@@ -1205,6 +1210,21 @@ extension OriginalHDF5Packing {
     let audit = try buffer(frames * 8)
     let errors = try buffer(4)
     let moments = try buffer(frames * 32)
+    // Measurement only: time the LZ4/bitshuffle pass with the transpose
+    // unshuffle removed. The dense window is zeroed so the downstream encoder
+    // still terminates; only the decode-only timing from this run is meaningful.
+    let probeSkipUnshuffle =
+      ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_SKIP_UNSHUFFLE"] == "1"
+    if probeSkipUnshuffle {
+      let zeroCommand = try commandBuffer()
+      guard let zeroBlit = zeroCommand.makeBlitCommandEncoder() else {
+        throw Self.invalid("Cannot zero the probe dense window")
+      }
+      zeroBlit.fill(buffer: dense, range: 0..<dense.length, value: 0)
+      zeroBlit.endEncoding()
+      zeroCommand.commit()
+      zeroCommand.waitUntilCompleted()
+    }
     memset(mask.contents(), 0, mask.length)
     var profile = Profile()
     for (ordinal, window) in windows.enumerated() {
@@ -1219,6 +1239,8 @@ extension OriginalHDF5Packing {
             dense: dense, mask: mask, audit: audit, scratch: scratch, errors: errors,
             partialDPC: nil, moments: moments,
             commandBufferOverride: command,
+            skipUnshuffle: probeSkipUnshuffle,
+            fusedDirect: Self.probeFusedDirect,
             shouldCancel: shouldCancel, profile: &profile)
         }
         if includeDPCMoments {

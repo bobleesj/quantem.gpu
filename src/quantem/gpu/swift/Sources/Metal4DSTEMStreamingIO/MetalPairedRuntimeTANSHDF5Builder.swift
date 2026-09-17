@@ -211,6 +211,7 @@ enum MetalPairedRuntimeTANSHDF5Builder {
     private var encodeStallSeconds = 0.0
     private var compactGPUSeconds = 0.0
     private var compactStallSeconds = 0.0
+    private var decodeOnlyGPUSeconds = 0.0
     private var encodeRecords = 0
 
     func logProfile(logicalBytes: UInt64) {
@@ -219,6 +220,8 @@ enum MetalPairedRuntimeTANSHDF5Builder {
         "encode_records": encodeRecords,
         "encode_gpu_seconds": encodeGPUSeconds,
         "encode_stall_seconds": encodeStallSeconds,
+        "decode_only_gpu_seconds": decodeOnlyGPUSeconds,
+        "phase_split": Self.splitPhaseProfile,
         "compact_gpu_seconds": compactGPUSeconds,
         "compact_stall_seconds": compactStallSeconds,
         "logical_bytes": logicalBytes,
@@ -389,7 +392,17 @@ enum MetalPairedRuntimeTANSHDF5Builder {
         UInt32(PairedRuntimeTANSRecordABI.streamScans * 2),
         0,
       ]
-      guard let encoder = decodeCommand.makeComputeCommandEncoder() else {
+      var workCommand = decodeCommand
+      if Self.splitPhaseProfile {
+        decodeCommand.commit()
+        decodeCommand.waitUntilCompleted()
+        decodeOnlyGPUSeconds += max(0, decodeCommand.gpuEndTime - decodeCommand.gpuStartTime)
+        guard let second = queue.makeCommandBuffer() else {
+          throw invalid("Metal could not create a split paired-runtime encode buffer")
+        }
+        workCommand = second
+      }
+      guard let encoder = workCommand.makeComputeCommandEncoder() else {
         throw invalid("Metal could not encode paired-runtime stream sizes")
       }
       encoder.setComputePipelineState(encodePipeline)
@@ -407,11 +420,11 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       encoder.endEncoding()
       let fusedStarted = CFAbsoluteTimeGetCurrent()
       try Self.finish(
-        decodeCommand, failure: failure,
+        workCommand, failure: failure,
         message: "Paired-runtime decode and size encoding failed")
       let fusedSeconds = CFAbsoluteTimeGetCurrent() - fusedStarted
       encodeRecords += 1
-      let fusedGPU = max(0, decodeCommand.gpuEndTime - decodeCommand.gpuStartTime)
+      let fusedGPU = max(0, workCommand.gpuEndTime - workCommand.gpuStartTime)
       encodeGPUSeconds += fusedGPU
       encodeStallSeconds += max(0, fusedSeconds - fusedGPU)
       if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
@@ -568,6 +581,11 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       }
       return try device.makeComputePipelineState(function: function)
     }
+
+    /// Measurement only: isolate source-decode GPU time from ANS-encode GPU time
+    /// by committing the decode command buffer before the encoder is appended.
+    static let splitPhaseProfile =
+      ProcessInfo.processInfo.environment["QGPU_PAIRED_SPLIT_PHASES"] == "1"
 
     private static func finish(
       _ command: MTLCommandBuffer, failure: MTLBuffer, message: String
