@@ -499,9 +499,11 @@ Reading, in the order the protocol asks:
    ~0.27 s/eval. This harness measures the production path at 259 objective
    evaluations (262 recorded trials) in 20.11-20.44 s at load 4.8-5.3, ~0.078
    s/eval, and the recorded `fit-arina-512-full-disk.json` artifact says
-   20.331 s. The two are not the same measurement; times are volatile, the
-   losses and optimums above are not, and the 61.97 s should be quoted with its
-   harness and load, never as a machine constant.
+   20.331 s. The two are not the same measurement: they execute different
+   numbers of BF terms (2,464 against 8,937), which is the whole of the 3.4x
+   - see the harness-discrepancy section below. Times are volatile, the
+   losses and optimums above are not, and the 61.97 s should be quoted with
+   its harness and load, never as a machine constant.
 5. **Caveats.** One case, one seed, one start point. TPE's candidate draw is
    seed-dependent and this acquisition's landscape is unusually benign at
    50 trials; "50 is enough" is a statement about this acquisition, not a
@@ -509,8 +511,134 @@ Reading, in the order the protocol asks:
    saturates, the NM phase is where the remaining loss is, and the recorded
    optimum is NM-termination-limited.
 
+## Harness discrepancy: 3.4x is the executed-term count, not the harness
+
+The recorded artifact `metal-runs/lowload/fit/pristine/report.json` (61.97 s,
+228 evaluations, load 1.86) and `tests/metal/ssb_fit_budget.swift`
+(20.11-20.44 s, 262 recorded trials, load 4.8-5.3) both describe "the 200-trial
+TPE plus Nelder-Mead fit at 8937 BF", 3.4x apart, with the faster number under
+the higher load. `tests/metal/ssb_production_protocol.swift` mode `ab` measures
+both configurations in one process, from one exported artifact (the same 8,937
+detector columns in the same order), on one `gpurun` lock,
+`GPU_RUN_LABEL=meitner-harness`:
+
+| configuration | executed BF | per-eval median (16 evals) | 200 TPE + NM | evaluations | loss | load |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| parity case, documented sampling 1.0909 mrad/px | 2,464 | 0.073618 s | 19.372 s | 262 | 0.096058391034603119 | 0.88 -> 1.37 |
+| production, disk-matched 0.5622196476170719 mrad/px | 8,937 | 0.267578 s | 58.588 s | 228 | 0.15314708650112152 | 1.29 -> 1.49 |
+
+Per-eval ratio 0.267578 / 0.073618 = **3.635** against an executed-term ratio
+8937 / 2464 = **3.627** (0.2% apart). Everything else is held fixed: the same
+timer (`SSBOptimizer.run`'s wall clock, `MetalSSBOptimizer.swift:79` and
+`:156`, which is the field both harnesses quote), the same source buffer and
+column order, and the same full `G` cache (`cacheBudgetBytes: nil`; the app's
+own `free` budget admits all 8,937 terms, `recommendedMaxWorkingSetSize`
+19,069,665,280 B against 9.41 GB of cache), so dtype, encode path, mask and
+timer are excluded. The faster measurement simply did 3.6x less work per
+evaluation; the load ordering was a red herring.
+
+Why the two configurations execute different terms:
+`matchApertureToBrightfieldDisk()` (`MetalSSBCalibration.swift:23`) sets
+`detectorStep = semiangle / radius` = 30 / 53.35992814757164 =
+0.5622196476170719 mrad/px, so the 30 mrad cone edge lands exactly on the
+documented disk edge and all 8,937 pixels keep a nonzero aperture (minimum
+weight 0.500276). The parity case keeps the frozen reference sampling
+1.0909 mrad/px, where only the inner 2,464 pixels are inside the cone and the
+engine prunes exact-zero-aperture terms.
+
+**Production configuration = the disk-matched one.** `SSBExplorer.swift:95`
+(`try? calibration.matchApertureToBrightfieldDisk()`), `:347` (prepare with
+`.uint32` and the encode closure) and `:440`
+(`engine.optimize(... globalTrials: trialCount)` at 100% BF). The user's exact
+protocol on that configuration is **58.6 s single run** (load 1.29 -> 1.49) or
+**64.6 s single run** (load 1.95 -> 1.52) - not 30 s.
+
+The app geometry is the case geometry rescaled, not a different disk: the DC
+term is identical (939084.0625), the selected pixel set and order are identical
+(8,937 row-major detector pixels, dead pixel `(78,74)` excluded), and the
+unrotated k-vectors match the case's to 1.64e-07 relative at a scale factor of
+0.5153680103156493. The objective still differs, because alpha^2 scales by
+(1 / 0.5153680103156493)^2 = 3.765. Three losses are now in play and must never
+share a table:
+
+| loss | objective |
+| ---: | --- |
+| 0.096058391034603119 | parity case, documented sampling 1.0909 mrad/px, 2,464 executed terms |
+| 0.15314708650112152 | production disk-matched, 8,937 executed terms, this acquisition (0.0x tilt) |
+| 0.1376979947090149 | probe5, disk-matched, the -17.0x acquisition (`experiments/20260916-metal-ssb-fit-acceleration`) |
+
+## Production-config fit identity (single runs, values only)
+
+`tests/metal/ssb_production_protocol.swift` mode `identity`, production
+configuration (disk-matched, 8,937 executed terms), seed 42, start
+`(0, 50, 0)`, one process, single runs:
+
+| arm | TPE trials | evaluations | NM evals | wall | loss | optimum (c10 nm, c12 nm, phi12 rad) | load |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| `tpe200` (reference) | 200 | 228 | 27 | 64.591 s | 0.15314708650112152 | 5.8845526481201356, 0.46141110440991562, 1.3530133901569708 | 1.95 -> 1.52 |
+| `tpe25` | 25 | 81 | 55 | 22.379 s | 0.15314710140228271 | 6.1600740257507347, 0.37580517960110538, 1.650074148576167 | 1.52 -> 1.00 |
+| `nmWarm` (NM only from the `tpe200` optimum) | 0 | 17 | 16 | 4.699 s | 0.15314705669879913 | 5.8845524787902832, 0.46141111850738525, 1.4230133962631226 | 1.00 -> 1.08 |
+
+- `tpe200` here is **bit-identical** to the `ab`-mode `tpe200`
+  (58.588 s, load 1.29 -> 1.49) in both the loss and all three parameter
+  bits, across processes: the fit is deterministic.
+- The 25-trial TPE prefix is **bitwise identical** to the first 25 trials of
+  `tpe200` (0 of 25 trials differ), so the nesting property holds on the
+  production configuration.
+- **The optimum is not bit-identical.** `tpe25` + NM lands on
+  (6.1600740257507347, 0.37580517960110538, 1.650074148576167) with loss
+  0.15314710140228271 against the 200-trial (5.8845526481201356,
+  0.46141110440991562, 1.3530133901569708) with 0.15314708650112152: c10 moves
+  4.7%, phi12 moves 0.30 rad, while the loss differs by 9.7e-08 relative. A
+  further NM-only run from the 200-trial optimum moves again (phi12
+  1.4230133962631226) and *lowers* the loss to 0.15314705669879913 (-1.9e-08
+  relative), so the recorded optimum is NM-termination-limited inside a very
+  flat valley: the loss pins the fit to ~1e-07 but the parameter triple is not
+  pinned at that level.
+- **Answer to the decision question: no** - 25 trials + NM is not
+  bit-identical to 200 trials + NM on the production configuration. It reaches
+  the same loss to ~1e-07 relative, with materially different parameters.
+
+## MPS on the production configuration: geometry matches, the fit is blocked
+
+- The geometry matches. Opening the same exported artifact with
+  `det_sampling = semiangle / bf_radius` (the disk-matched sampling) and
+  evaluating the Metal app-config optimum gives loss 0.15314766764640808
+  against Metal's 0.15314708650112152, **3.795e-06 relative** - float32-level
+  agreement, not a different objective. The MPS aperture formula is the same
+  one (`backends/mps/engine.py:798-811`) and it prunes aperture <= 0
+  (`:4225`), so it sees the same 8,937 active terms.
+- The fit cannot run. `session.fit(trials=25|200, refinement="nelder-mead")`
+  raises `ValueError: Exact 512 pair pack of 512 BF planes exceeds the
+  320-plane storage class` (`backends/mps/engine.py:188-202`, policy
+  `:75-90`). The 288/320-plane default applies to every machine that is not an
+  M5 Max with >= 96 GB; for a 512x512 scan `_default_phase_col_k_bf` returns
+  4096 (`:762-767`), so the pair boundary is `min(chunk, 512) = 512` and cannot
+  fit the largest storage class. `SSB.fit` exposes no chunk or batch knob
+  (`backends/mps/backend.py:189-213`), and this machine is an Apple M5.
+- Cost if it were unblocked: 2.76 s and 6.00 s per objective evaluation at
+  8,937 terms (two single probes, different queue conditions) against Metal's
+  0.2676 s - 10x to 22x - so a 228-evaluation MPS fit would take ~10-23
+  minutes.
+- Status: **unresolved/blocked**, so the 25-vs-200 and NM-warm identity checks
+  could not be run on MPS. Options for the user: an M5-Max-class machine, or a
+  change to the pair-pack storage policy / chunk default (not applied here).
+
 ## Findings, root causes and open items
 
+- **F11 (MPS fit blocked at 512x512, open).** On this Apple M5 (24 GB) the MPS
+  fit path cannot execute the user's protocol for the production geometry:
+  `session.fit(...)` raises `Exact 512 pair pack of 512 BF planes exceeds the
+  320-plane storage class` (`backends/mps/engine.py:188-202` with the default
+  policy at `:75-90`), because a 512x512 scan defaults to a 4,096-plane column
+  chunk (`:762-767`) whose pair boundary is `min(chunk, 512) = 512`, larger
+  than the 320-plane class retained on hardware that is not an M5 Max with
+  >= 96 GB. The objective itself is fine: the MPS loss at the Metal app-config
+  optimum agrees to 3.795e-06 relative. Recommendation: either raise the
+  retained pair-pack class (or lower the 512 default chunk) so the fit path can
+  run below 512-plane boundaries on non-M5-Max hardware, or record this as a
+  supported-configuration limit. Do not "fix" it by silently changing the
+  reduction chunk without re-running the strict gate.
 - **F1 (gate fails, MPS, deterministic).** At 512x512 the MPS object is
   4.317e-06 relL2 against the double oracle and 4.179e-06 against native
   Metal, where the independent float32 floor of the identical formula is
