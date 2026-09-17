@@ -31,11 +31,12 @@ done
 
 # The native batch objective is newer than the harness: compile it in only when
 # the tree actually exposes it, so this gate runs on both trees.
-BATCH_FLAGS=()
+# Keep this array nonempty: macOS Bash 3 treats an empty array as unset under -u.
+SWIFT_FLAGS=(-O)
 BATCH_MODE=closure
 if grep -q "func phaseVarianceBatch" \
   src/quantem/gpu/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift 2>/dev/null; then
-  BATCH_FLAGS=(-D SSB_HAS_BATCH_OBJECTIVE)
+  SWIFT_FLAGS+=(-D SSB_HAS_BATCH_OBJECTIVE)
   BATCH_MODE=both
 fi
 
@@ -43,7 +44,7 @@ if [ "$BUILD_METAL" = 1 ]; then
   swift build -c release --disable-sandbox --product metal-ssb-benchmark
   build_dir=$(swift build -c release --show-bin-path)
   mkdir -p build
-  swiftc -O "${BATCH_FLAGS[@]}" -I "$build_dir/Modules" tests/metal/ssb_fit_trajectory.swift \
+  swiftc "${SWIFT_FLAGS[@]}" -I "$build_dir/Modules" tests/metal/ssb_fit_trajectory.swift \
     "$build_dir"/MetalSSBKernels.build/*.o -o build/ssb-fit-trajectory -parse-as-library
 fi
 if [ ! -x build/ssb-fit-trajectory ]; then
