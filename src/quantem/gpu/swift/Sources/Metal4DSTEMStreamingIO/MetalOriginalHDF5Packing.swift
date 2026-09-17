@@ -243,6 +243,7 @@ final class OriginalHDF5Packing {
   let alignedRepeatFill: Bool
   let alignedHistoryCopy: Bool
   let transposeUnshuffle: Bool
+  let tiledUnshuffle: Bool
   let dpcUnshuffle, dpcUnshuffle32, dpcReduce: MTLComputePipelineState?
   let transposeDPCUnshuffle: MTLComputePipelineState?
   let planDecode, summaryValues, summaryReduce: MTLComputePipelineState?
@@ -336,6 +337,9 @@ final class OriginalHDF5Packing {
     let shortRepeatFill =
       OriginalPackingDiagnostics.enabled("DECODE_REPEAT32", byDefault: false)
     transposeUnshuffle = OriginalPackingDiagnostics.enabled("TRANSPOSE_UNSHUFFLE", byDefault: true)
+    tiledUnshuffle =
+      transposeUnshuffle
+      && OriginalPackingDiagnostics.enabled("TILED_UNSHUFFLE", byDefault: true)
     if OriginalPackingDiagnostics.enabled("SCALAR_DECODE", byDefault: true) {
       let function: String
       switch (alignedRepeatFill, alignedHistoryCopy) {
@@ -360,7 +364,9 @@ final class OriginalHDF5Packing {
       scalarUnshuffle = try pipeline(
         decode,
         transposeUnshuffle
-          ? "h5unshuffle_u16_transpose_qh5idx" : "h5unshuffle_u16_scalar_qh5idx")
+          ? (tiledUnshuffle
+            ? "h5unshuffle_u16_tiled_qh5idx" : "h5unshuffle_u16_transpose_qh5idx")
+          : "h5unshuffle_u16_scalar_qh5idx")
     } else {
       scalarDecode = nil
       scalarUnshuffle = nil

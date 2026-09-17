@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import Metal
@@ -1284,6 +1285,43 @@ extension OriginalHDF5Packing {
     ProcessInfo.processInfo.environment["QGPU_PAIRED_FUSED_MOMENTS"] != "0"
 
   /// Decode every original count in bounded private windows for a direct GPU consumer.
+  /// Measurement-only probe (`QGPU_PROBE_DENSE_SHA=<window ordinal>|all`): waits for the
+  /// window command buffer, then SHA256s the exact dense window bytes on the host and
+  /// prints the digest to stderr. Off by default, and it serializes the pipeline, so its
+  /// timings are not load timings.
+  private static func probeDenseWindowSHA(
+    dense: MTLBuffer, frameCount: Int, pixels: Int, bytesPerValue: Int, ordinal: Int,
+    command: MTLCommandBuffer, device: MTLDevice, queue: MTLCommandQueue
+  ) {
+    guard let probe = ProcessInfo.processInfo.environment["QGPU_PROBE_DENSE_SHA"],
+      probe == "all" || probe == String(ordinal)
+    else { return }
+    command.waitUntilCompleted()
+    let byteCount = frameCount * pixels * bytesPerValue
+    guard byteCount > 0, byteCount <= dense.length,
+      let staging = device.makeBuffer(length: byteCount, options: .storageModeShared),
+      let blitCommand = queue.makeCommandBuffer(),
+      let blit = blitCommand.makeBlitCommandEncoder()
+    else { return }
+    blit.copy(from: dense, sourceOffset: 0, to: staging, destinationOffset: 0, size: byteCount)
+    blit.endEncoding()
+    blitCommand.commit()
+    blitCommand.waitUntilCompleted()
+    var hasher = SHA256()
+    let base = staging.contents()
+    let chunk = 1 << 24
+    var offset = 0
+    while offset < byteCount {
+      let count = min(chunk, byteCount - offset)
+      hasher.update(data: Data(bytes: base + offset, count: count))
+      offset += count
+    }
+    let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    FileHandle.standardError.write(
+      "QGPU_DENSE_SHA window=\(ordinal) frames=\(frameCount) bytes=\(byteCount) sha256=\(digest)\n"
+        .data(using: .utf8)!)
+  }
+
   func forEachExactDecodedWindow(
     source: Native4DSTEMIndexedSource,
     maximumFrames: Int,
@@ -1423,6 +1461,10 @@ extension OriginalHDF5Packing {
         try consume(
           dense, includeDPCMoments ? moments : nil,
           window.globalFrameRange, command)
+        Self.probeDenseWindowSHA(
+          dense: dense, frameCount: window.globalFrameRange.count, pixels: pixels,
+          bytesPerValue: source.sourceBytesPerValue, ordinal: ordinal,
+          command: command, device: device, queue: queue)
         guard errors.contents().load(as: UInt32.self) == 0 else {
           throw Self.invalid("Invalid compressed original counts; no runtime ANS was published")
         }
