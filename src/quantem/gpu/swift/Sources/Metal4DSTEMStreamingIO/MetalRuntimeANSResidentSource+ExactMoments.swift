@@ -101,9 +101,45 @@ extension MetalRuntimeANSResidentSource {
     }
     let totalsBytes = includeDetectorTotals ? UInt64(pixels) * 8 : 0
     let validityBytes = includeDetectorTotals ? UInt64(pixels) : 0
-    let extraBytes = outputBytes + totalsBytes + validityBytes
+    // Account for the entire simultaneous allocation before creating buffers.
+    // Each packet in a batch owns a slice until the ordered combine finishes.
+    let stripeWidth = 32 * Self.exactMomentStreams
+    let stripesPerPacket = (pixels + stripeWidth - 1) / stripeWidth
+    var maximumUnits = 1
+    for chunk in chunks {
+      let blocks = (chunk.scanCount + interval - 1) / interval
+      let groups = groupsPerBlock > 0
+        ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripesPerPacket)
+      let units = blocks.multipliedReportingOverflow(by: groups)
+      guard !units.overflow else {
+        throw Self.invalid("The requested DPC moment group count exceeds the memory budget.")
+      }
+      maximumUnits = max(maximumUnits, units.partialValue)
+    }
+    let batchSize = min(16, chunks.count)
+    var partialStride = maximumUnits
+    for factor in [interval, Self.exactMomentWordsPerScan, MemoryLayout<UInt32>.stride] {
+      let size = partialStride.multipliedReportingOverflow(by: factor)
+      guard !size.overflow else {
+        throw Self.invalid("The exact DPC moment partials exceed the memory budget.")
+      }
+      partialStride = size.partialValue
+    }
+    let partialAllocation = partialStride.multipliedReportingOverflow(by: batchSize)
+    guard !partialAllocation.overflow, partialAllocation.partialValue <= device.maxBufferLength else {
+      throw Self.invalid("The exact DPC moment partials exceed Metal's buffer limit.")
+    }
+    let partialBytes = partialAllocation.partialValue
+    var extraBytes = UInt64(partialBytes)
+    for bytes in [outputBytes, totalsBytes, validityBytes, 16] {
+      let sum = extraBytes.addingReportingOverflow(bytes)
+      guard !sum.overflow else {
+        throw Self.invalid("The exact DPC moment buffers exceed the memory budget.")
+      }
+      extraBytes = sum.partialValue
+    }
     if let budget = maximumAdditionalBytes,
-      UInt64(device.currentAllocatedSize) + extraBytes > budget
+      extraBytes > budget || UInt64(device.currentAllocatedSize) > budget - extraBytes
     {
       throw Self.invalid(
         "Exact DPC moments need \(extraBytes / (1 << 20)) MB beyond the current resident; "
@@ -176,28 +212,12 @@ extension MetalRuntimeANSResidentSource {
     guard let combinePipeline = exactMomentCombinePipeline else {
       throw Self.invalid("Metal could not prepare the exact runtime ANS moment combine kernel.")
     }
-    // One reusable per-packet slice of stripe partials. Peak occupancy is
-    // `units` slots of `interval` scans, so a single packet's worth is enough
-    // when the packets are folded one at a time.
-    let stripeWidth = 32 * Self.exactMomentStreams
-    let stripesPerPacket = (pixels + stripeWidth - 1) / stripeWidth
-    let maximumUnits =
-      chunks.map { chunk -> Int in
-        let blocks = (chunk.scanCount + interval - 1) / interval
-        let groups =
-          groupsPerBlock > 0
-          ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripesPerPacket)
-        return blocks * groups
-      }.max() ?? 1
     // Every packet in a command buffer holds its own slice so the two passes meet
     // at a single barrier per buffer instead of one per packet: a barrier per
     // packet drains the pipeline and measured slower than the atomics it removed.
-    let batchSize = 16
-    let partialWords = maximumUnits * interval * Self.exactMomentWordsPerScan
-    let partialStride = partialWords * MemoryLayout<UInt32>.stride
     guard
       let partials = device.makeBuffer(
-        length: partialStride * batchSize, options: .storageModePrivate)
+        length: partialBytes, options: .storageModePrivate)
     else {
       throw Self.invalid("Metal could not allocate the exact DPC moment partials.")
     }
@@ -304,6 +324,12 @@ extension MetalRuntimeANSResidentSource {
       fold.endEncoding()
       command.commit()
       command.waitUntilCompleted()
+      guard command.status == .completed, command.error == nil else {
+        throw Self.invalid(
+          "Metal could not complete exact DPC moments: "
+            + (command.error?.localizedDescription ?? "the command did not complete")
+            + ". Close another dataset and try again.")
+      }
       if words[0] != 0 { throw Self.momentFailure(words) }
       completed = stop
       progress?(completed, chunks.count)
