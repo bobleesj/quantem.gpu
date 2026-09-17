@@ -66,6 +66,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   var detectorColumnsPipeline: MTLComputePipelineState?
   var detectorTotalsPipeline: MTLComputePipelineState?
   var regionMeanPipeline: MTLComputePipelineState?
+  var exactMomentsPipeline: MTLComputePipelineState?
   var detectorColumnsValidity: MTLBuffer?
 
   var usesSpatialIndex: Bool {
@@ -332,6 +333,7 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
     detectorColumnsPipeline = nil
     detectorTotalsPipeline = nil
     regionMeanPipeline = nil
+    exactMomentsPipeline = nil
     isReleased = true
   }
 

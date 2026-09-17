@@ -16,6 +16,10 @@ struct StreamReader {
     uint cursor, end, state, model, constant_value;
     bool valid;
 
+    StreamReader()
+        : payload(nullptr), table(nullptr), cursor(0), end(0), state(0), model(0),
+          constant_value(0), valid(false) {}
+
     StreamReader(device const uchar *bytes, device const uint *offsets,
                  device const uchar *models, device const uint *decoding,
                  uint stream)
@@ -669,4 +673,148 @@ kernel void streamed_counts_reduce(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     if (lane == 0) output[p.z + scan] = partials[0];
+}
+
+
+// Exact per-scan DPC moments (total, row moment, column moment) over every
+// stored original count, for the runtime ANS representation. One SIMD group
+// owns one stored packet and walks the detector in stripes: lane l decodes the
+// streams of pixels {stripe * 32 * S + lane + 32 * i} for i < S, so consecutive
+// lanes touch consecutive streams. Every reader consumes its stream exactly
+// once, which keeps the terminal-state check in StreamReader::finished
+// meaningful for the whole pass.
+//
+// Per-scan partials live in threadgroup memory that only lane 0 writes, so the
+// inner loop needs no atomics; the single publish per threadgroup uses
+// split-word atomic adds, which keep UInt64 sums exact on Apple GPUs that have
+// no 64-bit atomics. Values come from the stored payload through the same
+// StreamReader the decode path uses, so the basis is the exact integer quantity
+// of the retained counts, never an approximation.
+//
+// errors[0] records failure, errors[1..3] the first failing stream index, its
+// model, and a reason code, all through atomic min so a diagnosis survives.
+constant uint SC_MOMENT_WORDS = 6;
+constant uint SC_MOMENT_STREAMS = 4;
+constant uint SC_MOMENT_SCANS = 512;
+constant uint SC_MOMENT_REASON_INVALID = 1;
+constant uint SC_MOMENT_REASON_UNCONSUMED = 2;
+constant uint SC_MOMENT_REASON_STATE = 3;
+
+inline void sc_atomic_add_u64(device atomic_uint *target, ulong value) {
+    uint add = uint(value), carry = uint(value >> 32);
+    uint previous = atomic_fetch_add_explicit(target, add, memory_order_relaxed);
+    if (previous > 0xffffffffu - add) carry += 1u;
+    if (carry) atomic_fetch_add_explicit(target + 1, carry, memory_order_relaxed);
+}
+
+// Shuffle the two halves of every 64-bit partial separately and add in 64 bits
+// so carries never squeeze a moment through 32 bits.
+inline ulong sc_reduce_u64(ulong value, uint width) {
+    for (uint delta = width / 2; delta; delta >>= 1) {
+        uint low = simd_shuffle_down(uint(value), delta);
+        uint high = simd_shuffle_down(uint(value >> 32), delta);
+        value += ulong(low) | (ulong(high) << 32);
+    }
+    return value;
+}
+
+inline void sc_moment_failure(
+    device atomic_uint *errors, uint stream, uint model, uint reason) {
+    atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    atomic_fetch_min_explicit(errors + 1, stream, memory_order_relaxed);
+    atomic_fetch_min_explicit(errors + 2, model, memory_order_relaxed);
+    atomic_fetch_min_explicit(errors + 3, reason, memory_order_relaxed);
+}
+
+kernel void streamed_counts_exact_moments(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device atomic_uint *output [[buffer(5)]],
+    constant ulong *p [[buffer(6)]],
+    uint job [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]]) {
+    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
+    uint firstScan = uint(p[3]), columns = uint(p[4]), outputFirst = uint(p[5]);
+    uint stripeGroups = max(1u, uint(p[6]));
+    uint blocks = (scans + interval - 1) / interval;
+    if (lane >= 32u || job >= blocks * stripeGroups) return;
+    uint block = job / stripeGroups, stripeGroup = job % stripeGroups;
+    uint localFirst = block * interval;
+    uint count = min(interval, scans - localFirst);
+    threadgroup ulong partialTotal[SC_MOMENT_SCANS];
+    threadgroup ulong partialRow[SC_MOMENT_SCANS];
+    threadgroup ulong partialColumn[SC_MOMENT_SCANS];
+    for (uint i = lane; i < count; i += 32u) {
+        partialTotal[i] = 0ul;
+        partialRow[i] = 0ul;
+        partialColumn[i] = 0ul;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint width = 32u * SC_MOMENT_STREAMS;
+    uint stripes = (pixels + width - 1) / width;
+    for (uint stripe = stripeGroup; stripe < stripes; stripe += stripeGroups) {
+        uint base = stripe * width;
+        uint pixel[SC_MOMENT_STREAMS];
+        uint rowWeight[SC_MOMENT_STREAMS];
+        uint columnWeight[SC_MOMENT_STREAMS];
+        bool active[SC_MOMENT_STREAMS];
+        bool entropy[SC_MOMENT_STREAMS];
+        StreamReader reader[SC_MOMENT_STREAMS];
+        for (uint i = 0; i < SC_MOMENT_STREAMS; ++i) {
+            uint candidate = base + lane + 32u * i;
+            active[i] = candidate < pixels;
+            pixel[i] = active[i] ? candidate : 0u;
+            rowWeight[i] = pixel[i] / columns;
+            columnWeight[i] = pixel[i] % columns;
+            reader[i] = StreamReader(
+                payload, offsets, models, decoding, block * pixels + pixel[i]);
+            entropy[i] = active[i] && reader[i].model < SC_MODELS;
+        }
+        for (uint scan = 0; scan < count; ++scan) {
+            uint total = 0;
+            ulong row = 0ul, column = 0ul;
+            for (uint i = 0; i < SC_MOMENT_STREAMS; ++i) {
+                if (!active[i]) continue;
+                uint value = entropy[i] ? reader[i].next_entropy() : reader[i].next();
+                total += value;
+                row += ulong(value) * ulong(rowWeight[i]);
+                column += ulong(value) * ulong(columnWeight[i]);
+            }
+            // Every lane reaches both reductions: a stripe with no pixels for a
+            // lane is handled by marking it inactive, never by leaving the loop.
+            uint summedTotal = simd_sum(total);
+            ulong summedRow = sc_reduce_u64(row, 32u);
+            ulong summedColumn = sc_reduce_u64(column, 32u);
+            if (lane == 0) {
+                partialTotal[scan] += ulong(summedTotal);
+                partialRow[scan] += summedRow;
+                partialColumn[scan] += summedColumn;
+            }
+        }
+        for (uint i = 0; i < SC_MOMENT_STREAMS; ++i) {
+            if (!active[i]) continue;
+            uint stream = block * pixels + pixel[i];
+            if (!reader[i].valid) {
+                sc_moment_failure(errors, stream, uint(reader[i].model),
+                    SC_MOMENT_REASON_INVALID);
+            } else if (reader[i].cursor != reader[i].end) {
+                sc_moment_failure(errors, stream, uint(reader[i].model),
+                    SC_MOMENT_REASON_UNCONSUMED);
+            } else if (reader[i].model < SC_MODELS && reader[i].state != SC_LOWER) {
+                sc_moment_failure(errors, stream, uint(reader[i].model),
+                    SC_MOMENT_REASON_STATE);
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint i = lane; i < count; i += 32u) {
+        device atomic_uint *slot =
+            output + (ulong(outputFirst + firstScan + localFirst + i) * SC_MOMENT_WORDS);
+        sc_atomic_add_u64(slot, partialTotal[i]);
+        sc_atomic_add_u64(slot + 2, partialRow[i]);
+        sc_atomic_add_u64(slot + 4, partialColumn[i]);
+    }
 }
