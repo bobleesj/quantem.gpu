@@ -302,6 +302,206 @@ Python reference results, so all four searches are in the same valley, but the
 astigmatism direction is flat at 128x128, so its value is decided by the search
 order, not by the data.
 
+## F1 attribution: which line loses the precision
+
+F2b left the excess somewhere inside the summed spectrum: the per-BF weighting
+(the ``gamma / |gamma|`` unit-complex construction and the probe term) or the
+complex64 accumulation over 8,937 terms. That is now bisected, one lever per
+process, on the failing 512x512 setting #0 (C10 = 73.181886 nm,
+C12 = 14.020963 nm, phi12 = 0.470037 rad). Nothing below changes production
+arithmetic; every variant is a scratch probe under
+``parity-runs/scratch/19_f1_variants.py`` with its own report in
+``parity-runs/scratch/f1/``. The oracle and the float32 floor are the same
+cached artifacts the gate uses (floor relL2 1.0981e-06, 2x bound 2.196e-06).
+
+| variant (one lever changed) | object relL2 | x floor | phase max (rad) |
+| --- | ---: | ---: | ---: |
+| production (base) | 4.3173e-06 | 3.93 | 1.1038e-05 |
+| object trig spelled `metal::sincos` instead of `metal::fast::sincos` | 4.3173e-06 | 3.93 | 1.1038e-05 |
+| accumulation chunk 64 (140 groups) | 4.3151e-06 | 3.93 | 1.1049e-05 |
+| accumulation chunk 512 (18 groups) | 4.3351e-06 | 3.95 | 1.1146e-05 |
+| Kahan-compensated accumulation (fast mode) | 4.3173e-06 | 3.93 | 1.1038e-05 |
+| Kahan-compensated accumulation (safe mode) | 5.8261e-06 | 5.31 | 1.3795e-05 |
+| safe mode, uncompensated (control) | 5.8218e-06 | 5.30 | 1.3802e-05 |
+| forward BF transform recomputed by SciPy float32 | 4.3213e-06 | 3.94 | 1.1103e-05 |
+| forward BF transform recomputed by SciPy float64 then rounded | 4.3204e-06 | 3.93 | 1.1111e-05 |
+| probe term `pk` computed in-kernel from raw kx/ky (Metal-equivalent) | 3.8184e-06 | 3.48 | 1.1083e-05 |
+
+Readings, in the order the levers were asked for:
+
+1. **The accumulation is not the line.** Re-grouping the complex64 sum from
+   70 groups (production 128) to 140 and 18 groups moves the metric by <= 0.4%.
+   Making the accumulation *exact* for the same float32 terms - Kahan
+   compensation, which the compiler cannot remove in `math_mode: "safe"` -
+   moves it by 0.07% (5.8261e-06 against the 5.8218e-06 uncompensated control);
+   in `math_mode: "fast"` the compensated and uncompensated kernels are
+   bit-identical (4.3173e-06), because fast-math reassociation removes the
+   compensation. So neither the order/depth nor the precision of the
+   8,937-term sum is the excess. Compensating it would buy nothing at any cost.
+2. **The trig spelling is not the line, and neither is `math_mode`.** Over
+   18,302,976 real chi samples of this setting (`|chi| <= 167.09 rad`,
+   `parity-runs/scratch/f1/intrinsic-sincos-s0.json`), `metal::fast::sincos`
+   and `metal::sincos` are **bitwise identical** (max |delta| = 0.0), so the
+   `fast::` spelling in `engine.py:3919/3924` is a naming difference, not a
+   precision difference - which is also why the earlier `math_mode` probe found
+   a bit-identical object. Switching the whole kernel to `math_mode: "safe"`
+   makes it *worse* (5.82e-06): fast mode is contributing fused multiply-adds,
+   not shortcuts. What does differ from the reference is the trig
+   *implementation*: over the same samples Metal's `sincos` is 3.19e-08 RMS
+   (1.34e-07 max) from float64 where numpy float32 `cos`/`sin` is 1.70e-08 RMS
+   (6.88e-08 max) - about 1.9x the reference's per-term trig noise.
+3. **The FFT realization is not the line** - including the forward transform,
+   which F2b had left untested. Replacing the MLX forward `rfft2` with SciPy's
+   in float32 leaves the object error unchanged (4.3213e-06), and replacing it
+   with an exactly-rounded float64 forward transform leaves it unchanged too
+   (4.3204e-06). The error is created entirely downstream of the forward
+   transform.
+4. **The per-BF weighting construction is the line.** Re-building the probe
+   term `pk` in the kernel from the raw `kx/ky` with the same float32 formula
+   Metal uses, at identical accumulation, is the only lever that moves the
+   object materially: 4.3173e-06 -> 3.8184e-06 relL2 (-11.6%), i.e. 15% of the
+   3.219e-06 excess over the floor, at no measured cost (the variant skips the
+   host `pk` build). The residual lives in the same per-(BF, pixel) float32
+   weight chain the reference also evaluates, and it is diffuse rather than
+   structural: the error field is uniform over the object (median 1.26e-05,
+   max 3.96e-05, ratio 3.1; no concentration on borders, the Hermitian seam or
+   the aperture rim), which is the signature of summed per-term rounding.
+
+What that means for a fix: `double` is not available in Metal shaders on this
+GPU (`'double' is not supported in Metal`, refused by the compiler), so a
+higher-precision term chain has to be emulated; the cheap, measured step is the
+`pk` construction above, worth 15% of the excess. There is no single line whose
+repair is expected to reach the floor: the remaining 85% is the per-term float32
+rounding of the weighting chain as a whole.
+
+Fit impact of that candidate fix, measured rather than argued: **none**. The
+fit never builds the object kernel - `_reconstruct_prepared_batch_exact_loss`
+calls `_reconstruct_prepared(..., compute_loss=True, compute_object=False)` -
+so an object-kernel change cannot enter the search. Checked directly anyway with
+`parity-runs/scratch/21_f1_fit_variant.py --pk-inline`, which installs the same
+`pk` rewrite inside a full 200-trial reference fit on the 128x128 artifact
+(seed 42, batch 1): the object kernel really was rewritten
+(`ssb_object_fourier_sum_dyn_fast_sincos_b128_n2464_logical8937_sparse0_128_128_g65`,
+one match), and the trajectory digest is identical with and without the patch,
+`227cb1f4f8fe0553a10e198d0f2148414ea6767907d08837deccf61043b1e424`, with 0 of
+200 trial losses differing, the same best trial (184), the same optimum
+(-8.665518253322524, 6.248562683755667, -1.10898839103687) and the same loss
+(0.08557009696960449). The same-session unpatched control reproduces the
+recorded reference trajectory bit for bit. The fix is a rendering fix: it
+cannot move a fit optimum, and therefore cannot be validated through the fit
+gate - only through the object/phase metrics of the objective gate.
+
+### Is the MPS loss passing by luck?
+
+No - the loss is a structurally different computation from the object, and it
+is sound at the float32-representation level:
+
+- The loss is computed by the phase-moment kernels (`_row_ifft*`,
+  `_corrected*`, `ssb_phase_cols*`), never by the object-sum kernel. The object
+  excess above does not enter it.
+- One float32 ulp of a loss near 0.098 is 7.45e-09. The gate records
+  `mps vs metal:cached` loss agreement of 0.0 to 1.49e-08 absolute
+  (0 to 2.0 ulp) on all 9 gated 128x128 and 512x512 rows, and MPS against the
+  double oracle is 1.5878e-08 (2.1 ulp) at 512x512 setting #0 against the
+  float32 floor's own 1.5906e-08 (2.1 ulp). Two independent implementations
+  agreeing to 1-2 ulp of the representable value, at every tested setting, is
+  not a lucky pass: the loss path returns the correctly rounded float32
+  objective to a couple of ulp.
+- The one exception is the recorded 128x128 C10 = 155.96977 nm setting, where
+  MPS is 2.8746e-07 relative (3.0 ulp, 2.57x the floor, 1.28x the 2x bound).
+  The gate is right to flag it: the loss path is not uniformly floor-equal.
+- Mechanism for the object/loss asymmetry: the object is a coherent sum of
+  8,937 complex terms per pixel whose cancellation amplifies per-term rounding;
+  the loss is a per-pixel variance of per-BF phases, averaged over the BF set,
+  where the same per-term rounding averages down instead of amplifying.
+
+Fit impact, measured rather than argued: the loss differences the search acts
+on are 4 orders larger than the loss-path error. Changing only the *draw*
+(batched against sequential, the same objective) moves the final loss by
+1.34e-05 relative 1.57e-04 at 128x128 and 1.59e-03 at 512x512, while the
+implementation difference is <= 3.0 ulp (~2.2e-08 absolute). The one place the
+two scales meet is the Nelder-Mead tail: the last recorded improvements are
+1, 6, 7, 17 and 24 ulp, so the *final few digits* of a reported optimum are at
+the objective's float32 resolution and can differ between implementations. The
+optimum's physical values and the loss are not.
+
+## Trial-budget sensitivity at the production protocol (evidence only)
+
+How much of the "200 TPE trials + Nelder-Mead" budget is load-bearing? Measured
+on the native Metal path over the real 512x512 acquisition (8,937 logical /
+2,464 aperture-active BF), seed 42, start `(0, 50, 0)`, **with no change to the
+objective, the evaluator, the summation order or any search arithmetic**:
+`tests/metal/ssb_fit_budget.swift` runs the production `SSBOptimizer.run` and
+`MetalSSBEngine.phaseVariance` and varies only `globalTrials`, plus one
+refinement-only arm (`nmWarm`) that starts at the recorded 200-trial optimum.
+Every arm runs twice (forward and reverse pass, ABBA pairing for wall time)
+under one `gpurun` lock, `GPU_RUN_LABEL=meitner-budget`.
+
+| arm | TPE trials | objective evals | NM evals | best loss | gain vs initial | wall (fwd / rev) | load (fwd) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| tpe25 | 25 | 93 | 63 | 0.097227625548839569 | 3.465e-06 | 6.969 s / 6.709 s | 4.92 -> 4.68 |
+| tpe50 | 50 | 112 | 58 | 0.096058391034603119 | 1.173e-03 | 8.310 s / 8.339 s | 4.68 -> 5.56 |
+| tpe100 | 100 | 162 | 58 | 0.096058391034603119 | 1.173e-03 | 12.587 s / 12.381 s | 5.56 -> 4.84 |
+| tpe200 | 200 | 262 | 58 | 0.096058391034603119 | 1.173e-03 | 20.438 s / 20.107 s | 4.84 -> 4.84 |
+| nmWarm (NM only, from the recorded optimum) | 0 | 145 | 140 | 0.094526410102844238 | 2.705e-03 | 11.073 s / 11.005 s | 4.84 -> 6.77 |
+
+Machine load over the run: 4.92 at start, 5.33 at end (per-arm pairs above; the
+machine was not idle, so quote the load with every time). The three `tpe50`,
+`tpe100` and `tpe200` arms reach the *same* optimum to the last bit
+(52.871296844577195, 52.878826420320394, 0.0021567655543952434).
+`parity-runs/scratch/22_budget_report.py` regenerates this table.
+
+Controls, all measured: the `tpe200` trace is **bit-identical to the recorded
+production fit** in `parity-runs/fit-arina-512-full-disk.json` - all 262 trials,
+same stages, points, losses, refinement count - in both passes, so the harness
+is the production path and nothing drifted; forward and reverse traces are
+bit-identical to each other for every arm, so the wall-time pairing is not
+hiding a state leak; and the TPE prefixes nest exactly (the first 25/50/100
+trials of `tpe200` are the `tpe25`/`tpe50`/`tpe100` trials).
+
+What each block buys, best-so-far inside the 200-trial trace:
+
+| block | best-so-far after the block | gain in block | gain per 25 trials |
+| --- | ---: | ---: | ---: |
+| 0 -> 25 | 0.097231090068817139 | 0.0 | 0.0 |
+| 25 -> 50 | 0.097178995609283447 | 5.209e-05 | 2.084e-06 |
+| 50 -> 200 (6 blocks) | 0.097178995609283447 | 0.0 | 0.0 |
+
+Reading, in the order the protocol asks:
+
+1. **TPE converges before trial 50 on this case.** The last improvement in the
+   whole 200-trial phase arrives inside the second block; trials 50-200 buy
+   exactly 0.0, so 150 of the 200 trials are pure cost here (12.1 s of the
+   20.4 s).
+2. **25 trials is not enough.** Its TPE best (0.09806397557258606) and its NM
+   landing point (0.097227625548839569) are 1.17e-03 worse than the 50-trial
+   result; the search has not found the valley yet.
+3. **Nelder-Mead, not the trial count, is the binding constraint.** NM buys
+   1.121e-03 from the 50-trial TPE best, and a *second* NM started from the
+   recorded 200-trial optimum buys another 1.532e-03 - more than the entire
+   from-scratch search bought - landing at 0.094526410102844238 in 145 evals
+   (11.0 s). The recorded batched draw reaches 0.09447139501571655 in 338
+   evals, i.e. the same deeper optimum. Both are consistent with the sequential
+   NM stopping early on its own convergence test
+   (`coordinateSpread < 0.1 && lossSpread < 3e-6`, `SSBOptimizer.swift`) in a
+   shallow spot: stopping NM is what costs precision here, not the 200-trial
+   budget.
+4. **Timing context.** The user-quoted `228 evaluations / 61.97 s at load 1.86`
+   belongs to a different harness (`experiments/20260916-metal-ssb-fit-acceleration`:
+   201 trial-stage evaluations in 54.18 s plus 27 refinement evaluations), i.e.
+   ~0.27 s/eval. This harness measures the production path at 259 objective
+   evaluations (262 recorded trials) in 20.11-20.44 s at load 4.8-5.3, ~0.078
+   s/eval, and the recorded `fit-arina-512-full-disk.json` artifact says
+   20.331 s. The two are not the same measurement; times are volatile, the
+   losses and optimums above are not, and the 61.97 s should be quoted with its
+   harness and load, never as a machine constant.
+5. **Caveats.** One case, one seed, one start point. TPE's candidate draw is
+   seed-dependent and this acquisition's landscape is unusually benign at
+   50 trials; "50 is enough" is a statement about this acquisition, not a
+   guarantee for others. What generalises is the shape: the trial phase
+   saturates, the NM phase is where the remaining loss is, and the recorded
+   optimum is NM-termination-limited.
+
 ## Findings, root causes and open items
 
 - **F1 (gate fails, MPS, deterministic).** At 512x512 the MPS object is
@@ -369,7 +569,14 @@ order, not by the data.
   to uint8), and `expected.loss` 0.04469207674264908 against 0.098087540782 for
   the same aberration triple. Its `trial_trace_sha256` is not checked anywhere
   in the tree. The reference's source specimen is not in the repository, so this
-  stays unresolved rather than "fixed".
+  stays unresolved rather than "fixed". **Recommendation (not applied here, and
+  do not edit the fixture from this experiment):** either re-anchor it -
+  regenerate the fixture from an artifact that ships with the tree and add an
+  executable check of `trial_trace_sha256`, so the pin is verified instead of
+  prose - or delete it. A "frozen" reference that nothing compares against and
+  whose numbers contradict the only acquisition present is a trap: it reads as
+  authority, it can never fail, and the next agent has no way to tell it from a
+  live pin.
 - **F9 (fit-trajectory trap, verified).** See the section above: batching moves
   the final optimum by 3.2 nm / 7.3 nm / 0.61 rad at 128x128 and by
   13.8 nm / 13.8 nm / 2.2e-04 rad at 512x512, and the loss by 1.57e-04 /
