@@ -29,15 +29,25 @@
     }
   ],
   "parameters": {
-    "scan_shape": [512, 512],
-    "detector_shape": [192, 192],
+    "scan_shape": [
+      512,
+      512
+    ],
+    "detector_shape": [
+      192,
+      192
+    ],
     "raw_dtype": "uint16",
     "real_dtype": "float32",
     "complex_dtype": "complex64",
     "logical_bf_terms": 8937,
     "stored_bf_planes": 8937,
     "active_bf_planes": 8937,
-    "g_qk_shape": [8937, 512, 257],
+    "g_qk_shape": [
+      8937,
+      512,
+      257
+    ],
     "g_qk_bytes": 9407729664,
     "det_sampling_mrad": 0.5622196476170719,
     "rotation_angle_deg": 158.88268568029937,
@@ -132,6 +142,15 @@
       "retention": "durable",
       "consuming_figures": [],
       "result": "Pair pack eval depth 5 beats 4/3/2/1 with identical peak bytes (batch1 378.7 ms at depth 5 vs 395.7 at depth 1; batch2 697.8 vs 1028.1)."
+    },
+    {
+      "artifact_id": "sanctioned-pair-gate",
+      "path": "private-fixture://mps-runs/20260916-ssb-mps-hotpath/sanctioned_gate.jsonl",
+      "sha256": "e55976970c16c58835ede7a3d10973ba98022bc9f0fd74b1f896e9139334066b",
+      "size_bytes": 1397,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "scripts/benchmark_ssb_mps_scaling.py --skip-fit with --reference-engine: 8/8 randomized candidate pairs bit-exact against the frozen 32ba29b engine on real data by np.testing.assert_array_equal; pair p50 166.6 ms for the harness default geometry (8937 logical, 2319 stored BF planes), which scales to 642 ms for 8937 stored planes and reproduces the 654.8 ms batch-2 objective measured here within 2%."
     }
   ],
   "findings": {
@@ -164,6 +183,8 @@
   "parity": {
     "gate": "tests/hardware/mps/test_ssb_mps_cuda_reference.py, tests/hardware/mps/test_ssb_mps_compact_object.py, tests/contracts/test_ssb_mps_close.py, tests/contracts/test_ssb_batch_optuna.py, tests/parity/test_ssb_cold_preview.py",
     "result": "56 passed, 4 skipped in 3.09 s",
-    "bit_exact_evidence": "Final fit loss 0.13769753277301788, phase sha256 e6b3d3015ee0d6db3a19a57c872f8a83d423eaa0ee06927dc2ea2cc49343eb8c, object sha256 1773d7c35abf56a6db1c12e854c82a0c98f8195b8d8e60bbe18cf9c96ec1fe2a and aberrations C10=7.017120839737006, C12=0.0, phi12=-0.15393969519675116 are identical to the frozen 32ba29b baseline, and the tiled and flat scalar paths return identical loss hex and phase arrays on every tested triple."
+    "bit_exact_evidence": "Final fit loss 0.13769753277301788, phase sha256 e6b3d3015ee0d6db3a19a57c872f8a83d423eaa0ee06927dc2ea2cc49343eb8c, object sha256 1773d7c35abf56a6db1c12e854c82a0c98f8195b8d8e60bbe18cf9c96ec1fe2a and aberrations C10=7.017120839737006, C12=0.0, phi12=-0.15393969519675116 are identical to the frozen 32ba29b baseline, and the tiled and flat scalar paths return identical loss hex and phase arrays on every tested triple.",
+    "sanctioned_gate": "scripts/benchmark_ssb_mps_scaling.py --skip-fit --pair-iters 6 --parity-pairs 8 --reference-engine <32ba29b engine.py>: parity_pairs_bit_exact 8 of 8, reference_engine_sha256 200e906b3d7d87b6a2b7cbf330d03e389b181c702cb1688a8ec431a33c10c677.",
+    "gate_note": "The sanctioned harness cannot express this audit's calibrated geometry: it has no det-sampling or rotation override, calls backend.cache_rotation(0.0), and stores 2319 of the 8937 companion planes, so its absolute pair time is not comparable to the 8937-plane numbers above without the plane-count scaling noted in the artifact."
   }
 }
