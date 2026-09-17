@@ -8,16 +8,17 @@ the same objective - and if any pair disagrees, which implementation is wrong?
 
 ## Result, numbers first
 
-| gate | 128x128 real crop | 512x512 full acquisition |
+| gate (worst gated setting) | 128x128 real crop | 512x512 full acquisition |
 | --- | --- | --- |
-| MPS vs double oracle (object relL2) | 1.83e-06 (passes, 0.34x the float32 floor) | **4.32e-06 (FAILS the 2.20e-06 bound)** |
-| MPS vs native Metal (object relL2) | 2.90e-07 passes | **4.18e-06 (FAILS the 2.20e-06 bound)** |
-| MPS vs double oracle (loss rel/abs) | **FAILS at the recorded C10 = 155.97 setting: 2.87e-07 vs 2.24e-07** | 1.62e-07 passes |
-| Metal cached vs double oracle (object relL2) | 1.86e-06 passes | 5.62e-07 passes (best of all) |
-| Metal cached vs streamed (loss rel) | <= 1.16e-07 passes | 7.60e-08 passes |
-| MPS vs Metal (loss rel) | 8.65e-08 passes | 1.52e-07 passes |
+| MPS vs double oracle, object relL2 | 2.102e-06 passes (bound 4.378e-06) | **4.317e-06 FAILS (bound 2.196e-06)** |
+| MPS vs native Metal, object relL2 | 6.096e-07 passes | **4.179e-06 FAILS (bound 2.196e-06)** |
+| MPS vs double oracle, loss rel | **FAILS at C10 = 155.97: 2.875e-07 against 2.240e-07**; worst passing 4.599e-07 against 1.032e-06 | 1.619e-07 passes |
+| MPS vs double oracle, phase max (rad) | 4.421e-06 passes | **1.104e-05 FAILS (bound 6.532e-06)** |
+| Metal cached vs double oracle, object relL2 | 2.116e-06 passes | 5.618e-07 passes (best of all) |
+| Metal cached vs streamed, loss rel | 8.665e-08 passes | 7.600e-08 passes |
+| Metal cached vs streamed, object relL2 | 5.030e-07 passes | 3.731e-06 passes (bound 4.583e-06) |
 | native fit trajectory vs its pin | matches (digest `74cc7772...`, 2 processes) | not pinned |
-| batched vs sequential fit | optimum moves by (-3.18, +7.32, +0.611) nm/rad | by (-13.82, -13.83, -2.16e-04) nm/rad |
+| batched vs sequential fit, optimum delta | (-3.18, +7.32, +0.611) nm/rad | (-13.82, -13.83, -2.16e-04) nm/rad |
 
 Verdict: **the native Metal path clears the strict float32 gate everywhere; the
 MPS path does not, at 512x512 on the object/phase metrics and at one recorded
@@ -222,6 +223,21 @@ per-trial loss difference 3.1540e-03, optimum moved by
 objective is a pure function of the float32 point: repeated evaluation, a fresh
 engine, and the same float32 triple reached from a neighbouring double all agree
 bitwise (0 mismatches, 0 ULP).
+
+### Running the fit gate against a batching change
+
+`scripts/check_ssb_fit_trajectory.sh` is the acceptance test for any change
+that touches the native search or enables `evaluateBatch`. On a tree that
+exposes `MetalSSBEngine.phaseVarianceBatch` the script compiles the harness with
+`-D SSB_HAS_BATCH_OBJECTIVE` automatically and runs the pair draw twice: once
+through the plain single-candidate closure (isolating the sampling effect) and
+once through the native batch objective. It then reports, for every candidate
+the batch objective evaluated, whether the batched loss is bit-identical to the
+single-candidate loss, and whether running a batch perturbs later single
+evaluations. A production change that starts drawing pairs is caught by the
+sequential trajectory pin (`74cc7772...`); a batch objective that is not
+bit-identical per candidate is caught by the identity counters; and a
+non-deterministic fit is caught by the two-process digest comparison.
 
 ### Does the unbatched path match the frozen/QuantEM reference?
 
