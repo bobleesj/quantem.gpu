@@ -193,7 +193,7 @@ def _validate_experiments(errors: list[str]) -> tuple[int, set[str]]:
             errors.append(f"{label} dirty source needs a diff SHA-256")
 
         for item in manifest["inputs"]:
-            if not FULL_SHA256.fullmatch(item.get("sha256", "")):
+            if not FULL_SHA256.fullmatch(item.get("sha256") or ""):
                 errors.append(f"{label} input {item.get('dataset_id')} lacks SHA-256")
         if manifest["status"] in TERMINAL_STATUSES:
             if not manifest["timestamps"].get("finished"):

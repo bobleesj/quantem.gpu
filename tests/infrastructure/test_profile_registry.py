@@ -163,3 +163,13 @@ def test_unknown_experiment_status_reports_error_instead_of_crashing(
     _, identifiers = registry._validate_experiments(errors)
     registry._validate_runs_index(identifiers, errors)
     assert any("invalid status" in error for error in errors)
+
+
+def test_missing_input_hash_reports_error_instead_of_crashing(experiment_registry):
+    registry = experiment_registry
+    manifest, path = _retained_experiment(registry)
+    manifest["inputs"][0]["sha256"] = None
+    path.write_text(json.dumps(manifest))
+    errors = []
+    registry._validate_experiments(errors)
+    assert any("input bounded-fixture lacks SHA-256" in error for error in errors)
