@@ -272,7 +272,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         for name, key in (("batched", "batched"), ("batchedEngine", "batchedEngine")):
             if native.get(key):
-                entry = native[f"comparisonEngine" if key == "batchedEngine" else "comparison"]
+                entry = native.get(
+                    "comparisonEngine" if key == "batchedEngine" else "comparison"
+                )
                 pin[name] = {
                     "trajectorySha256": trial_digest(native[key]["trials"]),
                     "best": list(optimum(native[key])),
