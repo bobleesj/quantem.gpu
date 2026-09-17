@@ -70,7 +70,7 @@
   "host": "apple-m5-24gb",
   "backend": "swift-metal",
   "gpu_model": "Apple M5 10-core GPU, 24 GB unified memory",
-  "contention_note": "Every run was taken under the shared GPU lock. Host load is stated with every timing set because it moves the objective by ~10%: the same fit measures 61.97 s at load 1.86 and 67.99 s at load 3.28, and the loss p50 moves 279 ms (load 0.6-2.8) to 309 ms (load 2.3-2.6). The A/B arms were interleaved in balanced order (the arm that runs first alternates with the round and group index) so neither arm owns a fixed position."
+  "contention_note": "Every run was taken under the shared GPU lock. Host load is stated with every timing set because it moves the objective by ~10%: the same fit measures 61.97 s at load 1.86 and 67.99 s at load 3.28, and the loss p50 moves 279 ms (load 0.6-2.8) to 309 ms (load 2.3-2.6). The A/B arms were interleaved in balanced order (the arm that runs first alternates with the round and group index) so neither arm owns a fixed position. The probes record load_average from /proc/loadavg, which does not exist on macOS and reads back as n/a; the load averages quoted here were taken from uptime in the driving shell immediately before and after each run."
  },
  "results": {
   "headline": {
@@ -153,8 +153,11 @@
     "2_planes": 0.541
    },
    "peak_allocated_bytes": {
-    "single_candidate_engine": 11368785920,
-    "k4_batch_adds": "4 extra chi (2.1 MB) + cross (73.2 MB) + nyquist + phase-sum buffers, ~302 MB"
+    "single_candidate_engine": 11363418112,
+    "k2": 11518377984,
+    "k4": 11673337856,
+    "per_candidate_overhead_bytes": 77471744,
+    "note": "Measured device.currentAllocatedSize after the fit. Each extra candidate adds one chi table (2097152 B), one cross table (73211904 B), one Nyquist table (65536 B) and two phase-sum planes (1048576 B each) = 77471744 B, so K=4 adds 309.9 MB to an 11.36 GB engine, 2.7%. The register/occupancy cost is not directly observable without Metal counters; what is observable is that the batched path is slower at every footprint."
    }
   },
   "ranked_bottlenecks_ms_per_evaluation": [
