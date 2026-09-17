@@ -10,7 +10,7 @@
   },
   "code": {
     "repository": "quantem.gpu",
-    "revision": "434ae07d9de19afbd782ced2dd8db84b07230b44",
+    "revision": "cdfa229a615ffef2532f87d9e5743e3c934f4a7f",
     "dirty": false,
     "entrypoint": "scripts/check_ssb_parity.sh",
     "secondary_entrypoint": "scripts/check_ssb_fit_trajectory.sh",
@@ -165,8 +165,8 @@
     {
       "artifact_id": "experiment-record",
       "path": "experiments/20260916-ssb-strict-float32-parity/README.md",
-      "sha256": "d4865378d5b514eb997c0acc3731f6be6f5fda3977c0af913fffb1b4e1d8b4b9",
-      "size_bytes": 38172,
+      "sha256": "c6a0659234ab763149f85c1df68f868697cd40486b297c2fe15f15115dea2105",
+      "size_bytes": 38630,
       "retention": "durable",
       "consuming_figures": []
     },
