@@ -90,7 +90,8 @@
     "c10_nm": 6.603671591975075,
     "c12_nm": 0.09848762314231685,
     "phi12_rad": 1.1341200767509283
-   }
+   },
+   "load_average_note": "This is the low-load headline. Host load average is stated with every timing set: fit 61.97 s at load 1.86, 67.99 s at load 3.28. Loss p50 279.0 ms at load 0.6-2.8, 309.0 ms at load 2.3-2.6."
   },
   "lever_a_intermediate": {
    "verdict": "not achievable on this hardware; the blocked intermediate is a full-plane transpose buffer that cannot fit on chip at any granularity",
@@ -215,7 +216,23 @@
     "reason": "The entire transform work of both passes is worth 25.6 ms of a 250 ms evaluation and is already at peak float32 throughput, so there is no arithmetic headroom. Recorded as a bound, not a candidate."
    }
   ],
-  "what_would_be_needed": "The evaluation is 295 ms against a hardware floor of roughly 235 ms made of 9.41 GB of mandatory bright-field reads plus 18.82 GB of intermediate traffic at the measured 121-139 GB/s. The only large win left would be an algorithm that does not need a 512x512 complex64 transpose buffer per bright-field term - for example folding the aberration-dependent correction into a form whose 2D transform is candidate-independent. The correction is not factorable that way: ssb_corrected_value_precomputed_chi multiplies each cached value by a unit complex number built from a per-candidate per-pixel chi table and a per-candidate per-bright-field per-coordinate cross table, so the transform input genuinely depends on the candidate at every pixel."
+  "what_would_be_needed": "The evaluation is 295 ms against a hardware floor of roughly 235 ms made of 9.41 GB of mandatory bright-field reads plus 18.82 GB of intermediate traffic at the measured 121-139 GB/s. The only large win left would be an algorithm that does not need a 512x512 complex64 transpose buffer per bright-field term - for example folding the aberration-dependent correction into a form whose 2D transform is candidate-independent. The correction is not factorable that way: ssb_corrected_value_precomputed_chi multiplies each cached value by a unit complex number built from a per-candidate per-pixel chi table and a per-candidate per-bright-field per-coordinate cross table, so the transform input genuinely depends on the candidate at every pixel.",
+  "accumulate_first_variant": {
+   "question": "IFFT2 is linear, so could the per-bright-field corrected planes be summed in the q domain first and a single transform performed per candidate, removing the 18.82 GB intermediate round trip?",
+   "verdict": "not available for this objective; the constraint is structural, not numerical",
+   "constraint": "The per-pixel quantity is the variance of the phase ACROSS bright-field terms, so a phase has to exist per bright-field term. ssb_ifft512_rows_hermitian_phase_moments accumulates `float sum[8]`/`sumsq[8]` over local_bf through `phase = atan2(dc_spatial.y + h + delta.y, dc_spatial.x + delta.x)` and only then writes phase_sum[pixel] += sum[lane]; phaseVariance assembles sumOfSquares/(logical*pixels) - squareOfMeans/pixels, which is mean over pixels of (mean over bright field of phase^2 minus (mean over bright field of phase)^2). The nonlinearity sits between the transform and the sum, and the sum is over phases, not over complex amplitudes, so IFFT2 linearity has no sum to commute with.",
+   "second_barrier": "The Nyquist boundary correction is added inside the atan2 argument and is indexed by the bright-field term: boundary_base = local_bf * 2n, delta = +/-nyquist_correction[boundary_base + col] +/- nyquist_correction[boundary_base + n + row]. It is not the transform of any accumulated spectrum, so even a complex-plane accumulator would still need a per-bright-field term inside the atan2.",
+   "already_implemented_elsewhere": "The accumulate-first structure does exist in this engine, and is used exactly where the output IS linear: reconstruct() calls setCacheColumnMajor(false), clears `accumulator`, and runs ssb_gamma_accumulate_half(..., device float2 *accumulator [[buffer(15)]], ...) to sum the corrected bright-field planes into one 512x512 complex64 q-domain accumulator before a single transform. It reads the same 9.41 GB of G in 71-84 ms, i.e. 120-132 GB/s, which is the measured G-read floor. That is the structure the loss cannot use.",
+   "price_if_the_user_redefines_the_objective": "Device traffic would fall from 28.2 GB to about 9.4 GB per evaluation, removing roughly 155 ms of the 295 ms evaluation and taking the fit from 61.97 s to roughly 30 s. It is not a float32-epsilon change: the current per-pixel quantity is a sum of 8937 phases, whereas the variant's per-pixel quantity is a single angle in [-pi, pi], so the loss would move by O(1), not O(1e-7). Landing it would be a different objective that needs its own scientific validation and a recaptured frozen gate, so it is recorded as a decision for the user and was not built."
+  },
+  "arm_inventory_audit": {
+   "purpose": "Confirm no measurement arm silently failed and was dropped from the tables.",
+   "referenced_artifacts_present": 12,
+   "missing": 0,
+   "aborted_launches": "Two launch attempts produced no data and no arm: an initial background launch (2 s) and one using setsid, which does not exist on macOS ('command not found: setsid'). Both predate the successful run and only mean a retry, not a dropped arm.",
+   "deliberately_killed": "A queued probe4 job (k4b) was killed while waiting behind three other agents and replaced by an equivalent run (k4c) with the same inputs; k4c completed all three footprint arms.",
+   "superseded": "The first K=4 probe (metal-runs/lowload/k4, 3 rounds, unbalanced arm order, host load 2.95) gives speedups 1.127, 0.752, 1.015, 0.906, 0.974, 0.996 with 0 bit mismatches, median 0.94x. It agrees with the balanced ppc=8 arm (0.908x) and is superseded by it because the arm order was not counterbalanced."
+  }
  },
  "timestamps": {
   "created": "2026-09-16",
