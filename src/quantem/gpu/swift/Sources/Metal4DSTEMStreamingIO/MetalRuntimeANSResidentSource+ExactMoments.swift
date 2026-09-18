@@ -90,7 +90,8 @@ extension MetalRuntimeANSResidentSource {
     }
     guard interval <= Self.exactMomentScans else {
       throw Self.invalid(
-        "Stored packets of \(interval) scans exceed the \(Self.exactMomentScans)-scan moment basis.")
+        "Stored packets of \(interval) scans exceed the \(Self.exactMomentScans)-scan moment basis."
+      )
     }
     guard
       let outputBytes = Self.exactMomentBytes(scanCount: scanCount),
@@ -108,7 +109,8 @@ extension MetalRuntimeANSResidentSource {
     var maximumUnits = 1
     for chunk in chunks {
       let blocks = (chunk.scanCount + interval - 1) / interval
-      let groups = groupsPerBlock > 0
+      let groups =
+        groupsPerBlock > 0
         ? groupsPerBlock : Self.exactMomentGroups(blocks: blocks, stripes: stripesPerPacket)
       let units = blocks.multipliedReportingOverflow(by: groups)
       guard !units.overflow else {
@@ -126,7 +128,8 @@ extension MetalRuntimeANSResidentSource {
       partialStride = size.partialValue
     }
     let partialAllocation = partialStride.multipliedReportingOverflow(by: batchSize)
-    guard !partialAllocation.overflow, partialAllocation.partialValue <= device.maxBufferLength else {
+    guard !partialAllocation.overflow, partialAllocation.partialValue <= device.maxBufferLength
+    else {
       throw Self.invalid("The exact DPC moment partials exceed Metal's buffer limit.")
     }
     let partialBytes = partialAllocation.partialValue
@@ -186,7 +189,8 @@ extension MetalRuntimeANSResidentSource {
         "streamed_counts_exact_moments" + (includeDetectorTotals ? "_totals" : "")
         + (narrow ? "_narrow" : "")
       guard let function = library.makeFunction(name: name) else {
-        throw Self.invalid("Missing exact runtime ANS moments kernel. Rebuild the backend resources.")
+        throw Self.invalid(
+          "Missing exact runtime ANS moments kernel. Rebuild the backend resources.")
       }
       pipeline = try device.makeComputePipelineState(function: function)
       if includeDetectorTotals {
@@ -205,7 +209,8 @@ extension MetalRuntimeANSResidentSource {
       guard
         let function = library.makeFunction(name: "streamed_counts_exact_moments_combine")
       else {
-        throw Self.invalid("Missing exact runtime ANS moment combine kernel. Rebuild the backend resources.")
+        throw Self.invalid(
+          "Missing exact runtime ANS moment combine kernel. Rebuild the backend resources.")
       }
       exactMomentCombinePipeline = try device.makeComputePipelineState(function: function)
     }

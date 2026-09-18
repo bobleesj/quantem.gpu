@@ -127,10 +127,13 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       completedCommand: finalCommand, failureFlag: resources.failure)
     if ProcessInfo.processInfo.environment["QGPU_RUNTIME_ANS_PROFILE"] == "1" {
       let stageProvider = CFAbsoluteTimeGetCurrent()
-      fputs(String(format: "QGPU_STAGE_PROFILE validate=%.4f validity=%.4f resources=%.4f packing=%.4f loop=%.4f provider=%.4f total=%.4f\n",
-        stageValidate-started, stageValidity-stageValidate, stageResources-stageValidity,
-        stagePacking-stageResources, stageLoop-stagePacking, stageProvider-stageLoop,
-        stageProvider-started), stderr)
+      fputs(
+        String(
+          format:
+            "QGPU_STAGE_PROFILE validate=%.4f validity=%.4f resources=%.4f packing=%.4f loop=%.4f provider=%.4f total=%.4f\n",
+          stageValidate - started, stageValidity - stageValidate, stageResources - stageValidity,
+          stagePacking - stageResources, stageLoop - stagePacking, stageProvider - stageLoop,
+          stageProvider - started), stderr)
       resources.logProfile(
         logicalBytes: UInt64(source.logicalFrameCount) * source.decodedBytesPerFrame)
     }

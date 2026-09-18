@@ -58,16 +58,20 @@ public final class MetalImageOperations {
     self.queue = queue
     let resources: Bundle
     if Bundle.main.bundleURL.pathExtension == "app" {
-      guard let url = Bundle.main.resourceURL?
-        .appendingPathComponent("MetalKernels_MetalScientificNumerics.bundle"),
+      guard
+        let url = Bundle.main.resourceURL?
+          .appendingPathComponent("MetalKernels_MetalScientificNumerics.bundle"),
         let packaged = Bundle(url: url)
-      else { throw Self.invalid("Scientific image resources are missing. Reinstall the application.") }
+      else {
+        throw Self.invalid("Scientific image resources are missing. Reinstall the application.")
+      }
       resources = packaged
     } else {
       resources = .module
     }
-    guard let url = resources.url(
-      forResource: "images", withExtension: "metal", subdirectory: "Resources")
+    guard
+      let url = resources.url(
+        forResource: "images", withExtension: "metal", subdirectory: "Resources")
     else { throw Self.invalid("Scientific image kernels are missing. Reinstall the application.") }
     let options = MTLCompileOptions()
     options.fastMathEnabled = false

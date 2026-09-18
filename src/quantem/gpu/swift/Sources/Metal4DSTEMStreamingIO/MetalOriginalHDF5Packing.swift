@@ -2014,7 +2014,8 @@ final class OriginalHDF5Packing {
       unshuffle.dispatchThreadgroups(
         MTLSize(width: Int(frameCount), height: 1, depth: Int(blocks)),
         threadsPerThreadgroup: MTLSize(
-          width: is32 || (partialDPC != nil ? transposeDPC : (transposeUnshuffle && partialDPC == nil))
+          width: is32
+            || (partialDPC != nil ? transposeDPC : (transposeUnshuffle && partialDPC == nil))
             ? 128 : 64,
           height: 1, depth: 1))
       unshuffle.endEncoding()

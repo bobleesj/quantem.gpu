@@ -132,7 +132,6 @@ enum MetalPairedRuntimeTANSBenchmark {
         encoding: .utf8)!)
   }
 
-
   /// Thread-safe slot for the probe's background error.
   final class ProbeBox: @unchecked Sendable {
     private let lock = NSLock()

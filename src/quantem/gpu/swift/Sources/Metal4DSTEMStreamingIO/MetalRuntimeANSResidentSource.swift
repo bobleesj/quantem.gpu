@@ -1185,10 +1185,10 @@ extension OriginalHDF5Packing {
   /// Measurement only: route the direct ANS load through the fused
   /// decode+unshuffle kernels when the caller asks for the experiment.
   #if QGPU_PACKING_DIAGNOSTICS
-  static let probeFusedDirect =
-    ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_FUSED_DECODE"] == "1"
+    static let probeFusedDirect =
+      ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_FUSED_DECODE"] == "1"
   #else
-  static let probeFusedDirect = false
+    static let probeFusedDirect = false
   #endif
 
   /// Bounded compressed-input read-ahead for the direct ANS load.
@@ -1298,33 +1298,33 @@ extension OriginalHDF5Packing {
     command: MTLCommandBuffer, device: MTLDevice, queue: MTLCommandQueue
   ) {
     #if QGPU_PACKING_DIAGNOSTICS
-    guard let probe = ProcessInfo.processInfo.environment["QGPU_PROBE_DENSE_SHA"],
-      probe == "all" || probe == String(ordinal)
-    else { return }
-    command.waitUntilCompleted()
-    let byteCount = frameCount * pixels * bytesPerValue
-    guard byteCount > 0, byteCount <= dense.length,
-      let staging = device.makeBuffer(length: byteCount, options: .storageModeShared),
-      let blitCommand = queue.makeCommandBuffer(),
-      let blit = blitCommand.makeBlitCommandEncoder()
-    else { return }
-    blit.copy(from: dense, sourceOffset: 0, to: staging, destinationOffset: 0, size: byteCount)
-    blit.endEncoding()
-    blitCommand.commit()
-    blitCommand.waitUntilCompleted()
-    var hasher = SHA256()
-    let base = staging.contents()
-    let chunk = 1 << 24
-    var offset = 0
-    while offset < byteCount {
-      let count = min(chunk, byteCount - offset)
-      hasher.update(data: Data(bytes: base + offset, count: count))
-      offset += count
-    }
-    let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-    FileHandle.standardError.write(
-      "QGPU_DENSE_SHA window=\(ordinal) frames=\(frameCount) bytes=\(byteCount) sha256=\(digest)\n"
-        .data(using: .utf8)!)
+      guard let probe = ProcessInfo.processInfo.environment["QGPU_PROBE_DENSE_SHA"],
+        probe == "all" || probe == String(ordinal)
+      else { return }
+      command.waitUntilCompleted()
+      let byteCount = frameCount * pixels * bytesPerValue
+      guard byteCount > 0, byteCount <= dense.length,
+        let staging = device.makeBuffer(length: byteCount, options: .storageModeShared),
+        let blitCommand = queue.makeCommandBuffer(),
+        let blit = blitCommand.makeBlitCommandEncoder()
+      else { return }
+      blit.copy(from: dense, sourceOffset: 0, to: staging, destinationOffset: 0, size: byteCount)
+      blit.endEncoding()
+      blitCommand.commit()
+      blitCommand.waitUntilCompleted()
+      var hasher = SHA256()
+      let base = staging.contents()
+      let chunk = 1 << 24
+      var offset = 0
+      while offset < byteCount {
+        let count = min(chunk, byteCount - offset)
+        hasher.update(data: Data(bytes: base + offset, count: count))
+        offset += count
+      }
+      let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+      FileHandle.standardError.write(
+        "QGPU_DENSE_SHA window=\(ordinal) frames=\(frameCount) bytes=\(byteCount) sha256=\(digest)\n"
+          .data(using: .utf8)!)
     #endif
   }
 
