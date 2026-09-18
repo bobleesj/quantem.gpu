@@ -3,9 +3,11 @@ import Foundation
 
 public struct Native4DSTEMCatalogBuilder: Sendable {
   public let cacheDirectory: URL
+  private let shouldCancel: @Sendable () -> Bool
 
-  public init(cacheDirectory: URL) {
+  public init(cacheDirectory: URL, shouldCancel: @escaping @Sendable () -> Bool = { false }) {
     self.cacheDirectory = cacheDirectory
+    self.shouldCancel = shouldCancel
   }
 
   public func resolvedAcquisitionInput(_ input: URL) throws -> URL {
@@ -43,9 +45,11 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     var issues: [Native4DSTEMCatalogIssue] = []
     datasets.reserveCapacity(candidates.count)
     for candidate in candidates {
+      if shouldCancel() { throw CancellationError() }
       do {
         datasets.append(try prepareDataset(source: candidate, mode: mode))
       } catch {
+        if shouldCancel() { throw CancellationError() }
         guard isDirectory.boolValue else { throw error }
         issues.append(
           Native4DSTEMCatalogIssue(
@@ -62,6 +66,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     source: URL,
     mode: Native4DSTEMCatalogMode
   ) throws -> Native4DSTEMDataset {
+    if shouldCancel() { throw CancellationError() }
     if isEMD(source) {
       return try prepareVeloxDataset(source: source, mode: mode)
     }
@@ -242,6 +247,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       scalarImageRawPath: nil,
       detectorMaskSHA256: master.detectorMaskSHA256
     )
+    if shouldCancel() { throw CancellationError() }
     try cacheDataset(dataset, at: datasetCache)
     return dataset
   }
@@ -578,7 +584,7 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         let result = Result {
           let metadata = try QH5IndexWriter.prepare(
             source: dataFiles[index],
-            destination: indexFiles[index]
+            destination: indexFiles[index], shouldCancel: shouldCancel
           )
           return NativeHDF5Stack(
             frameCount: metadata.nFrames,
@@ -619,7 +625,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
           try nativeSourceHashes(
             master: master,
             dataFiles: dataFiles,
-            cacheFile: indexRoot.appendingPathComponent("source-hashes.json")
+            cacheFile: indexRoot.appendingPathComponent("source-hashes.json"),
+            shouldCancel: shouldCancel
           )
         }
         resultLock.lock()

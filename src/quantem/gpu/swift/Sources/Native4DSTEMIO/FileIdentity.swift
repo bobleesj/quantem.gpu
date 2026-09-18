@@ -90,7 +90,7 @@ private func nativeContentSnapshot(for url: URL) throws -> NativeContentSnapshot
   )
 }
 
-private func nativeSHA256(of url: URL) throws -> String {
+private func nativeSHA256(of url: URL, shouldCancel: @Sendable () -> Bool) throws -> String {
   let descriptor = Darwin.open(url.path, O_RDONLY)
   guard descriptor >= 0 else {
     throw Native4DSTEMIOError.invalidData(
@@ -115,6 +115,7 @@ private func nativeSHA256(of url: URL) throws -> String {
   defer { buffer.deallocate() }
   var digest = SHA256()
   while true {
+    if shouldCancel() { throw CancellationError() }
     let count = Darwin.read(descriptor, buffer, bufferBytes)
     if count < 0 && errno == EINTR { continue }
     guard count >= 0 else {
@@ -130,7 +131,7 @@ private func nativeSHA256(of url: URL) throws -> String {
   return digest.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
-private func nativeSHA256(of files: [URL]) throws -> [String] {
+private func nativeSHA256(of files: [URL], shouldCancel: @Sendable () -> Bool) throws -> [String] {
   guard !files.isEmpty else { return [] }
   let workerCount = min(8, files.count)
   let resultLock = NSLock()
@@ -141,7 +142,7 @@ private func nativeSHA256(of files: [URL]) throws -> [String] {
 
   DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
     for index in stride(from: worker, to: files.count, by: workerCount) {
-      let result = Result { try nativeSHA256(of: files[index]) }
+      let result = Result { try nativeSHA256(of: files[index], shouldCancel: shouldCancel) }
       resultLock.lock()
       results[index] = result
       resultLock.unlock()
@@ -174,8 +175,10 @@ private let compatibleNativeSourceHashCacheSchemas = [
 func nativeSourceHashes(
   master: URL?,
   dataFiles: [URL],
-  cacheFile: URL? = nil
+  cacheFile: URL? = nil,
+  shouldCancel: @Sendable () -> Bool = { false }
 ) throws -> NativeSourceHashes {
+  if shouldCancel() { throw CancellationError() }
   let hasMaster = master.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
   let files = (hasMaster ? [master!] : []) + dataFiles
   let before = try files.map(nativeContentSnapshot)
@@ -193,7 +196,8 @@ func nativeSourceHashes(
       aggregate: cached.aggregateHash
     )
   }
-  let hashes = try nativeSHA256(of: files)
+  let hashes = try nativeSHA256(of: files, shouldCancel: shouldCancel)
+  if shouldCancel() { throw CancellationError() }
   guard before == (try files.map(nativeContentSnapshot)) else {
     throw Native4DSTEMIOError.invalidData(
       "A source file changed while its exact identity was being verified; retry"

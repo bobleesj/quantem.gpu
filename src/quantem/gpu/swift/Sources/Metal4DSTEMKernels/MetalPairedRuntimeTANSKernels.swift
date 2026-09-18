@@ -84,9 +84,7 @@ extension Metal4DSTEMKernels {
     }
     do {
       let source = try String(contentsOf: url, encoding: .utf8)
-      let options = MTLCompileOptions()
-      options.fastMathEnabled = false
-      return try device.makeLibrary(source: source, options: options)
+      return try MetalLoadingLibraryCache.shared.library(device: device, source: source, strict: true)
     } catch {
       throw Metal4DSTEMKernelsError.libraryCompilation(
         resource: resource, message: error.localizedDescription)

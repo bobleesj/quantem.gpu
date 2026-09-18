@@ -139,13 +139,6 @@ struct OriginalPackedBuffers {
 }
 
 final class OriginalHDF5Packing {
-  #if QGPU_PACKING_DIAGNOSTICS
-    private final class ReusablePackingBox: @unchecked Sendable {
-      var value: OriginalHDF5Packing?
-    }
-    private static let reusablePackingLock = NSLock()
-    private static let reusablePacking = ReusablePackingBox()
-  #endif
   /// A cache hint must never become an output destination for source or index data.
   static func safePlanURL(_ candidate: URL?, source: Native4DSTEMIndexedSource) -> URL? {
     guard let candidate, candidate.isFileURL else { return nil }
@@ -171,24 +164,10 @@ final class OriginalHDF5Packing {
     var retryWithoutPlan = false
   }
 
-  /// Reuse immutable Metal queues and pipeline state only in an instrumented
-  /// diagnostic process. Production/UI loads keep their existing ownership
-  /// semantics; the opt-in probe isolates driver setup churn from resident
-  /// allocation churn during repeated source switches.
+  /// Reuse immutable pipelines and thread-safe command queues. All acquisition
+  /// buffers, failure flags and commands remain local to each load invocation.
   static func forLoad(device: MTLDevice, cachePlans: Bool) throws -> OriginalHDF5Packing {
-    #if QGPU_PACKING_DIAGNOSTICS
-      if !cachePlans && OriginalPackingDiagnostics.enabled("REUSE_PACKER", byDefault: false) {
-        return try reusablePackingLock.withLock {
-          if let value = reusablePacking.value, value.device.registryID == device.registryID {
-            return value
-          }
-          let created = try OriginalHDF5Packing(device: device, cachePlans: cachePlans)
-          reusablePacking.value = created
-          return created
-        }
-      }
-    #endif
-    return try OriginalHDF5Packing(device: device, cachePlans: cachePlans)
+    try OriginalHDF5LoadingPreparation.shared.packing(device: device, cachePlans: cachePlans)
   }
 
   struct Shape { var scans, pixels, columns, sourceBytes: UInt32 }

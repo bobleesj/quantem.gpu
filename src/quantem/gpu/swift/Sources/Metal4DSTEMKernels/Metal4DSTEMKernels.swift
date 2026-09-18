@@ -262,18 +262,8 @@ public enum Metal4DSTEMKernels {
           .appendingPathComponent("compact_detector_regions.metal")
         source += "\n" + (try String(contentsOf: regions, encoding: .utf8))
       }
-      let options: MTLCompileOptions?
-      if resource == "empad_float" {
-        let strict = MTLCompileOptions()
-        strict.fastMathEnabled = false
-        options = strict
-      } else {
-        options = nil
-      }
-      return try device.makeLibrary(
-        source: source,
-        options: options
-      )
+      return try MetalLoadingLibraryCache.shared.library(
+        device: device, source: source, strict: resource == "empad_float")
     } catch {
       throw Metal4DSTEMKernelsError.libraryCompilation(
         resource: resource,

@@ -30,8 +30,10 @@ public struct NativeQH5IndexMetadata: Codable, Equatable, Sendable {
 enum QH5IndexWriter {
   static func prepare(
     source: URL,
-    destination: URL
+    destination: URL,
+    shouldCancel: @Sendable () -> Bool = { false }
   ) throws -> NativeQH5IndexMetadata {
+    if shouldCancel() { throw CancellationError() }
     let identity = try nativeFileIdentity(for: source)
     if let cached = try currentMetadata(
       sourceIdentity: identity,
@@ -131,6 +133,7 @@ enum QH5IndexWriter {
         var rangeEnd: UInt64 = 0
         let chunkMetadataStart = metadataOffset
         for frame in start..<stop {
+          if frame.isMultiple(of: 256), shouldCancel() { throw CancellationError() }
           let rawChunk = stack.chunks[frame]
           let frameStart = try exactOffset(rawChunk.offset, label: "chunk offset")
           let frameSize = try exactOffset(rawChunk.size, label: "chunk size")
@@ -193,6 +196,7 @@ enum QH5IndexWriter {
       )
       return (metadata, words)
     }
+    if shouldCancel() { throw CancellationError() }
     try write(metadata: result.0, words: result.1, to: destination)
     return result.0
   }

@@ -13,6 +13,12 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
+      name: "LoadingPreparationParity",
+      dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
+                     .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu")],
+      swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
+    .executableTarget(
       name: "UInt32PackingParity",
       dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
                      .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu")]

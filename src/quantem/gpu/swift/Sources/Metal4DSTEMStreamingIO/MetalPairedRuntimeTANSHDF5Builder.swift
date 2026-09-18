@@ -66,7 +66,7 @@ enum MetalPairedRuntimeTANSHDF5Builder {
       allocatedBefore: allocatedBefore, maximumAdditionalBytes: maximumAdditionalBytes,
       configuration: configuration)
     let stageResources = CFAbsoluteTimeGetCurrent()
-    let packing = try OriginalHDF5Packing(device: device)
+    let packing = try OriginalHDF5Packing.forLoad(device: device, cachePlans: false)
     let stagePacking = CFAbsoluteTimeGetCurrent()
 
     var records: [PairedRuntimeTANSRecordBuffers] = []
