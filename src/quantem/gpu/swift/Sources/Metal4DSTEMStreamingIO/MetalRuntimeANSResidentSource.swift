@@ -1184,8 +1184,12 @@ final class RuntimeANSEncoder {
 extension OriginalHDF5Packing {
   /// Measurement only: route the direct ANS load through the fused
   /// decode+unshuffle kernels when the caller asks for the experiment.
+  #if QGPU_PACKING_DIAGNOSTICS
   static let probeFusedDirect =
     ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_FUSED_DECODE"] == "1"
+  #else
+  static let probeFusedDirect = false
+  #endif
 
   /// Bounded compressed-input read-ahead for the direct ANS load.
   ///
@@ -1293,6 +1297,7 @@ extension OriginalHDF5Packing {
     dense: MTLBuffer, frameCount: Int, pixels: Int, bytesPerValue: Int, ordinal: Int,
     command: MTLCommandBuffer, device: MTLDevice, queue: MTLCommandQueue
   ) {
+    #if QGPU_PACKING_DIAGNOSTICS
     guard let probe = ProcessInfo.processInfo.environment["QGPU_PROBE_DENSE_SHA"],
       probe == "all" || probe == String(ordinal)
     else { return }
@@ -1320,6 +1325,7 @@ extension OriginalHDF5Packing {
     FileHandle.standardError.write(
       "QGPU_DENSE_SHA window=\(ordinal) frames=\(frameCount) bytes=\(byteCount) sha256=\(digest)\n"
         .data(using: .utf8)!)
+    #endif
   }
 
   func forEachExactDecodedWindow(
@@ -1345,17 +1351,12 @@ extension OriginalHDF5Packing {
     let audit = try buffer(frames * 8)
     let errors = try buffer(4)
     let moments = try buffer(frames * 32)
-    // Measurement only: time the LZ4/bitshuffle pass with the transpose
-    // unshuffle removed. The dense window is zeroed so the downstream encoder
-    // still terminates; only the decode-only timing from this run is meaningful.
-    let probeSkipUnshuffle =
-      ProcessInfo.processInfo.environment["QGPU_PAIRED_PROBE_SKIP_UNSHUFFLE"] == "1"
     // One partial per (scan, block) when the moments ride the transpose
     // unshuffle. The standalone moments pass needs the dense window resident;
     // the fused one reuses the counts the unshuffle already has in registers.
     let fusedBlocks = pixels / 4096
     let fusedMoments =
-      includeDPCMoments && Self.fusedMomentsEnabled && !probeSkipUnshuffle
+      includeDPCMoments && Self.fusedMomentsEnabled
       && !(Self.probeFusedDirect && fusedDecodeUnshuffle != nil)
       && source.sourceBytesPerValue == 2
       && pixels % 4096 == 0
@@ -1368,16 +1369,6 @@ extension OriginalHDF5Packing {
     // need the standalone pass below.
     func fusesMoments(_ slice: Native4DSTEMIndexedSlice) -> Bool {
       partialDPC != nil && slice.globalFrameRange.count >= 2048
-    }
-    if probeSkipUnshuffle {
-      let zeroCommand = try commandBuffer()
-      guard let zeroBlit = zeroCommand.makeBlitCommandEncoder() else {
-        throw Self.invalid("Cannot zero the probe dense window")
-      }
-      zeroBlit.fill(buffer: dense, range: 0..<dense.length, value: 0)
-      zeroBlit.endEncoding()
-      zeroCommand.commit()
-      zeroCommand.waitUntilCompleted()
     }
     memset(mask.contents(), 0, mask.length)
     var profile = Profile()
@@ -1413,35 +1404,40 @@ extension OriginalHDF5Packing {
             transposeDPC: fusesMoments(slice),
             preparedInput: prepared.indices.contains(sliceIndex) ? prepared[sliceIndex] : nil,
             commandBufferOverride: command,
-            skipUnshuffle: probeSkipUnshuffle,
             fusedDirect: Self.probeFusedDirect && fusedDecodeUnshuffle != nil,
             shouldCancel: shouldCancel, profile: &profile)
         }
         if includeDPCMoments {
           if partialDPC == nil {
-          guard let encoder = command.makeComputeCommandEncoder() else {
-            throw Self.invalid("Cannot encode exact runtime-ANS DPC moments")
-          }
-          var shape = Shape(
-            scans: UInt32(window.globalFrameRange.count), pixels: UInt32(pixels),
-            columns: UInt32(source.dataset.detectorCols),
-            sourceBytes: UInt32(source.sourceBytesPerValue))
-          encoder.setComputePipelineState(momentsPipeline)
-          encoder.setBuffer(dense, offset: 0, index: 0)
-          encoder.setBuffer(moments, offset: 0, index: 1)
-          encoder.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
-          encoder.dispatchThreads(
-            MTLSize(width: window.globalFrameRange.count * 32, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
-          encoder.endEncoding()
+            guard let encoder = command.makeComputeCommandEncoder() else {
+              throw Self.invalid("Cannot encode exact runtime-ANS DPC moments")
+            }
+            var shape = Shape(
+              scans: UInt32(window.globalFrameRange.count), pixels: UInt32(pixels),
+              columns: UInt32(source.dataset.detectorCols),
+              sourceBytes: UInt32(source.sourceBytesPerValue))
+            encoder.setComputePipelineState(momentsPipeline)
+            encoder.setBuffer(dense, offset: 0, index: 0)
+            encoder.setBuffer(moments, offset: 0, index: 1)
+            encoder.setBytes(&shape, length: MemoryLayout<Shape>.stride, index: 2)
+            encoder.dispatchThreads(
+              MTLSize(width: window.globalFrameRange.count * 32, height: 1, depth: 1),
+              threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+            encoder.endEncoding()
           } else {
             for slice in window.slices where !fusesMoments(slice) {
               let sliceFrames = slice.globalFrameRange.count
               let sliceStart =
                 slice.globalFrameRange.lowerBound - window.globalFrameRange.lowerBound
               guard sliceFrames > 0, sliceStart >= 0,
-                let encoder = command.makeComputeCommandEncoder()
-              else { continue }
+                sliceFrames <= window.globalFrameRange.count,
+                sliceStart <= window.globalFrameRange.count - sliceFrames
+              else {
+                throw Self.invalid("Invalid exact runtime-ANS DPC moment slice")
+              }
+              guard let encoder = command.makeComputeCommandEncoder() else {
+                throw Self.invalid("Cannot encode exact runtime-ANS DPC moments for a short slice")
+              }
               var shape = Shape(
                 scans: UInt32(sliceFrames), pixels: UInt32(pixels),
                 columns: UInt32(source.dataset.detectorCols),
