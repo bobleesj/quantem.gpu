@@ -57,6 +57,10 @@ let package = Package(
       targets: ["MetalRuntimeANSBenchmark"]
     ),
     .executable(
+      name: "metal-qem-detector-update-benchmark",
+      targets: ["QEMDetectorUpdateBenchmark"]
+    ),
+    .executable(
       name: "metal-paired-runtime-tans-benchmark",
       targets: ["MetalPairedRuntimeTANSBenchmark"]
     ),
@@ -192,6 +196,11 @@ let package = Package(
       name: "MetalOriginalHDF5Benchmark",
       dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
       path: "src/quantem/gpu/swift/Benchmarks/MetalOriginalHDF5Benchmark"
+    ),
+    .executableTarget(
+      name: "QEMDetectorUpdateBenchmark",
+      dependencies: ["Native4DSTEMIO", "Metal4DSTEMStreamingIO"],
+      path: "src/quantem/gpu/swift/Benchmarks/QEMDetectorUpdateBenchmark"
     ),
     .executableTarget(
       name: "MetalRuntimeANSBenchmark",
