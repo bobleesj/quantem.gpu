@@ -114,3 +114,24 @@ def test_maped_json_provenance_has_public_metadata_keys(tmp_path):
     metadata = io.inspect(path).metadata
     assert metadata["maped_merge"] == merge
     assert metadata["maped_summary"] == summary
+
+
+def test_incomplete_transfer_reports_every_declared_chunk(tmp_path):
+    """Track all pending files while an acquisition arrives in stages."""
+    master = tmp_path / "arrival_master.h5"
+    chunks = [tmp_path / f"arrival_data_{i:06d}.h5" for i in range(1, 4)]
+    with h5py.File(master, "w") as source:
+        group = source.create_group("entry/data")
+        for i, chunk in enumerate(chunks, start=1):
+            group[f"data_{i:06d}"] = h5py.ExternalLink(
+                chunk.name, "/entry/data/data"
+            )
+    for completed in range(4):
+        info = io.inspect(master, scan_shape=(3, 4))
+        assert info.ready is (completed == 3)
+        assert {record["path"] for record in info.source_signature["files"]} == {
+            str(path) for path in [master, *chunks]
+        }
+        if completed < 3:
+            with h5py.File(chunks[completed], "w") as source:
+                source["entry/data/data"] = np.zeros((4, 8, 8), np.uint16)

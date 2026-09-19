@@ -2788,6 +2788,14 @@ def inspect_master_readiness(
                 if any(isinstance(link, h5py.ExternalLink) for link in links)
                 else "inline"
             )
+            # Discover every dependency before an incomplete chunk can return
+            # early, so arrival watchers see the full expected file count.
+            for link in links:
+                if isinstance(link, h5py.ExternalLink):
+                    link_filename = os.fsdecode(os.fspath(link.filename))
+                    source_paths.add(_absolute_source_path(
+                        os.path.join(os.path.dirname(master_path), link_filename)
+                    ))
             ntrigger = _scalar_int(
                 master,
                 "entry/instrument/detector/detectorSpecific/ntrigger",
