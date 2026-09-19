@@ -78,3 +78,100 @@ extension MetalImageOperations {
     return result
   }
 }
+
+/// Per-frame radial sums of a calibrated packed source around one detector
+/// center. Built in one traversal; every annulus image afterwards is a range
+/// sum over bins and takes milliseconds instead of a full traversal.
+public final class RadialProfileBank {
+  public let frames: Int
+  public let binCount: Int
+  public let binWidth: Float
+  public let centerRow: Float
+  public let centerCol: Float
+  public let scanRows: Int
+  public let scanColumns: Int
+  let bins: MTLBuffer
+
+  init(frames: Int, binCount: Int, binWidth: Float, centerRow: Float, centerCol: Float,
+    scanRows: Int, scanColumns: Int, bins: MTLBuffer) {
+    self.frames = frames; self.binCount = binCount; self.binWidth = binWidth
+    self.centerRow = centerRow; self.centerCol = centerCol
+    self.scanRows = scanRows; self.scanColumns = scanColumns; self.bins = bins
+  }
+
+  public func matches(centerRow: Float, centerCol: Float) -> Bool {
+    abs(self.centerRow - centerRow) < 1e-4 && abs(self.centerCol - centerCol) < 1e-4
+  }
+}
+
+extension MetalImageOperations {
+  /// One traversal of the source producing per-frame ring sums around `center`.
+  public func radialProfiles(
+    source: MetalPackedSource, centerRow: Float, centerCol: Float, binWidth: Float = 0.5,
+    shouldCancel: () -> Bool = { false }, progress: (Int, Int) -> Void = { _, _ in }
+  ) throws -> RadialProfileBank {
+    let shape = source.shape
+    let rows = shape[2], columns = shape[3], pixels = rows * columns
+    guard binWidth > 0, centerRow.isFinite, centerCol.isFinite, !source.isReleased,
+      source.readyFrames == shape[0] * shape[1]
+    else { throw Self.invalid("Radial profiles need a complete calibrated resident and a finite center.") }
+    var maxRadius: Float = 0
+    for (r, c) in [(0, 0), (0, columns - 1), (rows - 1, 0), (rows - 1, columns - 1)] {
+      let dr = Float(r) - centerRow, dc = Float(c) - centerCol
+      maxRadius = max(maxRadius, (dr * dr + dc * dc).squareRoot())
+    }
+    let binCount = Int(maxRadius / binWidth) + 2
+    // CSR layout: pixels grouped by ring so each threadgroup lane sums one ring.
+    var binOfPixel = [Int](repeating: 0, count: pixels)
+    var counts = [Int](repeating: 0, count: binCount)
+    for pixel in 0..<pixels {
+      let dr = Float(pixel / columns) - centerRow, dc = Float(pixel % columns) - centerCol
+      let bin = min(binCount - 1, Int((dr * dr + dc * dc).squareRoot() / binWidth))
+      binOfPixel[pixel] = bin; counts[bin] += 1
+    }
+    var starts = [UInt32](repeating: 0, count: binCount + 1)
+    for bin in 0..<binCount { starts[bin + 1] = starts[bin] + UInt32(counts[bin]) }
+    var cursor = Array(starts.dropLast())
+    var pixelIndex = [UInt32](repeating: 0, count: pixels)
+    for pixel in 0..<pixels {
+      let bin = binOfPixel[pixel]
+      pixelIndex[Int(cursor[bin])] = UInt32(pixel); cursor[bin] += 1
+    }
+    let startBuffer = try buffer(starts.count * 4)
+    starts.withUnsafeBytes { startBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+    let indexBuffer = try buffer(pixelIndex.count * 4)
+    pixelIndex.withUnsafeBytes { indexBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+    let frames = source.readyFrames
+    let bins = try buffer(frames * binCount * 4)
+    for first in stride(from: 0, to: frames, by: 512) {
+      if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+      try autoreleasepool {
+        let count = min(512, frames - first)
+        let values = try source.read(first..<(first + count))
+        let command = try makeCommand()
+        try run("radial_bins", [values, startBuffer, indexBuffer, bins],
+          words: [UInt32(pixels), UInt32(binCount), UInt32(first)], count: count * 128,
+          groupSize: 128, command: command)
+        try complete(command)
+      }
+      progress(min(first + 512, frames), frames)
+    }
+    return RadialProfileBank(frames: frames, binCount: binCount, binWidth: binWidth,
+      centerRow: centerRow, centerCol: centerCol, scanRows: shape[0], scanColumns: shape[1], bins: bins)
+  }
+
+  /// Annulus image from a bank: rings whose radius range lies inside
+  /// [innerRadius, outerRadius). Accurate to half a detector pixel at the two
+  /// edges; callers refine with the exact path when interaction ends.
+  public func annulusImage(bank: RadialProfileBank, innerRadius: Float, outerRadius: Float) throws -> GPUImage {
+    guard innerRadius.isFinite, outerRadius.isFinite, outerRadius > innerRadius
+    else { throw Self.invalid("Annulus needs finite radii with outer above inner.") }
+    let result = try image(rows: bank.scanRows, columns: bank.scanColumns)
+    let firstBin = min(bank.binCount, Int((max(0, innerRadius) / bank.binWidth).rounded(.up)))
+    let endBin = min(bank.binCount, max(firstBin, Int((outerRadius / bank.binWidth).rounded(.down))))
+    try run("radial_range_sum", [bank.bins, result.buffer],
+      words: [UInt32(bank.binCount), UInt32(firstBin), UInt32(endBin), UInt32(bank.frames)],
+      count: bank.frames, groupSize: 256)
+    return result
+  }
+}

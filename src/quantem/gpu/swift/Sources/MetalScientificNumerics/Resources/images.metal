@@ -339,3 +339,29 @@ kernel void NAME(device const TYPE *raw [[buffer(0)]],device const int4 *scans [
 PREPARED_KERNEL(sample_prepared_u8,uchar)
 PREPARED_KERNEL(sample_prepared_u16,ushort)
 PREPARED_KERNEL(sample_prepared_u32,uint)
+
+// ---- Radial profile bank: per-frame sums over 0.5 px rings around one center.
+// Built once per center in a single traversal; any annulus is then a range sum.
+kernel void radial_bins(
+    device const float *values [[buffer(0)]], device const uint *binStart [[buffer(1)]],
+    device const uint *pixelIndex [[buffer(2)]], device float *bins [[buffer(3)]],
+    constant uint *p [[buffer(4)]],
+    uint frame [[threadgroup_position_in_grid]], uint lane [[thread_index_in_threadgroup]]) {
+    // p[0] = pixels per frame, p[1] = bin count, p[2] = first global frame of this block
+    device const float *v = values + ulong(frame) * p[0];
+    for (uint b = lane; b < p[1]; b += 128) {
+        float sum = 0;
+        for (uint k = binStart[b]; k < binStart[b + 1]; ++k) sum += v[pixelIndex[k]];
+        bins[(ulong(p[2]) + frame) * p[1] + b] = sum;
+    }
+}
+kernel void radial_range_sum(
+    device const float *bins [[buffer(0)]], device float *output [[buffer(1)]],
+    constant uint *p [[buffer(2)]], uint frame [[thread_position_in_grid]]) {
+    // p[0] = bin count, p[1] = first bin (inclusive), p[2] = end bin (exclusive), p[3] = frames
+    if (frame >= p[3]) return;
+    float sum = 0;
+    device const float *row = bins + ulong(frame) * p[0];
+    for (uint b = p[1]; b < p[2]; ++b) sum += row[b];
+    output[frame] = sum;
+}
