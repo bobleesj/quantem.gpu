@@ -722,6 +722,10 @@ class _ArrayComputeBackend:
 
 def _resolve_backend(data):
     """Return the array compute backend for this data."""
+    if getattr(data, '_bounded_detector_source', False):
+        from .backends.bounded import BoundedDetectorCompute
+
+        return BoundedDetectorCompute(data)
     if isinstance(data, list):
         from .backends.cuda.series import CudaSeriesCompute
 

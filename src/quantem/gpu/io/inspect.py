@@ -36,6 +36,31 @@ class Inspection:
     dtype: str | None
     source_signature: dict[str, Any]
 
+    def _summary(self):
+        """Return concise header evidence, without dumping masks or metadata."""
+        import pandas as pd
+
+        geometry = lambda shape: ' × '.join(map(str, shape)) if shape else 'Unknown'
+        rows = {
+            'Source': self.source_signature.get('path', self.source_kind),
+            'Format': self.metadata.get('container', self.source_kind),
+            'Encoding': self.metadata.get('resident_profile', 'Not specified'),
+            'Scan shape': geometry(self.scan_shape),
+            'Diffraction shape': geometry(self.detector_shape),
+            'Stored dtype': self.dtype or 'Unknown',
+            'Frames': self.actual_frames,
+            'Representation': self.metadata.get('representation', 'Not specified'),
+            'Header status': self.reason.replace('_', ' '),
+            'Next step': self.action,
+        }
+        return pd.DataFrame({'Value': rows}).rename_axis('Property')
+
+    def __repr__(self):
+        return self._summary().to_string()
+
+    def _repr_html_(self):
+        return self._summary().to_html(escape=True)
+
 
 def inspect(
     filepath: str | PathLike[str],
@@ -75,6 +100,8 @@ def inspect(
         metadata = dict(effective_metadata(header.get("metadata", {}), header["scientific_metadata"]), resident_bytes=header["bytes"],
                         source_kind="resident", representation="encoded")
         metadata["scientific_metadata"] = header["scientific_metadata"]
+        metadata['container'] = header.get('container', 'QEM')
+        metadata['resident_profile'] = header.get('codec', header.get('profile', 'Unknown'))
         mask = None
         if "valid" in header:
             valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))
