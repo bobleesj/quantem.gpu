@@ -58,16 +58,14 @@ final class RuntimeSpatialQuery {
     _ = validity.withUnsafeBytes { memcpy(valid.contents(), $0.baseAddress!, $0.count) }
   }
 
-  func update(
-    _ values: [UInt8], source: MetalRuntimeANSResidentSource,
-    output: MTLBuffer
-  ) throws -> MetalRuntimeANSDetectorMetrics {
-    let started = CFAbsoluteTimeGetCurrent()
+  /// Encode this source's exact mask plan (leaf and root fields) into a caller
+  /// owned command buffer. A batch of sources shares one commit and one wait
+  /// instead of paying a GPU round trip for every acquisition.
+  func encodePlan(_ values: [UInt8], commands: MTLCommandBuffer) throws {
     _ = values.withUnsafeBytes { memcpy(mask.contents(), $0.baseAddress!, $0.count) }
     memset(counts.contents(), 0, 8)
     var dimensions = [UInt32(shape[0]), UInt32(shape[1])]
-    guard let plan = queue.makeCommandBuffer(), let encoder = plan.makeComputeCommandEncoder()
-    else {
+    guard let encoder = commands.makeComputeCommandEncoder() else {
       throw MetalRuntimeANSResidentSource.invalid("Cannot prepare the camera mask.")
     }
     encoder.setComputePipelineState(leafPipeline)
@@ -87,23 +85,34 @@ final class RuntimeSpatialQuery {
       MTLSize(width: rootCount, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
     encoder.endEncoding()
-    plan.commit()
-    plan.waitUntilCompleted()
-    guard plan.status == .completed else {
-      throw MetalRuntimeANSResidentSource.invalid("Camera mask planning failed.")
-    }
-    let sizes = counts.contents().assumingMemoryBound(to: UInt32.self)
-    let fieldCountSelected = Int(sizes[0])
-    let residualCount = Int(sizes[1])
-    guard fieldCountSelected <= fieldCount, residualCount <= values.count,
-      let command = queue.makeCommandBuffer(), let sums = command.makeComputeCommandEncoder(),
-      let failure = source.failure
+  }
+
+  /// Exact field counts for the plan while it is still readable on the host.
+  struct SumPlan {
+    let fieldCountSelected: Int
+    let residualCount: Int
+  }
+
+  /// Scalar count of one plan slot, read after the plan command buffer completes.
+  func planCount(_ slot: Int) -> Int {
+    Int(counts.contents().assumingMemoryBound(to: UInt32.self)[slot])
+  }
+
+  /// Encode the index sums and any edge-residual decode for this source into a
+  /// caller owned command buffer.
+  @discardableResult
+  func encodeSums(
+    plan: SumPlan, source: MetalRuntimeANSResidentSource, output: MTLBuffer,
+    commands: MTLCommandBuffer
+  ) throws -> SumPlan {
+    guard plan.fieldCountSelected <= fieldCount, plan.residualCount <= Int(mask.length),
+      let sums = commands.makeComputeCommandEncoder(), let failure = source.failure
     else { throw MetalRuntimeANSResidentSource.invalid("Invalid camera mask plan.") }
     memset(failure.contents(), 0, 4)
     sums.setComputePipelineState(indexPipeline)
     for chunk in source.chunks {
       var parameters = [
-        UInt32(chunk.scanCount), UInt32(fieldCount), UInt32(fieldCountSelected),
+        UInt32(chunk.scanCount), UInt32(fieldCount), UInt32(plan.fieldCountSelected),
         UInt32(chunk.firstScan),
       ]
       for (index, buffer) in (chunk.spatial + [fields, fieldCoefficients, output]).enumerated() {
@@ -121,22 +130,44 @@ final class RuntimeSpatialQuery {
       }
     }
     sums.endEncoding()
-    if residualCount > 0 {
-      guard let residual = command.makeComputeCommandEncoder(dispatchType: .concurrent) else {
+    if plan.residualCount > 0 {
+      guard let residual = commands.makeComputeCommandEncoder(dispatchType: .concurrent) else {
         throw MetalRuntimeANSResidentSource.invalid("Cannot decode camera edge residuals.")
       }
       try source.encodeDetectorDelta(
         selected: pixels, coefficients: pixelCoefficients,
-        changed: residualCount, output: output, encoder: residual)
+        changed: plan.residualCount, output: output, encoder: residual)
       residual.endEncoding()
     }
-    command.commit()
-    command.waitUntilCompleted()
-    try source.checkFailure(command)
+    return plan
+  }
+
+  func update(
+    _ values: [UInt8], source: MetalRuntimeANSResidentSource,
+    output: MTLBuffer
+  ) throws -> MetalRuntimeANSDetectorMetrics {
+    let started = CFAbsoluteTimeGetCurrent()
+    guard let planCommands = queue.makeCommandBuffer() else {
+      throw MetalRuntimeANSResidentSource.invalid("Cannot prepare the camera mask.")
+    }
+    try encodePlan(values, commands: planCommands)
+    planCommands.commit()
+    planCommands.waitUntilCompleted()
+    guard planCommands.status == .completed else {
+      throw MetalRuntimeANSResidentSource.invalid("Camera mask planning failed.")
+    }
+    let plan = SumPlan(fieldCountSelected: planCount(0), residualCount: planCount(1))
+    guard let commands = queue.makeCommandBuffer() else {
+      throw MetalRuntimeANSResidentSource.invalid("Invalid camera mask plan.")
+    }
+    try encodeSums(plan: plan, source: source, output: output, commands: commands)
+    commands.commit()
+    commands.waitUntilCompleted()
+    try source.checkFailure(commands)
     return MetalRuntimeANSDetectorMetrics(
-      changedDetectorPixels: residualCount,
-      gpuMilliseconds: (plan.gpuEndTime - plan.gpuStartTime + command.gpuEndTime
-        - command.gpuStartTime) * 1000,
+      changedDetectorPixels: plan.residualCount,
+      gpuMilliseconds: (planCommands.gpuEndTime - planCommands.gpuStartTime
+        + commands.gpuEndTime - commands.gpuStartTime) * 1000,
       wallMilliseconds: (CFAbsoluteTimeGetCurrent() - started) * 1000,
       acquisitionCount: 1, submissionCount: 2)
   }

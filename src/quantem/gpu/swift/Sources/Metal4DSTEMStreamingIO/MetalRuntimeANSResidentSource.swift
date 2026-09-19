@@ -80,11 +80,16 @@ public final class MetalRuntimeANSResidentSource: @unchecked Sendable {
   }
 
   func indexedDetector(mask: [UInt8], output: MTLBuffer) throws -> MetalRuntimeANSDetectorMetrics {
-    if spatialQuery == nil {
-      spatialQuery = try RuntimeSpatialQuery(
-        device: device, shape: Array(shape[2...]), validity: validPixels)
-    }
-    return try spatialQuery!.update(mask, source: self, output: output)
+    try spatialQueryForUpdate().update(mask, source: self, output: output)
+  }
+
+  /// Exact spatial query for this source, built on first use.
+  func spatialQueryForUpdate() throws -> RuntimeSpatialQuery {
+    if let spatialQuery { return spatialQuery }
+    let query = try RuntimeSpatialQuery(
+      device: device, shape: Array(shape[2...]), validity: validPixels)
+    spatialQuery = query
+    return query
   }
 
   public var residentBytes: UInt64 {
@@ -513,6 +518,69 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     return outputs
   }
 
+  /// One acquisition's next detector step, decided on the host before any GPU work.
+  private enum PreparedDetectorStep {
+    case unchanged
+    case indexed
+    case delta(rebaseFromZero: Bool, changedPixels: Int)
+
+    var hasWork: Bool {
+      if case .unchanged = self { return false }
+      return true
+    }
+
+    var rebasesFromZero: Bool {
+      if case .delta(let rebase, _) = self { return rebase }
+      return false
+    }
+  }
+
+  /// Difference one acquisition's mask against its published mask and record the
+  /// exact delta the GPU step needs. The caller commits `next` only after the
+  /// update succeeds, so a failed command leaves the published mask intact.
+  private func prepareDetectorStep(
+    mask: [UInt8], priorityIndex: Int, forceRebase: Bool
+  ) throws -> (PreparedDetectorStep, [UInt8]) {
+    let pixels = sources[0].shape[2] * sources[0].shape[3]
+    guard sources.indices.contains(priorityIndex), mask.count == pixels,
+      mask.allSatisfy({ $0 == 0 || $0 == 1 })
+    else {
+      throw MetalRuntimeANSResidentSource.invalid(
+        "Choose a live acquisition and a binary mask matching its detector")
+    }
+    let source = sources[priorityIndex]
+    let current = detectorMasks[priorityIndex]
+    var next = current
+    var deltaFromCurrent = 0
+    var selectedFromZero = 0
+    for pixel in 0..<pixels {
+      let value = mask[pixel] == 1 && source.validPixels[pixel] == 1 ? UInt8(1) : 0
+      next[pixel] = value
+      deltaFromCurrent += value == current[pixel] ? 0 : 1
+      selectedFromZero += value == 1 ? 1 : 0
+    }
+    if source.usesSpatialIndex && (forceRebase || min(selectedFromZero, deltaFromCurrent) > 4096) {
+      return (.indexed, next)
+    }
+    let rebaseFromZero = forceRebase || selectedFromZero < deltaFromCurrent
+    let selected = detectorSelected[priorityIndex].contents().bindMemory(
+      to: UInt32.self, capacity: pixels)
+    let coefficients = detectorCoefficients[priorityIndex].contents().bindMemory(
+      to: Int32.self, capacity: pixels)
+    var changed = 0
+    for pixel in 0..<pixels {
+      let value = next[pixel]
+      let previous = rebaseFromZero ? UInt8(0) : current[pixel]
+      if value != previous {
+        selected[changed] = UInt32(pixel)
+        coefficients[changed] = value == 1 ? 1 : -1
+        changed += 1
+      }
+    }
+    if !rebaseFromZero && changed == 0 { return (.unchanged, next) }
+    return (.delta(rebaseFromZero: rebaseFromZero, changedPixels: changed), next)
+  }
+
   /// Update and publish the selected acquisition's virtual image first.
   ///
   /// This advances only that acquisition's exact delta seed. Other sources
@@ -626,23 +694,107 @@ public final class MetalRuntimeANSSeries: @unchecked Sendable {
     }
     let wallStarted = CFAbsoluteTimeGetCurrent()
     if sources.allSatisfy({ $0.usesSpatialIndex }) {
-      var milliseconds = 0.0
-      var changed = 0
-      var submissions = 0
+      // Every acquisition gets the same mask here, so their plans and sums are
+      // independent. Batch each phase into one command buffer: seven tilts then
+      // cost two GPU round trips instead of two per tilt, which is what made a
+      // restored .qem drag feel slower than the same acquisition opened raw.
+      var prepared = [PreparedDetectorStep](repeating: .unchanged, count: sources.count)
+      var nextMasks = detectorMasks
       for index in sources.indices {
-        let (_, metrics) = try updatePriorityVirtualDetectorBuffer(
+        let (step, next) = try prepareDetectorStep(
           mask: mask, priorityIndex: index, forceRebase: forceRebase)
-        milliseconds += metrics.gpuMilliseconds
-        changed = max(changed, metrics.changedDetectorPixels)
-        submissions += metrics.submissionCount
+        prepared[index] = step
+        nextMasks[index] = next
       }
+      guard prepared.contains(where: { $0.hasWork }) else {
+        return (
+          virtualDetectorOutputs,
+          MetalRuntimeANSDetectorMetrics(
+            changedDetectorPixels: 0, gpuMilliseconds: 0,
+            wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
+            acquisitionCount: sources.count, submissionCount: 0)
+        )
+      }
+      guard let planCommands = queue.makeCommandBuffer() else {
+        throw MetalRuntimeANSResidentSource.invalid("Metal could not encode a detector update")
+      }
+      var queries = [RuntimeSpatialQuery?](repeating: nil, count: sources.count)
+      for index in sources.indices {
+        guard case .indexed = prepared[index] else { continue }
+        let query = try sources[index].spatialQueryForUpdate()
+        try query.encodePlan(nextMasks[index], commands: planCommands)
+        queries[index] = query
+      }
+      planCommands.commit()
+      planCommands.waitUntilCompleted()
+      guard planCommands.status == .completed else {
+        throw MetalRuntimeANSResidentSource.invalid("Camera mask planning failed.")
+      }
+      var plans = [RuntimeSpatialQuery.SumPlan?](repeating: nil, count: sources.count)
+      for index in sources.indices {
+        guard let query = queries[index] else { continue }
+        plans[index] = RuntimeSpatialQuery.SumPlan(
+          fieldCountSelected: query.planCount(0), residualCount: query.planCount(1))
+      }
+      guard let commands = queue.makeCommandBuffer() else {
+        throw MetalRuntimeANSResidentSource.invalid("Metal could not encode a detector update")
+      }
+      commands.useResidencySet(residency)
+      if prepared.contains(where: { $0.rebasesFromZero }) {
+        guard let blit = commands.makeBlitCommandEncoder() else {
+          throw MetalRuntimeANSResidentSource.invalid("Metal could not reset detector products")
+        }
+        for index in sources.indices where prepared[index].rebasesFromZero {
+          let output = virtualDetectorOutputs[index]
+          blit.fill(buffer: output, range: 0..<output.length, value: 0)
+        }
+        blit.endEncoding()
+      }
+      var changed = 0
+      var deltaEncoder: MTLComputeCommandEncoder?
+      for index in sources.indices {
+        guard case .delta(_, let changedPixels) = prepared[index] else { continue }
+        guard let failure = sources[index].failure else {
+          throw MetalRuntimeANSResidentSource.invalid("A runtime ANS source was released")
+        }
+        memset(failure.contents(), 0, 4)
+        if deltaEncoder == nil {
+          guard let encoder = commands.makeComputeCommandEncoder(dispatchType: .concurrent)
+          else {
+            throw MetalRuntimeANSResidentSource.invalid(
+              "Metal could not encode detector kernels")
+          }
+          deltaEncoder = encoder
+        }
+        try sources[index].encodeDetectorDelta(
+          selected: detectorSelected[index], coefficients: detectorCoefficients[index],
+          changed: changedPixels, output: virtualDetectorOutputs[index],
+          encoder: deltaEncoder!)
+        changed = max(changed, changedPixels)
+      }
+      deltaEncoder?.endEncoding()
+      for index in sources.indices {
+        guard let plan = plans[index], let query = queries[index] else { continue }
+        try query.encodeSums(
+          plan: plan, source: sources[index], output: virtualDetectorOutputs[index],
+          commands: commands)
+        changed = max(changed, plan.residualCount)
+      }
+      commands.commit()
+      commands.waitUntilCompleted()
+      for source in sources { try source.checkFailure(commands) }
+      detectorMasks = nextMasks
+      let gpuMilliseconds =
+        planCommands.gpuEndTime > planCommands.gpuStartTime
+        ? (planCommands.gpuEndTime - planCommands.gpuStartTime
+          + commands.gpuEndTime - commands.gpuStartTime) * 1000 : 0
       return (
         virtualDetectorOutputs,
         MetalRuntimeANSDetectorMetrics(
           changedDetectorPixels: changed,
-          gpuMilliseconds: milliseconds,
+          gpuMilliseconds: gpuMilliseconds,
           wallMilliseconds: (CFAbsoluteTimeGetCurrent() - wallStarted) * 1000,
-          acquisitionCount: sources.count, submissionCount: submissions)
+          acquisitionCount: sources.count, submissionCount: 2)
       )
     }
     var nextMasks = detectorMasks
