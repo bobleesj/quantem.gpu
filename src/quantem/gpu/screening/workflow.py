@@ -751,6 +751,7 @@ def _build_mps_products(
             scan_shape=scan_shape,
             seed=seed,
             backend="mps",
+            representation="dense",
             verbose=False,
         )
         sample_load_s = time.perf_counter() - sample_t0
@@ -773,6 +774,7 @@ def _build_mps_products(
         stage="before the primary MPS stream",
     )
 
+    # Preview kernels consume bounded Metal frame chunks, not encoded owners.
     chunk_timings: list[dict[str, float]] = []
     stream_t0 = time.perf_counter()
     for r0 in range(0, scan_shape[0], chunk_rows):
@@ -783,6 +785,7 @@ def _build_mps_products(
                 str(master),
                 scan_shape=scan_shape,
                 backend="mps",
+                representation="dense",
                 verbose=False,
             )
         else:
@@ -791,6 +794,7 @@ def _build_mps_products(
                 scan_region=(r0, r1, 0, scan_shape[1]),
                 scan_shape=scan_shape,
                 backend="mps",
+                representation="dense",
                 verbose=False,
             )
         load_s = time.perf_counter() - load_t0
@@ -879,6 +883,7 @@ def _build_mps_products(
                     str(master),
                     scan_shape=scan_shape,
                     backend="mps",
+                    representation="dense",
                     verbose=False,
                 )
             else:
@@ -887,6 +892,7 @@ def _build_mps_products(
                     scan_region=(r0, r1, 0, scan_shape[1]),
                     scan_shape=scan_shape,
                     backend="mps",
+                    representation="dense",
                     verbose=False,
                 )
             fallback_load_s += time.perf_counter() - load_t0

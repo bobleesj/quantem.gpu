@@ -39,15 +39,19 @@ def _metal_buffer_for(array):
 
 def _mps_chunked_frames_for(data):
     """Return a chunk-backed view over one Metal-resident load result."""
-    if getattr(data, "_is_gpu_frames", False):
+    from quantem.gpu.detector.backends.mps.kernels import ChunkedFrames
+    from quantem.gpu.io.backends.mps.dense import MPSChunked4DSTEM
+
+    if isinstance(data, ChunkedFrames):
         return data
+    if isinstance(data, MPSChunked4DSTEM):
+        return ChunkedFrames(data, torch_compat=False)
     metal_buffer = _metal_buffer_for(data)
     if metal_buffer is None:
         raise RuntimeError(
             "MPS screening products require Metal-backed load output; got "
             f"{type(data).__name__}. Use backend='cuda' or backend='mps'."
         )
-    from quantem.gpu.detector.backends.mps.kernels import ChunkedFrames
     from quantem.gpu.io.backends import mps
 
     array = data

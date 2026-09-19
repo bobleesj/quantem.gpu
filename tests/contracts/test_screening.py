@@ -36,7 +36,8 @@ def _run_fake_mps_screening(monkeypatch, tmp_path, chunks):
 
     loads = []
 
-    def fake_load(_source, *, scan_region=None, **_kwargs):
+    def fake_load(_source, *, scan_region=None, representation=None, **_kwargs):
+        assert representation == "dense", "Preview kernels require Metal-backed frames"
         row = 0 if scan_region is None else int(scan_region[0])
         loads.append(row)
         return SimpleNamespace(data=FakeFrames(chunks[row]))
