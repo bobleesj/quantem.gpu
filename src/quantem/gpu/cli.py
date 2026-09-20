@@ -22,6 +22,21 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("source", type=Path)
     prepare.add_argument("destination", type=Path)
     prepare.add_argument("--expected-source-sha256", required=True)
+    convert = commands.add_parser(
+        "convert",
+        help="convert Arina HDF5 acquisitions into verified .qem copies",
+        description=(
+            "Write a .qem copy of one acquisition, or of every *_master.h5 below a "
+            "folder. Counts are stored exactly in compressed form and acquisition "
+            "metadata is retained. Each copy is compared with its source files. "
+            "Source files are never modified or removed."
+        ),
+    )
+    convert.add_argument("source", type=Path, help="a *_master.h5 file, or a folder of acquisitions")
+    convert.add_argument("--out", type=Path, help="write copies here, mirroring the folder layout (default: beside each master)")
+    convert.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
+    convert.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
+    convert.add_argument("--no-verify", action="store_true", help="skip comparing each copy with its source files")
     serve = commands.add_parser(
         "serve",
         help="serve native 4D-STEM browsing over loopback",
@@ -88,6 +103,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(registry)
         return 0
+    if args.command == "convert":
+        return _convert(args)
     if not 1 <= args.port <= 65_535:
         raise SystemExit("--port must be between 1 and 65535")
     if args.command == "serve-ssb-mps":
@@ -139,6 +156,69 @@ def main(argv: Sequence[str] | None = None) -> int:
         log_level="warning",
     )
     return 0
+
+
+def _convert(args: argparse.Namespace) -> int:
+    """Convert every acquisition under the source and print sizes before and after."""
+    from quantem.gpu.io import qem_conversion
+
+    masters = qem_conversion.find_masters(args.source)
+    if not masters:
+        raise SystemExit(f"No *_master.h5 acquisitions under {args.source}")
+    print(
+        f"{len(masters)} acquisition(s). Stored counts, including flagged pixels, are preserved. "
+        "Source files are not modified."
+    )
+    if args.dry:
+        print("Dry run: GPU encoding estimates payload size; metadata and file overhead are additional. No copies written.")
+    before = after = failed = kept = 0
+    for master in masters:
+        destination = qem_conversion.destination_for(master, args.source, args.out)
+        try:
+            result = qem_conversion.convert(
+                master, destination, write=not args.dry, verify=not args.no_verify,
+                backend=args.backend,
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            failed += 1
+            print(f"  failed    {master.name}: {error}")
+            continue
+        name = master.name[: -len("_master.h5")]
+        if result.skipped:
+            failed += int(result.failed)
+            print(f"  skipped   {name}: {result.skipped}")
+            continue
+        if result.larger:
+            kept += 1
+            print(
+                f"  kept HDF5 {name}: the copy would be larger "
+                f"({result.source_bytes / 1e9:.2f} GB -> {result.qem_bytes / 1e9:.2f} GB); nothing written"
+            )
+            continue
+        before += result.source_bytes
+        after += result.qem_bytes
+        line = (
+            f"  {name}: {result.source_bytes / 1e9:.2f} GB -> {result.qem_bytes / 1e9:.2f} GB "
+            f"({result.source_bytes / result.qem_bytes:.2f}x, {result.seconds:.0f} s)"
+        )
+        if not result.master_embedded:
+            line += "  (master file too large to embed; its fields are kept, its long tables are not)"
+        if result.verified is True:
+            check = result.verification
+            line += f"  verified: {check['compared_values']:,} values identical"
+            if check["flagged_pixels"]:
+                line += (
+                    f"; {check['flagged_pixels']} flagged pixels also verified"
+                )
+        elif result.verified is False:
+            failed += 1
+            line += f"  VERIFICATION FAILED, no copy published: {result.verification}"
+        print(line)
+    if after:
+        print(f"Total: {before / 1e9:.2f} GB -> {after / 1e9:.2f} GB ({before / after:.2f}x)")
+    if kept:
+        print(f"{kept} acquisition(s) stay as HDF5 because their copy would be larger.")
+    return 1 if failed else 0
 
 
 def _serve_ssb_mps(args: argparse.Namespace) -> int:

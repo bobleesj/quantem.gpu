@@ -136,6 +136,34 @@ extension; the only accepted extension is `.qem`.
 DM selection/conversion options and MPS residency are currently unsupported. Load differently shaped acquisitions separately; a list can use
 `stack=False` to return independent residents.
 
+### Converting a collection from the command line
+
+```bash
+quantem-gpu convert /data/arina/session --dry     # GPU payload-size estimate; no copies written
+quantem-gpu convert /data/arina/session           # writes name.qem beside each name_master.h5
+quantem-gpu convert /data/arina/session --out /archive/session
+```
+
+Each published copy keeps master-file fields and attributes (units included) under
+its HDF5 path, embeds the master file itself so that long tables such as the
+flatfield survive (`qem_conversion.restore_master` writes it back byte for
+byte), records the name, size and SHA-256 of its source files, and fills the scientific metadata (source format, accelerating
+voltage, dwell time) from the Arina master. After writing, every value is
+compared with the detector files read through h5py before the copy is published.
+Flagged pixels are preserved and checked too: conversion disables display-time
+hot-pixel correction. CUDA `uint32` files are stored as `uint16` only after every
+stored value is shown to fit, with the original dtype retained in metadata.
+Larger values are refused, even at flagged pixels. `float32` acquisitions are
+not supported by this collection command (other `.qem` writers support them).
+Use `--backend cuda` or `--backend mps` to select a device backend; the Metal
+collection loader currently accepts uint8/uint16, not uint32. An
+acquisition whose copy would be larger than its HDF5 files is reported and left
+as HDF5. Oversized masters that cannot be embedded are not converted, so long
+metadata tables cannot be silently lost. Source files are never modified or
+removed; existing copies are never overwritten. `--no-verify` explicitly skips
+the comparison. Dry-run size is the encoded payload estimate, not final file
+size, and still performs GPU loading and encoding.
+
 ### Load an existing saved copy directly into native Metal
 
 The native Swift reader accepts the same `quantem.qem` files written by the

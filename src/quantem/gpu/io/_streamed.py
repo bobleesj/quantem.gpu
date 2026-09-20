@@ -51,11 +51,14 @@ def load_h5_ans(
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
         raise ValueError(f"{info.reason}: {info.action}")
     shape = (*info.scan_shape, *info.detector_shape)
-    dtype = np.dtype(info.dtype)
+    stored_dtype = np.dtype(info.dtype)
+    # Arina writes uint32 files whose counts still fit 16 bits. They are encoded
+    # as uint16 only after every stored chunk proves that no count is changed.
+    dtype = np.dtype("uint16") if stored_dtype == np.dtype("uint32") else stored_dtype
     if dtype not in (np.dtype("uint8"), np.dtype("uint16")):
         raise TypeError(
-            "Compact count loading preserves native uint8/uint16. Use dense "
-            "loading for other dtypes."
+            "Compact count loading preserves native uint8/uint16 counts, and "
+            "uint32 counts that fit uint16. Use dense loading for other dtypes."
         )
     selected = (
         cp.cuda.Device().id
@@ -93,7 +96,7 @@ def load_h5_ans(
         if dataset_path is not None:
             handle = stack.enter_context(h5py.File(path, "r"))
             dataset = handle[dataset_path]
-            if tuple(dataset.shape) != shape or np.dtype(dataset.dtype) != dtype:
+            if tuple(dataset.shape) != shape or np.dtype(dataset.dtype) != stored_dtype:
                 raise ValueError(
                     "The selected H5 dataset must match its complete inspected "
                     "native geometry and dtype."
@@ -112,7 +115,7 @@ def load_h5_ans(
             stop = min(first + chunk_scans, math.prod(info.scan_shape))
             before = time.perf_counter()
             if dataset is not None:
-                host = np.empty((stop - first, *info.detector_shape), dtype)
+                host = np.empty((stop - first, *info.detector_shape), stored_dtype)
                 # A chunk can cut a rectangular scan row. Only storage copying
                 # runs on CPU; counts and all scientific reductions stay native.
                 cursor = first
@@ -138,7 +141,7 @@ def load_h5_ans(
                 raw = _decompress_prepared(
                     prepared,
                     auto_narrow=False,
-                    output_dtype=dtype,
+                    output_dtype=stored_dtype,
                     batch_bytes_target=128 * 1024**2,
                     prune_device_pool=False,
                 )
@@ -146,6 +149,8 @@ def load_h5_ans(
                 raw = raw.reshape(stop - first, *info.detector_shape)
             cp.cuda.get_current_stream().synchronize()
             read_seconds += time.perf_counter() - before
+            if stored_dtype != dtype:
+                raw = _exact_uint16_counts(raw, first, stop)
             corrector.apply(raw)
             source.append(raw)
             del raw
@@ -158,12 +163,12 @@ def load_h5_ans(
             working_shape=shape,
             scan_shape=shape[:2],
             detector_shape=shape[2:],
-            source_dtype=dtype.name,
+            source_dtype=stored_dtype.name,
             working_dtype=dtype.name,
             dtype=dtype.name,
             n_frames=math.prod(shape[:2]),
             source_read_passes=1,
-            source_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
+            source_logical_tensor_bytes=math.prod(shape) * stored_dtype.itemsize,
             working_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
             physical_resident_bytes=source.nbytes,
             index_bytes=source.index_nbytes,
@@ -204,6 +209,19 @@ def load_h5_ans(
                 f"{correction['pixel_count']} stored detector-mask pixels."
             )
         return FourDSTEMData(source, metadata)
+
+
+def _exact_uint16_counts(raw, first: int, stop: int):
+    """Narrow only when every stored value, including flagged pixels, fits."""
+    import cupy as cp
+
+    if bool(cp.any(raw > 0xFFFF)):
+        raise ValueError(
+            f"Frames {first} to {stop - 1} hold counts above 65535, so the uint32 "
+            "acquisition cannot be encoded as exact uint16 counts. Keep the original "
+            "file; this encoded writer does not support these uint32 values."
+        )
+    return raw.astype(cp.uint16)
 
 
 def _load_h5_ans_mps(

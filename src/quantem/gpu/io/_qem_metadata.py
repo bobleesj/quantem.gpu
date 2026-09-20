@@ -138,6 +138,20 @@ def reject_constant(value):
     raise ValueError(f"QEM metadata cannot contain nonfinite number {value}.")
 
 
+def _nexus_source_metadata(metadata: dict) -> dict:
+    """Gather the NXmx master fields that the HDF5 reader retains as flat keys."""
+    source = {
+        key: value for key, value in metadata.items()
+        if isinstance(key, str) and key.startswith("entry/")
+    }
+    if source:
+        description = str(source.get("entry/instrument/detector/description", ""))
+        source["sourceFormat"] = (
+            "dectris-arina-hdf5" if "ARINA" in description.upper() else "nexus-nxmx-hdf5"
+        )
+    return source
+
+
 def acquisition_metadata(shape, metadata: dict) -> dict:
     """Normalize recorded calibration without replacing source fields."""
     if "scientific_metadata" in metadata:
@@ -146,7 +160,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                              codec="retained", profile="retained", shape=list(shape),
                              scientific_metadata=saved))
         return microscopy_metadata(saved)
-    source = dict(metadata.get("source_metadata", {}))
+    source = dict(metadata.get("source_metadata") or _nexus_source_metadata(metadata))
     quantities = {}
 
     def quantity(path, factors, output_unit, source_path=None):
@@ -182,6 +196,27 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         "s",
     )
     quantity("imaging_system/camera_length", {"m": 1, "cm": 0.01, "mm": 0.001}, "m")
+    # ARINA's electron-energy setting uses an NXmx photon-energy field.
+    # Do not reinterpret a generic X-ray NXmx energy as accelerating voltage.
+    if "ARINA" in str(source.get("entry/instrument/detector/description", "")).upper():
+        for path, field, factors, default_unit, output_unit in (
+            ("electron_source/accelerating_voltage", "detectorSpecific/photon_energy",
+             {"eV": 1, "keV": 1000}, "eV", "V"),
+            ("scan_controller/regular_scan/dwell_time", "count_time",
+             {"s": 1, "ms": 0.001, "us": 1e-6}, "s", "s"),
+            ("scan_controller/regular_scan/dwell_time", "frame_time",
+             {"s": 1, "ms": 0.001, "us": 1e-6}, "s", "s"),
+        ):
+            key = "entry/instrument/detector/" + field
+            value = source.get(key)
+            factor = factors.get(source.get(key + "@units", default_unit))
+            if (path not in quantities and factor is not None
+                    and isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value * factor) and value > 0):
+                quantities[path] = dict(
+                    value=float(value) * factor, unit=output_unit,
+                    provenance="source_metadata", evidence=key,
+                )
     for suffix in ("y", "x"):
         quantity(
             f"imaging_system/reciprocal_pixel_size_{suffix}",
