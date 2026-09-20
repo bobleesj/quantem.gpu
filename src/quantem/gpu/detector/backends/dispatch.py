@@ -100,6 +100,12 @@ def compute_backend(data):
     from .packed import PackedDetectorCompute, is_packed_source
     from .counts import CountDetectorCompute, is_count_source
 
+    from quantem.gpu.io._float_ans import FloatANSResident
+    if isinstance(data, FloatANSResident):
+        from .float_ans import FloatANSDetectorCompute
+
+        return FloatANSDetectorCompute(data)
+
     if is_count_source(data):
         return CountDetectorCompute(data)
     if is_packed_source(data):

@@ -2066,6 +2066,13 @@ def save(
             save_array(filepath, data, metadata, chunk_scans=512 if batch_size is None else batch_size)
             return SaveResult(str(filepath), "cpu", complete=True)
         from quantem.gpu._compact.streamed import StreamedCounts
+        from ._float_ans import FloatANSResident, save_float_ans
+
+        if isinstance(data, FloatANSResident):
+            if backend not in ("auto", data.backend) or batch_size is not None:
+                raise ValueError("Save the float resident on its own backend without batch_size.")
+            save_float_ans(filepath, data, metadata)
+            return SaveResult(str(filepath), data.backend, complete=True)
 
         from .backends.mps._streamed import MPSStreamedCounts
 

@@ -757,6 +757,11 @@ def _resolve_backend(data):
     data = _unwrap_core_4dstem(data)
     if hasattr(data, "_fields") and "data" in getattr(data, "_fields", ()):
         data = data.data
+    from quantem.gpu.io._float_ans import FloatANSResident
+    if isinstance(data, FloatANSResident):
+        from .backends.float_ans import FloatANSDetectorCompute
+
+        return FloatANSDetectorCompute(data)
     from quantem.gpu.io._resident import is_cuda_resident, _ResidentBackend
 
     if is_cuda_resident(data):

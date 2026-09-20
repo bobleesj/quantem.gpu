@@ -51,10 +51,26 @@ def read_header(path) -> tuple[dict, int]:
             raise ValueError(".qem header checksum mismatch; recopy the file.")
         header = json.loads(blob)
         _qem_metadata.validate_header(header)
+        if header.get("codec") == "float32-bit-lanes-rans-v1":
+            from .qem_validation import _validate_declared_processing, _validate_float_ans_layout
+
+            shape = header.get("shape")
+            if (not isinstance(shape, list) or len(shape) != 4
+                    or any(type(n) is not int or not 0 < n < 1 << 24 for n in shape)
+                    or type(header.get("bytes")) is not int or header["bytes"] <= 0
+                    or start + header["bytes"] != size
+                    or not isinstance(header.get("sha256"), list)
+                    or len(header["sha256"]) != math.ceil(header["bytes"] / BLOCK)):
+                raise ValueError("Invalid float ANS shape, length or checksum table; recopy the file.")
+            _validate_declared_processing(header)
+            _validate_float_ans_layout(handle, header, start)
+            if any(chunk["payload_bytes"] > 32 << 20 for chunk in header["chunks"]):
+                raise ValueError("Float ANS payload padding exceeds the 32 MiB GPU window; re-export the source.")
+            return header, start
         if header.get("codec") != PROFILE:
             raise NotImplementedError(
                 f"This Python reader does not support QEM codec {header.get('codec')!r}. "
-                "Open EMPAD float32 QEM files in Live4DSTEM, or use the original acquisition."
+                "Re-export the original acquisition using the current .qem writer."
             )
     try:
         shape = header["shape"]
@@ -197,6 +213,10 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     shape = tuple(header["shape"])
     if scan_shape is not None and tuple(scan_shape) != shape[:2]:
         raise ValueError("scan_shape disagrees with the saved acquisition; omit scan_shape.")
+    if header["codec"] == "float32-bit-lanes-rans-v1":
+        from ._float_ans import load_float_ans
+
+        return load_float_ans(path, header, start, backend=selected_backend, device=device)
     if selected_backend == "mps":
         from ._camera_mps import load_snapshot_mps
 
