@@ -83,27 +83,40 @@ func checkFrozenImageOperations(directory: URL) throws {
       values: (0..<(rows * columns)).map { Float(($0 * 37) % 251 - 125) * 0.03125 }, rows: rows,
       columns: columns)
   }
+  var frozenFailures: [String] = []
   func check(_ image: GPUImage, _ observation: [String: Any], operation: String) throws {
     let values = image.values()
     let indices = observation["indices"] as! [Int]
+    var mismatches: [String] = []
+    var maxAbsolute: Float = 0
+    var maxRelative: Float = 0
+    func compare(_ actual: Float, _ expected: Float, index: Int) {
+      guard actual != expected else { return }
+      let absolute = abs(actual - expected)
+      maxAbsolute = max(maxAbsolute, absolute)
+      maxRelative = max(maxRelative, absolute / max(abs(expected), Float.leastNormalMagnitude))
+      mismatches.append("index=\(index) actual=\(actual) expected=\(expected)")
+    }
     if image.isComplex {
       for (index, expected) in zip(indices, observation["values"] as! [[Double]]) {
-        try require(
-          values[2 * index] == Float(expected[0]) && values[2 * index + 1] == Float(expected[1]),
-          "Frozen MPS \(operation) mismatch at \(index): \(values[2 * index]), \(values[2 * index + 1]); expected \(expected)"
-        )
+        compare(values[2 * index], Float(expected[0]), index: 2 * index)
+        compare(values[2 * index + 1], Float(expected[1]), index: 2 * index + 1)
       }
     } else {
       for (index, expected) in zip(indices, observation["values"] as! [Double]) {
-        try require(
-          values[index] == Float(expected),
-          "Frozen MPS \(operation) mismatch at \(index): \(values[index]); expected \(Float(expected))"
-        )
+        compare(values[index], Float(expected), index: index)
       }
+    }
+    if !mismatches.isEmpty {
+      frozenFailures.append(
+        "Frozen MPS \(operation): mismatches=\(mismatches.count) max_absolute=\(maxAbsolute) max_relative=\(maxRelative); \(mismatches.prefix(5).joined(separator: "; "))"
+      )
     }
   }
   let full = try generated(512, 512)
-  for (sigma, observation) in torch["gradient"] as! [String: [String: Any]] {
+  let gradients = torch["gradient"] as! [String: [String: Any]]
+  for sigma in gradients.keys.sorted() {
+    let observation = gradients[sigma]!
     try check(
       ops.gradientMagnitude(full, sigma: Double(sigma)!), observation,
       operation: "gradient sigma=\(sigma)")
@@ -117,6 +130,7 @@ func checkFrozenImageOperations(directory: URL) throws {
   try check(
     ops.centered(full, window: ops.image(rows: 512, columns: 512, value: 1)),
     torch["centered"] as! [String: Any], operation: "centered")
+  try require(frozenFailures.isEmpty, frozenFailures.joined(separator: "\n"))
   print(
     "FROZEN_IMAGE_OPERATIONS_PASS numpy_counts_median_means=true gaussian=true correlation=true grid=true torch_mps=true"
   )
