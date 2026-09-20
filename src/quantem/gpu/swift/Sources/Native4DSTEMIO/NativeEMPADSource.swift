@@ -3,7 +3,7 @@ import CryptoKit
 import Darwin
 import Foundation
 
-/// Recorded float32 frames from EMPAD-G1, EMPAD-G2 XML/RAW, or EMD 1 datacubes.
+/// Recorded float32 frames from EMPAD XML/RAW, EMD 1, or named HDF5 stacks.
 ///
 /// Open an XML acquisition directly, or supply the measured scan shape for a
 /// headerless RAW file. Reading a frame preserves its IEEE-754 bits, including
@@ -105,7 +105,8 @@ public struct NativeEMPADSource: Sendable {
   /// the file length. Conflicting shape metadata fails rather than reordering
   /// measurements. G1 stores a 256-word footer; G2 must explicitly declare
   /// 128×128 float32 records in XML. Encoded integer acquisition words are not
-  /// float exports. EMD supports contiguous little-endian float32 storage.
+  /// float exports. EMD and named `/dp` stacks support contiguous little-endian
+  /// float32 storage; named stacks also require an explicit recorded scan grid.
   public static func open(
     _ input: URL, scanShape: (row: Int, col: Int)? = nil
   ) throws -> NativeEMPADSource {
@@ -267,6 +268,13 @@ public struct NativeEMPADSource: Sendable {
   /// Recognize the supported EMD schema from metadata rather than filenames.
   public static func isEMDFloatAcquisition(_ url: URL) -> Bool {
     guard ["h5", "hdf5", "emd"].contains(url.pathExtension.lowercased()) else { return false }
+    return (try? openEMD(url, scanShape: nil).formatIdentifier) == "emd1-contiguous-float32/v1"
+  }
+
+  /// Recognize EMD or a named float32 HDF5 stack with an explicit scan grid.
+  /// Example: `NativeEMPADSource.isFloatDatacubeAcquisition(url)`.
+  public static func isFloatDatacubeAcquisition(_ url: URL) -> Bool {
+    guard ["h5", "hdf5", "emd"].contains(url.pathExtension.lowercased()) else { return false }
     return (try? openEMD(url, scanShape: nil)) != nil
   }
 
@@ -300,8 +308,10 @@ public struct NativeEMPADSource: Sendable {
       ("imaging_system/reciprocal_pixel_size_y", info.angle_mrad, "mrad"),
       ("imaging_system/reciprocal_pixel_size_x", info.angle_mrad, "mrad"),
     ] where value > 0 { metadata["electron_microscope/" + key] = "\(value) \(unit)" }
-    metadata["sourceDataset"] = "/datacube_root/datacube/data"
-    metadata["sourceAxisOrder"] = "Recorded EMD axes 0,1,2,3; no transpose"
+    metadata["sourceDataset"] = info.generic == 1 ? "/dp" : "/datacube_root/datacube/data"
+    metadata["sourceAxisOrder"] = info.generic == 1
+      ? "Recorded frame, detector row, detector column; explicit scan grid; no transpose"
+      : "Recorded EMD axes 0,1,2,3; no transpose"
     let calibration: Native4DSTEMScanCalibration? =
       info.scan_angstrom > 0
       ? Native4DSTEMScanCalibration(
@@ -311,7 +321,8 @@ public struct NativeEMPADSource: Sendable {
     return NativeEMPADSource(
       rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
       scanCalibration: calibration, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
-      formatIdentifier: "emd1-contiguous-float32/v1", formatName: "EMD 1 · HDF5 float32",
+      formatIdentifier: info.generic == 1 ? "hdf5-contiguous-float32/v1" : "emd1-contiguous-float32/v1",
+      formatName: info.generic == 1 ? "HDF5 · float32 dp" : "EMD 1 · HDF5 float32",
       microscopeMetadata: metadata,
       backgroundSubtractionEvidence: .discover(raw: url, metadata: url),
       recordBytes: 65536, dataOffset: info.offset,

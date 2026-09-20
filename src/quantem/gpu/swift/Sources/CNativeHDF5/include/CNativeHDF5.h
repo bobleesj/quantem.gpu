@@ -80,6 +80,7 @@ char *qh5_read_root_attribute(const char *path, const char *name);
 typedef struct {
   uint64_t rows, columns, offset, bytes;
   double scan_angstrom, angle_mrad, voltage, semiangle_mrad, camera_meters;
+  int generic;
 } qh5_emd_float_info;
 int qh5_inspect_emd_float(const char *path, qh5_emd_float_info *info, char **error_message);
 

@@ -882,6 +882,63 @@ static double qh5_positive_scalar(hid_t file, const char *path) {
   return value;
 }
 
+/* A named dp stack is not an arbitrary HDF5 array. Require an explicit scan
+   shape, either on the dataset or in the simulation's recorded parameters.
+   Never infer a square scan just because the frame count is a square. */
+static int qh5_inspect_named_float_stack(hid_t file, qh5_emd_float_info *info) {
+  H5L_info2_t link;
+  if (file < 0 || H5Lget_info2(file, "/dp", &link, H5P_DEFAULT) < 0
+      || link.type != H5L_TYPE_HARD) return 0;
+  hid_t dataset = H5Dopen2(file, "/dp", H5P_DEFAULT);
+  hid_t space = dataset >= 0 ? H5Dget_space(dataset) : -1;
+  hid_t type = dataset >= 0 ? H5Dget_type(dataset) : -1;
+  hid_t plist = dataset >= 0 ? H5Dget_create_plist(dataset) : -1;
+  hsize_t dims[3] = {0};
+  int valid = space >= 0 && H5Sget_simple_extent_ndims(space) == 3
+    && type >= 0 && H5Tequal(type, H5T_IEEE_F32LE) > 0
+    && plist >= 0 && H5Pget_layout(plist) == H5D_CONTIGUOUS
+    && H5Pget_external_count(plist) == 0;
+  if (valid) {
+    H5Sget_simple_extent_dims(space, dims, NULL);
+    valid = dims[0] > 0 && dims[1] == 128 && dims[2] == 128
+      && dims[0] <= UINT64_MAX / 65536;
+  }
+  uint64_t rows = 0, columns = 0;
+  if (valid && H5Aexists(dataset, "scan_shape") > 0) {
+    hid_t attribute = H5Aopen(dataset, "scan_shape", H5P_DEFAULT);
+    hid_t attribute_space = attribute >= 0 ? H5Aget_space(attribute) : -1;
+    hid_t attribute_type = attribute >= 0 ? H5Aget_type(attribute) : -1;
+    long long shape[2] = {0};
+    valid = attribute_space >= 0 && H5Sget_simple_extent_npoints(attribute_space) == 2
+      && attribute_type >= 0 && H5Tget_class(attribute_type) == H5T_INTEGER
+      && H5Aread(attribute, H5T_NATIVE_LLONG, shape) >= 0
+      && shape[0] > 0 && shape[1] > 0;
+    if (valid) { rows = (uint64_t)shape[0]; columns = (uint64_t)shape[1]; }
+    if (attribute_type >= 0) H5Tclose(attribute_type);
+    if (attribute_space >= 0) H5Sclose(attribute_space);
+    if (attribute >= 0) H5Aclose(attribute);
+  } else if (valid) {
+    double slow = qh5_positive_scalar(file, "/abtem_params/N_scan_slow");
+    double fast = qh5_positive_scalar(file, "/abtem_params/N_scan_fast");
+    valid = slow >= 1 && fast >= 1 && slow < 4294967296.0 && fast < 4294967296.0
+      && floor(slow) == slow && floor(fast) == fast;
+    if (valid) { rows = (uint64_t)slow; columns = (uint64_t)fast; }
+  }
+  haddr_t offset = valid ? H5Dget_offset(dataset) : HADDR_UNDEF;
+  valid = valid && columns > 0 && rows <= UINT64_MAX / columns
+    && rows * columns == dims[0] && offset != HADDR_UNDEF
+    && H5Dget_storage_size(dataset) == dims[0] * 65536;
+  if (valid) {
+    info->rows = rows; info->columns = columns; info->offset = offset;
+    info->bytes = dims[0] * 65536; info->generic = 1;
+  }
+  if (plist >= 0) H5Pclose(plist);
+  if (type >= 0) H5Tclose(type);
+  if (space >= 0) H5Sclose(space);
+  if (dataset >= 0) H5Dclose(dataset);
+  return valid;
+}
+
 int qh5_inspect_emd_float(const char *path, qh5_emd_float_info *info, char **error_message) {
   if (!path || !info) return qh5_fail(error_message, "Invalid EMD request");
   memset(info, 0, sizeof(*info));
@@ -942,10 +999,11 @@ int qh5_inspect_emd_float(const char *path, qh5_emd_float_info *info, char **err
   if (ty >= 0) H5Tclose(ty);
   if (sp >= 0) H5Sclose(sp);
   if (ds >= 0) H5Dclose(ds);
+  if (!valid && file >= 0) valid = qh5_inspect_named_float_stack(file, info);
   if (file >= 0) H5Fclose(file);
   pthread_mutex_unlock(&qh5_hdf5_lock);
   return valid ? 0 : qh5_fail(error_message,
-    "This EMD reader requires an EMD 1.x contiguous little-endian float32 datacube with a 128×128 detector. Open the original supported export.");
+    "Open an EMD 1.x float32 datacube or a contiguous float32 /dp stack with a 128×128 detector and explicit scan_shape or abtem_params/N_scan_slow,N_scan_fast. Float64 and compressed stacks require a different exact reader; do not cast the measurements.");
 }
 
 char *qh5_read_scientific_metadata(const char *path) {
