@@ -41,7 +41,7 @@ class EMPADSourceTests(unittest.TestCase):
                 stream.write(struct.pack("<I", 0xDEADBEEF) * 256)
 
     def read(self, source, *shape, succeeds=True, metal=False, budget=None,
-             mutate=None, cancel_at=None, hash_cache=None, cache_hit=None):
+             mutate=None, cancel_at=None, hash_cache=None, cache_hit=None, save_qem=None):
         output = self.root / "selected.bin"
         indices = (5, 0, 3, 0) + ((64, 65) if len(self.frames) > 64 else ())
         environment = dict(os.environ, EMPAD_TEST_METAL="1" if metal else "0")
@@ -53,6 +53,8 @@ class EMPADSourceTests(unittest.TestCase):
             environment["EMPAD_TEST_CANCEL_AT"] = str(cancel_at)
         if hash_cache is not None:
             environment["EMPAD_TEST_HASH_CACHE"] = str(hash_cache)
+        if save_qem is not None:
+            environment["EMPAD_TEST_SAVE_QEM"] = str(save_qem)
         result = subprocess.run(
             [os.environ["EMPAD_SOURCE_PARITY_EXE"], str(source), str(output),
              ",".join(map(str, indices)), *map(str, shape)], capture_output=True, text=True,
@@ -78,7 +80,9 @@ class EMPADSourceTests(unittest.TestCase):
                 self.assertEqual(receipt["sourceRawLogicalSHA256"], logical_hash)
                 self.assertEqual(receipt["sourceDtype"], "float32")
                 self.assertEqual(receipt["workingDtype"], "float32")
-                self.assertEqual(receipt["representation"], "packed")
+                self.assertEqual(receipt["representation"], "encoded")
+                self.assertEqual(receipt["storageSchema"],
+                                 "quantem.gpu.float32-bit-lanes-rans/v1")
                 self.assertEqual(receipt["workingLogicalTensorBytes"], len(self.frames) * 65536)
                 self.assertEqual(capabilities["exactIntegerBits"], 0)
                 products = {entry["product"]: entry for entry in capabilities["products"]}
@@ -90,6 +94,24 @@ class EMPADSourceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout)
             if mutate is not None:
                 self.assertIn("changed during loading", result.stderr)
+
+    def test_ans_qem_roundtrip_preserves_bits_and_gpu_products(self):
+        """Native GPU export and reopen, with a tiny independent codec oracle."""
+        from quantem.gpu.io._qem_reference import load_array
+        from quantem.gpu.io.qem_validation import validate_qem
+
+        qem = self.root / "exact.qem"
+        self.read(self.raw, metal=True, save_qem=qem)
+        products = {name: (self.root / ("selected.bin." + name)).read_bytes()
+                    for name in ("products", "mean", "com-row", "com-column")}
+        report = validate_qem(qem)
+        self.assertEqual(report["codec"], "float32-bit-lanes-rans-v1")
+        self.assertEqual(report["codec_layout"], "verified")
+        restored, _ = load_array(qem)
+        self.assertEqual(restored.tobytes(), b"".join(self.frames))
+        self.read(qem, metal=True)
+        for name, expected in products.items():
+            self.assertEqual((self.root / ("selected.bin." + name)).read_bytes(), expected)
 
     def test_supplier_readme_recognition_preserves_values_and_tracks_document_edits(self):
         acquisition = self.root / "acquisition"
@@ -109,6 +131,35 @@ class EMPADSourceTests(unittest.TestCase):
         self.read(self.raw)
         metadata = json.loads((self.root / "selected.bin.metadata.json").read_text())
         self.assertIsNone(metadata["backgroundSubtractionEvidence"])
+
+    @patch.dict(os.environ, {"EMPAD_TEST_APERTURE_SEQUENCE": "1"})
+    def test_entropy_and_literal_detectors_match_full_gpu_decode_after_reopen(self):
+        """A moving detector gives identical images from RAW and saved ANS streams."""
+        from quantem.gpu.io._qem_reference import read_envelope
+
+        self.shape = (6, 11)
+        self.raw = self.root / "scan_x11_y6.raw"
+        self.frames = [struct.pack("<16384I", *(
+            0x3F800000 | ((pixel + frame) % 16)
+            for pixel in range(16384))) for frame in range(66)]
+        with self.raw.open("wb") as stream:
+            for frame in self.frames:
+                stream.write(frame)
+                stream.write(bytes(1024))
+        qem = self.root / "entropy.qem"
+        with patch.dict(os.environ, {"QGPU_FLOAT_ANS_FULL_DECODE_CONTROL": "1"}):
+            self.read(self.raw, metal=True, save_qem=qem)
+        suffixes = ("products", "apertures", "mean", "com-row", "com-column")
+        expected = {s: (self.root / ("selected.bin." + s)).read_bytes() for s in suffixes}
+        header, start = read_envelope(qem)
+        chunk = header["chunks"][0]
+        with qem.open("rb") as stream:
+            stream.seek(start + chunk["model_offset"])
+            models = stream.read(chunk["model_bytes"])
+        self.assertTrue(any(model < 64 for model in models), "Fixture must exercise entropy streams")
+        self.read(qem, metal=True)
+        for suffix, frozen in expected.items():
+            self.assertEqual((self.root / ("selected.bin." + suffix)).read_bytes(), frozen)
 
     def test_changed_supplier_declaration_invalidates_in_progress_source(self):
         (self.root / "readme.txt").write_text(
@@ -203,8 +254,10 @@ class EMPADSourceTests(unittest.TestCase):
             for frame in self.frames:
                 stream.write(frame)
                 stream.write(b"\xff" * 1024)
-        # The complete acquisition fits, but its full staging pair does not.
-        self.read(self.raw, metal=True, budget=6 * 1024 * 1024)
+        # ANS restart tables and query scratch need more than the old XOR
+        # resident. Below that requirement fail closed, never switch codecs.
+        self.read(self.raw, metal=True, budget=6 * 1024 * 1024, succeeds=False)
+        self.read(self.raw, metal=True, budget=20 * 1024 * 1024)
 
     def test_cancellation_before_final_publication(self):
         self.read(self.raw, metal=True, cancel_at=5)

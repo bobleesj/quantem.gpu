@@ -2,7 +2,7 @@
 
 This page specifies the bytes needed by independent implementations. It is a
 project specification, not a claim of community ratification. The
-[envelope and calibration contract](qem-format.md) applies to both codecs.
+[envelope and calibration contract](qem-format.md) applies to all codecs.
 All multi-byte words are little-endian. Counts use C order:
 `(scan_row, scan_column, detector_row, detector_column)`.
 
@@ -87,7 +87,52 @@ the final word is zero-padded. A width-zero stream has no words. Offsets count
 uint32 words, not bytes. Readers must bound every span before using an index.
 Index correctness is checked against sums of decoded counts, not just checksums.
 
-## Float codec: empad-xor-row-packed-v1
+## Float codec: float32-bit-lanes-rans-v1
+
+New native float32 exports use ANS-coded IEEE bits, not float-to-integer
+conversion. The detector shape is `(128,128)`, dtype is `float32`, and
+`version=1`. Source axes, calibration and retained metadata are unchanged.
+
+Each chunk covers 1 through 512 consecutive flattened scan positions, declared
+by `first` and `scans`. There are 32,768 streams: two uint16 lanes for every
+detector pixel in row-major order, low word first. Each lane uses the count
+models and normative rANS table above. Literal and constant models are part of
+the ANS codec; incompressible input need not become smaller.
+
+Three arrays appear consecutively, without alignment gaps. Their body-relative
+byte offsets and byte lengths are named `payload_offset`, `payload_bytes`,
+`offset_offset`, `offset_bytes`, `model_offset`, and `model_bytes`:
+
+| Array | Layout |
+| --- | --- |
+| payload | Byte streams; an entirely empty payload retains at least one padding byte |
+| offset | 32,769 little-endian uint32 byte offsets; starts at zero, nondecreasing |
+| model | 32,768 uint8 model selectors |
+
+The final offset cannot exceed the payload length. Bytes beyond that offset
+are padding, not samples. Decode each lane for exactly `scans` values, then
+join each low/high pair into its original uint32 bit pattern and reinterpret
+as float32. Signed zero, subnormals, infinities and NaN payloads are retained.
+`logical_sha256` hashes the original little-endian float32 bytes in C order.
+The `empad` description and optional mean-dark recipe have the same meaning
+as described below; saving never bakes a display correction into original bits.
+
+Native Metal ingestion encodes bounded source windows. Detector changes read
+literal/constant ANS codes directly and decode only required entropy columns.
+Other scientific products decode bounded GPU scratch and reuse it between ordered consumers; neither a
+full dense cube nor a full XOR-packed cube is retained. The receipt is
+`representation=encoded`, schema `quantem.gpu.float32-bit-lanes-rans/v1`.
+The explicit Python CPU reference can read/write this profile for small
+interoperability checks. This profile does not establish Python CUDA/MPS or
+float64 support; those require their own implementation and qualification.
+
+### Earlier float codec: empad-xor-row-packed-v1
+
+This older profile remains documented for interpreting existing archives.
+New native exports and the Python reference writer no longer emit it. Native
+ANS-only loading requires re-export from the original acquisition; renaming
+an old file does not convert its payload. The explicit Python reference reader
+can still recover the original bits from an old archive.
 
 Required geometry: four positive axes with detector `(128,128)`, dtype
 `float32`, `version=1`. This describes bit-exact storage, not a detector

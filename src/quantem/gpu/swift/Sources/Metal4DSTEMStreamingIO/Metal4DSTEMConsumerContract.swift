@@ -272,9 +272,9 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     }
     let shape = [source.source.scanRows, source.source.scanColumns, 128, 128]
     let logicalBytes = try Metal4DSTEMResidentReceipt.logicalBytes(shape: shape, bytesPerValue: 4)
-    let storageSchema = "quantem.gpu.empad-xor-row-packed/v1"
+    let storageSchema = "quantem.gpu.float32-bit-lanes-rans/v1"
     let receipt = Metal4DSTEMResidentReceipt(
-      schema: Metal4DSTEMResidentReceipt.currentSchema, representation: .packed,
+      schema: Metal4DSTEMResidentReceipt.currentSchema, representation: .encoded,
       sourceIdentitySHA256: source.sourceIdentitySHA256,
       sourceShape: shape, workingShape: shape, sourceDtype: "float32", workingDtype: "float32",
       sourceLogicalTensorBytes: logicalBytes, workingLogicalTensorBytes: logicalBytes,
@@ -297,7 +297,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
           ? .exactFloat32Bits : .frozenFloat32)
     }
     return Self(
-      schema: currentSchema, representation: .packed,
+      schema: currentSchema, representation: .encoded,
       sourceIdentitySHA256: source.sourceIdentitySHA256,
       scanRows: shape[0], scanColumns: shape[1], detectorRows: 128, detectorColumns: 128,
       storageSchema: storageSchema, workingDtype: "float32", exactIntegerBits: 0,

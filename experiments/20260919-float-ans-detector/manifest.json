@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260919-float-ans-detector",
+  "status": "completed",
+  "question": "Can selecting only changed ANS detector streams reach an 8.33 ms interaction budget without changing existing GPU reduction bits?",
+  "paper": {"authoritative_host": "apple-m5-24gb", "repository": "quantem.gpu", "manifest_path": "experiments/20260919-float-ans-detector/manifest.json"},
+  "code": {"repository": "https://github.com/bobleesj/quantem.gpu", "revision": "afc7aa4dc3b4b97fcc6cbad4695e337d847e3e7c", "entrypoint": "tests/hardware/metal/swift_original_packing/Sources/EMPADSourceParity/main.swift", "dirty": true, "diff_sha256": "cadd2cc9972fed65251cf464828c2595ccfb77477fb7ee1b0c07959e293cc2c3", "snapshot_path": "local-evidence://ptyrad-io-20260919/selective-ans.patch"},
+  "inputs": [
+    {"dataset_id": "zenodo.15987625 MOSS6", "path": "00_data/MOSS6/ExperimentalData_MOSS-6_Fig.3/scan_x256_y256.raw", "sha256": "fa7940523e3ea879598a516c35fc0d1461bc634d7f055fe7b9568c2178192ac3"},
+    {"dataset_id": "zenodo.15987625 ZSM5", "path": "00_data/ZSM5/Fig.1C/scan_x256_y256.raw", "sha256": "7ea0838b74899a2ad8450315c28a35d6b8b7bcbcdbeca81736812ff9594f03ad"},
+    {"dataset_id": "zenodo.15987625 WSe2", "path": "00_data/tBL_WSe2/Panel_g-h_Themis/scan_x128_y128.raw", "sha256": "e759bfc8a3b462fa86656dcdcfb4d28729e7522104e0e4e37d72d87c3d722d48"}
+  ],
+  "parameters": {
+    "dtype": "float32", "detector": [128,128], "scan_bin": 1, "detector_bin": 1, "crop": null,
+    "control": "QGPU_FLOAT_ANS_FULL_DECODE_CONTROL=1; same executable, existing full-window GPU decode",
+    "sequence": "96 identical aperture masks per arm; A/B/A per source; reset/large jump separate from steady drag",
+    "timer": "encodeVirtualImage through command completion; CPU mask construction and output hash outside timer; GPU command timestamps separate",
+    "target_ms": 8.3333333333, "native_fps_claim": false,
+    "executable_sha256": "47865eb9f9c0a65f5dbe8ae696afdda8712ed292ee3229ddb3a554fc99d82b08",
+    "resource_sha256": "070cb0a232c77e4c93885cb10f66068806d8e2208a85508cd050a1bd48476f70",
+    "new_helper_snapshot_sha256": "6196669b4b68ad2a7edcd74a4e10a9151a119b4e5b29e5a7e83e3ed1665468d4",
+    "memory": "ANS only; unchanged bounded query window; two image-sized accumulated sums; no full decoded duplicate",
+    "cache": "fresh process/resident each arm; uncontrolled OS pages; not a cold SSD benchmark",
+    "stage_profile": "Metal timestamp attachments on separate decode/reduction encoders; same numerical work, instrumented timings not used for a native FPS claim",
+    "direct_literal_probe": "Consume independent literal/constant ANS codes directly in the unchanged compensated detector reduction; decode entropy columns only into bounded scratch. Specialize the legacy row-word accessor for already decoded words, not XOR packing.",
+    "final_candidate": {
+      "snapshot_path": "local-evidence://ptyrad-io-20260919/direct-literal.patch",
+      "diff_sha256": "7569270f614d7dd725092743426302c77ba9844d9dc61802fa18f603c7730b41",
+      "helper_snapshot_path": "local-evidence://ptyrad-io-20260919/MetalFloatANS-direct.swift",
+      "helper_sha256": "ee9353ebc55274266a5446227f427501ba90e2875729b153e545fd8bf0584894",
+      "executable_sha256": "d9bf69c1953dc49a0a7306d80950a262ad406d188de9e659c1c8563fc6fee9ff",
+      "native_executable_sha256": "c9971c5926d3210adbc691f9773bf866af98e81ed418acc6433acb98952ca859",
+      "runtime_ans_resource_sha256": "25235f8f56879e27f6119a47f697267f63aae35f96eb45b8aa9ca67de1e78aff",
+      "empad_float_resource_sha256": "4c3aff192d4e81a89bc8ed8f9c641bd9b817114669d492df7ac7f170deafba4a",
+      "post_build_edits": "Kernel comment and Python docstring corrections only; no functional code change."
+    },
+    "parallel_literal_probe": {
+      "hypothesis": "32 scan lanes per selected literal/constant stream remove unnecessary sequential decoding while entropy streams retain the reference decoder",
+      "diff_sha256": "5a84e2bc5b847b3003e878b45cb723945d2d8469dfe658584deea63753a2dbc2",
+      "helper_sha256": "ee9353ebc55274266a5446227f427501ba90e2875729b153e545fd8bf0584894",
+      "executable_sha256": "c8542ea637b69ecd990c7a658bbcc2c3ff36cad714b6833b51f51de5874533d3",
+      "resource_sha256": "f4990aab3252e12a5c1278a84573d408ade5c51da112d44b80387ce8755be085"
+    },
+    "serial_encoder_probe": {
+      "hypothesis": "One serial encoder with explicit bounded-scratch barriers removes per-chunk encoder overhead",
+      "diff_sha256": "d8160ec2bca35c3c07a6e3459babcf3f7caf2cc2675b8c68a2ae9247d3c6fd65",
+      "helper_sha256": "6252686e17180362b8930fcceb146f072b77ea6f38c7bbe6141e59e2e1ae15d1",
+      "executable_sha256": "0f62100179a4d1f184aa0d481695ffcee3d5d62e9333b6b7bf41cee2faca99c1",
+      "baseline": "local-evidence://ptyrad-io-20260919/selective-ans-aba/results.json"
+    }
+  },
+  "execution": {"host": "macbook", "backend": "swift-metal", "gpu_ids": ["integrated-gpu-0"], "gpu_model": "Apple M5 24 GB"},
+  "outputs": [{
+    "artifact_id": "detector-results",
+    "path": "experiments/20260919-float-ans-detector/results.json",
+    "sha256": "a402af03cdf5d13cc1ba522d1b2f92b9cbe083418105ec6557469308dd940524",
+    "size_bytes": 10287,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "Frozen products remain byte-identical on three real sources. Candidate medians 6.252/6.257/1.736 ms; periodic rebases reach 104 ms. Native sustained 120 FPS is not qualified. All raw result hashes are retained in this artifact."
+  }],
+  "timestamps": {"created": "2026-09-19T23:26:00-07:00", "started": "2026-09-19T23:26:00-07:00", "finished": "2026-09-19T23:57:59-07:00"}
+}

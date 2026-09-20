@@ -20,6 +20,53 @@ from . import _qem_metadata
 _BLOCK_BYTES = 64 << 20
 _INTEGER_CODEC = "runtime-column-rans-spatial-v2"
 _EMPAD_CODEC = "empad-xor-row-packed-v1"
+_FLOAT_ANS_CODEC = "float32-bit-lanes-rans-v1"
+
+
+def _validate_float_ans_layout(handle, header: dict, start: int) -> None:
+    """Validate bounded IEEE bit-lane streams without decoding measurements."""
+    if (header.get("version") != 1 or header.get("dtype") != "float32"
+            or header["shape"][2:] != [128, 128]
+            or not isinstance(header.get("empad"), dict)
+            or not isinstance(header.get("logical_sha256"), str)
+            or len(header["logical_sha256"]) != 64):
+        raise ValueError("Invalid QEM floating-point ANS description.")
+    frames = header["shape"][0] * header["shape"][1]
+    lanes, cursor, first = 128 * 128 * 2, 0, 0
+    for chunk in header["chunks"]:
+        count = chunk["scans"]
+        if (type(count) is not int or not 1 <= count <= min(512, frames - first)
+                or chunk["first"] != first):
+            raise ValueError("Invalid float ANS frame coverage.")
+        arrays = {}
+        for name in ("payload", "offset", "model"):
+            length = chunk[name + "_bytes"]
+            if (type(length) is not int or length <= 0
+                    or chunk[name + "_offset"] != cursor
+                    or length > header["bytes"] - cursor
+                    or name == "offset" and length != (lanes + 1) * 4
+                    or name == "model" and length != lanes):
+                raise ValueError("Invalid float ANS array bounds.")
+            if name != "payload":
+                handle.seek(start + cursor)
+                arrays[name] = handle.read(length)
+            cursor += length
+        offsets = np.frombuffer(arrays["offset"], "<u4").astype(np.int64)
+        models = np.frombuffer(arrays["model"], "u1")
+        lengths = np.diff(offsets)
+        if (offsets[0] != 0 or offsets[-1] > chunk["payload_bytes"]
+                or np.any(lengths < 0)):
+            raise ValueError("Invalid float ANS stream offsets.")
+        valid = (((models < 64) & (lengths >= 4) & (lengths <= count * 2))
+                 | ((models == 252) & (lengths % 2 == 0) & (lengths <= count * 2))
+                 | ((models == 253) & (lengths == 0))
+                 | ((models == 254) & (lengths == count * 2))
+                 | ((models == 255) & (lengths == 2)))
+        if not valid.all():
+            raise ValueError("Invalid float ANS stream model or extent.")
+        first += count
+    if first != frames or cursor != header["bytes"]:
+        raise ValueError("Incomplete float ANS coverage.")
 
 
 def _validate_float_layout(handle, header: dict, start: int) -> None:
@@ -143,7 +190,7 @@ def validate_qem(path: str | Path) -> dict[str, object]:
         ):
             raise ValueError("Invalid QEM shape; expected four positive integer axes.")
         codec = header.get("codec")
-        if codec not in (_INTEGER_CODEC, _EMPAD_CODEC):
+        if codec not in (_INTEGER_CODEC, _EMPAD_CODEC, _FLOAT_ANS_CODEC):
             raise NotImplementedError(
                 f"QEM codec {codec!r} is not supported by this validator."
             )
@@ -178,6 +225,9 @@ def validate_qem(path: str | Path) -> dict[str, object]:
             layout = "verified"
         elif codec == _EMPAD_CODEC:
             _validate_float_layout(handle, header, start)
+            layout = "verified"
+        elif codec == _FLOAT_ANS_CODEC:
+            _validate_float_ans_layout(handle, header, start)
             layout = "verified"
         after = path.stat()
         if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (

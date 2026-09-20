@@ -1194,6 +1194,16 @@ final class RuntimeANSEncoder {
     FileHandle.standardError.write(Data(("QGPU_ENCODE_PROFILE " + line + "\n").utf8))
   }
 
+  /// Drop completed encode scratch when a memory-limited caller shrinks its
+  /// next window. Encoded residents remain intact; no dispatch is outstanding.
+  func releaseScratch() {
+    reusableScratch = nil
+    reusableSizes = nil
+    reusableStates = nil
+    reusableModels = nil
+    reusableOffsets = nil
+  }
+
   func finish() throws -> Output {
     Output(
       chunks: chunks, decoding: decoding,

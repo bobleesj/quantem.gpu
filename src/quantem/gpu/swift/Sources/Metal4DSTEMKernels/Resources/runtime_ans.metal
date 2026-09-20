@@ -246,6 +246,83 @@ kernel void streamed_counts_compact(
         payload[begin + i] = scratch[ulong(size - 1 - i) * streams + stream];
 }
 
+// Restore IEEE-754 words without converting their numerical value. Row
+// descriptors expose only this bounded scratch window to existing consumers.
+kernel void float_ans_recovery_needed(
+    device const uint2 *accumulated [[buffer(0)]],
+    device atomic_uint *recover [[buffer(1)]],
+    uint frame [[thread_position_in_grid]]) {
+    uint2 previous = accumulated[frame];
+    if ((previous.x & 0x7f800000u) == 0x7f800000u
+        || (previous.y & 0x7f800000u) == 0x7f800000u)
+        atomic_fetch_or_explicit(recover, 1u, memory_order_relaxed);
+}
+
+// Nonfinite prior sums require current-mask entropy columns too, so removal of
+// a NaN can recover. Independent codes are consumed directly by the reducer.
+kernel void float_ans_decode_selected(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device uint *words [[buffer(5)]],
+    device uint4 *descriptors [[buffer(6)]],
+    device const uchar *changed [[buffer(7)]],
+    device const uchar *mask [[buffer(8)]],
+    device const uint *recover [[buffer(9)]],
+    constant uint &scans [[buffer(10)]],
+    uint pixel [[thread_position_in_grid]]) {
+    // Changed columns are handled by the parallel literal/constant decoder.
+    // This dispatch supplies only the exceptional nonfinite recovery columns.
+    if (!recover[0] || !mask[pixel] || changed[pixel]) return;
+    if (models[pixel * 2] >= 253 && models[pixel * 2 + 1] >= 253) return;
+    StreamReader low(payload, offsets, models, decoding, pixel * 2);
+    StreamReader high(payload, offsets, models, decoding, pixel * 2 + 1);
+    for (uint frame = 0; frame < scans; ++frame)
+        words[frame * 16384 + pixel] = low.next() | (high.next() << 16);
+    if (!low.finished() || !high.finished())
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Decode only changed entropy columns into bounded scratch. Literal/constant
+// streams have no state dependency and are read directly by the reducer.
+kernel void float_ans_decode_changes(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device uint *words [[buffer(5)]],
+    device const int2 *entries [[buffer(6)]],
+    constant uint &scans [[buffer(7)]],
+    uint entry [[threadgroup_position_in_grid]],
+    ushort lane [[thread_index_in_simdgroup]]) {
+    uint pixel = uint(entries[entry].x);
+    uint stream = pixel * 2;
+    uint low_model = models[stream], high_model = models[stream + 1];
+    if (low_model >= 253 && high_model >= 253) {
+        // The detector consumer can read these independent codes in place.
+        return;
+    } else if (lane == 0) {
+        StreamReader low(payload, offsets, models, decoding, stream);
+        StreamReader high(payload, offsets, models, decoding, stream + 1);
+        for (uint frame = 0; frame < scans; ++frame)
+            words[frame * 16384 + pixel] = low.next() | (high.next() << 16);
+        if (!low.finished() || !high.finished())
+            atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    }
+}
+
+kernel void float_ans_join_words(
+    device const uint *lanes [[buffer(0)]],
+    device uint *words [[buffer(1)]],
+    device uint4 *descriptors [[buffer(2)]],
+    uint index [[thread_position_in_grid]]) {
+    words[index] = lanes[index * 2] | (lanes[index * 2 + 1] << 16);
+    if (index % 128 == 0) descriptors[index / 128] = uint4(0, 32, 0, index);
+}
+
 kernel void streamed_counts_decode_range(
     device const uchar *payload [[buffer(0)]],
     device const uint *offsets [[buffer(1)]],

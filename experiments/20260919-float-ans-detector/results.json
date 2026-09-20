@@ -1,0 +1,350 @@
+{
+  "timing_boundary": "encodeVirtualImage entry through Metal command completion; not native presentation",
+  "sample_policy": "All steps 3 through 95, inclusive; periodic rebase at step 63 retained. Earlier exploratory summaries excluded step 67 by mistake; these summaries correct that without changing raw evidence.",
+  "p95_method": "nearest rank",
+  "native_120_fps_qualified": false,
+  "runs": [
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "MOSS6",
+      "arm": "A1",
+      "samples": 93,
+      "median_ms": 229.8734167125076,
+      "p95_ms": 236.58308340236545,
+      "max_ms": 254.95500001125038,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "MOSS6",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 39.07879162579775,
+      "p95_ms": 44.73604168742895,
+      "max_ms": 106.71841667499393,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "MOSS6",
+      "arm": "A2",
+      "samples": 93,
+      "median_ms": 230.082374997437,
+      "p95_ms": 234.2140832915902,
+      "max_ms": 255.08262508083135,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "ZSM5",
+      "arm": "A1",
+      "samples": 93,
+      "median_ms": 231.57879163045436,
+      "p95_ms": 234.64995832182467,
+      "max_ms": 255.4557917173952,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "ZSM5",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 39.163250010460615,
+      "p95_ms": 44.67887501232326,
+      "max_ms": 106.39712505508214,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "ZSM5",
+      "arm": "A2",
+      "samples": 93,
+      "median_ms": 231.75912501756102,
+      "p95_ms": 239.43241662345827,
+      "max_ms": 255.95899997279048,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "tBL_WSe2",
+      "arm": "A1",
+      "samples": 93,
+      "median_ms": 57.7693332452327,
+      "p95_ms": 60.166249983012676,
+      "max_ms": 63.46837501041591,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "tBL_WSe2",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 9.984458331018686,
+      "p95_ms": 11.355124996043742,
+      "max_ms": 26.81079169269651,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "selective-ans-aba",
+      "dataset": "tBL_WSe2",
+      "arm": "A2",
+      "samples": 93,
+      "median_ms": 57.62933334335685,
+      "p95_ms": 61.609875061549246,
+      "max_ms": 64.39129170030355,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "serial-ans-probe",
+      "dataset": "MOSS6",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 39.13379169534892,
+      "p95_ms": 44.71479170024395,
+      "max_ms": 106.98029166087508,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "serial-ans-probe",
+      "dataset": "ZSM5",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 39.25250004976988,
+      "p95_ms": 45.043958351016045,
+      "max_ms": 107.53645841032267,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "serial-ans-probe",
+      "dataset": "tBL_WSe2",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 9.984333300963044,
+      "p95_ms": 11.371291591785848,
+      "max_ms": 26.47104172501713,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "parallel-literal-probe",
+      "dataset": "MOSS6",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 16.943541704677045,
+      "p95_ms": 18.25866661965847,
+      "max_ms": 90.93879163265228,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "parallel-literal-probe",
+      "dataset": "ZSM5",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 16.912458348087966,
+      "p95_ms": 18.076416687108576,
+      "max_ms": 85.78175003640354,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "parallel-literal-probe",
+      "dataset": "tBL_WSe2",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 4.4234583619982,
+      "p95_ms": 4.795166663825512,
+      "max_ms": 23.509916616603732,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "direct-literal-probe",
+      "dataset": "MOSS6",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 6.251458311453462,
+      "p95_ms": 6.511666695587337,
+      "max_ms": 104.34608336072415,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "direct-literal-probe",
+      "dataset": "ZSM5",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 6.256666732951999,
+      "p95_ms": 6.615916616283357,
+      "max_ms": 104.07037497498095,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "direct-literal-probe",
+      "dataset": "tBL_WSe2",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 1.7361666541546583,
+      "p95_ms": 1.8272916786372662,
+      "max_ms": 26.373791741207242,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "direct-literal-repeat",
+      "dataset": "MOSS6",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 6.205208250321448,
+      "p95_ms": 6.407125038094819,
+      "max_ms": 104.62324996478856,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "direct-literal-repeat",
+      "dataset": "ZSM5",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 6.217750022187829,
+      "p95_ms": 6.412541610188782,
+      "max_ms": 103.42762502841651,
+      "all_frozen_product_hashes_match": true
+    },
+    {
+      "probe": "direct-literal-repeat",
+      "dataset": "tBL_WSe2",
+      "arm": "B",
+      "samples": 93,
+      "median_ms": 1.7144583398476243,
+      "p95_ms": 1.7963333521038294,
+      "max_ms": 26.435916661284864,
+      "all_frozen_product_hashes_match": true
+    }
+  ],
+  "evidence": [
+    {
+      "path": "local-evidence://ptyrad-io-20260919/selective-ans-aba/results.json",
+      "sha256": "1cef67f7418783dfb9eb08015b5d29fcba108be33ab3f0bca95ac265b65dc8bd",
+      "bytes": 103782,
+      "retention": "keep"
+    },
+    {
+      "path": "local-evidence://ptyrad-io-20260919/serial-ans-probe/results.json",
+      "sha256": "9b4d63d8283cab4046bc15e25b0360b62048a07ad1c7e5049e1bcc63adcb2ede",
+      "bytes": 34463,
+      "retention": "keep"
+    },
+    {
+      "path": "local-evidence://ptyrad-io-20260919/parallel-literal-probe/results.json",
+      "sha256": "c938f8860c2548024f5334e4125051d8ecefcaaae4d3e8536bb3f3003213b0e7",
+      "bytes": 34608,
+      "retention": "keep"
+    },
+    {
+      "path": "local-evidence://ptyrad-io-20260919/direct-literal-probe/results.json",
+      "sha256": "8bd0cc0d6d6c86bbd53b0b1c79e8a75dcacf7524f9edad05b22a1602487c0af2",
+      "bytes": 34515,
+      "retention": "keep"
+    },
+    {
+      "path": "local-evidence://ptyrad-io-20260919/direct-literal-repeat/results.json",
+      "sha256": "54db73465c5058766be4836ec22796773df0ccb256051e75f44a8ce4f3e8a4ee",
+      "bytes": 34496,
+      "retention": "keep"
+    },
+    {
+      "path": "local-evidence://ptyrad-io-20260919/ans-final-native/detector-latency.json",
+      "sha256": "5fa1dcd8050fa114ae0113fc6661b86b4a5e88b3fd042c13760b0e74c0141cad",
+      "bytes": 2558,
+      "retention": "keep"
+    }
+  ],
+  "native": {
+    "samples": [
+      {
+        "id": "detector-1-submission-1",
+        "accepted": 684890.1365957501,
+        "presented": null,
+        "latency_ms": null,
+        "publish_ms": 61.68004171922803
+      },
+      {
+        "id": "detector-3-submission-2",
+        "accepted": 684890.1421097502,
+        "presented": null,
+        "latency_ms": null,
+        "publish_ms": 68.08016658760607
+      },
+      {
+        "id": "detector-4-submission-3",
+        "accepted": 684890.8934917501,
+        "presented": 684890.9420636668,
+        "latency_ms": 48.5719166463241,
+        "publish_ms": 6.702541722916067
+      },
+      {
+        "id": "detector-6-submission-4",
+        "accepted": 684890.8944117918,
+        "presented": 684890.9503968752,
+        "latency_ms": 55.98508333787322,
+        "publish_ms": 26.83395834174007
+      },
+      {
+        "id": "detector-7-submission-5",
+        "accepted": 684895.3182953335,
+        "presented": null,
+        "latency_ms": null,
+        "publish_ms": 32.65741665381938
+      },
+      {
+        "id": "detector-9-submission-6",
+        "accepted": 684895.3192710835,
+        "presented": null,
+        "latency_ms": null,
+        "publish_ms": 40.17883341293782
+      },
+      {
+        "id": "detector-10-submission-7",
+        "accepted": 684896.0619855418,
+        "presented": 684896.0836662918,
+        "latency_ms": 21.68074995279312,
+        "publish_ms": 3.8320833118632436
+      },
+      {
+        "id": "detector-13-submission-8",
+        "accepted": 684896.0676512502,
+        "presented": 684896.1086660002,
+        "latency_ms": 41.01475002244115,
+        "publish_ms": 18.276833347044885
+      },
+      {
+        "id": "detector-14-submission-9",
+        "accepted": 685010.2749240835,
+        "presented": null,
+        "latency_ms": null,
+        "publish_ms": 52.30391665827483
+      },
+      {
+        "id": "detector-16-submission-10",
+        "accepted": 685010.2861717085,
+        "presented": null,
+        "latency_ms": null,
+        "publish_ms": 50.731000024825335
+      },
+      {
+        "id": "detector-17-submission-11",
+        "accepted": 685011.0368573752,
+        "presented": 685011.0655802918,
+        "latency_ms": 28.722916613332927,
+        "publish_ms": 7.975916611030698
+      },
+      {
+        "id": "detector-20-submission-12",
+        "accepted": 685011.0406371668,
+        "presented": 685011.0822468335,
+        "latency_ms": 41.609666659496725,
+        "publish_ms": 20.224499981850386
+      }
+    ],
+    "confirmed": 6,
+    "unconfirmed": 6,
+    "median_ms": 41.31220834096894,
+    "p95_ms": 55.98508333787322,
+    "max_ms": 55.98508333787322,
+    "claim": "Short native pointer test; insufficient sustained input for 120 FPS certification"
+  }
+}

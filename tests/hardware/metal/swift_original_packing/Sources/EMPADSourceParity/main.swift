@@ -74,6 +74,9 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     sourceHashCacheURL: ProcessInfo.processInfo.environment["EMPAD_TEST_HASH_CACHE"].map { URL(fileURLWithPath: $0) },
     subtracting: background)
   print("EMPAD_SOURCE_HASH cached=\(resident.reusedSourceHash ? 1 : 0)")
+  if let destination = ProcessInfo.processInfo.environment["EMPAD_TEST_SAVE_QEM"] {
+    try resident.saveQEM(to: URL(fileURLWithPath: destination))
+  }
   let capabilities = try Metal4DSTEMResidentCapabilities.empad(resident)
   try capabilities.residentReceipt.validate()
   guard capabilities.fullInteractiveResident, capabilities.completeSourceResident else {
@@ -151,6 +154,7 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
     let stream = try FileHandle(forWritingTo: destination)
     defer { try? stream.close() }
     var masks = Data()
+    var timings: [[String: Double]] = []
     for step in 0..<96 {
       let values = mask.contents().assumingMemoryBound(to: UInt8.self)
       let centerRow = 64.0 + 4.0 * sin(Double(step) * 0.2)
@@ -165,13 +169,21 @@ if ProcessInfo.processInfo.environment["EMPAD_TEST_METAL"] == "1" {
           : (square >= inner * inner && square <= outer * outer ? 1 : 0)
       }
       let command = queue.makeCommandBuffer()!
+      let started = ProcessInfo.processInfo.systemUptime
       try resident.encodeVirtualImage(mask: mask, into: image, command: command)
       command.commit(); command.waitUntilCompleted()
       guard command.status == .completed else { fatalError("EMPAD aperture sequence command failed") }
+      timings.append([
+        "step": Double(step),
+        "wall_ms": (ProcessInfo.processInfo.systemUptime - started) * 1000,
+        "gpu_ms": (command.gpuEndTime - command.gpuStartTime) * 1000,
+      ])
       try stream.write(contentsOf: Data(bytes: image.contents(), count: image.length))
       masks.append(Data(bytes: mask.contents(), count: 16384))
     }
     try masks.write(to: URL(fileURLWithPath: arguments[1] + ".aperture-masks"))
+    try JSONSerialization.data(withJSONObject: timings, options: [.sortedKeys]).write(
+      to: URL(fileURLWithPath: arguments[1] + ".timings.json"))
     print("EMPAD_APERTURE_SEQUENCE steps=96")
   }
   print("EMPAD_METAL_PARITY device=\(device.name) resident_bytes=\(resident.residentBytes)")

@@ -24,38 +24,27 @@ extension MetalEMPADResidentSource {
     var table = [[String: Int]]()
     for chunk in chunks {
       if shouldCancel() { throw CancellationError() }
-      guard
-        let payload = device.makeBuffer(length: chunk.payload.length, options: .storageModeShared),
-        let descriptors = device.makeBuffer(
-          length: chunk.descriptors.length, options: .storageModeShared),
-        let command = queue.makeCommandBuffer(), let copy = command.makeBlitCommandEncoder()
-      else {
-        throw qemError(
-          "Not enough memory to save a bounded compressed window; free memory and retry.")
+      var entry = ["first": chunk.firstFrame, "scans": chunk.frameCount]
+      for (name, buffer) in [
+        ("payload", chunk.payload), ("offset", chunk.offsets), ("model", chunk.models),
+      ] {
+        guard let staging = device.makeBuffer(length: buffer.length, options: .storageModeShared),
+          let command = queue.makeCommandBuffer(), let copy = command.makeBlitCommandEncoder()
+        else { throw qemError("Free memory for a bounded ANS save window.") }
+        copy.copy(
+          from: buffer, sourceOffset: 0, to: staging, destinationOffset: 0, size: buffer.length)
+        copy.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
+        guard command.status == .completed else {
+          throw qemError("ANS transfer failed; retry saving.")
+        }
+        entry[name + "_offset"] = try writer.append(
+          Data(bytesNoCopy: staging.contents(), count: staging.length, deallocator: .none),
+          shouldCancel: shouldCancel)
+        entry[name + "_bytes"] = staging.length
       }
-      copy.copy(
-        from: chunk.payload, sourceOffset: 0, to: payload, destinationOffset: 0,
-        size: payload.length)
-      copy.copy(
-        from: chunk.descriptors, sourceOffset: 0, to: descriptors, destinationOffset: 0,
-        size: descriptors.length)
-      copy.endEncoding()
-      command.commit()
-      command.waitUntilCompleted()
-      guard command.status == .completed else {
-        throw qemError("Compressed transfer failed; retry saving.")
-      }
-      let start = try writer.append(
-        Data(bytesNoCopy: payload.contents(), count: payload.length, deallocator: .none),
-        shouldCancel: shouldCancel)
-      let descriptorStart = try writer.append(
-        Data(bytesNoCopy: descriptors.contents(), count: descriptors.length, deallocator: .none),
-        shouldCancel: shouldCancel)
-      table.append([
-        "first": chunk.firstFrame, "scans": chunk.frameCount,
-        "payload_offset": start, "payload_bytes": payload.length,
-        "descriptor_offset": descriptorStart, "descriptor_bytes": descriptors.length,
-      ])
+      table.append(entry)
     }
     var description: [String: Any] = [
       "format_identifier": source.formatIdentifier,
@@ -112,8 +101,8 @@ extension MetalEMPADResidentSource {
     }
     try writer.finish(
       header: [
-        "version": 1, "profile": "empad-xor-row-packed-v1",
-        "codec": "empad-xor-row-packed-v1",
+        "version": 1, "profile": MetalFloatANS.codec,
+        "codec": MetalFloatANS.codec,
         "shape": [source.scanRows, source.scanColumns, 128, 128],
         "dtype": "float32", "logical_sha256": logicalSHA256, "chunks": table,
         "empad": description, "scientific_metadata": scientific,
@@ -125,13 +114,14 @@ extension MetalEMPADResidentSource {
     memoryBudgetBytes: UInt64, shouldCancel: () -> Bool
   ) throws -> MetalEMPADResidentSource {
     let file = try NativeQEMFile(url: source.rawURL)
-    guard file.codec == "empad-xor-row-packed-v1", file.header["version"] as? Int == 1,
+    guard file.codec == MetalFloatANS.codec, file.header["version"] as? Int == 1,
       let entries = file.header["chunks"] as? [[String: Int]],
       let logicalHash = file.header["logical_sha256"] as? String, logicalHash.count == 64,
       UInt64(device.currentAllocatedSize) + UInt64(file.bodyBytes) + 65536 <= memoryBudgetBytes
     else { throw qemError("Unsupported or oversized EMPAD QEM; update the reader or free memory.") }
     if shouldCancel() { throw CancellationError() }
     let mapped = try file.verifiedMapping()
+    let ans = try MetalFloatANS(device: device)
     var chunks = [Chunk]()
     var cursor = 0
     var first = 0
@@ -139,47 +129,74 @@ extension MetalEMPADResidentSource {
       for entry in entries {
         if shouldCancel() { throw CancellationError() }
         guard entry["first"] == first, let count = entry["scans"], count > 0, count <= 512,
-          first <= source.frameCount - count,
-          entry["payload_offset"] == cursor, let length = entry["payload_bytes"], length >= 4,
-          length % 4 == 0, length <= file.bodyBytes - cursor,
-          entry["descriptor_offset"] == cursor + length,
-          entry["descriptor_bytes"] == count * 128 * 16,
-          count * 128 * 16 <= file.bodyBytes - cursor - length
-        else { throw qemError("Invalid EMPAD QEM chunk bounds; recopy the file.") }
-        let descriptorPointer = bytes.baseAddress!.advanced(by: file.bodyStart + cursor + length)
-        var words = 0
-        for index in 0..<count * 128 {
-          let descriptor = descriptorPointer.loadUnaligned(
-            fromByteOffset: index * 16, as: SIMD4<UInt32>.self)
-          guard descriptor.y <= 32, descriptor.z <= 32 - descriptor.y,
-            Int(descriptor.w) == words
-          else { throw qemError("Invalid EMPAD QEM row descriptor; recopy the file.") }
-          words += Int(descriptor.y) * 4
+          first <= source.frameCount - count
+        else { throw qemError("Invalid float ANS chunk coverage; recopy the file.") }
+        var buffers = [MTLBuffer]()
+        for name in ["payload", "offset", "model"] {
+          guard entry[name + "_offset"] == cursor, let length = entry[name + "_bytes"],
+            length > 0, length <= file.bodyBytes - cursor,
+            name != "offset" || length == (MetalFloatANS.lanes + 1) * 4,
+            name != "model" || length == MetalFloatANS.lanes,
+            let buffer = device.makeBuffer(
+              bytes: bytes.baseAddress!.advanced(by: file.bodyStart + cursor),
+              length: length, options: .storageModeShared)
+          else {
+            throw qemError(
+              "Invalid float ANS spans or insufficient memory; recopy the file or free memory.")
+          }
+          buffers.append(buffer)
+          cursor += length
         }
-        guard max(4, words * 4) == length,
-          let payload = device.makeBuffer(
-            bytes: bytes.baseAddress!.advanced(by: file.bodyStart + cursor),
-            length: length, options: .storageModeShared),
-          let descriptors = device.makeBuffer(
-            bytes: descriptorPointer, length: count * 128 * 16, options: .storageModeShared)
-        else {
-          throw qemError(
-            "Invalid packed length or insufficient Metal memory; recopy the file or free memory.")
+        let offsets = buffers[1].contents().assumingMemoryBound(to: UInt32.self)
+        let models = buffers[2].contents().assumingMemoryBound(to: UInt8.self)
+        guard offsets[0] == 0, Int(offsets[MetalFloatANS.lanes]) <= buffers[0].length else {
+          throw qemError("Invalid float ANS payload bounds.")
+        }
+        for stream in 0..<MetalFloatANS.lanes {
+          let begin = Int(offsets[stream])
+          let end = Int(offsets[stream + 1])
+          let model = Int(models[stream])
+          let length = end - begin
+          guard end >= begin, end <= buffers[0].length,
+            (model < 64 && length >= 4 && length <= count * 2)
+              || (model == 252 && length % 2 == 0 && length <= count * 2)
+              || (model == 253 && length == 0)
+              || (model == 254 && length == count * 2)
+              || (model == 255 && length == 2)
+          else { throw qemError("Invalid float ANS stream bounds or model.") }
         }
         chunks.append(
-          Chunk(firstFrame: first, frameCount: count, payload: payload, descriptors: descriptors))
-        cursor += length + count * 128 * 16
+          Chunk(
+            firstFrame: first, frameCount: count,
+            payload: buffers[0], offsets: buffers[1], models: buffers[2]))
         first += count
       }
     }
     guard first == source.frameCount, cursor == file.bodyBytes else {
       throw qemError("Incomplete EMPAD QEM; recopy the file.")
     }
+    guard let queue = device.makeCommandQueue() else { throw qemError("Metal queue unavailable.") }
+    for chunk in chunks {
+      if shouldCancel() { throw CancellationError() }
+      guard let command = queue.makeCommandBuffer() else {
+        throw qemError("Metal command unavailable.")
+      }
+      let workspace = try ans.workspace(
+        frames: chunk.frameCount, budget: memoryBudgetBytes, command: command)
+      try ans.encode(chunk, into: workspace, command: command)
+      command.commit()
+      command.waitUntilCompleted()
+      guard command.status == .completed,
+        workspace.errors.contents().load(as: UInt32.self) == 0
+      else { throw qemError("Corrupt float ANS stream; recopy or re-export the acquisition.") }
+    }
     let library = try Metal4DSTEMKernels.makeEMPADLibrary(device: device)
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
-      guard let function = library.makeFunction(name: name) else {
-        throw qemError("Missing EMPAD kernel; rebuild the app.")
-      }
+      let constants = MTLFunctionConstantValues()
+      var decoded = true
+      constants.setConstantValue(&decoded, type: .bool, index: 0)
+      constants.setConstantValue(&decoded, type: .bool, index: 1)
+      let function = try library.makeFunction(name: name, constantValues: constants)
       return try device.makeComputePipelineState(function: function)
     }
     var background: MetalEMPADBackground?
@@ -202,7 +219,7 @@ extension MetalEMPADResidentSource {
     }
     try source.validateUnchanged()
     return try MetalEMPADResidentSource(
-      source: source, device: device,
+      source: source, device: device, ans: ans,
       diffraction: pipeline("empad_diffraction"), detector: pipeline("empad_virtual_image"),
       chunks: chunks,
       logicalSHA256: logicalHash, centerOfMass: pipeline("empad_center_of_mass_simd"),

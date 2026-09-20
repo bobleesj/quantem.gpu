@@ -42,11 +42,11 @@ class NamedFloatSourceTests(unittest.TestCase):
             # A dose variant must not be silently substituted for /dp.
             handle["dp_1e+04"] = np.ones((6, 128, 128), dtype="<f4")
 
-    def invoke(self, succeeds):
+    def invoke(self, succeeds, *, metal=False):
         result = subprocess.run(
             [os.environ["EMPAD_SOURCE_PARITY_EXE"], str(self.source),
              str(self.output), "5,0,3,0"],
-            env={**os.environ, "EMPAD_TEST_METAL": "0"},
+            env={**os.environ, "EMPAD_TEST_METAL": "1" if metal else "0"},
             capture_output=True, text=True, check=False,
         )
         if succeeds:
@@ -67,6 +67,14 @@ class NamedFloatSourceTests(unittest.TestCase):
     def test_recorded_abtem_scan_axes(self):
         self.make(abtem=True)
         self.invoke(True)
+
+    def test_named_hdf5_is_exact_ans_resident(self):
+        self.make(abtem=True)
+        self.invoke(True, metal=True)
+        capabilities = json.loads(Path(str(self.output) + ".capabilities.json").read_text())
+        self.assertEqual(capabilities["representation"], "encoded")
+        self.assertEqual(capabilities["storageSchema"],
+                         "quantem.gpu.float32-bit-lanes-rans/v1")
 
     def test_missing_or_inconsistent_shape_is_not_guessed(self):
         for shape in (None, (3, 3), (0, 6), (-2, -3), (2.0, 3.0)):

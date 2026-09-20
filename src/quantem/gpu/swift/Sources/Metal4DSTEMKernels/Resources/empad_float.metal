@@ -1,6 +1,9 @@
 #include <metal_stdlib>
 using namespace metal;
 
+constant bool empad_decoded_words [[function_constant(0)]];
+constant bool empad_direct_ans [[function_constant(1)]];
+
 kernel void empad_dark_mean(device const float* input [[buffer(0)]],
                             device float2* accumulator [[buffer(1)]],
                             device float* output [[buffer(2)]],
@@ -83,6 +86,8 @@ kernel void empad_pack_simd(device const uint* input [[buffer(0)]],
 
 inline uint empad_word(device const uint* packed, device const uint4* descriptors,
                        uint index) {
+    if (is_function_constant_defined(empad_decoded_words) && empad_decoded_words)
+        return packed[index];
     uint4 d = descriptors[index / 128];
     if (!d.y) return d.x;
     uint bit = (index % 128) * d.y, shift = bit % 32, word = d.w + bit / 32;
@@ -206,6 +211,13 @@ kernel void empad_virtual_image(device const uint* packed [[buffer(0)]],
 // Incremental integration retains a high/low sum per scan position. It is an
 // image-sized cache, not a second 4D representation. Nonfinite previous sums
 // are recomputed from the complete current mask so removing a NaN recovers.
+inline uint empad_ans_literal(device const uchar *payload, device const uint *offsets,
+                              uint stream, uint model, uint frame) {
+    if (model == 253) return 0;
+    uint at = offsets[stream] + (model == 254 ? frame * 2 : 0);
+    return uint(payload[at]) | (uint(payload[at + 1]) << 8);
+}
+
 kernel void empad_virtual_image_changes(device const uint* packed [[buffer(0)]],
                                        device const uint4* descriptors [[buffer(1)]],
     device const float* background [[buffer(8)]],
@@ -216,6 +228,9 @@ kernel void empad_virtual_image_changes(device const uint* packed [[buffer(0)]],
                                        device float2* accumulated [[buffer(5)]],
                                        constant uint2& parameters [[buffer(6)]],
                                        device const uchar* mask [[buffer(7)]],
+                                       device const uchar* ansPayload [[buffer(10)]],
+                                       device const uint* ansOffsets [[buffer(11)]],
+                                       device const uchar* ansModels [[buffer(12)]],
                                        uint frame [[threadgroup_position_in_grid]],
                                        ushort lane [[thread_index_in_simdgroup]],
                                        ushort group [[simdgroup_index_in_threadgroup]],
@@ -234,7 +249,17 @@ kernel void empad_virtual_image_changes(device const uint* packed [[buffer(0)]],
     for (uint entry = local; entry < count; entry += width) {
         int2 item = recover ? int2(entry, mask[entry] != 0) : entries[entry];
         if (item.y) {
-            float value = empad_value(packed, descriptors, frame * 16384 + uint(item.x), background, corrected);
+            uint pixel = uint(item.x);
+            float value;
+            if (is_function_constant_defined(empad_direct_ans) && empad_direct_ans
+                && ansModels[pixel * 2] >= 253 && ansModels[pixel * 2 + 1] >= 253) {
+                uint low = empad_ans_literal(ansPayload, ansOffsets, pixel * 2, ansModels[pixel * 2], frame);
+                uint high = empad_ans_literal(ansPayload, ansOffsets, pixel * 2 + 1, ansModels[pixel * 2 + 1], frame);
+                value = as_type<float>(low | (high << 16));
+                if (corrected) value -= background[pixel];
+            } else {
+                value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected);
+            }
             empad_accumulate(value * float(item.y), sum, residual);
         }
     }

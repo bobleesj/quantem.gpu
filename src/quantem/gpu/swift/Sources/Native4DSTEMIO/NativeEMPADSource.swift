@@ -36,13 +36,13 @@ public struct NativeEMPADSource: Sendable {
   private let metadataIdentity: NativeFileIdentity?
   public var frameCount: Int { scanRows * scanColumns }
   public var sourceBytes: Int { frameCount * recordBytes }
-  public var hasQEMStorage: Bool { microscopeMetadata["qem_storage"] == "empad-xor-row-packed-v1" }
+  public var hasQEMStorage: Bool { microscopeMetadata["qem_storage"] == "float32-bit-lanes-rans-v1" }
 
   /// Restore an EMPAD acquisition description without requiring its original folder.
   /// Example: `try NativeEMPADSource.openQEM(url)`.
   public static func openQEM(_ url: URL) throws -> NativeEMPADSource {
     let file = try NativeQEMFile(url: url)
-    guard file.codec == "empad-xor-row-packed-v1",
+    guard file.codec == "float32-bit-lanes-rans-v1",
       file.header["dtype"] as? String == "float32",
       let shape = file.header["shape"] as? [Int], shape.count == 4,
       shape[2...] == [128, 128], shape[0] <= Int(UInt32.max) / shape[1],

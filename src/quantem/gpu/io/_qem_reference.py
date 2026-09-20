@@ -1,4 +1,4 @@
-"""Readable, explicit CPU reference for the two QEM version-1 measurement codecs.
+"""Readable, explicit CPU reference for QEM version-1 measurement codecs.
 
 Only NumPy and the standard library are used. No accelerated codec or entropy
 table builder is imported. The frozen table and bitstream specification own the
@@ -22,6 +22,7 @@ from . import _qem_metadata
 
 _INTEGER = "runtime-column-rans-spatial-v2"
 _FLOAT = "empad-xor-row-packed-v1"
+_FLOAT_ANS = "float32-bit-lanes-rans-v1"
 _BLOCK = 64 << 20
 _LOWER = 1 << 23
 
@@ -179,17 +180,17 @@ def _integer_arrays(frames: np.ndarray, valid: np.ndarray) -> tuple[bytes, ...]:
     )
 
 
-def _float_arrays(frames: np.ndarray) -> tuple[bytes, bytes]:
-    payload, descriptors = bytearray(), []
-    for row in frames.view("<u4").reshape(-1, 128):
-        base = int(row[0])
-        delta = row ^ base
-        changed = int(np.bitwise_or.reduce(delta))
-        shift = (changed & -changed).bit_length() - 1 if changed else 0
-        width = changed.bit_length() - shift
-        descriptors.append((base, width, shift, len(payload) // 4))
-        payload.extend(_pack(delta >> shift, width))
-    return bytes(payload or b"\0" * 4), np.asarray(descriptors, "<u4").tobytes()
+def _float_arrays(frames: np.ndarray) -> tuple[bytes, bytes, bytes]:
+    """Reference ANS encoding of IEEE bits, never float-to-integer conversion."""
+    lanes = frames.view("<u2").reshape(len(frames), -1)
+    payload, offsets, models = bytearray(), [0], []
+    for lane in lanes.T:
+        model, encoded = _encode_stream(lane)
+        models.append(model)
+        payload.extend(encoded)
+        offsets.append(len(payload))
+    return (bytes(payload or b"\0"), np.asarray(offsets, "<u4").tobytes(),
+            bytes(models))
 
 
 def save_array(
@@ -242,7 +243,7 @@ def save_array(
             "The float32 QEM codec cannot retain a detector validity mask yet; "
             "keep the original acquisition instead of silently discarding the mask."
         )
-    codec = _FLOAT if floating else _INTEGER
+    codec = _FLOAT_ANS if floating else _INTEGER
     header = dict(
         container="quantem.qem",
         container_version=1,
@@ -263,20 +264,13 @@ def save_array(
             block = np.ascontiguousarray(frames[first : first + chunk_scans])
             if floating:
                 logical.update(block.tobytes())
-                payload, descriptors = _float_arrays(block)
-                offset = body.tell()
-                body.write(payload)
-                body.write(descriptors)
-                header["chunks"].append(
-                    dict(
-                        first=first,
-                        scans=len(block),
-                        payload_offset=offset,
-                        payload_bytes=len(payload),
-                        descriptor_offset=offset + len(payload),
-                        descriptor_bytes=len(descriptors),
-                    )
-                )
+                entry = dict(first=first, scans=len(block))
+                for name, encoded in zip(("payload", "offset", "model"),
+                                         _float_arrays(block)):
+                    entry[name + "_offset"] = body.tell()
+                    entry[name + "_bytes"] = len(encoded)
+                    body.write(encoded)
+                header["chunks"].append(entry)
             else:
                 arrays = []
                 for encoded, itemsize in zip(
@@ -384,6 +378,15 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
                     frames[
                         first + block * 512 : first + block * 512 + length, pixel
                     ] = values
+            elif header["codec"] == _FLOAT_ANS:
+                handle.seek(start + chunk["payload_offset"])
+                payload = handle.read(chunk["payload_bytes"])
+                offsets = np.frombuffer(handle.read(chunk["offset_bytes"]), "<u4")
+                models = handle.read(chunk["model_bytes"])
+                lanes = frames[first:first + count].view("<u2")
+                for lane, model in enumerate(models):
+                    lanes[:, lane] = _decode_stream(
+                        payload[int(offsets[lane]):int(offsets[lane + 1])], model, count)
             elif header["codec"] == _FLOAT:
                 handle.seek(start + chunk["payload_offset"])
                 payload = handle.read(chunk["payload_bytes"])
@@ -402,7 +405,7 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
             else:
                 raise NotImplementedError(f"Unsupported QEM codec {header['codec']!r}.")
     if (
-        header["codec"] == _FLOAT
+        header["codec"] in (_FLOAT, _FLOAT_ANS)
         and hashlib.sha256(data.tobytes()).hexdigest() != header["logical_sha256"]
     ):
         raise ValueError("QEM decoded float32 checksum mismatch.")
@@ -419,7 +422,7 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
         detector_shape=shape[2:],
         file_counts_exact=True,
     )
-    if header["codec"] == _FLOAT:
+    if header["codec"] in (_FLOAT, _FLOAT_ANS):
         metadata["qem_empad"] = header["empad"]
         metadata.setdefault("background_applied", False)
         metadata["background_applied_by_reader"] = False

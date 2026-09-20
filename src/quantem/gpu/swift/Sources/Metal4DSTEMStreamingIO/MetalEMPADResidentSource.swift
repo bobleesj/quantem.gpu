@@ -1,18 +1,11 @@
 import CryptoKit
 import Foundation
-import Metal
+@preconcurrency import Metal
 import Metal4DSTEMKernels
 import Native4DSTEMIO
 
-/// Full EMPAD measurements in lossless, randomly addressable Metal word packing.
-///
-/// This format preserves float32 bit patterns, not integer counts. It stores
-/// each detector row's common XOR prefix and suffix plus the remaining bits.
-/// Compression is data-dependent and can be slightly larger than float32 for
-/// incompressible rows. It never quantizes or clips measurements.
-///
-/// Example: `try MetalEMPADResidentSource.load(source, device: device,
-/// memoryBudgetBytes: budget)` followed by encoding a selected DP or mask sum.
+/// Exact float32 measurements resident as ANS-coded IEEE bit lanes.
+/// Scientific consumers decode bounded GPU windows without a full dense cube.
 /// Calls, release and command completion must be serialized by the owner.
 public final class MetalEMPADResidentSource {
   public let source: NativeEMPADSource
@@ -24,12 +17,13 @@ public final class MetalEMPADResidentSource {
   /// Uncorrected tensor identity, suitable for source-bound notes and metadata.
   public let originalSourceIdentitySHA256: String
   /// True only when a checksum-protected source hash matched the file snapshot.
-  /// The complete original measurements are still reread and packed.
+  /// The complete original measurements are still reread and ANS encoded.
   public let reusedSourceHash: Bool
-  /// Optional calibrated product transform; original packed measurements remain intact.
+  /// Optional calibrated product transform; original encoded measurements remain intact.
   public private(set) var background: MetalEMPADBackground?
   public private(set) var isReleased = false
   let device: MTLDevice
+  let ans: MetalFloatANS
   private let diffractionPipeline: MTLComputePipelineState
   private let detectorPipeline: MTLComputePipelineState
   private let serialDetector: Bool
@@ -49,43 +43,12 @@ public final class MetalEMPADResidentSource {
     let firstFrame: Int
     let frameCount: Int
     let payload: MTLBuffer
-    let descriptors: MTLBuffer
-  }
-
-  /// One in-flight read-only window, ordered exactly like the source tensor.
-  /// The producer waits before submitting another hash, so slow checksumming
-  /// cannot accumulate a hidden dense volume of staging buffers.
-  // Mutable state is confined to the serial queue. Input ownership is retained
-  // there until hashing finishes; the producer and Metal only read its bytes.
-  private final class SourceDigest: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "quantem.gpu.empad-source-digest", qos: .userInitiated)
-    private var digest = SHA256()
-    private var seconds = 0.0
-    private var input: MTLBuffer?
-
-    func append(_ input: MTLBuffer) {
-      queue.sync { self.input = input }
-      queue.async {
-        let started = CFAbsoluteTimeGetCurrent()
-        self.digest.update(
-          bufferPointer: UnsafeRawBufferPointer(
-            start: self.input!.contents(), count: self.input!.length))
-        self.seconds += CFAbsoluteTimeGetCurrent() - started
-        self.input = nil
-      }
-    }
-
-    func wait() { queue.sync {} }
-
-    func finish() -> (hash: String, seconds: Double) {
-      queue.sync {
-        (digest.finalize().map { String(format: "%02x", $0) }.joined(), seconds)
-      }
-    }
+    let offsets: MTLBuffer
+    let models: MTLBuffer
   }
 
   init(
-    source: NativeEMPADSource, device: MTLDevice,
+    source: NativeEMPADSource, device: MTLDevice, ans: MetalFloatANS,
     diffraction: MTLComputePipelineState, detector: MTLComputePipelineState, chunks: [Chunk],
     logicalSHA256: String, centerOfMass: MTLComputePipelineState, mean: MTLComputePipelineState,
     serialDetector: Bool, detectorThreads: Int, serialCenterOfMass: Bool,
@@ -94,6 +57,7 @@ public final class MetalEMPADResidentSource {
   ) {
     self.source = source
     self.device = device
+    self.ans = ans
     self.diffractionPipeline = diffraction
     self.detectorPipeline = detector
     self.serialDetector = serialDetector
@@ -121,11 +85,11 @@ public final class MetalEMPADResidentSource {
     }
     sourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
     residentBytes =
-      chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.descriptors.length) }
-      + (background == nil ? 0 : 65536)
+      chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.offsets.length + $1.models.length) }
+      + UInt64(ans.table.length) + (background == nil ? 0 : 65536)
   }
 
-  /// Read every original detector pixel and finish packing before returning.
+  /// Read every original detector pixel and finish ANS encoding before returning.
   ///
   /// The budget caps total current Metal allocation plus the next bounded
   /// staging window. It is not a process-RSS or operating-system page-cache cap.
@@ -153,8 +117,7 @@ public final class MetalEMPADResidentSource {
     let profile = ProcessInfo.processInfo.environment["QGPU_EMPAD_LOAD_PROFILE"] == "1"
     var readSeconds = 0.0
     var hashSeconds = 0.0
-    var analyzeSeconds = 0.0
-    var packSeconds = 0.0
+    var encodeSeconds = 0.0
     guard source.frameCount <= Int(UInt32.max) else {
       throw failure("EMPAD scan exceeds the supported frame-address range.")
     }
@@ -184,22 +147,15 @@ public final class MetalEMPADResidentSource {
     let snapshot = try source.sourceSnapshot()
     let hashCacheURL = EMPADSourceHashCache.safeURL(sourceHashCacheURL, source: source)
     let cachedHash = EMPADSourceHashCache.read(hashCacheURL, snapshot: snapshot)
-    let pipelinedHash =
-      cachedHash == nil && ProcessInfo.processInfo.environment["QGPU_EMPAD_HASH_SERIAL"] != "1"
-      ? SourceDigest() : nil
-    // Cancellation/error must drain readers before returning to the owner.
-    defer { pipelinedHash?.wait() }
-    var hashWaitSeconds = 0.0
     let library = try Metal4DSTEMKernels.makeEMPADLibrary(device: device)
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
-      guard let function = library.makeFunction(name: name) else {
-        throw failure("EMPAD kernel is missing: \(name). Rebuild the backend resources.")
-      }
+      let constants = MTLFunctionConstantValues()
+      var decoded = true
+      constants.setConstantValue(&decoded, type: .bool, index: 0)
+      constants.setConstantValue(&decoded, type: .bool, index: 1)
+      let function = try library.makeFunction(name: name, constantValues: constants)
       return try device.makeComputePipelineState(function: function)
     }
-    let cooperativePacking = ProcessInfo.processInfo.environment["QGPU_EMPAD_PACK_CONTROL"] != "1"
-    let describe = try pipeline(cooperativePacking ? "empad_describe_simd" : "empad_describe")
-    let pack = try pipeline(cooperativePacking ? "empad_pack_simd" : "empad_pack")
     let diffraction = try pipeline("empad_diffraction")
     // Retained control for reproducible native A/B/A qualification.
     let serialDetector = ProcessInfo.processInfo.environment["QGPU_EMPAD_SERIAL_DETECTOR"] == "1"
@@ -224,264 +180,73 @@ public final class MetalEMPADResidentSource {
     if let incremental, incremental.maxTotalThreadsPerThreadgroup < detectorThreads {
       throw failure("EMPAD aperture-change kernel requires a 128-thread-capable Metal pipeline.")
     }
-    guard let queue = device.makeCommandQueue() else {
-      throw failure("Metal command queue is unavailable.")
+    let ans = try MetalFloatANS(device: device)
+    let allocatedBefore = UInt64(device.currentAllocatedSize)
+    guard allocatedBefore < memoryBudgetBytes else {
+      throw failure("Free memory before loading the ANS resident.")
     }
-    var chunks: [Chunk] = []
-    var logicalDigest = SHA256()
-    // Two 16 MiB windows overlap first-use hashing at the same staging bound
-    // as the single 32 MiB window used when a prior source hash is available.
-    let requestedWindow =
-      ProcessInfo.processInfo.environment["QGPU_EMPAD_WINDOW"]
-      ?? (pipelinedHash == nil ? "512" : "256")
-    let window = requestedWindow == "64" ? 64 : requestedWindow == "256" ? 256 : 512
-    // Two bounded input windows alternate so the read of window N+1 runs while
-    // the GPU analyses and packs window N. A window is refilled only after the
-    // command buffer that consumed it has completed. The pipelined source hash
-    // reads its window later on another queue, so recycling is enabled only
-    // when nothing else still holds a reference.
-    let overlapReads =
-      pipelinedHash == nil
-      && ProcessInfo.processInfo.environment["QGPU_EMPAD_READ_OVERLAP"] != "0"
-    let readQueue = DispatchQueue(label: "org.quantem.gpu.empad-read", qos: .userInitiated)
-    // Cancellation and GPU failures must not leave a read writing after return.
-    defer { readQueue.sync {} }
-    var inputRing: [MTLBuffer?] = [nil, nil]
-    var ringSlot = 0
-    var prefetched: (first: Int, frameCount: Int, buffer: MTLBuffer, status: EMPADReadStatus)?
-
-    /// Exact pixel data for one bounded window, in a destination buffer.
-    ///
-    /// Without overlap the original fresh allocation and synchronous read are
-    /// kept. With overlap the two ring slots alternate, and any in-flight
-    /// prefetch is drained before a slot is refilled so a buffer is never
-    /// overwritten while a read still owns it.
-    func windowInput(first: Int, frameCount: Int, bytes: Int) throws -> MTLBuffer {
-      guard overlapReads else {
-        guard let buffer = device.makeBuffer(length: bytes, options: .storageModeShared) else {
-          throw failure("Metal could not allocate the bounded EMPAD input window.")
-        }
-        let started = CFAbsoluteTimeGetCurrent()
-        try source.readFrames(
-          Array(first..<(first + frameCount)),
-          into: UnsafeMutableRawBufferPointer(start: buffer.contents(), count: bytes))
-        readSeconds += CFAbsoluteTimeGetCurrent() - started
-        return buffer
-      }
-      if let pending = prefetched {
-        prefetched = nil
-        pending.status.wait()
-        if let error = pending.status.failure { throw error }
-        if pending.first == first, pending.frameCount == frameCount {
-          readSeconds += pending.status.seconds
-          return pending.buffer
-        }
-      }
-      let slot = ringSlot
-      let buffer: MTLBuffer
-      if let reused = inputRing[slot], reused.length == bytes {
-        buffer = reused
-      } else {
-        guard let made = device.makeBuffer(length: bytes, options: .storageModeShared) else {
-          throw failure("Metal could not allocate the bounded EMPAD input window.")
-        }
-        inputRing[slot] = made
-        buffer = made
-      }
-      let status = EMPADReadStatus()
-      startEMPADRead(
-        source: source, frames: first..<(first + frameCount), into: buffer,
-        status: status, queue: readQueue)
-      status.wait()
-      if let error = status.failure { throw error }
-      readSeconds += status.seconds
-      return buffer
-    }
-
+    let encoder = try RuntimeANSEncoder(
+      device: device, pixels: MetalFloatANS.lanes, bytesPerValue: 2,
+      allocatedBefore: allocatedBefore, maximumAdditionalBytes: memoryBudgetBytes - allocatedBefore)
+    var digest = SHA256()
+    // A bounded restart window also fixes scientific reduction order.
+    let requested = ProcessInfo.processInfo.environment["QGPU_EMPAD_WINDOW"]
+    let window = requested == "64" ? 64 : requested == "512" ? 512 : 256
     var first = 0
     while first < source.frameCount {
       try checkCancellation(shouldCancel)
-      var allocatedBytes = UInt64(device.currentAllocatedSize)
-      // A nearly full budget may fit the remaining source only after the last
-      // hash releases its window. Do not reject a valid source prematurely.
-      if memoryBudgetBytes <= allocatedBytes + 16384 * 4 * 2 + 128 * 16 * 2 + UInt64(getpagesize())
-        * 3
-      {
-        pipelinedHash?.wait()
-        allocatedBytes = UInt64(device.currentAllocatedSize)
-      }
-      let available = memoryBudgetBytes > allocatedBytes ? memoryBudgetBytes - allocatedBytes : 0
-      let peakBytesPerFrame: UInt64 = 16384 * 4 * 2 + 128 * 16 * 2
-      // The input is page-aligned in size; allow page rounding for the two
-      // descriptor buffers and a variable-length packed payload as well.
-      let pageHeadroom = UInt64(getpagesize()) * 3
-      let windowBudget = available > pageHeadroom ? available - pageHeadroom : 0
-      let framesWithinBudget = Int(min(UInt64(window), windowBudget / peakBytesPerFrame))
-      let frameCount = min(framesWithinBudget, source.frameCount - first)
-      let blocks = frameCount * 128
-      let sourceBytes = frameCount * 16384 * 4
-      let descriptorBytes = blocks * MemoryLayout<SIMD4<UInt32>>.stride
-      // Includes worst-case payload and private descriptor copy before reading.
-      let additionalBytes = UInt64(sourceBytes * 2 + descriptorBytes * 2)
-      guard frameCount > 0, allocatedBytes <= memoryBudgetBytes,
-        additionalBytes <= memoryBudgetBytes - allocatedBytes
-      else {
-        if profile {
-          fputs(
-            "EMPAD_BUDGET allocated=\(allocatedBytes) budget=\(memoryBudgetBytes) first=\(first) frames=\(frameCount) additional=\(additionalBytes)\n",
-            stderr)
-        }
-        throw failure(
-          "The full EMPAD resident exceeds the Metal memory budget. Close another dataset or open a smaller acquisition; no pixels were reduced."
-        )
-      }
+      let allocated = UInt64(device.currentAllocatedSize)
+      let available = memoryBudgetBytes > allocated ? memoryBudgetBytes - allocated : 0
+      // Include input, ANS scratch, worst-case output, and stream tables.
+      // Shrinking this window changes neither detector nor scan coverage.
+      let boundedFrames = available > 1 << 20 ? Int((available - (1 << 20)) / (16384 * 16)) : 0
+      let count = min(window, boundedFrames, source.frameCount - first)
+      guard count > 0 else { throw failure("Free memory for a bounded ANS encoding window.") }
       try autoreleasepool {
-        let input = try windowInput(
-          first: first, frameCount: frameCount, bytes: sourceBytes)
-        let analyzeStarted = CFAbsoluteTimeGetCurrent()
-        guard
-          let descriptors = device.makeBuffer(length: descriptorBytes, options: .storageModeShared),
-          let analysis = queue.makeCommandBuffer(),
-          let encoder = analysis.makeComputeCommandEncoder()
-        else { throw failure("Metal could not allocate the bounded EMPAD packing window.") }
-        encoder.setComputePipelineState(describe)
-        encoder.setBuffer(input, offset: 0, index: 0)
-        encoder.setBuffer(descriptors, offset: 0, index: 1)
-        if cooperativePacking {
-          encoder.dispatchThreadgroups(
-            MTLSize(width: blocks, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
-        } else {
-          dispatch(encoder, pipeline: describe, count: blocks)
-        }
-        encoder.endEncoding()
-        // Both consumers only read input. An ordered, bounded hash queue also
-        // overlaps packing and the following read without changing SHA-256.
-        analysis.commit()
-        let hashStarted = CFAbsoluteTimeGetCurrent()
-        if let pipelinedHash {
-          pipelinedHash.append(input)
-        } else if cachedHash == nil {
-          logicalDigest.update(
-            bufferPointer: UnsafeRawBufferPointer(
-              start: input.contents(), count: sourceBytes))
-        }
-        let hashElapsed = CFAbsoluteTimeGetCurrent() - hashStarted
-        if pipelinedHash != nil {
-          hashWaitSeconds += hashElapsed
-        } else {
-          hashSeconds += hashElapsed
-        }
-        analysis.waitUntilCompleted()
-        guard analysis.status == .completed else {
-          throw failure("EMPAD row analysis failed: \(String(describing: analysis.error))")
-        }
-        analyzeSeconds += CFAbsoluteTimeGetCurrent() - analyzeStarted - hashElapsed
-        let packStarted = CFAbsoluteTimeGetCurrent()
+        let bytes = count * 16384 * 4
+        guard UInt64(device.currentAllocatedSize) + UInt64(bytes) < memoryBudgetBytes,
+          let input = device.makeBuffer(length: bytes, options: .storageModeShared)
+        else { throw failure("Free memory for the bounded ANS input window.") }
+        let readStarted = CFAbsoluteTimeGetCurrent()
+        try source.readFrames(
+          Array(first..<(first + count)),
+          into: UnsafeMutableRawBufferPointer(start: input.contents(), count: bytes))
         try checkCancellation(shouldCancel)
-        let entries = descriptors.contents().bindMemory(to: SIMD4<UInt32>.self, capacity: blocks)
-        var words: UInt32 = 0
-        for block in 0..<blocks {
-          entries[block].w = words
-          words += entries[block].y * 4
+        readSeconds += CFAbsoluteTimeGetCurrent() - readStarted
+        if cachedHash == nil {
+          let hashStarted = CFAbsoluteTimeGetCurrent()
+          digest.update(
+            bufferPointer: UnsafeRawBufferPointer(start: input.contents(), count: bytes))
+          hashSeconds += CFAbsoluteTimeGetCurrent() - hashStarted
         }
-        guard
-          let payload = device.makeBuffer(
-            length: max(4, Int(words) * 4), options: .storageModePrivate),
-          let residentDescriptors = device.makeBuffer(
-            length: descriptorBytes, options: .storageModePrivate),
-          let command = queue.makeCommandBuffer(),
-          let packEncoder = command.makeComputeCommandEncoder()
-        else {
-          throw failure("Metal could not allocate the exact EMPAD resident. Free memory and retry.")
-        }
-        packEncoder.setComputePipelineState(pack)
-        packEncoder.setBuffer(input, offset: 0, index: 0)
-        packEncoder.setBuffer(descriptors, offset: 0, index: 1)
-        packEncoder.setBuffer(payload, offset: 0, index: 2)
-        if cooperativePacking {
-          packEncoder.dispatchThreadgroups(
-            MTLSize(width: blocks, height: 1, depth: 1),
-            threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
-        } else {
-          dispatch(packEncoder, pipeline: pack, count: blocks)
-        }
-        packEncoder.endEncoding()
-        guard let copy = command.makeBlitCommandEncoder() else {
-          throw failure("Metal descriptor upload failed.")
-        }
-        copy.copy(
-          from: descriptors, sourceOffset: 0, to: residentDescriptors,
-          destinationOffset: 0, size: descriptorBytes)
-        copy.endEncoding()
-        try finish(command)
-        packSeconds += CFAbsoluteTimeGetCurrent() - packStarted
-        guard UInt64(device.currentAllocatedSize) <= memoryBudgetBytes else {
-          throw failure(
-            "EMPAD packing exceeded the Metal memory budget, including command resources. Free memory and retry; no partial resident was published."
-          )
-        }
+        let encodeStarted = CFAbsoluteTimeGetCurrent()
+        try encoder.append(dense: input, firstScan: first, scanCount: count)
         try checkCancellation(shouldCancel)
-        chunks.append(
-          Chunk(
-            firstFrame: first, frameCount: frameCount,
-            payload: payload, descriptors: residentDescriptors))
+        encodeSeconds += CFAbsoluteTimeGetCurrent() - encodeStarted
+        if count < window { encoder.releaseScratch() }
       }
-      let nextFirst = first + frameCount
-      if overlapReads {
-        // Probe the next window with the same budget arithmetic the loop uses,
-        // so a prefetch never asks for more memory than the synchronous path.
-        let nextSlot = 1 - ringSlot
-        let nextAllocated = UInt64(device.currentAllocatedSize)
-        let nextAvailable =
-          memoryBudgetBytes > nextAllocated ? memoryBudgetBytes - nextAllocated : 0
-        let nextHeadroom = UInt64(getpagesize()) * 3
-        let nextBudget = nextAvailable > nextHeadroom ? nextAvailable - nextHeadroom : 0
-        let nextCount = min(
-          Int(min(UInt64(window), nextBudget / peakBytesPerFrame)),
-          source.frameCount - nextFirst)
-        let nextBytes = nextCount * 16384 * 4
-        let nextDescriptors = nextCount * 128 * MemoryLayout<SIMD4<UInt32>>.stride
-        if nextCount > 0, nextFirst < source.frameCount,
-          UInt64(nextBytes * 2 + nextDescriptors * 2) <= nextAvailable,
-          let buffer = inputRing[nextSlot], buffer.length == nextBytes
-        {
-          let status = EMPADReadStatus()
-          prefetched = (nextFirst, nextCount, buffer, status)
-          startEMPADRead(
-            source: source, frames: nextFirst..<(nextFirst + nextCount), into: buffer,
-            status: status, queue: readQueue)
-        }
-        ringSlot = nextSlot
-      }
-      first = nextFirst
+      first += count
     }
-    let hashFinishStarted = CFAbsoluteTimeGetCurrent()
-    let completedHash = pipelinedHash?.finish()
-    if let completedHash {
-      hashSeconds = completedHash.seconds
-      hashWaitSeconds += CFAbsoluteTimeGetCurrent() - hashFinishStarted
+    let encoded = try encoder.finish()
+    let chunks = encoded.chunks.map {
+      Chunk(
+        firstFrame: $0.firstScan, frameCount: $0.scanCount,
+        payload: $0.payload, offsets: $0.offsets, models: $0.models)
     }
     try source.validateUnchanged()
-    let logicalHash =
-      cachedHash ?? completedHash?.hash
-      ?? logicalDigest.finalize().map { String(format: "%02x", $0) }.joined()
     try background?.source.validateUnchanged()
-    if profile {
-      fputs(
-        String(
-          format:
-            "EMPAD_LOAD total=%.6f read=%.6f hash=%.6f analyze=%.6f pack=%.6f chunks=%d hash_cached=%d frames_read=%d hash_pipeline=%d hash_wait=%.6f\n",
-          CFAbsoluteTimeGetCurrent() - started, readSeconds, hashSeconds, analyzeSeconds,
-          packSeconds, chunks.count, cachedHash == nil ? 0 : 1, first, pipelinedHash == nil ? 0 : 1,
-          hashWaitSeconds), stderr)
-    }
     try checkCancellation(shouldCancel)
+    let logicalHash = cachedHash ?? digest.finalize().map { String(format: "%02x", $0) }.joined()
     if cachedHash == nil {
       EMPADSourceHashCache.write(hashCacheURL, snapshot: snapshot, hash: logicalHash)
     }
+    if profile {
+      fputs(
+        "EMPAD_ANS total=\(CFAbsoluteTimeGetCurrent() - started) read=\(readSeconds) hash=\(hashSeconds) encode=\(encodeSeconds) chunks=\(chunks.count)\n",
+        stderr)
+    }
     return MetalEMPADResidentSource(
-      source: source, device: device,
+      source: source, device: device, ans: ans,
       diffraction: diffraction, detector: detector, chunks: chunks,
       logicalSHA256: logicalHash,
       centerOfMass: centerOfMass, mean: mean, serialDetector: serialDetector,
@@ -509,21 +274,26 @@ public final class MetalEMPADResidentSource {
     guard
       let chunk = chunks.first(where: {
         ($0.firstFrame..<($0.firstFrame + $0.frameCount)).contains(frame)
-      }),
-      let encoder = command.makeComputeCommandEncoder()
+      })
     else { throw Self.failure("EMPAD selected-frame encoding failed.") }
-    var local = UInt32(frame - chunk.firstFrame)
+    let workspace = try ans.workspace(frames: 1, budget: memoryBudgetBytes, command: command)
+    try ans.encode(
+      chunk, first: frame - chunk.firstFrame, count: 1, into: workspace, command: command)
+    guard let encoder = command.makeComputeCommandEncoder() else {
+      throw Self.failure("EMPAD selected-frame encoding failed.")
+    }
+    var local: UInt32 = 0
     encoder.setComputePipelineState(diffractionPipeline)
     bindBackground(encoder, fallback: chunk.payload)
-    encoder.setBuffer(chunk.payload, offset: 0, index: 0)
-    encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
+    encoder.setBuffer(workspace.words, offset: 0, index: 0)
+    encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
     encoder.setBuffer(output, offset: 0, index: 2)
     encoder.setBytes(&local, length: 4, index: 3)
     Self.dispatch(encoder, pipeline: diffractionPipeline, count: 16384)
     encoder.endEncoding()
   }
 
-  /// Encode mask integration over all scan positions, directly from packing.
+  /// Encode mask integration over all scan positions using bounded ANS windows.
   ///
   /// Any nonzero uint8 mask entry selects that detector pixel. Output is
   /// float32 in scan-row-major order. Selected NaNs propagate; unselected
@@ -545,17 +315,20 @@ public final class MetalEMPADResidentSource {
     {
       return
     }
-    guard let encoder = command.makeComputeCommandEncoder() else {
-      throw Self.failure("EMPAD detector encoding failed.")
-    }
-    encoder.setComputePipelineState(detectorPipeline)
-    bindBackground(encoder, fallback: output)
-    encoder.setBuffer(mask, offset: 0, index: 2)
-    encoder.setBuffer(output, offset: 0, index: 3)
+    let workspace = try ans.workspace(
+      frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
     for chunk in chunks {
+      try ans.encode(chunk, into: workspace, command: command)
+      guard let encoder = command.makeComputeCommandEncoder() else {
+        throw Self.failure("EMPAD consumer encoder unavailable.")
+      }
+      encoder.setComputePipelineState(detectorPipeline)
+      bindBackground(encoder, fallback: output)
+      encoder.setBuffer(mask, offset: 0, index: 2)
+      encoder.setBuffer(output, offset: 0, index: 3)
       var offset = UInt32(chunk.firstFrame)
-      encoder.setBuffer(chunk.payload, offset: 0, index: 0)
-      encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
+      encoder.setBuffer(workspace.words, offset: 0, index: 0)
+      encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
       encoder.setBytes(&offset, length: 4, index: 4)
       if serialDetector {
         Self.dispatch(encoder, pipeline: detectorPipeline, count: chunk.frameCount)
@@ -564,8 +337,8 @@ public final class MetalEMPADResidentSource {
           MTLSize(width: chunk.frameCount, height: 1, depth: 1),
           threadsPerThreadgroup: MTLSize(width: detectorThreads, height: 1, depth: 1))
       }
+      encoder.endEncoding()
     }
-    encoder.endEncoding()
   }
 
   /// Encode full-detector intensity-weighted `(row, column)` coordinates.
@@ -577,20 +350,25 @@ public final class MetalEMPADResidentSource {
     guard !isReleased, row !== column,
       row.length >= source.frameCount * 4, column.length >= source.frameCount * 4,
       row.device.registryID == device.registryID, column.device.registryID == device.registryID,
-      command.commandQueue.device.registryID == device.registryID,
-      let encoder = command.makeComputeCommandEncoder()
+      command.commandQueue.device.registryID == device.registryID
     else {
       throw Self.failure(
         "EMPAD CoM needs a resident and two separate same-device full-scan float32 outputs.")
     }
-    encoder.setComputePipelineState(centerOfMassPipeline)
-    bindBackground(encoder, fallback: row)
-    encoder.setBuffer(row, offset: 0, index: 2)
-    encoder.setBuffer(column, offset: 0, index: 3)
+    let workspace = try ans.workspace(
+      frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
     for chunk in chunks {
+      try ans.encode(chunk, into: workspace, command: command)
+      guard let encoder = command.makeComputeCommandEncoder() else {
+        throw Self.failure("EMPAD consumer encoder unavailable.")
+      }
+      encoder.setComputePipelineState(centerOfMassPipeline)
+      bindBackground(encoder, fallback: row)
+      encoder.setBuffer(row, offset: 0, index: 2)
+      encoder.setBuffer(column, offset: 0, index: 3)
       var offset = UInt32(chunk.firstFrame)
-      encoder.setBuffer(chunk.payload, offset: 0, index: 0)
-      encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
+      encoder.setBuffer(workspace.words, offset: 0, index: 0)
+      encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
       encoder.setBytes(&offset, length: 4, index: 4)
       if serialCenterOfMass {
         Self.dispatch(encoder, pipeline: centerOfMassPipeline, count: chunk.frameCount)
@@ -599,8 +377,8 @@ public final class MetalEMPADResidentSource {
           MTLSize(width: chunk.frameCount, height: 1, depth: 1),
           threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
       }
+      encoder.endEncoding()
     }
-    encoder.endEncoding()
   }
 
   /// Encode the arithmetic mean of every scan position, with compensated sums.
@@ -627,39 +405,45 @@ public final class MetalEMPADResidentSource {
     guard !isReleased, output.length >= 16384 * 4,
       output.device.registryID == device.registryID,
       command.commandQueue.device.registryID == device.registryID,
-      let accumulator = device.makeBuffer(length: 16384 * 8, options: .storageModePrivate),
-      let encoder = command.makeComputeCommandEncoder()
+      let accumulator = device.makeBuffer(length: 16384 * 8, options: .storageModePrivate)
     else {
       throw Self.failure("EMPAD mean DP needs a resident and a same-device 128×128 float32 output.")
     }
-    encoder.setComputePipelineState(meanPipeline)
-    bindBackground(encoder, fallback: output)
-    encoder.setBuffer(accumulator, offset: 0, index: 2)
-    encoder.setBuffer(output, offset: 0, index: 3)
-    var region = SIMD4<UInt32>(
-      UInt32(selectedRows.lowerBound), UInt32(selectedRows.upperBound),
-      UInt32(selectedColumns.lowerBound), UInt32(selectedColumns.upperBound))
-    var scanColumns = UInt32(source.scanColumns)
-    encoder.setBytes(&region, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 5)
-    encoder.setBytes(&scanColumns, length: 4, index: 6)
-    var regionShape = shape.rawValue
-    encoder.setBytes(&regionShape, length: 4, index: 7)
+    let workspace = try ans.workspace(
+      frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
     for chunk in chunks {
+      try ans.encode(chunk, into: workspace, command: command)
+      guard let encoder = command.makeComputeCommandEncoder() else {
+        throw Self.failure("EMPAD consumer encoder unavailable.")
+      }
+      encoder.setComputePipelineState(meanPipeline)
+      bindBackground(encoder, fallback: output)
+      encoder.setBuffer(accumulator, offset: 0, index: 2)
+      encoder.setBuffer(output, offset: 0, index: 3)
+      var region = SIMD4<UInt32>(
+        UInt32(selectedRows.lowerBound), UInt32(selectedRows.upperBound),
+        UInt32(selectedColumns.lowerBound), UInt32(selectedColumns.upperBound))
+      var scanColumns = UInt32(source.scanColumns)
+      encoder.setBytes(&region, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 5)
+      encoder.setBytes(&scanColumns, length: 4, index: 6)
+      var regionShape = shape.rawValue
+      encoder.setBytes(&regionShape, length: 4, index: 7)
       var dimensions = SIMD3<UInt32>(
         UInt32(chunk.firstFrame), UInt32(chunk.frameCount),
         UInt32(shape.sampleCount(rowCount: selectedRows.count, columnCount: selectedColumns.count)))
-      encoder.setBuffer(chunk.payload, offset: 0, index: 0)
-      encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
+      encoder.setBuffer(workspace.words, offset: 0, index: 0)
+      encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
       encoder.setBytes(&dimensions, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 4)
       Self.dispatch(encoder, pipeline: meanPipeline, count: 16384)
       encoder.memoryBarrier(scope: .buffers)
+      encoder.endEncoding()
     }
-    encoder.endEncoding()
   }
 
   /// Release after outstanding commands finish. Encoding after release fails.
   public func releaseResidentStorage() {
     chunks.removeAll()
+    ans.releaseScratch()
     background = nil
     detectorAccumulation = nil
     priorDetectorMask = nil
@@ -699,33 +483,109 @@ public final class MetalEMPADResidentSource {
       entries = current.indices.compactMap { current[$0] == 0 ? nil : SIMD2(Int32($0), 1) }
     }
     let count = entries.count
+    var changedPixels = [UInt8](repeating: 0, count: 16384)
+    for entry in entries { changedPixels[Int(entry.x)] = 1 }
     if entries.isEmpty { entries.append(.zero) }
     guard
       let list = entries.withUnsafeBytes({
         device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
       }),
-      let encoder = command.makeComputeCommandEncoder()
+      let changed = changedPixels.withUnsafeBytes({
+        device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)
+      })
     else {
       throw Self.failure("EMPAD aperture change encoding failed.")
     }
-    encoder.setComputePipelineState(pipeline)
-    bindBackground(encoder, fallback: output)
-    encoder.setBuffer(list, offset: 0, index: 2)
-    encoder.setBuffer(output, offset: 0, index: 3)
-    encoder.setBuffer(accumulated, offset: 0, index: 5)
-    var parameters = SIMD2<UInt32>(UInt32(count), reset ? 1 : 0)
-    encoder.setBytes(&parameters, length: 8, index: 6)
-    encoder.setBuffer(mask, offset: 0, index: 7)
-    for chunk in chunks {
+    let recovery = try ans.recoveryFlag(
+      accumulated: accumulated, reset: reset,
+      frames: source.frameCount, command: command)
+    let fullDecodeControl =
+      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_FULL_DECODE_CONTROL"] == "1"
+    let workspace = try ans.workspace(
+      frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
+    var samples: MTLCounterSampleBuffer?
+    if !fullDecodeControl,
+      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_STAGE_PROFILE"] == "1",
+      let counter = device.counterSets?.first(where: { $0.name == "timestamp" })
+    {
+      let descriptor = MTLCounterSampleBufferDescriptor()
+      descriptor.counterSet = counter
+      descriptor.storageMode = .shared
+      descriptor.sampleCount = chunks.count * 4
+      samples = try device.makeCounterSampleBuffer(descriptor: descriptor)
+    }
+    func measuredEncoder(_ index: Int) -> MTLComputeCommandEncoder? {
+      guard let samples else { return command.makeComputeCommandEncoder() }
+      let pass = MTLComputePassDescriptor()
+      pass.sampleBufferAttachments[0].sampleBuffer = samples
+      pass.sampleBufferAttachments[0].startOfEncoderSampleIndex = index
+      pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = index + 1
+      return command.makeComputeCommandEncoder(descriptor: pass)
+    }
+    let sharedEncoder = fullDecodeControl || samples != nil ? nil : command.makeComputeCommandEncoder(dispatchType: .serial)
+    if !fullDecodeControl && samples == nil && sharedEncoder == nil {
+      throw Self.failure("EMPAD consumer encoder unavailable.")
+    }
+    for (chunkIndex, chunk) in chunks.enumerated() {
+      if fullDecodeControl {
+        try ans.encode(chunk, into: workspace, command: command)
+      } else {
+        guard let decoder = sharedEncoder ?? measuredEncoder(chunkIndex * 4) else {
+          throw Self.failure("EMPAD decoder encoder unavailable.")
+        }
+        try ans.encodeSelected(
+          chunk, changed: changed, entries: list, count: count, mask: mask, recovery: recovery,
+          into: workspace, encoder: decoder)
+        if sharedEncoder != nil {
+          decoder.memoryBarrier(resources: [workspace.words, workspace.descriptors])
+        } else {
+          decoder.endEncoding()
+        }
+      }
+      guard let encoder = sharedEncoder ?? measuredEncoder(chunkIndex * 4 + 2) else {
+        throw Self.failure("EMPAD consumer encoder unavailable.")
+      }
+      encoder.setComputePipelineState(pipeline)
+      bindBackground(encoder, fallback: output)
+      encoder.setBuffer(list, offset: 0, index: 2)
+      encoder.setBuffer(output, offset: 0, index: 3)
+      encoder.setBuffer(accumulated, offset: 0, index: 5)
+      var parameters = SIMD2<UInt32>(UInt32(count), reset ? 1 : 0)
+      encoder.setBytes(&parameters, length: 8, index: 6)
+      encoder.setBuffer(mask, offset: 0, index: 7)
+      encoder.setBuffer(chunk.payload, offset: 0, index: 10)
+      encoder.setBuffer(chunk.offsets, offset: 0, index: 11)
+      encoder.setBuffer(chunk.models, offset: 0, index: 12)
       var offset = UInt32(chunk.firstFrame)
-      encoder.setBuffer(chunk.payload, offset: 0, index: 0)
-      encoder.setBuffer(chunk.descriptors, offset: 0, index: 1)
+      encoder.setBuffer(workspace.words, offset: 0, index: 0)
+      encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
       encoder.setBytes(&offset, length: 4, index: 4)
       encoder.dispatchThreadgroups(
         MTLSize(width: chunk.frameCount, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: detectorThreads, height: 1, depth: 1))
+      if sharedEncoder != nil {
+        encoder.memoryBarrier(resources: [workspace.words, workspace.descriptors])
+      } else {
+        encoder.endEncoding()
+      }
     }
-    encoder.endEncoding()
+    sharedEncoder?.endEncoding()
+    if let samples {
+      let chunkCount = chunks.count
+      let isReset = reset
+      command.addCompletedHandler { _ in
+        guard let data = try? samples.resolveCounterRange(0..<chunkCount * 4) else { return }
+        data.withUnsafeBytes { bytes in
+          let times = bytes.bindMemory(to: UInt64.self)
+          var decode: UInt64 = 0, reduce: UInt64 = 0
+          for chunk in 0..<chunkCount {
+            decode += times[chunk * 4 + 1] - times[chunk * 4]
+            reduce += times[chunk * 4 + 3] - times[chunk * 4 + 2]
+          }
+          print("FLOAT_ANS_STAGES changed=\(count) reset=\(isReset) decode_ticks=\(decode) reduce_ticks=\(reduce)")
+        }
+      }
+    }
     priorDetectorMask = current
     priorDetectorCommand = command
     incrementalUpdates = reset ? 0 : incrementalUpdates + 1
