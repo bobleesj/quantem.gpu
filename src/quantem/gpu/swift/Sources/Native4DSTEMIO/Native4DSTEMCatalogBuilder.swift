@@ -670,9 +670,9 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       }
       masters.sort { $0.path < $1.path }
       guard !masters.isEmpty else {
-        throw Native4DSTEMIOError.invalidData(
-          "No recognized *_master.h5 or Velox .emd files were found under \(input.path)"
-        )
+        // Callers may also discover RAW/QEM acquisitions in this folder.
+        // Distinguish an empty HDF5 catalog from malformed data or IO failure.
+        throw Native4DSTEMIOError.noDatasets
       }
       return masters
     }

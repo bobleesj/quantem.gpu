@@ -46,6 +46,25 @@ class CatalogCalibrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)["datasets"][0]
 
+    def test_non_hdf5_folder_is_distinct_from_invalid_input(self):
+        mixed = self.root / "mixed"
+        mixed.mkdir()
+        (mixed / "scan_x2_y3.raw").write_bytes(b"raw fixture placeholder")
+        with h5py.File(mixed / "simulation.hdf5", "w") as handle:
+            handle["dp"] = np.zeros((6, 2, 2), dtype="f4")
+        result = subprocess.run(
+            [os.environ["CATALOG_CALIBRATION_EXE"], str(mixed), str(self.root / "cache")],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stderr.strip(), "EMPTY_CATALOG")
+        result = subprocess.run(
+            [os.environ["CATALOG_CALIBRATION_EXE"], str(mixed / "missing.h5"),
+             str(self.root / "cache")], capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("does not exist", result.stderr)
+
     def test_units_axes_cache_and_removal(self):
         self.assertNotIn("sourceScanCalibration", self.read())
         for factor, unit in ((1, "nm"), (1e-9, "m"), (1e-3, "um")):
