@@ -184,7 +184,24 @@ def _embedded_master(master: Path) -> dict | None:
 
 
 def restore_master(qem: Path, destination: Path) -> Path:
-    """Write the embedded master file back out, byte for byte; never replaces a file."""
+    """Restore the original master without replacing an existing file.
+
+    Parameters
+    ----------
+    qem : Path
+        Copy written by :func:`convert` with its embedded source master.
+    destination : Path
+        New file path, or an existing directory for the original filename.
+
+    Returns
+    -------
+    Path
+        Restored master. External detector links still refer to original files.
+
+    Examples
+    --------
+    >>> restored = restore_master(Path("scan.qem"), Path("restored_master.h5"))
+    """
     from ._streamed_file import read_header
 
     header, _ = read_header(qem)
@@ -204,6 +221,10 @@ def restore_master(qem: Path, destination: Path) -> Path:
     )
     if len(content) > _EMBEDDED_MASTER_LIMIT or not decoder.eof or decoder.unused_data:
         raise ValueError("Invalid or oversized embedded master; retain the original acquisition.")
+    expected = next((record["sha256"] for record in header["metadata"].get("source_files", [])
+                     if record["name"] == embedded["name"]), None)
+    if expected is None or hashlib.sha256(content).hexdigest() != expected:
+        raise ValueError("Embedded master does not match its source checksum; recopy the .qem file.")
     with open(destination, "xb") as handle:
         handle.write(content)
     return destination
@@ -278,7 +299,34 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
 
 def convert(master: Path, destination: Path, *, write: bool = True, verify: bool = True,
             backend: str = "auto") -> ConvertedAcquisition:
-    """Convert one acquisition; with ``write=False`` only measure the encoded size."""
+    """Preserve a complete acquisition in a verified, no-overwrite saved copy.
+
+    Parameters
+    ----------
+    master : Path
+        ARINA master with external detector-file links.
+    destination : Path
+        New ``.qem`` path. Original acquisitions are never modified.
+    write : bool, default True
+        False performs GPU encoding for a payload estimate without saving.
+    verify : bool, default True
+        Compare every decoded value with bounded independent source reads
+        before publishing. False explicitly skips that integrity gate.
+    backend : {"auto", "cuda", "mps"}, default "auto"
+        Accelerator for loading, encoding and decoded-value comparison.
+
+    Returns
+    -------
+    ConvertedAcquisition
+        Sizes, verification result and any refusal reason. Larger copies and
+        masters beyond the embedding limit are left in the original format.
+
+    Examples
+    --------
+    >>> result = convert(Path("scan_master.h5"), Path("scan.qem"))
+    >>> result.verified
+    True
+    """
     from . import load, save
 
     master, destination = Path(master), Path(destination)
