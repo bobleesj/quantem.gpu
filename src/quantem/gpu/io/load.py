@@ -96,7 +96,10 @@ from ._memory import (
 )
 
 ScanOrder = Literal["row-major", "serpentine"]
-_MASTER_FRAME_SOURCE_CACHE: dict[tuple[str, tuple[str, ...], bool], tuple[list[dict[str, Any]], Any]] = {}
+_MASTER_FRAME_SOURCE_CACHE: dict[
+    tuple[str, tuple[str, ...], bool],
+    tuple[list[dict[str, Any]], tuple[list[dict[str, Any]], Any]],
+] = {}
 _FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_FRAME_SOURCE_CACHE_DIR"
 _TRUST_FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_TRUST_FRAME_SOURCE_CACHE"
 _PREPARED_SCAN_CROP_CACHE_ENV = "QUANTEM_GPU_HDF5_PREPARED_SCAN_CROP_CACHE_DIR"
@@ -1345,7 +1348,10 @@ def _get_master_frame_sources(
     key = (abs_path, tuple(chunk_names), bool(apply_mask))
     cached = _MASTER_FRAME_SOURCE_CACHE.get(key)
     if cached is not None:
-        return cached
+        signatures, sources = cached
+        if all(_file_stat_signature(item["path"]) == item for item in signatures):
+            return sources
+        del _MASTER_FRAME_SOURCE_CACHE[key]
 
     disk_cache_path = _frame_source_cache_path(
         filepath,
@@ -1362,7 +1368,10 @@ def _get_master_frame_sources(
             signature=None,
         )
         if cached is not None:
-            _MASTER_FRAME_SOURCE_CACHE[key] = cached
+            _MASTER_FRAME_SOURCE_CACHE[key] = (
+                [_file_stat_signature(path) for path in
+                 [filepath, *(info["path"] for info in cached[0])]], cached
+            )
             return cached
 
     data_refs, pixel_mask, signature = _master_frame_source_refs(
@@ -1370,13 +1379,17 @@ def _get_master_frame_sources(
         chunk_names,
         apply_mask=apply_mask,
     )
+    file_signatures = [signature["master"], *[
+        {name: value for name, value in item.items() if name != "dataset_path"}
+        for item in signature["sources"]
+    ]]
     if disk_cache_path is not None:
         cached = _load_frame_source_disk_cache(
             disk_cache_path,
             signature=signature,
         )
         if cached is not None:
-            _MASTER_FRAME_SOURCE_CACHE[key] = cached
+            _MASTER_FRAME_SOURCE_CACHE[key] = (file_signatures, cached)
             return cached
 
     source_infos: list[dict[str, Any]] = []
@@ -1405,7 +1418,7 @@ def _get_master_frame_sources(
                 }
             )
     cached = (source_infos, pixel_mask)
-    _MASTER_FRAME_SOURCE_CACHE[key] = cached
+    _MASTER_FRAME_SOURCE_CACHE[key] = (file_signatures, cached)
     if disk_cache_path is not None:
         _write_frame_source_disk_cache(
             disk_cache_path,
