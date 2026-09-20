@@ -44,3 +44,40 @@ def test_damaged_downloads_are_not_accepted(tmp_path):
         path.write_bytes(content)
         with pytest.raises(ValueError):
             validate_qem(path)
+
+
+def test_stored_changes_must_be_declared_in_processing():
+    from quantem.gpu.io import _qem_metadata, qem_validation
+
+    narrowed = dict(source_dtype="uint32", dtype="uint16", working_counts_exact=True,
+                    hot_pixel_correction=dict(applied=True, method="median", pixel_count=4))
+    scientific = _qem_metadata.acquisition_metadata((2, 2, 8, 8), narrowed)
+    operations = {record["operation"]: record for record in scientific["processing"]}
+    assert operations["exact_integer_narrowing"]["changes_measurements"] is False
+    assert operations["flagged_pixel_replacement"]["changes_measurements"] is True
+    header = dict(dtype="uint16", metadata=narrowed, scientific_metadata=scientific)
+    qem_validation._validate_declared_processing(header)
+
+    undeclared = _qem_metadata.acquisition_metadata((2, 2, 8, 8), {})
+    header = dict(dtype="uint16", metadata=narrowed, scientific_metadata=undeclared)
+    with pytest.raises(ValueError, match="flagged_pixel_replacement"):
+        qem_validation._validate_declared_processing(header)
+    header["metadata"] = dict(source_dtype="uint32")
+    with pytest.raises(ValueError, match="exact_integer_narrowing"):
+        qem_validation._validate_declared_processing(header)
+
+    for source_dtype, stored_dtype in (("float32", "float16"), ("uint32", "uint16")):
+        with pytest.raises(ValueError, match="processing provenance"):
+            _qem_metadata.acquisition_metadata(
+                (2, 2, 8, 8), dict(source_dtype=source_dtype, dtype=stored_dtype)
+            )
+
+
+def test_validate_command_reports_shared_reference(capsys):
+    """Validate a downloaded reference through the documented public command."""
+    from quantem.gpu.cli import main
+
+    assert main(["validate", str(REFERENCES / "uint16.qem")]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["integrity"] == "verified"
+    assert report["measurements_changed_by"] == []

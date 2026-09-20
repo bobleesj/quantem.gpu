@@ -67,6 +67,30 @@ def _unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def _validate_declared_processing(header: dict) -> None:
+    """A stored change to the counts must appear in the scientific processing list."""
+    retained = header.get("metadata") if isinstance(header.get("metadata"), dict) else {}
+    declared = {
+        record["operation"]: record
+        for record in header["scientific_metadata"]["processing"]
+    }
+    correction = retained.get("hot_pixel_correction")
+    if isinstance(correction, dict) and correction.get("applied"):
+        record = declared.get("flagged_pixel_replacement")
+        if record is None or record["changes_measurements"] is not True:
+            raise ValueError(
+                "Flagged detector pixels were replaced but processing does not declare "
+                "flagged_pixel_replacement; re-export the original acquisition."
+            )
+    source_dtype, stored_dtype = retained.get("source_dtype"), header.get("dtype")
+    if source_dtype and stored_dtype and source_dtype != stored_dtype:
+        if "exact_integer_narrowing" not in declared:
+            raise ValueError(
+                f"Counts were stored as {stored_dtype} from {source_dtype} but processing does "
+                "not declare exact_integer_narrowing; re-export the original acquisition."
+            )
+
+
 def validate_qem(path: str | Path) -> dict[str, object]:
     """Verify the envelope, metadata contract and every body checksum.
 
@@ -110,6 +134,7 @@ def validate_qem(path: str | Path) -> dict[str, object]:
             raise ValueError("QEM header checksum mismatch; recopy the complete file.")
         header = json.loads(blob, object_pairs_hook=_unique_keys)
         _qem_metadata.validate_header(header)
+        _validate_declared_processing(header)
         shape = header.get("shape")
         if (
             not isinstance(shape, list)
@@ -175,6 +200,11 @@ def validate_qem(path: str | Path) -> dict[str, object]:
         codec_layout=layout,
         decoded_parity="not_checked",
         metadata_coverage=scientific.get("source_metadata_coverage", "unknown"),
+        processing=[record["operation"] for record in scientific["processing"]],
+        measurements_changed_by=[
+            record["operation"] for record in scientific["processing"]
+            if record["changes_measurements"]
+        ],
         calibrated_axes=[
             axis["name"] for axis in scientific["axes"] if "sampling" in axis
         ],
@@ -183,11 +213,11 @@ def validate_qem(path: str | Path) -> dict[str, object]:
     )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Validate files without loading a GPU; emit one JSON report per path."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     failed = False
     for path in args.paths:
         try:

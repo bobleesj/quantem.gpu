@@ -1,8 +1,86 @@
 [
-  {"name": "conflicting-scan-step", "path": ["axes", 0, "sampling", "value"], "value": 99},
-  {"name": "wrong-scan-unit", "path": ["axes", 0, "sampling", "unit"], "value": "m"},
-  {"name": "missing-provenance", "path": ["axes", 0, "sampling", "provenance"], "delete": true},
-  {"name": "missing-coverage", "path": ["source_metadata_coverage"], "delete": true},
-  {"name": "invalid-microscope-section", "path": ["electron_microscope"], "value": []},
-  {"name": "boolean-scan-step", "path": ["axes", 0, "sampling", "value"], "value": true}
+ {
+  "name": "conflicting-scan-step",
+  "path": [
+   "axes",
+   0,
+   "sampling",
+   "value"
+  ],
+  "value": 99
+ },
+ {
+  "name": "wrong-scan-unit",
+  "path": [
+   "axes",
+   0,
+   "sampling",
+   "unit"
+  ],
+  "value": "m"
+ },
+ {
+  "name": "missing-provenance",
+  "path": [
+   "axes",
+   0,
+   "sampling",
+   "provenance"
+  ],
+  "delete": true
+ },
+ {
+  "name": "missing-coverage",
+  "path": [
+   "source_metadata_coverage"
+  ],
+  "delete": true
+ },
+ {
+  "name": "invalid-microscope-section",
+  "path": [
+   "electron_microscope"
+  ],
+  "value": []
+ },
+ {
+  "name": "boolean-scan-step",
+  "path": [
+   "axes",
+   0,
+   "sampling",
+   "value"
+  ],
+  "value": true
+ },
+ {
+  "name": "retired-x-y-quantity",
+  "path": [
+   "electron_microscope",
+   "scan_controller/regular_scan/pixel_size_y"
+  ],
+  "value": {
+   "value": 0.4,
+   "unit": "angstrom",
+   "provenance": "source_metadata"
+  }
+ },
+ {
+  "name": "missing-processing",
+  "path": [
+   "processing"
+  ],
+  "delete": true
+ },
+ {
+  "name": "processing-without-measurement-statement",
+  "path": [
+   "processing"
+  ],
+  "value": [
+   {
+    "operation": "lossless_storage"
+   }
+  ]
+ }
 ]

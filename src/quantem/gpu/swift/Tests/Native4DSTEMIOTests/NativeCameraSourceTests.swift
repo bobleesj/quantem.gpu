@@ -40,6 +40,7 @@ final class NativeCameraSourceTests: XCTestCase {
         "schema": "quantem.scientific-metadata/1",
         "source_metadata": [String: Any](),
         "source_metadata_coverage": "unknown",
+        "processing": [["operation": "lossless_storage", "changes_measurements": false]],
         "axes": [
           ["name": "scan_row", "size": 1], ["name": "scan_column", "size": 2],
           ["name": "detector_row", "size": 2], ["name": "detector_column", "size": 2],

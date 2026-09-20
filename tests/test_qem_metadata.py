@@ -133,8 +133,8 @@ def test_saved_user_calibration_restores_without_replacing_recorded_values():
     scientific["calibration_overrides"] = {
         path: dict(value=value, unit=unit, provenance="user_override", evidence="measured standard")
         for path, value, unit in (
-            ("scan_controller/regular_scan/pixel_size_y", 0.4, "angstrom"),
-            ("scan_controller/regular_scan/pixel_size_x", 0.6, "angstrom"),
+            ("scan_controller/regular_scan/pixel_size_row", 0.4, "angstrom"),
+            ("scan_controller/regular_scan/pixel_size_column", 0.6, "angstrom"),
             ("electron_source/accelerating_voltage", 200, "kV"),
         )
     }
@@ -164,10 +164,10 @@ def test_existing_reference_migrates_units_without_changing_source_metadata():
     assert normalized["schema"] == SCHEMA
     assert normalized["source_metadata"] == original["source_metadata"]
     override = normalized["calibration_overrides"]
-    scan = override["scan_controller/regular_scan/pixel_size_y"]
+    scan = override["scan_controller/regular_scan/pixel_size_row"]
     assert scan["unit"] == "angstrom"
     assert scan["value"] == pytest.approx(0.4)
-    assert override["imaging_system/reciprocal_pixel_size_y"]["unit"] == "1/angstrom"
+    assert override["imaging_system/reciprocal_pixel_size_row"]["unit"] == "1/angstrom"
     upgraded = effective_metadata({}, normalized)
     for key, value in effective_metadata({}, original).items():
         assert upgraded[key] == value
@@ -206,7 +206,7 @@ def test_public_calibration_is_authoritative_for_independent_writers():
         invalid = copy.deepcopy(header)
         record = invalid["scientific_metadata"]
         if change == "conflict":
-            record["electron_microscope"]["scan_controller/regular_scan/pixel_size_y"]["value"] = 99
+            record["electron_microscope"]["scan_controller/regular_scan/pixel_size_row"]["value"] = 99
         elif change == "provenance":
             del record["axes"][0]["sampling"]["provenance"]
         else:

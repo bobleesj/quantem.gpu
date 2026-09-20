@@ -12,7 +12,7 @@
         3
       ],
       "dtype": "uint8",
-      "sha256": "beac6155386b245e3446636e8a40e2a59ccc19b88d9606694c9b2bc1940787bc",
+      "sha256": "ae256214129a04bdf319c60133c2a80326b0d83fa589b2883f14968b62ff6c73",
       "counts_sha256": "d4ada0aa00fe8cee8aa6aab16498105188fd36479bbfde68154b98003bb05569",
       "scientific_metadata": {
         "axes": [
@@ -60,12 +60,12 @@
             "unit": "kV",
             "value": 300.0
           },
-          "scan_controller/regular_scan/pixel_size_x": {
+          "scan_controller/regular_scan/pixel_size_column": {
             "provenance": "source_metadata",
             "unit": "angstrom",
             "value": 0.6
           },
-          "scan_controller/regular_scan/pixel_size_y": {
+          "scan_controller/regular_scan/pixel_size_row": {
             "provenance": "source_metadata",
             "unit": "angstrom",
             "value": 0.4
@@ -108,8 +108,8 @@
         ],
         "normalized_fields": [
           "electron_source/accelerating_voltage",
-          "scan_controller/regular_scan/pixel_size_x",
-          "scan_controller/regular_scan/pixel_size_y"
+          "scan_controller/regular_scan/pixel_size_column",
+          "scan_controller/regular_scan/pixel_size_row"
         ],
         "override_fields": []
       }
@@ -123,7 +123,7 @@
         9
       ],
       "dtype": "uint16",
-      "sha256": "89da6f3c19a0d8df81693a4d552a94568d1c23918b884e0619b0481956fa5333",
+      "sha256": "9fa95c7ceb9baf424042b41ccb3e0f9c2133e8e5e99f8173ff419a4f98e17c82",
       "counts_sha256": "5bd973f86a36d5a5c7f2ffa1b7db70f4f2e2c0dd6a70ec0017657827841aeb7d",
       "scientific_metadata": {
         "axes": [
@@ -171,12 +171,12 @@
             "unit": "kV",
             "value": 300.0
           },
-          "scan_controller/regular_scan/pixel_size_x": {
+          "scan_controller/regular_scan/pixel_size_column": {
             "provenance": "source_metadata",
             "unit": "angstrom",
             "value": 0.6
           },
-          "scan_controller/regular_scan/pixel_size_y": {
+          "scan_controller/regular_scan/pixel_size_row": {
             "provenance": "source_metadata",
             "unit": "angstrom",
             "value": 0.4
@@ -219,8 +219,8 @@
         ],
         "normalized_fields": [
           "electron_source/accelerating_voltage",
-          "scan_controller/regular_scan/pixel_size_x",
-          "scan_controller/regular_scan/pixel_size_y"
+          "scan_controller/regular_scan/pixel_size_column",
+          "scan_controller/regular_scan/pixel_size_row"
         ],
         "override_fields": []
       }
@@ -234,7 +234,7 @@
         128
       ],
       "dtype": "float32",
-      "sha256": "7006fefc72e6977bd242ea464d60d65fdb75bb83679d087ff52e504149851c2c",
+      "sha256": "668511af97646047c849451b20c358baac930cf1c8b35501a00aa28f6dd958b4",
       "counts_sha256": "f5ba1ba38f5de59213cea754729a287049e95639bfb91379165bd1effac80d43",
       "scientific_metadata": {
         "axes": [
@@ -282,12 +282,12 @@
             "unit": "kV",
             "value": 300.0
           },
-          "scan_controller/regular_scan/pixel_size_x": {
+          "scan_controller/regular_scan/pixel_size_column": {
             "provenance": "source_metadata",
             "unit": "angstrom",
             "value": 0.6
           },
-          "scan_controller/regular_scan/pixel_size_y": {
+          "scan_controller/regular_scan/pixel_size_row": {
             "provenance": "source_metadata",
             "unit": "angstrom",
             "value": 0.4
@@ -330,8 +330,8 @@
         ],
         "normalized_fields": [
           "electron_source/accelerating_voltage",
-          "scan_controller/regular_scan/pixel_size_x",
-          "scan_controller/regular_scan/pixel_size_y"
+          "scan_controller/regular_scan/pixel_size_column",
+          "scan_controller/regular_scan/pixel_size_row"
         ],
         "override_fields": []
       }

@@ -98,6 +98,12 @@ public enum NativeQEMMetadataUnits {
     return result
   }
 
+  /// Quantity names of specification 0.0.1, refused since 0.0.2 names them by row and column.
+  static let retiredQuantities: Set<String> = [
+    "scan_controller/regular_scan/pixel_size_y", "scan_controller/regular_scan/pixel_size_x",
+    "imaging_system/reciprocal_pixel_size_y", "imaging_system/reciprocal_pixel_size_x",
+  ]
+
   /// Validate documented calibration provenance and redundant physical quantities.
   /// Example: `try NativeQEMMetadataUnits.validateScientific(scientific)`.
   public static func validateScientific(_ scientific: [String: Any]) throws {
@@ -116,6 +122,25 @@ public enum NativeQEMMetadataUnits {
       throw Native4DSTEMIOError.invalidData("QEM microscope fields must be quantities.")
     }
     let quantities = normalized["electron_microscope"] as? [String: [String: Any]] ?? [:]
+    for section in ["electron_microscope", "calibration_overrides"] {
+      let names = (scientific[section] as? [String: Any] ?? [:]).keys
+      if let retired = names.sorted().first(where: { retiredQuantities.contains($0) }) {
+        throw Native4DSTEMIOError.invalidData(
+          "QEM \(section) uses the x/y names of specification 0.0.1 (\(retired)); "
+            + "quantities are named by row and column. Re-export the original acquisition.")
+      }
+    }
+    guard let processing = scientific["processing"] as? [[String: Any]], !processing.isEmpty,
+      processing.allSatisfy({ record in
+        guard let operation = record["operation"] as? String, !operation.isEmpty,
+          let changes = record["changes_measurements"] as? NSNumber
+        else { return false }
+        return CFGetTypeID(changes) == CFBooleanGetTypeID()
+      })
+    else {
+      throw Native4DSTEMIOError.invalidData(
+        "QEM processing must list every operation and whether it changes measurements.")
+    }
     func provenance(_ quantity: [String: Any]) throws {
       guard let origin = quantity["provenance"] as? String,
         !origin.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

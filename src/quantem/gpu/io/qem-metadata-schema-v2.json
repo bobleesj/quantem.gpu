@@ -7,7 +7,8 @@
     "schema",
     "axes",
     "source_metadata",
-    "source_metadata_coverage"
+    "source_metadata_coverage",
+    "processing"
   ],
   "properties": {
     "schema": {
@@ -170,7 +171,7 @@
     "electron_microscope": {
       "type": "object",
       "properties": {
-        "scan_controller/regular_scan/pixel_size_y": {
+        "scan_controller/regular_scan/pixel_size_row": {
           "allOf": [
             {
               "$ref": "#/$defs/quantity"
@@ -186,7 +187,7 @@
             }
           ]
         },
-        "scan_controller/regular_scan/pixel_size_x": {
+        "scan_controller/regular_scan/pixel_size_column": {
           "allOf": [
             {
               "$ref": "#/$defs/quantity"
@@ -202,7 +203,7 @@
             }
           ]
         },
-        "imaging_system/reciprocal_pixel_size_y": {
+        "imaging_system/reciprocal_pixel_size_row": {
           "allOf": [
             {
               "$ref": "#/$defs/quantity"
@@ -219,7 +220,7 @@
             }
           ]
         },
-        "imaging_system/reciprocal_pixel_size_x": {
+        "imaging_system/reciprocal_pixel_size_column": {
           "allOf": [
             {
               "$ref": "#/$defs/quantity"
@@ -324,7 +325,7 @@
     "calibration_overrides": {
       "type": "object",
       "properties": {
-        "scan_controller/regular_scan/pixel_size_y": {
+        "scan_controller/regular_scan/pixel_size_row": {
           "allOf": [
             {
               "allOf": [
@@ -358,7 +359,7 @@
             }
           ]
         },
-        "scan_controller/regular_scan/pixel_size_x": {
+        "scan_controller/regular_scan/pixel_size_column": {
           "allOf": [
             {
               "allOf": [
@@ -392,7 +393,7 @@
             }
           ]
         },
-        "imaging_system/reciprocal_pixel_size_y": {
+        "imaging_system/reciprocal_pixel_size_row": {
           "allOf": [
             {
               "allOf": [
@@ -427,7 +428,7 @@
             }
           ]
         },
-        "imaging_system/reciprocal_pixel_size_x": {
+        "imaging_system/reciprocal_pixel_size_column": {
           "allOf": [
             {
               "allOf": [
@@ -603,8 +604,23 @@
     },
     "processing": {
       "type": "array",
+      "minItems": 1,
+      "description": "Every operation between the source measurements and the stored measurements.",
       "items": {
-        "type": "object"
+        "type": "object",
+        "required": [
+          "operation",
+          "changes_measurements"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "changes_measurements": {
+            "type": "boolean"
+          }
+        }
       }
     },
     "extensions": {

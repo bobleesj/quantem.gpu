@@ -20,10 +20,10 @@ public struct NativeQEMCalibrationQuantity: Codable, Equatable, Hashable, Sendab
 public enum NativeQEMCalibration {
   public typealias Overrides = [String: NativeQEMCalibrationQuantity]
   public static let metadataKey = "qem_calibration_overrides"
-  public static let scanRow = "scan_controller/regular_scan/pixel_size_y"
-  public static let scanColumn = "scan_controller/regular_scan/pixel_size_x"
-  public static let detectorRow = "imaging_system/reciprocal_pixel_size_y"
-  public static let detectorColumn = "imaging_system/reciprocal_pixel_size_x"
+  public static let scanRow = "scan_controller/regular_scan/pixel_size_row"
+  public static let scanColumn = "scan_controller/regular_scan/pixel_size_column"
+  public static let detectorRow = "imaging_system/reciprocal_pixel_size_row"
+  public static let detectorColumn = "imaging_system/reciprocal_pixel_size_column"
 
   /// Validate scientific units before saving or interpreting a portable override.
   public static func validate(_ overrides: Overrides) throws {

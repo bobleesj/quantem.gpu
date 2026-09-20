@@ -29,8 +29,8 @@ public enum NativeQEMMetadata {
       "s")
     quantity(
       "imaging_system/camera_length", microscope.cameraLengthMillimeters.map { $0 * 1e-3 }, "m")
-    quantity("imaging_system/reciprocal_pixel_size_y", microscope.angularRowMrad, "mrad")
-    quantity("imaging_system/reciprocal_pixel_size_x", microscope.angularColumnMrad, "mrad")
+    quantity("imaging_system/reciprocal_pixel_size_row", microscope.angularRowMrad, "mrad")
+    quantity("imaging_system/reciprocal_pixel_size_column", microscope.angularColumnMrad, "mrad")
     var axes: [[String: Any]] = zip(
       ["scan_row", "scan_column", "detector_row", "detector_column"],
       [dataset.scanRows, dataset.scanCols, dataset.detectorRows, dataset.detectorCols]
@@ -43,9 +43,9 @@ public enum NativeQEMMetadata {
             "provenance": scan.origin.rawValue, "evidence": scan.evidence,
           ] as [String: Any]
       }
-      quantity("scan_controller/regular_scan/pixel_size_y", scan.rowSamplingAngstrom * 1e-10, "m")
+      quantity("scan_controller/regular_scan/pixel_size_row", scan.rowSamplingAngstrom * 1e-10, "m")
       quantity(
-        "scan_controller/regular_scan/pixel_size_x", scan.columnSamplingAngstrom * 1e-10, "m")
+        "scan_controller/regular_scan/pixel_size_column", scan.columnSamplingAngstrom * 1e-10, "m")
     }
     if let unit = dataset.kPixelUnit, let row = dataset.kPixelSizeRow,
       let col = dataset.kPixelSizeCol,

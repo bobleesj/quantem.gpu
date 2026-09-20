@@ -37,6 +37,11 @@ def _parser() -> argparse.ArgumentParser:
     convert.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
     convert.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
     convert.add_argument("--no-verify", action="store_true", help="skip comparing each copy with its source files")
+    validate = commands.add_parser(
+        "validate",
+        help="check .qem integrity and metadata without a GPU",
+    )
+    validate.add_argument("paths", nargs="+", type=Path, help=".qem files to check")
     serve = commands.add_parser(
         "serve",
         help="serve native 4D-STEM browsing over loopback",
@@ -105,6 +110,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "convert":
         return _convert(args)
+    if args.command == "validate":
+        from quantem.gpu.io import qem_validation
+
+        return qem_validation.main([str(path) for path in args.paths])
     if not 1 <= args.port <= 65_535:
         raise SystemExit("--port must be between 1 and 65535")
     if args.command == "serve-ssb-mps":

@@ -95,25 +95,25 @@
             "unit": "V",
             "value": 200000
           },
-          "imaging_system/reciprocal_pixel_size_x": {
+          "imaging_system/reciprocal_pixel_size_column": {
             "evidence": "synthetic reference",
             "provenance": "user_override",
             "unit": "1/\u00c5",
             "value": 0.3
           },
-          "imaging_system/reciprocal_pixel_size_y": {
+          "imaging_system/reciprocal_pixel_size_row": {
             "evidence": "synthetic reference",
             "provenance": "user_override",
             "unit": "1/\u00c5",
             "value": 0.2
           },
-          "scan_controller/regular_scan/pixel_size_x": {
+          "scan_controller/regular_scan/pixel_size_column": {
             "evidence": "synthetic reference",
             "provenance": "user_override",
             "unit": "m",
             "value": 6e-11
           },
-          "scan_controller/regular_scan/pixel_size_y": {
+          "scan_controller/regular_scan/pixel_size_row": {
             "evidence": "synthetic reference",
             "provenance": "user_override",
             "unit": "m",
@@ -142,7 +142,7 @@
       },
       "files": {
         "uint16.npy": "00e6419f2d67929b1946f3f17f0274c7a82908bc12443f927d06b534082f8a94",
-        "uint16.qem": "2d1555e1d17e6cde2c463073c3c0075c5c905e5d87185cfe7cf85fc79e337a4b"
+        "uint16.qem": "fbefb975e026980b9e1255b4dc87ca0819345543116173df0f0f2629c1082ccc"
       }
     }
   ]

@@ -1,9 +1,44 @@
 # QuantEM data (.qem), container version 1
 
-## QEM specification 0.0.1: microscopy-friendly metadata
+## QEM specification 0.0.2
+
+Changes from 0.0.1. There is no compatibility period: 0.0.2 readers refuse the
+0.0.1 forms named here, and the file must be exported again from its source.
+
+- Calibration quantities are named by array axis:
+  `scan_controller/regular_scan/pixel_size_row` and `pixel_size_column`,
+  `imaging_system/reciprocal_pixel_size_row` and `reciprocal_pixel_size_column`.
+  The 0.0.1 names ending in `_y` and `_x` are refused in `electron_microscope`
+  and in `calibration_overrides`. Source files keep their own x and y names
+  inside `source_metadata`; a reader maps source y to row and source x to column.
+- `processing` is required. It lists every operation between the source
+  measurements and the stored measurements. Each record has an `operation` name
+  and a boolean `changes_measurements`.
+- Two operations are defined in addition to `lossless_storage`:
+  `exact_integer_narrowing` (`changes_measurements: false`, with `source_dtype`
+  and `stored_dtype`) and `flagged_pixel_replacement`
+  (`changes_measurements: true`, with `method` and `pixel_count`).
+
+### Validate a file
+
+```bash
+quantem-gpu validate acquisition.qem another.qem
+```
+
+The command needs no GPU. For each file it checks the envelope, the header and
+every body checksum, the codec layout, and the metadata rules of this
+specification, then prints one JSON report. The report lists `processing` and,
+separately, `measurements_changed_by`, so a reader sees at once whether the
+stored counts differ from the source. A file whose retained reader record shows
+replaced detector pixels or a narrower stored dtype, without the matching
+`processing` record, fails validation. The exit status is nonzero when any file
+fails. `tests/data/qem-v2/invalid-metadata.json` lists header mutations that
+every conforming reader must refuse; the Python and Swift readers share them.
+
+## Microscopy-friendly metadata (since 0.0.1)
 
 New writers use `quantem.scientific-metadata/2`. The binary container and
-measurement codecs remain unchanged. Readers accept metadata schemas 1 and 2;
+measurement codecs remain unchanged. Readers accept metadata schemas 1 and 2 subject to the 0.0.2 rules above;
 older schema-1-only readers must reject schema 2 rather than reinterpret units.
 Existing files are not rewritten. Previously distributed schema-1 consumers
 need an updated backend before opening schema-2 files.
@@ -29,8 +64,10 @@ restoration metadata and internal calculation APIs keep their existing units;
 the public scientific metadata is the authoritative human-readable unit layer.
 Measurement bytes remain exact. Calibration conversion uses floating-point
 arithmetic without display-style rounding; physical equivalence is tested to a
-relative tolerance of `1e-14`. Exposure and frame-interval mappings are not
-implemented by this revision.
+relative tolerance of `1e-14`. For identified ARINA sources, `count_time` takes
+precedence over `frame_time` when recording the scan timing. The original
+fields remain available separately; generic NXmx photon energy is not inferred
+to be an electron accelerating voltage.
 
 Open an acquisition, preserve its scientific measurements and calibration, save
 one portable file, then restore the same measurements without the source folder.
@@ -63,18 +100,36 @@ for portability, small examples and independent verification, not speed claims.
 
 No implicit crop, binning, masking, background subtraction, integer narrowing or
 float quantization is permitted. Integer counts and floating-point bit patterns
-must round-trip exactly. Axes are ordered, named and sized; row precedes column.
+must round-trip exactly. Two operations are permitted only when declared in
+`processing`. A writer may store uint32 source counts as uint16 after checking
+every stored value, refusing the file when any count exceeds 65535; the all-ones
+marker of a masked detector pixel maps to the uint16 all-ones marker
+(`exact_integer_narrowing`). A writer may replace detector pixels flagged in the
+source pixel mask, for example with the median of their valid neighbors
+(`flagged_pixel_replacement`); all other pixels stay exact, and the record
+states that measurements changed. A detector pixel marked invalid in the header
+`valid` mask carries no measurement: its stored value is undefined, readers must
+not use it, and a writer needs no `processing` record for it. A writer that
+fills a flagged pixel and marks it valid must declare the replacement. Axes are ordered, named and sized; row precedes column.
 Each calibrated axis has an explicit value, unit and provenance. An absent
 quantity is unknown, not zero. Detector sensor pitch is not specimen scan step.
 
 The metadata vocabulary follows the microscope companion files used with ARINA:
 `electron_source/accelerating_voltage`,
 `illumination_system/semi_convergence_angle`,
-`scan_controller/regular_scan/pixel_size_y` and `pixel_size_x`,
+`scan_controller/regular_scan/pixel_size_row` and `pixel_size_column`,
 `scan_controller/regular_scan/dwell_time`, and `imaging_system/camera_length`,
 all below `electron_microscope`. Source x maps to column and y to row.
 Other detectors map to these scientific quantities without changing their
 recorded detector identity. Angular and reciprocal-length sampling are distinct.
+
+A converter that walks the complete source master declares
+`source_metadata_coverage: "exhaustive"`. It stores every field under its HDF5
+path and every attribute as `path@attribute`, so a unit sits beside its value
+(`.../count_time` and `.../count_time@units`). Arrays longer than 64 values are
+named with their dtype and shape, and travel complete in
+`metadata.source_master_file`, the master file itself as zlib then base64.
+`metadata.source_files` records the name, size and SHA-256 of every source file.
 
 Keep interpreted quantities separate from `source_metadata`, which retains the
 original reader-provided fields and units. `source_metadata_coverage` must say

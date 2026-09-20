@@ -25,8 +25,8 @@ _QUANTITIES = {
     "illumination_system/semi_convergence_angle": ("mrad", {"rad": 1000, "mrad": 1}),
     "scan_controller/regular_scan/dwell_time": ("us", {"s": 1e6, "ms": 1000, "us": 1}),
     "imaging_system/camera_length": ("mm", {"m": 1000, "cm": 10, "mm": 1}),
-    "scan_controller/regular_scan/pixel_size_y": _LENGTH,
-    "scan_controller/regular_scan/pixel_size_x": _LENGTH,
+    "scan_controller/regular_scan/pixel_size_row": _LENGTH,
+    "scan_controller/regular_scan/pixel_size_column": _LENGTH,
 }
 
 
@@ -138,6 +138,45 @@ def reject_constant(value):
     raise ValueError(f"QEM metadata cannot contain nonfinite number {value}.")
 
 
+RETIRED_QUANTITIES = (
+    "scan_controller/regular_scan/pixel_size_y",
+    "scan_controller/regular_scan/pixel_size_x",
+    "imaging_system/reciprocal_pixel_size_y",
+    "imaging_system/reciprocal_pixel_size_x",
+)
+
+
+def _processing_records(metadata: dict) -> list[dict]:
+    """State every operation between the source counts and the stored counts."""
+    records = [dict(operation="lossless_storage", changes_measurements=False)]
+    source_dtype, stored_dtype = metadata.get("source_dtype"), metadata.get("dtype")
+    if source_dtype and stored_dtype and source_dtype != stored_dtype:
+        source_type, stored_type = np.dtype(source_dtype), np.dtype(stored_dtype)
+        if not (
+            source_type.kind in "iu" and stored_type.kind in "iu"
+            and stored_type.itemsize < source_type.itemsize
+            and (metadata.get("file_counts_exact") is True
+                 or metadata.get("working_counts_exact") is True)
+        ):
+            raise ValueError(
+                "A dtype change needs explicit processing provenance; only a "
+                "reader-verified exact integer narrowing can be inferred. "
+                "Retain the original dtype or provide validated scientific metadata."
+            )
+        records.append(dict(
+            operation="exact_integer_narrowing", changes_measurements=False,
+            source_dtype=str(source_dtype), stored_dtype=str(stored_dtype),
+        ))
+    correction = metadata.get("hot_pixel_correction")
+    if isinstance(correction, dict) and correction.get("applied"):
+        records.append(dict(
+            operation="flagged_pixel_replacement", changes_measurements=True,
+            method=str(correction.get("method")),
+            pixel_count=int(correction.get("pixel_count", 0)),
+        ))
+    return records
+
+
 def _nexus_source_metadata(metadata: dict) -> dict:
     """Gather the NXmx master fields that the HDF5 reader retains as flat keys."""
     source = {
@@ -217,11 +256,13 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                     value=float(value) * factor, unit=output_unit,
                     provenance="source_metadata", evidence=key,
                 )
-    for suffix in ("y", "x"):
+    # Source files name these by x and y; the saved copy names them by array axis.
+    for axis, source_axis in (("row", "y"), ("column", "x")):
         quantity(
-            f"imaging_system/reciprocal_pixel_size_{suffix}",
+            f"imaging_system/reciprocal_pixel_size_{axis}",
             {"rad": 1000, "mrad": 1},
             "mrad",
+            f"electron_microscope/imaging_system/reciprocal_pixel_size_{source_axis}",
         )
     voltage = metadata.get("voltage_kV")
     if "electron_source/accelerating_voltage" not in quantities and voltage is not None:
@@ -233,7 +274,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
     axes = [dict(name=name, size=int(size)) for name, size in zip(AXIS_NAMES, shape)]
     scan = metadata.get("scan_sampling_A")
     if scan is not None and len(scan) == 2:
-        for axis, suffix, value in zip(axes, ("y", "x"), scan):
+        for axis, suffix, value in zip(axes, ("row", "column"), scan):
             value = float(value) * 1e-10
             if math.isfinite(value) and value > 0:
                 sampling = dict(value=value, unit="m", provenance="source_metadata")
@@ -257,9 +298,9 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         axes=axes,
         electron_microscope=quantities,
         source_metadata=source,
-        source_metadata_coverage="reader-retained",
+        source_metadata_coverage=metadata.get("source_metadata_coverage", "reader-retained"),
         calibration_overrides={},
-        processing=[dict(operation="lossless_storage", changes_measurements=False)],
+        processing=_processing_records(metadata),
         source_format=source.get(
             "sourceFormat", metadata.get("source_kind", "unknown")
         ),
@@ -307,11 +348,27 @@ def _validate_scientific(scientific: dict) -> None:
         "reader-retained", "exhaustive", "unknown"
     ):
         raise ValueError("Declare QEM source_metadata_coverage explicitly.")
+    for section in ("electron_microscope", "calibration_overrides"):
+        retired = sorted(set(scientific.get(section) or {}) & set(RETIRED_QUANTITIES))
+        if retired:
+            raise ValueError(
+                f"QEM {section} uses the x/y names of specification 0.0.1 ({retired[0]}); "
+                "quantities are named by row and column. Re-export the original acquisition."
+            )
+    processing = scientific.get("processing")
+    if not isinstance(processing, list) or not processing or not all(
+        isinstance(record, dict) and isinstance(record.get("operation"), str)
+        and record["operation"] and type(record.get("changes_measurements")) is bool
+        for record in processing
+    ):
+        raise ValueError(
+            "QEM processing must list every operation with its name and whether it changes measurements."
+        )
     paths = [
-        "scan_controller/regular_scan/pixel_size_y",
-        "scan_controller/regular_scan/pixel_size_x",
-        "imaging_system/reciprocal_pixel_size_y",
-        "imaging_system/reciprocal_pixel_size_x",
+        "scan_controller/regular_scan/pixel_size_row",
+        "scan_controller/regular_scan/pixel_size_column",
+        "imaging_system/reciprocal_pixel_size_row",
+        "imaging_system/reciprocal_pixel_size_column",
     ]
     for axis, path in zip(normalized["axes"], paths):
         sampling = axis.get("sampling")
@@ -392,7 +449,7 @@ def _validate_overrides(overrides: dict) -> None:
         ("imaging_system/reciprocal_pixel_size_", {"mrad", "1/nm", "1/Å"}),
     ]
     for prefix, allowed in pairs:
-        units.update({prefix + axis: allowed for axis in ("y", "x")})
+        units.update({prefix + axis: allowed for axis in ("row", "column")})
     if not isinstance(overrides, dict):
         raise ValueError("QEM calibration overrides must be named quantities.")
     for path, quantity in overrides.items():
@@ -409,7 +466,7 @@ def _validate_overrides(overrides: dict) -> None:
         if path.startswith("scan_controller/regular_scan/pixel_size_") and not 1e-14 <= value <= 1e-6:
             raise ValueError("Scan sampling must be between 0.0001 and 10000 angstrom per pixel.")
     for prefix, _ in pairs:
-        row, column = overrides.get(prefix + "y"), overrides.get(prefix + "x")
+        row, column = overrides.get(prefix + "row"), overrides.get(prefix + "column")
         if ((row is None) != (column is None)
                 or row is not None and row["unit"] != column["unit"]):
             raise ValueError("QEM calibration requires both row and column in the same units.")
@@ -435,10 +492,10 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
         ("scan_controller/regular_scan/pixel_size_", "scan_sampling_A", 1e10),
         ("imaging_system/reciprocal_pixel_size_", "detector_sampling", 1),
     ):
-        if prefix + "y" in overrides:
-            result[field] = [overrides[prefix + axis]["value"] * factor for axis in ("y", "x")]
+        if prefix + "row" in overrides:
+            result[field] = [overrides[prefix + axis]["value"] * factor for axis in ("row", "column")]
             if field == "detector_sampling":
-                result["detector_sampling_unit"] = overrides[prefix + "y"]["unit"]
+                result["detector_sampling_unit"] = overrides[prefix + "row"]["unit"]
                 result.pop("detector_sampling_inv_A", None)
     voltage = overrides.get("electron_source/accelerating_voltage")
     if voltage is not None:
