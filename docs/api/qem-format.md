@@ -102,15 +102,17 @@ No implicit crop, binning, masking, background subtraction, integer narrowing or
 float quantization is permitted. Integer counts and floating-point bit patterns
 must round-trip exactly. Two operations are permitted only when declared in
 `processing`. A writer may store uint32 source counts as uint16 after checking
-every stored value, refusing the file when any count exceeds 65535; the all-ones
-marker of a masked detector pixel maps to the uint16 all-ones marker
-(`exact_integer_narrowing`). A writer may replace detector pixels flagged in the
-source pixel mask, for example with the median of their valid neighbors
+every stored value, refusing the file when any count exceeds 65535
+(`exact_integer_narrowing`). Masked pixels are not an exception to this range
+check. The record requires verified exact-count evidence from the reader, not
+just a difference between source and stored dtypes. A writer may replace detector
+pixels flagged in the source pixel mask, for example with the median of their valid neighbors
 (`flagged_pixel_replacement`); all other pixels stay exact, and the record
 states that measurements changed. A detector pixel marked invalid in the header
-`valid` mask carries no measurement: its stored value is undefined, readers must
-not use it, and a writer needs no `processing` record for it. A writer that
-fills a flagged pixel and marks it valid must declare the replacement. Axes are ordered, named and sized; row precedes column.
+`valid` mask is excluded from analysis, but its stored source value must still
+round-trip exactly unless replacement is explicitly declared in `processing`.
+The mask never permits an undeclared change to stored values.
+Axes are ordered, named and sized; row precedes column.
 Each calibrated axis has an explicit value, unit and provenance. An absent
 quantity is unknown, not zero. Detector sensor pitch is not specimen scan step.
 
