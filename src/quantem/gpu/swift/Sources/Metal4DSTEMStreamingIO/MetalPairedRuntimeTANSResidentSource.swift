@@ -1116,7 +1116,6 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         completion(.cancelled)
         return
       }
-      let allocatedBefore = UInt64(request.device.currentAllocatedSize)
       let started = CFAbsoluteTimeGetCurrent()
       let candidate: MetalPairedRuntimeTANSPolarIndex
       do {
@@ -1137,13 +1136,13 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         completion(.cancelled)
         return
       }
-      let allocatedAfter = UInt64(request.device.currentAllocatedSize)
-      let added = allocatedAfter > allocatedBefore ? allocatedAfter - allocatedBefore : 0
       guard installResidentDetectorIndex(candidate, request: request) else {
         completion(.superseded)
         return
       }
-      completion(.installed(addedBytes: added, buildSeconds: seconds))
+      // Other residents can load concurrently. Charge only this index's buffers,
+      // not the change in the device-wide allocation count during its build.
+      completion(.installed(addedBytes: candidate.residentBytes, buildSeconds: seconds))
     }
   }
 
