@@ -10,7 +10,7 @@ import pytest
 from quantem.gpu import io
 
 
-def _write_synthetic_qem(path, *, shape, excluded):
+def _write_synthetic_qem(path, *, shape, excluded, processing=True):
     """Write a minimal valid saved copy so header handling is tested without a GPU."""
     from quantem.gpu._compact.streamed import field_count
     from quantem.gpu.io import _qem_metadata
@@ -40,10 +40,13 @@ def _write_synthetic_qem(path, *, shape, excluded):
             schema=_qem_metadata.SCHEMA,
             source_metadata={},
             source_metadata_coverage="unknown",
+            processing=[dict(operation="lossless_storage", changes_measurements=False)],
             axes=[dict(name=name, size=size)
                   for name, size in zip(_qem_metadata.AXIS_NAMES, shape)],
         ),
     )
+    if not processing:
+        header["scientific_metadata"].pop("processing")
     blob = json.dumps(header).encode()
     path.write_bytes(
         _qem_metadata.MAGIC + struct.pack("<QQ", len(blob), 56 + len(blob))
@@ -85,6 +88,13 @@ def test_retired_ans_snapshot_is_rejected_with_guidance(tmp_path):
     assert not io._streamed_file.is_streamed_file(path)
     with pytest.raises(ValueError, match="no longer supported"):
         io.load(path, backend="mps")
+
+
+def test_saved_qem_inspection_rejects_missing_processing_provenance(tmp_path):
+    path = tmp_path / "incomplete-metadata.qem"
+    _write_synthetic_qem(path, shape=(3, 5, 7, 9), excluded=[], processing=False)
+    with pytest.raises(ValueError, match="processing must list"):
+        io.inspect(path)
 
 
 def test_prepared_header_checks_expected_scan_dimensions(tmp_path):
