@@ -18,7 +18,8 @@ public struct NativeMetadataDocument: Codable, Equatable, Hashable, Sendable {
     guard bytes.count <= maximumBytes, let text = String(data: bytes, encoding: .utf8),
       ["xml", "json"].contains(url.pathExtension.lowercased())
     else { throw invalid("Choose a UTF-8 XML or JSON metadata file no larger than 4 MiB.") }
-    let result = Self(filename: url.lastPathComponent,
+    let result = Self(
+      filename: url.lastPathComponent,
       mediaType: url.pathExtension.lowercased() == "xml" ? "application/xml" : "application/json",
       content: text, sha256: digest(bytes))
     try result.validate()
@@ -29,7 +30,10 @@ public struct NativeMetadataDocument: Codable, Equatable, Hashable, Sendable {
     let bytes = Data(content.utf8)
     guard !filename.isEmpty, !filename.contains("/"), !filename.contains("\\"),
       bytes.count <= Self.maximumBytes, Self.digest(bytes) == sha256
-    else { throw Self.invalid("Metadata document is damaged or oversized; attach the original file again.") }
+    else {
+      throw Self.invalid(
+        "Metadata document is damaged or oversized; attach the original file again.")
+    }
     switch mediaType {
     case "application/xml":
       guard !content.uppercased().contains("<!DOCTYPE"),
@@ -37,7 +41,9 @@ public struct NativeMetadataDocument: Codable, Equatable, Hashable, Sendable {
       else { throw Self.invalid("XML external entities and document types are not supported.") }
       let parser = XMLParser(data: bytes)
       parser.shouldResolveExternalEntities = false
-      guard parser.parse() else { throw Self.invalid("XML metadata is malformed; choose the original file.") }
+      guard parser.parse() else {
+        throw Self.invalid("XML metadata is malformed; choose the original file.")
+      }
     case "application/json":
       guard try JSONSerialization.jsonObject(with: bytes) is [String: Any] else {
         throw Self.invalid("JSON metadata must be an object with named fields.")
@@ -49,7 +55,9 @@ public struct NativeMetadataDocument: Codable, Equatable, Hashable, Sendable {
   public static func encoded(_ documents: [Self]) throws -> Data {
     guard documents.count <= 16,
       documents.reduce(0, { $0 + $1.content.utf8.count }) <= maximumBytes
-    else { throw invalid("Attachments exceed 4 MiB total; remove an attachment before adding another.") }
+    else {
+      throw invalid("Attachments exceed 4 MiB total; remove an attachment before adding another.")
+    }
     for document in documents { try document.validate() }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
@@ -63,7 +71,8 @@ public struct NativeMetadataDocument: Codable, Equatable, Hashable, Sendable {
       return documents
     }
     if let text = metadata[NativeQEMMetadataUnits.metadataKey],
-      let scientific = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] {
+      let scientific = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+    {
       return try read(scientific: scientific)
     }
     return []
@@ -71,14 +80,17 @@ public struct NativeMetadataDocument: Codable, Equatable, Hashable, Sendable {
 
   public static func read(scientific: [String: Any]) throws -> [Self] {
     guard let raw = scientific["source_documents"] else { return [] }
-    let documents = try JSONDecoder().decode([Self].self,
+    let documents = try JSONDecoder().decode(
+      [Self].self,
       from: JSONSerialization.data(withJSONObject: raw))
     _ = try encoded(documents)
     return documents
   }
 
   /// Add original attachments without changing source quantities or user overrides.
-  public static func adding(_ documents: [Self], to scientific: [String: Any]) throws -> [String: Any] {
+  public static func adding(_ documents: [Self], to scientific: [String: Any]) throws -> [String:
+    Any]
+  {
     var result = scientific
     var combined = try read(scientific: scientific)
     for document in documents where !combined.contains(where: { $0.sha256 == document.sha256 }) {

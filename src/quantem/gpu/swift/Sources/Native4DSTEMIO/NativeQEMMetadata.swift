@@ -14,7 +14,8 @@ public enum NativeQEMMetadata {
       let scientific = try JSONSerialization.jsonObject(with: Data(saved.utf8)) as? [String: Any]
     {
       try NativeQEMMetadataUnits.validateScientific(scientific)
-      return try NativeMetadataDocument.adding(documents,
+      return try NativeMetadataDocument.adding(
+        documents,
         to: NativeQEMMetadataUnits.normalized(scientific))
     }
     let microscope = NativeMicroscopeMetadata(metadata: original)
@@ -58,14 +59,16 @@ public enum NativeQEMMetadata {
         axes[axis + 2]["sampling"] = ["value": step, "unit": unit, "provenance": "source_metadata"]
       }
     }
-    return try NativeMetadataDocument.adding(documents, to: NativeQEMMetadataUnits.normalized([
-      "schema": "quantem.scientific-metadata/1", "axes": axes,
-      "electron_microscope": quantities, "source_metadata": original,
-      "source_metadata_coverage": "reader-retained",
-      "calibration_overrides": [:] as [String: String],
-      "processing": [["operation": "lossless_storage", "changes_measurements": false]],
-      "source_format": original["sourceFormat"] ?? dataset.schemaIdentity ?? "unknown",
-    ]))
+    return try NativeMetadataDocument.adding(
+      documents,
+      to: NativeQEMMetadataUnits.normalized([
+        "schema": "quantem.scientific-metadata/1", "axes": axes,
+        "electron_microscope": quantities, "source_metadata": original,
+        "source_metadata_coverage": "reader-retained",
+        "calibration_overrides": [:] as [String: String],
+        "processing": [["operation": "lossless_storage", "changes_measurements": false]],
+        "source_format": original["sourceFormat"] ?? dataset.schemaIdentity ?? "unknown",
+      ]))
   }
 
   /// Reject incompatible envelopes without interpreting codec bytes.

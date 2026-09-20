@@ -522,7 +522,9 @@ public final class MetalEMPADResidentSource {
       pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = index + 1
       return command.makeComputeCommandEncoder(descriptor: pass)
     }
-    let sharedEncoder = fullDecodeControl || samples != nil ? nil : command.makeComputeCommandEncoder(dispatchType: .serial)
+    let sharedEncoder =
+      fullDecodeControl || samples != nil
+      ? nil : command.makeComputeCommandEncoder(dispatchType: .serial)
     if !fullDecodeControl && samples == nil && sharedEncoder == nil {
       throw Self.failure("EMPAD consumer encoder unavailable.")
     }
@@ -577,12 +579,15 @@ public final class MetalEMPADResidentSource {
         guard let data = try? samples.resolveCounterRange(0..<chunkCount * 4) else { return }
         data.withUnsafeBytes { bytes in
           let times = bytes.bindMemory(to: UInt64.self)
-          var decode: UInt64 = 0, reduce: UInt64 = 0
+          var decode: UInt64 = 0
+          var reduce: UInt64 = 0
           for chunk in 0..<chunkCount {
             decode += times[chunk * 4 + 1] - times[chunk * 4]
             reduce += times[chunk * 4 + 3] - times[chunk * 4 + 2]
           }
-          print("FLOAT_ANS_STAGES changed=\(count) reset=\(isReset) decode_ticks=\(decode) reduce_ticks=\(reduce)")
+          print(
+            "FLOAT_ANS_STAGES changed=\(count) reset=\(isReset) decode_ticks=\(decode) reduce_ticks=\(reduce)"
+          )
         }
       }
     }

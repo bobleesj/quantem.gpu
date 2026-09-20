@@ -36,30 +36,41 @@ public struct NativeEMPADSource: Sendable {
   private let metadataIdentity: NativeFileIdentity?
   public var frameCount: Int { scanRows * scanColumns }
   public var sourceBytes: Int { frameCount * recordBytes }
-  public var hasQEMStorage: Bool { microscopeMetadata["qem_storage"] == "float32-bit-lanes-rans-v1" }
+  public var hasQEMStorage: Bool {
+    microscopeMetadata["qem_storage"] == "float32-bit-lanes-rans-v1"
+  }
 
-  static func metadataQuantities(document: NativeMetadataDocument, rows: Int, columns: Int, evidence: String) throws
-    -> NativeQEMCalibration.Overrides {
+  static func metadataQuantities(
+    document: NativeMetadataDocument, rows: Int, columns: Int, evidence: String
+  ) throws
+    -> NativeQEMCalibration.Overrides
+  {
     let parsed = try EMPADXML.read(document: document, allowUnknown: true)
     guard !parsed.filename.isEmpty else { return [:] }
     if let shape = parsed.shape, shape.row != rows || shape.col != columns {
-      throw EMPADError("XML scan dimensions do not match this acquisition; choose its matching metadata.")
+      throw EMPADError(
+        "XML scan dimensions do not match this acquisition; choose its matching metadata.")
     }
     let microscope = NativeMicroscopeMetadata(metadata: parsed.microscopeMetadata)
     var values: NativeQEMCalibration.Overrides = [:]
     for (path, value, unit) in [
       ("electron_source/accelerating_voltage", microscope.beamEnergyKeV.map { $0 * 1000 }, "V"),
       ("imaging_system/camera_length", microscope.cameraLengthMillimeters.map { $0 / 1000 }, "m"),
-      ("scan_controller/regular_scan/dwell_time", microscope.dwellTimeMicroseconds.map { $0 / 1e6 }, "s"),
+      (
+        "scan_controller/regular_scan/dwell_time",
+        microscope.dwellTimeMicroseconds.map { $0 / 1e6 }, "s"
+      ),
       (NativeQEMCalibration.detectorRow, microscope.angularRowMrad, "mrad"),
       (NativeQEMCalibration.detectorColumn, microscope.angularColumnMrad, "mrad"),
     ] {
       if let value { values[path] = .init(value: value, unit: unit, evidence: evidence) }
     }
     if let scan = parsed.scanCalibration(rows: rows, columns: columns) {
-      values[NativeQEMCalibration.scanRow] = .init(value: scan.rowSamplingAngstrom * 1e-10,
+      values[NativeQEMCalibration.scanRow] = .init(
+        value: scan.rowSamplingAngstrom * 1e-10,
         unit: "m", evidence: evidence)
-      values[NativeQEMCalibration.scanColumn] = .init(value: scan.columnSamplingAngstrom * 1e-10,
+      values[NativeQEMCalibration.scanColumn] = .init(
+        value: scan.columnSamplingAngstrom * 1e-10,
         unit: "m", evidence: evidence)
     }
     if let sampling = parsed.diffractionSampling {
@@ -341,7 +352,8 @@ public struct NativeEMPADSource: Sendable {
       ("imaging_system/reciprocal_pixel_size_x", info.angle_mrad, "mrad"),
     ] where value > 0 { metadata["electron_microscope/" + key] = "\(value) \(unit)" }
     metadata["sourceDataset"] = info.generic == 1 ? "/dp" : "/datacube_root/datacube/data"
-    metadata["sourceAxisOrder"] = info.generic == 1
+    metadata["sourceAxisOrder"] =
+      info.generic == 1
       ? "Recorded frame, detector row, detector column; explicit scan grid; no transpose"
       : "Recorded EMD axes 0,1,2,3; no transpose"
     let calibration: Native4DSTEMScanCalibration? =
@@ -353,7 +365,8 @@ public struct NativeEMPADSource: Sendable {
     return NativeEMPADSource(
       rawURL: url, metadataURL: url, scanRows: rows, scanColumns: columns,
       scanCalibration: calibration, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
-      formatIdentifier: info.generic == 1 ? "hdf5-contiguous-float32/v1" : "emd1-contiguous-float32/v1",
+      formatIdentifier: info.generic == 1
+        ? "hdf5-contiguous-float32/v1" : "emd1-contiguous-float32/v1",
       formatName: info.generic == 1 ? "HDF5 · float32 dp" : "EMD 1 · HDF5 float32",
       microscopeMetadata: metadata,
       backgroundSubtractionEvidence: .discover(raw: url, metadata: url),
@@ -636,7 +649,8 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
     try read(document: NativeMetadataDocument.read(url))
   }
 
-  static func read(document: NativeMetadataDocument, allowUnknown: Bool = false) throws -> EMPADXML {
+  static func read(document: NativeMetadataDocument, allowUnknown: Bool = false) throws -> EMPADXML
+  {
     try document.validate()
     let result = EMPADXML()
     result.document = document

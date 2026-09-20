@@ -80,10 +80,11 @@ public enum MetalQEMExporter {
             originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
             metadata: original.microscopeMetadata))
       progress("Writing .qem file…")
-      let documents = try resolveDocuments(.init(
-        sourceIdentitySHA256: resident.sourceIdentitySHA256,
-        originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
-        metadata: original.microscopeMetadata))
+      let documents = try resolveDocuments(
+        .init(
+          sourceIdentitySHA256: resident.sourceIdentitySHA256,
+          originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
+          metadata: original.microscopeMetadata))
       try resident.saveQEM(
         to: destination, userConfirmedBackgroundCorrected: alreadyCorrected,
         calibrationOverrides: overrides,
@@ -120,12 +121,14 @@ public enum MetalQEMExporter {
           originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
           metadata: metadata))
     progress("Writing .qem file…")
-    let documents = try resolveDocuments(.init(
-      sourceIdentitySHA256: resident.sourceIdentitySHA256,
-      originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
-      metadata: metadata))
+    let documents = try resolveDocuments(
+      .init(
+        sourceIdentitySHA256: resident.sourceIdentitySHA256,
+        originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
+        metadata: metadata))
     try resident.saveSnapshot(
-      to: destination, calibrationOverrides: overrides, sourceDocuments: documents + sourceDocuments,
+      to: destination, calibrationOverrides: overrides,
+      sourceDocuments: documents + sourceDocuments,
       shouldCancel: shouldCancel)
   }
 }
