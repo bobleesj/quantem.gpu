@@ -113,7 +113,7 @@ with io.load(args.input, backend=args.backend) as loaded:
         report["products"]["detector_" + str(n)]["bit_exact"] = bool(
             np.array_equal(actual.view(np.uint32), expected[n].view(np.uint32))
         )
-        np.testing.assert_allclose(actual, expected[n], rtol=2e-5, atol=2e-3)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected[n].view(np.uint32))
     start = time.perf_counter()
     mean = session.mean_dp()
     report["timings"]["mean_dp"] = time.perf_counter() - start

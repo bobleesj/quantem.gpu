@@ -122,9 +122,25 @@ literal/constant ANS codes directly and decode only required entropy columns.
 Other scientific products decode bounded GPU scratch and reuse it between ordered consumers; neither a
 full dense cube nor a full XOR-packed cube is retained. The receipt is
 `representation=encoded`, schema `quantem.gpu.float32-bit-lanes-rans/v1`.
-The explicit Python CPU reference can read/write this profile for small
-interoperability checks. This profile does not establish Python CUDA/MPS or
-float64 support; those require their own implementation and qualification.
+Python CUDA and MPS readers also upload the encoded chunks directly. They
+preserve original float bits and metadata when saving another `.qem`, without
+requiring the original acquisition or re-encoding a dense cube. Point DPs,
+binary-mask detector images, mean/selected DPs and CoM run on the accelerator.
+Each decoded window is limited to 512 frames (32 MiB); reductions may use
+additional bounded temporary buffers, so this is not a total-memory limit.
+The explicit CPU reference remains available for small interoperability checks.
+
+BF/ABF/ADF reductions use compensated float32 sums. CoM is mean-subtracted in
+`(row, column)` order; invalid or zero-total frames remain NaN and are excluded
+from the scan mean. Raw DP reads retain source bits, while detector-session
+products apply a saved mean-dark plane once. Neither saving nor raw reads bake
+that correction into the measurements.
+
+The repository's `experiments/20260920-float-qem-cross-backend/README.md`
+qualification record separates exact measurement/virtual-image parity from tolerance-based mean-DP
+and CoM comparisons. It does not qualify float64, other detector geometries,
+raw float-source ingestion on Python GPUs, SSB, or an application's 120 Hz
+presentation cadence.
 
 ### Earlier float codec: empad-xor-row-packed-v1
 

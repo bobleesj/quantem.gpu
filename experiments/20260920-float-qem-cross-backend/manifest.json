@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260920-float-qem-cross-backend",
+  "status": "completed",
+  "question": "Can Python MPS and CUDA reopen native float32 QEM with exact bit preservation, bounded decode memory and faster direct literal DP queries?",
+  "paper": {"authoritative_host": "apple-m5", "repository": "quantem.gpu", "manifest_path": "experiments/20260920-float-qem-cross-backend/manifest.json"},
+  "code": {"repository": "https://github.com/bobleesj/quantem.gpu", "revision": "de942589a5cfad8df9d2132d90d9f4a1f75b0d27", "entrypoint": "tests/hardware/test_float_qem_resident.py", "dirty": false},
+  "inputs": [{"dataset_id": "zenodo.15987625 WSe2", "path": "00_data/tBL_WSe2/Panel_g-h_Themis/scan_x128_y128.raw", "sha256": "e759bfc8a3b462fa86656dcdcfb4d28729e7522104e0e4e37d72d87c3d722d48"}],
+  "parameters": {"dtype": "float32", "shape": [128,128,128,128], "scan_bin": 1, "detector_bin": 1, "crop": null, "maximum_decode_bytes": 33554432, "oracle": "native Metal products and unchanged integer lane decoder; tiny CPU bit-pattern fixtures only", "fps_claim": false},
+  "execution": {"host": "apple-m5 and cuda-validation-host", "backend": "native-metal, python-mps, cuda", "gpu_ids": ["integrated", "cuda:0"], "gpu_model": "Apple M5 and NVIDIA RTX PRO 6000 Blackwell"},
+  "outputs": [{"artifact": "cross-backend-results", "path": "experiments/20260920-float-qem-cross-backend/results.json", "sha256": "b19637010fda5c1a123a94c60bdb066a8d10a86707f7381fd957bb0d9fd9b70d", "size_bytes": 11047, "result": "All 268435456 float words match on MPS and CUDA; four native virtual images are bit-identical. Mean/CoM pass predeclared tolerances. Reopen 0.872 s MPS and 0.652 s CUDA with generally warm OS pages; broad reductions do not qualify 120 Hz. Generated datasets removed."}],
+  "timestamps": {"created": "2026-09-20", "started": "2026-09-20", "finished": "2026-09-20"}
+}

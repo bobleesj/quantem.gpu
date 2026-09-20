@@ -136,6 +136,29 @@ extension; the only accepted extension is `.qem`.
 DM selection/conversion options and MPS residency are currently unsupported. Load differently shaped acquisitions separately; a list can use
 `stack=False` to return independent residents.
 
+### Reopen float32 `.qem` on CUDA or MPS
+
+For `float32-bit-lanes-rans-v1` files with a `(128, 128)` detector, use the same
+public API on either accelerator:
+
+```python
+from quantem.gpu import detector, io
+
+with io.load("measurements.qem", backend="cuda") as loaded:  # or "mps"
+    session = detector.prepare(loaded)
+    pattern = session.frame(0)
+    mean_pattern = session.mean_dp()
+    io.save("measurements-copy.qem", loaded)
+```
+
+The acquisition remains encoded on-device. Only requested small products
+return to NumPy; there is no CPU scientific fallback or complete dense-cube
+allocation. Copying retains original IEEE float bits, calibration, source
+documents and the saved background recipe. The output must not already exist.
+See the [float codec contract](qem-codecs.md)
+for supported geometry, reduction precision and memory limits. This does not
+extend the collection converter below to raw float32 HDF5 inputs.
+
 ### Converting a collection from the command line
 
 ```bash
