@@ -686,13 +686,16 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       implementationRevision: nil)
     try receipt.validate()
     let available: Set<Metal4DSTEMResidentProduct> = [
-      .diffractionPattern, .brightField, .annularBrightField, .annularDarkField,
+      .diffractionPattern, .meanDiffractionPattern, .brightField, .annularBrightField,
+      .annularDarkField,
     ]
     let products = Metal4DSTEMResidentProduct.allCases.map { product in
       capability(
         product,
         available.contains(product) ? .residentOnDemand : .unavailable,
-        available.contains(product) ? .exactInteger : .frozenFloat32)
+        product == .meanDiffractionPattern
+          ? .exactIntegerThenFloat32
+          : (available.contains(product) ? .exactInteger : .frozenFloat32))
     }
     return Self(
       schema: currentSchema,

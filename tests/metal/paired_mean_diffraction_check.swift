@@ -108,6 +108,12 @@ enum PairedMeanCheck {
       precondition(catalog.datasets.count == 1, "Choose one acquisition")
       let indexed = try Native4DSTEMIndexedSource.open(dataset: catalog.datasets[0])
       let actual = try MetalPairedRuntimeTANSResidentSource.load(source: indexed, device: device)
+      let capabilities = try Metal4DSTEMResidentCapabilities.pairedRuntimeTANS(actual)
+      precondition(
+        capabilities.products.contains {
+          $0.product == .meanDiffractionPattern && $0.availability == .residentOnDemand
+            && $0.numerics == .exactIntegerThenFloat32
+        }, "Consumers must discover exact paired-ANS mean diffraction")
       let reference = try MetalRuntimeANSResidentSource.load(source: indexed, device: device)
       defer {
         actual.releaseResidentStorage()
