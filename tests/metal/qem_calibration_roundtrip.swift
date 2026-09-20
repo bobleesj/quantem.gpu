@@ -70,6 +70,9 @@ import Native4DSTEMIO
         return overrides
       })
     let snapshot = try NativeANSSnapshot(url: output)
+    precondition(snapshot.dataset.metadata?["originalSourceIdentity"] == original.dataset.sourceIdentitySHA256,
+      "Saved copies must retain acquisition provenance independently of the container cache identity")
+    precondition(snapshot.identity != original.dataset.sourceIdentitySHA256)
     precondition(snapshot.scientificMetadata["schema"] as? String == "quantem.scientific-metadata/2")
     let saved = snapshot.scientificMetadata["calibration_overrides"] as! [String: [String: Any]]
     let expectedUnits = [
@@ -121,6 +124,8 @@ import Native4DSTEMIO
         preconditionFailure("Explicit queued calibration must take priority over saved edits")
       })
     let preservedSnapshot = try NativeANSSnapshot(url: preserved)
+    precondition(preservedSnapshot.dataset.metadata?["originalSourceIdentity"] == original.dataset.sourceIdentitySHA256,
+      "Re-export must retain the first acquisition identity")
     let resetSnapshot = try NativeANSSnapshot(url: reset)
     let preservedValues = try NativeQEMCalibration.read(metadata: preservedSnapshot.dataset.metadata ?? [:])
     let resetValues = try NativeQEMCalibration.read(metadata: resetSnapshot.dataset.metadata ?? [:])

@@ -165,6 +165,13 @@ public struct NativeANSSnapshot {
     if scientificMetadata["schema"] as? String == NativeQEMMetadataUnits.schema {
       nativeMetadata = try NativeQEMMetadataUnits.microscopeMetadata(scientificMetadata)
     }
+    if let original = metadata["original_source_identity_sha256"] as? String {
+      guard original.count == 64, original.allSatisfy(\.isHexDigit) else {
+        throw Self.invalid("Invalid original acquisition identity; re-export the source.")
+      }
+      // Keep container identity separate for cache safety when calibration changes.
+      nativeMetadata["originalSourceIdentity"] = original
+    }
     nativeMetadata[NativeQEMCalibration.metadataKey] = String(
       decoding: try NativeQEMCalibration.encoded(
         NativeQEMCalibration.read(scientific: scientificMetadata)), as: UTF8.self)

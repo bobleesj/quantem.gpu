@@ -134,6 +134,8 @@ extension MetalRuntimeANSResidentSource {
     }
     var metadata: [String: Any] = [
       "source_path": dataset.masterPath ?? "", "source_shape": shape,
+      "original_source_identity_sha256": dataset.metadata?["originalSourceIdentity"]
+        ?? sourceIdentitySHA256,
       "file_counts_exact": true, "lossless_exact": true, "median_correction_applied": false,
       "source_metadata": dataset.metadata ?? [:],
       "axis_order": ["scan_row", "scan_col", "detector_row", "detector_col"],
