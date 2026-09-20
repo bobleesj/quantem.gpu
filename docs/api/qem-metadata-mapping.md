@@ -35,6 +35,7 @@ to its `electron_microscope` object. Source `y` means row and `x` means column.
 | Acquisition processing | `source_metadata.acquisition_processing` | DM4 `ImageTags.Acquisition.Parameters.High Level.Processing` | Preserved text, not assumed to mean background-corrected |
 | Acquisition date | header `metadata.acquisition_date` | DM4 `ImageTags.SI.Acquisition.Date`; reader-provided date | Preserved when present; not a required normalized microscope field |
 | Vendor fields | `source_metadata` | Fields retained by the source reader; DM4 names prefixed `dm4.` | Preserved subset, not every vendor object |
+| Original XML/JSON documents | `source_documents[]` | Native EMPAD companion XML and explicitly attached UTF-8 XML/JSON | Complete text, filename, media type and SHA-256; separate from interpreted quantities |
 | User calibration | `calibration_overrides` | Explicit scan/detector sampling, voltage, semi-angle, dwell, camera-length edits | Normalized values, units, `user_override` provenance and evidence; original fields stay separate |
 | Lossless storage history | `processing` | Exporter operation | `lossless_storage`, `changes_measurements=false` |
 | Dark/background recipe | header `empad` | Explicit native EMPAD dark reference and supplier correction evidence | Saved recipe/plane/identity; packed sample remains unchanged; subtraction applied once |
@@ -57,6 +58,30 @@ contract, but runtime/source-reader qualification remains separate.
 
 SSB result images/calibration remain separate JSON/NumPy result artifacts; they
 are not silently embedded as an acquisition's recorded microscope calibration.
+
+## Original documents and reviewed edits
+
+`source_documents` preserves the original UTF-8 text, including unknown fields,
+comments and whitespace. Each entry contains `filename`, `mediaType`, `content`
+and `sha256`; the digest covers the UTF-8 bytes of `content`. Readers validate
+the digest before accepting a document. The current limits are 16 documents and
+4 MiB total document content. XML document types and external entities are not
+accepted. JSON must contain a top-level object.
+
+Three distinct records must not be conflated:
+
+- `source_documents`: original document text, available after the source file is
+  removed or the acquisition moves to another machine.
+- `electron_microscope` and `axes`: supported, normalized recorded quantities.
+- `calibration_overrides`: explicit reviewed edits, without replacing the original
+  recorded quantities or document text.
+
+The native `NativeMetadataImport.read` API previews recognized EMPAD XML or
+scientific-metadata JSON quantities before a client applies them. Unknown vendor
+XML/JSON is preserved without guessed units. Saving an attachment alone must not
+change calibration. Contents can include names and paths; inspect them before
+sharing a QEM file. Document preservation does not imply exhaustive DM4/HDF5 tag
+capture, nor does it establish CUDA support for the float32 measurement codec.
 
 ## Source map
 

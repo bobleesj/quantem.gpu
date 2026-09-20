@@ -9,6 +9,7 @@ extension MetalEMPADResidentSource {
   public func saveQEM(
     to destination: URL, userConfirmedBackgroundCorrected: Bool = false,
     calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
+    sourceDocuments: [NativeMetadataDocument] = [],
     shouldCancel: () -> Bool = { false }
   ) throws {
     guard !isReleased, !chunks.isEmpty else {
@@ -46,9 +47,12 @@ extension MetalEMPADResidentSource {
       }
       table.append(entry)
     }
+    var retainedMetadata = source.microscopeMetadata
+    retainedMetadata.removeValue(forKey: NativeMetadataDocument.metadataKey)
+    retainedMetadata.removeValue(forKey: NativeQEMMetadataUnits.metadataKey)
     var description: [String: Any] = [
       "format_identifier": source.formatIdentifier,
-      "format_name": source.formatName, "microscope_metadata": source.microscopeMetadata,
+      "format_name": source.formatName, "microscope_metadata": retainedMetadata,
     ]
     description["user_confirmed_background_corrected"] =
       userConfirmedBackgroundCorrected
@@ -90,6 +94,7 @@ extension MetalEMPADResidentSource {
     var scientific = try NativeQEMCalibration.applying(
       overrides,
       to: NativeQEMMetadata.acquisition(dataset))
+    scientific = try NativeMetadataDocument.adding(sourceDocuments, to: scientific)
     if background != nil {
       scientific["processing"] = [
         ["operation": "lossless_storage", "changes_measurements": false],

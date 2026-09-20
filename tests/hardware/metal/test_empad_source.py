@@ -113,6 +113,28 @@ class EMPADSourceTests(unittest.TestCase):
         for name, expected in products.items():
             self.assertEqual((self.root / ("selected.bin." + name)).read_bytes(), expected)
 
+    def test_xml_document_survives_native_save_and_reopen(self):
+        from quantem.gpu.io._qem_reference import read_envelope
+        from quantem.gpu.io.qem_validation import validate_qem
+
+        xml = self.root / "acquisition.xml"
+        content = ('<root><raw_file filename="scan_x3_y2.raw"/>'
+                   '<pix_y>2</pix_y><pix_x>3</pix_x>'
+                   '<vendor_extension units="µs">49.6</vendor_extension>'
+                   '<!-- preserve comments and unknown fields --></root>\n')
+        xml.write_text(content)
+        qem = self.root / "document.qem"
+        self.read(xml, metal=True, save_qem=qem)
+        self.assertEqual(validate_qem(qem)["integrity"], "verified")
+        document = read_envelope(qem)[0]["scientific_metadata"]["source_documents"][0]
+        self.assertEqual(document["content"], content)
+        self.assertEqual(document["sha256"], hashlib.sha256(content.encode()).hexdigest())
+        self.assertEqual(document["filename"], xml.name)
+        xml.unlink()
+        self.read(qem, metal=True, save_qem=self.root / "reexport.qem")
+        self.assertEqual(read_envelope(self.root / "reexport.qem")[0]
+                         ["scientific_metadata"]["source_documents"], [document])
+
     def test_supplier_readme_recognition_preserves_values_and_tracks_document_edits(self):
         acquisition = self.root / "acquisition"
         acquisition.mkdir()

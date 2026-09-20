@@ -40,12 +40,15 @@ public enum MetalQEMExporter {
     _ source: Source, to destination: URL, device: MTLDevice,
     maximumAdditionalBytes: UInt64? = nil,
     calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
+    sourceDocuments: [NativeMetadataDocument] = [],
+    resolveDocuments: (CalibrationIdentity) throws -> [NativeMetadataDocument] = { _ in [] },
     resolveCalibration: (CalibrationIdentity) throws -> NativeQEMCalibration.Overrides? = { _ in nil
     },
     shouldCancel: () -> Bool = { false },
     progress: (String) -> Void = { _ in }
   ) throws {
     if let calibrationOverrides { try NativeQEMCalibration.validate(calibrationOverrides) }
+    _ = try NativeMetadataDocument.encoded(sourceDocuments)
     guard !FileManager.default.fileExists(atPath: destination.path) else {
       throw Native4DSTEMIOError.invalidData(
         "\(destination.lastPathComponent) already exists; choose another destination.")
@@ -77,9 +80,14 @@ public enum MetalQEMExporter {
             originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
             metadata: original.microscopeMetadata))
       progress("Writing .qem file…")
+      let documents = try resolveDocuments(.init(
+        sourceIdentitySHA256: resident.sourceIdentitySHA256,
+        originalSourceIdentitySHA256: resident.originalSourceIdentitySHA256,
+        metadata: original.microscopeMetadata))
       try resident.saveQEM(
         to: destination, userConfirmedBackgroundCorrected: alreadyCorrected,
         calibrationOverrides: overrides,
+        sourceDocuments: documents + sourceDocuments,
         shouldCancel: shouldCancel)
       return
     }
@@ -112,7 +120,12 @@ public enum MetalQEMExporter {
           originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
           metadata: metadata))
     progress("Writing .qem file…")
+    let documents = try resolveDocuments(.init(
+      sourceIdentitySHA256: resident.sourceIdentitySHA256,
+      originalSourceIdentitySHA256: originalIdentity ?? resident.sourceIdentitySHA256,
+      metadata: metadata))
     try resident.saveSnapshot(
-      to: destination, calibrationOverrides: overrides, shouldCancel: shouldCancel)
+      to: destination, calibrationOverrides: overrides, sourceDocuments: documents + sourceDocuments,
+      shouldCancel: shouldCancel)
   }
 }

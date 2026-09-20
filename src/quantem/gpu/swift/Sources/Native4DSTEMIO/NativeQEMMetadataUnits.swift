@@ -107,6 +107,7 @@ public enum NativeQEMMetadataUnits {
   /// Validate documented calibration provenance and redundant physical quantities.
   /// Example: `try NativeQEMMetadataUnits.validateScientific(scientific)`.
   public static func validateScientific(_ scientific: [String: Any]) throws {
+    _ = try NativeMetadataDocument.read(scientific: scientific)
     let normalized = try normalized(scientific)
     guard scientific["source_metadata"] is [String: Any],
       let coverage = scientific["source_metadata_coverage"] as? String,

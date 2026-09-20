@@ -158,6 +158,22 @@
     "source_metadata": {
       "type": "object"
     },
+    "source_documents": {
+      "type": "array",
+      "maxItems": 16,
+      "description": "Original UTF-8 XML/JSON, separate from normalized quantities and overrides. Total UTF-8 content is limited to 4 MiB; readers verify hashes and safe XML/JSON syntax.",
+      "items": {
+        "type": "object",
+        "required": ["filename", "mediaType", "content", "sha256"],
+        "properties": {
+          "filename": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$"},
+          "mediaType": {"enum": ["application/xml", "application/json"]},
+          "content": {"type": "string", "maxLength": 4194304},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "additionalProperties": true
+      }
+    },
     "source_metadata_coverage": {
       "enum": [
         "reader-retained",

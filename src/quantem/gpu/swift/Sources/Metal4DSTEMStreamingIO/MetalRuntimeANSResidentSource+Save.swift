@@ -14,6 +14,7 @@ extension MetalRuntimeANSResidentSource {
   public func saveSnapshot(
     to destination: URL,
     calibrationOverrides: NativeQEMCalibration.Overrides? = nil,
+    sourceDocuments: [NativeMetadataDocument] = [],
     shouldCancel: () -> Bool = { false },
     progress: (Int, Int) -> Void = { _, _ in }
   ) throws {
@@ -175,9 +176,9 @@ extension MetalRuntimeANSResidentSource {
     header["container"] = NativeQEMMetadata.container
     header["container_version"] = 1
     header["codec"] = "runtime-column-rans-spatial-v2"
-    header["scientific_metadata"] = try NativeQEMCalibration.applying(
+    header["scientific_metadata"] = try NativeMetadataDocument.adding(sourceDocuments, to: NativeQEMCalibration.applying(
       overrides,
-      to: NativeQEMMetadata.acquisition(dataset))
+      to: NativeQEMMetadata.acquisition(dataset)))
     let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
     guard json.count <= 16 << 20 else {
       throw Self.invalid("Source metadata exceeds the compressed header limit.")

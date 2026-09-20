@@ -1,7 +1,10 @@
 """Scientific metadata shared by QEM readers, independent of payload codecs."""
 
 import copy
+import hashlib
+import json
 import math
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -298,6 +301,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         axes=axes,
         electron_microscope=quantities,
         source_metadata=source,
+        source_documents=copy.deepcopy(metadata.get("source_documents", [])),
         source_metadata_coverage=metadata.get("source_metadata_coverage", "reader-retained"),
         calibration_overrides={},
         processing=_processing_records(metadata),
@@ -338,9 +342,43 @@ def validate_header(header: dict) -> None:
     _legacy_overrides(scientific)
 
 
+def _validate_source_documents(documents: list[dict]) -> None:
+    """Authenticate bounded original attachments without interpreting unknown fields."""
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"QEM metadata JSON contains non-standard constant {value}.")
+
+    if not isinstance(documents, list) or len(documents) > 16:
+        raise ValueError("QEM permits at most 16 XML/JSON metadata attachments.")
+    total = 0
+    for document in documents:
+        if not isinstance(document, dict):
+            raise ValueError("QEM metadata attachments must be named documents.")
+        name, content = document.get("filename"), document.get("content")
+        if (not isinstance(name, str) or not name or "/" in name or "\\" in name
+                or not isinstance(content, str)):
+            raise ValueError("QEM metadata attachments require a filename and UTF-8 content.")
+        payload = content.encode("utf-8")
+        total += len(payload)
+        if total > 4 << 20 or hashlib.sha256(payload).hexdigest() != document.get("sha256"):
+            raise ValueError("QEM metadata attachment is oversized or its checksum does not match.")
+        if document.get("mediaType") == "application/xml":
+            if "<!DOCTYPE" in content.upper() or "<!ENTITY" in content.upper():
+                raise ValueError("QEM metadata XML cannot contain document types or entities.")
+            try:
+                ET.fromstring(payload)
+            except ET.ParseError as error:
+                raise ValueError("QEM metadata attachment contains malformed XML.") from error
+        elif document.get("mediaType") == "application/json":
+            if not isinstance(json.loads(content, parse_constant=reject_constant), dict):
+                raise ValueError("QEM metadata JSON must contain named fields.")
+        else:
+            raise ValueError("QEM metadata attachments support XML and JSON only.")
+
+
 def _validate_scientific(scientific: dict) -> None:
     """Check provenance and one unambiguous physical calibration at the boundary."""
     normalized = microscopy_metadata(scientific)
+    _validate_source_documents(scientific.get("source_documents", []))
     quantities = normalized.get("electron_microscope", {})
     if not isinstance(scientific.get("source_metadata"), dict):
         raise ValueError("QEM source_metadata must be an object, including when empty.")

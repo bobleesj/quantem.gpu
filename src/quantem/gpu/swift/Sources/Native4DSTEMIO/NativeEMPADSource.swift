@@ -38,6 +38,38 @@ public struct NativeEMPADSource: Sendable {
   public var sourceBytes: Int { frameCount * recordBytes }
   public var hasQEMStorage: Bool { microscopeMetadata["qem_storage"] == "float32-bit-lanes-rans-v1" }
 
+  static func metadataQuantities(document: NativeMetadataDocument, rows: Int, columns: Int, evidence: String) throws
+    -> NativeQEMCalibration.Overrides {
+    let parsed = try EMPADXML.read(document: document, allowUnknown: true)
+    guard !parsed.filename.isEmpty else { return [:] }
+    if let shape = parsed.shape, shape.row != rows || shape.col != columns {
+      throw EMPADError("XML scan dimensions do not match this acquisition; choose its matching metadata.")
+    }
+    let microscope = NativeMicroscopeMetadata(metadata: parsed.microscopeMetadata)
+    var values: NativeQEMCalibration.Overrides = [:]
+    for (path, value, unit) in [
+      ("electron_source/accelerating_voltage", microscope.beamEnergyKeV.map { $0 * 1000 }, "V"),
+      ("imaging_system/camera_length", microscope.cameraLengthMillimeters.map { $0 / 1000 }, "m"),
+      ("scan_controller/regular_scan/dwell_time", microscope.dwellTimeMicroseconds.map { $0 / 1e6 }, "s"),
+      (NativeQEMCalibration.detectorRow, microscope.angularRowMrad, "mrad"),
+      (NativeQEMCalibration.detectorColumn, microscope.angularColumnMrad, "mrad"),
+    ] {
+      if let value { values[path] = .init(value: value, unit: unit, evidence: evidence) }
+    }
+    if let scan = parsed.scanCalibration(rows: rows, columns: columns) {
+      values[NativeQEMCalibration.scanRow] = .init(value: scan.rowSamplingAngstrom * 1e-10,
+        unit: "m", evidence: evidence)
+      values[NativeQEMCalibration.scanColumn] = .init(value: scan.columnSamplingAngstrom * 1e-10,
+        unit: "m", evidence: evidence)
+    }
+    if let sampling = parsed.diffractionSampling {
+      for path in [NativeQEMCalibration.detectorRow, NativeQEMCalibration.detectorColumn] {
+        values[path] = .init(value: sampling, unit: "1/nm", evidence: evidence)
+      }
+    }
+    return values
+  }
+
   /// Restore an EMPAD acquisition description without requiring its original folder.
   /// Example: `try NativeEMPADSource.openQEM(url)`.
   public static func openQEM(_ url: URL) throws -> NativeEMPADSource {
@@ -503,6 +535,9 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
   }
   var microscopeMetadata: [String: String] {
     var result: [String: String] = [:]
+    if let document, let bytes = try? NativeMetadataDocument.encoded([document]) {
+      result[NativeMetadataDocument.metadataKey] = String(decoding: bytes, as: UTF8.self)
+    }
     let root = "electron_microscope/"
     for (source, target, unit) in [
       (
@@ -595,26 +630,24 @@ private final class EMPADXML: NSObject, XMLParserDelegate {
   private var stack: [String] = []
   private var scanMode = ""
   private var content = ""
+  private var document: NativeMetadataDocument?
 
   static func read(_ url: URL) throws -> EMPADXML {
-    let handle = try FileHandle(forReadingFrom: url)
-    defer { try? handle.close() }
-    let bytes = try handle.read(upToCount: 4 * 1024 * 1024 + 1) ?? Data()
-    guard bytes.count <= 4 * 1024 * 1024,
-      let text = String(data: bytes, encoding: .utf8),
-      !text.uppercased().contains("<!DOCTYPE"), !text.uppercased().contains("<!ENTITY")
-    else {
-      throw EMPADError(
-        "EMPAD XML must be UTF-8 metadata without external entities (at most 4 MiB).")
-    }
+    try read(document: NativeMetadataDocument.read(url))
+  }
+
+  static func read(document: NativeMetadataDocument, allowUnknown: Bool = false) throws -> EMPADXML {
+    try document.validate()
     let result = EMPADXML()
-    let parser = XMLParser(data: bytes)
+    result.document = document
+    let parser = XMLParser(data: Data(document.content.utf8))
     parser.shouldResolveExternalEntities = false
     parser.delegate = result
-    guard parser.parse(), !result.filename.isEmpty else {
+    guard parser.parse(), allowUnknown || !result.filename.isEmpty else {
       throw EMPADError(
         "Could not read EMPAD XML raw_file metadata. Open the original acquisition XML.")
     }
+    if result.filename.isEmpty { return result }
     if result.fields["sensor/type"] != nil || result.fields["rawfile/filename"] != nil {
       guard result.isGeneration2, result.fields["rawfile/datatype"] == "float32",
         result.fields["scan/type"] == "scan", result.shape != nil,
