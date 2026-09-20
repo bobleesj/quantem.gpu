@@ -184,6 +184,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private let detectorFinishPipeline: MTLComputePipelineState
   private var failure: MTLBuffer!
   private var diffraction: MTLBuffer!
+  private var meanDiffractionReducer: PairedRuntimeMeanDiffraction?
   private var detectorProduct: MTLBuffer!
   private var pendingCopyDestination: MTLBuffer?
   private let historyEnabled: Bool
@@ -1321,6 +1322,29 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     var values = [UInt32](repeating: 0, count: stored.count)
     for (rank, pixel) in pixelOfStreamRank.enumerated() { values[Int(pixel)] = stored[rank] }
     return values
+  }
+
+  /// Average raw counts over half-open scan (row, column) ranges, or the full scan.
+  /// Circles use square bounds and include pixel centers on the circumference.
+  /// All detector pixels are retained, including pixels excluded from virtual
+  /// detectors. UInt64 sums are exact and divided once to Float32. Only bounded
+  /// packet sums are allocated; the compressed resident is never expanded.
+  /// Example: `try source.meanDiffractionPattern(rows: 10..<20, columns: 30..<40, shape: .circle)`.
+  public func meanDiffractionPattern(
+    rows: Range<Int>? = nil, columns: Range<Int>? = nil,
+    shape selectionShape: MetalScanRegionShape = .rectangle
+  ) throws -> MetalCompactH5MeanDiffraction {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    try requireLive()
+    if meanDiffractionReducer == nil {
+      meanDiffractionReducer = try PairedRuntimeMeanDiffraction(
+        device: queue.device, library: sourceLibrary, compactOffsets: compactOffsetsEnabled)
+    }
+    return try meanDiffractionReducer!.mean(
+      queue: queue, payload: payload, offsets: offsets,
+      modes: modes, table: decodingTable, shape: shape, pixelOfStreamRank: pixelOfStreamRank,
+      rows: rows ?? 0..<shape[0], columns: columns ?? 0..<shape[1], regionShape: selectionShape)
   }
 
   private struct UpdateProfile {
@@ -3434,6 +3458,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     diagnosticScratch = nil
     failure = nil
     diffraction = nil
+    meanDiffractionReducer = nil
     detectorProduct = nil
     historyProduct = nil
     historyMask = nil

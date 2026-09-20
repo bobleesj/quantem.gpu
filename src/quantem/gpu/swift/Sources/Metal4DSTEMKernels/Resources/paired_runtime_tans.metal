@@ -1451,6 +1451,73 @@ inline bool prt_packed_finished(thread PRTPackedReader &r) {
     return !prt_entropy_mode(r.mode) || prt_fast_finished(r.entropy);
 }
 
+// One exact partial per detector stream and selected scan packet. Counts never
+// leave registers; a packet sum is at most 512 * 65535 and fits in uint32.
+kernel void paired_runtime_tans_region_partials(
+    device const uchar *payload [[buffer(0)]], device const uint *offsets [[buffer(1)]],
+    device const uchar *modes [[buffer(2)]], device const uint *table [[buffer(3)]],
+    device uint *partials [[buffer(4)]], device atomic_uint *failure [[buffer(5)]],
+    constant uint *p [[buffer(6)]], device const uchar *membership [[buffer(7)]],
+    device const uint *selected_counts [[buffer(8)]],
+    uint index [[thread_position_in_grid]]) {
+    uint pixels = p[0], packets = p[1], packet_count = p[4];
+    if (index >= pixels * packet_count) return;
+    uint packet = p[3] + index / pixels;
+    uint stream = packet * pixels + index % pixels;
+    uint first = prt_source_offset(offsets, stream, pixels * packets);
+    uint end = prt_source_offset(offsets, stream + 1u, pixels * packets);
+    PRTPackedReader reader;
+    if (!prt_packed_begin(payload, table, first, end, p[2], uint(modes[stream]), reader)) {
+        atomic_store_explicit(failure, 110u, memory_order_relaxed); return;
+    }
+    if (reader.mode == 253u || selected_counts[packet] == 0u) {
+        partials[index] = 0u; return;
+    }
+    if (reader.mode == 255u) {
+        partials[index] = (uint(payload[first]) | (uint(payload[first + 1u]) << 8u))
+            * selected_counts[packet]; return;
+    }
+    if (reader.mode == 252u || reader.mode == 251u) {
+        uint sum = 0u, previous = 0u;
+        bool has_previous = false;
+        PRTCompactEvents events = {first, end, 0u, true};
+        while (events.cursor < end) {
+            uint position = 0u, value = 0u;
+            if (reader.mode == 252u) {
+                uint code = uint(payload[events.cursor]) | (uint(payload[events.cursor + 1u]) << 8u);
+                events.cursor += 2u; position = code >> 7u; value = (code & 127u) + 1u;
+            } else if (!prt_compact_next(payload, events, position, value)) {
+                atomic_store_explicit(failure, 111u, memory_order_relaxed); return;
+            }
+            if (position >= PRT_INTERVAL || (has_previous && position <= previous)) {
+                atomic_store_explicit(failure, 111u, memory_order_relaxed); return;
+            }
+            if (membership[packet * PRT_INTERVAL + position] != 0u) sum += value;
+            previous = position; has_previous = true;
+        }
+        partials[index] = sum; return;
+    }
+    uint sum = 0u;
+    for (uint scan = 0u; scan < PRT_INTERVAL; ++scan) {
+        uint value = prt_packed_next(payload, reader);
+        if (membership[packet * PRT_INTERVAL + scan] != 0u) sum += value;
+    }
+    partials[index] = sum;
+    if (!prt_packed_finished(reader))
+        atomic_store_explicit(failure, 111u, memory_order_relaxed);
+}
+
+// Ordered encoders combine bounded batches into an exact 64-bit detector sum.
+kernel void paired_runtime_tans_region_combine(
+    device const uint *partials [[buffer(0)]], device ulong *sums [[buffer(1)]],
+    constant uint *p [[buffer(2)]], uint pixel [[thread_position_in_grid]]) {
+    if (pixel >= p[0]) return;
+    ulong sum = sums[pixel];
+    for (uint packet = 0u; packet < p[1]; ++packet)
+        sum += ulong(partials[packet * p[0] + pixel]);
+    sums[pixel] = sum;
+}
+
 constant bool prt_packed_staging_requested [[function_constant(80)]];
 constant bool prt_packed_staging = is_function_constant_defined(prt_packed_staging_requested)
     ? prt_packed_staging_requested : false;

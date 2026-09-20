@@ -89,6 +89,8 @@ jobs:
           src/quantem/gpu/swift/Sources
           src/quantem/gpu/swift/Tests
           src/quantem/gpu/swift/Benchmarks
+      - name: Exact paired-ANS mean diffraction
+        run: bash scripts/check_paired_mean_diffraction.sh
       - name: Run Swift tests
         run: swift test
       - name: Check native EMPAD source contract
