@@ -116,33 +116,21 @@ See [Install](docs/install.md) for complete commands and runtime verification.
 ## Quick start
 
 ```python
-from quantem.gpu import detector, dpc, io
+from quantem.gpu import detector, io
 
-with io.load(
-    "scan_master.h5",
-    backend="auto",
-    representation="dense",
-    dtype="native",
-    detector_bin=1,
-    apply_mask=False,
-) as loaded:
-    # Step 1. Compute products from the full native-count array.
-    bright_field = detector.bf(loaded.data)
-    annular_dark_field = detector.adf(
-        loaded.data, inner=40, outer=90, unit="px",
-    )
-    dpc_result = dpc.run(loaded.data)
-
-    # Step 2. Inspect logical geometry separately from physical storage.
+with io.load("acquisition.qem") as loaded:
+    session = detector.prepare(loaded)
+    diffraction = session.frame(0)
     print(loaded.shape, loaded.dtype, loaded.representation)
     print(loaded.logical_bytes, loaded.resident_bytes)
 ```
 
-Here `apply_mask=False` preserves raw detector values; apply the experiment's
-detector exclusions explicitly when forming scientific products. Choose the
-center, apertures, and DPC calibration for your acquisition. `backend="auto"`
-selects an available accelerator, never a silent CPU fallback. Dense loading
-requires enough memory for the selected array and its working buffers.
+No storage option is needed. Supported original HDF5, NumPy, DM3/DM4 and
+EMPAD float acquisitions use bounded ANS ingestion on CUDA or MPS; `.qem`
+reopens its saved encoding. Only requested diffraction patterns or reduced
+products are decoded, not the complete acquisition. Automatic backend selection
+never silently falls back to CPU. See the [IO contract](docs/api/io.md) for
+format, calibration and native Swift coverage limits.
 
 ## Count representations and file compression
 
@@ -152,28 +140,21 @@ These controls answer different questions:
 |---|---|---|
 | `format` on save | `"arina"`, `"quantem"` | Acquisition/container layout |
 | `compression` on save | `"auto"` or a supported codec for that format | Disk encoding; Arina retains bitshuffle/LZ4, QuantEM currently uses ANS |
-| `representation` on load | `"dense"`, `"packed"`, `"ans"` | In-memory count layout |
+| `representation` on load | Omit for normal acquisition loading | Expert layout selection; inspect the returned storage metadata |
 | `backend` | `"auto"`, `"cuda"`, `"mps"`, explicit `"cpu"` | Python execution runtime, subject to operation support |
 
-Loading detects file format and compression from the source. The default
-representation is **source-native**: ordinary HDF5 stays dense, a prepared
-Lossless Pack Format source stays packed, and a standalone ANS source stays ANS.
-Automatic original-HDF5-to-packed conversion is not implemented by Python
-`io.load` yet. Source-native representation is separate from dtype selection;
-use `dtype="native"` when loading original counts.
+Loading detects format and compression from file contents. Supported originals
+default to ANS (`representation="encoded"` in result metadata). Existing
+prepared packed sources retain their declared layout; they are not advertised
+as ANS. Unsupported inputs fail explicitly instead of expanding a dense cube.
 
-For an existing `.qem` saved copy (`io.save(..., format="quantem")`), Python
-MPS can decode directly into a packed resident without a full dense intermediate:
+Save and reopen a supported acquisition without choosing its codec:
 
 ```python
 from quantem.gpu import detector, io
 
-with io.load("experiment.qem", backend="mps", representation="packed") as data:
-    # Step 1. Keep an operation handle to the existing resident buffers.
-    session = detector.prepare(data)
-
-    # Step 2. Read one diffraction pattern, in scan-row-major order.
-    diffraction = session.frame(0)
+with io.load("acquisition.npy") as data:
+    io.save("acquisition.qem", data)
 ```
 
 For portable conversion, metadata inspection and lossless round trips, see
@@ -181,12 +162,9 @@ the [QEM Python guide](docs/api/qem-python.md) and
 [synthetic notebook](docs/examples/qem_portable.ipynb). The reference CPU path
 is explicit; supported dtypes and detector geometries are documented there.
 
-`session.masked_sum_exact(mask)` computes a scan-shaped uint64 image from a
-binary mask with the working detector shape. Saving ANS currently uses the
-explicit CPU reference writer; accelerated saving and reverse GPU conversions
-remain pending. `data.to_representation(...)` is explicit: ANS-to-packed creates
-an independent owner, while unsupported conversions raise without CPU fallback.
-Both encoded representations coexist at conversion peak.
+Saving a supported encoded resident preserves its encoded measurements and
+scientific metadata without materializing the acquisition. Original tags can
+contain identifying information: review metadata before sharing a `.qem` file.
 
 | New count-ANS workflow | Implementation | Current qualification |
 |---|---|---|

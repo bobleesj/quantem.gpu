@@ -18,12 +18,12 @@
     },
     {
       "path": "docs/platforms/cuda.md",
-      "sha256": "5c9aabcf9c472dfab56e6d2097cbbf262c7041cd94d429ad0c3a6ad0c6844d84",
+      "sha256": "c11a9e49082a1a4567d8ff88116392ae241bbf3b52d87da5ca2d284ad87ee1c4",
       "role": "CUDA 6 GiB minimum-device acceptance contract"
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "f8251d9bd929df5ebe103739271d251bfc5bd0c732793600a64207714ff60789",
+      "sha256": "a7c195d54c6f9acc64f9ee7d8efa877e77b48abc29de8f23a03780a65d764b44",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {

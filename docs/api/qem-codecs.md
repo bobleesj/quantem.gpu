@@ -133,7 +133,7 @@ The explicit CPU reference remains available for small interoperability checks.
 The Python CUDA and Metal/MPS implementations accept rectangular detectors.
 The separate Swift native reader still requires a 128×128 float detector;
 do not assume a Python-exported larger detector is supported by an installed
-Live4DSTEM build. The 128×128 byte layout and arithmetic are unchanged.
+native application build. The 128×128 byte layout and arithmetic are unchanged.
 
 BF/ABF/ADF reductions use compensated float32 sums. CoM is mean-subtracted in
 `(row, column)` order; invalid or zero-total frames remain NaN and are excluded

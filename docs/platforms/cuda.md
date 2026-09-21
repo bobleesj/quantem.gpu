@@ -24,8 +24,8 @@ The ordinary IO call path is:
 io.load(..., backend="cuda")
   → io.backends.protocol.resolve_backend
   → io.load source/index/read planning
-  → io.backends.cuda.decoder
-  → CuPy-resident FourDSTEMData + provenance
+  → bounded source decode + ANS encoding
+  → encoded FourDSTEMData + provenance
 ```
 
 Detector and reconstruction calls dispatch from their public workflow to the
@@ -35,14 +35,8 @@ classes and RawKernel launch shapes do not appear in the public API.
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load(
-    "scan_master.h5",
-    backend="cuda",
-    representation="dense",
-    dtype="u16",
-    detector_bin=1,
-)
-bright_field = detector.bf(loaded.data)
+with io.load("scan_master.h5", backend="cuda") as loaded:
+    diffraction = detector.prepare(loaded).frame(0, output="native")
 ```
 
 An existing Lossless Pack Format source uses the same public loader and remains

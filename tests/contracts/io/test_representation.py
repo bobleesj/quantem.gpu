@@ -12,6 +12,34 @@ import pytest
 from quantem.gpu import io
 
 
+@pytest.mark.parametrize("backend", ["cuda", "mps"])
+def test_original_acquisition_defaults_to_ans(monkeypatch, tmp_path, backend) -> None:
+    """Opening an original without storage flags reaches ANS, never dense IO."""
+    import h5py
+
+    load_module = import_module("quantem.gpu.io.load")
+    backends = import_module("quantem.gpu.io.backends")
+    streamed = import_module("quantem.gpu.io._streamed")
+    source = tmp_path / "acquisition.h5"
+    with h5py.File(source, "w") as handle:
+        handle.create_dataset("data", data=np.zeros((2, 3, 4, 5), np.uint16))
+    expected = object()
+    calls = []
+
+    def encoded(path, **options):
+        calls.append((path, options["backend"]))
+        return expected
+
+    def dense(*args, **kwargs):
+        pytest.fail("Default acquisition loading reached dense materialization")
+
+    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    monkeypatch.setattr(streamed, "load_h5_ans", encoded)
+    monkeypatch.setattr(load_module, "_load", dense)
+    assert io.load(source) is expected
+    assert calls == [(source, backend)]
+
+
 def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> None:
     """An explicit dense load reports its representation and exact byte counts."""
     load_module = import_module("quantem.gpu.io.load")

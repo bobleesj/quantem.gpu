@@ -1,15 +1,16 @@
 # Experimental lossless resident ANS
 
-ANS means **asymmetric numeral systems**. This feature is opt-in and experimental:
-container compatibility, admission policies, and private adapters may change.
-It is not a new default for ordinary HDF5, dense, or packed-data workflows.
-Use the matching experimental `quantem.gpu` and `quantem.widget` revisions.
-Source integration does not mean that these changes have been released on PyPI.
+ANS means **asymmetric numeral systems**. Supported original acquisitions now
+default to ANS on CUDA/MPS through `io.load(path)`. This page retains experimental
+browser/archive integrations; their qualification is distinct from that default.
+See the [current IO guide](../api/io.md) for supported formats and the
+[acceptance gate](../maintainer/ans-io-acceptance.md) for runtime coverage.
+Source integration does not mean these changes have been released on PyPI.
 
 ## Compatibility safeguards
 
-Encoded sources are explicitly selected. Ordinary HDF5, dense and packed inputs
-retain their established workflows. Encoding writes a new container atomically
+The loader detects encoded sources. Explicit reference and prepared packed inputs
+retain their separate contracts. Encoding writes a new container atomically
 and refuses to overwrite an existing file; original acquisitions remain intact.
 Source ownership and cancellation are covered by regression tests. These are
 specific safeguards, not a guarantee that every experimental hardware path is
@@ -48,8 +49,8 @@ not establish that support.
 from quantem.gpu import io
 
 # counts: native uint8/uint16, (scan_row, scan_col, detector_row, detector_col)
-io.save("acquisition.qem", resident, format="quantem", backend="auto")
-source = io.load(saved.path, backend="cuda", representation="encoded", device=0).data
+io.save("acquisition.qem", resident)
+source = io.load("acquisition.qem", backend="cuda", device=0).data
 try:
     pattern = source.extract_diffraction_device(0, 0)
     image = source.detector_sum_device(binary_detector_mask)
@@ -83,7 +84,7 @@ as one detector session without dense stacking:
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load(paths, backend="mps", representation="ans", stack=False)
+loaded = io.load(paths, backend="mps", stack=False)
 session = detector.prepare(loaded)
 patterns = session.frame(scan_row * scan_columns + scan_column)
 images = session.masked_sums_exact(masks)  # (mask, acquisition, scan_row, scan_column)

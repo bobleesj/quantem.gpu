@@ -1,5 +1,11 @@
 # Count representations: dense, packed, and encoded
 
+For normal acquisition loading, use `io.load(path)` without a representation
+option. Supported originals default to ANS on CUDA/MPS; saved files retain
+their authenticated layout. The selectors below document advanced and retained
+reference paths, not options a new user must choose. No format-support claim
+follows from a selector alone: see the [acceptance matrix](../maintainer/ans-io-acceptance.md).
+
 Dense and lossless-packed representations remain supported parts of the library.
 Dense arrays remain
 the ordinary input for algorithms that require them; packed sources let
@@ -50,7 +56,7 @@ not a promise that its operations automatically work on every encoded profile.
 from quantem.gpu import io
 
 # Step 1. Retain an original HDF5 source as compact encoded counts.
-encoded = io.load("scan_master.h5", representation="encoded", dtype="native")
+encoded = io.load("scan_master.h5")
 
 # Step 2. Load an already prepared Lossless Pack Format source directly.
 packed = io.load("scan-lossless.h5", representation="packed")

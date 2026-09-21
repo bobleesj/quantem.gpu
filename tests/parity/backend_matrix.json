@@ -73,7 +73,7 @@
             "docs/api/native_resident.md",
             "tests/hardware/mps/test_precision.py"
           ],
-          "qualification": "Native scaled uint16 conversion, exact packed reads, GPU error accounting and standard HDF5 save/reopen are implemented and checked in the QuantEM native MAPED consumer on Phil. Float16 native export, arbitrary detector geometry, detector-query coverage and minimum-memory release signoff remain incomplete."
+          "qualification": "Native scaled uint16 conversion, exact packed reads, GPU error accounting and standard HDF5 save/reopen are implemented and checked in the native MAPED consumer on an Apple Silicon workstation. Float16 native export, arbitrary detector geometry, detector-query coverage and minimum-memory release signoff remain incomplete."
         },
         "webgpu": {
           "level": "not-implemented",

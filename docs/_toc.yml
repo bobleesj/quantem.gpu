@@ -29,6 +29,8 @@ parts:
         title: Explicit scan regions
       - file: kernels/display-export
         title: Display and export kernels
+        sections:
+          - file: kernels/metal-image-statistics
 
   - caption: Kernel implementations
     chapters:
@@ -75,7 +77,9 @@ parts:
           - file: api/movie
           - file: api/metal_image
           - file: api/native_4dstem_io
+          - file: api/native_resident
           - file: api/native-acquisition-formats
+          - file: integrations/k3-dm4-qem
           - file: api/qem-format
           - file: api/qem-python
           - file: examples/qem_portable

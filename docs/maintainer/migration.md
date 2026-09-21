@@ -171,18 +171,18 @@ Before publishing an rc:
 - Do not add a local Python FFT or HDF5 helper to the Mac app.
 
 
-## Python HDF5 loading defaults to packed storage
+## Python acquisition loading defaults to ANS
 
 `io.load(path)` now preserves complete native uint8/uint16 HDF5 counts in
-lossless packed GPU storage. Backend selection remains automatic. For multiple
-acquisitions use `io.load(paths, stack=False)` to retain separate packed owners.
+lossless ANS GPU storage. Backend selection remains automatic. For multiple
+acquisitions use `io.load(paths, stack=False)` to retain separate encoded owners.
 Saved packed, ANS and paired sources continue to reopen their recorded layouts.
 
 Code requiring dense tensors, selection, binning, or dtype conversion must request
 `representation="dense"` explicitly. Packed counts retain detector-mask metadata;
 apply that mask when calculating products rather than changing stored counts.
 
-Ordinary HDF5 packing is implemented for CUDA and Metal. Unsupported dtypes and
+Ordinary HDF5 ANS ingestion is implemented for CUDA and MPS. Unsupported dtypes and
 backends raise with corrective guidance; there is no implicit dense or CPU fallback.
 CUDA and MPS precision loads keep encoded values resident and run detector queries
 on their owning accelerator. CUDA uses float64 intermediates where available;

@@ -24,7 +24,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Optimization ledger](../maintainer/backend-optimization-matrix.md) | Accepted and rejected IO, kernel, display, and browser experiments |
 | [Load acceptance evidence](../maintainer/backend-4dstem-load-checklist.md) | Real-data load/decode/product gates and backend signoff |
 | [SSB performance evidence](../maintainer/ssb-performance.md) | Shape-by-backend SSB kernel history, memory, and exactness |
-| [Native Swift/Metal SSB migration](../maintainer/native-metal-ssb-migration.md) | Frozen historical extraction record; see [native-size verification](../../experiments/20260915-metal-ssb-native-sizes/README.md) for the current 128/256/512 scan support and parity checks |
+| [Native Swift/Metal SSB migration](../maintainer/native-metal-ssb-migration.md) | Frozen historical extraction record; see [native-size verification](https://github.com/bobleesj/quantem.gpu/blob/main/experiments/20260915-metal-ssb-native-sizes/README.md) for the current 128/256/512 scan support and parity checks |
 | [Native Metal loader postmortem](../maintainer/native-metal-hdf5-postmortem.md) | Pass-graph, redundant-work failure, and prevention checklist |
 | [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) | Physical low-memory Apple load/decode profiling and retained kernel evidence |
 | [WebGPU memory history](../maintainer/history/webgpu-gqk-memory-2026-07.md) | Archived browser G(q,k) layout and memory experiments |

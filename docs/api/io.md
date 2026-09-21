@@ -7,9 +7,8 @@ from quantem.gpu import io
 
 files = io.discover("/data/session")
 readiness = io.inspect(files[0])
-loaded = io.load(files[0], backend="auto", dtype="u16")
-saved = io.save("copy_master.h5", loaded.data, backend="auto", dtype="u16")
-saved.wait()
+with io.load(files[0]) as loaded:
+    saved = io.save("copy.qem", loaded)
 ```
 
 Metadata parsing may run on the host, but detector decoding and compression do
@@ -64,6 +63,12 @@ print(loaded.representation)
 print(loaded.residency)
 print(loaded.logical_bytes, loaded.resident_bytes)
 ```
+
+For ordinary acquisition use, omit `representation`, `compression`, and
+`backend`. Supported originals become ANS-resident on the selected CUDA or MPS
+device; saved `.qem` files retain their declared encoded layout. Existing
+prepared packed containers remain a separate explicit storage contract.
+Unknown formats are rejected, not silently expanded or relabeled as ANS.
 
 ### Load original arrays into ANS and save a `.qem` copy
 
@@ -168,13 +173,12 @@ float acquisition geometry to 128 × 128 and does not read these gzip stacks.
 ```python
 from quantem.gpu import io, detector
 
-loaded = io.load("scan_master.h5", backend="cuda", representation="encoded",
-                 dtype="native", apply_mask=False)
+loaded = io.load("scan_master.h5", backend="cuda")
 session = detector.prepare(loaded)
 pattern = session.frame(0, output="native")
 ```
 
-This opt-in CUDA path streams bounded chunks of a complete uint8/uint16 H5
+This default CUDA path streams bounded chunks of a complete uint8/uint16 H5
 acquisition, preserves every stored count, and builds exact spatial sums while
 those chunks are available. The library's default H5 representation on
 accelerator backends is encoded. Existing encoded files keep their original
@@ -532,15 +536,15 @@ These are independent decisions, not different names for the same setting:
 | `compression` on save | Lossless file encoding | `"bitshuffle_lz4"` for Arina; `"ans"` for QuantEM |
 | `representation` on load | In-memory count layout | `"dense"`, `"packed"`, `"encoded"` |
 
-For example, save an ANS-compressed QuantEM file, then use bitpacking in memory:
+For example, save and reopen an ANS-resident acquisition:
 
 ```python
 # Step 1. Save a copy of a complete encoded CUDA or Metal resident.
 # Nothing is re-encoded; the resident's exact bytes and indexes are stored.
-io.save("experiment.qem", resident, format="quantem", backend="auto")
+io.save("experiment.qem", resident)
 
 # Step 2. Load the copy and select the representation used by GPU operations.
-with io.load("experiment.qem", representation="packed", backend="mps") as data:
+with io.load("experiment.qem") as data:
     print(data.shape, data.dtype, data.representation)
 ```
 

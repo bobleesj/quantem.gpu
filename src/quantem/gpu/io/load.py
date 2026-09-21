@@ -9,7 +9,8 @@ qualified measurements live in the benchmark registry.
 Examples
 --------
 >>> from quantem.gpu.io import load
->>> data = load('/path/to/file.h5').data
+>>> with load("acquisition.qem") as acquisition:
+...     pattern = acquisition.read(scan_region=(0, 1, 0, 1))
 """
 
 from __future__ import annotations
@@ -5154,7 +5155,7 @@ def load(
 ) -> FourDSTEMData | list[FourDSTEMData]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
-    NumPy and supported EMPAD RAW/XML sources default to bounded ANS ingestion
+    Supported original acquisitions default to bounded ANS ingestion
     on CUDA and MPS. Integer sources retain uint8/uint16; float32 sources retain
     IEEE bits at native detector geometry. Use ``scan_shape`` for
     headerless EMPAD RAW. CPU reference access is explicit, never a fallback.

@@ -5,7 +5,7 @@ There are two CUDA source paths behind the existing `io.load` and
 runtime encoded resident with `representation="encoded"`; portable encoded files retain
 their original encoded storage. Equally shaped acquisitions can be prepared
 as a list for joint native queries. See the
-{ref}`H5 workflow <cuda-h5-ans-residency>`
+{ref}`H5 workflow <cuda-h5-encoded-residency>`
 for the current options and save/conversion limits.
 
 The prepared-series path below preserves the earlier specialized deployment.

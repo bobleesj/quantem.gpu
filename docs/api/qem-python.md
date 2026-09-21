@@ -6,7 +6,23 @@ cannot open it. QuantEM provides GPU readers and an explicit CPU reference path.
 These examples require a development version containing that reference path,
 not the older published app or an assumed PyPI version.
 
-## Smallest portable example
+## Open and save on your GPU
+
+```python
+from quantem.gpu import detector, io
+
+with io.load("acquisition.npy") as acquisition:
+    pattern = detector.prepare(acquisition).frame(0)
+    io.save("acquisition.qem", acquisition)
+```
+
+Omit backend, representation and compression options for normal use. The loader
+selects an available CUDA or MPS device, ingests supported originals into ANS,
+and decodes selected products on demand. Saving retains measurements and
+reader-provided metadata. See [supported inputs](io.md) for exact dtype,
+geometry and calibration limits. Python coverage does not certify native Swift.
+
+## Small synthetic CPU reference
 
 ```python
 import numpy as np
@@ -65,17 +81,17 @@ needed to decode the saved measurements.
 
 ```python
 # NumPy .npy, K3/other qualified DM3/DM4, or an EMPAD float-export XML/RAW pair.
-with io.load("acquisition.npy", backend="cpu") as acquisition:
-    io.save("acquisition.qem", acquisition, backend="cpu")
+with io.load("acquisition.npy") as acquisition:
+    io.save("acquisition.qem", acquisition)
 ```
 
 | Input | Python route | Limits |
 | --- | --- | --- |
-| NumPy array / `.npy` | `io.save(..., backend="cpu")`; `.npy` through `io.load` | 4D uint8/uint16, or float32 detector 128x128; no implicit cast |
-| DM3/DM4 including K3 | `io.load(..., backend="cpu")`, then save | Install `quantem.gpu[dm]`; one qualified 4D uint8/uint16 diffraction image |
-| EMPAD-G1 XML/RAW float export | `io.load("scan.xml", backend="cpu")` | 130x128 float32 records; retains the 128x128 detector, not footer words |
+| NumPy `.npy` | `io.load(path)`, then `io.save` | 4D counts or float32; wider input requires an exact audit |
+| DM3/DM4 including K3 | `io.load(path)`, then save | Install `quantem.gpu[dm]`; one qualified 4D count or float32 image |
+| EMPAD-G1 XML/RAW float export | `io.load("scan.xml")` | 130x128 float32 records; retains the 128x128 detector, not footer words |
 | EMPAD-G2 declared float export | Same XML route | Explicit 128x128 float32 raster; raw encoded detector words and their calibration are not supported by this reference importer |
-| ARINA/NCEM HDF5 | Existing `io.load(..., backend="cuda", representation="encoded")`, then `io.save` | Qualified original HDF5 layout; not arbitrary HDF5 datasets |
+| ARINA/NCEM HDF5 | `io.load(path)`, then `io.save` | Qualified original and generic array layouts; not arbitrary HDF5 structures |
 | Other vendors or array dtypes | Not automatically supported | Use a verified source reader, preserve its calibration, and pass supported NumPy measurements; do not relabel bytes |
 
 For a headerless EMPAD-G1 `.raw`, explicitly supply `scan_shape=(rows, columns)`.
@@ -90,13 +106,13 @@ an additional background subtraction.
 For already encoded GPU counts, saving copies the encoded bytes and indexes:
 
 ```python
-with io.load("acquisition.dm4", backend="mps", representation="encoded") as acquisition:
-    io.save("acquisition.qem", acquisition, backend="mps")
+with io.load("acquisition.dm4") as acquisition:
+    io.save("acquisition.qem", acquisition)
 ```
 
 Use the runtime your machine supports. CPU is explicit, never a fallback for a
-failed GPU operation. Python GPU EMPAD-QEM decoding remains unsupported; use the
-CPU reference or the qualified native Metal path. See the
+failed GPU operation. Qualified float32 `.qem` files reopen directly on CUDA
+and MPS, with the saved geometry and correction provenance. See the
 [field-by-field mapping](qem-metadata-mapping.md) for calibration limits.
 
 ## Export measurements again

@@ -7,22 +7,18 @@ meaning.
 ```python
 from quantem.gpu import io
 
-result = io.load(
-    "scan_master.h5",
-    backend="auto",
-    representation="dense",
-    dtype="u16",
-    detector_bin=1,
-)
+result = io.load("scan_master.h5")
 
 print(result.shape, result.dtype)
 print(result.representation, result.residency)
 print(result.logical_bytes, result.resident_bytes)
 ```
 
-`detector_bin=1` preserves native detector sampling. Detector binning is explicit,
-count-preserving, and recorded. Scan cropping is never introduced as an
-automatic resource policy.
+The default retains native detector sampling and ANS residency for supported
+original acquisitions. No representation option is needed. Decode a selected
+region through `result.read(...)`; do not expand the acquisition to select it.
+Scientific binning and cropping require a separately supported operation and
+are never introduced as an automatic resource policy.
 
 ## Coordinate and layout contract
 
@@ -46,7 +42,7 @@ Keep these three axes separate:
 
 | Axis | Public values | Question answered |
 |---|---|---|
-| Representation | `packed`, `dense` | How are all logical counts encoded? |
+| Representation | `encoded`, `packed`, `dense` | How are all logical counts encoded? |
 | Dtype | `uint8`, `uint16`, `uint32`, and supported floating types | What scientific value type is exposed? |
 | Residency | host, CUDA device, Apple unified/device memory, or WebGPU device | Where is the physical payload retained? |
 
