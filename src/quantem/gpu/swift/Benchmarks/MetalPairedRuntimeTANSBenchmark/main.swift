@@ -289,6 +289,10 @@ enum MetalPairedRuntimeTANSBenchmark {
     defer { resident.releaseResidentStorage() }
     let identity = resident.sourceIdentitySHA256
 
+    // The low-level API includes excluded pixels when explicitly requested.
+    // An acceleration index must not change that raw-mask contract.
+    let rawMask = [UInt8](repeating: 1, count: zero.count)
+    let rawReference = try resident.updateVirtualDetector(mask: rawMask).values
     let unindexed = try sweep(resident)
 
     // Control arm: an operation that genuinely holds `stateLock` throughout.
@@ -317,6 +321,12 @@ enum MetalPairedRuntimeTANSBenchmark {
     let parity = indexedValues.values == unindexed.values
     let polarFields = resident.lastPolarFieldCount
     let polarResiduals = resident.lastPolarResidualCount
+    let rawParity = try resident.updateVirtualDetector(mask: rawMask).values == rawReference
+    resident.releaseResidentDetectorIndex()
+    let releasedParity = try sweep(resident).values == unindexed.values
+    guard installed, parity, rawParity, releasedParity else {
+      throw failure("Installing or removing the detector index changed exact virtual images")
+    }
     let scheduled: (addedBytes: UInt64, seconds: Double)
     switch outcomeBox.outcome {
     case .installed(let bytes, let seconds): scheduled = (bytes, seconds)
@@ -335,6 +345,8 @@ enum MetalPairedRuntimeTANSBenchmark {
       "indexed_wall_max_milliseconds": percentile(indexedValues.wall, 1.0),
       "index_installed": installed,
       "index_parity": parity,
+      "raw_mask_parity": rawParity,
+      "released_index_parity": releasedParity,
       "last_polar_field_count": polarFields,
       "last_polar_residual_count": polarResiduals,
       "masked_detector_pixels": dataset.badPixelIndices.count,

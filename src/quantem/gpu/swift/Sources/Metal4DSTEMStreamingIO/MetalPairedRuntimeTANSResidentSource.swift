@@ -67,6 +67,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private var decodingTable: MTLBuffer!
   private var macroDecodingTable: MTLBuffer?
   private var polarIndex: MetalPairedRuntimeTANSPolarIndex?
+  private var residentIndexedDetectorPipeline: MTLComputePipelineState?
   private struct DiagnosticScratch {
     let jointPlanEnabled: Bool
     let previous: [UInt8]
@@ -1117,7 +1118,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         return
       }
       let started = CFAbsoluteTimeGetCurrent()
-      let candidate: MetalPairedRuntimeTANSPolarIndex
+      let candidate: ResidentDetectorIndexCandidate
       do {
         // The build's packing chunks each end in `waitUntilCompleted`. On the
         // resident's own queue an interaction command lands behind whichever
@@ -1176,6 +1177,12 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     let allocationLimit: UInt64
   }
 
+  private struct ResidentDetectorIndexCandidate {
+    let index: MetalPairedRuntimeTANSPolarIndex
+    let detector: MTLComputePipelineState
+    var residentBytes: UInt64 { index.residentBytes }
+  }
+
   /// Validate and snapshot under `stateLock`, then release it before any build
   /// work. Returns `nil` when an index already exists, which keeps the shipped
   /// silent no-op. Reuses the library the load already compiled instead of
@@ -1211,10 +1218,13 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private func buildResidentDetectorIndex(
     _ request: ResidentDetectorIndexBuildRequest, queue: MTLCommandQueue? = nil,
     shouldCancel: () -> Bool
-  ) throws -> MetalPairedRuntimeTANSPolarIndex {
+  ) throws -> ResidentDetectorIndexCandidate {
     try autoreleasepool {
-      try MetalPairedRuntimeTANSPolarIndex(
-        device: request.device, library: request.library, queue: queue ?? request.queue,
+      let buildQueue = queue ?? request.queue
+      try Self.validateTrustedTable(
+        decodingTable: request.decoding, queue: buildQueue, device: request.device)
+      let index = try MetalPairedRuntimeTANSPolarIndex(
+        device: request.device, library: request.library, queue: buildQueue,
         payload: request.payload, offsets: request.offsets, modes: request.modes,
         decoding: request.decoding, validPixels: request.validPixels,
         packets: request.packets, leafPixels: 16, layoutKind: "radial1fine4",
@@ -1223,12 +1233,38 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         prepareScan512QueryPipeline: true,
         allocationLimit: request.allocationLimit,
         shouldCancel: shouldCancel)
+      if shouldCancel() { throw Metal4DSTEMStreamingIOError.cancelled }
+      // The completed index has validated every query-eligible stream. Reuse the existing
+      // trusted window reader without changing or duplicating encoded counts.
+      // Compile off the interaction queue and publish index + decoder atomically.
+      let constants = MTLFunctionConstantValues()
+      var compact = request.compactOffsetsEnabled
+      var enabled = true
+      var streams: UInt32 = 2
+      var cadence: UInt32 = 3
+      constants.setConstantValue(&streams, type: .uint, index: 0)
+      constants.setConstantValue(&enabled, type: .bool, index: 13)
+      constants.setConstantValue(&enabled, type: .bool, index: 41)
+      constants.setConstantValue(
+        &compact, type: .bool,
+        index: Metal4DSTEMKernels.pairedRuntimeTANSCompactOffsetsFunctionConstantIndex)
+      constants.setConstantValue(
+        &enabled, type: .bool,
+        index: Metal4DSTEMKernels.pairedRuntimeTANSWindowReaderFunctionConstantIndex)
+      constants.setConstantValue(
+        &cadence, type: .uint,
+        index: Metal4DSTEMKernels.pairedRuntimeTANSWindowReaderCadenceFunctionConstantIndex)
+      let function = try request.library.makeFunction(
+        name: Metal4DSTEMKernels.pairedRuntimeTANSDetectorPacketOwner2Function,
+        constantValues: constants)
+      return ResidentDetectorIndexCandidate(
+        index: index, detector: try request.device.makeComputePipelineState(function: function))
     }
   }
 
   /// Install a finished index under `stateLock`, rejecting stale generations.
   private func installResidentDetectorIndex(
-    _ candidate: MetalPairedRuntimeTANSPolarIndex,
+    _ candidate: ResidentDetectorIndexCandidate,
     request: ResidentDetectorIndexBuildRequest
   ) -> Bool {
     stateLock.lock()
@@ -1237,7 +1273,8 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       !residentIndexPrepared, polarIndex == nil,
       let livePayload = payload, livePayload === request.payload
     else { return false }
-    polarIndex = candidate
+    polarIndex = candidate.index
+    residentIndexedDetectorPipeline = candidate.detector
     residentIndexPrepared = true
     refreshMetadataSnapshot()
     return true
@@ -1253,6 +1290,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     residentIndexGeneration &+= 1
     guard residentIndexPrepared else { return }
     polarIndex = nil
+    residentIndexedDetectorPipeline = nil
     residentIndexPrepared = false
     refreshMetadataSnapshot()
   }
@@ -2917,7 +2955,9 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
         "The window reader requires its prepared trusted-table two-stream packet-owner2 "
           + "pipeline with other detector specializations disabled")
     }
-    if vectorPairReduction && trustedTable {
+    if residentIndexPrepared, currentIndexAllowed, let residentIndexedDetectorPipeline {
+      encoder.setComputePipelineState(residentIndexedDetectorPipeline)
+    } else if vectorPairReduction && trustedTable {
       guard let detectorTrustedVectorPairReductionPipeline else {
         throw Self.invalid(
           "Prepare the trusted-table vector-pair reduction pipeline before testing it")
@@ -3454,6 +3494,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     decodingTable = nil
     macroDecodingTable = nil
     polarIndex = nil
+    residentIndexedDetectorPipeline = nil
     diagnosticScratch = nil
     failure = nil
     diffraction = nil
@@ -3708,19 +3749,25 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private static func validateTrustedTable(
     provider: PairedRuntimeTANSRecordProvider, queue: MTLCommandQueue, device: MTLDevice
   ) throws {
+    try validateTrustedTable(decodingTable: provider.decodingTable, queue: queue, device: device)
+  }
+
+  private static func validateTrustedTable(
+    decodingTable: MTLBuffer, queue: MTLCommandQueue, device: MTLDevice
+  ) throws {
     let expected: [UInt32]
     switch trustedTableExpected {
     case .success(let values): expected = values
     case .failure(let error): throw error
     }
-    guard provider.decodingTable.length == expected.count * MemoryLayout<UInt32>.stride,
+    guard decodingTable.length == expected.count * MemoryLayout<UInt32>.stride,
       let staging = device.makeBuffer(
         length: expected.count * MemoryLayout<UInt32>.stride, options: .storageModeShared),
       let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder()
     else { throw invalid("Trusted paired-runtime table validation could not allocate readback") }
     blit.copy(
-      from: provider.decodingTable, sourceOffset: 0, to: staging, destinationOffset: 0,
-      size: provider.decodingTable.length)
+      from: decodingTable, sourceOffset: 0, to: staging, destinationOffset: 0,
+      size: decodingTable.length)
     blit.endEncoding()
     command.commit()
     command.waitUntilCompleted()
