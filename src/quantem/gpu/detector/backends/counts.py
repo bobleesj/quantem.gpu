@@ -38,6 +38,13 @@ def _copy_output(output):
     return output.get()  # Caller-owned CuPy output; no source buffer is released.
 
 
+def _native_output(output):
+    """Transfer private Metal ownership into a tensor, retaining device storage."""
+    from quantem.gpu.io._read import _torch_value
+
+    return _torch_value(output) if hasattr(output, "to_torch") else output
+
+
 class CountDetectorCompute:
     """Keep counts on the accelerator; return only requested DP/maps to callers.
 
@@ -58,6 +65,23 @@ class CountDetectorCompute:
             raise IndexError("Scan index is outside the resident counts.")
         row, column = divmod(index, self.scan_shape[1])
         return _copy_output(self.source.extract_diffraction_device(row, column))
+
+    def frame_native(self, index, *, out=None, wait=True):
+        """Decode one pattern into independently owned device storage."""
+        row, column = divmod(index, self.scan_shape[1])
+        result = _native_output(self.source.extract_diffraction_device(row, column))
+        if out is not None:
+            if (
+                out.shape != result.shape
+                or out.dtype != result.dtype
+                or out.device != result.device
+            ):
+                raise ValueError(
+                    "out must match the pattern's shape, dtype and device."
+                )
+            out[...] = result
+            return out
+        return result
 
     def masked_sum_exact(self, mask):
         mask = np.asarray(mask)
@@ -87,9 +111,7 @@ class CountDetectorCompute:
         batch = getattr(self.source, "detector_sums_device", None)
         if batch is not None:
             return _copy_output(batch(values.astype(np.uint8, copy=False)))
-        return np.stack(
-            [self.masked_sum_exact(mask) for mask in values], axis=0
-        )
+        return np.stack([self.masked_sum_exact(mask) for mask in values], axis=0)
 
     def masked_sum(self, mask):
         return self.masked_sum_exact(mask).astype(np.float32)
@@ -112,6 +134,13 @@ class CountDetectorCompute:
         # through ``_copy_output`` so the owner is released and the caller receives
         # a NumPy mean pattern instead of the unreleased Metal owner object.
         return _copy_output(operation())
+
+    def mean_dp_native(self):
+        """Return the reduced pattern without a host copy."""
+        operation = getattr(self.source, "mean_dp_device", None)
+        if operation is None:
+            raise self._unsupported("Mean diffraction")
+        return _native_output(operation())
 
     def center_of_mass(self, mask=None):
         raise self._unsupported("Center of mass")

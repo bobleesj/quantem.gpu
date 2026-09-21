@@ -26,16 +26,20 @@ _FLOAT_ANS_CODEC = "float32-bit-lanes-rans-v1"
 def _validate_float_ans_layout(handle, header: dict, start: int) -> None:
     """Validate bounded IEEE bit-lane streams without decoding measurements."""
     if (header.get("version") != 1 or header.get("dtype") != "float32"
-            or header["shape"][2:] != [128, 128]
             or not isinstance(header.get("empad"), dict)
             or not isinstance(header.get("logical_sha256"), str)
             or len(header["logical_sha256"]) != 64):
         raise ValueError("Invalid QEM floating-point ANS description.")
     frames = header["shape"][0] * header["shape"][1]
-    lanes, cursor, first = 128 * 128 * 2, 0, 0
+    lanes = header["shape"][2] * header["shape"][3] * 2
+    frame_bytes = lanes * 2
+    if frame_bytes > 32 << 20:
+        raise ValueError("Float ANS frame exceeds the 32 MiB decode budget.")
+    maximum = min(512, (32 << 20) // frame_bytes)
+    cursor = first = 0
     for chunk in header["chunks"]:
         count = chunk["scans"]
-        if (type(count) is not int or not 1 <= count <= min(512, frames - first)
+        if (type(count) is not int or not 1 <= count <= min(maximum, frames - first)
                 or chunk["first"] != first):
             raise ValueError("Invalid float ANS frame coverage.")
         arrays = {}

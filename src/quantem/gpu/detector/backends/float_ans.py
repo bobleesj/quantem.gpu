@@ -32,11 +32,47 @@ class FloatANSDetectorCompute:
             raise IndexError("Choose a scan index within the acquisition.")
         return _numpy(self.source._tensor(index, index + 1)).reshape(self.det_shape)
 
+    def frame_native(self, index, *, out=None, wait=True):
+        """Return one corrected pattern without downloading measurements."""
+        result = self.source._tensor(index, index + 1).reshape(self.det_shape)
+        if out is not None:
+            if (
+                out.shape != result.shape
+                or out.dtype != result.dtype
+                or out.device != result.device
+            ):
+                raise ValueError(
+                    "out must match the pattern's shape, dtype and device."
+                )
+            out[...] = result
+            return out
+        return result
+
     def masked_sum(self, mask):
         return _numpy(self.source.detector_sum_device(mask))
 
+    def masked_sum_native(self, mask, *, out=None, wait=True):
+        """Return the virtual-detector image without a host copy."""
+        result = self.source.detector_sum_device(mask)
+        if out is not None:
+            if (
+                out.shape != result.shape
+                or out.dtype != result.dtype
+                or out.device != result.device
+            ):
+                raise ValueError(
+                    "out must match the detector image's shape, dtype and device."
+                )
+            out[...] = result
+            return out
+        return result
+
     def mean_dp(self):
         return _numpy(self.source.mean_dp_device())
+
+    def mean_dp_native(self):
+        """Return an independent mean pattern on the source device."""
+        return self.source.mean_dp_device()
 
     def reduce_frames(self, indices, reduce="mean"):
         return _numpy(self.source.reduce_frames_device(indices, reduce))

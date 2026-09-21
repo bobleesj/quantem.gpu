@@ -211,14 +211,15 @@ def save_array(
         not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("float32"))
     ):
         raise ValueError(
-            "QEM needs 4D uint8/uint16 counts or float32 128x128 frames; do not cast measurements silently."
+            "QEM needs 4D uint8/uint16 counts or float32 measurements; do not cast measurements silently."
         )
     floating = data.dtype == np.float32
-    if floating and data.shape[2:] != (128, 128):
-        raise NotImplementedError(
-            "The float32 QEM codec currently requires detector shape (128,128)."
-        )
-    maximum = 512 if floating else 1024
+    frame_bytes = math.prod(data.shape[2:]) * data.dtype.itemsize
+    if floating and frame_bytes > 32 << 20:
+        raise ValueError("One float32 diffraction frame exceeds the 32 MiB decode budget.")
+    maximum = min(512, (32 << 20) // frame_bytes) if floating else 1024
+    if floating:
+        chunk_scans = min(chunk_scans, maximum)
     if not 1 <= chunk_scans <= maximum:
         raise ValueError(
             f"Reference encoding chunk_scans must be between 1 and {maximum}."

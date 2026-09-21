@@ -56,7 +56,12 @@ class FloatANSResident:
         self._background = None
         self.peak_decode_bytes = 0
         self._mean = None
-        lane_shape = (*self.shape[:2], 128, 256)
+        self.detector_shape = self.shape[2:]
+        if self.frame_bytes > MAX_DECODE_BYTES:
+            raise ValueError(
+                "One float32 diffraction frame exceeds the 32 MiB decode budget."
+            )
+        lane_shape = (*self.shape[:3], self.shape[3] * 2)
         if backend == "cuda":
             import cupy as cp
             from .backends.cuda.float_ans import CUDAFloatLanes
@@ -76,14 +81,20 @@ class FloatANSResident:
             self.device = self._lanes.device
 
     @property
+    def frame_bytes(self) -> int:
+        return math.prod(self.shape[2:]) * 4
+
+    @property
     def nbytes(self) -> int:
         if self.is_released:
             return 0
         cached = (self._background, self._mean)
         return self._lanes.nbytes + sum(
-            value.nbytes
-            if self.backend == "cuda"
-            else value.numel() * value.element_size()
+            (
+                value.nbytes
+                if self.backend == "cuda"
+                else value.numel() * value.element_size()
+            )
             for value in cached
             if value is not None
         )
@@ -114,10 +125,10 @@ class FloatANSResident:
                 or not 0 <= first < stop <= math.prod(self.shape[:2])
             ):
                 raise ValueError("Choose a nonempty scan range within the acquisition.")
-            size = (stop - first) * 128 * 128 * 4
+            size = (stop - first) * self.frame_bytes
             if size > MAX_DECODE_BYTES:
                 raise ValueError(
-                    "Decode requests are limited to 32 MiB; process scan windows of at most 512 frames."
+                    f"Decode requests are limited to 32 MiB; use at most {MAX_DECODE_BYTES // self.frame_bytes} frames."
                 )
             self.peak_decode_bytes = max(self.peak_decode_bytes, size)
 
@@ -126,9 +137,9 @@ class FloatANSResident:
         self._check(first, stop)
         output = self._lanes.decode_scan_range_device(first, stop)
         if self.backend == "cuda":
-            return output.view(np.float32).reshape(stop - first, 128, 128)
+            return output.view(np.float32).reshape(stop - first, *self.detector_shape)
         output.dtype = self.dtype
-        output.shape = (stop - first, 128, 128)
+        output.shape = (stop - first, *self.detector_shape)
         return output
 
     def extract_diffraction_device(self, scan_row: int, scan_column: int) -> Any:
@@ -138,8 +149,8 @@ class FloatANSResident:
         first = scan_row * self.shape[1] + scan_column
         output = self.decode_scan_range_device(first, first + 1)
         if self.backend == "cuda":
-            return output.reshape(128, 128)
-        output.shape = (128, 128)
+            return output.reshape(self.detector_shape)
+        output.shape = self.detector_shape
         return output
 
     @_device_scoped
@@ -151,7 +162,9 @@ class FloatANSResident:
             import torch
 
             output = self._lanes._decode_scan_range_torch(first, stop)
-            output = output.view(torch.float32).reshape(stop - first, 128, 128)
+            output = output.view(torch.float32).reshape(
+                stop - first, *self.detector_shape
+            )
         if corrected and self._background is not None:
             output -= self._background
         return output
@@ -207,18 +220,22 @@ class FloatANSResident:
     ) -> tuple[Any, ...]:
         """Reduce bounded windows; scale weights before computing CoM moments."""
         self._check()
-        mask = np.ones((128, 128), bool) if mask is None else np.asarray(mask)
-        if mask.shape != (128, 128) or not np.all((mask == 0) | (mask == 1)):
+        mask = np.ones(self.detector_shape, bool) if mask is None else np.asarray(mask)
+        if mask.shape != self.detector_shape or not np.all((mask == 0) | (mask == 1)):
             raise ValueError(
-                "Float detector masks must be binary with shape (128,128)."
+                f"Float detector masks must be binary with shape {self.detector_shape}."
             )
         selected = self._array(mask.astype(bool))
         total = self._empty((math.prod(self.shape[:2]),))
         products = [total]
         if moments:
             products += [self._empty(total.shape), self._empty(total.shape)]
-            row = self._array(np.arange(128, dtype=np.float32)[:, None])
-            column = self._array(np.arange(128, dtype=np.float32)[None, :])
+            row = self._array(
+                np.arange(self.detector_shape[0], dtype=np.float32)[:, None]
+            )
+            column = self._array(
+                np.arange(self.detector_shape[1], dtype=np.float32)[None, :]
+            )
         for chunk in self._lanes.chunks:
             first, stop = chunk.first, chunk.first + chunk.scans
             values = self._tensor(first, stop)
@@ -246,11 +263,13 @@ class FloatANSResident:
     def detector_sum_device(self, mask: np.ndarray) -> Any:
         self._check()
         values = np.asarray(mask)
-        if values.shape != (128, 128) or not np.all((values == 0) | (values == 1)):
+        if values.shape != self.detector_shape or not np.all(
+            (values == 0) | (values == 1)
+        ):
             raise ValueError(
-                "Float detector masks must be binary with shape (128,128)."
+                f"Float detector masks must be binary with shape {self.detector_shape}."
             )
-        size = max(chunk.scans for chunk in self._lanes.chunks) * 65536
+        size = max(chunk.scans for chunk in self._lanes.chunks) * self.frame_bytes
         self.peak_decode_bytes = max(self.peak_decode_bytes, size)
         return self._lanes.float_detector(values, self._background)
 
@@ -259,7 +278,7 @@ class FloatANSResident:
         """Compute and cache the full-scan mean on the accelerator."""
         self._check()
         if self._mean is None:
-            total = self._empty((128, 128), zero=True)
+            total = self._empty(self.detector_shape, zero=True)
             for chunk in self._lanes.chunks:
                 values = self._tensor(chunk.first, chunk.first + chunk.scans)
                 total += self._sum(values, 0)
@@ -406,12 +425,12 @@ def load_float_ans(
         background = header["empad"].get("background")
         if background is not None:
             raw = base64.b64decode(background["values_float32_le"], validate=True)
-            if len(raw) != 128 * 128 * 4:
+            if len(raw) != source.frame_bytes:
                 raise ValueError(
-                    "QEM mean-dark plane must contain 128x128 float32 values."
+                    f"QEM mean-dark plane must contain {source.detector_shape} float32 values."
                 )
             source._background = source._array(
-                np.frombuffer(raw, "<f4").copy().reshape(128, 128)
+                np.frombuffer(raw, "<f4").copy().reshape(source.detector_shape)
             )
         source.synchronize()
         metadata = _qem_metadata.effective_metadata(
@@ -479,29 +498,50 @@ def save_float_ans(
         header["scientific_metadata"] = _qem_metadata.acquisition_metadata(
             source.shape, metadata
         )
-    blob = json.dumps(
-        header, sort_keys=True, allow_nan=False, separators=(",", ":")
-    ).encode()
-    if len(blob) > 16 << 20:
-        raise ValueError("QEM metadata exceeds the 16 MiB limit.")
-    descriptor, temporary = tempfile.mkstemp(prefix=".qem-", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as output:
-            output.write(
-                _qem_metadata.MAGIC + struct.pack("<QQ", len(blob), 56 + len(blob))
-            )
-            output.write(hashlib.sha256(blob).digest() + blob)
-            for chunk in source._lanes.chunks:
-                if source.backend == "cuda":
-                    arrays = (array.get() for array in chunk.arrays)
-                else:
-                    from .backends.mps.packed import _buffer_view
+    # Build the authenticated directory from resident bytes, including newly
+    # ingested sources. Only encoded blocks visit host storage for file writing.
+    with tempfile.TemporaryFile(dir=path.parent) as body:
+        header["chunks"] = []
+        for chunk in source._lanes.chunks:
+            if source.backend == "cuda":
+                arrays = (array.get() for array in chunk.arrays)
+            else:
+                from .backends.mps.packed import _buffer_view
 
-                    arrays = (_buffer_view(buffer) for buffer in chunk.buffers)
-                for array in arrays:
-                    output.write(memoryview(array).cast("B"))
-            output.flush()
-            os.fsync(output.fileno())
-        os.link(temporary, path)
-    finally:
-        os.unlink(temporary)
+                arrays = (_buffer_view(buffer) for buffer in chunk.buffers)
+            entry = dict(first=chunk.first, scans=chunk.scans)
+            for name, array in zip(("payload", "offset", "model"), arrays):
+                view = memoryview(array).cast("B")
+                entry[name + "_offset"] = body.tell()
+                entry[name + "_bytes"] = len(view)
+                body.write(view)
+            header["chunks"].append(entry)
+        header["bytes"] = body.tell()
+        body.seek(0)
+        header["sha256"] = []
+        while block := body.read(_BLOCK):
+            header["sha256"].append(hashlib.sha256(block).hexdigest())
+        blob = json.dumps(
+            header,
+            default=_qem_metadata.json_metadata,
+            sort_keys=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+        if len(blob) > 16 << 20:
+            raise ValueError("QEM metadata exceeds the 16 MiB limit.")
+        descriptor, temporary = tempfile.mkstemp(prefix=".qem-", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(
+                    _qem_metadata.MAGIC + struct.pack("<QQ", len(blob), 56 + len(blob))
+                )
+                output.write(hashlib.sha256(blob).digest() + blob)
+                body.seek(0)
+                while block := body.read(_BLOCK):
+                    output.write(block)
+                output.flush()
+                os.fsync(output.fileno())
+            os.link(temporary, path)
+        finally:
+            os.unlink(temporary)

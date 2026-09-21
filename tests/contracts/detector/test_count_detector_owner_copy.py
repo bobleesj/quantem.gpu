@@ -3,8 +3,9 @@
 F1 shipped because ``CountDetectorCompute.mean_dp`` handed callers the raw
 Metal/ANS owner object (``MPSANSArray``) instead of a copied NumPy array; the
 same class of bug can reappear in any method that forgets ``_copy_output``.
-These checks read ``counts.py`` as source, so they run in milliseconds with no
-accelerator and cover every ``*_device`` call at once.
+Native outputs instead use ``_native_output`` to transfer private ownership
+into an independently owned device tensor, without a host download. These
+checks cover both explicit boundaries; hardware tests verify the device result.
 """
 
 import ast
@@ -18,12 +19,12 @@ def _module_tree():
 
 
 def _copy_output_calls(tree):
-    """Every ``_copy_output(...)`` call with the expression it receives."""
+    """Every host-copy or native-ownership transfer and its input expression."""
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == "_copy_output"
+            and node.func.id in {"_copy_output", "_native_output"}
             and len(node.args) == 1
         ):
             yield node, node.args[0]

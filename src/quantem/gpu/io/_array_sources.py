@@ -21,20 +21,51 @@ def _pair(text: str) -> tuple[int, int]:
     return values
 
 
+def _xml_root(path: Path) -> tuple[bytes, ET.Element]:
+    """Read bounded detector metadata without accepting external entities."""
+    with path.open("rb") as handle:
+        text = handle.read(4 * 1024 * 1024 + 1)
+    if (
+        len(text) > 4 * 1024 * 1024
+        or b"<!DOCTYPE" in text.upper()
+        or b"<!ENTITY" in text.upper()
+    ):
+        raise ValueError("EMPAD XML must be at most 4 MiB with no DTD or entities.")
+    return text, ET.fromstring(text)
+
+
+def _raw_companion(path: Path) -> Path:
+    """Find metadata naming this RAW file when its XML uses an acquisition name."""
+    adjacent = path.with_suffix(".xml")
+    if adjacent.exists():
+        return adjacent
+    matches = []
+    for candidate in sorted(path.parent.glob("*.xml")):
+        try:
+            _, root = _xml_root(candidate)
+        except (ET.ParseError, ValueError):
+            continue
+        element = root.find("raw_file")
+        filename = (
+            element.attrib.get("filename", "")
+            if element is not None
+            else root.findtext("rawfile/filename", "")
+        )
+        if filename.replace("\\", "/").split("/")[-1] == path.name:
+            matches.append(candidate)
+    if len(matches) > 1:
+        raise ValueError(
+            f"Multiple XML acquisitions name {path.name}; open the intended XML explicitly."
+        )
+    return matches[0] if matches else adjacent
+
+
 def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
-    xml = path if path.suffix.lower() == ".xml" else path.with_suffix(".xml")
+    xml = path if path.suffix.lower() == ".xml" else _raw_companion(path)
     fields, original, shape, record_rows = {}, {}, scan_shape, 130
     raw = path
     if xml.exists():
-        with xml.open("rb") as handle:
-            text = handle.read(4 * 1024 * 1024 + 1)
-        if (
-            len(text) > 4 * 1024 * 1024
-            or b"<!DOCTYPE" in text.upper()
-            or b"<!ENTITY" in text.upper()
-        ):
-            raise ValueError("EMPAD XML must be at most 4 MiB with no DTD or entities.")
-        root = ET.fromstring(text)
+        text, root = _xml_root(xml)
 
         def visit(node, prefix=""):
             for child in node:
@@ -43,6 +74,8 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
                     if child.tag == "scan_parameters"
                     else child.tag
                 )
+                if child.tag == "roimask" and "roi_idx" in child.attrib:
+                    component += "[" + child.attrib["roi_idx"] + "]"
                 key = prefix + component
                 if len(child):
                     visit(child, key + "/")
@@ -67,16 +100,6 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
             ):
                 raise ValueError(
                     "Open an EMPAD raster float32 export, not encoded detector words."
-                )
-            if any(
-                key in fields
-                for key in (
-                    "grabber/avg_scan_even_offset",
-                    "grabber/avg_scan_odd_offset",
-                )
-            ):
-                raise NotImplementedError(
-                    "EMPAD2 raw acquisition calibration is not implemented in the Python reference reader; use a verified float32 export."
                 )
             shape, record_rows = _pair(fields["scan/shape"]), 128
             filename = fields["rawfile/filename"]
@@ -125,6 +148,32 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
         raise ValueError(
             "EMPAD RAW length disagrees with the declared layout; restore the matching XML/RAW files."
         )
+    if record_rows == 128 and all(
+        key in fields
+        for key in (
+            "pdcu/SerialNumber",
+            "grabber/avg_scan_even_offset",
+            "grabber/avg_scan_odd_offset",
+        )
+    ):
+        # Match the native reader's bounded format guard. Retained acquisition
+        # offsets alone do not imply uncalibrated detector words.
+        frames = math.prod(shape)
+        with raw.open("rb") as handle:
+            for frame in sorted({0, frames // 2, frames - 1}):
+                handle.seek(frame * 65536)
+                words = np.frombuffer(handle.read(65536), "<u4")
+                if words.size != 128 * 128:
+                    raise ValueError(
+                        "EMPAD RAW ended during validation; restore the complete acquisition."
+                    )
+                if not np.all(words & 0x40000000):
+                    break
+            else:
+                raise NotImplementedError(
+                    "EMPAD2 contains ambiguous encoded detector words despite its float32 label. "
+                    "Use a calibrated float32 export or the matching sensor gain calibration and dark acquisition."
+                )
     data = np.memmap(raw, dtype="<f4", mode="r", shape=(*shape, record_rows, 128))[
         :, :, :128, :
     ]
@@ -137,19 +186,25 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
         source_path=str(path),
         background_applied=False,
     )
+    if xml.exists():
+        metadata["source_metadata_path"] = str(xml)
     modern = record_rows == 128
     for field, target, unit in (
         (
-            "iom_measurements/ColumnSourceHighVoltage"
-            if modern
-            else "iom_measurements/high_voltage",
+            (
+                "iom_measurements/ColumnSourceHighVoltage"
+                if modern
+                else "iom_measurements/high_voltage"
+            ),
             "electron_source/accelerating_voltage",
             "V",
         ),
         (
-            "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength"
-            if modern
-            else "iom_measurements/nominal_camera_length",
+            (
+                "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength"
+                if modern
+                else "iom_measurements/nominal_camera_length"
+            ),
             "imaging_system/camera_length",
             "m",
         ),

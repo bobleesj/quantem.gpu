@@ -1844,7 +1844,7 @@ def save(
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
     HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
     its existing bytes without re-encoding. Explicit ``backend="cpu"`` accepts
-    a 4D NumPy uint8/uint16 array, or float32 with a 128x128 detector, using the
+    a 4D NumPy uint8/uint16 or float32 array, using the
     portable reference encoder. Calibration is retained and an
     existing destination is never replaced. Saved copies reopen on CUDA or
     MPS/Metal as encoded counts, or explicitly on CPU as original dense measurements.

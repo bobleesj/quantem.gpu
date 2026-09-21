@@ -11,22 +11,34 @@ pytest.importorskip("ncempy")
 
 def write_dm4(path, values):
     """Write a small standard DM4 image with a survey followed by diffraction."""
+    return write_dm(path, values, version=4)
+
+
+def write_dm(path, values, *, version):
+    """Write the version-specific tag structure, not a renamed DM4 payload."""
+    integer = ">Q" if version == 4 else ">I"
+
     def entry(name, kind, contents):
         label = name.encode()
-        return struct.pack(">BH", kind, len(label)) + label + struct.pack(">Q", len(contents)) + contents
+        size = struct.pack(integer, len(contents)) if version == 4 else b""
+        return struct.pack(">BH", kind, len(label)) + label + size + contents
 
     def group(name, entries):
-        body = b"\x01\x01" + struct.pack(">Q", len(entries)) + b"".join(entries)
+        body = b"\x01\x01" + struct.pack(integer, len(entries)) + b"".join(entries)
         return entry(name, 20, body)
 
     def tag(name, types, data):
-        return entry(name, 21, b"%%%%" + struct.pack(">Q", len(types))
-                     + b"".join(struct.pack(">Q", value) for value in types) + data)
+        return entry(name, 21, b"%%%%" + struct.pack(integer, len(types))
+                     + b"".join(struct.pack(integer, value) for value in types) + data)
 
     def scalar(name, value, code, fmt):
         return tag(name, [code], struct.pack("<" + fmt, value))
 
     def image(name, data, units):
+        image_type, element_type = {
+            np.dtype("uint8"): (6, 10), np.dtype("uint16"): (10, 4),
+            np.dtype("float32"): (2, 6),
+        }[data.dtype]
         calibrations = []
         for axis, unit in enumerate(units[::-1], 1):
             text = unit.encode("utf-16le")
@@ -36,27 +48,29 @@ def write_dm4(path, values):
             ]))
         return group(name, [group("ImageData", [
             group("Calibrations", [group("Dimension", calibrations)]),
-            scalar("DataType", 6 if data.dtype == np.uint8 else 10, 5, "I"),
+            scalar("DataType", image_type, 5, "I"),
             group("Dimensions", [scalar(str(i), size, 5, "I")
                                   for i, size in enumerate(data.shape[::-1], 1)]),
-            tag("Data", [20, 10 if data.dtype == np.uint8 else 4, data.size], data.tobytes()),
+            tag("Data", [20, element_type, data.size], data.tobytes()),
         ])])
 
     images = [image("1", np.zeros((3, 4), np.uint8), ["nm", "nm"]),
               image("2", values, ["nm", "nm", "1/nm", "1/nm"])]
-    body = b"\x01\x01" + struct.pack(">Q", 1) + group("ImageList", images)
-    path.write_bytes(struct.pack(">IQI", 4, len(body), 1) + body)
+    body = b"\x01\x01" + struct.pack(integer, 1) + group("ImageList", images)
+    path.write_bytes(struct.pack(">I", version) + struct.pack(integer, len(body))
+                    + struct.pack(">I", 1) + body)
     return path
 
 
-@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
-def test_dm4_matches_independent_reader(tmp_path, dtype):
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.float32])
+@pytest.mark.parametrize("version", [3, 4])
+def test_dm_matches_independent_reader(tmp_path, dtype, version):
     """Read the calibrated 4D image, retaining rectangular axes and native counts."""
     from ncempy.io import dm
     from quantem.gpu import io
 
     values = np.arange(5 * 7 * 12 * 16).reshape(5, 7, 12, 16).astype(dtype)
-    path = write_dm4(tmp_path / "camera.dm4", values)
+    path = write_dm(tmp_path / f"camera.dm{version}", values, version=version)
     info = io.inspect(path)
     with io.load(path, backend="cpu", representation="dense") as loaded:
         with dm.fileDM(path) as reference:
@@ -66,7 +80,7 @@ def test_dm4_matches_independent_reader(tmp_path, dtype):
         assert info.scan_shape == (5, 7)
         assert info.detector_shape == (12, 16)
         assert loaded.metadata["scan_sampling_A"] == [2.5, 2.5]
-        assert loaded.metadata["source_metadata"]["dm4.ImageData.Calibrations.Dimension.1.Units"] == "1/nm"
+        assert loaded.metadata["source_metadata"][f"dm{version}.ImageData.Calibrations.Dimension.1.Units"] == "1/nm"
 
 
 @pytest.mark.skipif(not os.environ.get("QUANTEM_TEST_CUDA"), reason="CUDA opt-in")
@@ -177,7 +191,7 @@ def test_saved_camera_ans_reopens_without_original_or_encoder(tmp_path, dtype, m
     with pytest.raises(ValueError, match="checksum mismatch"):
         io.load(saved, backend="cuda")
     saved.write_bytes(original_bytes[:-1])
-    with pytest.raises(ValueError, match="Incomplete ANS"):
+    with pytest.raises(ValueError, match="Incomplete QEM"):
         io.inspect(saved)
     corrupted = bytearray(original_bytes)
     corrupted[80] ^= 1

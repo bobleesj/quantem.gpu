@@ -155,7 +155,14 @@ def _processing_records(metadata: dict) -> list[dict]:
     source_dtype, stored_dtype = metadata.get("source_dtype"), metadata.get("dtype")
     if source_dtype and stored_dtype and source_dtype != stored_dtype:
         source_type, stored_type = np.dtype(source_dtype), np.dtype(stored_dtype)
-        if not (
+        exact_float = (
+            source_type == np.dtype("float64")
+            and stored_type == np.dtype("float32")
+            and metadata.get("exact_float_narrowing", {}).get("method")
+            == "float64-float32-float64-bitwise"
+            and metadata.get("file_counts_exact") is True
+        )
+        if not exact_float and not (
             source_type.kind in "iu" and stored_type.kind in "iu"
             and stored_type.itemsize < source_type.itemsize
             and (metadata.get("file_counts_exact") is True
@@ -163,11 +170,11 @@ def _processing_records(metadata: dict) -> list[dict]:
         ):
             raise ValueError(
                 "A dtype change needs explicit processing provenance; only a "
-                "reader-verified exact integer narrowing can be inferred. "
+                "reader-verified exact narrowing can be inferred. "
                 "Retain the original dtype or provide validated scientific metadata."
             )
         records.append(dict(
-            operation="exact_integer_narrowing", changes_measurements=False,
+            operation="exact_float_narrowing" if exact_float else "exact_integer_narrowing", changes_measurements=False,
             source_dtype=str(source_dtype), stored_dtype=str(stored_dtype),
         ))
     correction = metadata.get("hot_pixel_correction")
@@ -273,6 +280,13 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         if math.isfinite(value) and value > 0:
             quantities["electron_source/accelerating_voltage"] = dict(
                 value=value, unit="V", provenance="source_metadata"
+            )
+    semiangle = metadata.get("semiangle_mrad")
+    if "illumination_system/semi_convergence_angle" not in quantities and semiangle is not None:
+        value = float(semiangle)
+        if math.isfinite(value) and value > 0:
+            quantities["illumination_system/semi_convergence_angle"] = dict(
+                value=value, unit="mrad", provenance="source_metadata"
             )
     axes = [dict(name=name, size=int(size)) for name, size in zip(AXIS_NAMES, shape)]
     scan = metadata.get("scan_sampling_A")

@@ -68,6 +68,30 @@ def test_explicit_four_dimensions_override_square_scan_inference(tmp_path, shape
     assert not mismatched.ready and mismatched.expected_frames == 1
 
 
+@pytest.mark.parametrize("geometry", ["positions", "crop"])
+def test_prepared_stack_companions_define_rectangular_scan(tmp_path, geometry):
+    """Prepared diffraction stacks retain calibration without square inference."""
+    from scipy.io import savemat
+
+    path = tmp_path / "data_roi0_Ndp8_dp.hdf5"
+    with h5py.File(path, "w") as handle:
+        handle["dp"] = np.zeros((15, 8, 12), np.float32)
+    parameters = dict(Np_p=[12, 8], voltage=300, alpha=25, dk=0.04, dx=[0.2, 0.3])
+    if geometry == "positions":
+        with h5py.File(tmp_path / "data_position.hdf5", "w") as handle:
+            handle["probe_positions_0"] = np.stack((np.repeat(np.arange(3), 5), np.tile(np.arange(5), 3))) * 0.5
+    else:
+        parameters["crop_idx0"] = [2, 6, 10, 12]
+    savemat(tmp_path / "params_backup.mat", parameters)
+    info = io.inspect(path)
+    assert info.ready and info.scan_shape == (3, 5)
+    assert info.detector_shape == (8, 12)
+    assert info.metadata["voltage_kV"] == 300
+    assert info.metadata["detector_sampling"] == [0.04, 0.04]
+    assert info.metadata.get("scan_sampling_A") is None
+    assert info.metadata["source_metadata"]["prepared_stack/params_backup"]["dx"] == [0.2, 0.3]
+
+
 def test_saved_qem_inspection_uses_header_and_preserves_validity(tmp_path):
     """A saved copy reports its declared geometry and excluded-pixel mask."""
     path = tmp_path / "saved-copy.qem"
@@ -80,6 +104,10 @@ def test_saved_qem_inspection_uses_header_and_preserves_validity(tmp_path):
     assert "unverified" in info.reason
     mismatched = io.inspect(path, scan_shape=(1, 1))
     assert not mismatched.ready and mismatched.reason == "scan_shape_mismatch"
+    with path.open("r+b") as handle:
+        handle.truncate(path.stat().st_size - 1)
+    with pytest.raises(ValueError, match="Incomplete QEM"):
+        io.inspect(path)
 
 
 def test_retired_ans_snapshot_is_rejected_with_guidance(tmp_path):

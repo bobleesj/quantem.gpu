@@ -94,7 +94,7 @@ def read_dm_source(
         tags = {key[len(prefix):]: value for key, value in source.allTags.items()
                 if key.startswith(prefix) and ".Data." not in key and not key.endswith(".ImageData.Data")}
         retained = {
-            "dm4." + key: value if isinstance(value, str) else json.dumps(
+            f"dm{int(source._dmType)}." + key: value if isinstance(value, str) else json.dumps(
                 value, default=lambda item: item.tolist() if hasattr(item, "tolist") else str(item)
             )
             for key, value in tags.items()
@@ -142,6 +142,26 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
         metadata.update(backend="cpu", residency="host", file_counts_exact=True,
                         lossless_exact=True, scan_bin=1, detector_bin=1, crop=None)
         return FourDSTEMData(source.memmap(), metadata)
+    if (backend in {"cuda", "mps"} and representation is DataRepresentation.ENCODED
+            and source.dtype == np.dtype("float32")):
+        from ._array_resident import load_array_resident, read_frame_block
+
+        mapped = source.memmap()
+        loaded = None
+        try:
+            loaded = load_array_resident(
+                source.shape, source.dtype,
+                lambda first, stop: read_frame_block(mapped, source.shape, first, stop),
+                metadata, backend=backend, device=device, verbose=verbose,
+            )
+            source.assert_unchanged()
+            return loaded
+        except BaseException:
+            if loaded is not None:
+                loaded.close()
+            raise
+        finally:
+            mapped._mmap.close()
     if backend == "mps" and representation is DataRepresentation.ENCODED:
         from ._camera_mps import load_camera_mps
 

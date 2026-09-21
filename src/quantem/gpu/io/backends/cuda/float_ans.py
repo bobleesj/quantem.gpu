@@ -9,7 +9,7 @@ from quantem.gpu._compact import streamed
 
 
 @cache
-def _kernels(device):
+def _kernels(device, lanes):
     import cupy as cp
 
     with cp.cuda.Device(device):
@@ -21,6 +21,7 @@ def _kernels(device):
         )
         # The codec reader is shared; unrelated count-product kernels are omitted.
         source = source[: source.index('extern "C" __global__ void sc_encode')]
+        source += f"\n#define FLOAT_LANES {lanes}u\n"
         source += Path(__file__).with_suffix(".cu").read_text()
         module = cp.RawModule(code=source, options=("--std=c++17", "--fmad=false"))
         return tuple(
@@ -36,8 +37,9 @@ class CUDAFloatLanes(streamed.StreamedCounts):
         import cupy as cp
 
         with cp.cuda.Device(self.device):
-            direct, entropy = _kernels(self.device)[:2]
-            output = cp.empty((stop - first, 128, 256), cp.uint16)
+            lanes = int(np.prod(self.shape[2:]))
+            direct, entropy = _kernels(self.device, lanes)[:2]
+            output = cp.empty((stop - first, *self.shape[2:]), cp.uint16)
             errors = cp.zeros(1, cp.uint32)
             for chunk in self.chunks:
                 begin, end = (
@@ -49,12 +51,12 @@ class CUDAFloatLanes(streamed.StreamedCounts):
                 target = output[begin - first : end - first]
                 local, count = np.uint32(begin - chunk.first), np.uint32(end - begin)
                 direct(
-                    ((int(count) * 32768 + 255) // 256,),
+                    ((int(count) * lanes + 255) // 256,),
                     (256,),
                     (*chunk.arrays, target, local, count),
                 )
                 entropy(
-                    (256,),
+                    ((lanes + 127) // 128,),
                     (128,),
                     (
                         *chunk.arrays,
@@ -77,14 +79,15 @@ class CUDAFloatLanes(streamed.StreamedCounts):
         import cupy as cp
 
         with cp.cuda.Device(self.device):
-            entropy, reduce = _kernels(self.device)[2:]
+            lanes = int(np.prod(self.shape[2:]))
+            entropy, reduce = _kernels(self.device, lanes)[2:]
             selected = cp.asarray(mask, dtype=cp.uint8)
-            scratch = cp.empty((max(c.scans for c in self.chunks), 32768), cp.uint16)
+            scratch = cp.empty((max(c.scans for c in self.chunks), lanes), cp.uint16)
             output = cp.empty(self.shape[:2], cp.float32)
             errors = cp.zeros(1, cp.uint32)
             for chunk in self.chunks:
                 entropy(
-                    (256,),
+                    ((lanes + 127) // 128,),
                     (128,),
                     (
                         *chunk.arrays,

@@ -95,6 +95,26 @@ def test_existing_numpy_workflow_keeps_shape_and_precision():
     np.testing.assert_array_equal(session.frame(0), counts[0, 0])
 
 
+def test_streamed_host_patterns_use_the_native_decoder():
+    """Reopened count streams expose the same owned point DP on host and device."""
+    from quantem.gpu._compact.interaction import StreamedSeriesCompute
+
+    source = StreamedSeriesCompute.__new__(StreamedSeriesCompute)
+    source.n_frames = 12
+    values = np.arange(30, dtype=np.uint16).reshape(5, 6).view(_DeviceArray)
+    source.frame_native = lambda index: values
+    _DeviceArray.downloads = 0
+    from quantem.gpu.detector.workflow import DetectorSession
+
+    session = DetectorSession.__new__(DetectorSession)
+    session._backend = source
+    actual = session.frame(7)
+    assert _DeviceArray.downloads == 1
+    np.testing.assert_array_equal(actual, values)
+    actual.fill(0)
+    assert values[-1, -1] == 29
+
+
 @pytest.mark.parametrize("representation", [None, "encoded", io.DataRepresentation.ENCODED])
 def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch, representation):
     """The normal load API selects the compact loader without generic H5 decoding."""

@@ -5154,6 +5154,13 @@ def load(
 ) -> FourDSTEMData | list[FourDSTEMData]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
+    NumPy and supported EMPAD RAW/XML sources default to bounded ANS ingestion
+    on CUDA and MPS. Integer sources retain uint8/uint16; float32 sources retain
+    IEEE bits at native detector geometry. Use ``scan_shape`` for
+    headerless EMPAD RAW. CPU reference access is explicit, never a fallback.
+    Generic HDF5 layouts use bounded storage reads where the direct compressed
+    chunk decoder cannot apply. Saved copies retain calibration and provenance.
+
     Fractional intensity exports support ``dtype="float16"`` and
     ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain compressed and
     print a measured conversion report. Scaled uint16 defaults to ANS residency
@@ -5318,19 +5325,76 @@ def load(
                      and Path(path).suffix.lower() in {".npy", ".xml", ".raw"}
                      for path in precision_sources]
     if any(array_sources):
-        if not all(array_sources) or backend != "cpu" or representation not in (None, "dense"):
-            raise NotImplementedError("NumPy/EMPAD reference loading requires backend='cpu', representation='dense'; load these separately from other formats.")
+        from .backends import resolve_backend
+
+        array_backend = resolve_backend(backend)
+        allowed = (None, "dense") if array_backend == "cpu" else (None, "encoded")
+        if not all(array_sources) or representation not in allowed:
+            raise NotImplementedError(
+                "Load NumPy/EMPAD separately with encoded GPU residency; "
+                "CPU dense access is explicit reference-only."
+            )
         if (any(value is not None for value in (dataset_path, scan_region, detector_region,
                 target_scan_region, scan_shift_row_col, scan_indices, random_positions,
                 drift, devices, expected_source_sha256, source_integrity))
                 or detector_bin != 1 or det_bin not in (None, 1) or dtype not in (None, "native")
                 or output != "native" or apply_mask or scan_order != "row-major"):
-            raise ValueError("Reference loading preserves original measurements; remove selection, dtype, correction and binning options.")
+            raise ValueError(
+                "Original-array loading preserves complete measurements; remove "
+                "selection, dtype and binning options, then use read() for a region."
+            )
         from ._array_sources import load_array_source
 
-        results = [load_array_source(path, scan_shape) for path in precision_sources]
-        if len(results) > 1 and stack:
+        if len(precision_sources) > 1 and stack:
             raise ValueError("Use stack=False for independently calibrated acquisitions.")
+        from ._array_resident import load_array_resident, read_frame_block
+
+        results = []
+        try:
+            for path in precision_sources:
+                mapped = load_array_source(path, scan_shape)
+                if array_backend == "cpu":
+                    results.append(mapped)
+                else:
+                    try:
+                        source_files = {Path(path), Path(mapped.data.filename)}
+                        if mapped.metadata.get("source_metadata_path"):
+                            source_files.add(
+                                Path(mapped.metadata["source_metadata_path"])
+                            )
+                        signatures = {
+                            source: (source.stat().st_size, source.stat().st_mtime_ns)
+                            for source in source_files
+                        }
+                        loaded = load_array_resident(
+                            mapped.data.shape,
+                            mapped.data.dtype,
+                            lambda first, stop: read_frame_block(
+                                mapped.data, mapped.data.shape, first, stop
+                            ),
+                            mapped.metadata,
+                            backend=array_backend,
+                            device=device,
+                            auto_narrow=auto_narrow,
+                            hot_pixel_correction=hot_pixel_correction,
+                            verbose=verbose,
+                        )
+                        results.append(loaded)
+                        for source_file, signature in signatures.items():
+                            status = source_file.stat()
+                            if (status.st_size, status.st_mtime_ns) != signature:
+                                raise ValueError(
+                                    "Source changed during ANS ingestion; "
+                                    "reopen the acquisition."
+                                )
+                    finally:
+                        mapping = getattr(mapped.data, "_mmap", None)
+                        if mapping is not None:
+                            mapping.close()
+        except BaseException:
+            for result in results:
+                result.close()
+            raise
         return results[0] if isinstance(source, (str, os.PathLike)) else results
     dm_sources = [isinstance(path, (str, os.PathLike))
                   and Path(path).suffix.lower() in {".dm3", ".dm4"}
@@ -5614,6 +5678,7 @@ def load(
                         verbose=verbose,
                         backend=ans_backend,
                         hot_pixel_correction=hot_pixel_correction,
+                        auto_narrow=auto_narrow,
                     )
                 )
         except BaseException:

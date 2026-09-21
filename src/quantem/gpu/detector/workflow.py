@@ -110,12 +110,17 @@ class DetectorSession:
                 "use a nonnegative row-major index within the loaded scan."
             )
         native = getattr(self._backend, "frame_native", None)
+        if output == "numpy":
+            host = getattr(self._backend, "frame", None)
+            result = host(index) if host is not None else native(index)
+            if hasattr(result, "get"):
+                result = result.get()
+            elif _is_torch_tensor(result):
+                result = result.detach().cpu().numpy()
+            return np.array(result, copy=True)
         if native is not None:
-            result = native(index, out=out) if wait else native(index, out=out, wait=False)
-            return result if output == "native" else result.get()
-        if output == "native":
-            raise NotImplementedError("This backend has no native frame output; use output='numpy'.")
-        return np.array(self._backend.frame(index), copy=True)
+            return native(index, out=out) if wait else native(index, out=out, wait=False)
+        raise NotImplementedError("This backend has no native frame output; use output='numpy'.")
 
     def reduce_frames(self, indices, mode: str = "mean") -> np.ndarray:
         """Reduce selected scan frames with ``mean``, ``sum``, or ``max``."""
@@ -146,7 +151,12 @@ class DetectorSession:
         """Return the float32 mean diffraction pattern on the host or device."""
 
         _check_output(output, None)
-        result = self._backend.mean_dp()
+        native = getattr(self._backend, "mean_dp_native", None)
+        result = native() if output == "native" and native else self._backend.mean_dp()
+        if output == "native" and isinstance(result, np.ndarray):
+            raise NotImplementedError(
+                "This backend has no native mean output; use output='numpy'."
+            )
         return result if output == "native" else _reduced_to_numpy(result)
 
     def finish(self) -> dict:

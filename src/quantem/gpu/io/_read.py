@@ -33,13 +33,15 @@ def _torch_value(value):
         return value
     to_torch = getattr(value, "to_torch", None)
     if callable(to_torch):
-        tensor = to_torch()
-        if tensor.device.type == "mps":
-            torch.mps.synchronize()
-        release = getattr(value, "release", None)
-        if callable(release):
-            release()
-        return tensor
+        try:
+            tensor = to_torch()
+            if tensor.device.type == "mps":
+                torch.mps.synchronize()
+            return tensor
+        finally:
+            release = getattr(value, "release", None)
+            if callable(release):
+                release()
     try:
         tensor = torch.from_dlpack(value)
     except Exception as error:

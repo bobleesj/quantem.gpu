@@ -22,8 +22,21 @@ def load_h5_ans(
     verbose,
     backend="cuda",
     hot_pixel_correction="median",
+    auto_narrow=True,
 ):
     """Load bounded native chunks into a backend-owned runtime encoded resident."""
+    from ._hdf5_array_resident import load_hdf5_array_resident
+
+    started = time.perf_counter()
+    info = inspect(path, scan_shape=scan_shape, dataset_path=dataset_path)
+    inspected = time.perf_counter()
+    generic = load_hdf5_array_resident(
+        path, scan_shape=scan_shape, dataset_path=dataset_path, backend=backend,
+        device=device, verbose=verbose, hot_pixel_correction=hot_pixel_correction,
+        info=info, auto_narrow=auto_narrow,
+    )
+    if generic is not None:
+        return generic
     if backend == "mps":
         return _load_h5_ans_mps(
             path,
@@ -31,6 +44,7 @@ def load_h5_ans(
             dataset_path=dataset_path,
             verbose=verbose,
             hot_pixel_correction=hot_pixel_correction,
+            info=info,
         )
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
@@ -45,9 +59,6 @@ def load_h5_ans(
         _SparseFrameReadSession,
     )
 
-    started = time.perf_counter()
-    info = inspect(path, scan_shape=scan_shape)
-    inspected = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
         raise ValueError(f"{info.reason}: {info.action}")
     shape = (*info.scan_shape, *info.detector_shape)
@@ -225,7 +236,7 @@ def _exact_uint16_counts(raw, first: int, stop: int):
 
 
 def _load_h5_ans_mps(
-    path, *, scan_shape, dataset_path, verbose, hot_pixel_correction="median"
+    path, *, scan_shape, dataset_path, verbose, hot_pixel_correction="median", info=None
 ):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal."""
     from .backends.mps._spatial import build_index
@@ -238,7 +249,8 @@ def _load_h5_ans_mps(
     )
 
     started = time.perf_counter()
-    info = inspect(path, scan_shape=scan_shape)
+    if info is None:
+        info = inspect(path, scan_shape=scan_shape)
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
         raise ValueError(f"{info.reason}: {info.action}")
     shape = (*info.scan_shape, *info.detector_shape)

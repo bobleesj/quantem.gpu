@@ -6,10 +6,10 @@ kernel void float_ans_direct(
     device ushort* output [[buffer(3)]],
     constant uint2& range [[buffer(4)]],
     uint at [[thread_position_in_grid]]) {
-    if (at >= range.y * 32768u) return;
-    uint lane = at % 32768u, model = models[lane];
+    if (at >= range.y * FLOAT_LANES) return;
+    uint lane = at % FLOAT_LANES, model = models[lane];
     if (model < 253u) return;
-    uint position = offsets[lane] + (model == 254u ? 2 * (range.x + at / 32768u) : 0);
+    uint position = offsets[lane] + (model == 254u ? 2 * (range.x + at / FLOAT_LANES) : 0);
     output[at] = model == 253u ? 0 : payload[position] | (uint(payload[position + 1]) << 8);
 }
 
@@ -22,11 +22,11 @@ kernel void float_ans_entropy(
     device atomic_uint* errors [[buffer(5)]],
     constant uint3& range [[buffer(6)]],
     uint lane [[thread_position_in_grid]]) {
-    if (lane >= 32768u || models[lane] >= 253u) return;
+    if (lane >= FLOAT_LANES || models[lane] >= 253u) return;
     StreamReader reader(payload, offsets, models, decoding, lane);
     for (uint scan = 0; scan < range.y + range.z; ++scan) {
         uint value = reader.next();
-        if (scan >= range.y) output[(scan - range.y) * 32768u + lane] = value;
+        if (scan >= range.y) output[(scan - range.y) * FLOAT_LANES + lane] = value;
     }
     if (!reader.valid || (range.y + range.z == range.x && !reader.finished()))
         atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
@@ -38,9 +38,9 @@ kernel void float_ans_selected_entropy(
     device ushort* output [[buffer(4)]], device atomic_uint* errors [[buffer(5)]],
     device const uchar* mask [[buffer(6)]], constant uint& scans [[buffer(7)]],
     uint lane [[thread_position_in_grid]]) {
-    if (lane >= 32768u || !mask[lane / 2] || models[lane] >= 253u) return;
+    if (lane >= FLOAT_LANES || !mask[lane / 2] || models[lane] >= 253u) return;
     StreamReader reader(payload, offsets, models, decoding, lane);
-    for (uint scan = 0; scan < scans; ++scan) output[scan * 32768u + lane] = reader.next();
+    for (uint scan = 0; scan < scans; ++scan) output[scan * FLOAT_LANES + lane] = reader.next();
     if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
 
@@ -48,7 +48,7 @@ inline uint float_lane(device const uchar* payload, device const uint* offsets,
                        device const uchar* models, device const ushort* decoded,
                        uint lane, uint scan) {
     uint model = models[lane];
-    if (model < 253u) return decoded[scan * 32768u + lane];
+    if (model < 253u) return decoded[scan * FLOAT_LANES + lane];
     if (model == 253u) return 0;
     uint at = offsets[lane] + (model == 254u ? scan * 2 : 0);
     return payload[at] | (uint(payload[at + 1]) << 8);
@@ -71,7 +71,7 @@ kernel void float_ans_detector(
     ushort lane [[thread_index_in_simdgroup]], ushort group [[simdgroup_index_in_threadgroup]]) {
     threadgroup float2 partials[4];
     float sum=0, residual=0;
-    for (uint pixel=local; pixel<16384; pixel+=128) {
+    for (uint pixel=local; pixel<FLOAT_LANES/2; pixel+=128) {
         if (mask[pixel]) {
             uint word=float_lane(payload,offsets,models,decoded,pixel*2,scan)
                      | (float_lane(payload,offsets,models,decoded,pixel*2+1,scan)<<16);

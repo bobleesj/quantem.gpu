@@ -9,7 +9,7 @@ from ._streamed import MPSStreamedCounts
 
 
 @cache
-def _kernels():
+def _kernels(lanes):
     from .packed import _metal_module
 
     metal = _metal_module()
@@ -20,6 +20,7 @@ def _kernels():
         .read_text()
         .split("kernel void streamed_counts_encode")[0]
     )
+    source += f"\n#define FLOAT_LANES {lanes}u\n"
     source += (root / "float_ans.msl").read_text()
     options = metal.MTLCompileOptions.alloc().init()
     options.setFastMathEnabled_(False)
@@ -44,7 +45,8 @@ class MPSFloatLanes(MPSStreamedCounts):
     def _encode_decode(
         self, command, chunk, local_first, count, output, output_offset_bytes=0
     ):
-        direct, entropy = _kernels()[:2]
+        lanes = int(np.prod(self.shape[2:]))
+        direct, entropy = _kernels(lanes)[:2]
         encoder = command.computeCommandEncoder()
         encoder.setComputePipelineState_(direct)
         for index, buffer in enumerate(chunk.buffers):
@@ -52,7 +54,7 @@ class MPSFloatLanes(MPSStreamedCounts):
         encoder.setBuffer_offset_atIndex_(output, output_offset_bytes, 3)
         parameters = np.asarray([local_first, count], np.uint32).tobytes()
         encoder.setBytes_length_atIndex_(parameters, len(parameters), 4)
-        self._dispatch_threads(encoder, count * 32768)
+        self._dispatch_threads(encoder, count * lanes)
         encoder.endEncoding()
         encoder = command.computeCommandEncoder()
         encoder.setComputePipelineState_(entropy)
@@ -62,7 +64,7 @@ class MPSFloatLanes(MPSStreamedCounts):
         encoder.setBuffer_offset_atIndex_(self._errors, 0, 5)
         parameters = np.asarray([chunk.scans, local_first, count], np.uint32).tobytes()
         encoder.setBytes_length_atIndex_(parameters, len(parameters), 6)
-        self._dispatch_threads(encoder, 32768)
+        self._dispatch_threads(encoder, lanes)
         encoder.endEncoding()
 
     def float_detector(self, mask, background=None):
@@ -73,7 +75,8 @@ class MPSFloatLanes(MPSStreamedCounts):
         from ._streamed import _upload
         from .packed import _allocate_shared, _release, _complete
 
-        entropy, reduce = _kernels()[2:]
+        lanes = int(np.prod(self.shape[2:]))
+        entropy, reduce = _kernels(lanes)[2:]
         output = torch.empty(self.shape[:2], dtype=torch.float32, device="mps")
         torch.mps.synchronize()
         target = objc.objc_object(
@@ -94,7 +97,7 @@ class MPSFloatLanes(MPSStreamedCounts):
             scratch = _allocate_shared(
                 self._device,
                 self._metal,
-                max(c.scans for c in self.chunks) * 65536,
+                max(c.scans for c in self.chunks) * lanes * 2,
                 "Bounded float entropy scratch",
             )
             self._clear_errors()
@@ -108,7 +111,7 @@ class MPSFloatLanes(MPSStreamedCounts):
                     encoder.setBuffer_offset_atIndex_(buffer, 0, i)
                 parameters = np.uint32(chunk.scans).tobytes()
                 encoder.setBytes_length_atIndex_(parameters, len(parameters), 7)
-                self._dispatch_threads(encoder, 32768)
+                self._dispatch_threads(encoder, lanes)
                 encoder.endEncoding()
                 encoder = command.computeCommandEncoder()
                 encoder.setComputePipelineState_(reduce)

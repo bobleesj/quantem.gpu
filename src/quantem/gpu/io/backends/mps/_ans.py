@@ -86,10 +86,27 @@ class MPSANSArray:
         """Copy this bounded Metal result into a Torch MPS tensor."""
         if self.is_released:
             raise RuntimeError("The ANS output was released; request a new result.")
+        import ctypes
+        import objc
         import torch
 
-        view = np.frombuffer(_buffer_view(self.buffer), self.dtype).reshape(self.shape)
-        return torch.from_numpy(view).to("mps")
+        output_t = torch.empty(
+            self.shape, dtype=getattr(torch, self.dtype.name), device="mps"
+        )
+        if not self.nbytes:
+            return output_t
+        torch.mps.synchronize()
+        target = objc.objc_object(
+            c_void_p=ctypes.c_void_p(output_t.untyped_storage().data_ptr())
+        )
+        command = self.buffer.device().newCommandQueue().commandBuffer()
+        encoder = command.blitCommandEncoder()
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
+            self.buffer, 0, target, 0, self.nbytes
+        )
+        encoder.endEncoding()
+        _complete(command, "ANS Torch transfer")
+        return output_t
 
     def release(self):
         """Release exactly this buffer, leaving its source and other results intact."""

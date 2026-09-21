@@ -66,6 +66,7 @@ def inspect(
     filepath: str | PathLike[str],
     *,
     scan_shape: tuple[int, int] | None = None,
+    dataset_path: str | None = None,
 ) -> Inspection:
     """Inspect source geometry and small validity metadata before loading.
 
@@ -75,6 +76,11 @@ def inspect(
         HDF5/encoded file or complete prepared-series folder.
     scan_shape
         Optional expected ``(scan_row, scan_col)`` shape.
+    dataset_path
+        HDF5 measurement dataset to inspect when the container has several
+        acquisitions. Four-dimensional arrays use scan row, scan column,
+        detector row, detector column order. A frame-first 3D array requires
+        an explicit ``scan_shape``.
 
     Returns
     -------
@@ -94,7 +100,9 @@ def inspect(
     from ._qem_metadata import effective_metadata
 
     if is_streamed_file(path):
-        header, _ = read_envelope(path)
+        header, start = read_envelope(path)
+        if start + header["bytes"] != path.stat().st_size:
+            raise ValueError("Incomplete QEM payload; recopy the complete file.")
         shape = tuple(header["shape"])
         matches = scan_shape is None or tuple(scan_shape) == shape[:2]
         metadata = dict(effective_metadata(header.get("metadata", {}), header["scientific_metadata"]), resident_bytes=header["bytes"],
@@ -131,6 +139,27 @@ def inspect(
             {"path": str(source.path), "size": source.signature[0],
              "mtime_ns": source.signature[1], "data_offset": source.offset},
         )
+    if path.suffix.lower() in {".npy", ".raw", ".xml"}:
+        from ._array_sources import load_array_source
+
+        mapped = load_array_source(path, scan_shape)
+        try:
+            shape = tuple(mapped.shape)
+            dtype = mapped.data.dtype.name
+            metadata = dict(
+                mapped.metadata, scan_shape=shape[:2], detector_shape=shape[2:],
+                source_shape=shape, dtype=dtype, n_frames=math.prod(shape[:2]),
+            )
+            status = path.stat()
+            return Inspection(
+                True, "complete_dataset", "Load the complete acquisition into ANS.",
+                metadata, None, metadata["source_kind"], math.prod(shape[:2]),
+                math.prod(shape[:2]), shape[:2], shape[2:], dtype,
+                {"path": str(path.resolve()), "size": status.st_size,
+                 "mtime_ns": status.st_mtime_ns},
+            )
+        finally:
+            mapped.data._mmap.close()
     if path.is_dir() and (path / "checkpoint.json").is_file():
         document = json.loads((path / "checkpoint.json").read_text())
         layout = document["layout"]
@@ -159,19 +188,50 @@ def inspect(
         metadata = get_metadata(str(filepath))
     except (OSError, KeyError, TypeError, ValueError):
         metadata = {}
+    from ._prepared_stack_metadata import prepared_stack_metadata
+
+    with h5py.File(filepath, "r") as source:
+        prepared = prepared_stack_metadata(source["dp"]) if "dp" in source else {}
+    if prepared:
+        metadata.update(prepared)
+        if dataset_path is None and prepared.get("scan_shape") is not None:
+            dataset_path = "/dp"
     # Explicit 4D dimensions take precedence over square-scan inference.
     candidates = []
     try:
         with h5py.File(filepath, "r") as source:
+            if dataset_path is not None:
+                selected = source[dataset_path]
+                if not isinstance(selected, h5py.Dataset) or selected.ndim not in (3, 4):
+                    raise ValueError("dataset_path must select a 3D or 4D measurement array.")
+                if selected.ndim == 3:
+                    selected_scan = scan_shape or prepared.get("scan_shape")
+                    if selected_scan is None:
+                        raise ValueError("A frame-first 3D dataset needs scan_shape=(rows, columns).")
+                    shape = (*selected_scan, *selected.shape[1:])
+                    if math.prod(selected_scan) != selected.shape[0]:
+                        raise ValueError("scan_shape must cover every frame in the selected dataset.")
+                else:
+                    shape = selected.shape
+                candidates.append((selected.name, shape, selected.dtype))
             def visit(name, value):
                 if isinstance(value, h5py.Dataset) and value.ndim == 4:
                     candidates.append((name, value.shape, value.dtype))
-            source.visititems(visit)
+            if dataset_path is None:
+                source.visititems(visit)
     except (OSError, KeyError, TypeError, ValueError):
+        if dataset_path is not None:
+            raise
         # Preserve the readiness diagnosis when a source cannot be traversed.
         candidates.clear()
     if len(candidates) == 1:
         name, shape, dtype = candidates[0]
+        from ._emd_metadata import dataset_metadata
+
+        with h5py.File(filepath, "r") as source:
+            metadata = dataset_metadata(source[name], metadata)
+        if prepared:
+            metadata["source_metadata"].update(prepared["source_metadata"])
         matches = scan_shape is None or tuple(scan_shape) == tuple(shape[:2])
         metadata.update(dataset_path=name, scan_shape=shape[:2], detector_shape=shape[2:],
                         source_shape=shape, dtype=np.dtype(dtype).name,
@@ -182,6 +242,11 @@ def inspect(
                           int(np.prod(scan_shape)) if scan_shape is not None else shape[0] * shape[1],
                           tuple(shape[:2]), tuple(shape[2:]), np.dtype(dtype).name,
                           readiness.source_signature)
+    if len(candidates) > 1:
+        raise ValueError(
+            "Multiple 4D acquisitions found; pass dataset_path to select one: "
+            + ", ".join(name for name, _, _ in candidates)
+        )
     metadata.setdefault("scan_shape", scan_shape)
     metadata["representation"] = DataRepresentation.DENSE.value
     metadata["detector_shape"] = readiness.detector_shape
