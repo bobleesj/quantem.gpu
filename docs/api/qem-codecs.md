@@ -90,11 +90,12 @@ Index correctness is checked against sums of decoded counts, not just checksums.
 ## Float codec: float32-bit-lanes-rans-v1
 
 New native float32 exports use ANS-coded IEEE bits, not float-to-integer
-conversion. The detector shape is `(128,128)`, dtype is `float32`, and
+conversion. The detector axes are positive, dtype is `float32`, and
 `version=1`. Source axes, calibration and retained metadata are unchanged.
 
-Each chunk covers 1 through 512 consecutive flattened scan positions, declared
-by `first` and `scans`. There are 32,768 streams: two uint16 lanes for every
+Let `P = detector_rows * detector_columns`. Each chunk covers 1 through
+`min(512, floor(32 MiB / (4*P)))` consecutive flattened scan positions, declared
+by `first` and `scans`. There are `2*P` streams: two uint16 lanes for every
 detector pixel in row-major order, low word first. Each lane uses the count
 models and normative rANS table above. Literal and constant models are part of
 the ANS codec; incompressible input need not become smaller.
@@ -106,8 +107,8 @@ byte offsets and byte lengths are named `payload_offset`, `payload_bytes`,
 | Array | Layout |
 | --- | --- |
 | payload | Byte streams; an entirely empty payload retains at least one padding byte |
-| offset | 32,769 little-endian uint32 byte offsets; starts at zero, nondecreasing |
-| model | 32,768 uint8 model selectors |
+| offset | `2*P+1` little-endian uint32 byte offsets; starts at zero, nondecreasing |
+| model | `2*P` uint8 model selectors |
 
 The final offset cannot exceed the payload length. Bytes beyond that offset
 are padding, not samples. Decode each lane for exactly `scans` values, then
@@ -126,9 +127,13 @@ Python CUDA and MPS readers also upload the encoded chunks directly. They
 preserve original float bits and metadata when saving another `.qem`, without
 requiring the original acquisition or re-encoding a dense cube. Point DPs,
 binary-mask detector images, mean/selected DPs and CoM run on the accelerator.
-Each decoded window is limited to 512 frames (32 MiB); reductions may use
+Each decoded window is limited to 32 MiB; reductions may use
 additional bounded temporary buffers, so this is not a total-memory limit.
 The explicit CPU reference remains available for small interoperability checks.
+The Python CUDA and Metal/MPS implementations accept rectangular detectors.
+The separate Swift native reader still requires a 128×128 float detector;
+do not assume a Python-exported larger detector is supported by an installed
+Live4DSTEM build. The 128×128 byte layout and arithmetic are unchanged.
 
 BF/ABF/ADF reductions use compensated float32 sums. CoM is mean-subtracted in
 `(row, column)` order; invalid or zero-total frames remain NaN and are excluded
@@ -141,6 +146,11 @@ qualification record separates exact measurement/virtual-image parity from toler
 and CoM comparisons. It does not qualify float64, other detector geometries,
 raw float-source ingestion on Python GPUs, SSB, or an application's 120 Hz
 presentation cadence.
+
+The additional Python geometry and original-input tests are in
+`tests/hardware/test_array_ans_workflows.py` and
+`tests/hardware/test_emd_ans_workflows.py`. These do not retroactively broaden
+that earlier experiment's evidence or certify an application's frame rate.
 
 ### Earlier float codec: empad-xor-row-packed-v1
 

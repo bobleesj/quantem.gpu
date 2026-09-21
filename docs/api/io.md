@@ -45,6 +45,9 @@ if not report.ready:
 
 The report includes the frame count, detector `(row, col)` shape, dtype, source
 layout, and a source signature suitable for acquisition-readiness polling.
+For `.qem`, inspection rejects an incomplete file length but does not read and
+authenticate the entire payload. `io.load` verifies payload checksums before
+exposing the resident measurements.
 
 ## `load`
 
@@ -61,6 +64,103 @@ print(loaded.representation)
 print(loaded.residency)
 print(loaded.logical_bytes, loaded.resident_bytes)
 ```
+
+### Load original arrays into ANS and save a `.qem` copy
+
+NumPy arrays, EMPAD-G1 RAW/XML and calibrated EMPAD2 float32 exports now use
+the same encoded-device workflow as supported HDF5 sources:
+
+```python
+from quantem.gpu import detector, io
+
+with io.load("scan.npy", backend="mps") as loaded:  # or backend="cuda"
+    dp = loaded.read(scan_region=(10, 11, 20, 21))[0, 0]
+    session = detector.prepare(loaded)
+    mean_dp = session.mean_dp(output="native")
+    io.save("scan.qem", loaded)
+```
+
+`dp` is a Torch tensor on the source GPU. `output="native"` keeps point and
+mean diffraction products on that GPU; the default `output="numpy"` copies
+only the requested small product to the host. The complete acquisition stays
+ANS-encoded. The original-array ingestion path uses at most 32 MiB per input
+window, with separate bounded encoder scratch. Saving copies encoded bytes,
+original metadata and normalized scientific fields without expanding the cube.
+
+| Original source | Encoded loading |
+| --- | --- |
+| NumPy `.npy` | Four axes, uint8/uint16 or float32; wider integer counts require an exact range audit |
+| EMPAD-G1 `.raw` / `.xml` | Float32 records; 130×128 storage, 128×128 detector |
+| EMPAD2 `.xml` | Calibrated 128×128 float32 exports, not encoded sensor words |
+| DigitalMicrograph `.dm3` / `.dm4` | Native uint8/uint16 or float32; one calibrated four-axis image |
+| NCEM EMD `.emd` | Four-axis arrays; `dataset_path` selects among multiple acquisitions |
+| HDF5 | 4D datasets or flattened 3D frames, including contiguous and gzip layouts |
+
+Float32 ANS retains the source detector geometry, including rectangular detectors,
+without cropping or rounding to integer counts. A single float32 frame must fit
+the 32 MiB working-window limit; larger detectors use fewer frames per window.
+Headerless EMPAD RAW needs
+`scan_shape=(rows, columns)`. XML calibration is retained. Raw EMPAD2 detector
+words still require matching sensor calibration and a qualified decoder;
+this does not establish EMPAD-G3 or arbitrary EMD support. The native
+bitshuffle/LZ4 HDF5 layout retains its direct GPU decoder. Other supported
+HDF5 layouts use bounded storage-library reads before GPU ANS encoding.
+
+NCEM EMD coordinate vectors follow the [EMD specification](https://emdatasets.com/format/).
+Regular scan sampling is normalized to Å and reciprocal sampling to Å⁻¹
+(angular sampling stays in mrad). Original coordinate values, labels and units
+are retained; nonuniform coordinates and unknown units are not guessed.
+The reader retains coordinate vectors up to 4,096 values and records omitted
+larger vectors explicitly. Arrays use scan-row, scan-column, detector-row,
+detector-column order; arbitrary Velox event/image layouts are not implied.
+Use `io.inspect(path, dataset_path="experiment/acquisition/data")` and the same
+`dataset_path` in `io.load` when an EMD contains multiple acquisitions.
+
+GPU NumPy/EMPAD loading rejects dense or packed residency overrides. Explicit
+`backend="cpu", representation="dense"` remains available for reference access,
+not as an automatic fallback. Unsupported dtypes/layouts raise an actionable
+error before allocating a resident cube.
+
+NumPy simulations stored as `int32`, such as those in
+[the SrTiO3 dislocation dataset](https://doi.org/10.5281/zenodo.7464234),
+are audited in bounded windows before allocation. With `auto_narrow=True`
+(the default), nonnegative counts up to 65,535 use uint8 or uint16 ANS
+without changing any value. The original dtype, complete count range, and
+exact-narrowing provenance survive `.qem` export. Negative or larger values
+are rejected rather than clipped. EMPAD RAW loading finds a sibling XML that
+names the RAW file, retaining its scan dimensions, instrument fields, and
+independently indexed virtual-detector regions. If multiple XML files name the
+same RAW, open the intended XML explicitly. The archive's separate `para.txt`
+is not automatically interpreted: keep it with the original acquisition and explicitly record any
+calibration taken from it. Its three-dimensional `potential.npy` is a simulated
+object, not a four-dimensional detector acquisition.
+
+The [TCMEP dataset](https://doi.org/10.5281/zenodo.15084123) contains prepared
+`/dp` HDF5 stacks and MATLAB 7.3 `/cbed` simulation arrays. Keep each prepared
+stack beside its `params_backup.mat` and, when supplied, `data_position.hdf5`.
+The Python reader validates the recorded raster positions or inclusive crop
+bounds rather than guessing a square scan. It retains the source parameters,
+normalizes voltage to kV, convergence semi-angle to mrad, and diffraction
+sampling to Å⁻¹. Object sampling `dx` is not scan sampling; position units that
+are not documented in the companion remain unspecified.
+
+```python
+from quantem.gpu import detector, io
+
+with io.load("data_roi0_Ndp128_dp.hdf5", backend="mps") as loaded:
+    pattern = detector.prepare(loaded).frame(0)
+    io.save("acquisition.qem", loaded)
+```
+
+Use `backend="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
+followed by GPU ANS encoding; this is not GPU gzip decompression. Float64 input
+is accepted only when `auto_narrow=True` and a complete bounded bitwise
+float64 → float32 → float64 audit proves every value unchanged. Otherwise it
+fails before resident allocation. Exact narrowing and the original dtype are
+recorded in `.qem` provenance; arbitrary float64 support is not implied.
+Reconstruction objects, probes and result TIFFs are not diffraction acquisitions.
+These Python paths do not certify the native Swift reader, which still limits
+float acquisition geometry to 128 × 128 and does not read these gzip stacks.
 
 (cuda-h5-encoded-residency)=
 ### Stream complete H5 counts into CUDA encoded residency
@@ -133,12 +233,14 @@ every 64 MiB block with SHA-256 while uploading through two bounded pinned
 buffers. It does not require the original DM file. Writes are atomic and reject
 existing destinations. Saved copies are detected by magic regardless of
 extension; the only accepted extension is `.qem`.
-DM selection/conversion options and MPS residency are currently unsupported. Load differently shaped acquisitions separately; a list can use
+DM selection/conversion options remain unsupported. Native uint8/uint16 DM
+counts also have an MPS encoded loading path; DM4 tests alone do not qualify all
+DM3 variants. Load differently shaped acquisitions separately; a list can use
 `stack=False` to return independent residents.
 
 ### Reopen float32 `.qem` on CUDA or MPS
 
-For `float32-bit-lanes-rans-v1` files with a `(128, 128)` detector, use the same
+For `float32-bit-lanes-rans-v1` files, use the same
 public API on either accelerator:
 
 ```python

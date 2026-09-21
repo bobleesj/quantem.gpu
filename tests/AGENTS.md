@@ -1,5 +1,19 @@
 # Disposable test data
 
+## Compressed acquisition acceptance
+
+- For acquisition IO changes, use `python scripts/check_ans_io.py` on the
+  physical requested backend. Supply the local Zenodo collection via
+  `--zenodo-root` or `QEM_ZENODO_ROOT` for the full real-data gate.
+- Missing hardware/data, skipped/xfail tests, deselection and empty execution
+  are not passes. Retain the generated table with unsupported/untested cells
+  visible; do not substitute an older installed package or a different commit.
+- Python MPS/Metal tests do not certify native Swift/Metal or application UI.
+  CUDA requires its own physical-device run. Do not infer raw EMPAD2/G3 support
+  from processed float exports, DM3 from DM4, or Velox events from EMD arrays.
+- Keep reports outside the repository and use disposable exports. See
+  `docs/maintainer/ans-io-acceptance.md` for the exact scope and commands.
+
 ## GPU-first numerical verification
 
 - For GPU optimization, freeze the known-good GPU result and compare the
