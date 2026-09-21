@@ -25,13 +25,22 @@ extension MetalRuntimeANSResidentSource {
     let mapped = try snapshot.verifiedMapping()
     let chunks: [Chunk] = try mapped.withUnsafeBytes { bytes in
       try snapshot.chunks.map { chunk in
-        let buffers = try chunk.arrays.map { span -> MTLBuffer in
+        let buffers = try chunk.arrays.enumerated().map { index, span -> MTLBuffer in
+          // Spatial buffers use a four-byte minimum in the original encoder.
+          // Restore that allocation without reading padding beyond the file span.
+          let length = max(index >= 3 ? 4 : 1, span.bytes)
           guard
             let buffer = device.makeBuffer(
-              bytes: bytes.baseAddress!.advanced(by: snapshot.dataStart + span.offset),
-              length: max(1, span.bytes), options: .storageModeShared)
+              length: length, options: .storageModeShared)
           else {
             throw invalid("Metal could not allocate the encoded snapshot.")
+          }
+          if span.bytes > 0 {
+            memcpy(buffer.contents(),
+              bytes.baseAddress!.advanced(by: snapshot.dataStart + span.offset), span.bytes)
+          }
+          if length > span.bytes {
+            memset(buffer.contents().advanced(by: span.bytes), 0, length - span.bytes)
           }
           return buffer
         }

@@ -23,6 +23,10 @@ import Native4DSTEMIO
     let snapshot = try NativeANSSnapshot(url: output)
     let restored = try MetalRuntimeANSResidentSource.load(snapshot: snapshot, device: device)
     defer { restored.releaseResidentStorage() }
+    let original = try MetalRuntimeANSResidentSource.load(array: source, device: device)
+    precondition(original.residentBytes == restored.residentBytes,
+      "Restoring a saved acquisition must retain the same spatial-index allocation policy")
+    original.releaseResidentStorage()
     precondition(restored.shape == shape && restored.dataset.sourceDtype == source.dataset.sourceDtype)
     precondition(restored.dataset.sourceScanCalibration == nil)
     let header = try NativeQEMFile(url: output).header
