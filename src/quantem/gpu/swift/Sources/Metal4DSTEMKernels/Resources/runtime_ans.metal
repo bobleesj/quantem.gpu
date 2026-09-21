@@ -314,6 +314,78 @@ kernel void float_ans_decode_changes(
     }
 }
 
+// The same compensated, scan-ordered mean as empad_mean_diffraction. Each
+// detector pixel owns its accumulator across ordered chunk dispatches. Unlike
+// a point query, a region must not decode unrelated chunks on every movement.
+inline void float_ans_mean_add(float value, thread float& sum, thread float& correction) {
+    if (isfinite(value) && isfinite(sum)) {
+        float adjusted = value - correction;
+        float next = sum + adjusted;
+        correction = (next - sum) - adjusted;
+        sum = next;
+    } else { sum += value; correction = 0; }
+}
+
+inline uint float_ans_independent(device const uchar* payload, uint start,
+                                  uint model, uint frame) {
+    if (model == 253) return 0;
+    uint at = start + (model == 254 ? frame * 2 : 0);
+    return uint(payload[at]) | (uint(payload[at + 1]) << 8);
+}
+
+kernel void float_ans_region_mean(
+    device const uchar* payload [[buffer(0)]],
+    device const uint* offsets [[buffer(1)]],
+    device const uchar* models [[buffer(2)]],
+    device const uint* table [[buffer(3)]],
+    device atomic_uint* errors [[buffer(4)]],
+    device float2* accumulator [[buffer(5)]],
+    device float* output [[buffer(6)]],
+    device const float* background [[buffer(7)]],
+    constant uint& corrected [[buffer(8)]],
+    constant uint4& parameters [[buffer(9)]],
+    constant uint* frames [[buffer(10)]],
+    uint pixel [[thread_position_in_grid]]) {
+    uint stream = pixel * 2;
+    float2 previous = parameters.w ? float2(0) : accumulator[pixel];
+    float sum = previous.x, correction = previous.y;
+    uint lowModel = models[stream], highModel = models[stream + 1];
+    if (lowModel >= 253 && highModel >= 253) {
+        uint lowStart = offsets[stream], highStart = offsets[stream + 1];
+        uint lowBytes = lowModel == 253 ? 0 : lowModel == 255 ? 2 : parameters.x * 2;
+        uint highBytes = highModel == 253 ? 0 : highModel == 255 ? 2 : parameters.x * 2;
+        if (highStart - lowStart != lowBytes || offsets[stream + 2] - highStart != highBytes) {
+            atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+            return;
+        }
+        for (uint index = 0; index < parameters.y; ++index) {
+            uint frame = frames[index];
+            uint word = float_ans_independent(payload, lowStart, lowModel, frame)
+                | (float_ans_independent(payload, highStart, highModel, frame) << 16);
+            float value = as_type<float>(word);
+            if (corrected) value -= background[pixel];
+            float_ans_mean_add(value / float(parameters.z), sum, correction);
+        }
+    } else {
+        StreamReader low(payload, offsets, models, table, stream);
+        StreamReader high(payload, offsets, models, table, stream + 1);
+        uint index = 0;
+        for (uint frame = 0; frame < parameters.x; ++frame) {
+            uint word = low.next() | (high.next() << 16);
+            if (index < parameters.y && frame == frames[index]) {
+                float value = as_type<float>(word);
+                if (corrected) value -= background[pixel];
+                float_ans_mean_add(value / float(parameters.z), sum, correction);
+                ++index;
+            }
+        }
+        if (!low.finished() || !high.finished())
+            atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    }
+    accumulator[pixel] = float2(sum, correction);
+    output[pixel] = sum;
+}
+
 kernel void float_ans_join_words(
     device const uint *lanes [[buffer(0)]],
     device uint *words [[buffer(1)]],

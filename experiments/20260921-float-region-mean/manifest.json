@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260921-float-region-mean",
+  "status": "completed",
+  "question": "Can region-selective float ANS consumption eliminate unrelated scan decoding while preserving the existing GPU mean bit-for-bit?",
+  "paper": {"authoritative_host": "apple-m5-24gb", "repository": "quantem.gpu", "manifest_path": "experiments/20260921-float-region-mean/manifest.json"},
+  "code": {"repository": "https://github.com/bobleesj/quantem.gpu", "revision": "d0438ac2e1e4b84fae2b446f2ac5f48ecc5e3313", "entrypoint": "tests/hardware/metal/swift_original_packing/Sources/EMPADRegionMeanParity/main.swift", "dirty": true, "diff_sha256": "169e169b57fe24c8a9c67e7665d93cfde06217ac7f07f5a9a02b779f2f4504fd", "diff_scope": "tracked Swift backend and harness Package.swift diff, followed by new harness and Python test no-index diffs, excluding experiment evidence"},
+  "inputs": [{"dataset_id": "zenodo.15987625 ZSM5", "path": "00_data/ZSM5/Fig.1C/scan_x256_y256.raw", "sha256": "7ea0838b74899a2ad8450315c28a35d6b8b7bcbcdbeca81736812ff9594f03ad"}],
+  "parameters": {"dtype": "float32", "shape": [256, 256, 128, 128], "scan_bin": 1, "detector_bin": 1, "crop": null, "target_ms": 8.3333333333, "parity": "frozen existing GPU output hashes, all detector pixels", "native_fps_claim": false},
+  "execution": {"host": "macbook", "backend": "swift-metal", "gpu_ids": ["integrated-gpu-0"], "gpu_model": "Apple M5 24 GB"},
+  "outputs": [{"artifact_id": "results", "path": "experiments/20260921-float-region-mean/results.md", "sha256": "8ad12fa3581414f20dad3f7c41bfc12a524f62634b6039edab21c81fb73f2eee", "size_bytes": 5243, "retention": "durable", "consuming_figures": [], "result": "Frozen GPU bit parity passes; Circle mean 225.523 to 2.484 ms. Native sustained Circle and Rectangle measured 116.6–116.94 displayed updates/s, not a universal or locked 120 FPS guarantee."}],
+  "timestamps": {"created": "2026-09-21T11:33:00-07:00", "started": "2026-09-21T11:33:00-07:00", "finished": "2026-09-21T11:51:47-07:00"}
+}

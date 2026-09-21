@@ -205,6 +205,12 @@ public enum Metal4DSTEMKernels {
     try makeLibrary(resource: "runtime_ans", device: device)
   }
 
+  /// Preserve compensated float sums and non-finite semantics while decoding.
+  /// Integer codec clients retain their existing compilation policy.
+  public static func makeFloatANSMeanLibrary(device: MTLDevice) throws -> MTLLibrary {
+    try makeLibrary(resource: "runtime_ans", device: device, strict: true)
+  }
+
   /// Compile exact paired tANS archive diffraction queries.
   @_spi(EntropySeriesPrototype)
   public static func makeTANSLibrary(device: MTLDevice) throws -> MTLLibrary {
@@ -228,7 +234,8 @@ public enum Metal4DSTEMKernels {
 
   private static func makeLibrary(
     resource: String,
-    device: MTLDevice
+    device: MTLDevice,
+    strict: Bool = false
   ) throws -> MTLLibrary {
     let packagedURL = Bundle.main.resourceURL?
       .appendingPathComponent(
@@ -263,7 +270,7 @@ public enum Metal4DSTEMKernels {
         source += "\n" + (try String(contentsOf: regions, encoding: .utf8))
       }
       return try MetalLoadingLibraryCache.shared.library(
-        device: device, source: source, strict: resource == "empad_float")
+        device: device, source: source, strict: strict || resource == "empad_float")
     } catch {
       throw Metal4DSTEMKernelsError.libraryCompilation(
         resource: resource,

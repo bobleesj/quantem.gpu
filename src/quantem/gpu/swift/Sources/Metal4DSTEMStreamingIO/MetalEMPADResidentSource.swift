@@ -409,6 +409,14 @@ public final class MetalEMPADResidentSource {
     else {
       throw Self.failure("EMPAD mean DP needs a resident and a same-device 128×128 float32 output.")
     }
+    if (rows != nil || columns != nil),
+      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_MEAN_CONTROL"] != "1"
+    {
+      try ans.encodeMean(chunks: chunks, rows: selectedRows, columns: selectedColumns,
+        scanColumns: source.scanColumns, shape: shape, output: output,
+        accumulator: accumulator, background: background?.values, command: command)
+      return
+    }
     let workspace = try ans.workspace(
       frames: chunks.map(\.frameCount).max() ?? 0, budget: memoryBudgetBytes, command: command)
     for chunk in chunks {

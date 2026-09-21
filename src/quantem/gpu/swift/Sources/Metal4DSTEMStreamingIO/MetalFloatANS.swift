@@ -15,6 +15,7 @@ final class MetalFloatANS {
   private let selected: MTLComputePipelineState
   private let recovery: MTLComputePipelineState
   private let changes: MTLComputePipelineState
+  private let mean: MTLComputePipelineState
   private let device: MTLDevice
   private var scratch: Workspace?
   private var scratchCommand: MTLCommandBuffer?
@@ -29,17 +30,20 @@ final class MetalFloatANS {
   init(device: MTLDevice) throws {
     self.device = device
     let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
+    let meanLibrary = try Metal4DSTEMKernels.makeFloatANSMeanLibrary(device: device)
     guard let decode = library.makeFunction(name: "streamed_counts_decode_range"),
       let join = library.makeFunction(name: "float_ans_join_words"),
       let selected = library.makeFunction(name: "float_ans_decode_selected"),
       let recovery = library.makeFunction(name: "float_ans_recovery_needed"),
-      let changes = library.makeFunction(name: "float_ans_decode_changes")
+      let changes = library.makeFunction(name: "float_ans_decode_changes"),
+      let mean = meanLibrary.makeFunction(name: "float_ans_region_mean")
     else { throw Metal4DSTEMStreamingIOError.invalidRequest("Rebuild the float ANS kernels.") }
     self.decode = try device.makeComputePipelineState(function: decode)
     self.join = try device.makeComputePipelineState(function: join)
     self.selected = try device.makeComputePipelineState(function: selected)
     self.recovery = try device.makeComputePipelineState(function: recovery)
     self.changes = try device.makeComputePipelineState(function: changes)
+    self.mean = try device.makeComputePipelineState(function: mean)
     let values = RuntimeANSEncoder.tables().decoding
     guard
       let table = values.withUnsafeBytes({
@@ -52,6 +56,62 @@ final class MetalFloatANS {
   func releaseScratch() {
     scratch = nil
     scratchCommand = nil
+  }
+
+  /// Consume only selected frames, retaining the reference scan-order sum.
+  /// Literal/constant lanes need no decoded window; entropy lanes are streamed
+  /// through registers. Neither path materializes a dense scan volume.
+  func encodeMean(
+    chunks: [MetalEMPADResidentSource.Chunk], rows: Range<Int>, columns: Range<Int>,
+    scanColumns: Int, shape: MetalScanRegionShape, output: MTLBuffer,
+    accumulator: MTLBuffer, background: MTLBuffer?, command: MTLCommandBuffer
+  ) throws {
+    guard let errors = device.makeBuffer(length: 4, options: .storageModeShared),
+      let encoder = command.makeComputeCommandEncoder(dispatchType: .serial)
+    else { throw Metal4DSTEMStreamingIOError.invalidRequest("Cannot encode the selected mean DP.") }
+    errors.contents().storeBytes(of: UInt32(0), as: UInt32.self)
+    encoder.setComputePipelineState(mean)
+    encoder.setBuffer(table, offset: 0, index: 3)
+    encoder.setBuffer(errors, offset: 0, index: 4)
+    encoder.setBuffer(accumulator, offset: 0, index: 5)
+    encoder.setBuffer(output, offset: 0, index: 6)
+    encoder.setBuffer(background ?? output, offset: 0, index: 7)
+    var corrected: UInt32 = background == nil ? 0 : 1
+    encoder.setBytes(&corrected, length: 4, index: 8)
+    let divisor = UInt32(shape.sampleCount(rowCount: rows.count, columnCount: columns.count))
+    var first = true
+    for chunk in chunks {
+      let firstRow = max(rows.lowerBound, chunk.firstFrame / scanColumns)
+      let lastRow = min(rows.upperBound, (chunk.firstFrame + chunk.frameCount - 1) / scanColumns + 1)
+      guard firstRow < lastRow else { continue }
+      var frames: [UInt32] = []
+      for row in firstRow..<lastRow {
+        let start = max(row * scanColumns + columns.lowerBound, chunk.firstFrame)
+        let stop = min(row * scanColumns + columns.upperBound, chunk.firstFrame + chunk.frameCount)
+        guard start < stop else { continue }
+        for frame in start..<stop {
+          if shape == .circle {
+            let diameter = rows.count
+            let dr = 2 * (row - rows.lowerBound) + 1 - diameter
+            let dc = 2 * (frame % scanColumns - columns.lowerBound) + 1 - diameter
+            if dr * dr + dc * dc > diameter * diameter { continue }
+          }
+          frames.append(UInt32(frame - chunk.firstFrame))
+        }
+      }
+      guard !frames.isEmpty else { continue }
+      encoder.setBuffer(chunk.payload, offset: 0, index: 0)
+      encoder.setBuffer(chunk.offsets, offset: 0, index: 1)
+      encoder.setBuffer(chunk.models, offset: 0, index: 2)
+      var parameters = SIMD4<UInt32>(UInt32(chunk.frameCount), UInt32(frames.count), divisor, first ? 1 : 0)
+      encoder.setBytes(&parameters, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
+      frames.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 10) }
+      encoder.dispatchThreads(MTLSize(width: Self.pixels, height: 1, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+      encoder.memoryBarrier(resources: [accumulator])
+      first = false
+    }
+    encoder.endEncoding()
   }
 
   func recoveryFlag(

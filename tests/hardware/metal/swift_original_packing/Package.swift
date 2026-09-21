@@ -13,6 +13,13 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
+      name: "EMPADRegionMeanParity",
+      dependencies: [
+        .product(name: "Native4DSTEMIO", package: "quantem.gpu"),
+        .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu"),
+      ]
+    ),
+    .executableTarget(
       name: "LoadingPreparationParity",
       dependencies: [.product(name: "Native4DSTEMIO", package: "quantem.gpu"),
                      .product(name: "Metal4DSTEMStreamingIO", package: "quantem.gpu")],
