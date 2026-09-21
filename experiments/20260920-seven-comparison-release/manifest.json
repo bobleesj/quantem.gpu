@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260920-seven-comparison-release",
+  "status": "failed",
+  "question": "Does the existing exact Fast ANS representation meet the unchanged 110 complete-seven presentations/s gate on the current app, unlike the Normal index-only path?",
+  "paper": {
+    "authoritative_host": "research-host",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260920-seven-comparison-release/manifest.json"
+  },
+  "code": {
+    "repository": "Live4DSTEM",
+    "revision": "0637c7685477589f66324acdb0900ea798ca0c62",
+    "entrypoint": "Tests/NativeUI/profile_seven_tilts.py --fast --count 7 --repeats 3 --average --capture --min-presented-fps 110",
+    "dirty": true,
+    "diff_sha256": "36142d74323b444e2a789a97a036b26ac3cb14c82b11b7e7b685891715b5e953",
+    "snapshot_path": "local-evidence://mean-fix/fast-harness.patch"
+  },
+  "inputs": [{
+    "dataset_id": "seven-original-uint16-masters",
+    "path": "private-fixture://local-native-seven-reference",
+    "sha256": "b4a0f32c6796bfabda2aa1fe7b6fb6e49d0b3fd86b6e08cdadaa51fbdc3436b2"
+  }],
+  "parameters": {
+    "input_hash_definition": "SHA256 of sorted master-file shasum output including private canonical paths; data shards remain unchanged from retained previous native checks",
+    "backend_revision": "042a3cb7bc75b243647eee6bc71572f1cb3def0f",
+    "executable_sha256": "8758e8631b9123a55521cf2f43f23455530e777cb28627efdd2c48e30a33c528",
+    "source_shape": [512, 512, 192, 192],
+    "dtype": "uint16",
+    "binning": 1,
+    "crop": false,
+    "mode": "Hypothesis corrected: current public Fast control converts ANS to bit-packed storage, not the historical Fast ANS configuration. Not an eligible ANS-only fix.",
+    "baseline": "retained seven-index-audited run, same fixture and trajectories; not an interleaved A/B/A speed claim",
+    "evidence_root": "local-evidence://mean-fix/seven-fast-pinned",
+    "notes": "Run stopped during conversion as free disk fell from 3.8 GiB to 171 MiB and swap reached 9.7 GiB. No interaction timing claim. Exact owned app and driver terminated; managed cleanup retained logs and removed scratch. No original acquisition removed.",
+    "artifact_results": {"cleanup": "Stopped under memory/swap pressure; cleanup completed, final target process count zero. Public Fast is bit-packed, so rejected as an ANS-only solution."}
+  },
+  "execution": {"host": "local-macbook", "backend": "Metal", "gpu_ids": ["default"], "gpu_model": "Apple M5 24 GB"},
+  "outputs": [{"artifact_id": "cleanup", "path": "local-evidence://mean-fix/seven-fast-pinned/cleanup-receipt.json", "sha256": "e54613b064a9142c9a5e04502afb8c3c1433a4e2d00ca8ac71fbfdd3c5afde6a", "size_bytes": 476, "retention": "durable", "consuming_figures": []}],
+  "timestamps": {"created": "2026-09-20", "started": "2026-09-20", "finished": "2026-09-20"}
+}

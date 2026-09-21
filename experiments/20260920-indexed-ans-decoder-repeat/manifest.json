@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260920-indexed-ans-decoder-repeat",
+  "status": "failed",
+  "question": "Does the validated indexed decoder improve native seven-image interaction when competing MPS jobs are recorded continuously?",
+  "paper": {"authoritative_host": "research-host", "repository": "quantem.gpu", "manifest_path": "experiments/20260920-indexed-ans-decoder-repeat/manifest.json"},
+  "code": {"repository": "quantem.gpu", "revision": "ba55b1724360b1258bdb56232083eaebc74412af", "entrypoint": "Live4DSTEM profile_seven_tilts.py wrapped by private process sampler", "dirty": true, "diff_sha256": "daea90c59558f443d681a938221edbc49086b5174f404d6bf0df0fe27fc36abd", "snapshot_path": "local-evidence://mean-fix/index-decoder-final.patch"},
+  "inputs": [{"dataset_id": "seven-original-uint16-masters", "path": "private-fixture://local-native-seven-reference", "sha256": "b4a0f32c6796bfabda2aa1fe7b6fb6e49d0b3fd86b6e08cdadaa51fbdc3436b2"}],
+  "parameters": {
+    "parent_experiment": "20260920-indexed-ans-decoder",
+    "registration": "Repeats of the registered parent hypothesis; this separate reconciliation record was written after completion.",
+    "source_shape": [512,512,192,192], "dtype": "uint16", "scan_bin": 1, "detector_bin": 1, "crop": false,
+    "representation": "unchanged Normal paired ANS; unchanged resident index bytes",
+    "candidate_commit": "bd08492",
+    "source_note": "The final commit adds lifecycle benchmark assertions and a comment clarification to the previously built native runtime. Runtime implementation is identical to the tested patch.",
+    "control_executable_sha256": "8758e8631b9123a55521cf2f43f23455530e777cb28627efdd2c48e30a33c528",
+    "candidate_executable_sha256": "ebd0ea7bf97531699337f5c22984a23d6c5897f170d3a8cd76e62c1ecc5f1843",
+    "app_revision": "0637c7685477589f66324acdb0900ea798ca0c62",
+    "method": "Native hook-driven trajectories, one repeat per arm; actual drawable presentation telemetry, window-only screenshots, one app process, mean-DP presentation and return to selected DP. Process context sampled once per second. Not physical mouse/Finder evidence or cold SSD IO.",
+    "gate": "Unchanged minimum110 complete seven-tile presentations/s, p95<=9.09ms, >=120 distinct observations, no incomplete generations. FAIL: center drags remain too slow; short runs have fewer than120 center observations and occasional incomplete generations. No release readiness claim.",
+    "observed_reduction_p50_ms_A2_B2_A3": {"ABF_center": [20.23,16.53,20.11], "ADF_center": [23.30,19.06,23.47]},
+    "observed_presented_per_second_A2_B2_A3": {"ABF_center": [48.0,59.2,48.4], "ABF_resize": [108.5,118.0,108.5], "ADF_center": [42.9,51.1,42.9], "ADF_resize": [93.1,114.5,92.1]},
+    "full_input_per_second_A2_B2_A3": {"ABF_center": [45.0,55.5,45.0], "ADF_center": [42.5,50.5,42.5]},
+    "candidate_center_p95_ms": 25.0,
+    "candidate_resize_p95_ms": 8.33,
+    "contention": "A1, A2 and B2 recorded no known competing MPS benchmark. B overlapped another benchmark during load and is not a clean control. A3 recorded another short benchmark that ended approximately three seconds before detector trajectories; its timing is corroborative, not a claim of exclusive GPU access throughout the process. All raw process samples retained privately.",
+    "parity": "All seven final detector-image hashes and full-scan mean fingerprint match in A2/B2/A3; source schema, full scan, dtype and binning unchanged. Independent GPU, raw-mask and index-removal assertions passed in parent record.",
+    "tests": "54 native harness tests passed; Swift format lint and diff checks passed. Every native app exited0; performance harnesses correctly failed. Managed scratch removed. Installed app unchanged; no notarization or push."
+  },
+  "execution": {"host": "local-macbook", "backend": "Metal", "gpu_ids": ["default"], "gpu_model": "Apple M5 24 GB"},
+  "outputs": [
+    {"artifact_id": "A1", "path": "local-evidence://mean-fix/seven-monitored-a1/summary.json", "sha256": "1ed2dbd6e168e831bd986ea36dfeeff283c97882e36a65f6945a258145634dbb", "size_bytes": 14177, "retention": "durable", "consuming_figures": [], "result": "Control ABF47.6/s, ADF42.9/s; gate fails."},
+    {"artifact_id": "B-contended", "path": "local-evidence://mean-fix/seven-monitored-b/summary.json", "sha256": "a807c6305e1c76811f8a64274d6951f68bc1c144633cb2c6321b423f5fd089e4", "size_bytes": 11725, "retention": "durable", "consuming_figures": [], "result": "Competing MPS load; not a clean performance comparison. Gate fails."},
+    {"artifact_id": "A2", "path": "local-evidence://mean-fix/seven-monitored-a2/summary.json", "sha256": "6b40cf298c3253b2f11672809278425b97fb240df98a2c21bcfd693ed29b93b4", "size_bytes": 14335, "retention": "durable", "consuming_figures": [], "result": "Control ABF48.0/s, ADF42.9/s; gate fails."},
+    {"artifact_id": "B2", "path": "local-evidence://mean-fix/seven-monitored-b2/summary.json", "sha256": "12ae2418969b2a2184f0744c4919958338f64655faca841bb97a472c9e3e5286", "size_bytes": 13857, "retention": "durable", "consuming_figures": [], "result": "Candidate ABF59.2/s, ADF51.1/s; exact final maps, gate still fails."},
+    {"artifact_id": "A3", "path": "local-evidence://mean-fix/seven-monitored-a3/summary.json", "sha256": "57caaac40655b5f16be59793bb0f02e784fa384d49697239dae6fcc6ea30265f", "size_bytes": 14322, "retention": "durable", "consuming_figures": [], "result": "Return control ABF48.4/s, ADF42.9/s; exact final maps, gate fails. Brief competing job before detector trajectories."}
+  ],
+  "timestamps": {"created": "2026-09-20", "started": "2026-09-20", "finished": "2026-09-20"}
+}
