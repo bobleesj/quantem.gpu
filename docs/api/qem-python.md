@@ -8,6 +8,10 @@ not the older published app or an assumed PyPI version.
 
 ## Open and save on your GPU
 
+For notebooks, use `acquisition = io.load("acquisition.npy")` and keep it
+available across cells. Call `acquisition.close()` after the last viewer or
+calculation finishes. The script examples below use `with` for automatic cleanup.
+
 ```python
 from quantem.gpu import detector, io
 

@@ -115,6 +115,10 @@ See [Install](docs/install.md) for complete commands and runtime verification.
 
 ## Quick start
 
+In a notebook, start with `data = io.load("acquisition.qem")`; keep it open
+across cells and call `data.close()` when finished. For scripts, use `with`
+for automatic cleanup:
+
 ```python
 from quantem.gpu import detector, io
 

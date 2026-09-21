@@ -50,6 +50,30 @@ exposing the resident measurements.
 
 ## `load`
 
+### Notebooks and scripts
+
+In a notebook, load with one assignment and keep the owner available across cells:
+
+```python
+data = io.load("acquisition.qem")
+```
+
+Explore with `detector.prepare(data)` or `data.read(...)`. Run `data.close()`
+after the last use, including any viewer using its buffers. Close an old owner
+before replacing it by rerunning a loading cell.
+
+In scripts and batch jobs, prefer automatic cleanup, including on exceptions:
+
+```python
+with io.load("acquisition.qem") as data:
+    pattern = data.read(scan_region=(0, 1, 0, 1))
+```
+
+Neither spelling changes storage, precision or backend selection. Do not use
+an operation handle or viewer after closing its acquisition.
+
+### Inspect the loaded acquisition
+
 Use the same entry point for complete fields, scan crops, detector crops, and
 stochastic scan batches. It returns `FourDSTEMData`, which keeps backend-native
 data and its scientific/storage metadata together:
