@@ -7,8 +7,8 @@ import Metal4DSTEMKernels
 final class MetalFloatANS {
   static let codec = "float32-bit-lanes-rans-v1"
   static let schema = "quantem.gpu.float32-bit-lanes-rans/v1"
-  static let pixels = 128 * 128
-  static let lanes = pixels * 2
+  let pixels: Int
+  var lanes: Int { pixels * 2 }
   let table: MTLBuffer
   private let decode: MTLComputePipelineState
   private let join: MTLComputePipelineState
@@ -27,15 +27,19 @@ final class MetalFloatANS {
     let errors: MTLBuffer
   }
 
-  init(device: MTLDevice) throws {
+  init(device: MTLDevice, pixels: Int) throws {
+    self.pixels = pixels
     self.device = device
     let library = try Metal4DSTEMKernels.makeRuntimeANSLibrary(device: device)
     let meanLibrary = try Metal4DSTEMKernels.makeFloatANSMeanLibrary(device: device)
+    let constants = MTLFunctionConstantValues()
+    var pixelCount = UInt32(pixels)
+    constants.setConstantValue(&pixelCount, type: .uint, index: 20)
     guard let decode = library.makeFunction(name: "streamed_counts_decode_range"),
       let join = library.makeFunction(name: "float_ans_join_words"),
-      let selected = library.makeFunction(name: "float_ans_decode_selected"),
+      let selected = try? library.makeFunction(name: "float_ans_decode_selected", constantValues: constants),
       let recovery = library.makeFunction(name: "float_ans_recovery_needed"),
-      let changes = library.makeFunction(name: "float_ans_decode_changes"),
+      let changes = try? library.makeFunction(name: "float_ans_decode_changes", constantValues: constants),
       let mean = meanLibrary.makeFunction(name: "float_ans_region_mean")
     else { throw Metal4DSTEMStreamingIOError.invalidRequest("Rebuild the float ANS kernels.") }
     self.decode = try device.makeComputePipelineState(function: decode)
@@ -106,7 +110,7 @@ final class MetalFloatANS {
       var parameters = SIMD4<UInt32>(UInt32(chunk.frameCount), UInt32(frames.count), divisor, first ? 1 : 0)
       encoder.setBytes(&parameters, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
       frames.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 10) }
-      encoder.dispatchThreads(MTLSize(width: Self.pixels, height: 1, depth: 1),
+      encoder.dispatchThreads(MTLSize(width: pixels, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
       encoder.memoryBarrier(resources: [accumulator])
       first = false
@@ -153,7 +157,7 @@ final class MetalFloatANS {
     var scans = UInt32(chunk.frameCount)
     encoder.setBytes(&scans, length: 4, index: 10)
     encoder.dispatchThreads(
-      MTLSize(width: Self.pixels, height: 1, depth: 1),
+      MTLSize(width: pixels, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
     if count > 0 {
       encoder.setComputePipelineState(changes)
@@ -166,7 +170,7 @@ final class MetalFloatANS {
   }
 
   func workspace(frames: Int, budget: UInt64, command: MTLCommandBuffer) throws -> Workspace {
-    let size = frames * Self.pixels
+    let size = frames * pixels
     // Ordered encoders in one command may reuse the same window. A different
     // in-flight command must retain its own buffers until it has completed.
     if let scratch, scratch.words.length >= size * 4,
@@ -175,13 +179,13 @@ final class MetalFloatANS {
       scratchCommand = command
       return scratch
     }
-    let needed = UInt64(size * 12 + frames * 128 * 16 + 65536)
+    let needed = UInt64(size * 12 + ((size + 127) / 128) * 16 + 65536)
     guard frames > 0, frames <= 512,
       UInt64(device.currentAllocatedSize) <= budget,
       needed <= budget - UInt64(device.currentAllocatedSize),
       let lanes = device.makeBuffer(length: size * 8, options: .storageModePrivate),
       let words = device.makeBuffer(length: size * 4, options: .storageModePrivate),
-      let descriptors = device.makeBuffer(length: frames * 128 * 16, options: .storageModePrivate),
+      let descriptors = device.makeBuffer(length: ((size + 127) / 128) * 16, options: .storageModePrivate),
       let errors = device.makeBuffer(length: 4, options: .storageModeShared)
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
@@ -200,7 +204,7 @@ final class MetalFloatANS {
   ) throws {
     let count = count ?? chunk.frameCount
     guard first >= 0, count > 0, first + count <= chunk.frameCount,
-      workspace.words.length >= count * Self.pixels * 4,
+      workspace.words.length >= count * pixels * 4,
       let encoder = command.makeComputeCommandEncoder()
     else { throw Metal4DSTEMStreamingIOError.invalidRequest("Invalid float ANS decode window.") }
     encoder.setComputePipelineState(decode)
@@ -211,12 +215,12 @@ final class MetalFloatANS {
       encoder.setBuffer(buffer, offset: 0, index: index)
     }
     var parameters: [UInt64] = [
-      UInt64(chunk.frameCount), UInt64(Self.lanes), 512,
-      UInt64(first), UInt64(count), 0, UInt64(Self.lanes), 2,
+      UInt64(chunk.frameCount), UInt64(lanes), 512,
+      UInt64(first), UInt64(count), 0, UInt64(lanes), 2,
     ]
     encoder.setBytes(&parameters, length: parameters.count * 8, index: 6)
     encoder.dispatchThreads(
-      MTLSize(width: Self.lanes, height: 1, depth: 1),
+      MTLSize(width: lanes, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
     encoder.endEncoding()
     guard let joinEncoder = command.makeComputeCommandEncoder() else {
@@ -227,7 +231,7 @@ final class MetalFloatANS {
     joinEncoder.setBuffer(workspace.words, offset: 0, index: 1)
     joinEncoder.setBuffer(workspace.descriptors, offset: 0, index: 2)
     joinEncoder.dispatchThreads(
-      MTLSize(width: count * Self.pixels, height: 1, depth: 1),
+      MTLSize(width: count * pixels, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
     joinEncoder.endEncoding()
   }

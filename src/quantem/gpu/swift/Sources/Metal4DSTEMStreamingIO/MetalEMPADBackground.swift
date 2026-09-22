@@ -33,12 +33,16 @@ public final class MetalEMPADBackground {
     }
     if shouldCancel() { throw CancellationError() }
     let library = try Metal4DSTEMKernels.makeEMPADLibrary(device: device)
-    guard let function = library.makeFunction(name: "empad_dark_mean"),
-      UInt64(device.currentAllocatedSize) + 256 * 65536 + 196608 <= memoryBudgetBytes,
+    let constants = MTLFunctionConstantValues()
+    var pixelCount = UInt32(source.detectorPixelCount)
+    constants.setConstantValue(&pixelCount, type: .uint, index: 20)
+    let window = min(256, (32 << 20) / (source.detectorPixelCount * 4))
+    guard let function = try? library.makeFunction(name: "empad_dark_mean", constantValues: constants),
+      UInt64(device.currentAllocatedSize) + UInt64(window * source.detectorPixelCount * 4) + UInt64(source.detectorPixelCount * 12) <= memoryBudgetBytes,
       let queue = device.makeCommandQueue(),
-      let input = device.makeBuffer(length: 256 * 65536, options: .storageModeShared),
-      let accumulator = device.makeBuffer(length: 16384 * 8, options: .storageModePrivate),
-      let output = device.makeBuffer(length: 65536, options: .storageModeShared)
+      let input = device.makeBuffer(length: window * source.detectorPixelCount * 4, options: .storageModeShared),
+      let accumulator = device.makeBuffer(length: source.detectorPixelCount * 8, options: .storageModePrivate),
+      let output = device.makeBuffer(length: (source.detectorPixelCount * 4), options: .storageModeShared)
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Not enough Metal memory for background correction. Close another dataset and retry.")
@@ -46,10 +50,10 @@ public final class MetalEMPADBackground {
     let pipeline = try device.makeComputePipelineState(function: function)
     var digest = SHA256()
     digest.update(data: Data((schema + "\0").utf8))
-    for first in stride(from: 0, to: source.frameCount, by: 256) {
+    for first in stride(from: 0, to: source.frameCount, by: window) {
       if shouldCancel() { throw CancellationError() }
-      let count = min(256, source.frameCount - first)
-      let bytes = UnsafeMutableRawBufferPointer(start: input.contents(), count: count * 65536)
+      let count = min(window, source.frameCount - first)
+      let bytes = UnsafeMutableRawBufferPointer(start: input.contents(), count: count * (source.detectorPixelCount * 4))
       try source.readFrames(Array(first..<(first + count)), into: bytes)
       digest.update(bufferPointer: UnsafeRawBufferPointer(bytes))
       guard let command = queue.makeCommandBuffer(),
@@ -65,7 +69,7 @@ public final class MetalEMPADBackground {
       encoder.setBuffer(output, offset: 0, index: 2)
       encoder.setBytes(&dimensions, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 3)
       encoder.dispatchThreads(
-        MTLSize(width: 16384, height: 1, depth: 1),
+        MTLSize(width: source.detectorPixelCount, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
       encoder.endEncoding()
       command.commit()
@@ -79,13 +83,13 @@ public final class MetalEMPADBackground {
     if shouldCancel() { throw CancellationError() }
     // Only a 64 KiB calibration is checked on the host, never the full cube.
     let pixels = UnsafeBufferPointer(
-      start: output.contents().assumingMemoryBound(to: Float.self), count: 16384)
+      start: output.contents().assumingMemoryBound(to: Float.self), count: source.detectorPixelCount)
     guard pixels.allSatisfy(\.isFinite) else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Background contains non-finite measurements. Choose a finite dark reference; no correction was applied."
       )
     }
-    digest.update(bufferPointer: UnsafeRawBufferPointer(start: output.contents(), count: 65536))
+    digest.update(bufferPointer: UnsafeRawBufferPointer(start: output.contents(), count: (source.detectorPixelCount * 4)))
     return MetalEMPADBackground(
       source: source, values: output,
       identity: digest.finalize().map { String(format: "%02x", $0) }.joined())

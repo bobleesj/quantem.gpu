@@ -15,6 +15,10 @@ public struct NativeEMPADSource: Sendable {
   public static let detectorRows = 128
   public static let detectorColumns = 128
   public static let frameBytes = 130 * 128 * 4
+  private var detectorGeometry = (row: 128, column: 128)
+  /// Native detector dimensions; NumPy and QEM are not restricted to EMPAD geometry.
+  public var detectorShape: (row: Int, column: Int) { detectorGeometry }
+  public var detectorPixelCount: Int { detectorGeometry.row * detectorGeometry.column }
   public let rawURL: URL
   public let metadataURL: URL?
   public let scanRows: Int
@@ -88,7 +92,8 @@ public struct NativeEMPADSource: Sendable {
     guard file.codec == "float32-bit-lanes-rans-v1",
       file.header["dtype"] as? String == "float32",
       let shape = file.header["shape"] as? [Int], shape.count == 4,
-      shape[2...] == [128, 128], shape[0] <= Int(UInt32.max) / shape[1],
+      shape.allSatisfy({ $0 > 0 }), shape[0] <= Int(UInt32.max) / shape[1],
+      shape[2] <= (1 << 20) / shape[3],
       let description = file.header["empad"] as? [String: Any],
       let format = description["format_identifier"] as? String,
       let name = description["format_name"] as? String,
@@ -131,14 +136,16 @@ public struct NativeEMPADSource: Sendable {
       metadata["qem_user_confirmed_background_corrected"] = "true"
     }
     if description["background"] != nil { metadata["qem_background"] = "mean-dark" }
-    return NativeEMPADSource(
+    var restored = NativeEMPADSource(
       rawURL: url, metadataURL: nil,
       scanRows: shape[0], scanColumns: shape[1], scanCalibration: calibration,
       diffractionSamplingInverseNanometers: diffraction,
       acquisitionDate: description["acquisition_date"] as? String,
       formatIdentifier: format, formatName: name, microscopeMetadata: metadata,
-      backgroundSubtractionEvidence: evidence, recordBytes: 65536,
+      backgroundSubtractionEvidence: evidence, recordBytes: shape[2] * shape[3] * 4,
       rawIdentity: try nativeFileIdentity(for: url), metadataIdentity: nil)
+    restored.detectorGeometry = (shape[2], shape[3])
+    return restored
   }
 
   /// Resolve XML/RAW input and verify the complete acquisition length.
@@ -154,6 +161,22 @@ public struct NativeEMPADSource: Sendable {
     _ input: URL, scanShape: (row: Int, col: Int)? = nil
   ) throws -> NativeEMPADSource {
     let source = input.standardizedFileURL
+    if source.pathExtension.lowercased() == "npy" {
+      let array = try NativeNPYSource(url: source, measurementDtype: "float32")
+      let shape = array.shape
+      guard shape[2] <= (1 << 20) / shape[3],
+        scanShape == nil || (scanShape!.row == shape[0] && scanShape!.col == shape[1])
+      else { throw EMPADError("NumPy geometry is unsupported or conflicts with scan_shape.") }
+      var result = NativeEMPADSource(
+        rawURL: source, metadataURL: nil, scanRows: shape[0], scanColumns: shape[1],
+        scanCalibration: nil, diffractionSamplingInverseNanometers: nil, acquisitionDate: nil,
+        formatIdentifier: "numpy-float32/v1", formatName: "NumPy · float32",
+        microscopeMetadata: array.dataset.metadata ?? [:], backgroundSubtractionEvidence: nil,
+        recordBytes: shape[2] * shape[3] * 4, dataOffset: UInt64(array.dataOffset),
+        rawIdentity: try nativeFileIdentity(for: source), metadataIdentity: nil)
+      result.detectorGeometry = (shape[2], shape[3])
+      return result
+    }
     if NativeQEMFile.matches(source) {
       let restored = try openQEM(source)
       if let scanShape, scanShape.row != restored.scanRows || scanShape.col != restored.scanColumns
@@ -317,6 +340,9 @@ public struct NativeEMPADSource: Sendable {
   /// Recognize EMD or a named float32 HDF5 stack with an explicit scan grid.
   /// Example: `NativeEMPADSource.isFloatDatacubeAcquisition(url)`.
   public static func isFloatDatacubeAcquisition(_ url: URL) -> Bool {
+    if url.pathExtension.lowercased() == "npy" {
+      return (try? NativeNPYSource(url: url, measurementDtype: "float32")) != nil
+    }
     guard ["h5", "hdf5", "emd"].contains(url.pathExtension.lowercased()) else { return false }
     return (try? openEMD(url, scanShape: nil)) != nil
   }
@@ -400,7 +426,7 @@ public struct NativeEMPADSource: Sendable {
     guard indices.allSatisfy({ (0..<frameCount).contains($0) }) else {
       throw EMPADError("EMPAD frame selection is outside 0..<\(frameCount).")
     }
-    let (bytes, overflow) = indices.count.multipliedReportingOverflow(by: 16384 * 4)
+    let (bytes, overflow) = indices.count.multipliedReportingOverflow(by: detectorPixelCount * 4)
     guard !overflow else { throw EMPADError("EMPAD selection exceeds addressable memory.") }
     var values = [Float](repeating: 0, count: bytes / 4)
     try values.withUnsafeMutableBytes { try readFrames(indices, into: $0) }
@@ -442,7 +468,7 @@ public struct NativeEMPADSource: Sendable {
     }
     let handle = try FileHandle(forReadingFrom: rawURL)
     defer { try? handle.close() }
-    let pixels = Self.detectorRows * Self.detectorColumns
+    let pixels = detectorPixelCount
     let (count, overflow) = indices.count.multipliedReportingOverflow(by: pixels)
     guard !overflow else { throw EMPADError("EMPAD selection exceeds addressable memory.") }
     guard output.count / 4 >= count else {

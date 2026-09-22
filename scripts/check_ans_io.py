@@ -43,12 +43,14 @@ GROUPS = {
             ARRAY + "test_float_detector_geometries",
             ARRAY + "test_float_ingestion_preserves_ieee_bits",
         ],
+        "metal": [NATIVE + "test_float_numpy_native_qem_geometry"],
     },
     "Original HDF5 count ANS round trip": {
         "python": [STRICT + "test_original_hdf5_default_ans_roundtrip"],
     },
     "NumPy float32": {
         "python": [ARRAY + "test_float_original_to_qem_and_native_patterns[numpy]"],
+        "metal": [NATIVE + "test_float_numpy_native_qem_geometry"],
     },
     "EMPAD-G1 processed float32": {
         "python": [
@@ -222,7 +224,7 @@ def _run(backend: str, output: Path, zenodo_root: Path | None) -> dict:
     sys.path[:0] = [str(ROOT), str(ROOT / "src")]
     import quantem
 
-    quantem.__path__.insert(0, str(ROOT / "src/quantem"))
+    quantem.__path__ = [str(ROOT / "src/quantem"), *quantem.__path__]
     import quantem.gpu
     import pytest
 
@@ -235,7 +237,7 @@ def _run(backend: str, output: Path, zenodo_root: Path | None) -> dict:
     if zenodo_root is not None:
         os.environ["QEM_ZENODO_ROOT"] = str(zenodo_root.resolve())
     results = _Results()
-    nodes = [node for values in selected.values() for node in values]
+    nodes = list(dict.fromkeys(node for values in selected.values() for node in values))
     os.chdir(ROOT)
     with tempfile.TemporaryDirectory(prefix="ans-acceptance-") as temporary:
         with output.with_suffix(".log").open("w") as log:

@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
+constant uint float_ans_pixels [[function_constant(20)]];
 
 constant uint SC_LOWER = 1u << 23;
 constant uint SC_SCALE = 10;
@@ -280,7 +281,7 @@ kernel void float_ans_decode_selected(
     StreamReader low(payload, offsets, models, decoding, pixel * 2);
     StreamReader high(payload, offsets, models, decoding, pixel * 2 + 1);
     for (uint frame = 0; frame < scans; ++frame)
-        words[frame * 16384 + pixel] = low.next() | (high.next() << 16);
+        words[frame * float_ans_pixels + pixel] = low.next() | (high.next() << 16);
     if (!low.finished() || !high.finished())
         atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
@@ -308,7 +309,7 @@ kernel void float_ans_decode_changes(
         StreamReader low(payload, offsets, models, decoding, stream);
         StreamReader high(payload, offsets, models, decoding, stream + 1);
         for (uint frame = 0; frame < scans; ++frame)
-            words[frame * 16384 + pixel] = low.next() | (high.next() << 16);
+            words[frame * float_ans_pixels + pixel] = low.next() | (high.next() << 16);
         if (!low.finished() || !high.finished())
             atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
     }

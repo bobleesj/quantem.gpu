@@ -1,6 +1,11 @@
 #include <metal_stdlib>
 using namespace metal;
 
+constant uint empad_geometry_pixels [[function_constant(20)]];
+constant uint empad_geometry_columns [[function_constant(21)]];
+constant uint empad_pixels = is_function_constant_defined(empad_geometry_pixels) ? empad_geometry_pixels : 16384;
+constant uint empad_columns = is_function_constant_defined(empad_geometry_columns) ? empad_geometry_columns : 128;
+
 constant bool empad_decoded_words [[function_constant(0)]];
 constant bool empad_direct_ans [[function_constant(1)]];
 
@@ -12,7 +17,7 @@ kernel void empad_dark_mean(device const float* input [[buffer(0)]],
     float2 prior = dimensions.x == 0 ? float2(0) : accumulator[pixel];
     float sum = prior.x, correction = prior.y;
     for (uint frame = 0; frame < dimensions.y; ++frame) {
-        float value = input[frame * 16384 + pixel] / float(dimensions.z);
+        float value = input[frame * empad_pixels + pixel] / float(dimensions.z);
         float adjusted = value - correction;
         float next = sum + adjusted;
         correction = (next - sum) - adjusted;
@@ -100,7 +105,7 @@ inline uint empad_word(device const uint* packed, device const uint4* descriptor
 inline float empad_value(device const uint* packed, device const uint4* descriptors,
                          uint index, device const float* background, uint corrected) {
     float value = as_type<float>(empad_word(packed, descriptors, index));
-    return corrected ? value - background[index % 16384] : value;
+    return corrected ? value - background[index % empad_pixels] : value;
 }
 
 kernel void empad_diffraction(device const uint* packed [[buffer(0)]],
@@ -110,7 +115,7 @@ kernel void empad_diffraction(device const uint* packed [[buffer(0)]],
                              device const float* background [[buffer(8)]],
                              constant uint& corrected [[buffer(9)]],
                              uint pixel [[thread_position_in_grid]]) {
-    uint word = empad_word(packed, descriptors, frame * 16384 + pixel);
+    uint word = empad_word(packed, descriptors, frame * empad_pixels + pixel);
     output[pixel] = corrected ? as_type<uint>(as_type<float>(word) - background[pixel]) : word;
 }
 
@@ -123,10 +128,10 @@ kernel void empad_virtual_image_serial(device const uint* packed [[buffer(0)]],
                                constant uint& offset [[buffer(4)]],
                                uint frame [[thread_position_in_grid]]) {
     float sum = 0, correction = 0;
-    for (uint pixel = 0; pixel < 16384; ++pixel) {
+    for (uint pixel = 0; pixel < empad_pixels; ++pixel) {
         // Unselected NaNs do not contaminate the selected detector aperture.
         if (mask[pixel]) {
-            float value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected);
+            float value = empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected);
             if (isfinite(value) && isfinite(sum)) {
                 float adjusted = value - correction;
                 float next = sum + adjusted;
@@ -182,9 +187,9 @@ kernel void empad_virtual_image(device const uint* packed [[buffer(0)]],
                                uint width [[threads_per_threadgroup]]) {
     threadgroup float2 partials[4];
     float sum = 0, correction = 0;
-    for (uint pixel = localIndex; pixel < 16384; pixel += width) {
+    for (uint pixel = localIndex; pixel < empad_pixels; pixel += width) {
         if (mask[pixel]) {
-            empad_accumulate(empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected), sum, correction);
+            empad_accumulate(empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected), sum, correction);
         }
     }
     float total = 0, compensation = 0;
@@ -245,7 +250,7 @@ kernel void empad_virtual_image_changes(device const uint* packed [[buffer(0)]],
     }
     bool recover = !reset && (!isfinite(previous.x) || !isfinite(previous.y));
     float sum = 0, residual = 0;
-    uint count = recover ? 16384 : parameters.x;
+    uint count = recover ? empad_pixels : parameters.x;
     for (uint entry = local; entry < count; entry += width) {
         int2 item = recover ? int2(entry, mask[entry] != 0) : entries[entry];
         if (item.y) {
@@ -258,7 +263,7 @@ kernel void empad_virtual_image_changes(device const uint* packed [[buffer(0)]],
                 value = as_type<float>(low | (high << 16));
                 if (corrected) value -= background[pixel];
             } else {
-                value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected);
+                value = empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected);
             }
             empad_accumulate(value * float(item.y), sum, residual);
         }
@@ -297,18 +302,18 @@ kernel void empad_center_of_mass(device const uint* packed [[buffer(0)]],
                                 uint frame [[thread_position_in_grid]]) {
     float magnitude = 0;
     bool valid = true;
-    for (uint pixel = 0; pixel < 16384; ++pixel) {
-        float value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected);
+    for (uint pixel = 0; pixel < empad_pixels; ++pixel) {
+        float value = empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected);
         valid = valid && isfinite(value);
         magnitude = max(magnitude, abs(value));
     }
     float total = 0, row = 0, column = 0, ct = 0, cr = 0, cc = 0;
     if (valid && magnitude > 0) {
-        for (uint pixel = 0; pixel < 16384; ++pixel) {
-            float value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected) / magnitude;
+        for (uint pixel = 0; pixel < empad_pixels; ++pixel) {
+            float value = empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected) / magnitude;
             empad_add(value, total, ct);
-            empad_add(value * float(pixel / 128), row, cr);
-            empad_add(value * float(pixel % 128), column, cc);
+            empad_add(value * float(pixel / empad_columns), row, cr);
+            empad_add(value * float(pixel % empad_columns), column, cc);
         }
     }
     rows[offset + frame] = valid && total != 0 ? row / total : NAN;
@@ -331,8 +336,8 @@ kernel void empad_center_of_mass_simd(device const uint* packed [[buffer(0)]],
     threadgroup float2 partials[12];
     float magnitude = 0;
     bool valid = true;
-    for (uint pixel = local; pixel < 16384; pixel += 128) {
-        float value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected);
+    for (uint pixel = local; pixel < empad_pixels; pixel += 128) {
+        float value = empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected);
         valid = valid && isfinite(value);
         magnitude = max(magnitude, abs(value));
     }
@@ -344,11 +349,11 @@ kernel void empad_center_of_mass_simd(device const uint* packed [[buffer(0)]],
     valid = validity[0] && validity[1] && validity[2] && validity[3];
     float sum[3] = {0, 0, 0}, residual[3] = {0, 0, 0};
     if (valid && magnitude > 0) {
-        for (uint pixel = local; pixel < 16384; pixel += 128) {
-            float value = empad_value(packed, descriptors, frame * 16384 + pixel, background, corrected) / magnitude;
+        for (uint pixel = local; pixel < empad_pixels; pixel += 128) {
+            float value = empad_value(packed, descriptors, frame * empad_pixels + pixel, background, corrected) / magnitude;
             empad_accumulate(value, sum[0], residual[0]);
-            empad_accumulate(value * float(pixel / 128), sum[1], residual[1]);
-            empad_accumulate(value * float(pixel % 128), sum[2], residual[2]);
+            empad_accumulate(value * float(pixel / empad_columns), sum[1], residual[1]);
+            empad_accumulate(value * float(pixel % empad_columns), sum[2], residual[2]);
         }
     }
     for (uint component = 0; component < 3; ++component) {
@@ -403,7 +408,7 @@ kernel void empad_mean_diffraction(device const uint* packed [[buffer(0)]],
                 if (dr * dr + dc * dc > diameter * diameter) continue;
             }
             float value = empad_value(packed, descriptors,
-                (frame - dimensions.x) * 16384 + pixel, background, corrected);
+                (frame - dimensions.x) * empad_pixels + pixel, background, corrected);
             empad_add(value / float(dimensions.z), sum, correction);
         }
     }

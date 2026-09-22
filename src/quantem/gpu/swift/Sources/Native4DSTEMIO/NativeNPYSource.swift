@@ -15,6 +15,11 @@ public struct NativeNPYSource: NativeCountArray {
   private let modificationDate: Date?
 
   public init(url: URL) throws {
+    try self.init(url: url, measurementDtype: nil)
+  }
+
+  // Shared header parsing for the separate float measurement resident.
+  package init(url: URL, measurementDtype: String?) throws {
     self.url = url.resolvingSymlinksInPath()
     let values = try self.url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
     guard let size = values.fileSize else {
@@ -58,7 +63,9 @@ public struct NativeNPYSource: NativeCountArray {
       throw Self.invalid(
         "NumPy array is Fortran-order. Save numpy.ascontiguousarray(data) before converting.")
     }
-    guard ["|u1", "<u1", "=u1", "<u2", "=u2"].contains(dtype) else {
+    let isFloat = ["<f4", "=f4"].contains(dtype)
+    guard measurementDtype == "float32" ? isFloat
+      : ["|u1", "<u1", "=u1", "<u2", "=u2"].contains(dtype) else {
       throw Self.invalid(
         "NumPy dtype \(dtype) is not supported by this lossless count encoder. Use native little-endian uint8/uint16 counts; do not cast calibrated or floating-point measurements."
       )
@@ -74,7 +81,7 @@ public struct NativeNPYSource: NativeCountArray {
     }
     shape = parsed
     dataOffset = 8 + lengthBytes + length
-    let itemBytes = dtype.hasSuffix("1") ? 1 : 2
+    let itemBytes = isFloat ? 4 : dtype.hasSuffix("1") ? 1 : 2
     var bytes = itemBytes
     for dimension in shape {
       let product = bytes.multipliedReportingOverflow(by: dimension)
@@ -97,7 +104,7 @@ public struct NativeNPYSource: NativeCountArray {
       id: identity, label: self.url.lastPathComponent,
       masterPath: self.url.path, dataFiles: [self.url.path], indexFiles: [],
       scanRows: shape[0], scanCols: shape[1], detectorRows: shape[2], detectorCols: shape[3],
-      sourceDtype: itemBytes == 1 ? "uint8" : "uint16", sourceBytes: size,
+      sourceDtype: isFloat ? "float32" : itemBytes == 1 ? "uint8" : "uint16", sourceBytes: size,
       badPixelIndices: [], kPixelSizeRow: nil, kPixelSizeCol: nil, kPixelUnit: nil,
       acquisitionDate: nil,
       metadata: [

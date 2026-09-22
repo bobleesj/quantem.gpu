@@ -73,7 +73,7 @@ public final class MetalEMPADResidentSource {
     self.logicalSHA256 = logicalSHA256
     var identity = SHA256()
     identity.update(data: Data("quantem.gpu.empad-tensor/v1\0float32-le\0".utf8))
-    for dimension in [source.scanRows, source.scanColumns, 128, 128] {
+    for dimension in [source.scanRows, source.scanColumns, source.detectorShape.row, source.detectorShape.column] {
       var word = UInt64(dimension).littleEndian
       withUnsafeBytes(of: &word) { identity.update(bufferPointer: $0) }
     }
@@ -86,7 +86,7 @@ public final class MetalEMPADResidentSource {
     sourceIdentitySHA256 = identity.finalize().map { String(format: "%02x", $0) }.joined()
     residentBytes =
       chunks.reduce(0) { $0 + UInt64($1.payload.length + $1.offsets.length + $1.models.length) }
-      + UInt64(ans.table.length) + (background == nil ? 0 : 65536)
+      + UInt64(ans.table.length) + UInt64(background?.values.length ?? 0)
   }
 
   /// Read every original detector pixel and finish ANS encoding before returning.
@@ -127,7 +127,9 @@ public final class MetalEMPADResidentSource {
       guard background.values.device.registryID == device.registryID,
         background.source.rawURL.resolvingSymlinksInPath()
           != source.rawURL.resolvingSymlinksInPath(),
-        background.source.formatIdentifier == source.formatIdentifier
+        background.source.formatIdentifier == source.formatIdentifier,
+        background.values.length == source.detectorPixelCount * 4,
+        background.source.detectorShape == source.detectorShape
       else {
         throw failure(
           "Choose a different dark acquisition with the same reader format and Metal device.")
@@ -153,6 +155,10 @@ public final class MetalEMPADResidentSource {
       var decoded = true
       constants.setConstantValue(&decoded, type: .bool, index: 0)
       constants.setConstantValue(&decoded, type: .bool, index: 1)
+      var pixels = UInt32(source.detectorPixelCount)
+      var columns = UInt32(source.detectorShape.column)
+      constants.setConstantValue(&pixels, type: .uint, index: 20)
+      constants.setConstantValue(&columns, type: .uint, index: 21)
       let function = try library.makeFunction(name: name, constantValues: constants)
       return try device.makeComputePipelineState(function: function)
     }
@@ -180,18 +186,19 @@ public final class MetalEMPADResidentSource {
     if let incremental, incremental.maxTotalThreadsPerThreadgroup < detectorThreads {
       throw failure("EMPAD aperture-change kernel requires a 128-thread-capable Metal pipeline.")
     }
-    let ans = try MetalFloatANS(device: device)
+    let ans = try MetalFloatANS(device: device, pixels: source.detectorPixelCount)
     let allocatedBefore = UInt64(device.currentAllocatedSize)
     guard allocatedBefore < memoryBudgetBytes else {
       throw failure("Free memory before loading the ANS resident.")
     }
     let encoder = try RuntimeANSEncoder(
-      device: device, pixels: MetalFloatANS.lanes, bytesPerValue: 2,
+      device: device, pixels: ans.lanes, bytesPerValue: 2,
       allocatedBefore: allocatedBefore, maximumAdditionalBytes: memoryBudgetBytes - allocatedBefore)
     var digest = SHA256()
     // A bounded restart window also fixes scientific reduction order.
     let requested = ProcessInfo.processInfo.environment["QGPU_EMPAD_WINDOW"]
-    let window = requested == "64" ? 64 : requested == "512" ? 512 : 256
+    let window = min(requested == "64" ? 64 : requested == "512" ? 512 : 256,
+      (32 << 20) / (source.detectorPixelCount * 4))
     var first = 0
     while first < source.frameCount {
       try checkCancellation(shouldCancel)
@@ -199,11 +206,13 @@ public final class MetalEMPADResidentSource {
       let available = memoryBudgetBytes > allocated ? memoryBudgetBytes - allocated : 0
       // Include input, ANS scratch, worst-case output, and stream tables.
       // Shrinking this window changes neither detector nor scan coverage.
-      let boundedFrames = available > 1 << 20 ? Int((available - (1 << 20)) / (16384 * 16)) : 0
+      let frameWorkspaceBytes = UInt64(source.detectorPixelCount * 16)
+      let boundedFrames = available > 1 << 20
+        ? Int((available - (1 << 20)) / frameWorkspaceBytes) : 0
       let count = min(window, boundedFrames, source.frameCount - first)
       guard count > 0 else { throw failure("Free memory for a bounded ANS encoding window.") }
       try autoreleasepool {
-        let bytes = count * 16384 * 4
+        let bytes = count * source.detectorPixelCount * 4
         guard UInt64(device.currentAllocatedSize) + UInt64(bytes) < memoryBudgetBytes,
           let input = device.makeBuffer(length: bytes, options: .storageModeShared)
         else { throw failure("Free memory for the bounded ANS input window.") }
@@ -256,18 +265,18 @@ public final class MetalEMPADResidentSource {
   }
 
   /// Encode a complete selected float32 DP without reading it back to the CPU.
-  /// Output needs 128×128×4 bytes. The caller waits for its command completion
+  /// Output needs native-detector×4 bytes. The caller waits for its command completion
   /// before publishing the frame or reusing the output buffer.
   public func encodeDiffraction(
     scanRow: Int, scanColumn: Int, into output: MTLBuffer, command: MTLCommandBuffer
   ) throws {
     guard !isReleased, (0..<source.scanRows).contains(scanRow),
-      (0..<source.scanColumns).contains(scanColumn), output.length >= 16384 * 4,
+      (0..<source.scanColumns).contains(scanColumn), output.length >= source.detectorPixelCount * 4,
       command.commandQueue.device.registryID == device.registryID,
       output.device.registryID == device.registryID
     else {
       throw Self.failure(
-        "EMPAD diffraction needs a resident source, valid scan coordinates and a same-device 128×128 float32 output."
+        "EMPAD diffraction needs a resident source, valid scan coordinates and a same-device native-detector float32 output."
       )
     }
     let frame = scanRow * source.scanColumns + scanColumn
@@ -289,7 +298,7 @@ public final class MetalEMPADResidentSource {
     encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
     encoder.setBuffer(output, offset: 0, index: 2)
     encoder.setBytes(&local, length: 4, index: 3)
-    Self.dispatch(encoder, pipeline: diffractionPipeline, count: 16384)
+    Self.dispatch(encoder, pipeline: diffractionPipeline, count: source.detectorPixelCount)
     encoder.endEncoding()
   }
 
@@ -301,13 +310,13 @@ public final class MetalEMPADResidentSource {
   public func encodeVirtualImage(
     mask: MTLBuffer, into output: MTLBuffer, command: MTLCommandBuffer
   ) throws {
-    guard !isReleased, mask !== output, mask.length >= 16384,
+    guard !isReleased, mask !== output, mask.length >= source.detectorPixelCount,
       output.length >= source.frameCount * 4,
       command.commandQueue.device.registryID == device.registryID,
       mask.device.registryID == device.registryID, output.device.registryID == device.registryID
     else {
       throw Self.failure(
-        "EMPAD integration needs a resident source, a same-device 128×128 uint8 mask and a separate full-scan float32 output."
+        "EMPAD integration needs a resident source, a same-device native-detector uint8 mask and a separate full-scan float32 output."
       )
     }
     if let incrementalPipeline, mask.storageMode == .shared,
@@ -382,7 +391,7 @@ public final class MetalEMPADResidentSource {
   }
 
   /// Encode the arithmetic mean of every scan position, with compensated sums.
-  /// Output is a 128×128 float32 DP. Temporary compensation is only one DP,
+  /// Output is a native-detector float32 DP. Temporary compensation is only one DP,
   /// retained by the command until completion; no dense 4D array is allocated.
   /// Optional half-open scan `rows` and `columns` restrict the mean to a
   /// rectangle or circle with square bounds. Circle pixel centers inside or on
@@ -402,12 +411,12 @@ public final class MetalEMPADResidentSource {
       throw Self.failure(
         "Mean DP requires a nonempty region inside the loaded scan; circle bounds must be square.")
     }
-    guard !isReleased, output.length >= 16384 * 4,
+    guard !isReleased, output.length >= source.detectorPixelCount * 4,
       output.device.registryID == device.registryID,
       command.commandQueue.device.registryID == device.registryID,
-      let accumulator = device.makeBuffer(length: 16384 * 8, options: .storageModePrivate)
+      let accumulator = device.makeBuffer(length: source.detectorPixelCount * 8, options: .storageModePrivate)
     else {
-      throw Self.failure("EMPAD mean DP needs a resident and a same-device 128×128 float32 output.")
+      throw Self.failure("EMPAD mean DP needs a resident and a same-device native-detector float32 output.")
     }
     if (rows != nil || columns != nil),
       ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_MEAN_CONTROL"] != "1"
@@ -442,7 +451,7 @@ public final class MetalEMPADResidentSource {
       encoder.setBuffer(workspace.words, offset: 0, index: 0)
       encoder.setBuffer(workspace.descriptors, offset: 0, index: 1)
       encoder.setBytes(&dimensions, length: MemoryLayout<SIMD3<UInt32>>.stride, index: 4)
-      Self.dispatch(encoder, pipeline: meanPipeline, count: 16384)
+      Self.dispatch(encoder, pipeline: meanPipeline, count: source.detectorPixelCount)
       encoder.memoryBarrier(scope: .buffers)
       encoder.endEncoding()
     }
@@ -466,7 +475,7 @@ public final class MetalEMPADResidentSource {
     let cacheBytes = source.frameCount * 8
     let allocated = UInt64(device.currentAllocatedSize)
     guard allocated <= memoryBudgetBytes,
-      UInt64((detectorAccumulation == nil ? cacheBytes : 0) + 16384 * 8 + 32768)
+      UInt64((detectorAccumulation == nil ? cacheBytes : 0) + source.detectorPixelCount * 8 + 32768)
         <= memoryBudgetBytes - allocated
     else { return false }
     if detectorAccumulation == nil {
@@ -474,7 +483,7 @@ public final class MetalEMPADResidentSource {
     }
     guard let accumulated = detectorAccumulation else { return false }
     let current = UnsafeBufferPointer(
-      start: mask.contents().assumingMemoryBound(to: UInt8.self), count: 16384
+      start: mask.contents().assumingMemoryBound(to: UInt8.self), count: source.detectorPixelCount
     )
     .map { $0 == 0 ? UInt8(0) : UInt8(1) }
     var reset =
@@ -491,7 +500,7 @@ public final class MetalEMPADResidentSource {
       entries = current.indices.compactMap { current[$0] == 0 ? nil : SIMD2(Int32($0), 1) }
     }
     let count = entries.count
-    var changedPixels = [UInt8](repeating: 0, count: 16384)
+    var changedPixels = [UInt8](repeating: 0, count: source.detectorPixelCount)
     for entry in entries { changedPixels[Int(entry.x)] = 1 }
     if entries.isEmpty { entries.append(.zero) }
     guard

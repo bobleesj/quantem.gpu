@@ -54,3 +54,17 @@ def test_float_qem_bits(tmp_path):
         fixtures / "float32-special-bits.npy",
         saved,
     )
+
+
+@pytest.mark.parametrize("detector_shape", [(3, 5), (100, 100), (192, 192), (210, 210), (256, 384), (1024, 1024)])
+def test_float_numpy_native_qem_geometry(tmp_path, detector_shape):
+    """Native float measurements retain rectangular and non-power-of-two detectors."""
+    from quantem.gpu import io
+
+    original = tmp_path / "measurements.npy"
+    values = np.random.default_rng(4).normal(size=(4, 5, *detector_shape)).astype(np.float32)
+    np.save(original, values)
+    saved = tmp_path / "python.qem"
+    with io.load(original, backend="mps", verbose=False) as acquisition:
+        io.save(saved, acquisition)
+    _run("check_qem_float_reference.sh", original, saved)

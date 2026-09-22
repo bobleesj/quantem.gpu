@@ -73,7 +73,7 @@ extension MetalEMPADResidentSource {
         "schema": MetalEMPADBackground.schema,
         "identity": background.identitySHA256,
         "values_float32_le": Data(
-          bytesNoCopy: background.values.contents(), count: 65536, deallocator: .none
+          bytesNoCopy: background.values.contents(), count: source.detectorPixelCount * 4, deallocator: .none
         ).base64EncodedString(),
       ]
     }
@@ -82,7 +82,7 @@ extension MetalEMPADResidentSource {
       id: sourceIdentitySHA256,
       label: source.rawURL.lastPathComponent, masterPath: source.rawURL.path,
       dataFiles: [source.rawURL.path], indexFiles: [], scanRows: source.scanRows,
-      scanCols: source.scanColumns, detectorRows: 128, detectorCols: 128,
+      scanCols: source.scanColumns, detectorRows: source.detectorShape.row, detectorCols: source.detectorShape.column,
       sourceDtype: "float32", sourceBytes: source.sourceBytes, badPixelIndices: [],
       kPixelSizeRow: source.diffractionSamplingInverseNanometers ?? microscope.angularRowMrad,
       kPixelSizeCol: source.diffractionSamplingInverseNanometers ?? microscope.angularColumnMrad,
@@ -108,7 +108,7 @@ extension MetalEMPADResidentSource {
       header: [
         "version": 1, "profile": MetalFloatANS.codec,
         "codec": MetalFloatANS.codec,
-        "shape": [source.scanRows, source.scanColumns, 128, 128],
+        "shape": [source.scanRows, source.scanColumns, source.detectorShape.row, source.detectorShape.column],
         "dtype": "float32", "logical_sha256": logicalSHA256, "chunks": table,
         "empad": description, "scientific_metadata": scientific,
       ], shouldCancel: shouldCancel)
@@ -126,7 +126,7 @@ extension MetalEMPADResidentSource {
     else { throw qemError("Unsupported or oversized EMPAD QEM; update the reader or free memory.") }
     if shouldCancel() { throw CancellationError() }
     let mapped = try file.verifiedMapping()
-    let ans = try MetalFloatANS(device: device)
+    let ans = try MetalFloatANS(device: device, pixels: source.detectorPixelCount)
     var chunks = [Chunk]()
     var cursor = 0
     var first = 0
@@ -140,8 +140,8 @@ extension MetalEMPADResidentSource {
         for name in ["payload", "offset", "model"] {
           guard entry[name + "_offset"] == cursor, let length = entry[name + "_bytes"],
             length > 0, length <= file.bodyBytes - cursor,
-            name != "offset" || length == (MetalFloatANS.lanes + 1) * 4,
-            name != "model" || length == MetalFloatANS.lanes,
+            name != "offset" || length == (ans.lanes + 1) * 4,
+            name != "model" || length == ans.lanes,
             let buffer = device.makeBuffer(
               bytes: bytes.baseAddress!.advanced(by: file.bodyStart + cursor),
               length: length, options: .storageModeShared)
@@ -154,10 +154,10 @@ extension MetalEMPADResidentSource {
         }
         let offsets = buffers[1].contents().assumingMemoryBound(to: UInt32.self)
         let models = buffers[2].contents().assumingMemoryBound(to: UInt8.self)
-        guard offsets[0] == 0, Int(offsets[MetalFloatANS.lanes]) <= buffers[0].length else {
+        guard offsets[0] == 0, Int(offsets[ans.lanes]) <= buffers[0].length else {
           throw qemError("Invalid float ANS payload bounds.")
         }
-        for stream in 0..<MetalFloatANS.lanes {
+        for stream in 0..<ans.lanes {
           let begin = Int(offsets[stream])
           let end = Int(offsets[stream + 1])
           let model = Int(models[stream])
@@ -201,6 +201,10 @@ extension MetalEMPADResidentSource {
       var decoded = true
       constants.setConstantValue(&decoded, type: .bool, index: 0)
       constants.setConstantValue(&decoded, type: .bool, index: 1)
+      var pixels = UInt32(source.detectorPixelCount)
+      var columns = UInt32(source.detectorShape.column)
+      constants.setConstantValue(&pixels, type: .uint, index: 20)
+      constants.setConstantValue(&columns, type: .uint, index: 21)
       let function = try library.makeFunction(name: name, constantValues: constants)
       return try device.makeComputePipelineState(function: function)
     }
@@ -210,7 +214,7 @@ extension MetalEMPADResidentSource {
     {
       guard saved["schema"] == MetalEMPADBackground.schema,
         let text = saved["values_float32_le"], let values = Data(base64Encoded: text),
-        values.count == 65536,
+        values.count == source.detectorPixelCount * 4,
         let identity = saved["identity"], identity.count == 64
       else { throw qemError("Invalid saved dark calibration; recopy the file.") }
       let buffer = try values.withUnsafeBytes { bytes -> MTLBuffer in
