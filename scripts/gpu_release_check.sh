@@ -44,19 +44,26 @@ if len(wheels) != 1:
 wheel = wheels[0]
 required = {
     "quantem/gpu/__init__.py",
-    "quantem/gpu/io/hdf5.py",
-    "quantem/gpu/io/bitshuffle.py",
-    "quantem/gpu/io/backends/mps.py",
-    "quantem/gpu/io/backends/metal/bslz4.msl",
-    "quantem/gpu/compute/backends.py",
-    "quantem/gpu/compute/mps.py",
-    "quantem/gpu/compute/metal/reductions.msl",
-    "quantem/gpu/detector.py",
-    "quantem/gpu/dpc.py",
-    "quantem/gpu/ssb/api.py",
+    "quantem/gpu/io/load.py",
+    "quantem/gpu/io/backends/cuda/decoder.py",
+    "quantem/gpu/io/backends/mps/decoder.py",
+    "quantem/gpu/io/backends/mps/kernels/bslz4.msl",
+    "quantem/gpu/io/qem-rans-tables-v1.json",
+    "quantem/gpu/detector/workflow.py",
+    "quantem/gpu/detector/backends/webgpu/qem-source.ts",
+    "quantem/gpu/dpc/workflow.py",
+    "quantem/gpu/ssb/workflow.py",
+    "quantem/gpu/webgpu/sources.json",
+    "quantem/gpu/swift/Sources/Metal4DSTEMKernels/Resources/detector.metal",
 }
 with zipfile.ZipFile(wheel) as zf:
     names = set(zf.namelist())
+development_sources = sorted(
+    name for name in names
+    if name.startswith(("quantem/gpu/swift/Benchmarks/", "quantem/gpu/swift/Tests/"))
+)
+if development_sources:
+    raise SystemExit(f"{wheel} contains development-only Swift files: {development_sources}")
 missing = sorted(required - names)
 if missing:
     raise SystemExit(f"{wheel} missing required files: {missing}")
