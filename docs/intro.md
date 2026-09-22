@@ -9,7 +9,7 @@ WebGPU, and an explicit CPU reference.
 This site documents an evolving `0.0.1` release-candidate series. Public APIs,
 runtime coverage, and recommendations may change between candidates. Python
 examples currently pin the exact TestPyPI candidate
-`quantem.gpu==0.0.1rc6`; Swift consumers pin an exact verified Git revision.
+`quantem.gpu==0.0.1rc8`; Swift consumers pin an exact verified Git revision.
 
 The documentation is a draft, but retained performance and parity rows are not
 draft estimates: each is a frozen historical measurement tied to its stated

@@ -1045,7 +1045,7 @@ def test_prerelease_docs_pin_the_exact_declared_candidate() -> None:
     version = package["project"]["version"]
     exact_pin = f"quantem.gpu=={version}"
 
-    assert version == "0.0.1rc6"
+    assert re.fullmatch(r"\d+\.\d+\.\d+rc\d+", version)
     assert exact_pin in readme
     assert exact_pin in intro
     assert exact_pin in install

@@ -17,7 +17,7 @@ API contracts, benchmark methodology, and cross-backend parity evidence.
 > **Pre-release documentation:** `quantem.gpu` and this site are an evolving
 > draft during the `0.0.1` release-candidate series. APIs and support guidance
 > may change between candidates. This README describes the current source tree,
-> which can be ahead of the TestPyPI candidate (`quantem.gpu==0.0.1rc6`). Pin an
+> which can be ahead of the TestPyPI candidate (`quantem.gpu==0.0.1rc8`). Pin an
 > exact verified Git revision when using the new count-ANS workflows; installing
 > the older candidate does not establish support for those changes. Native Swift
 > clients should also pin an exact verified Git revision.
@@ -97,7 +97,7 @@ reproducibility pin. For the release-candidate baseline instead:
 ```bash
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu==0.0.1rc6"
+  "quantem.gpu==0.0.1rc8"
 ```
 
 Choose only the runtime extras you need:
