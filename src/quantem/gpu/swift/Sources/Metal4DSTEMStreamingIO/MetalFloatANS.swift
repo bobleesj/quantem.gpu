@@ -37,6 +37,11 @@ final class MetalFloatANS {
     let constants = MTLFunctionConstantValues()
     var pixelCount = UInt32(pixels)
     constants.setConstantValue(&pixelCount, type: .uint, index: 20)
+    // Compile only the selected parallel variant. The generic path remains an
+    // explicit A/B control, without a second pipeline on ordinary app opens.
+    let parallelName = ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_ENTROPY_PAIR"] == "0"
+      ? "float_ans_decode_changes_parallel"
+      : "float_ans_decode_changes_parallel_entropy"
     guard let decode = library.makeFunction(name: "streamed_counts_decode_range"),
       let join = library.makeFunction(name: "float_ans_join_words"),
       let selected = try? library.makeFunction(
@@ -45,7 +50,7 @@ final class MetalFloatANS {
       let changes = try? library.makeFunction(
         name: "float_ans_decode_changes", constantValues: constants),
       let parallelChanges = try? library.makeFunction(
-        name: "float_ans_decode_changes_parallel", constantValues: constants),
+        name: parallelName, constantValues: constants),
       let mean = meanLibrary.makeFunction(name: "float_ans_region_mean")
     else { throw Metal4DSTEMStreamingIOError.invalidRequest("Rebuild the float ANS kernels.") }
     self.decode = try device.makeComputePipelineState(function: decode)
@@ -54,10 +59,10 @@ final class MetalFloatANS {
     self.recovery = try device.makeComputePipelineState(function: recovery)
     self.changes = try device.makeComputePipelineState(function: changes)
     self.parallelChanges = try device.makeComputePipelineState(function: parallelChanges)
-    // Override only for controlled A/B tests; large edits amortize the extra
-    // per-lane stream state, while small edits keep the lower-latency kernel.
+    // Ordinary aperture movement changes hundreds of columns; tiny edits and
+    // resets retain the lower-latency serial kernel. Override for A/B tests.
     parallelChangeThreshold = Int(
-      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_PARALLEL_CHANGES"] ?? "") ?? 1600
+      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_PARALLEL_CHANGES"] ?? "") ?? 384
     self.mean = try device.makeComputePipelineState(function: mean)
     let values = RuntimeANSEncoder.tables().decoding
     guard

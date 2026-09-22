@@ -29,8 +29,10 @@ defer { try? stream.close() }
 let centerRow = Double(rows - 1) / 2
 let centerColumn = Double(columns - 1) / 2
 let scale = Double(min(rows, columns)) / 256
+var previousMask = [UInt8](repeating: 0, count: pixels)
+var largeEdits = 0
 for step in 0..<180 {
-  let phase = Double(step % 60) / 59 * .pi * 4
+  let phase = Double(step % 60) / 59 * .pi * 8
   let adf = step < 90
   let shift = adf ? 6.0 : 8.0
   let row = centerRow + shift * scale * sin(phase)
@@ -44,6 +46,12 @@ for step in 0..<180 {
     let squared = dy * dy + dx * dx
     bytes[pixel] = squared >= inner * inner && squared <= outer * outer ? 1 : 0
   }
+  var changed = 0
+  for pixel in 0..<pixels {
+    if bytes[pixel] != previousMask[pixel] { changed += 1 }
+    previousMask[pixel] = bytes[pixel]
+  }
+  if step > 0 && changed >= 1600 { largeEdits += 1 }
   let command = queue.makeCommandBuffer()!
   try resident.encodeVirtualImage(mask: mask, into: image, command: command)
   command.commit()
@@ -53,4 +61,7 @@ for step in 0..<180 {
   }
   try stream.write(contentsOf: Data(bytes: image.contents(), count: source.frameCount * 4))
 }
-print("FLOAT_ANS_DETECTOR_PARITY images=180 scan=\(source.scanRows)x\(source.scanColumns) detector=\(rows)x\(columns)")
+guard largeEdits >= 20 || pixels < 256 * 256 else {
+  fatalError("Parity journey did not exercise enough large detector edits.")
+}
+print("FLOAT_ANS_DETECTOR_PARITY images=180 large_edits=\(largeEdits) scan=\(source.scanRows)x\(source.scanColumns) detector=\(rows)x\(columns)")

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260922-float-ans-parallel-group-width",
+  "status": "refuted",
+  "question": "Can 64 or 128 active threads per group reduce large float-ANS changed-column decode latency without altering image bits or resident memory?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260922-float-ans-parallel-group-width/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "d87f4f8585358cce21c8ee36e87f9e83c8089e50",
+    "entrypoint": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalFloatANS.swift",
+    "dirty": false
+  },
+  "inputs": [
+    {
+      "dataset_id": "local float32 4D-STEM fixture",
+      "shape": [100, 100, 256, 256],
+      "dtype": "float32",
+      "codec": "float32-bit-lanes-rans-v1",
+      "sha256": "e5e7511732c3d0a4f1c18937bb0a7d381241cab906301c48edc7549deb260216"
+    }
+  ],
+  "parameters": {
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "group_widths": [32, 64, 128],
+    "target_ms": 8.3333333333,
+    "parity": "bit-identical full virtual-image products",
+    "benchmark": "ordered same-source A/B/A GPU timestamps, followed by native presentation if qualified"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": ["integrated-gpu-0"],
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [{
+    "artifact_id": "results",
+    "path": "experiments/20260922-float-ans-parallel-group-width/results.md",
+    "sha256": "1bc61c0f87eb5e3bf667199224733781d9bef2c569587134b8f7f3aa457ce38c",
+    "size_bytes": 653,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "64-thread groups were neutral; 128-thread groups were slower, so the temporary dispatch override was removed."
+  }],
+  "timestamps": {"finished": "2026-09-22T16:53:00-07:00"}
+}

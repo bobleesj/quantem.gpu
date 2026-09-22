@@ -130,6 +130,61 @@ struct StreamReader {
     }
 };
 
+// Begin both independent rANS table lookups before consuming either result.
+// The two streams and their byte cursors remain separate; output word order is
+// unchanged. Invalid streams still set the existing error flag after decode.
+inline uint2 float_ans_next_entropy_pair(
+    thread StreamReader& low, thread StreamReader& high) {
+    uint lowSlot = low.state & 1023u;
+    uint highSlot = high.state & 1023u;
+    uint lowCode = low.table[lowSlot];
+    uint highCode = high.table[highSlot];
+    low.state = (lowCode >> 16) * (low.state >> SC_SCALE)
+        + lowSlot - ((lowCode >> 6) & 1023u);
+    high.state = (highCode >> 16) * (high.state >> SC_SCALE)
+        + highSlot - ((highCode >> 6) & 1023u);
+    bool lowFailed = false, highFailed = false;
+    while (low.state < SC_LOWER) {
+        if (low.cursor >= low.end) {
+            low.valid = false;
+            lowFailed = true;
+            break;
+        }
+        low.state = (low.state << 8) | uint(low.payload[low.cursor++]);
+    }
+    while (high.state < SC_LOWER) {
+        if (high.cursor >= high.end) {
+            high.valid = false;
+            highFailed = true;
+            break;
+        }
+        high.state = (high.state << 8) | uint(high.payload[high.cursor++]);
+    }
+    uint lowSymbol = lowFailed ? 0 : lowCode & 63u;
+    uint highSymbol = highFailed ? 0 : highCode & 63u;
+    if (lowSymbol == 32) {
+        if (low.end - low.cursor < 2) {
+            low.valid = false;
+            lowSymbol = 0;
+        } else {
+            lowSymbol = uint(low.payload[low.cursor])
+                | (uint(low.payload[low.cursor + 1]) << 8);
+            low.cursor += 2;
+        }
+    }
+    if (highSymbol == 32) {
+        if (high.end - high.cursor < 2) {
+            high.valid = false;
+            highSymbol = 0;
+        } else {
+            highSymbol = uint(high.payload[high.cursor])
+                | (uint(high.payload[high.cursor + 1]) << 8);
+            high.cursor += 2;
+        }
+    }
+    return uint2(lowSymbol, highSymbol);
+}
+
 kernel void streamed_counts_encode(
     device const uchar *raw [[buffer(0)]],
     device const uint *encoding [[buffer(1)]],
@@ -337,6 +392,39 @@ kernel void float_ans_decode_changes_parallel(
     StreamReader high(payload, offsets, models, decoding, stream + 1);
     for (uint frame = 0; frame < scans; ++frame)
         words[frame * float_ans_pixels + pixel] = low.next() | (high.next() << 16);
+    if (!low.finished() || !high.finished())
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
+// Specialize the common paired-entropy case once per changed column. Both
+// independent table lookups can proceed before either rANS state is updated.
+kernel void float_ans_decode_changes_parallel_entropy(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device uint *words [[buffer(5)]],
+    device const int2 *entries [[buffer(6)]],
+    constant uint &scans [[buffer(7)]],
+    constant uint &entryCount [[buffer(13)]],
+    uint entry [[thread_position_in_grid]]) {
+    if (entry >= entryCount) return;
+    uint pixel = uint(entries[entry].x);
+    uint stream = pixel * 2;
+    uint lowModel = models[stream], highModel = models[stream + 1];
+    if (lowModel >= 253 && highModel >= 253) return;
+    StreamReader low(payload, offsets, models, decoding, stream);
+    StreamReader high(payload, offsets, models, decoding, stream + 1);
+    if (lowModel < 64 && highModel < 64 && low.valid && high.valid) {
+        for (uint frame = 0; frame < scans; ++frame) {
+            uint2 pair = float_ans_next_entropy_pair(low, high);
+            words[frame * float_ans_pixels + pixel] = pair.x | (pair.y << 16);
+        }
+    } else {
+        for (uint frame = 0; frame < scans; ++frame)
+            words[frame * float_ans_pixels + pixel] = low.next() | (high.next() << 16);
+    }
     if (!low.finished() || !high.finished())
         atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }

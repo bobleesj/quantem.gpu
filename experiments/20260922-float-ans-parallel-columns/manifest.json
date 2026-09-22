@@ -50,8 +50,8 @@
     {
       "artifact_id": "results",
       "path": "experiments/20260922-float-ans-parallel-columns/results.md",
-      "sha256": "0cdf5203c4c391ce4e6b537ef9a0bd07c3098db2bc74ca00b5f9354bffbf5e79",
-      "size_bytes": 1958,
+      "sha256": "c56d81ad1417f3b067a3f2d6638eea8041a20e94013296374c21cbb923166428",
+      "size_bytes": 2151,
       "retention": "durable",
       "consuming_figures": [],
       "result": "Native large-ADF center 78.8/94.4/78.5 presented updates/s A/B/A; 3.6 million detector output words bit-exact."
