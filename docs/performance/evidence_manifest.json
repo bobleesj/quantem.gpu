@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "release_pin_review_2026_09_21": "The docs/intro.md change from f5cb542 to f372317 only updates the installation pin from 0.0.1rc6 to 0.0.1rc8. No numerical evidence or qualification claim changed.",
   "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
   "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
   "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. 2026-09-06: updated only the public packed name in CUDA/MPS/WebGPU platform pages and the WebGPU resident receipt reference from v2 to v3, relative to e78c46f2191ab0c50cc5fe72ce1b934cce19aaa8. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. Historical transcripts and all numerical evidence remain unchanged. 2026-09-08: added a separate experimental CUDA count-codec page and anonymous measured summary; appended compressed-resident accounting to methodology. Existing numerical results and qualification states remain unchanged; the new record does not qualify the public ANS API.",
@@ -8,7 +9,7 @@
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "cd8d1c3dea06ddd7619ef9d08dcdb4f934892fc8c50f14b2b487737b2af12dbb",
+      "sha256": "9ce3be00ecb8f2e59c8c4bf0cf2b69322b6d0a16308759eb5b4d7d8497974fb6",
       "role": "Developer landing page and benchmark routing without copied measurements"
     },
     {
