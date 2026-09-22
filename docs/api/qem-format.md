@@ -181,17 +181,16 @@ arbitrary 3D/5D codecs are not implied by this contract.
 
 ### Native EMPAD floating-point codec
 
-`empad-xor-row-packed-v1` stores the existing native lossless float32 row codec
-with detector shape 128×128. Each chunk contains 1–512 scans, its packed payload,
-then one 16-byte descriptor per detector row. The four uint32 descriptor fields
-are the reference bit pattern, residual bit width, residual shift, and payload
-word offset. The reader checks contiguous scan/byte coverage, widths and offsets
-before invoking the existing Metal kernels. No float quantization is introduced.
+`float32-bit-lanes-rans-v1` preserves float32 bit patterns in two encoded uint16
+lanes per detector pixel, including signed zero, NaN payloads, and infinities.
+Detector geometry is stored explicitly, not inferred as 128×128. The former
+`empad-xor-row-packed-v1` acquisition codec is retired: re-export original data.
+See the [normative codec specification](qem-codecs.md).
 
 `empad` stores the original format identity, reader-retained microscope metadata,
 scan calibration and supplier correction statement. An explicitly selected dark
-reference saves its 128×128 mean float32 plane and calibration identity in the
-checksummed header. The original sample values remain packed unchanged; the
+reference saves its detector-shaped mean float32 plane and calibration identity in the
+checksummed header. The original sample values remain encoded unchanged; the
 restored plane is subtracted once for display and products. Changing this saved
 recipe currently requires reopening the original and exporting another copy.
 Encoded EMPAD2 sensor words still require matching gain/dark calibration and are
@@ -203,8 +202,8 @@ not accepted as float32 merely because an XML label says float32.
   `io.load("copy.qem", backend="mps")`. The shared integer codec also has a CUDA
   reader, but CUDA execution must be qualified independently. Explicit
   `backend="cpu"` reads both integer and EMPAD float32 codecs as original dense
-  measurements, and writes supported NumPy arrays. Python GPU EMPAD-QEM
-  decoding remains unsupported. See the [Python workflow](qem-python.md) and
+  measurements, and writes supported NumPy arrays. Python GPU float32 ANS-QEM
+  reading is implemented; physical backend qualification remains separate. See the [Python workflow](qem-python.md) and
   [normative codec specification](qem-codecs.md).
   Normalized quantities are available as `acquisition.metadata["scientific_metadata"]`.
 - Native Swift: `NativeNPYSource(url:)` followed by
@@ -216,6 +215,10 @@ not accepted as float32 merely because an XML label says float32.
   Floating-point, signed, Fortran-order, zipped and non-4D arrays are rejected
   with corrective guidance. This native entry point does not imply automatic
   `.npy` dispatch in the Python API.
+  For native float32 NumPy and `.qem`, use `NativeEMPADSource.open` followed by
+  `MetalEMPADResidentSource.load` and `saveQEM(to:)`. Read actual dimensions from
+  `source.detectorShape`; do not use the static EMPAD sensor dimensions for an
+  arbitrary array. Application dispatch and rendering need their own integration tests.
   Run `bash scripts/check_npy_qem_roundtrip.sh counts.npy` on Metal to verify
   every diffraction pattern and three detector masks against the input counts,
   plus metadata preservation. Add `--reject=unsupported.npy` for negative cases.

@@ -73,7 +73,10 @@ entry names the catalogued master, compact artifact, and required whole-file
 SHA-256. Relative master paths are rooted at the served data folder, while
 relative compact paths are rooted at the registry directory.
 
-Both ordinary and packed sources enter through `quantem.gpu.io.load`.
+Ordinary and ANS sources enter through `quantem.gpu.io.load`. The historical
+prepared-packed binding described here is no longer admitted by that GPU loader;
+it requires migration from the original acquisition to an encoded source before
+use. A retained binding is not evidence that its old packed artifact is supported.
 The server's trusted `CompactBrowseSource` may carry a `SourceIntegrity` value
 from an externally sealed byte-range manifest. Registry preparation is exposed
 through `prepare_browse_source` and the matching `prepare-browse` CLI command;

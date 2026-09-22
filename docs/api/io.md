@@ -337,9 +337,9 @@ dense allocation. The path is independent of scan shape, including 512×512,
 original HDF5 loader still performs bitshuffle/LZ4 decode on cold HDF5 input.
 The same handoff has been checked on bounded real 4D-STEM HDF5 slices; see the
 local experiment record for the retained parity evidence.
-An accelerated HDF5→canonical-encoded encoder is not yet qualified, so the first
-interactive load still uses the exact HDF5-to-packed path and sidecar encoding
-preparation must remain asynchronous or an explicit offline step.
+Qualification of this saved-file reader does not establish cold original-HDF5
+latency or application scheduling. Measure the selected original-file ingestion
+path separately from `.qem` reopen.
 
 (cuda-h5-paired-residency)=
 ### Stream complete uint16 H5 counts into the paired CUDA layout
@@ -378,11 +378,11 @@ series while earlier files are still streaming.
 ### Representation
 
 See [Count representations](representations.md) for per-backend
-operation support, exactness, and ownership. Dense and packed paths are retained;
-packed storage is not a replacement for algorithms that require dense arrays.
+operation support, exactness, and ownership. Dense array algorithms and low-level
+packed paths are retained, but neither is a public GPU acquisition loading mode.
 
 `representation` describes how the complete logical array is retained. It has
-the following public selectors on this integration branch:
+the following layout names; the loader admits only backend-appropriate choices:
 
 | Representation | Meaning |
 |---|---|
@@ -395,13 +395,13 @@ These are the only representation names. The authenticated `storage_schema`
 selects the precise decoder within a representation; users do not select an
 internal bitpacking or block-compression profile through this argument.
 
-The new encoded-to-packed file workflow is available on Python MPS and CUDA, with
-bounded physical integer-parity evidence. Native Swift/Metal can now reopen a
+Low-level encoded-to-packed conversion has bounded physical integer-parity
+evidence; it is not a public acquisition-loading override. Native Swift/Metal can reopen a
 saved `.qem` copy directly, with the same bounded physical geometry gate.
 These results do not qualify complete-series loading, peak memory, or
 interactive throughput. The explicit CPU reference can decode encoded data to dense.
-GPU dense materialization, reverse conversions, and accelerated cold
-HDF5-to-encoded preparation remain pending. Do not infer support for every
+Accelerated HDF5-to-ANS ingestion is implemented on CUDA and MPS. Native
+float32 coverage remains narrower than Python coverage. Do not infer support for every
 source/representation/backend combination from the selector names.
 
 Representation is independent of dtype and residency. A lossless-packed
@@ -415,80 +415,61 @@ The shortest call is source-native:
 loaded = io.load("scan-lossless.h5", backend="auto")
 ```
 
-An existing Lossless Pack Format source stays packed. Ordinary HDF5 uses encoded
-residency on accelerator backends. A standalone encoded source stays encoded unless a
-supported conversion is requested. Loading never silently creates or evicts a
-cache because those are consumer-policy decisions. Ask for dense explicitly
-when an algorithm truly requires it:
+Ordinary HDF5 uses ANS residency on accelerator backends. A saved `.qem`
+source remains encoded. Dense/packed GPU loading is rejected, including older
+packed files: reopen their original acquisition and save a new `.qem` copy.
+Read only the working region needed by the calculation:
 
 ```python
-loaded = io.load(
-    "scan_master.h5",
-    backend="cuda",
-    representation="dense",
-    dtype="u16",
-)
+loaded = io.load("scan_master.h5")
+pattern = loaded.read(scan_region=(0, 1, 0, 1))
 ```
 
-Requesting `representation="packed"` for an ordinary HDF5 source
-fails with the preparation step instead of claiming that the source is packed.
+Tiny explicit CPU references may use `backend="cpu", representation="dense"`.
+They are not a production loading fallback.
 
 ### Selection and exact detector binning
 
-The dense path also supports regions and stochastic batches:
+Keep the acquisition compressed and request bounded working regions:
 
 ```python
-full = io.load(
-    "scan_master.h5",
-    backend="auto",
-    representation="dense",
-    dtype="u16",
-)
-
-crop = io.load(
-    "scan_master.h5",
-    backend="mps",
+full = io.load("scan_master.h5")
+crop = full.read(
     scan_region=(32, 160, 48, 176),
     detector_region=(0, 192, 0, 192),
 )
 
-batch = io.load(
-    masters,
-    backend="cuda",
-    random_positions=1000,
-    scan_shape=(512, 512),
-    seed=42,
-)
 ```
 
 `scan_region` and `detector_region` are always
 `(row_start, row_stop, col_start, col_stop)`.
-Use `detector_bin=1` to retain native detector sampling or a larger explicit
-factor for exact detector-space sum binning. The former `det_bin` spelling is a
-deprecated compatibility alias.
+This read does not bin or alter stored samples. Additional transformations
+belong to the requested working array, not an implicit loading policy.
 
 ### Dtype selection
 
-Keep native or unsigned 16-bit counts for an exact raw-count workflow, and make
-an unsigned 8-bit browse representation explicit:
+Preserve original counts or float32 measurements by omitting `dtype`:
 
 ```python
-exact = io.load("scan_master.h5", backend="auto", dtype="u16")
-browse = io.load("scan_master.h5", backend="auto", dtype="u8")
+exact = io.load("scan_master.h5")
 ```
 
 | Selector | Meaning | Scientific boundary |
 |---|---|---|
 | `dtype="native"` or `None` | Preserve the backend-native source dtype | Preferred when the source precision must remain unchanged |
-| `dtype="u16"` | Request unsigned 16-bit resident counts | Exact only while every corrected or binned value fits `uint16`; exact detector sums widen when required |
-| `dtype="u8"` | Decode directly to unsigned 8-bit and saturate values above 255 | Browse/screening representation unless a complete source audit proves zero saturation |
-| `dtype="auto"` | Use the loader's advisory compact-dtype selection | Convenience only; do not cite it as a complete-source losslessness audit |
+| `dtype="scaled_uint16"` | Explicit calibrated approximate intensity storage | Quantization is reported; not a lossless substitute for float32 |
+
+The ordinary ANS count loader rejects dtype narrowing (`u8`, `u16`, `auto`)
+rather than silently changing scientific values. The retired bit-packed
+`float16` acquisition profile is also rejected; reopen its original float32
+source and save a lossless `.qem` copy.
 
 Native `uint8` input and a `uint16` input converted to `uint8` are different
 provenance. A lossless conversion requires a retained source identity, bad-pixel
 policy, maximum count, and `pixelsAbove255 == 0`. Otherwise retain the
 saturation count and label the result browse-only. Reconstruction workflows
 should retain the raw-count precision required by their objective.
+In particular, values above 255 cannot be preserved in an unsigned 8-bit array.
 
 The resident payload is not peak memory. Record the requested, source,
 working, accumulation, and output dtypes; original/output shapes; bin/crop;
@@ -496,33 +477,18 @@ payload bytes; predicted peak; measured process/accelerator peak; pressure or
 swap; and the resource-policy reason. See the
 {ref}`dtype and peak-memory dashboard <dtype-support-and-peak-memory>`.
 
-For stochastic loading, `random_positions=` asks QuantEM to select positions,
-while `scan_indices=` accepts positions selected by an external sampler. The
-loader sorts and de-duplicates storage reads, decodes on the GPU, and restores
-the requested stochastic order.
-
-For joint time-series ptychography, keep one shared random batch and attach the
-per-frame drift vectors without resampling the raw diffraction patterns:
+For a series, retain separate encoded acquisitions:
 
 ```python
-batch = io.load(
-    master_paths,                       # e.g. 40 frame masters
-    random_positions=1000,
-    same_random_positions=True,
-    scan_shape=(512, 512),
-    drift=drift_fields,                 # shape (40, 512, 512, 2)
-    output="torch",
-)
-positions = batch.metadata["drift_batch"]["corrected_positions"]
+acquisitions = io.load(master_paths, stack=False)
+# Close each owner after its last queued scientific operation.
 ```
 
-`drift_fields[f, r, c]` supplies the row/column shift for frame `f` at scan
-position `(r, c)`. `positions` remains float32 for fractional shifts such as
-`0.4` or `-0.6`.
-The detector patterns are unchanged; the reconstruction forward model consumes
-these corrected probe positions. Integer and fractional drift use the same
-API. Use `scan_shift_row_col=` with `scan_region=` only when an explicitly
-resampled scan-space stack is desired.
+The former dense joint-series options (`random_positions`, `scan_indices`,
+`drift`, and whole-acquisition `output="torch"`) are not supported by the ANS
+loader. Request bounded patterns from each owner and pass explicit probe
+coordinates to the reconstruction workflow. Do not use a dense-loading
+fallback to recover the old combined interface.
 
 ## `save`
 
@@ -558,7 +524,7 @@ These are independent decisions, not different names for the same setting:
 |---|---|---|
 | `format` on save | File layout | `"arina"`, `"quantem"` |
 | `compression` on save | Lossless file encoding | `"bitshuffle_lz4"` for Arina; `"ans"` for QuantEM |
-| `representation` on load | In-memory count layout | `"dense"`, `"packed"`, `"encoded"` |
+| `representation` on load | In-memory count layout | GPU: `"encoded"`, explicit CUDA `"paired"`; CPU reference: `"dense"` |
 
 For example, save and reopen an ANS-resident acquisition:
 
@@ -581,8 +547,7 @@ pairs also raise. ANS is not an implemented HDF5 filter here. This API change
 does not change the bytes of the supported file formats.
 
 The standalone writer is transactional and never overwrites an existing file.
-Source/working shape, dtype, and calibration are preserved. Encoded-to-packed does
-not materialize a full dense tensor, but both encoded representations coexist
-during conversion. This is not yet incremental file-shard streaming or a
-full-volume memory/performance qualification. `discover` and `inspect` support
-for this standalone envelope is also pending; use an explicit file path.
+Source/working shape, dtype, and calibration are preserved. Saving and reopening
+an encoded acquisition is distinct from low-level representation conversion.
+Use `io.inspect` for supported-container metadata and readiness; successful
+inspection is not payload-integrity or full-volume performance qualification.

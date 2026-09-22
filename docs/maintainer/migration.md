@@ -25,11 +25,10 @@ keeping second copies.
 
 ## Dense, packed, and experimental status
 
-Dense loading remains supported, including host arrays and accelerator-resident
-arrays where the backend supports them. Representation (`dense` or
-`packed`), location (host or device), and scientific dtype are separate
-choices. Original compressed HDF5 does not silently become a prepared packed
-file, and packed input does not silently expand into a dense volume.
+Explicit dense array algorithms and CPU references remain supported. Public
+GPU acquisition loading uses ANS; retained low-level packed readers are not
+public loader options. Representation, location, and scientific dtype remain
+separate facts. Unsupported inputs never silently expand into a dense volume.
 
 The following summarizes the [representation contract](../api/representations.md),
 not a new qualification registry. Exact gates remain in
@@ -38,8 +37,8 @@ not a new qualification registry. Exact gates remain in
 
 | Runtime | Implemented entry points | Remaining or experimental scope |
 |---|---|---|
-| Python CUDA | Dense and lossless-packed `io.load`; detector reductions; prepared CoM and packed SSB within their recorded contracts | Packed mean-DP, masked CoM, and arbitrary packed scan reductions are not general public operations. |
-| Python MPS | Dense loading and direct-bitpacked loading; detector reductions and prepared products | The packed uint16/LZ4 profile is native-Metal-only on Apple. |
+| Python CUDA | ANS acquisition loading; detector reductions and encoded products within their recorded contracts | Physical CUDA acceptance remains separate from Apple tests. |
+| Python MPS | ANS acquisition loading; detector reductions and encoded products | Native Swift format qualification is separate from Python support. |
 | Native Swift/Metal | Indexed dense and both packed profiles; source inspection, admission, authenticated loads, detector and prepared products | App adoption and physical end-to-end qualification must use an exact package revision. |
 | WebGPU | Dense and packed readers, batched detector updates, resident display and lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
 | Android/Vulkan | Native packed detector session, BF/DF/ADF, selected diffraction, bounded dense decode/staging | Experimental. Compact headers support widths 0–8, expanded descriptors 0–16. No full dense-volume residency, shared SSB, or general 1024 FFT claim. |
@@ -176,28 +175,30 @@ Before publishing an rc:
 `io.load(path)` now preserves complete native uint8/uint16 HDF5 counts in
 lossless ANS GPU storage. Backend selection remains automatic. For multiple
 acquisitions use `io.load(paths, stack=False)` to retain separate encoded owners.
-Saved packed, ANS and paired sources continue to reopen their recorded layouts.
+Saved ANS and paired sources reopen their recorded encoded layouts. Older
+prepared-packed acquisitions are rejected; re-export their originals as `.qem`.
 
-Code requiring dense tensors, selection, binning, or dtype conversion must request
-`representation="dense"` explicitly. Packed counts retain detector-mask metadata;
-apply that mask when calculating products rather than changing stored counts.
+Code requiring working tensors must request bounded `loaded.read(...)` regions.
+Dense/packed GPU overrides, whole-acquisition tensor output, and the former
+combined drift/stochastic loader interface are not supported. Explicit array
+algorithms and tiny CPU reference loads remain separate APIs.
 
 Ordinary HDF5 ANS ingestion is implemented for CUDA and MPS. Unsupported dtypes and
 backends raise with corrective guidance; there is no implicit dense or CPU fallback.
 CUDA and MPS precision loads keep encoded values resident and run detector queries
 on their owning accelerator. CUDA uses float64 intermediates where available;
 Metal uses deterministic float32/floating-pair reductions because Apple GPUs do
-not expose float64 arithmetic. CUDA loading reads the source twice to allocate
-exact packed storage without staging a complete decoded acquisition. MPS uses the
-same bounded source blocks and reuses its Metal decoder between blocks.
+not expose float64 arithmetic. Original ingestion uses bounded source blocks
+without retaining a complete decoded acquisition. Backend and format-specific
+staging are implementation details, not another user-selected representation.
 
-The legacy `dtype='u4'` shortcut is no longer a default-load mode. Use lossless
-packed native counts, or explicit dense `dtype='u8'` when that precision is intended.
+The legacy `dtype='u4'` shortcut is no longer a default-load mode. Omit dtype to
+retain native values in lossless ANS storage.
 
-## Packed precision for fractional intensities
+## Explicit approximate precision for fractional intensities
 
 Keep a float32 archive, then explicitly choose a smaller working precision.
-The CUDA and MPS loaders retain all converted values in packed device storage and
+The CUDA and MPS loaders retain scaled integer codes in ANS device storage and
 measure errors across every selected value on the accelerator. Loading does not
 change the source.
 
@@ -205,18 +206,18 @@ change the source.
 from quantem.gpu import io
 
 io.save("merged_master.h5", merged, dtype="float32")
-half = io.load("merged_master.h5", dtype="float16")
+exact = io.load("merged_master.h5")
 scaled = io.load("merged_master.h5", dtype="scaled_uint16")
 ```
 
-`float16` retains fractional weak intensities with reduced floating-point
-precision. `scaled_uint16` stores `round((intensity - offset) / scale)` using
-one range for the complete source. Returned patterns and reductions restore
+The retired packed `float16` loading profile is rejected; preserve the original
+float32 archive instead. `scaled_uint16` stores `round((intensity - offset) / scale)`
+using recorded regional calibration. Returned patterns and reductions restore
 `code * scale + offset`. These codes are not raw detector counts; code 65535
 is a valid intensity. Plain `uint16` keeps its existing whole-count meaning.
-Backend choice and packing are automatic. Lossy precision is always explicit.
+Backend choice and ANS encoding are automatic. Lossy precision is always explicit.
 
-The loader reports source/working precision, intensity range, packed bytes,
+The loader reports source/working precision, intensity range, resident bytes,
 RMS and maximum absolute error, positive values becoming zero, overflow,
 clipping, and the number of values measured. Measurements use GPU reductions;
 no CPU codec or numerical fallback is used. Scaled uint16 may erase weak
@@ -239,15 +240,14 @@ values. Reopened exports use saved scaling and label the original error report
 as saved, rather than claiming a fresh comparison against the original source.
 Inspect `reopened.metadata["precision"]` for the persisted report. `close()`
 releases storage after the final consumer. Disk compression is GPU
-bitshuffle/LZ4; packed resident size and compressed file size are different.
+bitshuffle/LZ4 for these HDF5 exports; ANS resident size and file size are different.
 
-Export directly with `io.save(..., dtype="float16")` or
-`io.save(..., dtype="scaled_uint16")`. Conversion and writing use bounded GPU
+Export directly with `io.save(..., dtype="scaled_uint16")`. Conversion and writing use bounded GPU
 blocks. A native 4D NPY source is also accepted by the precision loader.
 Unsupported resampling, masks, and source dtypes fail explicitly. Nonfinite
-sources and values outside float16's finite range are rejected before export.
+sources are rejected by this approximate conversion path; preserve exact float32 instead.
 
-Both CUDA and Metal support precision conversion, packed saving, and reopening.
+Both CUDA and Metal implement scaled precision conversion, saving, and ANS reopening.
 For a file-backed source, the elapsed time includes reading the complete source;
 an already-resident MPS tensor uses the direct Metal path and avoids a host copy.
 The live widget consumes the loaded source without materializing a complete

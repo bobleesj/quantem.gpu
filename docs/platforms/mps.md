@@ -38,15 +38,15 @@ with io.load("scan_master.h5", backend="mps") as loaded:
     diffraction = detector.prepare(loaded).frame(0, output="native")
 ```
 
-An existing supported Lossless Pack Format source remains packed:
+Saved `.qem` acquisitions remain encoded:
 
 ```python
-packed = io.load("scan-lossless.h5", backend="mps")
-assert packed.representation is io.DataRepresentation.PACKED
+encoded = io.load("scan.qem", backend="mps")
+assert encoded.representation is io.DataRepresentation.ENCODED
 ```
 
-Python MPS currently accepts the direct-bitpacked profile through this generic
-surface. Native Swift/Metal accepts both current encoding profiles. Unsupported
+Older packed acquisitions are rejected by this surface; re-export their original
+measurements. Low-level native readers have separate format contracts. Unsupported
 profiles fail explicitly rather than expanding to a dense tensor.
 
 ## Execution and memory model

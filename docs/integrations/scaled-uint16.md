@@ -32,12 +32,12 @@ not select the MAPED calculation precision, GPU backend, or compression codec.
 | Choice | Stored values | Values returned by precision reads | Scientific consequence |
 |---|---|---|---|
 | `float32` export | Original float32 intensities | Float32 intensities | No additional precision reduction |
-| `float16` | Half-precision floating-point intensities | Float32 reconstruction of the stored float16 values | Reduced precision; spacing grows with magnitude; no intensity scale/offset |
+| Legacy `float16` | Half-precision floating-point intensities | Rejected by the public GPU acquisition loader | Re-export the original float32 source as `.qem` |
 | `scaled_uint16` | Unsigned 16-bit codes with saved scale and offset per region | Float32 calibrated intensities | Uniform intensity step within each region; rounding introduces measured storage error |
 
-Both float16 and scaled uint16 storage are supported by CUDA and Python MPS IO.
-ANS preserves scaled uint16 codes exactly; float16 currently uses bit packing,
-which also preserves its stored bit patterns exactly. Compression does not recover
+Scaled uint16 storage is implemented by CUDA and Python MPS IO.
+ANS preserves scaled uint16 codes exactly; the older bit-packed float16
+acquisition profile is no longer admitted. Compression does not recover
 precision removed by conversion. Physical resident size depends on the encoded
 codes and metadata, not only the nominal two bytes per stored value.
 Plain `uint16` is an ordinary integer conversion, not calibrated scaled storage.

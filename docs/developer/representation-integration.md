@@ -26,8 +26,10 @@ authenticated source -> io.load -> dense, packed, or ANS counts
                                             aberration updates and search
 ```
 
-`representation="dense"`, `"packed"`, and `"encoded"` are the count choices for
-the integration, with no legacy selector aliases. `"packed"` covers compact
+`dense`, `packed`, and `encoded` describe the retained low-level count layouts,
+with no legacy selector aliases. Public CUDA/MPS acquisition loading requires
+ANS (`encoded` or the explicit paired ANS profile); it rejects dense and packed
+overrides. At the low level, `packed` covers compact
 count storage; authenticated profile metadata still distinguishes bitpacking,
 block compression, and the ANS-derived layout. File layout and compression
 are separate: `io.save(..., format="quantem", compression="ans")`

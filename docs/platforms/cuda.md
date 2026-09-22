@@ -39,12 +39,12 @@ with io.load("scan_master.h5", backend="cuda") as loaded:
     diffraction = detector.prepare(loaded).frame(0, output="native")
 ```
 
-An existing Lossless Pack Format source uses the same public loader and remains
-packed. Its dtype and encoding profile stay separate metadata:
+Saved `.qem` acquisitions use the same public loader and remain encoded.
+Older packed artifacts require re-export from their originals:
 
 ```python
-packed = io.load("scan-lossless.h5", backend="cuda")
-assert packed.representation is io.DataRepresentation.PACKED
+encoded = io.load("scan.qem", backend="cuda")
+assert encoded.representation is io.DataRepresentation.ENCODED
 ```
 
 ## Execution and memory model
