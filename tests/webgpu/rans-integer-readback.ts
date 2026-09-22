@@ -5,7 +5,7 @@ import { RansResidentSet } from "../../src/quantem/gpu/detector/compute/webgpu/r
 export async function runRansIntegerReadbackParity(device: GPUDevice, fixtureURL: string): Promise<Record<string, boolean>> {
   const response = await fetch(fixtureURL);
   if (!response.ok) throw new Error(`Fixture fetch failed: ${response.status}`);
-  const file = new File([await response.arrayBuffer()], "saturated.ans");
+  const file = new File([await response.arrayBuffer()], "saturated.qem");
   device.pushErrorScope("validation");
   try {
     const source = await RansResidentSet.loadCountANS(device, file);

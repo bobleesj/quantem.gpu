@@ -1,5 +1,6 @@
 /// <reference types="@webgpu/types" />
 import { RansResidentSet } from "../../src/quantem/gpu/detector/compute/webgpu/rans";
+import { countAnsFileSource } from "../../src/quantem/gpu/detector/backends/webgpu/count-ans";
 
 type Case = { name: string; shape: number[]; dtype: "uint8" | "uint16"; block_frames: number };
 function exact(label: string, actual: Float32Array, expected: Float32Array): void {
@@ -17,7 +18,7 @@ export async function runCountANSBrowserParity(device: GPUDevice, baseURL: strin
   device.pushErrorScope("validation");
   try {
     for (const item of cases) {
-      const file = new File([await (await fetch(base + item.name + ".ans")).arrayBuffer()], item.name + ".ans");
+      const file = new File([await (await fetch(base + item.name + ".qem")).arrayBuffer()], item.name + ".qem");
       const rawBytes = await (await fetch(base + item.name + ".bin")).arrayBuffer();
       const counts = item.dtype === "uint8" ? new Uint8Array(rawBytes) : new Uint16Array(rawBytes);
       const scans = item.shape[0] * item.shape[1], K = item.shape[2] * item.shape[3];
@@ -42,13 +43,46 @@ export async function runCountANSBrowserParity(device: GPUDevice, baseURL: strin
         results[item.name] = true;
       } finally { source.dispose(); }
       // The package checksum must fail before corrupted payloads reach a decoder.
-      const bytes = new Uint8Array(await file.arrayBuffer()); bytes[65536] ^= 1;
+      const bytes = new Uint8Array(await file.arrayBuffer()); bytes[bytes.length - 1] ^= 1;
       let rejected = false;
-      try { await RansResidentSet.loadCountANS(device, new File([bytes], "corrupt.ans")); }
+      try { await RansResidentSet.loadCountANS(device, new File([bytes], "corrupt.qem")); }
       catch (error) { rejected = String(error).includes("payload checksum mismatch"); }
       if (!rejected) throw new Error("Modified payload was not rejected by checksum admission");
     }
     results.payload_corruption_rejected = true;
+    const floating = new File([await (await fetch(base + "float.qem")).arrayBuffer()], "float.qem");
+    let floatRejected = false;
+    try { await RansResidentSet.loadCountANS(device, floating); }
+    catch (error) { floatRejected = String(error).includes("integer QEM only"); }
+    if (!floatRejected) throw new Error("Unsupported float QEM was not rejected with a corrective message");
+    results.float_profile_rejected = true;
+    const original = new Uint8Array(await (await fetch(base + cases[0].name + ".qem")).arrayBuffer());
+    const originalBody = Number(new DataView(original.buffer).getBigUint64(16, true));
+    const headerText = new TextDecoder().decode(original.subarray(56, originalBody));
+    for (const [field, reason] of [
+      ["axes", "axes disagree"],
+      ["bounds", "chunk array bounds"],
+      ["calibration", "retired x/y"],
+    ]) {
+      const header = JSON.parse(headerText);
+      if (field === "axes") header.scientific_metadata.axes[0].name = "x";
+      if (field === "bounds") header.chunks[0].arrays[0].offset = 7;
+      if (field === "calibration") header.scientific_metadata.calibration_overrides["imaging_system/reciprocal_pixel_size_x"] = {value: 1, unit: "mrad"};
+      const encoded = new TextEncoder().encode(JSON.stringify(header));
+      const changed = new Uint8Array(56 + encoded.length + original.length - originalBody);
+      changed.set(new TextEncoder().encode("QEMDATA1"));
+      const prefix = new DataView(changed.buffer);
+      prefix.setBigUint64(8, BigInt(encoded.length), true);
+      prefix.setBigUint64(16, BigInt(56 + encoded.length), true);
+      changed.set(new Uint8Array(await crypto.subtle.digest("SHA-256", encoded)), 24);
+      changed.set(encoded, 56);
+      changed.set(original.subarray(originalBody), 56 + encoded.length);
+      let rejected = false;
+      try { await countAnsFileSource(new File([changed], "invalid.qem")); }
+      catch (error) { rejected = String(error).includes(reason); }
+      if (!rejected) throw new Error(`Authenticated invalid ${field} was not rejected before GPU upload`);
+    }
+    results.semantic_metadata_and_bounds_rejected = true;
     results.all_passed = true;
     return results;
   } finally {

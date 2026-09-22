@@ -32,19 +32,20 @@ struct Unit { payload_word: u32, offsets_base: u32, colmeta_word: u32, entries_w
 @group(0) @binding(7) var<uniform> p: Params;
 const LOWER: u32 = ${LOWER}u;
 override BINARY_LOOKUP: bool = false;
-struct Col { cursor: u32, end: u32, state: u32, left0: u32, right0: u32, raw: bool, bad: bool, lutbyte: u32, pay: u32, ebase: u32 }
+struct Col { cursor: u32, end: u32, state: u32, left0: u32, right0: u32, raw: bool, bad: bool, lutbyte: u32, pay: u32, ebase: u32, mode: u32 }
 fn byte_at(c: ptr<function, Col>, at: u32) -> u32 { let w = (*c).pay + (at >> 2u); return (payload[w] >> ((at & 3u) * 8u)) & 255u; }
 fn open_col(u: Unit, k: u32) -> Col {
   var c: Col;
   c.pay = u.payload_word; c.ebase = u.entries_word;
   c.cursor = offsets[u.offsets_base + k]; c.end = offsets[u.offsets_base + k + 1u];
   c.right0 = tables[u.colmeta_word + k * 3u + 1u];
-  c.left0 = tables[u.colmeta_word + k * 3u]; c.raw = tables[u.colmeta_word + k * 3u + 2u] != 0u;
+  c.left0 = tables[u.colmeta_word + k * 3u]; c.mode = tables[u.colmeta_word + k * 3u + 2u]; c.raw = c.mode == 1u;
   c.bad = false; c.state = LOWER; c.lutbyte = u.lut_word * 4u + k * 256u;
   return c;
 }
 fn unit_frames(u: Unit) -> u32 { return select(p.frames, u.pad & 0x3fffffffu, (u.pad & 0x3fffffffu) != 0u); }
 fn start_col(c: ptr<function, Col>) {
+  if ((*c).mode >= 3u) { if ((*c).mode == 5u) { (*c).state = 0u; } return; }
   if ((*c).raw) { return; }
   if ((*c).end - (*c).cursor < 4u) { (*c).bad = true; return; }
   var s: u32 = 0u;
@@ -53,6 +54,20 @@ fn start_col(c: ptr<function, Col>) {
   if (s < LOWER || s >= 2147483648u) { (*c).bad = true; }
 }
 fn decode_one(c: ptr<function, Col>) -> u32 {
+  if ((*c).mode == 3u) { return 0u; }
+  if ((*c).mode == 4u) {
+    let value = byte_at(c, (*c).end - 2u) | (byte_at(c, (*c).end - 1u) << 8u);
+    (*c).cursor = (*c).end; return value;
+  }
+  if ((*c).mode == 5u) {
+    let row = (*c).state; (*c).state += 1u;
+    if ((*c).cursor == (*c).end) { return 0u; }
+    let event = byte_at(c, (*c).cursor) | (byte_at(c, (*c).cursor + 1u) << 8u);
+    let position = event >> 7u;
+    if (position < row) { (*c).bad = true; return 0u; }
+    if (position != row) { return 0u; }
+    (*c).cursor += 2u; return (event & 127u) + 1u;
+  }
   if ((*c).raw) {
     if ((*c).cursor + 2u > (*c).end) { (*c).bad = true; return 0u; }
     let lo = byte_at(c, (*c).cursor); let hi = byte_at(c, (*c).cursor + 1u); (*c).cursor += 2u;
@@ -88,6 +103,11 @@ fn decode_one(c: ptr<function, Col>) -> u32 {
     if ((*c).cursor >= (*c).end) { (*c).bad = true; return 0u; }
     (*c).state = ((*c).state << 8u) | byte_at(c, (*c).cursor); (*c).cursor += 1u;
   }
+  if ((*c).mode == 2u && v == 32u) {
+    if ((*c).cursor + 2u > (*c).end) { (*c).bad = true; return 0u; }
+    let escaped = byte_at(c, (*c).cursor) | (byte_at(c, (*c).cursor + 1u) << 8u);
+    (*c).cursor += 2u; return escaped;
+  }
   return v;
 }
 `;
@@ -103,7 +123,7 @@ const BUILD_WGSL = COMMON_WGSL + /* wgsl */ `
     let v = decode_one(&c);
     if ((u.pad & 0x40000000u) != 0u && v > 255u) { c.bad = true; }
   }
-  if (c.bad || c.cursor != c.end || (!c.raw && c.state != LOWER)) { atomicAdd(&out[p.N * 2u], 1u); }
+  if (c.bad || c.cursor != c.end || (!c.raw && c.mode != 5u && c.state != LOWER)) { atomicAdd(&out[p.N * 2u], 1u); }
 }`;
 const INTEGRATE_WGSL = COMMON_WGSL + /* wgsl */ `
 var<workgroup> s_add: array<atomic<u32>, 256>;
@@ -397,8 +417,8 @@ export class RansResidentSet {
     // and making a second multi-gigabyte concatenation in JavaScript memory.
     const plans: { ti: number; block: RansTiltMeta["blocks_meta"][number]; group: Pending; offset: number }[] = [];
     for (let ti = 0; ti < T; ti++) for (const block of tilts[ti].blocks_meta) {
-      const size = pad4(block.bytes);
-      if (!Number.isSafeInteger(block.bytes) || block.bytes <= 0 || size > limit) throw new Error(`rANS block ${block.index} exceeds device buffer limits or has invalid length`);
+      const size = Math.max(4, pad4(block.bytes));
+      if (!Number.isSafeInteger(block.bytes) || block.bytes < 0 || size > limit) throw new Error(`rANS block ${block.index} exceeds device buffer limits or has invalid length`);
       if (!cur || cur.payBytes + size > limit) {
         cur = { payload: null as unknown as GPUBuffer, payBytes: 0, offParts: [], offLen: 0, units: [] };
         pending.push(cur);

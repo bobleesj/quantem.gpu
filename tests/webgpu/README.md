@@ -44,81 +44,46 @@ It also verifies that repeated slot updates reuse the partial-range scratch.
 All cases passed on NVIDIA/Blackwell on 2026-09-07; no performance assertion is
 part of this correctness gate.
 
-## Canonical count-ANS files in the browser
+## Integer .qem browser admission
 
-**Fixture source removed.** This gate previously used
-`tests/webgpu/make_count_ans_fixture.py`, which encoded fixtures through the legacy
-`.ans` container (`io.save(..., compression="ans")` / `ANSFile`). Both the container
-and that generator were removed, so there is currently **no shipped way to produce a
-count-ANS fixture for this gate**. The harness below is unchanged and still expects
-the canonical count-ANS layout; re-establishing a fixture source is outstanding work,
-not a silent pass. Saved `.qem` copies are the supported artefact, but whether
-`RansResidentSet.loadCountANS` accepts the `.qem` layout has not been re-qualified
-since that change.
+Run the disposable, headed physical-adapter gate:
 
-Bundle `count-ans-browser.ts` with `--global-name=CountANSBrowserParity`, serve the
-fixture directory, and call:
-
-```javascript
-await CountANSBrowserParity.runCountANSBrowserParity(device, fixtureURL)
+```bash
+python tests/webgpu/run_qem_browser.py \
+  --esbuild /path/to/quantem.widget/node_modules/.bin/esbuild \
+  --chrome /path/to/chrome
 ```
 
-The production entry point is `RansResidentSet.loadCountANS(device, file)` for a
-user-granted `File`. It verifies typed sections and their SHA-256 checksums,
-then maps model selectors, encoded payload spans, and per-block column tables
-into the same GPU checkpoint, gather, and integration engine. The payload is
-verified in bounded chunks; no native source tensor is decoded on the host.
-Checksums establish section integrity, not acquisition identity. Native dtype
-and provenance are retained as `nativeDtype` and `sourceMetadata`.
+This generates tiny synthetic uint8/uint16 .qem acquisitions, bundles the
+canonical decoder, and removes fixtures and browser state on exit. It tests
+zero, constant, literal, sparse-event, and entropy streams (including escaped
+counts), scan checkpoints, multiple chunks, a tail, zero-byte payloads,
+patterns, detector-mask updates, ROI sums/means, and corrupted-payload rejection.
+The retained rANS product test runs in the same physical browser adapter.
+A passed gate is numerical browser coverage, not a UI or performance claim.
 
-Canonical models with more than 256 symbols use a specialized binary table
-lookup followed by the same byte-rANS recurrence. The legacy byte lookup is
-compiled without that branch. Block lengths need not be divisible by 256;
-tail windows decode only the source's actual scan positions.
+The existing `loadCountANS` / `loadCountANSFiles` entry points now admit the
+QEMDATA1 envelope and runtime-column-rans-spatial-v2 integer codec. Headers and
+payload chunks are authenticated before GPU upload. Only encoded tables are
+prepared on the host; measurement decoding remains in WGSL. QEM detector
+validity masks reach the displayed products without rewriting stored counts.
+Series must share geometry, dtype, and validity masks.
 
-The fixture gate covers native uint16 counts with a 512-symbol model, literal
-columns, a 65535 sentinel, and a short final block; native uint8 uses 17-position
-blocks and a tail. Point patterns, full and delta detector masks, scan-ROI sums,
-and means compare exactly against the encoder's original counts. A payload
-mutation must fail checksum admission before GPU decoding. The existing rANS
-product fixture remains the regression gate for the legacy representation.
+Float32 QEM codecs are not supported by this browser adapter. Admission rejects
+them with directions to use the native application or Python GPU session.
+Old .ans containers are not accepted. The unrelated retained source112 tANS
+representation is unchanged.
 
-The browser image contract remains uint32 sums. Admission rejects sources whose
-worst-case native detector sum exceeds that contract and recommends the CUDA
-uint64 product backend. Pre-reduced/cropped provenance is rejected rather than
-presented as a full-resolution source. This adapter does not migrate the retained source112
-source112 tANS representation or assert full-acquisition encoding performance.
+The browser image contract remains uint32 detector sums; sources exceeding that
+bound are rejected. No universal format, full-acquisition throughput, or 120 FPS
+claim follows from this small correctness gate.
 
-On 2026-09-07 both canonical fixtures, payload-corruption rejection, and the
-complete legacy numerical-product regression passed on real NVIDIA/Blackwell.
-All canonical pattern and product comparisons used zero tolerance.
+The same headed gate runs `count-ans-series.ts` against current QEM fixtures.
+It checks reversed acquisition order, exact batched detector/delta products,
+saved validity masks and scientific metadata, and shape/dtype/mask mismatches
+rejected before GPU allocation. The fixture generator also supplies the
+saturated QEM acquisition for the integer readback gate below.
 
-## Ordered canonical series
-
-`RansResidentSet.loadCountANSFiles(device, files, status, badPixels)` admits every
-file in the caller's order into one resident set. `loadCountANS` delegates to
-this path with one file. Geometry, native dtype, block length, and probability
-precision must match before any GPU upload begins. Encode a series with the
-same `block_frames` and `scale`; differing profiles fail with corrective
-instructions. No acquisition is selected implicitly or omitted.
-
-The optional fourth argument contains flat excluded detector indices. It is
-range-checked and deduplicated, then applied to every acquisition's displayed
-patterns and products. Encoded native counts, including sentinels, remain
-unchanged. Arbitrary original metadata is retained per file in
-`sourceMetadata.acquisitions`; count-ANS v1 does not define a native pixel-mask
-metadata convention, so exclusions have an explicit argument.
-
-The fixture generator also creates a distinct second acquisition and invalid
-series companions. Bundle `count-ans-series.ts` with
-`--global-name=CountANSSeriesParity`, then call
-`await CountANSSeriesParity.runCountANSSeriesParity(device, fixtureURL)`.
-The gate checks reversed file order, boundary patterns, stock batch detector
-sums and delta updates, global exclusions without changing raw counts, and
-mismatched geometry/dtype/encoding profiles rejected before GPU allocation.
-
-The ordered-series gate passed on real NVIDIA/Blackwell on 2026-09-07,
-including global bad-pixel exclusion and unchanged raw sentinel counts.
 ## Compare-preview normalization
 
 The same `rans-products.ts` bundle exposes
@@ -176,20 +141,21 @@ Generate the small saturated fixture with the public encoder (CPU only):
 import numpy as np
 from quantem.gpu import io
 
-io.save("saturated.ans", np.full((1, 1, 256, 256), 65535, np.uint16),
+io.save("saturated.qem", np.full((1, 1, 256, 256), 65535, np.uint16),
         format="quantem", compression="ans", backend="cpu")
 ```
 
 Bundle `rans-integer-readback.ts` with
 `--global-name=RansIntegerReadbackParity`, then run
 `await RansIntegerReadbackParity.runRansIntegerReadbackParity(device, fixtureURL)`
-on the verified hardware adapter. Here `fixtureURL` points to `saturated.ans`.
+on the verified hardware adapter. Here `fixtureURL` points to `saturated.qem`.
 The zero-tolerance gate checks sums 16842495 and 4294836225, addition/removal
 deltas, queue-ordered snapshots, unchanged counts after preview normalization,
 float32 compatibility, and invalid acquisition indices.
 
-This gate passed on real NVIDIA/Blackwell on 2026-09-07, with exact integer
-equality for every quantitative comparison.
+The historical integer gate passed on NVIDIA/Blackwell on 2026-09-07. That
+result predates the QEM container migration and does not certify the current
+reader; run the current headed QEM gate above for a fresh result.
 
 ## Bounded payload read-ahead (CPU-only)
 
