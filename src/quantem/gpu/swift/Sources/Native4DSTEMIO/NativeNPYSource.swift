@@ -64,8 +64,11 @@ public struct NativeNPYSource: NativeCountArray {
         "NumPy array is Fortran-order. Save numpy.ascontiguousarray(data) before converting.")
     }
     let isFloat = ["<f4", "=f4"].contains(dtype)
-    guard measurementDtype == "float32" ? isFloat
-      : ["|u1", "<u1", "=u1", "<u2", "=u2"].contains(dtype) else {
+    guard
+      measurementDtype == "float32"
+        ? isFloat
+        : ["|u1", "<u1", "=u1", "<u2", "=u2"].contains(dtype)
+    else {
       throw Self.invalid(
         "NumPy dtype \(dtype) is not supported by this lossless count encoder. Use native little-endian uint8/uint16 counts; do not cast calibrated or floating-point measurements."
       )

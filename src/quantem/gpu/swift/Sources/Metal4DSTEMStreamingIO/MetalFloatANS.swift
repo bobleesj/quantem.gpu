@@ -37,9 +37,11 @@ final class MetalFloatANS {
     constants.setConstantValue(&pixelCount, type: .uint, index: 20)
     guard let decode = library.makeFunction(name: "streamed_counts_decode_range"),
       let join = library.makeFunction(name: "float_ans_join_words"),
-      let selected = try? library.makeFunction(name: "float_ans_decode_selected", constantValues: constants),
+      let selected = try? library.makeFunction(
+        name: "float_ans_decode_selected", constantValues: constants),
       let recovery = library.makeFunction(name: "float_ans_recovery_needed"),
-      let changes = try? library.makeFunction(name: "float_ans_decode_changes", constantValues: constants),
+      let changes = try? library.makeFunction(
+        name: "float_ans_decode_changes", constantValues: constants),
       let mean = meanLibrary.makeFunction(name: "float_ans_region_mean")
     else { throw Metal4DSTEMStreamingIOError.invalidRequest("Rebuild the float ANS kernels.") }
     self.decode = try device.makeComputePipelineState(function: decode)
@@ -86,7 +88,8 @@ final class MetalFloatANS {
     var first = true
     for chunk in chunks {
       let firstRow = max(rows.lowerBound, chunk.firstFrame / scanColumns)
-      let lastRow = min(rows.upperBound, (chunk.firstFrame + chunk.frameCount - 1) / scanColumns + 1)
+      let lastRow = min(
+        rows.upperBound, (chunk.firstFrame + chunk.frameCount - 1) / scanColumns + 1)
       guard firstRow < lastRow else { continue }
       var frames: [UInt32] = []
       for row in firstRow..<lastRow {
@@ -107,10 +110,12 @@ final class MetalFloatANS {
       encoder.setBuffer(chunk.payload, offset: 0, index: 0)
       encoder.setBuffer(chunk.offsets, offset: 0, index: 1)
       encoder.setBuffer(chunk.models, offset: 0, index: 2)
-      var parameters = SIMD4<UInt32>(UInt32(chunk.frameCount), UInt32(frames.count), divisor, first ? 1 : 0)
+      var parameters = SIMD4<UInt32>(
+        UInt32(chunk.frameCount), UInt32(frames.count), divisor, first ? 1 : 0)
       encoder.setBytes(&parameters, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
       frames.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 10) }
-      encoder.dispatchThreads(MTLSize(width: pixels, height: 1, depth: 1),
+      encoder.dispatchThreads(
+        MTLSize(width: pixels, height: 1, depth: 1),
         threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
       encoder.memoryBarrier(resources: [accumulator])
       first = false
@@ -185,7 +190,8 @@ final class MetalFloatANS {
       needed <= budget - UInt64(device.currentAllocatedSize),
       let lanes = device.makeBuffer(length: size * 8, options: .storageModePrivate),
       let words = device.makeBuffer(length: size * 4, options: .storageModePrivate),
-      let descriptors = device.makeBuffer(length: ((size + 127) / 128) * 16, options: .storageModePrivate),
+      let descriptors = device.makeBuffer(
+        length: ((size + 127) / 128) * 16, options: .storageModePrivate),
       let errors = device.makeBuffer(length: 4, options: .storageModeShared)
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(

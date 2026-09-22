@@ -73,7 +73,9 @@ public final class MetalEMPADResidentSource {
     self.logicalSHA256 = logicalSHA256
     var identity = SHA256()
     identity.update(data: Data("quantem.gpu.empad-tensor/v1\0float32-le\0".utf8))
-    for dimension in [source.scanRows, source.scanColumns, source.detectorShape.row, source.detectorShape.column] {
+    for dimension in [
+      source.scanRows, source.scanColumns, source.detectorShape.row, source.detectorShape.column,
+    ] {
       var word = UInt64(dimension).littleEndian
       withUnsafeBytes(of: &word) { identity.update(bufferPointer: $0) }
     }
@@ -197,7 +199,8 @@ public final class MetalEMPADResidentSource {
     var digest = SHA256()
     // A bounded restart window also fixes scientific reduction order.
     let requested = ProcessInfo.processInfo.environment["QGPU_EMPAD_WINDOW"]
-    let window = min(requested == "64" ? 64 : requested == "512" ? 512 : 256,
+    let window = min(
+      requested == "64" ? 64 : requested == "512" ? 512 : 256,
       (32 << 20) / (source.detectorPixelCount * 4))
     var first = 0
     while first < source.frameCount {
@@ -207,7 +210,8 @@ public final class MetalEMPADResidentSource {
       // Include input, ANS scratch, worst-case output, and stream tables.
       // Shrinking this window changes neither detector nor scan coverage.
       let frameWorkspaceBytes = UInt64(source.detectorPixelCount * 16)
-      let boundedFrames = available > 1 << 20
+      let boundedFrames =
+        available > 1 << 20
         ? Int((available - (1 << 20)) / frameWorkspaceBytes) : 0
       let count = min(window, boundedFrames, source.frameCount - first)
       guard count > 0 else { throw failure("Free memory for a bounded ANS encoding window.") }
@@ -414,14 +418,17 @@ public final class MetalEMPADResidentSource {
     guard !isReleased, output.length >= source.detectorPixelCount * 4,
       output.device.registryID == device.registryID,
       command.commandQueue.device.registryID == device.registryID,
-      let accumulator = device.makeBuffer(length: source.detectorPixelCount * 8, options: .storageModePrivate)
+      let accumulator = device.makeBuffer(
+        length: source.detectorPixelCount * 8, options: .storageModePrivate)
     else {
-      throw Self.failure("EMPAD mean DP needs a resident and a same-device native-detector float32 output.")
+      throw Self.failure(
+        "EMPAD mean DP needs a resident and a same-device native-detector float32 output.")
     }
-    if (rows != nil || columns != nil),
+    if rows != nil || columns != nil,
       ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_MEAN_CONTROL"] != "1"
     {
-      try ans.encodeMean(chunks: chunks, rows: selectedRows, columns: selectedColumns,
+      try ans.encodeMean(
+        chunks: chunks, rows: selectedRows, columns: selectedColumns,
         scanColumns: source.scanColumns, shape: shape, output: output,
         accumulator: accumulator, background: background?.values, command: command)
       return

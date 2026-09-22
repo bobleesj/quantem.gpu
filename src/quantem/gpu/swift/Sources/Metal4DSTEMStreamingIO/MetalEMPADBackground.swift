@@ -37,12 +37,17 @@ public final class MetalEMPADBackground {
     var pixelCount = UInt32(source.detectorPixelCount)
     constants.setConstantValue(&pixelCount, type: .uint, index: 20)
     let window = min(256, (32 << 20) / (source.detectorPixelCount * 4))
-    guard let function = try? library.makeFunction(name: "empad_dark_mean", constantValues: constants),
-      UInt64(device.currentAllocatedSize) + UInt64(window * source.detectorPixelCount * 4) + UInt64(source.detectorPixelCount * 12) <= memoryBudgetBytes,
+    guard
+      let function = try? library.makeFunction(name: "empad_dark_mean", constantValues: constants),
+      UInt64(device.currentAllocatedSize) + UInt64(window * source.detectorPixelCount * 4)
+        + UInt64(source.detectorPixelCount * 12) <= memoryBudgetBytes,
       let queue = device.makeCommandQueue(),
-      let input = device.makeBuffer(length: window * source.detectorPixelCount * 4, options: .storageModeShared),
-      let accumulator = device.makeBuffer(length: source.detectorPixelCount * 8, options: .storageModePrivate),
-      let output = device.makeBuffer(length: (source.detectorPixelCount * 4), options: .storageModeShared)
+      let input = device.makeBuffer(
+        length: window * source.detectorPixelCount * 4, options: .storageModeShared),
+      let accumulator = device.makeBuffer(
+        length: source.detectorPixelCount * 8, options: .storageModePrivate),
+      let output = device.makeBuffer(
+        length: (source.detectorPixelCount * 4), options: .storageModeShared)
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Not enough Metal memory for background correction. Close another dataset and retry.")
@@ -53,7 +58,8 @@ public final class MetalEMPADBackground {
     for first in stride(from: 0, to: source.frameCount, by: window) {
       if shouldCancel() { throw CancellationError() }
       let count = min(window, source.frameCount - first)
-      let bytes = UnsafeMutableRawBufferPointer(start: input.contents(), count: count * (source.detectorPixelCount * 4))
+      let bytes = UnsafeMutableRawBufferPointer(
+        start: input.contents(), count: count * (source.detectorPixelCount * 4))
       try source.readFrames(Array(first..<(first + count)), into: bytes)
       digest.update(bufferPointer: UnsafeRawBufferPointer(bytes))
       guard let command = queue.makeCommandBuffer(),
@@ -83,13 +89,16 @@ public final class MetalEMPADBackground {
     if shouldCancel() { throw CancellationError() }
     // Only a 64 KiB calibration is checked on the host, never the full cube.
     let pixels = UnsafeBufferPointer(
-      start: output.contents().assumingMemoryBound(to: Float.self), count: source.detectorPixelCount)
+      start: output.contents().assumingMemoryBound(to: Float.self), count: source.detectorPixelCount
+    )
     guard pixels.allSatisfy(\.isFinite) else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "Background contains non-finite measurements. Choose a finite dark reference; no correction was applied."
       )
     }
-    digest.update(bufferPointer: UnsafeRawBufferPointer(start: output.contents(), count: (source.detectorPixelCount * 4)))
+    digest.update(
+      bufferPointer: UnsafeRawBufferPointer(
+        start: output.contents(), count: (source.detectorPixelCount * 4)))
     return MetalEMPADBackground(
       source: source, values: output,
       identity: digest.finalize().map { String(format: "%02x", $0) }.joined())

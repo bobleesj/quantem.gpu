@@ -73,7 +73,8 @@ extension MetalEMPADResidentSource {
         "schema": MetalEMPADBackground.schema,
         "identity": background.identitySHA256,
         "values_float32_le": Data(
-          bytesNoCopy: background.values.contents(), count: source.detectorPixelCount * 4, deallocator: .none
+          bytesNoCopy: background.values.contents(), count: source.detectorPixelCount * 4,
+          deallocator: .none
         ).base64EncodedString(),
       ]
     }
@@ -82,7 +83,8 @@ extension MetalEMPADResidentSource {
       id: sourceIdentitySHA256,
       label: source.rawURL.lastPathComponent, masterPath: source.rawURL.path,
       dataFiles: [source.rawURL.path], indexFiles: [], scanRows: source.scanRows,
-      scanCols: source.scanColumns, detectorRows: source.detectorShape.row, detectorCols: source.detectorShape.column,
+      scanCols: source.scanColumns, detectorRows: source.detectorShape.row,
+      detectorCols: source.detectorShape.column,
       sourceDtype: "float32", sourceBytes: source.sourceBytes, badPixelIndices: [],
       kPixelSizeRow: source.diffractionSamplingInverseNanometers ?? microscope.angularRowMrad,
       kPixelSizeCol: source.diffractionSamplingInverseNanometers ?? microscope.angularColumnMrad,
@@ -108,7 +110,10 @@ extension MetalEMPADResidentSource {
       header: [
         "version": 1, "profile": MetalFloatANS.codec,
         "codec": MetalFloatANS.codec,
-        "shape": [source.scanRows, source.scanColumns, source.detectorShape.row, source.detectorShape.column],
+        "shape": [
+          source.scanRows, source.scanColumns, source.detectorShape.row,
+          source.detectorShape.column,
+        ],
         "dtype": "float32", "logical_sha256": logicalSHA256, "chunks": table,
         "empad": description, "scientific_metadata": scientific,
       ], shouldCancel: shouldCancel)

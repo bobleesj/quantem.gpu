@@ -36,7 +36,8 @@ extension MetalRuntimeANSResidentSource {
             throw invalid("Metal could not allocate the encoded snapshot.")
           }
           if span.bytes > 0 {
-            memcpy(buffer.contents(),
+            memcpy(
+              buffer.contents(),
               bytes.baseAddress!.advanced(by: snapshot.dataStart + span.offset), span.bytes)
           }
           if length > span.bytes {
