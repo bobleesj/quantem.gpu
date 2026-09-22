@@ -324,10 +324,15 @@ def test_compact_v3_api_remains_an_explicit_submodule() -> None:
     assert not hasattr(mps, "load_compact_v3_mps")
 
 
-def test_public_dense_and_packed_detector_workflows_match(tmp_path: Path) -> None:
-    """The same public detector calls preserve counts in either representation."""
+def test_legacy_packed_detector_workflows_match_reference(tmp_path: Path) -> None:
+    """Retained low-level packed readers preserve detector products.
+
+    Public acquisition loading is ANS-only; this exercises the isolated legacy
+    adapter directly, not a supported public loading recipe.
+    """
     pytest.importorskip("Metal")
     from quantem.gpu import detector, dpc, io
+    from quantem.gpu.io._packed import _load_packed
 
     path = tmp_path / "science-v3.h5"
     values, _, _ = _fixture(path, raw_exclusions=True, prepared_dpc=True,
@@ -341,7 +346,7 @@ def test_public_dense_and_packed_detector_workflows_match(tmp_path: Path) -> Non
     assert inspection.scan_shape == (8, 16)
     assert inspection.detector_shape == (2, 3)
     assert not io.inspect(path, scan_shape=(16, 8)).ready
-    with io.load(path, backend="mps", representation="packed",
+    with _load_packed(path, backend="mps", device=None,
                  expected_source_sha256=checksum) as packed:
         session = detector.prepare(packed)
         np.testing.assert_array_equal(session.frame(23), dense.reshape(128, 2, 3)[23])
