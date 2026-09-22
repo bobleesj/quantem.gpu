@@ -15,6 +15,8 @@ final class MetalFloatANS {
   private let selected: MTLComputePipelineState
   private let recovery: MTLComputePipelineState
   private let changes: MTLComputePipelineState
+  private let parallelChanges: MTLComputePipelineState
+  private let parallelChangeThreshold: Int
   private let mean: MTLComputePipelineState
   private let device: MTLDevice
   private var scratch: Workspace?
@@ -42,6 +44,8 @@ final class MetalFloatANS {
       let recovery = library.makeFunction(name: "float_ans_recovery_needed"),
       let changes = try? library.makeFunction(
         name: "float_ans_decode_changes", constantValues: constants),
+      let parallelChanges = try? library.makeFunction(
+        name: "float_ans_decode_changes_parallel", constantValues: constants),
       let mean = meanLibrary.makeFunction(name: "float_ans_region_mean")
     else { throw Metal4DSTEMStreamingIOError.invalidRequest("Rebuild the float ANS kernels.") }
     self.decode = try device.makeComputePipelineState(function: decode)
@@ -49,6 +53,11 @@ final class MetalFloatANS {
     self.selected = try device.makeComputePipelineState(function: selected)
     self.recovery = try device.makeComputePipelineState(function: recovery)
     self.changes = try device.makeComputePipelineState(function: changes)
+    self.parallelChanges = try device.makeComputePipelineState(function: parallelChanges)
+    // Override only for controlled A/B tests; large edits amortize the extra
+    // per-lane stream state, while small edits keep the lower-latency kernel.
+    parallelChangeThreshold = Int(
+      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_PARALLEL_CHANGES"] ?? "") ?? 1600
     self.mean = try device.makeComputePipelineState(function: mean)
     let values = RuntimeANSEncoder.tables().decoding
     guard
@@ -150,7 +159,7 @@ final class MetalFloatANS {
     _ chunk: MetalEMPADResidentSource.Chunk, changed: MTLBuffer,
     entries: MTLBuffer, count: Int,
     mask: MTLBuffer, recovery: MTLBuffer, into workspace: Workspace,
-    encoder: MTLComputeCommandEncoder
+    encoder: MTLComputeCommandEncoder, preferParallel: Bool = true
   ) throws {
     encoder.setComputePipelineState(selected)
     for (index, buffer) in [
@@ -165,12 +174,21 @@ final class MetalFloatANS {
       MTLSize(width: pixels, height: 1, depth: 1),
       threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
     if count > 0 {
-      encoder.setComputePipelineState(changes)
+      let parallel = preferParallel && count >= parallelChangeThreshold
+      encoder.setComputePipelineState(parallel ? parallelChanges : changes)
       encoder.setBuffer(entries, offset: 0, index: 6)
       encoder.setBytes(&scans, length: 4, index: 7)
-      encoder.dispatchThreadgroups(
-        MTLSize(width: count, height: 1, depth: 1),
-        threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+      if parallel {
+        var entryCount = UInt32(count)
+        encoder.setBytes(&entryCount, length: 4, index: 13)
+        encoder.dispatchThreads(
+          MTLSize(width: count, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+      } else {
+        encoder.dispatchThreadgroups(
+          MTLSize(width: count, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+      }
     }
   }
 

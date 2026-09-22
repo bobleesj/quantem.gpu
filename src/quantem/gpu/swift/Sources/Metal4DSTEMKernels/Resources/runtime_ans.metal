@@ -315,6 +315,32 @@ kernel void float_ans_decode_changes(
     }
 }
 
+// One independent ANS stream pair per SIMD lane. Each lane preserves its
+// original frame order; only the schedule of independent detector columns
+// changes. The reducer still consumes exactly the same decoded IEEE words.
+kernel void float_ans_decode_changes_parallel(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device uint *words [[buffer(5)]],
+    device const int2 *entries [[buffer(6)]],
+    constant uint &scans [[buffer(7)]],
+    constant uint &entryCount [[buffer(13)]],
+    uint entry [[thread_position_in_grid]]) {
+    if (entry >= entryCount) return;
+    uint pixel = uint(entries[entry].x);
+    uint stream = pixel * 2;
+    if (models[stream] >= 253 && models[stream + 1] >= 253) return;
+    StreamReader low(payload, offsets, models, decoding, stream);
+    StreamReader high(payload, offsets, models, decoding, stream + 1);
+    for (uint frame = 0; frame < scans; ++frame)
+        words[frame * float_ans_pixels + pixel] = low.next() | (high.next() << 16);
+    if (!low.finished() || !high.finished())
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}
+
 // The same compensated, scan-ordered mean as empad_mean_diffraction. Each
 // detector pixel owns its accumulator across ordered chunk dispatches. Unlike
 // a point query, a region must not decode unrelated chunks on every movement.

@@ -1,0 +1,9 @@
+# Parallel changed-column ANS decode
+
+The resident stays lossless ANS at full 100×100 scan and 256×256 detector resolution; no cropping, binning, cache of decoded 4D values, or numerical reorder was introduced. Independent changed detector columns are assigned to active SIMD lanes for large non-reset updates (threshold 1600 changed pixels). Small updates and resets retain the original kernel, as does the existing nonfinite recovery path.
+
+Native Live4DSTEM A/B/A used the same 720-input trajectory and actual distinct image presentations for each arm. The large ADF center gesture produced 78.8/s control, 94.4/s candidate, and 78.5/s control. Its reduction p50 was 9.67, 9.46, 9.72 ms; p95 was 23.02, 11.39, 22.82 ms. The three other ABF/ADF gestures were within the observed control range: ABF center 101.8/101.8/101.8/s, ABF resize 101.7/101.6/101.6/s, ADF resize 105.3/106.0/105.1/s. The candidate's selected scan-DP and all product switches completed without errors. Resident allocation remained 0.73 GB as reported by the app.
+
+For exact arithmetic parity, a separate Metal harness encoded the same 180-mask sequence under the old and new decode schedulers and compared every output byte. Both 256×256 and 128×128 detector fixtures passed `cmp`. The full 256 fixture's output SHA-256 was `4ba0865d4aca393a7b3f3cce4fc25849458afe0f29d5f5ce08488dabe6c116ab` for both arms; the 128 fixture's was `7f69f9c0a34ee33029668e4a5ee307f3578c6cd5ae28de7632fb7b9eaf01a37e` for both arms. Each fixture produced 180 complete 100×100 float32 images, so 3.6 million output words matched exactly across the two fixtures.
+
+The 120 Hz target remains unmet for the large ADF center gesture. The gain is for this Metal float32 ANS detector workload; it does not claim a CUDA/MPS change or an all-dataset guarantee. Full native A/B/A logs and raw parity files were retained outside the repository in local scratch to avoid publishing private acquisition information.
