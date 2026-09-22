@@ -161,6 +161,10 @@ def load_h5_ans(
             cp.cuda.get_current_stream().synchronize()
             read_seconds += time.perf_counter() - before
             if stored_dtype != dtype:
+                if corrector.record["applied"]:
+                    # Masked samples are replaced by the requested correction;
+                    # their sentinels must not participate in the count audit.
+                    raw.reshape(len(raw), -1)[:, corrector.bad] = 0
                 raw = _exact_uint16_counts(raw, first, stop)
             corrector.apply(raw)
             source.append(raw)

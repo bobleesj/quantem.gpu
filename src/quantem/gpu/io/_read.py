@@ -6,6 +6,8 @@ import math
 
 import numpy as np
 
+_READ_BYTES = 32 << 20
+
 
 def _region(value, shape, name):
     if value is None:
@@ -77,7 +79,7 @@ def _check_allocation(shape, dtype, device):
             )
 
 
-def read(data, *, scan_region=None, detector_region=None):
+def _read_region(data, *, scan_region=None, detector_region=None):
     """Return a requested logical region as a Torch tensor on the source GPU."""
     import torch
 
@@ -177,3 +179,73 @@ def read(data, *, scan_region=None, detector_region=None):
         for invalid_row, invalid_column in np.argwhere(~selected_valid):
             tensor[..., int(invalid_row), int(invalid_column)] = 0
     return tensor.reshape(output_shape).contiguous()
+
+
+def _read(data, *, scan_region=None, detector_region=None,
+          pixel_range=None, detector_bin=1):
+    """Decode bounded source windows into a selected scientific tensor."""
+    import operator
+    import torch
+
+    shape = tuple(data.shape)
+    if len(shape) != 4:
+        raise ValueError(f"read() requires 4D-STEM shape; got {shape}.")
+    row0, row1, col0, col1 = _region(scan_region, shape[:2], "scan_region")
+    factor = operator.index(detector_bin)
+    if factor < 1:
+        raise ValueError("detector_bin must be a positive integer.")
+    pixel_start = pixel_stop = None
+    if pixel_range is not None:
+        pixel_start, pixel_stop = pixel_range
+        width = shape[-1]
+        detector_region = (
+            pixel_start // width, (pixel_stop + width - 1) // width, 0, width,
+        )
+    dr0, dr1, dc0, dc1 = _region(detector_region, shape[2:], "detector_region")
+    if (dr1 - dr0) % factor or (dc1 - dc0) % factor:
+        raise ValueError("Selected detector dimensions must be divisible by detector_bin.")
+    # Bound decoded native frames, including pixels outside the requested crop.
+    frames_per_read = max(1, _READ_BYTES // (math.prod(shape[2:]) * data.dtype.itemsize))
+    columns = col1 - col0
+    rows_per_read = max(1, frames_per_read // columns)
+    columns_per_read = min(columns, frames_per_read)
+    result = None
+    for row in range(row0, row1, rows_per_read):
+        stop_row = min(row + rows_per_read, row1)
+        for column in range(col0, col1, columns_per_read):
+            stop_column = min(column + columns_per_read, col1)
+            block = _read_region(
+                data, scan_region=(row, stop_row, column, stop_column),
+                detector_region=(dr0, dr1, dc0, dc1),
+            )
+            if pixel_start is not None:
+                offset = pixel_start - dr0 * shape[-1]
+                block = block.flatten(2)[..., offset:offset + pixel_stop - pixel_start]
+            elif factor != 1:
+                if block.is_floating_point():
+                    dtype = block.dtype
+                else:
+                    bounds = np.iinfo(data.dtype)
+                    dtype = (
+                        torch.int32
+                        if bounds.min * factor**2 >= -(2**31)
+                        and bounds.max * factor**2 < 2**31 else torch.int64
+                    )
+                block = block.reshape(
+                    *block.shape[:2], (dr1 - dr0) // factor, factor,
+                    (dc1 - dc0) // factor, factor,
+                ).sum((3, 5), dtype=dtype)
+            if result is None:
+                output_shape = (row1 - row0, col1 - col0, *block.shape[2:])
+                dtype = np.dtype(str(block.dtype).removeprefix("torch."))
+                _check_allocation(output_shape, dtype, block.device)
+                result = torch.empty(output_shape, dtype=block.dtype, device=block.device)
+            result[row - row0:stop_row - row0, column - col0:stop_column - col0] = block
+            del block
+    return result
+
+
+def read(data, *, scan_region=None, detector_region=None, detector_bin=1):
+    """Read a scientific region or preview with automatic bounded decoding."""
+    return _read(data, scan_region=scan_region, detector_region=detector_region,
+                 detector_bin=detector_bin)

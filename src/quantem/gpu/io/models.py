@@ -193,13 +193,19 @@ class FourDSTEMData(NamedTuple):
         *,
         scan_region: tuple[int, int, int, int] | None = None,
         detector_region: tuple[int, int, int, int] | None = None,
+        detector_bin: int = 1,
     ):
-        """Read one bounded logical region as a Torch tensor on the source GPU.
+        """Read selected measurements as a Torch tensor on the source GPU.
 
-        Regions use ``(row_start, row_stop, column_start, column_stop)`` with
-        exclusive stops. The resident representation, decoding, and transfer
-        scheduling remain automatic. A complete read is allowed only when its
-        dense tensor fits the accelerator's current working memory.
+        Regions use ``(row_start, row_stop, column_start, column_stop)``.
+        The result keeps four axes. ``detector_bin`` sums square detector
+        bins; selected dimensions must be divisible by the factor.
+        Decoding and transfer batch sizes remain automatic.
+
+        Examples
+        --------
+        >>> preview = loaded.read(detector_bin=4)
+        >>> pattern = loaded.read(scan_region=(10, 11, 20, 21))[0, 0]
         """
         from ._read import read
 
@@ -207,6 +213,7 @@ class FourDSTEMData(NamedTuple):
             self,
             scan_region=scan_region,
             detector_region=detector_region,
+            detector_bin=detector_bin,
         )
 
     def to_representation(self, representation: DataRepresentation | str) -> FourDSTEMData:

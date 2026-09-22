@@ -54,6 +54,12 @@ def load_array_resident(
     shape, dtype = tuple(shape), np.dtype(dtype)
     source_dtype = dtype
     peak_bytes = 0
+    correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
+    # Corrected pixels are replaced before encoding and never contribute to
+    # the median of a valid neighbor. Audit only the counts we retain.
+    retained_pixels = (
+        np.asarray(pixel_mask) == 0 if correction["applied"] else True
+    )
     exact_float_narrowing = dtype == np.dtype("float64")
     if exact_float_narrowing:
         if not auto_narrow:
@@ -113,12 +119,15 @@ def load_array_resident(
         if frame_bytes > MAX_INGEST_BYTES:
             raise MemoryError("One detector frame exceeds the 32 MiB ingestion limit.")
         audit_scans = min(512, MAX_INGEST_BYTES // frame_bytes)
-        minimum, maximum = np.iinfo(dtype).max, np.iinfo(dtype).min
+        minimum = 0 if correction["applied"] else np.iinfo(dtype).max
+        maximum = np.iinfo(dtype).min
         for first in range(0, math.prod(shape[:2]), audit_scans):
             block = read_frames(first, min(first + audit_scans, math.prod(shape[:2])))
-            minimum, maximum = min(minimum, int(block.min())), max(
-                maximum, int(block.max())
+            minimum = min(
+                minimum,
+                int(block.min(where=retained_pixels, initial=np.iinfo(dtype).max)),
             )
+            maximum = max(maximum, int(block.max(where=retained_pixels, initial=0)))
             peak_bytes = max(peak_bytes, block.nbytes)
             if minimum < 0 or maximum > 65535:
                 raise NotImplementedError(
@@ -151,7 +160,6 @@ def load_array_resident(
             "One detector frame and its exact conversion exceed the 32 MiB ingestion limit."
         )
     block_scans = min(512, MAX_INGEST_BYTES // staging_bytes)
-    correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
     valid = np.ones(shape[2:], bool)
     if pixel_mask is not None and not correction["applied"]:
         valid &= np.asarray(pixel_mask) == 0
@@ -227,7 +235,23 @@ def load_array_resident(
                 peak_bytes = max(peak_bytes, block.nbytes)
                 if source_dtype != dtype:
                     # Recheck each window in case the input changes after the audit.
-                    narrowed = block.astype(dtype)
+                    if not exact_float_narrowing and (
+                        block.min(where=retained_pixels, initial=0) < 0
+                        or block.max(where=retained_pixels, initial=0)
+                        > np.iinfo(dtype).max
+                    ):
+                        raise ValueError(
+                            "Counts changed after the range audit; reopen the acquisition."
+                        )
+                    if correction["applied"]:
+                        # Do not cast detector sentinels into plausible counts.
+                        # The selected correction still runs on the GPU below.
+                        narrowed = np.zeros(block.shape, dtype=dtype)
+                        np.copyto(
+                            narrowed, block, where=retained_pixels, casting="unsafe"
+                        )
+                    else:
+                        narrowed = block.astype(dtype)
                     if exact_float_narrowing:
                         restored = narrowed.astype(np.float64)
                         if not np.array_equal(
@@ -238,10 +262,6 @@ def load_array_resident(
                             )
                         peak_bytes = max(peak_bytes, block.size * 24)
                         del restored
-                    elif block.min() < 0 or block.max() > np.iinfo(dtype).max:
-                        raise ValueError(
-                            "Counts changed after the range audit; reopen the acquisition."
-                        )
                     peak_bytes = max(peak_bytes, block.nbytes + narrowed.nbytes)
                     block = narrowed
                     del narrowed

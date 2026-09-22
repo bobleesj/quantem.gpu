@@ -25,6 +25,12 @@ FLOAT = "tests/hardware/test_float_qem_resident.py::"
 STRICT = "tests/hardware/test_ans_io_acceptance.py::"
 NATIVE = "tests/hardware/metal/test_qem_acceptance.py::"
 GROUPS = {
+    "Resident selections and previews": {
+        "python": ["tests/hardware/test_resident_selection.py"],
+    },
+    "Masked uint32 detector counts": {
+        "python": ["tests/hardware/test_masked_count_narrowing.py"],
+    },
     "NumPy uint8/uint16": {
         "python": [
             ARRAY + f"test_integer_original_native_outputs_and_qem[{dtype}-numpy]"
