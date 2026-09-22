@@ -43,6 +43,10 @@ import Native4DSTEMIO
       memoryBudgetBytes: UInt64(device.recommendedMaxWorkingSetSize))
     defer { reopened.releaseResidentStorage() }
     precondition(reopened.source.detectorShape == original.detectorShape)
+    let capabilities = try Metal4DSTEMResidentCapabilities.empad(reopened)
+    precondition(capabilities.detectorRows == original.detectorShape.row)
+    precondition(capabilities.detectorColumns == original.detectorShape.column)
+    precondition(capabilities.logicalTensorBytes == UInt64(original.frameCount * frameBytes))
     let mask = device.makeBuffer(length: source.detectorPixelCount, options: .storageModeShared)!
     let virtual = device.makeBuffer(length: source.frameCount * 4, options: .storageModeShared)!
     let selected = Array(Set([0, source.detectorPixelCount / 2, source.detectorPixelCount - 1])).sorted()

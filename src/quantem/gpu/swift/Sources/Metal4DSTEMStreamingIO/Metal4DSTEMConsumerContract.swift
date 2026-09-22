@@ -270,7 +270,8 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
         "EMPAD resident storage was released. Reload it before requesting capabilities.")
     }
-    let shape = [source.source.scanRows, source.source.scanColumns, 128, 128]
+    let detector = source.source.detectorShape
+    let shape = [source.source.scanRows, source.source.scanColumns, detector.row, detector.column]
     let logicalBytes = try Metal4DSTEMResidentReceipt.logicalBytes(shape: shape, bytesPerValue: 4)
     let storageSchema = "quantem.gpu.float32-bit-lanes-rans/v1"
     let receipt = Metal4DSTEMResidentReceipt(
@@ -299,7 +300,7 @@ public struct Metal4DSTEMResidentCapabilities: Codable, Equatable, Sendable {
     return Self(
       schema: currentSchema, representation: .encoded,
       sourceIdentitySHA256: source.sourceIdentitySHA256,
-      scanRows: shape[0], scanColumns: shape[1], detectorRows: 128, detectorColumns: 128,
+      scanRows: shape[0], scanColumns: shape[1], detectorRows: shape[2], detectorColumns: shape[3],
       storageSchema: storageSchema, workingDtype: "float32", exactIntegerBits: 0,
       logicalTensorBytes: logicalBytes, completeSourceResident: true,
       residentBytes: source.residentBytes, residentStorageBytes: source.residentBytes,

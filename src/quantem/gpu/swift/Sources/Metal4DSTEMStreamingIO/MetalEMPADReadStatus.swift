@@ -38,7 +38,7 @@ func startEMPADRead(
   source: NativeEMPADSource, frames: Range<Int>, into buffer: MTLBuffer,
   status: EMPADReadStatus, queue: DispatchQueue
 ) {
-  let bytes = frames.count * 16384 * 4
+  let bytes = frames.count * source.detectorPixelCount * 4
   let retained = MetalInputReadBuffer(buffer: buffer)
   let indices = Array(frames)
   queue.async {
