@@ -50,7 +50,7 @@ def test_failed_mps_metadata_releases_storage_and_preserves_error(
 
     monkeypatch.setattr(loading, "_packed_metadata", unavailable_metadata)
     with pytest.raises(ValueError) as caught:
-        io.load(source, backend="mps")
+        loading._load_packed(source, backend="mps", expected_source_sha256=None, device=None)
     assert caught.value is failure
     assert resident.release_count == 1
     if cleanup_fails:

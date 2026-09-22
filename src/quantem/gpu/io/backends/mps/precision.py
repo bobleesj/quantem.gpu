@@ -346,9 +346,14 @@ def _accumulate_measurement(errors, counts, exponent, report, values):
         totals.release()
 
 
+# Share the partition between fused and separate measurement so their
+# floating-point accumulation order (and saved error statistics) agrees.
+_MEASUREMENT_PARTIALS = 65536
+
+
 def measure(original, restored, report):
     p, f = _parameters(original, report)
-    p[14] = p[15] = min(original.size, 8192)
+    p[14] = p[15] = min(original.size, _MEASUREMENT_PARTIALS)
     errors = MetalArray((p[14], 4), np.float32)
     counts = MetalArray((p[14], 4), np.uint32)
     try:
@@ -358,10 +363,6 @@ def measure(original, restored, report):
     finally:
         errors.release()
         counts.release()
-
-
-# Supply enough independent work while keeping partial statistics bounded.
-_MEASUREMENT_PARTIALS = 65536
 
 
 def encode_measure(values, report):

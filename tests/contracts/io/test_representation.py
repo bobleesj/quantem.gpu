@@ -71,46 +71,19 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
     np.testing.assert_array_equal(loaded.data, values)
 
 
-def test_existing_lossless_pack_source_selects_packed_loader(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("backend", ["cuda", "mps"])
+def test_existing_lossless_pack_source_requires_reexport(
+    monkeypatch, tmp_path, backend
 ) -> None:
-    """A prepared lossless source reaches the packed backend without API flags."""
+    """Older packed acquisitions cannot silently bypass ANS residency."""
     load_module = import_module("quantem.gpu.io.load")
     source = tmp_path / "prepared.h5"
     source.write_bytes(b"QGPUH5\0\x01" + b"prepared source")
-    expected = load_module.FourDSTEMData(
-        object(),
-        {
-            "representation": "packed",
-            "residency": "device",
-            "working_shape": (2, 3, 4, 5),
-            "working_dtype": "uint16",
-            "working_logical_tensor_bytes": 240,
-            "physical_resident_bytes": 80,
-            "lossless_exact": True,
-        },
-    )
-    calls = {}
-
-    def fake_load(source, **kwargs):
-        calls["source"] = source
-        calls.update(kwargs)
-        return expected
-
-    monkeypatch.setattr(load_module, "_load_packed", fake_load)
-
-    loaded = io.load(source, backend="mps", verbose=False)
-
-    assert loaded is expected
-    assert loaded.representation is io.DataRepresentation.PACKED
-    assert loaded.logical_bytes == 240
-    assert loaded.resident_bytes == 80
-    assert calls == {
-        "source": source,
-        "backend": "mps",
-        "expected_source_sha256": None,
-        "device": None,
-    }
+    backends = import_module("quantem.gpu.io.backends")
+    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    monkeypatch.setattr(load_module, "_load_packed", lambda *a, **k: pytest.fail("packed dispatch"))
+    with pytest.raises(NotImplementedError, match="save a new .qem"):
+        io.load(source, backend=backend, verbose=False)
 
 
 def test_dense_request_does_not_silently_expand_lossless_pack(tmp_path) -> None:
@@ -119,7 +92,7 @@ def test_dense_request_does_not_silently_expand_lossless_pack(tmp_path) -> None:
     source.write_bytes(b"QGPUH5\0\x01" + b"prepared source")
 
     with pytest.raises(ValueError, match="Dense expansion"):
-        io.load(source, representation="dense", verbose=False)
+        io.load(source, backend="cpu", representation="dense", verbose=False)
 
 
 def test_representation_values_do_not_encode_dtype() -> None:
@@ -233,7 +206,7 @@ def test_packed_scan_order_is_not_silently_ignored(tmp_path) -> None:
     source = tmp_path / "prepared.h5"
     source.write_bytes(b"QGPUH5\0\x01")
     with pytest.raises(ValueError, match="already declare row-major"):
-        io.load(source, scan_order="serpentine")
+        io.load(source, backend="cpu", scan_order="serpentine")
 
 
 def test_dense_hash_request_is_not_silently_ignored(tmp_path) -> None:
@@ -245,7 +218,20 @@ def test_dense_hash_request_is_not_silently_ignored(tmp_path) -> None:
             "counts.h5", "/entry/data/data"
         )
     with pytest.raises(ValueError, match="external shards"):
-        io.load(source, representation="dense", expected_source_sha256="0" * 64)
+        io.load(source, backend="cpu", representation="dense", expected_source_sha256="0" * 64)
+
+
+@pytest.mark.parametrize("backend", ["cuda", "mps"])
+@pytest.mark.parametrize("representation", ["dense", "packed"])
+@pytest.mark.parametrize("extension", ["h5", "dm4", "npy", "raw", "emd", "qem"])
+def test_gpu_acquisitions_reject_expansion_before_opening(
+    monkeypatch, backend, representation, extension,
+):
+    """Selecting GPU residency never expands an acquisition as a loading option."""
+    backends = import_module("quantem.gpu.io.backends")
+    monkeypatch.setattr(backends, "resolve_backend", lambda requested: backend)
+    with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
+        io.load(f"not-opened.{extension}", backend=backend, representation=representation)
 
 
 def test_inspection_rejects_truncated_packed_index(tmp_path) -> None:

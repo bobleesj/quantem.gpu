@@ -4,6 +4,10 @@ from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import os
+import subprocess
+import sys
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,3 +36,29 @@ def test_runner_translates_node_ids_without_changing_pytest_options(monkeypatch)
         "tests/contracts/io/test_load.py::test_name", "-q"
     ]
     assert calls[0][1]["cwd"] == ROOT
+
+
+@pytest.mark.parametrize("regular_parent", [False, True])
+def test_runner_tests_checkout_even_with_installed_parent_package(tmp_path, regular_parent):
+    """A local test run must not certify a stale installed quantem.gpu copy."""
+    installed = tmp_path / "installed" / "quantem"
+    installed.mkdir(parents=True)
+    if regular_parent:
+        (installed / "__init__.py").write_text("")
+    (installed / "gpu").mkdir()
+    (installed / "gpu" / "__init__.py").write_text(
+        "raise RuntimeError('stale installed backend imported')\n"
+    )
+    check = tmp_path / "test_checkout.py"
+    check.write_text(
+        "def test_checkout():\n"
+        "    from pathlib import Path\n"
+        "    import quantem.gpu\n"
+        f"    assert Path(quantem.gpu.__file__).resolve().is_relative_to({str(ROOT / 'src')!r})\n"
+    )
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/run_tests.py"), str(check), "-q"],
+        env={**os.environ, "PYTHONPATH": str(installed.parent)},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

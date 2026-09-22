@@ -49,7 +49,20 @@ def main(argv=None):
         value for value in (str(ROOT / "src"), environment.get("PYTHONPATH")) if value
     )
     return subprocess.run(
-        [sys.executable, "-m", "pytest", *translated], cwd=ROOT, env=environment
+        [sys.executable, "-c", """
+import sys
+from pathlib import Path
+import quantem
+
+root = Path.cwd()
+quantem.__path__ = [str(root / "src/quantem"), *quantem.__path__]
+import quantem.gpu
+import pytest
+
+if not Path(quantem.gpu.__file__).resolve().is_relative_to(root / "src"):
+    raise RuntimeError("Tests imported another checkout; refusing stale installed code.")
+raise SystemExit(pytest.main(sys.argv[1:]))
+""", *translated], cwd=ROOT, env=environment
     ).returncode
 
 

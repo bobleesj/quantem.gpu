@@ -26,7 +26,7 @@ def test_public_load_forwards_one_source_seal_and_rejects_conflicts(
     monkeypatch.setattr(
         import_module("quantem.gpu.io.load"), "_load_packed", load_source
     )
-    assert io.load(source, source_integrity=integrity) is marker
+    assert io.load(source, backend="cpu", source_integrity=integrity) is marker
     assert calls[0][1]["source_integrity"] is integrity
     assert calls[0][1]["expected_source_sha256"] == expected
     with pytest.raises(ValueError, match="conflicts"):

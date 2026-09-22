@@ -182,6 +182,11 @@ def test_float_original_to_qem_and_native_patterns(
         assert loaded.representation.value == "encoded"
         assert loaded.metadata["backend"] == backend
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
+        if format_name in ("dm3", "dm4"):
+            correction = loaded.metadata["hot_pixel_correction"]
+            assert correction["method"] == "median"
+            assert correction["pixel_count"] == 0
+            assert correction["applied"] is False
         session = detector.prepare(loaded)
         pattern = session.frame(34, output="native")
         assert not isinstance(pattern, np.ndarray)

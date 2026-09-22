@@ -98,9 +98,8 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
             np.testing.assert_array_equal(
                 selected.read().cpu(), expected[1:5, 2:5, 1:6, 2:8]
             )
-        with io.load(path, dtype="float16", backend=BACKEND, verbose=False) as reduced:
-            np.testing.assert_array_equal(reduced.read().cpu(), expected.astype(np.float16).astype(np.float32))
-            assert reduced.metadata["precision"]["prior_conversion"]["version"] == 2
+        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
+            io.load(path, dtype="float16", backend=BACKEND, verbose=False)
         # The returned Torch allocation remains valid after subsequent reads/close.
         retained = loaded.read(scan_region=(1, 2, 0, 1))
     np.testing.assert_array_equal(retained.cpu(), expected[1:2, :1])

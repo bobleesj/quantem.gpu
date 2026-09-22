@@ -5162,10 +5162,10 @@ def load(
     Generic HDF5 layouts use bounded storage reads where the direct compressed
     chunk decoder cannot apply. Saved copies retain calibration and provenance.
 
-    Fractional intensity exports support ``dtype="float16"`` and
-    ``dtype="scaled_uint16"`` on CUDA and Metal/MPS. They remain compressed and
-    print a measured conversion report. Scaled uint16 defaults to ANS residency
-    (representation="encoded"); float16 remains bit-packed. Scaled codes restore their saved
+    Fractional intensity exports support explicit ``dtype="scaled_uint16"``
+    on CUDA and Metal/MPS. They remain ANS encoded and print a measured
+    conversion report. The older bit-packed float16 acquisition profile is
+    rejected; omit dtype to preserve original float32 bits. Scaled codes restore their saved
     intensity units for detector queries. ``scan_region`` and
     ``detector_region`` select values before resident allocation. New scaled
     storage automatically calibrates bounded regions in one pass; saved files
@@ -5177,27 +5177,23 @@ def load(
     preserve the original float32 file for exact scientific analysis.
 
     Here ``dtype`` selects stored precision, not calculation precision or a
-    compression codec. ``"float16"`` stores half-precision intensities;
-    ``"scaled_uint16"`` stores calibrated integer codes. Both precision readers
-    reconstruct float32 intensities on the GPU; neither recovers discarded
+    compression codec. ``"scaled_uint16"`` stores calibrated integer codes
+    and reconstructs float32 intensities on the GPU; it does not recover discarded
     precision. Plain ``"uint16"`` is not calibrated scaled storage.
     Omit ``dtype`` when reopening a precision file to retain its recorded
     values and calibration. ``"uint16_scaled"`` is not a supported alias.
 
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
-    on CUDA and MPS; request ``representation="packed"`` for bit-packed storage.
-    A first-seen source needs one bounded measurement pass and one packing pass;
-    a validated width-plan cache removes the measurement pass on later loads.
-    All packed sources remain resident when this call returns. No binning or
-    clipping is applied. Stored detector-mask pixels use GPU median replacement
-    by default before packing.
+    on CUDA and MPS. Each result remains an independent encoded owner, not a
+    dense stacked array. Stored detector-mask pixels use GPU median replacement
+    by default before encoding.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
-    how the complete logical data is retained. Existing Lossless Pack Format
-    sources select their saved representation. Ordinary HDF5 selects
-    ``"encoded"`` automatically on CUDA and MPS. Pass
-    ``representation="dense"`` explicitly when an unpacked array is required.
+    how the complete logical data is retained. Ordinary HDF5 selects
+    ``"encoded"`` automatically on CUDA and MPS. Dense/packed GPU overrides
+    fail before allocation. Use ``loaded.read(scan_region=...)`` for bounded
+    tensor access, and re-export older packed files from their originals.
 
     Self-contained ANS files default to ``representation="encoded"`` and retain
     stored native counts. On MPS, pass ``stack=False`` with a list of compatible
@@ -5206,8 +5202,7 @@ def load(
     ``representation="paired"`` streams complete uint16
     acquisitions (one path or a list, each returned as its own source) into
     the CUDA paired-count tANS resident layout, and a saved paired resident
-    form reopens under the same name without decoding. ``representation="packed"`` requests an explicit
-    encoded-to-bitpacked GPU transcode where implemented. CPU reference expansion
+    form reopens under the same name without decoding. CPU reference expansion
     requires ``backend="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
     ``apply_mask=None`` keeps historical masking behavior for explicitly dense
@@ -5222,8 +5217,8 @@ def load(
     count is at most 255. Use ``"u16"`` or the native dtype for exact
     raw-count workflows, widening detector sums when required.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
-    ``output="native"`` preserves the backend-native payload; use
-    ``output="torch"`` when the consumer expects a Torch tensor.
+    ``output="native"`` preserves the backend-native payload. Use a bounded
+    ``read`` request when the consumer expects a Torch tensor.
 
     ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
     acquisition loaded into resident packed or encoded storage. Stored detector-mask
@@ -5253,9 +5248,9 @@ def load(
         ``"dense"``, ``"packed"``, or ``"encoded"``. The authenticated storage
         schema selects the exact decoder within each representation.
         When omitted, ordinary HDF5 uses encoded CUDA/MPS storage; saved
-        compact sources retain their recorded representation. Request
-        ``representation="dense"`` explicitly for dense arrays or transformed
-        selections. Unsupported
+        ANS sources retain their recorded representation. GPU dense/packed
+        overrides are rejected before loading; use bounded ``read`` selections
+        from the encoded acquisition. Unsupported
         source/representation/backend combinations raise rather than transform
         implicitly. Representation never changes scan coverage,
         detector coverage, binning, calibration, or scientific dtype.
@@ -5310,6 +5305,19 @@ def load(
 
     hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
 
+    if representation is not None and DataRepresentation.parse(representation) in {
+        DataRepresentation.DENSE, DataRepresentation.PACKED,
+    }:
+        from .backends import resolve_backend
+
+        if resolve_backend(backend) in {"cuda", "mps"}:
+            raise NotImplementedError(
+                "GPU acquisitions must remain ANS encoded; omit representation "
+                "or use representation='encoded'. Read bounded regions from the "
+                "loaded acquisition instead of expanding the full cube. "
+                "Tiny reference arrays require backend='cpu'."
+            )
+
     precision = precision_name(dtype)
     precision_sources = [source] if isinstance(source, (str, os.PathLike)) or (precision and hasattr(source, "shape")) else list(source)
     from ._streamed_file import is_streamed_file, load_streamed
@@ -5325,7 +5333,7 @@ def load(
     array_sources = [isinstance(path, (str, os.PathLike))
                      and Path(path).suffix.lower() in {".npy", ".xml", ".raw"}
                      for path in precision_sources]
-    if any(array_sources):
+    if any(array_sources) and not precision:
         from .backends import resolve_backend
 
         array_backend = resolve_backend(backend)
@@ -5425,6 +5433,15 @@ def load(
                 loader = load_streamed if all(snapshots) else load_dm
                 loaded.append(loader(path, backend=backend, representation=representation,
                                       scan_shape=scan_shape, device=device, verbose=verbose))
+                if all(dm_sources):
+                    from ._hot_pixels import hot_pixel_record
+
+                    # DM has no stored detector-validity mask. Record the policy
+                    # without pretending that unflagged measurements were changed.
+                    loaded[-1].metadata["hot_pixel_correction"] = hot_pixel_record(
+                        None, hot_pixel_correction,
+                        backend=loaded[-1].metadata["backend"],
+                    )
         except BaseException:
             for item in loaded:
                 item.close()
@@ -5445,6 +5462,12 @@ def load(
             if storage_types == {"scaled_uint16"}
             else DataRepresentation.PACKED
         )
+        if expected_representation is DataRepresentation.PACKED:
+            raise NotImplementedError(
+                "This precision profile requires a full packed GPU allocation. "
+                "Reopen the original float32 acquisition without dtype conversion "
+                "to use lossless ANS residency."
+            )
         if representation is not None and DataRepresentation.parse(representation) is not expected_representation:
             raise ValueError(
                 f"This precision uses representation='{expected_representation.value}'; "
@@ -5533,6 +5556,16 @@ def load(
             raise ValueError("expected_source_sha256 conflicts with source_integrity.")
         expected_source_sha256 = source_integrity.whole_file_sha256
     paths = _source_paths(source)
+    if any(DataRepresentation.detect_source(path) is DataRepresentation.PACKED
+           for path in paths):
+        from .backends import resolve_backend
+
+        if resolve_backend(backend) in {"cuda", "mps"}:
+            raise NotImplementedError(
+                "ANS loading requires an encoded source for prepared files. "
+                "Packed acquisition files cannot be opened as ANS residents. "
+                "Reopen the original acquisition and save a new .qem copy."
+            )
     if representation is None and paths and all(
         DataRepresentation.detect_source(path) is DataRepresentation.DENSE
         for path in paths

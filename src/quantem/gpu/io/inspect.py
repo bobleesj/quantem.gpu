@@ -190,8 +190,13 @@ def inspect(
         metadata = {}
     from ._prepared_stack_metadata import prepared_stack_metadata
 
-    with h5py.File(filepath, "r") as source:
-        prepared = prepared_stack_metadata(source["dp"]) if "dp" in source else {}
+    prepared = {}
+    try:
+        with h5py.File(filepath, "r") as source:
+            prepared = prepared_stack_metadata(source["dp"]) if "dp" in source else {}
+    except (OSError, KeyError, TypeError, ValueError):
+        # Preserve the readiness diagnostic for corrupt or incomplete acquisitions.
+        pass
     if prepared:
         metadata.update(prepared)
         if dataset_path is None and prepared.get("scan_shape") is not None:

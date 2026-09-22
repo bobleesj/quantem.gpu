@@ -29,6 +29,10 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     )
     source = tmp_path / "source.npy"
     np.save(source, values)
+    if dtype == "float16":
+        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
+            io.load(source, dtype=dtype, backend="mps", verbose=False)
+        return
     loaded = io.load(source, dtype=dtype, backend="mps", verbose=False)
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
@@ -70,6 +74,10 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     original = make_precision_fixture()
     source = tmp_path / "shared_oracle.npy"
     np.save(source, original)
+    if dtype == "float16":
+        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
+            io.load(source, dtype=dtype, backend="mps", verbose=False)
+        return
     with io.load(source, dtype=dtype, backend="mps", verbose=False) as loaded:
         report = loaded.metadata["precision"]
         calibration = report["regions"][0] if report.get("version") == 2 else report
