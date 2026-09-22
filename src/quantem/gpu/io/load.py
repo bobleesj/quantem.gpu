@@ -5221,7 +5221,7 @@ def load(
     ``read`` request when the consumer expects a Torch tensor.
 
     ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
-    acquisition loaded into resident packed or encoded storage. Stored detector-mask
+    acquisition loaded into resident ANS storage. Stored detector-mask
     pixels are replaced on the selected GPU by the integer local 3x3 median
     before encoding. Use ``"zero"`` for zero replacement or ``"none"`` to
     retain raw masked-pixel counts.
@@ -5308,9 +5308,8 @@ def load(
     if representation is not None and DataRepresentation.parse(representation) in {
         DataRepresentation.DENSE, DataRepresentation.PACKED,
     }:
-        from .backends import resolve_backend
-
-        if resolve_backend(backend) in {"cuda", "mps"}:
+        # Residency policy does not depend on whether a device is available.
+        if backend in (None, "auto", "cuda", "mps"):
             raise NotImplementedError(
                 "GPU acquisitions must remain ANS encoded; omit representation "
                 "or use representation='encoded'. Read bounded regions from the "
@@ -5558,9 +5557,7 @@ def load(
     paths = _source_paths(source)
     if any(DataRepresentation.detect_source(path) is DataRepresentation.PACKED
            for path in paths):
-        from .backends import resolve_backend
-
-        if resolve_backend(backend) in {"cuda", "mps"}:
+        if backend in (None, "auto", "cuda", "mps"):
             raise NotImplementedError(
                 "ANS loading requires an encoded source for prepared files. "
                 "Packed acquisition files cannot be opened as ANS residents. "

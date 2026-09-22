@@ -8,12 +8,19 @@ import pytest
 from quantem.gpu import io
 
 
-def test_encoded_request_requires_an_encoded_source(tmp_path):
+@pytest.mark.parametrize("backend", ["auto", "cuda", "mps"])
+def test_encoded_request_requires_an_encoded_source(tmp_path, monkeypatch, backend):
+    from quantem.gpu.io import backends
+
+    def unavailable_backend(_backend):
+        raise AssertionError("Source policy must be checked before probing a device")
+
+    monkeypatch.setattr(backends, "resolve_backend", unavailable_backend)
     prepared = tmp_path / "packed.h5"
     prepared.write_bytes(b"QGPUH5\0\x01")
     assert io.DataRepresentation.detect_source(prepared).value == "packed"
     with pytest.raises(NotImplementedError, match="requires an encoded source"):
-        io.load(prepared, representation="encoded")
+        io.load(prepared, backend=backend, representation="encoded")
 
 
 def test_removed_names_are_rejected_before_saving_or_loading(tmp_path):

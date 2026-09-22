@@ -162,7 +162,7 @@ def test_prepared_folder_uses_existing_io_load(tmp_path, monkeypatch, representa
     )
     np.testing.assert_array_equal(session.frame(0), source.counts[:, 0, 0])
     for conversion in ("dense", "packed"):
-        with pytest.raises(NotImplementedError, match="Conversion is not implemented"):
+        with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
             io.load(tmp_path, backend="cuda", representation=conversion, verbose=False)
     assert calls == [(tmp_path, 1)]  # Rejected conversions did not reload the source.
 

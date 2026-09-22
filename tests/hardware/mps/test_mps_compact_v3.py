@@ -366,13 +366,13 @@ def test_public_dense_and_packed_detector_workflows_match(tmp_path: Path) -> Non
     assert packed.data.is_released
 
 
-def test_public_packed_load_rejects_legacy_raw_loss_without_allocating(tmp_path: Path) -> None:
-    """Explicit mask-only readers stay separate from raw-lossless public loading."""
+def test_public_packed_load_rejects_dense_residency_without_allocating(tmp_path: Path) -> None:
+    """Legacy packed readers cannot bypass the public ANS residency policy."""
     from quantem.gpu import io
 
     path = tmp_path / "mask-only.h5"
     _fixture(path, raw_exclusions=False)
-    with pytest.raises(ValueError, match="Raw reconstruction requires"):
+    with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
         io.load(path, backend="mps", representation="packed")
 
 
