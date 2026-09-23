@@ -325,9 +325,11 @@ def save_array(
                     output.write(encoded)
                 output.flush()
                 os.fsync(output.fileno())
-            os.link(temporary, path)
+            from ._publish import publish_file
+
+            publish_file(temporary, path)
         finally:
-            os.unlink(temporary)
+            Path(temporary).unlink(missing_ok=True)
 
 
 def _read_array(handle, start: int, span: dict, dtype: str) -> np.ndarray:
