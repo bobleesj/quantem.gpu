@@ -238,3 +238,48 @@ def test_sparse_events_and_rare_counts_reconstruct_every_scan(tmp_path):
         np.testing.assert_array_equal(
             session.frame(i, output="native").get(), raw[0, i]
         )
+
+
+@pytest.mark.parametrize("method", ["median", "zero"])
+def test_uint32_master_sentinels_are_corrected_before_encoding(tmp_path, method):
+    """Inspect corrected patterns without narrowing valid detector counts."""
+    raw = (np.arange(10 * 8 * 8).reshape(10, 8, 8) * 7 % 251).astype(np.uint32)
+    mask = np.zeros((8, 8), np.uint8)
+    mask[0, 0] = 16
+    mask[2, 3] = 20
+    raw[:, mask != 0] = np.iinfo(np.uint32).max
+    expected = _median_corrected(raw, mask) if method == "median" else raw.copy()
+    if method == "zero":
+        expected[:, mask != 0] = 0
+    import hdf5plugin
+
+    path = tmp_path / "sentinel_master.h5"
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("entry/data/data_000001", data=raw,
+                              chunks=(1, 8, 8), **hdf5plugin.Bitshuffle())
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
+    with io.load(
+        path, backend="cuda", representation="encoded", scan_shape=(2, 5),
+        apply_mask=False, hot_pixel_correction=method, verbose=False,
+    ) as loaded:
+        session = detector.prepare(loaded)
+        try:
+            for index in (0, 9):
+                np.testing.assert_array_equal(session.frame(index), expected[index])
+            np.testing.assert_array_equal(
+                session.masked_sum(np.ones((8, 8), bool)),
+                expected.sum((-2, -1), dtype=np.uint64).reshape(2, 5),
+            )
+        finally:
+            session.close()
+        assert loaded.metadata["hot_pixel_correction"]["applied"] is True
+        assert loaded.metadata["file_counts_exact"] is False
+    with h5py.File(path) as handle:
+        np.testing.assert_array_equal(handle["entry/data/data_000001"][:], raw)
+
+    # A genuine over-range count at a valid pixel must never be clipped.
+    with h5py.File(path, "r+") as handle:
+        handle["entry/data/data_000001"][0, 1, 1] = 70000
+    with pytest.raises(ValueError, match="counts above 65535"):
+        io.load(path, backend="cuda", representation="encoded", scan_shape=(2, 5),
+                apply_mask=False, hot_pixel_correction=method, verbose=False)
