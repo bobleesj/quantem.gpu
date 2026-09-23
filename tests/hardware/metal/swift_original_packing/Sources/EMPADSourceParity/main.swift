@@ -18,7 +18,7 @@ let metadata: [String: Any] = [
   "snapshotFingerprint": try source.snapshotFingerprint(),
   "microscope": source.microscopeMetadata,
   "backgroundSubtractionEvidence": source.backgroundSubtractionEvidence.map {
-    ["document": $0.documentURL.lastPathComponent, "statement": $0.statement]
+    ["document": $0.documentName, "statement": $0.statement]
   } as Any? ?? NSNull(),
   "scanRowAngstrom": source.scanCalibration?.rowSamplingAngstrom as Any? ?? NSNull(),
   "scanColumnAngstrom": source.scanCalibration?.columnSamplingAngstrom as Any? ?? NSNull(),

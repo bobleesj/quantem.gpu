@@ -5,12 +5,21 @@ import Foundation
 /// Example: `source.backgroundSubtractionEvidence?.statement`.
 public struct NativeBackgroundSubtractionEvidence: Sendable {
   public let documentURL: URL
+  /// Original supplier document name, retained when evidence is restored from QEM.
+  public let documentName: String
   public let statement: String
   private let identity: NativeFileIdentity
 
-  static func restored(statement: String, container: URL) throws -> Self {
-    Self(
-      documentURL: container, statement: statement, identity: try nativeFileIdentity(for: container)
+  static func restored(statement: String, documentName: String?, container: URL) throws -> Self {
+    let name = documentName ?? container.lastPathComponent
+    guard !name.isEmpty, name.utf8.count <= 255,
+      !name.contains("/"), !name.contains("\\")
+    else {
+      throw EMPADError("Saved supplier document name is invalid; re-export the original acquisition.")
+    }
+    return Self(
+      documentURL: container, documentName: name, statement: statement,
+      identity: try nativeFileIdentity(for: container)
     )
   }
 
@@ -38,7 +47,9 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
         let result = declarations(text, directory: directory, targets: targets)
         if result.conflict { return nil }
         if let statement = result.statement {
-          matches.append(Self(documentURL: document, statement: statement, identity: before))
+          matches.append(Self(
+            documentURL: document, documentName: document.lastPathComponent,
+            statement: statement, identity: before))
         }
       }
       directory.deleteLastPathComponent()

@@ -67,6 +67,7 @@ extension MetalEMPADResidentSource {
     if let date = source.acquisitionDate { description["acquisition_date"] = date }
     if let evidence = source.backgroundSubtractionEvidence {
       description["supplier_background_statement"] = evidence.statement
+      description["supplier_background_document"] = evidence.documentName
     }
     if let background {
       description["background"] = [
