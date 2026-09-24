@@ -3,7 +3,8 @@
 The conversion is ``io.load(master, representation="encoded")`` followed by
 ``io.save(destination, acquisition, format="quantem")``. This module adds what a
 collection needs around that pair: finding acquisitions, recording which source
-files a copy came from, and comparing the saved copy with the source files.
+files a copy came from, carrying the session's calibrated beam from its
+``dataset.yaml``, and comparing the saved copy with the source files.
 Source files are opened read-only and are never modified or removed.
 """
 
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import tempfile
 import time
@@ -26,6 +28,7 @@ _STORED_DTYPES = ("uint8", "uint16", "uint32")
 _HASH_BLOCK = 64 << 20
 _READABLE_VALUES = 64
 _EMBEDDED_MASTER_LIMIT = 8 << 20
+_SESSION_FILE = "dataset.yaml"
 
 
 @dataclass
@@ -42,11 +45,73 @@ class ConvertedAcquisition:
     master_embedded: bool = True
     failed: bool = False
     verification: dict = field(default_factory=dict)
+    session_calibration: dict = field(default_factory=dict)
 
     @property
     def verified(self) -> bool | None:
         """True or False after verification; None when it did not run."""
         return self.verification.get("identical") if self.verification else None
+
+
+def session_calibration(master: Path) -> tuple[dict, dict | None]:
+    """Calibration an operator recorded for this acquisition in its session's ``dataset.yaml``.
+
+    An Arina master records neither the probe semi-angle nor the scan step; the
+    session file next to it does, once per session (``microscope``) and per
+    magnification (``calibrations``) through the file's own ``files`` entry. The
+    values become calibration overrides whose evidence is the session file's
+    SHA-256, so every reader of the copy applies them ahead of the recorded
+    values, and the fields used are attached as a JSON source document. Only an
+    entry whose ``master`` is this file counts: a session can hold several series
+    with the same numbers.
+
+    Parameters
+    ----------
+    master : Path
+        ARINA master file.
+
+    Returns
+    -------
+    tuple[dict, dict | None]
+        Overrides in calculation units (V, mrad, m) keyed by microscope path, and
+        the source document, or ``({}, None)`` without a session file.
+
+    Examples
+    --------
+    >>> session_calibration(Path("no/such/scan_master.h5"))
+    ({}, None)
+    """
+    sidecar = Path(master).parent / _SESSION_FILE
+    if not sidecar.is_file():
+        return {}, None
+    import yaml
+
+    text = sidecar.read_bytes()
+    document = yaml.safe_load(text) or {}
+    evidence = f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
+    microscope = document.get("microscope") or {}
+    files = document.get("files") or {}
+    key, entry = next(((k, f) for k, f in files.items() if isinstance(f, dict) and f.get("master") == Path(master).name), (None, None))
+    calibration = ((document.get("calibrations") or {}).get(entry.get("mag")) or {}) if entry else {}
+    overrides = {}
+
+    def override(path, value, factor, unit):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            overrides[path] = {"value": float(value) * factor, "unit": unit, "provenance": "user_override", "evidence": evidence}
+
+    override("electron_source/accelerating_voltage", microscope.get("voltage_kV"), 1000, "V")
+    override("illumination_system/semi_convergence_angle", microscope.get("semiangle_mrad"), 1, "mrad")
+    for axis in ("row", "column"):
+        override(f"scan_controller/regular_scan/pixel_size_{axis}", calibration.get("scan_sampling_A"), 1e-10, "m")
+    if not overrides:
+        return {}, None
+    # only the fields this acquisition used: session notes can name people and links that do not belong in a portable copy
+    used = {"session": (document.get("session") or {}).get("name"), "microscope": microscope,
+            "file": {**(entry or {}), "key": key}, "calibration": calibration}
+    content = json.dumps(used, sort_keys=True, default=str)
+    attachment = {"filename": "dataset.json", "mediaType": "application/json", "content": content,
+                  "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
+    return overrides, attachment
 
 
 def find_masters(source: Path) -> list[Path]:
@@ -367,6 +432,11 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                     result.skipped = "master exceeds the metadata embedding limit; keep the original acquisition"
                     return result
                 metadata["source_master_file"] = embedded
+                overrides, attachment = session_calibration(master)
+                if overrides:
+                    metadata["calibration_overrides"] = overrides
+                    metadata["source_documents"] = [*metadata.get("source_documents", []), attachment]
+                    result.session_calibration = overrides
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix=".qem-convert-", dir=destination.parent) as scratch:
                     candidate = Path(scratch) / destination.name

@@ -301,7 +301,15 @@ Each published copy keeps master-file fields and attributes (units included) und
 its HDF5 path, embeds the master file itself so that long tables such as the
 flatfield survive (`qem_conversion.restore_master` writes it back byte for
 byte), records the name, size and SHA-256 of its source files, and fills the scientific metadata (source format, accelerating
-voltage, dwell time) from the Arina master. After writing, every value is
+voltage, dwell time) from the Arina master. An Arina master records neither the
+probe semi-angle nor the scan step; when the acquisition's folder has a session
+`dataset.yaml`, its `microscope` voltage and semi-angle and, through the
+`files` entry whose `master` is this file, the scan step of its magnification
+become calibration overrides whose evidence is the session file's SHA-256
+(`qem_conversion.session_calibration`). Readers then report them as the
+effective `semiangle_mrad`, `voltage_kV` and `scan_sampling_A`, so the copy
+needs no sidecar. Only the fields used are attached (`dataset.json`), not the
+session notes. The command line names the calibrated fields for each copy. After writing, every value is
 compared with the detector files read through h5py before the copy is published.
 Flagged pixels are preserved and checked too: conversion disables display-time
 hot-pixel correction. CUDA `uint32` files are stored as `uint16` only after every

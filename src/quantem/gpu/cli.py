@@ -212,6 +212,8 @@ def _convert(args: argparse.Namespace) -> int:
         )
         if not result.master_embedded:
             line += "  (master file too large to embed; its fields are kept, its long tables are not)"
+        if result.session_calibration:
+            line += f"  (calibration from dataset.yaml: {', '.join(path.rsplit('/', 1)[-1] for path in result.session_calibration)})"
         if result.verified is True:
             check = result.verification
             line += f"  verified: {check['compared_values']:,} values identical"

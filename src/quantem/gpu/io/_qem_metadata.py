@@ -317,12 +317,20 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         source_metadata=source,
         source_documents=copy.deepcopy(metadata.get("source_documents", [])),
         source_metadata_coverage=metadata.get("source_metadata_coverage", "reader-retained"),
-        calibration_overrides={},
+        calibration_overrides=_recorded_overrides(metadata),
         processing=_processing_records(metadata),
         source_format=source.get(
             "sourceFormat", metadata.get("source_kind", "unknown")
         ),
     ))
+
+
+def _recorded_overrides(metadata: dict) -> dict:
+    """Explicit calibration supplied with a new copy (for example a session's
+    ``dataset.yaml`` at conversion), validated in calculation units."""
+    overrides = copy.deepcopy(metadata.get("calibration_overrides") or {})
+    _validate_overrides(overrides)
+    return overrides
 
 
 def validate_header(header: dict) -> None:
