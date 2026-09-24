@@ -511,11 +511,6 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                 except ValueError as error:          # an optional sidecar never blocks a lossless copy
                     overrides, attachment = {}, None
                     result.session_notes.append(f"{_SESSION_FILE} ignored: {error}")
-                recorded = metadata["source_metadata"].get("entry/instrument/detector/detectorSpecific/photon_energy")
-                voltage = overrides.get("electron_source/accelerating_voltage")
-                if voltage and isinstance(recorded, (int, float)) and abs(recorded - voltage["value"]) > 0.01 * voltage["value"]:
-                    result.session_notes.append(f"{_SESSION_FILE} gives {voltage['value'] / 1e3:g} kV, the master records "
-                                                f"{recorded / 1e3:g} kV; the session's calibration is kept")
                 if overrides:
                     metadata["calibration_overrides"] = overrides
                     metadata["source_documents"] = [*metadata.get("source_documents", []), attachment]

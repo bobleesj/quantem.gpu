@@ -308,7 +308,8 @@ probe semi-angle nor the scan step; when the acquisition's folder has a session
 become calibration overrides whose evidence is the session file's SHA-256
 (`qem_conversion.session_calibration`). Readers then report them as the
 effective `semiangle_mrad`, `voltage_kV` and `scan_sampling_A`, so the copy
-needs no sidecar. Only the fields used are attached (`dataset.json`), not the
+needs no sidecar. The session's values override what the master records (an Arina's
+`photon_energy` field can hold a stale voltage). Only the fields used are attached (`dataset.json`), not the
 session notes. The command line names the calibrated fields for each copy. After writing, every value is
 compared with the detector files read through h5py before the copy is published.
 Flagged pixels are preserved and checked too: conversion disables display-time
