@@ -132,7 +132,7 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
         "schema_version: 1\nsession:\n  name: s1\n  notes: private\n"
         "calibrations:\n  mag_5p1:\n    scan_sampling_A: 0.373\n"
         "microscope:\n  voltage_kV: 300\n  semiangle_mrad: 30\n"
-        "files:\n  16:\n    master: zoneB_16_master.h5\n    mag: mag_5p1\n"
+        "files:\n  16:\n    master: zoneB_16_master.h5\n    mag: mag_5p1\n    notes: file note\n"
     )
     overrides, attachment = qem_conversion.session_calibration(tmp_path / "zoneB_16_master.h5")
     assert overrides["illumination_system/semi_convergence_angle"]["value"] == 30.0
@@ -140,7 +140,7 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
     assert overrides["scan_controller/regular_scan/pixel_size_row"]["value"] == pytest.approx(0.373e-10)
     assert overrides["scan_controller/regular_scan/pixel_size_column"]["value"] == pytest.approx(0.373e-10)
     assert all(q["evidence"].startswith("dataset.yaml sha256:") for q in overrides.values())
-    assert "private" not in attachment["content"]
+    assert "private" not in attachment["content"] and "file note" not in attachment["content"]
     other, _ = qem_conversion.session_calibration(tmp_path / "zoneA_16_master.h5")
     assert "scan_controller/regular_scan/pixel_size_row" not in other
     scientific = _qem_metadata.acquisition_metadata(
@@ -148,3 +148,15 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
     effective = _qem_metadata.effective_metadata({}, scientific)
     assert effective["semiangle_mrad"] == 30.0 and effective["voltage_kV"] == 300.0
     assert effective["scan_sampling_A"] == pytest.approx([0.373, 0.373])
+
+
+@pytest.mark.parametrize("text", ["microscope: {voltage_kV: 300", "files: [a, b]", "session: s1", "- a\n- b",
+                                  "microscope: {voltage_kV: 300, 1: a}\nfiles:\n  1:\n    master: x_master.h5\n    mag: [a]\n"])
+def test_malformed_session_file_is_named_not_fatal(tmp_path, text):
+    """A malformed dataset.yaml raises one ValueError naming the file (convert then copies without it), never a parser or
+    attribute error that would stop a batch."""
+    (tmp_path / "dataset.yaml").write_text(text)
+    try:
+        qem_conversion.session_calibration(tmp_path / "x_master.h5")
+    except ValueError as error:
+        assert "dataset.yaml" in str(error)

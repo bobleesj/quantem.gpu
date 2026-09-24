@@ -46,6 +46,7 @@ class ConvertedAcquisition:
     failed: bool = False
     verification: dict = field(default_factory=dict)
     session_calibration: dict = field(default_factory=dict)
+    session_notes: list = field(default_factory=list)
 
     @property
     def verified(self) -> bool | None:
@@ -76,6 +77,12 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
         Overrides in calculation units (V, mrad, m) keyed by microscope path, and
         the source document, or ``({}, None)`` without a session file.
 
+    Raises
+    ------
+    ValueError
+        The session file is not readable YAML with the expected sections;
+        ``convert`` then converts without it and says why.
+
     Examples
     --------
     >>> session_calibration(Path("no/such/scan_master.h5"))
@@ -87,12 +94,19 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     import yaml
 
     text = sidecar.read_bytes()
-    document = yaml.safe_load(text) or {}
+    try:
+        document = yaml.safe_load(text) or {}
+    except yaml.YAMLError as error:
+        raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
     evidence = f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
-    microscope = document.get("microscope") or {}
-    files = document.get("files") or {}
+    sections = {name: document.get(name) or {} for name in ("microscope", "files", "calibrations", "session")} if isinstance(document, dict) else {}
+    if not sections or not all(isinstance(section, dict) for section in sections.values()):
+        raise ValueError(f"{sidecar}: microscope, files, calibrations and session must be mappings")
+    microscope, files, calibrations = sections["microscope"], sections["files"], sections["calibrations"]
     key, entry = next(((k, f) for k, f in files.items() if isinstance(f, dict) and f.get("master") == Path(master).name), (None, None))
-    calibration = ((document.get("calibrations") or {}).get(entry.get("mag")) or {}) if entry else {}
+    mag = entry.get("mag") if entry else None
+    calibration = calibrations.get(mag) if isinstance(mag, str) else None
+    calibration = calibration if isinstance(calibration, dict) else {}
     overrides = {}
 
     def override(path, value, factor, unit):
@@ -105,9 +119,11 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
         override(f"scan_controller/regular_scan/pixel_size_{axis}", calibration.get("scan_sampling_A"), 1e-10, "m")
     if not overrides:
         return {}, None
-    # only the fields this acquisition used: session notes can name people and links that do not belong in a portable copy
-    used = {"session": (document.get("session") or {}).get("name"), "microscope": microscope,
-            "file": {**(entry or {}), "key": key}, "calibration": calibration}
+    # only the fields read: session and file notes can name people and links that do not belong in a portable copy
+    used = {"session": str(sections["session"].get("name")),
+            "microscope": {name: microscope.get(name) for name in ("voltage_kV", "semiangle_mrad")},
+            "file": {"key": str(key), "master": entry.get("master"), "mag": mag} if entry else None,
+            "calibration": {"scan_sampling_A": calibration.get("scan_sampling_A")}}
     content = json.dumps(used, sort_keys=True, default=str)
     attachment = {"filename": "dataset.json", "mediaType": "application/json", "content": content,
                   "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
@@ -432,7 +448,16 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                     result.skipped = "master exceeds the metadata embedding limit; keep the original acquisition"
                     return result
                 metadata["source_master_file"] = embedded
-                overrides, attachment = session_calibration(master)
+                try:
+                    overrides, attachment = session_calibration(master)
+                except ValueError as error:          # an optional sidecar never blocks a lossless copy
+                    overrides, attachment = {}, None
+                    result.session_notes.append(f"{_SESSION_FILE} ignored: {error}")
+                recorded = metadata["source_metadata"].get("entry/instrument/detector/detectorSpecific/photon_energy")
+                voltage = overrides.get("electron_source/accelerating_voltage")
+                if voltage and isinstance(recorded, (int, float)) and abs(recorded - voltage["value"]) > 0.01 * voltage["value"]:
+                    result.session_notes.append(f"{_SESSION_FILE} gives {voltage['value'] / 1e3:g} kV, the master records "
+                                                f"{recorded / 1e3:g} kV; the session's calibration is kept")
                 if overrides:
                     metadata["calibration_overrides"] = overrides
                     metadata["source_documents"] = [*metadata.get("source_documents", []), attachment]
