@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 import zlib
@@ -103,7 +104,9 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     if not sections or not all(isinstance(section, dict) for section in sections.values()):
         raise ValueError(f"{sidecar}: microscope, files, calibrations and session must be mappings")
     microscope, files, calibrations = sections["microscope"], sections["files"], sections["calibrations"]
-    key, entry = next(((k, f) for k, f in files.items() if isinstance(f, dict) and f.get("master") == Path(master).name), (None, None))
+    key, entry, matched_by = session_file_entry(files, Path(master))
+    if entry is not None:
+        evidence += f", files[{key}] by {matched_by}"
     mag = entry.get("mag") if entry else None
     calibration = calibrations.get(mag) if isinstance(mag, str) else None
     calibration = calibration if isinstance(calibration, dict) else {}
@@ -128,6 +131,61 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     attachment = {"filename": "dataset.json", "mediaType": "application/json", "content": content,
                   "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
     return overrides, attachment
+
+
+def session_file_entry(files: dict, path: Path) -> tuple[object, dict | None, str]:
+    """The ``files`` entry of a session ``dataset.yaml`` that describes one scan.
+
+    By name: the entry whose ``master`` is this file, or the master a ``.qem``
+    copy was converted from. By scan number: only when no entry of the session
+    names its master (some sessions list scans by number alone) and exactly one
+    scan in the folder ends in that number. A session can hold several series with
+    the same numbers, and matching one of them by number would lend it another
+    scan's calibration.
+
+    Parameters
+    ----------
+    files : dict
+        The session file's ``files`` mapping.
+    path : Path
+        A ``*_master.h5`` or ``.qem`` scan.
+
+    Returns
+    -------
+    tuple
+        ``(key, entry, "name" | "scan number")``, or ``(None, None, "")``.
+
+    Examples
+    --------
+    >>> session_file_entry({3: {"master": "a_3_master.h5"}}, Path("a_3_master.h5"))
+    (3, {'master': 'a_3_master.h5'}, 'name')
+    """
+    stem = _scan_stem(path)
+    entries = [(key, entry) for key, entry in files.items() if isinstance(entry, dict)]
+    for key, entry in entries:
+        if entry.get("master") in (path.name, f"{stem}{_MASTER_SUFFIX}"):
+            return key, entry, "name"
+    number = _trailing_number(stem)
+    if number is None or any("master" in entry for _, entry in entries):
+        return None, None, ""
+    stems = {_scan_stem(other) for pattern in (f"*{_MASTER_SUFFIX}", "*.qem") for other in path.parent.glob(pattern)}
+    if sum(_trailing_number(other) == number for other in stems) != 1:
+        return None, None, ""
+    for key, entry in entries:
+        if _trailing_number(str(key)) == number:
+            return key, entry, "scan number"
+    return None, None, ""
+
+
+def _scan_stem(path: Path) -> str:
+    """zoneB_16_master.h5 and zoneB_16.qem both name the scan zoneB_16."""
+    return path.name[: -len(_MASTER_SUFFIX)] if path.name.endswith(_MASTER_SUFFIX) else path.stem
+
+
+def _trailing_number(text: str) -> int | None:
+    """The number a name ends with (dggg_54___00 gives 0), or None."""
+    match = re.search(r"(\d+)$", text)
+    return int(match.group(1)) if match else None
 
 
 def find_masters(source: Path) -> list[Path]:

@@ -160,3 +160,22 @@ def test_malformed_session_file_is_named_not_fatal(tmp_path, text):
         qem_conversion.session_calibration(tmp_path / "x_master.h5")
     except ValueError as error:
         assert "dataset.yaml" in str(error)
+
+
+
+def test_session_listed_by_scan_number_calibrates_only_an_unambiguous_scan(tmp_path):
+    """A session that lists scans by number alone gives the scan step to the one
+    scan ending in that number, and says so in the evidence; two series ending
+    in the same number get none."""
+    (tmp_path / "dataset.yaml").write_text(
+        "calibrations:\n  mag_3p6:\n    scan_sampling_A: 0.525\nmicroscope:\n  semiangle_mrad: 30\n"
+        "files:\n  0:\n    mag: mag_3p6\n    notes: dggg_54___00\n"
+    )
+    (tmp_path / "dggg_54___00_master.h5").write_bytes(b"")
+    overrides, attachment = qem_conversion.session_calibration(tmp_path / "dggg_54___00_master.h5")
+    row = overrides["scan_controller/regular_scan/pixel_size_row"]
+    assert row["value"] == pytest.approx(0.525e-10) and row["evidence"].endswith("files[0] by scan number")
+    assert "dggg_54___00" not in attachment["content"].replace("dggg_54___00_master", "")
+    (tmp_path / "dggg_55___00_master.h5").write_bytes(b"")
+    overrides, _ = qem_conversion.session_calibration(tmp_path / "dggg_54___00_master.h5")
+    assert "scan_controller/regular_scan/pixel_size_row" not in overrides

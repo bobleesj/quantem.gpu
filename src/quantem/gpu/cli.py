@@ -214,8 +214,6 @@ def _convert(args: argparse.Namespace) -> int:
             line += "  (master file too large to embed; its fields are kept, its long tables are not)"
         if result.session_calibration:
             line += f"  (calibration from dataset.yaml: {', '.join(path.rsplit('/', 1)[-1] for path in result.session_calibration)})"
-        for note in result.session_notes:
-            line += f"\n    note: {note}"
         if result.verified is True:
             check = result.verification
             line += f"  verified: {check['compared_values']:,} values identical"
@@ -226,6 +224,8 @@ def _convert(args: argparse.Namespace) -> int:
         elif result.verified is False:
             failed += 1
             line += f"  VERIFICATION FAILED, no copy published: {result.verification}"
+        for note in result.session_notes:
+            line += f"\n    note: {note}"
         print(line)
     if after:
         print(f"Total: {before / 1e9:.2f} GB -> {after / 1e9:.2f} GB ({before / after:.2f}x)")
