@@ -27,6 +27,7 @@
   "display/backends/webgpu/filter.ts",
   "display/backends/webgpu/frequencyFilter.ts",
   "display/backends/webgpu/geometry.ts",
+  "display/backends/webgpu/native-fft.ts",
   "display/backends/webgpu/quantization.ts",
   "display/backends/webgpu/stats.ts",
   "display/goldens/parity.json",
