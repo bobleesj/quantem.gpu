@@ -117,6 +117,9 @@ class _MpsBfSubset:
             backend.cache_rotation(math.radians(backend._rotation_angle_deg))
         prepared = backend._prepared
         source = (prepared, prepared.g_qk, prepared.kx, prepared.bf_storage_indices_np)
+        if self._num_bf >= int(prepared.num_bf):
+            # all BF pixels: use the session itself instead of a full copy of G
+            return prepared
         if self._source is None or any(a is not b for a, b in zip(source, self._source)):
             self._subset = _subset_prepared(prepared, self._num_bf)
             self._source = source

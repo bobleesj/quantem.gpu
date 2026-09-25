@@ -511,6 +511,21 @@ class _PreparedCudaBfSubset:
         self._engine = engine
         full_num_bf = engine.num_bf
         count = max(1, min(int(num_bf), full_num_bf))
+        self._full = {
+            "G_qk": engine.G_qk,
+            "bf_inds_row": engine.bf_inds_row,
+            "bf_inds_col": engine.bf_inds_col,
+            "cache": engine._cache,
+            "pk_buffer": engine._pk_buffer,
+            "result_buffer": engine._result_buffer,
+            "mean_phase_buffer": engine._mean_phase_buffer,
+        }
+        self._active = False
+        if count == full_num_bf:
+            # All BF pixels: the "subset" is the session itself. Copying G and a full result buffer would duplicate
+            # ~2 x (BF x scan) complex64 (37 GB at 512 x 512) for an identical preview.
+            self._subset = {**self._full, "cache": {**engine._cache, "num_bf": full_num_bf}}
+            return
         step = max(1, full_num_bf // count)
         indices = cp.arange(0, full_num_bf, step, dtype=cp.int64)[:count]
         cache = dict(engine._cache)
@@ -537,16 +552,6 @@ class _PreparedCudaBfSubset:
             ),
             "mean_phase_buffer": cp.empty((ny, nx), dtype=cp.float32),
         }
-        self._full = {
-            "G_qk": engine.G_qk,
-            "bf_inds_row": engine.bf_inds_row,
-            "bf_inds_col": engine.bf_inds_col,
-            "cache": engine._cache,
-            "pk_buffer": engine._pk_buffer,
-            "result_buffer": engine._result_buffer,
-            "mean_phase_buffer": engine._mean_phase_buffer,
-        }
-        self._active = False
 
     @property
     def num_bf(self) -> int:
