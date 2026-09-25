@@ -532,6 +532,8 @@ class SSB:
         self.bf_radius = bf_radius
         # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
         self.bf_center = None if bf_center is None else (float(bf_center[0]), float(bf_center[1]))
+        # thick-sample fit of the latest fit(tilt=True): tilt (mrad, scan frame) and depth spread (nm); empty otherwise
+        self.sample: dict[str, float] = {}
         self.source_path = source_path
         self.calibration_path: str | None = None
         self.source_manifest_path: str | None = None
@@ -1161,6 +1163,7 @@ class SSB:
 
         result.source_path = self.source_path
         self.aberrations = dict(result.aberrations)
+        self.sample = dict(result.sample)
         self._aberrations_explicit = True
         self.rotation_angle_deg = float(result.rotation_angle_deg)
         self.best_loss = (
@@ -1204,10 +1207,12 @@ class SSB:
     def fit(
         self,
         *,
+        tilt: bool = False,
         trials: int = 200,
         refinement: RefineMethod = "nelder-mead",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
+        tilt_limit_mrad: float = 25.0,
         seed: int = 42,
         save_to: str | Path | None = None,
         force: bool = False,
@@ -1215,12 +1220,22 @@ class SSB:
     ) -> SSBResult:
         """Optimize C10/C12/phi12 and return the final reconstruction.
 
+        ``tilt=True`` also fits the sample tilt and a depth spread for a thick, tilted crystal, jointly with the
+        aberrations in one search of ``trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
+        C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
+        not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
+        result's ``sample`` holds the tilt (mrad, scan frame, within ``tilt_limit_mrad``) and depth spread (nm); CUDA and
+        MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
+        to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
+
         Set ``save_to`` to reuse an exact prior result when the detector source,
         calibration, backend, physical parameters, and fit settings all match.
         Changed settings recompute automatically. Set ``force=True`` to recompute
         an otherwise matching result.
         """
 
+        if tilt and (search_ranges is not None or refine_lock is not None):
+            raise ValueError("search_ranges and refine_lock apply to the standard fit; tilt=True searches its own ranges.")
         if trials < 0:
             raise ValueError(f"trials must be non-negative, got {trials}.")
         if refinement not in {"nelder-mead", None}:
@@ -1241,6 +1256,7 @@ class SSB:
                     "starting_aberrations_explicit": (
                         self._fit_start_aberrations_explicit
                     ),
+                    **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
                 },
             )
             if not force:
@@ -1255,15 +1271,18 @@ class SSB:
                     return self._accept_result(reused)
             if verbose and any(path.exists() for path in paths):
                 print("Saved SSB settings changed; running fit end to end")
-        result = self._backend_protocol.fit(
-            trials=int(trials),
-            refinement=refinement,
-            search_ranges=_search_ranges_to_engine(search_ranges),
-            refine_lock=refine_lock,
-            seed=int(seed),
-            verbose=verbose,
-        )
-        result = self._accept_result(_result_from_engine(result))
+        if tilt:
+            result = self._accept_result(self._fit_tilt(int(trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
+        else:
+            result = self._backend_protocol.fit(
+                trials=int(trials),
+                refinement=refinement,
+                search_ranges=_search_ranges_to_engine(search_ranges),
+                refine_lock=refine_lock,
+                seed=int(seed),
+                verbose=verbose,
+            )
+            result = self._accept_result(_result_from_engine(result))
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
@@ -1346,7 +1365,7 @@ class SSB:
 
         ``aberrations`` C10 / C12 in nm, phi12 in rad. ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} switches to
         the thick-sample model (each bright-field pixel's correction averaged over the sample depth, with the crystal leaning by
-        the tilt; see ``fit_sample``). Thickness in nm; thickness 0 is standard SSB. CUDA and MPS backends.
+        the tilt; see ``fit(tilt=True)``). Thickness in nm; thickness 0 is standard SSB. CUDA and MPS backends.
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
@@ -1399,33 +1418,35 @@ class SSB:
 
     @property
     def supports_sample(self) -> bool:
-        """True when this session's backend implements the thick-sample model (``preview(sample=...)``, ``fit_sample``)."""
+        """True when this session's backend implements the thick-sample model (``preview(sample=...)``, ``fit(tilt=True)``)."""
         return hasattr(self._backend_protocol, "fit_sample")
 
-    def fit_sample(
-        self,
-        *,
-        trials: int = 300,
-        band_inv_A: tuple[float, float] = (0.2, 0.9),
-        tilt_limit_mrad: float = 25.0,
-        verbose: bool = True,
-    ) -> dict[str, object]:
-        """Fit defocus, astigmatism, sample tilt and thickness together (thick-sample SSB model).
-
-        A thick, tilted crystal changes how strongly each bright-field pixel carries each spatial frequency; the fit maximises
-        the least-squares agreement of that model with the data (the phase-variance loss of ``fit`` does not see tilt).
-        Returns {"C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "thickness", "fit", "standard_fit", "gain", ...};
-        C10 / C12 in nm (C10 is the defocus at mid-depth), phi12 in rad, tilt in mrad in the scan frame (row, col), thickness
-        in nm (a model depth spread, not a measured sample thickness). Validated on simulated BaTiO3 15 nm tilted (3, -4) mrad: found (3.0, -4.1);
-        untilted control: (-0.3, -0.1). CUDA and MPS backends.
-        """
+    def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
+        """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
         backend = self._backend_protocol
         if not hasattr(backend, "fit_sample"):
-            raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA and MPS backends only.")
-        fit = backend.fit_sample(trials=int(trials), band_inv_A=tuple(band_inv_A), tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose)
-        converted = {**fit, **_aberrations_from_engine(fit), "thickness": float(fit["thickness"]) / _ENGINE_PER_NM}
-        converted["standard"] = _aberrations_from_engine({"phi12": 0.0, **fit["standard"]})
-        return converted
+            raise NotImplementedError("fit(tilt=True) is implemented for the CUDA and MPS backends only.")
+        started = time.perf_counter()
+        fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
+                                 polish_starts=0 if refinement is None else 3)
+        aberrations = _aberrations_from_engine({key: float(fit[key]) for key in ("C10", "C12", "phi12")})
+        sample = {"tilt_row_mrad": float(fit["tilt_row_mrad"]), "tilt_col_mrad": float(fit["tilt_col_mrad"]),
+                  "thickness_nm": float(fit["thickness"]) / _ENGINE_PER_NM, "gain": float(fit["gain"])}
+        phase, loss = self.preview(aberrations, sample={"tilt_row_mrad": sample["tilt_row_mrad"],
+                                                        "tilt_col_mrad": sample["tilt_col_mrad"],
+                                                        "thickness": sample["thickness_nm"]})
+        # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
+        if self.backend == "cuda":
+            import cupy as cp
+
+            object_wave = cp.exp(1j * cp.asarray(phase))
+        else:
+            object_wave = np.exp(1j * np.asarray(phase))
+        return SSBResult(object_wave=object_wave, backend=self.backend, aberrations=aberrations, sample=sample,
+                         rotation_angle_deg=self.rotation_angle_deg, loss=None if loss is None else float(loss),
+                         elapsed=time.perf_counter() - started, n_trials=trials, num_bf=self.num_bf,
+                         refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                         scan_sampling_A=self.scan_sampling_A)
 
     def preview_context(self, num_bf: int):
         """Prepare a backend-owned reduced-BF interaction context."""

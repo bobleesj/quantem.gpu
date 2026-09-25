@@ -45,12 +45,13 @@ def _simulated_crystal(name):
 
 
 @pytest.mark.parametrize(("name", "tilt_mrad"), [("tilted_3_-4_t15", (3.0, -4.0)), ("untilted_t15", (0.0, 0.0))])
-def test_fit_sample_recovers_known_tilt(name, tilt_mrad):
+def test_fit_tilt_recovers_known_tilt(name, tilt_mrad):
     _require_mps()
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
     assert ssb.supports_sample
-    fit = ssb.fit_sample(verbose=False)
+    result = ssb.fit(tilt=True, verbose=False)
+    fit = result.sample
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
     assert abs(fit["tilt_row_mrad"] - tilt_mrad[0]) < 1.0
     assert abs(fit["tilt_col_mrad"] - tilt_mrad[1]) < 1.0

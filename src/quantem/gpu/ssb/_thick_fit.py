@@ -120,12 +120,16 @@ def fit_sample_search(
             starts.append(x)
         if len(starts) == polish_starts:
             break
-    polished = [minimize(lambda x: -single(x) / scale, x0, method="Nelder-Mead", bounds=bounds,
-                         options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for x0 in starts]
-    polish = min(polished, key=lambda r: r.fun)
-    best = dict(zip(PARAMETERS, (float(v) for v in polish.x)))
+    if polish_starts == 0:      # refinement=None: the best trial as is
+        best = {name: float(study.best_params[name]) for name in PARAMETERS}
+        fit = float(-study.best_value)
+    else:
+        polished = [minimize(lambda x: -single(x) / scale, x0, method="Nelder-Mead", bounds=bounds,
+                             options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for x0 in starts]
+        polish = min(polished, key=lambda r: r.fun)
+        best = dict(zip(PARAMETERS, (float(v) for v in polish.x)))
+        fit = float(-polish.fun) * scale
     best["C12"], best["thickness"], best["phi12"] = abs(best["C12"]), abs(best["thickness"]), wrap_phi(best["phi12"])
-    fit = float(-polish.fun) * scale
     standard_fit = float(-thin.best_value)
     return {**best, "fit": fit, "standard_fit": standard_fit, "gain": fit / standard_fit if standard_fit > 0 else float("nan"),
             "standard": {k: float(v) for k, v in thin.best_params.items()}, "band_inv_A": list(band_inv_A), "trials": int(trials)}

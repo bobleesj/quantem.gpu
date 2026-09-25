@@ -60,12 +60,13 @@ def _session(data, det_mrad, scan_A=0.25):
 
 
 @pytest.mark.parametrize("tilt_mrad", [(3.0, -4.0), (0.0, 0.0)])
-def test_fit_sample_recovers_known_tilt(tilt_mrad):
+def test_fit_tilt_recovers_known_tilt(tilt_mrad):
     _require_cuda()
     data, det_mrad = _simulated_crystal(tilt_mrad)
     ssb = _session(data, det_mrad)
     assert ssb.supports_sample
-    fit = ssb.fit_sample(verbose=False)
+    result = ssb.fit(tilt=True, verbose=False)
+    fit = result.sample
     # Validated 2026-09-24: (3, -4) -> (3.0, -4.1); (0, 0) -> (-0.3, -0.1). 1 mrad is the scan/detector sampling limit here.
     assert abs(fit["tilt_row_mrad"] - tilt_mrad[0]) < 1.0
     assert abs(fit["tilt_col_mrad"] - tilt_mrad[1]) < 1.0
@@ -126,7 +127,7 @@ def test_torch_reference_matches_cuda_engine():
 
 
 def test_batched_fit_kernel_matches_reference_objective():
-    """The fused batch kernel (fast path of fit_sample) equals SSBEngine.thick_fit row by row."""
+    """The fused batch kernel (fast path of fit(tilt=True)) equals SSBEngine.thick_fit row by row."""
     _require_cuda()
     _, engine = _synthetic_session()
     rng = np.random.default_rng(3)
