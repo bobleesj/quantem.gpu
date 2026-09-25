@@ -107,6 +107,48 @@ result = workflow.reconstruct(
 transient phase array plus an optional exact loss. It does not create a second
 public result type.
 
+## Thick, tilted crystals
+
+Standard SSB treats the sample as one thin plane. In a crystal a few nanometres
+thick that leans by a few milliradians, each atomic column walks sideways with
+depth (5 mrad over 10 nm is 0.5 A), which blurs the lattice along the tilt.
+`fit(tilt=True)` fits the aberrations together with the sample tilt and a depth
+spread, in one search with the same trial budget as the standard fit:
+
+```python
+standard = workflow.fit()              # C10, C12, phi12
+tilted = workflow.fit(tilt=True)       # + sample tilt and depth spread, jointly
+
+tilted.tilt_mrad          # (row, col) mrad, scan frame
+tilted.depth_spread_nm    # model depth spread, not a measured thickness
+tilted.tilt_fit_gain      # least-squares agreement relative to standard SSB (> 1: tilt explains more)
+pd.concat([standard.report(), tilted.report()])   # one row per fit
+```
+
+After a tilt fit, `C10` is the defocus at mid-depth, so it can differ from the
+standard fit's. The search is joint on purpose: fitting the tilt after a
+standard fit leaves C10 behind and stalls (0.91-0.99 of the best agreement on
+two acquisitions, every seed). With 200 trials every seed reached the same tilt
+within 0.02 mrad; 300 and 400 trials gave the same answer.
+
+`preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)` renders the
+thick-sample model for interactive viewers; with no depth spread the tilt has
+no effect. `supports_tilt` says whether the session's backend implements it
+(CUDA and MPS).
+
+Limits:
+
+- The phase-variance loss that `report()` shows does not reward tilt; judge a
+  tilt by `tilt_fit_gain` and the lattice, not by the loss.
+- A tilt at the search limit (`tilt_limit_mrad`, default 25) or a gain close to
+  1 is not a measurement.
+- One tilt direction can be loosely determined (on one film acquisition the
+  row tilt varied by 0.6 mrad at 0.05 % of the agreement).
+- The tilt is in the scan frame. The ptychography object frame is the scan
+  rotated by the same scan-detector rotation.
+
+Evidence: [SSB units and the thick-sample model](../maintainer/2026-09-24-ssb-units-and-thick-sample.md).
+
 ## Native Swift and Metal
 
 `MetalSSBEngine` consumes exact plane-major BF columns with layout
