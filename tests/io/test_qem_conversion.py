@@ -132,16 +132,16 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
         "schema_version: 1\nsession:\n  name: s1\n  notes: private\n"
         "calibrations:\n  mag_5p1:\n    scan_sampling_A: 0.373\n"
         "microscope:\n  voltage_kV: 300\n  semiangle_mrad: 30\n"
-        "files:\n  16:\n    master: zoneB_16_master.h5\n    mag: mag_5p1\n    notes: file note\n"
+        "files:\n  16:\n    master: scan_16_master.h5\n    mag: mag_5p1\n    notes: file note\n"
     )
-    overrides, attachment = qem_conversion.session_calibration(tmp_path / "zoneB_16_master.h5")
+    overrides, attachment = qem_conversion.session_calibration(tmp_path / "scan_16_master.h5")
     assert overrides["illumination_system/semi_convergence_angle"]["value"] == 30.0
     assert overrides["electron_source/accelerating_voltage"]["value"] == 300e3
     assert overrides["scan_controller/regular_scan/pixel_size_row"]["value"] == pytest.approx(0.373e-10)
     assert overrides["scan_controller/regular_scan/pixel_size_column"]["value"] == pytest.approx(0.373e-10)
     assert all(q["evidence"].startswith("dataset.yaml sha256:") for q in overrides.values())
     assert "private" not in attachment["content"] and "file note" not in attachment["content"]
-    other, _ = qem_conversion.session_calibration(tmp_path / "zoneA_16_master.h5")
+    other, _ = qem_conversion.session_calibration(tmp_path / "other_16_master.h5")
     assert "scan_controller/regular_scan/pixel_size_row" not in other
     scientific = _qem_metadata.acquisition_metadata(
         (2, 2, 8, 8), {"calibration_overrides": overrides, "source_documents": [attachment]})
@@ -169,13 +169,13 @@ def test_session_listed_by_scan_number_calibrates_only_an_unambiguous_scan(tmp_p
     in the same number get none."""
     (tmp_path / "dataset.yaml").write_text(
         "calibrations:\n  mag_3p6:\n    scan_sampling_A: 0.525\nmicroscope:\n  semiangle_mrad: 30\n"
-        "files:\n  0:\n    mag: mag_3p6\n    notes: dggg_54___00\n"
+        "files:\n  0:\n    mag: mag_3p6\n    notes: sample_54___00\n"
     )
-    (tmp_path / "dggg_54___00_master.h5").write_bytes(b"")
-    overrides, attachment = qem_conversion.session_calibration(tmp_path / "dggg_54___00_master.h5")
+    (tmp_path / "sample_54___00_master.h5").write_bytes(b"")
+    overrides, attachment = qem_conversion.session_calibration(tmp_path / "sample_54___00_master.h5")
     row = overrides["scan_controller/regular_scan/pixel_size_row"]
     assert row["value"] == pytest.approx(0.525e-10) and row["evidence"].endswith("files[0] by scan number")
-    assert "dggg_54___00" not in attachment["content"].replace("dggg_54___00_master", "")
-    (tmp_path / "dggg_55___00_master.h5").write_bytes(b"")
-    overrides, _ = qem_conversion.session_calibration(tmp_path / "dggg_54___00_master.h5")
+    assert "sample_54___00" not in attachment["content"].replace("sample_54___00_master", "")
+    (tmp_path / "sample_55___00_master.h5").write_bytes(b"")
+    overrides, _ = qem_conversion.session_calibration(tmp_path / "sample_54___00_master.h5")
     assert "scan_controller/regular_scan/pixel_size_row" not in overrides

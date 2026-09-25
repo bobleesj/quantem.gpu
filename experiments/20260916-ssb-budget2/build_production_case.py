@@ -2,7 +2,7 @@
 """Build the 512x512 Metal case for the *production* acquisition (-17.0x tilt).
 
 The MPS fit evidence and the recorded 62 s production fit both run on
-``..._17mradtilt_-17.0x_0.0y_..._15-41-00_master.h5``. The Metal trial-budget
+an industrial partner logic acquisition (512 x 512 scan, 17 mrad tilt series, the -17.0x position). The Metal trial-budget
 harness needs a case directory (``case.json`` + ``source/bf_columns.u16``), so
 this script builds one whose bytes are that acquisition's exact raw counts:
 

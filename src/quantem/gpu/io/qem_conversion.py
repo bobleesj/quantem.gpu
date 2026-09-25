@@ -178,12 +178,12 @@ def session_file_entry(files: dict, path: Path) -> tuple[object, dict | None, st
 
 
 def _scan_stem(path: Path) -> str:
-    """zoneB_16_master.h5 and zoneB_16.qem both name the scan zoneB_16."""
+    """scan_16_master.h5 and scan_16.qem both name the scan scan_16."""
     return path.name[: -len(_MASTER_SUFFIX)] if path.name.endswith(_MASTER_SUFFIX) else path.stem
 
 
 def _trailing_number(text: str) -> int | None:
-    """The number a name ends with (dggg_54___00 gives 0), or None."""
+    """The number a name ends with (sample_54___00 gives 0), or None."""
     match = re.search(r"(\d+)$", text)
     return int(match.group(1)) if match else None
 
