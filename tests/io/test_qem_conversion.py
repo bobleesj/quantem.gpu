@@ -1,5 +1,6 @@
 """Collection discovery, destinations and refusals of the ``quantem-gpu convert`` command."""
 
+import json
 from pathlib import Path
 
 import h5py
@@ -179,3 +180,42 @@ def test_session_listed_by_scan_number_calibrates_only_an_unambiguous_scan(tmp_p
     (tmp_path / "sample_55___00_master.h5").write_bytes(b"")
     overrides, _ = qem_conversion.session_calibration(tmp_path / "sample_54___00_master.h5")
     assert "scan_controller/regular_scan/pixel_size_row" not in overrides
+
+
+def test_session_specimen_becomes_the_sample_group(tmp_path):
+    """The declared specimen, its CIF and the file's own components and thickness estimates become the .qem sample
+    group (thickness in angstrom), with the CIF text as a JSON document; another series gets no file fields; a header
+    with the group validates and keeps it."""
+    (tmp_path / "BaTiO3.cif").write_text("data_BaTiO3\n_cell_length_a 4.0\n")
+    (tmp_path / "dataset.yaml").write_text(
+        "schema_version: 1\n"
+        "specimen:\n  name: BaTiO3 film on SrTiO3\n  geometry: cross-section\n  components:\n"
+        "    BTO:\n      role: film\n      chemical_formula: BaTiO3\n      cif: BaTiO3.cif\n      zone_axis: [0, 0, 1]\n"
+        "    STO:\n      chemical_formula: SrTiO3\n      zone_axis: '[1-10]'\n"
+        "files:\n  '38':\n    master: scan_38_master.h5\n    components_in_view: [BTO]\n    thickness:\n      BTO:\n"
+        "        - method: ptychography_multislice\n          value_nm: 41\n          uncertainty_nm: 4\n"
+        "          region:\n            rows: [320, 512]\n            cols: [128, 384]\n          preferred: true\n")
+    sample, documents = qem_conversion.session_specimen(tmp_path / "scan_38_master.h5")
+    estimate = sample["components"]["BTO"]["thickness_estimates"][0]
+    assert (estimate["value"], estimate["unit"], estimate["uncertainty"]) == (410.0, "angstrom", 40.0)
+    assert sample["components"]["STO"]["zone_axis"] == [1, -1, 0] and sample["components_in_view"] == ["BTO"]
+    assert sample["provenance"] == "dataset.yaml" and sample["evidence"].endswith("files[38] by name")
+    assert [d["filename"] for d in documents] == ["BaTiO3.cif.json"]
+    assert json.loads(documents[0]["content"])["cif"].startswith("data_BaTiO3")
+    assert sample["components"]["BTO"]["cif"]["sha256"] == documents[0]["sha256"]
+    other, _ = qem_conversion.session_specimen(tmp_path / "other_38_master.h5")
+    assert "components_in_view" not in other and "thickness_estimates" not in other["components"]["BTO"]
+    scientific = _qem_metadata.acquisition_metadata((2, 2, 8, 8), {"sample": sample, "source_documents": documents})
+    _qem_metadata.validate_header(dict(container="quantem.qem", container_version=1, codec="c", profile="c",
+                                       shape=[2, 2, 8, 8], scientific_metadata=scientific))
+    assert scientific["sample"] == sample
+
+
+def test_session_specimen_reads_the_older_reference_structure_and_rejects_a_missing_cif(tmp_path):
+    (tmp_path / "BaTiO3.cif").write_text("data_BaTiO3\n")
+    (tmp_path / "dataset.yaml").write_text("reference_structure:\n  cif: ./BaTiO3.cif\n  zone_axis: '[100]'\n")
+    sample, documents = qem_conversion.session_specimen(tmp_path / "x_master.h5")
+    assert sample["components"]["BaTiO3"]["zone_axis"] == [1, 0, 0] and len(documents) == 1
+    (tmp_path / "dataset.yaml").write_text("specimen:\n  components:\n    A:\n      cif: missing.cif\n")
+    with pytest.raises(ValueError, match="missing.cif"):
+        qem_conversion.session_specimen(tmp_path / "x_master.h5")

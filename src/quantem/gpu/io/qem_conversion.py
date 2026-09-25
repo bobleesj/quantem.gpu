@@ -133,6 +133,107 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     return overrides, attachment
 
 
+def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
+    """The specimen an operator declared for this acquisition in its session's ``dataset.yaml``, as the ``.qem``
+    ``sample`` group (specification 0.0.3), and each component's CIF as a JSON source document.
+
+    ``specimen:`` (or an older one-crystal ``reference_structure:``) names the components; the file's own ``files``
+    entry (``session_file_entry``) adds which components it shows and its recorded thickness estimates, converted from
+    ``value_nm`` to ``value`` in angstrom. Only declared fields are written, nothing is defaulted.
+
+    Parameters
+    ----------
+    master : Path
+        ARINA master file or its ``.qem`` copy.
+
+    Returns
+    -------
+    tuple[dict | None, list[dict]]
+        The sample group and the CIF documents, or ``(None, [])`` without a declared specimen.
+
+    Raises
+    ------
+    ValueError
+        The session file is not readable YAML, or its specimen is malformed (``_qem_metadata.validate_sample``).
+
+    Examples
+    --------
+    >>> session_specimen(Path("no/such/scan_master.h5"))
+    (None, [])
+    """
+    from ._qem_metadata import validate_sample
+    sidecar = Path(master).parent / _SESSION_FILE
+    if not sidecar.is_file():
+        return None, []
+    import yaml
+
+    text = sidecar.read_bytes()
+    try:
+        document = yaml.safe_load(text) or {}
+    except yaml.YAMLError as error:
+        raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
+    declared = document.get("specimen")
+    if declared is None and isinstance(document.get("reference_structure"), dict):
+        legacy = document["reference_structure"]
+        declared = {"components": {Path(str(legacy.get("cif") or "crystal")).stem: {"cif": legacy.get("cif"), "zone_axis": legacy.get("zone_axis")}}}
+    if not isinstance(declared, dict):
+        return None, []
+    key, entry, matched_by = session_file_entry(document.get("files") or {}, Path(master))
+    evidence = f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}" + (f", files[{key}] by {matched_by}" if entry else "")
+    sample = {"provenance": _SESSION_FILE, "evidence": evidence}
+    for name in ("id", "name", "geometry", "description", "orientation_relationship"):
+        if declared.get(name) is not None:
+            sample[name] = str(declared[name])
+    if declared.get("growth_direction") is not None:
+        sample["growth_direction"] = _indices(declared["growth_direction"])
+    documents, components = [], {}
+    for label, component in (declared.get("components") or {}).items():
+        component = component or {}
+        written = {name: str(component[name]) for name in ("role", "chemical_formula") if component.get(name)}
+        if component.get("zone_axis") is not None:
+            written["zone_axis"] = _indices(component["zone_axis"])
+        if component.get("cif"):
+            cif = (sidecar.parent / str(component["cif"])).resolve()
+            if not cif.is_file():
+                raise ValueError(f"{sidecar}: component {label} names {component['cif']}, which is not in the session folder")
+            content = json.dumps({"cif": cif.read_text(errors="replace")})
+            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            documents.append({"filename": f"{cif.stem}.cif.json", "mediaType": "application/json", "content": content, "sha256": digest})
+            written["cif"] = {"document": f"{cif.stem}.cif.json", "sha256": digest}
+        estimates = [_thickness_estimate(e) for e in ((entry or {}).get("thickness") or {}).get(label, [])]
+        if estimates:
+            written["thickness_estimates"] = estimates
+        components[str(label)] = written
+    if components:
+        sample["components"] = components
+    if entry and entry.get("components_in_view"):
+        sample["components_in_view"] = [str(label) for label in entry["components_in_view"]]
+    validate_sample(sample)
+    return sample, documents
+
+
+def _indices(value) -> list[int]:
+    """A direction [u, v, w] from a list or the older text form "[1-10]"."""
+    if isinstance(value, (list, tuple)):
+        return [int(v) for v in value]
+    return [int(v) for v in re.findall(r"-?\d", str(value))]
+
+
+def _thickness_estimate(estimate: dict) -> dict:
+    """A declared estimate in the ``.qem`` form: ``value_nm`` becomes ``value`` in angstrom, the rest as typed."""
+    out = {"method": estimate.get("method"), "value": float(estimate.get("value_nm", 0)) * 10, "unit": "angstrom"}
+    if estimate.get("uncertainty_nm") is not None:
+        out["uncertainty"] = float(estimate["uncertainty_nm"]) * 10
+    if estimate.get("range_nm") is not None:
+        out["range"] = [float(v) * 10 for v in estimate["range_nm"]]
+    for name in ("region", "reference", "date"):
+        if estimate.get(name) is not None:
+            out[name] = estimate[name] if name == "region" else str(estimate[name])
+    if estimate.get("preferred") is not None:
+        out["preferred"] = bool(estimate["preferred"])
+    return out
+
+
 def session_file_entry(files: dict, path: Path) -> tuple[object, dict | None, str]:
     """The ``files`` entry of a session ``dataset.yaml`` that describes one scan.
 
@@ -515,6 +616,14 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                     metadata["calibration_overrides"] = overrides
                     metadata["source_documents"] = [*metadata.get("source_documents", []), attachment]
                     result.session_calibration = overrides
+                try:
+                    sample, cif_documents = session_specimen(master)
+                except ValueError as error:          # a malformed specimen never blocks a lossless copy
+                    sample, cif_documents = None, []
+                    result.session_notes.append(f"{_SESSION_FILE} specimen ignored: {error}")
+                if sample is not None:
+                    metadata["sample"] = sample
+                    metadata["source_documents"] = [*metadata.get("source_documents", []), *cif_documents]
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix=".qem-convert-", dir=destination.parent) as scratch:
                     candidate = Path(scratch) / destination.name
