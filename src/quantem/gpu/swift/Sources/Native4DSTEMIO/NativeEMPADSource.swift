@@ -125,7 +125,10 @@ public struct NativeEMPADSource: Sendable {
       metadata = try NativeQEMMetadataUnits.microscopeMetadata(scientific)
     }
     let evidence = try (description["supplier_background_statement"] as? String).map {
-      try NativeBackgroundSubtractionEvidence.restored(statement: $0, container: url)
+      try NativeBackgroundSubtractionEvidence.restored(
+        statement: $0,
+        documentName: description["supplier_background_document"] as? String,
+        container: url)
     }
     metadata["qem_storage"] = file.codec
     metadata[NativeQEMCalibration.metadataKey] = String(

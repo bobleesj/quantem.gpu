@@ -142,6 +142,7 @@ struct QEMRoundtrip {
         try require(restoredDescription.microscopeMetadata[key] == value, "EMPAD metadata lost: \(key)")
       }
       try require(restoredDescription.backgroundSubtractionEvidence?.statement == original.backgroundSubtractionEvidence?.statement, "Supplier correction evidence lost")
+      try require(restoredDescription.backgroundSubtractionEvidence?.documentName == original.backgroundSubtractionEvidence?.documentName, "Supplier document name changed")
       let frames = Array(Set([0, 1, original.frameCount / 4, original.frameCount / 2,
         original.frameCount * 3 / 4, original.frameCount - 2, original.frameCount - 1])).sorted()
       let queue = device.makeCommandQueue()!

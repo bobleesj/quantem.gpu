@@ -542,6 +542,8 @@ def save_float_ans(
                     output.write(block)
                 output.flush()
                 os.fsync(output.fileno())
-            os.link(temporary, path)
+            from ._publish import publish_file
+
+            publish_file(temporary, path)
         finally:
-            os.unlink(temporary)
+            Path(temporary).unlink(missing_ok=True)

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260922-float-ans-parallel-columns",
+  "status": "completed",
+  "question": "Can assigning each changed float-ANS detector column to an active SIMD lane accelerate large ADF moves without changing any output bits or slowing small edits?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260922-float-ans-parallel-columns/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "1d9093adb31a4aa6a17fe8d36b34449afebb1b5b",
+    "entrypoint": "tests/hardware/metal/swift_original_packing/Sources/FloatANSDetectorParity/main.swift",
+    "dirty": true,
+    "diff_sha256": "f3f4e6f1d50feb75b70ad7c4201461b38fca0eb1062a8051e5b8f57739116b85",
+    "diff_scope": "tracked Swift backend and harness Package.swift diff; new parity harness SHA-256 e68633d7b950cb011052350cb56addc9909cdd6cf06e9d0181fab3c07656dccd; excludes unrelated Python edits"
+  },
+  "inputs": [
+    {
+      "dataset_id": "local float32 4D-STEM fixture",
+      "shape": [100, 100, 256, 256],
+      "dtype": "float32",
+      "codec": "float32-bit-lanes-rans-v1",
+      "sha256": "e5e7511732c3d0a4f1c18937bb0a7d381241cab906301c48edc7549deb260216"
+    },
+    {
+      "dataset_id": "second local float32 4D-STEM fixture",
+      "shape": [100, 100, 128, 128],
+      "dtype": "float32",
+      "codec": "float32-bit-lanes-rans-v1",
+      "sha256": "3ee8c69748e8fc4fbc0fb6f2d5275d0f19119d0677655d928a3a2f16f8c9d303"
+    }
+  ],
+  "parameters": {
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "target_ms": 8.3333333333,
+    "parity": "bit-identical full virtual-image products across deterministic mask sequence",
+    "benchmark": "native app A/B/A, actual presented generations and GPU reduction wall"
+  },
+  "execution": {
+    "host": "macbook",
+    "backend": "swift-metal",
+    "gpu_ids": ["integrated-gpu-0"],
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "results",
+      "path": "experiments/20260922-float-ans-parallel-columns/results.md",
+      "sha256": "c56d81ad1417f3b067a3f2d6638eea8041a20e94013296374c21cbb923166428",
+      "size_bytes": 2151,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Native large-ADF center 78.8/94.4/78.5 presented updates/s A/B/A; 3.6 million detector output words bit-exact."
+    }
+  ],
+  "timestamps": {"finished": "2026-09-22T16:23:00-07:00"}
+}

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260922-float-ans-finite-recovery",
+  "status": "refuted",
+  "question": "Can a bounded finite-value proof at QEM restore remove the per-chunk nonfinite recovery dispatch during exact incremental detector updates?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260922-float-ans-finite-recovery/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "1d9093adb31a4aa6a17fe8d36b34449afebb1b5b",
+    "entrypoint": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalEMPADResidentSource+QEM.swift",
+    "dirty": false
+  },
+  "inputs": [
+    {
+      "dataset_id": "local float32 4D-STEM fixture",
+      "shape": [100, 100, 256, 256],
+      "dtype": "float32",
+      "codec": "float32-bit-lanes-rans-v1",
+      "sha256": "e5e7511732c3d0a4f1c18937bb0a7d381241cab906301c48edc7549deb260216"
+    }
+  ],
+  "parameters": {
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "target_ms": 8.3333333333,
+    "parity": "bit-identical full virtual-image products against the existing GPU path",
+    "benchmark": "native app A/B/A, actual presented generations and GPU stage timing"
+  },
+  "execution": {
+    "host": "macbook",
+    "backend": "swift-metal",
+    "gpu_ids": ["integrated-gpu-0"],
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [
+    {
+      "artifact_id": "results",
+      "path": "experiments/20260922-float-ans-finite-recovery/results.md",
+      "sha256": "0f62a5e1397dd4a599a564a7acf52828d2395ec518f085eb3831b4217e138adf",
+      "size_bytes": 830,
+      "retention": "durable",
+      "consuming_figures": [],
+      "result": "Marginal native gain was rejected and all prototype source was removed."
+    }
+  ],
+  "timestamps": {"finished": "2026-09-22T16:23:00-07:00"}
+}

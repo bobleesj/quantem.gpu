@@ -561,7 +561,7 @@ public final class MetalEMPADResidentSource {
         }
         try ans.encodeSelected(
           chunk, changed: changed, entries: list, count: count, mask: mask, recovery: recovery,
-          into: workspace, encoder: decoder)
+          into: workspace, encoder: decoder, preferParallel: !reset)
         if sharedEncoder != nil {
           decoder.memoryBarrier(resources: [workspace.words, workspace.descriptors])
         } else {

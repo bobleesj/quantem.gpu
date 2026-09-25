@@ -148,6 +148,13 @@ class EMPADSourceTests(unittest.TestCase):
         self.assertEqual(metadata["backgroundSubtractionEvidence"], {
             "document": "readme.txt", "statement": "already background-subtracted",
         })
+        qem = self.root / "supplier-copy.qem"
+        self.read(self.raw, metal=True, save_qem=qem)
+        self.read(qem, metal=True)
+        restored = json.loads((self.root / "selected.bin.metadata.json").read_text())
+        self.assertEqual(restored["backgroundSubtractionEvidence"], {
+            "document": "readme.txt", "statement": "already background-subtracted",
+        })
         # Removing the declaration must not leave a remembered scientific claim.
         readme.write_text("acquisition\\\n\tProcessing state unknown.\n")
         self.read(self.raw)

@@ -1,0 +1,5 @@
+# Paired-entropy specialization
+
+The common case was two entropy-coded 16-bit lanes per float32 pixel. Branching once on their models, then calling `next_entropy()` for each frame, reduced large-edit GPU decode p50 from 7,386,422 to 6,983,489 ticks in an ordered control/candidate/control/candidate/control sweep. The second candidate was 7,137,624 ticks; controls were 7,384,294 and 7,362,665. Reducer timing remained about 1.47 million ticks.
+
+Every byte of 180 complete 100×100 float32 virtual images matched the original decoder on the real 256×256 detector. Native large-ADF-center presentations were 95.0/97.2/94.7 updates/s in control/candidate/control runs at the original 1600-pixel threshold. This was a qualified but small gain; the later interleaved two-state variant superseded it and the intermediate kernel was removed. To reproduce the intermediate variant from the final kernel, replace its paired `float_ans_next_entropy_pair(low, high)` call with independent `low.next_entropy()` and `high.next_entropy()` calls in the same frame loop. No decoded 4D cache, crop, bin, or arithmetic reorder was used.

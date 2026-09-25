@@ -185,9 +185,11 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
                     output.write(block)
                 output.flush()
                 os.fsync(output.fileno())
-            os.link(temporary, path)  # publish only a complete file, without replacement
+            from ._publish import publish_file
+
+            publish_file(temporary, path)
         finally:
-            os.unlink(temporary)
+            Path(temporary).unlink(missing_ok=True)
 
 
 def load_streamed(path, *, backend, representation, scan_shape, device, verbose):

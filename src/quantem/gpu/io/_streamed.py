@@ -161,6 +161,11 @@ def load_h5_ans(
             cp.cuda.get_current_stream().synchronize()
             read_seconds += time.perf_counter() - before
             if stored_dtype != dtype:
+                if corrector.record["applied"]:
+                    # Flagged uint32 pixels can contain 0xffffffff sentinels.
+                    # Their requested correction replaces them anyway; clear
+                    # only those pixels before validating every retained count.
+                    raw.reshape(raw.shape[0], -1)[:, corrector.bad] = 0
                 raw = _exact_uint16_counts(raw, first, stop)
             corrector.apply(raw)
             source.append(raw)

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "experiment_id": "20260922-float-ans-change-threshold",
+  "status": "completed",
+  "question": "Can routing ordinary sub-1600-pixel float-ANS detector changes to the column-parallel decoder improve native presentation without changing exact output or GPU-resident storage?",
+  "paper": {
+    "authoritative_host": "apple-m5-24gb",
+    "repository": "quantem.gpu",
+    "manifest_path": "experiments/20260922-float-ans-change-threshold/manifest.json"
+  },
+  "code": {
+    "repository": "https://github.com/bobleesj/quantem.gpu",
+    "revision": "d87f4f8585358cce21c8ee36e87f9e83c8089e50",
+    "entrypoint": "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalFloatANS.swift",
+    "dirty": true,
+    "diff_sha256": "fdea33207cecae3f373d88a054422ab323b8121194505a2ed6eac1d21e5dcee6",
+    "diff_scope": "retained Metal and Swift decoder plus parity-harness diff; unrelated Python edits excluded"
+  },
+  "inputs": [{
+    "dataset_id": "local float32 4D-STEM fixture",
+    "shape": [100, 100, 256, 256],
+    "dtype": "float32",
+    "codec": "float32-bit-lanes-rans-v1",
+    "sha256": "e5e7511732c3d0a4f1c18937bb0a7d381241cab906301c48edc7549deb260216"
+  }],
+  "parameters": {
+    "scan_bin": 1,
+    "detector_bin": 1,
+    "crop": null,
+    "thresholds": [1600, 384],
+    "target_ms": 8.3333333333,
+    "parity": "bit-identical full virtual-image products",
+    "benchmark": "same-source native A/B/A displayed-frame cadence; GPU timestamp diagnostic"
+  },
+  "execution": {
+    "host": "apple-m5-24gb",
+    "backend": "swift-metal",
+    "gpu_ids": ["integrated-gpu-0"],
+    "gpu_model": "Apple M5"
+  },
+  "outputs": [{
+    "artifact_id": "results",
+    "path": "experiments/20260922-float-ans-change-threshold/results.md",
+    "sha256": "24d209a477f42f982455e7a3d409cfd5faf13185d7a20c0524a940158589cbb5",
+    "size_bytes": 2241,
+    "retention": "durable",
+    "consuming_figures": [],
+    "result": "Native large-ADF-center presentation improved from 96.7/96.0 to 106.5 updates/s; 180 complete images matched byte-for-byte."
+  }],
+  "timestamps": {"finished": "2026-09-22T16:57:00-07:00"}
+}
