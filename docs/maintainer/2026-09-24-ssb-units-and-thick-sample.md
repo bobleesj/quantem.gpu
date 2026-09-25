@@ -43,7 +43,7 @@ weights 1 -> standard SSB exactly.
 thickness jointly (C10 must move to the mid-depth focus; tilt-only from the standard optimum stops at (8.6, -6.3)), then
 Nelder-Mead.
 
-| data | truth | CUDA | MPS (phil) |
+| data | truth | CUDA | MPS (Apple M5) |
 |---|---|---|---|
 | sim BaTiO3 15.2 nm tilted | (3, -4) mrad | (3.0, -4.1) | (3.12, -4.19) |
 | sim untilted control | (0, 0) | (-0.3, -0.1) | (0.002, 0.000) |

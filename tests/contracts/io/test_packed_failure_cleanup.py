@@ -89,6 +89,8 @@ def test_failed_ssb_setup_releases_loaded_source_and_keeps_original_error(monkey
     )
     monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
     monkeypatch.setattr(io, "load", lambda *args, **kwargs: loaded)
+    # SSB.open decides packed from the source file before loading; this path names no real file
+    monkeypatch.setattr(workflow.DataRepresentation, "detect_source", classmethod(lambda cls, _: cls.PACKED))
     failure = ValueError("injected SSB calibration failure")
 
     def unavailable_calibration(*args, **kwargs):
