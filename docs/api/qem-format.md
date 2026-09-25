@@ -1,5 +1,47 @@
 # QuantEM data (.qem), container version 1
 
+## QEM specification 0.0.3
+
+Adds an optional `sample` group to `scientific_metadata`: the specimen as a person declared it (for example a session's
+`dataset.yaml` at conversion). The schema string stays `quantem.scientific-metadata/2`; readers that do not know the
+group keep it unchanged on re-save and ignore it otherwise. Nothing derived and nothing defaulted is written into it.
+
+```json
+"sample": {
+  "provenance": "dataset.yaml",
+  "evidence": "dataset.yaml sha256:..., files[38]",
+  "id": "BTO-STO-01",
+  "name": "BaTiO3 film on SrTiO3",
+  "geometry": "cross-section",
+  "growth_direction": [0, 0, 1],
+  "orientation_relationship": "(001)[100] BTO || (001)[100] STO",
+  "components": {
+    "BTO": {
+      "role": "film",
+      "chemical_formula": "BaTiO3",
+      "zone_axis": [0, 0, 1],
+      "cif": {"document": "BaTiO3.cif.json", "sha256": "..."},
+      "thickness_estimates": [
+        {"method": "ptychography_multislice", "value": 410, "unit": "angstrom", "uncertainty": 40,
+         "region": {"rows": [320, 512], "cols": [128, 384]}, "reference": "...", "date": "2026-09-26", "preferred": true}
+      ]
+    }
+  },
+  "components_in_view": ["BTO"]
+}
+```
+
+- `provenance` and `evidence` cover the whole group: who declared it and in which file.
+- `geometry` is `cross-section` (component thicknesses side by side) or `plan-view` (stacked along the beam).
+- `zone_axis` and `growth_direction` are integer `[u, v, w]` in the CIF's cell (or hexagonal `[u, v, t, w]`).
+- `role` is `film`, `substrate`, `support` or `particle`. Component labels are free text.
+- `cif` names a JSON document in `source_documents[]` holding the CIF text (`{"cif": "..."}`) and its sha256.
+- A thickness is always an estimate: `thickness_estimates` lists each with `method` (`diffraction_ridge`,
+  `pacbed_fit`, `ssb_depth`, `ptychography_multislice`, `cross_section`, `nominal`), `value` in `angstrom`, optional
+  `uncertainty` or `range`, `region` (a component label, `{rows, cols}` or `{point}` in scan positions, or absent for
+  the whole scan), `reference`, `date`, and at most one `preferred`.
+- Python validates the group (`validate_sample`); the Swift reader keeps it unchanged and does not interpret it yet.
+
 ## QEM specification 0.0.2
 
 Changes from 0.0.1. There is no compatibility period: 0.0.2 readers refuse the
@@ -54,6 +96,7 @@ Schema 2 stores normalized quantities and calibration overrides in these units:
 | Beam energy, when explicitly supplied | `keV` | keV |
 | Scan dwell time | `us` | µs |
 | Camera length | `mm` | mm |
+| Sample thickness estimate (0.0.3) | `angstrom` | nm |
 
 For example, `{"value": 0.42, "unit": "angstrom"}` means 0.42 Å per scan
 step. Applications may display another convenient unit, but must read the unit,

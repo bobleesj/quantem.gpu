@@ -1,7 +1,7 @@
 # QEM metadata mapping and completeness
 
 This is the implemented container-v1, scientific-metadata-schema-2 contract,
-documented as QEM specification 0.0.1, not a claim that every vendor
+documented as QEM specification 0.0.3, not a claim that every vendor
 field is understood. The [format specification](qem-format.md) owns the binary
 envelope. The format is independent of the compression algorithm and app version.
 
@@ -40,6 +40,10 @@ to its `electron_microscope` object. Source `y` means row and `x` means column.
 | Lossless storage history | `processing` | Exporter operation | `lossless_storage`, `changes_measurements=false` |
 | Dark/background recipe | header `empad` | Explicit native EMPAD dark reference and supplier correction evidence | Saved recipe/plane/identity; packed sample remains unchanged; subtraction applied once |
 | Bad-pixel validity | header `valid` for integer codec | Reader detector-validity mask | Preserved independently of raw counts |
+| Specimen (0.0.3) | `sample` (id, name, geometry, growth_direction, orientation_relationship) | Session `dataset.yaml` `specimen:` at conversion | Declared; provenance `dataset.yaml` with its sha256 as evidence; never derived |
+| Specimen components | `sample/components/<label>` (role, chemical_formula, zone_axis, cif) | `specimen.components.<label>`; the CIF file as a JSON document in `source_documents[]` | Declared; lattice and space group read from the CIF, not stored |
+| Thickness estimates | `sample/components/<label>/thickness_estimates[]` | `files.<n>.thickness.<label>[]` (`value_nm` becomes `value` in `angstrom`) | Declared estimates with method and region; automatic readings stay in result files until a person records them |
+| Components in view | `sample/components_in_view` | `files.<n>.components_in_view` | Written only when declared |
 
 Only finite positive calibration quantities with recognized units are promoted.
 Missing metadata is not fabricated. A supported field may still be missing in a

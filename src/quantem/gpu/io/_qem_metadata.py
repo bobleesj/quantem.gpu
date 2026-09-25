@@ -319,10 +319,21 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
         source_metadata_coverage=metadata.get("source_metadata_coverage", "reader-retained"),
         calibration_overrides=_recorded_overrides(metadata),
         processing=_processing_records(metadata),
+        **_recorded_sample(metadata),
         source_format=source.get(
             "sourceFormat", metadata.get("source_kind", "unknown")
         ),
     ))
+
+
+def _recorded_sample(metadata: dict) -> dict:
+    """The declared specimen supplied with a new copy (``sample``: a session's dataset.yaml at conversion), validated;
+    nothing when none was supplied (an absent specimen is not written as an empty one)."""
+    if not metadata.get("sample"):
+        return {}
+    sample = copy.deepcopy(metadata["sample"])
+    validate_sample(sample)
+    return {"sample": sample}
 
 
 def _recorded_overrides(metadata: dict) -> dict:
@@ -439,6 +450,8 @@ def _validate_scientific(scientific: dict) -> None:
             if (sampling is None or sampling["unit"] != duplicate["unit"]
                     or not math.isclose(sampling["value"], duplicate["value"], rel_tol=1e-14)):
                 raise ValueError(f"Conflicting QEM axis and microscope calibration at {path}.")
+    if "sample" in scientific:
+        validate_sample(scientific["sample"])
     for path, quantity in quantities.items():
         if (not isinstance(quantity, dict)
                 or not isinstance(quantity.get("unit"), str) or not quantity["unit"]
@@ -447,6 +460,108 @@ def _validate_scientific(scientific: dict) -> None:
                 or not math.isfinite(quantity["value"]) or quantity["value"] <= 0):
             raise ValueError(f"Invalid QEM microscope quantity at {path}.")
         _require_provenance(quantity)
+
+
+SAMPLE_GEOMETRIES = ("cross-section", "plan-view")
+SAMPLE_ROLES = ("film", "substrate", "support", "particle")
+THICKNESS_METHODS = ("diffraction_ridge", "pacbed_fit", "ssb_depth", "ptychography_multislice", "cross_section", "nominal")
+
+
+def validate_sample(sample: dict) -> None:
+    """Check the optional ``sample`` group (specification 0.0.3): the specimen as a person declared it, never derived.
+
+    ``components`` maps free labels (e.g. "BTO") to a chemical formula, a zone axis [u, v, w] in the CIF's cell, an optional
+    role and CIF document reference, and a list of thickness estimates (method from a fixed list, value in angstrom, the
+    scan region it was measured on). The group carries one provenance and evidence, like a calibration override: who
+    declared it and in which file."""
+    if not isinstance(sample, dict):
+        raise ValueError("QEM sample must be an object.")
+    _require_provenance(sample)
+    for key in ("id", "name", "description", "orientation_relationship", "evidence"):
+        if key in sample and not isinstance(sample[key], str):
+            raise ValueError(f"QEM sample {key} must be text.")
+    if "geometry" in sample and sample["geometry"] not in SAMPLE_GEOMETRIES:
+        raise ValueError(f"QEM sample geometry is one of {SAMPLE_GEOMETRIES}.")
+    if "growth_direction" in sample:
+        _require_indices(sample["growth_direction"], "growth_direction")
+    components = sample.get("components", {})
+    if not isinstance(components, dict) or not all(isinstance(label, str) and label for label in components):
+        raise ValueError("QEM sample components map nonempty labels to components.")
+    for label, component in components.items():
+        _validate_component(label, component)
+    in_view = sample.get("components_in_view")
+    if in_view is not None and (not isinstance(in_view, list) or any(label not in components for label in in_view)):
+        raise ValueError("QEM sample components_in_view lists labels of sample components.")
+
+
+def _validate_component(label: str, component: dict) -> None:
+    """One sample component: formula, zone, role, CIF reference and thickness estimates."""
+    if not isinstance(component, dict):
+        raise ValueError(f"QEM sample component {label} must be an object.")
+    if "chemical_formula" in component and not isinstance(component["chemical_formula"], str):
+        raise ValueError(f"QEM sample component {label}: chemical_formula must be text.")
+    if "role" in component and component["role"] not in SAMPLE_ROLES:
+        raise ValueError(f"QEM sample component {label}: role is one of {SAMPLE_ROLES}.")
+    if "zone_axis" in component:
+        _require_indices(component["zone_axis"], f"{label} zone_axis")
+    cif = component.get("cif")
+    if cif is not None and (not isinstance(cif, dict) or not isinstance(cif.get("document"), str)
+                            or not isinstance(cif.get("sha256"), str)):
+        raise ValueError(f"QEM sample component {label}: cif names a source document and its sha256.")
+    estimates = component.get("thickness_estimates", [])
+    if not isinstance(estimates, list):
+        raise ValueError(f"QEM sample component {label}: thickness_estimates is a list.")
+    for estimate in estimates:
+        _validate_thickness_estimate(label, estimate)
+    if sum(bool(estimate.get("preferred")) for estimate in estimates) > 1:
+        raise ValueError(f"QEM sample component {label}: at most one preferred thickness estimate.")
+
+
+def _validate_thickness_estimate(label: str, estimate: dict) -> None:
+    """One thickness estimate: a method from the fixed list, a positive value in angstrom and where it was measured."""
+    where = f"QEM sample component {label} thickness estimate"
+    if not isinstance(estimate, dict) or estimate.get("method") not in THICKNESS_METHODS:
+        raise ValueError(f"{where}: method is one of {THICKNESS_METHODS}.")
+    if estimate.get("unit") != "angstrom" or not _positive(estimate.get("value")):
+        raise ValueError(f"{where}: a positive value in angstrom.")
+    if "uncertainty" in estimate and not _positive(estimate["uncertainty"]):
+        raise ValueError(f"{where}: uncertainty is positive, in angstrom.")
+    bounds = estimate.get("range")
+    if bounds is not None and (not isinstance(bounds, list) or len(bounds) != 2 or not all(map(_positive, bounds))
+                               or bounds[0] > bounds[1]):
+        raise ValueError(f"{where}: range is [low, high] in angstrom.")
+    region = estimate.get("region")
+    if region is not None and not (isinstance(region, str) or _scan_region(region)):
+        raise ValueError(f"{where}: region is a component label, {{rows, cols}} or {{point}} in scan positions.")
+    for key in ("reference", "date"):
+        if key in estimate and not isinstance(estimate[key], str):
+            raise ValueError(f"{where}: {key} must be text.")
+    if "preferred" in estimate and type(estimate["preferred"]) is not bool:
+        raise ValueError(f"{where}: preferred is true or false.")
+
+
+def _scan_region(region) -> bool:
+    """A rectangle {rows: [start, end], cols: [start, end]} or a point {point: [row, col]}, in scan positions."""
+    if not isinstance(region, dict):
+        return False
+    if set(region) == {"point"}:
+        return _integers(region["point"], 2, minimum=0)
+    return (set(region) == {"rows", "cols"} and all(_integers(region[k], 2, minimum=0) and region[k][0] < region[k][1]
+                                                    for k in ("rows", "cols")))
+
+
+def _require_indices(value, name: str) -> None:
+    if not (_integers(value, 3) or _integers(value, 4)) or not any(value):
+        raise ValueError(f"QEM sample {name} is [u, v, w] or hexagonal [u, v, t, w] integers, not all zero.")
+
+
+def _integers(value, length: int, minimum: int | None = None) -> bool:
+    return (isinstance(value, list) and len(value) == length
+            and all(type(v) is int and (minimum is None or v >= minimum) for v in value))
+
+
+def _positive(value) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
 def _require_provenance(quantity: dict) -> None:

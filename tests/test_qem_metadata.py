@@ -213,3 +213,71 @@ def test_public_calibration_is_authoritative_for_independent_writers():
             del record["source_metadata_coverage"]
         with pytest.raises(ValueError):
             validate_header(invalid)
+
+
+# --- sample (specification 0.0.3) -------------------------------------------------------------------------------------
+
+SAMPLE = {
+    "provenance": "dataset.yaml",
+    "evidence": "dataset.yaml sha256:0123, files[38]",
+    "id": "BTO-STO-01",
+    "name": "BaTiO3 film on SrTiO3",
+    "geometry": "cross-section",
+    "growth_direction": [0, 0, 1],
+    "orientation_relationship": "(001)[100] BTO || (001)[100] STO",
+    "components": {
+        "BTO": {
+            "role": "film",
+            "chemical_formula": "BaTiO3",
+            "zone_axis": [0, 0, 1],
+            "cif": {"document": "BaTiO3.cif.json", "sha256": "ab" * 32},
+            "thickness_estimates": [
+                {"method": "ptychography_multislice", "value": 410.0, "unit": "angstrom", "uncertainty": 40.0,
+                 "region": {"rows": [320, 512], "cols": [128, 384]}, "reference": "trials/000", "date": "2026-09-26", "preferred": True},
+                {"method": "diffraction_ridge", "value": 430.0, "unit": "angstrom", "range": [390.0, 450.0], "region": "BTO"},
+            ],
+        },
+        "STO": {"role": "substrate", "chemical_formula": "SrTiO3", "zone_axis": [0, 0, 1]},
+    },
+    "components_in_view": ["BTO", "STO"],
+}
+
+
+def _header_with(sample):
+    shape = [2, 3, 16, 16]
+    return dict(container="quantem.qem", container_version=1, codec="c", profile="c", shape=shape,
+                scientific_metadata=acquisition_metadata(shape, {"sample": sample}))
+
+
+def test_declared_sample_is_written_and_validated_unchanged():
+    """A declared specimen passes through a new copy as written; with none, no sample group appears."""
+    header = _header_with(copy.deepcopy(SAMPLE))
+    validate_header(header)
+    assert header["scientific_metadata"]["sample"] == SAMPLE
+    assert "sample" not in acquisition_metadata([2, 3, 16, 16], {})
+
+
+@pytest.mark.parametrize("path, value", [
+    (("provenance",), ""),                                                        # every declared group names its origin
+    (("geometry",), "side view"),
+    (("components", "BTO", "role"), "layer"),
+    (("components", "BTO", "zone_axis"), [0, 0, 0]),
+    (("components", "BTO", "zone_axis"), "[001]"),
+    (("components", "BTO", "thickness_estimates", 0, "method"), "guess"),
+    (("components", "BTO", "thickness_estimates", 0, "unit"), "nm"),           # one canonical length unit
+    (("components", "BTO", "thickness_estimates", 0, "value"), -4.0),
+    (("components", "BTO", "thickness_estimates", 1, "range"), [450.0, 390.0]),
+    (("components", "BTO", "thickness_estimates", 0, "region"), {"rows": [512, 320], "cols": [0, 8]}),
+    (("components", "BTO", "thickness_estimates", 1, "preferred"), True),       # at most one preferred estimate
+    (("components_in_view",), ["BTO", "LAO"]),
+])
+def test_invalid_sample_rejected(path, value):
+    sample = copy.deepcopy(SAMPLE)
+    target = sample
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    header = _header_with(SAMPLE)
+    header["scientific_metadata"]["sample"] = sample
+    with pytest.raises(ValueError):
+        validate_header(header)
