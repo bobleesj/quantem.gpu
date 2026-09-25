@@ -327,6 +327,44 @@ class MpsSSBBackend:
         array = self.phase_to_numpy(phase)
         return array, None if loss is None else float(loss)
 
+    def preview_sample(
+        self,
+        aberrations: dict[str, float],
+        sample: dict[str, float],
+        *,
+        compute_loss: bool,
+    ) -> tuple[np.ndarray, float | None]:
+        """Phase (and phase-variance loss) for a thick, tilted sample: ``_thick_sample.reconstruct_thick``.
+
+        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit, Angstrom; 0 = standard SSB).
+        Same contract as ``CudaSSBBackend.preview_sample``.
+        """
+        from ._thick_sample import reconstruct_thick
+
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._rotation_angle_deg))
+        phase, loss = reconstruct_thick(
+            self._prepared,
+            C10=float(aberrations["C10"]),
+            C12=float(aberrations["C12"]),
+            phi12=float(aberrations["phi12"]),
+            tilt_mrad=(float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
+            thickness=float(sample.get("thickness", 0.0)),
+            compute_loss=compute_loss,
+        )
+        _require_mlx().clear_cache()
+        return phase, loss
+
+    def fit_sample(self, **options) -> dict[str, object]:
+        """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
+        from .optimizer import fit_sample
+
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._rotation_angle_deg))
+        result = fit_sample(self._prepared, **options)
+        _require_mlx().clear_cache()
+        return result
+
     def close(self) -> None:
         """Release MPS preparation, source data, and cached Metal buffers."""
 

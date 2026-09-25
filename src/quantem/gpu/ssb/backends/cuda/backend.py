@@ -1127,6 +1127,31 @@ class CudaSSBBackend:
         array = self.phase_to_numpy(phase)
         return array, None if loss is None else float(loss)
 
+    def preview_sample(
+        self,
+        aberrations: dict[str, float],
+        sample: dict[str, float],
+        *,
+        compute_loss: bool,
+    ) -> tuple[np.ndarray, float | None]:
+        """Phase (and phase-variance loss) for a thick, tilted sample: ``SSBEngine.reconstruct_thick``.
+
+        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit; 0 = standard SSB exactly)."""
+        accel = self._get_accelerator(); accel.cache_rotation(self._rotation_angle_rad)
+        phase, loss = accel.reconstruct_thick(
+            aberrations["C10"], aberrations["C12"], aberrations["phi12"],
+            (float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
+            float(sample.get("thickness", 0.0)), compute_loss=compute_loss,
+        )
+        return self.phase_to_numpy(phase), loss
+
+    def fit_sample(self, **options) -> dict[str, object]:
+        """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
+        from .optimizer import fit_sample
+
+        accel = self._get_accelerator(); accel.cache_rotation(self._rotation_angle_rad)
+        return fit_sample(accel, **options)
+
     def close(self) -> None:
         """Release CUDA-owned session state."""
 

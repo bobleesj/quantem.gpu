@@ -92,6 +92,64 @@ def _validate_aberrations(
     return {name: float(aberrations[name]) for name in ("C10", "C12", "phi12")}
 
 
+# ---------------------------------------------------------------------------
+# Aberration units: the public API is nm, the engines work in Angstrom.
+# Every backend evaluates chi = (pi / lambda[A]) alpha^2 (C10 + C12 cos 2(phi - phi12)) with no conversion, so the numbers
+# it takes and returns are Angstrom; before 2026-09-24 they were passed through and reported as "nm" (known-defocus check:
+# abTEM C10 = -100 A came back as C10 = -100.26 "nm"). The SSB session now converts at this boundary so C10 / C12 and the
+# sample thickness are true nm everywhere users see them, while kernels, backend parity tests and fixtures keep Angstrom.
+# Files written before the fix carry Angstrom under an nm label and no "aberration_unit" marker; they are read as Angstrom.
+# ---------------------------------------------------------------------------
+
+_ENGINE_PER_NM = 10.0
+ABERRATION_UNIT = "nm"
+
+
+def _aberrations_to_engine(aberrations: dict[str, float]) -> dict[str, float]:
+    """nm -> engine Angstrom for C10 / C12; phi12 (rad) unchanged."""
+    return {**aberrations, "C10": float(aberrations["C10"]) * _ENGINE_PER_NM, "C12": float(aberrations["C12"]) * _ENGINE_PER_NM}
+
+
+def _aberrations_from_engine(aberrations: dict[str, float]) -> dict[str, float]:
+    """engine Angstrom -> nm for C10 / C12; phi12 (rad) unchanged."""
+    return {**aberrations, "C10": float(aberrations["C10"]) / _ENGINE_PER_NM, "C12": float(aberrations["C12"]) / _ENGINE_PER_NM}
+
+
+def _search_ranges_to_engine(search_ranges: dict[str, object] | None) -> dict[str, object] | None:
+    """Scale the nm keys of an Optuna search-range dict (``C10_nm``, ``C12_nm``: range tuple or fixed value) into Angstrom."""
+    if search_ranges is None:
+        return None
+    scaled = dict(search_ranges)
+    for key in ("C10_nm", "C12_nm"):
+        if key in scaled and scaled[key] is not None:
+            value = scaled[key]
+            scaled[key] = tuple(float(v) * _ENGINE_PER_NM for v in value) if isinstance(value, (tuple, list)) else float(value) * _ENGINE_PER_NM
+    return scaled
+
+
+def _result_from_engine(result: SSBResult) -> SSBResult:
+    """Convert a result computed by a backend (Angstrom) to the public nm units, in place."""
+    result.aberrations = _aberrations_from_engine(result.aberrations)
+    if result.optuna_trials:
+        converted = []
+        for trial in result.optuna_trials:
+            params = dict(trial.get("params") or {})
+            for key in ("C10_nm", "C12_nm"):
+                if key in params:
+                    params[key] = float(params[key]) / _ENGINE_PER_NM
+            converted.append({**trial, "params": params})
+        result.optuna_trials = converted
+    return result
+
+
+def _saved_aberrations_nm(settings: dict[str, object]) -> dict[str, float]:
+    """Aberrations from a Live / GPU fit record in nm: records without ``aberration_unit`` predate the fix (Angstrom)."""
+    aberrations = dict(settings["aberrations"])
+    if settings.get("aberration_unit") == ABERRATION_UNIT:
+        return aberrations
+    return _aberrations_from_engine(aberrations)
+
+
 def _resolve_backend(
     backend: Literal["auto", "cuda", "mps", "webgpu"],
 ) -> Literal["cuda", "mps", "webgpu"]:
@@ -340,6 +398,7 @@ def _write_series_fit_metadata(
         **dict(computed.get("ssb") or {}),
         **settings,
         "aberrations": dict(result.aberrations),
+        "aberration_unit": ABERRATION_UNIT,
         "rotation_angle_deg": float(result.rotation_angle_deg),
         "loss": None if result.loss is None else float(result.loss),
         "bf_radius": result.bf_radius,
@@ -355,7 +414,7 @@ def _screen_fit_settings(screen_path: Path) -> dict[str, object] | None:
         config = json.loads(config_path.read_text())
         settings = (config.get("computed") or {}).get("ssb") or {}
         if "aberrations" in settings and "rotation_angle_deg" in settings:
-            return settings
+            return {**settings, "aberrations": _saved_aberrations_nm(settings), "aberration_unit": ABERRATION_UNIT}
     metadata_path = screen_path / "ssb-fit" / "ssb-fit.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
@@ -363,8 +422,11 @@ def _screen_fit_settings(screen_path: Path) -> dict[str, object] | None:
         aberrations = result.get("aberrations")
         rotation = result.get("rotation_angle_deg")
         if aberrations is not None and rotation is not None:
+            # ssb-fit.json is a saved SSBResult; schema 2 onwards stores nm (see _persistence.SCHEMA)
+            unit = ABERRATION_UNIT if int(metadata.get("schema", 1)) >= 2 else "A"
             return {
-                "aberrations": aberrations,
+                "aberrations": _saved_aberrations_nm({"aberrations": aberrations, "aberration_unit": unit}),
+                "aberration_unit": ABERRATION_UNIT,
                 "rotation_angle_deg": rotation,
             }
     return None
@@ -931,7 +993,7 @@ class SSB:
                 bf_intensity_threshold=self.bf_intensity_threshold,
                 bf_radius=self.bf_radius,
                 aberrations=(
-                    self.aberrations if self._aberrations_explicit else None
+                    _aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
                 ),
                 rotation_angle_deg=self.rotation_angle_deg,
             )
@@ -1083,7 +1145,7 @@ class SSB:
                     bf_radius=self.bf_radius,
                     rotation_angle_deg=self.rotation_angle_deg,
                     aberrations=(
-                        self.aberrations if self._aberrations_explicit else None
+                        _aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
                     ),
                 )
             backend = self._mps_backend
@@ -1150,12 +1212,12 @@ class SSB:
         result = self._backend_protocol.fit(
             trials=int(trials),
             refinement=refinement,
-            search_ranges=search_ranges,
+            search_ranges=_search_ranges_to_engine(search_ranges),
             refine_lock=refine_lock,
             seed=int(seed),
             verbose=verbose,
         )
-        result = self._accept_result(result)
+        result = self._accept_result(_result_from_engine(result))
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
@@ -1214,10 +1276,10 @@ class SSB:
             result = self._reconstruction
         else:
             result = self._backend_protocol.reconstruct_result(
-                coefs,
+                _aberrations_to_engine(coefs),
                 compute_loss=compute_loss,
             )
-            result = self._accept_result(result)
+            result = self._accept_result(_result_from_engine(result))
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
@@ -1232,10 +1294,27 @@ class SSB:
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
         context: AbstractContextManager | None = None,
+        sample: dict[str, float] | None = None,
     ) -> tuple[np.ndarray, float | None]:
-        """Reconstruct a transient phase image for an interactive viewer."""
+        """Reconstruct a transient phase image for an interactive viewer.
 
-        coefs = _validate_aberrations(aberrations)
+        ``aberrations`` C10 / C12 in nm, phi12 in rad. ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} switches to
+        the thick-sample model (each bright-field pixel's correction averaged over the sample depth, with the crystal leaning by
+        the tilt; see ``fit_sample``). Thickness in nm; thickness 0 is standard SSB. CUDA only for now.
+        """
+
+        coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
+        if sample is not None and float(sample.get("thickness", 0.0)) > 0.0:
+            sample = {**sample, "thickness": float(sample["thickness"]) * _ENGINE_PER_NM}
+            if higher_order_magnitudes is not None:
+                raise ValueError("The thick-sample preview does not combine with higher-order aberrations yet.")
+            backend = self._backend_protocol
+            if not hasattr(backend, "preview_sample"):
+                raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA backend only.")
+            if context is None:
+                return backend.preview_sample(coefs, sample, compute_loss=compute_loss)
+            with context:
+                return backend.preview_sample(coefs, sample, compute_loss=compute_loss)
         if (higher_order_magnitudes is None) != (higher_order_angles is None):
             raise ValueError(
                 "higher_order_magnitudes and higher_order_angles must be "
@@ -1244,7 +1323,8 @@ class SSB:
         magnitudes = (
             None
             if higher_order_magnitudes is None
-            else np.asarray(higher_order_magnitudes, dtype=np.float32)
+            # all 14 magnitudes (C10, C12 in slots 0-1, then C21..C56) are nm; the engines take Angstrom
+            else np.asarray(higher_order_magnitudes, dtype=np.float32) * np.float32(_ENGINE_PER_NM)
         )
         angles = (
             None
@@ -1270,6 +1350,36 @@ class SSB:
                 higher_order_magnitudes=magnitudes,
                 higher_order_angles=angles,
             )
+
+    @property
+    def supports_sample(self) -> bool:
+        """True when this session's backend implements the thick-sample model (``preview(sample=...)``, ``fit_sample``)."""
+        return hasattr(self._backend_protocol, "fit_sample")
+
+    def fit_sample(
+        self,
+        *,
+        trials: int = 300,
+        band_inv_A: tuple[float, float] = (0.2, 0.9),
+        tilt_limit_mrad: float = 25.0,
+        verbose: bool = True,
+    ) -> dict[str, object]:
+        """Fit defocus, astigmatism, sample tilt and thickness together (thick-sample SSB model).
+
+        A thick, tilted crystal changes how strongly each bright-field pixel carries each spatial frequency; the fit maximises
+        the least-squares agreement of that model with the data (the phase-variance loss of ``fit`` does not see tilt).
+        Returns {"C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "thickness", "fit", "standard_fit", "gain", ...};
+        C10 / C12 in nm (C10 is the defocus at mid-depth), phi12 in rad, tilt in mrad in the scan frame (row, col), thickness
+        in nm (a model depth spread, not a measured sample thickness). Validated on simulated BaTiO3 15 nm tilted (3, -4) mrad: found (3.0, -4.1);
+        untilted control: (-0.3, -0.1). CUDA only for now.
+        """
+        backend = self._backend_protocol
+        if not hasattr(backend, "fit_sample"):
+            raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA backend only.")
+        fit = backend.fit_sample(trials=int(trials), band_inv_A=tuple(band_inv_A), tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose)
+        converted = {**fit, **_aberrations_from_engine(fit), "thickness": float(fit["thickness"]) / _ENGINE_PER_NM}
+        converted["standard"] = _aberrations_from_engine({"phi12": 0.0, **fit["standard"]})
+        return converted
 
     def preview_context(self, num_bf: int):
         """Prepare a backend-owned reduced-BF interaction context."""

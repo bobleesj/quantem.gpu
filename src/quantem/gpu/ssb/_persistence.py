@@ -16,7 +16,7 @@ import numpy as np
 from .results import SSBResult
 
 
-SCHEMA = 1
+SCHEMA = 2  # 2: aberrations in true nm (1: Angstrom under an nm label, see workflow._ENGINE_PER_NM)
 _ARTIFACT_FIELDS = {"object_wave", "reused", "saved_path", "metadata"}
 
 

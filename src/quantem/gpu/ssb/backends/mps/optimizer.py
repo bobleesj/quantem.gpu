@@ -329,3 +329,28 @@ def optimize(
 
 
 __all__ = ["optimize"]
+
+
+# =========================================================================
+#  Thick-sample fit: sample tilt and thickness with the aberrations
+# =========================================================================
+
+def fit_sample(
+    prepared: _PreparedMpsSSB,
+    *,
+    band_inv_A: tuple[float, float] = (0.2, 0.9),
+    **options,
+) -> dict[str, object]:
+    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``_thick_sample.thick_fit`` (search: ``ssb._thick_fit``,
+    shared with CUDA). Trials are evaluated in batches of ``THICK_FIT_MAX_BATCH`` with the fused Metal kernel
+    (``thick_fit_batch``, same value as ``thick_fit``). Units: C10, C12, thickness in Angstrom (engine unit); tilt in mrad,
+    scan frame (row, col)."""
+    from ..._thick_fit import fit_sample_search
+    from ._thick_sample import THICK_FIT_MAX_BATCH, thick_fit, thick_fit_batch
+
+    return fit_sample_search(
+        lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, tilt_mrad=tilt,
+                                                           thickness=thickness, band_inv_A=band_inv_A),
+        objective_batch=lambda rows: thick_fit_batch(prepared, rows, band_inv_A),
+        batch_size=THICK_FIT_MAX_BATCH,
+        band_inv_A=band_inv_A, **options)

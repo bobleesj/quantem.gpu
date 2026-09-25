@@ -12,6 +12,7 @@ import type {
   SSBOptimizationResult,
   WebGPUOptimizationOptions,
   WebGPUReconstructionOptions,
+  WebGPUSampleOptions,
   SSBProtocol,
 } from "./protocol";
 import { fit } from "./optimizer";
@@ -304,6 +305,9 @@ type SsbPipelines = {
   objSum: GPUComputePipeline;
   objFftRows: GPUComputePipeline;
   objFftCols: GPUComputePipeline;
+  // thick-sample variants of the two passes that apply the SSB correction (makeSsbShader(n, true))
+  rowsThick: GPUComputePipeline;
+  objSumThick: GPUComputePipeline;
 };
 
 type SsbBindGroups = {
@@ -314,6 +318,8 @@ type SsbBindGroups = {
   objSum: GPUBindGroup[];
   objFftRows: GPUBindGroup;
   objFftCols: GPUBindGroup;
+  rowsThick: GPUBindGroup[];
+  objSumThick: GPUBindGroup[];
 };
 
 export type WebGPUSSBResult = {
@@ -399,7 +405,34 @@ function makeFftStages(n: SupportedSsbSize): string {
   return lines.join("\n");
 }
 
-function makeSsbShader(n: SupportedSsbSize): string {
+// Thick-sample WGSL pieces. Compiled into a separate shader variant (makeSsbShader(n, true)) so the standard (thin) SSB shader text,
+// and therefore its compiled code and results, stay exactly as before; only ssbRows and ssbObjSum differ between variants.
+const THICK_PARAMS_FIELDS = `
+  thickness: f32,
+  tilt_row_rad: f32,
+  tilt_col_rad: f32,
+  _pad0: u32,
+  _pad1: u32,
+  _pad2: u32,`;
+const THICK_GAMMA_SIGNATURE = "fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, alpha_k2: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {";
+const THIN_GAMMA_SIGNATURE = "fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {";
+// Thick, tilted crystal (CUDA _thick_correct_kernel): each SSB term is averaged over the sample depth t. Term 1 dephases at
+// rate1 = -factor (alpha_m^2 - alpha_k^2) - 2 pi q.theta and term 2 at rate2 = +factor (alpha_p^2 - alpha_k^2) - 2 pi q.theta, so
+// the depth average multiplies them by sinc(rate t / 2). Without it the two overlap terms of a thick sample partly cancel at
+// frequencies where free-space propagation differs across the depth. Thickness 0 gives weights exactly 1.
+const THICK_TERMS = `  var t1 = cmul(pm, pk_conj);
+  var t2 = cmul(pp_conj, pk);
+  if (params.thickness > 0.0) {
+    let shift = 6.283185307 * (qx * params.tilt_row_rad + qy * params.tilt_col_rad);
+    let rate1 = -params.factor * (m.x - alpha_k2) - shift;
+    let rate2 = params.factor * (p.x - alpha_k2) - shift;
+    t1 *= thick_sinc(0.5 * rate1 * params.thickness);
+    t2 *= thick_sinc(0.5 * rate2 * params.thickness);
+  }`;
+const THIN_TERMS = `  let t1 = cmul(pm, pk_conj);
+  let t2 = cmul(pp_conj, pk);`;
+
+function makeSsbShader(n: SupportedSsbSize, thick = false): string {
   const workgroupSize = Math.min(n, 256);
   const half = n / 2;
   const halfW = half + 1;
@@ -440,7 +473,7 @@ struct Params {
   partial_groups: u32,
   compute_loss: u32,
   active_bf: u32,
-  full_aberration: u32,
+  full_aberration: u32,${thick ? THICK_PARAMS_FIELDS : ""}
 };
 @group(0) @binding(0) var<uniform> params: Params;
 ${gqkDecl}
@@ -478,7 +511,7 @@ fn compute_geometry(dx: f32, dy: f32) -> vec4<f32> {
   let edge = select(1.0, (params.semiangle_rad - alpha) / denom + 0.5, denom > 1e-15);
   return vec4<f32>(alpha2, cos2phi, sin2phi, clamp(edge, 0.0, 1.0));
 }
-fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, pk: vec2<f32>, G: vec2<f32>) -> vec2<f32> {
+${thick ? "fn thick_sinc(x: f32) -> f32 { return select(sin(x) / x, 1.0, abs(x) < 1e-6); }\n" + THICK_GAMMA_SIGNATURE : THIN_GAMMA_SIGNATURE}
   let m = compute_geometry(qx - kx, qy - ky);
   let p = compute_geometry(qx + kx, qy + ky);
   var chi_m: f32;
@@ -496,8 +529,7 @@ fn gamma_mul(qx: f32, qy: f32, kx: f32, ky: f32, pk: vec2<f32>, G: vec2<f32>) ->
   let pp = vec2<f32>(p.w * cos(chi_p), -p.w * sin(chi_p));
   let pk_conj = vec2<f32>(pk.x, -pk.y);
   let pp_conj = vec2<f32>(pp.x, -pp.y);
-  let t1 = cmul(pm, pk_conj);
-  let t2 = cmul(pp_conj, pk);
+${thick ? THICK_TERMS : THIN_TERMS}
   var gg = t1 - t2;
   let mag_sq = gg.x * gg.x + gg.y * gg.y;
   let inv_mag = select(1e8, inverseSqrt(mag_sq), mag_sq > 1e-16);
@@ -572,7 +604,7 @@ fn ssbRows(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) 
   for (var off = 0u; off < ${n}u; off = off + ${workgroupSize}u) {
     let x = off + tid;
     if (x < ${n}u) {
-      var v = gamma_mul(qx1d[row], qy1d[x], bg.x, bg.y, pk, fetch_g(local_bf, bf, row, x));
+      var v = gamma_mul(qx1d[row], qy1d[x], bg.x, bg.y, ${thick ? "bg.z, " : ""}pk, fetch_g(local_bf, bf, row, x));
       if (row == 0u && x == 0u) { v = vec2<f32>(params.dc_re, params.dc_im); }
       s[FFT_BITREV[x]] = v;
     }
@@ -706,7 +738,7 @@ fn ssbObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
       chi_k = params.factor * bg.z * (params.C12 * cos_term_k + params.C10);
     }
     let pk = vec2<f32>(bg.w * cos(chi_k), -bg.w * sin(chi_k));
-    acc += gamma_mul(qx1d[row], qy1d[x], bg.x, bg.y, pk, fetch_g(bf - params.bf_offset, bf, row, x));
+    acc += gamma_mul(qx1d[row], qy1d[x], bg.x, bg.y, ${thick ? "bg.z, " : ""}pk, fetch_g(bf - params.bf_offset, bf, row, x));
   }
   // stage[0..plane] is the accumulation plane for the fast path (cleared
   // before the first chunk; chunks add sequentially via separate dispatches).
@@ -1501,6 +1533,14 @@ async function buildH5GqkChunks(
   return { gqkChunks, chunkBfCounts, fetchBytes, fetchMs, fetchWallMs, parseMs, decodeMs, gatherMs, fftMs, sourceFrames };
 }
 
+function sampleThickness(sample?: WebGPUSampleOptions): number {
+  return sample && Number.isFinite(sample.thickness) && sample.thickness > 0 ? sample.thickness : 0;
+}
+
+// Params uniform: 22 original words + thickness, tilt_row_rad, tilt_col_rad + 3 pad words (multiple of 16 bytes); the last
+// six are declared only in the thick shader variant.
+const SSB_PARAMS_BYTES = 112;
+
 function makeParams(
   cal: SsbCal,
   n: SupportedSsbSize,
@@ -1513,9 +1553,10 @@ function makeParams(
   computeLoss = true,
   activeBfCount = bfCount,
   fullAberration = false,
+  sample?: WebGPUSampleOptions,
 ): ArrayBuffer {
   const plane = n * n;
-  const b = new ArrayBuffer(96);
+  const b = new ArrayBuffer(SSB_PARAMS_BYTES);
   const u = new Uint32Array(b);
   const f = new Float32Array(b);
   const phi12Rad = phi12Deg * Math.PI / 180;
@@ -1539,6 +1580,11 @@ function makeParams(
   u[19] = computeLoss ? 1 : 0;
   u[20] = Math.max(1, Math.round(activeBfCount || u[0]));
   u[21] = fullAberration ? 1 : 0;
+  // Thick-sample depth average (Angstrom, radians). Absent or non-positive thickness leaves the standard SSB gamma.
+  const thickness = sampleThickness(sample);
+  f[22] = thickness;
+  f[23] = thickness > 0 ? (sample!.tiltRowMrad || 0) * 1e-3 : 0;
+  f[24] = thickness > 0 ? (sample!.tiltColMrad || 0) * 1e-3 : 0;
   return b;
 }
 
@@ -2328,8 +2374,9 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     }
     const gqkStorageMode = resolveGqkMode();
     const module = device.createShaderModule({ code: makeSsbShader(n), label: `SSB SSB WGSL ${n} ${gqkStorageMode}` });
+    const thickModule = device.createShaderModule({ code: makeSsbShader(n, true), label: `SSB SSB thick WGSL ${n} ${gqkStorageMode}` });
     const [
-      rows, cols, reducePartial, finalizeGroups, objSum, objFftRows, objFftCols,
+      rows, cols, reducePartial, finalizeGroups, objSum, objFftRows, objFftCols, rowsThick, objSumThick,
     ] = await Promise.all([
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbRows" } }),
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbCols" } }),
@@ -2338,6 +2385,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjSum" } }),
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjFftRows" } }),
       device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "ssbObjFftCols" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module: thickModule, entryPoint: "ssbRows" } }),
+      device.createComputePipelineAsync({ layout: "auto", compute: { module: thickModule, entryPoint: "ssbObjSum" } }),
     ]);
     const pipelines: SsbPipelines = {
       rows,
@@ -2347,6 +2396,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       objSum,
       objFftRows,
       objFftCols,
+      rowsThick,
+      objSumThick,
     };
     let gqkChunks: GPUBuffer[] = [];
     let chunkBfCounts: number[] = [];
@@ -2396,9 +2447,9 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       + `for ${chunkBfCounts.reduce((acc, bf) => acc + bf, 0)} active BF pixels`,
     );
     const buffers: SsbBuffers = {
-      params: device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: "ssb ssb params" }),
+      params: device.createBuffer({ size: SSB_PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, label: "ssb ssb params" }),
       paramsChunks: Array.from({ length: dispatchCount }, (_, index) => device.createBuffer({
-        size: 96,
+        size: SSB_PARAMS_BYTES,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         label: `ssb ssb params chunk ${index}`,
       })),
@@ -2434,23 +2485,26 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       return Math.floor(bfOffset / buffers.chunkCapacity);
     };
     device.pushErrorScope("validation");
+    // ssbRows and ssbObjSum (thin and thick variants) read the same resources
+    const correctionEntries = (params: GPUBuffer, index: number): GPUBindGroupEntry[] => [
+      { binding: 0, resource: { buffer: params } },
+      { binding: 1, resource: { buffer: buffers.gqkChunks[chunkBufferIndex(index)] } },
+      { binding: 2, resource: { buffer: buffers.stage } },
+      { binding: 3, resource: { buffer: buffers.bfGeom } },
+      { binding: 4, resource: { buffer: buffers.bfTrig } },
+      { binding: 5, resource: { buffer: buffers.qx } },
+      { binding: 6, resource: { buffer: buffers.qy } },
+      { binding: 12, resource: { buffer: buffers.aberrations } },
+    ];
     const bindGroups: SsbBindGroups = {
-      rows: buffers.paramsChunks.map((params, index) => {
-        const entries: GPUBindGroupEntry[] = [
-          { binding: 0, resource: { buffer: params } },
-          { binding: 1, resource: { buffer: buffers.gqkChunks[chunkBufferIndex(index)] } },
-          { binding: 2, resource: { buffer: buffers.stage } },
-          { binding: 3, resource: { buffer: buffers.bfGeom } },
-          { binding: 4, resource: { buffer: buffers.bfTrig } },
-          { binding: 5, resource: { buffer: buffers.qx } },
-          { binding: 6, resource: { buffer: buffers.qy } },
-          { binding: 12, resource: { buffer: buffers.aberrations } },
-        ];
-        return device.createBindGroup({
-          layout: pipelines.rows.getBindGroupLayout(0),
-          entries,
-        });
-      }),
+      rows: buffers.paramsChunks.map((params, index) => device.createBindGroup({
+        layout: pipelines.rows.getBindGroupLayout(0),
+        entries: correctionEntries(params, index),
+      })),
+      rowsThick: buffers.paramsChunks.map((params, index) => device.createBindGroup({
+        layout: pipelines.rowsThick.getBindGroupLayout(0),
+        entries: correctionEntries(params, index),
+      })),
       cols: buffers.paramsChunks.map((params) => device.createBindGroup({
         layout: pipelines.cols.getBindGroupLayout(0),
         entries: [
@@ -2480,19 +2534,14 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           { binding: 11, resource: { buffer: buffers.variance } },
         ],
       }),
-      objSum: buffers.paramsChunks.map((params, index) => {
-        const entries: GPUBindGroupEntry[] = [
-          { binding: 0, resource: { buffer: params } },
-          { binding: 1, resource: { buffer: buffers.gqkChunks[chunkBufferIndex(index)] } },
-          { binding: 2, resource: { buffer: buffers.stage } },
-          { binding: 3, resource: { buffer: buffers.bfGeom } },
-          { binding: 4, resource: { buffer: buffers.bfTrig } },
-          { binding: 5, resource: { buffer: buffers.qx } },
-          { binding: 6, resource: { buffer: buffers.qy } },
-          { binding: 12, resource: { buffer: buffers.aberrations } },
-        ];
-        return device.createBindGroup({ layout: pipelines.objSum.getBindGroupLayout(0), entries });
-      }),
+      objSum: buffers.paramsChunks.map((params, index) => device.createBindGroup({
+        layout: pipelines.objSum.getBindGroupLayout(0),
+        entries: correctionEntries(params, index),
+      })),
+      objSumThick: buffers.paramsChunks.map((params, index) => device.createBindGroup({
+        layout: pipelines.objSumThick.getBindGroupLayout(0),
+        entries: correctionEntries(params, index),
+      })),
       objFftRows: device.createBindGroup({
         layout: pipelines.objFftRows.getBindGroupLayout(0),
         // ssbObjFftRows uses only the stage plane (sizes are compile-time
@@ -2586,6 +2635,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         throw new Error("WebGPU SSB buffers are not ready after setup");
       }
       const aberrations = packAberrations(c10, c12, phi12Deg, options.higherOrder);
+      // thickness > 0 selects the thick-sample shader variant; otherwise the standard pipelines run unchanged
+      const thick = sampleThickness(options.sample) > 0;
       device.queue.writeBuffer(buffers.aberrations, 0, aberrations.data as unknown as BufferSource);
       const t0 = performance.now();
       const enc = device.createCommandEncoder();
@@ -2607,18 +2658,18 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           device.queue.writeBuffer(
             buffers.paramsChunks[chunkIndex],
             0,
-            makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, bfOffset, chunkBf, false, buffers.activeBfCount, aberrations.active),
+            makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, bfOffset, chunkBf, false, buffers.activeBfCount, aberrations.active, options.sample),
           );
           const pass = enc.beginComputePass({ label: "ssb ssb obj sum" });
-          pass.setPipeline(pipelines.objSum);
-          pass.setBindGroup(0, bindGroups.objSum[chunkIndex]);
+          pass.setPipeline(thick ? pipelines.objSumThick : pipelines.objSum);
+          pass.setBindGroup(0, (thick ? bindGroups.objSumThick : bindGroups.objSum)[chunkIndex]);
           pass.dispatchWorkgroups(Math.ceil(this.plane / 256));
           pass.end();
         }
         device.queue.writeBuffer(
           buffers.params,
           0,
-          makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, 0, 1, false, buffers.activeBfCount, aberrations.active),
+          makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample),
         );
         let pass = enc.beginComputePass({ label: "ssb ssb obj fft rows" });
         pass.setPipeline(pipelines.objFftRows);
@@ -2655,6 +2706,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           rotationDeg,
           loss: null,
           objPath: true,
+          sample: options.sample ?? null,
           phase: phaseFast,
         };
         return resultFast;
@@ -2677,11 +2729,12 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
             computeLoss,
             buffers.activeBfCount,
             aberrations.active,
+            options.sample,
           ),
         );
         let pass = enc.beginComputePass({ label: "ssb ssb rows" });
-        pass.setPipeline(pipelines.rows);
-        pass.setBindGroup(0, bindGroups.rows[chunkIndex]);
+        pass.setPipeline(thick ? pipelines.rowsThick : pipelines.rows);
+        pass.setBindGroup(0, (thick ? bindGroups.rowsThick : bindGroups.rows)[chunkIndex]);
         pass.dispatchWorkgroups(1, this.n, chunkBf);
         pass.end();
         pass = enc.beginComputePass({ label: "ssb ssb cols" });
@@ -2710,6 +2763,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           computeLoss,
           buffers.activeBfCount,
           aberrations.active,
+          options.sample,
         ),
       );
       const pass = enc.beginComputePass({ label: "ssb ssb reduce" });
@@ -2748,6 +2802,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         c10, c12, phi12Deg,
         rotationDeg,
         loss,
+        sample: options.sample ?? null,
         phase,
       };
       return result;

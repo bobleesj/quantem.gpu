@@ -21,6 +21,14 @@ export interface WebGPUReconstructionOptions {
   readonly computeLoss?: boolean;
   readonly rotationDeg?: number;
   readonly higherOrder?: Record<string, number>;
+  /** Thick, tilted crystal: tilt in mrad (scan frame, row/col), thickness in Angstrom (C10 unit). Absent or 0 = thin SSB. */
+  readonly sample?: WebGPUSampleOptions;
+}
+
+export interface WebGPUSampleOptions {
+  readonly tiltRowMrad: number;
+  readonly tiltColMrad: number;
+  readonly thickness: number;
 }
 
 export interface SSBProtocol<Result> {

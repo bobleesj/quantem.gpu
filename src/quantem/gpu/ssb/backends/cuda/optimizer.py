@@ -405,3 +405,21 @@ def _eval_single(accel: SSBEngine, x: np.ndarray) -> float:
     phi12_arr = np.full(4, x[2], dtype=np.float32)
     result = accel.variance_loss_batch(c10_arr, c12_arr, phi12_arr)
     return float(result[0])
+
+
+# =========================================================================
+#  Thick-sample fit: sample tilt and thickness with the aberrations
+# =========================================================================
+
+def fit_sample(
+    accel: SSBEngine,
+    *,
+    band_inv_A: tuple[float, float] = (0.2, 0.9),
+    **options,
+) -> dict[str, object]:
+    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``SSBEngine.thick_fit`` (search: ``ssb._thick_fit``)."""
+    from ..._thick_fit import fit_sample_search
+
+    return fit_sample_search(lambda c10, c12, phi12, tilt, thickness: accel.thick_fit(c10, c12, phi12, tilt, thickness, band_inv_A),
+                             objective_batch=lambda rows: accel.thick_fit_batch(rows, band_inv_A),
+                             band_inv_A=band_inv_A, **options)

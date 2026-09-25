@@ -214,6 +214,207 @@ void reduce_group_sums_batch(
 ''', 'reduce_group_sums_batch')
 
 # pk kernel for precomputing pk values (used in fused FFT paths)
+# Thick-sample SSB correction (sample tilt + thickness), for SSBEngine.reconstruct_thick.
+# Standard SSB treats the sample as one plane at the probe defocus. For a crystal of thickness t tilted by theta (straight
+# columns), the slice at depth z (from mid-depth) sees the defocus C10 + z and sits shifted by z theta. Averaging the two SSB
+# terms over depth gives each its own real weight (sinc of the depth-phase rate times t / 2):
+#   t1 = P(q - k) conj(P(k)),   rate1 = -pi lambda (|q - k|^2 - |k|^2) - 2 pi q . theta
+#   t2 = conj(P(q + k)) P(k),   rate2 = +pi lambda (|q + k|^2 - |k|^2) - 2 pi q . theta
+#   gamma = w1 t1 - w2 t2,  w = sinc(rate t / 2)
+# with P = aperture exp(-i chi) at the mid-depth aberrations (chi = factor alpha^2 (C10 + C12 cos 2(phi - phi12)), the same
+# geometry and soft aperture as compute_geometry). corrected = G conj(gamma / |gamma|); t = 0 gives w = 1 and the standard
+# correction exactly. Units: q, k in 1/A; C10, C12, thickness in the engine's C10 unit (A: chi uses factor = pi / lambda[A]).
+_thick_correct_kernel = cp.ElementwiseKernel(
+    in_params="""
+        complex64 G, float32 qx, float32 qy, float32 kx, float32 ky,
+        float32 wavelength, float32 semiangle_rad, float32 ang_y_rad, float32 ang_x_rad,
+        float32 C10, float32 C12, float32 cos2phi12, float32 sin2phi12, float32 factor,
+        float32 thickness, float32 theta_r, float32 theta_c
+        """,
+    out_params="complex64 corrected",
+    preamble=r"""
+    __device__ float4 thick_geometry(float dx, float dy, float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad) {
+        float r2 = dx * dx + dy * dy;
+        float alpha2 = r2 * wavelength * wavelength;
+        float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+        float cos2phi = (dx * dx - dy * dy) * inv_r2;
+        float sin2phi = 2.0f * dx * dy * inv_r2;
+        float r = sqrtf(r2);
+        float alpha = r * wavelength;
+        float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+        float denom = sqrtf(dx * ang_y_rad * dx * ang_y_rad + dy * ang_x_rad * dy * ang_x_rad) * inv_r;
+        float edge = (denom > 1e-15f) ? ((semiangle_rad - alpha) / denom + 0.5f) : 1.0f;
+        return make_float4(alpha2, cos2phi, sin2phi, fminf(fmaxf(edge, 0.0f), 1.0f));
+    }
+    __device__ float thick_sinc(float x) { return (fabsf(x) < 1e-6f) ? 1.0f : sinf(x) / x; }
+    """,
+    operation="""
+        float4 g_k = thick_geometry(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float4 g_m = thick_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float4 g_p = thick_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float chi_k = factor * g_k.x * fmaf(C12, fmaf(g_k.y, cos2phi12, g_k.z * sin2phi12), C10);
+        float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
+        float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
+        float w1 = 1.0f, w2 = 1.0f;
+        if (thickness > 0.0f) {
+            float shift = 6.283185307f * (qx * theta_r + qy * theta_c);
+            float rate1 = -factor * (g_m.x - g_k.x) - shift;
+            float rate2 = factor * (g_p.x - g_k.x) - shift;
+            w1 = thick_sinc(0.5f * rate1 * thickness);
+            w2 = thick_sinc(0.5f * rate2 * thickness);
+        }
+        // t1 = P(m) conj(P(k)) = a_m a_k exp(-i (chi_m - chi_k)); t2 = conj(P(p)) P(k) = a_p a_k exp(i (chi_p - chi_k))
+        float a1 = w1 * g_m.w * g_k.w, a2 = w2 * g_p.w * g_k.w;
+        float s1, c1, s2, c2;
+        __sincosf(chi_m - chi_k, &s1, &c1);
+        __sincosf(chi_p - chi_k, &s2, &c2);
+        float g_re = a1 * c1 - a2 * c2;
+        float g_im = -a1 * s1 - a2 * s2;
+        float mag_sq = g_re * g_re + g_im * g_im;
+        float inv_mag = (mag_sq > 1e-16f) ? rsqrtf(mag_sq) : 1e8f;
+        g_re *= inv_mag; g_im *= inv_mag;
+        float Gr = G.real(), Gi = G.imag();
+        corrected = thrust::complex<float>(Gr * g_re + Gi * g_im, Gi * g_re - Gr * g_im);
+    """,
+    name="thick_correct_kernel",
+)
+
+# Least-squares fit of the SSB model G(q, k) = Psi(q) gamma(q, k) (unnormalised gamma of _thick_correct_kernel): per q the best
+# Psi explains |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 of the data, so the sum of that over a spatial-frequency band measures how
+# much of G the model with these aberrations, tilt and thickness accounts for. Unlike the phase-variance loss (phase-only
+# correction, pixels weighted equally) it uses how strongly each pixel carries the signal, which is what tilt changes.
+_thick_fit_kernel = cp.ElementwiseKernel(
+    in_params="""
+        complex64 G, float32 qx, float32 qy, float32 kx, float32 ky,
+        float32 wavelength, float32 semiangle_rad, float32 ang_y_rad, float32 ang_x_rad,
+        float32 C10, float32 C12, float32 cos2phi12, float32 sin2phi12, float32 factor,
+        float32 thickness, float32 theta_r, float32 theta_c
+        """,
+    out_params="complex64 projected, float32 weight2",
+    preamble=r"""
+    __device__ float4 thick_geometry(float dx, float dy, float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad) {
+        float r2 = dx * dx + dy * dy;
+        float alpha2 = r2 * wavelength * wavelength;
+        float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+        float cos2phi = (dx * dx - dy * dy) * inv_r2;
+        float sin2phi = 2.0f * dx * dy * inv_r2;
+        float r = sqrtf(r2);
+        float alpha = r * wavelength;
+        float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+        float denom = sqrtf(dx * ang_y_rad * dx * ang_y_rad + dy * ang_x_rad * dy * ang_x_rad) * inv_r;
+        float edge = (denom > 1e-15f) ? ((semiangle_rad - alpha) / denom + 0.5f) : 1.0f;
+        return make_float4(alpha2, cos2phi, sin2phi, fminf(fmaxf(edge, 0.0f), 1.0f));
+    }
+    __device__ float thick_sinc(float x) { return (fabsf(x) < 1e-6f) ? 1.0f : sinf(x) / x; }
+    """,
+    operation="""
+        float4 g_k = thick_geometry(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float4 g_m = thick_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float4 g_p = thick_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float chi_k = factor * g_k.x * fmaf(C12, fmaf(g_k.y, cos2phi12, g_k.z * sin2phi12), C10);
+        float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
+        float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
+        float w1 = 1.0f, w2 = 1.0f;
+        if (thickness > 0.0f) {
+            float shift = 6.283185307f * (qx * theta_r + qy * theta_c);
+            float rate1 = -factor * (g_m.x - g_k.x) - shift;
+            float rate2 = factor * (g_p.x - g_k.x) - shift;
+            w1 = thick_sinc(0.5f * rate1 * thickness);
+            w2 = thick_sinc(0.5f * rate2 * thickness);
+        }
+        // t1 = P(m) conj(P(k)) = a_m a_k exp(-i (chi_m - chi_k)); t2 = conj(P(p)) P(k) = a_p a_k exp(i (chi_p - chi_k))
+        float a1 = w1 * g_m.w * g_k.w, a2 = w2 * g_p.w * g_k.w;
+        float s1, c1, s2, c2;
+        __sincosf(chi_m - chi_k, &s1, &c1);
+        __sincosf(chi_p - chi_k, &s2, &c2);
+        float g_re = a1 * c1 - a2 * c2;
+        float g_im = -a1 * s1 - a2 * s2;
+        float Gr = G.real(), Gi = G.imag();
+        projected = thrust::complex<float>(Gr * g_re + Gi * g_im, Gi * g_re - Gr * g_im);
+        weight2 = g_re * g_re + g_im * g_im;
+    """,
+    name="thick_fit_kernel",
+)
+
+
+# Batched thick-sample fit (fast path for SSBEngine.thick_fit_batch): one thread per band q on the stored half-plane, loop over
+# bright-field pixels k, up to THICK_FIT_MAX_BATCH parameter sets per pass so G is read once per batch. Geometry of q-k, q+k, k
+# (apertures, alpha^2, 2phi) is computed once per (k, q) and shared by every parameter set; pairs with no overlap are skipped.
+# Same model as _thick_fit_kernel (and ssb/torch_ssb.py): gamma = w1 P(q-k) conj P(k) - w2 conj P(q+k) P(k).
+THICK_FIT_MAX_BATCH = 8
+_thick_fit_batch_kernel = cp.RawKernel(r"""
+#define MAXB 8
+__device__ __forceinline__ float4 tf_geometry(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x) {
+    float r2 = dx * dx + dy * dy;
+    float alpha2 = r2 * wl * wl;
+    float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+    float cos2 = (dx * dx - dy * dy) * inv_r2;
+    float sin2 = 2.0f * dx * dy * inv_r2;
+    float r = sqrtf(r2);
+    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+    float denom = sqrtf(dx * ang_y * dx * ang_y + dy * ang_x * dy * ang_x) * inv_r;
+    float edge = (denom > 1e-15f) ? ((semiangle - r * wl) / denom + 0.5f) : 1.0f;
+    return make_float4(alpha2, cos2, sin2, fminf(fmaxf(edge, 0.0f), 1.0f));
+}
+__device__ __forceinline__ float tf_sinc(float x) { return (fabsf(x) < 1e-6f) ? 1.0f : __sinf(x) / x; }
+extern "C" __global__ void thick_fit_batch(
+    const float2* __restrict__ G, const long long* __restrict__ flat, const float* __restrict__ qxb, const float* __restrict__ qyb,
+    const float* __restrict__ kx, const float* __restrict__ ky, const float* __restrict__ trial,
+    float2* __restrict__ numer, float* __restrict__ denom,
+    int num_bf, long long plane, int n_band, int B, float wl, float semiangle, float ang_y, float ang_x, float factor,
+    int k_chunk)
+{
+    __shared__ float tp[MAXB * 7];   // C10, C12, cos2phi12, sin2phi12, thickness, theta_r, theta_c (rad)
+    for (int i = threadIdx.x; i < B * 7; i += blockDim.x) tp[i] = trial[i];
+    __syncthreads();
+    int q = blockIdx.x * blockDim.x + threadIdx.x;
+    if (q >= n_band) return;
+    float qx = qxb[q], qy = qyb[q];
+    long long off = flat[q];
+    float nr[MAXB], ni[MAXB], dd[MAXB];
+    for (int b = 0; b < MAXB; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
+    // grid.y splits the bright-field pixels: each block sums its slice and adds it atomically (outputs zeroed by the host)
+    int k0 = blockIdx.y * k_chunk, k1 = min(num_bf, k0 + k_chunk);
+    for (int k = k0; k < k1; ++k) {
+        float kxv = __ldg(kx + k), kyv = __ldg(ky + k);
+        float4 gk = tf_geometry(kxv, kyv, wl, semiangle, ang_y, ang_x);
+        float4 gm = tf_geometry(qx - kxv, qy - kyv, wl, semiangle, ang_y, ang_x);
+        float4 gp = tf_geometry(qx + kxv, qy + kyv, wl, semiangle, ang_y, ang_x);
+        float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
+        if (a1 == 0.0f && a2 == 0.0f) continue;             // no double overlap for this (k, q)
+        float2 g = G[(long long)k * plane + off];
+        for (int b = 0; b < B; ++b) {
+            float C10 = tp[b * 7 + 0], C12 = tp[b * 7 + 1], c2 = tp[b * 7 + 2], s2 = tp[b * 7 + 3];
+            float t = tp[b * 7 + 4], thr = tp[b * 7 + 5], thc = tp[b * 7 + 6];
+            float chi_k = factor * gk.x * fmaf(C12, fmaf(gk.y, c2, gk.z * s2), C10);
+            float chi_m = factor * gm.x * fmaf(C12, fmaf(gm.y, c2, gm.z * s2), C10);
+            float chi_p = factor * gp.x * fmaf(C12, fmaf(gp.y, c2, gp.z * s2), C10);
+            float w1 = 1.0f, w2 = 1.0f;
+            if (t > 0.0f) {
+                float shift = 6.283185307f * (qx * thr + qy * thc);
+                w1 = tf_sinc(0.5f * (-factor * (gm.x - gk.x) - shift) * t);
+                w2 = tf_sinc(0.5f * (factor * (gp.x - gk.x) - shift) * t);
+            }
+            float s1, c1, sp, cp_;
+            __sincosf(chi_m - chi_k, &s1, &c1);
+            __sincosf(chi_p - chi_k, &sp, &cp_);
+            float b1 = w1 * a1, b2 = w2 * a2;
+            float gr = b1 * c1 - b2 * cp_;          // gamma = b1 exp(-i(chi_m - chi_k)) - b2 exp(i(chi_p - chi_k))
+            float gi = -b1 * s1 - b2 * sp;
+            nr[b] += g.x * gr + g.y * gi;          // G conj(gamma)
+            ni[b] += g.y * gr - g.x * gi;
+            dd[b] += gr * gr + gi * gi;
+        }
+    }
+    for (int b = 0; b < B; ++b) {
+        float* nq = reinterpret_cast<float*>(numer + (long long)b * n_band + q);
+        atomicAdd(nq, nr[b]); atomicAdd(nq + 1, ni[b]);
+        atomicAdd(denom + (long long)b * n_band + q, dd[b]);
+    }
+}
+""", "thick_fit_batch")
+
+
 _pk_kernel = cp.ElementwiseKernel(
     in_params="""
         float32 alpha_k2, float32 cos2phi_k, float32 sin2phi_k, float32 aperture_k,
@@ -2090,6 +2291,212 @@ class SSBEngine:
         if chunk_bf >= num_bf:
             chunk_bf = 0
         return chunk_bf
+
+    def reconstruct_thick(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+        tilt_mrad: tuple[float, float],
+        thickness: float,
+        compute_loss: bool = True,
+        chunk_bytes: int = 1 << 30,
+    ) -> "tuple[cp.ndarray, float | None]":
+        """Mean phase and variance loss for a thick, tilted crystal (see ``_thick_correct_kernel``).
+
+        Same outputs and definitions as ``reconstruct`` / ``reconstruct_with_loss`` (mean over bright-field pixels of the
+        per-pixel phase; loss = mean over the image of the per-pixel phase variance), with each pixel's SSB correction
+        averaged over the sample depth. ``tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit; thickness
+        0 reproduces the standard reconstruction. Reference path: element-wise correction then one inverse FFT per pixel,
+        processed in chunks of bright-field pixels, not the fused FFT kernels, so it is slower than the standard path.
+        """
+        c = self._cache
+        num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
+        qx = c["qx_1d"].reshape(1, ny, 1); qy = c["qy_1d"].reshape(1, 1, nx)
+        half = self._gqk_is_hermitian_half_plane()
+        # other half of the plane for a real bright-field image: G(-q) = conj(G(q))
+        neg_rows = cp.asarray((-np.arange(ny)) % ny)
+        neg_cols = cp.asarray((nx - np.arange(nx // 2 + 1, nx)) % nx)
+        chunk = max(1, int(chunk_bytes // (ny * nx * 8 * 3)))
+        phase_sum = cp.zeros((ny, nx), dtype=cp.float32); phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
+        params = (
+            cp.float32(self.wavelength), cp.float32(c["semiangle_rad"]), cp.float32(c["ang_y_rad"]), cp.float32(c["ang_x_rad"]),
+            cp.float32(C10), cp.float32(C12), cp.float32(math.cos(2.0 * phi12)), cp.float32(math.sin(2.0 * phi12)),
+            cp.float32(self._factor), cp.float32(thickness), cp.float32(tilt_mrad[0] * 1e-3), cp.float32(tilt_mrad[1] * 1e-3),
+        )
+        for start in range(0, num_bf, chunk):
+            stop = min(num_bf, start + chunk)
+            if half:
+                source = self.G_qk[start:stop]
+                full = cp.empty((stop - start, ny, nx), dtype=cp.complex64)
+                full[:, :, : nx // 2 + 1] = source
+                full[:, :, nx // 2 + 1:] = cp.conj(source[:, neg_rows][:, :, neg_cols])
+            else:
+                full = self.G_qk[start:stop]
+            kx = c["kx_bf"][start:stop].reshape(-1, 1, 1); ky = c["ky_bf"][start:stop].reshape(-1, 1, 1)
+            corrected = _thick_correct_kernel(full, qx, qy, kx, ky, *params)
+            corrected[:, 0, 0] = self._dc_value_host
+            angles = cp.angle(cp.fft.ifft2(corrected, axes=(1, 2)))
+            phase_sum += angles.sum(axis=0)
+            if compute_loss:
+                phase_sumsq += (angles * angles).sum(axis=0)
+            del full, corrected, angles
+        mean = phase_sum / float(num_bf)
+        if not compute_loss:
+            return mean, None
+        loss = float(cp.mean(phase_sumsq / float(num_bf) - mean * mean))
+        return mean, loss
+
+    def thick_fit(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+        tilt_mrad: tuple[float, float],
+        thickness: float,
+        band_inv_A: tuple[float, float] = (0.2, 0.9),
+        chunk_bytes: int = 1 << 30,
+    ) -> float:
+        """Least-squares fit of the thick-sample SSB model to G over a spatial-frequency band (larger = better).
+
+        sum over q in the band of |sum_k G conj(gamma)|^2 / sum_k |gamma|^2 (see ``_thick_fit_kernel``). This is the objective
+        that recovers sample tilt: on simulated BaTiO3 15 nm tilted (3, -4) mrad it finds (3.0, -4.1) and ~0 for the untilted
+        control, where the phase-variance loss does not. ``band_inv_A`` excludes the lowest frequencies (dominated by the
+        probe-overlap geometry, not the lattice) and frequencies beyond the lattice signal.
+
+        Evaluated on the stored Hermitian half-plane only, and only at the band's q: the probe phase is even (P(-v) = P(v)) and
+        the two depth weights swap under q -> -q, so gamma(k, -q) = -conj(gamma(k, q)) and G(k, -q) = conj(G(k, q)); the term at
+        -q equals the term at q. Columns with a mirror inside the half-plane count once, all others twice. Same value as the
+        full-plane sum (checked to float32 precision) at about a third of the work, with no full-plane copy of G.
+        """
+        c = self._cache
+        num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
+        half = self._gqk_is_hermitian_half_plane()
+        cols = nx // 2 + 1 if half else nx
+        key = (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1]))
+        if getattr(self, "_thick_band_key", None) != key:
+            qr = c["qx_1d"].reshape(ny, 1); qc = c["qy_1d"][:cols].reshape(1, cols)
+            q = cp.hypot(qr, qc)
+            inside = (q > band_inv_A[0]) & (q < band_inv_A[1])
+            rows_idx, cols_idx = cp.nonzero(inside)
+            if half:
+                # columns 0 and nx/2 map onto themselves (their mirror is in the stored half): count once there
+                self_mirror = (cols_idx == 0) | ((nx % 2 == 0) & (cols_idx == nx // 2))
+                weight = cp.where(self_mirror, 1.0, 2.0).astype(cp.float32)
+            else:
+                weight = cp.ones(rows_idx.shape, dtype=cp.float32)
+            self._thick_band = (rows_idx, cols_idx, (rows_idx * cols + cols_idx).astype(cp.int64),
+                                c["qx_1d"][rows_idx].reshape(1, -1), c["qy_1d"][cols_idx].reshape(1, -1), weight)
+            self._thick_band_key = key
+        _, _, flat, qx, qy, weight = self._thick_band
+        n_band = int(flat.size)
+        chunk = max(1, int(chunk_bytes // (n_band * 8 * 3)))
+        numerator = cp.zeros((n_band,), dtype=cp.complex64); denominator = cp.zeros((n_band,), dtype=cp.float32)
+        params = (
+            cp.float32(self.wavelength), cp.float32(c["semiangle_rad"]), cp.float32(c["ang_y_rad"]), cp.float32(c["ang_x_rad"]),
+            cp.float32(C10), cp.float32(C12), cp.float32(math.cos(2.0 * phi12)), cp.float32(math.sin(2.0 * phi12)),
+            cp.float32(self._factor), cp.float32(thickness), cp.float32(tilt_mrad[0] * 1e-3), cp.float32(tilt_mrad[1] * 1e-3),
+        )
+        g_flat = self.G_qk.reshape(num_bf, -1)
+        for start in range(0, num_bf, chunk):
+            stop = min(num_bf, start + chunk)
+            gathered = g_flat[start:stop][:, flat]                      # (chunk, n_band): only the band's q, half-plane
+            kx = c["kx_bf"][start:stop].reshape(-1, 1); ky = c["ky_bf"][start:stop].reshape(-1, 1)
+            projected, weight2 = _thick_fit_kernel(gathered, qx, qy, kx, ky, *params)
+            numerator += projected.sum(axis=0); denominator += weight2.sum(axis=0)
+            del gathered, projected, weight2
+        keep = denominator > 0
+        return float((weight[keep] * cp.abs(numerator[keep]) ** 2 / denominator[keep]).sum())
+
+    def thick_fit_batch(self, params, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
+        """``thick_fit`` for many parameter sets at once, with the fused batch kernel (fast path used by the fit search).
+
+        ``params``: (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness), engine units. Same value as
+        ``thick_fit`` row by row; G is read once per group of ``THICK_FIT_MAX_BATCH`` rows.
+        """
+        params = np.atleast_2d(np.asarray(params, dtype=np.float64))
+        c = self._cache
+        num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
+        cols = nx // 2 + 1 if self._gqk_is_hermitian_half_plane() else nx
+        if getattr(self, "_thick_band_key", None) != (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1])):
+            self.thick_fit(0.0, 0.0, 0.0, (0.0, 0.0), 0.0, band_inv_A)      # builds the band index for this band
+        _, _, flat, qx, qy, weight = self._thick_band
+        n_band = int(flat.size)
+        if self.G_qk.dtype != cp.complex64 or not self.G_qk.flags.c_contiguous:
+            raise TypeError("thick_fit_batch needs a C-contiguous complex64 G_qk")
+        # kernel-ready copies of the band and pixel coordinates, built once per band / rotation (not per call)
+        cache_key = (self._thick_band_key, id(c))
+        if getattr(self, "_thick_batch_key", None) != cache_key:
+            self._thick_batch_arrays = (
+                cp.ascontiguousarray(qx.ravel().astype(cp.float32)), cp.ascontiguousarray(qy.ravel().astype(cp.float32)),
+                cp.ascontiguousarray(c["kx_bf"].astype(cp.float32)), cp.ascontiguousarray(c["ky_bf"].astype(cp.float32)),
+                cp.ascontiguousarray(flat.astype(cp.int64)),
+            )
+            self._thick_batch_key = cache_key
+        qx_b, qy_b, kx, ky, flat64 = self._thick_batch_arrays
+        out = np.empty(len(params))
+        threads = 256
+        blocks = (n_band + threads - 1) // threads
+        # enough blocks to fill the GPU: split the pixel loop so blocks x k_blocks is a few thousand
+        k_chunk = 256
+        k_blocks = (num_bf + k_chunk - 1) // k_chunk
+        for start in range(0, len(params), THICK_FIT_MAX_BATCH):
+            rows = params[start:start + THICK_FIT_MAX_BATCH]
+            b = len(rows)
+            trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
+                              rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
+            numer = cp.zeros((b, n_band), dtype=cp.complex64); denom = cp.zeros((b, n_band), dtype=cp.float32)
+            _thick_fit_batch_kernel(
+                (blocks, k_blocks), (threads,),
+                (self.G_qk, flat64, qx_b, qy_b, kx, ky, cp.asarray(trial.ravel()), numer, denom,
+                 np.int32(num_bf), np.int64(self.G_qk.shape[1] * self.G_qk.shape[2]), np.int32(n_band), np.int32(b),
+                 np.float32(self.wavelength), np.float32(c["semiangle_rad"]), np.float32(c["ang_y_rad"]), np.float32(c["ang_x_rad"]),
+                 np.float32(self._factor), np.int32(k_chunk)),
+            )
+            ok = denom > 0
+            values = (weight[None] * cp.where(ok, cp.abs(numer) ** 2 / cp.where(ok, denom, 1.0), 0.0)).sum(axis=1)
+            out[start:start + b] = cp.asnumpy(values)
+        return out
+
+    def _thick_fit_full_plane(
+        self,
+        C10: float,
+        C12: float,
+        phi12: float,
+        tilt_mrad: tuple[float, float],
+        thickness: float,
+        band_inv_A: tuple[float, float] = (0.2, 0.9),
+        chunk_bytes: int = 1 << 30,
+    ) -> float:
+        """Reference for ``thick_fit``: the same sum over the full q plane (G expanded from its half-plane). Tests only."""
+        c = self._cache
+        num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
+        qx = c["qx_1d"].reshape(1, ny, 1); qy = c["qy_1d"].reshape(1, 1, nx)
+        half = self._gqk_is_hermitian_half_plane()
+        neg_rows = cp.asarray((-np.arange(ny)) % ny)
+        neg_cols = cp.asarray((nx - np.arange(nx // 2 + 1, nx)) % nx)
+        chunk = max(1, int(chunk_bytes // (ny * nx * 8 * 3)))
+        numerator = cp.zeros((ny, nx), dtype=cp.complex64); denominator = cp.zeros((ny, nx), dtype=cp.float32)
+        params = (
+            cp.float32(self.wavelength), cp.float32(c["semiangle_rad"]), cp.float32(c["ang_y_rad"]), cp.float32(c["ang_x_rad"]),
+            cp.float32(C10), cp.float32(C12), cp.float32(math.cos(2.0 * phi12)), cp.float32(math.sin(2.0 * phi12)),
+            cp.float32(self._factor), cp.float32(thickness), cp.float32(tilt_mrad[0] * 1e-3), cp.float32(tilt_mrad[1] * 1e-3),
+        )
+        for start in range(0, num_bf, chunk):
+            stop = min(num_bf, start + chunk)
+            if half:
+                source = self.G_qk[start:stop]
+                full = cp.empty((stop - start, ny, nx), dtype=cp.complex64)
+                full[:, :, : nx // 2 + 1] = source
+                full[:, :, nx // 2 + 1:] = cp.conj(source[:, neg_rows][:, :, neg_cols])
+            else:
+                full = self.G_qk[start:stop]
+            kx = c["kx_bf"][start:stop].reshape(-1, 1, 1); ky = c["ky_bf"][start:stop].reshape(-1, 1, 1)
+            projected, weight2 = _thick_fit_kernel(full, qx, qy, kx, ky, *params)
+            numerator += projected.sum(axis=0); denominator += weight2.sum(axis=0)
+            del full, projected, weight2
+        q = cp.hypot(qx[0], qy[0]); band = (q > band_inv_A[0]) & (q < band_inv_A[1]) & (denominator > 0)
+        return float((cp.abs(numerator[band]) ** 2 / denominator[band]).sum())
 
     def variance_loss(
         self,
