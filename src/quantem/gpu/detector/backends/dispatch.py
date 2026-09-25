@@ -83,6 +83,16 @@ _SPARSE_MASK_CHUNK_BYTE_BUDGET = 64 * 1024 * 1024
 _CUDA_MASK_INDEX_CACHE_SIZE = 32
 
 
+
+def _sum_accumulator(dtype) -> np.dtype:
+    """Return uint64 for integer counts (exact) and float64 for float data.
+
+    A uint64 accumulator truncates floating-point intensities (simulated or
+    normalised data) to 0, which empties the mean diffraction pattern.
+    """
+    return np.dtype(np.uint64) if np.dtype(dtype).kind in "ui" else np.dtype(np.float64)
+
+
 def compute_backend(data):
     """Return the compute backend for ``data``, duck-typed on its type.
 
@@ -913,7 +923,9 @@ class CudaKernelCompute:
     def mean_dp(self) -> np.ndarray:
         import cupy as cp
 
-        acc = self._flat.sum(axis=0, dtype=cp.uint64)
+        # uint64 keeps integer counts exact; float input needs a float
+        # accumulator or every sub-unity intensity truncates to 0.
+        acc = self._flat.sum(axis=0, dtype=_sum_accumulator(self._flat.dtype))
         return (acc.astype(cp.float32) / self.n_frames).get()
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
@@ -921,12 +933,13 @@ class CudaKernelCompute:
 
         idx = cp.asarray(np.asarray(scan_indices, dtype=np.int64))
         frames = self._flat.reshape(self.n_frames, -1).take(idx, axis=0)
+        accumulator = _sum_accumulator(frames.dtype)
         if reduce == "sum":
-            out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32)
+            out = frames.sum(axis=0, dtype=accumulator).astype(cp.float32)
         elif reduce == "max":
             out = frames.max(axis=0).astype(cp.float32)
         else:
-            out = frames.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / int(idx.size)
+            out = frames.sum(axis=0, dtype=accumulator).astype(cp.float32) / int(idx.size)
         return out.reshape(self.det_shape).get()
 
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:

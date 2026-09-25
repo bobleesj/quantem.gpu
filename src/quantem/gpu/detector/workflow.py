@@ -500,6 +500,17 @@ def _unwrap_core_4dstem(data):
     return data
 
 
+def _sum_accumulator(dtype) -> np.dtype:
+    """Return the accumulator dtype for a display sum over detector frames.
+
+    Integer counts accumulate in uint64 so the sum is exact. Floating-point
+    data (simulated intensities, normalised float32) must accumulate in
+    float64: a uint64 accumulator truncates every sub-unity value to 0, which
+    leaves an empty mean diffraction pattern and no bright-field pixels.
+    """
+    return np.dtype(np.uint64) if np.dtype(dtype).kind in "ui" else np.dtype(np.float64)
+
+
 def _reduced_to_numpy(data) -> np.ndarray:
     """Convert a small reduced product to float32 NumPy for widget display."""
     if _is_cupy_array(data):
@@ -552,14 +563,18 @@ class _ArrayComputeBackend:
         if _is_cupy_array(self.flat):
             import cupy as cp
 
-            return self.flat.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / self.n_frames
+            return (
+                self.flat.sum(axis=0, dtype=_sum_accumulator(self.flat.dtype))
+                .astype(cp.float32)
+                / self.n_frames
+            )
         if _is_torch_tensor(self.flat):
             import torch
 
             return self.flat.to(torch.float32).mean(dim=0)
         return (
             np.asarray(self.flat)
-            .sum(axis=0, dtype=np.uint64)
+            .sum(axis=0, dtype=_sum_accumulator(self.flat.dtype))
             .astype(np.float32)
             / self.n_frames
         )
@@ -577,7 +592,9 @@ class _ArrayComputeBackend:
         if reduce == "mean":
             return _reduced_to_numpy(selected.mean(axis=0))
         if reduce == "sum":
-            return _reduced_to_numpy(selected.sum(axis=0, dtype=np.uint64))
+            return _reduced_to_numpy(
+                selected.sum(axis=0, dtype=_sum_accumulator(selected.dtype))
+            )
         if reduce == "max":
             return _reduced_to_numpy(selected.max(axis=0))
         raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
@@ -656,7 +673,7 @@ class _ArrayComputeBackend:
             flat = self.flat.reshape(self.n_frames, -1)
             return (
                 flat[:, selected]
-                .sum(axis=1, dtype=cp.uint64)
+                .sum(axis=1, dtype=_sum_accumulator(flat.dtype))
                 .astype(cp.float32)
                 .reshape(self.scan_shape)
             )
@@ -669,7 +686,7 @@ class _ArrayComputeBackend:
         flat = np.asarray(self.flat).reshape(self.n_frames, -1)
         return (
             flat[:, mask_np.reshape(-1)]
-            .sum(axis=1, dtype=np.uint64)
+            .sum(axis=1, dtype=_sum_accumulator(flat.dtype))
             .astype(np.float32)
             .reshape(self.scan_shape)
         )

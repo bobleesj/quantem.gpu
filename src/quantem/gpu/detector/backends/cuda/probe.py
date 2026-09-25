@@ -123,7 +123,10 @@ def mean_dp(data: cp.ndarray) -> cp.ndarray:
     """
     Compute mean diffraction pattern on GPU.
 
-    Uses integer reduction (``uint64`` accumulator) so there is no
+    Uses integer reduction (``uint64`` accumulator) for integer counts so
+    the sum is exact; floating-point input (simulated or normalised
+    intensities) accumulates in float64, because a uint64 accumulator
+    truncates every sub-unity value to 0. Either way there is no
     intermediate float32 copy of the full 4D array. For 512x512 x 192x192
     this saves ~38 GB of transient VRAM compared with
     ``data.astype(float32).mean(axis=0)``.
@@ -139,9 +142,10 @@ def mean_dp(data: cp.ndarray) -> cp.ndarray:
         2D array (det_row, det_col), float32.
     """
     import cupy as cp
+    accumulator = cp.uint64 if data.dtype.kind in "ui" else cp.float64
     if data.ndim == 3:
         n = data.shape[0]
-        return data.sum(axis=0, dtype=cp.uint64).astype(cp.float32) / n
+        return data.sum(axis=0, dtype=accumulator).astype(cp.float32) / n
     scan_row, scan_col = data.shape[0], data.shape[1]
     n = scan_row * scan_col
-    return data.reshape(n, *data.shape[2:]).sum(axis=0, dtype=cp.uint64).astype(cp.float32) / n
+    return data.reshape(n, *data.shape[2:]).sum(axis=0, dtype=accumulator).astype(cp.float32) / n
