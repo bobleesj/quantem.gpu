@@ -172,65 +172,126 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
         document = yaml.safe_load(text) or {}
     except yaml.YAMLError as error:
         raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
+    if not isinstance(document, dict):
+        raise ValueError(f"{sidecar}: the top level must be a mapping")
     declared = document.get("specimen")
     if declared is None and isinstance(document.get("reference_structure"), dict):
         legacy = document["reference_structure"]
         declared = {"components": {Path(str(legacy.get("cif") or "crystal")).stem: {"cif": legacy.get("cif"), "zone_axis": legacy.get("zone_axis")}}}
-    if not isinstance(declared, dict):
+    if declared is None:
         return None, []
-    key, entry, matched_by = session_file_entry(document.get("files") or {}, Path(master))
+    files = document.get("files") or {}
+    if not isinstance(declared, dict) or not isinstance(declared.get("components") or {}, dict) or not isinstance(files, dict):
+        raise ValueError(f"{sidecar}: specimen and its components, and files, must be mappings")
+    key, entry, matched_by = session_file_entry(files, Path(master))
     evidence = f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}" + (f", files[{key}] by {matched_by}" if entry else "")
-    sample = {"provenance": _SESSION_FILE, "evidence": evidence}
+    sample: dict = {"provenance": _SESSION_FILE, "evidence": evidence}
     for name in ("id", "name", "geometry", "description", "orientation_relationship"):
         if declared.get(name) is not None:
             sample[name] = str(declared[name])
     if declared.get("growth_direction") is not None:
-        sample["growth_direction"] = _indices(declared["growth_direction"])
-    documents, components = [], {}
+        sample["growth_direction"] = _indices(declared["growth_direction"], f"{sidecar}: growth_direction")
+    thickness = (entry or {}).get("thickness") or {}
+    if not isinstance(thickness, dict) or not all(isinstance(v, list) and all(isinstance(e, dict) for e in v) for v in thickness.values()):
+        raise ValueError(f"{sidecar}: files[{key}].thickness maps each component to a list of estimates")
+    documents: dict[Path, dict] = {}
+    components = {}
     for label, component in (declared.get("components") or {}).items():
-        component = component or {}
+        component = {} if component is None else component
+        if not isinstance(component, dict):
+            raise ValueError(f"{sidecar}: component {label} must be a mapping (role, chemical_formula, cif, zone_axis)")
         written = {name: str(component[name]) for name in ("role", "chemical_formula") if component.get(name)}
         if component.get("zone_axis") is not None:
-            written["zone_axis"] = _indices(component["zone_axis"])
+            written["zone_axis"] = _indices(component["zone_axis"], f"{sidecar}: component {label} zone_axis")
         if component.get("cif"):
-            cif = (sidecar.parent / str(component["cif"])).resolve()
-            if not cif.is_file():
-                raise ValueError(f"{sidecar}: component {label} names {component['cif']}, which is not in the session folder")
-            content = json.dumps({"cif": cif.read_text(errors="replace")})
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            documents.append({"filename": f"{cif.stem}.cif.json", "mediaType": "application/json", "content": content, "sha256": digest})
-            written["cif"] = {"document": f"{cif.stem}.cif.json", "sha256": digest}
-        estimates = [_thickness_estimate(e) for e in ((entry or {}).get("thickness") or {}).get(label, [])]
+            written["cif"] = _cif_document(sidecar, str(label), str(component["cif"]), documents)
+        estimates = [_thickness_estimate(e, f"{sidecar}: files[{key}].thickness.{label}") for e in thickness.get(label, [])]
         if estimates:
             written["thickness_estimates"] = estimates
         components[str(label)] = written
     if components:
         sample["components"] = components
-    if entry and entry.get("components_in_view"):
-        sample["components_in_view"] = [str(label) for label in entry["components_in_view"]]
-    validate_sample(sample)
-    return sample, documents
+    in_view = (entry or {}).get("components_in_view")
+    if in_view:
+        if not isinstance(in_view, list):
+            raise ValueError(f"{sidecar}: files[{key}].components_in_view is a list of component labels")
+        sample["components_in_view"] = [str(label) for label in in_view]
+    attached = list(documents.values())
+    if len(attached) > _MAX_CIF_DOCUMENTS or sum(len(d["content"].encode("utf-8")) for d in attached) > _MAX_CIF_BYTES:
+        raise ValueError(f"{sidecar}: more CIF text than a .qem carries ({_MAX_CIF_DOCUMENTS} files, {_MAX_CIF_BYTES >> 20} MiB)")
+    try:
+        validate_sample(sample)
+    except (ValueError, TypeError, KeyError) as error:  # named after the file to fix; a crafted value is still a malformed specimen
+        raise ValueError(f"{sidecar}: {error}") from error
+    return sample, attached
 
 
-def _indices(value) -> list[int]:
-    """A direction [u, v, w] from a list or the older text form "[1-10]"."""
+_MAX_CIF_DOCUMENTS = 8                 # of the 16 source documents a .qem carries; the rest stay for the source's own metadata
+_MAX_CIF_BYTES = 2 << 20               # of the 4 MiB attachment budget
+
+
+def _cif_document(sidecar: Path, label: str, name: str, documents: dict[Path, dict]) -> dict:
+    """The CIF a component names, as a JSON source document (one per file, named uniquely): a file inside the session
+    folder only, so a .qem never carries an unrelated file; returns the component's reference to it."""
+    folder = sidecar.parent.resolve()
+    cif = (folder / name).resolve()
+    if not cif.is_relative_to(folder) or not cif.is_file():
+        raise ValueError(f"{sidecar}: component {label} names {name}, which is not a file in the session folder")
+    if cif not in documents:
+        taken = {d["filename"] for d in documents.values()}
+        filename = f"{cif.stem}.cif.json" if f"{cif.stem}.cif.json" not in taken else f"{cif.stem}_{len(documents)}.cif.json"
+        content = json.dumps({"cif": cif.read_text(errors="replace")})
+        documents[cif] = {"filename": filename, "mediaType": "application/json", "content": content,
+                          "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
+    return {"document": documents[cif]["filename"], "sha256": documents[cif]["sha256"]}
+
+
+def _indices(value, where: str) -> list[int]:
+    """A direction [u, v, w] (or hexagonal [u, v, t, w]): a list of integers, or text "[1-10]" (single-digit indices, a
+    minus applying to the next digit) or "[1 -1 0]" (separated). Anything else is refused, not rounded."""
     if isinstance(value, (list, tuple)):
-        return [int(v) for v in value]
-    return [int(v) for v in re.findall(r"-?\d", str(value))]
+        if not all(type(v) is int for v in value):
+            raise ValueError(f"{where}: {value!r} must be integers")
+        indices = list(value)
+    elif isinstance(value, str):
+        text = value.strip().strip("[]() ")
+        parts = re.split(r"[,\s]+", text) if re.search(r"[,\s]", text) else re.findall(r"-?\d", text)
+        if "".join(parts).replace("-", "") != re.sub(r"[^0-9]", "", text) or not all(re.fullmatch(r"-?\d+", p) for p in parts):
+            raise ValueError(f"{where}: {value!r} is not a direction")
+        indices = [int(p) for p in parts]
+    else:
+        raise ValueError(f"{where}: {value!r} is not a direction")
+    if len(indices) not in (3, 4) or not any(indices):
+        raise ValueError(f"{where}: {value!r} is not [u, v, w] or [u, v, t, w]")
+    return indices
 
 
-def _thickness_estimate(estimate: dict) -> dict:
-    """A declared estimate in the ``.qem`` form: ``value_nm`` becomes ``value`` in angstrom, the rest as typed."""
-    out = {"method": estimate.get("method"), "value": float(estimate.get("value_nm", 0)) * 10, "unit": "angstrom"}
+def _thickness_estimate(estimate: dict, where: str) -> dict:
+    """A declared estimate in the ``.qem`` form: ``value_nm`` becomes ``value`` in angstrom, the rest as typed; a value
+    of the wrong type is refused, not coerced."""
+    def number(value, name):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{where}: {name} {value!r} must be a number")
+        return float(value)
+
+    out = {"method": estimate.get("method"), "value": number(estimate.get("value_nm"), "value_nm") * 10, "unit": "angstrom"}
     if estimate.get("uncertainty_nm") is not None:
-        out["uncertainty"] = float(estimate["uncertainty_nm"]) * 10
+        out["uncertainty"] = number(estimate["uncertainty_nm"], "uncertainty_nm") * 10
     if estimate.get("range_nm") is not None:
-        out["range"] = [float(v) * 10 for v in estimate["range_nm"]]
-    for name in ("region", "reference", "date"):
+        bounds = estimate["range_nm"]
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            raise ValueError(f"{where}: range_nm {bounds!r} is [low, high]")
+        out["range"] = [number(v, "range_nm") * 10 for v in bounds]
+    region = estimate.get("region")
+    if region is not None:
+        out["region"] = region
+    for name in ("reference", "date"):
         if estimate.get(name) is not None:
-            out[name] = estimate[name] if name == "region" else str(estimate[name])
+            out[name] = str(estimate[name])
     if estimate.get("preferred") is not None:
-        out["preferred"] = bool(estimate["preferred"])
+        if type(estimate["preferred"]) is not bool:
+            raise ValueError(f"{where}: preferred {estimate['preferred']!r} is true or false")
+        out["preferred"] = estimate["preferred"]
     return out
 
 

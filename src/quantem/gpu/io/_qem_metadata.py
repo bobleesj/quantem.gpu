@@ -490,8 +490,12 @@ def validate_sample(sample: dict) -> None:
     for label, component in components.items():
         _validate_component(label, component)
     in_view = sample.get("components_in_view")
-    if in_view is not None and (not isinstance(in_view, list) or any(label not in components for label in in_view)):
+    if in_view is not None and (not isinstance(in_view, list) or not all(isinstance(label, str) and label in components for label in in_view)):
         raise ValueError("QEM sample components_in_view lists labels of sample components.")
+    for label, component in components.items():
+        for estimate in component.get("thickness_estimates", []):
+            if isinstance(estimate.get("region"), str) and estimate["region"] not in components:
+                raise ValueError(f"QEM sample component {label} thickness estimate: region {estimate['region']!r} is not a component.")
 
 
 def _validate_component(label: str, component: dict) -> None:

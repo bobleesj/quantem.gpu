@@ -219,3 +219,35 @@ def test_session_specimen_reads_the_older_reference_structure_and_rejects_a_miss
     (tmp_path / "dataset.yaml").write_text("specimen:\n  components:\n    A:\n      cif: missing.cif\n")
     with pytest.raises(ValueError, match="missing.cif"):
         qem_conversion.session_specimen(tmp_path / "x_master.h5")
+
+
+@pytest.mark.parametrize("specimen", [
+    "specimen:\n  components: [BTO]\n",                                         # components not a mapping
+    "specimen:\n  components:\n    BTO: BaTiO3\n",                             # a component as text
+    "specimen:\n  components:\n    A:\n      zone_axis: [0.5, 0, 1]\n",        # not integers: refused, not truncated
+    "specimen:\n  components:\n    A:\n      zone_axis: [null, 0, 1]\n",
+    "specimen:\n  components:\n    A:\n      cif: ../../../etc/hostname\n",    # outside the session folder
+    "specimen:\n  components:\n    A:\n      cif: /etc/hostname\n",
+    "specimen:\n  components:\n    A: {}\nfiles:\n  '1':\n    master: x_1_master.h5\n    thickness: [40]\n",
+    "specimen:\n  components:\n    A: {}\nfiles:\n  '1':\n    master: x_1_master.h5\n    thickness:\n      A:\n        method: nominal\n",
+    "specimen:\n  components:\n    A: {}\nfiles:\n  '1':\n    master: x_1_master.h5\n    thickness:\n      A:\n        - method: nominal\n          value_nm: 4\n          range_nm: 5\n",
+    "specimen:\n  components:\n    A: {}\nfiles:\n  '1':\n    master: x_1_master.h5\n    thickness:\n      A:\n        - method: nominal\n          value_nm: 4\n          preferred: 'no'\n",
+    "specimen:\n  components:\n    A: {}\nfiles:\n  '1':\n    master: x_1_master.h5\n    thickness:\n      A:\n        - method: nominal\n          value_nm: 4\n          region: ZZZ\n",
+    "- a\n- b\n",                                                                 # the top level is not a mapping
+])
+def test_a_malformed_specimen_is_one_named_error(tmp_path, specimen):
+    """Every malformed specimen raises one ValueError naming dataset.yaml (convert then copies without it, with a note),
+    never AttributeError or TypeError, and never embeds a file from outside the session folder."""
+    (tmp_path / "dataset.yaml").write_text(specimen)
+    with pytest.raises(ValueError, match="dataset.yaml"):
+        qem_conversion.session_specimen(tmp_path / "x_1_master.h5")
+
+
+def test_specimen_directions_and_shared_cif(tmp_path):
+    """'[10 0 1]' keeps its two-digit index; two components sharing one CIF embed it once."""
+    (tmp_path / "X.cif").write_text("data_X\n")
+    (tmp_path / "dataset.yaml").write_text("specimen:\n  components:\n    A:\n      cif: X.cif\n      zone_axis: '[10 0 1]'\n"
+                                           "    B:\n      cif: ./X.cif\n      zone_axis: '[1-10]'\n")
+    sample, documents = qem_conversion.session_specimen(tmp_path / "x_1_master.h5")
+    assert sample["components"]["A"]["zone_axis"] == [10, 0, 1] and sample["components"]["B"]["zone_axis"] == [1, -1, 0]
+    assert len(documents) == 1 and sample["components"]["A"]["cif"] == sample["components"]["B"]["cif"]
