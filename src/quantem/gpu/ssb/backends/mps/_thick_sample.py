@@ -13,10 +13,11 @@ with P = aperture exp(-i chi) at the mid-depth aberrations, chi = factor alpha^2
 factor = pi / lambda[A], and the soft aperture of ``engine._compute_geometry``. Thickness 0 gives w = 1 and the standard
 correction exactly. Units: q, k in 1/A; C10, C12, thickness in Angstrom (the engine unit); tilt in mrad, scan frame (row, col).
 
-The element-wise model is one ``mx.compile`` graph (fused into a few Metal kernels) applied per chunk of bright-field
-pixels; the inverse FFT and the atan2 phase sums reuse the standard MPS path's ``_ifft2_chunked`` and
-``_phase_sums_from_complex`` so thickness 0 matches the standard preview to float32 rounding. It only runs when the thick
-model is requested, so it is not tuned like the fused standard kernels.
+Two implementations of the thick preview. ``reconstruct_thick`` (the interactive path) runs the standard fused MPS
+row kernel with the depth weights added per (k, q) (``engine._row_ifft_small_dynamic_kernel(thick=True)``) and the same
+column-IFFT phase kernel, so it costs about what the standard preview costs; 128/256/1024 scans. ``reconstruct_thick_reference``
+is the element-wise model as one ``mx.compile`` graph with MLX inverse FFTs: any scan shape, the definition the fast path
+is tested against, and the fallback for shapes the fused kernels do not cover.
 """
 from __future__ import annotations
 
@@ -31,8 +32,11 @@ from .engine import (
     _expand_hermitian_mx,
     _ifft2_chunked,
     _phase_sums_from_complex,
+    _reconstruct_prepared,
     _require_mlx,
 )
+
+_FUSED_SHAPES = ((128, 128), (256, 256), (1024, 1024))
 
 # bytes of one complex64 plane-sized temporary per BF pixel, times the live temporaries of a chunk
 _CHUNK_BYTES = 256 << 20
@@ -120,8 +124,35 @@ def reconstruct_thick(
     tilt_mrad: tuple[float, float],
     thickness: float,
     compute_loss: bool = True,
+    chunk_bf: int = 4096,
 ) -> tuple[np.ndarray, float | None]:
-    """Mean phase and phase-variance loss for a thick, tilted crystal.
+    """Mean phase and phase-variance loss for a thick, tilted crystal (interactive path).
+
+    Same outputs as ``reconstruct_thick_reference``. On 128/256/1024 scans the depth weights run inside the standard
+    fused row kernel, ``chunk_bf`` BF pixels per dispatch (why: the per-call cost is then the standard preview's, not a
+    separate element-wise graph + MLX FFT per chunk); other shapes use the reference graph.
+    """
+    if tuple(prepared.scan_shape) not in _FUSED_SHAPES:
+        return reconstruct_thick_reference(prepared, C10=C10, C12=C12, phi12=phi12, tilt_mrad=tilt_mrad,
+                                           thickness=thickness, compute_loss=compute_loss)
+    thick = (float(thickness), float(tilt_mrad[0]) * 1e-3, float(tilt_mrad[1]) * 1e-3)
+    _object, loss, phase = _reconstruct_prepared(prepared, C10=float(C10), C12=float(C12), phi12=float(phi12),
+                                                 chunk_bf=int(chunk_bf), compute_loss=compute_loss,
+                                                 compute_object=False, thick=thick)
+    return phase, None if loss is None else float(loss)
+
+
+def reconstruct_thick_reference(
+    prepared: _PreparedMpsSSB,
+    *,
+    C10: float,
+    C12: float,
+    phi12: float,
+    tilt_mrad: tuple[float, float],
+    thickness: float,
+    compute_loss: bool = True,
+) -> tuple[np.ndarray, float | None]:
+    """Mean phase and phase-variance loss for a thick, tilted crystal: MLX element-wise reference, any scan shape.
 
     Same outputs and definitions as ``engine._reconstruct_prepared`` (mean over bright-field pixels of the per-pixel phase
     of ifft2(G conj(gamma / |gamma|)) with the DC set to the stored DC value; loss = mean over the image of the per-pixel
@@ -363,4 +394,4 @@ def _band_mask(prepared: _PreparedMpsSSB, band_inv_A: tuple[float, float]) -> np
     return (q > float(band_inv_A[0])) & (q < float(band_inv_A[1]))
 
 
-__all__ = ["reconstruct_thick", "thick_fit", "thick_fit_batch"]
+__all__ = ["reconstruct_thick", "reconstruct_thick_reference", "thick_fit", "thick_fit_batch"]

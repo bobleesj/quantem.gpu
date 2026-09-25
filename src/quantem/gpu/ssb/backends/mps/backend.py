@@ -1,6 +1,7 @@
 """Backend-neutral MPS implementation of interactive SSB reconstruction."""
 from __future__ import annotations
 
+import dataclasses
 import math
 import time
 from pathlib import Path
@@ -37,6 +38,101 @@ def _clear_mps_io_cache() -> None:
     from quantem.gpu.io.backends.mps.dense import clear_mps_cache
 
     clear_mps_cache()
+
+
+_PER_BF_FIELDS = (
+    "alpha_k2", "cos2_k", "sin2_k", "aperture_k",
+    "alpha_m2", "cos2_m", "sin2_m", "ap_m",
+    "alpha_p2", "cos2_p", "sin2_p", "ap_p",
+    "alpha_k2_1d", "cos2_k_1d", "sin2_k_1d", "aperture_k_1d",
+)
+
+
+def _subset_prepared(prepared: _PreparedMpsSSB, num_bf: int) -> _PreparedMpsSSB:
+    """``prepared`` restricted to every ``num_bf / count``-th logical BF pixel (the CUDA ``prepare_bf_subset`` rule).
+
+    Logical BF pixels that were compacted away (aperture 0, not stored) stay unstored and still count in ``num_bf``,
+    so the subset mean has the same definition as the full one.
+    """
+    mx = prepared.mx
+    full = int(prepared.num_bf)
+    count = max(1, min(int(num_bf), full))
+    step = max(1, full // count)
+    logical = np.arange(0, full, step, dtype=np.int64)[:count]
+    stored = prepared.bf_storage_indices_np
+    if stored is None:
+        slots = logical
+        storage_indices = None
+    else:
+        stored = np.asarray(stored, dtype=np.int64)
+        keep = np.isin(stored, logical)
+        slots = np.nonzero(keep)[0]
+        storage_indices = np.searchsorted(logical, stored[keep]).astype(stored.dtype)
+        if storage_indices.size == logical.size:
+            storage_indices = None
+    slots_mx = mx.array(slots.astype(np.int32))
+    fields = {
+        name: getattr(prepared, name)[slots_mx]
+        for name in _PER_BF_FIELDS
+        if getattr(prepared, name) is not None
+    }
+    subset = dataclasses.replace(
+        prepared,
+        g_qk=prepared.g_qk[slots_mx],
+        kx=prepared.kx[slots_mx],
+        ky=prepared.ky[slots_mx],
+        kx_np=np.asarray(prepared.kx_np)[slots],
+        ky_np=np.asarray(prepared.ky_np)[slots],
+        num_bf=int(logical.size),
+        bf_storage_indices_np=storage_indices,
+        **fields,
+    )
+    mx.eval(subset.g_qk, subset.kx, subset.ky, *fields.values())
+    return subset
+
+
+class _MpsBfSubset:
+    """Context manager that swaps an MPS backend onto a reduced-BF ``_PreparedMpsSSB`` for drag previews.
+
+    Why: the preview cost is linear in the BF count, so a 25 % subset is ~4x faster while dragging. The subset is built
+    on first use and rebuilt only when the backend's prepared evidence or rotation geometry changes, so entering the
+    context per preview call is free.
+    """
+
+    def __init__(self, backend: "MpsSSBBackend", num_bf: int) -> None:
+        self._backend = backend
+        self._num_bf = int(num_bf)
+        self._source = None
+        self._subset = None
+        self._saved = None
+
+    @property
+    def num_bf(self) -> int:
+        """Number of BF pixels in the subset (logical, including compacted ones)."""
+        return int(self._current().num_bf)
+
+    def _current(self) -> _PreparedMpsSSB:
+        backend = self._backend
+        if backend._prepared is None:
+            backend.cache_rotation(math.radians(backend._rotation_angle_deg))
+        prepared = backend._prepared
+        source = (prepared, prepared.g_qk, prepared.kx, prepared.bf_storage_indices_np)
+        if self._source is None or any(a is not b for a, b in zip(source, self._source)):
+            self._subset = _subset_prepared(prepared, self._num_bf)
+            self._source = source
+        return self._subset
+
+    def __enter__(self) -> "_MpsBfSubset":
+        if self._saved is not None:
+            raise RuntimeError("The prepared SSB BF subset is already active.")
+        subset = self._current()
+        self._saved = self._backend._prepared
+        self._backend._prepared = subset
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._backend._prepared = self._saved
+        self._saved = None
 
 
 def _bf_geometry_1d_numpy(
@@ -131,8 +227,11 @@ class MpsSSBBackend:
             if redraw_chunk_bf is not None
             else max(requested_chunk_bf, int(_default_object_redraw_chunk_bf()))
         )
+        # phase/loss chunk: the optimizer's rule (``optimize(chunk_bf=16)`` -> the per-scan default), so previews and
+        # ``reconstruct_result`` sum BF pixels in the fit's chunks. Deriving it from the default ``requested_chunk_bf = 1``
+        # gave one BF pixel per dispatch (a 128x128 x 8889-BF preview took 3.3 s instead of ~9 ms).
         self._phase_chunk_bf = _effective_phase_loss_chunk_bf(
-            requested_chunk_bf, self._scan_shape
+            16 if chunk_bf is None else requested_chunk_bf, self._scan_shape
         )
         stored_dc = (
             self._frames.dc_value
@@ -351,8 +450,8 @@ class MpsSSBBackend:
             tilt_mrad=(float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
             thickness=float(sample.get("thickness", 0.0)),
             compute_loss=compute_loss,
+            chunk_bf=self._phase_chunk_bf,
         )
-        _require_mlx().clear_cache()
         return phase, loss
 
     def fit_sample(self, **options) -> dict[str, object]:
@@ -452,7 +551,9 @@ class MpsSSBBackend:
             C10=float(c10),
             C12=float(c12),
             phi12=float(phi12),
-            chunk_bf=self._chunk_bf,
+            # phase images use the fit's phase chunk (one dispatch pair per ~4096 BF): the 128-BF object-redraw chunk
+            # spent ~30 of 39 ms of a 128x128 preview on per-chunk synchronisation, and the fit's final phase uses it too
+            chunk_bf=self._phase_chunk_bf,
             compute_loss=True,
             compute_object=False,
         )
@@ -472,7 +573,7 @@ class MpsSSBBackend:
             C10=float(c10),
             C12=float(c12),
             phi12=float(phi12),
-            chunk_bf=self._chunk_bf,
+            chunk_bf=self._phase_chunk_bf,
             compute_loss=False,
             compute_object=False,
         )
@@ -523,9 +624,13 @@ class MpsSSBBackend:
         return self.reconstruct(c10, c12, phi12)
 
     def preview_context(self, num_bf: int):
-        """Return no reduced-evidence preview for the exact MPS path."""
+        """Reusable reduced-BF context for drag previews (standard and thick): every ``num_bf / N``-th BF pixel.
 
-        del num_bf
+        Same deterministic subset rule as the CUDA backend's ``prepare_bf_subset``. Inside ``with context:`` both
+        ``preview`` and ``preview_sample`` reconstruct from the subset (mean over the subset's BF pixels).
+        """
+
+        return _MpsBfSubset(self, int(num_bf))
 
     def export_brightfield(
         self,

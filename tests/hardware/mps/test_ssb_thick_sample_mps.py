@@ -95,3 +95,48 @@ def test_zero_depth_weighting_is_standard_ssb():
         thick, thick_loss = ssb.preview(aberrations, sample={"tilt_row_mrad": 5.0, "tilt_col_mrad": -3.0, "thickness": 1e-9})
         np.testing.assert_allclose(thick, standard, atol=5e-6)
         assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
+
+
+def test_fused_thick_preview_matches_reference_model():
+    """The interactive thick path (depth weights inside the fused row kernel) equals the MLX element-wise reference model
+    at real thickness and tilt, where the weights are far from 1.
+
+    Tolerances are the measured float32 floor of each case. At 3 nm defocus both paths sit ~1e-8 from a float64
+    evaluation of the model. At 40 nm defocus, 60 nm thickness and 23 mrad tilt chi reaches ~1e2 rad, and float32 chi
+    alone puts both paths 2.5e-6 (reference) to 7e-6 (fused) from float64, on phases of ~5e-3.
+    """
+    _require_mps()
+    from quantem.gpu.ssb.backends.mps._thick_sample import reconstruct_thick, reconstruct_thick_reference
+
+    ssb = _poisson_disk_session()
+    backend = ssb._backend_protocol
+    backend.cache_rotation(0.0)
+    prepared = backend._prepared
+    for kw, atol in ((dict(C10=30.0, C12=5.0, phi12=0.3, tilt_mrad=(5.0, -3.0), thickness=150.0), 5e-8),
+                     (dict(C10=-400.0, C12=120.0, phi12=-1.0, tilt_mrad=(-20.0, 12.0), thickness=600.0), 1e-5)):
+        fused, fused_loss = reconstruct_thick(prepared, **kw)
+        reference, reference_loss = reconstruct_thick_reference(prepared, **kw)
+        np.testing.assert_allclose(fused, reference, rtol=0, atol=atol)
+        assert abs(fused_loss - reference_loss) <= 1e-6 * abs(reference_loss)
+
+
+def test_drag_subset_context_standard_and_thick():
+    """``preview_context`` swaps both previews onto the deterministic BF subset: the full-size subset reproduces the full
+    preview exactly, and on a reduced subset the thick path at zero depth weighting still equals the standard path."""
+    _require_mps()
+    ssb = _poisson_disk_session()
+    aberrations = {"C10": 30.0, "C12": 5.0, "phi12": 0.3}
+    full, _ = ssb.preview(aberrations, compute_loss=False)
+    everything = ssb.preview_context(ssb.num_bf)
+    same, _ = ssb.preview(aberrations, compute_loss=False, context=everything)
+    np.testing.assert_array_equal(same, full)
+    context = ssb.preview_context(ssb.num_bf // 4)
+    assert context.num_bf == ssb.num_bf // 4
+    standard, standard_loss = ssb.preview(aberrations, context=context)
+    thick, thick_loss = ssb.preview(aberrations, context=context,
+                                    sample={"tilt_row_mrad": 5.0, "tilt_col_mrad": -3.0, "thickness": 1e-9})
+    np.testing.assert_allclose(thick, standard, atol=5e-6)
+    assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
+    assert np.abs(standard - full).max() > 1e-3      # the subset really is fewer BF pixels
+    after, _ = ssb.preview(aberrations, compute_loss=False)
+    np.testing.assert_array_equal(after, full)      # leaving the context restores the full evidence

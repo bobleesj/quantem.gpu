@@ -3065,12 +3065,58 @@ def _row_ifft_small_dynamic_kernel(
     gqk_cols: int,
     batch: int = 1,
     rows_per_group: int = 4,
+    thick: bool = False,
 ):
+    """Fused SSB correction + row IFFT for 128/256/1024 scans.
+
+    ``thick=True`` builds gamma = w1 t1 - w2 t2 with the thick-sample depth weights w = sinc(rate t / 2) of
+    ``_thick_sample`` from one extra input ``thick_params`` = (thickness, tilt_row_rad, tilt_col_rad). The thick
+    variant forms t1, t2 from the phase differences chi(q -/+ k) - chi(k) with precise sincos (as the reference model
+    and ``thick_fit_batch`` do): the depth weights can cancel the two terms, and the normalisation gamma / |gamma| then
+    amplifies the ~1e-5 rad error of fast sincos at large defocus. chi(k) is evaluated here with the same expression
+    as chi(q -/+ k) so their difference cancels consistently. With ``thick=False`` the generated Metal code is the
+    standard kernel's.
+    """
     mx = _require_mlx()
     n = int(n)
     t = n // 4
     half = n // 2
     define_rev, undef_rev, radix4_max, has_final = _small_fft_macros(n)
+    # geometry of k once per thread, same formula as engine._compute_geometry
+    thick_load = (
+        "float thickness = thick_params[0]; float theta_row = thick_params[1]; float theta_col = thick_params[2]; "
+        "float k_r2 = kxv * kxv + kyv * kyv; float k_r = metal::sqrt(k_r2); float k_alpha = k_r * wavelength; "
+        "float alpha_kv = k_alpha * k_alpha; float k_inv_r2 = k_r2 > 1.0e-30f ? 1.0f / k_r2 : 0.0f; "
+        "float cos2_kv = (kxv * kxv - kyv * kyv) * k_inv_r2; float sin2_kv = 2.0f * kxv * kyv * k_inv_r2; "
+        "float k_inv_r = k_r > 1.0e-15f ? 1.0f / k_r : 0.0f; "
+        "float k_denom = metal::sqrt((kxv * ang_y) * (kxv * ang_y) + (kyv * ang_x) * (kyv * ang_x)) * k_inv_r; "
+        "float k_edge = k_denom > 1.0e-15f ? (semiangle - k_alpha) / k_denom + 0.5f : 1.0f; "
+        "float ap_kv = metal::clamp(k_edge, 0.0f, 1.0f);"
+        if thick else ""
+    )
+    # depth weights of the two SSB terms; |x| < 1e-6 gives w = 1 exactly (standard SSB), as in _thick_sample
+    thick_weights = (
+        "float shift = 6.283185307179586f * (qxv * theta_row + qyv * theta_col); "
+        "float x1 = 0.5f * thickness * (-factor * (alpha2_m - alpha_kv) - shift); "
+        "float x2 = 0.5f * thickness * (factor * (alpha2_p - alpha_kv) - shift); "
+        "float w1 = metal::abs(x1) < 1.0e-6f ? 1.0f : metal::precise::sin(x1) / x1; "
+        "float w2 = metal::abs(x2) < 1.0e-6f ? 1.0f : metal::precise::sin(x2) / x2;"
+        if thick else ""
+    )
+    if thick:
+        gamma_lines = (
+            "float chi_k = factor * alpha_kv * (c12v * (cos2_kv * cos2v + sin2_kv * sin2v) + c10v); "
+            "float d1 = chi_m - chi_k; float d2 = chi_p - chi_k; "
+            "float c1; float s1 = metal::precise::sincos(d1, c1); "
+            "float cp; float sp = metal::precise::sincos(d2, cp); "
+            "float b1 = w1 * ap_m * ap_kv; float b2 = w2 * ap_p * ap_kv; "
+            "float gamma_r = b1 * c1 - b2 * cp; float gamma_i = -b1 * s1 - b2 * sp;"
+        )
+    else:
+        gamma_lines = (
+            "float gamma_r = (pmr * pkr + pmi * pki) - (ppr * pkr + ppi * pki);\n"
+            "                    float gamma_i = (pmi * pkr - pmr * pki) - (ppr * pki - ppi * pkr);"
+        )
     final_stage = ""
     if has_final:
         final_stage = f"""
@@ -3126,6 +3172,7 @@ def _row_ifft_small_dynamic_kernel(
         float kxv = kx[bf];
         float kyv = ky[bf];
         float qxv = q_row[row];
+        {thick_load}
 
         for (uint lane = 0u; lane < 4u; ++lane) {{
             uint col = tid + lane * T;
@@ -3170,6 +3217,7 @@ def _row_ifft_small_dynamic_kernel(
                 denom = metal::sqrt(denom_num2) * inv_r;
                 edge = denom > 1.0e-15f ? (semiangle - alpha) / denom + 0.5f : 1.0f;
                 float ap_p = metal::clamp(edge, 0.0f, 1.0f);
+                {thick_weights}
 
                 size_t g_idx;
                 bool mirror = false;
@@ -3210,8 +3258,7 @@ def _row_ifft_small_dynamic_kernel(
                     float ppr = ap_p * cos_chi_p;
                     float ppi = -ap_p * sin_chi_p;
 
-                    float gamma_r = (pmr * pkr + pmi * pki) - (ppr * pkr + ppi * pki);
-                    float gamma_i = (pmi * pkr - pmr * pki) - (ppr * pki - ppi * pkr);
+                    {gamma_lines}
                     float mag = metal::sqrt(gamma_r * gamma_r + gamma_i * gamma_i);
                     float inv_mag = 1.0f / metal::max(mag, 1.0e-8f);
                     float conj_gamma_r = gamma_r * inv_mag;
@@ -3277,10 +3324,15 @@ def _row_ifft_small_dynamic_kernel(
         #undef TW
         {undef_rev}
     """
+    if thick:
+        # the depth phase x = t factor (alpha^2(q -/+ k) - alpha^2(k)) / 2 multiplies the geometry's rounding by the
+        # thickness; fast sqrt put ~6e-7 rad of noise on a 15 nm tilted preview (precise: ~1e-8, as the MLX reference)
+        source = source.replace("metal::sqrt(", "metal::precise::sqrt(")
     return mx.fast.metal_kernel(
         name=(
             f"ssb_row_ifft{n}_dyn_n{int(batch)}_b{int(chunk)}_"
             f"g{int(gqk_cols)}_r{int(rows_per_group)}_sb1"
+            + ("_thick" if thick else "")
         ),
         input_names=[
             "g",
@@ -3295,7 +3347,7 @@ def _row_ifft_small_dynamic_kernel(
             "sin2phi12",
             "scalars",
             "twiddle",
-        ],
+        ] + (["thick_params"] if thick else []),
         output_names=["row_ifft"],
         source=source,
         compile_options={"math_mode": "fast"},
@@ -3311,8 +3363,13 @@ def _row_ifft_small_from_dynamic_geometry(
     c12,
     cos2phi12,
     sin2phi12,
+    thick=None,
 ):
-    """Fused dynamic correction + 128/256/1024 row IFFT for exact MPS phase/loss."""
+    """Fused dynamic correction + 128/256/1024 row IFFT for exact MPS phase/loss.
+
+    ``thick`` = (thickness, tilt_row_rad, tilt_col_rad) switches on the thick-sample depth weights
+    (``_row_ifft_small_dynamic_kernel(thick=True)``); None is standard SSB.
+    """
     mx = prepared.mx
     if prepared.scan_shape not in ((128, 128), (256, 256), (1024, 1024)):
         raise ValueError(
@@ -3326,6 +3383,7 @@ def _row_ifft_small_from_dynamic_geometry(
         n,
         chunk,
         int(prepared.g_qk.shape[-1]),
+        thick=thick is not None,
     )
     scalars = mx.array(
         [
@@ -3348,6 +3406,7 @@ def _row_ifft_small_from_dynamic_geometry(
         cos2phi12=cos2phi12,
         sin2phi12=sin2phi12,
     )[0]
+    extra = [] if thick is None else [mx.array([float(v) for v in thick], dtype=mx.float32)]
     t = n // 4
     return kernel(
         inputs=[
@@ -3363,7 +3422,7 @@ def _row_ifft_small_from_dynamic_geometry(
             sin2phi12,
             scalars,
             _twiddle_n(mx, n),
-        ],
+        ] + extra,
         template=[],
         grid=(t, n, chunk),
         threadgroup=(t, 4, 1),
@@ -4552,9 +4611,18 @@ def _reconstruct_prepared(
     compute_loss: bool,
     compute_object: bool,
     return_phase: bool = True,
+    thick=None,
 ) -> tuple[np.ndarray | None, float | None, np.ndarray | None]:
-    """Run SSB correction from a prepared BF FFT stack."""
+    """Run SSB correction from a prepared BF FFT stack.
+
+    ``thick`` = (thickness, tilt_row_rad, tilt_col_rad) applies the thick-sample depth weights inside the fused
+    128/256/1024 row kernel (``_thick_sample.reconstruct_thick``); None is standard SSB.
+    """
     mx = prepared.mx
+    if thick is not None and (
+        prepared.scan_shape not in ((128, 128), (256, 256), (1024, 1024)) or compute_object
+    ):
+        raise ValueError("The fused thick-sample path covers 128/256/1024 phase images only.")
     accumulator = (
         mx.zeros(prepared.scan_shape, dtype=mx.complex64)
         if compute_object else None
@@ -4565,7 +4633,7 @@ def _reconstruct_prepared(
     uses_scalar_512_loss = prepared.scan_shape == (512, 512)
     uses_scalar_dynamic_loss = (
         prepared.scan_shape in ((128, 128), (256, 256), (1024, 1024))
-        and prepared.alpha_k2 is None
+        and (prepared.alpha_k2 is None or thick is not None)
     )
     use_scalar_loss = (
         compute_loss
@@ -4595,7 +4663,7 @@ def _reconstruct_prepared(
         use_fused_row = (
             prepared.scan_shape in ((128, 128), (256, 256), (512, 512), (1024, 1024))
             and not compute_object
-            and prepared.alpha_k2 is None
+            and (prepared.alpha_k2 is None or thick is not None)
         )
         if use_fused_row:
             if prepared.scan_shape == (512, 512):
@@ -4647,6 +4715,7 @@ def _reconstruct_prepared(
                     c12=c12_values,
                     cos2phi12=cos2phi12_values,
                     sin2phi12=sin2phi12_values,
+                    thick=thick,
                 )
                 if compute_loss:
                     chunk_sum, chunk_sumsq = _phase_cols_small_scalar_loss_from_row_ifft(
