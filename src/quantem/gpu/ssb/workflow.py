@@ -172,6 +172,47 @@ def _resolve_backend(
     return selected
 
 
+def _bright_field_crop(loaded, backend: str, threshold: float, bf_radius: float | None):
+    """Decode only the bright-field disk of an encoded acquisition; return (counts, disk centre in the crop, disk radius).
+
+    SSB reads nothing outside the bright-field disk, but decoding the whole 4D cube (19 GB for 512^2 x 192^2 uint16) is
+    what the GPU loader forbids. The disk is found on the full-detector mean pattern with the backend's own rule
+    (pixels above ``threshold`` x max, within the radius around the centroid of pixels above mean + std, or within
+    ``bf_radius`` around the weighted centroid), so the crop plus the pinned centre selects exactly the pixels a
+    full-detector session would (tests/hardware/cuda/test_ssb_open_encoded.py).
+    """
+    from quantem.gpu.detector.workflow import mean_dp
+
+    dp = np.asarray(mean_dp(loaded), dtype=np.float64)
+    selected = dp > dp.max() * float(threshold)
+    if bf_radius is None:
+        probe = dp > dp.mean() + dp.std()
+        total = int(probe.sum())
+        if total == 0:
+            raise ValueError("No bright-field disk found in the mean diffraction pattern.")
+        rows, cols = np.nonzero(probe)
+        center = (float(rows.mean()), float(cols.mean()))
+        radius = math.sqrt(total / math.pi)
+    else:
+        rows, cols = np.nonzero(selected)
+        weights = dp[rows, cols]
+        center = (float((rows * weights).sum() / weights.sum()), float((cols * weights).sum() / weights.sum()))
+        radius = float(bf_radius)
+    det_rows, det_cols = dp.shape
+    # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
+    row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
+    row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)
+    counts = loaded.read(detector_region=(row0, row1, col0, col1))
+    if backend == "cuda":
+        import cupy as cp
+
+        counts = cp.from_dlpack(counts)
+    else:
+        counts = counts.cpu().numpy()
+    loaded.close()
+    return counts, (center[0] - row0, center[1] - col0), radius
+
+
 def _mps_data_with_scan_shape(data: object, scan_shape: tuple[int, int] | None):
     """Apply an explicit scan shape to an in-memory MPS array without copying."""
 
@@ -457,8 +498,9 @@ class SSB:
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
         bf_intensity_threshold: float = 0.0,
-        bf_radius: int | None = None,
+        bf_radius: float | None = None,
         source_path: str | None = None,
+        bf_center: tuple[float, float] | None = None,
     ) -> None:
         self.backend = _resolve_backend(backend)
         if self.backend == "mps":
@@ -488,6 +530,8 @@ class SSB:
         self.rotation_angle_deg = float(rotation_angle_deg)
         self.bf_intensity_threshold = float(bf_intensity_threshold)
         self.bf_radius = bf_radius
+        # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
+        self.bf_center = None if bf_center is None else (float(bf_center[0]), float(bf_center[1]))
         self.source_path = source_path
         self.calibration_path: str | None = None
         self.source_manifest_path: str | None = None
@@ -836,6 +880,7 @@ class SSB:
                 "Browser WebGPU sources are opened by the exported SSB runtime."
             )
         data = None
+        bf_center = None
         source_kind: Literal["detector", "bf_columns", "packed_detector"]
         source_dtype: str
         source_bytes: int
@@ -864,34 +909,32 @@ class SSB:
             from quantem.gpu.io.load import LoadResult
 
             load_started = time.perf_counter()
+            packed = DataRepresentation.detect_source(source) is DataRepresentation.PACKED
             loaded = load(
                 source,
                 backend=selected,
-                # Preserve authenticated packed storage for the qualified
-                # BF-column path; ordinary acquisitions need dense FFT input.
-                representation=(
-                    "packed"
-                    if DataRepresentation.detect_source(source)
-                    is DataRepresentation.PACKED
-                    else "dense"
-                ),
+                # Packed sources keep authenticated packed storage for the qualified BF-column path. Other acquisitions
+                # stay ANS encoded on the accelerator (the loader's GPU policy); only the bright-field crop is decoded.
+                representation="packed" if packed else None,
                 detector_bin=1,
                 dtype=dtype,
                 verbose=verbose,
                 expected_source_sha256=expected_source_sha256,
                 source_integrity=source_integrity,
             )
-            if not isinstance(loaded, LoadResult):
+            if not isinstance(loaded, LoadResult) and packed:
                 raise TypeError(
                     "One SSB source must produce one LoadResult; "
                     f"got {type(loaded).__name__}."
                 )
-            data = loaded.data
-            source_kind = (
-                "packed_detector"
-                if loaded.representation is DataRepresentation.PACKED
-                else "detector"
-            )
+            if packed:
+                data = loaded.data
+                source_kind = "packed_detector"
+            else:
+                data, bf_center, bf_radius = _bright_field_crop(
+                    loaded, selected, bf_intensity_threshold, bf_radius
+                )
+                source_kind = "detector"
             source_storage_path = str(source)
             source_dtype = str(loaded.dtype)
             source_bytes = loaded.logical_bytes
@@ -910,6 +953,7 @@ class SSB:
                 bf_intensity_threshold=bf_intensity_threshold,
                 bf_radius=bf_radius,
                 source_path=str(source),
+                bf_center=bf_center,
             )
         except BaseException as error:
             if source_kind == "packed_detector":
@@ -992,6 +1036,7 @@ class SSB:
                 scan_shape=self._scan_shape,
                 bf_intensity_threshold=self.bf_intensity_threshold,
                 bf_radius=self.bf_radius,
+                bf_center=self.bf_center,
                 aberrations=(
                     _aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
                 ),
@@ -1078,6 +1123,7 @@ class SSB:
                     "rotation_angle_deg": self.rotation_angle_deg,
                     "bf_intensity_threshold": self.bf_intensity_threshold,
                     "bf_radius": self.bf_radius,
+                    "bf_center": self.bf_center,
                 },
                 "settings": settings,
             }
@@ -1141,7 +1187,7 @@ class SSB:
                     scan_sampling=self.scan_sampling_A,
                     det_sampling=self.det_sampling,
                     bf_intensity_threshold=self.bf_intensity_threshold,
-                    bf_center=None,
+                    bf_center=self.bf_center,
                     bf_radius=self.bf_radius,
                     rotation_angle_deg=self.rotation_angle_deg,
                     aberrations=(

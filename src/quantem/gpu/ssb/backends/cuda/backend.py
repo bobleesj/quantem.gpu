@@ -178,6 +178,7 @@ class CudaSSBBackend:
         scan_shape: tuple[int, int] | None = None,
         bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
+        bf_center: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
         detector_gain: cp.ndarray | np.ndarray | None = None,
@@ -387,7 +388,7 @@ class CudaSSBBackend:
         self.compact_gqk_allocation_wall_ms = 0.0
         if compact_source is None:
             self.bf_inds_row, self.bf_inds_col, self.bf_center = self._compute_bf_mask(
-                data, bf_intensity_threshold, bf_radius, detector_gain=gain,
+                data, bf_intensity_threshold, bf_radius, detector_gain=gain, bf_center=bf_center,
             )
             self.G_qk, self.dc_value = self._extract_gqk(
                 data, self.bf_inds_row, self.bf_inds_col, scan_gpts, det_gpts,
@@ -527,6 +528,7 @@ class CudaSSBBackend:
         threshold: float,
         bf_radius: int | None = None,
         detector_gain: cp.ndarray | None = None,
+        bf_center: tuple[float, float] | None = None,
     ) -> tuple[cp.ndarray, cp.ndarray, tuple[float, float]]:
         """Compute bright-field mask indices and center from mean diffraction pattern.
 
@@ -546,7 +548,7 @@ class CudaSSBBackend:
         if detector_gain is not None:
             mean_dp = mean_dp.astype(cp.float32, copy=False) * detector_gain
         return CudaSSBBackend._compute_bf_mask_from_mean_dp(
-            mean_dp, threshold, bf_radius
+            mean_dp, threshold, bf_radius, bf_center
         )
 
     @staticmethod
@@ -554,8 +556,13 @@ class CudaSSBBackend:
         mean_dp: cp.ndarray,
         threshold: float,
         bf_radius: int | None = None,
+        bf_center: tuple[float, float] | None = None,
     ) -> tuple[cp.ndarray, cp.ndarray, tuple[float, float]]:
-        """Compute BF mask indices from a precomputed mean diffraction pattern."""
+        """Compute BF mask indices from a precomputed mean diffraction pattern.
+
+        ``bf_center`` (row, col, detector pixels) with ``bf_radius`` pins the disk instead of detecting it; SSB.open uses
+        this to reproduce the full-detector disk on a detector crop, where the mean + std centre rule would shift.
+        """
         bf_mask = mean_dp > mean_dp.max() * threshold
         bf_inds = cp.nonzero(bf_mask)
         bf_inds_row = bf_inds[0].astype(cp.int32)
@@ -566,7 +573,12 @@ class CudaSSBBackend:
                 f"{threshold:.2f}. Check that the data "
                 f"contains a visible BF disk, or lower the threshold."
             )
-        if bf_radius is None:
+        if bf_center is not None:
+            if bf_radius is None:
+                raise ValueError("bf_center needs bf_radius.")
+            center_row, center_col = float(bf_center[0]), float(bf_center[1])
+            selected_radius = float(bf_radius)
+        elif bf_radius is None:
             probe_mask = mean_dp > mean_dp.mean() + mean_dp.std()
             probe_total = int(probe_mask.sum().get())
             if probe_total > 0:
