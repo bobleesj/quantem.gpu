@@ -5,6 +5,11 @@ from __future__ import annotations
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 
+from . import _cuda_libraries
+
+# before anything imports CuPy's FFT/BLAS: see _cuda_libraries (torch's CUDA 13 cuFFT otherwise shadows CuPy's CUDA 12 one)
+_cuda_libraries.preload()
+
 from .ssb import SSB, SSBResult
 
 try:
