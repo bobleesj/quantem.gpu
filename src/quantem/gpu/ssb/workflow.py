@@ -1300,7 +1300,7 @@ class SSB:
 
         ``aberrations`` C10 / C12 in nm, phi12 in rad. ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} switches to
         the thick-sample model (each bright-field pixel's correction averaged over the sample depth, with the crystal leaning by
-        the tilt; see ``fit_sample``). Thickness in nm; thickness 0 is standard SSB. CUDA only for now.
+        the tilt; see ``fit_sample``). Thickness in nm; thickness 0 is standard SSB. CUDA and MPS backends.
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
@@ -1310,7 +1310,7 @@ class SSB:
                 raise ValueError("The thick-sample preview does not combine with higher-order aberrations yet.")
             backend = self._backend_protocol
             if not hasattr(backend, "preview_sample"):
-                raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA backend only.")
+                raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA and MPS backends only.")
             if context is None:
                 return backend.preview_sample(coefs, sample, compute_loss=compute_loss)
             with context:
@@ -1371,11 +1371,11 @@ class SSB:
         Returns {"C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "thickness", "fit", "standard_fit", "gain", ...};
         C10 / C12 in nm (C10 is the defocus at mid-depth), phi12 in rad, tilt in mrad in the scan frame (row, col), thickness
         in nm (a model depth spread, not a measured sample thickness). Validated on simulated BaTiO3 15 nm tilted (3, -4) mrad: found (3.0, -4.1);
-        untilted control: (-0.3, -0.1). CUDA only for now.
+        untilted control: (-0.3, -0.1). CUDA and MPS backends.
         """
         backend = self._backend_protocol
         if not hasattr(backend, "fit_sample"):
-            raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA backend only.")
+            raise NotImplementedError("Sample tilt / thickness SSB is implemented for the CUDA and MPS backends only.")
         fit = backend.fit_sample(trials=int(trials), band_inv_A=tuple(band_inv_A), tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose)
         converted = {**fit, **_aberrations_from_engine(fit), "thickness": float(fit["thickness"]) / _ENGINE_PER_NM}
         converted["standard"] = _aberrations_from_engine({"phi12": 0.0, **fit["standard"]})
