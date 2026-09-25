@@ -62,8 +62,8 @@ thick fit (or trust the calibrated rotation).
 **Performance.** CUDA 128 crop (8889 BF): thick preview 29-61 ms, `fit_sample` 30-55 s (1500 trials). MPS M5: preview
 ~20 ms after 1 s compile, fit ~65 s.
 
-**API.** `SSB.preview(aberrations, sample={"tilt_row_mrad", "tilt_col_mrad", "thickness"})` (nm, mrad),
-`SSB.fit(tilt=True)` (result `.sample`, `.report()`), `SSB.supports_sample`. CUDA and MPS backends. WebGPU (`reconstruct(..., {sample: {tiltRowMrad, tiltColMrad, thickness}})`, a separate thick shader so the thin path is bit-identical) drives ShowPtycho exports: logic crop in Mac Chrome (Metal) loss 0.170941 vs CUDA 0.170950, phase correlation 0.99999997; fitting stays in Python.
+**API.** `SSB.fit(tilt=True)` (result `.tilt_mrad` (row, col), `.depth_spread_nm`, `.tilt_fit_gain`, `.report()`),
+`SSB.preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)`, `SSB.supports_tilt`. CUDA and MPS backends. WebGPU (`reconstruct(..., {sample: {tiltRowMrad, tiltColMrad, thickness}})`, a separate thick shader so the thin path is bit-identical) drives ShowPtycho exports: logic crop in Mac Chrome (Metal) loss 0.170941 vs CUDA 0.170950, phase correlation 0.99999997; fitting stays in Python.
 Tests: `tests/hardware/cuda/test_ssb_thick_sample.py`, `tests/hardware/mps/test_ssb_thick_sample_mps.py`, `tests/webgpu/ssb-thick-sample.ts` (+ `run_ssb_thick_sample.py`, weights vs CUDA: max rel 5e-4, median 1.5e-7).
 
 ## 3. cuFFT import order

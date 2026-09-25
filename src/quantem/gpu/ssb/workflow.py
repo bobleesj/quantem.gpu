@@ -532,8 +532,9 @@ class SSB:
         self.bf_radius = bf_radius
         # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
         self.bf_center = None if bf_center is None else (float(bf_center[0]), float(bf_center[1]))
-        # thick-sample fit of the latest fit(tilt=True): tilt (mrad, scan frame) and depth spread (nm); empty otherwise
-        self.sample: dict[str, float] = {}
+        # latest fit(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
+        self.tilt_mrad: tuple[float, float] | None = None
+        self.depth_spread_nm: float | None = None
         self.source_path = source_path
         self.calibration_path: str | None = None
         self.source_manifest_path: str | None = None
@@ -1163,7 +1164,7 @@ class SSB:
 
         result.source_path = self.source_path
         self.aberrations = dict(result.aberrations)
-        self.sample = dict(result.sample)
+        self.tilt_mrad, self.depth_spread_nm = result.tilt_mrad, result.depth_spread_nm
         self._aberrations_explicit = True
         self.rotation_angle_deg = float(result.rotation_angle_deg)
         self.best_loss = (
@@ -1224,7 +1225,7 @@ class SSB:
         aberrations in one search of ``trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
         C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
         not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
-        result's ``sample`` holds the tilt (mrad, scan frame, within ``tilt_limit_mrad``) and depth spread (nm); CUDA and
+        result's ``tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
         MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
         to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
 
@@ -1359,18 +1360,21 @@ class SSB:
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
         context: AbstractContextManager | None = None,
-        sample: dict[str, float] | None = None,
+        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        depth_spread_nm: float = 0.0,
     ) -> tuple[np.ndarray, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
 
-        ``aberrations`` C10 / C12 in nm, phi12 in rad. ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} switches to
-        the thick-sample model (each bright-field pixel's correction averaged over the sample depth, with the crystal leaning by
-        the tilt; see ``fit(tilt=True)``). Thickness in nm; thickness 0 is standard SSB. CUDA and MPS backends.
+        ``aberrations`` C10 / C12 in nm, phi12 in rad. A positive ``depth_spread_nm`` switches to the thick-sample model:
+        each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``tilt_mrad``
+        (row, col; scan frame), as fitted by ``fit(tilt=True)``. With no depth spread the tilt has no effect and this is
+        standard SSB. CUDA and MPS backends.
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
-        if sample is not None and float(sample.get("thickness", 0.0)) > 0.0:
-            sample = {**sample, "thickness": float(sample["thickness"]) * _ENGINE_PER_NM}
+        if float(depth_spread_nm) > 0.0:
+            sample = {"tilt_row_mrad": float(tilt_mrad[0]), "tilt_col_mrad": float(tilt_mrad[1]),
+                      "thickness": float(depth_spread_nm) * _ENGINE_PER_NM}
             if higher_order_magnitudes is not None:
                 raise ValueError("The thick-sample preview does not combine with higher-order aberrations yet.")
             backend = self._backend_protocol
@@ -1417,8 +1421,8 @@ class SSB:
             )
 
     @property
-    def supports_sample(self) -> bool:
-        """True when this session's backend implements the thick-sample model (``preview(sample=...)``, ``fit(tilt=True)``)."""
+    def supports_tilt(self) -> bool:
+        """True when this session's backend implements the thick-sample model (``fit(tilt=True)``, ``preview(tilt_mrad=...)``)."""
         return hasattr(self._backend_protocol, "fit_sample")
 
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
@@ -1430,11 +1434,9 @@ class SSB:
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3)
         aberrations = _aberrations_from_engine({key: float(fit[key]) for key in ("C10", "C12", "phi12")})
-        sample = {"tilt_row_mrad": float(fit["tilt_row_mrad"]), "tilt_col_mrad": float(fit["tilt_col_mrad"]),
-                  "thickness_nm": float(fit["thickness"]) / _ENGINE_PER_NM, "gain": float(fit["gain"])}
-        phase, loss = self.preview(aberrations, sample={"tilt_row_mrad": sample["tilt_row_mrad"],
-                                                        "tilt_col_mrad": sample["tilt_col_mrad"],
-                                                        "thickness": sample["thickness_nm"]})
+        tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
+        depth_spread_nm = float(fit["thickness"]) / _ENGINE_PER_NM
+        phase, loss = self.preview(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm)
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         if self.backend == "cuda":
             import cupy as cp
@@ -1442,7 +1444,8 @@ class SSB:
             object_wave = cp.exp(1j * cp.asarray(phase))
         else:
             object_wave = np.exp(1j * np.asarray(phase))
-        return SSBResult(object_wave=object_wave, backend=self.backend, aberrations=aberrations, sample=sample,
+        return SSBResult(object_wave=object_wave, backend=self.backend, aberrations=aberrations, tilt_mrad=tilt_mrad,
+                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]),
                          rotation_angle_deg=self.rotation_angle_deg, loss=None if loss is None else float(loss),
                          elapsed=time.perf_counter() - started, n_trials=trials, num_bf=self.num_bf,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,

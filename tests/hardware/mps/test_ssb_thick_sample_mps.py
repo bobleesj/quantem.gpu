@@ -49,13 +49,12 @@ def test_fit_tilt_recovers_known_tilt(name, tilt_mrad):
     _require_mps()
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
-    assert ssb.supports_sample
+    assert ssb.supports_tilt
     result = ssb.fit(tilt=True, verbose=False)
-    fit = result.sample
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
-    assert abs(fit["tilt_row_mrad"] - tilt_mrad[0]) < 1.0
-    assert abs(fit["tilt_col_mrad"] - tilt_mrad[1]) < 1.0
-    assert fit["gain"] > 1.2      # the thick model explains the thick data better than standard SSB
+    assert abs(result.tilt_mrad[0] - tilt_mrad[0]) < 1.0
+    assert abs(result.tilt_mrad[1] - tilt_mrad[1]) < 1.0
+    assert result.tilt_fit_gain > 1.2      # the thick model explains the thick data better than standard SSB
 
 
 # ---
@@ -93,7 +92,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     ssb.reconstruct({"C10": 0.0, "C12": 0.0, "phi12": 0.0})
     for aberrations in ({"C10": 30.0, "C12": 5.0, "phi12": 0.3}, {"C10": -40.0, "C12": 12.0, "phi12": -1.0}):
         standard, standard_loss = ssb.preview(aberrations)
-        thick, thick_loss = ssb.preview(aberrations, sample={"tilt_row_mrad": 5.0, "tilt_col_mrad": -3.0, "thickness": 1e-9})
+        thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
         np.testing.assert_allclose(thick, standard, atol=5e-6)
         assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
 
@@ -135,7 +134,7 @@ def test_drag_subset_context_standard_and_thick():
     assert context.num_bf == ssb.num_bf // 4
     standard, standard_loss = ssb.preview(aberrations, context=context)
     thick, thick_loss = ssb.preview(aberrations, context=context,
-                                    sample={"tilt_row_mrad": 5.0, "tilt_col_mrad": -3.0, "thickness": 1e-9})
+                                    tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
     np.testing.assert_allclose(thick, standard, atol=5e-6)
     assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
     assert np.abs(standard - full).max() > 1e-3      # the subset really is fewer BF pixels

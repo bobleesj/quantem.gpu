@@ -49,10 +49,13 @@ class SSBResult:
     aberrations : dict[str, float]
         Aberration coefficients ``{C10, C12, phi12}`` in nm / radians. After ``fit(tilt=True)`` C10 is the defocus at
         mid-depth of the crystal.
-    sample : dict[str, float]
-        Thick-sample fit from ``fit(tilt=True)``: ``tilt_row_mrad`` / ``tilt_col_mrad`` (scan frame), ``thickness_nm``
-        (a model depth spread, not a measured thickness) and ``gain`` (least-squares fit relative to standard SSB).
-        Empty for standard SSB.
+    tilt_mrad : tuple[float, float] | None
+        Sample tilt (row, col) in mrad, scan frame, from ``fit(tilt=True)``; None for standard SSB.
+    depth_spread_nm : float | None
+        Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
+        thickness); None for standard SSB.
+    tilt_fit_gain : float | None
+        Least-squares agreement with the data of the tilt fit relative to standard SSB (> 1: the tilt explains more).
     rotation_angle_deg : float
         Rotation angle in degrees.
     loss : float | None
@@ -71,7 +74,9 @@ class SSBResult:
     object_wave: object
     backend: Literal["cuda", "mps", "webgpu"]
     aberrations: dict[str, float] = field(default_factory=dict)
-    sample: dict[str, float] = field(default_factory=dict)
+    tilt_mrad: tuple[float, float] | None = None
+    depth_spread_nm: float | None = None
+    tilt_fit_gain: float | None = None
     rotation_angle_deg: float = 0.0
     loss: float | None = None
     elapsed: float | None = None
@@ -108,10 +113,10 @@ class SSBResult:
         lines.append(f"  Rotation       {self.rotation_angle_deg:.1f}°")
         if self.aberrations:
             lines.append(_format_aberrations(self.aberrations))
-        if self.sample:
+        if self.tilt_mrad is not None:
             lines.append(
-                f"  Sample tilt    ({self.sample['tilt_row_mrad']:+.2f}, {self.sample['tilt_col_mrad']:+.2f}) mrad scan frame, "
-                f"depth spread {self.sample['thickness_nm']:.1f} nm"
+                f"  Sample tilt    ({self.tilt_mrad[0]:+.2f}, {self.tilt_mrad[1]:+.2f}) mrad scan frame, "
+                f"depth spread {self.depth_spread_nm:.1f} nm"
             )
         if self.elapsed is not None:
             lines.append(f"  Time           {self.elapsed:.2f}s")
@@ -126,19 +131,20 @@ class SSBResult:
         """One-row table of the fitted parameters; ``pd.concat([a.report(), b.report()])`` compares fits side by side."""
         import pandas as pd
 
-        aberrations, sample = self.aberrations, self.sample
+        aberrations = self.aberrations
+        tilt_row, tilt_col = self.tilt_mrad if self.tilt_mrad is not None else (0.0, 0.0)
         row = {
             "C10 (nm)": aberrations.get("C10"),
             "C12 (nm)": aberrations.get("C12"),
             "phi12 (deg)": math.degrees(aberrations.get("phi12", 0.0)),
-            "tilt row (mrad)": sample.get("tilt_row_mrad", 0.0),
-            "tilt col (mrad)": sample.get("tilt_col_mrad", 0.0),
-            "depth spread (nm)": sample.get("thickness_nm", 0.0),
+            "tilt row (mrad)": tilt_row,
+            "tilt col (mrad)": tilt_col,
+            "depth spread (nm)": self.depth_spread_nm or 0.0,
             "loss": self.loss,
             "trials": self.n_trials,
             "time (s)": self.elapsed,
         }
-        model = "tilt-aware SSB" if sample else "standard SSB"
+        model = "standard SSB" if self.tilt_mrad is None else "tilt-aware SSB"
         return pd.DataFrame([row], index=pd.Index([model], name="model")).round(3)
 
     @property

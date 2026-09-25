@@ -16,7 +16,7 @@ import numpy as np
 from .results import SSBResult
 
 
-SCHEMA = 2  # 2: aberrations in true nm (1: Angstrom under an nm label, see workflow._ENGINE_PER_NM)
+SCHEMA = 3   # 3: tilt fit stored as tilt_mrad / depth_spread_nm / tilt_fit_gain (2026-09-24)
 _ARTIFACT_FIELDS = {"object_wave", "reused", "saved_path", "metadata"}
 
 
@@ -223,7 +223,7 @@ def load_result(
         import cupy as cp
 
         object_wave = cp.asarray(object_wave)
-    for name in ("scan_sampling_A", "bf_center"):
+    for name in ("scan_sampling_A", "bf_center", "tilt_mrad"):
         if isinstance(saved.get(name), list):
             saved[name] = tuple(saved[name])
     return SSBResult(
