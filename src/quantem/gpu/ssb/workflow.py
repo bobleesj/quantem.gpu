@@ -30,7 +30,7 @@ from ._persistence import (
     software_signature,
 )
 from .backends.protocol import SSBProtocol
-from .results import SSBResult, SSBSeriesResult
+from .results import COLUMN_SIGN_MIN, SSBResult, SSBSeriesResult, column_sign, draw_column_histogram
 
 RefineMethod = Literal["nelder-mead"] | None
 
@@ -102,6 +102,16 @@ def _validate_aberrations(
 # ---------------------------------------------------------------------------
 
 _ENGINE_PER_NM = 10.0
+
+
+def _in_notebook() -> bool:
+    """True inside a Jupyter kernel, where fit() draws its histograms."""
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return False
+    shell = get_ipython()
+    return shell is not None and "IPKernelApp" in shell.config
 ABERRATION_UNIT = "nm"
 
 
@@ -1163,6 +1173,9 @@ class SSB:
         """Update session state from a computed or reused result."""
 
         result.source_path = self.source_path
+        if float(result.rotation_angle_deg) != float(self.rotation_angle_deg) and self._backend_ready():
+            # a flipped or reused result can sit on the other 180-degree branch; previews must use its rotation
+            self.set_rotation(result.rotation_angle_deg)
         self.aberrations = dict(result.aberrations)
         self.tilt_mrad, self.depth_spread_nm = result.tilt_mrad, result.depth_spread_nm
         self._aberrations_explicit = True
@@ -1173,6 +1186,53 @@ class SSB:
         self.trial_history = [dict(trial) for trial in result.optuna_trials or ()]
         self._reconstruction = result
         return result
+
+    def _resolve_rotation_branch(self, result: SSBResult, *, refinement: RefineMethod, tilt: bool,
+                                 tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
+        """Keep the scan-detector rotation whose phase has bright atom columns (see ``fit(check_rotation=...)``).
+
+        Screening measures the rotation only up to 180 degrees. When the fitted atom columns are dark, the session rotation
+        is changed to the other value and the fit is repeated there, starting from the opposite defocus (the aberration
+        phase of that branch is negated: C10 -> -C10, phi12 -> phi12 + 90 degrees). A tilt-aware fit repeats its search.
+        """
+        sign = column_sign(result.phase)
+        result.column_sign = sign
+        show = verbose and _in_notebook()
+        start_deg = float(result.rotation_angle_deg)
+        limit = draw_column_histogram(result.phase, f"fit at rotation {start_deg:.1f}° · column sign {sign:+.2f}") if show else None
+        if sign >= -COLUMN_SIGN_MIN:
+            if verbose and sign < COLUMN_SIGN_MIN:
+                print(f"SSB: column sign {sign:+.2f} is too weak to decide the 180° question; rotation stays {start_deg:.1f}°.")
+            return result
+        new_deg = (start_deg + 180.0) % 360.0
+        start = {"C10": -result.aberrations["C10"], "C12": result.aberrations["C12"],
+                 "phi12": (result.aberrations["phi12"] + math.pi) % math.pi - math.pi / 2.0}
+        if verbose:
+            print(f"SSB: atom columns are dark at rotation {start_deg:.1f}° (column sign {sign:+.2f}).\n"
+                  f"     Rotation changed to {new_deg:.1f}° for this session; refitting from C10 {start['C10']:+.2f} nm.")
+        self.set_rotation(new_deg)
+        backend = self._backend_protocol
+        if tilt:
+            refit = self._fit_tilt(result.n_trials or 200, refinement, tilt_limit_mrad, seed, False)
+        else:
+            backend.reconstruct_result(_aberrations_to_engine(start), compute_loss=False)   # the refit starts here
+            refit = _result_from_engine(backend.fit(trials=0, refinement=refinement or "nelder-mead", search_ranges=None,
+                                                    refine_lock=None, seed=seed, verbose=False))
+            refit.n_trials, refit.optuna_trials = result.n_trials, result.optuna_trials
+        refit.column_sign = column_sign(refit.phase)
+        refit.rotation_flipped = True
+        if refit.elapsed is not None and result.elapsed is not None:
+            refit.elapsed += result.elapsed   # time of the whole fit: first pass + refit
+        if show:
+            draw_column_histogram(refit.phase, f"refit at rotation {new_deg:.1f}° · column sign {refit.column_sign:+.2f}", limit=limit)
+        if verbose:
+            print(f"SSB: refit at {new_deg:.1f}°: C10 {refit.aberrations['C10']:+.2f} nm, column sign {refit.column_sign:+.2f}. "
+                  f"fit(check_rotation=False) keeps the rotation you give.")
+        return refit
+
+    def _backend_ready(self) -> bool:
+        """True once a backend holds prepared data, so changing its rotation does not trigger a load."""
+        return self._cuda_session is not None or self._mps_backend is not None
 
     @property
     def _backend_protocol(self) -> SSBProtocol:
@@ -1214,6 +1274,7 @@ class SSB:
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
         tilt_limit_mrad: float = 25.0,
+        check_rotation: bool = True,
         seed: int = 42,
         save_to: str | Path | None = None,
         force: bool = False,
@@ -1228,6 +1289,13 @@ class SSB:
         result's ``tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
         MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
         to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
+
+        ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
+        search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
+        the opposite aberration phase). Atom columns carry positive phase, so when the fitted phase has a negative column
+        sign (``result.column_sign`` < -0.2) the session rotation is changed by 180 degrees, said in one line, and the fit is
+        repeated there from the opposite defocus. In a notebook the phase histogram is drawn after the fit (and after the
+        refit). Near zero (no resolved columns) the rotation is kept. ``check_rotation=False`` keeps the rotation as given.
 
         Set ``save_to`` to reuse an exact prior result when the detector source,
         calibration, backend, physical parameters, and fit settings all match.
@@ -1258,6 +1326,7 @@ class SSB:
                         self._fit_start_aberrations_explicit
                     ),
                     **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
+                    "check_rotation": bool(check_rotation),
                 },
             )
             if not force:
@@ -1284,6 +1353,10 @@ class SSB:
                 verbose=verbose,
             )
             result = self._accept_result(_result_from_engine(result))
+        if check_rotation:
+            result = self._accept_result(self._resolve_rotation_branch(
+                result, refinement=refinement, tilt=tilt, tilt_limit_mrad=float(tilt_limit_mrad), seed=int(seed),
+                verbose=verbose))
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:

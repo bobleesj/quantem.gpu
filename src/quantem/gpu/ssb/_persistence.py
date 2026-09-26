@@ -16,7 +16,7 @@ import numpy as np
 from .results import SSBResult
 
 
-SCHEMA = 3   # 3: tilt fit stored as tilt_mrad / depth_spread_nm / tilt_fit_gain (2026-09-24)
+SCHEMA = 4   # 4: fit() 180-degree branch check: column_sign, rotation_flipped (2026-09-26); 3: typed tilt fields
 _ARTIFACT_FIELDS = {"object_wave", "reused", "saved_path", "metadata"}
 
 

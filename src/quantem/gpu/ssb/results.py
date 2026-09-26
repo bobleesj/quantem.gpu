@@ -35,6 +35,61 @@ def _format_aberrations(aberrations: dict) -> str:
     return "\n".join(lines)
 
 
+# A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
+# 180-degree branch the scan-detector rotation is on, so the branch is left as given.
+COLUMN_SIGN_MIN = 0.2
+
+
+def column_sign(phase: object) -> float:
+    """Skewness of the phase about its median: positive when atom columns are bright.
+
+    The projected potential of atoms is positive, so on the correct scan-detector rotation a resolved crystal's phase
+    histogram has a long tail on the positive side (few bright columns over a flatter background). Rotating the scan by
+    180 degrees negates the phase and the sign. SSB loses the absolute phase level, hence the median rather than zero.
+    """
+    host = cp.asnumpy(phase) if _is_cupy_array(phase) else np.asarray(phase)
+    values = host.astype(np.float64).ravel()
+    values = values - np.median(values)
+    variance = float(np.mean(values * values))
+    if variance <= 0.0:
+        return 0.0
+    return float(np.mean(values ** 3) / variance ** 1.5)
+
+
+def draw_column_histogram(phase: object, title: str, *, limit: float | None = None, bins: int = 101) -> float:
+    """Draw the phase histogram about its median with its mirror image (dashed); return the axis half-width used.
+
+    Bars beyond the dashed line are the tail: on the right when atom columns are bright (correct rotation), on the left
+    when the scan-detector rotation is 180 degrees off. Pass the returned ``limit`` to the next call so two histograms
+    share one axis. Displays in a notebook only.
+    """
+    import matplotlib.pyplot as plt
+    from IPython.display import display
+
+    host = cp.asnumpy(phase) if _is_cupy_array(phase) else np.asarray(phase)
+    values = host.astype(np.float64).ravel()
+    values = values - np.median(values)
+    if limit is None:
+        limit = float(np.percentile(np.abs(values), 99.9))
+    edges = np.linspace(-limit, limit, bins)
+    counts = np.histogram(values, edges)[0] / values.size
+    centres = (edges[1:] + edges[:-1]) / 2.0
+    figure, axis = plt.subplots(figsize=(6, 2.6))
+    axis.bar(centres, counts, width=edges[1] - edges[0], color="#e6873c")
+    axis.plot(centres, counts[::-1], "k--", linewidth=1, label="mirrored")
+    axis.axvline(0.0, color="0.5", linewidth=0.8)
+    axis.set_yscale("log")
+    axis.set_xlim(-limit, limit)
+    axis.set_xlabel("phase - median (rad)")
+    axis.set_ylabel("fraction of pixels")
+    axis.set_title(title, fontsize=10)
+    axis.legend(loc="upper left", frameon=False, fontsize=8)
+    figure.tight_layout()
+    display(figure)
+    plt.close(figure)
+    return limit
+
+
 @dataclass
 class SSBResult:
     """Result from SSB ptychographic reconstruction.
@@ -97,6 +152,9 @@ class SSBResult:
     # Each entry: ``{"params": {"C10_nm", "C12_nm", "phi12_deg"}, "loss"}``.
     # Used by the Screening dashboard (#26) to plot the loss landscape.
     optuna_trials: list[dict] | None = None
+    # 180-degree check of fit(): phase skewness (+ = bright atom columns) and whether fit() turned the rotation and refit
+    column_sign: float | None = None
+    rotation_flipped: bool = False
     reused: bool = False
     saved_path: Path | None = None
     metadata: dict[str, object] = field(default_factory=dict)
@@ -111,6 +169,11 @@ class SSBResult:
         if self.n_trials is not None:
             lines.append(f"  Trials         {self.n_trials}")
         lines.append(f"  Rotation       {self.rotation_angle_deg:.1f}°")
+        if self.column_sign is not None:
+            lines.append(
+                f"  Column sign    {self.column_sign:+.2f}"
+                + ("  (fit turned the rotation 180° and refit)" if self.rotation_flipped else "")
+            )
         if self.aberrations:
             lines.append(_format_aberrations(self.aberrations))
         if self.tilt_mrad is not None:
@@ -140,6 +203,9 @@ class SSBResult:
             "tilt row (mrad)": tilt_row,
             "tilt col (mrad)": tilt_col,
             "depth spread (nm)": self.depth_spread_nm or 0.0,
+            "rotation (deg)": self.rotation_angle_deg,
+            "column sign": self.column_sign,
+            "flipped 180°": self.rotation_flipped,
             "loss": self.loss,
             "trials": self.n_trials,
             "time (s)": self.elapsed,
