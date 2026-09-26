@@ -182,6 +182,17 @@ def test_session_listed_by_scan_number_calibrates_only_an_unambiguous_scan(tmp_p
     assert "scan_controller/regular_scan/pixel_size_row" not in overrides
 
 
+def test_number_entries_still_match_beside_named_entries(tmp_path):
+    """Entries listed by number keep matching their scan when another entry names its master (quantem.live adds a named
+    entry when it records a thickness); an entry that names a different master is never matched by its number."""
+    files = {0: {"mag": "mag_3p6"}, "7": {"master": "sample_7_master.h5"}, 5: {"master": "other_5_master.h5"}}
+    for name in ("sample_0_master.h5", "sample_5_master.h5", "sample_7_master.h5"):
+        (tmp_path / name).write_bytes(b"")
+    assert qem_conversion.session_file_entry(files, tmp_path / "sample_0_master.h5")[::2] == (0, "scan number")
+    assert qem_conversion.session_file_entry(files, tmp_path / "sample_7_master.h5")[::2] == ("7", "name")
+    assert qem_conversion.session_file_entry(files, tmp_path / "sample_5_master.h5") == (None, None, "")
+
+
 def test_session_specimen_becomes_the_sample_group(tmp_path):
     """The declared specimen, its CIF and the file's own components and thickness estimates become the .qem sample
     group (thickness in angstrom), with the CIF text as a JSON document; another series gets no file fields; a header

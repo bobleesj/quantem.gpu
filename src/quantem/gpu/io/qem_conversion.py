@@ -299,11 +299,12 @@ def session_file_entry(files: dict, path: Path) -> tuple[object, dict | None, st
     """The ``files`` entry of a session ``dataset.yaml`` that describes one scan.
 
     By name: the entry whose ``master`` is this file, or the master a ``.qem``
-    copy was converted from. By scan number: only when no entry of the session
-    names its master (some sessions list scans by number alone) and exactly one
-    scan in the folder ends in that number. A session can hold several series with
-    the same numbers, and matching one of them by number would lend it another
-    scan's calibration.
+    copy was converted from. By scan number: an entry that names no master (some
+    sessions list scans by number alone), and only when exactly one scan in the
+    folder ends in that number. A session can hold several series with the same
+    numbers, and matching one of them by number would lend it another scan's
+    calibration. Entries that name their master and entries listed by number can
+    share a session (quantem.live records a thickness under a named entry).
 
     Parameters
     ----------
@@ -328,13 +329,13 @@ def session_file_entry(files: dict, path: Path) -> tuple[object, dict | None, st
         if entry.get("master") in (path.name, f"{stem}{_MASTER_SUFFIX}"):
             return key, entry, "name"
     number = _trailing_number(stem)
-    if number is None or any("master" in entry for _, entry in entries):
+    if number is None:
         return None, None, ""
     stems = {_scan_stem(other) for pattern in (f"*{_MASTER_SUFFIX}", "*.qem") for other in path.parent.glob(pattern)}
     if sum(_trailing_number(other) == number for other in stems) != 1:
         return None, None, ""
     for key, entry in entries:
-        if _trailing_number(str(key)) == number:
+        if "master" not in entry and _trailing_number(str(key)) == number:
             return key, entry, "scan number"
     return None, None, ""
 
