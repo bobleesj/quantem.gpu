@@ -2,8 +2,8 @@
 
 The centre-of-mass rotation search cannot tell omega from omega + 180 degrees, and SSB fits both equally well: the second
 is the negated phase with the opposite defocus. Atom columns carry positive phase, so ``fit()`` keeps the rotation whose
-phase has a positive column sign and otherwise changes the session rotation by 180 degrees and refits from the opposite
-defocus. Parity: starting from the wrong rotation must land on the same reconstruction as a direct fit at the right one.
+phase has a positive column sign and otherwise changes the session rotation by 180 degrees and refits with every
+aberration flipped in sign (C10 -> -C10, C12 -> -C12). Parity: starting from the wrong rotation must land on the same reconstruction as a direct fit at the right one.
 """
 
 import os
@@ -40,6 +40,10 @@ def _correlation(first, second) -> float:
     return float((first * second).sum() / np.sqrt((first * first).sum() * (second * second).sum()))
 
 
+def _astigmatism(aberrations) -> complex:
+    return aberrations["C12"] * np.exp(2j * aberrations["phi12"])
+
+
 def _simulated(rotation_angle_deg: float):
     from quantem.gpu import SSB
 
@@ -61,7 +65,7 @@ def test_simulated_crystal_wrong_rotation_is_turned_and_refit():
     assert checked.rotation_angle_deg == pytest.approx(0.0, abs=1e-9)
     assert session.rotation_angle_deg == pytest.approx(0.0, abs=1e-9)       # the session keeps the corrected rotation
     # validated 2026-09-26: column sign +0.88; phase correlation 0.993 with the direct fit, whose loss is 0.8% higher
-    # (the refit from the opposite defocus lands in a slightly deeper minimum of the same branch)
+    # (the refit from the flipped aberrations lands in a slightly deeper minimum of the same branch)
     assert checked.column_sign > 0.8
     assert _correlation(checked.phase, direct.phase) > 0.99
     assert checked.loss <= direct.loss * (1.0 + 1e-6)
@@ -110,4 +114,6 @@ def test_real_acquisition_from_the_wrong_rotation_matches_a_direct_fit():
     assert _correlation(checked.phase, direct_phase) > 0.9999
     assert checked.loss == pytest.approx(direct_loss, rel=1e-5)
     assert checked.aberrations["C10"] == pytest.approx(direct_aberrations["C10"], abs=0.05)
-    assert checked.aberrations["C12"] == pytest.approx(direct_aberrations["C12"], abs=0.05)
+    # astigmatism as one physical quantity, C12 * exp(2 i phi12): (-C12, phi12) and (C12, phi12 + 90 deg) are the same
+    # aberration, and the refit starts from every aberration flipped, so compare the vector, not the signed C12
+    assert abs(_astigmatism(checked.aberrations) - _astigmatism(direct_aberrations)) < 0.05

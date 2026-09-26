@@ -1192,8 +1192,9 @@ class SSB:
         """Keep the scan-detector rotation whose phase has bright atom columns (see ``fit(check_rotation=...)``).
 
         Screening measures the rotation only up to 180 degrees. When the fitted atom columns are dark, the session rotation
-        is changed to the other value and the fit is repeated there, starting from the opposite defocus (the aberration
-        phase of that branch is negated: C10 -> -C10, phi12 -> phi12 + 90 degrees). A tilt-aware fit repeats its search.
+        is changed to the other value and the fit is repeated there, starting from every aberration flipped in sign
+        (C10 -> -C10, C12 -> -C12 at the same angle; the tilt too): the other branch is the conjugate object, whose
+        aberration phase is the negative of this one. A tilt-aware fit repeats its search.
         """
         sign = column_sign(result.phase)
         result.column_sign = sign
@@ -1205,11 +1206,10 @@ class SSB:
                 print(f"SSB: column sign {sign:+.2f} is too weak to decide the 180° question; rotation stays {start_deg:.1f}°.")
             return result
         new_deg = (start_deg + 180.0) % 360.0
-        start = {"C10": -result.aberrations["C10"], "C12": result.aberrations["C12"],
-                 "phi12": (result.aberrations["phi12"] + math.pi) % math.pi - math.pi / 2.0}
+        start = {"C10": -result.aberrations["C10"], "C12": -result.aberrations["C12"], "phi12": result.aberrations["phi12"]}
         if verbose:
             print(f"SSB: atom columns are dark at rotation {start_deg:.1f}° (column sign {sign:+.2f}).\n"
-                  f"     Rotation changed to {new_deg:.1f}° for this session; refitting from C10 {start['C10']:+.2f} nm.")
+                  f"     Rotation changed to {new_deg:.1f}° for this session; refitting with every aberration flipped (C10 {start['C10']:+.2f} nm, C12 {start['C12']:+.2f} nm).")
         self.set_rotation(new_deg)
         backend = self._backend_protocol
         if tilt:
@@ -1294,7 +1294,7 @@ class SSB:
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
         the opposite aberration phase). Atom columns carry positive phase, so when the fitted phase has a negative column
         sign (``result.column_sign`` < -0.2) the session rotation is changed by 180 degrees, said in one line, and the fit is
-        repeated there from the opposite defocus. In a notebook the phase histogram is drawn after the fit (and after the
+        repeated there with every aberration flipped in sign. In a notebook the phase histogram is drawn after the fit (and after the
         refit). Near zero (no resolved columns) the rotation is kept. ``check_rotation=False`` keeps the rotation as given.
 
         Set ``save_to`` to reuse an exact prior result when the detector source,
