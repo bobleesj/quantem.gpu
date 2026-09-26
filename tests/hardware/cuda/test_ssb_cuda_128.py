@@ -971,3 +971,21 @@ def test_ssb_roi96_auto_pads_to_128_not_256() -> None:
     accel = ssb._get_accelerator()
     accel.cache_rotation(0.0)
     assert accel._custom_fft._size == 128
+
+
+@pytest.mark.parametrize(("size", "num_bf"), [(128, 40), (256, 20), (512, 8), (1024, 3)])
+@pytest.mark.parametrize("compute_loss", [True, False])
+def test_cuda_chunked_phase_is_in_row_col_order(size: int, num_bf: int, compute_loss: bool) -> None:
+    """The large-scan chunked core returns the phase in (row, col) order for every kernel size.
+
+    The 512 kernels accumulate column-major; before 2026-09-26 their phase came back transposed (99th-percentile error
+    2.3 rad against the reference, 1.5e-5 rad after a transpose), so 512 x 512 previews looked rotated next to results.
+    """
+    cp = _cupy()
+    engine = _make_engine(size=size, num_bf=num_bf)
+    c10, c12, phi12 = -120.0, 55.0, math.radians(17.0)
+    ref_phase, _ = _reference_phase_loss_chunked(engine, c10, c12, phi12, chunk_bf=1)
+    output = engine._fused_chunked_core(c10, c12, phi12, compute_loss=compute_loss)
+    phase = output[0] if compute_loss else output
+    # a few pixels can cross the atan2 branch cut differently; the 99th percentile is the orientation-sensitive check
+    assert float(cp.percentile(cp.abs(phase - ref_phase), 99)) < 3e-4

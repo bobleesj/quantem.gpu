@@ -1929,8 +1929,8 @@ class SSBEngine:
                 else:
                     var_per_pixel = phase_sumsq / float(num_bf) - mean_phase ** 2
                     loss = float(cp.mean(var_per_pixel))
-                return mean_phase, loss
-            return mean_phase
+                return self._row_col_phase(mean_phase), loss
+            return self._row_col_phase(mean_phase)
 
         for bf_start in range(0, num_bf, chunk_bf):
             bf_end = min(bf_start + chunk_bf, num_bf)
@@ -1985,7 +1985,20 @@ class SSBEngine:
         if compute_loss:
             var_per_pixel = phase_sumsq / float(num_bf) - mean_phase ** 2
             loss = float(cp.mean(var_per_pixel))
-            return mean_phase, loss
+            return self._row_col_phase(mean_phase), loss
+        return self._row_col_phase(mean_phase)
+
+    def _row_col_phase(self, mean_phase: "cp.ndarray") -> "cp.ndarray":
+        """Return a chunked-core phase image in the public (row, col) scan order.
+
+        The 512 fused column-IFFT kernels accumulate each pixel at ``col * 512 + row`` (``accumulates_column_major``), so
+        their summed plane is the transpose of the scan-frame image that ``reconstruct_object``, the small-scan pipeline,
+        the thick-sample path and the 128/256/1024 kernels return. The loss is a mean over pixels and does not depend on
+        the order, so only the phase image is transposed back. Without this, previews of 512 x 512 scans appear transposed
+        next to the fitted result.
+        """
+        if getattr(self._custom_fft, "accumulates_column_major", False):
+            return cp.ascontiguousarray(mean_phase.T)
         return mean_phase
 
     # =====================================================================

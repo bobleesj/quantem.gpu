@@ -43,3 +43,41 @@ def test_open_bright_field_crop_matches_full_detector():
     # validated 2026-09-24: max |phase difference| 6e-8 rad, identical loss
     np.testing.assert_allclose(crop_phase, cp.asnumpy(full_phase), atol=1e-6)
     assert abs(crop_loss - full_loss) <= 1e-6 * abs(full_loss)
+
+
+def _correlation(first: np.ndarray, second: np.ndarray) -> float:
+    first = first - first.mean()
+    second = second - second.mean()
+    return float((first * second).sum() / np.sqrt((first * first).sum() * (second * second).sum()))
+
+
+def test_preview_is_in_the_same_scan_order_as_the_result():
+    """Every preview path (large-scan chunked, reduced drag subset, thick sample) matches the fitted result's orientation.
+
+    The fused column-IFFT kernels of the large-scan path accumulate column-major; before 2026-09-26 its previews came back
+    transposed next to ``reconstruct()`` and the thick-sample preview, so the phase appeared to rotate when a viewer switched
+    between them.
+    """
+    if not SOURCE.is_file():
+        pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
+    try:
+        if cp.cuda.runtime.getDeviceCount() == 0:
+            pytest.skip("No CUDA device")
+    except cp.cuda.runtime.CUDARuntimeError:
+        pytest.skip("No CUDA runtime")
+    from quantem.gpu import SSB
+
+    aberrations = {"C10": 16.2, "C12": 4.15, "phi12": 0.33}
+    session = SSB.open(str(SOURCE), **SETTINGS)
+    result = cp.asnumpy(session.reconstruct(aberrations).phase).astype(np.float64)
+    previews = {
+        "chunked with loss": session.preview(aberrations)[0],
+        "chunked without loss": session.preview(aberrations, compute_loss=False)[0],
+        "full drag subset": session.preview(aberrations, context=session.preview_context(session.num_bf))[0],
+        "thick sample": session.preview(aberrations, tilt_mrad=(0.0, 0.0), depth_spread_nm=1e-6)[0],
+    }
+    for name, phase in previews.items():
+        phase = np.asarray(cp.asnumpy(phase), np.float64)
+        # validated 2026-09-26 on a real 512 x 512 acquisition: 0.995 in scan order, -0.03 transposed
+        assert _correlation(result, phase) > 0.98, name
+        assert _correlation(result, phase) > _correlation(result, phase.T) + 0.5, name

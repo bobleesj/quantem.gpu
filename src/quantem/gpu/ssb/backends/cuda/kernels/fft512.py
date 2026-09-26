@@ -2042,6 +2042,9 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
 class CustomFFT512(CustomFFTBase):
     """Custom 512x512 IFFT kernels for SSB."""
 
+    # the fused column-IFFT accumulate kernels write each pixel at col * 512 + row (see SSBEngine._row_col_phase)
+    accumulates_column_major = True
+
     def __init__(self) -> None:
         super().__init__(
             size=512,
