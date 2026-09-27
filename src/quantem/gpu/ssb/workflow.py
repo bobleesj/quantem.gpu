@@ -30,7 +30,8 @@ from ._persistence import (
     software_signature,
 )
 from .backends.protocol import SSBProtocol
-from .results import COLUMN_SIGN_MIN, SSBResult, SSBSeriesResult, column_sign, draw_column_histogram
+from .results import (COLUMN_SIGN_MIN, SSBResult, SSBSeriesResult, column_sign, draw_column_histogram,
+                      physical_rotation_deg, split_rotation)
 
 RefineMethod = Literal["nelder-mead"] | None
 
@@ -432,6 +433,9 @@ def _series_settings(
             "pass the missing physical parameters to reconstruct_series()."
         )
     values["bf_radius"] = saved.get("bf_radius")
+    if rotation_angle_deg is None and saved.get("rotation_angle_deg") is not None:
+        # a saved fit stores the angle below 180 plus com_reversed; the series passes the physical angle to open()
+        values["rotation_angle_deg"] = physical_rotation_deg(float(values["rotation_angle_deg"]), bool(saved.get("com_reversed", False)))
     return values
 
 
@@ -451,6 +455,7 @@ def _write_series_fit_metadata(
         "aberrations": dict(result.aberrations),
         "aberration_unit": ABERRATION_UNIT,
         "rotation_angle_deg": float(result.rotation_angle_deg),
+        "com_reversed": bool(result.com_reversed),
         "loss": None if result.loss is None else float(result.loss),
         "bf_radius": result.bf_radius,
     }
@@ -459,19 +464,23 @@ def _write_series_fit_metadata(
 
 
 def _screen_fit_settings(screen_path: Path) -> dict[str, object] | None:
-    """Return fitted aberrations and rotation from Live or a current GPU save."""
+    """Return fitted aberrations and the physical rotation (CoM reversal folded in) from Live or a current GPU save."""
     config_path = screen_path / "config.json"
     if config_path.is_file():
         config = json.loads(config_path.read_text())
         settings = (config.get("computed") or {}).get("ssb") or {}
         if "aberrations" in settings and "rotation_angle_deg" in settings:
-            return {**settings, "aberrations": _saved_aberrations_nm(settings), "aberration_unit": ABERRATION_UNIT}
+            rotation = physical_rotation_deg(float(settings["rotation_angle_deg"]), bool(settings.get("com_reversed", False)))
+            return {**settings, "aberrations": _saved_aberrations_nm(settings), "aberration_unit": ABERRATION_UNIT,
+                    "rotation_angle_deg": rotation}
     metadata_path = screen_path / "ssb-fit" / "ssb-fit.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
         result = metadata.get("result") or {}
         aberrations = result.get("aberrations")
         rotation = result.get("rotation_angle_deg")
+        if rotation is not None:
+            rotation = physical_rotation_deg(float(rotation), bool(result.get("com_reversed", False)))
         if aberrations is not None and rotation is not None:
             # ssb-fit.json is a saved SSBResult; schema 2 onwards stores nm (see _persistence.SCHEMA)
             unit = ABERRATION_UNIT if int(metadata.get("schema", 1)) >= 2 else "A"
@@ -507,6 +516,7 @@ class SSB:
         det_sampling: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
+        com_reversed: bool = False,
         bf_intensity_threshold: float = 0.0,
         bf_radius: float | None = None,
         source_path: str | None = None,
@@ -537,7 +547,8 @@ class SSB:
         self.aberrations = _validate_aberrations(aberrations)
         self._fit_start_aberrations = dict(self.aberrations)
         self._fit_start_aberrations_explicit = self._aberrations_explicit
-        self.rotation_angle_deg = float(rotation_angle_deg)
+        # public form: angle below 180 plus whether the CoM is reversed; the engines get the physical angle
+        self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
         self.bf_intensity_threshold = float(bf_intensity_threshold)
         self.bf_radius = bf_radius
         # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
@@ -714,7 +725,7 @@ class SSB:
                 )
                 reference_fit = {
                     "aberrations": reference_result.aberrations,
-                    "rotation_angle_deg": reference_result.rotation_angle_deg,
+                    "rotation_angle_deg": reference_result.physical_rotation_deg,
                 }
             reference_aberrations = dict(reference_fit["aberrations"])
             reference_rotation = float(reference_fit["rotation_angle_deg"])
@@ -855,6 +866,7 @@ class SSB:
         det_sampling: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
+        com_reversed: bool = False,
         bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
         calibration: str | None = None,
@@ -963,6 +975,7 @@ class SSB:
                 det_sampling=det_sampling,
                 aberrations=aberrations,
                 rotation_angle_deg=rotation_angle_deg,
+                com_reversed=com_reversed,
                 bf_intensity_threshold=bf_intensity_threshold,
                 bf_radius=bf_radius,
                 source_path=str(source),
@@ -1013,6 +1026,7 @@ class SSB:
         det_sampling: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
+        com_reversed: bool = False,
         bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
         source_path: str | None = None,
@@ -1029,6 +1043,7 @@ class SSB:
             det_sampling=det_sampling,
             aberrations=aberrations,
             rotation_angle_deg=rotation_angle_deg,
+            com_reversed=com_reversed,
             bf_intensity_threshold=bf_intensity_threshold,
             bf_radius=bf_radius,
             source_path=source_path,
@@ -1053,7 +1068,7 @@ class SSB:
                 aberrations=(
                     _aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
                 ),
-                rotation_angle_deg=self.rotation_angle_deg,
+                rotation_angle_deg=self.physical_rotation_deg,
             )
         return self._cuda_session
 
@@ -1133,7 +1148,8 @@ class SSB:
                 },
                 "ssb": {
                     "backend": self.backend,
-                    "rotation_angle_deg": self.rotation_angle_deg,
+                    # physical angle: saves made before the (angle, com_reversed) split still match exactly
+                    "rotation_angle_deg": self.physical_rotation_deg,
                     "bf_intensity_threshold": self.bf_intensity_threshold,
                     "bf_radius": self.bf_radius,
                     "bf_center": self.bf_center,
@@ -1173,13 +1189,13 @@ class SSB:
         """Update session state from a computed or reused result."""
 
         result.source_path = self.source_path
-        if float(result.rotation_angle_deg) != float(self.rotation_angle_deg) and self._backend_ready():
-            # a flipped or reused result can sit on the other 180-degree branch; previews must use its rotation
-            self.set_rotation(result.rotation_angle_deg)
+        if result.physical_rotation_deg != self.physical_rotation_deg and self._backend_ready():
+            # a reversed or reused result can sit on the other 180-degree branch; previews must use its rotation
+            self.set_rotation(result.rotation_angle_deg, com_reversed=result.com_reversed)
         self.aberrations = dict(result.aberrations)
         self.tilt_mrad, self.depth_spread_nm = result.tilt_mrad, result.depth_spread_nm
         self._aberrations_explicit = True
-        self.rotation_angle_deg = float(result.rotation_angle_deg)
+        self.rotation_angle_deg, self.com_reversed = result.rotation_angle_deg, result.com_reversed
         self.best_loss = (
             float(result.loss) if result.loss is not None else float("inf")
         )
@@ -1189,28 +1205,31 @@ class SSB:
 
     def _resolve_rotation_branch(self, result: SSBResult, *, refinement: RefineMethod, tilt: bool,
                                  tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
-        """Keep the scan-detector rotation whose phase has bright atom columns (see ``fit(check_rotation=...)``).
+        """Keep the CoM direction whose phase has bright atom columns (see ``fit(check_rotation=...)``).
 
-        Screening measures the rotation only up to 180 degrees. When the fitted atom columns are dark, the session rotation
-        is changed to the other value and the fit is repeated there, starting from every aberration flipped in sign
-        (C10 -> -C10, C12 -> -C12 at the same angle; the tilt too): the other branch is the conjugate object, whose
-        aberration phase is the negative of this one. A tilt-aware fit repeats its search.
+        The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the same angle with
+        every CoM vector reversed. When the fitted atom columns are dark, the CoM is reversed (the angle stays) and the
+        fit is repeated there, starting from every aberration flipped in sign (C10 -> -C10, C12 -> -C12 at the same
+        angle; the tilt too): the other branch is the conjugate object, whose aberration phase is the negative of this
+        one. A tilt-aware fit repeats its search.
         """
         sign = column_sign(result.phase)
         result.column_sign = sign
         show = verbose and _in_notebook()
-        start_deg = float(result.rotation_angle_deg)
-        limit = draw_column_histogram(result.phase, f"fit at rotation {start_deg:.1f}° · column sign {sign:+.2f}") if show else None
+        angle = float(result.rotation_angle_deg)
+        state = "CoM reversed" if result.com_reversed else "CoM as measured"
+        limit = draw_column_histogram(result.phase, f"fit at rotation {angle:.1f}°, {state} · column sign {sign:+.2f}") if show else None
         if sign >= -COLUMN_SIGN_MIN:
             if verbose and sign < COLUMN_SIGN_MIN:
-                print(f"SSB: column sign {sign:+.2f} is too weak to decide the 180° question; rotation stays {start_deg:.1f}°.")
+                print(f"SSB: column sign {sign:+.2f} is too weak to decide the 180° question; rotation stays {angle:.1f}°, {state}.")
             return result
-        new_deg = (start_deg + 180.0) % 360.0
+        reversed_now = not result.com_reversed
         start = {"C10": -result.aberrations["C10"], "C12": -result.aberrations["C12"], "phi12": result.aberrations["phi12"]}
         if verbose:
-            print(f"SSB: atom columns are dark at rotation {start_deg:.1f}° (column sign {sign:+.2f}).\n"
-                  f"     Rotation changed to {new_deg:.1f}° for this session; refitting with every aberration flipped (C10 {start['C10']:+.2f} nm, C12 {start['C12']:+.2f} nm).")
-        self.set_rotation(new_deg)
+            print(f"SSB: atom columns are dark at rotation {angle:.1f}°, {state} (column sign {sign:+.2f}).\n"
+                  f"     CoM {'reversed' if reversed_now else 'restored'} for this session, rotation stays {angle:.1f}°; "
+                  f"refitting with every aberration flipped (C10 {start['C10']:+.2f} nm, C12 {start['C12']:+.2f} nm).")
+        self.set_rotation(angle, com_reversed=reversed_now)
         backend = self._backend_protocol
         if tilt:
             refit = self._fit_tilt(result.n_trials or 200, refinement, tilt_limit_mrad, seed, False)
@@ -1223,11 +1242,12 @@ class SSB:
         refit.rotation_flipped = True
         if refit.elapsed is not None and result.elapsed is not None:
             refit.elapsed += result.elapsed   # time of the whole fit: first pass + refit
+        state = "CoM reversed" if refit.com_reversed else "CoM as measured"
         if show:
-            draw_column_histogram(refit.phase, f"refit at rotation {new_deg:.1f}° · column sign {refit.column_sign:+.2f}", limit=limit)
+            draw_column_histogram(refit.phase, f"refit at rotation {angle:.1f}°, {state} · column sign {refit.column_sign:+.2f}", limit=limit)
         if verbose:
-            print(f"SSB: refit at {new_deg:.1f}°: C10 {refit.aberrations['C10']:+.2f} nm, column sign {refit.column_sign:+.2f}. "
-                  f"fit(check_rotation=False) keeps the rotation you give.")
+            print(f"SSB: refit at rotation {angle:.1f}°, {state}: C10 {refit.aberrations['C10']:+.2f} nm, "
+                  f"column sign {refit.column_sign:+.2f}. fit(check_rotation=False) keeps the rotation you give.")
         return refit
 
     def _backend_ready(self) -> bool:
@@ -1253,7 +1273,7 @@ class SSB:
                     bf_intensity_threshold=self.bf_intensity_threshold,
                     bf_center=self.bf_center,
                     bf_radius=self.bf_radius,
-                    rotation_angle_deg=self.rotation_angle_deg,
+                    rotation_angle_deg=self.physical_rotation_deg,
                     aberrations=(
                         _aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
                     ),
@@ -1293,8 +1313,8 @@ class SSB:
         ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
         the opposite aberration phase). Atom columns carry positive phase, so when the fitted phase has a negative column
-        sign (``result.column_sign`` < -0.2) the session rotation is changed by 180 degrees, said in one line, and the fit is
-        repeated there with every aberration flipped in sign. In a notebook the phase histogram is drawn after the fit (and after the
+        sign (``result.column_sign`` < -0.2) the CoM is reversed for the session (``com_reversed``; the angle stays below
+        180 degrees), said in one line, and the fit is repeated there with every aberration flipped in sign. In a notebook the phase histogram is drawn after the fit (and after the
         refit). Near zero (no resolved columns) the rotation is kept. ``check_rotation=False`` keeps the rotation as given.
 
         Set ``save_to`` to reuse an exact prior result when the detector source,
@@ -1519,7 +1539,8 @@ class SSB:
             object_wave = np.exp(1j * np.asarray(phase))
         return SSBResult(object_wave=object_wave, backend=self.backend, aberrations=aberrations, tilt_mrad=tilt_mrad,
                          depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]),
-                         rotation_angle_deg=self.rotation_angle_deg, loss=None if loss is None else float(loss),
+                         rotation_angle_deg=self.rotation_angle_deg, com_reversed=self.com_reversed,
+                         loss=None if loss is None else float(loss),
                          elapsed=time.perf_counter() - started, n_trials=trials, num_bf=self.num_bf,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          scan_sampling_A=self.scan_sampling_A)
@@ -1558,11 +1579,16 @@ class SSB:
 
         return self._backend_protocol.num_bf
 
-    def set_rotation(self, rotation_angle_deg: float) -> None:
-        """Set scan-to-detector rotation and refresh backend geometry."""
+    @property
+    def physical_rotation_deg(self) -> float:
+        """Rotation the engines use: ``rotation_angle_deg + 180`` when the CoM is reversed."""
+        return physical_rotation_deg(self.rotation_angle_deg, self.com_reversed)
 
-        self.rotation_angle_deg = float(rotation_angle_deg)
-        self._backend_protocol.cache_rotation(math.radians(self.rotation_angle_deg))
+    def set_rotation(self, rotation_angle_deg: float, com_reversed: bool = False) -> None:
+        """Set scan-to-detector rotation (any angle; stored as below 180 plus ``com_reversed``) and refresh geometry."""
+
+        self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
+        self._backend_protocol.cache_rotation(math.radians(self.physical_rotation_deg))
 
     def close(self) -> None:
         """Release backend-owned GPU state."""

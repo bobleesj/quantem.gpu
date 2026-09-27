@@ -321,7 +321,7 @@ def ssb_time_series(
         rotation_angle_deg=(
             float(rotation_angle_deg)
             if rotation_angle_deg is not None
-            else float(first.rotation_angle_deg)
+            else float(first.physical_rotation_deg)
         ),
         shifts=shifts_cp,
         weights=weights_cp,
@@ -390,7 +390,7 @@ def ssb_time_average(
     if rotation_angle_deg is not None:
         result.rotation_angle_deg = float(rotation_angle_deg)
     else:
-        result.rotation_angle_deg = float(ssb_frames[0].rotation_angle_deg)
+        result.rotation_angle_deg = float(ssb_frames[0].physical_rotation_deg)
     result.voltage_kV = ssb_frames[0].voltage_kV
     result.semiangle_mrad = ssb_frames[0].semiangle_mrad
     scan_sampling = ssb_frames[0].scan_sampling_A

@@ -40,6 +40,23 @@ def _format_aberrations(aberrations: dict) -> str:
 COLUMN_SIGN_MIN = 0.2
 
 
+def split_rotation(rotation_angle_deg: float, com_reversed: bool = False) -> tuple[float, bool]:
+    """Return a scan-detector rotation as ``(angle in [0, 180) degrees, com_reversed)``.
+
+    The centre-of-mass curl fixes the rotation only up to 180 degrees, and turning the scan by 180 degrees is the same as
+    reversing every CoM vector. So the physical rotation ``angle + 180 * com_reversed`` is kept as the angle an operator
+    reads (always below 180) plus one flag that says the CoM points the other way. Any input angle, e.g. a 345.5 from an
+    older save, maps to the same physical rotation: ``split_rotation(345.5) == (165.5, True)``.
+    """
+    total = (float(rotation_angle_deg) + (180.0 if com_reversed else 0.0)) % 360.0
+    return total % 180.0, total >= 180.0
+
+
+def physical_rotation_deg(rotation_angle_deg: float, com_reversed: bool) -> float:
+    """Physical scan-detector rotation in [0, 360) degrees that the reconstruction engines use."""
+    return (float(rotation_angle_deg) + (180.0 if com_reversed else 0.0)) % 360.0
+
+
 def column_sign(phase: object) -> float:
     """Skewness of the phase about its median: positive when atom columns are bright.
 
@@ -112,7 +129,11 @@ class SSBResult:
     tilt_fit_gain : float | None
         Least-squares agreement with the data of the tilt fit relative to standard SSB (> 1: the tilt explains more).
     rotation_angle_deg : float
-        Rotation angle in degrees.
+        Scan-detector rotation in degrees, in [0, 180).
+    com_reversed : bool
+        True when the centre-of-mass vectors point the other way, i.e. the physical rotation is
+        ``rotation_angle_deg + 180``. The CoM curl cannot tell the two apart; ``fit(check_rotation=True)`` decides from
+        the atom columns (see ``column_sign``).
     loss : float | None
         Variance loss value.
     elapsed : float | None
@@ -133,6 +154,7 @@ class SSBResult:
     depth_spread_nm: float | None = None
     tilt_fit_gain: float | None = None
     rotation_angle_deg: float = 0.0
+    com_reversed: bool = False
     loss: float | None = None
     elapsed: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
@@ -152,12 +174,21 @@ class SSBResult:
     # Each entry: ``{"params": {"C10_nm", "C12_nm", "phi12_deg"}, "loss"}``.
     # Used by the Screening dashboard (#26) to plot the loss landscape.
     optuna_trials: list[dict] | None = None
-    # 180-degree check of fit(): phase skewness (+ = bright atom columns) and whether fit() turned the rotation and refit
+    # 180-degree check of fit(): phase skewness (+ = bright atom columns) and whether fit() reversed the CoM and refit
     column_sign: float | None = None
     rotation_flipped: bool = False
     reused: bool = False
     saved_path: Path | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # engines and older saves give the physical angle (up to 360); the public form is below 180 plus the flag
+        self.rotation_angle_deg, self.com_reversed = split_rotation(self.rotation_angle_deg, self.com_reversed)
+
+    @property
+    def physical_rotation_deg(self) -> float:
+        """Rotation the engines use: ``rotation_angle_deg + 180`` when the CoM is reversed."""
+        return physical_rotation_deg(self.rotation_angle_deg, self.com_reversed)
 
     def __repr__(self) -> str:
         lines = ["SSB Result"]
@@ -168,11 +199,11 @@ class SSBResult:
             lines.append(f"  BF pixels      {self.num_bf}")
         if self.n_trials is not None:
             lines.append(f"  Trials         {self.n_trials}")
-        lines.append(f"  Rotation       {self.rotation_angle_deg:.1f}°")
+        lines.append(f"  Rotation       {self.rotation_angle_deg:.1f}°" + (" · CoM reversed" if self.com_reversed else ""))
         if self.column_sign is not None:
             lines.append(
                 f"  Column sign    {self.column_sign:+.2f}"
-                + ("  (fit turned the rotation 180° and refit)" if self.rotation_flipped else "")
+                + ("  (fit reversed the CoM and refit)" if self.rotation_flipped else "")
             )
         if self.aberrations:
             lines.append(_format_aberrations(self.aberrations))
@@ -204,8 +235,9 @@ class SSBResult:
             "tilt col (mrad)": tilt_col,
             "depth spread (nm)": self.depth_spread_nm or 0.0,
             "rotation (deg)": self.rotation_angle_deg,
+            "CoM reversed": self.com_reversed,
             "column sign": self.column_sign,
-            "flipped 180°": self.rotation_flipped,
+            "reversed by fit": self.rotation_flipped,
             "loss": self.loss,
             "trials": self.n_trials,
             "time (s)": self.elapsed,

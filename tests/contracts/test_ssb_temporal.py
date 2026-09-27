@@ -74,13 +74,14 @@ def test_ssb_time_average_reconstructs_frames_with_shared_calibration() -> None:
             self.wave = wave
             self.aberrations = {"C10": 1.0, "C12": 2.0, "phi12": 0.0}
             self.rotation_angle_deg = 0.0
+            self.physical_rotation_deg = 0.0
             self.voltage_kV = 300
             self.semiangle_mrad = 21.4
             self.scan_sampling_A = (0.5, 0.5)
             self.calls = []
 
         def set_rotation(self, rotation_angle_deg):
-            self.rotation_angle_deg = rotation_angle_deg
+            self.rotation_angle_deg = self.physical_rotation_deg = rotation_angle_deg
 
         def reconstruct(self, aberrations):
             self.calls.append((
@@ -125,12 +126,13 @@ def test_ssb_time_series_preserves_per_frame_objects_and_can_average() -> None:
             self.wave = wave
             self.aberrations = {"C10": 1.0, "C12": 2.0, "phi12": 0.0}
             self.rotation_angle_deg = 0.0
+            self.physical_rotation_deg = 0.0
             self.voltage_kV = 300
             self.semiangle_mrad = 21.4
             self.scan_sampling_A = (0.5, 0.5)
 
         def set_rotation(self, rotation_angle_deg):
-            self.rotation_angle_deg = rotation_angle_deg
+            self.rotation_angle_deg = self.physical_rotation_deg = rotation_angle_deg
 
         def reconstruct(self, aberrations):
             del aberrations
