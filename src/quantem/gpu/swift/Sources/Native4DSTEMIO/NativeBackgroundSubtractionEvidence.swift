@@ -15,7 +15,8 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
     guard !name.isEmpty, name.utf8.count <= 255,
       !name.contains("/"), !name.contains("\\")
     else {
-      throw EMPADError("Saved supplier document name is invalid; re-export the original acquisition.")
+      throw EMPADError(
+        "Saved supplier document name is invalid; re-export the original acquisition.")
     }
     return Self(
       documentURL: container, documentName: name, statement: statement,
@@ -47,9 +48,10 @@ public struct NativeBackgroundSubtractionEvidence: Sendable {
         let result = declarations(text, directory: directory, targets: targets)
         if result.conflict { return nil }
         if let statement = result.statement {
-          matches.append(Self(
-            documentURL: document, documentName: document.lastPathComponent,
-            statement: statement, identity: before))
+          matches.append(
+            Self(
+              documentURL: document, documentName: document.lastPathComponent,
+              statement: statement, identity: before))
         }
       }
       directory.deleteLastPathComponent()

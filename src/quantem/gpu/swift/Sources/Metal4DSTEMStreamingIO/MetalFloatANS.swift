@@ -39,7 +39,8 @@ final class MetalFloatANS {
     constants.setConstantValue(&pixelCount, type: .uint, index: 20)
     // Compile only the selected parallel variant. The generic path remains an
     // explicit A/B control, without a second pipeline on ordinary app opens.
-    let parallelName = ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_ENTROPY_PAIR"] == "0"
+    let parallelName =
+      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_ENTROPY_PAIR"] == "0"
       ? "float_ans_decode_changes_parallel"
       : "float_ans_decode_changes_parallel_entropy"
     guard let decode = library.makeFunction(name: "streamed_counts_decode_range"),
@@ -61,8 +62,9 @@ final class MetalFloatANS {
     self.parallelChanges = try device.makeComputePipelineState(function: parallelChanges)
     // Ordinary aperture movement changes hundreds of columns; tiny edits and
     // resets retain the lower-latency serial kernel. Override for A/B tests.
-    parallelChangeThreshold = Int(
-      ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_PARALLEL_CHANGES"] ?? "") ?? 384
+    parallelChangeThreshold =
+      Int(
+        ProcessInfo.processInfo.environment["QGPU_FLOAT_ANS_PARALLEL_CHANGES"] ?? "") ?? 384
     self.mean = try device.makeComputePipelineState(function: mean)
     let values = RuntimeANSEncoder.tables().decoding
     guard

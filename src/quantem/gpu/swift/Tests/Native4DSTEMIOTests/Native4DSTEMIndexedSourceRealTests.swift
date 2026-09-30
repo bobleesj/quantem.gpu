@@ -163,7 +163,9 @@ final class Native4DSTEMIndexedSourceRealTests: XCTestCase {
     XCTAssertEqual(dataset.dataFiles.count, 27)
     XCTAssertEqual(dataset.indexFiles.count, dataset.dataFiles.count)
     // the master is the one *_master.h5 in the source directory (its name identifies a private session)
-    XCTAssertEqual(URL(fileURLWithPath: dataset.masterPath).deletingLastPathComponent().path, sourceDirectory.path)
+    XCTAssertEqual(
+      URL(fileURLWithPath: dataset.masterPath).deletingLastPathComponent().path,
+      sourceDirectory.path)
     XCTAssertTrue(dataset.masterPath.hasSuffix("_master.h5"))
     XCTAssertEqual(dataset.scanRows, 512)
     XCTAssertEqual(dataset.scanCols, 512)
