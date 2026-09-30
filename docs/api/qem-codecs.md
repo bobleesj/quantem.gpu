@@ -190,6 +190,41 @@ measurements and reports `background_applied=False`; it retains the recipe in
 `metadata["qem_empad"]`. Native products may apply this recipe once. A corrected
 display and original decoded measurements are different scientific outputs.
 
+## Scaled codec: scaled-uint16-column-rans-v1
+
+Calibrated derived results, such as merged tilts, whose intensities were stored as
+regional scaled uint16 codes. The codes are **not** detector counts: a reader must
+refuse this codec rather than interpret it as `runtime-column-rans-spatial-v2`.
+
+Required fields: `version=1`, `interval=512`, `dtype="uint16"` (the stored codes),
+a positive 4D `shape`, and `intensity_calibration`, the complete version-2
+precision report (`storage="scaled_uint16"`, `complete=true`, `source_shape`
+equal to `shape`, and contiguous `regions` covering every scan position, each with
+`first_frame`, `stop_frame`, `scale` and `offset`). Restore frame `f` as
+`float32(code * scale + offset)` with the region containing `f`. Rounding error
+(`rmse`, `max_abs_error`, clipped and overflow counts) is part of the report.
+`scientific_metadata.processing` must include `scaled_uint16_quantization` with
+`changes_measurements: true`; derivations such as `maped_merge` are listed too.
+`attributes` carries producer provenance strings unchanged.
+
+Each chunk covers consecutive scans inside one region and names it with `region`.
+It holds three arrays, laid out exactly like arrays 0–2 of the integer codec
+(8-byte aligned, counts in elements): payload (uint8), `B*P+1` uint32 stream
+offsets and `B*P` uint8 model selectors, with `B = ceil(scans/512)` and
+`P = detector_rows*detector_columns`. The count models and the normative rANS
+table are the integer codec's. There are no spatial-sum arrays.
+
+The native Swift writer stores the resident streams byte for byte; saving never
+decodes, recalibrates or rounds again, and reopening restores bit-identical
+float32 intensities. Checksums are computed from resident memory before the file
+is written once and published atomically. Readers check every block checksum while
+reading the arrays straight into GPU memory: `MetalPackedSource.loadQEM` and Python
+`io.load(path)` on Apple GPUs keep the streams ANS encoded and restore values only
+inside queries, bit-identical between the two. Masked sums add the integer codes of
+the listed pixels and calibrate once per scan, `float32(scale * sum + offset * n)`.
+`io.load(path, backend="cpu")` is the dense NumPy reference; CUDA reading is not
+implemented and fails with that explanation.
+
 ## Conformance and extension policy
 
 Validate the envelope, supported versions, metadata, chunk bounds and body

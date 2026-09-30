@@ -270,8 +270,13 @@ not accepted as float32 merely because an XML label says float32.
   It owns bounded conversion and atomic output; the calling app owns scheduling,
   progress presentation, and explicit dark-reference/already-corrected choices.
   It has no dependency on app preferences, dialogs, or a particular viewer.
-- Scaled/quantized products, uint32 counts and other arbitrary dense arrays do not yet
-  have QEM export codecs. Unsupported exports fail rather than writing another
+- Regional scaled-uint16 results (for example merged tilts) use the
+  `scaled-uint16-column-rans-v1` codec: native Swift
+  `MetalPackedSource.saveQEM(to:scientificMetadata:)` and `MetalPackedSource.loadQEM(url:device:)`
+  keep the resident codes and calibration unchanged. Python `io.load(path)` reopens
+  them on Apple GPUs as encoded float32 data (`backend="cpu"` is a dense NumPy
+  reference) and `qem_validation` checks them. uint32 counts and other arbitrary dense arrays do not yet
+  have QEM export codecs; unsupported exports fail rather than writing another
   container under a `.qem` filename.
 
 `scientific_metadata.calibration_overrides` stores explicit user edits separately

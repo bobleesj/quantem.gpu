@@ -1,0 +1,222 @@
+{
+ "schema_version": 1,
+ "experiment_id": "20260929-maped-merged-qem-interactive",
+ "status": "succeeded",
+ "question": "Can merged seven-tilt results be saved and reopened as .qem, made interactive with exact detector updates, and merged faster, without changing any stored code?",
+ "paper": {
+  "authoritative_host": "apple-m5-24gb",
+  "repository": "quantem.gpu",
+  "manifest_path": "experiments/20260929-maped-merged-qem-interactive/manifest.json"
+ },
+ "code": {
+  "repository": "quantem.gpu",
+  "revision": "9eca3dee42ab585e8f89d33835e4b5a6d1636b3b",
+  "dirty": true,
+  "diff_sha256": "f8aa25534548666170b954f3f7dc334e2648efb749d16233dabf157f03f8a1f5",
+  "untracked_sha256": {
+   "scripts/check_scaled_masked_sums.sh": "407d3fb0145e37c3bd60686d4584880f532aa0f427f4bd56c6e5988d1ba12b1f",
+   "scripts/check_scaled_qem_roundtrip.sh": "6e328069bf15b8e2c67d91a68d3efcf4b81862dd64c78b77655b26d7fc455a4b",
+   "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalKernelCache.swift": "f8cda9dfa3693e0e0d0275c72a12c3acdf5cd4c36fc83d9976143886515021e2",
+   "src/quantem/gpu/swift/Sources/Metal4DSTEMStreamingIO/MetalPackedSource+QEM.swift": "2968895a710c6bd9eb5b40de17d627a028f6d1a158a7e270ab734174ecb9824f",
+   "tests/metal/scaled_masked_sums_check.swift": "302f46631a51ba0a0251158de4b0b7bce194d63ceab07248ce69f5df11af83db",
+   "tests/metal/scaled_qem_roundtrip.swift": "8c96ab06cd58aa8fb5041e581f67faa1f936d2f9086c935226423a4d8d610409",
+   "tests/test_qem_scaled.py": "ecd98a3093de51a66d67027e3bc40fba65ded5a0af8d9fa7aa24db5fd68af888"
+  },
+  "app": "Live4DSTEM main 892a705 with uncommitted integration, built against this worktree via LIVE4DSTEM_QUANTEM_GPU_PATH; quantem.widget origin/main 977a97a2 plus the exact MPS viewer fix"
+ },
+ "inputs": [
+  {
+   "dataset_id": "ARINA seven-tilt MAPED reference (logic_pmos 17 mrad)",
+   "path": "private-fixture://maped-integration-20260913/reference-sources",
+   "sha256": "b56fcf5c5fd8e30530c2b6f040e6920694d2d11460ac0b6b256283c45925c55c"
+  }
+ ],
+ "parameters": {
+  "scan_shape": [
+   512,
+   512
+  ],
+  "detector_shape": [
+   192,
+   192
+  ],
+  "tilts": 7,
+  "crop": null,
+  "bin": 1,
+  "storage": "regional scaled_uint16, ANS codes",
+  "tolerances": {
+   "detector_rtol": 3e-06,
+   "detector_atol": 2e-05
+  },
+  "exactness": "saved .qem block checksums compared between merge paths; reopen fingerprints compared bit for bit"
+ },
+ "execution": {
+  "host": "apple-m5-24gb",
+  "backend": "swift-metal",
+  "gpu_ids": [
+   "Apple M5"
+  ]
+ },
+ "outputs": [
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/01-seven-tilt-merge/result.json",
+   "sha256": "b4da87fda9eee5458f70cf33ca07282688e835fced02307483764485f2ef20be",
+   "result": "Current main 892a705 (pin 306a354): seven-tilt merge 54.35 s to first images; resident 13.14 GiB, peak 14.82 GiB; merged and final shape/image/DP/precision equal to the 2026-09-13 reference; screenshot step blocked by missing Accessibility grant."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/03-empad-folder-three/result.json",
+   "sha256": "f6a81928d944a265a59ba6744f1a2da0f4ba00c916c9dd25e072beb784bdf4b1",
+   "result": "Three EMPAD G1 acquisitions in one folder: every file loaded, BF/ABF/ADF and mean/selected DP, return visits identical, 4/4 navigations applied once."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/04-empad-compare-three/result.json",
+   "sha256": "0956e805d6866f58b388f71f1bbdc6109c8c3e93e9ba569d47b8bac1c4f367c0",
+   "result": "Three EMPAD acquisitions side by side in Compare: ready in 4.42 s, 8.95 GB resident of 17.2 GB budget, products and references switched, exit 0."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/05-merged-interactivity-h5/result.json",
+   "sha256": "6c49dd10973cc8b710408da7e4221293a6e41b7bf0d6b3a105899fdca4da6d1e",
+   "result": "Baseline merged interactivity (ring bank): radius compute 2.0-4.7 ms (approximate edges), centre moves 6.7-7.6 s, exact drag end 5.6 s, first drag 6.4 s."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/06-merged-interactivity-h5-sep18-ddb3c1a/result.json",
+   "sha256": "18c1213d8050c6aeb4c28a5e890df866401af893cfa6d7ee9da2d3a76b48cc74",
+   "result": "Sep 18 ring-bank build: same timings (no regression); exact update after off-axis centre moves timed out (fixed since)."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/09-merged-interactivity-exact-incremental-r2/result.json",
+   "sha256": "da110338609d39c596878e886761065295f1dd8d8945b80f8c7d17887eb94fb7",
+   "result": "Exact incremental masked sums: radius 26-49 ms, off-axis centre 33-63 ms per exact update, drag end reuses exact image, first drag 0.15 s; parity with independently restored HDF5 during and after drags."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/10-merged-qem-save-click-reopen-r2/result.json",
+   "sha256": "4510ca2eba98489ca0d1f1f378b0194dfd53e454c56e94f60a697f9f2a301263",
+   "result": "Merge -> Save .qem into loaded folder (3.66 s, 6.54 GB) -> sidebar -> click reopen (11.0 s) and relaunch click (9.2 s); Mean, products, four DPs and exact off-axis detector bit-identical to the merge."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/11-merge-sampling-profile/result.json",
+   "sha256": "82ead6719d1d9dc021de97ac69edfbcdb28e4f6d78082a8d141b8ae33ed0598f",
+   "result": "Per-source merge profile: decode 5.04 s, sampling 12.43 s over 448 calls."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/14-fused-merge-oracle-r3/result.json",
+   "sha256": "3b28737bfd830c135bb8ec72bf14121e9ff9bc305543fcb61eb3b22c8841c297",
+   "result": "Fused merge with 32-bit tap bases: merge to first images 43.92 s; saved .qem block checksums identical to the per-source path (98/98)."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/15-fused-merge-oracle-r4/result.json",
+   "sha256": "9857a9f015513676d4e23f2b1a9fe5ba07c47cabec986bc48dc04810b85d13ce",
+   "result": "Fused merge + kernel cache + region buffer reuse: merge to first images 36.64 s, merge core 13.83 s; block checksums identical (98/98)."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/16-fused-merge-oracle-parallel-load/result.json",
+   "sha256": "677e69099c08fd47614807bc9de3fe5a800792cf632ee4c5b8421df24c81c1cc",
+   "result": "Rejected: loading two input files concurrently, load 12.99 s versus 13.95 s (within noise); reverted. Checksums identical."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/18-regression-saved-hdf5/result.json",
+   "sha256": "b99a7ab9af7f0bce187432965f66caaf1ca4ad1e9df123d9e3bfb97159d9fb99",
+   "result": "Existing saved-HDF5 merged-result drive passes on the final build: reopen, HDF5 re-save and reopen identical, raw-count loading rejected."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/19-final-e2e-merge-save-reopen/result.json",
+   "sha256": "d9d06dbfdf8f421aede1a0ab7d1c4fa4e9c5ee66ffa97844cb506c8b0781af5d",
+   "result": "Final build before the loader changes: seven-tilt merge, Save .qem into the loaded folder (12.2 s), sidebar listing, click reopen (5.1 s) and relaunch click reopen (3.9 s); every DP, product and off-axis detector fingerprint identical."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/20-notebook-live-merged/result.json",
+   "sha256": "c8a458860a0be3de061b2f2666f9e6c46f723ffcc601fad5196d04f7126c5cf9",
+   "result": "Live4DSTEM 'Open in Jupyter Notebook' on the merged .qem, run headed in JupyterLab: io.load 1.61 s in a fresh kernel, Show4DSTEM exact viewer ready in 0.46 s, exact annular drags 35-61 ms; metadata cell shows maped_merge and scaled_uint16_quantization records."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/21-notebook-live-integer-qem/result.json",
+   "sha256": "74151eaa2634826251ed5797b4b5f65066db2d35b29e47cf5fa16c11ee5389ba",
+   "result": "Same route for an integer ANS .qem (128x128x24x24): io.load 0.082 s, exact viewer ready 0.08 s. The 512x512x192x192 HDF5 tilt notebook loaded in 3.74 s with exact annular drags 6-34 ms."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/22-reopen-parallel-load-adf-subtraction/result.json",
+   "sha256": "5ee8da8c3dbeafbec16a22eab5ec9f70ecf263f4965975db7b8ea6caa58d9b19",
+   "result": "Relaunch click reopen after parallel chunk adoption and exact ADF subtraction: all fingerprints identical to run 19."
+  },
+  {
+   "artifact": "local-evidence://2026-09-29 merged-tilts-qem-empad/23-reopen-cold-verified-parallel-read/result.json",
+   "sha256": "e9e6c563f6551acdc06dd80dbc07e68a8d6f1864c30cc52a5d6ab51bcfbf5682",
+   "result": "Cold page cache (msync MS_INVALIDATE) relaunch click reopen with verified parallel reads: 3.29 s to first images (file 1.61 s); all fingerprints identical to run 19."
+  }
+ ],
+ "results": {
+  "merge_to_first_images_seconds": {
+   "before": 54.35,
+   "after": [
+    36.64,
+    37.26
+   ]
+  },
+  "center_drag_seconds": {
+   "before": [
+    6.69,
+    7.57
+   ],
+   "after_compute": [
+    0.033,
+    0.063
+   ]
+  },
+  "qem_bytes": 6536513163,
+  "block_checksums_identical": true,
+  "rejected": [
+   "two-file concurrent input loading (within noise)"
+  ],
+  "pending": [
+   "borrowing Compare residents as merge inputs",
+   "float32 (EMPAD) merge inputs",
+   "one fused moments pass for reopen products (row and column marginals take about 1.1 s)"
+  ],
+  "qem_load_seconds": {
+   "python_io_load": {
+    "cold": [
+     1.43,
+     1.48
+    ],
+    "warm": [
+     0.63,
+     0.84
+    ],
+    "fresh_kernel_with_metal_compile": 1.61
+   },
+   "swift_loadQEM": {
+    "before": {
+     "cold": [
+      2.46,
+      2.49
+     ],
+     "warm": [
+      0.84,
+      1.2
+     ]
+    },
+    "after": {
+     "cold": [
+      1.454,
+      1.464
+     ],
+     "warm": [
+      0.467,
+      0.477
+     ]
+    }
+   }
+  },
+  "reopen_click_to_first_images_seconds": {
+   "before_warm": 3.97,
+   "before_cold": 4.9,
+   "after_cold": 3.29
+  },
+  "python_swift_bitwise_parity": "BF r48 image and frames 0, 4095, 4096, 131328, 262143 identical bit for bit"
+ },
+ "timestamps": {
+  "created": "2026-09-29",
+  "started": "2026-09-29",
+  "finished": "2026-09-30"
+ }
+}
