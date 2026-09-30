@@ -26,7 +26,7 @@
  },
  "inputs": [
   {
-   "dataset_id": "ARINA seven-tilt MAPED reference (logic_pmos 17 mrad)",
+   "dataset_id": "ARINA seven-tilt MAPED reference (17 mrad tilt series)",
    "path": "private-fixture://maped-integration-20260913/reference-sources",
    "sha256": "b56fcf5c5fd8e30530c2b6f040e6920694d2d11460ac0b6b256283c45925c55c"
   }
