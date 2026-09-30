@@ -72,31 +72,8 @@ extension MetalImageOperations {
     let stop = min(shape[0], outputRows.upperBound + delta + 1)
     if first >= stop { return }
     if !referenceSampling {
-      let scanPair = scanShifts.buffer.contents().assumingMemoryBound(to: Float.self)
-      let detectorPair = detectorShifts.buffer.contents().assumingMemoryBound(to: Float.self)
-      let signature =
-        shape.map(UInt32.init) + [
-          scanPair[index * 2].bitPattern, scanPair[index * 2 + 1].bitPattern,
-          detectorPair[index * 2].bitPattern, detectorPair[index * 2 + 1].bitPattern,
-        ]
-      if translatedPlans[index]?.signature != signature {
-        let plan = TranslatedSamplingPlan(
-          signature: signature, scans: try buffer(shape[0] * columns * 16),
-          pixels: try buffer(pixels * 16), scanCoefficients: try buffer(16),
-          detectorCoefficients: try buffer(pixels * 16))
-        try run(
-          "translated_scan_plan", [scanShifts.buffer, plan.scans, plan.scanCoefficients],
-          words: [UInt32(shape[0]), UInt32(columns), UInt32(index), 0], count: shape[0] * columns)
-        try run(
-          "translated_detector_plan",
-          [detectorShifts.buffer, plan.pixels, plan.detectorCoefficients],
-          words: [UInt32(shape[2]), UInt32(shape[3]), UInt32(index), 0], count: pixels)
-        if translatedPlans.count >= 16, translatedPlans[index] == nil {
-          translatedPlans.removeAll()
-        }
-        translatedPlans[index] = plan
-      }
-      let plan = translatedPlans[index]!
+      let plan = try samplingPlan(
+        shape: shape, scanShifts: scanShifts, detectorShifts: detectorShifts, index: index)
       let beforeRead = Date.timeIntervalSinceReferenceDate
       let bytes = (stop - first) * columns * pixels * source.itemBytes
       if translatedReadBuffer == nil || translatedReadBuffer!.length < bytes {
@@ -155,6 +132,121 @@ extension MetalImageOperations {
     try complete(command)
     try source.checkErrors()
   }
+  /// Sampling geometry for one source, prepared once per shape and displacement.
+  func samplingPlan(shape: [Int], scanShifts: GPUImage, detectorShifts: GPUImage, index: Int)
+    throws -> TranslatedSamplingPlan
+  {
+    let columns = shape[1]
+    let pixels = shape[2] * shape[3]
+    let scanPair = scanShifts.buffer.contents().assumingMemoryBound(to: Float.self)
+    let detectorPair = detectorShifts.buffer.contents().assumingMemoryBound(to: Float.self)
+    let signature =
+      shape.map(UInt32.init) + [
+        scanPair[index * 2].bitPattern, scanPair[index * 2 + 1].bitPattern,
+        detectorPair[index * 2].bitPattern, detectorPair[index * 2 + 1].bitPattern,
+      ]
+    if let plan = translatedPlans[index], plan.signature == signature { return plan }
+    let plan = TranslatedSamplingPlan(
+      signature: signature, scans: try buffer(shape[0] * columns * 16),
+      pixels: try buffer(pixels * 16), scanCoefficients: try buffer(16),
+      detectorCoefficients: try buffer(pixels * 16))
+    try run(
+      "translated_scan_plan", [scanShifts.buffer, plan.scans, plan.scanCoefficients],
+      words: [UInt32(shape[0]), UInt32(columns), UInt32(index), 0], count: shape[0] * columns)
+    try run(
+      "translated_detector_plan",
+      [detectorShifts.buffer, plan.pixels, plan.detectorCoefficients],
+      words: [UInt32(shape[2]), UInt32(shape[3]), UInt32(index), 0], count: pixels)
+    if translatedPlans.count >= 16, translatedPlans[index] == nil {
+      translatedPlans.removeAll()
+    }
+    translatedPlans[index] = plan
+    return plan
+  }
+
+  /// Merge translated inputs straight into finished values: identical to filling the
+  /// accumulators with zero, calling `accumulateTranslated` for every source in order
+  /// and then `finishWeighted`, but the accumulators stay in registers. Each pass
+  /// decodes a bounded window per source for `rowsPerPass` output rows. Returns false
+  /// when the fused path does not apply (reference sampling, mixed or unsupported item
+  /// sizes, or `QUANTEM_GPU_FUSED_MERGE=0`); the caller then uses the per-source path.
+  public func mergeTranslated(
+    sources: [any MetalResidentCounts], outputRows: Range<Int>, scanShifts: GPUImage,
+    detectorShifts: GPUImage, scanWeights: [GPUImage], detectorWeights: [GPUImage],
+    uncovered: GPUImage, output: GPUImage, rowsPerPass: Int = 4
+  ) throws -> Bool {
+    guard fusedMerge, !referenceSampling, !profileSampling, let first = sources.first,
+      [1, 2].contains(first.itemBytes),
+      sources.allSatisfy({ $0.itemBytes == first.itemBytes && $0.shape == first.shape }),
+      scanWeights.count == sources.count, detectorWeights.count == sources.count,
+      rowsPerPass > 0
+    else { return false }
+    let shape = first.shape
+    let columns = shape[1]
+    let pixels = shape[2] * shape[3]
+    guard !outputRows.isEmpty, output.rows == outputRows.count * columns, output.columns == pixels
+    else {
+      throw Self.invalid("Merge output must hold the requested scan rows by detector pixels.")
+    }
+    // Windows span at most rowsPerPass + 2 scan rows; the kernel indexes them in 32 bits.
+    guard (rowsPerPass + 2) * columns * pixels < Int(UInt32.max) else { return false }
+    let kernel = "sample_fused_u\(first.itemBytes * 8)"
+    for passStart in stride(from: outputRows.lowerBound, to: outputRows.upperBound, by: rowsPerPass)
+    {
+      let rows = passStart..<min(outputRows.upperBound, passStart + rowsPerPass)
+      let command = try makeCommand()
+      var table = [UInt64]()
+      var used = [MTLBuffer]()
+      var active = [any MetalResidentCounts]()
+      for (index, source) in sources.enumerated() {
+        let shiftRow = scanShifts.buffer.contents().load(fromByteOffset: index * 8, as: Float.self)
+        let delta = Int(floor(-shiftRow))
+        let windowFirst = max(0, rows.lowerBound + delta)
+        let windowStop = min(shape[0], rows.upperBound + delta + 1)
+        if windowFirst >= windowStop { continue }
+        let plan = try samplingPlan(
+          shape: shape, scanShifts: scanShifts, detectorShifts: detectorShifts, index: index)
+        let bytes = (windowStop - windowFirst) * columns * pixels * source.itemBytes
+        let slot = active.count
+        if fusedReadBuffers.count <= slot { fusedReadBuffers.append(try buffer(bytes)) }
+        if fusedReadBuffers[slot].length < bytes { fusedReadBuffers[slot] = try buffer(bytes) }
+        let raw = fusedReadBuffers[slot]
+        try source.encodeRead(
+          (windowFirst * columns)..<(windowStop * columns), into: raw, command: command)
+        let buffers = [
+          raw, plan.scans, plan.pixels, plan.scanCoefficients, plan.detectorCoefficients,
+          scanWeights[index].buffer, detectorWeights[index].buffer,
+        ]
+        table += buffers.map { $0.gpuAddress }
+        table.append(UInt64(windowFirst * columns))  // windowStart, then padding
+        used += buffers
+        active.append(source)
+      }
+      let encoder = try self.encoder(command, kernel, [])
+      if table.isEmpty { table = [UInt64](repeating: 0, count: 8) }
+      table.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 0) }
+      var count = UInt32(active.count)
+      encoder.setBytes(&count, length: 4, index: 1)
+      encoder.setBuffer(uncovered.buffer, offset: 0, index: 2)
+      encoder.setBuffer(
+        output.buffer, offset: (rows.lowerBound - outputRows.lowerBound) * columns * pixels * 4,
+        index: 3)
+      var parameters = SIMD4<UInt32>(
+        UInt32(pixels), 0, UInt32(rows.lowerBound * columns), UInt32(rows.count * columns))
+      encoder.setBytes(&parameters, length: 16, index: 4)
+      encoder.useResources(used, usage: .read)
+      encoder.dispatchThreads(
+        MTLSize(width: pixels, height: rows.count * columns, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))
+      encoder.endEncoding()
+      try complete(command)
+      for source in active { try source.checkErrors() }
+      fusedMergePasses += 1
+      fusedMergeGPUSeconds += max(0, command.gpuEndTime - command.gpuStartTime)
+    }
+    return true
+  }
+
   public func finishWeighted(_ numerator: GPUImage, denominator: GPUImage, uncovered: GPUImage)
     throws -> GPUImage
   {

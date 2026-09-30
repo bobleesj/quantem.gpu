@@ -44,6 +44,12 @@ public final class MetalImageOperations {
   var convolutionPlans: [String: ImageConvolutionPlan] = [:]
   var translatedPlans: [Int: TranslatedSamplingPlan] = [:]
   var translatedReadBuffer: MTLBuffer?
+  var fusedReadBuffers: [MTLBuffer] = []
+  /// Fused merge passes and their summed GPU seconds, for workflow timing reports.
+  public internal(set) var fusedMergePasses = 0
+  public internal(set) var fusedMergeGPUSeconds = 0.0
+  /// `QUANTEM_GPU_FUSED_MERGE=0` keeps one sampling pass per source (A/B checks).
+  let fusedMerge = ProcessInfo.processInfo.environment["QUANTEM_GPU_FUSED_MERGE"] != "0"
   let referenceSampling =
     ProcessInfo.processInfo.environment["QUANTEM_GPU_SAMPLING_REFERENCE"] == "1"
   let profileSampling = ProcessInfo.processInfo.environment["QUANTEM_GPU_SAMPLING_PROFILE"] == "1"

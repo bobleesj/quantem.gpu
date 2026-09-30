@@ -340,6 +340,70 @@ PREPARED_KERNEL(sample_prepared_u8,uchar)
 PREPARED_KERNEL(sample_prepared_u16,ushort)
 PREPARED_KERNEL(sample_prepared_u32,uint)
 
+// All translated inputs of one output range in a single pass. Each thread repeats
+// prepared_accumulate for every source, in source order and with the same float
+// expressions, accumulating in registers instead of device numerator/denominator
+// buffers, then applies weighted_finish. Results are identical to one
+// sample_prepared_* call per source followed by weighted_finish.
+struct FusedTranslatedSource {
+    device const uchar *raw;
+    device const int4 *scans;
+    device const int4 *pixels;
+    device const float4 *scanCoefficients;
+    device const float4 *detectorCoefficients;
+    device const float *scanWeight;
+    device const float *detectorWeight;
+    uint windowStart;
+    uint pad;
+};
+template<typename T>
+inline float fused_tap(device const T *raw,uint base,bool scan_valid,int pixel) {
+    return !scan_valid||pixel<0?0:float(raw[base+uint(pixel)]);
+}
+// Same value and operation order as prepared_scan: four scan taps, one pixel.
+template<typename T>
+inline float fused_scan(device const T *raw,uint4 base,bool4 valid,int pixel,float4 w) {
+    float value=0;
+    value+=fused_tap(raw,base.x,valid.x,pixel)*w.x;
+    value+=fused_tap(raw,base.y,valid.y,pixel)*w.y;
+    value+=fused_tap(raw,base.z,valid.z,pixel)*w.z;
+    value+=fused_tap(raw,base.w,valid.w,pixel)*w.w;
+    return value;
+}
+template<typename T>
+inline void fused_accumulate(constant FusedTranslatedSource *sources, uint count,
+    device const float *edge, device float *output, constant uint4 &q, uint2 at, uint lane, uint width) {
+    if(at.x>=q.x||at.y>=q.w)return;
+    uint scan=at.y+q.z,i=at.y*q.x+at.x;
+    float num=0,den=0;
+    for(uint s=0;s<count;++s){
+        device const T *raw=reinterpret_cast<device const T *>(sources[s].raw);
+        int4 sc=sources[s].scans[scan],d=sources[s].pixels[at.x];
+        float4 sw=sources[s].scanCoefficients[0],dw=sources[s].detectorCoefficients[at.x];
+        // Window row bases once per scan tap, in 32 bits (windows hold < 2^32 values).
+        bool4 valid=sc>=0;
+        uint4 base=select(uint4(0),uint4(sc-int(sources[s].windowStart))*q.x,valid);
+        float upper=fused_scan(raw,base,valid,d.x,sw),lower=fused_scan(raw,base,valid,d.z,sw);
+        float upperNext=simd_shuffle_down(upper,1),lowerNext=simd_shuffle_down(lower,1);
+        int nextUpper=simd_shuffle_down(d.x,1),nextLower=simd_shuffle_down(d.z,1);
+        bool reuse=lane+1<width&&at.x+1<q.x&&nextUpper==d.y&&nextLower==d.w;
+        if(!reuse){upperNext=fused_scan(raw,base,valid,d.y,sw);lowerNext=fused_scan(raw,base,valid,d.w,sw);}
+        float value=upper*dw.x+upperNext*dw.y+lower*dw.z+lowerNext*dw.w;
+        float weight=sources[s].scanWeight[scan];
+        num+=value*weight;den+=weight*sources[s].detectorWeight[at.x];
+    }
+    float d=den+edge[i%q.x];output[i]=d==0?0:num/d;
+}
+#define FUSED_KERNEL(NAME,TYPE) \
+kernel void NAME(constant FusedTranslatedSource *sources [[buffer(0)]],constant uint &count [[buffer(1)]], \
+    device const float *edge [[buffer(2)]],device float *output [[buffer(3)]],constant uint4 &q [[buffer(4)]], \
+    uint2 at [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]],uint width [[threads_per_simdgroup]]) { \
+    fused_accumulate<TYPE>(sources,count,edge,output,q,at,lane,width); \
+}
+FUSED_KERNEL(sample_fused_u8,uchar)
+FUSED_KERNEL(sample_fused_u16,ushort)
+FUSED_KERNEL(sample_fused_u32,uint)
+
 // ---- Radial profile bank: per-frame sums over 0.5 px rings around one center.
 // Built once per center in a single traversal; any annulus is then a range sum.
 kernel void radial_bins(

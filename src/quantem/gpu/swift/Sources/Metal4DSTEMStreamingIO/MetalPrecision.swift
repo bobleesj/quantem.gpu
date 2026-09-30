@@ -22,12 +22,11 @@ public final class MetalPrecision {
       throw Self.invalid("An available Metal queue is required.")
     }
     self.queue = queue
-    let options = MTLCompileOptions()
-    options.fastMathEnabled = false
-    let code = try ["precision", "native_precision", "save_uint16"].map {
-      try MetalCountResources.source($0)
-    }.joined(separator: "\n")
-    library = try device.makeLibrary(source: code, options: options)
+    library = try MetalKernelCache.library(device: device, key: "precision") {
+      try ["precision", "native_precision", "save_uint16"].map {
+        try MetalCountResources.source($0)
+      }.joined(separator: "\n")
+    }
     func allocate(_ bytes: Int) throws -> MTLBuffer {
       guard let value = device.makeBuffer(length: bytes, options: .storageModeShared) else {
         throw Self.invalid("Cannot allocate precision workspace.")
@@ -198,10 +197,8 @@ public final class MetalPrecision {
     -> MTLComputeCommandEncoder
   {
     if pipelines[name] == nil {
-      guard let function = library.makeFunction(name: name) else {
-        throw Self.invalid("Missing kernel \(name).")
-      }
-      pipelines[name] = try device.makeComputePipelineState(function: function)
+      pipelines[name] = try MetalKernelCache.pipeline(
+        device: device, library: library, key: "precision", function: name)
     }
     guard let encoder = command.makeComputeCommandEncoder() else {
       throw Self.invalid("Cannot allocate a compute encoder.")
