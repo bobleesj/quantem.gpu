@@ -98,6 +98,122 @@ public struct NativeQEMFile {
     }
     return data
   }
+
+  /// A body range to read into caller memory with `readVerified(into:)`.
+  public struct BodySpan {
+    public let offset: Int
+    public let destination: UnsafeMutableRawBufferPointer
+
+    public init(offset: Int, destination: UnsafeMutableRawBufferPointer) {
+      self.offset = offset
+      self.destination = destination
+    }
+  }
+
+  /// The authenticated JSON header, read again and checked against `identity`.
+  public func headerJSON() throws -> Data {
+    let file = try FileHandle(forReadingFrom: url)
+    defer { try? file.close() }
+    try file.seek(toOffset: 56)
+    let json = try file.read(upToCount: bodyStart - 56) ?? Data()
+    guard json.count == bodyStart - 56,
+      SHA256.hash(data: json).map({ String(format: "%02x", $0) }).joined() == identity
+    else {
+      throw Native4DSTEMIOError.invalidData("QEM file changed during loading; reopen it.")
+    }
+    return json
+  }
+
+  /// Read body ranges straight into caller memory while verifying every block checksum.
+  ///
+  /// Blocks are read and hashed in parallel, alignment padding between spans included,
+  /// so each byte is read once and nothing is copied again. Spans must be sorted, disjoint
+  /// and inside the body. The destinations hold unverified bytes if this throws.
+  public func readVerified(into spans: [BodySpan], shouldCancel: () -> Bool = { false }) throws {
+    var end = 0
+    for span in spans {
+      guard span.offset >= end, span.offset + span.destination.count <= bodyBytes else {
+        throw Native4DSTEMIOError.invalidData("QEM body ranges overlap or exceed the file.")
+      }
+      end = span.offset + span.destination.count
+    }
+    let descriptor = open(url.path, O_RDONLY)
+    guard descriptor >= 0 else {
+      throw Native4DSTEMIOError.invalidData("Cannot read \(url.lastPathComponent).")
+    }
+    defer { close(descriptor) }
+    var status = stat()
+    guard fstat(descriptor, &status) == 0, Int(status.st_size) == bodyStart + bodyBytes else {
+      throw Native4DSTEMIOError.invalidData("QEM file changed during loading; reopen it.")
+    }
+    let (start, length, expected) = (bodyStart, bodyBytes, checksums)
+    let starts = spans.map(\.offset)
+    nonisolated(unsafe) let targets = spans
+    nonisolated(unsafe) var failure: String?
+    let lock = NSLock()
+    withoutActuallyEscaping(shouldCancel) { cancel in
+      nonisolated(unsafe) let cancelled = cancel
+      DispatchQueue.concurrentPerform(iterations: expected.count) { block in
+        if cancelled() {
+          lock.lock()
+          failure = failure ?? "Opening cancelled."
+          lock.unlock()
+          return
+        }
+        let lower = block * Self.blockBytes
+        let upper = min(length, lower + Self.blockBytes)
+        var hasher = SHA256()
+        var scratch = [UInt8]()
+        var index = max(0, (starts.lastIndex { $0 <= lower }) ?? 0)
+        var position = lower
+        while position < upper {
+          while index < targets.count,
+            targets[index].offset + targets[index].destination.count <= position
+          {
+            index += 1
+          }
+          let inside = index < targets.count && targets[index].offset <= position
+          let stop =
+            inside
+            ? min(upper, targets[index].offset + targets[index].destination.count)
+            : min(upper, index < targets.count ? targets[index].offset : upper)
+          let count = stop - position
+          if !inside, scratch.count < count { scratch = [UInt8](repeating: 0, count: count) }
+          let read = scratch.withUnsafeMutableBytes { padding -> Bool in
+            let destination =
+              inside
+              ? targets[index].destination.baseAddress!
+                .advanced(by: position - targets[index].offset)
+              : padding.baseAddress!
+            var done = 0
+            while done < count {
+              let got = pread(
+                descriptor, destination.advanced(by: done), count - done,
+                off_t(start + position + done))
+              if got <= 0 { return false }
+              done += got
+            }
+            hasher.update(bufferPointer: UnsafeRawBufferPointer(start: destination, count: count))
+            return true
+          }
+          guard read else {
+            lock.lock()
+            failure = failure ?? "QEM file ended during loading; recopy it."
+            lock.unlock()
+            return
+          }
+          position = stop
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        if digest != expected[block] {
+          lock.lock()
+          failure = failure ?? "QEM checksum mismatch in block \(block); recopy the file."
+          lock.unlock()
+        }
+      }
+    }
+    if let failure { throw Native4DSTEMIOError.invalidData(failure) }
+  }
 }
 
 /// Bounded writer for already-encoded bytes; originals and existing copies are kept.

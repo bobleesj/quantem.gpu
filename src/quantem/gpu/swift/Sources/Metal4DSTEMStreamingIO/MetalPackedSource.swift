@@ -8,12 +8,14 @@ import Native4DSTEMIO
 public final class MetalPackedSource {
   public let shape: [Int]
   public let precision: MetalPrecision
-  public private(set) var readyFrames = 0
+  public internal(set) var readyFrames = 0
   public private(set) var isReleased = false
-  public private(set) var peakAllocatedBytes = 0
+  public internal(set) var peakAllocatedBytes = 0
   /// Application provenance copied into exports; precision metadata is managed internally.
   public var attributes: [String: String] = [:]
-  private var savedMetadata: [String: Any]?
+  /// Public schema-2 metadata of the `.qem` this result was opened from, if any.
+  public internal(set) var qemScientificMetadata: [String: Any]?
+  var savedMetadata: [String: Any]?
   public var metadata: [String: Any] {
     if let savedMetadata { return savedMetadata }
     guard !calibrated.isEmpty else { return precision.report }
@@ -41,17 +43,19 @@ public final class MetalPackedSource {
     result["intensity_max"] = reports.map { ($0["intensity_max"] as! NSNumber).doubleValue }.max()!
     return result
   }
-  private struct CalibratedPart {
+  struct CalibratedPart {
     let first: Int
     let source: MetalEncodedSource
     let precision: MetalPrecision
   }
-  private var calibrated: [CalibratedPart] = []
+  var calibrated: [CalibratedPart] = []
   private struct Chunk {
     let first, count: Int
     let words, offsets, widths: MTLBuffer
   }
   private var chunks: [Chunk] = []
+  /// Globally scaled bit-packed chunks have no `.qem` codec; only calibrated parts do.
+  var containsPackedChunks: Bool { !chunks.isEmpty }
   public var residentBytes: Int {
     calibrated.reduce(0) { $0 + $1.source.residentBytes }
       + chunks.reduce(0) { $0 + $1.words.length + $1.offsets.length + $1.widths.length }
@@ -282,6 +286,139 @@ public final class MetalPackedSource {
       data: try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
       encoding: .utf8)!
     try writer.finish(metadata: attributes)
+  }
+
+  /// Exact per-frame integer sums of the stored codes over the listed detector pixels.
+  ///
+  /// Only those pixels' streams are decoded. Sums are additive, so a changed mask can be
+  /// updated exactly from the pixels that entered and left it. Frames are row-major.
+  public func maskedCodeSums(detectorPixels: [Int]) throws -> [UInt64] {
+    let frames = shape[0] * shape[1]
+    let pixels = shape[2] * shape[3]
+    guard !isReleased, !calibrated.isEmpty, chunks.isEmpty, readyFrames == frames else {
+      throw MetalPrecision.invalid("Masked sums need a complete calibrated result.")
+    }
+    guard Set(detectorPixels).count == detectorPixels.count,
+      detectorPixels.allSatisfy({ (0..<pixels).contains($0) })
+    else {
+      throw MetalPrecision.invalid("Detector pixels must be unique and inside the detector.")
+    }
+    var totals = [UInt64](repeating: 0, count: frames)
+    // 65,536 codes of at most 65,535 fit a uint32 frame total; larger lists are split.
+    for start in stride(from: 0, to: detectorPixels.count, by: 65_536) {
+      let batch = detectorPixels[start..<min(detectorPixels.count, start + 65_536)].map(UInt32.init)
+      let listed = try precision.buffer(batch.count * 4)
+      batch.withUnsafeBytes {
+        listed.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+      }
+      let sums = try precision.buffer(frames * 4)
+      memset(sums.contents(), 0, frames * 4)
+      let command = try precision.command()
+      for part in calibrated {
+        try part.source.encodeMaskedSums(
+          listed: listed, count: batch.count, into: sums, sumsOffset: part.first * 4,
+          command: command)
+      }
+      try precision.complete(command)
+      for part in calibrated { try part.source.checkErrors() }
+      let partial = sums.contents().assumingMemoryBound(to: UInt32.self)
+      for frame in 0..<frames { totals[frame] += UInt64(partial[frame]) }
+    }
+    return totals
+  }
+
+  /// Exact per-frame code sums along one detector axis: for every frame, the sum of the
+  /// stored codes in each detector row (`rows: true`) or column. Returned row-major as
+  /// frames × rows (or columns). Together they give totals and first moments exactly.
+  public func detectorMarginalCodeSums(rows: Bool) throws -> [UInt32] {
+    let frames = shape[0] * shape[1]
+    let (detectorRows, detectorColumns) = (shape[2], shape[3])
+    guard !isReleased, !calibrated.isEmpty, chunks.isEmpty, readyFrames == frames,
+      max(detectorRows, detectorColumns) <= 65_536
+    else {
+      throw MetalPrecision.invalid("Marginal sums need a complete calibrated result.")
+    }
+    let groupCount = rows ? detectorRows : detectorColumns
+    let length = rows ? detectorColumns : detectorRows
+    let padded = (length + 31) / 32 * 32
+    var listed = [UInt32](repeating: 0xFFFF_FFFF, count: groupCount * padded)
+    var groups = [UInt32](repeating: 0, count: groupCount * padded / 32)
+    for group in 0..<groupCount {
+      for position in 0..<length {
+        let pixel = rows ? group * detectorColumns + position : position * detectorColumns + group
+        listed[group * padded + position] = UInt32(pixel)
+      }
+      for simd in 0..<(padded / 32) { groups[group * padded / 32 + simd] = UInt32(group) }
+    }
+    let listedBuffer = try precision.buffer(listed.count * 4)
+    listed.withUnsafeBytes {
+      listedBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+    }
+    let groupBuffer = try precision.buffer(groups.count * 4)
+    groups.withUnsafeBytes {
+      groupBuffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count)
+    }
+    let sums = try precision.buffer(frames * groupCount * 4)
+    memset(sums.contents(), 0, frames * groupCount * 4)
+    let command = try precision.command()
+    for part in calibrated {
+      try part.source.encodeGroupSums(
+        listed: listedBuffer, count: listed.count, groups: groupBuffer, groupCount: groupCount,
+        into: sums, sumsOffset: part.first * groupCount * 4, command: command)
+    }
+    try precision.complete(command)
+    for part in calibrated { try part.source.checkErrors() }
+    return Array(
+      UnsafeBufferPointer(
+        start: sums.contents().assumingMemoryBound(to: UInt32.self), count: frames * groupCount))
+  }
+
+  /// Per-frame region calibration `(scale, offset)`, row-major over scan positions.
+  public func frameCalibration() throws -> [(scale: Double, offset: Double)] {
+    let frames = shape[0] * shape[1]
+    guard !isReleased, !calibrated.isEmpty, readyFrames == frames else {
+      throw MetalPrecision.invalid("Calibration needs a complete calibrated result.")
+    }
+    var result = [(scale: Double, offset: Double)](repeating: (0, 0), count: frames)
+    for part in calibrated {
+      guard let scale = part.precision.report["scale"] as? Double,
+        let offset = part.precision.report["offset"] as? Double
+      else { throw MetalPrecision.invalid("A calibrated region lost its scale or offset.") }
+      for frame in part.first..<(part.first + part.source.readyFrames) {
+        result[frame] = (scale, offset)
+      }
+    }
+    return result
+  }
+
+  /// Calibrated virtual image from exact per-frame code sums over `pixelCount` pixels.
+  ///
+  /// Each frame's region calibration is applied once, `scale × Σ codes + offset × n`,
+  /// in double precision: the exact affine reconstruction of the summed intensities,
+  /// without per-value rounding. Returns one float32 per scan position in a shared buffer.
+  public func calibratedImage(codeSums: [UInt64], pixelCount: Int) throws -> MTLBuffer {
+    let frames = shape[0] * shape[1]
+    guard !isReleased, !calibrated.isEmpty, codeSums.count == frames, pixelCount >= 0 else {
+      throw MetalPrecision.invalid("Provide one code sum per frame of a calibrated result.")
+    }
+    let output = try precision.buffer(frames * 4)
+    let values = output.contents().assumingMemoryBound(to: Float.self)
+    let count = Double(pixelCount)
+    for part in calibrated {
+      guard let scale = part.precision.report["scale"] as? Double,
+        let offset = part.precision.report["offset"] as? Double
+      else { throw MetalPrecision.invalid("A calibrated region lost its scale or offset.") }
+      for frame in part.first..<(part.first + part.source.readyFrames) {
+        values[frame] = Float(scale * Double(codeSums[frame]) + offset * count)
+      }
+    }
+    return output
+  }
+
+  /// Exact virtual image for a binary detector mask, decoding only the listed pixels.
+  public func maskedVirtualImage(detectorPixels: [Int]) throws -> MTLBuffer {
+    try calibratedImage(
+      codeSums: maskedCodeSums(detectorPixels: detectorPixels), pixelCount: detectorPixels.count)
   }
 
   /// Restore a bounded consecutive frame region directly into a float32 GPU buffer.

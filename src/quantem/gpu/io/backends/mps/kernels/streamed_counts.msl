@@ -306,3 +306,87 @@ kernel void streamed_counts_reduce(
     }
     if (lane == 0) output[p.z + scan] = partials[0];
 }
+
+// Exact per-frame code sums over listed detector pixels, decoding only their
+// streams. A threadgroup of 256 lanes decodes 256 listed pixels of one block in
+// lockstep; SIMD sums combine lanes per frame, eight SIMD partials combine in
+// threadgroup memory, then each frame receives one device atomic add. Codes are
+// integers, so the sums are exact; callers keep a group's possible total below
+// 2^32 (256 lanes x 65535 per frame per group, then < 2^32 across groups by
+// splitting the pixel list).
+kernel void streamed_counts_masked_sums(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device atomic_uint *sums [[buffer(5)]],
+    device const uint *listed [[buffer(6)]],
+    constant ulong *p [[buffer(7)]],
+    uint2 group [[threadgroup_position_in_grid]],
+    uint lane [[thread_index_in_threadgroup]],
+    uint simd_lane [[thread_index_in_simdgroup]],
+    uint simd_group [[simdgroup_index_in_threadgroup]]) {
+    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
+    uint listed_count = uint(p[3]);
+    threadgroup uint partial[8][512];
+    uint block = group.y, index = group.x * 256 + lane;
+    uint block_first = block * interval;
+    uint block_count = min(interval, scans - block_first);
+    bool active = index < listed_count;
+    StreamReader reader(payload, offsets, models, decoding,
+                        active ? block * pixels + listed[index] : 0);
+    for (uint i = 0; i < block_count; ++i) {
+        uint value = active ? reader.next() : 0;
+        uint total = simd_sum(value);
+        if (simd_lane == 0) partial[simd_group][i] = total;
+    }
+    if (active && !reader.finished())
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint i = lane; i < block_count; i += 256) {
+        uint total = 0;
+        for (uint s = 0; s < 8; ++s) total += partial[s][i];
+        if (total != 0)
+            atomic_fetch_add_explicit(&sums[block_first + i], total, memory_order_relaxed);
+    }
+}
+
+// Exact per-frame code sums for groups of listed pixels (for example detector rows
+// or columns). The host lists each group's pixels contiguously, padded to whole
+// SIMD groups with 0xFFFFFFFF, and names the group of every SIMD group. Each SIMD
+// group adds its per-frame total to sums[frame * group_count + group]; a group of
+// at most 65,536 pixels keeps every total below 2^32.
+kernel void streamed_counts_group_sums(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device atomic_uint *sums [[buffer(5)]],
+    device const uint *listed [[buffer(6)]],
+    device const uint *groups [[buffer(7)]],
+    constant ulong *p [[buffer(8)]],
+    uint2 at [[thread_position_in_grid]],
+    uint simd_lane [[thread_index_in_simdgroup]]) {
+    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
+    uint listed_count = uint(p[3]), group_count = uint(p[4]);
+    uint index = at.x, block = at.y;
+    if (index >= listed_count) return;  // listed_count is a multiple of the SIMD width
+    uint block_first = block * interval;
+    uint block_count = min(interval, scans - block_first);
+    uint pixel = listed[index];
+    bool active = pixel != 0xFFFFFFFFu;
+    uint group = groups[index / 32];
+    StreamReader reader(payload, offsets, models, decoding,
+                        active ? block * pixels + pixel : 0);
+    for (uint i = 0; i < block_count; ++i) {
+        uint value = active ? reader.next() : 0;
+        uint total = simd_sum(value);
+        if (simd_lane == 0 && total != 0)
+            atomic_fetch_add_explicit(&sums[ulong(block_first + i) * group_count + group], total,
+                                      memory_order_relaxed);
+    }
+    if (active && !reader.finished())
+        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+}

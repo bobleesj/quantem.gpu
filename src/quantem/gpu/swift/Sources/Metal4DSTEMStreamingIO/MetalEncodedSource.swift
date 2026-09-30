@@ -57,22 +57,20 @@ public final class MetalEncodedSource {
       throw Self.invalid("Hot-pixel indices must be unique and inside the detector.")
     }
     self.hotPixelIndices = hotPixelIndices
-    let options = MTLCompileOptions()
-    options.fastMathEnabled = false
-    let code = try ["streamed_counts", "hot_pixels", "resident_utilities", "count_tables"].map {
-      try MetalCountResources.source($0)
-    }.joined(separator: "\n")
-    let library = try device.makeLibrary(source: code, options: options)
+    let library = try MetalKernelCache.library(device: device, key: "encoded-counts") {
+      try ["streamed_counts", "hot_pixels", "resident_utilities", "count_tables"].map {
+        try MetalCountResources.source($0)
+      }.joined(separator: "\n")
+    }
     var compiled: [String: MTLComputePipelineState] = [:]
     for name in [
       "streamed_counts_encode", "streamed_counts_compact", "streamed_counts_decode_range",
       "hot_median", "count_prefix", "count_prefix_totals", "count_prefix_add",
       "count_summary", "count_bright", "count_normalize", "count_verify", "count_tables",
+      "streamed_counts_masked_sums", "streamed_counts_group_sums",
     ] {
-      guard let function = library.makeFunction(name: name) else {
-        throw Self.invalid("Missing kernel \(name).")
-      }
-      compiled[name] = try device.makeComputePipelineState(function: function)
+      compiled[name] = try MetalKernelCache.pipeline(
+        device: device, library: library, key: "encoded-counts", function: name)
     }
     pipelines = compiled
     encoding = try Self.buffer(device, 64 * 33 * 4)
@@ -308,4 +306,147 @@ public final class MetalEncodedSource {
     return buffer
   }
   static func invalid(_ text: String) -> Metal4DSTEMStreamingIOError { .invalidRequest(text) }
+}
+
+extension MetalEncodedSource {
+  /// Enqueue exact per-frame code sums over `count` listed detector pixels (uint32
+  /// indices in `listed`). Only those pixels' streams are decoded. `sums` receives one
+  /// uint32 per frame of this source starting at `sumsOffset` bytes and must be zeroed
+  /// by the caller; keep `count` at or below 65,536 so a frame total fits in 32 bits.
+  /// Call `checkErrors()` after the command completes.
+  func encodeMaskedSums(
+    listed: MTLBuffer, count: Int, into sums: MTLBuffer, sumsOffset: Int,
+    command: MTLCommandBuffer
+  ) throws {
+    let pixels = shape[2] * shape[3]
+    guard !isReleased, count > 0, count <= 65_536, count <= pixels, listed.length >= count * 4,
+      sums.length >= sumsOffset + readyFrames * 4,
+      let pipeline = pipelines["streamed_counts_masked_sums"]
+    else {
+      throw Self.invalid("Masked sums need 1-65536 listed pixels and a frame-sized output.")
+    }
+    error.contents().storeBytes(of: UInt32(0), as: UInt32.self)
+    for chunk in chunks {
+      guard let encoder = command.makeComputeCommandEncoder() else {
+        throw Self.invalid("Cannot encode masked sums.")
+      }
+      encoder.setComputePipelineState(pipeline)
+      for (index, buffer) in [chunk.payload, chunk.offsets, chunk.models, decoding, error]
+        .enumerated()
+      {
+        encoder.setBuffer(buffer, offset: 0, index: index)
+      }
+      encoder.setBuffer(sums, offset: sumsOffset + chunk.first * 4, index: 5)
+      encoder.setBuffer(listed, offset: 0, index: 6)
+      let p = [UInt64(chunk.count), UInt64(pixels), UInt64(interval), UInt64(count)]
+      p.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 7) }
+      encoder.dispatchThreadgroups(
+        MTLSize(
+          width: (count + 255) / 256, height: (chunk.count + interval - 1) / interval, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+      encoder.endEncoding()
+    }
+  }
+
+  /// Enqueue exact per-frame sums for pixel groups. `listed` holds `count` uint32 pixel
+  /// indices (a multiple of 32; padding lanes are 0xFFFFFFFF) and `groups` one group
+  /// index per 32 listed entries. `sums` holds `groupCount` uint32 per frame of this
+  /// source, starting at `sumsOffset` bytes, zeroed by the caller.
+  func encodeGroupSums(
+    listed: MTLBuffer, count: Int, groups: MTLBuffer, groupCount: Int, into sums: MTLBuffer,
+    sumsOffset: Int, command: MTLCommandBuffer
+  ) throws {
+    let pixels = shape[2] * shape[3]
+    guard !isReleased, count > 0, count % 32 == 0, groupCount > 0, listed.length >= count * 4,
+      groups.length >= count / 32 * 4, sums.length >= sumsOffset + readyFrames * groupCount * 4,
+      let pipeline = pipelines["streamed_counts_group_sums"]
+    else {
+      throw Self.invalid("Group sums need whole SIMD groups of listed pixels and a sized output.")
+    }
+    error.contents().storeBytes(of: UInt32(0), as: UInt32.self)
+    for chunk in chunks {
+      guard let encoder = command.makeComputeCommandEncoder() else {
+        throw Self.invalid("Cannot encode group sums.")
+      }
+      encoder.setComputePipelineState(pipeline)
+      for (index, buffer) in [chunk.payload, chunk.offsets, chunk.models, decoding, error]
+        .enumerated()
+      {
+        encoder.setBuffer(buffer, offset: 0, index: index)
+      }
+      encoder.setBuffer(sums, offset: sumsOffset + chunk.first * groupCount * 4, index: 5)
+      encoder.setBuffer(listed, offset: 0, index: 6)
+      encoder.setBuffer(groups, offset: 0, index: 7)
+      let p = [
+        UInt64(chunk.count), UInt64(pixels), UInt64(interval), UInt64(count), UInt64(groupCount),
+      ]
+      p.withUnsafeBytes { encoder.setBytes($0.baseAddress!, length: $0.count, index: 8) }
+      encoder.dispatchThreads(
+        MTLSize(width: count, height: (chunk.count + interval - 1) / interval, depth: 1),
+        threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+      encoder.endEncoding()
+    }
+  }
+
+  /// Encoded arrays of one appended frame range. The layout is the QEM integer count
+  /// stream: `ceil(count / 512) * detectorPixels` streams, uint32 payload offsets and
+  /// uint8 model selectors. Buffers are the resident storage itself, not copies.
+  struct EncodedChunk {
+    let first: Int
+    let count: Int
+    let payload: MTLBuffer
+    let offsets: MTLBuffer
+    let models: MTLBuffer
+  }
+
+  var encodedChunks: [EncodedChunk] {
+    chunks.map {
+      EncodedChunk(
+        first: $0.first, count: $0.count, payload: $0.payload, offsets: $0.offsets,
+        models: $0.models)
+    }
+  }
+
+  /// Take ownership of verified uint16 streams for the next `frames`, without copying.
+  ///
+  /// `payload`, `offsets` and `models` hold `payloadBytes`, `(streams + 1) × 4` and
+  /// `streams` bytes. Offsets must start at zero, never decrease and stay inside the
+  /// payload; models are 0...63 or the reserved 252...255 stream kinds. Every later
+  /// decode still checks entropy completion. Code summaries (detector sums and means)
+  /// are not recomputed, so only owners that never read them may adopt streams.
+  func adoptEncodedChunk(
+    frames: Int, payload: MTLBuffer, payloadBytes: Int, offsets: MTLBuffer, models: MTLBuffer
+  ) throws {
+    let pixels = shape[2] * shape[3]
+    guard !isReleased, itemBytes == 2, frames > 0, readyFrames + frames <= shape[0] * shape[1]
+    else {
+      throw Self.invalid("Adopt uint16 streams for an in-bounds frame range of an open source.")
+    }
+    let streams = ((frames + interval - 1) / interval) * pixels
+    guard offsets.length >= (streams + 1) * 4, models.length >= streams,
+      payload.length >= payloadBytes
+    else {
+      throw Self.invalid("Encoded stream tables do not match the declared frames.")
+    }
+    let table = offsets.contents().assumingMemoryBound(to: UInt32.self)
+    var previous: UInt32 = 0
+    for index in 0...streams {
+      let value = UInt32(littleEndian: table[index])
+      guard index > 0 || value == 0, value >= previous else {
+        throw Self.invalid("Encoded stream offsets must start at zero and never decrease.")
+      }
+      previous = value
+    }
+    guard Int(previous) <= payloadBytes else {
+      throw Self.invalid("Encoded stream offsets exceed the stored payload.")
+    }
+    for model in UnsafeRawBufferPointer(start: models.contents(), count: streams)
+    where !(model < 64 || model >= 252) {
+      throw Self.invalid("Unknown encoded stream model \(model).")
+    }
+    chunks.append(
+      Chunk(first: readyFrames, count: frames, payload: payload, offsets: offsets, models: models))
+    readyFrames += frames
+    peakAllocatedBytes = max(peakAllocatedBytes, device.currentAllocatedSize)
+  }
 }
