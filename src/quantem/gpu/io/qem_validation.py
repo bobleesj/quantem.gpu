@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import struct
@@ -21,6 +22,62 @@ _BLOCK_BYTES = 64 << 20
 _INTEGER_CODEC = "runtime-column-rans-spatial-v2"
 _EMPAD_CODEC = "empad-xor-row-packed-v1"
 _FLOAT_ANS_CODEC = "float32-bit-lanes-rans-v1"
+_SCALED_CODEC = "scaled-uint16-column-rans-v1"
+
+
+def _validate_scaled_layout(header: dict) -> None:
+    """Check the regional calibration and every span of saved scaled uint16 codes.
+
+    The three arrays per chunk are the integer codec's payload, offsets and
+    models, without a spatial index; ``region`` names the chunk's calibration.
+    """
+    from ._precision import validate_regions
+
+    shape = header["shape"]
+    frames, pixels = shape[0] * shape[1], shape[2] * shape[3]
+    report = header.get("intensity_calibration")
+    if (header.get("version") != 1 or header.get("interval") != 512
+            or header.get("dtype") != "uint16" or not isinstance(report, dict)
+            or report.get("storage") != "scaled_uint16" or report.get("version") != 2
+            or report.get("complete") is not True or report.get("source_shape") != shape):
+        raise ValueError("Invalid scaled uint16 description; save the result again.")
+    validate_regions(report)
+    if not all(region.get("storage") == "scaled_uint16"
+               and all(isinstance(region.get(key), (int, float))
+                       and math.isfinite(region[key])
+                       for key in ("intensity_min", "intensity_max"))
+               for region in report["regions"]):
+        raise ValueError("Invalid regional intensity range; save the result again.")
+    if not any(record.get("operation") == "scaled_uint16_quantization"
+               and record.get("changes_measurements") is True
+               for record in header["scientific_metadata"]["processing"]):
+        raise ValueError(
+            "Scaled .qem metadata must declare scaled_uint16_quantization; save the result again."
+        )
+    regions = report["regions"]
+    cursor = first = 0
+    for chunk in header["chunks"]:
+        scans, region, arrays = chunk.get("scans"), chunk.get("region"), chunk.get("arrays")
+        if (type(scans) is not int or scans <= 0 or chunk.get("first") != first
+                or type(region) is not int or not 0 <= region < len(regions)
+                or not regions[region]["first_frame"] <= first
+                or first + scans > regions[region]["stop_frame"]
+                or not isinstance(arrays, list) or len(arrays) != 3):
+            raise ValueError("Invalid scaled .qem chunk coverage; save the result again.")
+        streams = -(-scans // 512) * pixels
+        if streams * (2 * min(scans, 512) + 4) >= 2**32:
+            raise ValueError("Scaled .qem chunk offsets exceed the codec's uint32 range.")
+        for index, (spec, itemsize) in enumerate(zip(arrays, (1, 4, 1))):
+            cursor = (cursor + 7) & ~7
+            count = spec.get("count")
+            if (type(count) is not int or count < 0 or spec.get("offset") != cursor
+                    or index == 1 and count != streams + 1
+                    or index == 2 and count != streams):
+                raise ValueError("Invalid scaled .qem array span; save the result again.")
+            cursor += count * itemsize
+        first += scans
+    if first != frames or header.get("bytes") != cursor:
+        raise ValueError("Incomplete scaled .qem coverage; save the result again.")
 
 
 def _validate_float_ans_layout(handle, header: dict, start: int) -> None:
@@ -194,7 +251,7 @@ def validate_qem(path: str | Path) -> dict[str, object]:
         ):
             raise ValueError("Invalid QEM shape; expected four positive integer axes.")
         codec = header.get("codec")
-        if codec not in (_INTEGER_CODEC, _EMPAD_CODEC, _FLOAT_ANS_CODEC):
+        if codec not in (_INTEGER_CODEC, _EMPAD_CODEC, _FLOAT_ANS_CODEC, _SCALED_CODEC):
             raise NotImplementedError(
                 f"QEM codec {codec!r} is not supported by this validator."
             )
@@ -220,7 +277,7 @@ def validate_qem(path: str | Path) -> dict[str, object]:
                     f"QEM body checksum mismatch in block {number}; recopy the file."
                 )
         layout = "not_checked"
-        if codec == _INTEGER_CODEC:
+        if codec in (_INTEGER_CODEC, _SCALED_CODEC):
             from ._streamed_file import read_header
 
             read_header(

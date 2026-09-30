@@ -17,6 +17,7 @@ import numpy as np
 from . import _qem_metadata
 
 PROFILE = "runtime-column-rans-spatial-v2"
+SCALED = "scaled-uint16-column-rans-v1"
 BLOCK = 64 << 20
 DTYPES = ("uint8", "uint32", "uint8", "uint32", "uint64", "uint8")
 _EXTENSION = ".qem"
@@ -51,6 +52,17 @@ def read_header(path) -> tuple[dict, int]:
             raise ValueError(".qem header checksum mismatch; recopy the file.")
         header = json.loads(blob)
         _qem_metadata.validate_header(header)
+        if header.get("codec") == SCALED:
+            from .qem_validation import _validate_scaled_layout
+
+            try:
+                _validate_scaled_layout(header)
+            except (KeyError, TypeError, IndexError) as error:
+                raise ValueError("Malformed scaled .qem header; save the result again.") from error
+            if (start + header["bytes"] != size or not isinstance(header.get("sha256"), list)
+                    or len(header["sha256"]) != math.ceil(header["bytes"] / BLOCK)):
+                raise ValueError("Incomplete scaled .qem file or checksum table; recopy the file.")
+            return header, start
         if header.get("codec") == "float32-bit-lanes-rans-v1":
             from .qem_validation import _validate_declared_processing, _validate_float_ans_layout
 
@@ -219,6 +231,15 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
         from ._float_ans import load_float_ans
 
         return load_float_ans(path, header, start, backend=selected_backend, device=device)
+    if header["codec"] == SCALED:
+        if selected_backend != "mps":
+            raise NotImplementedError(
+                "Scaled uint16 .qem results reopen on Apple GPUs (backend='mps'), or "
+                "as a dense CPU reference with backend='cpu'."
+            )
+        from ._camera_mps import load_scaled_snapshot_mps
+
+        return load_scaled_snapshot_mps(path, header, start, verbose=verbose)
     if selected_backend == "mps":
         from ._camera_mps import load_snapshot_mps
 

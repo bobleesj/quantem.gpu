@@ -21,6 +21,7 @@ import numpy as np
 from . import _qem_metadata
 
 _INTEGER = "runtime-column-rans-spatial-v2"
+_SCALED = "scaled-uint16-column-rans-v1"
 _FLOAT = "empad-xor-row-packed-v1"
 _FLOAT_ANS = "float32-bit-lanes-rans-v1"
 _BLOCK = 64 << 20
@@ -353,7 +354,7 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
     with open(path, "rb") as handle:
         for chunk in header["chunks"]:
             first, count = chunk["first"], chunk["scans"]
-            if header["codec"] == _INTEGER:
+            if header["codec"] in (_INTEGER, _SCALED):
                 payload, offsets, models = [
                     _read_array(handle, start, span, kind)
                     for span, kind in zip(chunk["arrays"], ("u1", "<u4", "u1"))
@@ -407,6 +408,14 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
                         row[col] = base ^ (((bits >> (col * width)) & mask) << shift)
             else:
                 raise NotImplementedError(f"Unsupported QEM codec {header['codec']!r}.")
+    if header["codec"] == _SCALED:
+        # Regional calibration, once per value: float32(code * scale + offset).
+        codes, data = frames, np.empty(shape, np.float32)
+        for region in header["intensity_calibration"]["regions"]:
+            first, stop = region["first_frame"], region["stop_frame"]
+            data.reshape(frames.shape)[first:stop] = (
+                codes[first:stop] * region["scale"] + region["offset"]
+            )
     if (
         header["codec"] in (_FLOAT, _FLOAT_ANS)
         and hashlib.sha256(data.tobytes()).hexdigest() != header["logical_sha256"]
@@ -420,12 +429,14 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
         backend="cpu",
         representation="dense",
         source_path=str(path),
-        dtype=dtype.name,
+        dtype=data.dtype.name,
         scan_shape=shape[:2],
         detector_shape=shape[2:],
-        file_counts_exact=True,
+        file_counts_exact=header["codec"] != _SCALED,
     )
-    if header["codec"] in (_FLOAT, _FLOAT_ANS):
+    if header["codec"] == _SCALED:
+        metadata["precision"] = header["intensity_calibration"]
+    elif header["codec"] in (_FLOAT, _FLOAT_ANS):
         metadata["qem_empad"] = header["empad"]
         metadata.setdefault("background_applied", False)
         metadata["background_applied_by_reader"] = False

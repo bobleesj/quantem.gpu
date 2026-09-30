@@ -145,8 +145,51 @@ class CountDetectorCompute:
     def center_of_mass(self, mask=None):
         raise self._unsupported("Center of mass")
 
+    def _selected_blocks(self, indices):
+        """Yield exact decoded counts for each contiguous run of selected frames.
+
+        Runs are decoded from the resident streams at most 4,096 frames at a
+        time; each block arrives as ``(frames, pixels)`` with its multiplicity.
+        """
+        selected = np.asarray(list(indices), dtype=np.int64)
+        if not selected.size:
+            raise ValueError("Select at least one scan position.")
+        if selected.min() < 0 or selected.max() >= self.n_frames:
+            raise IndexError("A selected scan index lies outside the resident counts.")
+        decode = getattr(self.source, "decode_scan_range_device", None)
+        if decode is None:
+            raise self._unsupported("Selected-frame reduction")
+        frames, counts = np.unique(selected, return_counts=True)
+        breaks = np.flatnonzero(np.diff(frames) != 1) + 1
+        for run, weights in zip(np.split(frames, breaks), np.split(counts, breaks)):
+            for low in range(0, run.size, 4096):
+                first = int(run[low])
+                stop = int(run[min(run.size, low + 4096) - 1]) + 1
+                block = _copy_output(decode(first, stop)).reshape(stop - first, -1)
+                yield block, weights[low:low + 4096]
+
+    def reduce_frames_exact(self, indices):
+        """Exact uint64 sum of the selected patterns, repeated indices included."""
+        total = np.zeros(np.prod(self.det_shape), np.uint64)
+        for block, weights in self._selected_blocks(indices):
+            total += block.sum(axis=0, dtype=np.uint64)
+            for row in np.flatnonzero(weights > 1):
+                total += block[row].astype(np.uint64) * np.uint64(weights[row] - 1)
+        return total.reshape(self.det_shape)
+
+    def reduce_frames_max(self, indices):
+        """Exact integer maximum of the selected patterns."""
+        result = None
+        for block, _ in self._selected_blocks(indices):
+            value = block.max(axis=0)
+            result = value if result is None else np.maximum(result, value)
+        return result.reshape(self.det_shape)
+
     def reduce_frames(self, indices, reduce="mean"):
         selected = list(indices)
-        if len(selected) == 1 and reduce in {"sum", "mean", "max"}:
-            return self.frame(selected[0]).astype(np.float32)
-        raise self._unsupported("Selected-frame reduction")
+        if reduce not in {"sum", "mean", "max"}:
+            raise ValueError("Use reduce='mean', 'sum' or 'max'.")
+        if reduce == "max":
+            return self.reduce_frames_max(selected).astype(np.float32)
+        total = self.reduce_frames_exact(selected).astype(np.float64)
+        return (total / len(selected) if reduce == "mean" else total).astype(np.float32)

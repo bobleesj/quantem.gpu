@@ -605,13 +605,32 @@ class PrecisionSource:
 
     def masked_sum_native(self, mask, *, out=None):
         self._check()
-        weights = upload(mask)
-        if weights.shape != self.det_shape or str(weights.dtype).removeprefix("torch.") not in ("float32", "uint8", "bool"):
+        binary = None
+        if self.precision["storage"] == "scaled_uint16" and all(
+            isinstance(part, _ANSPart) for part in self.parts
+        ):
+            values = mask.detach().cpu().numpy() if hasattr(mask, "detach") else np.asarray(mask)
+            if values.shape == self.det_shape and np.all((values == 0) | (values == 1)):
+                binary = values.astype(bool)
+        weights = None if binary is not None else upload(mask)
+        if weights is not None and (weights.shape != self.det_shape or str(weights.dtype).removeprefix("torch.") not in ("float32", "uint8", "bool")):
             raise ValueError(f"Detector mask must have shape {self.det_shape} and float32/bool weights.")
-        weights = restore(weights, None)
         result = out if out is not None else MetalArray(self.scan_shape, np.float32)
         if not isinstance(result, MetalArray) or result.shape != self.scan_shape or result.dtype != self.dtype:
             raise ValueError("out must be a native float32 Metal scan result with matching shape.")
+        if binary is not None:
+            # Exact integer code sums over the mask, calibrated once per scan in
+            # double precision: float32(scale * sum(codes) + offset * pixels).
+            count = int(binary.sum())
+            image = np.frombuffer(_buffer_view(result._mtl), np.float32, count=result.size)
+            first = 0
+            for part in self.parts:
+                region = self._reports[id(part)]
+                codes = part.owner.masked_code_sums(binary)
+                image[first:first + codes.size] = codes * region["scale"] + region["offset"] * count
+                first += codes.size
+            return result
+        weights = restore(weights, None)
         first = 0
         for part in self.parts:
             p, f = self._params(part)

@@ -69,7 +69,7 @@ def _runtime():
         "decode_range",
         "detector_total",
         "normalize",
-        "reduce",
+        "masked_sums",
         "tables",
     ):
         function = library.newFunctionWithName_(
@@ -121,10 +121,17 @@ class _Chunk:
 
 
 class MPSStreamedCounts:
-    """Keep complete HDF5 counts in the CUDA-equivalent runtime ANS layout."""
+    """Keep complete HDF5 counts in the CUDA-equivalent runtime ANS layout.
+
+    Viewers use it like a 4D array (``shape``, ``device``, ``source[row, col]``);
+    every pattern and reduction is decoded from the resident streams.
+    """
 
     interval = 512
     summary_batch_mode = "individual"
+    _is_gpu_frames = True
+    ndim = 4
+    det_bin = 1
 
     def __init__(self, shape, dtype, valid=None):
         self.shape = tuple(map(int, shape))
@@ -177,6 +184,39 @@ class MPSStreamedCounts:
         import torch
 
         return torch.device("mps")
+
+    @property
+    def scan_shape(self) -> tuple:
+        return self.shape[:2]
+
+    @property
+    def det_shape(self) -> tuple:
+        return self.shape[2:]
+
+    @property
+    def n_frames(self) -> int:
+        return math.prod(self.shape[:2])
+
+    def numel(self) -> int:
+        """Logical count of native values; nothing is expanded."""
+        return math.prod(self.shape)
+
+    def __getitem__(self, position):
+        """Decode one pattern, ``source[index]`` or ``source[row, col]``, on MPS."""
+        if isinstance(position, (int, np.integer)):
+            index = int(position)
+        elif isinstance(position, tuple) and len(position) == 2:
+            row, column = map(int, position)
+            if not (0 <= row < self.shape[0] and 0 <= column < self.shape[1]):
+                raise IndexError("Scan position lies outside this acquisition.")
+            index = row * self.shape[1] + column
+        else:
+            raise TypeError(
+                "Select one diffraction pattern with source[index] or source[row, col]."
+            )
+        if not 0 <= index < self.n_frames:
+            raise IndexError(f"Scan index must be in [0, {self.n_frames}); got {index}.")
+        return self._decode_scan_range_torch(index, index + 1)[0]
 
     @property
     def resident_bytes(self) -> int:
@@ -493,7 +533,7 @@ class MPSStreamedCounts:
             sums.release()
 
     def detector_sum_device(self, mask):
-        """Compute exact masked detector sums with bounded decode staging."""
+        """Compute exact masked detector sums from the resident streams."""
         self._check_resident()
         values = np.asarray(mask)
         if values.shape != self.shape[2:] or not np.all((values == 0) | (values == 1)):
@@ -504,55 +544,74 @@ class MPSStreamedCounts:
             from ._spatial import detector_sum
 
             return detector_sum(self, values)
-        pixels = math.prod(self.shape[2:])
-        mask_buffer = _upload(
-            self._device,
-            self._metal,
-            (values.astype(bool) & self.valid_pixels).astype(np.uint8).reshape(-1),
-            "ANS detector mask",
-        )
         output = MPSANSArray(self._device, self._metal, self.shape[:2], np.uint64)
-        decoded = MPSANSArray(
-            self._device,
-            self._metal,
-            (max((chunk.scans for chunk in self.chunks), default=1), *self.shape[2:]),
-            self.dtype,
-        )
-        self._clear_errors()
         try:
-            command = self._queue.commandBuffer()
-            for chunk in self.chunks:
-                self._encode_decode(
-                    command,
-                    chunk,
-                    0,
-                    chunk.scans,
-                    decoded.buffer,
-                )
-                parameters = np.asarray(
-                    [pixels, self.dtype.itemsize, chunk.first, 0], np.uint64
-                ).tobytes()
-                encoder = command.computeCommandEncoder()
-                encoder.setComputePipelineState_(self._pipelines["reduce"])
-                for index, buffer in enumerate(
-                    (decoded.buffer, mask_buffer, output.buffer)
-                ):
-                    encoder.setBuffer_offset_atIndex_(buffer, 0, index)
-                encoder.setBytes_length_atIndex_(parameters, len(parameters), 3)
-                encoder.dispatchThreadgroups_threadsPerThreadgroup_(
-                    self._metal.MTLSizeMake(chunk.scans, 1, 1),
-                    self._metal.MTLSizeMake(128, 1, 1),
-                )
-                encoder.endEncoding()
-            _complete(command, "ANS detector reduction")
-            self._check_errors()
+            np.frombuffer(_buffer_view(output.buffer), np.uint64)[:] = (
+                self.masked_code_sums(values)
+            )
             return output
         except BaseException:
             output.release()
             raise
+
+    def masked_code_sums(self, mask) -> np.ndarray:
+        """Exact uint64 per-scan sums over the mask's valid pixels.
+
+        Only the listed pixels' streams are decoded, never the whole detector.
+        Each pass lists at most 65,536 pixels, so every device total stays
+        below 2^32; passes are added exactly on the host.
+        """
+        self._check_resident()
+        values = np.asarray(mask)
+        if values.shape != self.shape[2:] or not np.all((values == 0) | (values == 1)):
+            raise ValueError(
+                f"mask must have detector shape {self.shape[2:]} and be binary."
+            )
+        listed = np.flatnonzero(values.astype(bool) & self.valid_pixels)
+        scans, pixels = math.prod(self.shape[:2]), math.prod(self.shape[2:])
+        totals = np.zeros(scans, np.uint64)
+        if not listed.size:
+            return totals
+        sums = _allocate_shared(self._device, self._metal, scans * 4, "ANS masked sums")
+        try:
+            view = np.frombuffer(_buffer_view(sums, scans * 4), np.uint32)
+            for first in range(0, listed.size, 1 << 16):
+                batch = listed[first : first + (1 << 16)].astype(np.uint32)
+                pixel_buffer = _upload(self._device, self._metal, batch, "ANS pixels")
+                try:
+                    view[:] = 0
+                    self._clear_errors()
+                    command = self._queue.commandBuffer()
+                    for chunk in self.chunks:
+                        parameters = np.asarray(
+                            [chunk.scans, pixels, self.interval, batch.size], np.uint64
+                        ).tobytes()
+                        encoder = command.computeCommandEncoder()
+                        encoder.setComputePipelineState_(self._pipelines["masked_sums"])
+                        for index, buffer in enumerate(
+                            (*chunk.buffers, self._decoding, self._errors)
+                        ):
+                            encoder.setBuffer_offset_atIndex_(buffer, 0, index)
+                        encoder.setBuffer_offset_atIndex_(sums, chunk.first * 4, 5)
+                        encoder.setBuffer_offset_atIndex_(pixel_buffer, 0, 6)
+                        encoder.setBytes_length_atIndex_(parameters, len(parameters), 7)
+                        encoder.dispatchThreadgroups_threadsPerThreadgroup_(
+                            self._metal.MTLSizeMake(
+                                math.ceil(batch.size / 256),
+                                math.ceil(chunk.scans / self.interval),
+                                1,
+                            ),
+                            self._metal.MTLSizeMake(256, 1, 1),
+                        )
+                        encoder.endEncoding()
+                    _complete(command, "ANS masked sums")
+                    self._check_errors()
+                    totals += view
+                finally:
+                    _release(pixel_buffer)
         finally:
-            decoded.release()
-            _release(mask_buffer)
+            _release(sums)
+        return totals
 
     def detector_delta_device(self, mask, previous=None, output=None):
         """Update an exact uint64 detector image from changed mask membership."""
