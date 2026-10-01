@@ -183,8 +183,17 @@ def _resolve_backend(
     return selected
 
 
-def _bright_field_crop(loaded, backend: str, threshold: float, bf_radius: float | None):
-    """Decode only the bright-field disk of an encoded acquisition; return (counts, disk centre in the crop, disk radius).
+def _bright_field_crop(
+    loaded,
+    backend: str,
+    threshold: float,
+    bf_radius: float | None,
+    *,
+    calibrate_detector: bool = False,
+):
+    """Decode a BF crop while retaining full-detector CUDA calibration.
+
+    Return counts, cropped disk centre, disk radius, and calibration radius.
 
     SSB reads nothing outside the bright-field disk, but decoding the whole 4D cube (19 GB for 512^2 x 192^2 uint16) is
     what the GPU loader forbids. The disk is found on the full-detector mean pattern with the backend's own rule
@@ -195,6 +204,14 @@ def _bright_field_crop(loaded, backend: str, threshold: float, bf_radius: float 
     from quantem.gpu.detector.workflow import mean_dp
 
     dp = np.asarray(mean_dp(loaded), dtype=np.float64)
+    calibration_radius = None
+    if backend == "cuda" and calibrate_detector:
+        import cupy as cp
+        from quantem.gpu.detector.backends.cuda.probe import detect_bf_radius
+
+        # Detector calibration must see the full radial profile. A tight BF
+        # crop can remove the disk edge and change the detected pixel size.
+        _, calibration_radius = detect_bf_radius(cp.asarray(dp))
     selected = dp > dp.max() * float(threshold)
     if bf_radius is None:
         probe = dp > dp.mean() + dp.std()
@@ -221,7 +238,7 @@ def _bright_field_crop(loaded, backend: str, threshold: float, bf_radius: float 
     else:
         counts = counts.cpu().numpy()
     loaded.close()
-    return counts, (center[0] - row0, center[1] - col0), radius
+    return counts, (center[0] - row0, center[1] - col0), radius, calibration_radius
 
 
 def _mps_data_with_scan_shape(data: object, scan_shape: tuple[int, int] | None):
@@ -956,9 +973,12 @@ class SSB:
                 data = loaded.data
                 source_kind = "packed_detector"
             else:
-                data, bf_center, bf_radius = _bright_field_crop(
-                    loaded, selected, bf_intensity_threshold, bf_radius
+                data, bf_center, bf_radius, calibration_radius = _bright_field_crop(
+                    loaded, selected, bf_intensity_threshold, bf_radius,
+                    calibrate_detector=det_sampling is None,
                 )
+                if det_sampling is None and calibration_radius is not None:
+                    det_sampling = (2.0 * semiangle_mrad) / calibration_radius
                 source_kind = "detector"
             source_storage_path = str(source)
             source_dtype = str(loaded.dtype)

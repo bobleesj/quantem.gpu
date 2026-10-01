@@ -19,7 +19,8 @@ SETTINGS = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_samp
                 rotation_angle_deg=158.9)
 
 
-def test_open_bright_field_crop_matches_full_detector():
+@pytest.mark.parametrize("det_sampling", [None, SETTINGS["det_sampling"]])
+def test_open_bright_field_crop_matches_full_detector(det_sampling):
     if not SOURCE.is_file():
         pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
     try:
@@ -31,18 +32,27 @@ def test_open_bright_field_crop_matches_full_detector():
     from quantem.gpu.io import load
 
     aberrations = {"C10": 16.2, "C12": 4.15, "phi12": 0.33}
-    cropped = SSB.open(str(SOURCE), **SETTINGS)
+    settings = {**SETTINGS, "det_sampling": det_sampling}
+    cropped = SSB.open(str(SOURCE), **settings)
     assert cropped._data.shape[-2:] != (192, 192)          # only the bright-field region was decoded
-    crop_phase, crop_loss = cropped.preview(aberrations)
-    crop_phase, crop_bf = cp.asnumpy(crop_phase), cropped.num_bf
+    factors = [1, 2, 3, 4] if det_sampling is None else [1]
+    crop_results = {
+        factor: cropped.preview(aberrations, upsampling_factor=factor)
+        for factor in factors
+    }
+    crop_bf = cropped.num_bf
+    cropped.close()
     del cropped
     cp.get_default_memory_pool().free_all_blocks()
-    full = SSB.from_array(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **SETTINGS)
-    full_phase, full_loss = full.preview(aberrations)
+    full = SSB.from_array(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
     assert crop_bf == full.num_bf
-    # validated 2026-09-24: max |phase difference| 6e-8 rad, identical loss
-    np.testing.assert_allclose(crop_phase, cp.asnumpy(full_phase), atol=1e-6)
-    assert abs(crop_loss - full_loss) <= 1e-6 * abs(full_loss)
+    for factor in factors:
+        full_phase, full_loss = full.preview(aberrations, upsampling_factor=factor)
+        crop_phase, crop_loss = crop_results[factor]
+        np.testing.assert_allclose(crop_phase, full_phase, atol=1e-6)
+        assert abs(crop_loss - full_loss) <= 1e-6 * abs(full_loss)
+        assert crop_loss == crop_results[1][1]
+    full.close()
 
 
 def _correlation(first: np.ndarray, second: np.ndarray) -> float:
