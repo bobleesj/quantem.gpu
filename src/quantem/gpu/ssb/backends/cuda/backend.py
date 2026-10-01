@@ -1145,16 +1145,25 @@ class CudaSSBBackend:
         *,
         upsampling_factor: int,
         compute_loss: bool,
+        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        thickness: float = 0.0,
     ) -> tuple[np.ndarray, float | None]:
-        """Upsampled standard SSB with the diagnostic loss kept on the native grid."""
+        """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
         accel.cache_rotation(self._rotation_angle_rad)
         args = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.reconstruct_thick(
-            *args, (0.0, 0.0), 0.0, compute_loss=False,
+            *args, tilt_mrad, thickness, compute_loss=False,
             upsampling_factor=upsampling_factor,
         )
-        loss = self.reconstruct_with_loss(*args)[1] if compute_loss else None
+        loss = None
+        if compute_loss:
+            if thickness > 0:
+                _, loss = accel.reconstruct_thick(
+                    *args, tilt_mrad, thickness, compute_loss=True,
+                )
+            else:
+                _, loss = self.reconstruct_with_loss(*args)
         return self.phase_to_numpy(phase), loss
 
     def preview_sample(

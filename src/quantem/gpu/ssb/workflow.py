@@ -1464,21 +1464,50 @@ class SSB:
         (row, col; scan frame), as fitted by ``fit(tilt=True)``. With no depth spread the tilt has no effect and this is
         standard SSB. CUDA and MPS backends.
 
-        ``upsampling_factor`` selects 1, 2, 4, or 8 times finer output sampling.
-        Values above one currently require standard C10/C12 SSB on CUDA. The
-        diagnostic loss and aberration search remain on the native scan grid.
+        ``upsampling_factor`` selects 1, 2, 3, 4, or 8 times finer output sampling.
+        Values above one support C10/C12 with or without tilt/depth correction
+        on CUDA. The diagnostic loss and aberration search remain on the native
+        scan grid. Sampling never fits parameters or interpolates detector data.
+
+        Examples
+        --------
+        Fit all correction parameters once, then change only output sampling:
+
+        >>> fitted = ssb.fit(tilt=True)  # native-grid joint fit
+        >>> phase, loss = ssb.preview(
+        ...     fitted.aberrations, tilt_mrad=fitted.tilt_mrad,
+        ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
+        ... )
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
-        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 4, 8):
-            raise ValueError("upsampling_factor must be 1, 2, 4, or 8.")
+        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
+            raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
+        if (higher_order_magnitudes is None) != (higher_order_angles is None):
+            raise ValueError("Higher-order magnitudes and angles must be provided together.")
+        if higher_order_magnitudes is not None:
+            magnitudes = np.asarray(higher_order_magnitudes, dtype=np.float32)
+            angles = np.asarray(higher_order_angles, dtype=np.float32)
+            if magnitudes.shape != (14,) or angles.shape != (14,):
+                raise ValueError("Higher-order SSB arrays must each have shape (14,).")
+            # An angle has no physical effect when its coefficient is zero.
+            if (upsampling_factor > 1 or depth_spread_nm > 0) and not np.any(magnitudes[2:]):
+                # Preserve the explicit primary coefficients in the packed API.
+                coefs = {**coefs, "C10": float(magnitudes[0]) * _ENGINE_PER_NM,
+                         "C12": float(magnitudes[1]) * _ENGINE_PER_NM,
+                         "phi12": float(angles[1])}
+                higher_order_magnitudes = higher_order_angles = None
         if upsampling_factor != 1:
-            if depth_spread_nm > 0 or higher_order_magnitudes is not None or higher_order_angles is not None:
-                raise ValueError("Upsampling currently supports standard C10/C12 SSB only; turn off depth spread and higher orders.")
+            if higher_order_magnitudes is not None:
+                raise ValueError("Upsampling supports C10/C12 with tilt/depth; turn off higher-order magnitudes.")
             backend = self._backend_protocol
             if not hasattr(backend, "preview_upsampled"):
                 raise NotImplementedError("Upsampled SSB preview currently requires the CUDA backend.")
-            options = dict(upsampling_factor=upsampling_factor, compute_loss=compute_loss)
+            options = dict(
+                upsampling_factor=upsampling_factor, compute_loss=compute_loss,
+                tilt_mrad=tuple(float(value) for value in tilt_mrad),
+                thickness=float(depth_spread_nm) * _ENGINE_PER_NM,
+            )
             if context is None:
                 return backend.preview_upsampled(coefs, **options)
             with context:

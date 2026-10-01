@@ -2332,8 +2332,8 @@ class SSBEngine:
         c = self._cache
         num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
         native_ny, native_nx = ny, nx
-        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 4, 8):
-            raise ValueError("upsampling_factor must be 1, 2, 4, or 8.")
+        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
+            raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
         if upsampling_factor != 1:
             ny, nx = ny * upsampling_factor, nx * upsampling_factor
             # Same field of view: Fourier spacing is unchanged. Tile measured
