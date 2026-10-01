@@ -2319,6 +2319,7 @@ class SSBEngine:
         thickness: float,
         compute_loss: bool = True,
         chunk_bytes: int = 1 << 30,
+        upsampling_factor: int = 1,
     ) -> "tuple[cp.ndarray, float | None]":
         """Mean phase and variance loss for a thick, tilted crystal (see ``_thick_correct_kernel``).
 
@@ -2330,11 +2331,21 @@ class SSBEngine:
         """
         c = self._cache
         num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
-        qx = c["qx_1d"].reshape(1, ny, 1); qy = c["qy_1d"].reshape(1, 1, nx)
+        native_ny, native_nx = ny, nx
+        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 4, 8):
+            raise ValueError("upsampling_factor must be 1, 2, 4, or 8.")
+        if upsampling_factor != 1:
+            ny, nx = ny * upsampling_factor, nx * upsampling_factor
+            # Same field of view: Fourier spacing is unchanged. Tile measured
+            # scan-frequency aliases, then evaluate the kernel at the new q.
+            qx = (cp.fft.fftfreq(ny) * ny * c["qx_1d"][1]).astype(cp.float32).reshape(1, ny, 1)
+            qy = (cp.fft.fftfreq(nx) * nx * c["qy_1d"][1]).astype(cp.float32).reshape(1, 1, nx)
+        else:
+            qx = c["qx_1d"].reshape(1, ny, 1); qy = c["qy_1d"].reshape(1, 1, nx)
         half = self._gqk_is_hermitian_half_plane()
         # other half of the plane for a real bright-field image: G(-q) = conj(G(q))
-        neg_rows = cp.asarray((-np.arange(ny)) % ny)
-        neg_cols = cp.asarray((nx - np.arange(nx // 2 + 1, nx)) % nx)
+        neg_rows = cp.asarray((-np.arange(native_ny)) % native_ny)
+        neg_cols = cp.asarray((native_nx - np.arange(native_nx // 2 + 1, native_nx)) % native_nx)
         chunk = max(1, int(chunk_bytes // (ny * nx * 8 * 3)))
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32); phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
         params = (
@@ -2346,11 +2357,13 @@ class SSBEngine:
             stop = min(num_bf, start + chunk)
             if half:
                 source = self.G_qk[start:stop]
-                full = cp.empty((stop - start, ny, nx), dtype=cp.complex64)
-                full[:, :, : nx // 2 + 1] = source
-                full[:, :, nx // 2 + 1:] = cp.conj(source[:, neg_rows][:, :, neg_cols])
+                full = cp.empty((stop - start, native_ny, native_nx), dtype=cp.complex64)
+                full[:, :, : native_nx // 2 + 1] = source
+                full[:, :, native_nx // 2 + 1:] = cp.conj(source[:, neg_rows][:, :, neg_cols])
             else:
                 full = self.G_qk[start:stop]
+            if upsampling_factor != 1:
+                full = cp.tile(full, (1, upsampling_factor, upsampling_factor))
             kx = c["kx_bf"][start:stop].reshape(-1, 1, 1); ky = c["ky_bf"][start:stop].reshape(-1, 1, 1)
             corrected = _thick_correct_kernel(full, qx, qy, kx, ky, *params)
             corrected[:, 0, 0] = self._dc_value_host

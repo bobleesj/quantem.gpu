@@ -1450,6 +1450,7 @@ class SSB:
         aberrations: dict[str, float],
         *,
         compute_loss: bool = True,
+        upsampling_factor: int = 1,
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
         context: AbstractContextManager | None = None,
@@ -1462,9 +1463,26 @@ class SSB:
         each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``tilt_mrad``
         (row, col; scan frame), as fitted by ``fit(tilt=True)``. With no depth spread the tilt has no effect and this is
         standard SSB. CUDA and MPS backends.
+
+        ``upsampling_factor`` selects 1, 2, 4, or 8 times finer output sampling.
+        Values above one currently require standard C10/C12 SSB on CUDA. The
+        diagnostic loss and aberration search remain on the native scan grid.
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
+        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 4, 8):
+            raise ValueError("upsampling_factor must be 1, 2, 4, or 8.")
+        if upsampling_factor != 1:
+            if depth_spread_nm > 0 or higher_order_magnitudes is not None or higher_order_angles is not None:
+                raise ValueError("Upsampling currently supports standard C10/C12 SSB only; turn off depth spread and higher orders.")
+            backend = self._backend_protocol
+            if not hasattr(backend, "preview_upsampled"):
+                raise NotImplementedError("Upsampled SSB preview currently requires the CUDA backend.")
+            options = dict(upsampling_factor=upsampling_factor, compute_loss=compute_loss)
+            if context is None:
+                return backend.preview_upsampled(coefs, **options)
+            with context:
+                return backend.preview_upsampled(coefs, **options)
         if float(depth_spread_nm) > 0.0:
             sample = {"tilt_row_mrad": float(tilt_mrad[0]), "tilt_col_mrad": float(tilt_mrad[1]),
                       "thickness": float(depth_spread_nm) * _ENGINE_PER_NM}

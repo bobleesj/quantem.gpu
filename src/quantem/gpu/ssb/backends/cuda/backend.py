@@ -1139,6 +1139,24 @@ class CudaSSBBackend:
         array = self.phase_to_numpy(phase)
         return array, None if loss is None else float(loss)
 
+    def preview_upsampled(
+        self,
+        aberrations: dict[str, float],
+        *,
+        upsampling_factor: int,
+        compute_loss: bool,
+    ) -> tuple[np.ndarray, float | None]:
+        """Upsampled standard SSB with the diagnostic loss kept on the native grid."""
+        accel = self._get_accelerator()
+        accel.cache_rotation(self._rotation_angle_rad)
+        args = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
+        phase, _ = accel.reconstruct_thick(
+            *args, (0.0, 0.0), 0.0, compute_loss=False,
+            upsampling_factor=upsampling_factor,
+        )
+        loss = self.reconstruct_with_loss(*args)[1] if compute_loss else None
+        return self.phase_to_numpy(phase), loss
+
     def preview_sample(
         self,
         aberrations: dict[str, float],
