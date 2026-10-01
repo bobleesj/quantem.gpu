@@ -65,3 +65,41 @@ def test_resident_read_matches_numpy_region():
         np.testing.assert_array_equal(observed.cpu().numpy(), expected)
     finally:
         loaded.close()
+
+
+def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
+    """A detector crop never decodes more than one block of whole frames at a time.
+
+    Decoding the whole region before cropping held a full-detector copy of every
+    requested scan position (19 GB for a 512 x 512 x 192 x 192 uint16 scan just to
+    keep a 110 x 110 bright-field disk).
+    """
+    from quantem.gpu.io import _read
+
+    shape = (7, 5, 6, 8)
+    values = cp.arange(np.prod(shape), dtype=cp.uint16).reshape(shape) % 251
+    source = StreamedCounts(shape, np.uint16)
+    source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
+    frame_bytes = 6 * 8 * 2
+    monkeypatch.setattr(_read, "_BLOCK_BYTES", 2 * 3 * frame_bytes)
+    decoded = []
+    decode = source.decode_scan_range_device
+    monkeypatch.setattr(
+        source,
+        "decode_scan_range_device",
+        lambda first, stop: decoded.append(stop - first) or decode(first, stop),
+    )
+    loaded = io.FourDSTEMData(
+        source,
+        {"working_shape": shape, "working_dtype": "uint16", "representation": "encoded"},
+    )
+    try:
+        for scan_region in ((0, 7, 0, 5), (1, 6, 1, 4)):
+            decoded.clear()
+            observed = loaded.read(scan_region=scan_region, detector_region=(1, 5, 2, 7))
+            row0, row1, column0, column1 = scan_region
+            expected = values.get()[row0:row1, column0:column1, 1:5, 2:7]
+            np.testing.assert_array_equal(observed.cpu().numpy(), expected)
+            assert len(decoded) > 1 and max(decoded) <= 6
+    finally:
+        loaded.close()
