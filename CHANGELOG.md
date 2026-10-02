@@ -6,6 +6,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Decode selected detector streams directly for CUDA streamed integer ANS
+  indexing, preserving exact values while avoiding full-pattern expansion
+  for detector-pixel scan images and detector crops.
+
 - Index loaded 4D acquisitions directly with integers, slices and ellipsis to
   obtain GPU tensors, e.g. `data[10, 12]`. Integer indexing now selects scan
   rows rather than tuple fields; access storage and metadata with `.data` and

@@ -86,6 +86,16 @@ are supported, including negative indices and steps. Boolean masks and index
 arrays are not supported. `data[:]` requests the entire decoded acquisition;
 select a smaller region to limit memory. Metadata stays in `data.metadata`.
 
+### One detector pixel across the scan
+
+```python
+show_2d(data[:, :, 95, 100], norm="power_sqrt")
+```
+
+This returns a scan image: the value at detector pixel `(95, 100)` at every
+specimen position. The axes are always scan row, scan column, detector row,
+detector column.
+
 ### A region inside a diffraction pattern
 
 ```python
@@ -105,8 +115,9 @@ contrast is display-only, scaled independently per panel. The crop matched
 the full loaded pattern's pixels exactly on CUDA.
 
 Use `data[8:12, 10:16, 64:128, 64:128]` to crop several patterns. Selection
-does not bin or interpolate pixels. Decoding can require whole frames; strided
-slices decode their bounding region before selecting values.
+does not bin or interpolate pixels. CUDA streamed integer ANS data decode
+only the selected detector streams; other storage profiles may decode whole
+frames. Strided slices decode their bounding region before selecting values.
 
 ```python
 data.close()  # after the last read or viewer using this acquisition

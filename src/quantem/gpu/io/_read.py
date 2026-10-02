@@ -122,20 +122,29 @@ def read(data, *, scan_region=None, detector_region=None):
             detector_column0:detector_column1,
         ].contiguous()
 
-    # Decoding yields whole frames; decoding the full region at once would hold a
-    # dense full-detector copy of every requested scan position before the crop.
-    # Blocks of scan rows bound that transient to about _BLOCK_BYTES.
-    frame_bytes = math.prod(shape[2:]) * np.dtype(data.dtype).itemsize
+    # Bound decoded scratch by scan rows. Integer CUDA streams can select
+    # detector pixels directly; other representations decode whole frames.
+    from quantem.gpu._compact.streamed import StreamedCounts
+
+    # Calibrated subclasses have different decode semantics; keep their path.
+    selected_region = None
+    if type(payload) is StreamedCounts:
+        selected_region = (detector_row0, detector_row1,
+                           detector_column0, detector_column1)
+    frame_shape = output_shape[2:] if selected_region else shape[2:]
+    frame_bytes = math.prod(frame_shape) * np.dtype(data.dtype).itemsize
     block_rows = max(1, _BLOCK_BYTES // (frame_bytes * (column1 - column0)))
     tensor = None
     for block_row0 in range(row0, row1, block_rows):
         block_row1 = min(row1, block_row0 + block_rows)
-        block = _decode_rows(payload, shape, block_row0, block_row1, column0, column1)
-        block = block[
-            :,
-            detector_row0:detector_row1,
-            detector_column0:detector_column1,
-        ]
+        block = _decode_rows(
+            payload, shape, block_row0, block_row1, column0, column1,
+            detector_region=selected_region,
+        )
+        if selected_region is None:
+            block = block[
+                :, detector_row0:detector_row1, detector_column0:detector_column1
+            ]
         if tensor is None:
             tensor = torch.empty(
                 (math.prod(output_shape[:2]), *output_shape[2:]),
@@ -156,13 +165,26 @@ def read(data, *, scan_region=None, detector_region=None):
     return tensor.reshape(output_shape)
 
 
-def _decode_rows(payload, shape, row0, row1, column0, column1):
-    """Decode full frames for scan rows [row0, row1) and columns [column0, column1).
+def _decode_rows(
+    payload, shape, row0, row1, column0, column1, *, detector_region=None
+):
+    """Decode scan rows [row0, row1) and columns [column0, column1).
 
     Returns a (positions, detector_rows, detector_columns) tensor in row-major
-    scan order. Callers keep the row span small because every frame is whole.
+    scan order, optionally cropped by the CUDA streamed-count decoder.
     """
     import torch
+
+    if detector_region is not None:
+        if column0 == 0 and column1 == shape[1]:
+            return _torch_value(payload.decode_scan_range_device(
+                row0 * shape[1], row1 * shape[1], detector_region=detector_region
+            ))
+        parts = [_torch_value(payload.decode_scan_range_device(
+            row * shape[1] + column0, row * shape[1] + column1,
+            detector_region=detector_region,
+        )) for row in range(row0, row1)]
+        return parts[0] if len(parts) == 1 else torch.cat(parts, dim=0)
 
     gather = getattr(payload, "gather_diffraction_device", None)
     if callable(gather):

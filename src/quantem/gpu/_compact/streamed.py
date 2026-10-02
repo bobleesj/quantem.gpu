@@ -323,7 +323,9 @@ class StreamedCounts:
                 raise ValueError("An encoded count stream failed reconstruction.")
             return raw.astype(self.dtype, copy=False)
 
-    def decode_scan_range_device(self, first: int, stop: int, *, errors=None):
+    def decode_scan_range_device(
+        self, first: int, stop: int, *, errors=None, detector_region=None
+    ):
         """Decode a contiguous scan range without expanding the acquisition."""
         import cupy as cp
 
@@ -350,7 +352,15 @@ class StreamedCounts:
                     "errors must be one uint32 value on the source CUDA device."
                 )
             pixels = math.prod(self.shape[2:])
-            output = cp.empty((stop - first, *self.shape[2:]), self.dtype)
+            if detector_region is None:
+                detector_region = (0, self.shape[2], 0, self.shape[3])
+            row0, row1, col0, col1 = map(int, detector_region)
+            if not (0 <= row0 < row1 <= self.shape[2]
+                    and 0 <= col0 < col1 <= self.shape[3]):
+                raise ValueError("Detector region must lie within the detector shape.")
+            crop_rows, crop_cols = row1 - row0, col1 - col0
+            selected_pixels = crop_rows * crop_cols
+            output = cp.empty((stop - first, crop_rows, crop_cols), self.dtype)
             for chunk in self.chunks:
                 overlap_first = max(first, chunk.first)
                 overlap_stop = min(stop, chunk.first + chunk.scans)
@@ -358,8 +368,8 @@ class StreamedCounts:
                     continue
                 local_first = overlap_first - chunk.first
                 local_stop = overlap_stop - chunk.first
-                first_stream = (local_first // self.interval) * pixels
-                stop_stream = math.ceil(local_stop / self.interval) * pixels
+                first_stream = (local_first // self.interval) * selected_pixels
+                stop_stream = math.ceil(local_stop / self.interval) * selected_pixels
                 result = output[overlap_first - first : overlap_stop - first]
                 self.kernels[f"decode_range_u{self.dtype.itemsize * 8}"](
                     ((stop_stream - first_stream + 127) // 128,),
@@ -376,6 +386,11 @@ class StreamedCounts:
                         np.uint32(local_stop - local_first),
                         np.uint32(first_stream),
                         np.uint32(stop_stream),
+                        np.uint32(self.shape[3]),
+                        np.uint32(row0),
+                        np.uint32(col0),
+                        np.uint32(crop_rows),
+                        np.uint32(crop_cols),
                     ),
                 )
             if owns_errors and int(errors.get()[0]):
