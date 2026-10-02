@@ -30,7 +30,8 @@ cd quantem.gpu
 python -m pip install -e ".[mps]"
 ```
 
-The Mac backend uses MLX and Metal; PyTorch is not required for these workflows.
+The Mac SSB backend uses MLX and Metal. Bounded `data.read()` access uses
+PyTorch; install a GPU-enabled PyTorch build to use those examples.
 For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
 
@@ -38,35 +39,136 @@ This is pre-release software. The older TestPyPI candidate
 `quantem.gpu==0.0.1rc8` does not include all current source features.
 See [installation and runtime checks](docs/install.md) for details.
 
-## Load and inspect diffraction patterns
+## Load diffraction patterns
+
+The examples below use a gold acquisition: a 512 × 512 scan with a
+192 × 192 detector. Replace `gold_master.h5` with your local master file and
+keep its companion HDF5 files beside it. The data are not bundled here.
+
+Supported acquisitions use ANS storage on CUDA or MPS; `.qem` reopens its
+saved encoding. Automatic backend selection never silently falls back to CPU.
+Install `quantem` for `show_2d`, and GPU-enabled PyTorch for `data.read()`.
+
+### One diffraction pattern
 
 ```python
 from quantem.gpu import detector, io
+from quantem.core.visualization import show_2d
 
-with io.load("acquisition.qem") as data:
-    session = detector.prepare(data)
-    diffraction = session.frame(0)
-    print(data.shape, data.dtype)
+# Keep data open while working through these examples.
+data = io.load("gold_master.h5")
+session = detector.prepare(data)
+
+row, column = 10, 12
+pattern = session.frame(row * session.scan_shape[1] + column)
+show_2d(pattern, norm="power_sqrt", title="Gold: scan (10, 12)")
 ```
 
-In a notebook, you can keep `data = io.load("acquisition.qem")` open across
-cells; call `data.close()` after the last use.
+`frame()` takes a row-major **scan index** and returns one NumPy pattern.
+Use `output="native"` to keep a supported result on the GPU. The gold source
+flags four detector pixels; default loading applies median hot-pixel
+correction. Use `hot_pixel_correction="none"` when loading to retain the
+original measurements.
 
-Supported original HDF5, NumPy, DM3/DM4 and EMPAD float acquisitions are ingested
-into ANS storage on the GPU; `.qem` reopens its saved encoding. Only requested
-patterns or reduced products are decoded. Automatic backend selection chooses
-CUDA or MPS and never silently falls back to CPU. Format and geometry limits
-are documented in the [I/O guide](docs/api/io.md).
+### Several diffraction patterns
 
-Save a reusable acquisition with the same entry point:
+```python
+positions = [(10, 12), (8, 10), (0, 0)]
+selected = [
+    session.frame(row * session.scan_shape[1] + column)
+    for row, column in positions
+]
+show_2d(
+    selected, norm="power_sqrt", axsize=(3, 3),
+    title=[f"Gold: scan {position}" for position in positions],
+)
+```
+
+![Three gold diffraction patterns](docs/_static/gold-multiple-patterns.png)
+
+For a rectangular patch of **scan positions**, read a GPU tensor:
+
+```python
+patterns = data.read(scan_region=(8, 12, 10, 16))
+print(patterns.shape)  # (4, 6, 192, 192): 24 diffraction patterns
+```
+
+Regions are `(row_start, row_stop, column_start, column_stop)`, with exclusive
+stops. Indices start at zero. `data.read()` returns a PyTorch tensor on the
+source GPU; omitting the region requests the whole decoded acquisition.
+
+### A region inside a diffraction pattern
+
+```python
+patch = data.read(
+    scan_region=(10, 11, 12, 13),
+    detector_region=(64, 128, 64, 128),
+)[0, 0]
+print(patch.shape)  # (64, 64)
+show_2d(
+    [pattern, patch.cpu().numpy()], norm="power_sqrt", axsize=(3.5, 3.5),
+    title=["Full detector", "Detector crop: [64:128, 64:128]"],
+)
+```
+
+![Gold diffraction pattern and detector crop](docs/_static/gold-pattern-crop.png)
+
+The red box marks the crop in this saved figure. Crop coordinates start at
+zero locally; add 64 to recover original detector coordinates. Square-root
+contrast is display-only, scaled independently per panel. The crop matched
+the full loaded pattern's pixels exactly on CUDA.
+
+Combine a larger `scan_region` with the same `detector_region` to crop several
+patterns. Selection does not bin or interpolate pixels, though decoding may
+require whole frames internally before cropping.
+
+```python
+data.close()  # after the last read or viewer using this acquisition
+```
+
+### One acquisition from a 5D-STEM series
+
+The conceptual axes are `(acquisition, scan_row, scan_column, detector_row,
+detector_column)`. The acquisition axis may represent tilt, time, or repeats.
+If each acquisition is a separate file, load only the one you need:
+
+```python
+paths = ["tilt_00.qem", "tilt_01.qem", "tilt_02.qem"]
+with io.load(paths[1]) as acquisition:
+    pattern = detector.prepare(acquisition).frame(0)
+```
+
+To keep several acquisitions resident without a dense 5D stack:
+
+```python
+series = io.load(paths, stack=False)
+try:
+    acquisition = series[1]  # second acquisition, in paths order
+    pattern = detector.prepare(acquisition).frame(0)
+finally:
+    for acquisition in series:
+        acquisition.close()
+```
+
+`series[1]` selects an acquisition; `frame(1)` selects a scan position.
+Call `read()` on the chosen 4D acquisition. For separate 4D datasets within
+an EMD file, select the actual stored dataset path instead:
+
+```python
+with io.load("experiment.emd", dataset_path="experiment/acquisition/data") as data:
+    pattern = detector.prepare(data).frame(0)
+```
+
+This is not arbitrary indexing into a single on-disk 5D tensor; there is no
+general `acquisition_index=` argument. See the [I/O guide](docs/api/io.md)
+for supported container layouts.
+
+### Save a reusable acquisition
 
 ```python
 with io.load("acquisition.npy") as data:
     io.save("acquisition.qem", data)
 ```
-
-See the [pattern-selection tutorial](docs/tutorials/select-diffraction.md) for
-one pattern, multiple positions, detector crops, and acquisitions in a 5D series.
 
 ## Reconstruct phase with SSB
 
