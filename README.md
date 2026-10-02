@@ -52,20 +52,16 @@ Install `quantem` for `show_2d`, and GPU-enabled PyTorch for `data.read()`.
 ### One diffraction pattern
 
 ```python
-from quantem.gpu import detector, io
+from quantem.gpu import io
 from quantem.core.visualization import show_2d
 
 # Keep data open while working through these examples.
 data = io.load("gold_master.h5")
-session = detector.prepare(data)
-
-row, column = 10, 12
-pattern = session.frame(row * session.scan_shape[1] + column)
+pattern = data.read(scan_region=(10, 11, 12, 13))[0, 0]
 show_2d(pattern, norm="power_sqrt", title="Gold: scan (10, 12)")
 ```
 
-`frame()` takes a row-major **scan index** and returns one NumPy pattern.
-Use `output="native"` to keep a supported result on the GPU. The gold source
+`read()` returns a GPU tensor; `show_2d` handles it directly. The gold source
 flags four detector pixels; default loading applies median hot-pixel
 correction. Use `hot_pixel_correction="none"` when loading to retain the
 original measurements.
@@ -75,7 +71,7 @@ original measurements.
 ```python
 positions = [(10, 12), (8, 10), (0, 0)]
 selected = [
-    session.frame(row * session.scan_shape[1] + column)
+    data.read(scan_region=(row, row + 1, column, column + 1))[0, 0]
     for row, column in positions
 ]
 show_2d(
@@ -106,7 +102,7 @@ patch = data.read(
 )[0, 0]
 print(patch.shape)  # (64, 64)
 show_2d(
-    [pattern, patch.cpu().numpy()], norm="power_sqrt", axsize=(3.5, 3.5),
+    [pattern, patch], norm="power_sqrt", axsize=(3.5, 3.5),
     title=["Full detector", "Detector crop: [64:128, 64:128]"],
 )
 ```
@@ -135,7 +131,7 @@ If each acquisition is a separate file, load only the one you need:
 ```python
 paths = ["tilt_00.qem", "tilt_01.qem", "tilt_02.qem"]
 with io.load(paths[1]) as acquisition:
-    pattern = detector.prepare(acquisition).frame(0)
+    pattern = acquisition.read(scan_region=(0, 1, 0, 1))[0, 0]
 ```
 
 To keep several acquisitions resident without a dense 5D stack:
@@ -144,19 +140,19 @@ To keep several acquisitions resident without a dense 5D stack:
 series = io.load(paths, stack=False)
 try:
     acquisition = series[1]  # second acquisition, in paths order
-    pattern = detector.prepare(acquisition).frame(0)
+    pattern = acquisition.read(scan_region=(0, 1, 0, 1))[0, 0]
 finally:
     for acquisition in series:
         acquisition.close()
 ```
 
-`series[1]` selects an acquisition; `frame(1)` selects a scan position.
+`series[1]` selects an acquisition; `scan_region` selects positions within it.
 Call `read()` on the chosen 4D acquisition. For separate 4D datasets within
 an EMD file, select the actual stored dataset path instead:
 
 ```python
 with io.load("experiment.emd", dataset_path="experiment/acquisition/data") as data:
-    pattern = detector.prepare(data).frame(0)
+    pattern = data.read(scan_region=(0, 1, 0, 1))[0, 0]
 ```
 
 This is not arbitrary indexing into a single on-disk 5D tensor; there is no
