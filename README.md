@@ -69,15 +69,7 @@ original measurements.
 ### Several diffraction patterns
 
 ```python
-positions = [(10, 12), (8, 10), (0, 0)]
-selected = [
-    data[row, column]
-    for row, column in positions
-]
-show_2d(
-    selected, norm="power_sqrt", axsize=(3, 3),
-    title=[f"Gold: scan {position}" for position in positions],
-)
+show_2d([data[10, 12], data[8, 10], data[0, 0]], norm="power_sqrt")
 ```
 
 ![Three gold diffraction patterns](docs/_static/gold-multiple-patterns.png)
