@@ -1,6 +1,5 @@
 """Private CUDA compute implementation for the public SSB workflow."""
 
-import gc
 import math
 import time
 from itertools import product
@@ -410,7 +409,6 @@ class CudaSSBBackend:
                 scan_gpts,
             )
         del data
-        gc.collect()
         cp.get_default_memory_pool().free_all_blocks()
 
         self._scan_shape = scan_gpts
