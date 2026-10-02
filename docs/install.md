@@ -1,11 +1,30 @@
 # Install
 
+## Current source
+
+Use the current source for ANS acquisition loading and the latest SSB features:
+
+```bash
+git clone https://github.com/bobleesj/quantem.gpu.git
+cd quantem.gpu
+python -m pip install -e ".[cuda]"
+git rev-parse HEAD
+```
+
+Use `[mps]` on Apple Silicon, and add `dm` for DM3/DM4 input
+(for example, `".[cuda,dm]"`). Save the Git revision with your results.
+The source version field still reads rc8, but its features have advanced
+beyond that published candidate.
+
+## Older release candidate
+
 ```{admonition} Pin the documented candidate
 :class: important
 QuantEM.GPU and this documentation are an evolving pre-release draft. As of
-2026-08-19, the Python examples target the exact TestPyPI candidate
-`quantem.gpu==0.0.1rc8`, which matches the version declared by this source
-tree. TestPyPI may list a newer candidate; candidates are not assumed to be
+2026-08-19, the release baseline was the exact TestPyPI candidate
+`quantem.gpu==0.0.1rc8`. The commands below reproduce that baseline rather
+than all current source examples. TestPyPI may list a newer candidate;
+candidates are not assumed to be
 interchangeable. Keep the equality pin, and advance it only after installation,
 compatibility, scientific parity, and performance checks are repeated.
 ```

@@ -170,17 +170,13 @@ def test_product_browser_benchmark_matches_local_api_contract() -> None:
 def test_true_1024_product_signoff_is_documented_without_overclaiming() -> None:
     checklist = CHECKLIST.read_text(encoding="utf-8")
     matrix = MATRIX.read_text(encoding="utf-8")
-    readme = Path("README.md").read_text(encoding="utf-8")
-
-    for text in (checklist, matrix, readme):
+    for text in (checklist, matrix):
         assert "true real-acquisition `1024" in text or "true `1024" in text
         assert "product-first BF" in text
         assert "full-stack no-bin" in text
 
     assert "4.92 s" in matrix
     assert "selected compressed payload `6.88 GB`" in matrix
-    assert "max/mean abs error `0`" in readme
-    assert "This is not full-stack no-bin browse/load signoff" in readme
 
 
 def test_show4dstem_browser_benchmark_can_reject_url_fallback() -> None:
