@@ -77,6 +77,8 @@ the original measurements.
 
 ### Bright-field and annular dark-field images
 
+**Automatic disk fitting is the default.** Load the data, then choose an image:
+
 ```python
 bf = detector.bf(data)
 adf = detector.adf(data)
@@ -96,36 +98,29 @@ The first detector call fits the bright-field disk automatically. Later BF,
 ADF and DF calls reuse that fit for the same encoded acquisition. Mutable
 array inputs are fitted again on each call.
 
-Choose a different ADF ring by specifying its inner and outer radii:
-
-```python
-adf = detector.adf(
-    data, inner=60, outer=85, unit="px",
-)
-show_2d(adf, norm="power_sqrt")
-```
-
-Use `unit="mrad"` for collection angles when convergence semi-angle calibration
-is available in `data.metadata`.
-
-### Override or inspect the disk geometry
-
-Override only what you need; the other value is fitted automatically:
-
-```python
-bf = detector.bf(data, radius=45)  # radius in detector pixels
-bf = detector.bf(data, center=(94, 96))  # (row, column)
-```
-
-Overrides affect only that call. Later calls without overrides keep using
-the automatic fit. For dark field outside the fitted disk:
+For dark field outside the fitted disk:
 
 ```python
 df = detector.df(data)
 show_2d(df, norm="power_sqrt")
 ```
 
-To inspect the mean diffraction pattern and fitted values explicitly:
+### Optional detector overrides
+
+Override only what you need; the other value is fitted automatically:
+
+```python
+bf = detector.bf(data, radius=45)  # radius in detector pixels
+bf = detector.bf(data, center=(94, 96))  # (row, column)
+adf = detector.adf(data, inner=60, outer=85, unit="px")  # custom ring
+```
+
+Overrides affect only that call. Later calls without overrides keep using
+the automatic fit. Use `unit="mrad"` for collection angles when convergence
+semi-angle calibration is available in `data.metadata`.
+
+<details>
+<summary>Inspect the mean diffraction pattern and fitted values</summary>
 
 ```python
 mean_dp = detector.mean(data)
@@ -134,7 +129,9 @@ show_2d(mean_dp, norm="power_sqrt")
 ```
 
 `fit_probe` estimates the bright-field disk geometry, not probe phase or
-aberrations. It is optional for BF, ADF and DF images.
+aberrations. This diagnostic step is optional for BF, ADF and DF images.
+
+</details>
 
 ### Select patterns and detector pixels
 
