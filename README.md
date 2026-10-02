@@ -9,6 +9,11 @@ on Apple Silicon.
 [API guide](docs/api/io.md) · [Contributing](CONTRIBUTING.md) ·
 [Issues](https://github.com/bobleesj/quantem.gpu/issues)
 
+[Install](#install) · [Load and inspect](#load-diffraction-patterns) ·
+[BF/ADF](#bright-field-and-annular-dark-field-images) ·
+[Save as QEM](#why-qem-one-research-format-across-detector-vendors) ·
+[SSB](#reconstruct-phase-with-ssb)
+
 ## Install
 
 Python 3.11 or newer is required. For the current ANS loading and SSB workflows,
@@ -41,108 +46,50 @@ See [installation and runtime checks](docs/install.md) for details.
 
 ## Load diffraction patterns
 
-The examples below use a gold acquisition: a 512 × 512 scan with a
-192 × 192 detector. Replace `gold_master.h5` with your local master file and
-keep its companion HDF5 files beside it. The data are not bundled here.
+These examples use a gold acquisition: a 512 × 512 scan with a 192 × 192
+detector. Replace `gold_master.h5` with your file and keep its companion HDF5
+files beside it. Install `quantem` for `show_2d` and GPU-enabled PyTorch for
+indexing. The data are not bundled here.
 
-Supported acquisitions use ANS storage on CUDA or MPS; `.qem` reopens its
-saved encoding. Automatic backend selection never silently falls back to CPU.
-Install `quantem` for `show_2d`, and GPU-enabled PyTorch for array indexing.
-
-The indexing order stays the same for every selection:
-
-```text
-data[scan_row, scan_column, detector_row, detector_column]
-```
-
-### Load and look at one pattern
+### Load and inspect
 
 ```python
-from quantem.gpu import io
+from quantem.gpu import io, detector
 from quantem.core.visualization import show_2d
 
 data = io.load("gold_master.h5")
 show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
 
-Indexing returns a GPU tensor; `show_2d` handles it directly. The gold source
-flags four detector pixels; default loading applies median hot-pixel
-correction. Use `hot_pixel_correction="none"` when loading to retain the
-original measurements.
-
-Inspect the acquisition without decoding the whole array:
+Indexing decodes the selection into a GPU tensor; `show_2d` handles it directly.
+The acquisition remains ANS encoded. Backend selection uses CUDA or MPS and
+never silently falls back to CPU.
 
 ```python
 data.shape     # (512, 512, 192, 192): scan axes, then detector axes
 data.dtype     # measurement dtype
-data.metadata  # retained calibration and source information
+data.metadata  # calibration, units, source and recorded corrections
 ```
 
-### Compare several positions
+The gold source flags four detector pixels; loading applies median hot-pixel
+correction by default. Use `hot_pixel_correction="none"` in `io.load` to retain
+the original measurements.
+
+### Mean diffraction pattern and fitted disk
 
 ```python
-show_2d([data[10, 12], data[8, 10], data[0, 0]], norm="power_sqrt")  # three positions
+mean_dp = detector.mean(data)
+center, radius = detector.fit_probe(mean_dp)
+show_2d(mean_dp, norm="power_sqrt")
 ```
 
-![Three gold diffraction patterns](docs/_static/gold-multiple-patterns.png)
-
-For a rectangular patch of **scan positions**, read a GPU tensor:
-
-```python
-patterns = data[8:12, 10:16]  # 4 × 6 scan positions; full detector
-print(patterns.shape)  # (4, 6, 192, 192): 24 diffraction patterns
-```
-
-Indices start at zero; slice stops are excluded. Integers, slices and ellipsis
-are supported, including negative indices and steps. Boolean masks and index
-arrays are not supported. `data[:]` requests the entire decoded acquisition;
-select a smaller region to limit memory. Metadata stays in `data.metadata`.
-
-### One detector pixel across the scan
-
-```python
-show_2d(data[:, :, 95, 100], norm="power_sqrt")  # one detector pixel, all positions
-```
-
-This returns a scan image: the value at detector pixel `(95, 100)` at every
-specimen position. `:` means keep every value along that axis.
-
-### A region inside a diffraction pattern
-
-```python
-show_2d(data[10, 12, 64:128, 64:128], norm="power_sqrt")  # crop at one position
-```
-
-![Gold diffraction pattern and detector crop](docs/_static/gold-pattern-crop.png)
-
-The red box marks the crop in this saved figure. Crop coordinates start at
-zero locally; add 64 to recover original detector coordinates. Square-root
-contrast is display-only, scaled independently per panel. The crop matched
-the full loaded pattern's pixels exactly on CUDA.
-
-Apply the same detector crop at several scan positions:
-
-```python
-patches = data[8:12, 10:16, 64:128, 64:128]  # crop at 24 positions
-print(patches.shape)  # (4, 6, 64, 64)
-```
-
-Selection does not bin or interpolate pixels. CUDA streamed integer ANS data decode
-only the selected detector streams; other storage profiles may decode whole
-frames. Strided slices decode their bounding region before selecting values.
+`center` is `(row, column)` and `radius` is in detector pixels. `fit_probe`
+estimates the bright-field disk geometry, not probe phase or aberrations.
+Keep these values to reuse the same geometry for every virtual detector.
 
 ### Bright-field and annular dark-field images
 
-A virtual detector sums selected detector pixels at each scan position.
-Bright field (BF) uses a disk around the transmitted beam; annular dark field
-(ADF) uses a ring outside it. Compute the mean diffraction pattern and fit
-the beam disk once, then reuse its center and radius:
-
 ```python
-from quantem.gpu import detector
-
-mean_dp = detector.mean(data)                        # average over scan positions
-center, radius = detector.fit_probe(mean_dp)         # (row, column), radius in pixels
 bf = detector.bf(data, center=center, radius=radius)
 adf = detector.adf(data, center=center, radius=radius)
 show_2d([bf, adf], title=["BF", "ADF"], norm="power_sqrt")
@@ -150,60 +97,117 @@ show_2d([bf, adf], title=["BF", "ADF"], norm="power_sqrt")
 
 ![Gold bright-field and annular dark-field scan images](docs/_static/gold-bf-adf.png)
 
-`fit_probe` estimates the bright-field disk geometry using thresholding and
-its centroid; it does not recover probe phase or aberrations. BF includes
-pixels through the fitted radius. The default ADF ring spans one to two
-times that radius, limited by the detector. Both images show the full gold
-scan with independent square-root display contrast. The acquisition remains
-ANS encoded; only the reduced images are returned as NumPy arrays.
+| Image | Detector region summed at each scan position |
+|---|---|
+| BF | Disk through the fitted radius |
+| ADF | Ring from one to two fitted radii, within the detector |
 
-To choose collection angles, use `detector.adf(data, inner=40, outer=90,
-unit="px", center=center, radius=radius)`. Use `unit="mrad"` when convergence
-semi-angle calibration is available in the metadata. Omitting the geometry
-from BF/ADF/DF calls estimates it again, so supply it when making several images.
+These are full-scan images. The acquisition stays ANS encoded; the reduced
+images are NumPy arrays. Each panel uses its own square-root display contrast.
+Supplying `center` and `radius` avoids repeating the fit.
+
+Choose a different ADF ring by specifying its inner and outer radii:
 
 ```python
-data.close()  # after the last read or viewer using this acquisition
+adf = detector.adf(
+    data, center=center, radius=radius, inner=60, outer=85, unit="px",
+)
+show_2d(adf, norm="power_sqrt")
+```
+
+Use `unit="mrad"` for collection angles when convergence semi-angle calibration
+is available in `data.metadata`.
+
+### Select patterns and detector pixels
+
+Indexing follows this order everywhere:
+
+```text
+data[scan_row, scan_column, detector_row, detector_column]
+```
+
+| Selection | Meaning |
+|---|---|
+| `data[10, 12]` | One full diffraction pattern |
+| `data[8:12, 10:16]` | A 4 × 6 scan patch, with the full detector |
+| `data[:, :, 95, 100]` | One detector pixel across every scan position |
+| `data[10, 12, 64:128, 64:128]` | A detector crop at one scan position |
+| `data[8:12, 10:16, 64:128, 64:128]` | The same detector crop at 24 positions |
+
+Display several patterns directly:
+
+```python
+show_2d([data[10, 12], data[8, 10], data[0, 0]], norm="power_sqrt")
+```
+
+![Three gold diffraction patterns](docs/_static/gold-multiple-patterns.png)
+
+Display a scan image from one detector pixel:
+
+```python
+show_2d(data[:, :, 95, 100], norm="power_sqrt")
+```
+
+Or inspect a crop within one pattern:
+
+```python
+show_2d(data[10, 12, 64:128, 64:128], norm="power_sqrt")
+```
+
+![Gold diffraction pattern and detector crop](docs/_static/gold-pattern-crop.png)
+
+The red box marks the crop. Crop coordinates start at zero locally; add 64
+to recover original detector coordinates. The saved figure uses independent
+square-root contrast per panel. Selection does not bin or interpolate pixels.
+
+Indices start at zero; slice stops are excluded. Integers, slices and ellipsis
+work, including negative indices and steps. Index arrays and boolean masks
+are not yet supported. `data[:]` requests the entire decoded acquisition;
+select a smaller region to limit memory. Strided slices decode their bounding
+region before selecting values. CUDA streamed integer ANS data decode only the
+selected detector streams; other storage profiles may decode whole frames.
+
+Keep `data` open while reading it or using a viewer that depends on it:
+
+```python
+data.close()  # when finished with this acquisition
 ```
 
 ### One acquisition from a 5D-STEM series
 
-The conceptual axes are `(acquisition, scan_row, scan_column, detector_row,
-detector_column)`. The acquisition axis may represent tilt, time, or repeats.
-If each acquisition is a separate file, load only the one you need:
+A series adds an acquisition axis: tilt, time or repeat. If acquisitions are
+separate files, load the one you want:
 
 ```python
 paths = ["tilt_00.qem", "tilt_01.qem", "tilt_02.qem"]
 with io.load(paths[1]) as acquisition:
-    pattern = acquisition[0, 0]
+    show_2d(acquisition[10, 12], norm="power_sqrt")  # second acquisition
 ```
 
-To keep several acquisitions resident without a dense 5D stack:
+Or keep several acquisitions open without building a dense 5D stack:
 
 ```python
 series = io.load(paths, stack=False)
-show_2d(series[1][10, 12], norm="power_sqrt")  # second acquisition, one position
+show_2d(series[1][10, 12], norm="power_sqrt")  # second acquisition, one pattern
 ```
 
-When finished with the series:
+`series[1]` selects an acquisition; the following `[10, 12]` selects a scan
+position. Close the series members after their last use:
 
 ```python
 for acquisition in series:
     acquisition.close()
 ```
 
-`series[1]` selects an acquisition; `series[1][10, 12]` selects its pattern
-at scan position `(10, 12)`. For separate 4D datasets within
-an EMD file, select the actual stored dataset path instead:
+For separate 4D datasets inside an EMD file, select the stored dataset path:
 
 ```python
 with io.load("experiment.emd", dataset_path="experiment/acquisition/data") as data:
-    pattern = data[0, 0]
+    show_2d(data[0, 0], norm="power_sqrt")
 ```
 
-This is not arbitrary indexing into a single on-disk 5D tensor; there is no
-general `acquisition_index=` argument. See the [I/O guide](docs/api/io.md)
-for supported container layouts.
+These examples select files or named datasets, not an arbitrary axis in any
+on-disk 5D tensor. See [supported container layouts](docs/api/io.md).
 
 ## Why QEM? One research format across detector vendors
 
