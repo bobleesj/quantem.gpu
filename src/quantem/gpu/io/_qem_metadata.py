@@ -126,16 +126,6 @@ def json_metadata(value):
     )
 
 
-def no_duplicate_keys(pairs):
-    """Reject repeated manifest fields instead of silently keeping the last one."""
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"Duplicate QEM manifest field: {key}.")
-        result[key] = value
-    return result
-
-
 def reject_constant(value):
     """Reject NaN and infinity so a manifest always round-trips exactly."""
     raise ValueError(f"QEM metadata cannot contain nonfinite number {value}.")
