@@ -11,6 +11,7 @@ on Apple Silicon.
 
 [Install](#install) · [Load and inspect](#load-diffraction-patterns) ·
 [BF/ADF](#bright-field-and-annular-dark-field-images) ·
+[Detector preview](#preview-the-detector-selection) ·
 [Save as QEM](#why-qem-one-research-format-across-detector-vendors) ·
 [SSB](#reconstruct-phase-with-ssb)
 
@@ -85,8 +86,6 @@ adf = detector.adf(data)
 show_2d([bf, adf], title=["BF", "ADF"], norm="power_sqrt")
 ```
 
-![Gold bright-field and annular dark-field scan images](docs/_static/gold-bf-adf.png)
-
 | Image | Detector region summed at each scan position |
 |---|---|
 | BF | Disk through the fitted radius |
@@ -104,6 +103,61 @@ For dark field outside the fitted disk:
 df = detector.df(data)
 show_2d(df, norm="power_sqrt")
 ```
+
+### Preview the detector selection
+
+**Load → fit the disk → calculate BF/ADF → show the selection beside its image.**
+Start with a static figure to see which detector pixels contribute to each
+scan image. No interactive viewer is required.
+
+![Gold mean diffraction patterns with BF disk and ADF ring selections beside their full-scan images](docs/_static/gold-detector-preview.png)
+
+Left: the mean diffraction pattern, averaged over all scan positions. Cyan
+marks the BF disk; gold marks the ADF ring. Right: the corresponding summed
+counts at every scan position. The ring stops at the detector boundary.
+Both diffraction panels use the same log contrast; BF and ADF each use their
+own square-root contrast, so their displayed brightness is not a shared count
+scale. Outlines and shading only affect the figure.
+
+<details>
+<summary>Copy the static plotting workflow</summary>
+
+Continue with the loaded `data` above. The explicit fit here gives the plot
+its circle coordinates; passing those same values to both calculations keeps
+the outlines and images consistent. Ordinary BF/ADF calls still fit
+automatically. `fit_probe` estimates disk geometry, not probe phase or
+aberrations.
+
+```python
+from matplotlib.patches import Circle
+
+mean_dp = detector.mean(data)
+center, radius = detector.fit_probe(mean_dp)
+bf = detector.bf(data, center=center, radius=radius)
+adf = detector.adf(data, center=center, radius=radius)
+
+fig, axes = show_2d(
+    [[mean_dp, bf], [mean_dp, adf]],
+    title=[["Mean DP: BF disk", "BF image"], ["Mean DP: ADF ring", "ADF image"]],
+    norm=[["log_auto", "power_sqrt"], ["log_auto", "power_sqrt"]],
+    axsize=(3, 3),
+)
+
+row, column = center  # QuantEM uses (row, column); Matplotlib uses (column, row).
+axes[0, 0].add_patch(Circle((column, row), radius, fill=False, color="deepskyblue"))
+axes[1, 0].set_autoscale_on(False)  # Keep the full detector extent if the ring extends beyond it.
+axes[1, 0].add_patch(Circle((column, row), radius, fill=False, color="goldenrod"))
+axes[1, 0].add_patch(Circle((column, row), 2 * radius, fill=False, color="goldenrod"))
+
+fig.savefig("detector-preview.png", dpi=150, bbox_inches="tight")
+fig.savefig("detector-preview.pdf", bbox_inches="tight")
+```
+
+This minimal example draws the outlines. The preview above also adds tinted
+selections and labels. Customize the returned Matplotlib figure for a report
+or paper; the numerical BF/ADF arrays remain unchanged.
+
+</details>
 
 ### Optional detector overrides
 
