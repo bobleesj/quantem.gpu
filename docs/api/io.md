@@ -1,5 +1,8 @@
 # I/O API
 
+Start with the [pattern-selection tutorial](../tutorials/select-diffraction.md)
+for individual patterns, scan patches, detector crops, and acquisition series.
+
 `quantem.gpu.io` has four public operations:
 
 ```python

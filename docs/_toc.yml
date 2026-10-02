@@ -6,6 +6,7 @@ parts:
       - file: dashboard
         title: Implementation overview
       - file: install
+      - file: tutorials/select-diffraction
       - file: concepts/scientific-contract
         title: Scientific contract
       - file: concepts/kernel-architecture

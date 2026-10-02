@@ -65,6 +65,9 @@ with io.load("acquisition.npy") as data:
     io.save("acquisition.qem", data)
 ```
 
+See the [pattern-selection tutorial](docs/tutorials/select-diffraction.md) for
+one pattern, multiple positions, detector crops, and acquisitions in a 5D series.
+
 ## Reconstruct phase with SSB
 
 Supply the microscope calibration and fit defocus and astigmatism:
