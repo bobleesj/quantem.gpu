@@ -14,15 +14,25 @@ on Apple Silicon.
 Python 3.11 or newer is required. For the current ANS loading and SSB workflows,
 install from source:
 
+**NVIDIA GPU — CUDA (Linux)**
+
 ```bash
 git clone https://github.com/bobleesj/quantem.gpu.git
 cd quantem.gpu
 python -m pip install -e ".[cuda]"
 ```
 
-On Apple Silicon, replace `[cuda]` with `[mps]`. For DM3/DM4 files, add the
-`dm` extra, for example `".[cuda,dm]"`. Record `git rev-parse HEAD` with your
-results so you can reproduce the exact version.
+**Apple Silicon Mac — MPS/Metal**
+
+```bash
+git clone https://github.com/bobleesj/quantem.gpu.git
+cd quantem.gpu
+python -m pip install -e ".[mps]"
+```
+
+The Mac backend uses MLX and Metal; PyTorch is not required for these workflows.
+For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
+Record `git rev-parse HEAD` with your results to reproduce the exact version.
 
 This is pre-release software. The older TestPyPI candidate
 `quantem.gpu==0.0.1rc8` does not include all current source features.

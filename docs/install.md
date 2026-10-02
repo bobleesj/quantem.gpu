@@ -4,15 +4,25 @@
 
 Use the current source for ANS acquisition loading and the latest SSB features:
 
+### NVIDIA GPU — CUDA (Linux)
+
 ```bash
 git clone https://github.com/bobleesj/quantem.gpu.git
 cd quantem.gpu
 python -m pip install -e ".[cuda]"
-git rev-parse HEAD
 ```
 
-Use `[mps]` on Apple Silicon, and add `dm` for DM3/DM4 input
-(for example, `".[cuda,dm]"`). Save the Git revision with your results.
+### Apple Silicon Mac — MPS/Metal
+
+```bash
+git clone https://github.com/bobleesj/quantem.gpu.git
+cd quantem.gpu
+python -m pip install -e ".[mps]"
+```
+
+The Mac backend uses MLX and Metal; PyTorch is not required for these workflows.
+Add `dm` for DM3/DM4 input (`".[cuda,dm]"` or `".[mps,dm]"`).
+Save `git rev-parse HEAD` with your results.
 The source version field still reads rc8, but its features have advanced
 beyond that published candidate.
 
