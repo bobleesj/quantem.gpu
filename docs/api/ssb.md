@@ -122,8 +122,64 @@ result = workflow.reconstruct(
 ```
 
 `preview()` accepts the same complete aberration mapping and returns a
-transient phase array plus an optional exact loss. It does not create a second
-public result type.
+transient phase array plus an optional exact loss. The array has the full
+selected output resolution: "preview" means it is not saved and does not
+replace the fitted calibration or stored result, not that it is lower quality.
+It does not create a second public result type.
+
+### Experimental phase averaging
+
+The default `preview(..., phase_estimator="mean_phase")` averages the phase of
+each corrected bright-field detector contribution. At higher output sampling,
+detector-dependent structure in the added frequency bands can compress contrast
+through this nonlinear phase extraction. This is not an FFT brightness factor.
+
+On CUDA, explicitly compare phase after complex-wave averaging:
+
+```python
+phase, native_loss = workflow.preview(
+    tilted.aberrations,
+    tilt_mrad=tilted.tilt_mrad,
+    depth_spread_nm=tilted.depth_spread_nm,
+    upsampling_factor=4,
+    phase_estimator="phase_of_mean",
+)
+```
+
+Both estimators reuse the existing C10/C12 depth-aware correction kernel, the
+same measured diffraction patterns and the supplied calibration. Fitting never
+runs inside `preview`. Diagnostic loss retains the original native-grid
+per-detector phase variance, even for the experimental estimator. Use
+`compute_loss=False` when only the image is needed.
+
+The estimator choice applies at **every** output factor, including 1x. Existing
+calls and the default native output remain unchanged. To compare 1x/2x/3x/4x
+scientifically, use the same estimator at each factor. Switching from legacy
+1x to wave-average 2x introduces an estimator change as well as a sampling change.
+
+Wave averaging is experimental: reduced contrast compression does not establish
+quantitative phase accuracy. Known-phase controls still show amplitude
+attenuation, and improvement is not uniform across tested noise/sampling cases.
+There is no fitted gain, display normalization or detector interpolation in
+this option. Active higher-order magnitudes and non-CUDA backends are not
+supported; zero higher-order magnitudes with retained angles are allowed.
+
+This transient option does not change `fit`, `reconstruct`, saved-result reuse,
+or Live defaults. If persisting the returned array, record `phase_estimator`,
+`upsampling_factor`, native scan sampling, aberrations, tilt and depth alongside
+it. Any application adopting the option must include the estimator in its
+scientific product/cache identity, rather than reuse an older phase product.
+
+Regression checks on the chosen physical CUDA device:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 python -m pytest tests/hardware/cuda/test_ssb_wave_average.py -q
+```
+
+These compare public output against independent Torch per-detector inverse
+transforms at 1x/2x/3x/4x, with and without depth/tilt, unchanged native loss,
+return to the legacy estimator, and memory-batch invariance. They validate the
+implementation, not absolute phase accuracy.
 
 ## Thick, tilted crystals
 

@@ -2320,6 +2320,7 @@ class SSBEngine:
         compute_loss: bool = True,
         chunk_bytes: int = 1 << 30,
         upsampling_factor: int = 1,
+        phase_estimator: str = "mean_phase",
     ) -> "tuple[cp.ndarray, float | None]":
         """Mean phase and variance loss for a thick, tilted crystal (see ``_thick_correct_kernel``).
 
@@ -2328,7 +2329,18 @@ class SSBEngine:
         averaged over the sample depth. ``tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit; thickness
         0 reproduces the standard reconstruction. Reference path: element-wise correction then one inverse FFT per pixel,
         processed in chunks of bright-field pixels, not the fused FFT kernels, so it is slower than the standard path.
+
+        Experimental ``phase_of_mean`` averages corrected spectra before a
+        single inverse FFT and phase extraction. Linear averaging commutes with
+        the inverse FFT, but not with phase extraction. Its diagnostic loss is
+        evaluated separately with the legacy estimator on the native grid.
         """
+        if phase_estimator not in ("mean_phase", "phase_of_mean"):
+            raise ValueError(
+                "phase_estimator must be 'mean_phase' or 'phase_of_mean'; "
+                f"got {phase_estimator!r}."
+            )
+        average_wave = phase_estimator == "phase_of_mean"
         c = self._cache
         num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
         native_ny, native_nx = ny, nx
@@ -2347,7 +2359,13 @@ class SSBEngine:
         neg_rows = cp.asarray((-np.arange(native_ny)) % native_ny)
         neg_cols = cp.asarray((native_nx - np.arange(native_nx // 2 + 1, native_nx)) % native_nx)
         chunk = max(1, int(chunk_bytes // (ny * nx * 8 * 3)))
-        phase_sum = cp.zeros((ny, nx), dtype=cp.float32); phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
+        if average_wave:
+            # Accumulate many detector contributions without chunk-dependent
+            # float32 cancellation. The public phase remains float32.
+            spectrum_sum = cp.zeros((ny, nx), dtype=cp.complex128)
+        else:
+            phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
+            phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
         params = (
             cp.float32(self.wavelength), cp.float32(c["semiangle_rad"]), cp.float32(c["ang_y_rad"]), cp.float32(c["ang_x_rad"]),
             cp.float32(C10), cp.float32(C12), cp.float32(math.cos(2.0 * phi12)), cp.float32(math.sin(2.0 * phi12)),
@@ -2367,11 +2385,24 @@ class SSBEngine:
             kx = c["kx_bf"][start:stop].reshape(-1, 1, 1); ky = c["ky_bf"][start:stop].reshape(-1, 1, 1)
             corrected = _thick_correct_kernel(full, qx, qy, kx, ky, *params)
             corrected[:, 0, 0] = self._dc_value_host
+            if average_wave:
+                spectrum_sum += corrected.sum(axis=0, dtype=cp.complex128)
+                del full, corrected
+                continue
             angles = cp.angle(cp.fft.ifft2(corrected, axes=(1, 2)))
             phase_sum += angles.sum(axis=0)
             if compute_loss:
                 phase_sumsq += (angles * angles).sum(axis=0)
             del full, corrected, angles
+        if average_wave:
+            mean = cp.angle(cp.fft.ifft2(spectrum_sum / num_bf)).astype(cp.float32)
+            loss = None
+            if compute_loss:
+                _, loss = self.reconstruct_thick(
+                    C10, C12, phi12, tilt_mrad, thickness,
+                    compute_loss=True, chunk_bytes=chunk_bytes,
+                )
+            return mean, loss
         mean = phase_sum / float(num_bf)
         if not compute_loss:
             return mean, None

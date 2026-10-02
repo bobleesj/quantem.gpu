@@ -1145,6 +1145,7 @@ class CudaSSBBackend:
         compute_loss: bool,
         tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
+        phase_estimator: str = "mean_phase",
     ) -> tuple[np.ndarray, float | None]:
         """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
@@ -1153,6 +1154,7 @@ class CudaSSBBackend:
         phase, _ = accel.reconstruct_thick(
             *args, tilt_mrad, thickness, compute_loss=False,
             upsampling_factor=upsampling_factor,
+            phase_estimator=phase_estimator,
         )
         loss = None
         if compute_loss:

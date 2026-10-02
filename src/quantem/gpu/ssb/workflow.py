@@ -1445,8 +1445,13 @@ class SSB:
         context: AbstractContextManager | None = None,
         tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
+        phase_estimator: Literal["mean_phase", "phase_of_mean"] = "mean_phase",
     ) -> tuple[np.ndarray, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
+
+        The returned array has the full selected output resolution. "Preview"
+        means it is not saved and does not replace the fitted calibration or
+        stored result; it does not imply a lower-quality reconstruction.
 
         ``aberrations`` C10 / C12 in nm, phi12 in rad. A positive ``depth_spread_nm`` switches to the thick-sample model:
         each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``tilt_mrad``
@@ -1458,6 +1463,15 @@ class SSB:
         on CUDA. The diagnostic loss and aberration search remain on the native
         scan grid. Sampling never fits parameters or interpolates detector data.
 
+        ``phase_estimator="mean_phase"`` preserves the existing average of
+        per-detector phases. Experimental ``"phase_of_mean"`` instead takes
+        the phase after averaging corrected complex waves, on CUDA with C10/C12
+        and optional tilt/depth. This choice applies at every sampling factor,
+        including 1x, so changing sampling never switches estimators. It can
+        reduce sampling-dependent contrast compression, but quantitative phase
+        amplitude is not validated. Loss still uses the existing native-grid
+        per-detector phase variance; fitting is unaffected.
+
         Examples
         --------
         Fit all correction parameters once, then change only output sampling:
@@ -1467,9 +1481,22 @@ class SSB:
         ...     fitted.aberrations, tilt_mrad=fitted.tilt_mrad,
         ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
         ... )
+
+        Compare the experimental estimator explicitly, without changing the fit:
+
+        >>> candidate, native_loss = ssb.preview(
+        ...     fitted.aberrations, tilt_mrad=fitted.tilt_mrad,
+        ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
+        ...     phase_estimator="phase_of_mean",
+        ... )
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
+        if phase_estimator not in ("mean_phase", "phase_of_mean"):
+            raise ValueError(
+                "phase_estimator must be 'mean_phase' or 'phase_of_mean'; "
+                f"got {phase_estimator!r}."
+            )
         if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
             raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
         if (higher_order_magnitudes is None) != (higher_order_angles is None):
@@ -1480,22 +1507,34 @@ class SSB:
             if magnitudes.shape != (14,) or angles.shape != (14,):
                 raise ValueError("Higher-order SSB arrays must each have shape (14,).")
             # An angle has no physical effect when its coefficient is zero.
-            if (upsampling_factor > 1 or depth_spread_nm > 0) and not np.any(magnitudes[2:]):
+            uses_depth_kernel = (
+                upsampling_factor > 1
+                or depth_spread_nm > 0
+                or phase_estimator == "phase_of_mean"
+            )
+            if uses_depth_kernel and not np.any(magnitudes[2:]):
                 # Preserve the explicit primary coefficients in the packed API.
                 coefs = {**coefs, "C10": float(magnitudes[0]) * _ENGINE_PER_NM,
                          "C12": float(magnitudes[1]) * _ENGINE_PER_NM,
                          "phi12": float(angles[1])}
                 higher_order_magnitudes = higher_order_angles = None
-        if upsampling_factor != 1:
+        if upsampling_factor != 1 or phase_estimator == "phase_of_mean":
             if higher_order_magnitudes is not None:
-                raise ValueError("Upsampling supports C10/C12 with tilt/depth; turn off higher-order magnitudes.")
+                raise ValueError(
+                    "Upsampling and wave averaging support C10/C12 with "
+                    "tilt/depth; turn off higher-order magnitudes."
+                )
             backend = self._backend_protocol
             if not hasattr(backend, "preview_upsampled"):
-                raise NotImplementedError("Upsampled SSB preview currently requires the CUDA backend.")
+                raise NotImplementedError(
+                    "Upsampled or wave-average SSB preview requires the CUDA "
+                    "backend; use backend='cuda'."
+                )
             options = dict(
                 upsampling_factor=upsampling_factor, compute_loss=compute_loss,
                 tilt_mrad=tuple(float(value) for value in tilt_mrad),
                 thickness=float(depth_spread_nm) * _ENGINE_PER_NM,
+                phase_estimator=phase_estimator,
             )
             if context is None:
                 return backend.preview_upsampled(coefs, **options)
