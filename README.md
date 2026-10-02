@@ -149,11 +149,62 @@ This is not arbitrary indexing into a single on-disk 5D tensor; there is no
 general `acquisition_index=` argument. See the [I/O guide](docs/api/io.md)
 for supported container layouts.
 
-### Save a reusable acquisition
+## Why QEM? One research format across detector vendors
+
+Different microscopes and detectors write different file layouts, metadata
+names, and units. Researchers should be able to load an acquisition and analyze
+it without rewriting those conventions for every instrument. **QEM is our open,
+research-oriented format for keeping diffraction measurements and their
+scientific meaning together.** We recommend it for reusable QuantEM datasets.
+It is an evolving format, not an established industry standard.
+
+### What does a `.qem` file contain?
+
+| Content | Why it matters |
+|---|---|
+| Encoded diffraction measurements, shape and dtype | Retain the data without storing a full uncompressed cube |
+| Named scan and detector axes | Make `(row, column)` ordering explicit |
+| Calibration values with units and provenance | Interpret distances, angles and microscope settings consistently |
+| Reader-retained source metadata | Keep the original instrument context alongside normalized fields |
+| Recorded corrections and precision choices | Know what happened before analysis |
+| Format/codec versions, indexes and integrity checks | Locate, decode and validate the saved measurements |
+
+Available calibration is expressed in microscopy units: scan sampling in Å,
+detector sampling in mrad or Å⁻¹, accelerating voltage in kV, convergence
+semiangle in mrad, and dwell time in µs. Angular and reciprocal sampling are
+different quantities; the format preserves that distinction. Missing values
+remain unknown. Importers retain supported source metadata, not necessarily
+every proprietary field.
+
+QEM uses a versioned binary container with a JSON metadata header and encoded
+payloads. ANS compression supports compact storage and selected-pattern decoding.
+The file is **not HDF5**; use the QEM reader. The
+[container specification](docs/api/qem-format.md),
+[codec definitions](docs/api/qem-codecs.md), and
+[Python format guide](docs/api/qem-python.md) document how it is written and read.
+
+### Import, export, and reopen
 
 ```python
-with io.load("acquisition.npy") as data:
-    io.save("acquisition.qem", data)
+from quantem.gpu import io
+
+with io.load("gold_master.h5") as data:
+    io.save("gold.qem", data)
+
+data = io.load("gold.qem")
+show_2d(data[10, 12], norm="power_sqrt")
+data.metadata
+```
+
+Save once, then use the same indexing workflow when reopening. The saved file
+contains its encoded measurements; decoding does not require the original
+vendor files. Keep those originals as the acquisition archive. Saving preserves
+the loaded measurements and their recorded processing: compression does not
+undo hot-pixel corrections or an explicitly requested lossy precision change.
+An existing destination is not overwritten.
+
+```python
+data.close()
 ```
 
 ## Reconstruct phase with SSB
