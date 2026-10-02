@@ -32,22 +32,31 @@ The result keeps the full scan shape. Array order remains
 ```python
 from quantem.gpu import detector, io
 
-loaded = io.load("scan_master.h5", backend="auto", detector_bin=1)
+data = io.load("scan_master.h5")
 
-mean_dp = detector.mean(loaded)
-center, radius = detector.fit_probe(mean_dp)
-bright = detector.bf(loaded, center=center, radius=radius)
-annular = detector.adf(loaded, inner=40, outer=90, unit="px",
-                       center=center, radius=radius)
-dark = detector.df(loaded, center=center, radius=radius)
+bright = detector.bf(data)
+annular = detector.adf(data)
+dark = detector.df(data)
+
+# Override physical detector choices when needed.
+bright = detector.bf(data, radius=45)  # detector pixels
+annular = detector.adf(data, inner=60, outer=85, unit="px")
 ```
 
 Detector radii use detector-space calibration. A value in pixels must not be
 reported as mrad without calibration.
 
-`fit_probe` estimates disk geometry from a thresholded mean diffraction
-pattern; it does not fit probe phase or aberrations. Reuse the geometry across
-detector calls to avoid computing the mean again.
+The first BF/ADF/DF call fits the disk automatically and stores its geometry
+with the encoded acquisition. Subsequent calls reuse the fit. Explicit
+`center=(row, column)` and `radius` override only that call, without replacing
+the automatic fit. Reopening an acquisition gets a fresh fit. Array selections
+and mutable array inputs are fitted independently, so changes to measurements
+or detector coordinates cannot reuse an acquisition's old geometry.
+
+For diagnostics, `detector.fit_probe(detector.mean(data))` returns the fitted
+center and radius. It estimates disk geometry from a thresholded mean
+pattern, not probe phase or aberrations. The cached geometry is private runtime
+state; it does not modify acquisition metadata or enter saved QEM files.
 
 ## Coordinate, shape, dtype, unit, and provenance contract
 

@@ -80,7 +80,7 @@ In a notebook, load with one assignment and keep the owner available across cell
 data = io.load("acquisition.qem")
 ```
 
-Explore with `detector.prepare(data)` or `data.read(...)`. Run `data.close()`
+Explore with `detector.bf(data)` or array indexing such as `data[10, 12]`. Run `data.close()`
 after the last use, including any viewer using its buffers. Close an old owner
 before replacing it by rerunning a loading cell.
 
@@ -88,7 +88,7 @@ In scripts and batch jobs, prefer automatic cleanup, including on exceptions:
 
 ```python
 with io.load("acquisition.qem") as data:
-    pattern = data.read(scan_region=(0, 1, 0, 1))
+    pattern = data[0, 0]
 ```
 
 Neither spelling changes storage, precision or backend selection. Do not use
@@ -125,16 +125,15 @@ the same encoded-device workflow as supported HDF5 sources:
 from quantem.gpu import detector, io
 
 with io.load("scan.npy", backend="mps") as loaded:  # or backend="cuda"
-    dp = loaded.read(scan_region=(10, 11, 20, 21))[0, 0]
-    session = detector.prepare(loaded)
-    mean_dp = session.mean_dp(output="native")
+    dp = loaded[10, 20]
+    mean_dp = detector.mean(loaded)
+    bright = detector.bf(loaded)
     io.save("scan.qem", loaded)
 ```
 
-`dp` is a Torch tensor on the source GPU. `output="native"` keeps point and
-mean diffraction products on that GPU; the default `output="numpy"` copies
-only the requested small product to the host. The complete acquisition stays
-ANS-encoded. The original-array ingestion path uses at most 32 MiB per input
+`dp` is a Torch tensor on the source GPU. `mean_dp` and `bright` are reduced
+NumPy images; only those small products are transferred to the host. The complete
+acquisition stays ANS-encoded. The original-array ingestion path uses at most 32 MiB per input
 window, with separate bounded encoder scratch. Saving copies encoded bytes,
 original metadata and normalized scientific fields without expanding the cube.
 

@@ -86,6 +86,26 @@ def test_reuse_fitted_disk_for_bright_and_dark_field(monkeypatch):
     )
 
 
+def test_automatic_disk_follows_array_edits_and_detector_crops():
+    """Editing measurements or cropping detector coordinates needs a fresh fit."""
+    from quantem.gpu import detector
+
+    data = _bright_disk_counts()
+    bright = detector.bf(data)
+    data[:] = np.roll(data, (3, -2), axis=(-2, -1))
+    center, radius = detector.fit_probe(detector.mean(data))
+    assert center == (19.0, 13.0)
+    np.testing.assert_array_equal(detector.bf(data), bright)
+
+    crop = data[:, :, 8:30, 3:25]
+    crop_center, crop_radius = detector.fit_probe(detector.mean(crop))
+    assert crop_center == (center[0] - 8, center[1] - 3)
+    np.testing.assert_array_equal(
+        detector.bf(crop),
+        detector.bf(crop, center=crop_center, radius=crop_radius),
+    )
+
+
 
 def test_cuda_float_mean_dp_matches_scaled_counts():
     cp = pytest.importorskip("cupy")

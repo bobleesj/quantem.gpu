@@ -6,6 +6,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Fit the bright-field disk automatically once per encoded acquisition for
+  `detector.bf(data)`, `detector.adf(data)` and `detector.df(data)`. Reuse the
+  geometry across calls; optional center/radius overrides affect only that call.
+  Mutable arrays are refitted so measurement edits cannot leave stale geometry.
+
 - Rename `detector.mean_dp(data)` to `detector.mean(data)` and
   `detector.auto_probe(mean_dp)` to `detector.fit_probe(mean_dp)`, preserving
   the disk estimator. Update callers together; the previous names are removed.

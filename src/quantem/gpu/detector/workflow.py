@@ -971,8 +971,8 @@ def _detector_mask(mode, center, bf_radius, det_shape, inner, outer):
 # --- virtual detectors: thin geometry over the shared compute backend ---
 # bf/adf/df build a boolean detector mask, then call the dataset's masked-sum
 # (the single fast reduction in kernels/compute - the same one Show4DSTEM and any
-# GUI use). Stateless: the probe auto-fits per call (override via center/radius),
-# nothing is cached. Re-execute to rerun; cache at the edges (viewer/browser/caller).
+# GUI use). Encoded acquisitions reuse their automatic disk geometry; mutable
+# arrays refit on each call. Explicit center/radius overrides are call-scoped.
 
 
 def _mrad_to_px(data, mrad: float, radius: float) -> float:
@@ -1003,7 +1003,26 @@ def _to_px(data, value: float, unit: str, radius: float) -> float:
 def _probe(data, center=None, radius=None):
     if center is not None and radius is not None:
         return (float(center[0]), float(center[1])), float(radius)
-    auto_center, auto_radius = fit_probe(mean(data))
+    from quantem.gpu.io.models import FourDSTEMData
+    from quantem.gpu.io.representation import DataRepresentation
+
+    # Encoded acquisitions expose selections as separate tensors. Mutable
+    # arrays must be fitted again because their measurements can change.
+    source = (
+        data.data
+        if isinstance(data, FourDSTEMData)
+        and data.representation is DataRepresentation.ENCODED
+        and not getattr(data.data, "is_released", False)
+        else None
+    )
+    shape = data.shape if source is not None else None
+    cached = getattr(source, "_detector_probe_geometry", None)
+    if cached is None or cached[0] != shape:
+        auto_center, auto_radius = fit_probe(mean(data))
+        if source is not None:
+            source._detector_probe_geometry = (shape, auto_center, auto_radius)
+    else:
+        _, auto_center, auto_radius = cached
     center = (float(center[0]), float(center[1])) if center is not None else auto_center
     radius = float(radius) if radius is not None else auto_radius
     return center, radius
@@ -1020,7 +1039,17 @@ def _detector_image(data, center, lo_px: float, hi_px: float) -> np.ndarray:
 
 def bf(data, center=None, radius=None) -> np.ndarray:
     """Bright-field image of ``data``: the bright disk (the unscattered probe).
-    Probe auto-fits unless ``center``/``radius`` (detector pixels) are given."""
+    Probe auto-fits unless ``center``/``radius`` (detector pixels) are given.
+
+    Encoded acquisitions reuse their first disk fit across BF/ADF/DF calls.
+    Mutable arrays are fitted on each call. Overrides affect only this call;
+    omitted geometry continues to use the automatic fit.
+
+    Examples
+    --------
+    >>> bright = bf(data)
+    >>> smaller_disk = bf(data, radius=30)
+    """
     center, radius = _probe(data, center, radius)
     return _detector_image(data, center, 0.0, radius)
 
@@ -1031,7 +1060,16 @@ def adf(data, inner: float | None = None, outer: float | None = None,
     ``outer``. ``unit='mrad'`` (default, needs ``ds.semiangle_mrad``) or
     ``unit='px'`` (raw detector pixels). Omit either for the automatic band:
     ``inner`` = the bright-disk edge, ``outer`` = twice that. Probe auto-fits
-    unless ``center``/``radius`` (detector pixels) are given."""
+    unless ``center``/``radius`` (detector pixels) are given.
+
+    Encoded acquisitions reuse their automatic disk fit. Explicit geometry
+    affects only this call and does not replace the stored automatic fit.
+
+    Examples
+    --------
+    >>> annular = adf(data)
+    >>> wider_ring = adf(data, inner=60, outer=85, unit="px")
+    """
     center, radius = _probe(data, center, radius)
     lo_px = radius if inner is None else _to_px(data, inner, unit, radius)
     hi_px = 2.0 * radius if outer is None else _to_px(data, outer, unit, radius)
@@ -1043,7 +1081,16 @@ def df(data, inner: float | None = None, unit: str = "mrad",
     """Dark-field image of ``data``: everything collected beyond ``inner``.
     ``unit='mrad'`` (default, needs ``ds.semiangle_mrad``) or ``unit='px'``.
     Omit ``inner`` for everything outside the bright disk. Probe auto-fits
-    unless ``center``/``radius`` (detector pixels) are given."""
+    unless ``center``/``radius`` (detector pixels) are given.
+
+    Encoded acquisitions reuse their automatic disk fit. Explicit geometry
+    affects only this call and does not replace the stored automatic fit.
+
+    Examples
+    --------
+    >>> dark = df(data)
+    >>> outer_signal = df(data, inner=60, unit="px")
+    """
     center, radius = _probe(data, center, radius)
     lo_px = radius if inner is None else _to_px(data, inner, unit, radius)
     return _detector_image(data, center, lo_px, np.inf)

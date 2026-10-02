@@ -75,23 +75,11 @@ The gold source flags four detector pixels; loading applies median hot-pixel
 correction by default. Use `hot_pixel_correction="none"` in `io.load` to retain
 the original measurements.
 
-### Mean diffraction pattern and fitted disk
-
-```python
-mean_dp = detector.mean(data)
-center, radius = detector.fit_probe(mean_dp)
-show_2d(mean_dp, norm="power_sqrt")
-```
-
-`center` is `(row, column)` and `radius` is in detector pixels. `fit_probe`
-estimates the bright-field disk geometry, not probe phase or aberrations.
-Keep these values to reuse the same geometry for every virtual detector.
-
 ### Bright-field and annular dark-field images
 
 ```python
-bf = detector.bf(data, center=center, radius=radius)
-adf = detector.adf(data, center=center, radius=radius)
+bf = detector.bf(data)
+adf = detector.adf(data)
 show_2d([bf, adf], title=["BF", "ADF"], norm="power_sqrt")
 ```
 
@@ -104,19 +92,49 @@ show_2d([bf, adf], title=["BF", "ADF"], norm="power_sqrt")
 
 These are full-scan images. The acquisition stays ANS encoded; the reduced
 images are NumPy arrays. Each panel uses its own square-root display contrast.
-Supplying `center` and `radius` avoids repeating the fit.
+The first detector call fits the bright-field disk automatically. Later BF,
+ADF and DF calls reuse that fit for the same encoded acquisition. Mutable
+array inputs are fitted again on each call.
 
 Choose a different ADF ring by specifying its inner and outer radii:
 
 ```python
 adf = detector.adf(
-    data, center=center, radius=radius, inner=60, outer=85, unit="px",
+    data, inner=60, outer=85, unit="px",
 )
 show_2d(adf, norm="power_sqrt")
 ```
 
 Use `unit="mrad"` for collection angles when convergence semi-angle calibration
 is available in `data.metadata`.
+
+### Override or inspect the disk geometry
+
+Override only what you need; the other value is fitted automatically:
+
+```python
+bf = detector.bf(data, radius=45)  # radius in detector pixels
+bf = detector.bf(data, center=(94, 96))  # (row, column)
+```
+
+Overrides affect only that call. Later calls without overrides keep using
+the automatic fit. For dark field outside the fitted disk:
+
+```python
+df = detector.df(data)
+show_2d(df, norm="power_sqrt")
+```
+
+To inspect the mean diffraction pattern and fitted values explicitly:
+
+```python
+mean_dp = detector.mean(data)
+center, radius = detector.fit_probe(mean_dp)
+show_2d(mean_dp, norm="power_sqrt")
+```
+
+`fit_probe` estimates the bright-field disk geometry, not probe phase or
+aberrations. It is optional for BF, ADF and DF images.
 
 ### Select patterns and detector pixels
 
