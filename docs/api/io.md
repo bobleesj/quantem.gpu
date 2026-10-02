@@ -53,6 +53,25 @@ exposing the resident measurements.
 
 ## `load`
 
+### Array indexing
+
+```python
+with io.load("acquisition.qem") as data:
+    pattern = data[10, 12]
+    region = data[8:12, 10:16, 64:128, 64:128]
+    metadata = data.metadata
+```
+
+Indexing a 4D owner returns a PyTorch tensor on the source GPU, requiring
+GPU-enabled PyTorch. Integers remove axes; slices and one ellipsis support
+negative indices and steps. Boolean masks, index arrays and new axes are not
+supported. This selects measurements without interpolation. Strides decode a
+bounding region; empty selections currently decode one pixel to obtain the
+backend tensor type. Use `.data` and `.metadata` for the owner's fields;
+`owner[0]` now means the first scan row, not its storage field.
+For a list of acquisitions, select the owner first: `series[1][10, 12]`.
+The existing `read(scan_region=..., detector_region=...)` remains available.
+
 ### Notebooks and scripts
 
 In a notebook, load with one assignment and keep the owner available across cells:

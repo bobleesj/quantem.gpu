@@ -6,6 +6,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Index loaded 4D acquisitions directly with integers, slices and ellipsis to
+  obtain GPU tensors, e.g. `data[10, 12]`. Integer indexing now selects scan
+  rows rather than tuple fields; access storage and metadata with `.data` and
+  `.metadata`. Strides decode their bounding region; advanced indexing is
+  unsupported.
+
 - Remove the `ssb.compute` compatibility imports; use `ssb.backends`. Remove
   obsolete test-path aliases; test commands now use current paths or suite names.
 

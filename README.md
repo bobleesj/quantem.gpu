@@ -30,7 +30,7 @@ cd quantem.gpu
 python -m pip install -e ".[mps]"
 ```
 
-The Mac SSB backend uses MLX and Metal. Bounded `data.read()` access uses
+The Mac SSB backend uses MLX and Metal. Array indexing uses
 PyTorch; install a GPU-enabled PyTorch build to use those examples.
 For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
@@ -47,7 +47,7 @@ keep its companion HDF5 files beside it. The data are not bundled here.
 
 Supported acquisitions use ANS storage on CUDA or MPS; `.qem` reopens its
 saved encoding. Automatic backend selection never silently falls back to CPU.
-Install `quantem` for `show_2d`, and GPU-enabled PyTorch for `data.read()`.
+Install `quantem` for `show_2d`, and GPU-enabled PyTorch for array indexing.
 
 ### One diffraction pattern
 
@@ -57,11 +57,11 @@ from quantem.core.visualization import show_2d
 
 # Keep data open while working through these examples.
 data = io.load("gold_master.h5")
-pattern = data.read(scan_region=(10, 11, 12, 13))[0, 0]
+pattern = data[10, 12]
 show_2d(pattern, norm="power_sqrt", title="Gold: scan (10, 12)")
 ```
 
-`read()` returns a GPU tensor; `show_2d` handles it directly. The gold source
+Indexing returns a GPU tensor; `show_2d` handles it directly. The gold source
 flags four detector pixels; default loading applies median hot-pixel
 correction. Use `hot_pixel_correction="none"` when loading to retain the
 original measurements.
@@ -71,7 +71,7 @@ original measurements.
 ```python
 positions = [(10, 12), (8, 10), (0, 0)]
 selected = [
-    data.read(scan_region=(row, row + 1, column, column + 1))[0, 0]
+    data[row, column]
     for row, column in positions
 ]
 show_2d(
@@ -85,21 +85,19 @@ show_2d(
 For a rectangular patch of **scan positions**, read a GPU tensor:
 
 ```python
-patterns = data.read(scan_region=(8, 12, 10, 16))
+patterns = data[8:12, 10:16]
 print(patterns.shape)  # (4, 6, 192, 192): 24 diffraction patterns
 ```
 
-Regions are `(row_start, row_stop, column_start, column_stop)`, with exclusive
-stops. Indices start at zero. `data.read()` returns a PyTorch tensor on the
-source GPU; omitting the region requests the whole decoded acquisition.
+Indices start at zero; slice stops are excluded. Integers, slices and ellipsis
+are supported, including negative indices and steps. Boolean masks and index
+arrays are not supported. `data[:]` requests the entire decoded acquisition;
+select a smaller region to limit memory. Metadata stays in `data.metadata`.
 
 ### A region inside a diffraction pattern
 
 ```python
-patch = data.read(
-    scan_region=(10, 11, 12, 13),
-    detector_region=(64, 128, 64, 128),
-)[0, 0]
+patch = data[10, 12, 64:128, 64:128]
 print(patch.shape)  # (64, 64)
 show_2d(
     [pattern, patch], norm="power_sqrt", axsize=(3.5, 3.5),
@@ -114,9 +112,9 @@ zero locally; add 64 to recover original detector coordinates. Square-root
 contrast is display-only, scaled independently per panel. The crop matched
 the full loaded pattern's pixels exactly on CUDA.
 
-Combine a larger `scan_region` with the same `detector_region` to crop several
-patterns. Selection does not bin or interpolate pixels, though decoding may
-require whole frames internally before cropping.
+Use `data[8:12, 10:16, 64:128, 64:128]` to crop several patterns. Selection
+does not bin or interpolate pixels. Decoding can require whole frames; strided
+slices decode their bounding region before selecting values.
 
 ```python
 data.close()  # after the last read or viewer using this acquisition
@@ -131,7 +129,7 @@ If each acquisition is a separate file, load only the one you need:
 ```python
 paths = ["tilt_00.qem", "tilt_01.qem", "tilt_02.qem"]
 with io.load(paths[1]) as acquisition:
-    pattern = acquisition.read(scan_region=(0, 1, 0, 1))[0, 0]
+    pattern = acquisition[0, 0]
 ```
 
 To keep several acquisitions resident without a dense 5D stack:
@@ -140,19 +138,19 @@ To keep several acquisitions resident without a dense 5D stack:
 series = io.load(paths, stack=False)
 try:
     acquisition = series[1]  # second acquisition, in paths order
-    pattern = acquisition.read(scan_region=(0, 1, 0, 1))[0, 0]
+    pattern = acquisition[0, 0]
 finally:
     for acquisition in series:
         acquisition.close()
 ```
 
-`series[1]` selects an acquisition; `scan_region` selects positions within it.
-Call `read()` on the chosen 4D acquisition. For separate 4D datasets within
+`series[1]` selects an acquisition; `series[1][10, 12]` selects its pattern
+at scan position `(10, 12)`. For separate 4D datasets within
 an EMD file, select the actual stored dataset path instead:
 
 ```python
 with io.load("experiment.emd", dataset_path="experiment/acquisition/data") as data:
-    pattern = data.read(scan_region=(0, 1, 0, 1))[0, 0]
+    pattern = data[0, 0]
 ```
 
 This is not arbitrary indexing into a single on-disk 5D tensor; there is no

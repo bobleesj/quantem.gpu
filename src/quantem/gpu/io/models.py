@@ -188,6 +188,82 @@ class FourDSTEMData(NamedTuple):
         """
         _release_owned_storage(self.data)
 
+    def __getitem__(self, key):
+        """Decode a basic array selection into a tensor on the source GPU.
+
+        Axes are scan row, scan column, detector row, detector column.
+        Integers remove axes; slices and one ellipsis follow Python indexing,
+        including negative indices and steps. Boolean masks, index arrays and
+        new axes are not supported. A strided selection decodes its bounding
+        region before selecting values; it does not interpolate or bin them.
+        Metadata remains available through ``metadata``.
+        """
+        if len(self.shape) != 4:
+            raise ValueError(
+                "Index a single 4D acquisition; select a series member first."
+            )
+        keys = key if isinstance(key, tuple) else (key,)
+        if sum(item is Ellipsis for item in keys) > 1:
+            raise IndexError("Use at most one ellipsis.")
+        if any(item is Ellipsis for item in keys):
+            position = next(
+                i for i, item in enumerate(keys) if item is Ellipsis
+            )
+            keys = (
+                keys[:position]
+                + (slice(None),) * (5 - len(keys))
+                + keys[position + 1:]
+            )
+        if len(keys) > 4:
+            raise IndexError("A 4D acquisition accepts at most four indices.")
+        keys += (slice(None),) * (4 - len(keys))
+        regions, selection, reverse, output_shape = [], [], [], []
+        empty = False
+        for axis, (item, size) in enumerate(zip(keys, self.shape)):
+            if isinstance(item, (bool, np.bool_)):
+                raise TypeError("Use integer indices or slices, not boolean masks.")
+            if isinstance(item, (int, np.integer)):
+                index = int(item)
+                if index < 0:
+                    index += size
+                if not 0 <= index < size:
+                    raise IndexError(
+                        f"Index {item} is outside axis {axis} with size {size}."
+                    )
+                regions.extend((index, index + 1))
+                selection.append(0)
+            elif isinstance(item, slice):
+                indices = range(*item.indices(size))
+                count = len(indices)
+                output_shape.append(count)
+                empty |= count == 0
+                if count:
+                    regions.extend((
+                        min(indices[0], indices[-1]),
+                        max(indices[0], indices[-1]) + 1,
+                    ))
+                else:
+                    regions.extend((0, 1))
+                selection.append(slice(None, None, abs(indices.step)))
+                if indices.step < 0:
+                    reverse.append(axis)
+            else:
+                raise TypeError(
+                    "Use integer indices, slices or ellipsis; "
+                    "index arrays and new axes are unsupported."
+                )
+        if empty:
+            # Obtain the backend's scientific tensor dtype/device with one pixel.
+            return self.read(
+                scan_region=(0, 1, 0, 1), detector_region=(0, 1, 0, 1)
+            ).new_empty(output_shape)
+        values = self.read(
+            scan_region=tuple(regions[:4]), detector_region=tuple(regions[4:])
+        )
+        if reverse:
+            values = values.flip(reverse)
+        return values[tuple(selection)]
+
     def read(
         self,
         *,
