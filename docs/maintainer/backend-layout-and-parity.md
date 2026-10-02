@@ -124,7 +124,6 @@ tests/
   e2e/                            # consumer-local override and real-data gates
   infrastructure/                 # docs, packaging, benchmark checks
   direct3d/                       # native .NET test project
-  path_migrations.json            # exact old-to-new test paths
 
 benchmarks/
   benchmark_registry.json         # accepted immutable measurements
@@ -143,16 +142,15 @@ existing imports and native build entries available:
 | Current path | Target | Migration rule |
 |---|---|---|
 | `io/load.py` helper imports | Models and private responsibility modules | Original callable imports; private state belongs to the canonical module. |
-| `{detector,dpc,ssb,geometry,parallax}/compute/` | Corresponding `backends/` | Import-only Python and TypeScript compatibility files. |
+| `{detector,dpc,geometry,parallax}/compute/` | Corresponding `backends/` | Import-only Python and TypeScript compatibility files. |
 | `detector/compute/backends.py` | `detector/backends/dispatch.py` | Original callable imports. |
 | `display/cuda.py`, `display/reference.py`, `display/webgpu/` | `display/backends/...` | Original callable imports and TypeScript exports. |
 | `display/direct3d/` | `display/backends/direct3d/` | Original project compiles the same canonical C# source. |
-| Earlier Python test paths | Organized test directories | `scripts/run_tests.py` translates file paths and pytest node IDs. |
 | `android/{include,src,shaders,...}` | `vulkan/{include,src,shaders,...}` | CMake and header forwarding; unchanged library names. |
 
 `io/backends` is the naming reference for new Python backend directories.
-Existing `compute` imports remain valid until all consumers are tested against
-an exact local package revision. Compatibility shims must contain imports only,
+SSB callers must use `ssb.backends`; its `ssb.compute` aliases have been removed.
+The other listed `compute` imports remain until their consumers are migrated. Compatibility shims must contain imports only,
 not a second implementation.
 
 Do not create a second support or benchmark registry for this migration.

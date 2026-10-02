@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from profile_mps import open_fixture, prepared_of, bandwidth_control
 import mlx.core as mx
-from quantem.gpu.ssb.compute.mps import engine
+from quantem.gpu.ssb.backends.mps import engine
 
 REPEATS = 7
 DEPTHS = [int(v) for v in sys.argv[1].split(",")] if len(sys.argv) > 1 else [5, 4, 3, 2, 1]

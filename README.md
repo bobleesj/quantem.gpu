@@ -244,15 +244,15 @@ dispatch, and staging-memory ownership from load orchestration. For Python MPS,
 `io/backends/mps/dense.py`, `packed.py`, and `_ans.py` own their runtime paths;
 their Metal resources live in `kernels/`. CUDA owns its decoder, packed, and ANS
 implementations in `io/backends/cuda/`. ANS is not yet a WebGPU/Vulkan IO path.
-Older `compute` imports
-remain as import-only compatibility files, not duplicate kernels. Browser
+SSB uses `ssb.backends` directly; the older `ssb.compute` imports are removed.
+Other modules still retain some import-only compatibility files. Browser
 builds export the complete source graph with `quantem.gpu.webgpu.export_sources`.
 See the [source map and reproducible checks](docs/maintainer/backend-layout-and-parity.md)
 for canonical entry points and consumer migration details.
 
 Tests are grouped into `contracts`, `parity`, `hardware`, `e2e`, and
 `infrastructure`. Run `python scripts/run_tests.py --list` to find the suites;
-the runner also translates old test-file paths without changing their gates.
+pass current test paths or suite names to the runner.
 
 ## Native Swift and Metal
 

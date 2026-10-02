@@ -1,17 +1,15 @@
-"""Run named regression suites or translate retained pre-migration test paths.
+"""Run named regression suites or current pytest paths.
 
 Examples
 --------
 python scripts/run_tests.py contracts parity -q
 python scripts/run_tests.py hardware/cuda -q
-python scripts/run_tests.py tests/io/test_load.py -q
+python scripts/run_tests.py tests/contracts/io/test_load.py -q
 
 Hardware opt-ins and pytest options are unchanged. A skipped device gate is
-not a hardware pass. Historical commands remain reproducible at their pinned
-revision; this runner translates their test-file paths for the current tree.
+not a hardware pass. Historical commands remain reproducible at their pinned revision.
 """
 
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -38,11 +36,10 @@ def main(argv=None):
         for name, path in SUITES.items():
             print(f"{name:18} {path}")
         return 0
-    migrations = json.loads((ROOT / "tests/path_migrations.json").read_text())
     translated = []
     for value in arguments or ["all"]:
         path, separator, node = value.partition("::")
-        target = SUITES.get(path, migrations.get(path, path))
+        target = SUITES.get(path, path)
         translated.append(target + separator + node)
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(

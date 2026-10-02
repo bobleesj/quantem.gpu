@@ -55,8 +55,8 @@ operation accepts both representations on a given runtime.
 
 | Runtime | Discovery/dispatch | IO/decode | Detector and DPC | Reconstruction/display | Primary tests |
 |---|---|---|---|---|---|
-| CUDA | `device/backend.py`, operation protocols | `io/backends/cuda` | `detector/compute/cuda`, `dpc/compute/cuda` | `ssb/compute/cuda`, `display/cuda.py` | `test_cuda_*`, `test_realdata_parity.py` |
-| Python MPS | `device/backend.py`, operation protocols | `io/backends/mps` | `detector/compute/mps`, `dpc/compute/mps` | `ssb/compute/mps` | `test_mps_*`, MPS sections of parity tests |
+| CUDA | `device/backend.py`, operation protocols | `io/backends/cuda` | `detector/compute/cuda`, `dpc/compute/cuda` | `ssb/backends/cuda`, `display/cuda.py` | `test_cuda_*`, `test_realdata_parity.py` |
+| Python MPS | `device/backend.py`, operation protocols | `io/backends/mps` | `detector/compute/mps`, `dpc/compute/mps` | `ssb/backends/mps` | `test_mps_*`, MPS sections of parity tests |
 | Swift/Metal | SwiftPM products in `Package.swift` | `Native4DSTEMIO`, `Metal4DSTEMKernels` | `Metal4DSTEMKernels` | `MetalImageFFT`, `MetalDisplayKernels`, `MetalImageRuntime` | `src/quantem/gpu/swift/Tests` |
 | WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/backends/webgpu` | detector/DPC WebGPU modules | SSB and display WebGPU modules | `test_webgpu_*`, browser hardware gates |
 | CPU reference | explicit `backend="cpu"` | `io/backends/cpu/reference.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |

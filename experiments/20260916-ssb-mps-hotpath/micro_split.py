@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from profile_mps import open_fixture, prepared_of, report_times
 
 import mlx.core as mx
-from quantem.gpu.ssb.compute.mps import engine
+from quantem.gpu.ssb.backends.mps import engine
 
 FIXTURE = "/path/to/local/perf-lab/ssb-audit/mps-runs/fixture-512-a"
 REPEATS = 7

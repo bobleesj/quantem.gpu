@@ -423,10 +423,10 @@ parameters, precision, and optimizer settings match.
 | Layer | Source |
 |---|---|
 | Public workflow/results | `src/quantem/gpu/ssb` |
-| CUDA engine and optimizer | `src/quantem/gpu/ssb/compute/cuda` |
-| Python MPS engine and optimizer | `src/quantem/gpu/ssb/compute/mps` |
+| CUDA engine and optimizer | `src/quantem/gpu/ssb/backends/cuda` |
+| Python MPS engine and optimizer | `src/quantem/gpu/ssb/backends/mps` |
 | Native Swift/Metal engine and optimizer | `src/quantem/gpu/swift/Sources/MetalSSBKernels` |
-| WebGPU kernels | `src/quantem/gpu/ssb/compute/webgpu` |
+| WebGPU kernels | `src/quantem/gpu/ssb/backends/webgpu` |
 
 Parity uses the same source, bright-field selection, physical calibration,
 aberrations, precision, and objective. Reports include complex-object or phase

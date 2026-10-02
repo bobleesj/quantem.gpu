@@ -34,7 +34,7 @@ import mlx.core as mx
 import numpy as np
 
 from quantem.gpu import SSB
-from quantem.gpu.ssb.compute.mps import engine, optimizer
+from quantem.gpu.ssb.backends.mps import engine, optimizer
 
 
 def _parse_args() -> argparse.Namespace:
@@ -232,7 +232,7 @@ def _prepared_optimizer(prepared, selection) -> Iterator[None]:
 def _load_reference_engine(path: Path | None):
     if path is None:
         return None
-    name = "quantem.gpu.ssb.compute.mps.engine_benchmark_reference"
+    name = "quantem.gpu.ssb.backends.mps.engine_benchmark_reference"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load reference engine from {path}.")

@@ -137,7 +137,7 @@ def report_times(name: str, times: list[float]) -> dict:
 def main() -> None:
     args = parse_args()
     import mlx.core as mx
-    from quantem.gpu.ssb.compute.mps import engine, optimizer
+    from quantem.gpu.ssb.backends.mps import engine, optimizer
 
     record: dict = {
         "schema": "quantem.ssb.mps.hotpath.v1",

@@ -575,7 +575,7 @@ def test_ssb_series_show_starts_with_companion_views_hidden(monkeypatch) -> None
 def test_every_backend_exposes_the_same_size_modules() -> None:
     """C2: backend tree, expect explicit 128/256/512/1024 modules."""
 
-    root = Path("src/quantem/gpu/ssb/compute")
+    root = Path("src/quantem/gpu/ssb/backends")
     suffix = {"cuda": ".py", "mps": ".py", "webgpu": ".ts"}
     for backend, extension in suffix.items():
         kernels = root / backend / "kernels"
@@ -586,7 +586,7 @@ def test_every_backend_exposes_the_same_size_modules() -> None:
 def test_backend_ownership_is_symmetric() -> None:
     """C2b: each backend owns one backend, optimizer, and kernel tree."""
 
-    root = Path("src/quantem/gpu/ssb/compute")
+    root = Path("src/quantem/gpu/ssb/backends")
     for backend, extension in {
         "cuda": ".py",
         "mps": ".py",

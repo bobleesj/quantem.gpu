@@ -66,15 +66,6 @@
   "ssb/backends/webgpu/kernels/index.ts",
   "ssb/backends/webgpu/optimizer.ts",
   "ssb/backends/webgpu/protocol.ts",
-  "ssb/compute/webgpu/backend.ts",
-  "ssb/compute/webgpu/kernels/common.ts",
-  "ssb/compute/webgpu/kernels/fft1024.ts",
-  "ssb/compute/webgpu/kernels/fft128.ts",
-  "ssb/compute/webgpu/kernels/fft256.ts",
-  "ssb/compute/webgpu/kernels/fft512.ts",
-  "ssb/compute/webgpu/kernels/index.ts",
-  "ssb/compute/webgpu/optimizer.ts",
-  "ssb/compute/webgpu/protocol.ts",
   "swift/Sources/MetalDisplayKernels/Resources/colormaps.json",
   "webgpu/index.ts"
 ]

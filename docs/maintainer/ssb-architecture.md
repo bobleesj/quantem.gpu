@@ -109,7 +109,7 @@ native devices. Performance signoff is recorded only after parity passes.
 Every backend has the same discoverable scan-size layout:
 
 ```text
-quantem/gpu/ssb/compute/
+quantem/gpu/ssb/backends/
 ├── protocol.py
 ├── cuda/kernels/{fft128,fft256,fft512,fft1024}.py
 ├── mps/kernels/{fft128,fft256,fft512,fft1024}.py
@@ -119,5 +119,5 @@ quantem/gpu/ssb/compute/
 Shared generators remain in each backend's `kernels/common` module, but one
 deterministic registry selects the size implementation. Shape dispatch must not
 be scattered through UI or optimizer code. SSB-specific WebGPU code lives under
-`ssb/compute/webgpu`; generic browser device utilities live under `device`, and
+`ssb/backends/webgpu`; generic browser device utilities live under `device`, and
 HDF5/decoder utilities live under `io/backends/webgpu`.

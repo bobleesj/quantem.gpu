@@ -6,6 +6,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Remove the `ssb.compute` compatibility imports; use `ssb.backends`. Remove
+  obsolete test-path aliases; test commands now use current paths or suite names.
+
 - SSB C10/C12 values and search ranges now use nanometers at the public API.
   Earlier releases passed angstrom values under nm labels: divide manually
   retained C10/C12 numbers and search bounds by 10 when migrating. For example,

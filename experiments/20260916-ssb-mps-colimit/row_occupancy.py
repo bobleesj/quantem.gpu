@@ -68,9 +68,8 @@ INPUT_NAMES = [
 def _owning_module(engine):
     """The module whose globals the kernel builders actually resolve.
 
-    ``quantem.gpu.ssb.compute.mps.engine`` re-exports the backends builders, so
-    patching ``_require_mlx`` on the compute shim silently does nothing and the
-    capture comes back empty.  Resolve the defining module instead.
+    Resolve the defining module before patching ``_require_mlx`` so kernel
+    capture follows the builder's actual globals.
     """
     import sys
 
