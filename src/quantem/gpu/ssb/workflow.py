@@ -900,22 +900,16 @@ class SSB:
         precision or scientific objective.
 
         ``expected_source_sha256`` and ``source_integrity`` have the same
-        meanings as in ``io.load``. An authenticated packed source is opened
-        through that canonical loader without an alternate SSB decoder.
-        Packed MPS detector containers are unsupported and rejected before
-        allocation; MPS requires dense detector data or exact BF-column input.
+        meanings as in ``io.load``. GPU acquisitions use ANS-encoded storage.
+        Older prepared-packed files must be re-exported from their original
+        acquisitions as .qem files before opening them here.
         """
 
         selected = _resolve_backend(backend)
-        if (
-            selected == "mps"
-            and DataRepresentation.detect_source(source)
-            is DataRepresentation.PACKED
-        ):
+        if DataRepresentation.detect_source(source) is DataRepresentation.PACKED:
             raise NotImplementedError(
-                "Packed MPS detector sources are not supported by SSB.open. "
-                "Use backend='cuda' for a qualified packed source, or open "
-                "the original dense acquisition or an exact BF-column export."
+                "Packed acquisition files cannot be opened as ANS residents. "
+                "Reopen the original acquisition and save a new .qem copy."
             )
         if selected == "webgpu":
             raise RuntimeError(
@@ -923,7 +917,7 @@ class SSB:
             )
         data = None
         bf_center = None
-        source_kind: Literal["detector", "bf_columns", "packed_detector"]
+        source_kind: Literal["detector", "bf_columns"]
         source_dtype: str
         source_bytes: int
         source_load_seconds: float
@@ -948,38 +942,24 @@ class SSB:
                 break
         if data is None:
             from quantem.gpu.io import load
-            from quantem.gpu.io.load import LoadResult
 
             load_started = time.perf_counter()
-            packed = DataRepresentation.detect_source(source) is DataRepresentation.PACKED
             loaded = load(
                 source,
                 backend=selected,
-                # Packed sources keep authenticated packed storage for the qualified BF-column path. Other acquisitions
-                # stay ANS encoded on the accelerator (the loader's GPU policy); only the bright-field crop is decoded.
-                representation="packed" if packed else None,
                 detector_bin=1,
                 dtype=dtype,
                 verbose=verbose,
                 expected_source_sha256=expected_source_sha256,
                 source_integrity=source_integrity,
             )
-            if not isinstance(loaded, LoadResult) and packed:
-                raise TypeError(
-                    "One SSB source must produce one LoadResult; "
-                    f"got {type(loaded).__name__}."
-                )
-            if packed:
-                data = loaded.data
-                source_kind = "packed_detector"
-            else:
-                data, bf_center, bf_radius, calibration_radius = _bright_field_crop(
-                    loaded, selected, bf_intensity_threshold, bf_radius,
-                    calibrate_detector=det_sampling is None,
-                )
-                if det_sampling is None and calibration_radius is not None:
-                    det_sampling = (2.0 * semiangle_mrad) / calibration_radius
-                source_kind = "detector"
+            data, bf_center, bf_radius, calibration_radius = _bright_field_crop(
+                loaded, selected, bf_intensity_threshold, bf_radius,
+                calibrate_detector=det_sampling is None,
+            )
+            if det_sampling is None and calibration_radius is not None:
+                det_sampling = (2.0 * semiangle_mrad) / calibration_radius
+            source_kind = "detector"
             source_storage_path = str(source)
             source_dtype = str(loaded.dtype)
             source_bytes = loaded.logical_bytes

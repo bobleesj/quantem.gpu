@@ -70,7 +70,7 @@ def test_packed_mps_ssb_rejects_before_any_source_allocation(
 
     monkeypatch.setattr(io, "load", must_not_allocate)
     monkeypatch.setattr(workflow, "_mps_brightfield_sources", must_not_allocate)
-    with pytest.raises(NotImplementedError, match="Packed MPS detector"):
+    with pytest.raises(NotImplementedError, match="Reopen the original acquisition"):
         SSB.open(
             str(source),
             backend="mps",
@@ -79,35 +79,6 @@ def test_packed_mps_ssb_rejects_before_any_source_allocation(
             semiangle_mrad=25,
             scan_sampling_A=0.5,
         )
-
-
-def test_failed_ssb_setup_releases_loaded_source_and_keeps_original_error(monkeypatch):
-    resident = ReleaseOnlyResident(cleanup_fails=True)
-    loaded = io.FourDSTEMData(
-        resident,
-        {"representation": "packed", "working_dtype": "uint16"},
-    )
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
-    monkeypatch.setattr(io, "load", lambda *args, **kwargs: loaded)
-    # SSB.open decides packed from the source file before loading; this path names no real file
-    monkeypatch.setattr(workflow.DataRepresentation, "detect_source", classmethod(lambda cls, _: cls.PACKED))
-    failure = ValueError("injected SSB calibration failure")
-
-    def unavailable_calibration(*args, **kwargs):
-        raise failure
-
-    monkeypatch.setattr(SSB, "__init__", unavailable_calibration)
-    with pytest.raises(ValueError) as caught:
-        SSB.open(
-            "qualified.h5",
-            backend="cuda",
-            voltage_kV=300,
-            semiangle_mrad=25,
-            scan_sampling_A=0.5,
-        )
-    assert caught.value is failure
-    assert resident.release_count == 1
-    assert "injected release failure" in failure.__notes__[0]
 
 
 def test_unprepared_ssb_close_uses_the_shared_release_contract(monkeypatch):

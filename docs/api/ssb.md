@@ -17,15 +17,6 @@ from trusted source metadata.
 `SSB.open` uses the canonical `io.load` path, including its ANS-only GPU
 acquisition policy. Older prepared-packed files must be re-exported from their
 original acquisitions; they cannot be reopened through a packed override.
-The retained CUDA packed preparation implementation accepts authenticated
-source-bound calibration; its scientific constraints below do not imply
-public loader admission for old packed artifacts.
-The source must carry validated, source-bound detector calibration and a
-native 128, 256, 512, or 1024 square scan. Leave `bf_radius=None` and
-`bf_intensity_threshold=0.0` to retain the full calibrated disk. This path
-extracts exact detector columns before float32/complex64 computation; it
-does not expand a dense detector volume, crop, pad, or bin the source.
-Additional detector gain and reduced BF requests are rejected.
 
 `SSB.open` owns its loaded source until `close()` or context-manager exit,
 including when reconstruction has not yet started. Pass an ordinary dense
@@ -56,6 +47,33 @@ This is the implemented calibration workflow; Levenberg–Marquardt is not an
 available refinement mode. In WebGPU, requesting `fit()` fails explicitly and
 directs the caller to run the exact 200-trial plus Nelder–Mead workflow on CUDA
 or MPS. The browser never substitutes fewer trials or a reduced objective.
+
+## Finer preview sampling
+
+Fit at native sampling, then reuse the fitted parameters for a finer preview:
+
+```python
+fitted = workflow.fit(tilt=True)
+phase, loss = workflow.preview(
+    fitted.aberrations,
+    tilt_mrad=fitted.tilt_mrad,
+    depth_spread_nm=fitted.depth_spread_nm,
+    upsampling_factor=4,
+)
+```
+
+CUDA supports factors 1, 2, 3, 4 and 8 with C10/C12 and optional tilt/depth
+correction. The field of view stays fixed. The search and diagnostic loss stay
+on the native scan grid; changing the factor does not refit parameters or
+interpolate detector measurements. More output pixels do not guarantee more
+resolved specimen detail. Factors above one do not yet support MPS, WebGPU or
+higher-order aberrations.
+
+When migrating hard-coded aberrations from releases before the nm correction,
+divide old C10/C12 numbers and search bounds by 10. For example, an old value of
+100 represented 100 Å and should now be supplied as 10 nm. Do not rescale angles
+or values already recorded in nm. Saved records without an aberration-unit
+marker are converted by the loader.
 
 ## Errors and unsupported requests
 

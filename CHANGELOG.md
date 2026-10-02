@@ -6,6 +6,22 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- SSB C10/C12 values and search ranges now use nanometers at the public API.
+  Earlier releases passed angstrom values under nm labels: divide manually
+  retained C10/C12 numbers and search bounds by 10 when migrating. For example,
+  an old input of 100 now becomes 10 nm. Angles remain radians. Legacy saved
+  results without an aberration-unit marker are converted on loading.
+- CUDA SSB previews support 1x, 2x, 3x, 4x and 8x output sampling, including
+  tilt/depth correction with C10/C12. Fitting and diagnostic loss remain on
+  the native scan grid. Higher-order aberrations and upsampled MPS/WebGPU
+  previews are not supported. Finer sampling does not guarantee finer resolution.
+- SSB.open follows the ANS-only GPU acquisition policy. Re-export older
+  prepared-packed files from their original acquisitions as .qem; there is no
+  packed override. Remove the unreachable packed-loading branch and update
+  loading tests to use the supported source formats.
+- Fix optional master-path handling in the Swift real-acquisition test so the
+  Metal test target compiles.
+
 - Share exact SSB phase and calibration as versioned JSON/NumPy pairs, with
   Python and native Swift readers, source-content matching, checksum validation
   and non-overwriting publication. No reconstruction buffers are exported.

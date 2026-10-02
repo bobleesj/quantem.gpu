@@ -1,4 +1,4 @@
-"""Packed-source SSB must preserve the dense CUDA scientific result."""
+"""Retired packed SSB sources explain how to migrate to the canonical loader."""
 
 import hashlib
 from importlib.util import module_from_spec, spec_from_file_location
@@ -11,7 +11,7 @@ from quantem.gpu import SSB
 from quantem.gpu.io._compact_h5 import prepare_compact_h5_metadata_copy
 
 
-def test_public_packed_ssb_matches_dense_cuda(tmp_path):
+def test_packed_ssb_requires_reexport_from_original(tmp_path):
     cp = pytest.importorskip("cupy")
     try:
         if cp.cuda.runtime.getDeviceCount() == 0:
@@ -56,35 +56,9 @@ def test_public_packed_ssb_matches_dense_cuda(tmp_path):
         "scan_sampling_A": 0.5,
         "det_sampling": 1.0,
     }
-    aberrations = {"C10": 12.5, "C12": 3.0, "phi12": 0.25}
-    with SSB.from_array(dense, bf_radius=3, **options) as reference:
-        expected = reference.reconstruct(aberrations, verbose=False)
-        expected_wave = cp.asnumpy(expected.object_wave)
-        expected_loss = expected.loss
-        expected_fourier = cp.asnumpy(reference._cuda_session.G_qk)
-    with SSB.open(
-        str(prepared),
-        expected_source_sha256=hashlib.sha256(prepared.read_bytes()).hexdigest(),
-        **options,
-    ) as workflow:
-        source = workflow._data
-        actual = workflow.reconstruct(aberrations, verbose=False)
-        assert workflow.source_kind == "packed_detector"
-        np.testing.assert_array_equal(
-            cp.asnumpy(workflow._cuda_session.G_qk), expected_fourier
+    with pytest.raises(NotImplementedError, match="Reopen the original acquisition"):
+        SSB.open(
+            str(prepared),
+            expected_source_sha256=hashlib.sha256(prepared.read_bytes()).hexdigest(),
+            **options,
         )
-        np.testing.assert_allclose(
-            cp.asnumpy(actual.object_wave), expected_wave, rtol=2e-6, atol=2e-6
-        )
-        assert actual.loss == pytest.approx(expected_loss, rel=2e-6, abs=2e-6)
-    assert source.is_released
-    with SSB.open(
-        str(prepared),
-        bf_radius=2,
-        expected_source_sha256=hashlib.sha256(prepared.read_bytes()).hexdigest(),
-        **options,
-    ) as unsupported:
-        source = unsupported._data
-        with pytest.raises(ValueError, match="complete source-bound bright-field"):
-            unsupported.reconstruct(aberrations, verbose=False)
-    assert source.is_released

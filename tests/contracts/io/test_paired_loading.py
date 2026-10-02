@@ -54,7 +54,7 @@ def test_saved_form_is_detected_and_reopens_without_decoding(tmp_path):
     assert bool(cp.array_equal(reopened.data.decode_chunk(0), cp.asarray(counts.reshape(1024, 24, 24))).get())
     np.testing.assert_array_equal(reopened.data.detector_total_device().get(),
                                   counts.sum(axis=(0, 1), dtype=np.uint64))
-    with pytest.raises(ValueError, match="representation='paired'"):
+    with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
         io.load(saved, backend="cuda", representation="dense")
 
 

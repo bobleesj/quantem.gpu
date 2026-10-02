@@ -18,31 +18,18 @@ def test_uint64_series_sum_never_truncates_high_counts():
     )
 
 
-def test_packed_h5_joint_queries_restore_excluded_raw_counts(tmp_path):
-    from importlib.util import spec_from_file_location, module_from_spec
-    from pathlib import Path
+def test_original_h5_joint_queries_preserve_raw_counts(tmp_path):
+    import h5py
 
     cp = pytest.importorskip("cupy")
     if cp.cuda.runtime.getDeviceCount() == 0:
         pytest.skip("CUDA device required")
-    spec = spec_from_file_location(
-        "packed_fixture", Path(__file__).parents[2] / "contracts/io/test_compact_h5.py"
-    )
-    fixture = module_from_spec(spec)
-    spec.loader.exec_module(fixture)
     raw = (np.arange(32 * 6, dtype=np.uint16) % 12).reshape(32, 6)
     raw[:, 2] = 65535
-    file = tmp_path / "packed.h5"
-    fixture._write_v3_fixture(
-        file, raw, detector_shape=(2, 3), masked_pixels=(2,), scan_shape=(4, 8)
-    )
-    import hashlib
-
-    loaded = io.load(
-        file,
-        backend="cuda",
-        expected_source_sha256=hashlib.sha256(file.read_bytes()).hexdigest(),
-    )
+    file = tmp_path / "original.h5"
+    with h5py.File(file, "w") as handle:
+        handle["entry/data/data"] = raw.reshape(4, 8, 2, 3)
+    loaded = io.load(file, backend="cuda", apply_mask=False)
     session = detector.prepare([loaded, loaded])
     for index in (0, 7, 31):
         np.testing.assert_array_equal(
@@ -51,5 +38,5 @@ def test_packed_h5_joint_queries_restore_excluded_raw_counts(tmp_path):
         )
     np.testing.assert_array_equal(
         session.masked_sum(np.ones((2, 3), bool), output="native").get(),
-        np.broadcast_to(np.delete(raw, 2, axis=1).sum(-1).reshape(4, 8), (2, 4, 8)),
+        np.broadcast_to(raw.sum(-1).reshape(4, 8), (2, 4, 8)),
     )

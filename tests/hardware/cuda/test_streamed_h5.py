@@ -158,43 +158,30 @@ def test_mixed_dense_and_streamed_counts_keep_native_shapes(tmp_path):
     )
 
 
-def test_prepared_packed_and_streamed_h5_share_a_joint_query(tmp_path):
-    import hashlib
-    from importlib.util import module_from_spec, spec_from_file_location
-    from pathlib import Path
-
-    spec = spec_from_file_location(
-        "packed_fixture", Path(__file__).parents[2] / "contracts/io/test_compact_h5.py"
-    )
-    fixture = module_from_spec(spec)
-    spec.loader.exec_module(fixture)
-    raw = (np.arange(32 * 6, dtype=np.uint16) % 12).reshape(32, 6)
-    raw[:, 2] = 65535
-    packed_path = tmp_path / "packed.h5"
-    fixture._write_v3_fixture(
-        packed_path, raw, detector_shape=(2, 3), masked_pixels=(2,), scan_shape=(4, 8)
-    )
-    ordinary = tmp_path / "ordinary.h5"
-    with h5py.File(ordinary, "w") as handle:
-        handle["entry/data/data"] = raw.reshape(4, 8, 2, 3)
-    packed = io.load(
-        packed_path,
-        backend="cuda",
-        expected_source_sha256=hashlib.sha256(packed_path.read_bytes()).hexdigest(),
-    )
-    streamed = io.load(ordinary, backend="cuda", representation="encoded", apply_mask=False)
-    session = detector.prepare([packed, streamed])
-    for index in (0, 7, 31):
+def test_two_streamed_h5_sources_share_a_joint_query(tmp_path):
+    raw = (np.arange(32 * 6, dtype=np.uint16) % 12).reshape(4, 8, 2, 3)
+    other = raw + 100
+    loaded = []
+    for name, values in (("first", raw), ("second", other)):
+        path = tmp_path / f"{name}.h5"
+        with h5py.File(path, "w") as handle:
+            handle["entry/data/data"] = values
+        loaded.append(io.load(path, backend="cuda", apply_mask=False))
+    session = detector.prepare(loaded)
+    try:
+        for index in (0, 7, 31):
+            np.testing.assert_array_equal(
+                session.frame(index, output="native").get(),
+                np.stack([raw.reshape(32, 2, 3)[index], other.reshape(32, 2, 3)[index]]),
+            )
         np.testing.assert_array_equal(
-            session.frame(index, output="native").get(),
-            np.broadcast_to(raw[index].reshape(2, 3), (2, 2, 3)),
+            session.masked_sum(np.ones((2, 3), bool), output="native").get(),
+            np.stack([raw.sum((-2, -1)), other.sum((-2, -1))]),
         )
-    np.testing.assert_array_equal(
-        session.masked_sum(np.ones((2, 3), bool), output="native").get(),
-        np.stack(
-            [np.delete(raw, 2, axis=1).sum(-1).reshape(4, 8), raw.sum(-1).reshape(4, 8)]
-        ),
-    )
+    finally:
+        session.close()
+        for source in loaded:
+            source.close()
 
 
 def test_one_wide_scan_uses_actual_length_encoding_scratch(tmp_path):
