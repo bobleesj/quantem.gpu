@@ -183,7 +183,7 @@ def test_parallax_result_rejects_missing_ssb_conversion_inputs() -> None:
 def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
     cp = pytest.importorskip("cupy")
     from quantem.gpu import parallax
-    from quantem.gpu.detector import auto_probe
+    from quantem.gpu.detector import fit_probe
     from quantem.gpu.io import load
 
     master_env = "QUANTEM_GPU_PARALLAX_MASTER"
@@ -204,7 +204,7 @@ def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
         output_dtype=np.float32,
     )
     data = loaded.data
-    center, radius = auto_probe(data.mean(axis=(0, 1)))
+    center, radius = fit_probe(data.mean(axis=(0, 1)))
     center = tuple(int(v) for v in center)
     radius = int(radius)
 

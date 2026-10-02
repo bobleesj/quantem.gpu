@@ -3,12 +3,12 @@
 from .workflow import (
     DetectorSession,
     adf,
-    auto_probe,
     bf,
     detector_mask,
     df,
+    fit_probe,
     masked_sum,
-    mean_dp,
+    mean,
     prepare,
     virtual,
 )
@@ -16,12 +16,12 @@ from .workflow import (
 __all__ = [
     "DetectorSession",
     "adf",
-    "auto_probe",
     "bf",
     "detector_mask",
     "df",
+    "fit_probe",
     "masked_sum",
-    "mean_dp",
+    "mean",
     "prepare",
     "virtual",
 ]

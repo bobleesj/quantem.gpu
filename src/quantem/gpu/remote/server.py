@@ -1754,7 +1754,7 @@ class BrowseService:
                 )
             from quantem.gpu import detector
 
-            center, radius = detector.auto_probe(entry["mean_dp"])
+            center, radius = detector.fit_probe(entry["mean_dp"])
             geometry = (float(center[0]), float(center[1]), float(radius))
             entry["bf_geometry"] = geometry
         return geometry

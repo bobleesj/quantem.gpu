@@ -53,8 +53,8 @@ def test_realdata_detector_products_are_exact_and_gpu_backed() -> None:
     data = load(path, verbose=False).data
 
     t1 = time.perf_counter()
-    mean_dp = detector.mean_dp(data)
-    center, radius = detector.auto_probe(mean_dp)
+    mean_dp = detector.mean(data)
+    center, radius = detector.fit_probe(mean_dp)
     bright_field = detector.bf(data, center=center, radius=radius)
     cp.cuda.Stream.null.synchronize()
     elapsed = time.perf_counter() - t1

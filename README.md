@@ -135,40 +135,32 @@ frames. Strided slices decode their bounding region before selecting values.
 
 A virtual detector sums selected detector pixels at each scan position.
 Bright field (BF) uses a disk around the transmitted beam; annular dark field
-(ADF) uses a ring outside it. Start with a small scan region:
+(ADF) uses a ring outside it. Compute the mean diffraction pattern and fit
+the beam disk once, then reuse its center and radius:
 
 ```python
-import torch
+from quantem.gpu import detector
 
-patterns = data[224:288, 224:288].float()  # 64 × 64 scan region, float32 GPU tensor
-rows = torch.arange(patterns.shape[-2], device=patterns.device)[:, None]
-columns = torch.arange(patterns.shape[-1], device=patterns.device)[None, :]
-radius = ((rows - 96)**2 + (columns - 96)**2).sqrt()  # center (96, 96), in pixels
-
-bf_mask = radius < 45                        # central disk
-adf_mask = (radius >= 60) & (radius < 85)      # outer ring
-bf = patterns[..., bf_mask].sum(dim=-1)      # one intensity per scan position
-adf = patterns[..., adf_mask].sum(dim=-1)
+mean_dp = detector.mean(data)                        # average over scan positions
+center, radius = detector.fit_probe(mean_dp)         # (row, column), radius in pixels
+bf = detector.bf(data, center=center, radius=radius)
+adf = detector.adf(data, center=center, radius=radius)
 show_2d([bf, adf], title=["BF", "ADF"], norm="power_sqrt")
 ```
 
 ![Gold bright-field and annular dark-field scan images](docs/_static/gold-bf-adf.png)
 
-The example center and radii are in **detector pixels**. Adjust them to your
-beam center and collection angles; use detector calibration to convert angles
-to pixels. Each image shows the same 64 × 64 scan region, with independent
-square-root display contrast. These CUDA results matched the existing detector
-reduction exactly for this example.
+`fit_probe` estimates the bright-field disk geometry using thresholding and
+its centroid; it does not recover probe phase or aberrations. BF includes
+pixels through the fitted radius. The default ADF ring spans one to two
+times that radius, limited by the detector. Both images show the full gold
+scan with independent square-root display contrast. The acquisition remains
+ANS encoded; only the reduced images are returned as NumPy arrays.
 
-`patterns` is an ordinary PyTorch tensor, so boolean masks work on it even
-though the encoded `data` owner does not support boolean indexing. The sum is
-float32; exact large-integer accumulation may require a different dtype.
-This example decodes only the chosen scan region, but its full detector data
-still occupies memory. Release the temporary tensors when finished:
-
-```python
-del patterns, bf, adf
-```
+To choose collection angles, use `detector.adf(data, inner=40, outer=90,
+unit="px", center=center, radius=radius)`. Use `unit="mrad"` when convergence
+semi-angle calibration is available in the metadata. Omitting the geometry
+from BF/ADF/DF calls estimates it again, so supply it when making several images.
 
 ```python
 data.close()  # after the last read or viewer using this acquisition

@@ -350,7 +350,7 @@ def test_legacy_packed_detector_workflows_match_reference(tmp_path: Path) -> Non
                  expected_source_sha256=checksum) as packed:
         session = detector.prepare(packed)
         np.testing.assert_array_equal(session.frame(23), dense.reshape(128, 2, 3)[23])
-        np.testing.assert_array_equal(detector.mean_dp(packed), detector.mean_dp(dense))
+        np.testing.assert_array_equal(detector.mean(packed), detector.mean(dense))
         for mask in (np.ones((2, 3), dtype=bool), np.eye(2, 3, dtype=bool)):
             expected = (dense * mask).sum(axis=(2, 3), dtype=np.uint64)
             np.testing.assert_array_equal(session.masked_sum_exact(mask), expected)

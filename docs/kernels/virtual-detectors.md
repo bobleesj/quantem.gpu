@@ -34,14 +34,20 @@ from quantem.gpu import detector, io
 
 loaded = io.load("scan_master.h5", backend="auto", detector_bin=1)
 
-bright = detector.bf(loaded.data)
-annular = detector.adf(loaded.data, inner=40, outer=90, unit="px")
-dark = detector.df(loaded.data)
-mean_dp = detector.mean_dp(loaded.data)
+mean_dp = detector.mean(loaded)
+center, radius = detector.fit_probe(mean_dp)
+bright = detector.bf(loaded, center=center, radius=radius)
+annular = detector.adf(loaded, inner=40, outer=90, unit="px",
+                       center=center, radius=radius)
+dark = detector.df(loaded, center=center, radius=radius)
 ```
 
 Detector radii use detector-space calibration. A value in pixels must not be
 reported as mrad without calibration.
+
+`fit_probe` estimates disk geometry from a thresholded mean diffraction
+pattern; it does not fit probe phase or aberrations. Reuse the geometry across
+detector calls to avoid computing the mean again.
 
 ## Coordinate, shape, dtype, unit, and provenance contract
 

@@ -315,7 +315,7 @@ def _build_exact_cuda_products(
 
     import cupy as cp
 
-    from quantem.gpu.detector import auto_probe
+    from quantem.gpu.detector import fit_probe
     from quantem.gpu.detector.backends.cuda.kernels import (
         _cuda_screening_sums_exact,
     )
@@ -496,7 +496,7 @@ def _build_exact_cuda_products(
                 if detector_band_bits is None:
                     chunk_sum_host = cp.asnumpy(chunk_sum_gpu)
                     first_mean = chunk_sum_host.astype(np.float32) / float(stop - start)
-                    first_center, first_radius = auto_probe(first_mean)
+                    first_center, first_radius = fit_probe(first_mean)
                     provisional_center = (
                         float(first_center[0]),
                         float(first_center[1]),
@@ -610,7 +610,7 @@ def _build_exact_cuda_products(
             raise RuntimeError("Screening bootstrap geometry was not initialized")
 
         mean_dp = detector_sum.astype(np.float32) / float(full_frame_count)
-        center, radius = auto_probe(mean_dp)
+        center, radius = fit_probe(mean_dp)
         authoritative_masks = _band_masks(center, radius, detector_shape)
         masks_identical = all(
             np.array_equal(provisional_masks[name], authoritative_masks[name])

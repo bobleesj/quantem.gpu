@@ -398,7 +398,7 @@ def _build_cuda_products(
 
     import cupy as cp
 
-    from quantem.gpu.detector import auto_probe, detector_mask, mean_dp
+    from quantem.gpu.detector import fit_probe, detector_mask, mean as detector_mean
     from quantem.gpu.detector.backends.cuda.kernels import (
         cuda_center_of_mass,
         cuda_masked_sum,
@@ -446,8 +446,8 @@ def _build_cuda_products(
         sample_load_s = time.perf_counter() - sample_t0
 
         dp_t0 = time.perf_counter()
-        dp = mean_dp(sample.data)
-        center, radius = auto_probe(dp)
+        dp = detector_mean(sample.data)
+        center, radius = fit_probe(dp)
         bf_mask = detector_mask(center, 0.0, radius, dp.shape)
         df_mask = detector_mask(center, radius, np.inf, dp.shape)
         cp.cuda.Stream.null.synchronize()
@@ -491,8 +491,8 @@ def _build_cuda_products(
         data = result.data
         if dp is None:
             product_t0 = time.perf_counter()
-            dp = mean_dp(data)
-            center, radius = auto_probe(dp)
+            dp = detector_mean(data)
+            center, radius = fit_probe(dp)
             bf_mask = detector_mask(center, 0.0, radius, dp.shape)
             df_mask = detector_mask(center, radius, np.inf, dp.shape)
             cp.cuda.Stream.null.synchronize()
@@ -549,7 +549,7 @@ def _build_cuda_products(
     provisional_bf_mask = np.asarray(bf_mask, dtype=bool)
     provisional_df_mask = np.asarray(df_mask, dtype=bool)
     dp = detector_sum.astype(np.float32) / float(full_frame_count)
-    center, radius = auto_probe(dp)
+    center, radius = fit_probe(dp)
     bf_mask = detector_mask(center, 0.0, radius, dp.shape)
     df_mask = detector_mask(center, radius, np.inf, dp.shape)
     masks_identical = bool(
@@ -713,7 +713,7 @@ def _build_mps_products(
     verbose: bool,
     skip_mps_memory_check: bool | None,
 ) -> ScreeningResult:
-    from quantem.gpu.detector import auto_probe, detector_mask
+    from quantem.gpu.detector import fit_probe, detector_mask
     from quantem.gpu.dpc.workflow import find_optimal_rotation
     from quantem.gpu.io import inspect as inspect_source
     from quantem.gpu.io import load
@@ -759,7 +759,7 @@ def _build_mps_products(
         dp_t0 = time.perf_counter()
         sample_frames = _mps_chunked_frames_for(sample.data)
         dp = _mps_mean_dp(sample_frames)
-        center, radius = auto_probe(dp)
+        center, radius = fit_probe(dp)
         bf_mask = detector_mask(center, 0.0, radius, dp.shape)
         df_mask = detector_mask(center, radius, np.inf, dp.shape)
         sample_product_s = time.perf_counter() - dp_t0
@@ -804,7 +804,7 @@ def _build_mps_products(
         if dp is None:
             product_t0 = time.perf_counter()
             dp = _mps_mean_dp(frames)
-            center, radius = auto_probe(dp)
+            center, radius = fit_probe(dp)
             bf_mask = detector_mask(center, 0.0, radius, dp.shape)
             df_mask = detector_mask(center, radius, np.inf, dp.shape)
             sample_product_s = time.perf_counter() - product_t0
@@ -860,7 +860,7 @@ def _build_mps_products(
     provisional_bf_mask = np.asarray(bf_mask, dtype=bool)
     provisional_df_mask = np.asarray(df_mask, dtype=bool)
     dp = detector_sum.astype(np.float32) / float(full_frame_count)
-    center, radius = auto_probe(dp)
+    center, radius = fit_probe(dp)
     bf_mask = detector_mask(center, 0.0, radius, dp.shape)
     df_mask = detector_mask(center, radius, np.inf, dp.shape)
     masks_identical = bool(

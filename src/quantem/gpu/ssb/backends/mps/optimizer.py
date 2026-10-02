@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import numpy as np
 
-from quantem.gpu.detector import mean_dp
+from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.ssb.results import SSBResult
 
 from .engine import (
@@ -75,7 +75,7 @@ def optimize(
         if isinstance(frames, MpsBfColumnFrames)
         else None
     )
-    dp = None if stored_dc is not None else mean_dp(frames)
+    dp = None if stored_dc is not None else detector_mean(frames)
     selection = _resolve_bf_selection(
         frames,
         bf_intensity_threshold,

@@ -55,7 +55,7 @@ def _run_fake_mps_screening(monkeypatch, tmp_path, chunks):
         metadata={"detector_shape": (2, 2), "dtype": "uint16"},
     ))
     monkeypatch.setattr(io, "load", fake_load)
-    monkeypatch.setattr(detector, "auto_probe", fake_auto_probe)
+    monkeypatch.setattr(detector, "fit_probe", fake_auto_probe)
     monkeypatch.setattr(detector, "detector_mask", fake_detector_mask)
     monkeypatch.setattr(
         dpc_workflow,

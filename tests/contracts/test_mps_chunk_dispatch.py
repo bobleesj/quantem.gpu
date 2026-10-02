@@ -162,7 +162,7 @@ def test_marked_mps_io_source_is_wrapped_before_detector_compute(monkeypatch):
     monkeypatch.setattr(mps, "ChunkedFrames", FakeChunkedFrames)
     monkeypatch.setattr(backends, "compute_backend", fake_compute_backend)
 
-    out = detector.mean_dp(_MarkedChunkSource())
+    out = detector.mean(_MarkedChunkSource())
 
     np.testing.assert_array_equal(out, np.ones((3, 3), dtype=np.float32))
     assert len(calls) == 1

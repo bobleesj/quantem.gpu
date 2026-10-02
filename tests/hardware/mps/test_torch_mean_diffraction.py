@@ -15,7 +15,7 @@ def test_uint16_mean_diffraction_preserves_counts_before_output_conversion():
     )
     counts[0, 0] = 65535
     expected = counts.sum(axis=(0, 1), dtype=np.uint64).astype(np.float32) / 16
-    result = detector.mean_dp(torch.as_tensor(counts, device="mps"))
+    result = detector.mean(torch.as_tensor(counts, device="mps"))
     np.testing.assert_array_equal(result, expected)
 
 
@@ -24,5 +24,5 @@ def test_float32_mean_diffraction_keeps_fractional_intensities():
     if not torch.backends.mps.is_available():
         pytest.skip("A Torch MPS device is required for mean diffraction.")
     values = np.arange(4 * 4 * 8 * 8, dtype=np.float32).reshape(4, 4, 8, 8) / 8
-    result = detector.mean_dp(torch.as_tensor(values, device="mps"))
+    result = detector.mean(torch.as_tensor(values, device="mps"))
     np.testing.assert_array_equal(result, values.mean(axis=(0, 1)))

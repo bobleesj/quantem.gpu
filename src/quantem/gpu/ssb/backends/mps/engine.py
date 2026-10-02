@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.detector import auto_probe, mean_dp
+from quantem.gpu.detector import fit_probe, mean as detector_mean
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.bf_selector import BrightfieldDisk
 from quantem.gpu.ssb.results import SSBResult
@@ -340,7 +340,7 @@ class MpsBfColumnFrames:
             raise ValueError("detector_bin must be a positive integer.")
         self.source_provenance = dict(source_provenance or {})
         self.vi = _BfColumnDetectorView(self.det_shape)
-        # detector.mean_dp recognizes GPU-frame objects through the common
+        # detector.mean recognizes GPU-frame objects through the common
         # chunk-backed dispatch. No detector chunks are present by design.
         self.chunks = ()
         expected_bytes = selection.size * self._n * self._np_dtype.itemsize
@@ -875,9 +875,9 @@ def _resolve_bf_selection(
             )
         return data.selection
 
-    dp = mean_dp(data) if mean_diffraction is None else mean_diffraction
+    dp = detector_mean(data) if mean_diffraction is None else mean_diffraction
     if bf_radius is None:
-        detected_center, detected_radius = auto_probe(dp)
+        detected_center, detected_radius = fit_probe(dp)
     else:
         detected_center, detected_radius = _detect_bf_radius_numpy(dp)
     mask = dp > float(dp.max()) * float(threshold)

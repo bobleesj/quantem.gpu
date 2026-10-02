@@ -99,7 +99,7 @@ def test_mps_exact_refinement_caches_identical_float32_inputs() -> None:
 def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> None:
     """C1: exact BF companion, expect MPS sums and coordinate-only gathers."""
     pytest.importorskip("mlx.core")
-    from quantem.gpu.detector import mean_dp
+    from quantem.gpu.detector import mean as detector_mean
     from quantem.gpu.ssb.backends.mps.engine import (
         _resolve_bf_selection,
         load_bf_columns_mps,
@@ -152,7 +152,7 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     )
     expected_dp = np.zeros((4, 5), dtype=np.float32)
     expected_dp[bf_rows, bf_cols] = columns.sum(axis=1) / 16
-    np.testing.assert_array_equal(mean_dp(frames), expected_dp)
+    np.testing.assert_array_equal(detector_mean(frames), expected_dp)
     selection = _resolve_bf_selection(
         frames,
         threshold=0.5,
@@ -1902,8 +1902,8 @@ def test_mps_auto_bf_applies_detected_probe_disk(monkeypatch) -> None:
     from quantem.gpu.ssb.backends.mps import engine as mps
 
     dp = np.ones((9, 9), dtype=np.float32)
-    monkeypatch.setattr(mps, "mean_dp", lambda _data: dp)
-    monkeypatch.setattr(mps, "auto_probe", lambda _dp: ((4.0, 4.0), 2.2))
+    monkeypatch.setattr(mps, "detector_mean", lambda _data: dp)
+    monkeypatch.setattr(mps, "fit_probe", lambda _dp: ((4.0, 4.0), 2.2))
 
     selection = mps._resolve_bf_selection(
         object(),
@@ -1930,8 +1930,8 @@ def test_mps_auto_bf_can_reuse_the_computed_mean_dp(monkeypatch) -> None:
     def fail_mean_dp(_data):
         raise AssertionError("mean_dp must not run when evidence is supplied")
 
-    monkeypatch.setattr(mps, "mean_dp", fail_mean_dp)
-    monkeypatch.setattr(mps, "auto_probe", lambda _dp: ((4.0, 4.0), 2.2))
+    monkeypatch.setattr(mps, "detector_mean", fail_mean_dp)
+    monkeypatch.setattr(mps, "fit_probe", lambda _dp: ((4.0, 4.0), 2.2))
 
     selection = mps._resolve_bf_selection(
         object(),

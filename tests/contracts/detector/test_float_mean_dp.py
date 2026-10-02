@@ -9,7 +9,7 @@ with "No bright-field pixels found". Integer counts still accumulate in uint64.
 import numpy as np
 import pytest
 
-from quantem.gpu.detector import masked_sum, mean_dp
+from quantem.gpu.detector import masked_sum, mean as detector_mean
 from quantem.gpu.ssb.backends.mps.engine import _resolve_bf_selection
 
 SCALE = 1000.0
@@ -30,7 +30,7 @@ def test_float_mean_dp_matches_scaled_counts():
     intensities = (counts / SCALE).astype(np.float32)
     assert intensities.max() < 1.0
     np.testing.assert_allclose(
-        mean_dp(intensities) * SCALE, mean_dp(counts), rtol=1e-6
+        detector_mean(intensities) * SCALE, detector_mean(counts), rtol=1e-6
     )
 
 
@@ -57,7 +57,33 @@ def test_float_masked_sum_matches_scaled_counts():
 def test_integer_mean_dp_stays_exact():
     counts = _bright_disk_counts()
     expected = counts.sum(axis=(0, 1), dtype=np.uint64) / (8 * 8)
-    np.testing.assert_array_equal(mean_dp(counts), expected.astype(np.float32))
+    np.testing.assert_array_equal(detector_mean(counts), expected.astype(np.float32))
+
+
+def test_reuse_fitted_disk_for_bright_and_dark_field(monkeypatch):
+    """Fit once, then make several detector images with the same geometry."""
+    from quantem.gpu import detector
+
+    data = _bright_disk_counts()
+    mean_dp = detector.mean(data)
+    center, radius = detector.fit_probe(mean_dp)
+    assert center == (16.0, 15.0)
+    assert radius == np.sqrt(113 / np.pi)
+
+    def already_computed(_data):
+        raise AssertionError("Supplied geometry must reuse the existing fit.")
+
+    monkeypatch.setattr(detector.workflow, "mean", already_computed)
+    rows, columns = np.indices(mean_dp.shape)
+    distance = np.hypot(rows - center[0], columns - center[1])
+    bright = detector.bf(data, center=center, radius=radius)
+    dark = detector.df(data, center=center, radius=radius)
+    np.testing.assert_array_equal(
+        bright, data[..., distance <= radius].sum(axis=-1, dtype=np.uint64)
+    )
+    np.testing.assert_array_equal(
+        dark, data[..., distance >= radius].sum(axis=-1, dtype=np.uint64)
+    )
 
 
 
@@ -69,9 +95,9 @@ def test_cuda_float_mean_dp_matches_scaled_counts():
 
     counts = _bright_disk_counts()
     intensities = (counts / SCALE).astype(np.float32)
-    expected = mean_dp(counts)
+    expected = detector_mean(counts)
     np.testing.assert_allclose(
-        mean_dp(cp.asarray(intensities)) * SCALE, expected, rtol=1e-6
+        detector_mean(cp.asarray(intensities)) * SCALE, expected, rtol=1e-6
     )
     np.testing.assert_allclose(
         cuda_mean_dp(cp.asarray(intensities)).get() * SCALE, expected, rtol=1e-6

@@ -193,9 +193,9 @@ def _bright_field_crop(
     ``bf_radius`` around the weighted centroid), so the crop plus the pinned centre selects exactly the pixels a
     full-detector session would (tests/hardware/cuda/test_ssb_open_encoded.py).
     """
-    from quantem.gpu.detector.workflow import mean_dp
+    from quantem.gpu.detector.workflow import mean as detector_mean
 
-    dp = np.asarray(mean_dp(loaded), dtype=np.float64)
+    dp = np.asarray(detector_mean(loaded), dtype=np.float64)
     calibration_radius = None
     if backend == "cuda" and calibrate_detector:
         import cupy as cp

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.detector import mean_dp
+from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.results import SSBResult
 
@@ -242,7 +242,7 @@ class MpsSSBBackend:
             else None
         )
         mean_diffraction = (
-            None if stored_dc is not None else np.asarray(mean_dp(self._frames))
+            None if stored_dc is not None else np.asarray(detector_mean(self._frames))
         )
         self._selection = _resolve_bf_selection(
             self._frames,

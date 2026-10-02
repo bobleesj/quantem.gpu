@@ -848,8 +848,27 @@ def _semiangle_mrad(data):
     return getattr(data, "semiangle_mrad", None)
 
 
-def mean_dp(data) -> np.ndarray:
-    """Mean diffraction pattern for array/load/core-dataset/MPS inputs."""
+def mean(data) -> np.ndarray:
+    """Average scan positions into one mean diffraction pattern.
+
+    Parameters
+    ----------
+    data
+        One supported 4D acquisition or array, ordered as scan row, scan
+        column, detector row, detector column. Uses the source's detector
+        backend without constructing a dense copy of the acquisition.
+
+    Returns
+    -------
+    numpy.ndarray
+        Mean intensity with shape ``(detector_row, detector_column)``.
+        Only this reduced pattern is transferred to the host.
+
+    Examples
+    --------
+    >>> mean_dp = detector.mean(data)
+    >>> center, radius = detector.fit_probe(mean_dp)
+    """
     return _reduced_to_numpy(_resolve_backend(data).mean_dp())
 
 
@@ -862,12 +881,33 @@ def masked_sum(data, det_mask) -> np.ndarray:
     return prepare(data).masked_sum(det_mask)
 
 
-def auto_probe(mean_dp):
-    """Detect the probe (BF disk) from the mean diffraction pattern.
+def fit_probe(mean_dp: np.ndarray) -> tuple[tuple[float, float], float]:
+    """Estimate the bright-field disk center and radius.
 
-    Threshold at ``mean + std``, take the centroid of the bright disk for the
-    center, and ``radius = sqrt(area / pi)``. Matches Show4DSTEM.auto_detect_center.
-    Returns ``((center_row, center_col), bf_radius)``.
+    Parameters
+    ----------
+    mean_dp : numpy.ndarray
+        A 2D mean diffraction pattern, typically from :func:`mean`.
+
+    Returns
+    -------
+    center : tuple[float, float]
+        Disk center in ``(row, column)`` detector pixels.
+    radius : float
+        Equivalent-area disk radius in detector pixels.
+
+    Notes
+    -----
+    Uses a threshold of ``mean + std`` (population standard deviation), the
+    unweighted centroid of the selected pixels, and ``sqrt(area / pi)``.
+    This estimates disk geometry, not complex probe phase or aberrations.
+    If no pixels exceed the threshold, returns the detector midpoint and
+    one quarter of its smaller dimension as the radius.
+
+    Examples
+    --------
+    >>> center, radius = detector.fit_probe(detector.mean(data))
+    >>> bright = detector.bf(data, center=center, radius=radius)
     """
     dp = np.asarray(mean_dp, dtype=np.float32)
     thr = float(dp.mean()) + float(dp.std())
@@ -963,7 +1003,7 @@ def _to_px(data, value: float, unit: str, radius: float) -> float:
 def _probe(data, center=None, radius=None):
     if center is not None and radius is not None:
         return (float(center[0]), float(center[1])), float(radius)
-    auto_center, auto_radius = auto_probe(mean_dp(data))
+    auto_center, auto_radius = fit_probe(mean(data))
     center = (float(center[0]), float(center[1])) if center is not None else auto_center
     radius = float(radius) if radius is not None else auto_radius
     return center, radius
@@ -973,9 +1013,9 @@ def _detector_image(data, center, lo_px: float, hi_px: float) -> np.ndarray:
     """Masked-sum image over the annulus ``lo_px .. hi_px`` detector pixels.
     Stateless - builds the mask via :func:`detector_mask` and runs the
     shared-backend masked-sum each call."""
-    backend = _resolve_backend(data)
-    mask = detector_mask(center, lo_px, hi_px, backend.det_shape)
-    return _reduced_to_numpy(backend.masked_sum(mask)).reshape(backend.scan_shape)
+    session = prepare(data)
+    mask = detector_mask(center, lo_px, hi_px, session.detector_shape)
+    return session.masked_sum(mask)
 
 
 def bf(data, center=None, radius=None) -> np.ndarray:
@@ -1017,12 +1057,12 @@ def virtual(data, mode="BF", *, center=None, bf_radius=None, inner=None, outer=N
     units) define a custom band when ``mode="annular"``. Returns a 2D float array
     (detector-space for DP, scan-space otherwise) for ``Show2D``.
     """
-    dp = mean_dp(data)
+    dp = mean(data)
     mode = str(mode).strip().upper()
     if mode == "DP":
         return dp
     if center is None or bf_radius is None:
-        c_auto, r_auto = auto_probe(dp)
+        c_auto, r_auto = fit_probe(dp)
         center = center if center is not None else c_auto
         bf_radius = bf_radius if bf_radius is not None else r_auto
     mask = _detector_mask(mode, center, bf_radius, dp.shape, inner, outer)

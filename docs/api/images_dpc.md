@@ -8,7 +8,8 @@ They do not own presentation, cache policy, or automatic resource choices.
 
 | Call | Input | Output |
 |---|---|---|
-| `detector.mean_dp(data)` | one supported 4D source | detector-shaped mean diffraction pattern |
+| `detector.mean(data)` | one supported 4D source | detector-shaped mean diffraction pattern |
+| `detector.fit_probe(mean_dp)` | 2D mean diffraction pattern | `(row, column)` center and equivalent-area radius, in detector pixels |
 | `detector.bf(data, ...)` | 4D source plus bright-field geometry | scan-shaped bright-field sum |
 | `detector.adf(data, ...)` | 4D source plus annular limits | scan-shaped annular dark-field sum |
 | `detector.df(data, ...)` | 4D source plus inner limit | scan-shaped dark-field sum |
@@ -50,19 +51,26 @@ product and must not be labeled native detector resolution.
 ## Minimal example
 
 ```python
-from quantem.gpu import detector, dpc, io
+from quantem.gpu import detector, io
 
-loaded = io.load("scan_master.h5", backend="auto", detector_bin=1)
+loaded = io.load("scan_master.h5")
 
-bright_field = detector.bf(loaded.data)
+mean_dp = detector.mean(loaded)
+center, radius = detector.fit_probe(mean_dp)
+bright_field = detector.bf(loaded, center=center, radius=radius)
 annular_dark_field = detector.adf(
-    loaded.data,
+    loaded,
     inner=40,
     outer=90,
     unit="px",
+    center=center,
+    radius=radius,
 )
-dpc_result = dpc.run(loaded.data)
 ```
+
+`fit_probe` retains the threshold/centroid estimator and estimates disk geometry,
+not complex probe phase or aberrations. Supplying the fitted geometry to each
+detector call avoids repeated mean-pattern reductions.
 
 For a client that needs several launch products from the same source, use
 `screening.prepare()` and reuse its small derived state instead of traversing

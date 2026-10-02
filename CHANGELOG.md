@@ -6,6 +6,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Rename `detector.mean_dp(data)` to `detector.mean(data)` and
+  `detector.auto_probe(mean_dp)` to `detector.fit_probe(mean_dp)`, preserving
+  the disk estimator. Update callers together; the previous names are removed.
+  BF/ADF/DF now use the shared session reduction for ANS sources. Reuse fitted
+  geometry across detector calls to avoid repeated mean-pattern reductions.
+
 - Decode selected detector streams directly for CUDA streamed integer ANS
   indexing, preserving exact values while avoiding full-pattern expansion
   for detector-pixel scan images and detector crops.

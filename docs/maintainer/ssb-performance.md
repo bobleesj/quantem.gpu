@@ -388,7 +388,7 @@ than recorded as a regression.
 ## Automatic full-probe MPS optimizer, 2026-07-26
 
 The production MPS auto-BF path now applies the disk returned by the shared
-`quantem.gpu.detector.auto_probe` fit when `bf_radius=None`. Previously it
+`quantem.gpu.detector.fit_probe` fit when `bf_radius=None`. Previously it
 computed an automatic radius but did not use that radius to filter positive
 detector pixels. The GPU mean-DP reduction remains the expensive detector
 operation; fitting the center/radius from the resulting `192x192` image is a
