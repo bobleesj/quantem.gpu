@@ -128,12 +128,14 @@ To keep several acquisitions resident without a dense 5D stack:
 
 ```python
 series = io.load(paths, stack=False)
-try:
-    acquisition = series[1]  # second acquisition, in paths order
-    pattern = acquisition[0, 0]
-finally:
-    for acquisition in series:
-        acquisition.close()
+show_2d(series[1][10, 12], norm="power_sqrt")
+```
+
+When finished with the series:
+
+```python
+for acquisition in series:
+    acquisition.close()
 ```
 
 `series[1]` selects an acquisition; `series[1][10, 12]` selects its pattern
