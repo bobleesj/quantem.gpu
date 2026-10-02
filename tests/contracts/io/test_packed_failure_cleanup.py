@@ -57,23 +57,24 @@ def test_failed_mps_metadata_releases_storage_and_preserves_error(
         assert "injected release failure" in failure.__notes__[0]
 
 
+@pytest.mark.parametrize("backend", ["cuda", "mps"])
 @pytest.mark.parametrize("expected_sha256", [None, "a" * 64])
-def test_packed_mps_ssb_rejects_before_any_source_allocation(
-    tmp_path, monkeypatch, expected_sha256
+def test_packed_ssb_rejects_before_any_source_allocation(
+    tmp_path, monkeypatch, expected_sha256, backend
 ):
     source = tmp_path / "packed.h5"
     source.write_bytes(b"QGPUH5\0\1")
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "mps")
+    monkeypatch.setattr(workflow, "_resolve_backend", lambda _: backend)
 
     def must_not_allocate(*args, **kwargs):
-        pytest.fail("Unsupported packed MPS SSB must not load any source")
+        pytest.fail("Unsupported packed SSB must not load any source")
 
     monkeypatch.setattr(io, "load", must_not_allocate)
     monkeypatch.setattr(workflow, "_mps_brightfield_sources", must_not_allocate)
     with pytest.raises(NotImplementedError, match="Reopen the original acquisition"):
         SSB.open(
             str(source),
-            backend="mps",
+            backend=backend,
             expected_source_sha256=expected_sha256,
             voltage_kV=300,
             semiangle_mrad=25,

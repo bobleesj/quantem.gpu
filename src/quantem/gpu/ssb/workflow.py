@@ -99,7 +99,7 @@ def _validate_aberrations(
 # it takes and returns are Angstrom; before 2026-09-24 they were passed through and reported as "nm" (known-defocus check:
 # abTEM C10 = -100 A came back as C10 = -100.26 "nm"). The SSB session now converts at this boundary so C10 / C12 and the
 # sample thickness are true nm everywhere users see them, while kernels, backend parity tests and fixtures keep Angstrom.
-# Files written before the fix carry Angstrom under an nm label and no "aberration_unit" marker; they are read as Angstrom.
+# Records must declare nm explicitly; older records require a fresh fit.
 # ---------------------------------------------------------------------------
 
 _ENGINE_PER_NM = 10.0
@@ -151,14 +151,6 @@ def _result_from_engine(result: SSBResult) -> SSBResult:
             converted.append({**trial, "params": params})
         result.optuna_trials = converted
     return result
-
-
-def _saved_aberrations_nm(settings: dict[str, object]) -> dict[str, float]:
-    """Aberrations from a Live / GPU fit record in nm: records without ``aberration_unit`` predate the fix (Angstrom)."""
-    aberrations = dict(settings["aberrations"])
-    if settings.get("aberration_unit") == ABERRATION_UNIT:
-        return aberrations
-    return _aberrations_from_engine(aberrations)
 
 
 def _resolve_backend(
@@ -487,8 +479,10 @@ def _screen_fit_settings(screen_path: Path) -> dict[str, object] | None:
         config = json.loads(config_path.read_text())
         settings = (config.get("computed") or {}).get("ssb") or {}
         if "aberrations" in settings and "rotation_angle_deg" in settings:
+            if settings.get("aberration_unit") != ABERRATION_UNIT:
+                raise ValueError("Saved SSB fit must declare aberration_unit='nm'. Rerun the probe fit to save a current record.")
             rotation = physical_rotation_deg(float(settings["rotation_angle_deg"]), bool(settings.get("com_reversed", False)))
-            return {**settings, "aberrations": _saved_aberrations_nm(settings), "aberration_unit": ABERRATION_UNIT,
+            return {**settings, "aberrations": _validate_aberrations(settings["aberrations"]), "aberration_unit": ABERRATION_UNIT,
                     "rotation_angle_deg": rotation}
     metadata_path = screen_path / "ssb-fit" / "ssb-fit.json"
     if metadata_path.is_file():
@@ -499,10 +493,10 @@ def _screen_fit_settings(screen_path: Path) -> dict[str, object] | None:
         if rotation is not None:
             rotation = physical_rotation_deg(float(rotation), bool(result.get("com_reversed", False)))
         if aberrations is not None and rotation is not None:
-            # ssb-fit.json is a saved SSBResult; schema 2 onwards stores nm (see _persistence.SCHEMA)
-            unit = ABERRATION_UNIT if int(metadata.get("schema", 1)) >= 2 else "A"
+            if metadata.get("schema") != SCHEMA:
+                raise ValueError(f"Saved SSB fit must use schema {SCHEMA}. Rerun the probe fit to save a current record.")
             return {
-                "aberrations": _saved_aberrations_nm({"aberrations": aberrations, "aberration_unit": unit}),
+                "aberrations": _validate_aberrations(aberrations),
                 "aberration_unit": ABERRATION_UNIT,
                 "rotation_angle_deg": rotation,
             }
@@ -577,7 +571,7 @@ class SSB:
         self.calibration_path: str | None = None
         self.source_manifest_path: str | None = None
         self.source_storage_path = source_path
-        self.source_kind: Literal["array", "detector", "bf_columns", "packed_detector"] = "array"
+        self.source_kind: Literal["array", "detector", "bf_columns"] = "array"
         self.source_dtype = str(data.dtype)
         self.source_bytes = int(data.nbytes)
         self.source_detector_bin = int(getattr(data, "det_bin", 1) or 1)
@@ -964,27 +958,22 @@ class SSB:
             source_dtype = str(loaded.dtype)
             source_bytes = loaded.logical_bytes
             source_load_seconds = time.perf_counter() - load_started
-        try:
-            session = cls(
-                data,
-                backend=selected,
-                voltage_kV=voltage_kV,
-                semiangle_mrad=semiangle_mrad,
-                scan_sampling_A=scan_sampling_A,
-                scan_shape=scan_shape,
-                det_sampling=det_sampling,
-                aberrations=aberrations,
-                rotation_angle_deg=rotation_angle_deg,
-                com_reversed=com_reversed,
-                bf_intensity_threshold=bf_intensity_threshold,
-                bf_radius=bf_radius,
-                source_path=str(source),
-                bf_center=bf_center,
-            )
-        except BaseException as error:
-            if source_kind == "packed_detector":
-                _release_owned_storage(data, failure=error)
-            raise
+        session = cls(
+            data,
+            backend=selected,
+            voltage_kV=voltage_kV,
+            semiangle_mrad=semiangle_mrad,
+            scan_sampling_A=scan_sampling_A,
+            scan_shape=scan_shape,
+            det_sampling=det_sampling,
+            aberrations=aberrations,
+            rotation_angle_deg=rotation_angle_deg,
+            com_reversed=com_reversed,
+            bf_intensity_threshold=bf_intensity_threshold,
+            bf_radius=bf_radius,
+            source_path=str(source),
+            bf_center=bf_center,
+        )
         session.source_kind = source_kind
         auto_calibration = (
             session.source_provenance.get("calibration_path")

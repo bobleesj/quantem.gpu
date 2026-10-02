@@ -266,3 +266,30 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
 
     assert reused.reused
     assert isinstance(reused.object_wave, cp.ndarray)
+
+
+def test_reused_screen_fit_requires_explicit_current_units(tmp_path):
+    """A saved probe fit is reused without rescaling; ambiguous older fits need refitting."""
+    import json
+    import pytest
+    from quantem.gpu.ssb.workflow import _screen_fit_settings
+    from quantem.gpu.ssb._persistence import SCHEMA
+
+    aberrations = {"C10": 10.0, "C12": 2.0, "phi12": 0.3}
+    config = tmp_path / "config.json"
+    settings = {"aberrations": aberrations, "rotation_angle_deg": 30.0,
+                "aberration_unit": "nm"}
+    config.write_text(json.dumps({"computed": {"ssb": settings}}))
+    assert _screen_fit_settings(tmp_path)["aberrations"] == aberrations
+    del settings["aberration_unit"]
+    config.write_text(json.dumps({"computed": {"ssb": settings}}))
+    with pytest.raises(ValueError, match="Rerun the probe fit"):
+        _screen_fit_settings(tmp_path)
+    config.unlink()
+    saved = tmp_path / "ssb-fit" / "ssb-fit.json"
+    saved.parent.mkdir()
+    saved.write_text(json.dumps({"schema": SCHEMA, "result": settings}))
+    assert _screen_fit_settings(tmp_path)["aberrations"] == aberrations
+    saved.write_text(json.dumps({"schema": SCHEMA - 1, "result": settings}))
+    with pytest.raises(ValueError, match="Rerun the probe fit"):
+        _screen_fit_settings(tmp_path)

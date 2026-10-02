@@ -4,7 +4,6 @@
   "tests/io/test_compact_h5.py": "tests/contracts/io/test_compact_h5.py",
   "tests/io/test_compact_h5_cuda.py": "tests/hardware/cuda/test_compact_h5_cuda.py",
   "tests/io/test_compact_h5_uint16_builder.py": "tests/contracts/io/test_compact_h5_uint16_builder.py",
-  "tests/io/test_cuda_packed_ssb.py": "tests/hardware/cuda/test_cuda_packed_ssb.py",
   "tests/io/test_cuda_public_workflow.py": "tests/hardware/cuda/test_cuda_public_workflow.py",
   "tests/io/test_load.py": "tests/contracts/io/test_load.py",
   "tests/io/test_mps_buffer_release.py": "tests/hardware/mps/test_mps_buffer_release.py",

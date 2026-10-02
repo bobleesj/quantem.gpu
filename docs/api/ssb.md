@@ -72,8 +72,8 @@ higher-order aberrations.
 When migrating hard-coded aberrations from releases before the nm correction,
 divide old C10/C12 numbers and search bounds by 10. For example, an old value of
 100 represented 100 Å and should now be supplied as 10 nm. Do not rescale angles
-or values already recorded in nm. Saved records without an aberration-unit
-marker are converted by the loader.
+or values already recorded in nm. Saved records must declare nm explicitly and use the current schema.
+Rerun the probe fit for older records; the loader does not guess their units.
 
 ## Errors and unsupported requests
 

@@ -9,8 +9,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 - SSB C10/C12 values and search ranges now use nanometers at the public API.
   Earlier releases passed angstrom values under nm labels: divide manually
   retained C10/C12 numbers and search bounds by 10 when migrating. For example,
-  an old input of 100 now becomes 10 nm. Angles remain radians. Legacy saved
-  results without an aberration-unit marker are converted on loading.
+  an old input of 100 now becomes 10 nm. Angles remain radians. Saved fits must
+  declare nm and use the current schema; rerun old fits rather than silently
+  converting their units.
 - CUDA SSB previews support 1x, 2x, 3x, 4x and 8x output sampling, including
   tilt/depth correction with C10/C12. Fitting and diagnostic loss remain on
   the native scan grid. Higher-order aberrations and upsampled MPS/WebGPU
