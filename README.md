@@ -49,16 +49,20 @@ Supported acquisitions use ANS storage on CUDA or MPS; `.qem` reopens its
 saved encoding. Automatic backend selection never silently falls back to CPU.
 Install `quantem` for `show_2d`, and GPU-enabled PyTorch for array indexing.
 
-### One diffraction pattern
+The indexing order stays the same for every selection:
+
+```text
+data[scan_row, scan_column, detector_row, detector_column]
+```
+
+### Load and look at one pattern
 
 ```python
 from quantem.gpu import io
 from quantem.core.visualization import show_2d
 
-# Keep data open while working through these examples.
 data = io.load("gold_master.h5")
-pattern = data[10, 12]
-show_2d(pattern, norm="power_sqrt", title="Gold: scan (10, 12)")
+show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
 
 Indexing returns a GPU tensor; `show_2d` handles it directly. The gold source
@@ -66,10 +70,18 @@ flags four detector pixels; default loading applies median hot-pixel
 correction. Use `hot_pixel_correction="none"` when loading to retain the
 original measurements.
 
-### Several diffraction patterns
+Inspect the acquisition without decoding the whole array:
 
 ```python
-show_2d([data[10, 12], data[8, 10], data[0, 0]], norm="power_sqrt")
+data.shape     # (512, 512, 192, 192): scan axes, then detector axes
+data.dtype     # measurement dtype
+data.metadata  # retained calibration and source information
+```
+
+### Compare several positions
+
+```python
+show_2d([data[10, 12], data[8, 10], data[0, 0]], norm="power_sqrt")  # three positions
 ```
 
 ![Three gold diffraction patterns](docs/_static/gold-multiple-patterns.png)
@@ -77,7 +89,7 @@ show_2d([data[10, 12], data[8, 10], data[0, 0]], norm="power_sqrt")
 For a rectangular patch of **scan positions**, read a GPU tensor:
 
 ```python
-patterns = data[8:12, 10:16]
+patterns = data[8:12, 10:16]  # 4 × 6 scan positions; full detector
 print(patterns.shape)  # (4, 6, 192, 192): 24 diffraction patterns
 ```
 
@@ -89,22 +101,16 @@ select a smaller region to limit memory. Metadata stays in `data.metadata`.
 ### One detector pixel across the scan
 
 ```python
-show_2d(data[:, :, 95, 100], norm="power_sqrt")
+show_2d(data[:, :, 95, 100], norm="power_sqrt")  # one detector pixel, all positions
 ```
 
 This returns a scan image: the value at detector pixel `(95, 100)` at every
-specimen position. The axes are always scan row, scan column, detector row,
-detector column.
+specimen position. `:` means keep every value along that axis.
 
 ### A region inside a diffraction pattern
 
 ```python
-patch = data[10, 12, 64:128, 64:128]
-print(patch.shape)  # (64, 64)
-show_2d(
-    [pattern, patch], norm="power_sqrt", axsize=(3.5, 3.5),
-    title=["Full detector", "Detector crop: [64:128, 64:128]"],
-)
+show_2d(data[10, 12, 64:128, 64:128], norm="power_sqrt")  # crop at one position
 ```
 
 ![Gold diffraction pattern and detector crop](docs/_static/gold-pattern-crop.png)
@@ -114,8 +120,14 @@ zero locally; add 64 to recover original detector coordinates. Square-root
 contrast is display-only, scaled independently per panel. The crop matched
 the full loaded pattern's pixels exactly on CUDA.
 
-Use `data[8:12, 10:16, 64:128, 64:128]` to crop several patterns. Selection
-does not bin or interpolate pixels. CUDA streamed integer ANS data decode
+Apply the same detector crop at several scan positions:
+
+```python
+patches = data[8:12, 10:16, 64:128, 64:128]  # crop at 24 positions
+print(patches.shape)  # (4, 6, 64, 64)
+```
+
+Selection does not bin or interpolate pixels. CUDA streamed integer ANS data decode
 only the selected detector streams; other storage profiles may decode whole
 frames. Strided slices decode their bounding region before selecting values.
 
@@ -139,7 +151,7 @@ To keep several acquisitions resident without a dense 5D stack:
 
 ```python
 series = io.load(paths, stack=False)
-show_2d(series[1][10, 12], norm="power_sqrt")
+show_2d(series[1][10, 12], norm="power_sqrt")  # second acquisition, one position
 ```
 
 When finished with the series:
