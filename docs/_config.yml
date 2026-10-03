@@ -36,6 +36,7 @@ sphinx:
     autoclass_content: "both"
     html_theme_options:
       secondary_sidebar_items: []
+      show_navbar_depth: 1
     html_static_path:
       - "_static"
     html_css_files:

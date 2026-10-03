@@ -1,172 +1,88 @@
-# Read, convert and share QEM from Python
+# Save and share your data
 
-QEM 0.0.1 combines exact measurements with explicit scientific metadata. It is
-an experimental open format. The container is not HDF5; ordinary HDF5 readers
-cannot open it. QuantEM provides GPU readers and an explicit CPU reference path.
-These examples require a development version containing that reference path,
-not the older published app or an assumed PyPI version.
+QEM stores measurements and their scientific metadata together. It provides a
+common Python workflow across supported detector inputs, so a saved acquisition
+can be reopened without the original vendor files. It is an experimental open
+format; use the [current source installation](../install.md) and record its
+Git revision.
 
-## Open and save on your GPU
-
-For notebooks, use `acquisition = io.load("acquisition.npy")` and keep it
-available across cells. Call `acquisition.close()` after the last viewer or
-calculation finishes. The script examples below use `with` for automatic cleanup.
+## Save a loaded acquisition
 
 ```python
 from quantem.gpu import io
 
-with io.load("acquisition.npy") as acquisition:
-    pattern = acquisition[0, 0]
-    io.save("acquisition.qem", acquisition)
+data = io.load("gold_master.h5")
+io.save("gold.qem", data)
 ```
 
-Omit backend, representation and compression options for normal use. The loader
-selects an available CUDA or MPS device, ingests supported originals into ANS,
-and decodes selected products on demand. Saving retains measurements and
-reader-provided metadata. See [supported inputs](io.md) for exact dtype,
-geometry and calibration limits. Python coverage does not certify native Swift.
+Keep `data` open while using it, then call `data.close()`. Saving creates a new
+file and refuses to overwrite an existing destination. No codec configuration
+is needed: supported GPU acquisitions use ANS storage, and saving an encoded
+acquisition retains that storage without expanding the full array.
 
-## Small synthetic CPU reference
+## What is in the file?
+
+| Content | Why it matters |
+|---|---|
+| Detector measurements, shape, and dtype | Reopen the stored values and their array geometry |
+| Sampling, units, and origins | Interpret scan and detector coordinates physically |
+| Microscope fields retained by the reader | Keep voltage, angles, and other available acquisition context |
+| Source metadata and processing history | Know where values came from and which corrections were applied |
+| Integrity checks | Detect damaged or incomplete stored data |
+
+Lossless storage preserves the values being saved. It does not undo preprocessing
+that happened during acquisition or loading. For example, the Gold source's
+flagged-pixel correction is recorded as a change to measurements; use
+`hot_pixel_correction="none"` when loading if you need the original values.
+Missing calibration stays unknown. Retaining vendor tags does not mean that
+every tag has been interpreted or that every proprietary object is archived.
+
+QEM is not an HDF5 container. Open it with QuantEM rather than `h5py`.
+
+## Reopen and inspect
 
 ```python
-import numpy as np
-from quantem.gpu import io
+from quantem.gpu import detector
 
-# Synthetic counts: (scan row, scan column, detector row, detector column).
-counts = np.random.default_rng(7).poisson(2, (8, 12, 16, 16)).astype(np.uint16)
-io.save("example.qem", counts, backend="cpu", metadata={
-    "scan_sampling_A": [0.4, 0.4],
-    "voltage_kV": 300,
-    "source_metadata": {"data_origin": "synthetic example"},
-})
-
-with io.load("example.qem", backend="cpu") as acquisition:
-    np.testing.assert_array_equal(acquisition.data, counts)
-    print(acquisition.metadata["scientific_metadata"])
+saved = io.load("gold.qem")
+bf = detector.bf(saved)
+saved.shape, saved.dtype, saved.sampling, saved.units
+saved.metadata
 ```
 
-An existing destination is never overwritten. CPU reference encoding is for
-portability and verification, not a claim of GPU-like speed. It uses bounded
-encoding chunks; dense CPU decoding still requires RAM for the decoded array.
-For large acquisitions, retain the accelerated encoded path where supported.
+The same indexing and detector calls work after reopening. `saved[10, 12]`
+returns a GPU Torch tensor; `bf` is a reduced NumPy image. Close `saved` when
+finished. Read sampling together with its unit; do not assume an unlabelled
+number is in angstrom, nm, or mrad.
 
-## Inspect metadata without a GPU or full decode
+For a header-only check without a GPU, use `io.inspect("gold.qem")`.
+For a stored-file integrity check:
 
-```python
-info = io.inspect("example.qem")
-metadata = info.metadata["scientific_metadata"]
-row = metadata["axes"][0]
-print(row["name"], row["size"], row["sampling"])
-# scan_row 8 {'value': 0.4, 'unit': 'angstrom', 'provenance': ...}
+```bash
+python -m quantem.gpu.io.qem_validation gold.qem
 ```
 
-Read `value` and `unit` together. Do not assume a number is in meters because a
-different library expects meters. Missing sampling is unknown, not one or zero.
-`source_metadata` retains the reader-provided original tags. Coverage is stated
-explicitly; retaining tags is not a promise to archive every proprietary object.
+Integrity checks detect storage errors; they do not establish the physical
+accuracy of a calibration or the correctness of the original measurements.
 
-The machine-readable contract is
-{download}`qem-metadata-schema-v2.json <../../src/quantem/gpu/io/qem-metadata-schema-v2.json>`.
-JSON Schema checks structure; the package validator additionally checks physical
-consistency, versioning, spans and checksums:
+## Which files can I convert?
 
-```python
-from quantem.gpu.io.qem_validation import validate_qem
-report = validate_qem("example.qem")
-print(report["integrity"], report["codec_layout"])
-```
+Use `io.load(source_path)` followed by `io.save("copy.qem", data)`.
+Supported layouts include qualified HDF5, NCEM EMD, DM3/DM4, NumPy arrays, and
+specified EMPAD float exports. Support depends on dtype and geometry; see the
+[I/O input table](io.md) before converting a new source. DM3/DM4 need the `dm`
+extra. Raw EMPAD2 sensor words are different from calibrated float exports.
+Python MPS/CUDA support does not imply that every native application build
+can open the same geometry or codec.
 
-For a reader in another language, the first 56 bytes locate and authenticate a
-UTF-8 JSON header. Follow the [envelope](qem-format.md) and
-[complete codec definition](qem-codecs.md); no original filesystem path is
-needed to decode the saved measurements.
+## Share a reproducible file
 
-## Convert supported source files
+Retain the source license, conversion revision, calibration provenance, and
+processing history with the data. Review retained source tags before publishing;
+they may identify an acquisition or contain local paths. These functions save
+locally and do not upload files.
 
-```python
-# NumPy .npy, K3/other qualified DM3/DM4, or an EMPAD float-export XML/RAW pair.
-with io.load("acquisition.npy") as acquisition:
-    io.save("acquisition.qem", acquisition)
-```
-
-| Input | Python route | Limits |
-| --- | --- | --- |
-| NumPy `.npy` | `io.load(path)`, then `io.save` | 4D counts or float32; wider input requires an exact audit |
-| DM3/DM4 including K3 | `io.load(path)`, then save | Install `quantem.gpu[dm]`; one qualified 4D count or float32 image |
-| EMPAD-G1 XML/RAW float export | `io.load("scan.xml")` | 130x128 float32 records; retains the 128x128 detector, not footer words |
-| EMPAD-G2 declared float export | Same XML route | Explicit 128x128 float32 raster; raw encoded detector words and their calibration are not supported by this reference importer |
-| ARINA/NCEM HDF5 | `io.load(path)`, then `io.save` | Qualified original and generic array layouts; not arbitrary HDF5 structures |
-| Other vendors or array dtypes | Not automatically supported | Use a verified source reader, preserve its calibration, and pass supported NumPy measurements; do not relabel bytes |
-
-For a headerless EMPAD-G1 `.raw`, explicitly supply `scan_shape=(rows, columns)`.
-This selects the documented G1 float layout; file size alone is not a detector
-format detector. No background or gain correction is silently inferred.
-Source footer words are not detector measurements; original XML is retained.
-The reference exporter rejects an explicitly already-background-corrected float
-array until that correction state is qualified across readers. Keep that array
-and its metadata, or export the original measurements. Decoding never performs
-an additional background subtraction.
-
-For already encoded GPU counts, saving copies the encoded bytes and indexes:
-
-```python
-with io.load("acquisition.dm4") as acquisition:
-    io.save("acquisition.qem", acquisition)
-```
-
-Use the runtime your machine supports. CPU is explicit, never a fallback for a
-failed GPU operation. Qualified float32 `.qem` files reopen directly on CUDA
-and MPS, with the saved geometry and correction provenance. See the
-[field-by-field mapping](qem-metadata-mapping.md) for calibration limits.
-
-## Export measurements again
-
-```python
-with io.load("example.qem", backend="cpu") as acquisition:
-    np.save("restored.npy", acquisition.data)
-```
-
-NumPy does not carry the full QEM scientific record. Export
-`acquisition.metadata["scientific_metadata"]` as adjacent JSON if you need that
-calibration when sharing `.npy`. Float background recipes remain separate from
-the original decoded array; never apply one silently during a format conversion.
-
-## Share public data, including Hugging Face
-
-Start with the [synthetic notebook](../examples/qem_portable.ipynb). The
-distributed conformance bundle is synthetic and MIT licensed. It contains no
-private acquisitions, usernames, microscope-session paths or research notes.
-
-A future gold-data example should name a specific public repository, immutable
-revision and source license, verify download hashes, then publish new `.qem`
-derivatives alongside the originals. Public download access alone is not
-permission to redistribute. Review source tags for identifying information
-before publishing. Record the conversion software revision, source hashes,
-exactness checks, shapes, dtype, units and any explicitly applied corrections.
-Nothing in this workflow uploads data automatically.
-
-### Public QuantEM examples
-
-The intended public home is
-[bobleesj/quantem-data](https://huggingface.co/datasets/bobleesj/quantem-data).
-At revision `00179851c0015612bfb6e6438e02387f5ffff0ae`, its dataset card declares
-MIT licensing. A conversion must preserve the applicable attribution and check
-any file-specific restrictions as well.
-
-Start with `4dstem/gold_128_npy_bin8/data.npy` and its `meta.json`: the metadata
-declares uint16 measurements with shape `(128, 128, 24, 24)`, scan sampling in
-angstrom and detector sampling in mrad. Preserve the entire source JSON, not
-only its normalized numbers. In particular, its scan calibration is explicitly
-inferred from a sibling acquisition rather than measured per file. Preserve
-that qualification, the binning/averaging history and each optics source.
-QEM conversion preserves the input array exactly; it does not undo earlier
-averaging or establish the accuracy of a supplied calibration.
-
-Include the source repository, immutable revision, relative source filenames,
-SHA-256 hashes, license and converter revision in retained source metadata.
-Check every decoded measurement and the normalized calibration before publishing
-an additional `.qem` file. Keep originals until that migration is separately
-approved. The repository also contains HAADF images, 1D tutorial arrays and
-other assets outside the current four-axis QEM codecs; do not reshape or cast
-those merely to claim every file is supported. This inventory is not a completed
-dataset migration.
+The [QEM example notebook](../examples/qem_portable.ipynb) demonstrates a small
+synthetic save/reopen check with images. For format developers, the
+[file-format guide](../developer/file-formats.md) links the byte layout,
+metadata schema, and independent conformance checks.

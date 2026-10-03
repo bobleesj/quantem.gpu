@@ -1,11 +1,9 @@
 # SSB API
 
-`quantem.gpu.SSB` is the public Python single-sideband ptychography contract for
-CUDA and MPS. The browser WebGPU runtime mirrors reconstruction, phase, and the
-exact-loss contract asynchronously. Native clients use the separate SwiftPM
-product `MetalSSBKernels`. WebGPU does not currently implement aberration
-fitting. Backend launch geometry, FFT layouts, and optimizer batching remain
-implementation details.
+Use `SSB` from Python on MPS or CUDA. Find aberrations once, inspect the search,
+and reuse those parameters for reconstruction. Start with the
+{ref}`Python workflow <reconstruct-phase>` for a short example.
+This page covers parameters, calibration, ownership, and backend limits.
 
 ## Inputs and outputs
 
@@ -164,9 +162,6 @@ Rerun the aberration search for older records; the loader does not guess their u
 - To save results from an in-memory array, provide `source_path` for provenance.
   Direct arrays never reuse results from disk automatically: a path cannot
   identify which crop or edited array the scientist supplied.
-- Native Swift requires a complete, finite `MetalSSBGeometry`, a 512×512 scan,
-  and a sufficiently large plane-major `uint8` Metal buffer. It raises rather
-  than cropping, binning, changing precision, or falling back to CPU.
 
 ## Provenance and exact reuse
 
@@ -319,92 +314,7 @@ Evidence: [SSB units and the thick-sample model](../maintainer/2026-09-24-ssb-un
 
 ## Native Swift and Metal
 
-`MetalSSBEngine` consumes exact plane-major BF columns with layout
-`[logical_brightfield, scan_row, scan_column]`, source dtype `uint8`, and fixed
-scan shape 512×512. The engine computes in float32/complex64. It retains every
-logical BF term in normalization and skips only the proven-zero aperture union.
-
-```swift
-import Metal
-import MetalSSBKernels
-
-let device = MTLCreateSystemDefaultDevice()!
-let engine = try MetalSSBEngine(
-  device: device,
-  geometry: calibratedGeometry,
-  cacheBudgetBytes: availableSSBCacheBytes
-)
-
-try engine.prepare(brightfield: planeMajorUInt8Buffer)
-let result = try engine.reconstruct(
-  aberrations: MetalSSBAberrations(
-    c10Nanometers: 72.98,
-    c12Nanometers: 14.4,
-    phi12Radians: 0.4686
-  )
-)
-```
-
-`result.object` and `result.fourierSum` are row-major complex64 Metal
-buffers at the native 128×128, 256×256 or 512×512 scan size. Their
-`result.provenance` records scan shape, source/compute dtype, scan bin
-1, no scan crop, logical/executed/zero-aperture BF counts, cached/streamed BF
-counts, and cache bytes. `phaseVariance(...)` evaluates the same complete
-objective. `optimize(...)` defaults to 200 seeded TPE trials followed by
-Nelder–Mead and returns the full trial record.
-
-### Optional BF sampling for native optimization
-
-`phaseVariance` and `optimize` accept `brightfieldFraction`, default **1.0**.
-This fraction selects detector BF pixels for the objective, not scan positions,
-aperture radius, detector binning or the final image resolution. Full aperture
-remains the default throughout search and Nelder-Mead refinement.
-
-```swift
-let fit = try engine.optimize(
-  start: initialAberrations, globalTrials: 200, brightfieldFraction: 0.25)
-let final = try engine.reconstruct(aberrations: MetalSSBAberrations(
-  c10Nanometers: Float(fit.best.c10Nanometers),
-  c12Nanometers: Float(fit.best.c12Nanometers),
-  phi12Radians: Float(fit.best.phi12Radians)))
-```
-
-Fractions below one intentionally approximate the full objective and may change
-the fitted aberrations. They do not produce an equivalent full-BF loss. The
-selection is uniform without replacement, fixed at seed 42, sorted into source
-order and reused across all objective evaluations. Its size is the rounded
-fraction of the logical BF selection, with at least two pixels (or all pixels
-if fewer exist). Zero-aperture entries remain part of that logical normalization;
-a subset with no active contribution fails with an instruction to increase it.
-No intensity-based or central-disk-only selection is made.
-
-The engine skips unselected cached or streamed columns, batches adjacent selected
-columns, and reuses the full prepared cache. It does not allocate a second
-Fourier-volume cache. Initial full evidence preparation and memory use are not
-reduced. `reconstruct` is unchanged and always uses the engine's full selected
-aperture, including after a sampled fit. Using fewer objective pixels is not a
-kernel speedup or a guarantee of proportional total-workflow acceleration.
-
-`SSBOptimizationResult.brightfieldSampling` stores the policy version, requested
-fraction, total BF count and exact selected logical indices. Phase-variance
-results carry the same selection and selected-work provenance. Saved native
-runs retain this record; applications should label sampled losses explicitly
-and retain selection provenance when exporting a phase-only result.
-
-`scripts/check_metal_ssb_bf_sampling.sh` compares sampled loss against explicitly
-constructed subset inputs at all three native sizes in cached, streamed and
-hybrid modes, checks saved-fit selection, and checks bit-identical full
-reconstruction before/after sampling. The unchanged 100% path is additionally
-covered by `scripts/check_metal_ssb_scan_sizes.sh` against the frozen CUDA and
-independent-equation fixtures. These fixtures validate implementation, not the
-scientific quality of fitting a particular experiment with fewer BF pixels.
-
-`cacheBudgetBytes: nil` requests a complete Hermitian `G(k)` cache. A finite
-budget caches whole 32-BF batches and streams the remaining terms exactly.
-Cache policy is an application decision: the application must choose and show
-the memory policy, while QuantEM.GPU owns the estimator inputs, exact kernels,
-and provenance. The Swift package does not own windows, controls, sessions, or
-plots.
+Native application authors should use the {ref}`Swift/Metal integration guide <native-swift-and-metal>`.
 
 ## Series reconstruction
 

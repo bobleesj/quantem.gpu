@@ -1,4 +1,14 @@
-# QuantEM data (.qem), container version 1
+# QEM container and scientific metadata
+
+This is the implementation specification for container version 1. For ordinary
+Python use, follow [Save and share your data](qem-python.md).
+
+Read the scientific contract, binary envelope, and metadata requirements when
+building a reader or writer. The [codec layouts](qem-codecs.md) define payload
+bytes; [metadata mapping](qem-metadata-mapping.md) defines vendor-field handling;
+[conformance checks](qem-interoperability.md) verify independent implementations.
+Specification revisions below describe additional requirements; they are not
+user-selectable compression settings.
 
 ## QEM specification 0.0.3
 

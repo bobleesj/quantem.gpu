@@ -129,3 +129,21 @@ table tr[hidden] {
     margin-left: 0;
   }
 }
+
+/* Keep the first Python session readable on wide desktop displays. Technical
+   matrices elsewhere retain the full article width and horizontal scrolling. */
+.bd-article > section:is(#quantem-gpu, #from-acquisition-to-images, #save-and-share-your-data) {
+  max-width: 60rem;
+}
+
+.bd-article > section:is(#quantem-gpu, #from-acquisition-to-images, #save-and-share-your-data) p {
+  max-width: 78ch;
+}
+
+.bd-article > section:is(#quantem-gpu, #from-acquisition-to-images, #save-and-share-your-data) img {
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 32rem;
+  object-fit: contain;
+}

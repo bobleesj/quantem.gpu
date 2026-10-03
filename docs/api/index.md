@@ -1,101 +1,35 @@
-# API guide
+# Python API reference
 
-Start here to use QuantEM.GPU from a Python notebook or script. Choose the
-[Apple Silicon MPS or NVIDIA CUDA installation](../install.md), then use the
-same public calls for data access, virtual detectors, and reconstruction.
-Backend coverage differs; each operation guide lists its supported options.
+Use this section to check parameters, units, return values, and supported
+options. For a first session, follow [From acquisition to images](../python-workflow.md).
+The examples use one public Python API on supported MPS and CUDA paths.
 
-## Everyday Python workflow
+| Task | Entry point | Returns | Details |
+|---|---|---|---|
+| Load and select measurements | `io.load`, array indexing | `Dataset4dstemGPU`; selections are GPU Torch tensors | [I/O](io.md) |
+| Save or inspect a file | `io.save`, `io.inspect` | Saved acquisition or header report | [Save and share](qem-python.md) |
+| Mean diffraction, BF, ADF, DF | `detector.mean`, `bf`, `adf`, `df` | Reduced NumPy images | [Detectors](images_dpc.md) |
+| CoM and integrated DPC | `dpc.run` | `DPCResult` | [DPC](images_dpc.md) |
+| Find aberrations; reconstruct phase | `SSB.find_aberrations`, `SSB.reconstruct` | `SSBResult` | [SSB](ssb.md) |
+| Render a movie | `movie` | Encoded artifact | [Movies](movie.md) |
 
-The API is still release-candidate level. Prefer public functions documented
-here over internal backend modules.
+Use `(row, col)` coordinates. `data.sampling`, `data.units`, and `data.origin`
+describe the axes; `data.metadata` holds the full record. Unknown calibration
+stays explicit. See the individual API page for dtype, ownership, and backend
+limitations before interpreting a result.
 
-`io.load(path)` returns a `Dataset4dstemGPU` acquisition with ANS-encoded
-storage on CUDA or MPS. Use `data[row, column]` for one diffraction pattern,
-`data.sampling`, `data.units` and `data.origin` for axis calibration, and
-`data.metadata` for the complete record. Selected regions are Torch tensors;
-the full acquisition remains encoded. QuantEM's core data classes are unchanged.
+## Supporting modules
 
-For virtual images, start with `detector.bf(data)` or `detector.adf(data)`;
-disk fitting happens automatically. For SSB, use `SSB.open(path, ...)` or
-`SSB(data, ...)`, then `find_aberrations()` and `reconstruct(aberrations)`.
-See the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns) for the
-short workflow and [count representations](representations.md) for advanced
-storage contracts. Dense arrays and retained low-level packed readers are not
-public GPU acquisition-loading modes.
-
-## Available operations
-
-```python
-import quantem.gpu as qgpu
-
-qgpu.device.detect()
-```
-
-| Domain | Entry point | Primary result |
+| Module | Purpose | Details |
 |---|---|---|
-| discovery, load, and save | `quantem.gpu.io` | `Dataset4dstemGPU` with ANS storage and calibration |
-| BF, DF, ADF, mean diffraction | `quantem.gpu.detector` | scan- or detector-shaped product |
-| CoM, DPC, and iDPC | `quantem.gpu.dpc` | `DPCResult` |
-| SSB aberration search and reconstruction | `quantem.gpu.SSB` | `SSBResult` or `SSBSeriesResult` |
-| display/export math | `quantem.gpu.display`, `quantem.gpu.movie` | display buffer or encoded artifact |
-| device selection | `quantem.gpu.device.detect`, `profile`, `resolve` | explicit backend/device description |
-| electron optics | `quantem.gpu.optics` | wavelength, reciprocal cutoff, aberration phase, and fit results |
-| cached screening | `quantem.gpu.screening.prepare` | `ScreeningResult` with derived launch products and provenance |
-| parallax | `quantem.gpu.parallax.run` | `ParallaxResult` |
+| `io` | Discovery, loading, indexing, inspection, saving | [I/O](io.md) |
+| `detector`, `dpc` | Detector geometry, images, and phase gradients | [Detectors and DPC](images_dpc.md) |
+| `device` | Detect or explicitly select an accelerator | [Device APIs](core.md) |
+| `optics` | Wavelength, convergence, and aberration calculations | [Optics APIs](core.md) |
+| `parallax` | Parallax reconstruction | [Parallax](core.md) |
+| `screening` | Reuse derived products for application integration | [Screening](core.md) |
+| `display`, `movie` | Display math and export | [Movies](movie.md), [display operations](../kernels/display-export.md) |
 
-## Complete public namespace map
-
-| Namespace/product | Public surface | Contract page |
-|---|---|---|
-| `device` | `detect`, `profile`, `resolve` | [Device selection and supporting APIs](core.md) |
-| `io` | `discover`, `inspect`, `load`, `save` | [I/O API](io.md) |
-| `detector`, `dpc` | detector reductions, `DPCResult` | [Detector and DPC API](images_dpc.md) |
-| `optics` | wavelength/convergence conversions, aberration phase and fitting | [Device selection and supporting APIs](core.md) |
-| `screening` | `prepare`, `ScreeningResult` | [Device selection and supporting APIs](core.md) |
-| `parallax` | `run`, `ParallaxResult` | [Device selection and supporting APIs](core.md) |
-| `SSB` | `SSB`, `SSBResult`, series results | [SSB API](ssb.md) |
-| `display`, `movie` | display transforms and encoded artifacts | [Movie API](movie.md) and [display kernels](../kernels/display-export.md) |
-| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels`, `Metal4DSTEMStreamingIO`, `MetalSSBKernels` | [Native Metal image](metal_image.md), [native load/cache](native_4dstem_io.md), and [SSB](ssb.md) |
-| Remote services | browse, MAPED, and SSB protocol services | [QuantEM.GPU Remote](../remote/index.md) |
-
-Backend modules, private helpers, launch geometry, cache scheduling, and UI
-state are deliberately not public API.
-
-## Native application integration
-
-Native Swift/Metal products for macOS and iOS clients:
-
-- `MetalEncodedSource`, `MetalPrecision`, `MetalHDF5Writer`, and
-  `MetalPackedSource` for encoded counts and bounded scaled-output storage;
-  `MetalScientificNumerics` for reusable image and sampling operations. See
-  [native encoded inputs and scaled output](native_resident.md).
-
-- `MetalImageFFT.logMagnitude` for Browser FFT of an already-transferred 2D
-  product. See [Native Metal image endpoints](metal_image.md).
-- `MetalImageRuntime` for histogram, range, and display contracts.
-- `Native4DSTEMIO` for Python-free HDF5/EMD discovery, prepared QH5 indexes,
-  and bounded native frame windows.
-- `MetalCompactH5Loader.load(source:device:)` for original HDF5 directly into
-  exact packed Metal residency, without a dense 4D allocation. See
-  [original HDF5 loading and reload benchmarks](original-hdf5-metal-packing.md).
-- `NativeLosslessPackV1Producer` for an authenticated, resource-planned,
-  cancellable original-HDF5-to-lossless-pack lifecycle. See the
-  [native Lossless Pack Format v1 producer contract](native_lossless_pack_v1_producer.md).
-- `Metal4DSTEMStreamingIO` for bounded native QH5 decode, exact `uint64`
-  products, source audits, and on-demand full-resolution diffraction frames.
-- `Metal4DSTEMLoadPlan`, `Metal4DSTEMStreamingPlan`,
-  `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
-  native load, resource, resident-cache, and exact prepared-product provenance.
-  See [Native 4D-STEM load and cache contract](native_4dstem_io.md).
-- `MetalSSBEngine` for exact native 512×512 SSB reconstruction,
-  phase-variance evaluation, and deterministic 200-trial TPE plus Nelder–Mead
-  fitting. See [SSB API](ssb.md).
-
-Native clients call these endpoints directly. They are not a local Python
-backend.
-
-The dated [experimental native Metal entropy-series SPI](experimental_metal_entropy_series.md)
-is a separate opt-in prepared-archive consumer. It documents the 2026-09-08
-implementation, exact-count contract, measured limits and missing encoder/API
-gates; it is not part of the stable entry points above.
+Native Swift products, browser kernels, and byte-level formats are documented
+under the [Developer guide](../developer/index.md). Ordinary Python workflows
+use the public modules above rather than importing backend internals.

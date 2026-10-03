@@ -12,6 +12,21 @@ public API where supported, and state backend-specific limits explicitly. On
 implementation pages, define the scientific contract, map it to source paths,
 and explain how to verify it.
 
+## Documentation structure
+
+Use four visible sections: **Start here**, **Python workflows**, **API reference**,
+and **Developer guide**. Show installation for MPS before CUDA. Keep native APIs,
+file specifications, performance evidence, and historical records nested beneath
+the developer guide; expand only the branch a reader opens.
+
+A workflow answers one scientist's task: minimal code, a real image or result,
+then optional controls. A reference page owns signatures, units, return values,
+errors, and limitations. A developer page owns equations, layouts, source maps,
+and verification. Link between those owners instead of copying their inventories.
+Retain short README examples and use its existing figures when they illustrate
+the same calls. Keep experimental and historical instructions out of first-run
+installation. Preserve their dated evidence in the archive.
+
 ## Audiences and page types
 
 Use the page type that matches the reader's question:

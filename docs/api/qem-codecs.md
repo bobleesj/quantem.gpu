@@ -1,6 +1,9 @@
-# QEM 0.0.1 codec specification
+# QEM codec layouts
 
-This page specifies the bytes needed by independent implementations. It is a
+For saving data from Python, use [Save and share your data](qem-python.md).
+This page specifies the bytes needed by independent reader/writer implementations.
+The codec identifiers below have their own versions, distinct from the container
+and scientific-metadata schema. It is a
 project specification, not a claim of community ratification. The
 [envelope and calibration contract](qem-format.md) applies to all codecs.
 All multi-byte words are little-endian. Counts use C order:

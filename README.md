@@ -10,7 +10,7 @@ single-sideband ptychography (SSB). Use Python MPS on Apple Silicon or
 NVIDIA CUDA on Linux through the same public Python API.
 
 [Documentation](https://bobleesj.github.io/quantem.gpu/) ·
-[API guide](docs/api/io.md) · [Contributing](CONTRIBUTING.md) ·
+[API guide](docs/api/index.md) · [Contributing](CONTRIBUTING.md) ·
 [Issues](https://github.com/bobleesj/quantem.gpu/issues)
 
 [Install](#install) · [Load and inspect](#load-diffraction-patterns) ·

@@ -1,6 +1,6 @@
 # I/O API
 
-Start with the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns)
+Start with [From acquisition to images](../python-workflow.md) or the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns)
 for individual patterns, scan patches, detector crops, and acquisition series.
 
 `quantem.gpu.io` has four public operations:
@@ -610,3 +610,13 @@ Source/working shape, dtype, and calibration are preserved. Saving and reopening
 an encoded acquisition is distinct from low-level representation conversion.
 Use `io.inspect` for supported-container metadata and readiness; successful
 inspection is not payload-integrity or full-volume performance qualification.
+
+### EMPAD correction provenance
+
+The reference exporter rejects an explicitly already-background-corrected float
+array until that correction state is qualified across readers. Keep that array
+and its metadata, or export the original measurements. Decoding does not perform
+an additional background subtraction. Original XML is retained; storage footer
+words are not detector measurements. See [QEM interoperability](qem-interoperability.md)
+for independent validation and the [metadata mapping](qem-metadata-mapping.md) for
+which source fields are normalized or merely retained.

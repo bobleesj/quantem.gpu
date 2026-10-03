@@ -9,7 +9,7 @@
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "99f716e732c7929117b4c6454383a12adb8527415ff6cc96cfadae984a99a626",
+      "sha256": "6bc0317975b862cd56816b6d5bb8a3bee9d13714aa701b7bae03e72c68fa70fe",
       "role": "Python user landing page and benchmark routing without copied measurements"
     },
     {

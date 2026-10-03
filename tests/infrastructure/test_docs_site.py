@@ -16,17 +16,9 @@ EVIDENCE = Path("docs/performance/evidence_manifest.json")
 def test_docs_navigation_has_python_workflows_and_implementation_sections() -> None:
     toc = TOC.read_text(encoding="utf-8")
 
-    for caption in (
-        "Start here",
-        "Scientific kernels",
-        "Kernel implementations",
-        "Remote compute",
-        "Python workflows",
-        "Advanced integration contracts",
-        "Benchmarks and parity",
-        "Contributing",
-    ):
-        assert f"caption: {caption}" in toc
+    assert re.findall(r"caption: (.+)", toc) == [
+        "Start here", "Python workflows", "API reference", "Developer guide"
+    ]
 
     for page in (
         "dashboard",
@@ -275,12 +267,12 @@ def test_dashboard_is_the_dense_human_overview() -> None:
 def test_intro_routes_to_benchmarks_without_copying_them() -> None:
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
 
-    assert "## Implementation and benchmark overview" in intro
+    assert "## Start with Python" in intro
+    assert "## For developers" in intro
     assert "[implementation dashboard](dashboard.md)" in intro
     assert "[verified benchmark results](performance/results.md)" in intro
-    assert "[Benchmark methodology](performance/methodology.md)" in intro
-    assert "[Optimization ledger](maintainer/backend-optimization-matrix.md)" in intro
-    assert "One claim, one owner" in intro
+    developer = Path("docs/developer/index.md").read_text(encoding="utf-8")
+    assert "[benchmark methodology](../performance/methodology.md)" in developer
 
     for copied_field in (
         "Device tested",
@@ -304,11 +296,8 @@ def test_intro_routes_to_benchmarks_without_copying_them() -> None:
     ):
         assert copied_time not in intro
 
-    assert "## How loading becomes a usable product" in intro
-    assert "START WALL CLOCK" in intro
-    assert "FIRST COMPLETE USABLE PRODUCT" in intro
-    assert "no automatic real-space crop" in intro
-    assert "## The shared coordinate contract" in intro
+    assert "## What stays consistent" in intro
+    assert "[From acquisition to images](python-workflow.md)" in intro
 
     load_page = Path("docs/kernels/load-decode-bin.md").read_text(encoding="utf-8")
     assert "## Count-preserving detector binning" in load_page
@@ -1054,12 +1043,14 @@ def test_source_docs_distinguish_current_checkout_from_published_candidate() -> 
     for text in (readme, intro, install):
         assert "git rev-parse HEAD" in text
     assert "newer than that published" in intro
-    assert exact_pin in install
-    assert "evolving pre-release draft" in install
-    assert "candidates are not assumed to be" in install
-    assert "unpinned `--pre` install" in install
+    archive = Path("docs/maintainer/install-rc8.md").read_text(encoding="utf-8")
+    assert "maintainer/install-rc8.md" in install
+    assert "--extra-index-url" not in install
+    assert exact_pin in archive
+    assert "evolving pre-release draft" in archive
+    assert "candidates are not assumed to be" in archive
 
-    requirements = re.findall(r'"(quantem\.gpu(?:\[[^]]+\])?==[^"]+)"', install)
+    requirements = re.findall(r'"(quantem\.gpu(?:\[[^]]+\])?==[^"]+)"', archive)
     assert requirements
     assert all(requirement.endswith(f"=={version}") for requirement in requirements)
 
@@ -1252,8 +1243,8 @@ def test_remote_compute_is_a_deployment_not_a_kernel_runtime() -> None:
     service = Path("docs/remote/index.md").read_text(encoding="utf-8")
     service_words = " ".join(service.split())
 
-    assert "caption: Kernel implementations" in toc
-    assert "caption: Remote compute" in toc
+    assert "file: platforms/index" in toc
+    assert "file: remote/index" in toc
     assert "[QuantEM.GPU Remote](../remote/index.md)" in index
     assert service.startswith("# QuantEM.GPU Remote")
     assert "not another kernel runtime" in service_words
