@@ -9,8 +9,8 @@
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "c795824878ea7285f8cca048da9fac14f11a7b39dcc4c50312805cd1a961d344",
-      "role": "Developer landing page and benchmark routing without copied measurements"
+      "sha256": "99f716e732c7929117b4c6454383a12adb8527415ff6cc96cfadae984a99a626",
+      "role": "Python user landing page and benchmark routing without copied measurements"
     },
     {
       "path": "docs/dashboard.md",

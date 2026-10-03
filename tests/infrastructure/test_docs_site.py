@@ -13,7 +13,7 @@ CONFIG = Path("docs/_config.yml")
 EVIDENCE = Path("docs/performance/evidence_manifest.json")
 
 
-def test_docs_navigation_has_world_class_top_level_sections() -> None:
+def test_docs_navigation_has_python_workflows_and_implementation_sections() -> None:
     toc = TOC.read_text(encoding="utf-8")
 
     for caption in (
@@ -21,7 +21,8 @@ def test_docs_navigation_has_world_class_top_level_sections() -> None:
         "Scientific kernels",
         "Kernel implementations",
         "Remote compute",
-        "API contracts",
+        "Python workflows",
+        "Advanced integration contracts",
         "Benchmarks and parity",
         "Contributing",
     ):

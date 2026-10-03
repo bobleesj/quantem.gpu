@@ -1,8 +1,9 @@
 # quantem.gpu
 
-One scientific GPU contract for electron microscopy—from compressed detector
-data to exact products—across NVIDIA CUDA, Apple MPS/Metal, native Swift,
-WebGPU, and an explicit CPU reference.
+GPU-accelerated 4D-STEM analysis for scientists using Python. Load an
+acquisition, select diffraction patterns, create BF/ADF and DPC images, and
+reconstruct phase with single-sideband ptychography (SSB). Start with the
+Python workflow below; choose Apple Silicon MPS or NVIDIA CUDA for execution.
 
 ```{admonition} Living pre-release draft
 :class: important
@@ -10,7 +11,7 @@ This site documents the current source checkout. APIs and runtime coverage
 may change; use the [source installation instructions](install.md) and record
 `git rev-parse HEAD` with your results. The version field still reads
 `0.0.1rc8`, but the current examples require changes newer than that published
-candidate. Swift consumers also pin an exact verified Git revision.
+candidate.
 
 The documentation is a draft, but retained performance and parity rows are not
 draft estimates: each is a frozen historical measurement tied to its stated
@@ -18,7 +19,21 @@ date, source revision, device, data plan, cache state, and acceptance rule. A
 newer revision does not automatically inherit those measurements.
 ```
 
+## Install for your computer
+
+| Computer | Python installation |
+|---|---|
+| Apple Silicon Mac | {ref}`MPS/Metal setup <apple-silicon-mac-mps-metal>` |
+| NVIDIA GPU on Linux | {ref}`CUDA setup <nvidia-gpu-cuda-linux>` |
+
+Both backends use the public Python API. Supported options differ by operation;
+check the relevant guide before choosing one. The Mac backend uses MLX/Metal
+for computation; array indexing returns PyTorch tensors on the selected GPU.
+
 ## Python quick start
+
+Use your own acquisition in place of `gold_master.h5`; data are not bundled.
+The [installation guide](install.md) includes QuantEM for plotting.
 
 ```python
 from functools import partial
@@ -43,24 +58,34 @@ The detailed guides cover [I/O and calibration](api/io.md),
 [automatic BF/ADF and overrides](api/images_dpc.md),
 [QEM import/export](api/qem-python.md), and [SSB](api/ssb.md).
 
-```{admonition} Choose how you want to enter
-:class: tip
-**Whole project:** start with the
-[implementation overview](dashboard.md).
+## What would you like to do next?
 
-**Scientific operation:** start with [Scientific kernels](kernels/index.md).
+| Task | Guide |
+|---|---|
+| Load a file, select patterns, or crop detector pixels | [I/O and array indexing](api/io.md) |
+| Make BF/ADF images or change the detector radius | [Virtual detectors and DPC](api/images_dpc.md) |
+| Find aberrations and reconstruct SSB phase | [SSB](api/ssb.md) |
+| Save an acquisition with its calibration | [QEM import/export](api/qem-python.md) and [notebook example](examples/qem_portable.ipynb) |
+| Check available Python entry points | [Python API guide](api/index.md) |
 
-**Kernel implementation:** start with [Kernel implementations](platforms/index.md).
+## The shared coordinate contract
 
-**Correctness or speed claim:** start with
-[Benchmarks and parity](performance/index.md).
-```
+Data use `(scan_rows, scan_cols, detector_rows, detector_cols)` order,
+written $I[R_r,R_c,k_r,k_c]$ in the scientific guides: $R$ identifies scan
+coordinates and $k$ identifies detector coordinates.
+`data[row, column]` selects a scan position; the final two axes describe its
+pattern. Read `.sampling`, `.units`, and `.origin` for axis calibration,
+and `.metadata` for the complete record. Unknown physical calibration remains
+explicit; do not interpret a pixel distance as a physical length without it.
+
+See [Data model and coordinates](kernels/data-model.md) for the full contract.
 
 ## Implementation and benchmark overview
 
-This landing page explains the package contract and routes developers to the
-right implementation surface. Numerical results are maintained in two places
-only:
+For implementation work, start with [Scientific kernels](kernels/index.md),
+[backend guides](platforms/index.md), or the [developer guide](developer/index.md).
+The [implementation overview](dashboard.md) records current coverage. Numerical
+results are maintained in two places only:
 
 - the [implementation dashboard](dashboard.md) is the friendly, module-first
   view of current support, representative timing, memory, and parity state; and
@@ -83,6 +108,8 @@ or rejected experiments belong in the maintainer archive. A cached reopen is
 not a first source load, and a cropped or explicitly binned result is never
 reported as native resolution.
 ```
+
+::::{dropdown} How loading becomes a usable product — implementation details
 
 ## How loading becomes a usable product
 
@@ -123,95 +150,7 @@ and policy reason. See [Load, decode, and bin](kernels/load-decode-bin.md) for
 the mathematical contract and [Benchmark methodology](performance/methodology.md)
 for every timed stage.
 
-## The shared coordinate contract
-
-Every backend interprets 4D-STEM data as
-
-$$
-I[R_r,R_c,k_r,k_c],
-\qquad (\text{row},\text{column})\equiv(r,c),
-$$
-
-where $\mathbf R=(R_r,R_c)$ is the real-space probe/scan coordinate and
-$\mathbf k=(k_r,k_c)$ is the detector coordinate. A private device layout may
-be flattened, transposed, tiled, packed, or detector-major, but the public
-shape, masks, metadata, and results preserve this meaning.
-
-Read [Data model and coordinates](kernels/data-model.md) before implementing a
-new kernel.
-
-## Find the operation you are implementing
-
-| Operation | Meaning | Kernel page |
-|---|---|---|
-| Load/decode/bin | compressed source to typed resident counts | [Load, decode, and bin](kernels/load-decode-bin.md) |
-| Virtual detector | BF/DF/ADF and mean-diffraction reductions | [BF, DF, and ADF](kernels/virtual-detectors.md) |
-| Detector moments | CoM row, CoM column, DPC, and iDPC | [CoM, DPC, and iDPC](kernels/com-dpc-idpc.md) |
-| Ptychography | SSB object, phase, loss, and aberrations | [Single-sideband ptychography](kernels/ssb.md) |
-| Scan selection | explicit half-open real-space subsets | [Explicit scan regions](kernels/scan-regions.md) |
-| Presentation math | ranges, histograms, colormaps, FFT views, movies | [Display and export kernels](kernels/display-export.md) |
-
-Each page combines the scientific equations, exactness and provenance rules,
-optimization model, backend source map, and parity gate. This keeps the math
-beside the operation instead of separating it into a generic tutorial.
-
-## Choose the runtime you are implementing
-
-| Runtime | Start here | Primary implementation boundary |
-|---|---|---|
-| CUDA | [CUDA](platforms/cuda.md) | Python adapters, CuPy, CUDA C/RawKernel |
-| Python MPS | [Python MPS](platforms/mps.md) | Python adapters, MLX/PyObjC, Metal kernels |
-| Native Swift/Metal | [Native Swift and Metal](platforms/swift-metal.md) | SwiftPM products and bundled Metal resources |
-| WebGPU | [WebGPU](platforms/webgpu.md) | TypeScript adapters and WGSL resources |
-| CPU reference | [CPU reference](platforms/cpu-reference.md) | independent NumPy/reference implementation |
-
-Runtimes follow the same operation contracts where implemented. Support differs
-by operation; consult the runtime pages and acceptance evidence before relying
-on a capability.
-
-To run the CUDA implementation as a service, use
-[QuantEM.GPU Remote](remote/index.md). Remote access is deployment and
-communication, not another kernel runtime.
-
-## What belongs in this package
-
-`quantem.gpu` owns reusable accelerated IO, math, kernels, result contracts,
-resource estimation, and scientific provenance. A consuming application owns
-presentation, user-visible resource-policy choices, scheduling, and lifecycle.
-No application framework or view state is required to build or test this
-package.
-
-Read [Kernel architecture](concepts/kernel-architecture.md) for the source tree
-and [Kernel development lifecycle](developer/kernel-lifecycle.md) before adding
-an implementation.
-
-## How to interpret performance evidence
-
-The [implementation overview](dashboard.md) is the dense one-page view
-of implementation coverage and headline measurements. The
-[Benchmarks and parity](performance/index.md) section keeps the complete
-current and historical evidence with source revision, hardware, data
-shape/dtype, cache state, load plan, memory peak, parity artifact, and
-benchmark definition.
-
-A cached reopen is not a first source load. A cropped or binned fixture is not
-full-resolution evidence. A compile test is not a hardware benchmark. Rejected
-experiments remain recorded so kernel developers can avoid repeating known
-regressions.
-
-## Start coding
-
-Install the runtime you need, run the smallest relevant parity test, then use
-the physical target device for performance evidence:
-
-```bash
-python -m pip install -e ".[dev,docs]"
-PYTHONPATH=src python -m pytest -q
-swift test
-```
-
-See [Install](install.md), [API contracts](api/index.md), and
-[Contributing](developer/index.md).
+::::
 
 ## Citing and support
 

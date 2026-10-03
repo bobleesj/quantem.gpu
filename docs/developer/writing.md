@@ -2,17 +2,24 @@
 
 QuantEM.GPU follows the coding and documentation conventions in
 [`ophusgroup/dev` Appendix D](https://github.com/ophusgroup/dev#appendix-d-coding-standards).
-Write for scientific API authors, kernel/runtime implementers, and application
-integrators as well as scientists calling the API. State the scientific
-operation first, define its stable contract, map it to real source paths, and
-explain how to verify an implementation.
+Write first for scientists using Python notebooks and scripts. Lead with the
+shortest public workflow and the resulting scientific image or array. Present
+Apple Silicon MPS setup before NVIDIA CUDA setup. Keep kernel implementation,
+native application integration, and benchmark machinery in later sections.
+
+Python is the user interface; MPS and CUDA are execution backends. Document one
+public API where supported, and state backend-specific limits explicitly. On
+implementation pages, define the scientific contract, map it to source paths,
+and explain how to verify it.
 
 ## Audiences and page types
 
-Use the page type that matches the developer's question:
+Use the page type that matches the reader's question:
 
 | Reader question | Page type | Required content |
 |---|---|---|
+| How do I load data and get an image? | Python workflow | minimal calls, automatic defaults, calibration, output, optional overrides |
+| How do I run it on my computer? | Installation | Python first, Apple Silicon MPS then NVIDIA CUDA, verified dependencies |
 | What does this operation compute? | Scientific kernel | equations, coordinates, shapes/dtypes/units, optimization model, source map, parity gates |
 | How do I implement it on my device? | Kernel implementation | runtime boundary, sources, memory/execution model, build, profiling, acceptance |
 | What may my code call and rely on? | API contract | typed inputs/outputs/errors, provenance, minimal example, ownership |

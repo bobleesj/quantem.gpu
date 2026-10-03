@@ -6,8 +6,8 @@
 
 GPU-accelerated 4D-STEM analysis in Python: load acquisitions, explore
 virtual detectors, calculate CoM/DPC, and reconstruct phase with
-single-sideband ptychography (SSB). Use NVIDIA CUDA on Linux or Python MPS
-on Apple Silicon.
+single-sideband ptychography (SSB). Use Python MPS on Apple Silicon or
+NVIDIA CUDA on Linux through the same public Python API.
 
 [Documentation](https://bobleesj.github.io/quantem.gpu/) ·
 [API guide](docs/api/io.md) · [Contributing](CONTRIBUTING.md) ·
@@ -33,14 +33,6 @@ and reconstruction tools contributed to your research, please consider citing:
 Python 3.11 or newer is required. For the current ANS loading and SSB workflows,
 install from source:
 
-**NVIDIA GPU — CUDA (Linux)**
-
-```bash
-git clone https://github.com/bobleesj/quantem.gpu.git
-cd quantem.gpu
-python -m pip install -e ".[cuda]"
-```
-
 **Apple Silicon Mac — MPS/Metal**
 
 ```bash
@@ -49,9 +41,17 @@ cd quantem.gpu
 python -m pip install -e ".[mps]"
 ```
 
+**NVIDIA GPU — CUDA (Linux)**
+
+```bash
+git clone https://github.com/bobleesj/quantem.gpu.git
+cd quantem.gpu
+python -m pip install -e ".[cuda]"
+```
+
 The Mac SSB backend uses MLX and Metal. Array indexing uses
 PyTorch; install a GPU-enabled PyTorch build to use those examples.
-For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
+For DM3/DM4 files, add the `dm` extra: `".[mps,dm]"` or `".[cuda,dm]"`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
 
 This is pre-release software. The older TestPyPI candidate

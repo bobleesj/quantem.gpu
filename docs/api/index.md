@@ -1,8 +1,30 @@
 # API guide
 
-This guide maps public scientific contracts to their current entry points. Use
-it when integrating QuantEM.GPU; use the scientific-kernel and runtime sections
-when implementing or optimizing those contracts.
+Start here to use QuantEM.GPU from a Python notebook or script. Choose the
+[Apple Silicon MPS or NVIDIA CUDA installation](../install.md), then use the
+same public calls for data access, virtual detectors, and reconstruction.
+Backend coverage differs; each operation guide lists its supported options.
+
+## Everyday Python workflow
+
+The API is still release-candidate level. Prefer public functions documented
+here over internal backend modules.
+
+`io.load(path)` returns a `Dataset4dstemGPU` acquisition with ANS-encoded
+storage on CUDA or MPS. Use `data[row, column]` for one diffraction pattern,
+`data.sampling`, `data.units` and `data.origin` for axis calibration, and
+`data.metadata` for the complete record. Selected regions are Torch tensors;
+the full acquisition remains encoded. QuantEM's core data classes are unchanged.
+
+For virtual images, start with `detector.bf(data)` or `detector.adf(data)`;
+disk fitting happens automatically. For SSB, use `SSB.open(path, ...)` or
+`SSB(data, ...)`, then `find_aberrations()` and `reconstruct(aberrations)`.
+See the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns) for the
+short workflow and [count representations](representations.md) for advanced
+storage contracts. Dense arrays and retained low-level packed readers are not
+public GPU acquisition-loading modes.
+
+## Available operations
 
 ```python
 import quantem.gpu as qgpu
@@ -21,6 +43,26 @@ qgpu.device.detect()
 | electron optics | `quantem.gpu.optics` | wavelength, reciprocal cutoff, aberration phase, and fit results |
 | cached screening | `quantem.gpu.screening.prepare` | `ScreeningResult` with derived launch products and provenance |
 | parallax | `quantem.gpu.parallax.run` | `ParallaxResult` |
+
+## Complete public namespace map
+
+| Namespace/product | Public surface | Contract page |
+|---|---|---|
+| `device` | `detect`, `profile`, `resolve` | [Device selection and supporting APIs](core.md) |
+| `io` | `discover`, `inspect`, `load`, `save` | [I/O API](io.md) |
+| `detector`, `dpc` | detector reductions, `DPCResult` | [Detector and DPC API](images_dpc.md) |
+| `optics` | wavelength/convergence conversions, aberration phase and fitting | [Device selection and supporting APIs](core.md) |
+| `screening` | `prepare`, `ScreeningResult` | [Device selection and supporting APIs](core.md) |
+| `parallax` | `run`, `ParallaxResult` | [Device selection and supporting APIs](core.md) |
+| `SSB` | `SSB`, `SSBResult`, series results | [SSB API](ssb.md) |
+| `display`, `movie` | display transforms and encoded artifacts | [Movie API](movie.md) and [display kernels](../kernels/display-export.md) |
+| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels`, `Metal4DSTEMStreamingIO`, `MetalSSBKernels` | [Native Metal image](metal_image.md), [native load/cache](native_4dstem_io.md), and [SSB](ssb.md) |
+| Remote services | browse, MAPED, and SSB protocol services | [QuantEM.GPU Remote](../remote/index.md) |
+
+Backend modules, private helpers, launch geometry, cache scheduling, and UI
+state are deliberately not public API.
+
+## Native application integration
 
 Native Swift/Metal products for macOS and iOS clients:
 
@@ -57,38 +99,3 @@ The dated [experimental native Metal entropy-series SPI](experimental_metal_entr
 is a separate opt-in prepared-archive consumer. It documents the 2026-09-08
 implementation, exact-count contract, measured limits and missing encoder/API
 gates; it is not part of the stable entry points above.
-
-The API is still release-candidate level. Prefer public functions documented
-here over internal backend modules.
-
-`io.load(path)` returns a `Dataset4dstemGPU` acquisition with ANS-encoded
-storage on CUDA or MPS. Use `data[row, column]` for one diffraction pattern,
-`data.sampling`, `data.units` and `data.origin` for axis calibration, and
-`data.metadata` for the complete record. Selected regions are Torch tensors;
-the full acquisition remains encoded. QuantEM's core data classes are unchanged.
-
-For virtual images, start with `detector.bf(data)` or `detector.adf(data)`;
-disk fitting happens automatically. For SSB, use `SSB.open(path, ...)` or
-`SSB(data, ...)`, then `find_aberrations()` and `reconstruct(aberrations)`.
-See the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns) for the
-short workflow and [count representations](representations.md) for advanced
-storage contracts. Dense arrays and retained low-level packed readers are not
-public GPU acquisition-loading modes.
-
-## Complete public namespace map
-
-| Namespace/product | Public surface | Contract page |
-|---|---|---|
-| `device` | `detect`, `profile`, `resolve` | [Device selection and supporting APIs](core.md) |
-| `io` | `discover`, `inspect`, `load`, `save` | [I/O API](io.md) |
-| `detector`, `dpc` | detector reductions, `DPCResult` | [Detector and DPC API](images_dpc.md) |
-| `optics` | wavelength/convergence conversions, aberration phase and fitting | [Device selection and supporting APIs](core.md) |
-| `screening` | `prepare`, `ScreeningResult` | [Device selection and supporting APIs](core.md) |
-| `parallax` | `run`, `ParallaxResult` | [Device selection and supporting APIs](core.md) |
-| `SSB` | `SSB`, `SSBResult`, series results | [SSB API](ssb.md) |
-| `display`, `movie` | display transforms and encoded artifacts | [Movie API](movie.md) and [display kernels](../kernels/display-export.md) |
-| SwiftPM products | `MetalImageFFT`, `MetalImageRuntime`, `Native4DSTEMIO`, `Metal4DSTEMKernels`, `Metal4DSTEMStreamingIO`, `MetalSSBKernels` | [Native Metal image](metal_image.md), [native load/cache](native_4dstem_io.md), and [SSB](ssb.md) |
-| Remote services | browse, MAPED, and SSB protocol services | [QuantEM.GPU Remote](../remote/index.md) |
-
-Backend modules, private helpers, launch geometry, cache scheduling, and UI
-state are deliberately not public API.

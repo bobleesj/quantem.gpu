@@ -5,22 +5,26 @@
 Python 3.11 or newer is required. Record `git rev-parse HEAD` with your results;
 the version field alone does not identify a development checkout.
 
-Use the current source for ANS acquisition loading and the latest SSB features:
+Start with Python, then install the backend for your computer. The same public
+API provides loading, virtual detectors, and SSB; supported options differ by
+backend. Use the current source for ANS loading and the latest SSB features:
 
-### NVIDIA GPU — CUDA (Linux)
-
-```bash
-git clone https://github.com/bobleesj/quantem.gpu.git
-cd quantem.gpu
-python -m pip install -e ".[cuda]"
-```
-
+(apple-silicon-mac-mps-metal)=
 ### Apple Silicon Mac — MPS/Metal
 
 ```bash
 git clone https://github.com/bobleesj/quantem.gpu.git
 cd quantem.gpu
 python -m pip install -e ".[mps]"
+```
+
+(nvidia-gpu-cuda-linux)=
+### NVIDIA GPU — CUDA (Linux)
+
+```bash
+git clone https://github.com/bobleesj/quantem.gpu.git
+cd quantem.gpu
+python -m pip install -e ".[cuda]"
 ```
 
 The Mac SSB backend uses MLX and Metal. The NumPy-like indexing interface,
@@ -37,11 +41,11 @@ Check accelerator availability before running the indexing examples:
 ```python
 import torch
 
-print(torch.cuda.is_available())          # NVIDIA CUDA
 print(torch.backends.mps.is_available())  # Apple Silicon
+print(torch.cuda.is_available())          # NVIDIA CUDA
 ```
 
-Add `dm` for DM3/DM4 input (`".[cuda,dm]"` or `".[mps,dm]"`).
+Add `dm` for DM3/DM4 input (`".[mps,dm]"` or `".[cuda,dm]"`).
 Save `git rev-parse HEAD` with your results.
 The source version field still reads rc8, but its features have advanced
 beyond that published candidate.
@@ -67,6 +71,14 @@ python -m pip install \
   "quantem.gpu==0.0.1rc8"
 ```
 
+For Apple Silicon MPS testing:
+
+```bash
+python -m pip install \
+  --extra-index-url https://test.pypi.org/simple/ \
+  "quantem.gpu[mps]==0.0.1rc8"
+```
+
 For CUDA machines, install the CUDA extra in an environment that already has a
 compatible CUDA runtime:
 
@@ -74,14 +86,6 @@ compatible CUDA runtime:
 python -m pip install \
   --extra-index-url https://test.pypi.org/simple/ \
   "quantem.gpu[cuda]==0.0.1rc8"
-```
-
-For Apple Silicon MPS testing:
-
-```bash
-python -m pip install \
-  --extra-index-url https://test.pypi.org/simple/ \
-  "quantem.gpu[mps]==0.0.1rc8"
 ```
 
 For GIF/MP4 movie rendering, install the movie extra. Combine extras when

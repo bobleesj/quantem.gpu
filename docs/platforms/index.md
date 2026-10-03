@@ -1,12 +1,15 @@
 # Choose a kernel runtime
 
+For Python notebooks and scripts, begin with [installation](../install.md) and
+the [Python API guide](../api/index.md). This section is for implementation work.
+
 The scientific operation determines what must be computed; the runtime page
 explains how to implement it efficiently on a particular device.
 
 | You are implementing for | Start here | Build and memory model |
 |---|---|---|
-| NVIDIA GPU | [CUDA](cuda.md) | Python/CuPy with CUDA kernels and dedicated VRAM |
 | Apple GPU from Python | [Python MPS](mps.md) | Python adapters over MLX/PyObjC/Metal and unified memory |
+| NVIDIA GPU | [CUDA](cuda.md) | Python/CuPy with CUDA kernels and dedicated VRAM |
 | Native Apple client/library | [Native Swift and Metal](swift-metal.md) | SwiftPM products, Metal resources, and unified memory |
 | Browser GPU | [WebGPU](webgpu.md) | TypeScript/WGSL, browser security, and explicit GPU buffers |
 | Native Android client/library | [Android Vulkan](android-vulkan.md) | NDK C++/C ABI, Vulkan shaders, and admitted packed residency |
@@ -56,8 +59,8 @@ operation accepts a representation on a given runtime.
 
 | Runtime | Discovery/dispatch | IO/decode | Detector and DPC | Reconstruction/display | Primary tests |
 |---|---|---|---|---|---|
-| CUDA | `device/backend.py`, operation protocols | `io/backends/cuda` | `detector/backends/cuda`, `dpc/backends/cuda` | `ssb/backends/cuda`, `display/cuda.py` | `test_cuda_*`, `test_realdata_parity.py` |
 | Python MPS | `device/backend.py`, operation protocols | `io/backends/mps` | `detector/backends/mps`, `dpc/backends/mps` | `ssb/backends/mps` | `test_mps_*`, MPS sections of parity tests |
+| CUDA | `device/backend.py`, operation protocols | `io/backends/cuda` | `detector/backends/cuda`, `dpc/backends/cuda` | `ssb/backends/cuda`, `display/cuda.py` | `test_cuda_*`, `test_realdata_parity.py` |
 | Swift/Metal | SwiftPM products in `Package.swift` | `Native4DSTEMIO`, `Metal4DSTEMKernels` | `Metal4DSTEMKernels` | `MetalImageFFT`, `MetalDisplayKernels`, `MetalImageRuntime` | `src/quantem/gpu/swift/Tests` |
 | WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/backends/webgpu` | detector/DPC WebGPU modules | SSB and display WebGPU modules | `test_webgpu_*`, browser hardware gates |
 | CPU reference | explicit `backend="cpu"` | `io/load.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
