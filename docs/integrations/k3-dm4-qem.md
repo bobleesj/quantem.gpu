@@ -37,7 +37,26 @@ are rejected with guidance to re-save from the original acquisition. These sourc
 matching development revision; they are not a claim about an older PyPI release.
 Python DM4 metadata reading needs the `dm` extra (`ncempy`); native Swift does not.
 
-## Exact detector products
+## Automatic virtual images
+
+```python
+from quantem.gpu import detector, io
+
+with io.load("acquisition.qem") as data:
+    bf = detector.bf(data)
+    adf = detector.adf(data)
+```
+
+The disk is fitted automatically. Within the `with` block, replace the ADF
+call with `detector.adf(data, inner=180, outer=360, unit="px")` when those are
+the desired detector-pixel limits. Use the
+[static detector preview](../api/images_dpc.md) to inspect the selection.
+
+## Exact integer products for integrations
+
+The ordinary convenience functions return float32 NumPy images. The advanced
+session below preserves large integer sums as uint64; it uses an explicitly
+chosen center rather than the automatic disk fit.
 
 ```python
 import numpy as np

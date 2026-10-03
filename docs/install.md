@@ -2,6 +2,9 @@
 
 ## Current source
 
+Python 3.11 or newer is required. Record `git rev-parse HEAD` with your results;
+the version field alone does not identify a development checkout.
+
 Use the current source for ANS acquisition loading and the latest SSB features:
 
 ### NVIDIA GPU — CUDA (Linux)
@@ -20,7 +23,24 @@ cd quantem.gpu
 python -m pip install -e ".[mps]"
 ```
 
-The Mac backend uses MLX and Metal; PyTorch is not required for these workflows.
+The Mac SSB backend uses MLX and Metal. The NumPy-like indexing interface,
+such as `data[10, 12]`, returns PyTorch tensors and needs PyTorch on either
+platform. Install a PyTorch build with support for your selected GPU.
+For the static plotting examples, also install QuantEM:
+
+```bash
+python -m pip install torch quantem
+```
+
+Check accelerator availability before running the indexing examples:
+
+```python
+import torch
+
+print(torch.cuda.is_available())          # NVIDIA CUDA
+print(torch.backends.mps.is_available())  # Apple Silicon
+```
+
 Add `dm` for DM3/DM4 input (`".[cuda,dm]"` or `".[mps,dm]"`).
 Save `git rev-parse HEAD` with your results.
 The source version field still reads rc8, but its features have advanced

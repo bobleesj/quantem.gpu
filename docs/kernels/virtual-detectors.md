@@ -97,9 +97,9 @@ actual mask and source layout rather than assuming one universal winner.
 | Layer | Source |
 |---|---|
 | Public contract and geometry | `src/quantem/gpu/detector` |
-| CUDA reductions | `src/quantem/gpu/detector/compute/cuda` |
-| Python MPS/Metal reductions | `src/quantem/gpu/detector/compute/mps` |
-| WebGPU reductions | `src/quantem/gpu/detector/compute/webgpu` |
+| CUDA reductions | `src/quantem/gpu/detector/backends/cuda` |
+| Python MPS/Metal reductions | `src/quantem/gpu/detector/backends/mps` |
+| WebGPU reductions | `src/quantem/gpu/detector/backends/webgpu` |
 | Native Metal reductions | `src/quantem/gpu/swift/Sources/Metal4DSTEMKernels` |
 
 Parity fixtures include asymmetric masks, rectangular scan/detector shapes,

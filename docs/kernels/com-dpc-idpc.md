@@ -363,9 +363,9 @@ same device until the final result is requested.
 | Layer | Source |
 |---|---|
 | Public workflow and result | `src/quantem/gpu/dpc` |
-| CUDA CoM/DPC | `src/quantem/gpu/dpc/compute/cuda` and detector CUDA moment kernels |
-| Python MPS/Metal | `src/quantem/gpu/dpc/compute/mps` |
-| WebGPU | `src/quantem/gpu/dpc/compute/webgpu` |
+| CUDA CoM/DPC | `src/quantem/gpu/dpc/backends/cuda` and detector CUDA moment kernels |
+| Python MPS/Metal | `src/quantem/gpu/dpc/backends/mps` |
+| WebGPU | `src/quantem/gpu/dpc/backends/webgpu` |
 | Native Metal and FFT | `Metal4DSTEMKernels` and `MetalImageFFT` |
 
 Parity reports compare `com_row`, `com_col`, centered/rotated DPC components,

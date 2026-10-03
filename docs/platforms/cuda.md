@@ -13,8 +13,8 @@ launch details through the public API.
 | Load orchestration | `src/quantem/gpu/io/load.py` | source discovery, frame planning, metadata, crop/bin/dtype provenance |
 | CUDA decode | `src/quantem/gpu/io/backends/cuda/decoder.py` | bitshuffle/LZ4 decode into CuPy-resident arrays |
 | Detector dispatch | `src/quantem/gpu/detector/workflow.py` and `compute/backends.py` | select resident CUDA reducers and normalize small results |
-| Detector kernels | `src/quantem/gpu/detector/compute/cuda/kernels.py` | masks, exact sums, selected frames, and moments |
-| DPC | `src/quantem/gpu/dpc/compute/cuda/backend.py` | CUDA CoM/DPC primitives under the shared workflow |
+| Detector kernels | `src/quantem/gpu/detector/backends/cuda/kernels.py` | masks, exact sums, selected frames, and moments |
+| DPC | `src/quantem/gpu/dpc/backends/cuda/backend.py` | CUDA CoM/DPC primitives under the shared workflow |
 | SSB | `src/quantem/gpu/ssb/backends/cuda` | prepared geometry, size-specific FFT kernels, objective, optimizer |
 | Display | `src/quantem/gpu/display/cuda.py` | resident display statistics and transformations |
 

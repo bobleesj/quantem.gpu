@@ -38,7 +38,7 @@ Loaded data uses one vocabulary across runtimes:
 
 | Field | Values | Meaning |
 |---|---|---|
-| `representation` | `packed`, `dense` | how every logical count is encoded |
+| `representation` | `encoded`, `paired`, `packed`, `dense` | physical count layout; runtime support varies |
 | `dtype` | scientific value type | the value range and arithmetic contract |
 | `residency` | host or runtime device location | where the physical payload remains |
 | `storage_schema` | versioned internal format | which decoder/profile produced it |
@@ -46,20 +46,21 @@ Loaded data uses one vocabulary across runtimes:
 CUDA and Python MPS expose this through `io.Dataset4dstemGPU`, native Swift/Metal
 through `Metal4DSTEMResidentReceipt`, and WebGPU through
 `LocalH5LoadResult` and `WebGPUCompactH5ResidentSource`. Vulkan load plans and
-packed-session admission use the same two representation names. Runtime-specific
-codec names do not become public load modes. See the
+packed-session admission retain their documented dense/packed contracts.
+Python CUDA/MPS acquisition loading defaults to ANS; a representation enum is
+not a promise that every runtime can load that layout. See the
 [representation support matrix](../api/representations.md) before assuming an
-operation accepts both representations on a given runtime.
+operation accepts a representation on a given runtime.
 
 ## Repository map by layer
 
 | Runtime | Discovery/dispatch | IO/decode | Detector and DPC | Reconstruction/display | Primary tests |
 |---|---|---|---|---|---|
-| CUDA | `device/backend.py`, operation protocols | `io/backends/cuda` | `detector/compute/cuda`, `dpc/compute/cuda` | `ssb/backends/cuda`, `display/cuda.py` | `test_cuda_*`, `test_realdata_parity.py` |
-| Python MPS | `device/backend.py`, operation protocols | `io/backends/mps` | `detector/compute/mps`, `dpc/compute/mps` | `ssb/backends/mps` | `test_mps_*`, MPS sections of parity tests |
+| CUDA | `device/backend.py`, operation protocols | `io/backends/cuda` | `detector/backends/cuda`, `dpc/backends/cuda` | `ssb/backends/cuda`, `display/cuda.py` | `test_cuda_*`, `test_realdata_parity.py` |
+| Python MPS | `device/backend.py`, operation protocols | `io/backends/mps` | `detector/backends/mps`, `dpc/backends/mps` | `ssb/backends/mps` | `test_mps_*`, MPS sections of parity tests |
 | Swift/Metal | SwiftPM products in `Package.swift` | `Native4DSTEMIO`, `Metal4DSTEMKernels` | `Metal4DSTEMKernels` | `MetalImageFFT`, `MetalDisplayKernels`, `MetalImageRuntime` | `src/quantem/gpu/swift/Tests` |
 | WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/backends/webgpu` | detector/DPC WebGPU modules | SSB and display WebGPU modules | `test_webgpu_*`, browser hardware gates |
-| CPU reference | explicit `backend="cpu"` | `io/backends/cpu/reference.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
+| CPU reference | explicit `backend="cpu"` | `io/load.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
 
 Open the runtime page for exact source files, call path, memory behavior,
 profiling boundaries, build commands, and acceptance gates.

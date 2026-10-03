@@ -100,7 +100,7 @@ producer evidence. Header-only `io.inspect` reports
 
 | Field | Meaning |
 |---|---|
-| `representation` | `dense`, `packed`, or `encoded` |
+| `representation` | `dense`, `packed`, `encoded`, or `paired` |
 | `source_dtype` | Original detector-count type |
 | `working_dtype` | Exact type exposed to scientific operations after the declared mask policy |
 | `source_shape` | Original scan and detector geometry |

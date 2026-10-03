@@ -1,6 +1,6 @@
 # I/O API
 
-Start with the [README examples](../../README.md#load-diffraction-patterns)
+Start with the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns)
 for individual patterns, scan patches, detector crops, and acquisition series.
 
 `quantem.gpu.io` has four public operations:
@@ -9,10 +9,15 @@ for individual patterns, scan patches, detector crops, and acquisition series.
 from quantem.gpu import io
 
 files = io.discover("/data/session")
-readiness = io.inspect(files[0])
-with io.load(files[0]) as loaded:
-    saved = io.save("copy.qem", loaded)
+with io.load(files[0]) as data:
+    pattern = data[10, 12]
+    metadata = data.metadata
+    io.save("copy.qem", data)
 ```
+
+For ordinary work, load once and read metadata from the returned acquisition.
+`inspect` is optional: use it for header-only checks, acquisition-readiness
+polling, or metadata access without an accelerator.
 
 Metadata parsing may run on the host, but detector decoding and compression do
 not silently fall back to CPU. `backend="auto"` selects CUDA or MPS and raises
@@ -72,11 +77,20 @@ its storage, decoding and metadata; QuantEM's core data classes are unchanged.
 | `data.size` | Total number of logical detector values, not bytes |
 | `len(data)` | Size of the first scan axis |
 | `data.dtype` | Stored scientific dtype |
+| `data.sampling` | Per-axis spacing; `None` where unknown |
+| `data.units` | Per-axis physical units; `None` where unknown |
+| `data.origin` | First-pixel coordinates; `None` where unknown |
 | `data.metadata` | Calibration, provenance, and storage metadata |
 | `data.logical_bytes` | Size of the complete uncompressed array |
 | `data.resident_bytes` | Size reported by the resident storage owner |
 
 Indexing returns an ordinary PyTorch tensor on the source GPU.
+Install PyTorch for this indexing interface. The calibration properties are
+read-only tuples in axis order: scan row, scan column, detector row, detector
+column. Scan lengths use angstrom; detector spacing retains its recorded
+angular or reciprocal-length unit. Missing calibration is never invented.
+Selected Torch tensors do not carry the owner's calibration automatically;
+pass the appropriate sampling and units explicitly when adding scale bars.
 A single scalar selection returns a scalar tensor. Integers remove axes;
 slices and one ellipsis support negative indices and steps. Index arrays, Boolean masks, and new axes are not supported.
 This selects measurements without interpolation. Strides may decode a bounding
@@ -132,8 +146,9 @@ print(loaded.logical_bytes, loaded.resident_bytes)
 
 For ordinary acquisition use, omit `representation`, `compression`, and
 `backend`. Supported originals become ANS-resident on the selected CUDA or MPS
-device; saved `.qem` files retain their declared encoded layout. Existing
-prepared packed containers remain a separate explicit storage contract.
+device; saved `.qem` files retain their declared encoded layout. The public GPU
+loader rejects prepared-packed acquisitions; re-export their original source
+as `.qem`. Retained low-level readers have a separate storage contract.
 Unknown formats are rejected, not silently expanded or relabeled as ANS.
 
 ### Load original arrays into ANS and save a `.qem` copy
@@ -389,12 +404,16 @@ path separately from `.qem` reopen.
 (cuda-h5-paired-residency)=
 ### Stream complete uint16 H5 counts into the paired CUDA layout
 
+This is an advanced CUDA integration path with reusable native output buffers.
+For ordinary acquisitions, use `io.load(path)` and the automatic detector
+functions without a session or representation option.
+
 ```python
 from quantem.gpu import io, detector
 
 series = io.load(masters, backend="cuda", representation="paired",
                  dtype="native", apply_mask=False)
-session = detector.prepare([item.data for item in series])
+session = detector.prepare(series)
 images = session.masked_sum(detector_mask, output="native")
 preview = session.masked_sum(detector_mask, output="native", out=images, block_stride=4)   # every 4th scan row, 1/4 of the time
 ```
@@ -466,8 +485,8 @@ packed files: reopen their original acquisition and save a new `.qem` copy.
 Read only the working region needed by the calculation:
 
 ```python
-loaded = io.load("scan_master.h5")
-pattern = loaded.read(scan_region=(0, 1, 0, 1))
+data = io.load("scan_master.h5")
+pattern = data[0, 0]
 ```
 
 Tiny explicit CPU references may use `backend="cpu", representation="dense"`.
@@ -478,17 +497,12 @@ They are not a production loading fallback.
 Keep the acquisition compressed and request bounded working regions:
 
 ```python
-full = io.load("scan_master.h5")
-crop = full.read(
-    scan_region=(32, 160, 48, 176),
-    detector_region=(0, 192, 0, 192),
-)
-
+data = io.load("scan_master.h5")
+crop = data[32:160, 48:176, :192, :192]
 ```
 
-`scan_region` and `detector_region` are always
-`(row_start, row_stop, col_start, col_stop)`.
-This read does not bin or alter stored samples. Additional transformations
+Indices follow `(scan_row, scan_column, detector_row, detector_column)` and
+slice stops are excluded. This selection does not bin or alter stored samples. Additional transformations
 belong to the requested working array, not an implicit loading policy.
 
 ### Dtype selection

@@ -13,7 +13,7 @@ their kernels.
 | browse/residency service | `src/quantem/gpu/remote/server.py::BrowseService` | discovery, readiness, placement, cache ownership |
 | reconstruction protocol | `src/quantem/gpu/remote/ssb_api.py` | source identity, prepare/reconstruct jobs, typed state |
 | advanced protocol | `src/quantem/gpu/remote/maped_api.py` | inventory, payload, job, and cache-validation contracts |
-| transport tests | `tests/remote` | routes, headers, errors, admission, and lifecycle |
+| transport tests | `tests/contracts/remote` | routes, headers, errors, admission, and lifecycle |
 
 ## Version negotiation
 

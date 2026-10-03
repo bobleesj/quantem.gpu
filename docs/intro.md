@@ -6,16 +6,42 @@ WebGPU, and an explicit CPU reference.
 
 ```{admonition} Living pre-release draft
 :class: important
-This site documents an evolving `0.0.1` release-candidate series. Public APIs,
-runtime coverage, and recommendations may change between candidates. Python
-examples currently pin the exact TestPyPI candidate
-`quantem.gpu==0.0.1rc8`; Swift consumers pin an exact verified Git revision.
+This site documents the current source checkout. APIs and runtime coverage
+may change; use the [source installation instructions](install.md) and record
+`git rev-parse HEAD` with your results. The version field still reads
+`0.0.1rc8`, but the current examples require changes newer than that published
+candidate. Swift consumers also pin an exact verified Git revision.
 
 The documentation is a draft, but retained performance and parity rows are not
 draft estimates: each is a frozen historical measurement tied to its stated
 date, source revision, device, data plan, cache state, and acceptance rule. A
-newer candidate replaces the documented pin only after those gates are rerun.
+newer revision does not automatically inherit those measurements.
 ```
+
+## Python quick start
+
+```python
+from functools import partial
+
+from quantem.gpu import detector, io
+from quantem.core.visualization import show_2d
+
+show_2d = partial(show_2d, cmap="inferno")
+data = io.load("gold_master.h5")
+show_2d([detector.bf(data), detector.adf(data)], title=["BF", "ADF"], norm="power_sqrt")
+```
+
+The detector fits the bright-field disk automatically. `data[row, column]`
+returns a GPU Torch tensor for one diffraction pattern; `data.metadata`
+contains calibration and provenance. Close the acquisition with `data.close()`
+after the final calculation or viewer. Inferno is a notebook-local default;
+one plot can override it with `cmap="gray"`.
+
+For the complete scientist workflow, use the
+[README tutorials](https://github.com/bobleesj/quantem.gpu#load-diffraction-patterns).
+The detailed guides cover [I/O and calibration](api/io.md),
+[automatic BF/ADF and overrides](api/images_dpc.md),
+[QEM import/export](api/qem-python.md), and [SSB](api/ssb.md).
 
 ```{admonition} Choose how you want to enter
 :class: tip
@@ -78,7 +104,7 @@ Storage read ──overlap──► GPU bitshuffle/LZ4 decode
                               │  bad-pixel policy + dtype conversion
                               │  + exact detector sum/bin when selected
                               ▼
-Resident I[R_r,R_c,k_r,k_c] + complete provenance
+ANS-encoded acquisition + complete provenance (Python CUDA/MPS)
       │  fused/reused GPU reductions
       ▼
 Mean diffraction, BF/ADF/DF, CoM, DPC, iDPC
@@ -139,8 +165,9 @@ beside the operation instead of separating it into a generic tutorial.
 | WebGPU | [WebGPU](platforms/webgpu.md) | TypeScript adapters and WGSL resources |
 | CPU reference | [CPU reference](platforms/cpu-reference.md) | independent NumPy/reference implementation |
 
-All runtimes implement the same operation contract. They do not expose
-platform-specific scientific workflows.
+Runtimes follow the same operation contracts where implemented. Support differs
+by operation; consult the runtime pages and acceptance evidence before relying
+on a capability.
 
 To run the CUDA implementation as a service, use
 [QuantEM.GPU Remote](remote/index.md). Remote access is deployment and
@@ -188,10 +215,8 @@ See [Install](install.md), [API contracts](api/index.md), and
 
 ## Citing and support
 
-If the quantEM interactive framework, including `quantem.gpu` accelerated IO,
-detector or DPC analysis, display math, SSB reconstruction, or
-CUDA/MPS/Metal/WebGPU workflows, contributed to your research, please consider
-citing:
+If quantEM's interactive widgets, GPU-accelerated I/O, or data processing
+and reconstruction tools contributed to your research, please consider citing:
 
 > Sangjoon Lee et al., “Interactive Framework for Real-Time 4DSTEM Analysis
 > and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),

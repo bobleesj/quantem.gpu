@@ -9,18 +9,19 @@ implementation details.
 
 ## Inputs and outputs
 
-`SSB.open()` accepts a supported detector source. `SSB(patterns, ...)` accepts an
-existing backend-resident detector array. Both require electron voltage,
-convergence semiangle, and scan sampling unless those values are available
-from trusted source metadata.
+`SSB.open(path, ...)` loads a supported detector source. `SSB(data, ...)`
+accepts an existing `Dataset4dstemGPU` or supported array. Both require explicit
+`voltage_kV`, `semiangle_mrad`, and `scan_sampling_A`; read those values from
+verified acquisition metadata or supply your microscope calibration.
 
 `SSB.open` uses the canonical `io.load` path, including its ANS-only GPU
 acquisition policy. Older prepared-packed files must be re-exported from their
 original acquisitions; they cannot be reopened through a packed override.
 
 `SSB.open` owns its loaded source until `close()` or context-manager exit,
-including when reconstruction has not yet started. Pass an ordinary dense
-array to `SSB` when borrowing caller-owned array storage.
+including when reconstruction has not yet started. `SSB(data, ...)` borrows the
+caller-owned acquisition or array; keep it open until SSB has finished.
+Encoded inputs decode only the bright-field evidence needed by the session.
 Treat detector values as fixed for the lifetime of a session: SSB retains their
 prepared Fourier data. After editing the array, construct a new `SSB` session.
 SSB Fourier-stack preparation and reconstruction are additional work; they
@@ -35,11 +36,22 @@ bright-field geometry, timings, reuse state, and provenance metadata.
 ## Shapes, coordinates, dtypes, and units
 
 - detector input: `I[scan_row, scan_column, detector_row, detector_column]`;
-- complex result: `object_wave[scan_row, scan_column]`, complex64;
+- complex result: `object_wave[scan_row, scan_column]`, complex64, on the session's output grid;
 - `bf_center`: `(detector_row, detector_column)`;
 - `scan_sampling_A`: `(row, column)` when anisotropic, in Å;
 - `C10` and `C12`: nm; and
 - `phi12`: radians.
+
+For a dense CUDA input, native supported scan shapes are 128×128, 256×256,
+512×512 and 1024×1024. Other smaller scan shapes are padded with the mean
+diffraction pattern to a supported square. For example, a 32×32 input currently
+produces a 128×128 working grid before any requested upsampling. Compact CUDA
+inputs require a supported native square and reject padding. Check
+`ssb.scan_shape` and `result.phase.shape`; padded pixels are not additional
+measured scan positions. Dense inputs larger than 1024 along either scan axis
+are center-cropped by this CUDA path; choose the intended scan region explicitly
+before construction if that default crop is unsuitable. Computational padding is separate from
+`reconstruct(..., upsample=2)`.
 
 The default fit evaluates 200 seeded TPE candidates with the exact full active
 bright-field phase-variance objective, chooses the minimum loss, and performs
@@ -53,14 +65,27 @@ or MPS. The browser never substitutes fewer trials or a reduced objective.
 ## Find aberrations, then reconstruct
 
 ```python
+from quantem.gpu import SSB
+
+ssb = SSB.open(
+    "acquisition.qem",
+    voltage_kV=300,
+    semiangle_mrad=30,
+    scan_sampling_A=0.264,
+)
 aberrations = ssb.find_aberrations(tilt=True, save_to="results/aberrations")
 aberrations.report()
 ssb.show_trials(best=5)
-result = ssb.reconstruct(aberrations, upsample=4, save_to="results/4x")
+result = ssb.reconstruct(aberrations, save_to="results/native")
 ```
 
-`find_aberrations()` searches on the native scan grid. The public `fit()` name
-has been removed. `reconstruct()` applies the supplied parameters without
+The numbers above illustrate the units; use your acquisition's calibration.
+`tilt=True` jointly estimates specimen tilt and model depth spread as well as
+aberrations. Omit it for the standard aberration search.
+Keep `ssb` open for the examples below and call `ssb.close()` when finished.
+
+`find_aberrations()` searches on the native scan grid.
+`reconstruct()` applies the supplied parameters without
 searching. CUDA uses `phase_of_mean` at every output factor; MPS uses
 `mean_phase`. Both return phase-only complex waves with unit amplitude,
 recorded as `amplitude_estimated=False`. That amplitude is not a measured
@@ -110,13 +135,8 @@ rotation. Saved search results retain this history.
 Fit at native sampling, then reuse the fitted parameters for a finer preview:
 
 ```python
-fitted = workflow.find_aberrations(tilt=True)
-phase, loss = workflow.preview(
-    fitted.aberrations,
-    tilt_mrad=fitted.tilt_mrad,
-    depth_spread_nm=fitted.depth_spread_nm,
-    upsampling_factor=4,
-)
+result_2x = ssb.reconstruct(aberrations, upsample=2)
+result_4x = ssb.reconstruct(aberrations, upsample=4)
 ```
 
 CUDA supports factors 1, 2, 3, 4 and 8 with C10/C12 and optional tilt/depth
@@ -130,7 +150,7 @@ When migrating hard-coded aberrations from releases before the nm correction,
 divide old C10/C12 numbers and search bounds by 10. For example, an old value of
 100 represented 100 Å and should now be supplied as 10 nm. Do not rescale angles
 or values already recorded in nm. Saved records must declare nm explicitly and use the current schema.
-Rerun the probe fit for older records; the loader does not guess their units.
+Rerun the aberration search for older records; the loader does not guess their units.
 
 ## Errors and unsupported requests
 
@@ -164,25 +184,27 @@ with `reconstruct(aberrations={...})`. Those starting coefficients participate
 in the saved search identity, so a different refinement start cannot inherit
 an older result.
 
-## Minimal fit
+## Scripts and fixed aberrations
 
 ```python
 from quantem.gpu import SSB
 
 with SSB.open(
-    "scan_master.h5",
-    backend="mps",
+    "acquisition.qem",
     voltage_kV=300,
     semiangle_mrad=30,
     scan_sampling_A=(0.264, 0.264),
-) as workflow:
-    result = workflow.find_aberrations(save_to="results/ssb")
+) as batch_ssb:
+    batch_aberrations = batch_ssb.find_aberrations(save_to="results/aberrations")
+    result = batch_ssb.reconstruct(batch_aberrations, save_to="results/native")
 ```
 
-Use `reconstruct()` when aberrations are known and no optimizer should run:
+The context manager closes the session after the block. In a still-open
+notebook session, use `reconstruct()` when aberrations are known and no
+optimizer should run:
 
 ```python
-result = workflow.reconstruct(
+result = ssb.reconstruct(
     aberrations={"C10": 12.5, "C12": 3.0, "phi12": 0.25},
     save_to="results/fixed-ssb",
 )
@@ -204,10 +226,10 @@ through this nonlinear phase extraction. This is not an FFT brightness factor.
 CUDA C10/C12 now defaults to phase after complex-wave averaging:
 
 ```python
-phase, native_loss = workflow.preview(
-    tilted.aberrations,
-    tilt_mrad=tilted.tilt_mrad,
-    depth_spread_nm=tilted.depth_spread_nm,
+phase, native_loss = ssb.preview(
+    aberrations.aberrations,
+    tilt_mrad=aberrations.tilt_mrad,
+    depth_spread_nm=aberrations.depth_spread_nm,
     upsampling_factor=4,
     phase_estimator="phase_of_mean",
 )
@@ -260,8 +282,10 @@ depth (5 mrad over 10 nm is 0.5 A), which blurs the lattice along the tilt.
 spread, in one search with the same trial budget as the standard fit:
 
 ```python
-standard = workflow.find_aberrations()              # C10, C12, phi12
-tilted = workflow.find_aberrations(tilt=True)       # + sample tilt and depth spread, jointly
+import pandas as pd
+
+standard = ssb.find_aberrations()         # C10, C12, phi12
+tilted = ssb.find_aberrations(tilt=True)   # + specimen tilt and depth spread, jointly
 
 tilted.tilt_mrad          # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness

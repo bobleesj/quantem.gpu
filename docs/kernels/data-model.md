@@ -34,6 +34,31 @@ as BF or iDPC has shape `(scan_rows, scan_columns)`. A detector-shaped result
 such as the mean diffraction pattern has shape
 `(detector_rows, detector_columns)`.
 
+## Python acquisition and calibration
+
+`io.load(path)` returns `Dataset4dstemGPU`, an acquisition handle for encoded
+GPU storage. It is independent of QuantEM's core dataset classes. Use ordinary
+indexing to decode the selected working region into a Torch tensor:
+
+```python
+pattern = data[10, 12]
+patch = data[8:12, 10:16, 64:128, 64:128]
+```
+
+| Attribute | Meaning |
+| --- | --- |
+| `data.shape`, `data.ndim`, `data.size` | Logical dimensions and number of values |
+| `data.sampling` | Per-axis spacing |
+| `data.units` | Unit for each axis |
+| `data.origin` | First-pixel coordinate for each axis |
+| `data.metadata` | Complete calibration, provenance and storage record |
+
+Sampling, units and origin are read-only tuples in the same axis order as
+`shape`. Unknown entries are `None`. A selected Torch tensor does not retain
+these axis records automatically. When displaying a crop, use its matching
+sampling and account for the crop offset; do not label it with invented units.
+See [I/O](../api/io.md) for selection and lifetime rules.
+
 ## Regions are half-open
 
 Both scan and detector regions use:

@@ -818,7 +818,8 @@ def test_load_dtype_docs_keep_precision_and_peak_memory_distinct() -> None:
     assert "values above 255" in io_api
     assert "Do not call a payload size “peak memory.”" in methodology
     assert "Metal-driver allocation after output release" in methodology
-    assert "loaded.data.free()" in mps
+    assert "loaded.close()" in mps
+    assert "Retained dense-loader measurements" in mps
     assert "19,327,352,832 bytes (18.00 GiB)" in mps
     assert "torch.mps.driver_allocated_memory()" in mps
     assert "maximum possible sums 212, 848, and 3,392" in mps
@@ -1024,20 +1025,21 @@ def test_public_repository_links_and_citation_copy() -> None:
     assert "[Contributing](CONTRIBUTING.md)" in readme
     assert Path("CONTRIBUTING.md").is_file()
     assert "## Citing quantem.gpu" in readme
-    assert "the quantEM interactive framework" in readme
+    assert "interactive widgets, GPU-accelerated I/O" in readme
     assert "https://doi.org/10.1093/mam/ozag053.941" in readme
     assert "Sangjoon Lee et al." in intro
     assert "https://doi.org/10.1093/mam/ozag053.941" in intro
     assert "author: Sangjoon Lee et al." in config
     assert '{name = "Sangjoon Lee"}' in package
     assert '"CONTRIBUTING.md"' in package
-    assert not Path("CITATION.cff").exists()
+    citation = Path("CITATION.cff").read_text(encoding="utf-8")
+    assert "preferred-citation:" in citation
+    assert "10.1093/mam/ozag053.941" in citation
     for public_source in (readme, intro, config, package):
-        assert "CITATION.cff" not in public_source
         assert re.search(r"\bBob\b", public_source) is None
 
 
-def test_prerelease_docs_pin_the_exact_declared_candidate() -> None:
+def test_source_docs_distinguish_current_checkout_from_published_candidate() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     intro = Path("docs/intro.md").read_text(encoding="utf-8")
     install = Path("docs/install.md").read_text(encoding="utf-8")
@@ -1047,7 +1049,10 @@ def test_prerelease_docs_pin_the_exact_declared_candidate() -> None:
 
     assert re.fullmatch(r"\d+\.\d+\.\d+rc\d+", version)
     assert exact_pin in readme
-    assert exact_pin in intro
+    assert version in intro
+    for text in (readme, intro, install):
+        assert "git rev-parse HEAD" in text
+    assert "newer than that published" in intro
     assert exact_pin in install
     assert "evolving pre-release draft" in install
     assert "candidates are not assumed to be" in install
@@ -1352,7 +1357,7 @@ def test_public_api_pages_are_contracts_not_consumer_ui_guides() -> None:
             "## Shapes, coordinates, dtypes, and units",
             "## Errors and unsupported requests",
             "## Provenance",
-            "## Minimal example",
+            "## Start with automatic disk fitting",
             "## Integration boundary",
         ),
         "ssb.md": (
@@ -1360,7 +1365,7 @@ def test_public_api_pages_are_contracts_not_consumer_ui_guides() -> None:
             "## Shapes, coordinates, dtypes, and units",
             "## Errors and unsupported requests",
             "## Provenance and exact reuse",
-            "## Minimal fit",
+            "## Find aberrations, then reconstruct",
             "## Integration boundary",
         ),
         "movie.md": (

@@ -24,6 +24,34 @@ client schedules or presents—not instructions for a particular screen or
 viewer. Product-specific details belong in that product's documentation unless
 they are necessary historical provenance.
 
+## Scientist-facing examples
+
+Start with the current short workflow: `io.load(path)`, array indexing,
+`detector.bf(data)` / `detector.adf(data)`, and
+`ssb = SSB(data, ...)`, `aberrations = ssb.find_aberrations()`, then
+`ssb.reconstruct(aberrations)`. Call the fitted result `aberrations`. Show automatic defaults
+first, then pixel-radius and center overrides. Keep `detector.prepare` in
+advanced integration examples that need its exact/native output contract.
+
+Use `Dataset4dstemGPU` for the acquisition handle. Describe what returns a
+Torch tensor and what returns a NumPy product. Show `.sampling`, `.units`,
+`.origin` and `.metadata`; missing physical calibration stays explicit.
+
+For static `show_2d` examples, set the notebook's colormap once:
+
+```python
+from functools import partial
+from quantem.core.visualization import show_2d
+
+show_2d = partial(show_2d, cmap="inferno")
+```
+
+Do not repeat the import later and reset this local default. Explain display
+normalization and shared versus independent contrast. Add scale bars when
+calibration is known. Retain the short Gold workflows in the README and link
+to them from detailed guides. Keep historical measurements dated and separate
+from current API instructions.
+
 ## Docstrings
 
 Use NumPy-style docstrings for public Python APIs. The first line is a concise

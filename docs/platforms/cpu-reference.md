@@ -26,7 +26,7 @@ reference = io.load(
 | Layer | CPU/reference source | Responsibility |
 |---|---|---|
 | Explicit selection | `src/quantem/gpu/io/backends/protocol.py` | accept `backend="cpu"`; automatic accelerator selection never chooses it |
-| IO implementation | `src/quantem/gpu/io/backends/cpu/reference.py` | h5py/hdf5plugin decode, bad-pixel zeroing, integer detector-bin reference |
+| IO implementation | `src/quantem/gpu/io/load.py` | h5py/hdf5plugin decode, bad-pixel zeroing, integer detector-bin reference |
 | Array detector reference | `src/quantem/gpu/detector/workflow.py::_ArrayComputeBackend` | NumPy mean diffraction, masks, exact sums, and CoM |
 | DPC/iDPC reference | `src/quantem/gpu/dpc/workflow.py` | NumPy rotation, curl objective, and FFT integration |
 | Frozen contracts | `tests/parity`, product and backend tests | adjudicate accelerator outputs without generating goldens from that accelerator |

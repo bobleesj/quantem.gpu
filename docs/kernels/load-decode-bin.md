@@ -16,7 +16,8 @@ print(result.logical_bytes, result.resident_bytes)
 
 The default retains native detector sampling and ANS residency for supported
 original acquisitions. No representation option is needed. Decode a selected
-region through `result.read(...)`; do not expand the acquisition to select it.
+region through indexing, such as `result[10, 12]`; do not expand the acquisition
+to select it.
 Scientific binning and cropping require a separately supported operation and
 are never introduced as an automatic resource policy.
 

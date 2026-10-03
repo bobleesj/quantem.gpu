@@ -1,6 +1,6 @@
 # API guide
 
-This guide maps public scientific contracts to their stable entry points. Use
+This guide maps public scientific contracts to their current entry points. Use
 it when integrating QuantEM.GPU; use the scientific-kernel and runtime sections
 when implementing or optimizing those contracts.
 
@@ -10,14 +10,12 @@ import quantem.gpu as qgpu
 qgpu.device.detect()
 ```
 
-| Domain | Stable entry point | Primary result |
+| Domain | Entry point | Primary result |
 |---|---|---|
-| device selection | `quantem.gpu.device` | explicit backend/device description |
-| discovery, load, and save | `quantem.gpu.io` | typed data plus provenance metadata |
+| discovery, load, and save | `quantem.gpu.io` | `Dataset4dstemGPU` with ANS storage and calibration |
 | BF, DF, ADF, mean diffraction | `quantem.gpu.detector` | scan- or detector-shaped product |
 | CoM, DPC, and iDPC | `quantem.gpu.dpc` | `DPCResult` |
-| parallax reconstruction | `quantem.gpu.parallax` | domain reconstruction result |
-| SSB fitting/reconstruction | `quantem.gpu.SSB` | `SSBResult` or `SSBSeriesResult` |
+| SSB aberration search and reconstruction | `quantem.gpu.SSB` | `SSBResult` or `SSBSeriesResult` |
 | display/export math | `quantem.gpu.display`, `quantem.gpu.movie` | display buffer or encoded artifact |
 | device selection | `quantem.gpu.device.detect`, `profile`, `resolve` | explicit backend/device description |
 | electron optics | `quantem.gpu.optics` | wavelength, reciprocal cutoff, aberration phase, and fit results |
@@ -63,15 +61,23 @@ gates; it is not part of the stable entry points above.
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.
 
-`quantem.gpu.io.load` returns `Dataset4dstemGPU`. Its
-`DataRepresentation` is `packed` or `dense`; scientific dtype,
-physical residency, and storage schema remain independent metadata.
-Both paths remain supported; see [Dense and lossless-packed data](representations.md)
-for the operation matrix, ownership rules, and remaining backend gates.
+`io.load(path)` returns a `Dataset4dstemGPU` acquisition with ANS-encoded
+storage on CUDA or MPS. Use `data[row, column]` for one diffraction pattern,
+`data.sampling`, `data.units` and `data.origin` for axis calibration, and
+`data.metadata` for the complete record. Selected regions are Torch tensors;
+the full acquisition remains encoded. QuantEM's core data classes are unchanged.
+
+For virtual images, start with `detector.bf(data)` or `detector.adf(data)`;
+disk fitting happens automatically. For SSB, use `SSB.open(path, ...)` or
+`SSB(data, ...)`, then `find_aberrations()` and `reconstruct(aberrations)`.
+See the [README examples](https://github.com/bobleesj/quantem.gpu/blob/main/README.md#load-diffraction-patterns) for the
+short workflow and [count representations](representations.md) for advanced
+storage contracts. Dense arrays and retained low-level packed readers are not
+public GPU acquisition-loading modes.
 
 ## Complete public namespace map
 
-| Namespace/product | Stable public surface | Contract page |
+| Namespace/product | Public surface | Contract page |
 |---|---|---|
 | `device` | `detect`, `profile`, `resolve` | [Device selection and supporting APIs](core.md) |
 | `io` | `discover`, `inspect`, `load`, `save` | [I/O API](io.md) |

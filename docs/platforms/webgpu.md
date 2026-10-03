@@ -9,9 +9,9 @@ maps WebGPU to Metal internally.
 | Operation | TypeScript/WGSL source |
 |---|---|
 | Local HDF5 read/decode | `src/quantem/gpu/io/backends/webgpu` |
-| BF/DF/ADF and moments | `src/quantem/gpu/detector/compute/webgpu` |
-| DPC/iDPC | `src/quantem/gpu/dpc/compute/webgpu` |
-| SSB | `src/quantem/gpu/ssb/compute/webgpu` |
+| BF/DF/ADF and moments | `src/quantem/gpu/detector/backends/webgpu` |
+| DPC/iDPC | `src/quantem/gpu/dpc/backends/webgpu` |
+| SSB | `src/quantem/gpu/ssb/backends/webgpu` |
 | Display statistics/FFT/color | `src/quantem/gpu/display/webgpu` |
 
 The browser call path is:

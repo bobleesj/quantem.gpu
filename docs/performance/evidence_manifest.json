@@ -9,7 +9,7 @@
   "pages": [
     {
       "path": "docs/intro.md",
-      "sha256": "9ce3be00ecb8f2e59c8c4bf0cf2b69322b6d0a16308759eb5b4d7d8497974fb6",
+      "sha256": "c795824878ea7285f8cca048da9fac14f11a7b39dcc4c50312805cd1a961d344",
       "role": "Developer landing page and benchmark routing without copied measurements"
     },
     {
@@ -19,17 +19,17 @@
     },
     {
       "path": "docs/platforms/cuda.md",
-      "sha256": "74096411db28ac7c4bac17b293675bd7029a533deef4332fb537990b2c3ee4d9",
+      "sha256": "39afca638ad28dcd7392074a99a2fef56dedec6d212af0ff3ddd782ca2b583cb",
       "role": "CUDA 6 GiB minimum-device acceptance contract"
     },
     {
       "path": "docs/platforms/mps.md",
-      "sha256": "e955a5a58bcc25f257fb2e374287deda5fa6b77d71f15d78c53afe563af5151b",
+      "sha256": "e4eee78cc7294355418c8bcee1bd2e41c01a2bc2f5c5c9c59cf9800a76536c87",
       "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
     },
     {
       "path": "docs/platforms/webgpu.md",
-      "sha256": "be2ec2dbc4abd864a7d5b2a6b58d980c6e86283e09dd917cc9cd463cf2ef854d",
+      "sha256": "95b0f775b95850ce367d3e968cacf49f7f7dba9599c3ba1eca8fa135bec93eed",
       "role": "WebGPU 8 GB laptop acceptance contract"
     },
     {
@@ -39,7 +39,7 @@
     },
     {
       "path": "docs/backends.md",
-      "sha256": "3234920493408cb13fd496d6ee80538f695b96572d818aa2d3867b3efd4085aa",
+      "sha256": "32870eb81905c653a1e58852108f38ac63b43f38bc109ed5888d650e63be3df0",
       "role": "Capability and implementation-source map without copied timings"
     },
     {

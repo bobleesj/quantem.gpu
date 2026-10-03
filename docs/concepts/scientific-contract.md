@@ -71,15 +71,18 @@ when explicitly selected as a reference.
 See [Cross-backend parity](../performance/parity.md) for numerical gates and
 [Kernel architecture](kernel-architecture.md) for the implementation boundary.
 
+(resident-integer-detector-products-v1)=
 ## Resident integer detector products v1
 
 **Contract ID: `quantem.gpu.resident-integer-products/v1`.** A scientist selects
 detector pixels to form a scan image, then inspects diffraction at chosen scan
 positions without changing the source or the next detector result.
 
-The existing Python owner is `detector.prepare(data)`, followed by
+The advanced Python operation handle is `detector.prepare(data)`, followed by
 `masked_sum_exact(mask)` and `frame(index)`. This contract specifies observable
 counts, not a common kernel, storage layout, buffer class, or performance target.
+Ordinary users call `detector.bf(data)`, `detector.adf(data)` or `data[row, column]`;
+the session API is for exact integer totals and native-buffer integration.
 It is a narrow profile of `detector.integer-products` in
 `tests/parity/backend_matrix.json`, not a new capability or evidence registry.
 

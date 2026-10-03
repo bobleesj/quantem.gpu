@@ -5,7 +5,10 @@ study settings, private source locations, accepted results and figure rendering
 in the study workspace. A manuscript does not need to be public for its code
 dependency to be reusable.
 
-The existing entry points are `io.load`, `detector.prepare`, `session.frame`
+For ordinary scientific work, use `io.load`, array indexing and
+`detector.bf` / `detector.adf` as shown in the [README](https://github.com/bobleesj/quantem.gpu/blob/main/README.md).
+This guide covers advanced native and exact-integer integration. Its entry
+points are `io.load`, `detector.prepare`, `session.frame`
 and `session.masked_sum_exact`. There is no separate paper API, codec registry
 or common codec base class. Preserve the implementations until evidence
 justifies combining them.

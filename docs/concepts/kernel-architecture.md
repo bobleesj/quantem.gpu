@@ -14,9 +14,11 @@ scientific contract
 This structure prevents four optimized implementations from drifting into four
 different definitions of the science.
 
-For loaded 4D-STEM data, every runtime also shares two representation names:
-`packed` and `dense`. Dtype, device/host residency, file schema, and
-codec profile are separate fields. A backend may add a new internal codec
+Representation distinguishes `encoded`, `paired`, `packed`, and `dense`
+storage; each runtime supports its documented subset. Python GPU acquisition
+loading defaults to ANS-encoded storage. Dense arrays and low-level packed
+readers remain separate contracts. Dtype, device/host residency, file schema,
+and codec profile are separate fields. A backend may add a new internal codec
 without forcing every scientist or consumer application to learn another load
 mode.
 
@@ -30,9 +32,10 @@ mode.
 | Display statistics and transforms | `src/quantem/gpu/display` | `display/backends/{cpu,cuda,webgpu,direct3d}` | `MetalDisplayKernels`, `MetalImageRuntime` |
 | Single-sideband ptychography | `src/quantem/gpu/ssb` | `ssb/backends/{cuda,mps,webgpu}` | `MetalSSBKernels` |
 
-The old `compute` folder contains compatibility imports only. New
-public APIs belong to the scientific domain; consumers must not import a
-backend module directly.
+Internal `compute` helpers adapt resident storage to operation interfaces;
+runtime implementations live under each domain's `backends` directory.
+Public APIs belong to the scientific domain; ordinary callers should not
+import a backend module directly.
 
 Browser consumers can import `src/quantem/gpu/webgpu/index.ts`: it re-exports
 the existing dense and lossless-packed IO, detector, and display implementations

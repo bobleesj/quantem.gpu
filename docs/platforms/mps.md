@@ -9,12 +9,12 @@ MLX/PyObjC/Metal and chunk-backed unified-memory representations.
 |---|---|---|
 | Device selection | `src/quantem/gpu/device/backend.py` | require macOS Metal/PyObjC or an available Torch MPS device |
 | IO orchestration | `src/quantem/gpu/io/load.py` | source planning, metadata, policy-free crop/bin/dtype contract |
-| MPS decode adapter | `src/quantem/gpu/io/backends/mps/decoder.py` | map compressed chunks and submit Metal decode work |
+| MPS decode adapter | `src/quantem/gpu/io/backends/mps/dense.py` | map compressed chunks and submit Metal decode work |
 | Decode shader | `src/quantem/gpu/io/backends/mps/kernels/bslz4.msl` | bitshuffle/LZ4 reconstruction, scratch-free exact `uint16` output, and fused exact detector sums |
 | Chunk series | `src/quantem/gpu/io/backends/mps/series.py` | preserve source lifetime without full duplication |
-| Detector adapter | `src/quantem/gpu/detector/compute/mps/kernels.py` | chunk-backed frame and reduction interface |
-| Detector shader | `src/quantem/gpu/detector/compute/mps/metal/reductions.msl` | exact sums and detector moments |
-| DPC | `src/quantem/gpu/dpc/compute/mps/backend.py` | MPS CoM/DPC primitives under the shared workflow |
+| Detector adapter | `src/quantem/gpu/detector/backends/mps/kernels.py` | chunk-backed frame and reduction interface |
+| Detector shader | `src/quantem/gpu/detector/backends/mps/metal/reductions.msl` | exact sums and detector moments |
+| DPC | `src/quantem/gpu/dpc/backends/mps/backend.py` | MPS CoM/DPC primitives under the shared workflow |
 | SSB | `src/quantem/gpu/ssb/backends/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
 
 The IO call path is:
@@ -68,11 +68,20 @@ fused decode/conversion/bin/reduction while preserving exact counts. A unified
 memory mapping is not an H2D copy, so profiling should report page-in and GPU
 access honestly rather than inventing “upload” time.
 
-`MPSChunked4DSTEM` has explicit lifetime ownership. Its NumPy views are backed
+Use `loaded.close()` after the final reader of a `Dataset4dstemGPU` has
+finished. Array indexing returns a Torch MPS tensor and requires PyTorch;
+MLX and Metal still implement the accelerated loading and SSB paths.
+
+### Retained dense-loader measurements
+
+The measurements below describe the earlier dense loader at its stated revision,
+not the current ANS default. `MPSChunked4DSTEM` has explicit lifetime ownership.
+Its NumPy views are backed
 by buffers created directly with Metal/PyObjC; deleting the Python wrapper or
 calling `clear_mps_cache()` does not release caller-owned output buffers. Call
-`loaded.data.free()` only after the final reader has finished. A benchmark that
-repeats `io.load` without this release accumulates roughly one resident payload
+`free()` on a directly owned low-level buffer only after its final reader has
+finished; ordinary acquisition callers use `loaded.close()`. A benchmark that
+repeats loading without release accumulates roughly one resident payload
 per repetition and measures memory pressure rather than steady-state loader
 speed.
 
