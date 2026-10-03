@@ -455,6 +455,7 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
 
     session = Session.__new__(Session)
     session._test_backend = _Backend()
+    session.backend = session._test_backend.backend
     phase, loss = session.preview(
         {"C10": 0.0, "C12": 0.0, "phi12": 0.0},
         context=Context(),
