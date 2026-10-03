@@ -32,7 +32,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "quantem @ git+https://github.com/bobleesj/quantem.git@838b36c723dbb2e3feef631ad214092881359f70",
+    "quantem @ git+https://github.com/bobleesj/quantem.git@cddc61863a6d2dc2611f718196062fc86c5fbe07",
     "h5py",
     "hdf5plugin",
     "jinja2",

@@ -66,7 +66,8 @@ show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
 
 Indexing returns a native QuantEM dataset backed by the selected GPU tensor;
-`show_2d` uses its calibration directly.
+`show_2d` displays it directly. Use the selected dataset's `.show()` method
+to include its calibrated scale bar.
 The acquisition remains ANS encoded. Backend selection uses CUDA or MPS and
 never silently falls back to CPU.
 
