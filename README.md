@@ -83,7 +83,7 @@ classes. Indexing decodes only the requested region into a PyTorch tensor.
 ```python
 pattern = data[10, 12]       # torch.Tensor on the GPU
 pattern.float()              # standard PyTorch operations
-pattern.mean()               # GPU computation
+pattern.float().mean()       # GPU computation on floating-point counts
 pattern.cpu().numpy()       # explicit host copy of this one pattern
 ```
 
