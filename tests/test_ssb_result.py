@@ -9,6 +9,40 @@ import pytest
 from quantem.gpu.io.ssb_result import read_result
 
 
+def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
+    """Microscope screening exports beside processed results, not raw inputs."""
+    import h5py
+    from quantem.gpu.io.ssb_result import export_result
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    master = raw / "scan_master.h5"
+    with h5py.File(raw / "scan_data.h5", "w") as handle:
+        handle["data"] = np.ones((2, 2, 2), dtype=np.uint16)
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
+    run = tmp_path / "run"
+    run.mkdir()
+    phase = np.array([[0, 1], [-1, 2]], dtype=np.float32)
+    np.save(run / "ssb_phase.npy", phase)
+    config = {"computed": {"bf_radius": 1, "bf_center": [1, 1], "ssb": {
+        "semiangle_mrad": 20, "scan_sampling_A": 0.5, "voltage_kV": 200,
+        "aberrations": {"C10": 0, "C12": 0, "phi12": 0},
+        "rotation_angle_deg": 0,
+    }}}
+    (run / "config.json").write_text(json.dumps(config))
+    catalogue = tmp_path / "processed"
+    first = export_result(run, master, output_folder=catalogue)
+    assert first.is_relative_to(catalogue)
+    assert export_result(run, master, output_folder=catalogue) == first
+    np.save(run / "ssb_phase.npy", phase + 1)
+    second = export_result(run, master, output_folder=catalogue)
+    assert first != second
+    np.testing.assert_array_equal(read_result(first)[1], phase)
+    np.testing.assert_array_equal(read_result(second)[1], phase + 1)
+    assert not (raw / "live").exists()
+
+
 def test_real_pair_validation(tmp_path):
     """Keep signed float bits and reject incomplete or misbound companions."""
     import hashlib

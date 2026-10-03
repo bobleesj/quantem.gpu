@@ -1372,6 +1372,9 @@ class SSB:
                 print(f"SSB result saved to {paths[0]}")
         return result
 
+    # Microscope workflow name; keep fit available for existing notebooks.
+    find_aberrations = fit
+
     def reconstruct(
         self,
         aberrations: dict[str, float] | None = None,
@@ -1445,7 +1448,7 @@ class SSB:
         context: AbstractContextManager | None = None,
         tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
-        phase_estimator: Literal["mean_phase", "phase_of_mean"] = "mean_phase",
+        phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
     ) -> tuple[np.ndarray, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
 
@@ -1463,14 +1466,15 @@ class SSB:
         on CUDA. The diagnostic loss and aberration search remain on the native
         scan grid. Sampling never fits parameters or interpolates detector data.
 
-        ``phase_estimator="mean_phase"`` preserves the existing average of
-        per-detector phases. Experimental ``"phase_of_mean"`` instead takes
-        the phase after averaging corrected complex waves, on CUDA with C10/C12
-        and optional tilt/depth. This choice applies at every sampling factor,
-        including 1x, so changing sampling never switches estimators. It can
-        reduce sampling-dependent contrast compression, but quantitative phase
-        amplitude is not validated. Loss still uses the existing native-grid
-        per-detector phase variance; fitting is unaffected.
+        By default, CUDA C10/C12 reconstruction averages corrected complex
+        waves before taking phase (``phase_of_mean``), with or without sample
+        tilt, at every output factor. Explicit ``mean_phase`` retains the
+        historical per-detector phase average for comparisons. Native MPS and
+        higher-order paths retain their existing estimator; explicit wave
+        averaging on unsupported paths raises an error. Quantitative phase
+        amplitude is not established by stronger image contrast. Diagnostic
+        loss still uses native-grid per-detector phase variance; fitting is
+        unaffected.
 
         Examples
         --------
@@ -1482,16 +1486,23 @@ class SSB:
         ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
         ... )
 
-        Compare the experimental estimator explicitly, without changing the fit:
+        Compare the historical estimator explicitly, without changing the fit:
 
         >>> candidate, native_loss = ssb.preview(
         ...     fitted.aberrations, tilt_mrad=fitted.tilt_mrad,
         ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
-        ...     phase_estimator="phase_of_mean",
+        ...     phase_estimator="mean_phase",
         ... )
         """
 
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
+        if phase_estimator is None:
+            # Keep unsupported native backends/higher-order paths available.
+            # C10/C12 uses one estimator at every output factor on CUDA.
+            higher_order_active = (higher_order_magnitudes is not None
+                                   and np.any(np.asarray(higher_order_magnitudes)[2:]))
+            phase_estimator = ("phase_of_mean" if self.backend == "cuda"
+                               and not higher_order_active else "mean_phase")
         if phase_estimator not in ("mean_phase", "phase_of_mean"):
             raise ValueError(
                 "phase_estimator must be 'mean_phase' or 'phase_of_mean'; "
@@ -1604,7 +1615,8 @@ class SSB:
         aberrations = _aberrations_from_engine({key: float(fit[key]) for key in ("C10", "C12", "phi12")})
         tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / _ENGINE_PER_NM
-        phase, loss = self.preview(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm)
+        phase, loss = self.preview(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
+                                   phase_estimator="mean_phase")
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         if self.backend == "cuda":
             import cupy as cp

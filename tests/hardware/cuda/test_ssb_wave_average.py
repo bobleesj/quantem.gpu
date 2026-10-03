@@ -53,7 +53,7 @@ def test_explicit_estimator_matches_direct_waves_and_preserves_native_loss(facto
         )
         candidate, loss = ssb.preview(
             aberrations, tilt_mrad=tilt, depth_spread_nm=depth,
-            upsampling_factor=factor, phase_estimator="phase_of_mean",
+            upsampling_factor=factor,
         )
         expected = _direct_wave_average(ssb, factor, tilt, depth)
         np.testing.assert_allclose(candidate, expected, atol=1e-6, rtol=1e-5)

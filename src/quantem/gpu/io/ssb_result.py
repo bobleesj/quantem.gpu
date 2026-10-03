@@ -124,11 +124,17 @@ def _publish(path: Path, data: bytes) -> None:
 
 
 def export_result(run_folder: Path, master: Path, output: Path | None = None,
-                  expected_identity: str | None = None) -> Path:
+                  expected_identity: str | None = None, *,
+                  output_folder: Path | None = None) -> Path:
     """Preserve phase bits and physical settings in a JSON/NumPy result pair.
 
     Example: export_result(run_folder, master, Path('result.json'), digest).
+
+    ``output_folder`` selects a result catalogue without writing beside the raw
+    acquisition. Automatic names retain previous results on repeated exports.
     """
+    if output is not None and output_folder is not None:
+        raise ValueError("Choose output or output_folder, not both.")
     identity = acquisition_identity(master)
     if expected_identity is not None and identity != expected_identity:
         raise ValueError("Local acquisition does not match the verified remote source. No result was exported.")
@@ -176,7 +182,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
     )
     if output is None:
         stem = master.stem
-        folder = master.parent / "live" / "screen"
+        folder = Path(output_folder) if output_folder is not None else master.parent / "live" / "screen"
         # Stable numbering, including distinct calibrations of the same image.
         for number in range(1, 10000):
             name = stem if number == 1 else f"{stem}-{number:02d}"

@@ -26,6 +26,61 @@ BatchObjective = Callable[[np.ndarray], np.ndarray]
 PARAMETERS = ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "thickness")
 
 
+def _coalesced_polish(starts, fun_row, objective_rows, bounds, options):
+    """The sequential polish loop, with the concurrent simplexes' objective calls batched.
+
+    Profiling the full fit on a real 512 x 512 acquisition (a thick-film acquisition, RTX PRO 6000): the 400 TPE trials run in batches of 8 and
+    cost ~0.1 s, but the Nelder-Mead polish made ~1600 batch-of-1 calls, each reading the whole G band (1.57 GB, ~1.4 ms,
+    memory-bound) - ~80 % of the fit's wall clock. Here each start's ``minimize`` runs in its own thread and their objective
+    calls coalesce into one ``objective_rows`` pass (rows are independent in the kernel, so every value is exactly the
+    sequential loop's value); a 2 ms wait flushes partial batches so a converged simplex never stalls the others.
+    """
+    import threading
+
+    from scipy.optimize import minimize
+
+    lock = threading.Lock()
+    state = {"active": len(starts), "pending": []}       # pending: (row, out_list, done_event)
+
+    def flush_locked():
+        batch, state["pending"] = state["pending"], []
+        values = objective_rows(np.array([row for row, _, _ in batch], dtype=np.float64))
+        for (_, out, event), value in zip(batch, values):
+            out.append(float(value))
+            event.set()
+
+    def fun(x):
+        out: list[float] = []
+        event = threading.Event()
+        with lock:
+            state["pending"].append((fun_row(x), out, event))
+            if len(state["pending"]) >= state["active"]:
+                flush_locked()
+        while not event.wait(0.002):
+            with lock:
+                if not event.is_set() and state["pending"]:
+                    flush_locked()
+        return out[0]
+
+    results: list[object] = [None] * len(starts)
+
+    def run(index, x0):
+        try:
+            results[index] = minimize(fun, x0, method="Nelder-Mead", bounds=bounds, options=options)
+        finally:
+            with lock:
+                state["active"] -= 1
+                if state["pending"] and len(state["pending"]) >= state["active"]:
+                    flush_locked()
+
+    threads = [threading.Thread(target=run, args=(i, x0)) for i, x0 in enumerate(starts)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results
+
+
 def fit_sample_search(
     objective: Objective,
     *,
@@ -124,8 +179,16 @@ def fit_sample_search(
         best = {name: float(study.best_params[name]) for name in PARAMETERS}
         fit = float(-study.best_value)
     else:
-        polished = [minimize(lambda x: -single(x) / scale, x0, method="Nelder-Mead", bounds=bounds,
-                             options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for x0 in starts]
+        nm_options = {"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}
+        if objective_batch is not None and len(starts) > 1:
+            polished = _coalesced_polish(
+                starts,
+                lambda x: np.array([x[0], abs(x[1]), wrap_phi(x[2]), x[3], x[4], abs(x[5])], dtype=np.float64),
+                lambda rows: -np.asarray(objective_batch(rows), dtype=np.float64) / scale,
+                bounds, nm_options)
+        else:
+            polished = [minimize(lambda x: -single(x) / scale, x0, method="Nelder-Mead", bounds=bounds,
+                                 options=nm_options) for x0 in starts]
         polish = min(polished, key=lambda r: r.fun)
         best = dict(zip(PARAMETERS, (float(v) for v in polish.x)))
         fit = float(-polish.fun) * scale

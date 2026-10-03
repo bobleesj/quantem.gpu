@@ -24,7 +24,8 @@ array to `SSB.from_array` when borrowing caller-owned array storage.
 SSB Fourier-stack preparation and reconstruction are additional work; they
 are not included in a detector-viewer loading-time claim.
 
-`fit()` returns one `SSBResult`. Its primary field is the complex64
+`find_aberrations()` (also available as `fit()` for existing callers) returns
+one `SSBResult`. Both names use the same native-grid search. Its primary field is the complex64
 `object_wave` with shape `(scan_row, scan_column)`. `phase` and `amplitude` are
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
 the backend, fitted aberrations, rotation, loss, trial/refinement counts,
@@ -127,14 +128,14 @@ selected output resolution: "preview" means it is not saved and does not
 replace the fitted calibration or stored result, not that it is lower quality.
 It does not create a second public result type.
 
-### Experimental phase averaging
+### Phase averaging
 
-The default `preview(..., phase_estimator="mean_phase")` averages the phase of
+The historical `preview(..., phase_estimator="mean_phase")` averages the phase of
 each corrected bright-field detector contribution. At higher output sampling,
 detector-dependent structure in the added frequency bands can compress contrast
 through this nonlinear phase extraction. This is not an FFT brightness factor.
 
-On CUDA, explicitly compare phase after complex-wave averaging:
+CUDA C10/C12 now defaults to phase after complex-wave averaging:
 
 ```python
 phase, native_loss = workflow.preview(
@@ -149,23 +150,25 @@ phase, native_loss = workflow.preview(
 Both estimators reuse the existing C10/C12 depth-aware correction kernel, the
 same measured diffraction patterns and the supplied calibration. Fitting never
 runs inside `preview`. Diagnostic loss retains the original native-grid
-per-detector phase variance, even for the experimental estimator. Use
+per-detector phase variance, even for wave averaging. Use
 `compute_loss=False` when only the image is needed.
 
-The estimator choice applies at **every** output factor, including 1x. Existing
-calls and the default native output remain unchanged. To compare 1x/2x/3x/4x
+The estimator choice applies at **every** output factor, including 1x. CUDA
+C10/C12 previews now use wave averaging at 1x as well; request `mean_phase`
+explicitly to reproduce historical preview output. To compare 1x/2x/3x/4x
 scientifically, use the same estimator at each factor. Switching from legacy
 1x to wave-average 2x introduces an estimator change as well as a sampling change.
 
-Wave averaging is experimental: reduced contrast compression does not establish
+Reduced contrast compression from wave averaging does not establish
 quantitative phase accuracy. Known-phase controls still show amplitude
 attenuation, and improvement is not uniform across tested noise/sampling cases.
 There is no fitted gain, display normalization or detector interpolation in
 this option. Active higher-order magnitudes and non-CUDA backends are not
 supported; zero higher-order magnitudes with retained angles are allowed.
 
-This transient option does not change `fit`, `reconstruct`, saved-result reuse,
-or Live defaults. If persisting the returned array, record `phase_estimator`,
+This change preserves `fit`, native `reconstruct`, and saved-result reuse.
+Live uses the public preview default for supported CUDA C10/C12 outputs.
+If persisting the returned array, record `phase_estimator`,
 `upsampling_factor`, native scan sampling, aberrations, tilt and depth alongside
 it. Any application adopting the option must include the estimator in its
 scientific product/cache identity, rather than reuse an older phase product.
@@ -335,3 +338,25 @@ mathematics and [SSB performance evidence](../maintainer/ssb-performance.md)
 for dated, revision- and device-qualified measurements. Performance numbers do
 not live in this API contract because a new benchmark must not silently change
 API semantics.
+
+## Phase reconstruction order
+
+CUDA C10/C12 output now combines corrected complex waves before taking their
+phase, including tilt/depth correction and 1x, 2x, 3x, and 4x output.
+`preview(..., phase_estimator="mean_phase")` remains an explicit historical
+comparison. Native MPS and higher-order paths retain their existing estimator;
+explicit wave averaging is currently restricted to CUDA C10/C12.
+
+Taking a phase is nonlinear: `angle(mean(waves))` is not
+`mean(angle(waves))`. Taking each angle first discards amplitude information
+and can compress reconstructed contrast. Combining the corrected spectra
+before one inverse FFT gives the same wave sum as summing separate inverse
+FFTs, because both operations are linear. The calibration objective remains
+the native-grid per-detector phase variance. Stronger contrast alone does not
+establish quantitative phase accuracy.
+
+QuantEM's `DirectPtychography` SSB implementation uses a related but distinct
+weak-phase convention: multiply by `-1j * conj(gamma) / abs(gamma)`, inverse
+transform, take the real part, normalize by BF weight, and sum contributions.
+It does not average per-contribution phase angles. Do not describe our
+DC-referenced `angle(mean(waves))` as numerically identical to that output.

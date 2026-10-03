@@ -11,11 +11,11 @@ def test_upsampling_matches_zero_inserted_scan(factor):
     import torch
     from quantem.gpu.ssb.torch_ssb import TorchSSB
 
-    ssb, _ = _synthetic_session()
+    ssb, engine = _synthetic_session()
     try:
         coefs = {'C10': 30.0, 'C12': 5.0, 'phi12': 0.3}
-        native, native_loss = ssb.preview(coefs)
-        phase, loss = ssb.preview(coefs, upsampling_factor=factor)
+        native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase")
+        phase, loss = ssb.preview(coefs, phase_estimator="mean_phase", upsampling_factor=factor)
         assert phase.shape == (128 * factor, 128 * factor)
         assert loss == native_loss
         # Independent Fourier construction: insert zero scan samples in real
@@ -32,7 +32,7 @@ def test_upsampling_matches_zero_inserted_scan(factor):
                          ang_x_rad=base.ang_x, dc_value=base.dc_value)
         expected, _ = check.reconstruct(300.0, 50.0, 0.3, compute_loss=False)
         np.testing.assert_allclose(phase, expected.cpu().numpy(), atol=2e-5)
-        again, again_loss = ssb.preview(coefs)
+        again, again_loss = ssb.preview(coefs, phase_estimator="mean_phase")
         np.testing.assert_array_equal(again, native)
         assert again_loss == native_loss
     finally:
@@ -48,9 +48,9 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
     coefs = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
     tilt, depth = (-9.0, 5.0), 18.0
     try:
-        native, native_loss = ssb.preview(coefs, tilt_mrad=tilt, depth_spread_nm=depth)
+        native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth)
         actual, loss = ssb.preview(
-            coefs, tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
         )
         expected, _ = engine.reconstruct_thick(
             -80.0, 40.0, -0.7, tilt, depth * 10, compute_loss=False,
@@ -58,7 +58,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         )
         np.testing.assert_array_equal(actual, cp.asnumpy(expected))
         assert loss == native_loss
-        restored, restored_loss = ssb.preview(coefs, tilt_mrad=tilt, depth_spread_nm=depth)
+        restored, restored_loss = ssb.preview(coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth)
         np.testing.assert_array_equal(restored, native)
         assert restored_loss == native_loss
         # UI can retain an angle after its higher-order magnitude is cleared.
@@ -68,7 +68,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         angles[1] = -0.7
         angles[2] = 1.2
         inactive, _ = ssb.preview(
-            coefs, tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
             higher_order_magnitudes=magnitudes, higher_order_angles=angles,
         )
         np.testing.assert_allclose(inactive, actual, atol=2e-6)
