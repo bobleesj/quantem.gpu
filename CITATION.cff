@@ -1,7 +1,8 @@
 cff-version: 1.2.0
 message: >-
-  If the quantEM interactive framework contributed to your research,
-  please cite the paper listed in preferred-citation.
+  If quantEM's interactive widgets, GPU-accelerated I/O, or data processing
+  and reconstruction tools contributed to your research, please cite the
+  paper listed in preferred-citation.
 type: software
 title: quantem.gpu
 authors:

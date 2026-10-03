@@ -17,8 +17,8 @@ on Apple Silicon.
 
 ## Citing quantem.gpu
 
-If the quantEM interactive framework contributed to your research, please
-consider citing:
+If quantEM's interactive widgets, GPU-accelerated I/O, or data processing
+and reconstruction tools contributed to your research, please consider citing:
 
 > Sangjoon Lee et al., “Interactive Framework for Real-Time 4DSTEM Analysis
 > and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),
