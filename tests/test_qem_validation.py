@@ -72,6 +72,17 @@ def test_stored_changes_must_be_declared_in_processing():
                 (2, 2, 8, 8), dict(source_dtype=source_dtype, dtype=stored_dtype)
             )
 
+    exact_float = {
+        "source_dtype": "float64", "dtype": "float32", "file_counts_exact": True,
+        "exact_float_narrowing": {"method": "float64-float32-float64-bitwise"},
+    }
+    scientific = _qem_metadata.acquisition_metadata((2, 2, 8, 8), exact_float)
+    header = {"dtype": "float32", "metadata": exact_float, "scientific_metadata": scientific}
+    qem_validation._validate_declared_processing(header)
+    scientific["processing"][1]["stored_dtype"] = "float16"
+    with pytest.raises(ValueError, match="matching exact_float_narrowing"):
+        qem_validation._validate_declared_processing(header)
+
 
 def test_validate_command_reports_shared_reference(capsys):
     """Validate a downloaded reference through the documented public command."""

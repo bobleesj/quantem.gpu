@@ -192,10 +192,18 @@ def _validate_declared_processing(header: dict) -> None:
             )
     source_dtype, stored_dtype = retained.get("source_dtype"), header.get("dtype")
     if source_dtype and stored_dtype and source_dtype != stored_dtype:
-        if "exact_integer_narrowing" not in declared:
+        operation = (
+            "exact_float_narrowing"
+            if (source_dtype, stored_dtype) == ("float64", "float32")
+            else "exact_integer_narrowing"
+        )
+        record = declared.get(operation)
+        if (record is None or record.get("source_dtype") != source_dtype
+                or record.get("stored_dtype") != stored_dtype
+                or record.get("changes_measurements") is not False):
             raise ValueError(
                 f"Counts were stored as {stored_dtype} from {source_dtype} but processing does "
-                "not declare exact_integer_narrowing; re-export the original acquisition."
+                f"not declare matching {operation}; re-export the original acquisition."
             )
 
 

@@ -292,8 +292,10 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
     detector = metadata.get(
         "detector_sampling", metadata.get("detector_sampling_inv_A")
     )
-    unit = metadata.get("detector_sampling_unit", "1/angstrom")
-    if detector is not None and len(detector) == 2:
+    unit = metadata.get("detector_sampling_unit")
+    if "detector_sampling" not in metadata and "detector_sampling_inv_A" in metadata:
+        unit = "1/angstrom"
+    if detector is not None and unit is not None and len(detector) == 2:
         for axis, value in zip(axes[2:], detector):
             value = float(value)
             if math.isfinite(value) and value > 0:
@@ -651,6 +653,20 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     """
     overrides = _legacy_overrides(scientific)
     result = dict(metadata)
+    if result.get("origin") is not None:
+        # Preserve the origin's recorded units before resolving calibration.
+        # Dataset4dstemGPU converts these coordinates to the effective units.
+        source_units = (
+            ["angstrom" if result.get("scan_sampling_A") is not None else None] * 2
+            + [result.get("detector_sampling_unit")] * 2
+        )
+        units = result.get("units")
+        if units is None or np.isscalar(units):
+            units = [units] * 4
+        result["units"] = [
+            source if unit is None else unit
+            for unit, source in zip(units, source_units, strict=True)
+        ]
     if scientific.get("schema") == SCHEMA:
         for field in ("scan_sampling_A", "detector_sampling", "detector_sampling_unit",
                       "detector_sampling_inv_A", "voltage_kV", "semiangle_mrad",

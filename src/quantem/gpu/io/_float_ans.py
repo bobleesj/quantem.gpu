@@ -1,22 +1,22 @@
 """Portable float32 bit-lane residents with bounded accelerator decoding."""
 
-from quantem.gpu.io.models import Dataset4dstemGPU
-
 import base64
 import copy
-from contextlib import nullcontext
-from functools import wraps
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import struct
 import tempfile
 import time
+from contextlib import nullcontext
+from functools import wraps
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 from . import _qem_metadata
 
@@ -66,6 +66,7 @@ class FloatANSResident:
         lane_shape = (*self.shape[:3], self.shape[3] * 2)
         if backend == "cuda":
             import cupy as cp
+
             from .backends.cuda.float_ans import CUDAFloatLanes
 
             selected = (
@@ -496,6 +497,7 @@ def save_float_ans(
     source.synchronize()
     header = copy.deepcopy(source.header)
     if metadata is not None:
+        header["metadata"] = dict(metadata)
         header["scientific_metadata"] = _qem_metadata.acquisition_metadata(
             source.shape, metadata
         )
@@ -510,7 +512,7 @@ def save_float_ans(
                 from .backends.mps.packed import _buffer_view
 
                 arrays = (_buffer_view(buffer) for buffer in chunk.buffers)
-            entry = dict(first=chunk.first, scans=chunk.scans)
+            entry = {"first": chunk.first, "scans": chunk.scans}
             for name, array in zip(("payload", "offset", "model"), arrays):
                 view = memoryview(array).cast("B")
                 entry[name + "_offset"] = body.tell()

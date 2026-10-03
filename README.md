@@ -63,7 +63,8 @@ show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
 
 Indexing returns an ordinary PyTorch tensor on the selected GPU;
-`show_2d` displays it directly. Calibration and units remain in `data.metadata`.
+`show_2d` displays it directly. Axis calibration is available on `data`;
+the complete record remains in `data.metadata`.
 The acquisition remains ANS encoded. Backend selection uses CUDA or MPS and
 never silently falls back to CPU.
 
@@ -73,12 +74,24 @@ data.ndim      # 4 logical axes
 data.size      # number of detector values across the acquisition
 len(data)      # 512 scan rows
 data.dtype     # measurement dtype
+data.sampling  # spacing: scan row, scan col, detector row, detector col
+data.units     # corresponding units, e.g. angstrom or mrad
+data.origin    # first-pixel coordinates, where recorded
 data.metadata  # calibration, units, source and recorded corrections
 ```
 
 `io.load` returns a `Dataset4dstemGPU` acquisition handle owned by QuantEM.GPU.
 It manages encoded storage and metadata without changing QuantEM's core data
 classes. Indexing decodes only the requested region into a PyTorch tensor.
+
+`sampling`, `units` and `origin` follow QuantEM's axis conventions. They are
+read-only tuples derived from the existing metadata, with `None` for unknown
+values. Reading them does not decode diffraction patterns. Unlike a core
+dataset's default pixel coordinates, missing calibration stays explicit here:
+no physical spacing, scan origin or diffraction center is invented.
+These properties describe the whole acquisition; selected Torch tensors do not
+carry calibration automatically. Recorded scan spacing uses angstrom; detector
+spacing retains its angular or reciprocal-length units.
 
 ```python
 pattern = data[10, 12]       # torch.Tensor on the GPU

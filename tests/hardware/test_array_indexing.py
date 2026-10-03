@@ -39,6 +39,8 @@ def test_encoded_indexing(tmp_path, dtype):
         assert data.size == values.size
         assert len(data) == len(values)
         assert data.dtype == values.dtype
+        assert data.sampling == (None, None, None, None)
+        assert data.units == (None, None, None, None)
         for row, actual in enumerate(data):
             assert str(actual.device).split(":")[0] == backend
             np.testing.assert_array_equal(actual.cpu().numpy(), values[row])
@@ -55,11 +57,22 @@ def test_encoded_indexing(tmp_path, dtype):
         with pytest.raises(ValueError):
             data[::0]
         saved = tmp_path / "saved.qem"
+        data.metadata.update(
+            scan_sampling_A=[0.4, 0.6],
+            detector_sampling=[0.00002, 0.00003],
+            detector_sampling_unit="rad",
+            origin=[1.5, -2.0, -0.01, -0.02],
+            units=["nm", "nm", "rad", "rad"],
+        )
+        assert data.origin == (15.0, -20.0, -0.01, -0.02)
         io.save(saved, data)
     series = io.load([saved, saved], backend=backend, stack=False, verbose=False)
     try:
         np.testing.assert_array_equal(series[1][1, 2].cpu().numpy(), values[1, 2])
         assert isinstance(series[1].metadata, dict)
+        assert series[1].sampling == pytest.approx((0.4, 0.6, 0.02, 0.03))
+        assert series[1].units == ("angstrom", "angstrom", "mrad", "mrad")
+        assert series[1].origin == (15.0, -20.0, -10.0, -20.0)
     finally:
         for data in series:
             data.close()

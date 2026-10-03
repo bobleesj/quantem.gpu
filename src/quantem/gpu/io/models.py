@@ -73,6 +73,8 @@ class Dataset4dstemGPU:
 
     Owns the resident storage and decoder. Selecting scan/detector regions
     returns ordinary PyTorch tensors; calibration remains in ``metadata``.
+    The read-only ``sampling``, ``units`` and ``origin`` properties expose
+    that metadata in axis order without decoding data or keeping another copy.
     """
 
     data: Any
@@ -133,6 +135,108 @@ class Dataset4dstemGPU:
         if value is None:
             value = getattr(self.data, "shape", ())
         return tuple(int(item) for item in value)
+
+    def _axis_values(self, name: str) -> list:
+        """Read one metadata value per logical axis, retaining unknown values."""
+        value = self.metadata.get(name)
+        if value is None or np.isscalar(value):
+            return [value] * self.ndim
+        if len(value) != self.ndim:
+            raise ValueError(
+                f"metadata[{name!r}] must have {self.ndim} axis values; "
+                f"got {len(value)}. Match the order in data.shape."
+            )
+        return list(value)
+
+    def _axis_calibration(self) -> tuple[tuple, tuple]:
+        """Use the reader's effective calibration ahead of generic axis metadata."""
+        sampling = self._axis_values("sampling")
+        units = self._axis_values("units")
+        if self.ndim == 4:
+            for start, key, unit in (
+                (0, "scan_sampling_A", "angstrom"),
+                (2, "detector_sampling", self.metadata.get("detector_sampling_unit")),
+            ):
+                value = self.metadata.get(key)
+                if value is not None:
+                    pair = [value] * 2 if np.isscalar(value) else list(value)
+                    if len(pair) != 2:
+                        raise ValueError(
+                            f"metadata[{key!r}] must be a scalar or (row, col) "
+                            f"pair; got {value!r}."
+                        )
+                    sampling[start:start + 2] = pair
+                    units[start:start + 2] = [unit] * 2
+        return (
+            tuple(None if value is None else float(value) for value in sampling),
+            tuple(units),
+        )
+
+    @property
+    def sampling(self) -> tuple[float | None, ...]:
+        """Pixel spacing along each logical axis, with unknown values as None.
+
+        For a 4D acquisition the order is scan row, scan col, detector row,
+        detector col. Scan spacing is in angstrom; detector spacing uses
+        ``units``. Effective reader calibration takes precedence over generic
+        axis metadata, including when a saved calibration override is present.
+
+        Examples
+        --------
+        >>> data = load("gold.qem")
+        >>> scan_sampling = data.sampling[:2]
+        """
+        return self._axis_calibration()[0]
+
+    @property
+    def units(self) -> tuple[str | None, ...]:
+        """Units for each axis's sampling and origin; None means unspecified.
+
+        An uncalibrated axis is not silently assigned angstrom or reciprocal
+        units. These values describe the acquisition, not a selected tensor.
+
+        Examples
+        --------
+        >>> data = load("gold.qem")
+        >>> detector_units = data.units[2:]
+        """
+        return self._axis_calibration()[1]
+
+    @property
+    def origin(self) -> tuple[float | None, ...]:
+        """Coordinate of the first pixel on each axis, in the axis's units.
+
+        Unknown coordinates remain None. No detector center or absolute scan
+        position is inferred. Explicit origins come from ``metadata['origin']``
+        in ``metadata['units']`` when recorded, otherwise the effective units.
+
+        Examples
+        --------
+        >>> data = load("gold.qem")
+        >>> scan_origin = data.origin[:2]
+        """
+        origin = [
+            None if value is None else float(value)
+            for value in self._axis_values("origin")
+        ]
+        for axis, (source_unit, unit) in enumerate(zip(
+            self._axis_values("units"), self.units,
+        )):
+            if (origin[axis] is None or source_unit is None or unit is None
+                    or source_unit == unit):
+                continue
+            from ._qem_metadata import _microscopy_quantity
+
+            kind = "scan" if axis < 2 else "detector"
+            source = _microscopy_quantity({"value": 1, "unit": source_unit}, kind)
+            target = _microscopy_quantity({"value": 1, "unit": unit}, kind)
+            if source["unit"] != target["unit"]:
+                raise ValueError(
+                    f"Origin axis {axis} uses {source_unit!r}, but sampling uses "
+                    f"{unit!r}. Supply origin and sampling in compatible units."
+                )
+            origin[axis] *= source["value"] / target["value"]
+        return tuple(origin)
 
     @property
     def dtype(self) -> np.dtype:
