@@ -68,12 +68,20 @@ GPU tensors for selected regions. The data are not bundled here.
 ### Load and inspect
 
 ```python
+from functools import partial
+
 from quantem.gpu import io, detector
 from quantem.core.visualization import show_2d
+
+show_2d = partial(show_2d, cmap="inferno")  # set once for this notebook
 
 data = io.load("gold_master.h5")
 show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
+
+All later `show_2d` calls use inferno. Override one plot with `cmap="gray"`
+when needed. This sets a local display default; it does not change the data
+or QuantEM's package defaults.
 
 Indexing returns an ordinary PyTorch tensor on the selected GPU;
 `show_2d` displays it directly. Axis calibration is available on `data`;
@@ -381,11 +389,11 @@ data.close()
 
 ## Reconstruct phase with SSB
 
-Supply your microscope calibration, find the aberrations once, and reuse them:
+Using the `show_2d` setup above, supply your microscope calibration, find the
+aberrations once, and reuse them:
 
 ```python
 from quantem.gpu import SSB
-from quantem.core.visualization import show_2d
 
 ssb = SSB.open(
     "acquisition.qem",
