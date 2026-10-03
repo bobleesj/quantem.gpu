@@ -15,6 +15,15 @@ on Apple Silicon.
 [Save as QEM](#why-qem-one-research-format-across-detector-vendors) ·
 [SSB](#reconstruct-phase-with-ssb)
 
+## Citing quantem.gpu
+
+If the quantEM interactive framework contributed to your research, please
+consider citing:
+
+> Sangjoon Lee et al., “Interactive Framework for Real-Time 4DSTEM Analysis
+> and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),
+> ozag053.941 (2026). https://doi.org/10.1093/mam/ozag053.941
+
 ## Install
 
 Python 3.11 or newer is required. For the current ANS loading and SSB workflows,
@@ -430,14 +439,5 @@ between runtimes; see the [Implementation overview](docs/dashboard.md) and
 
 Backend implementation details, including native and browser integrations,
 belong in the [developer documentation](docs/developer/index.md).
-
-## Citing quantem.gpu
-
-If the quantEM interactive framework contributed to your research, please
-consider citing:
-
-> Sangjoon Lee et al., “Interactive Framework for Real-Time 4DSTEM Analysis
-> and Reconstruction,” *Microscopy and Microanalysis* 32 (Supplement 1),
-> ozag053.941 (2026). https://doi.org/10.1093/mam/ozag053.941
 
 [MIT License](LICENSE).
