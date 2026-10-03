@@ -137,15 +137,19 @@ selection passed 11 tests with 3 opt-in GPU/evidence skips. A wheel build
 passed and contains the CUDA source required for runtime compilation. These
 are correctness and packaging results, not latency benchmarks.
 
-## Retained source112 migration validation
+## Historical source112 migration validation
+
+The results below record the earlier migration experiment. The current archive
+workflow is bounded read-only access; the full-acquisition converter has been
+removed. These numbers do not establish a current archive-to-QEM export path.
 
 `tests/contracts/io/test_source112_ans_migration.py` compares 512 complete patterns from
 source chunks 0, 523 and 1055 (local starts 0, 12288 and 15872) against original
 HDF5 acquisitions. Every one of the 56,623,104 native uint16 counts matched.
 The first 18,874,368-count window also passed source112 decode, canonical
 streaming encode, public CUDA resident load and full count reconstruction.
-The validation window is labeled as such; it is not a reduced replacement for
-the full-acquisition converter.
+The validation window is labeled as such; it did not validate full-acquisition
+conversion.
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 QUANTEM_CUDA_ANS_TEST=1 \
@@ -198,14 +202,15 @@ workflow.
 
 ## Remaining unification work
 
-Both retained experimental formats can now enter the canonical CUDA codec:
-seven-tilt through table/offset admission, retained source112 through explicit bounded
-migration. The browser loads retained manifests through
+The seven-tilt format can enter the canonical CUDA codec through table/offset
+admission. Retained source112 archives currently support bounded read-only access;
+the earlier migration experiment did not become a supported full-acquisition
+converter. The browser loads retained manifests through
 `detector/backends/webgpu/rans.ts` and canonical containers through the package
 `count-ans.ts` adapter. Downstream viewers can export canonical containers using
-that adapter. Direct CUDA resident-owner compatibility remains a separate gate. An accelerated canonical
-encoder and complete 66-acquisition conversion campaign are not qualified.
-The small validation window encoded to 5,098,522 bytes; its compression does
+that adapter. Direct CUDA resident-owner compatibility remains a separate gate.
+A complete 66-acquisition archive conversion has not been qualified.
+The historical validation window encoded to 5,098,522 bytes; its compression does
 not establish that the complete series will fit in the same device memory as
 the original source112 archive. Full-series capacity needs its own admission
 check before replacing the resident production source.
