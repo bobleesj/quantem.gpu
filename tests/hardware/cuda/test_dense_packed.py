@@ -1,6 +1,6 @@
 """Exact native HDF5 tilts remain independently available in packed storage."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 import os
 
 import h5py
@@ -22,7 +22,7 @@ def test_native_dense_conversion_preserves_every_count(dtype):
         0, np.iinfo(dtype).max + 1, (3, 91, 4, 7), dtype=dtype
     )
     counts[:, :, 0, 0] = 0
-    source = create_dataset(cp.asarray(counts), {"working_shape": counts.shape})
+    source = Dataset4dstemGPU(cp.asarray(counts), {"working_shape": counts.shape})
     with source.to_representation("packed") as packed:
         blocks = [packed.data.decode_block_device(i) for i in range(3)]
         assert bool(cp.all(cp.concatenate(blocks).reshape(counts.shape) == counts))
@@ -46,13 +46,13 @@ def test_load_all_tilts_then_remove_files(tmp_path):
     loaded = io.load(paths, stack=False,
                      dataset_path="entry/data/data", scan_shape=(3, 91), verbose=False)
     try:
-        assert bool(cp.all(cp.from_dlpack(loaded[0][:].tensor) == counts))
+        assert bool(cp.all(cp.from_dlpack(loaded[0][:]) == counts))
         for path in paths:
             path.unlink()
         for index, tilt in enumerate(loaded):
             for row, column in ((2, 90), (0, 0)):
                 assert bool(cp.all(
-                    cp.from_dlpack(tilt[row, column].tensor) == counts[row, column] + index
+                    cp.from_dlpack(tilt[row, column]) == counts[row, column] + index
                 ))
     finally:
         for tilt in loaded:

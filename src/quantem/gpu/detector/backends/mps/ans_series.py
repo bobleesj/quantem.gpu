@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -37,7 +37,7 @@ class MPSANSSeriesCompute:
         for loaded in self.owners:
             source = (
                 loaded.data
-                if isinstance(loaded, Dataset)
+                if isinstance(loaded, Dataset4dstemGPU)
                 else loaded
             )
             if not isinstance(source, (MPSANSResidentCounts, MPSPackedResidentCounts)):

@@ -9,7 +9,7 @@ I/O domain.
 from .discover import discover
 from .inspect import inspect
 from .integrity import SourceIntegrity as SourceIntegrity
-from .models import Dataset4dstem as Dataset4dstem
+from .models import Dataset4dstemGPU as Dataset4dstemGPU
 from ._paired import PairedLoader as PairedLoader
 from .load import load
 from .representation import DataRepresentation as DataRepresentation

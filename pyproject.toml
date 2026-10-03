@@ -32,7 +32,6 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "quantem @ git+https://github.com/bobleesj/quantem.git@cddc61863a6d2dc2611f718196062fc86c5fbe07",
     "h5py",
     "hdf5plugin",
     "jinja2",
@@ -129,6 +128,3 @@ include = [
 testpaths = ["tests"]
 tmp_path_retention_count = 0
 tmp_path_retention_policy = "none"
-
-[tool.hatch.metadata]
-allow-direct-references = true

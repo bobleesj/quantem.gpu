@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import sys
 import threading
@@ -179,7 +179,7 @@ def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
 
     def fake_load(path, **kwargs):
         calls.append({"path": path, "kwargs": kwargs})
-        return create_dataset(
+        return Dataset4dstemGPU(
             SimpleNamespace(row_prefix=False, metadata={}), {}
         )
 

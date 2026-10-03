@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import json
 from importlib import import_module
@@ -50,7 +50,7 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
     monkeypatch.setattr(
         load_module,
         "_load",
-        lambda *args, **kwargs: create_dataset(
+        lambda *args, **kwargs: Dataset4dstemGPU(
             values,
             {"backend": "cpu", "source_dtype": "uint16"},
         ),
@@ -63,7 +63,7 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
         verbose=False,
     )
 
-    assert isinstance(loaded, io.Dataset4dstem)
+    assert isinstance(loaded, io.Dataset4dstemGPU)
     assert loaded.representation == io.DataRepresentation.DENSE
     assert loaded.residency == "host"
     assert loaded.shape == (2, 3, 4, 5)
@@ -144,7 +144,7 @@ def test_detector_bin_is_the_canonical_public_spelling(monkeypatch) -> None:
 
     def fake_load(*args, **kwargs):
         calls.update(kwargs)
-        return create_dataset(
+        return Dataset4dstemGPU(
             np.zeros((1, 1, 2, 2), dtype=np.uint16),
             {"backend": "cpu"},
         )
@@ -171,7 +171,7 @@ def test_retired_detector_bin_spelling_is_not_supported() -> None:
 def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
     load_module = import_module("quantem.gpu.io.load")
     loaded = load_module._record_dense_representation(
-        create_dataset(
+        Dataset4dstemGPU(
             np.asarray([255], dtype=np.uint8),
             {"source_dtype": "uint16", "backend": "cpu"},
         )
@@ -183,7 +183,7 @@ def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
 def test_float64_result_does_not_claim_exact_uint64_counts() -> None:
     load_module = import_module("quantem.gpu.io.load")
     loaded = load_module._record_dense_representation(
-        create_dataset(
+        Dataset4dstemGPU(
             np.asarray([2**60 + 1], dtype=np.float64),
             {"source_dtype": "uint64", "backend": "cpu"},
         )
@@ -261,7 +261,7 @@ def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
 def test_io_exposes_only_the_current_data_type() -> None:
     from quantem.gpu.io import models
 
-    assert io.Dataset4dstem is models.Dataset4dstem
+    assert io.Dataset4dstemGPU is models.Dataset4dstemGPU
     assert not hasattr(io, "LoadResult")
     assert not hasattr(models, "LoadResult")
     assert not hasattr(import_module("quantem.gpu.io.load"), "LoadResult")

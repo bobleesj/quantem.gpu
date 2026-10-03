@@ -24,7 +24,7 @@ io.load(..., backend="mps")
   → backend validation
   → source and chunk planning
   → bounded source decode + ANS encoding
-  → native Dataset4dstem with encoded storage and provenance
+  → Dataset4dstemGPU with encoded storage and provenance
 ```
 
 Python owns validation and typed results. Metal owns bounded device decode and

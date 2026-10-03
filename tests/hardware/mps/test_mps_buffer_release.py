@@ -874,7 +874,7 @@ def test_partial_bitshuffle_tail_preserves_selective_order_and_duplicates(
             verbose=False,
         ) as result:
             selected = np.stack([
-                result[row, col].numpy()
+                result[row, col].cpu().numpy()
                 for row, col in [(1, 1), (0, 1), (1, 1), (0, 0)]
             ])
             np.testing.assert_array_equal(selected, values[[3, 1, 3, 0]])

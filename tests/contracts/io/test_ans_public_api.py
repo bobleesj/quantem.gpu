@@ -1,6 +1,6 @@
 """Public exact file round trips and honest unsupported conversion directions."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 
 import numpy as np
@@ -54,7 +54,7 @@ def test_failed_conversion_publication_releases_output_not_source():
         def release(self):
             raise AssertionError("caller-owned input must not be released")
 
-    loaded = create_dataset(Source(), {"representation": "encoded"})
+    loaded = Dataset4dstemGPU(Source(), {"representation": "encoded"})
     with pytest.raises(RuntimeError, match="publication failure"):
         loaded.to_representation("packed")
     assert output.released

@@ -40,8 +40,6 @@ The Mac SSB backend uses MLX and Metal. Array indexing uses
 PyTorch; install a GPU-enabled PyTorch build to use those examples.
 For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
-The development package pins its matching native QuantEM source revision until
-that dataset support is included in a coordinated release.
 
 This is pre-release software. The older TestPyPI candidate
 `quantem.gpu==0.0.1rc8` does not include all current source features.
@@ -51,9 +49,8 @@ See [installation and runtime checks](docs/install.md) for details.
 
 These examples use a gold acquisition: a 512 × 512 scan with a 192 × 192
 detector. Replace `gold_master.h5` with your file and keep its companion HDF5
-files beside it. Installation includes the matching native QuantEM dataset
-implementation; PyTorch supplies GPU tensors for selected regions. The data
-are not bundled here.
+files beside it. Install QuantEM for the `show_2d` examples; PyTorch supplies
+GPU tensors for selected regions. The data are not bundled here.
 
 ### Load and inspect
 
@@ -65,9 +62,8 @@ data = io.load("gold_master.h5")
 show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
 
-Indexing returns a native QuantEM dataset backed by the selected GPU tensor;
-`show_2d` displays it directly. Use the selected dataset's `.show()` method
-to include its calibrated scale bar.
+Indexing returns an ordinary PyTorch tensor on the selected GPU;
+`show_2d` displays it directly. Calibration and units remain in `data.metadata`.
 The acquisition remains ANS encoded. Backend selection uses CUDA or MPS and
 never silently falls back to CPU.
 
@@ -80,17 +76,15 @@ data.dtype     # measurement dtype
 data.metadata  # calibration, units, source and recorded corrections
 ```
 
-`io.load` returns QuantEM's native `Dataset4dstem`, from
-`quantem.core.datastructures`. There is one dataset class for NumPy, PyTorch,
-and encoded storage. QuantEM.GPU owns the encoded buffers and selective decoder;
-the native dataset owns indexing, calibration, units, and metadata.
+`io.load` returns a `Dataset4dstemGPU` acquisition handle owned by QuantEM.GPU.
+It manages encoded storage and metadata without changing QuantEM's core data
+classes. Indexing decodes only the requested region into a PyTorch tensor.
 
 ```python
-pattern = data[10, 12]     # native Dataset2d, with detector calibration
-pattern.sampling          # sampling of the two retained detector axes
-pattern.units             # calibrated units, or pixels when unknown
-pattern.tensor            # the selected PyTorch tensor on the GPU
-pattern.numpy()           # explicit host copy of this one pattern
+pattern = data[10, 12]       # torch.Tensor on the GPU
+pattern.float()              # standard PyTorch operations
+pattern.mean()               # GPU computation
+pattern.cpu().numpy()       # explicit host copy of this one pattern
 ```
 
 No full acquisition is decoded by these selections.

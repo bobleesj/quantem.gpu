@@ -1,6 +1,6 @@
 """Native camera and saved ANS loading through bounded Metal allocations."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import bisect
 import hashlib
@@ -252,7 +252,7 @@ def load_scaled_snapshot_mps(path, header, start, *, verbose=False):
             f"Loaded scaled uint16 ANS on Metal in {time.perf_counter() - started:.3f} s "
             f"(RMSE {report['rmse']:.3g}, max error {report['max_abs_error']:.3g})."
         )
-    return create_dataset(source, metadata)
+    return Dataset4dstemGPU(source, metadata)
 
 
 def _result(resident, metadata, started, verbose):
@@ -289,4 +289,4 @@ def _result(resident, metadata, started, verbose):
         print(
             f"Loaded exact native camera ANS on Metal in {time.perf_counter() - started:.3f} s."
         )
-    return create_dataset(resident, record)
+    return Dataset4dstemGPU(resident, record)

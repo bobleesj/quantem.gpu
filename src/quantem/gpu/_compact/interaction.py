@@ -1,6 +1,6 @@
 """Joint translated detector queries over runtime-shaped encoded acquisitions."""
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import math
 import threading
@@ -61,7 +61,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         for item in acquisitions:
             source = (
                 item.data
-                if isinstance(item, Dataset)
+                if isinstance(item, Dataset4dstemGPU)
                 else item
             )
             if not isinstance(source, StreamedCounts):

@@ -25,7 +25,7 @@ io.load(..., backend="cuda")
   → io.backends.protocol.resolve_backend
   → io.load source/index/read planning
   → bounded source decode + ANS encoding
-  → native Dataset4dstem with encoded storage and provenance
+  → Dataset4dstemGPU with encoded storage and provenance
 ```
 
 Detector and reconstruction calls dispatch from their public workflow to the

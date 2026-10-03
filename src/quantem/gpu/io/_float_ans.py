@@ -1,6 +1,6 @@
 """Portable float32 bit-lane residents with bounded accelerator decoding."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import base64
 import copy
@@ -474,7 +474,7 @@ def load_float_ans(
                 "verified_encoded_bytes": header["bytes"],
             },
         )
-        return create_dataset(source, metadata)
+        return Dataset4dstemGPU(source, metadata)
     except BaseException:
         if backend == "mps":
             from .backends.mps.packed import _release

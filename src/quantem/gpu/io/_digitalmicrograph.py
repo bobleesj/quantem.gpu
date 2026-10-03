@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import json
 import math
@@ -142,7 +142,7 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
     if backend == "cpu" and representation is DataRepresentation.DENSE:
         metadata.update(backend="cpu", residency="host", file_counts_exact=True,
                         lossless_exact=True, scan_bin=1, detector_bin=1, crop=None)
-        return create_dataset(source.memmap(), metadata)
+        return Dataset4dstemGPU(source.memmap(), metadata)
     if (backend in {"cuda", "mps"} and representation is DataRepresentation.ENCODED
             and source.dtype == np.dtype("float32")):
         from ._array_resident import load_array_resident, read_frame_block
@@ -240,7 +240,7 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
             if verbose:
                 print(f"Loaded {source.path.name} {source.shape} {source.dtype.name} into "
                       f"lossless CUDA ANS in {metadata['load_timings']['resident_ready_seconds']:.2f} s.")
-            return create_dataset(resident, metadata)
+            return Dataset4dstemGPU(resident, metadata)
         except BaseException:
             resident.release()
             raise

@@ -1,6 +1,6 @@
 """Torch detector reductions over borrowed bounded-read sources."""
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import math
 
@@ -19,7 +19,7 @@ class BoundedDetectorCompute:
         self.capabilities = ()
         self._native = None
         owner = getattr(data, '_detector_source', None)
-        if isinstance(owner, Dataset) and owner.representation == 'encoded':
+        if isinstance(owner, Dataset4dstemGPU) and owner.representation == 'encoded':
             from quantem.gpu.detector import prepare
 
             self._native = prepare(owner)

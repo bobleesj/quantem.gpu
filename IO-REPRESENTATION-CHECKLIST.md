@@ -49,7 +49,7 @@ production encoder. The current checkpoint does not satisfy all backend gates.
   `compression="auto"` preserves the prior effective defaults: bitshuffle/LZ4
   for Arina and ANS for QuantEM. Loading detects decompression from the file;
   there is no `decompression=` selector. The load-time
-  `representation` and `FourDSTEMData.to_representation(...)` choose resident
+  `representation` and `Dataset4dstemGPU.to_representation(...)` choose resident
   layout. Do not use one option ambiguously for both disk and resident state.
 - Disk encoding is independent of resident representation. An ANS file may be
   loaded as ANS, decoded directly into packed storage, or materialized densely.

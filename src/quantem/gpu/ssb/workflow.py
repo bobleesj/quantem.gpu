@@ -14,7 +14,7 @@ from typing import Literal, Self
 
 import numpy as np
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 from quantem.gpu.device import resolve
 from quantem.gpu.io.integrity import SourceIntegrity
@@ -543,10 +543,10 @@ class SSB:
         bf_center: tuple[float, float] | None = None,
     ) -> None:
         self.backend = _resolve_backend(backend)
-        if isinstance(data, Dataset):
+        if isinstance(data, Dataset4dstemGPU):
             if data.ndim != 4:
                 raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
-            if data._storage is not None:
+            if data.representation is not DataRepresentation.DENSE:
                 # Decode only the bright-field evidence into session-owned
                 # tensors. The caller retains ownership of the acquisition.
                 data, bf_center, bf_radius, calibration_radius = _bright_field_crop(

@@ -94,7 +94,7 @@ dense expansion or invented calibration. Scan-ROI diffraction remains
 unsupported on this compact browse route.
 
 The service owns and releases each packed allocation on eviction and shutdown.
-In-process callers own the returned `Dataset4dstem` and must close it after
+In-process callers own the returned `Dataset4dstemGPU` and must close it after
 their scientific operations. Device result views may borrow source-owned
 storage; copy a result that must outlive its next update or source closure.
 

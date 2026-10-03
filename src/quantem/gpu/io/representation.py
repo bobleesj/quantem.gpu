@@ -127,15 +127,14 @@ class DataRepresentation(str, Enum):
 
 def convert(loaded, representation):
     """Convert explicitly without changing counts or releasing the caller's input."""
-    from .dataset_metadata import dataset_metadata
-    from .models import _release_owned_storage, create_dataset
+    from .models import _release_owned_storage, Dataset4dstemGPU
 
     target = DataRepresentation.parse(representation)
     current = DataRepresentation.parse(loaded.representation)
     if target is current:
         return loaded
     source = loaded.data
-    metadata = dataset_metadata(loaded)
+    metadata = dict(loaded.metadata)
     if current is DataRepresentation.ENCODED and target is DataRepresentation.PACKED:
         convert = getattr(source, "to_packed", None)
         if convert is None:
@@ -159,7 +158,7 @@ def convert(loaded, representation):
             conversion_from=current.value,
             resident_profile="block-column-bitpacked-u32-v1",
         )
-        return create_dataset(output, metadata)
+        return Dataset4dstemGPU(output, metadata)
     except BaseException as error:
         _release_owned_storage(output, failure=error)
         raise

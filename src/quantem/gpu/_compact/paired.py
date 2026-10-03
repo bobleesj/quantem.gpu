@@ -15,7 +15,7 @@ at most 65,535 pixels per stream group of 32 (grouped 16-bit offsets).
 
 from __future__ import annotations
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import json
 import math
@@ -724,7 +724,7 @@ class PairedSeriesCompute(StreamedSeriesCompute):
     def __init__(self, acquisitions):
         import cupy as cp
 
-        sources = [item.data if isinstance(item, Dataset) else item for item in acquisitions]
+        sources = [item.data if isinstance(item, Dataset4dstemGPU) else item for item in acquisitions]
         if not sources or not all(isinstance(source, PairedCounts) for source in sources):
             raise TypeError("Paired queries need paired-layout sources only; mix nothing else into the series.")
         super().__init__(acquisitions)

@@ -7,7 +7,7 @@ Torch. Interactive reconstruction and Optuna/Nelder-Mead fitting share the
 same exact reconstruction/loss core.
 """
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import json
 import math
@@ -684,7 +684,7 @@ def _as_chunked_frames(data):
 
     if isinstance(data, (MpsBfColumnFrames, ChunkedFrames, _ArrayFrames, _MpsTensorFrames)):
         return data
-    if isinstance(data, Dataset):
+    if isinstance(data, Dataset4dstemGPU):
         data = data.data
     if isinstance(data, MPSChunked4DSTEM):
         return ChunkedFrames(data, torch_compat=False)

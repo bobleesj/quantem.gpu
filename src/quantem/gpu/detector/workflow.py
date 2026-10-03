@@ -27,7 +27,7 @@ mainly the reference path the parity tests pin; ``ds.bf()`` etc. are the API.
 
 from __future__ import annotations
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import numpy as np
 
@@ -484,8 +484,8 @@ def _is_torch_tensor(data) -> bool:
 
 
 def _unwrap_core_4dstem(data):
-    """Return numeric data from Dataset4dstem or quantem.core Dataset4dstem."""
-    if isinstance(data, Dataset):
+    """Return numeric data from Dataset4dstemGPU or quantem.core Dataset4dstem."""
+    if isinstance(data, Dataset4dstemGPU):
         return data.data
     if is_packed_uint4(data):
         return data
@@ -762,7 +762,7 @@ def _resolve_backend(data):
         from quantem.gpu._compact.interaction import StreamedSeriesCompute
         from quantem.gpu._compact.streamed import StreamedCounts
 
-        sources = [item.data if isinstance(item, Dataset) else item for item in data]
+        sources = [item.data if isinstance(item, Dataset4dstemGPU) else item for item in data]
         from quantem.gpu.io.backends.cuda._ans import CudaANSResidentCounts, CudaPackedResidentCounts
         from quantem.gpu.io.backends.mps._ans import MPSANSResidentCounts, MPSPackedResidentCounts
 
@@ -778,14 +778,14 @@ def _resolve_backend(data):
         if sources and all(isinstance(source, (StreamedCounts, CudaANSResidentCounts, CudaPackedResidentCounts)) for source in sources):
             return StreamedSeriesCompute(data)
         return CudaSeriesCompute(data)
-    precision_payload = data.data if isinstance(data, Dataset) else data
+    precision_payload = data.data if isinstance(data, Dataset4dstemGPU) else data
     if type(precision_payload).__module__ in {"quantem.gpu.io.backends.cuda.precision", "quantem.gpu.io.backends.mps.precision"}:
         return precision_payload
     from .backends.packed import PackedDetectorCompute, is_packed_source
     from .backends.counts import CountDetectorCompute, is_count_source
 
     data = _unwrap_core_4dstem(data)
-    if isinstance(data, Dataset):
+    if isinstance(data, Dataset4dstemGPU):
         data = data.data
     from quantem.gpu.io._float_ans import FloatANSResident
     if isinstance(data, FloatANSResident):
@@ -842,7 +842,7 @@ def _scan_shape(data, backend) -> tuple[int, int]:
 
 
 def _semiangle_mrad(data):
-    if isinstance(data, Dataset):
+    if isinstance(data, Dataset4dstemGPU):
         meta = data.metadata or {}
         return meta.get("semiangle_mrad") or meta.get("semi_angle_mrad")
     meta = getattr(data, "metadata", None)
@@ -1012,7 +1012,7 @@ def _probe(data, center=None, radius=None):
     # arrays must be fitted again because their measurements can change.
     source = (
         data.data
-        if isinstance(data, Dataset)
+        if isinstance(data, Dataset4dstemGPU)
         and data.representation is DataRepresentation.ENCODED
         and not getattr(data.data, "is_released", False)
         else None

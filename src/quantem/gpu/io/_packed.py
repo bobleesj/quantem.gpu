@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
 
 import os
 from collections.abc import Sequence
@@ -13,7 +12,7 @@ import numpy as np
 from quantem.gpu.device._cupy import cp
 
 from .integrity import SourceIntegrity
-from .models import Dataset4dstem, _release_owned_storage
+from .models import Dataset4dstemGPU, _release_owned_storage
 from .representation import DataRepresentation
 from .uint4 import is_packed_uint4
 
@@ -134,7 +133,7 @@ def _load_packed(
     expected_source_sha256: str | None,
     device: int | str | None,
     source_integrity: SourceIntegrity | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Load one prepared exact representation through its accelerator backend."""
     paths = _source_paths(source)
     if len(paths) != 1:
@@ -201,15 +200,15 @@ def _load_packed(
             "backend='cpu' is an explicit dense reference path."
         )
     try:
-        return create_dataset(data, _packed_metadata(data, selected_backend))
+        return Dataset4dstemGPU(data, _packed_metadata(data, selected_backend))
     except BaseException as error:
         _release_owned_storage(data, failure=error)
         raise
 
 
 def _record_dense_representation(
-    result: Dataset4dstem | list[Dataset4dstem],
-) -> Dataset4dstem | list[Dataset4dstem]:
+    result: Dataset4dstemGPU | list[Dataset4dstemGPU],
+) -> Dataset4dstemGPU | list[Dataset4dstemGPU]:
     """Attach common representation fields to existing dense load results."""
     if isinstance(result, list):
         return [_record_dense_representation(item) for item in result]
@@ -266,4 +265,4 @@ def _record_dense_representation(
             and metadata.get("clipped_count", 0) == 0
             and not metadata.get("scan_resampling")
         )
-    return create_dataset(data, metadata)
+    return Dataset4dstemGPU(data, metadata)

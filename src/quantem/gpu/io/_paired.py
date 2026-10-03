@@ -12,7 +12,7 @@ time.
 
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import math
 import os
@@ -119,7 +119,7 @@ class PairedLoader:
         raise ValueError(f"{path} was not admitted.")
 
     def stream(self, paths, *, scan_shape=None, device=None, admit=None, verbose=False):
-        """Yield ``(path, Dataset4dstem)`` per admitted acquisition, as :func:`io.load` returns.
+        """Yield ``(path, Dataset4dstemGPU)`` per admitted acquisition, as :func:`io.load` returns.
 
         The same pipeline as :meth:`load_many`, with each source wrapped in the
         public result type (``representation="paired"``, per-source
@@ -623,4 +623,4 @@ def _result(source, timings, verbose):
     )
     if verbose:
         print(f"Paired resident source {shape} ready in {metadata['load_timings']['resident_ready_seconds']:.2f} s.")
-    return create_dataset(source, metadata)
+    return Dataset4dstemGPU(source, metadata)

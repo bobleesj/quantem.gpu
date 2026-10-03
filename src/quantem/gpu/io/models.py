@@ -5,8 +5,6 @@ from math import prod
 from typing import Any
 
 import numpy as np
-from quantem.core.datastructures import Dataset, Dataset4dstem
-from torch import Tensor
 
 from .representation import DataRepresentation
 
@@ -70,11 +68,11 @@ def _release_owned_storage(
 
 
 @dataclass(eq=False, frozen=True, slots=True)
-class ResidentStorage:
-    """Accelerator storage adapter used by the native QuantEM dataset.
+class Dataset4dstemGPU:
+    """Loaded acquisition with metadata and GPU tensor indexing.
 
-    This object owns decoding and lifetime only; ``io.load`` returns the
-    canonical ``quantem.core.datastructures.Dataset4dstem``.
+    Owns the resident storage and decoder. Selecting scan/detector regions
+    returns ordinary PyTorch tensors; calibration remains in ``metadata``.
     """
 
     data: Any
@@ -85,28 +83,18 @@ class ResidentStorage:
             "Save resident acquisitions with quantem.gpu.io.save(path, data); device handles cannot be pickled."
         )
 
-    def mean(self, axes):
-        """Reduce scan positions using the existing resident detector backend."""
-        if axes != (0, 1):
-            raise NotImplementedError(
-                "For encoded acquisitions use data.dp_mean, or select a bounded region before reducing other axes."
-            )
-        from quantem.gpu import detector
-
-        return detector.mean(self.data)
-
     def __array__(self, dtype=None, copy=None):
         """Reject implicit full-acquisition conversion to host memory."""
         raise TypeError(
-            "Dataset4dstem stays on the GPU. Select a bounded region first, "
-            "then use data[row, column].numpy() for a NumPy array. "
+            "Acquisition data stays on the GPU. Select a bounded region first, "
+            "then use data[row, column].cpu().numpy() for a NumPy array. "
             "Access acquisition metadata through data.metadata."
         )
 
     def __repr__(self) -> str:
         """Summarize the acquisition without decoding detector values."""
         return (
-            f"ResidentStorage(shape={self.shape}, dtype={self.dtype}, "
+            f"Dataset4dstemGPU(shape={self.shape}, dtype={self.dtype}, "
             f"representation={self.representation.value!r})"
         )
 
@@ -291,48 +279,21 @@ class ResidentStorage:
             detector_region=detector_region,
         )
 
+    def to_representation(self, representation: DataRepresentation | str):
+        """Convert exactly while retaining ownership of the original data."""
+        from .representation import convert
+
+        return convert(self, representation)
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __iter__(self):
+        for row in range(len(self)):
+            yield self[row]
+
+    def __enter__(self):
+        return self
+
     def __exit__(self, exc_type, exc_value, traceback):
         _release_owned_storage(self.data, failure=exc_value)
-
-
-def create_dataset(data, metadata: dict) -> Dataset:
-    """Attach resident storage to QuantEM's native calibrated dataset."""
-    storage = ResidentStorage(data, metadata)
-    cls = Dataset4dstem if storage.ndim == 4 else Dataset
-    sampling = list(metadata.get("sampling", [1.0] * storage.ndim))
-    units = list(metadata.get("units", ["pixels"] * storage.ndim))
-    if storage.ndim == 4 and "sampling" not in metadata:
-        for first, key, unit in (
-            (0, "scan_sampling_A", "angstrom"),
-            (
-                2,
-                "detector_sampling",
-                metadata.get("detector_sampling_unit", "1/angstrom"),
-            ),
-        ):
-            value = metadata.get(key)
-            if value is not None:
-                sampling[first : first + 2] = (
-                    [float(value)] * 2 if np.isscalar(value) else list(value)
-                )
-                units[first : first + 2] = [unit] * 2
-    if isinstance(data, np.ndarray):
-        source = {"array": data}
-    elif isinstance(data, Tensor):
-        source = {"tensor": data}
-    else:
-        source = {"storage": storage}
-    result = cls(
-        **source,
-        name=metadata.get("name", "4D-STEM acquisition"),
-        origin=metadata.get("origin"),
-        sampling=sampling,
-        units=units,
-        signal_units=metadata.get("signal_units", "arb. units"),
-        metadata=metadata,
-        _token=cls._token,
-    )
-    # Storage and the dataset share acquisition metadata without copying pixels.
-    metadata.update(result.metadata)
-    result._metadata = metadata
-    return result

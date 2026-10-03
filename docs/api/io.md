@@ -62,10 +62,8 @@ with io.load("acquisition.qem") as data:
     metadata = data.metadata
 ```
 
-`io.load` returns the native `quantem.core.datastructures.Dataset4dstem`,
-not a tuple or a second GPU-specific dataset class. Its storage may be NumPy,
-PyTorch, or encoded device buffers. QuantEM.GPU supplies the encoded storage;
-the native class preserves calibration and units when selecting data.
+`io.load` returns a `Dataset4dstemGPU` acquisition handle. QuantEM.GPU owns
+its storage, decoding and metadata; QuantEM's core data classes are unchanged.
 
 | Attribute or expression | Meaning |
 | --- | --- |
@@ -78,7 +76,7 @@ the native class preserves calibration and units when selecting data.
 | `data.logical_bytes` | Size of the complete uncompressed array |
 | `data.resident_bytes` | Size reported by the resident storage owner |
 
-Indexing returns a native dataset whose `.tensor` is on the source GPU.
+Indexing returns an ordinary PyTorch tensor on the source GPU.
 A single scalar selection returns a scalar tensor. Integers remove axes;
 slices and one ellipsis support negative indices and steps. Index arrays, Boolean masks, and new axes are not supported.
 This selects measurements without interpolation. Strides may decode a bounding
@@ -88,8 +86,8 @@ Iterating over `data` yields scan rows, as array iteration does; it is not a
 way to retrieve storage fields. Use `.data` only when an advanced operation
 needs the encoded storage object. `np.asarray(data)` on encoded storage is rejected to prevent an
 accidental whole-acquisition host copy. If a host array is needed, explicitly
-select a bounded dataset first: `data[10, 12].numpy()`.
-Use `data[10, 12].tensor` for direct PyTorch operations.
+select a bounded region first: `data[10, 12].cpu().numpy()`.
+Use `data[10, 12]` directly for PyTorch operations.
 For several acquisitions, select the owner first: `series[1][10, 12]`.
 The explicit `read(scan_region=..., detector_region=...)` operation is also
 available for region-based pipeline code.
@@ -119,7 +117,7 @@ an operation handle or viewer after closing its acquisition.
 ### Inspect the loaded acquisition
 
 Use the same entry point for complete fields, scan crops, detector crops, and
-stochastic scan batches. It returns `Dataset4dstem`, which keeps backend-native
+stochastic scan batches. It returns `Dataset4dstemGPU`, which keeps backend-native
 data and its scientific/storage metadata together:
 
 ```python
@@ -318,9 +316,8 @@ with io.load("measurements.qem", backend="cuda") as loaded:  # or "mps"
     io.save("measurements-copy.qem", loaded)
 ```
 
-The acquisition remains encoded on-device. The selected pattern is a calibrated
-native dataset; `pattern.tensor` exposes its device tensor and `pattern.numpy()`
-copies that selection to the host. The mean pattern is returned as NumPy.
+The acquisition remains encoded on-device. The selected pattern is a PyTorch
+tensor; `pattern.cpu().numpy()` copies that selection to the host. The mean pattern is returned as NumPy.
 There is no CPU scientific fallback or complete dense-cube
 allocation. Copying retains original IEEE float bits, calibration, source
 documents and the saved background recipe. The output must not already exist.

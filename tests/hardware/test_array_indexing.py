@@ -3,7 +3,7 @@ import os
 
 import numpy as np
 import pytest
-from quantem.core.datastructures import Dataset
+import torch
 
 from quantem.gpu import io
 
@@ -28,7 +28,12 @@ def test_encoded_indexing(tmp_path, dtype):
         (np.int64(-1), np.int32(2)),
     ]
     with io.load(path, backend=backend, verbose=False) as data:
-        assert isinstance(data, io.Dataset4dstem)
+        assert isinstance(data, io.Dataset4dstemGPU)
+        pattern = data[1, 2]
+        assert type(pattern) is torch.Tensor
+        assert pattern.float().device.type == backend
+        assert torch.mean(pattern.float()).device.type == backend
+        assert torch.as_tensor(pattern).data_ptr() == pattern.data_ptr()
         assert data.shape == values.shape
         assert data.ndim == values.ndim
         assert data.size == values.size
@@ -36,11 +41,11 @@ def test_encoded_indexing(tmp_path, dtype):
         assert data.dtype == values.dtype
         for row, actual in enumerate(data):
             assert str(actual.device).split(":")[0] == backend
-            np.testing.assert_array_equal((actual.numpy() if isinstance(actual, Dataset) else actual.cpu().numpy()), values[row])
+            np.testing.assert_array_equal(actual.cpu().numpy(), values[row])
         for key in selections:
             actual = data[key]
             assert str(actual.device).split(":")[0] == backend
-            np.testing.assert_array_equal((actual.numpy() if isinstance(actual, Dataset) else actual.cpu().numpy()), values[key])
+            np.testing.assert_array_equal(actual.cpu().numpy(), values[key])
         for key in [4, -5, (0, 0, 0, 0, 0), (Ellipsis, Ellipsis)]:
             with pytest.raises(IndexError):
                 data[key]
@@ -53,7 +58,7 @@ def test_encoded_indexing(tmp_path, dtype):
         io.save(saved, data)
     series = io.load([saved, saved], backend=backend, stack=False, verbose=False)
     try:
-        np.testing.assert_array_equal(series[1][1, 2].numpy(), values[1, 2])
+        np.testing.assert_array_equal(series[1][1, 2].cpu().numpy(), values[1, 2])
         assert isinstance(series[1].metadata, dict)
     finally:
         for data in series:
@@ -77,7 +82,7 @@ def test_detector_pixels_across_ans_intervals(tmp_path, dtype):
             (slice(14, 35), slice(5, 30), slice(2, 7), slice(4, 9)),
             (slice(None, None, -2), slice(None), -1, 0),
         ]:
-            np.testing.assert_array_equal(data[key].numpy(), values[key])
+            np.testing.assert_array_equal(data[key].cpu().numpy(), values[key])
 
 
 @pytest.mark.parametrize("apply_mask", [None, False])
@@ -108,14 +113,14 @@ def test_indexing_preserves_uncorrected_flagged_counts(tmp_path, apply_mask):
         hot_pixel_correction="none", verbose=False,
     ) as loaded:
         assert loaded.lossless
-        np.testing.assert_array_equal(loaded[0, 0].numpy(), values[0, 0])
+        np.testing.assert_array_equal(loaded[0, 0].cpu().numpy(), values[0, 0])
         np.testing.assert_array_equal(
-            loaded[:, :, 3, 4].numpy(), values[:, :, 3, 4]
+            loaded[:, :, 3, 4].cpu().numpy(), values[:, :, 3, 4]
         )
         io.save(saved, loaded)
     with io.load(saved, backend=backend, verbose=False) as reopened:
         np.testing.assert_array_equal(
-            reopened[:, :, 2:5, 3:6].numpy(), values[:, :, 2:5, 3:6]
+            reopened[:, :, 2:5, 3:6].cpu().numpy(), values[:, :, 2:5, 3:6]
         )
 
 
@@ -140,5 +145,5 @@ def test_float_reads_split_at_decoder_byte_limit(tmp_path, scan_shape):
             (slice(0, 0), slice(None), 5, 7),
             Ellipsis,
         ):
-            np.testing.assert_array_equal(loaded[key].numpy(), values[key])
+            np.testing.assert_array_equal(loaded[key].cpu().numpy(), values[key])
         assert loaded.data.peak_decode_bytes <= MAX_DECODE_BYTES

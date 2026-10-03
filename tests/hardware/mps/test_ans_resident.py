@@ -1,6 +1,6 @@
 """Metal tests for corrected ANS residency and bounded public reads."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import h5py
 import hdf5plugin
@@ -95,7 +95,7 @@ def test_resident_read_matches_numpy_region():
     raw = upload(values.reshape(-1, *shape[2:]))
     try:
         source.append(raw)
-        loaded = create_dataset(
+        loaded = Dataset4dstemGPU(
             source,
             {
                 "working_shape": shape,

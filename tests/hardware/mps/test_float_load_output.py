@@ -1,6 +1,6 @@
 """Explicit Torch output preserves the loader's MPS backend selection."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 import os
 
 import pytest
@@ -23,7 +23,7 @@ def test_float_load_output_returns_mps_tensor(host_tensor):
     staged = reference.cpu()
     payload = staged if host_tensor else staged.numpy()
     result = loader._convert_load_output(
-        create_dataset(payload, {"backend": "mps"}), "torch"
+        Dataset4dstemGPU(payload, {"backend": "mps"}), "torch"
     )
     assert result.data.device.type == "mps"
     assert result.data.dtype == torch.float32

@@ -37,7 +37,7 @@ The reference call path is:
 io.load(..., backend="cpu")
   → explicit protocol resolution
   → h5py + hdf5plugin decompression
-  → NumPy array + shared Dataset4dstem metadata
+  → NumPy array + shared Dataset4dstemGPU metadata
   → NumPy detector/DPC reference operations
 ```
 

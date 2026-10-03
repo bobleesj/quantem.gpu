@@ -874,7 +874,7 @@ def load_mps_datasets(
              if m.endswith("_master.h5") else os.path.basename(m) for m in masters]
 
     def _decode(path):
-        # load() returns a Dataset4dstem(data, meta); data is the MPSChunked4DSTEM
+        # load() returns a Dataset4dstemGPU(data, meta); data is the MPSChunked4DSTEM
         # (chunks + metadata). Wrap in the compute container so MultiChunkedFrames
         # sees a uniform ChunkedFrames.
         loaded = load(

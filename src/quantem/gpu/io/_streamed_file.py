@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import hashlib
 import json
@@ -219,7 +219,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
         data, metadata = load_array(path)
         if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
             raise ValueError("scan_shape disagrees with the saved QEM file.")
-        return create_dataset(data, metadata)
+        return Dataset4dstemGPU(data, metadata)
     selected_backend = resolve_backend(backend)
     if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
         raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")
@@ -320,7 +320,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
                                               verified_encoded_bytes=header["bytes"]))
             if verbose:
                 print(f"Restored exact CUDA ANS {shape} in {time.perf_counter() - started:.3f} s.")
-            return create_dataset(source, metadata)
+            return Dataset4dstemGPU(source, metadata)
         except BaseException:
             stream.synchronize()
             source.release()

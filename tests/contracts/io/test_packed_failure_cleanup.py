@@ -1,6 +1,6 @@
 """Failed loads and unsupported SSB must not retain owned packed storage."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 from importlib import import_module
 from types import SimpleNamespace
@@ -120,7 +120,7 @@ def test_ssb_open_forwards_scan_shape_and_closes_crop_source(tmp_path, monkeypat
     source = tmp_path / "rectangular.h5"
     source.touch()
     resident = ReleaseOnlyResident()
-    loaded = create_dataset(resident, {})
+    loaded = Dataset4dstemGPU(resident, {})
     calls = []
     monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
 
@@ -154,7 +154,7 @@ def test_ssb_open_releases_source_when_bf_detection_fails(
     source = tmp_path / "missing-disk.h5"
     source.touch()
     resident = ReleaseOnlyResident(cleanup_fails)
-    loaded = create_dataset(resident, {})
+    loaded = Dataset4dstemGPU(resident, {})
     monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
     monkeypatch.setattr(io, "load", lambda *a, **kw: loaded)
     failure = ValueError("injected mean diffraction failure")

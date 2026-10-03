@@ -13,7 +13,6 @@ Examples
 ...     pattern = acquisition[0, 0]
 """
 
-from quantem.gpu.io.models import create_dataset
 
 import hashlib
 import json
@@ -43,7 +42,7 @@ from ._hdf5_chunk_index import _chunk_locations
 # Shared models and helpers are implemented in their owning modules.
 from .models import (
     _release_owned_storage as _release_owned_storage,
-    Dataset4dstem as Dataset4dstem,
+    Dataset4dstemGPU as Dataset4dstemGPU,
 )
 
 from ._selection import (
@@ -141,7 +140,7 @@ def _io_context_key() -> tuple[int, int]:
     return _current_context_key()
 
 __version__ = "0.0.3"
-__all__ = ["Dataset4dstem", "load"]
+__all__ = ["Dataset4dstemGPU", "load"]
 
 
 def _clip_to_uint8(src, dst) -> bool:
@@ -205,7 +204,7 @@ def _convert_load_output(result, output: str):
     if isinstance(result, list):
         return [_convert_load_output(item, output) for item in result]
     device = "mps" if result.metadata.get("backend") == "mps" else None
-    return create_dataset(_to_torch_data(result.data, device=device), result.metadata)
+    return Dataset4dstemGPU(_to_torch_data(result.data, device=device), result.metadata)
 
 
 def _slice_detector_region(data, region: tuple[int, int, int, int], *, compact: bool):
@@ -2756,7 +2755,7 @@ def _load_sharded(
     dataset_path=None, apply_mask=True, scan_shape=None,
     scan_order="row-major", det_bin=1, verbose=True, auto_narrow=True,
     output_dtype=None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Sharded multi-GPU load — files split across GPUs, each kept on its card.
 
     Files are assigned to devices in disk-interleaved order: when files are
@@ -2766,7 +2765,7 @@ def _load_sharded(
     into one per-device array. No cross-GPU gather, no host bounce — the only way
     a stack exceeding one card's VRAM fits, and faster than gather.
 
-    Returns ``Dataset4dstem`` whose ``.data`` is ``{device: stacked_array}`` (each
+    Returns ``Dataset4dstemGPU`` whose ``.data`` is ``{device: stacked_array}`` (each
     array resident on that device) and ``.metadata["device_map"] = {file_idx:
     device}`` plus ``["shard_order"] = {device: [file_idx, ...]}``.
     """
@@ -2860,7 +2859,7 @@ def _load_sharded(
                        for d in sorted(shards))
         print(f"  Done: {len(device_map)} files sharded [{per}] "
               f"total {total_gib:.1f} GiB in {dt:.2f}s")
-    return create_dataset(shards, meta)
+    return Dataset4dstemGPU(shards, meta)
 
 
 def _normalize_view_metadata(
@@ -2915,7 +2914,7 @@ def _load_view(
     Decompresses to a numpy array via the chosen backend's ``load_master``,
     then runs the SAME post-processing the cuda path applies — pixel mask,
     auto_narrow (uint32→uint16), output_dtype cast, scan-shape unflatten — so
-    the returned Dataset4dstem is shape/metadata-identical to a cuda load, just
+    the returned Dataset4dstemGPU is shape/metadata-identical to a cuda load, just
     numpy instead of cupy. The MPS no-bin path is the exception: it returns a
     zero-copy ``MPSChunked4DSTEM`` object because a full 512x512x192x192 stack
     cannot be one Metal buffer on 24 GB Apple Silicon.
@@ -3055,7 +3054,7 @@ def _load_view(
                 data.element_size() * data.nelement())  # torch tensor
             print(f"  Loaded {tuple(data.shape)} ({nbytes / 1e9:.1f} GB) in "
                   f"{time.perf_counter() - t0:.2f}s ({backend} backend)")
-        return create_dataset(data, meta)
+        return Dataset4dstemGPU(data, meta)
     # Multi-file: stack with a leading file axis (matches cuda multi-file).
     first, meta = _one(paths[0])
     out = np.empty((len(paths), *first.shape), dtype=first.dtype)
@@ -3068,7 +3067,7 @@ def _load_view(
         gb = out.nbytes / 1e9
         print(f"  Loaded {len(paths)} files {out.shape} ({gb:.1f} GB) in "
               f"{time.perf_counter() - t0:.2f}s ({backend} backend)")
-    return create_dataset(out, meta)
+    return Dataset4dstemGPU(out, meta)
 
 
 def _browse_dtype_advise_and_cast(data, dtype, verbose):
@@ -3162,7 +3161,7 @@ def _load_scan_crop_impl(
     scan_shift_row_col=None,
     scan_resample_dtype: type | np.dtype = np.float32,
     detector_region: tuple[int, int, int, int] | list[int] | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Load only a rectangular scan region from a raw HDF5 master.
 
     Parameters
@@ -3185,7 +3184,7 @@ def _load_scan_crop_impl(
 
     Returns
     -------
-    Dataset4dstem
+    Dataset4dstemGPU
         ``data`` is a backend array with shape
         ``(region_rows, region_cols, det_rows, det_cols)``. Metadata keeps the
         full acquisition grid in ``full_scan_shape`` and the loaded patch in
@@ -3353,7 +3352,7 @@ def _load_scan_crop_impl(
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {time.perf_counter() - t0:.2f}s"
         )
-    return create_dataset(data, meta)
+    return Dataset4dstemGPU(data, meta)
 
 
 def _prepare_scan_crop_one(
@@ -3499,7 +3498,7 @@ def _decode_scan_crop_prepared(
     scan_shift_row_col=None,
     scan_resample_dtype: type | np.dtype = np.float32,
     detector_region: tuple[int, int, int, int] | list[int] | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Decode one prepared rectangular crop on the selected backend."""
     import time
 
@@ -3621,7 +3620,7 @@ def _decode_scan_crop_prepared(
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {float(meta['load_seconds']):.2f}s"
         )
-    return create_dataset(data, meta)
+    return Dataset4dstemGPU(data, meta)
 
 
 def _load_scan_crop_series_impl(
@@ -3642,7 +3641,7 @@ def _load_scan_crop_series_impl(
     scan_shift_row_col=None,
     scan_resample_dtype: type | np.dtype = np.float32,
     detector_region: tuple[int, int, int, int] | list[int] | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Load rectangular scan regions from many HDF5 masters.
 
     ``scan_region`` may be one shared ``(row_start, row_stop, col_start,
@@ -3847,7 +3846,7 @@ def _load_scan_crop_series_impl(
             f"  {len(paths)} masters scan_region {region_text} "
             f"-> {size_gb:.2f} GB in {time.perf_counter() - t0:.2f}s"
         )
-    return create_dataset(data, meta)
+    return Dataset4dstemGPU(data, meta)
 
 
 def _take_requested_scan_order(data, inverse: np.ndarray):
@@ -3935,7 +3934,7 @@ def _decode_scan_indices_prepared(
     verbose: bool,
     auto_narrow: bool,
     output_dtype: type | np.dtype | None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """GPU-decompress one prepared stochastic sparse HDF5 batch."""
     import time
 
@@ -4006,7 +4005,7 @@ def _decode_scan_indices_prepared(
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {time.perf_counter() - t0:.2f}s"
         )
-    return create_dataset(data, meta)
+    return Dataset4dstemGPU(data, meta)
 
 
 def load_scan_indices(
@@ -4024,7 +4023,7 @@ def load_scan_indices(
     output_dtype: type | np.dtype | None = None,
     stack: bool = True,
     prep_workers: int | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Load stochastic scan positions from one or many raw HDF5 masters.
 
     This is the ptychography/DataLoader-style sparse IO path. The requested
@@ -4160,7 +4159,7 @@ def load_scan_indices(
         meta["file_paths"] = [os.fspath(paths[0])]
         meta["file_names"] = [os.path.basename(os.fspath(paths[0]))]
         meta["prep_workers"] = int(worker_count)
-        return create_dataset(data, meta)
+        return Dataset4dstemGPU(data, meta)
 
     meta = {
         "backend": resolved_backend,
@@ -4205,7 +4204,7 @@ def load_scan_indices(
             f"{meta['n_frames']} requested -> {size_gb:.2f} GB "
             f"in {time.perf_counter() - t0:.2f}s"
         )
-    return create_dataset(data, meta)
+    return Dataset4dstemGPU(data, meta)
 
 
 def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
@@ -4215,9 +4214,9 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
          prep_workers: int | None = None, **kwargs):
     """Load 4D-STEM data — one master, or many.
 
-    * ``load(master)`` → one ``Dataset4dstem``.
+    * ``load(master)`` → one ``Dataset4dstemGPU``.
     * ``load(master, scan_region=(r0, r1, c0, c1))`` → one cropped
-      ``Dataset4dstem`` without loading the full scan first.
+      ``Dataset4dstemGPU`` without loading the full scan first.
     * ``load([masters], scan_region=(r0, r1, c0, c1), stack=True)`` → the same
       cropped scan region from each master stacked into one 5D result.
     * ``load([masters], scan_region=[region0, region1, ...], stack=False)`` →
@@ -4231,13 +4230,13 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
     * ``load(master, scan_region=(...), detector_region=(dr0, dr1, dc0, dc1))``
       → crop scan and detector evidence in one load call.
     * ``load(master, scan_indices=positions)`` → one stochastic sparse
-      ``Dataset4dstem`` in the caller-provided scan-position order.
+      ``Dataset4dstemGPU`` in the caller-provided scan-position order.
     * ``load(master, random_positions=1000, seed=42)`` → one stochastic sparse
-      ``Dataset4dstem`` after sampling logical scan positions for the caller.
+      ``Dataset4dstemGPU`` after sampling logical scan positions for the caller.
     * ``load([masters])`` → the masters **stacked** into one 5D dataset (the
       series/viewer case).
     * ``load([masters], gpus=[0, 1])`` (or ``stack=False``) → a **list** of separate
-      ``Dataset4dstem``, **read in parallel across disks** and **placed across GPUs** —
+      ``Dataset4dstemGPU``, **read in parallel across disks** and **placed across GPUs** —
       the joint-reconstruction path (``gpus``: ``None`` current device / ``int``
       all-that-GPU / ``list`` per-master round-robin). Decode is serial (concurrent
       in-process CUDA decode corrupts the device); reads overlap across disks so
@@ -4472,7 +4471,7 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
         if not stack:
             raise ValueError(
                 "load(..., scan_region=...) with one master returns one cropped "
-                "Dataset4dstem; stack=False is only meaningful for a list of masters."
+                "Dataset4dstemGPU; stack=False is only meaningful for a list of masters."
             )
         if region_scan_shape is not None:
             full_scan_shape = tuple(int(v) for v in region_scan_shape)
@@ -4541,7 +4540,7 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
             and getattr(data, "ndim", 0) >= 3):
         new = _browse_dtype_advise_and_cast(data, dtype, verbose)
         if new is not data:
-            result = create_dataset(new, result.metadata)
+            result = Dataset4dstemGPU(new, result.metadata)
     return result
 
 
@@ -4586,7 +4585,7 @@ def load(
     device: int | str | None = None,
     devices: list[int] | str | None = None,
     verbose: bool = True,
-) -> Dataset4dstem | list[Dataset4dstem]:
+) -> Dataset4dstemGPU | list[Dataset4dstemGPU]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Supported original acquisitions default to bounded ANS ingestion
@@ -4727,9 +4726,9 @@ def load(
 
     Returns
     -------
-    Dataset4dstem or list[Dataset4dstem]
+    Dataset4dstemGPU or list[Dataset4dstemGPU]
         Data stays backend-resident. MPS list/folder loads return a common
-        multi-frame detector object in ``Dataset4dstem.data`` while background
+        multi-frame detector object in ``Dataset4dstemGPU.data`` while background
         decoding fills its dataset slots.
     """
     from ._precision import load_precision, precision_name, saved_precision
@@ -5523,7 +5522,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
 
     Returns
     -------
-    list[Dataset4dstem]  — one per input master, in input order; each ``.data`` lives
+    list[Dataset4dstemGPU]  — one per input master, in input order; each ``.data`` lives
     on its assigned GPU.
     """
     import queue
@@ -5632,7 +5631,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
                     scan_order,
                 )
                 meta["scan_order"] = _normalize_scan_order(scan_order)
-            results[i] = create_dataset(data, meta)
+            results[i] = Dataset4dstemGPU(data, meta)
     except BaseException:
         cancelled.set()
         while producer_thread.is_alive() or not q.empty():
@@ -5663,17 +5662,17 @@ def _load_impl(
     row_prefix: bool = False,
     precompute_detector_sum: bool = False,
     skip_mps_memory_check: bool | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Decode HDF5 frames onto one backend before encoded source assembly.
 
     This internal helper handles detector-specific decompression, optional
     masking and binning, and scan ordering. The public :func:`load` owns source
-    selection, ANS encoding, and validation. Its returned :class:`Dataset4dstem`
+    selection, ANS encoding, and validation. Its returned :class:`Dataset4dstemGPU`
     exposes metadata separately from array-style indexing.
 
     Returns
     -------
-    Dataset4dstem
+    Dataset4dstemGPU
         Decoded backend storage and acquisition metadata for the caller to own.
     """
     import os
@@ -5710,7 +5709,7 @@ def _load_impl(
         if isinstance(filepath, (list, tuple)):
             raise NotImplementedError(
                 "dtype='u4' packed output is currently one master per "
-                "Dataset4dstem. Use gpus=... with stack=False for a list of "
+                "Dataset4dstemGPU. Use gpus=... with stack=False for a list of "
                 "packed results, or use dtype='uint8' for stacked browsing."
             )
     if row_prefix and backend != "mps":
@@ -5758,7 +5757,7 @@ def _load_impl(
                 scan_shape=tuple(int(value) for value in data.shape[1:3]),
                 detector_shape=tuple(int(value) for value in data.shape[-2:]),
             )
-            return create_dataset(data, metadata)
+            return Dataset4dstemGPU(data, metadata)
         return _load_view(
             filepath, backend, dataset_path=dataset_path, apply_mask=apply_mask,
             scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
@@ -5784,7 +5783,7 @@ def _load_impl(
     # its own subset (NO gather to a single card). The only way a stack larger
     # than one GPU fits (e.g. 6× 512² no-bin = 108 GiB across 2× 96 GB), and
     # avoids the host-bounce penalty that made gather-mode slower than serial.
-    # Returns Dataset4dstem.data = {device: stacked_array_on_that_device}.
+    # Returns Dataset4dstemGPU.data = {device: stacked_array_on_that_device}.
     if devices is not None and isinstance(filepath, (list, tuple)):
         return _load_sharded(
             list(filepath), devices, dataset_path=dataset_path,
@@ -5936,7 +5935,7 @@ def _load_impl(
             t_multi = time.perf_counter() - t_multi_start
             size_gb = out.nbytes / 1e9 if out is not None else 0
             print(f"  Done: {n_files} files → {tuple(out.shape)} ({size_gb:.1f} GB) in {t_multi:.2f}s")
-        return create_dataset(out, meta)
+        return Dataset4dstemGPU(out, meta)
 
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"HDF5 file not found: {filepath}")
@@ -5990,7 +5989,7 @@ def _load_impl(
                     meta["pixel_mask"] = pixel_mask
                 data = _apply_scan_shape(data, scan_shape, meta, scan_order)
                 meta["scan_order"] = scan_order
-                return create_dataset(data, meta)
+                return Dataset4dstemGPU(data, meta)
             if "data" in data_group:
                 # Self-contained master OR a master whose sibling chunk
                 # files weren't found - try inline entry/data/data.
@@ -6061,7 +6060,7 @@ def _load_impl(
                 meta["pixel_mask"] = pixel_mask
             data = _apply_scan_shape(data, scan_shape, meta, scan_order)
             meta["scan_order"] = scan_order
-            return create_dataset(data, meta)
+            return Dataset4dstemGPU(data, meta)
 
     # For 4D/5D compressed data, use the dedicated loader
     if len(shape) >= 4:
@@ -6081,7 +6080,7 @@ def _load_impl(
             meta["pixel_mask"] = pixel_mask
         data = _apply_scan_shape(data, scan_shape, meta, scan_order)
         meta["scan_order"] = scan_order
-        return create_dataset(data, meta)
+        return Dataset4dstemGPU(data, meta)
 
     # The previous global owner was discarded after every load anyway. Keep
     # this operation's buffers private so concurrent devices cannot replace it.
@@ -6127,7 +6126,7 @@ def _load_impl(
     data = _apply_scan_shape(data, scan_shape, meta, scan_order)
     meta["scan_order"] = scan_order
 
-    return create_dataset(data, meta)
+    return Dataset4dstemGPU(data, meta)
 
 
 def _load_gpu_decompressed(

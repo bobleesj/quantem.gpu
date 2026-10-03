@@ -1,6 +1,6 @@
 """Public detector workflow and unchanged host defaults, without CUDA allocation."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import numpy as np
 import pytest
@@ -59,7 +59,7 @@ class _FixtureSeries(CompactSeries):
 def test_complete_series_native_workflow_without_host_handoff(monkeypatch):
     """One mask returns both complete acquisitions, and out is caller-owned."""
     source = _FixtureSeries()
-    session = detector.prepare(create_dataset(source, {}))
+    session = detector.prepare(Dataset4dstemGPU(source, {}))
     mask = np.ones((5, 6), bool)
     _DeviceArray.downloads = 0
     images = session.masked_sum(mask, output="native")

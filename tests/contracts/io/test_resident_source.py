@@ -1,7 +1,7 @@
 """CPU-only source-owner contract tests; callbacks use tiny NumPy fixtures."""
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -48,7 +48,7 @@ def make_source(source_type=CudaResidentSource):
 def test_all66_one_backend_call_and_raw_precision_and_validity():
     source, owner = make_source()
     original = owner.counts.copy()
-    session = prepare(create_dataset(source, {}))
+    session = prepare(Dataset4dstemGPU(source, {}))
     actual = session.masked_sum_batch_exact(np.ones((18, 18), bool))
     expected = original[..., source.valid_pixels].sum(axis=-1, dtype=np.uint32)
     np.testing.assert_array_equal(actual, expected)

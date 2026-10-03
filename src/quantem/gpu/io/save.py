@@ -1,5 +1,5 @@
 """CUDA bitshuffle+LZ4 saving for 4D-STEM HDF5 files."""
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import queue
 import threading
@@ -1962,7 +1962,7 @@ def save(
 
     from ._precision import precision_name, save_precision
 
-    if precision_name(dtype) or (isinstance(data, Dataset) and "precision" in data.metadata):
+    if precision_name(dtype) or (isinstance(data, Dataset4dstemGPU) and "precision" in data.metadata):
         if Path(filepath).suffix.lower() == ".qem":
             raise NotImplementedError(
                 "QEM precision codecs are not implemented. Save this scaled/quantized "
@@ -2002,10 +2002,8 @@ def save(
                 f"ANS has no compression_level control; got {compression_level!r}. "
                 "Remove compression_level to preserve the exact codec contract."
             )
-        if isinstance(data, Dataset):
-            from .dataset_metadata import dataset_metadata
-
-            metadata = dataset_metadata(data) if metadata is None else metadata
+        if isinstance(data, Dataset4dstemGPU):
+            metadata = dict(data.metadata) if metadata is None else metadata
             data = data.data
             if torch is not None and isinstance(data, torch.Tensor) and data.is_cuda:
                 data = cp.from_dlpack(data.detach())

@@ -50,7 +50,6 @@ def main(argv=None):
 import sys
 from pathlib import Path
 import quantem
-from quantem.core.datastructures import Dataset
 
 root = Path.cwd()
 quantem.__path__ = [str(root / "src/quantem"), *quantem.__path__]

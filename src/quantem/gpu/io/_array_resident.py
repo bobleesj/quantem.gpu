@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from quantem.gpu.io.models import create_dataset
 
 from contextlib import nullcontext
 from collections.abc import Callable
@@ -12,7 +11,7 @@ import time
 
 import numpy as np
 
-from .models import Dataset4dstem
+from .models import Dataset4dstemGPU
 
 MAX_INGEST_BYTES = 32 << 20
 
@@ -46,7 +45,7 @@ def load_array_resident(
     auto_narrow: bool = False,
     verbose: bool = False,
     float_audit_blocks: Callable | None = None,
-) -> Dataset4dstem:
+) -> Dataset4dstemGPU:
     """Encode bounded input windows; never allocate a dense acquisition."""
     from ._hot_pixels import hot_pixel_record
     from ._float_ans import FloatANSResident, PROFILE
@@ -322,7 +321,7 @@ def load_array_resident(
                     f"Loaded {source_dtype.name} measurements as {dtype.name} ANS on {backend}; "
                     "no binning or cropping."
                 )
-            return create_dataset(source, record)
+            return Dataset4dstemGPU(source, record)
         except BaseException:
             if source is not None:
                 source.release()

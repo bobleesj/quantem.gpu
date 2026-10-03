@@ -43,7 +43,7 @@ Loaded data uses one vocabulary across runtimes:
 | `residency` | host or runtime device location | where the physical payload remains |
 | `storage_schema` | versioned internal format | which decoder/profile produced it |
 
-CUDA and Python MPS expose this through `io.Dataset4dstem`, native Swift/Metal
+CUDA and Python MPS expose this through `io.Dataset4dstemGPU`, native Swift/Metal
 through `Metal4DSTEMResidentReceipt`, and WebGPU through
 `LocalH5LoadResult` and `WebGPUCompactH5ResidentSource`. Vulkan load plans and
 packed-session admission use the same two representation names. Runtime-specific

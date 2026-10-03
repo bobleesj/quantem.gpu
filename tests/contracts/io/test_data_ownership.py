@@ -1,10 +1,9 @@
 """Context cleanup preserves the error that interrupted scientific work."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import pytest
 
-from quantem.gpu.io.models import Dataset4dstem
 
 
 def test_context_cleanup_preserves_scientific_failure():
@@ -14,7 +13,7 @@ def test_context_cleanup_preserves_scientific_failure():
 
     error = ValueError("scientific operation failed")
     with pytest.raises(ValueError) as raised:
-        with create_dataset(Owner(), {}):
+        with Dataset4dstemGPU(Owner(), {}):
             raise error
     assert raised.value is error
     assert error.__notes__ == ["Resident cleanup also failed: cleanup failed"]
@@ -26,7 +25,7 @@ def test_context_cleanup_surfaces_failure_after_success():
             raise RuntimeError("cleanup failed")
 
     with pytest.raises(RuntimeError, match="cleanup failed"):
-        with create_dataset(Owner(), {}):
+        with Dataset4dstemGPU(Owner(), {}):
             pass
 
 
@@ -46,7 +45,7 @@ def test_acquisition_summary_does_not_materialize_storage():
 
     storage = EncodedOwner()
     metadata = {"representation": "encoded"}
-    data = create_dataset(storage, metadata)
+    data = Dataset4dstemGPU(storage, metadata)
     assert data.data is storage
     assert data.metadata is metadata
     assert not isinstance(data, tuple)
@@ -68,13 +67,13 @@ def test_iteration_selects_rows_lazily(monkeypatch):
 
     calls = []
     values = np.arange(3 * 4 * 2 * 2).reshape(3, 4, 2, 2)
-    data = create_dataset(values, {})
+    data = Dataset4dstemGPU(values, {})
 
     def read_row(self, row):
         calls.append(row)
         return values[row]
 
-    monkeypatch.setattr(Dataset4dstem, "__getitem__", read_row)
+    monkeypatch.setattr(Dataset4dstemGPU, "__getitem__", read_row)
     iterator = iter(data)
     assert calls == []
     np.testing.assert_array_equal(next(iterator), values[0])
@@ -92,7 +91,7 @@ def test_old_load_result_names_are_not_exported():
     from quantem.gpu import io
     from quantem.gpu.io import models
 
-    assert io.Dataset4dstem is Dataset4dstem
-    for name in ("FourDSTEMData", "LoadResult"):
+    assert io.Dataset4dstemGPU is Dataset4dstemGPU
+    for name in ("Dataset4dstem", "FourDSTEMData", "LoadResult"):
         assert not hasattr(io, name)
         assert not hasattr(models, name)

@@ -32,4 +32,4 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path):
             np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-5)
             assert actual_loss == pytest.approx(expected_loss, abs=1e-7, rel=1e-5)
             assert native._data.shape[-2:] == (12, 12)
-        np.testing.assert_array_equal(data[0, 0].numpy(), counts[0, 0])
+        np.testing.assert_array_equal(data[0, 0].cpu().numpy(), counts[0, 0])

@@ -1,8 +1,7 @@
 """Bounded precision conversion with persistent scientific error measurements."""
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
-from quantem.gpu.io.models import create_dataset
 
 import json
 import math
@@ -561,7 +560,7 @@ def load_precision(
             )
             if verbose:
                 print_report(report, shape, resident.nbytes, saved=reuse)
-            return create_dataset(resident, metadata)
+            return Dataset4dstemGPU(resident, metadata)
         except BaseException:
             for chunk in chunks:
                 chunk.release()
@@ -611,7 +610,7 @@ def save_precision(
             "Converted intensities are not raw detector counts; pass calibration through metadata instead of source_master."
         )
     metadata = dict(metadata or {})
-    if isinstance(data, Dataset):
+    if isinstance(data, Dataset4dstemGPU):
         metadata = {**data.metadata, **metadata}
         payload = data.data
     else:
@@ -934,7 +933,7 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
         )
         if verbose:
             print_report(report, shape, resident.nbytes, saved=bool(source.saved))
-        return create_dataset(resident, metadata)
+        return Dataset4dstemGPU(resident, metadata)
     except BaseException:
         for chunk in chunks:
             chunk.release()

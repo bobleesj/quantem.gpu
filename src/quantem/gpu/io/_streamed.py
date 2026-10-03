@@ -1,6 +1,6 @@
 """Stream complete H5 acquisitions into native-count GPU residents."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import math
 import time
@@ -225,7 +225,7 @@ def load_h5_ans(
                 f"{correction['method']} correction, "
                 f"{correction['pixel_count']} stored detector-mask pixels."
             )
-        return create_dataset(source, metadata)
+        return Dataset4dstemGPU(source, metadata)
 
 
 def _exact_uint16_counts(raw, first: int, stop: int):
@@ -396,4 +396,4 @@ def _load_h5_ans_mps(
             f"{correction['method']} correction, "
             f"{correction['pixel_count']} stored detector-mask pixels."
         )
-    return create_dataset(source, metadata)
+    return Dataset4dstemGPU(source, metadata)

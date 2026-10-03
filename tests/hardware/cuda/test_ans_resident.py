@@ -1,6 +1,6 @@
 """CUDA tests for exact, bounded resident ANS reads."""
 
-from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 import os
 
@@ -46,7 +46,7 @@ def test_resident_read_matches_numpy_region():
     valid[2, 4] = False
     source = StreamedCounts(shape, np.uint16, valid)
     source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
-    loaded = create_dataset(
+    loaded = Dataset4dstemGPU(
         source,
         {
             "working_shape": shape,
@@ -90,7 +90,7 @@ def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
         return block
 
     monkeypatch.setattr(source, "decode_scan_range_device", record_decode)
-    loaded = create_dataset(
+    loaded = Dataset4dstemGPU(
         source,
         {"working_shape": shape, "working_dtype": "uint16", "representation": "encoded"},
     )

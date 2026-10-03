@@ -30,8 +30,8 @@ def test_runner_preserves_current_node_ids_and_pytest_options(monkeypatch):
     assert calls[0][1]["cwd"] == ROOT
 
 
-def test_runner_tests_checkout_with_native_core_and_stale_installed_gpu(tmp_path):
-    """Use the real required core while refusing a stale installed GPU copy."""
+def test_runner_tests_checkout_with_stale_installed_gpu(tmp_path):
+    """Refuse a stale installed GPU copy when running checkout tests."""
     installed = tmp_path / "installed" / "quantem"
     installed.mkdir(parents=True)
     native_package = Path(quantem.__file__).resolve().parent
@@ -47,8 +47,8 @@ def test_runner_tests_checkout_with_native_core_and_stale_installed_gpu(tmp_path
         "def test_checkout():\n"
         "    from pathlib import Path\n"
         "    import quantem.gpu\n"
-        "    from quantem.core.datastructures import Dataset4dstem\n"
-        "    assert quantem.gpu.io.Dataset4dstem is Dataset4dstem\n"
+        "    from quantem.gpu.io.models import Dataset4dstemGPU\n"
+        "    assert quantem.gpu.io.Dataset4dstemGPU is Dataset4dstemGPU\n"
         f"    assert Path(quantem.gpu.__file__).resolve().is_relative_to({str(ROOT / 'src')!r})\n"
     )
     result = subprocess.run(

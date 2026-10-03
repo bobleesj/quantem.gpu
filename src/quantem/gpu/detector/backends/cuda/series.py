@@ -1,6 +1,6 @@
 """Joint native queries over equally shaped dense or encoded acquisitions."""
 
-from quantem.core.datastructures import Dataset
+from quantem.gpu.io.models import Dataset4dstemGPU
 
 from functools import cache
 from pathlib import Path
@@ -72,7 +72,7 @@ class CudaSeriesCompute:
         for loaded in acquisitions:
             source = (
                 loaded.data
-                if isinstance(loaded, Dataset)
+                if isinstance(loaded, Dataset4dstemGPU)
                 else loaded
             )
             metadata = getattr(loaded, "metadata", {})
