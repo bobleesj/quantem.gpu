@@ -1,5 +1,4 @@
 """Exact full-BF aberration optimization for the MPS backend."""
-from __future__ import annotations
 
 import math
 import time
@@ -10,7 +9,7 @@ import numpy as np
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.ssb.results import SSBResult
 
-from .engine import (
+from quantem.gpu.ssb.backends.mps.engine import (
     MpsBfColumnFrames,
     _PreparedMpsSSB,
     _as_chunked_frames,
@@ -176,7 +175,7 @@ def optimize(
     initial_started = time.perf_counter()
     best_loss = evaluate(best["C10"], best["C12"], best["phi12"])
     timings["initial_loss_seconds"] = time.perf_counter() - initial_started
-    trials.append({"params": dict(best), "loss": best_loss})
+    trials.append({"stage": "initial", "params": dict(best), "loss": best_loss})
 
     optuna_started = time.perf_counter()
     if n_trials > 0:
@@ -201,9 +200,9 @@ def optimize(
         )
         while n_completed < int(n_trials):
             current = min(batch_size, int(n_trials) - n_completed)
-            optuna_trials = [study.ask() for _ in range(current)]
+            trial_records = [study.ask() for _ in range(current)]
             trial_params = []
-            for trial in optuna_trials:
+            for trial in trial_records:
                 C10 = _suggest_or_fixed(trial, ranges, "C10_nm", best["C10"])
                 C12 = _suggest_or_fixed(trial, ranges, "C12_nm", best["C12"])
                 phi12 = math.radians(_suggest_or_fixed(
@@ -211,10 +210,10 @@ def optimize(
                 ))
                 trial_params.append({"C10": C10, "C12": C12, "phi12": phi12})
             losses = evaluate_batch(trial_params)
-            for trial, params, loss in zip(optuna_trials, trial_params, losses):
+            for trial, params, loss in zip(trial_records, trial_params, losses):
                 loss_value = float(loss)
                 study.tell(trial, loss_value)
-                trials.append({"params": dict(params), "loss": loss_value})
+                trials.append({"stage": "search", "number": trial.number, "params": dict(params), "loss": loss_value})
             n_completed += current
             progress.update(current)
         progress.close()
@@ -243,7 +242,7 @@ def optimize(
                 ),
                 refine_cache,
             )
-            trials.append({"params": dict(params), "loss": loss})
+            trials.append({"stage": "refinement", "params": dict(params), "loss": loss})
             return loss
 
         best, best_loss = _nelder_mead_refine(
@@ -297,6 +296,8 @@ def optimize(
         params = dict(trial["params"])
         normalized_trials.append(
             {
+                "stage": trial["stage"],
+                "number": trial.get("number"),
                 "params": {
                     "C10_nm": float(params["C10"]),
                     "C12_nm": float(params["C12"]),
@@ -324,7 +325,7 @@ def optimize(
         bf_center=selection.center_row_col,
         bf_radius=selection.radius_px,
         detected_bf_radius=selection.detected_radius_px,
-        optuna_trials=normalized_trials,
+        trial_records=normalized_trials,
     )
 
 
@@ -341,12 +342,12 @@ def fit_sample(
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,
 ) -> dict[str, object]:
-    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``_thick_sample.thick_fit`` (search: ``ssb._thick_fit``,
+    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``thick_sample.thick_fit`` (search: ``ssb.thick_sample_fit``,
     shared with CUDA). Trials are evaluated in batches of ``THICK_FIT_MAX_BATCH`` with the fused Metal kernel
     (``thick_fit_batch``, same value as ``thick_fit``). Units: C10, C12, thickness in Angstrom (engine unit); tilt in mrad,
     scan frame (row, col)."""
-    from ..._thick_fit import fit_sample_search
-    from ._thick_sample import THICK_FIT_MAX_BATCH, thick_fit, thick_fit_batch
+    from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
+    from quantem.gpu.ssb.backends.mps.thick_sample import THICK_FIT_MAX_BATCH, thick_fit, thick_fit_batch
 
     return fit_sample_search(
         lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, tilt_mrad=tilt,

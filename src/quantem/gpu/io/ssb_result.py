@@ -128,13 +128,17 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
                   output_folder: Path | None = None) -> Path:
     """Preserve phase bits and physical settings in a JSON/NumPy result pair.
 
+    ``output_folder`` selects the parent of numbered acquisition folders;
+    otherwise they are placed in ``<source folder>/live/screen``. An explicit
+    ``output`` filename and ``output_folder`` are mutually exclusive.
+
     Example: export_result(run_folder, master, Path('result.json'), digest).
 
     ``output_folder`` selects a result catalogue without writing beside the raw
     acquisition. Automatic names retain previous results on repeated exports.
     """
     if output is not None and output_folder is not None:
-        raise ValueError("Choose output or output_folder, not both.")
+        raise ValueError("Choose either an output filename or output_folder, not both.")
     identity = acquisition_identity(master)
     if expected_identity is not None and identity != expected_identity:
         raise ValueError("Local acquisition does not match the verified remote source. No result was exported.")

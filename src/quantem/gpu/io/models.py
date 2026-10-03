@@ -1,11 +1,13 @@
 """Backend-neutral loaded data and ownership contracts."""
 
-from __future__ import annotations
-
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from math import prod
+from typing import Any
 
 import numpy as np
+from quantem.core.datastructures import Dataset, Dataset4dstem
+from torch import Tensor
 
 from .representation import DataRepresentation
 
@@ -68,60 +70,67 @@ def _release_owned_storage(
             return
 
 
-class FourDSTEMData(NamedTuple):
-    """Loaded 4D-STEM data with backend-neutral representation metadata.
+@dataclass(eq=False, frozen=True, slots=True)
+class ResidentStorage:
+    """Accelerator storage adapter used by the native QuantEM dataset.
 
-    Attributes
-    ----------
-    data
-        Backend-native detector data by default. CUDA returns a CuPy array;
-        MPS may return a chunk-backed Metal frame source. With
-        ``output="torch"``, this is a Torch tensor. Shape is normally
-        ``(scan_row, scan_col, detector_row, detector_col)`` when the scan
-        shape is known, otherwise ``(frame, detector_row, detector_col)``.
-    metadata
-        Acquisition and detector metadata from the HDF5 source. The mapping
-        includes these normalized fields:
-
-        **Derived, named fields** (always present; value is ``None`` when
-        the source field is missing):
-
-        - ``scan_shape`` : ``(H, W)`` or ``None``
-            Auto-derived from ``ntrigger`` assuming a square scan.
-        - ``n_frames`` : ``int`` or ``None``
-            Total frame count.
-        - ``dwell_time_us`` : ``float`` or ``None``
-            Per-frame dwell in microseconds.
-        - ``detector_shape`` : ``(H, W)`` or ``None``
-            Detector pixel count.
-        - ``detector_name`` : ``str`` or ``None``
-            Human-readable detector description.
-        - ``saturation`` : ``int`` or ``None``
-            ADU ceiling before the detector saturates.
-
-        **Raw HDF5 scalars**: every scalar dataset in the file keyed by its
-        full HDF5 path (e.g. ``metadata["entry/instrument/detector/count_time"]``),
-        as an escape hatch for fields not in the derived layer.
-
-        .. note::
-
-            Scope-side parameters (``voltage_kV``, ``semiangle``,
-            ``scan_sampling``, ``camera_length``, ``rotation``) are NOT in
-            the h5 master - pass them to ``ssb()`` explicitly.
-
-    Examples
-    --------
-    ```python
-    data, meta = load("scan_master.h5")
-    data.shape             # (512, 512, 192, 192)
-    meta["scan_shape"]     # (512, 512)
-    meta["dwell_time_us"]  # 99.6
-    meta["detector_name"]  # detector model string
-    ```
+    This object owns decoding and lifetime only; ``io.load`` returns the
+    canonical ``quantem.core.datastructures.Dataset4dstem``.
     """
 
     data: Any
     metadata: dict[str, Any]
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError(
+            "Save resident acquisitions with quantem.gpu.io.save(path, data); device handles cannot be pickled."
+        )
+
+    def mean(self, axes):
+        """Reduce scan positions using the existing resident detector backend."""
+        if axes != (0, 1):
+            raise NotImplementedError(
+                "For encoded acquisitions use data.dp_mean, or select a bounded region before reducing other axes."
+            )
+        from quantem.gpu import detector
+
+        return detector.mean(self.data)
+
+    def __len__(self) -> int:
+        """Return the first logical axis length, as for a NumPy array."""
+        if not self.shape:
+            raise TypeError("This acquisition has no logical shape.")
+        return self.shape[0]
+
+    def __iter__(self) -> Iterator[Any]:
+        """Read one scan row at a time; metadata is never an array element."""
+        for row in range(len(self)):
+            yield self[row]
+
+    def __array__(self, dtype=None, copy=None):
+        """Reject implicit full-acquisition conversion to host memory."""
+        raise TypeError(
+            "Dataset4dstem stays on the GPU. Select a bounded region first, "
+            "then use data[row, column].numpy() for a NumPy array. "
+            "Access acquisition metadata through data.metadata."
+        )
+
+    def __repr__(self) -> str:
+        """Summarize the acquisition without decoding detector values."""
+        return (
+            f"Dataset4dstem(shape={self.shape}, dtype={self.dtype}, "
+            f"representation={self.representation.value!r})"
+        )
+
+    @property
+    def ndim(self) -> int:
+        """Return the number of logical array axes."""
+        return len(self.shape)
+
+    @property
+    def size(self) -> int:
+        """Return the logical element count without decoding any values."""
+        return prod(self.shape)
 
     @property
     def representation(self) -> DataRepresentation:
@@ -133,6 +142,13 @@ class FourDSTEMData(NamedTuple):
     def residency(self) -> str:
         """Return where the representation remains available after loading."""
         return str(self.metadata.get("residency", "device"))
+
+    @property
+    def device(self):
+        """Return the normalized device without decoding detector values."""
+        from ._read import resident_device
+
+        return resident_device(self.data)
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -149,7 +165,9 @@ class FourDSTEMData(NamedTuple):
         if value is None:
             value = getattr(self.data, "dtype", None)
         if value is None:
-            raise AttributeError("Loaded data did not report a scientific working dtype.")
+            raise AttributeError(
+                "Loaded data did not report a scientific working dtype."
+            )
         token = str(value).removeprefix("torch.")
         return np.dtype(np.uint8 if token == "uint4" else token)
 
@@ -159,7 +177,7 @@ class FourDSTEMData(NamedTuple):
         value = self.metadata.get("working_logical_tensor_bytes")
         if value is not None:
             return int(value)
-        return int(np.prod(self.shape, dtype=np.int64)) * self.dtype.itemsize
+        return self.size * self.dtype.itemsize
 
     @property
     def resident_bytes(self) -> int | None:
@@ -206,13 +224,11 @@ class FourDSTEMData(NamedTuple):
         if sum(item is Ellipsis for item in keys) > 1:
             raise IndexError("Use at most one ellipsis.")
         if any(item is Ellipsis for item in keys):
-            position = next(
-                i for i, item in enumerate(keys) if item is Ellipsis
-            )
+            position = next(i for i, item in enumerate(keys) if item is Ellipsis)
             keys = (
                 keys[:position]
                 + (slice(None),) * (5 - len(keys))
-                + keys[position + 1:]
+                + keys[position + 1 :]
             )
         if len(keys) > 4:
             raise IndexError("A 4D acquisition accepts at most four indices.")
@@ -238,10 +254,12 @@ class FourDSTEMData(NamedTuple):
                 output_shape.append(count)
                 empty |= count == 0
                 if count:
-                    regions.extend((
-                        min(indices[0], indices[-1]),
-                        max(indices[0], indices[-1]) + 1,
-                    ))
+                    regions.extend(
+                        (
+                            min(indices[0], indices[-1]),
+                            max(indices[0], indices[-1]) + 1,
+                        )
+                    )
                 else:
                     regions.extend((0, 1))
                 selection.append(slice(None, None, abs(indices.step)))
@@ -285,42 +303,51 @@ class FourDSTEMData(NamedTuple):
             detector_region=detector_region,
         )
 
-    def to_representation(self, representation: DataRepresentation | str) -> FourDSTEMData:
-        """Return an exact independently owned conversion when supported.
-
-        The source remains usable and caller-owned. Requesting its current
-        representation returns this same object, not a second ownership lease.
-        Unsupported directions fail before hidden materialization or CPU work.
-        Conversion readiness is backend-specific during this integration.
-        Native contiguous CUDA uint8/uint16 arrays support exact dense-to-packed
-        conversion, with scan/detector geometry and metadata preserved.
-
-        Parameters
-        ----------
-        representation
-            Requested resident representation, for example ``"packed"``.
-
-        Returns
-        -------
-        FourDSTEMData
-            Independently owned converted counts, or this object if unchanged.
-
-        Examples
-        --------
-        >>> dense = load("acquisition.h5", representation="dense", dtype="native")
-        >>> packed = dense.to_representation("packed")
-        >>> dense.close()
-        >>> packed.close()
-        """
-        from ._ans_dispatch import _convert_resident
-
-        return _convert_resident(self, representation)
-
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, exc_type, exc_value, traceback):
+        _release_owned_storage(self.data, failure=exc_value)
 
-# Retained public result spelling.
-LoadResult = FourDSTEMData
+
+def create_dataset(data, metadata: dict) -> Dataset:
+    """Attach resident storage to QuantEM's native calibrated dataset."""
+    storage = ResidentStorage(data, metadata)
+    cls = Dataset4dstem if storage.ndim == 4 else Dataset
+    sampling = list(metadata.get("sampling", [1.0] * storage.ndim))
+    units = list(metadata.get("units", ["pixels"] * storage.ndim))
+    if storage.ndim == 4 and "sampling" not in metadata:
+        for first, key, unit in (
+            (0, "scan_sampling_A", "angstrom"),
+            (
+                2,
+                "detector_sampling",
+                metadata.get("detector_sampling_unit", "1/angstrom"),
+            ),
+        ):
+            value = metadata.get(key)
+            if value is not None:
+                sampling[first : first + 2] = (
+                    [float(value)] * 2 if np.isscalar(value) else list(value)
+                )
+                units[first : first + 2] = [unit] * 2
+    if isinstance(data, np.ndarray):
+        source = {"array": data}
+    elif isinstance(data, Tensor):
+        source = {"tensor": data}
+    else:
+        source = {"storage": storage}
+    result = cls(
+        **source,
+        name=metadata.get("name", "4D-STEM acquisition"),
+        origin=metadata.get("origin"),
+        sampling=sampling,
+        units=units,
+        signal_units=metadata.get("signal_units", "arb. units"),
+        metadata=metadata,
+        _token=cls._token,
+    )
+    # Storage and the dataset share acquisition metadata without copying pixels.
+    metadata.update(result.metadata)
+    result._metadata = metadata
+    return result

@@ -1,5 +1,4 @@
 """Header-only inspection for 4D-STEM sources."""
-from __future__ import annotations
 
 from dataclasses import dataclass
 import json
@@ -11,11 +10,8 @@ from typing import Any
 import numpy as np
 import h5py
 
-from .load import (
-    get_metadata,
-    inspect_master_readiness,
-    read_pixel_mask,
-)
+from ._metadata import get_metadata, read_pixel_mask
+from .readiness import inspect_master_readiness
 from .representation import DataRepresentation
 
 

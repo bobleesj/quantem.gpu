@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from quantem.core.datastructures import Dataset
+
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+
 
 
 class MPSANSSeriesCompute:
@@ -34,7 +37,7 @@ class MPSANSSeriesCompute:
         for loaded in self.owners:
             source = (
                 loaded.data
-                if hasattr(loaded, "_fields") and "data" in loaded._fields
+                if isinstance(loaded, Dataset)
                 else loaded
             )
             if not isinstance(source, (MPSANSResidentCounts, MPSPackedResidentCounts)):

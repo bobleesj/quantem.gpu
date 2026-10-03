@@ -142,7 +142,7 @@ def test_real_mps_sparse_det_bin_matches_no_bin_sum() -> None:
         scan_indices=indices,
         backend="mps",
         scan_shape=scan_shape,
-        det_bin=1,
+        detector_bin=1,
         verbose=False,
     )
     det_bin2 = load(
@@ -150,7 +150,7 @@ def test_real_mps_sparse_det_bin_matches_no_bin_sum() -> None:
         scan_indices=indices,
         backend="mps",
         scan_shape=scan_shape,
-        det_bin=2,
+        detector_bin=2,
         verbose=False,
     )
 
@@ -207,7 +207,7 @@ def test_real_mps_full_bins_match_exact_no_bin_sums() -> None:
         master,
         backend="mps",
         scan_shape=scan_shape,
-        det_bin=1,
+        detector_bin=1,
         verbose=False,
     )
     native_frames = []
@@ -242,7 +242,7 @@ def test_real_mps_full_bins_match_exact_no_bin_sums() -> None:
             master,
             backend="mps",
             scan_shape=scan_shape,
-            det_bin=detector_bin,
+            detector_bin=detector_bin,
             verbose=False,
         )
         got = np.asarray(binned.data.chunks[0])[list(selected)]

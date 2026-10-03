@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quantem.gpu.io.models import create_dataset
+
 import hashlib
 import json
 import math
@@ -207,7 +209,6 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
 def load_streamed(path, *, backend, representation, scan_shape, device, verbose):
     """Restore checked encoded bytes using two bounded pinned buffers, no encoding."""
     from .backends import resolve_backend
-    from .models import FourDSTEMData
     from quantem.gpu._compact.streamed import Chunk, StreamedCounts
 
     if backend == "cpu":
@@ -218,7 +219,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
         data, metadata = load_array(path)
         if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
             raise ValueError("scan_shape disagrees with the saved QEM file.")
-        return FourDSTEMData(data, metadata)
+        return create_dataset(data, metadata)
     selected_backend = resolve_backend(backend)
     if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
         raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")
@@ -319,7 +320,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
                                               verified_encoded_bytes=header["bytes"]))
             if verbose:
                 print(f"Restored exact CUDA ANS {shape} in {time.perf_counter() - started:.3f} s.")
-            return FourDSTEMData(source, metadata)
+            return create_dataset(source, metadata)
         except BaseException:
             stream.synchronize()
             source.release()

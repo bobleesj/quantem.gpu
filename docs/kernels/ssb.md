@@ -379,7 +379,7 @@ workflow = SSB.open(
     semiangle_mrad=21.4,
     scan_sampling_A=0.5,
 )
-result = workflow.fit(save_to="results/ssb")
+result = workflow.find_aberrations(save_to="results/ssb")
 ```
 
 For known aberrations, reconstruct without fitting:

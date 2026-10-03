@@ -12,6 +12,8 @@ time.
 
 from __future__ import annotations
 
+from quantem.gpu.io.models import create_dataset
+
 import math
 import os
 import time
@@ -25,7 +27,6 @@ from quantem.gpu._compact.paired import QUERY_ABI, PairedCounts
 
 from .constants import BLOCK_SIZE
 from .inspect import inspect
-from .models import FourDSTEMData
 
 _ALIGN = 4096
 _ROLLING_SCANS = 8192
@@ -118,7 +119,7 @@ class PairedLoader:
         raise ValueError(f"{path} was not admitted.")
 
     def stream(self, paths, *, scan_shape=None, device=None, admit=None, verbose=False):
-        """Yield ``(path, FourDSTEMData)`` per admitted acquisition, as :func:`io.load` returns.
+        """Yield ``(path, Dataset4dstem)`` per admitted acquisition, as :func:`io.load` returns.
 
         The same pipeline as :meth:`load_many`, with each source wrapped in the
         public result type (``representation="paired"``, per-source
@@ -622,4 +623,4 @@ def _result(source, timings, verbose):
     )
     if verbose:
         print(f"Paired resident source {shape} ready in {metadata['load_timings']['resident_ready_seconds']:.2f} s.")
-    return FourDSTEMData(source, metadata)
+    return create_dataset(source, metadata)

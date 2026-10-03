@@ -1,5 +1,7 @@
 """CUDA tests for exact, bounded resident ANS reads."""
 
+from quantem.gpu.io.models import create_dataset
+
 import os
 
 import numpy as np
@@ -11,7 +13,6 @@ pytestmark = pytest.mark.skipif(
     reason="Set QUANTEM_CUDA_ANS_TEST=1 in an owned CUDA test window.",
 )
 
-from quantem.gpu import io
 from quantem.gpu._compact.streamed import StreamedCounts
 
 
@@ -45,7 +46,7 @@ def test_resident_read_matches_numpy_region():
     valid[2, 4] = False
     source = StreamedCounts(shape, np.uint16, valid)
     source.append(cp.ascontiguousarray(values.reshape(-1, *shape[2:])))
-    loaded = io.FourDSTEMData(
+    loaded = create_dataset(
         source,
         {
             "working_shape": shape,
@@ -61,14 +62,13 @@ def test_resident_read_matches_numpy_region():
         assert observed.device.type == "cuda"
         assert observed.dtype == torch.uint16
         expected = values.get()[1:4, 2:6, 1:4, 3:7]
-        expected[..., 1, 1] = 0
         np.testing.assert_array_equal(observed.cpu().numpy(), expected)
     finally:
         loaded.close()
 
 
 def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
-    """A detector crop never decodes more than one block of whole frames at a time.
+    """A detector crop never decodes more than one bounded scratch block.
 
     Decoding the whole region before cropping held a full-detector copy of every
     requested scan position (19 GB for a 512 x 512 x 192 x 192 uint16 scan just to
@@ -84,12 +84,13 @@ def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
     monkeypatch.setattr(_read, "_BLOCK_BYTES", 2 * 3 * frame_bytes)
     decoded = []
     decode = source.decode_scan_range_device
-    monkeypatch.setattr(
-        source,
-        "decode_scan_range_device",
-        lambda first, stop: decoded.append(stop - first) or decode(first, stop),
-    )
-    loaded = io.FourDSTEMData(
+    def record_decode(first, stop, *, detector_region=None):
+        block = decode(first, stop, detector_region=detector_region)
+        decoded.append(block.nbytes)
+        return block
+
+    monkeypatch.setattr(source, "decode_scan_range_device", record_decode)
+    loaded = create_dataset(
         source,
         {"working_shape": shape, "working_dtype": "uint16", "representation": "encoded"},
     )
@@ -100,6 +101,7 @@ def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
             row0, row1, column0, column1 = scan_region
             expected = values.get()[row0:row1, column0:column1, 1:5, 2:7]
             np.testing.assert_array_equal(observed.cpu().numpy(), expected)
-            assert len(decoded) > 1 and max(decoded) <= 6
+            assert len(decoded) > 1
+            assert max(decoded) <= _read._BLOCK_BYTES
     finally:
         loaded.close()

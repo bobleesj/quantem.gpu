@@ -1,14 +1,16 @@
 """Expose prepared-series storage through the common loaded-data contract."""
 
+from quantem.gpu.io.models import create_dataset
+
 import math
 from pathlib import Path
 
-from .models import FourDSTEMData, _release_owned_storage
+from .models import Dataset4dstem, _release_owned_storage
 
 
 def load_prepared_series(
     path: Path, *, device: int | str | None, verbose: bool
-) -> FourDSTEMData:
+) -> Dataset4dstem:
     """Load an already validated request without converting the prepared source."""
     from quantem.gpu._compact.load import load
 
@@ -46,7 +48,7 @@ def load_prepared_series(
             "load_seconds": data.load_seconds,
             "load_timing": data.load_timing,
         }
-        return FourDSTEMData(data, metadata)
+        return create_dataset(data, metadata)
     except BaseException as error:
         _release_owned_storage(data, failure=error)
         raise

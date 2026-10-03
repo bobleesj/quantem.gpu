@@ -9,7 +9,7 @@ from functools import lru_cache
 import cupy as cp
 import numpy as np
 
-from .common import CustomFFTBase, build_cuda_code
+from quantem.gpu.ssb.backends.cuda.kernels.common import CustomFFTBase, build_cuda_code
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_512[512];'
 

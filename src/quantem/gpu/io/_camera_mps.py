@@ -1,5 +1,7 @@
 """Native camera and saved ANS loading through bounded Metal allocations."""
 
+from quantem.gpu.io.models import create_dataset
+
 import bisect
 import hashlib
 import math
@@ -13,7 +15,6 @@ import numpy as np
 
 from .backends.mps._streamed import MPSStreamedCounts, _Chunk
 from .backends.mps.packed import _allocate_shared, _buffer_view, _pread_exact, _release
-from .models import FourDSTEMData
 
 
 def load_camera_mps(source, *, verbose=False):
@@ -251,7 +252,7 @@ def load_scaled_snapshot_mps(path, header, start, *, verbose=False):
             f"Loaded scaled uint16 ANS on Metal in {time.perf_counter() - started:.3f} s "
             f"(RMSE {report['rmse']:.3g}, max error {report['max_abs_error']:.3g})."
         )
-    return FourDSTEMData(source, metadata)
+    return create_dataset(source, metadata)
 
 
 def _result(resident, metadata, started, verbose):
@@ -288,4 +289,4 @@ def _result(resident, metadata, started, verbose):
         print(
             f"Loaded exact native camera ANS on Metal in {time.perf_counter() - started:.3f} s."
         )
-    return FourDSTEMData(resident, record)
+    return create_dataset(resident, record)

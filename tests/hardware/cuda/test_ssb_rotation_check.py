@@ -48,7 +48,7 @@ def _simulated(rotation_angle_deg: float):
     from quantem.gpu import SSB
 
     data, det_sampling = _simulated_crystal((3.0, -4.0))
-    return SSB.from_array(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
+    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
                           det_sampling=det_sampling, rotation_angle_deg=rotation_angle_deg)
 
 
@@ -58,9 +58,9 @@ def _simulated(rotation_angle_deg: float):
 def test_simulated_crystal_wrong_rotation_is_turned_and_refit():
     """Known answer (atoms positive, right rotation 0 deg): starting at 180 deg (0 deg, CoM reversed), fit() restores the CoM."""
     _require_cuda()
-    direct = _simulated(0.0).fit(check_rotation=False, verbose=False)
+    direct = _simulated(0.0).find_aberrations(check_rotation=False, verbose=False)
     session = _simulated(180.0)
-    checked = session.fit(verbose=False)
+    checked = session.find_aberrations(verbose=False)
     assert checked.rotation_flipped
     assert checked.rotation_angle_deg == pytest.approx(0.0, abs=1e-9) and not checked.com_reversed
     assert session.rotation_angle_deg == pytest.approx(0.0, abs=1e-9) and not session.com_reversed   # session keeps it
@@ -74,8 +74,8 @@ def test_simulated_crystal_wrong_rotation_is_turned_and_refit():
 def test_simulated_crystal_right_rotation_is_left_exactly_as_fitted():
     """Starting at the right rotation, the check only measures: same result as check_rotation=False, bit for bit."""
     _require_cuda()
-    kept = _simulated(0.0).fit(verbose=False)
-    direct = _simulated(0.0).fit(check_rotation=False, verbose=False)
+    kept = _simulated(0.0).find_aberrations(verbose=False)
+    direct = _simulated(0.0).find_aberrations(check_rotation=False, verbose=False)
     assert not kept.rotation_flipped
     assert kept.column_sign > 0.8
     np.testing.assert_array_equal(_host(kept.phase), _host(direct.phase))
@@ -88,7 +88,7 @@ def test_check_rotation_false_keeps_the_given_rotation():
     _require_cuda()
     from quantem.gpu.ssb.results import column_sign
 
-    result = _simulated(180.0).fit(check_rotation=False, verbose=False)
+    result = _simulated(180.0).find_aberrations(check_rotation=False, verbose=False)
     assert result.rotation_angle_deg == pytest.approx(0.0, abs=1e-9) and result.com_reversed
     assert not result.rotation_flipped and result.column_sign is None
     assert column_sign(result.phase) < -0.8
@@ -101,11 +101,11 @@ def test_real_acquisition_from_the_wrong_rotation_matches_a_direct_fit():
     _require_cuda()
     from quantem.gpu import SSB
 
-    direct = SSB.open(str(SOURCE), rotation_angle_deg=REAL_ROTATION_DEG, **REAL).fit(check_rotation=False, verbose=False)
+    direct = SSB.open(str(SOURCE), rotation_angle_deg=REAL_ROTATION_DEG, **REAL).find_aberrations(check_rotation=False, verbose=False)
     direct_phase, direct_loss, direct_aberrations = _host(direct.phase), direct.loss, dict(direct.aberrations)
     del direct
     cp.get_default_memory_pool().free_all_blocks()
-    checked = SSB.open(str(SOURCE), rotation_angle_deg=REAL_ROTATION_DEG + 180.0, **REAL).fit(verbose=False)
+    checked = SSB.open(str(SOURCE), rotation_angle_deg=REAL_ROTATION_DEG + 180.0, **REAL).find_aberrations(verbose=False)
     assert checked.rotation_flipped
     assert checked.rotation_angle_deg == pytest.approx(REAL_ROTATION_DEG, abs=1e-9) and not checked.com_reversed
     # validated 2026-09-26: column sign +0.665, phase correlation 0.99995, loss 1.4e-6 relative, C10 0.018 nm apart
@@ -125,12 +125,12 @@ def test_reversed_com_is_the_conjugate_object_with_every_aberration_flipped():
     _require_cuda()
     aberrations = {"C10": 1.5, "C12": 0.8, "phi12": 0.4}
     flipped = {"C10": -1.5, "C12": -0.8, "phi12": 0.4}
-    measured = _simulated(0.0).reconstruct(aberrations)
+    measured = _simulated(0.0).reconstruct(aberrations=aberrations)
     reversed_ = _simulated(0.0)
     reversed_.set_rotation(0.0, com_reversed=True)
-    conjugate = reversed_.reconstruct(flipped)
+    conjugate = reversed_.reconstruct(aberrations=flipped)
     assert reversed_.rotation_angle_deg == 0.0 and reversed_.com_reversed and reversed_.physical_rotation_deg == 180.0
     assert conjugate.rotation_angle_deg == 0.0 and conjugate.com_reversed
     assert _correlation(conjugate.phase, -_host(measured.phase)) > 0.9999
-    same = _simulated(180.0).reconstruct(flipped)     # the old spelling of the same physical rotation
+    same = _simulated(180.0).reconstruct(aberrations=flipped)     # the old spelling of the same physical rotation
     np.testing.assert_array_equal(_host(same.phase), _host(conjugate.phase))

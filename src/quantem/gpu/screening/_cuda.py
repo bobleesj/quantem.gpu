@@ -349,11 +349,15 @@ def _build_exact_cuda_products(
             "The private exact CUDA screening candidate is qualified only for "
             f"uint16 decoded counts; got {output_dtype}."
         )
-    if not np.can_cast(source_dtype, output_dtype, casting="safe"):
+    checked_narrow = source_dtype == np.dtype(np.uint32)
+    if not checked_narrow and not np.can_cast(source_dtype, output_dtype, casting="safe"):
         raise ValueError(
             "Exact CUDA screening may preserve or safely widen source counts, "
             f"but may not narrow {source_dtype} to {output_dtype}."
         )
+    # Arina may store low counts as uint32. The decoder checks every valid
+    # count before narrowing; an explicit output dtype would skip that check.
+    decode_dtype = None if checked_narrow else output_dtype
 
     num_frames = int(np.prod(scan_shape, dtype=np.int64))
     max_batch_frames = min(
@@ -478,8 +482,8 @@ def _build_exact_cuda_products(
                 data = _decompress_prepared(
                     prepared,
                     verbose=False,
-                    auto_narrow=False,
-                    output_dtype=output_dtype,
+                    auto_narrow=checked_narrow,
+                    output_dtype=decode_dtype,
                     prune_device_pool=False,
                 )
                 decode_s = time.perf_counter() - decode_started
@@ -664,8 +668,8 @@ def _build_exact_cuda_products(
                         data = _decompress_prepared(
                             prepared,
                             verbose=False,
-                            auto_narrow=False,
-                            output_dtype=output_dtype,
+                            auto_narrow=checked_narrow,
+                            output_dtype=decode_dtype,
                             prune_device_pool=False,
                         )
                         fallback_decode_s += time.perf_counter() - decode_started
@@ -762,6 +766,7 @@ def _build_exact_cuda_products(
         "working_detector_shape": [int(value) for value in detector_shape],
         "source_dtype": str(source_dtype),
         "working_dtype": str(output_dtype),
+        "narrowing_verified": checked_narrow,
         "scan_region": None,
         "detector_region": None,
         "scan_bin": 1,

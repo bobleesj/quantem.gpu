@@ -16,7 +16,7 @@ with SSB.open(
     scan_sampling_A=(0.5, 0.5),
     rotation_angle_deg=-8.2,
 ) as ssb:
-    result = ssb.fit(save_to="results/ssb")
+    result = ssb.find_aberrations(save_to="results/ssb")
 ```
 
 The public units are fixed: kV, mrad, angstrom, nanometres for C10/C12,
@@ -39,7 +39,7 @@ object values. A backend may reject a job it cannot execute, but may not switch
 to CPU, crop or subsample the BF evidence, quantize values, or change the
 objective silently.
 
-`fit()` and `reconstruct()` own saved-result reuse through the same `save_to`
+`find_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_to`
 and `force` controls. Reuse requires an exact scientific signature and restores
 one `SSBResult`; there is no cache manager, persistence session, or second
 workflow API. The NPZ owns the complex object wave, and its JSON companion owns
@@ -88,7 +88,7 @@ The CLI flow is fixed:
 2. call `SSB.open()`, which automatically chooses the fastest exact storage;
 3. detect the complete bright-field disk once, or load its exact persisted
    `(row, col)` selection from a BF-column companion;
-4. call `fit()`, which optimizes and reconstructs;
+4. call `find_aberrations()`, which optimizes and reconstructs;
 5. save the shared result and provenance;
 6. hand the result to ShowPtycho for rendering.
 

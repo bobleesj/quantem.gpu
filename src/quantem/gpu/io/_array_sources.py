@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quantem.gpu.io.models import create_dataset
+
 import json
 import math
 from pathlib import Path
@@ -9,7 +11,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
-from .models import FourDSTEMData
+from .models import Dataset4dstem
 
 
 def _pair(text: str) -> tuple[int, int]:
@@ -60,7 +62,7 @@ def _raw_companion(path: Path) -> Path:
     return matches[0] if matches else adjacent
 
 
-def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
+def _empad(path: Path, scan_shape: tuple[int, int] | None) -> Dataset4dstem:
     xml = path if path.suffix.lower() == ".xml" else _raw_companion(path)
     fields, original, shape, record_rows = {}, {}, scan_shape, 130
     raw = path
@@ -260,12 +262,12 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> FourDSTEMData:
         format_name="EMPAD float32",
         microscope_metadata=original,
     )
-    return FourDSTEMData(data, metadata)
+    return create_dataset(data, metadata)
 
 
 def load_array_source(
     path: str | Path, scan_shape: tuple[int, int] | None = None
-) -> FourDSTEMData:
+) -> Dataset4dstem:
     """Map explicit array sources without silently changing measurement precision."""
     path = Path(path)
     if path.suffix.lower() != ".npy":
@@ -277,7 +279,7 @@ def load_array_source(
         )
     if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
         raise ValueError("scan_shape disagrees with the NumPy array.")
-    return FourDSTEMData(
+    return create_dataset(
         data,
         dict(
             backend="cpu",

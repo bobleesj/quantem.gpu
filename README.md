@@ -40,6 +40,8 @@ The Mac SSB backend uses MLX and Metal. Array indexing uses
 PyTorch; install a GPU-enabled PyTorch build to use those examples.
 For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
+The development package pins its matching native QuantEM source revision until
+that dataset support is included in a coordinated release.
 
 This is pre-release software. The older TestPyPI candidate
 `quantem.gpu==0.0.1rc8` does not include all current source features.
@@ -49,8 +51,9 @@ See [installation and runtime checks](docs/install.md) for details.
 
 These examples use a gold acquisition: a 512 × 512 scan with a 192 × 192
 detector. Replace `gold_master.h5` with your file and keep its companion HDF5
-files beside it. Install `quantem` for `show_2d` and GPU-enabled PyTorch for
-indexing. The data are not bundled here.
+files beside it. Installation includes the matching native QuantEM dataset
+implementation; PyTorch supplies GPU tensors for selected regions. The data
+are not bundled here.
 
 ### Load and inspect
 
@@ -62,15 +65,34 @@ data = io.load("gold_master.h5")
 show_2d(data[10, 12], norm="power_sqrt")  # pattern at scan position (10, 12)
 ```
 
-Indexing decodes the selection into a GPU tensor; `show_2d` handles it directly.
+Indexing returns a native QuantEM dataset backed by the selected GPU tensor;
+`show_2d` uses its calibration directly.
 The acquisition remains ANS encoded. Backend selection uses CUDA or MPS and
 never silently falls back to CPU.
 
 ```python
 data.shape     # (512, 512, 192, 192): scan axes, then detector axes
+data.ndim      # 4 logical axes
+data.size      # number of detector values across the acquisition
+len(data)      # 512 scan rows
 data.dtype     # measurement dtype
 data.metadata  # calibration, units, source and recorded corrections
 ```
+
+`io.load` returns QuantEM's native `Dataset4dstem`, from
+`quantem.core.datastructures`. There is one dataset class for NumPy, PyTorch,
+and encoded storage. QuantEM.GPU owns the encoded buffers and selective decoder;
+the native dataset owns indexing, calibration, units, and metadata.
+
+```python
+pattern = data[10, 12]     # native Dataset2d, with detector calibration
+pattern.sampling          # sampling of the two retained detector axes
+pattern.units             # calibrated units, or pixels when unknown
+pattern.tensor            # the selected PyTorch tensor on the GPU
+pattern.numpy()           # explicit host copy of this one pattern
+```
+
+No full acquisition is decoded by these selections.
 
 The gold source flags four detector pixels; loading applies median hot-pixel
 correction by default. Use `hot_pixel_correction="none"` in `io.load` to retain
@@ -338,25 +360,50 @@ data.close()
 
 ## Reconstruct phase with SSB
 
-Supply the microscope calibration and fit defocus and astigmatism:
+Supply your microscope calibration, find the aberrations once, and reuse them:
 
 ```python
 from quantem.gpu import SSB
+from quantem.core.visualization import show_2d
 
-with SSB.open(
+ssb = SSB.open(
     "acquisition.qem",
     voltage_kV=300,
     semiangle_mrad=30,
     scan_sampling_A=0.264,
-) as workflow:
-    result = workflow.fit(save_to="results/ssb")
-    phase = result.phase
+)
+aberrations = ssb.find_aberrations()
+result = ssb.reconstruct(aberrations)
+show_2d(result.phase, scalebar={"sampling": result.scan_sampling_A, "units": "Å"})
 ```
 
-The calibration values above are examples; use your acquisition's values.
-`phase` is in radians. Use `reconstruct()` for known aberrations, or `preview()`
-for interactive parameter changes. The [SSB guide](docs/api/ssb.md) covers
-fitting, tilt correction, saved results, and finer CUDA preview sampling.
+Inspect the search visually, with a parameter table and shared phase contrast:
+
+```python
+ssb.show_trials(best=5)     # five lowest-loss search trials
+ssb.show_trials(last=5)     # five most recent search trials
+ssb.show_trials(first=5)    # five earliest search trials
+```
+
+The calibration above is an example; use your acquisition's values. For the
+joint aberration, sample-tilt and depth-spread model, use
+`aberrations = ssb.find_aberrations(tilt=True)`. Its search objective differs
+from standard SSB. A fitted depth spread is not a thickness measurement.
+
+```python
+aberrations.report()               # final parameters, units and diagnostics
+aberrations.trials                 # trial parameter/score DataFrame
+aberrations.aberrations["C10"]      # defocus in nm; C12 in nm, phi12 in radians
+aberrations.tilt_mrad              # sample tilt (row, column), or None
+result = ssb.reconstruct(aberrations, upsample=4)  # CUDA: same parameters, finer output
+adjusted = ssb.reconstruct(aberrations, aberrations={"C10": 12.5})
+ssb.close()
+```
+
+Searches use the native scan grid. Finer output sampling does not add detector
+measurements or guarantee additional resolution. Reconstruction reuses the
+selected aberrations, tilt, depth spread and rotation; it does not refit them.
+See the [SSB guide](docs/api/ssb.md) for trial replay and saved results.
 
 ## What can I do?
 

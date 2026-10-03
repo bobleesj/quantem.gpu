@@ -83,7 +83,8 @@ def test_ssb_time_average_reconstructs_frames_with_shared_calibration() -> None:
         def set_rotation(self, rotation_angle_deg):
             self.rotation_angle_deg = self.physical_rotation_deg = rotation_angle_deg
 
-        def reconstruct(self, aberrations):
+        def reconstruct(self, aberrations, *, phase_estimator):
+            assert phase_estimator == "complex_wave"
             self.calls.append((
                 aberrations["C10"],
                 aberrations["C12"],
@@ -134,7 +135,8 @@ def test_ssb_time_series_preserves_per_frame_objects_and_can_average() -> None:
         def set_rotation(self, rotation_angle_deg):
             self.rotation_angle_deg = self.physical_rotation_deg = rotation_angle_deg
 
-        def reconstruct(self, aberrations):
+        def reconstruct(self, aberrations, *, phase_estimator):
+            assert phase_estimator == "complex_wave"
             del aberrations
             return SimpleNamespace(object_wave=self.wave)
 

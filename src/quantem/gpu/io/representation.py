@@ -1,10 +1,9 @@
 """Backend-neutral 4D-STEM in-memory representation contract."""
 
-from __future__ import annotations
-
 from enum import Enum
 from os import PathLike
 from pathlib import Path
+from typing import Self
 
 __all__ = ["DataRepresentation"]
 
@@ -54,7 +53,7 @@ class DataRepresentation(str, Enum):
     PAIRED = "paired"
 
     @classmethod
-    def parse(cls, value: DataRepresentation | str) -> DataRepresentation:
+    def parse(cls, value: Self | str) -> Self:
         """Return the canonical representation selected by a public caller.
 
         Parameters
@@ -88,9 +87,7 @@ class DataRepresentation(str, Enum):
             ) from error
 
     @classmethod
-    def detect_source(
-        cls, source: str | PathLike[str]
-    ) -> DataRepresentation:
+    def detect_source(cls, source: str | PathLike[str]) -> Self:
         """Identify the representation encoded by one source container.
 
         Ordinary HDF5 is dense-compatible source evidence. A QuantEM lossless
@@ -125,8 +122,44 @@ class DataRepresentation(str, Enum):
             return cls.ENCODED
         if magic == _PAIRED_RESIDENT_MAGIC:
             return cls.PAIRED
-        return (
-            cls.PACKED
-            if magic == _LOSSLESS_PACK_CONTAINER_MAGIC
-            else cls.DENSE
+        return cls.PACKED if magic == _LOSSLESS_PACK_CONTAINER_MAGIC else cls.DENSE
+
+
+def convert(loaded, representation):
+    """Convert explicitly without changing counts or releasing the caller's input."""
+    from .dataset_metadata import dataset_metadata
+    from .models import _release_owned_storage, create_dataset
+
+    target = DataRepresentation.parse(representation)
+    current = DataRepresentation.parse(loaded.representation)
+    if target is current:
+        return loaded
+    source = loaded.data
+    metadata = dataset_metadata(loaded)
+    if current is DataRepresentation.ENCODED and target is DataRepresentation.PACKED:
+        convert = getattr(source, "to_packed", None)
+        if convert is None:
+            raise NotImplementedError(
+                "Direct encoded-to-packed conversion is not qualified for this backend yet."
+            )
+        output = convert()
+    elif current is DataRepresentation.DENSE and target is DataRepresentation.PACKED:
+        from .backends.cuda._ans import CudaPackedResidentCounts
+
+        output = CudaPackedResidentCounts.from_array(source, loaded.shape)
+    else:
+        raise NotImplementedError(
+            f"{current.value}-to-{target.value} resident conversion "
+            "is not implemented yet. No dense expansion or CPU fallback was performed."
         )
+    try:
+        metadata.update(
+            representation=target.value,
+            physical_resident_bytes=output.nbytes,
+            conversion_from=current.value,
+            resident_profile="block-column-bitpacked-u32-v1",
+        )
+        return create_dataset(output, metadata)
+    except BaseException as error:
+        _release_owned_storage(output, failure=error)
+        raise

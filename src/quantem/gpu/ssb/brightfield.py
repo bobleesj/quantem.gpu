@@ -1,5 +1,4 @@
 """Typed bright-field detector selection for SSB reconstruction."""
-from __future__ import annotations
 
 from dataclasses import dataclass
 import math

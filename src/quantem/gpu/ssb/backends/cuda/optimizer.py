@@ -14,7 +14,7 @@ import math
 import numpy as np
 import cupy as cp
 
-from .engine import SSBEngine
+from quantem.gpu.ssb.backends.cuda.engine import SSBEngine
 
 # =========================================================================
 #  Core batch evaluation
@@ -139,6 +139,7 @@ def batch_optimize(
     pbar = tqdm(total=n_trials, desc="SSB optimize", disable=not verbose,
                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
 
+    trial_history = []
     n_completed = 0
     while n_completed < n_trials:
         # Ask for a batch of trials
@@ -175,19 +176,18 @@ def batch_optimize(
 
         for i, trial in enumerate(trials):
             study.tell(trial, float(losses_cpu[i]))
+            trial_history.append({
+                "number": trial.number,
+                "params": {"C10_nm": float(c10_arr[i]), "C12_nm": float(c12_arr[i]),
+                           "phi12_deg": math.degrees(float(phi12_arr[i]))},
+                "loss": float(losses_cpu[i]),
+            })
 
         n_completed += current_batch
         pbar.update(current_batch)
 
     pbar.close()
 
-    # Dump every completed trial as a plain dict so the caller can
-    # persist it (sidecar JSON) without needing Optuna in downstream
-    # code. See #26 for the scatter plot consumer.
-    trial_history = [
-        {"params": dict(t.params), "loss": float(t.value)}
-        for t in study.trials if t.value is not None
-    ]
     return study.best_params, study.best_value, trial_history
 
 def _sequential_optimize(
@@ -213,6 +213,8 @@ def _sequential_optimize(
     sampler = TPESampler(seed=seed)
     study = optuna.create_study(direction="minimize", sampler=sampler)
 
+    trial_history = []
+
     def objective(trial):
         c10 = _suggest(trial, "C10_nm", aberrations.get("C10_nm", aberration_defaults.get("C10", 0.0)))
         c12 = _suggest(trial, "C12_nm", aberrations.get("C12_nm", aberration_defaults.get("C12", 0.0)))
@@ -221,13 +223,17 @@ def _sequential_optimize(
         if rotation_angle_deg_spec is not None and isinstance(rotation_angle_deg_spec, tuple):
             rot_deg = _suggest(trial, "rotation_angle_deg", rotation_angle_deg_spec)
             accel.cache_rotation(math.radians(rot_deg))
-        return accel.variance_loss(c10, c12, phi12)
+        loss = float(accel.variance_loss(c10, c12, phi12))
+        trial_history.append({
+            "number": trial.number,
+            "params": {"C10_nm": c10, "C12_nm": c12, "phi12_deg": phi12_deg,
+                       "rotation_angle_deg": rot_deg if isinstance(rotation_angle_deg_spec, tuple)
+                       else math.degrees(rotation_angle_rad)},
+            "loss": loss,
+        })
+        return loss
 
     study.optimize(objective, n_trials=n_trials, show_progress_bar=verbose)
-    trial_history = [
-        {"params": dict(t.params), "loss": float(t.value)}
-        for t in study.trials if t.value is not None
-    ]
     return study.best_params, study.best_value, trial_history
 
 # =========================================================================
@@ -417,8 +423,8 @@ def fit_sample(
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     **options,
 ) -> dict[str, object]:
-    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``SSBEngine.thick_fit`` (search: ``ssb._thick_fit``)."""
-    from ..._thick_fit import fit_sample_search
+    """Fit C10, C12, phi12, sample tilt and thickness by maximising ``SSBEngine.thick_fit`` (search: ``ssb.thick_sample_fit``)."""
+    from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
 
     return fit_sample_search(lambda c10, c12, phi12, tilt, thickness: accel.thick_fit(c10, c12, phi12, tilt, thickness, band_inv_A),
                              objective_batch=lambda rows: accel.thick_fit_batch(rows, band_inv_A),

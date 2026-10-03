@@ -33,12 +33,12 @@ without changing the public Python verbs, load defaults, metadata, or kernels.
 The Python files below were moved, not copied. Browser exports refer to the
 existing source modules, so their file registry and GPU lifetimes remain shared.
 
-| Backend | Dense implementation | Lossless-packed implementation | Retained compatibility path |
-|---|---|---|---|
-| Python CUDA | `io/load.py` orchestration and `io/backends/cuda/decoder.py` kernels | `io/backends/cuda/packed.py` | `cuda/compact_h5.py` |
-| Python MPS | `io/backends/mps/dense.py` | `io/backends/mps/packed.py` | `mps/decoder.py`, `mps/compact_v3.py` |
-| Explicit CPU reference | `io/backends/cpu/dense.py` | Test-only reference decoder, not public packed loading | `cpu/reference.py` |
-| WebGPU | `io/backends/webgpu/dense.ts` exports `local-h5.ts` | `io/backends/webgpu/packed.ts` exports `compact-h5.ts` | Existing TypeScript imports stay valid |
+| Backend | Dense implementation | Lossless-packed implementation |
+|---|---|---|
+| Python CUDA | `io/load.py` orchestration and `io/backends/cuda/decoder.py` kernels | `io/backends/cuda/packed.py` |
+| Python MPS | `io/backends/mps/dense.py` | `io/backends/mps/packed.py` |
+| Explicit CPU reference | `io/backends/cpu/dense.py` | Test-only reference decoder, not public packed loading |
+| WebGPU | `io/backends/webgpu/dense.ts` exports `local-h5.ts` | `io/backends/webgpu/packed.ts` exports `compact-h5.ts` |
 
 Python callers continue to use `io.load(..., representation=...)`.
 The [representation contract](../api/representations.md) remains authoritative
@@ -53,11 +53,11 @@ master/chunk files with `setLocalFiles` before using the dense loader.
 loader accepts its own source directly. This migration does not unify those
 different lifecycles or add automatic transcoding.
 
-Compatibility files contain imports only. Callable/class imports retain object
-identity; mutable backend state has one owner in the canonical module. Tests
-that inject private allocation, cache, or device state must target that module,
-not assign globals on a compatibility file. Public Python call sites remain
-unchanged; browser build scripts must export the complete dependency graph.
+Python backend imports use the canonical modules above. The old
+`cpu.reference`, `cuda.compact_h5`, `mps.decoder`, and `mps.compact_v3`
+compatibility modules are removed. Mutable backend state has one owner; tests
+that inject allocation, cache, or device state target that canonical module.
+Browser build scripts must export the complete dependency graph.
 
 The loader separates result/ownership types (`models.py`), exact scan indexing
 (`_selection.py`), header readers (`_metadata.py`), pinned staging ownership

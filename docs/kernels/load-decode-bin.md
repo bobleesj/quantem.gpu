@@ -32,7 +32,7 @@ $$
 In plain terms, `(row, column)` is `(r, c)` for both scan and detector axes.
 
 Storage shards may flatten $(R_r,R_c)$ into a frame index, and a device layout
-may be detector-major or packed. `FourDSTEMData` metadata must still report the
+may be detector-major or packed. `Dataset4dstem` metadata must still report the
 logical scan and detector shapes, source/output dtype, crop/bin plan, and
 source identity.
 

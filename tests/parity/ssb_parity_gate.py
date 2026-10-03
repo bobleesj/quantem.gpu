@@ -35,7 +35,6 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ssb_double_reference import ssb_reference  # noqa: E402
 from ssb_parity_case import (  # noqa: E402
     CASES,
     SSBParityCase,
@@ -186,7 +185,7 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
     for index in range(len(case.aberrations)):
         aberrations = _aberration_dict(case, index)
         started = time.perf_counter()
-        result = session.reconstruct(aberrations, compute_loss=False)
+        result = session.reconstruct(aberrations=aberrations, compute_loss=False)
         object_seconds = time.perf_counter() - started
         started = time.perf_counter()
         phase, loss = session.preview(aberrations)

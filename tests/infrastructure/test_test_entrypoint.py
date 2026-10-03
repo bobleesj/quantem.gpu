@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import os
 import subprocess
 import sys
-import pytest
+
+import quantem
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,13 +30,14 @@ def test_runner_preserves_current_node_ids_and_pytest_options(monkeypatch):
     assert calls[0][1]["cwd"] == ROOT
 
 
-@pytest.mark.parametrize("regular_parent", [False, True])
-def test_runner_tests_checkout_even_with_installed_parent_package(tmp_path, regular_parent):
-    """A local test run must not certify a stale installed quantem.gpu copy."""
+def test_runner_tests_checkout_with_native_core_and_stale_installed_gpu(tmp_path):
+    """Use the real required core while refusing a stale installed GPU copy."""
     installed = tmp_path / "installed" / "quantem"
     installed.mkdir(parents=True)
-    if regular_parent:
-        (installed / "__init__.py").write_text("")
+    native_package = Path(quantem.__file__).resolve().parent
+    for child in native_package.iterdir():
+        if child.name not in {"gpu", "__pycache__"}:
+            (installed / child.name).symlink_to(child, target_is_directory=child.is_dir())
     (installed / "gpu").mkdir()
     (installed / "gpu" / "__init__.py").write_text(
         "raise RuntimeError('stale installed backend imported')\n"
@@ -45,6 +47,8 @@ def test_runner_tests_checkout_even_with_installed_parent_package(tmp_path, regu
         "def test_checkout():\n"
         "    from pathlib import Path\n"
         "    import quantem.gpu\n"
+        "    from quantem.core.datastructures import Dataset4dstem\n"
+        "    assert quantem.gpu.io.Dataset4dstem is Dataset4dstem\n"
         f"    assert Path(quantem.gpu.__file__).resolve().is_relative_to({str(ROOT / 'src')!r})\n"
     )
     result = subprocess.run(

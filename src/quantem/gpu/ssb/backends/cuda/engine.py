@@ -14,8 +14,8 @@ from types import TracebackType
 import numpy as np
 import cupy as cp
 
-from ..protocol import SSBExportState, SSBPrecision
-from ...bf_selector import BrightfieldDisk
+from quantem.gpu.ssb.backends.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.brightfield import BrightfieldDisk
 
 # Mean phase kernel: avoids materializing a full phase buffer.
 _mean_phase_kernel = cp.RawKernel(r'''
@@ -911,12 +911,6 @@ class SSBEngine:
 
         return _PreparedCudaBfSubset(self, num_bf)
 
-    @staticmethod
-    def phase_to_numpy(phase) -> np.ndarray:
-        """Copy one reconstructed phase image from CUDA to host float32."""
-
-        return cp.asnumpy(phase).astype(np.float32, copy=False)
-
     def clear_batch_caches(self) -> None:
         """Release batch and chunk caches to free GPU VRAM."""
         self._batch_cache.clear()
@@ -1106,7 +1100,7 @@ class SSBEngine:
                     "CUDA SSB requires a square scan grid; "
                     f"got {ny}x{nx}."
                 )
-            from .kernels import get_fft_kernel
+            from quantem.gpu.ssb.backends.cuda.kernels import get_fft_kernel
 
             self._custom_fft = get_fft_kernel(ny)
             self._colvar_group = int(self._custom_fft._colvar_group)
@@ -1419,7 +1413,7 @@ class SSBEngine:
         14 Krivanek coefficients instead of the 2-term C10/C12 formula.
         Result lands in ``self._corrected_buffer``.
         """
-        from .kernels.common import pack_aberration_coefs
+        from quantem.gpu.ssb.backends.cuda.kernels.common import pack_aberration_coefs
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
@@ -1511,7 +1505,7 @@ class SSBEngine:
         performed via CuPy per chunk (no dedicated col-accumulate kernel for
         the 14-coef path yet - that belongs to a future perf pass).
         """
-        from .kernels.common import pack_aberration_coefs
+        from quantem.gpu.ssb.backends.cuda.kernels.common import pack_aberration_coefs
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])
@@ -1614,7 +1608,7 @@ class SSBEngine:
         variance from the pooled statistics.  Bit-identical to the
         non-chunked path (just sum-then-divide instead of divide-then-sum).
         """
-        from .kernels.common import pack_aberration_coefs
+        from quantem.gpu.ssb.backends.cuda.kernels.common import pack_aberration_coefs
         c = self._cache
         num_bf = int(c["num_bf"])
         ny = int(c["ny"])

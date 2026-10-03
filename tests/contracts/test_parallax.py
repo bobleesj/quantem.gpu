@@ -199,7 +199,7 @@ def test_parallax_real_env_crop_recovers_aberrations_when_available() -> None:
         str(master),
         scan_region=(232, 280, 232, 280),
         scan_shape=(512, 512),
-        det_bin=1,
+        detector_bin=1,
         verbose=False,
         output_dtype=np.float32,
     )

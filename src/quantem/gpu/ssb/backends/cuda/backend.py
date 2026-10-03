@@ -11,8 +11,8 @@ import numpy as np
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.results import SSBResult
 
-from ..protocol import SSBExportState, SSBPrecision
-from .engine import SSBEngine
+from quantem.gpu.ssb.backends.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.backends.cuda.engine import SSBEngine
 
 # =========================================================================
 #  Utility functions
@@ -426,7 +426,7 @@ class CudaSSBBackend:
         self._refine_method: str | None = None
         self._refine_nfev: int | None = None
         self._n_trials: int | None = None
-        self._optuna_trials: list[dict] = []
+        self._trial_records: list[dict] = []
         self._optimizer_objective_mode = "exact"
 
     # =====================================================================
@@ -890,12 +890,6 @@ class CudaSSBBackend:
             angles_rad,
         )
 
-    @staticmethod
-    def phase_to_numpy(phase) -> np.ndarray:
-        """Copy one reconstructed phase image to host float32."""
-
-        return cp.asnumpy(phase).astype(np.float32, copy=False)
-
     def preview_context(self, num_bf: int):
         """Prepare a reusable reduced-BF CUDA preview context."""
 
@@ -1043,7 +1037,9 @@ class CudaSSBBackend:
             # are intentionally not caught so they surface to the caller (#130).
             loss = None
         elapsed = self._elapsed_optimize + self._elapsed_grid + self._elapsed_refine
-        scan_sampling_scalar = self.scan_sampling[0] if isinstance(self.scan_sampling, tuple) else self.scan_sampling
+        scan_sampling = self.scan_sampling
+        if isinstance(scan_sampling, tuple) and scan_sampling[0] == scan_sampling[1]:
+            scan_sampling = scan_sampling[0]
         brightfield = self.browser_state().brightfield
         return SSBResult(
             object_wave=obj,
@@ -1059,16 +1055,17 @@ class CudaSSBBackend:
             refine_elapsed=self._elapsed_refine if self._elapsed_refine > 0 else None,
             voltage_kV=self.voltage_kV,
             semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=scan_sampling_scalar,
+            scan_sampling_A=scan_sampling,
             bf_center=brightfield.center_row_col,
             bf_radius=brightfield.radius_px,
             detected_bf_radius=brightfield.detected_radius_px,
-            optuna_trials=self._optuna_trials,
+            trial_records=self._trial_records,
         )
 
     def fit(
         self,
         *,
+        aberrations: dict[str, float] | None,
         trials: int,
         refinement: str | None,
         search_ranges: dict[str, tuple[float, float] | float] | None,
@@ -1078,6 +1075,17 @@ class CudaSSBBackend:
     ) -> SSBResult:
         """Run the shared exact optimization contract on CUDA."""
 
+        if aberrations is not None:
+            self.aberrations = dict(aberrations)
+        # Each call owns a new search record, including a zero-trial refinement.
+        # Replacing the list preserves records already returned to the caller.
+        self._trial_records = []
+        self._n_trials = int(trials)
+        self._refine_method = None
+        self._refine_nfev = None
+        self._elapsed_optimize = 0.0
+        self._elapsed_grid = 0.0
+        self._elapsed_refine = 0.0
         if trials:
             self.optimize(
                 aberrations=search_ranges,
@@ -1112,8 +1120,8 @@ class CudaSSBBackend:
         compute_loss: bool,
         higher_order_magnitudes: np.ndarray | None,
         higher_order_angles: np.ndarray | None,
-    ) -> tuple[np.ndarray, float | None]:
-        """Return one transient float32 phase and optional exact loss."""
+    ) -> tuple[cp.ndarray, float | None]:
+        """Return one device-resident float32 phase and optional exact loss."""
 
         if higher_order_magnitudes is not None:
             if compute_loss:
@@ -1134,8 +1142,7 @@ class CudaSSBBackend:
                 aberrations["C10"], aberrations["C12"], aberrations["phi12"]
             )
             loss = None
-        array = self.phase_to_numpy(phase)
-        return array, None if loss is None else float(loss)
+        return phase, None if loss is None else float(loss)
 
     def preview_upsampled(
         self,
@@ -1146,7 +1153,7 @@ class CudaSSBBackend:
         tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
-    ) -> tuple[np.ndarray, float | None]:
+    ) -> tuple[cp.ndarray, float | None]:
         """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
         accel.cache_rotation(self._rotation_angle_rad)
@@ -1164,7 +1171,7 @@ class CudaSSBBackend:
                 )
             else:
                 _, loss = self.reconstruct_with_loss(*args)
-        return self.phase_to_numpy(phase), loss
+        return phase, loss
 
     def preview_sample(
         self,
@@ -1172,7 +1179,7 @@ class CudaSSBBackend:
         sample: dict[str, float],
         *,
         compute_loss: bool,
-    ) -> tuple[np.ndarray, float | None]:
+    ) -> tuple[cp.ndarray, float | None]:
         """Phase (and phase-variance loss) for a thick, tilted sample: ``SSBEngine.reconstruct_thick``.
 
         ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit; 0 = standard SSB exactly)."""
@@ -1182,11 +1189,11 @@ class CudaSSBBackend:
             (float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
             float(sample.get("thickness", 0.0)), compute_loss=compute_loss,
         )
-        return self.phase_to_numpy(phase), loss
+        return phase, loss
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
-        from .optimizer import fit_sample
+        from quantem.gpu.ssb.backends.cuda.optimizer import fit_sample
 
         accel = self._get_accelerator(); accel.cache_rotation(self._rotation_angle_rad)
         return fit_sample(accel, **options)
@@ -1321,7 +1328,7 @@ class CudaSSBBackend:
             else:
                 print(f"Optimizing aberrations ({n_trials} trials, {full_num_bf} BF pixels)")
             print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB, {opt_gb:.1f} GB needed")
-        from .optimizer import batch_optimize
+        from quantem.gpu.ssb.backends.cuda.optimizer import batch_optimize
         def _run_optimize():
             return batch_optimize(
                 accel,
@@ -1347,7 +1354,7 @@ class CudaSSBBackend:
             # Store full Optuna trial history (#26) on the engine so the
             # caller can persist it to the sidecar. Cheap to keep: ~200
             # dicts x 3 floats each = ~5 KB per file.
-            self._optuna_trials = trial_history
+            self._trial_records = trial_history
         except cp.cuda.memory.OutOfMemoryError:
             num_bf = len(self.bf_inds_row)
             free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
@@ -1475,7 +1482,7 @@ class CudaSSBBackend:
                 "locked SSB reference mode, or add a GPU-batched locked refiner."
             )
 
-        from .optimizer import batch_nelder_mead
+        from quantem.gpu.ssb.backends.cuda.optimizer import batch_nelder_mead
 
         def _run_batched():
             exact_fallback = accel.uses_optimizer_reconstruct_fallback

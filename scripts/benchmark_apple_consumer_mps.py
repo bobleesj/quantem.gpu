@@ -25,7 +25,7 @@ from typing import Any, Self
 import numpy as np
 
 from quantem.gpu.io import DataRepresentation
-from quantem.gpu.io.backends.mps.compact_v3 import load_compact_v3_mps
+from quantem.gpu.io.backends.mps.packed import load_compact_v3_mps
 from quantem.gpu.io.backends.mps.consumer import (
     MPSPublicationCounters,
     MPSPublicationMilestone,

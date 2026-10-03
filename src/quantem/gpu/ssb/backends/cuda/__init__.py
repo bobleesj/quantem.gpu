@@ -1,5 +1,5 @@
 """CUDA implementation of the private SSB compute protocol."""
 
-from .backend import CudaSSBBackend
+from quantem.gpu.ssb.backends.cuda.backend import CudaSSBBackend
 
 __all__ = ["CudaSSBBackend"]

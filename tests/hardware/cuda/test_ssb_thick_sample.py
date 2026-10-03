@@ -55,7 +55,7 @@ def _simulated_crystal(tilt_mrad, thickness_A=152.0):
 def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
-    return SSB.from_array(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
+    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
                           rotation_angle_deg=0.0)
 
 
@@ -65,7 +65,7 @@ def test_fit_tilt_recovers_known_tilt(tilt_mrad):
     data, det_mrad = _simulated_crystal(tilt_mrad)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
-    result = ssb.fit(tilt=True, verbose=False)
+    result = ssb.find_aberrations(tilt=True, verbose=False)
     # Validated 2026-09-24: (3, -4) -> (3.0, -4.1); (0, 0) -> (-0.3, -0.1). 1 mrad is the scan/detector sampling limit here.
     assert abs(result.tilt_mrad[0] - tilt_mrad[0]) < 1.0
     assert abs(result.tilt_mrad[1] - tilt_mrad[1]) < 1.0
@@ -83,7 +83,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200      # bright-field disk
     ssb = _session(counts, det_mrad=3.0, scan_A=0.3)
-    ssb.reconstruct({"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
     for aberrations in ({"C10": 30.0, "C12": 5.0, "phi12": 0.3}, {"C10": -40.0, "C12": 12.0, "phi12": -1.0}):
         standard, standard_loss = ssb.preview(aberrations)
         thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
@@ -97,7 +97,7 @@ def _synthetic_session():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200
     ssb = _session(counts, det_mrad=3.0, scan_A=0.3)
-    ssb.reconstruct({"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
     return ssb, ssb._backend_protocol._accelerator
 
 

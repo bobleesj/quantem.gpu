@@ -5,7 +5,7 @@
 **Question.** The API, docs and ShowPtycho label SSB C10 / C12 in nm. Are they?
 
 **Setup.** abTEM 4D-STEM of a thin crystal (one BaTiO3 unit cell, 4 A, so thickness cannot move the apparent focus), 300 kV,
-30 mrad, 64 x 64 scan at 0.25 A, probe defocus set explicitly (abTEM C10 = -defocus). `SSB.fit(trials=200,
+30 mrad, 64 x 64 scan at 0.25 A, probe defocus set explicitly (abTEM C10 = -defocus). `SSB.find_aberrations(trials=200,
 refinement="nelder-mead")`. Script: study folder `c10_unit_test.py` (same setup as `tests/hardware/cuda/test_ssb_units.py`).
 
 | abTEM defocus | true C10 | fit before | fit after |
@@ -62,7 +62,7 @@ thick fit (or trust the calibrated rotation).
 **Performance.** CUDA 128 crop (8889 BF): thick preview 29-61 ms, `fit_sample` 30-55 s (1500 trials). MPS M5: preview
 ~20 ms after 1 s compile, fit ~65 s.
 
-**API.** `SSB.fit(tilt=True)` (result `.tilt_mrad` (row, col), `.depth_spread_nm`, `.tilt_fit_gain`, `.report()`),
+**API.** `SSB.find_aberrations(tilt=True)` (result `.tilt_mrad` (row, col), `.depth_spread_nm`, `.tilt_fit_gain`, `.report()`),
 `SSB.preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)`, `SSB.supports_tilt`. CUDA and MPS backends. WebGPU (`reconstruct(..., {sample: {tiltRowMrad, tiltColMrad, thickness}})`, a separate thick shader so the thin path is bit-identical) drives ShowPtycho exports: logic crop in Mac Chrome (Metal) loss 0.170941 vs CUDA 0.170950, phase correlation 0.99999997; fitting stays in Python.
 Tests: `tests/hardware/cuda/test_ssb_thick_sample.py`, `tests/hardware/mps/test_ssb_thick_sample_mps.py`, `tests/webgpu/ssb-thick-sample.ts` (+ `run_ssb_thick_sample.py`, weights vs CUDA: max rel 5e-4, median 1.5e-7).
 
@@ -75,9 +75,9 @@ package import dlopens the nvidia-*-cu12 wheel libraries by path (different sona
 
 ## 4. Speed: standard vs thick-sample, CUDA vs MPS (measured 2026-09-24)
 
-**Setup.** `bench_ssb_tilt.py` (study folder): `SSB.from_array` on uint16 counts, 192 x 192 detector, 300 kV, 30 mrad.
+**Setup.** `bench_ssb_tilt.py` (study folder): `SSB` on uint16 counts, 192 x 192 detector, 300 kV, 30 mrad.
 Preview = median of 30 `SSB.preview` calls returning the loss (a float, so the device is synchronised); drag = the same
-through `preview_context(num_bf // 4)`. Fit = `SSB.fit(trials=200, refinement="nelder-mead")`; tilt fit = the thick-sample search (then
+through `preview_context(num_bf // 4)`. Fit = `SSB.find_aberrations(trials=200, refinement="nelder-mead")`; tilt fit = the thick-sample search (then
 `fit_sample`: 200-trial standard baseline + 300 joint trials + 3-start Nelder-Mead, all on the least-squares objective). CUDA: RTX PRO
 6000 Blackwell, idle GPU. MPS: M5 (128 GB). Same committed source on both. Samples: logic device (Si) and BaTiO3/SrTiO3 film.
 
@@ -147,7 +147,7 @@ consistent +1 deg on two datasets is a lead for the rotation calibration itself.
 ANS encoded"). It now loads encoded (film, 512 x 512 x 192 x 192: 2.2 GB resident, 3.0 s), finds the bright-field disk
 on the full-detector mean pattern (0.34 s) with the backend's own rule, decodes only that detector crop (112 x 112,
 0.22 s) and pins the disk centre (`bf_center`, detector pixels) so the crop selects the same pixels. Session memory 9.6
-GB instead of decoding the 19 GB cube first. Against `from_array` on the fully decoded cube: same 8939 BF pixels,
+GB instead of decoding the 19 GB cube first. Against direct `SSB(...)` construction on the fully decoded cube: same 8939 BF pixels,
 max |phase difference| 6e-8 rad, identical loss (`tests/hardware/cuda/test_ssb_open_encoded.py`).
 
 Also: at the full BF count, the drag-preview context no longer copies G and a result buffer (2 x BF x scan complex64,

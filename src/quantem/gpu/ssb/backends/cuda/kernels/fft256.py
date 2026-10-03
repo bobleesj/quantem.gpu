@@ -8,7 +8,7 @@ the ~14 GB packed_m/packed_p cache that previously stored precomputed values.
 
 from functools import lru_cache
 
-from .common import CustomFFTBase, build_cuda_code
+from quantem.gpu.ssb.backends.cuda.kernels.common import CustomFFTBase, build_cuda_code
 
 _TWIDDLE_DECL = '__constant__ float2 TWIDDLE_256[256];'
 

@@ -1,5 +1,7 @@
 """Failed loads and unsupported SSB must not retain owned packed storage."""
 
+from quantem.gpu.io.models import create_dataset
+
 from importlib import import_module
 from types import SimpleNamespace
 
@@ -85,7 +87,7 @@ def test_packed_ssb_rejects_before_any_source_allocation(
 def test_unprepared_ssb_close_uses_the_shared_release_contract(monkeypatch):
     monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "mps")
     resident = ReleaseOnlyResident()
-    with SSB.from_array(
+    with SSB(
         resident,
         backend="mps",
         voltage_kV=300,
@@ -103,10 +105,70 @@ def test_borrowed_packed_mps_array_is_rejected_without_taking_ownership(monkeypa
     monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "mps")
     resident = MPSCompactV3Resident.__new__(MPSCompactV3Resident)
     with pytest.raises(NotImplementedError, match="Packed MPS detector"):
-        SSB.from_array(
+        SSB(
             resident,
             backend="mps",
             voltage_kV=300,
             semiangle_mrad=25,
             scan_sampling_A=0.5,
         )
+
+
+def test_ssb_open_forwards_scan_shape_and_closes_crop_source(tmp_path, monkeypatch):
+    """The encoded loader needs the explicit raster before reading the BF crop."""
+
+    source = tmp_path / "rectangular.h5"
+    source.touch()
+    resident = ReleaseOnlyResident()
+    loaded = create_dataset(resident, {})
+    calls = []
+    monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
+
+    def load_source(path, **kwargs):
+        calls.append(kwargs)
+        return loaded
+
+    monkeypatch.setattr(io, "load", load_source)
+    counts = np.ones((3, 4, 2, 2), dtype=np.float32)
+    monkeypatch.setattr(
+        workflow,
+        "_bright_field_crop",
+        lambda *a, **kw: (counts, (0.5, 0.5), 1.0, None),
+    )
+    with SSB.open(
+        str(source), backend="cuda", scan_shape=(3, 4),
+        voltage_kV=300, semiangle_mrad=25, scan_sampling_A=0.5,
+    ) as session:
+        assert calls[0]["scan_shape"] == (3, 4)
+        assert session._scan_shape == (3, 4)
+        assert resident.release_count == 1
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_ssb_open_releases_source_when_bf_detection_fails(
+    tmp_path, monkeypatch, cleanup_fails
+):
+    """Failed BF detection must not retain the acquisition or hide its error."""
+    from quantem.gpu.detector import workflow as detector_workflow
+
+    source = tmp_path / "missing-disk.h5"
+    source.touch()
+    resident = ReleaseOnlyResident(cleanup_fails)
+    loaded = create_dataset(resident, {})
+    monkeypatch.setattr(workflow, "_resolve_backend", lambda _: "cuda")
+    monkeypatch.setattr(io, "load", lambda *a, **kw: loaded)
+    failure = ValueError("injected mean diffraction failure")
+
+    def fail_mean(*args):
+        raise failure
+
+    monkeypatch.setattr(detector_workflow, "mean", fail_mean)
+    with pytest.raises(ValueError) as caught:
+        SSB.open(
+            str(source), backend="cuda", voltage_kV=300,
+            semiangle_mrad=25, scan_sampling_A=0.5,
+        )
+    assert caught.value is failure
+    assert resident.release_count == 1
+    if cleanup_fails:
+        assert "injected release failure" in failure.__notes__[0]

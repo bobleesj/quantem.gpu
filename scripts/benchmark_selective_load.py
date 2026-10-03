@@ -162,7 +162,7 @@ def _run_once(
     result = load(
         args.source,
         backend=args.backend,
-        det_bin=args.det_bin,
+        detector_bin=args.det_bin,
         verbose=False,
         **_selector_kwargs(selector),
     )

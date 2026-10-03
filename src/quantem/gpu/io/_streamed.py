@@ -1,5 +1,7 @@
 """Stream complete H5 acquisitions into native-count GPU residents."""
 
+from quantem.gpu.io.models import create_dataset
+
 import math
 import time
 from contextlib import ExitStack
@@ -8,7 +10,6 @@ import h5py
 import numpy as np
 
 from .inspect import inspect
-from .models import FourDSTEMData
 
 _CUDA_MAX_STAGING_SCANS = 16384
 
@@ -224,7 +225,7 @@ def load_h5_ans(
                 f"{correction['method']} correction, "
                 f"{correction['pixel_count']} stored detector-mask pixels."
             )
-        return FourDSTEMData(source, metadata)
+        return create_dataset(source, metadata)
 
 
 def _exact_uint16_counts(raw, first: int, stop: int):
@@ -395,4 +396,4 @@ def _load_h5_ans_mps(
             f"{correction['method']} correction, "
             f"{correction['pixel_count']} stored detector-mask pixels."
         )
-    return FourDSTEMData(source, metadata)
+    return create_dataset(source, metadata)

@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import pytest
+from quantem.core.datastructures import Dataset
 
 from quantem.gpu import io
 
@@ -27,10 +28,19 @@ def test_encoded_indexing(tmp_path, dtype):
         (np.int64(-1), np.int32(2)),
     ]
     with io.load(path, backend=backend, verbose=False) as data:
+        assert isinstance(data, io.Dataset4dstem)
+        assert data.shape == values.shape
+        assert data.ndim == values.ndim
+        assert data.size == values.size
+        assert len(data) == len(values)
+        assert data.dtype == values.dtype
+        for row, actual in enumerate(data):
+            assert str(actual.device).split(":")[0] == backend
+            np.testing.assert_array_equal((actual.numpy() if isinstance(actual, Dataset) else actual.cpu().numpy()), values[row])
         for key in selections:
             actual = data[key]
-            assert actual.device.type == backend
-            np.testing.assert_array_equal(actual.cpu().numpy(), values[key])
+            assert str(actual.device).split(":")[0] == backend
+            np.testing.assert_array_equal((actual.numpy() if isinstance(actual, Dataset) else actual.cpu().numpy()), values[key])
         for key in [4, -5, (0, 0, 0, 0, 0), (Ellipsis, Ellipsis)]:
             with pytest.raises(IndexError):
                 data[key]
@@ -43,7 +53,7 @@ def test_encoded_indexing(tmp_path, dtype):
         io.save(saved, data)
     series = io.load([saved, saved], backend=backend, stack=False, verbose=False)
     try:
-        np.testing.assert_array_equal(series[1][1, 2].cpu().numpy(), values[1, 2])
+        np.testing.assert_array_equal(series[1][1, 2].numpy(), values[1, 2])
         assert isinstance(series[1].metadata, dict)
     finally:
         for data in series:
@@ -67,4 +77,68 @@ def test_detector_pixels_across_ans_intervals(tmp_path, dtype):
             (slice(14, 35), slice(5, 30), slice(2, 7), slice(4, 9)),
             (slice(None, None, -2), slice(None), -1, 0),
         ]:
-            np.testing.assert_array_equal(data[key].cpu().numpy(), values[key])
+            np.testing.assert_array_equal(data[key].numpy(), values[key])
+
+
+@pytest.mark.parametrize("apply_mask", [None, False])
+def test_indexing_preserves_uncorrected_flagged_counts(tmp_path, apply_mask):
+    """Raw reads preserve flagged values before and after an exact QEM save."""
+    import h5py
+    import hdf5plugin
+
+    backend = os.environ.get("QEM_TEST_BACKEND")
+    if backend not in {"cuda", "mps"}:
+        pytest.skip("Set QEM_TEST_BACKEND=cuda or mps on physical hardware.")
+    values = np.arange(4 * 8 * 10, dtype=np.uint16).reshape(2, 2, 8, 10)
+    values[:, :, 3, 4] = 50000
+    mask = np.zeros((8, 10), np.uint8)
+    mask[3, 4] = 1
+    original = tmp_path / "masked.h5"
+    saved = tmp_path / "masked.qem"
+    with h5py.File(original, "w") as handle:
+        handle.create_dataset(
+            "entry/data/data", data=values.reshape(4, 8, 10),
+            chunks=(1, 8, 10), **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"),
+        )
+        handle["entry/instrument/detector/detectorSpecific/ntrigger"] = 4
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
+
+    with io.load(
+        original, backend=backend, apply_mask=apply_mask,
+        hot_pixel_correction="none", verbose=False,
+    ) as loaded:
+        assert loaded.lossless
+        np.testing.assert_array_equal(loaded[0, 0].numpy(), values[0, 0])
+        np.testing.assert_array_equal(
+            loaded[:, :, 3, 4].numpy(), values[:, :, 3, 4]
+        )
+        io.save(saved, loaded)
+    with io.load(saved, backend=backend, verbose=False) as reopened:
+        np.testing.assert_array_equal(
+            reopened[:, :, 2:5, 3:6].numpy(), values[:, :, 2:5, 3:6]
+        )
+
+
+@pytest.mark.parametrize("scan_shape", [(9, 64), (1, 576)])
+def test_float_reads_split_at_decoder_byte_limit(tmp_path, scan_shape):
+    """A float selection can exceed one decode window, including a wide row."""
+    from quantem.gpu.io._float_ans import MAX_DECODE_BYTES
+
+    backend = os.environ.get("QEM_TEST_BACKEND")
+    if backend not in {"cuda", "mps"}:
+        pytest.skip("Set QEM_TEST_BACKEND=cuda or mps on physical hardware.")
+    shape = (*scan_shape, 128, 128)
+    values = (np.arange(np.prod(shape), dtype=np.float32) % 251).reshape(shape) / 8
+    path = tmp_path / "float.npy"
+    np.save(path, values)
+    assert values.nbytes > MAX_DECODE_BYTES
+    with io.load(path, backend=backend, verbose=False) as loaded:
+        for key in (
+            (slice(None), slice(None), 5, 7),
+            (Ellipsis, slice(32, 40), slice(45, 52)),
+            (slice(None, None, -1), slice(None, None, -3), 0, 0),
+            (slice(0, 0), slice(None), 5, 7),
+            Ellipsis,
+        ):
+            np.testing.assert_array_equal(loaded[key].numpy(), values[key])
+        assert loaded.data.peak_decode_bytes <= MAX_DECODE_BYTES

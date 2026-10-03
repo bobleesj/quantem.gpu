@@ -1,5 +1,4 @@
-"""Private saved-result storage for the public SSB workflow."""
-from __future__ import annotations
+"""Saved-result storage for the public SSB workflow."""
 
 import hashlib
 import json
@@ -13,10 +12,10 @@ from typing import Literal
 
 import numpy as np
 
-from .results import SSBResult
+from quantem.gpu.ssb.results import SSBResult
 
 
-SCHEMA = 4   # 4: fit() 180-degree branch check: column_sign, rotation_flipped (2026-09-26); 3: typed tilt fields
+SCHEMA = 5  # Replayable, optimizer-neutral trial records and explicit correction overrides.
 _ARTIFACT_FIELDS = {"object_wave", "reused", "saved_path", "metadata"}
 
 
@@ -110,7 +109,7 @@ def path_signature(path: str | Path) -> dict[str, object]:
 
 def result_paths(
     save_to: str | Path,
-    operation: Literal["fit", "reconstruct"],
+    operation: Literal["find_aberrations", "reconstruct"],
 ) -> tuple[Path, Path]:
     """Resolve the array and readable metadata paths for one saved result."""
 

@@ -10,10 +10,10 @@ Examples
 --------
 >>> from quantem.gpu.io import load
 >>> with load("acquisition.qem") as acquisition:
-...     pattern = acquisition.read(scan_region=(0, 1, 0, 1))
+...     pattern = acquisition[0, 0]
 """
 
-from __future__ import annotations
+from quantem.gpu.io.models import create_dataset
 
 import hashlib
 import json
@@ -22,7 +22,6 @@ import pickle
 import re
 import tempfile
 import threading
-import warnings
 from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
@@ -41,12 +40,10 @@ from .constants import BLOCK_SIZE
 from .integrity import SourceIntegrity
 from ._hdf5_chunk_index import _chunk_locations
 
-# Compatibility exports; private mutable state lives in its owning module.
+# Shared models and helpers are implemented in their owning modules.
 from .models import (
-    MasterReadiness as MasterReadiness,
     _release_owned_storage as _release_owned_storage,
-    FourDSTEMData as FourDSTEMData,
-    LoadResult as LoadResult,
+    Dataset4dstem as Dataset4dstem,
 )
 
 from ._selection import (
@@ -144,7 +141,7 @@ def _io_context_key() -> tuple[int, int]:
     return _current_context_key()
 
 __version__ = "0.0.3"
-__all__ = ["FourDSTEMData", "LoadResult", "load"]
+__all__ = ["Dataset4dstem", "load"]
 
 
 def _clip_to_uint8(src, dst) -> bool:
@@ -208,7 +205,7 @@ def _convert_load_output(result, output: str):
     if isinstance(result, list):
         return [_convert_load_output(item, output) for item in result]
     device = "mps" if result.metadata.get("backend") == "mps" else None
-    return LoadResult(_to_torch_data(result.data, device=device), result.metadata)
+    return create_dataset(_to_torch_data(result.data, device=device), result.metadata)
 
 
 def _slice_detector_region(data, region: tuple[int, int, int, int], *, compact: bool):
@@ -325,13 +322,13 @@ def _resample_scan_crop_kernel(dtype: np.dtype):
 
 
 def _resample_scan_crop_cuda(
-    data: cp.ndarray,
+    data: "cp.ndarray",
     *,
     source_scan_region: tuple[int, int, int, int],
     target_scan_region: tuple[int, int, int, int],
     scan_shift_row_col,
     scan_resample_dtype: type | np.dtype = np.float32,
-) -> cp.ndarray:
+) -> "cp.ndarray":
     """Resample a decoded scan crop into one target specimen-coordinate crop."""
     if cp is None:  # pragma: no cover - CUDA-only helper
         raise RuntimeError("scan-crop resampling requires CuPy/CUDA")
@@ -400,13 +397,13 @@ def _resample_scan_crop_cuda(
 
 
 def resample_scan_crop(
-    data: cp.ndarray,
+    data: "cp.ndarray",
     *,
     source_scan_region: tuple[int, int, int, int],
     target_scan_region: tuple[int, int, int, int],
     scan_shift_row_col,
     output_dtype: type | np.dtype = np.float32,
-) -> cp.ndarray:
+) -> "cp.ndarray":
     """Resample a decoded CUDA scan crop into specimen coordinates.
 
     Parameters
@@ -527,7 +524,7 @@ class GPUDecompressor:
         self,
         filepath: str,
         dataset_path: str = "entry/data/data",
-    ) -> cp.ndarray:
+    ) -> "cp.ndarray":
         """Load and decompress a bitshuffle+LZ4 HDF5 dataset to GPU.
 
         Parameters
@@ -563,7 +560,7 @@ class GPUDecompressor:
                     _FAILED_DECOMPRESSIONS.append((self, error, drain_error))
                 raise
 
-    def _load(self, filepath: str, dataset_path: str) -> cp.ndarray:
+    def _load(self, filepath: str, dataset_path: str) -> "cp.ndarray":
         """Decode under the instance lock and its owning context."""
         with h5py.File(filepath, "r") as f:
             ds = f[dataset_path]
@@ -2064,7 +2061,7 @@ def _decompress_prepared_impl(
     output_dtype: type | np.dtype | None = None,
     streaming_upload: bool | None = None,
     prune_device_pool: bool = True,
-) -> cp.ndarray:
+) -> "cp.ndarray":
     """GPU phase: transfer compressed bytes and decompress on GPU.
 
     Chunked implementation: processes frames in ~256 MB batches using two
@@ -2505,7 +2502,7 @@ def _decompress_prepared(
     streaming_upload: bool | None = None,
     prune_pinned: bool = True,
     prune_device_pool: bool = True,
-) -> cp.ndarray:
+) -> "cp.ndarray":
     """Release host staging only after its device accesses have completed."""
     read_buffer = prepared["read_buffer"]
     release_buffer = True
@@ -2549,568 +2546,6 @@ def _discover_chunk_names(filepath: str) -> list[str]:
             name for name in data_group
             if re.match(r"data_\d{6}", name)
         ])
-
-
-def _absolute_source_path(path: str | os.PathLike[str]) -> str:
-    """Absolute source spelling without resolving a watched symlink."""
-    return os.path.abspath(os.path.expanduser(os.fspath(path)))
-
-
-def _file_source_signature(path: str) -> dict[str, Any]:
-    """JSON-serializable identity and stability fields for one source file."""
-    absolute = _absolute_source_path(path)
-    try:
-        stat = os.stat(absolute)
-    except FileNotFoundError:
-        return {"path": absolute, "missing": True}
-    except OSError as exc:
-        return {"path": absolute, "unreadable": True, "error": str(exc)}
-    signature: dict[str, Any] = {
-        "path": absolute,
-        "size": int(stat.st_size),
-        "mtime_ns": int(stat.st_mtime_ns),
-        "ctime_ns": int(stat.st_ctime_ns),
-        "device": int(stat.st_dev),
-        "inode": int(stat.st_ino),
-    }
-    if os.path.islink(absolute):
-        try:
-            link_stat = os.lstat(absolute)
-            signature["symlink_target"] = os.readlink(absolute)
-            signature["symlink_mtime_ns"] = int(link_stat.st_mtime_ns)
-            signature["symlink_ctime_ns"] = int(link_stat.st_ctime_ns)
-        except OSError:
-            signature["symlink_unreadable"] = True
-    return signature
-
-
-def _master_source_signature(
-    master_path: str,
-    source_paths: set[str],
-    datasets: list[dict[str, Any]],
-    *,
-    expected_frames: int | None,
-    expected_basis: str | None,
-) -> dict[str, Any]:
-    """Build a deterministic master/chunk fingerprint for poll comparison."""
-    return {
-        "master": master_path,
-        "files": [
-            _file_source_signature(path)
-            for path in sorted({_absolute_source_path(path) for path in source_paths})
-        ],
-        "datasets": [dict(dataset) for dataset in datasets],
-        "expectation": {
-            "frames": expected_frames,
-            "basis": expected_basis,
-        },
-    }
-
-
-def _normalise_readiness_scan_shape(
-    scan_shape: tuple[int, int] | None,
-) -> tuple[int, int] | None:
-    """Validate an explicit readiness frame-count contract."""
-    if scan_shape is None:
-        return None
-    try:
-        values = tuple(scan_shape)
-    except TypeError as exc:
-        raise ValueError(
-            "scan_shape must be two positive integers (scan_row, scan_col), "
-            "for example scan_shape=(512, 512)."
-        ) from exc
-    if len(values) != 2:
-        raise ValueError(
-            "scan_shape must contain exactly two positive integers "
-            f"(scan_row, scan_col); got {scan_shape!r}."
-        )
-    normalized: list[int] = []
-    for value in values:
-        if isinstance(value, (bool, np.bool_)):
-            raise ValueError(  # noqa: TRY004 - preserve the public validation contract
-                "scan_shape values must be positive integers, not booleans; "
-                f"got {scan_shape!r}."
-            )
-        try:
-            integer = int(value)
-        except (TypeError, ValueError, OverflowError) as exc:
-            raise ValueError(
-                "scan_shape values must be positive integers; "
-                f"got {scan_shape!r}."
-            ) from exc
-        if integer < 1 or integer != value:
-            raise ValueError(
-                "scan_shape values must be positive integers; "
-                f"got {scan_shape!r}."
-            )
-        normalized.append(integer)
-    return normalized[0], normalized[1]
-
-
-def _scalar_int(handle: h5py.File, path: str) -> int | None:
-    """Read one optional scalar integer without following detector data."""
-    dataset = handle.get(path)
-    if dataset is None:
-        return None
-    try:
-        value = np.asarray(dataset[()])
-        if value.size != 1:
-            return None
-        return int(value.reshape(()).item())
-    except (OSError, TypeError, ValueError, OverflowError):
-        return None
-
-
-def _attribute_scan_shape(attributes: Any) -> tuple[int, int] | None:
-    """Return a valid positive ``scan_shape`` HDF5 attribute, when present."""
-    if "scan_shape" not in attributes:
-        return None
-    try:
-        values = tuple(int(value) for value in attributes["scan_shape"])
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if len(values) != 2 or any(value < 1 for value in values):
-        return None
-    return values[0], values[1]
-
-
-def inspect_master_readiness(
-    filepath: str | os.PathLike[str],
-    *,
-    scan_shape: tuple[int, int] | None = None,
-) -> MasterReadiness:
-    """Inspect whether a 4D-STEM master is complete enough to browse.
-
-    The inspection reads HDF5 headers only. It supports a self-contained
-    ``entry/data/data`` dataset and the usual ``data_NNNNNN`` entries, including
-    external links to sibling files. For the selected source it totals stored
-    frames, checks detector shape and dtype consistency, and compares the total
-    with ``scan_shape`` or the master's ``ntrigger``/``nimages`` metadata.
-
-    The returned ``source_signature`` captures the master, every selected source
-    file, and every selected dataset header. Compare it across separate polls to
-    establish a caller-defined stability probation; this function deliberately
-    does not sleep or perform a second poll itself.
-
-    Parameters
-    ----------
-    filepath
-        Master HDF5 path.
-    scan_shape
-        Optional explicit ``(scan_row, scan_col)`` contract. When supplied, it
-        takes precedence over the master's expected-frame metadata.
-
-    Returns
-    -------
-    MasterReadiness
-        Structured readiness state, corrective action, and source signature.
-
-    Raises
-    ------
-    ValueError
-        If ``scan_shape`` is not exactly two positive integers.
-    """
-    explicit_scan_shape = _normalise_readiness_scan_shape(scan_shape)
-    master_path = _absolute_source_path(filepath)
-    source_paths = {master_path}
-    datasets: list[dict[str, Any]] = []
-    initial_files = {master_path: _file_source_signature(master_path)}
-    expected_frames = (
-        int(explicit_scan_shape[0] * explicit_scan_shape[1])
-        if explicit_scan_shape is not None
-        else None
-    )
-    expected_basis = (
-        f"explicit scan_shape={explicit_scan_shape}"
-        if explicit_scan_shape is not None
-        else None
-    )
-    source_kind = "unavailable"
-    actual_frames: int | None = None
-    detector_shape: tuple[int, int] | None = None
-    common_dtype: str | None = None
-
-    def result(ready: bool, reason: str, action: str) -> MasterReadiness:
-        return MasterReadiness(
-            ready=bool(ready),
-            reason=str(reason),
-            action=str(action),
-            source_kind=source_kind,
-            actual_frames=actual_frames,
-            expected_frames=expected_frames,
-            detector_shape=detector_shape,
-            dtype=common_dtype,
-            source_signature=_master_source_signature(
-                master_path,
-                source_paths,
-                datasets,
-                expected_frames=expected_frames,
-                expected_basis=expected_basis,
-            ),
-        )
-
-    master_stat = initial_files[master_path]
-    if master_stat.get("missing", False):
-        return result(
-            False,
-            f"master file is missing: {master_path}",
-            "Wait for the master file to be atomically renamed into place, "
-            "then poll again.",
-        )
-    if master_stat.get("unreadable", False):
-        return result(
-            False,
-            f"master file cannot be inspected: {master_path} "
-            f"({master_stat.get('error', 'unknown filesystem error')})",
-            "Fix file permissions or storage availability, then poll again.",
-        )
-    if int(master_stat.get("size", 0)) <= 0:
-        return result(
-            False,
-            f"master file is empty: {master_path}",
-            "Wait for the master HDF5 header to finish writing, then poll again.",
-        )
-
-    try:
-        with h5py.File(master_path, "r") as master:
-            data_group = master.get("entry/data")
-            if data_group is None:
-                return result(
-                    False,
-                    "master is missing the entry/data group",
-                    "Wait for acquisition to finish, or recopy a complete master file.",
-                )
-
-            chunk_names = sorted(
-                name
-                for name in data_group
-                if re.fullmatch(r"data_\d{6}", name)
-            )
-            source_names = chunk_names or (["data"] if "data" in data_group else [])
-            if not source_names:
-                return result(
-                    False,
-                    "master has no entry/data/data dataset or data_NNNNNN sources",
-                    "Wait for detector data links to finish writing, or recopy "
-                    "the complete acquisition group.",
-                )
-
-            links = [data_group.get(name, getlink=True) for name in source_names]
-            source_kind = (
-                "external"
-                if any(isinstance(link, h5py.ExternalLink) for link in links)
-                else "inline"
-            )
-            # Discover every dependency before an incomplete chunk can return
-            # early, so arrival watchers see the full expected file count.
-            for link in links:
-                if isinstance(link, h5py.ExternalLink):
-                    link_filename = os.fsdecode(os.fspath(link.filename))
-                    source_paths.add(_absolute_source_path(
-                        os.path.join(os.path.dirname(master_path), link_filename)
-                    ))
-            ntrigger = _scalar_int(
-                master,
-                "entry/instrument/detector/detectorSpecific/ntrigger",
-            )
-            nimages = _scalar_int(
-                master,
-                "entry/instrument/detector/detectorSpecific/nimages",
-            )
-            if explicit_scan_shape is None and ntrigger is not None:
-                if ntrigger < 1:
-                    return result(
-                        False,
-                        f"master ntrigger metadata is not positive: {ntrigger}",
-                        "Wait for acquisition metadata to finish writing, or repair "
-                        "ntrigger before loading.",
-                    )
-                images_per_trigger = int(1 if nimages is None else nimages)
-                if images_per_trigger < 1:
-                    return result(
-                        False,
-                        "master nimages metadata is not positive: "
-                        f"{images_per_trigger}",
-                        "Wait for acquisition metadata to finish writing, or repair "
-                        "nimages before loading.",
-                    )
-                expected_frames = int(ntrigger * images_per_trigger)
-                expected_basis = (
-                    f"master metadata ntrigger={ntrigger}, nimages={images_per_trigger}"
-                )
-
-            observed_frames = 0
-            detector_shapes: set[tuple[int, int]] = set()
-            dtypes: set[str] = set()
-            metadata_scan_shapes: set[tuple[int, int]] = set()
-            for attributes in (master.attrs, data_group.attrs):
-                metadata_shape = _attribute_scan_shape(attributes)
-                if metadata_shape is not None:
-                    metadata_scan_shapes.add(metadata_shape)
-
-            for name, link in zip(source_names, links, strict=True):
-                if isinstance(link, h5py.ExternalLink):
-                    link_filename = os.fsdecode(os.fspath(link.filename))
-                    source_path = (
-                        _absolute_source_path(link_filename)
-                        if os.path.isabs(link_filename)
-                        else _absolute_source_path(
-                            os.path.join(os.path.dirname(master_path), link_filename)
-                        )
-                    )
-                    dataset_path = str(link.path)
-                    source_paths.add(source_path)
-                    initial_files[source_path] = _file_source_signature(source_path)
-                    record: dict[str, Any] = {
-                        "name": str(name),
-                        "kind": "external",
-                        "file": source_path,
-                        "dataset": dataset_path,
-                    }
-                    datasets.append(record)
-                    source_stat = initial_files[source_path]
-                    if source_stat.get("missing", False):
-                        return result(
-                            False,
-                            f"linked detector file is missing: {source_path}",
-                            "Finish copying or writing the linked detector file "
-                            "next to the master, then poll again.",
-                        )
-                    if source_stat.get("unreadable", False):
-                        return result(
-                            False,
-                            f"linked detector file cannot be inspected: "
-                            f"{source_path} "
-                            f"({source_stat.get('error', 'unknown filesystem error')})",
-                            "Fix file permissions or storage availability, then "
-                            "poll again.",
-                        )
-                    if int(source_stat.get("size", 0)) <= 0:
-                        return result(
-                            False,
-                            f"linked detector file is empty: {source_path}",
-                            "Wait for the linked detector HDF5 file to finish "
-                            "writing, then poll again.",
-                        )
-                    try:
-                        source_handle = h5py.File(source_path, "r")
-                    except OSError as exc:
-                        return result(
-                            False,
-                            "linked detector file is not readable HDF5: "
-                            f"{source_path} ({exc})",
-                            "Wait for the detector writer to close or flush the "
-                            "file, then poll again; recopy it if the error persists.",
-                        )
-                    with source_handle:
-                        dataset = source_handle.get(dataset_path)
-                        if dataset is None:
-                            return result(
-                                False,
-                                "linked detector dataset is missing: "
-                                f"{source_path}:{dataset_path}",
-                                "Repair the external link or recopy the acquisition "
-                                "so it targets entry/data/data.",
-                            )
-                        shape = tuple(int(value) for value in dataset.shape)
-                        dtype_str = np.dtype(dataset.dtype).str
-                        metadata_shape = _attribute_scan_shape(dataset.attrs)
-                else:
-                    source_path = master_path
-                    dataset_path = f"{data_group.name}/{name}"
-                    record = {
-                        "name": str(name),
-                        "kind": "inline",
-                        "file": source_path,
-                        "dataset": dataset_path,
-                    }
-                    datasets.append(record)
-                    try:
-                        dataset = data_group[name]
-                        shape = tuple(int(value) for value in dataset.shape)
-                        dtype_str = np.dtype(dataset.dtype).str
-                        metadata_shape = _attribute_scan_shape(dataset.attrs)
-                    except (KeyError, OSError, TypeError, ValueError) as exc:
-                        return result(
-                            False,
-                            "inline detector dataset is not readable: "
-                            f"{dataset_path} ({exc})",
-                            "Wait for the master dataset header to finish writing, "
-                            "then poll again; recopy it if the error persists.",
-                        )
-
-                if len(shape) < 3:
-                    record.update({"shape": list(shape), "dtype": dtype_str})
-                    return result(
-                        False,
-                        f"detector dataset {dataset_path} has shape {shape}; "
-                        "expected at least (frame, det_row, det_col)",
-                        "Repair or reacquire the dataset with explicit frame and "
-                        "two detector dimensions.",
-                    )
-                frames = int(np.prod(shape[:-2], dtype=np.int64))
-                current_detector_shape = (int(shape[-2]), int(shape[-1]))
-                record.update(
-                    {
-                        "shape": list(shape),
-                        "dtype": dtype_str,
-                        "frames": frames,
-                        "detector_shape": list(current_detector_shape),
-                    }
-                )
-                if metadata_shape is not None:
-                    metadata_scan_shapes.add(metadata_shape)
-                    record["scan_shape"] = list(metadata_shape)
-                observed_frames += frames
-                detector_shapes.add(current_detector_shape)
-                dtypes.add(dtype_str)
-
-            actual_frames = int(observed_frames)
-            if len(detector_shapes) != 1:
-                observed = ", ".join(str(shape) for shape in sorted(detector_shapes))
-                return result(
-                    False,
-                    f"detector sources have inconsistent detector shapes: {observed}",
-                    "Use a narrower master pattern or repair the acquisition so "
-                    "every detector chunk has the same (row, col) shape.",
-                )
-            detector_shape = next(iter(detector_shapes))
-            if len(dtypes) != 1:
-                observed = ", ".join(sorted(dtypes))
-                return result(
-                    False,
-                    f"detector sources have inconsistent dtypes: {observed}",
-                    "Repair or reacquire the acquisition so every detector chunk "
-                    "uses the same stored dtype.",
-                )
-            common_dtype = next(iter(dtypes))
-            if len(metadata_scan_shapes) > 1:
-                observed = ", ".join(
-                    str(shape) for shape in sorted(metadata_scan_shapes)
-                )
-                return result(
-                    False,
-                    "detector sources have inconsistent scan_shape metadata: "
-                    f"{observed}",
-                    "Repair the conflicting scan_shape attributes, or pass the "
-                    "correct explicit scan_shape after confirming the acquisition "
-                    "layout.",
-                )
-            if (
-                expected_frames is None
-                and len(metadata_scan_shapes) == 1
-            ):
-                metadata_scan_shape = next(iter(metadata_scan_shapes))
-                expected_frames = int(metadata_scan_shape[0] * metadata_scan_shape[1])
-                expected_basis = f"HDF5 scan_shape={metadata_scan_shape}"
-            if actual_frames < 1:
-                return result(
-                    False,
-                    "detector sources contain zero stored frames",
-                    "Wait for detector frames to be written, then poll again.",
-                )
-            if expected_frames is not None and actual_frames != expected_frames:
-                if actual_frames < expected_frames:
-                    action = (
-                        "Wait for the remaining detector frames or chunks to finish writing, "
-                        "then poll again."
-                    )
-                else:
-                    action = (
-                        "Pass the correct explicit scan_shape or repair the master frame-count "
-                        "metadata before loading."
-                    )
-                return result(
-                    False,
-                    f"stored frame count is {actual_frames}; expected "
-                    f"{expected_frames} from {expected_basis}",
-                    action,
-                )
-    except OSError as exc:
-        return result(
-            False,
-            f"master file is not readable HDF5: {master_path} ({exc})",
-            "Wait for the master writer to close or flush the file, then poll "
-            "again; recopy it if the error persists.",
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        return result(
-            False,
-            f"master HDF5 headers are incomplete or invalid: {master_path} ({exc})",
-            "Wait for acquisition to finish, then poll again; recopy or repair "
-            "the group if the error persists.",
-        )
-
-    final_signature = _master_source_signature(
-        master_path,
-        source_paths,
-        datasets,
-        expected_frames=expected_frames,
-        expected_basis=expected_basis,
-    )
-    final_files = {item["path"]: item for item in final_signature["files"]}
-    changed = [
-        path
-        for path, before in initial_files.items()
-        if final_files.get(path, {"path": path, "missing": True}) != before
-    ]
-    if changed:
-        names = ", ".join(os.path.basename(path) for path in changed)
-        return MasterReadiness(
-            ready=False,
-            reason=f"source files changed during readiness inspection: {names}",
-            action=(
-                "Wait for acquisition or copy writes to finish, then compare a "
-                "fresh readiness signature on the next poll."
-            ),
-            source_kind=source_kind,
-            actual_frames=actual_frames,
-            expected_frames=expected_frames,
-            detector_shape=detector_shape,
-            dtype=common_dtype,
-            source_signature=final_signature,
-        )
-    return MasterReadiness(
-        ready=True,
-        reason=(
-            "master and detector sources are complete, readable, and internally "
-            "consistent"
-        ),
-        action="Ready to open with Show4DSTEM.",
-        source_kind=source_kind,
-        actual_frames=actual_frames,
-        expected_frames=expected_frames,
-        detector_shape=detector_shape,
-        dtype=common_dtype,
-        source_signature=final_signature,
-    )
-
-
-def is_master_ready(
-    filepath: str | os.PathLike[str],
-    *,
-    scan_shape: tuple[int, int] | None = None,
-) -> bool:
-    """Return whether a master passes header-only completeness inspection.
-
-    This compatibility wrapper delegates to :func:`inspect_master_readiness`.
-    Call that function when a folder watcher needs the frame counts, corrective
-    reason, or a signature to compare across separate stability polls.
-
-    Parameters
-    ----------
-    filepath
-        Master HDF5 path.
-    scan_shape
-        Optional explicit ``(scan_row, scan_col)`` expected frame count.
-
-    Returns
-    -------
-    bool
-        ``True`` only for complete, readable, internally consistent sources.
-    """
-    return inspect_master_readiness(filepath, scan_shape=scan_shape).ready
 
 
 def _load_master_pipelined(
@@ -3321,7 +2756,7 @@ def _load_sharded(
     dataset_path=None, apply_mask=True, scan_shape=None,
     scan_order="row-major", det_bin=1, verbose=True, auto_narrow=True,
     output_dtype=None,
-) -> LoadResult:
+) -> Dataset4dstem:
     """Sharded multi-GPU load — files split across GPUs, each kept on its card.
 
     Files are assigned to devices in disk-interleaved order: when files are
@@ -3331,7 +2766,7 @@ def _load_sharded(
     into one per-device array. No cross-GPU gather, no host bounce — the only way
     a stack exceeding one card's VRAM fits, and faster than gather.
 
-    Returns ``LoadResult`` whose ``.data`` is ``{device: stacked_array}`` (each
+    Returns ``Dataset4dstem`` whose ``.data`` is ``{device: stacked_array}`` (each
     array resident on that device) and ``.metadata["device_map"] = {file_idx:
     device}`` plus ``["shard_order"] = {device: [file_idx, ...]}``.
     """
@@ -3425,7 +2860,7 @@ def _load_sharded(
                        for d in sorted(shards))
         print(f"  Done: {len(device_map)} files sharded [{per}] "
               f"total {total_gib:.1f} GiB in {dt:.2f}s")
-    return LoadResult(shards, meta)
+    return create_dataset(shards, meta)
 
 
 def _normalize_view_metadata(
@@ -3480,7 +2915,7 @@ def _load_view(
     Decompresses to a numpy array via the chosen backend's ``load_master``,
     then runs the SAME post-processing the cuda path applies — pixel mask,
     auto_narrow (uint32→uint16), output_dtype cast, scan-shape unflatten — so
-    the returned LoadResult is shape/metadata-identical to a cuda load, just
+    the returned Dataset4dstem is shape/metadata-identical to a cuda load, just
     numpy instead of cupy. The MPS no-bin path is the exception: it returns a
     zero-copy ``MPSChunked4DSTEM`` object because a full 512x512x192x192 stack
     cannot be one Metal buffer on 24 GB Apple Silicon.
@@ -3620,7 +3055,7 @@ def _load_view(
                 data.element_size() * data.nelement())  # torch tensor
             print(f"  Loaded {tuple(data.shape)} ({nbytes / 1e9:.1f} GB) in "
                   f"{time.perf_counter() - t0:.2f}s ({backend} backend)")
-        return LoadResult(data, meta)
+        return create_dataset(data, meta)
     # Multi-file: stack with a leading file axis (matches cuda multi-file).
     first, meta = _one(paths[0])
     out = np.empty((len(paths), *first.shape), dtype=first.dtype)
@@ -3633,7 +3068,7 @@ def _load_view(
         gb = out.nbytes / 1e9
         print(f"  Loaded {len(paths)} files {out.shape} ({gb:.1f} GB) in "
               f"{time.perf_counter() - t0:.2f}s ({backend} backend)")
-    return LoadResult(out, meta)
+    return create_dataset(out, meta)
 
 
 def _browse_dtype_advise_and_cast(data, dtype, verbose):
@@ -3727,7 +3162,7 @@ def _load_scan_crop_impl(
     scan_shift_row_col=None,
     scan_resample_dtype: type | np.dtype = np.float32,
     detector_region: tuple[int, int, int, int] | list[int] | None = None,
-) -> LoadResult:
+) -> Dataset4dstem:
     """Load only a rectangular scan region from a raw HDF5 master.
 
     Parameters
@@ -3750,7 +3185,7 @@ def _load_scan_crop_impl(
 
     Returns
     -------
-    LoadResult
+    Dataset4dstem
         ``data`` is a backend array with shape
         ``(region_rows, region_cols, det_rows, det_cols)``. Metadata keeps the
         full acquisition grid in ``full_scan_shape`` and the loaded patch in
@@ -3918,7 +3353,7 @@ def _load_scan_crop_impl(
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {time.perf_counter() - t0:.2f}s"
         )
-    return LoadResult(data, meta)
+    return create_dataset(data, meta)
 
 
 def _prepare_scan_crop_one(
@@ -4064,7 +3499,7 @@ def _decode_scan_crop_prepared(
     scan_shift_row_col=None,
     scan_resample_dtype: type | np.dtype = np.float32,
     detector_region: tuple[int, int, int, int] | list[int] | None = None,
-) -> LoadResult:
+) -> Dataset4dstem:
     """Decode one prepared rectangular crop on the selected backend."""
     import time
 
@@ -4186,7 +3621,7 @@ def _decode_scan_crop_prepared(
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {float(meta['load_seconds']):.2f}s"
         )
-    return LoadResult(data, meta)
+    return create_dataset(data, meta)
 
 
 def _load_scan_crop_series_impl(
@@ -4207,7 +3642,7 @@ def _load_scan_crop_series_impl(
     scan_shift_row_col=None,
     scan_resample_dtype: type | np.dtype = np.float32,
     detector_region: tuple[int, int, int, int] | list[int] | None = None,
-) -> LoadResult:
+) -> Dataset4dstem:
     """Load rectangular scan regions from many HDF5 masters.
 
     ``scan_region`` may be one shared ``(row_start, row_stop, col_start,
@@ -4412,7 +3847,7 @@ def _load_scan_crop_series_impl(
             f"  {len(paths)} masters scan_region {region_text} "
             f"-> {size_gb:.2f} GB in {time.perf_counter() - t0:.2f}s"
         )
-    return LoadResult(data, meta)
+    return create_dataset(data, meta)
 
 
 def _take_requested_scan_order(data, inverse: np.ndarray):
@@ -4500,7 +3935,7 @@ def _decode_scan_indices_prepared(
     verbose: bool,
     auto_narrow: bool,
     output_dtype: type | np.dtype | None,
-) -> LoadResult:
+) -> Dataset4dstem:
     """GPU-decompress one prepared stochastic sparse HDF5 batch."""
     import time
 
@@ -4571,7 +4006,7 @@ def _decode_scan_indices_prepared(
             f"-> {tuple(data.shape)} ({size_gb:.2f} GB) "
             f"in {time.perf_counter() - t0:.2f}s"
         )
-    return LoadResult(data, meta)
+    return create_dataset(data, meta)
 
 
 def load_scan_indices(
@@ -4589,7 +4024,7 @@ def load_scan_indices(
     output_dtype: type | np.dtype | None = None,
     stack: bool = True,
     prep_workers: int | None = None,
-) -> LoadResult:
+) -> Dataset4dstem:
     """Load stochastic scan positions from one or many raw HDF5 masters.
 
     This is the ptychography/DataLoader-style sparse IO path. The requested
@@ -4725,7 +4160,7 @@ def load_scan_indices(
         meta["file_paths"] = [os.fspath(paths[0])]
         meta["file_names"] = [os.path.basename(os.fspath(paths[0]))]
         meta["prep_workers"] = int(worker_count)
-        return LoadResult(data, meta)
+        return create_dataset(data, meta)
 
     meta = {
         "backend": resolved_backend,
@@ -4770,7 +4205,7 @@ def load_scan_indices(
             f"{meta['n_frames']} requested -> {size_gb:.2f} GB "
             f"in {time.perf_counter() - t0:.2f}s"
         )
-    return LoadResult(data, meta)
+    return create_dataset(data, meta)
 
 
 def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = True,
@@ -4780,9 +4215,9 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
          prep_workers: int | None = None, **kwargs):
     """Load 4D-STEM data — one master, or many.
 
-    * ``load(master)`` → one ``LoadResult``.
+    * ``load(master)`` → one ``Dataset4dstem``.
     * ``load(master, scan_region=(r0, r1, c0, c1))`` → one cropped
-      ``LoadResult`` without loading the full scan first.
+      ``Dataset4dstem`` without loading the full scan first.
     * ``load([masters], scan_region=(r0, r1, c0, c1), stack=True)`` → the same
       cropped scan region from each master stacked into one 5D result.
     * ``load([masters], scan_region=[region0, region1, ...], stack=False)`` →
@@ -4796,13 +4231,13 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
     * ``load(master, scan_region=(...), detector_region=(dr0, dr1, dc0, dc1))``
       → crop scan and detector evidence in one load call.
     * ``load(master, scan_indices=positions)`` → one stochastic sparse
-      ``LoadResult`` in the caller-provided scan-position order.
+      ``Dataset4dstem`` in the caller-provided scan-position order.
     * ``load(master, random_positions=1000, seed=42)`` → one stochastic sparse
-      ``LoadResult`` after sampling logical scan positions for the caller.
+      ``Dataset4dstem`` after sampling logical scan positions for the caller.
     * ``load([masters])`` → the masters **stacked** into one 5D dataset (the
       series/viewer case).
     * ``load([masters], gpus=[0, 1])`` (or ``stack=False``) → a **list** of separate
-      ``LoadResult``, **read in parallel across disks** and **placed across GPUs** —
+      ``Dataset4dstem``, **read in parallel across disks** and **placed across GPUs** —
       the joint-reconstruction path (``gpus``: ``None`` current device / ``int``
       all-that-GPU / ``list`` per-master round-robin). Decode is serial (concurrent
       in-process CUDA decode corrupts the device); reads overlap across disks so
@@ -5037,7 +4472,7 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
         if not stack:
             raise ValueError(
                 "load(..., scan_region=...) with one master returns one cropped "
-                "LoadResult; stack=False is only meaningful for a list of masters."
+                "Dataset4dstem; stack=False is only meaningful for a list of masters."
             )
         if region_scan_shape is not None:
             full_scan_shape = tuple(int(v) for v in region_scan_shape)
@@ -5106,7 +4541,7 @@ def _load(filepath, *args, dtype: str | None = None, gpus=None, stack: bool = Tr
             and getattr(data, "ndim", 0) >= 3):
         new = _browse_dtype_advise_and_cast(data, dtype, verbose)
         if new is not data:
-            result = LoadResult(new, result.metadata)
+            result = create_dataset(new, result.metadata)
     return result
 
 
@@ -5143,7 +4578,6 @@ def load(
     same_random_positions: bool = False,
     drift: Sequence | np.ndarray | None = None,
     detector_bin: int = 1,
-    det_bin: int | None = None,
     apply_mask: bool | None = None,
     hot_pixel_correction: str = "median",
     auto_narrow: bool = True,
@@ -5152,7 +4586,7 @@ def load(
     device: int | str | None = None,
     devices: list[int] | str | None = None,
     verbose: bool = True,
-) -> FourDSTEMData | list[FourDSTEMData]:
+) -> Dataset4dstem | list[Dataset4dstem]:
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Supported original acquisitions default to bounded ANS ingestion
@@ -5275,8 +4709,6 @@ def load(
     detector_bin
         Exact detector-space sum-bin factor. ``1`` preserves native detector
         sampling. The result metadata records source and working geometry.
-    det_bin
-        Deprecated compatibility spelling for ``detector_bin``.
     target_scan_region, scan_shift_row_col
         Shared target crop and per-source row/column shifts for drift-aware
         multi-file loading.
@@ -5295,9 +4727,9 @@ def load(
 
     Returns
     -------
-    FourDSTEMData or list[FourDSTEMData]
+    Dataset4dstem or list[Dataset4dstem]
         Data stays backend-resident. MPS list/folder loads return a common
-        multi-frame detector object in ``FourDSTEMData.data`` while background
+        multi-frame detector object in ``Dataset4dstem.data`` while background
         decoding fills its dataset slots.
     """
     from ._precision import load_precision, precision_name, saved_precision
@@ -5345,7 +4777,7 @@ def load(
         if (any(value is not None for value in (dataset_path, scan_region, detector_region,
                 target_scan_region, scan_shift_row_col, scan_indices, random_positions,
                 drift, devices, expected_source_sha256, source_integrity))
-                or detector_bin != 1 or det_bin not in (None, 1) or dtype not in (None, "native")
+                or detector_bin != 1 or dtype not in (None, "native")
                 or output != "native" or apply_mask or scan_order != "row-major"):
             raise ValueError(
                 "Original-array loading preserves complete measurements; remove "
@@ -5416,7 +4848,7 @@ def load(
             dataset_path, scan_region, detector_region, target_scan_region,
             scan_shift_row_col, scan_indices, random_positions, drift, devices,
             expected_source_sha256, source_integrity,
-        )) or detector_bin != 1 or det_bin not in (None, 1)
+        )) or detector_bin != 1
                 or output != "native" or scan_order != "row-major" or apply_mask):
             raise NotImplementedError(
                 "DM loading preserves the complete acquisition; remove selection, "
@@ -5473,7 +4905,7 @@ def load(
                 "omit representation to select its default storage."
             )
         if any(value is not None for value in (target_scan_region, scan_shift_row_col,
-                scan_indices, random_positions, drift, devices, expected_source_sha256, source_integrity)) or detector_bin != 1 or det_bin not in (None, 1) or output != "native" or scan_order != "row-major" or apply_mask:
+                scan_indices, random_positions, drift, devices, expected_source_sha256, source_integrity)) or detector_bin != 1 or output != "native" or scan_order != "row-major" or apply_mask:
             raise NotImplementedError("Precision loading supports scan_region and detector_region; remove resampling, masking and other conversion controls.")
         multiple_regions = scan_region is not None and len(scan_region) > 0 and isinstance(scan_region[0], (tuple, list))
         regions = list(scan_region) if multiple_regions else [scan_region]
@@ -5513,7 +4945,7 @@ def load(
                 "source_integrity": source_integrity,
             }
             selected = [name for name, value in unsupported.items() if value is not None]
-            if (selected or scan_order != "row-major" or det_bin not in (None, 1)
+            if (selected or scan_order != "row-major"
                     or detector_bin != 1 or not stack or apply_mask is False or output != "native"
                     or backend not in ("auto", "cuda")):
                 raise NotImplementedError(
@@ -5532,18 +4964,6 @@ def load(
 
     if output not in {"native", "torch"}:
         raise ValueError("output must be 'native' or 'torch'")
-    if det_bin is not None:
-        if detector_bin != 1 and detector_bin != det_bin:
-            raise ValueError(
-                "detector_bin and deprecated det_bin cannot request different "
-                "bin factors. Use detector_bin only."
-            )
-        warnings.warn(
-            "det_bin is deprecated; use detector_bin.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        detector_bin = det_bin
 
     if source_integrity is not None:
         if not isinstance(source_integrity, SourceIntegrity):
@@ -6103,7 +5523,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
 
     Returns
     -------
-    list[LoadResult]  — one per input master, in input order; each ``.data`` lives
+    list[Dataset4dstem]  — one per input master, in input order; each ``.data`` lives
     on its assigned GPU.
     """
     import queue
@@ -6212,7 +5632,7 @@ def _load_many_parallel(masters, *, gpus=None, max_concurrent=None, verbose=Fals
                     scan_order,
                 )
                 meta["scan_order"] = _normalize_scan_order(scan_order)
-            results[i] = LoadResult(data, meta)
+            results[i] = create_dataset(data, meta)
     except BaseException:
         cancelled.set()
         while producer_thread.is_alive() or not q.empty():
@@ -6243,173 +5663,18 @@ def _load_impl(
     row_prefix: bool = False,
     precompute_detector_sum: bool = False,
     skip_mps_memory_check: bool | None = None,
-) -> LoadResult:
-    """Load bitshuffle+LZ4 compressed HDF5 data directly to GPU.
+) -> Dataset4dstem:
+    """Decode HDF5 frames onto one backend before encoded source assembly.
 
-    Automatically detects file format:
-    - Master files (*_master.h5): Auto-discovers data chunks (data_000001, etc.)
-    - Single data files: Uses entry/data/data or specified dataset_path
-
-    When a list of file paths is provided, loads each file sequentially and
-    stacks the results into a single array with an extra leading dimension.
-    The scan dimension is unflattened automatically from metadata so the
-    result is ready for ``Show4DSTEM`` (e.g. 5 files → ``(5, 256, 256, 96, 96)``).
-
-    Parameters
-    ----------
-    filepath : str or list[str]
-        Path to the HDF5 file, or a list of paths to load and stack.
-    dataset_path : str, optional
-        Path to dataset within HDF5 file. If None, auto-detects.
-    apply_mask : bool, optional
-        Apply pixel mask to zero out bad pixels (master files only), by default True.
-    scan_shape : tuple[int, int], optional
-        Scan grid shape ``(scan_row, scan_col)``. By default this is
-        **auto-derived** from the h5 ``ntrigger`` field assuming a square
-        scan, so users rarely need to pass it. Pass explicitly for
-        non-square scans, or to override the derived value.
-        When provided (or derived), the scan dimension is unflattened:
-        ``(N, det_r, det_c)`` → ``(scan_r, scan_c, det_r, det_c)``; for
-        multi-file loads: ``(n_files, scan_r, scan_c, det_r, det_c)``.
-    scan_order : {"row-major", "serpentine"}, optional
-        Ordering of flattened scan frames before unflattening. Serpentine
-        acquisitions store odd scan rows right-to-left; the loader corrects
-        them so returned arrays are always indexed as normal ``(row, col)``.
-    det_bin : int, optional
-        Detector binning factor (default 1 = no binning). Applied immediately
-        after loading each file, before copying into the output array. Reduces
-        VRAM by ``det_bin**2`` (e.g. ``det_bin=2`` quarters detector pixels).
-    verbose : bool, optional
-        Print progress information (default True).
-    auto_narrow : bool, optional
-        For master files with uint32 data, cast the final array down to
-        uint16 when every observed value fits (< 65536). Arina's uint32
-        output is almost always over-allocated in 4D-STEM (actual counts
-        rarely exceed a few thousand), so this halves the returned
-        array's memory for free. Raises ``ValueError`` if the data
-        genuinely contains a value >= 65536 - caller should retry with
-        ``auto_narrow=False`` in that case. Default True.
-    output_dtype : dtype, optional
-        Cast the returned GPU array during load. This is useful for corrected
-        4D-STEM archives saved as ``float32``: callers can request
-        ``output_dtype=np.float16`` and/or ``det_bin=2`` to work with a much
-        smaller GPU array while keeping the on-disk archive high precision.
-    skip_mps_memory_check : bool, optional
-        Override the Apple Silicon MPS memory guard. By default, MPS loads use
-        HDF5 metadata to estimate the unified-memory footprint before allocating
-        Metal buffers and refuse no-bin/large loads that can freeze a laptop.
-        Prefer ``det_bin=2`` or ``det_bin=4`` for browsing; set this only when
-        you intentionally want to force the risky allocation.
-    device : int or str, optional
-        Pin every allocation of a single-target load to this GPU
-        (``device=1`` or ``"cuda:1"``). Default None = current device.
-    devices : list[int], optional
-        **Sharded multi-GPU load** (lists of files only). Split the files
-        across these GPUs in disk-interleaved order; each card decompresses +
-        keeps its own subset, with NO gather to one card. This is how a stack
-        larger than a single card fits - e.g. ``load(six_512_masters,
-        devices=[0, 1])`` holds 108 GiB (6 x 512 x 512 x 192 x 192 no-bin)
-        across two 96 GB cards. The result's ``.data`` is a ``{device: array}``
-        dict (not one array), and ``metadata["device_map"]`` records which file
-        landed on which GPU. Sharding is primarily for capacity, and it also
-        unlocks load-speed wins when the masters are spread across independent
-        disks because GPU workers no longer all hammer the same drive first.
+    This internal helper handles detector-specific decompression, optional
+    masking and binning, and scan ordering. The public :func:`load` owns source
+    selection, ANS encoding, and validation. Its returned :class:`Dataset4dstem`
+    exposes metadata separately from array-style indexing.
 
     Returns
     -------
-    LoadResult
-        Named tuple with ``data`` (cupy.ndarray) and ``metadata`` (dict).
-        See :class:`LoadResult` for the full metadata field list, including
-        the derived fields (``scan_shape``, ``n_frames``, ``dwell_time_us``,
-        ``detector_shape``, ``detector_name``, ``saturation``). Can be
-        unpacked: ``data, meta = load(path)``.
-
-    Examples
-    --------
-    >>> from quantem.gpu.io import load
-    >>> # scan_shape auto-derived from h5 metadata - no need to type it
-    >>> data, meta = load('scan_master.h5')
-    >>> data.shape
-    (512, 512, 192, 192)
-    >>> meta['dwell_time_us']
-    99.6
-
-    >>> # Multiple files, scan shape still auto-derived
-    >>> data, meta = load(masters[:5])
-    >>> data.shape
-    (5, 256, 256, 192, 192)
-
-    >>> # Override for non-square scans
-    >>> data, meta = load('rectangular_master.h5', scan_shape=(128, 256))
-
-    >>> # Load a float32 corrected archive as a smaller working array
-    >>> data, meta = load('corrected_master.h5', det_bin=2, output_dtype=np.float16)
-
-    Performance
-    -----------
-    Two regimes, because the page cache changes everything:
-
-    - **Cold** (first load of a dataset, bytes not in RAM): disk-bound. The
-      compressed bytes must come off the NVMe, and that read dominates - the
-      GPU decompress runs hidden in its shadow. Wall time scales with the
-      *compressed* size, NOT ``det_bin`` (binning happens after decompress, so
-      the same bytes are read either way; ``det_bin`` only shrinks the output
-      array / VRAM).
-    - **Warm** (data already in RAM cache from a prior load): the read is
-      served from RAM at ~5x the NVMe rate, exposing the GPU phase. ~2-3x
-      faster than cold. Requires the working set to fit free RAM, else the
-      cache churns and warm degrades toward cold.
-
-    Measured 2026-05-24 on real Arina data (512²/1024² scan, 192² detector,
-    one RTX PRO 6000, data on a WD_BLACK SN850X). COLD = cache evicted,
-    WARM = min of 3 with cache hot:
-
-    ====================================  ========  ========  ==========
-    case                                  COLD (s)  WARM (s)  peak VRAM
-    ====================================  ========  ========  ==========
-    single 512²  det_bin=1 (18 GiB out)     0.75      0.35     24.8 GiB
-    single 512²  det_bin=2                   0.75      0.36      6.9 GiB
-    single 1024² det_bin=2                   2.54      1.15     24.9 GiB
-    single 1024² det_bin=4                   2.52      1.12      6.7 GiB
-    6x  512²     det_bin=2 -> 1 GPU          3.87      1.69     32.3 GiB
-    6x  512²     det_bin=4 -> 1 GPU          3.73      1.63      8.5 GiB
-    10x 512²     det_bin=4 -> 1 GPU          6.25      2.63     13.0 GiB
-    16x 512²     det_bin=4 -> 1 GPU         10.05      4.16     19.8 GiB
-    ====================================  ========  ========  ==========
-
-    Notes:
-    - ``det_bin`` barely changes load time (compare 6x det_bin=2 vs 4) - it
-      trades VRAM, not wall time. Use it to fit memory, not to go faster.
-    - The compressed read is page-locked (parallel ``cudaHostRegister``) and
-      its H2D overlaps the LZ4+bitshuffle kernels on a copy stream, so the GPU
-      phase is largely hidden. The remaining cold cost is pure NVMe read.
-    - Multi-GPU ``devices=[0, 1]`` shards files across cards for *capacity*
-      (a stack larger than one card), not speed - cold load is disk-bound and
-      both cards share the one NVMe.
-
-    Sharded multi-GPU (``devices=[0, 1]``, 2x 96 GB cards, same setup):
-
-    ====================================  ========  ========  ==========
-    case                                  COLD (s)  WARM (s)  total VRAM
-    ====================================  ========  ========  ==========
-    6x  512² no-bin     (108 GiB)            4.07      2.02     108 GiB
-    8x  512² no-bin     (144 GiB)            OOM       -        ceiling
-    6x  512² det_bin=2  (27 GiB)             4.21      2.04      27 GiB
-    16x 512² det_bin=2  (72 GiB)            10.03      5.10      72 GiB
-    19x 512² det_bin=2  (86 GiB)            12.50      6.14      86 GiB
-    16x 512² det_bin=4  (18 GiB)            10.43      5.24      18 GiB
-    ====================================  ========  ========  ==========
-
-    Capacity rule (per-tilt 512²x192² uint16): no-bin = 18 GiB, det_bin=2 =
-    4.5 GiB, det_bin=4 = 1.1 GiB. The usable VRAM is NOT the full 190 GiB -
-    each file's decompress transient (compressed + scratch + the growing
-    output stack) stacks ~20 GiB on top per card, so:
-
-    - **no-bin caps at ~6 files** on 2 cards (8x = 144 GiB OOMs on the
-      transient, not the final size).
-    - **det_bin=2 fits ~30 files**, **det_bin=4 fits ~150** (tiny per-file
-      transient at bin=4). E.g. a 70-tilt det_bin=4 series = 70 x 1.1 ~= 79 GiB,
-      fits two cards (or even one) with room to spare.
+    Dataset4dstem
+        Decoded backend storage and acquisition metadata for the caller to own.
     """
     import os
     import re
@@ -6445,7 +5710,7 @@ def _load_impl(
         if isinstance(filepath, (list, tuple)):
             raise NotImplementedError(
                 "dtype='u4' packed output is currently one master per "
-                "LoadResult. Use gpus=... with stack=False for a list of "
+                "Dataset4dstem. Use gpus=... with stack=False for a list of "
                 "packed results, or use dtype='uint8' for stacked browsing."
             )
     if row_prefix and backend != "mps":
@@ -6493,7 +5758,7 @@ def _load_impl(
                 scan_shape=tuple(int(value) for value in data.shape[1:3]),
                 detector_shape=tuple(int(value) for value in data.shape[-2:]),
             )
-            return LoadResult(data, metadata)
+            return create_dataset(data, metadata)
         return _load_view(
             filepath, backend, dataset_path=dataset_path, apply_mask=apply_mask,
             scan_shape=scan_shape, scan_order=scan_order, det_bin=det_bin, verbose=verbose,
@@ -6519,7 +5784,7 @@ def _load_impl(
     # its own subset (NO gather to a single card). The only way a stack larger
     # than one GPU fits (e.g. 6× 512² no-bin = 108 GiB across 2× 96 GB), and
     # avoids the host-bounce penalty that made gather-mode slower than serial.
-    # Returns LoadResult.data = {device: stacked_array_on_that_device}.
+    # Returns Dataset4dstem.data = {device: stacked_array_on_that_device}.
     if devices is not None and isinstance(filepath, (list, tuple)):
         return _load_sharded(
             list(filepath), devices, dataset_path=dataset_path,
@@ -6671,7 +5936,7 @@ def _load_impl(
             t_multi = time.perf_counter() - t_multi_start
             size_gb = out.nbytes / 1e9 if out is not None else 0
             print(f"  Done: {n_files} files → {tuple(out.shape)} ({size_gb:.1f} GB) in {t_multi:.2f}s")
-        return LoadResult(out, meta)
+        return create_dataset(out, meta)
 
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"HDF5 file not found: {filepath}")
@@ -6725,7 +5990,7 @@ def _load_impl(
                     meta["pixel_mask"] = pixel_mask
                 data = _apply_scan_shape(data, scan_shape, meta, scan_order)
                 meta["scan_order"] = scan_order
-                return LoadResult(data, meta)
+                return create_dataset(data, meta)
             if "data" in data_group:
                 # Self-contained master OR a master whose sibling chunk
                 # files weren't found - try inline entry/data/data.
@@ -6796,7 +6061,7 @@ def _load_impl(
                 meta["pixel_mask"] = pixel_mask
             data = _apply_scan_shape(data, scan_shape, meta, scan_order)
             meta["scan_order"] = scan_order
-            return LoadResult(data, meta)
+            return create_dataset(data, meta)
 
     # For 4D/5D compressed data, use the dedicated loader
     if len(shape) >= 4:
@@ -6816,7 +6081,7 @@ def _load_impl(
             meta["pixel_mask"] = pixel_mask
         data = _apply_scan_shape(data, scan_shape, meta, scan_order)
         meta["scan_order"] = scan_order
-        return LoadResult(data, meta)
+        return create_dataset(data, meta)
 
     # The previous global owner was discarded after every load anyway. Keep
     # this operation's buffers private so concurrent devices cannot replace it.
@@ -6862,7 +6127,7 @@ def _load_impl(
     data = _apply_scan_shape(data, scan_shape, meta, scan_order)
     meta["scan_order"] = scan_order
 
-    return LoadResult(data, meta)
+    return create_dataset(data, meta)
 
 
 def _load_gpu_decompressed(
@@ -6871,7 +6136,7 @@ def _load_gpu_decompressed(
     shape: tuple,
     dtype: np.dtype,
     verbose: bool = False,
-) -> cp.ndarray:
+) -> "cp.ndarray":
     """Load HDF5 dataset using GPU decompression.
 
     Works with files saved using our GPU bitshuffle format.
@@ -7326,7 +6591,7 @@ def bin(
 
     raise ValueError(
         f"Expected 2D, 3D, or 4D array, got {data.ndim}D. "
-        "For multi-file data, use load(..., det_bin=2) instead."
+        "For multi-file data, use load(..., detector_bin=2) instead."
     )
 
 

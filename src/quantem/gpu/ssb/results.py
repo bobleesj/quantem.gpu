@@ -1,5 +1,4 @@
 """Backend-neutral SSB fit, source, evaluation, and reconstruction results."""
-from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
@@ -119,10 +118,10 @@ class SSBResult:
     object_wave : cp.ndarray
         Complex transmission function (scan_row, scan_col).
     aberrations : dict[str, float]
-        Aberration coefficients ``{C10, C12, phi12}`` in nm / radians. After ``fit(tilt=True)`` C10 is the defocus at
+        Aberration coefficients ``{C10, C12, phi12}`` in nm / radians. After ``find_aberrations(tilt=True)`` C10 is the defocus at
         mid-depth of the crystal.
     tilt_mrad : tuple[float, float] | None
-        Sample tilt (row, col) in mrad, scan frame, from ``fit(tilt=True)``; None for standard SSB.
+        Sample tilt (row, col) in mrad, scan frame, from ``find_aberrations(tilt=True)``; None for standard SSB.
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
         thickness); None for standard SSB.
@@ -132,8 +131,16 @@ class SSBResult:
         Scan-detector rotation in degrees, in [0, 180).
     com_reversed : bool
         True when the centre-of-mass vectors point the other way, i.e. the physical rotation is
-        ``rotation_angle_deg + 180``. The CoM curl cannot tell the two apart; ``fit(check_rotation=True)`` decides from
+        ``rotation_angle_deg + 180``. The CoM curl cannot tell the two apart; ``find_aberrations(check_rotation=True)`` decides from
         the atom columns (see ``column_sign``).
+    upsample : int
+        Output factor relative to the native scan grid. ``scan_sampling_A``
+        records output pixel spacing, preserving the physical field of view.
+    phase_estimator : str
+        ``mean_phase`` or ``phase_of_mean`` for phase-only reconstruction;
+        ``complex_wave`` identifies a direct complex-object reconstruction.
+    amplitude_estimated : bool
+        False for phase-only paths, whose complex wave has unit amplitude.
     loss : float | None
         Variance loss value.
     elapsed : float | None
@@ -166,6 +173,9 @@ class SSBResult:
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
     scan_sampling_A: float | tuple[float, float] | None = None
+    upsample: int = 1
+    phase_estimator: str = "complex_wave"
+    amplitude_estimated: bool = True
     source_path: str | None = None
     bf_center: tuple[float, float] | None = None
     bf_radius: float | None = None
@@ -173,7 +183,7 @@ class SSBResult:
     # Full Optuna trial history, one entry per evaluated trial, in order.
     # Each entry: ``{"params": {"C10_nm", "C12_nm", "phi12_deg"}, "loss"}``.
     # Used by the Screening dashboard (#26) to plot the loss landscape.
-    optuna_trials: list[dict] | None = None
+    trial_records: list[dict] | None = None
     # 180-degree check of fit(): phase skewness (+ = bright atom columns) and whether fit() reversed the CoM and refit
     column_sign: float | None = None
     rotation_flipped: bool = False
@@ -182,6 +192,9 @@ class SSBResult:
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if self.phase_estimator == "complex_wave" and (self.depth_spread_nm or 0) > 0:
+            self.phase_estimator = "mean_phase"
+            self.amplitude_estimated = False
         # engines and older saves give the physical angle (up to 360); the public form is below 180 plus the flag
         self.rotation_angle_deg, self.com_reversed = split_rotation(self.rotation_angle_deg, self.com_reversed)
 
@@ -192,7 +205,10 @@ class SSBResult:
 
     def __repr__(self) -> str:
         lines = ["SSB Result"]
-        lines.append(f"  Shape          {tuple(self.object_wave.shape)}")
+        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
+        lines.append(f"  Estimator      {self.phase_estimator}")
+        if not self.amplitude_estimated:
+            lines.append("  Amplitude      not estimated (unit-amplitude phase representation)")
         if self.loss is not None:
             lines.append(f"  Loss           {self.loss:.6f}")
         if self.num_bf is not None:
@@ -221,10 +237,33 @@ class SSBResult:
             )
         return "\n".join(lines)
 
+    @property
+    def trials(self):
+        """Completed search trials as a table, indexed by stable trial ID.
+
+        Coefficient lengths are nm, angles explicitly name their units, and
+        loss is the recorded search objective (lower is better). Different
+        objectives must not be ranked together. Refinement is reported separately.
+        """
+        import pandas as pd
+
+        rows = []
+        for index, record in enumerate(self.trial_records or ()):
+            if record.get("stage", "search") != "search":
+                continue
+            rows.append({"trial": record.get("trial", index),
+                         **{key: value for key, value in record.items() if key not in {"params", "trial"}},
+                         **record["params"]})
+        if not rows:
+            return pd.DataFrame(index=pd.Index([], name="trial"))
+        return pd.DataFrame.from_records(rows).set_index("trial")
+
     def report(self):
         """One-row table of the fitted parameters; ``pd.concat([a.report(), b.report()])`` compares fits side by side."""
         import pandas as pd
 
+        if self.object_wave.ndim == 3:
+            return self.trials
         aberrations = self.aberrations
         tilt_row, tilt_col = self.tilt_mrad if self.tilt_mrad is not None else (0.0, 0.0)
         row = {
@@ -238,6 +277,9 @@ class SSBResult:
             "CoM reversed": self.com_reversed,
             "column sign": self.column_sign,
             "reversed by fit": self.rotation_flipped,
+            "upsample": self.upsample,
+            "pixel size (A)": self.scan_sampling_A,
+            "phase estimator": self.phase_estimator,
             "loss": self.loss,
             "trials": self.n_trials,
             "time (s)": self.elapsed,

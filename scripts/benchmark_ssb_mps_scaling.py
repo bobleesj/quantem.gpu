@@ -327,7 +327,7 @@ def _fit_report(prepared, selection, args: argparse.Namespace):
         "wall_seconds": time.perf_counter() - started,
         "elapsed_seconds": result.elapsed,
         "timings": result.timings,
-        "records": len(result.optuna_trials),
+        "records": len(result.trial_records),
         "refine_nfev": result.refine_nfev,
         "aberrations": result.aberrations,
         "loss": result.loss,

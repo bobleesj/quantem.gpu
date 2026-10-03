@@ -9,7 +9,7 @@ implementation details.
 
 ## Inputs and outputs
 
-`SSB.open()` accepts a supported detector source. `SSB.from_array()` accepts an
+`SSB.open()` accepts a supported detector source. `SSB(patterns, ...)` accepts an
 existing backend-resident detector array. Both require electron voltage,
 convergence semiangle, and scan sampling unless those values are available
 from trusted source metadata.
@@ -20,12 +20,13 @@ original acquisitions; they cannot be reopened through a packed override.
 
 `SSB.open` owns its loaded source until `close()` or context-manager exit,
 including when reconstruction has not yet started. Pass an ordinary dense
-array to `SSB.from_array` when borrowing caller-owned array storage.
+array to `SSB` when borrowing caller-owned array storage.
+Treat detector values as fixed for the lifetime of a session: SSB retains their
+prepared Fourier data. After editing the array, construct a new `SSB` session.
 SSB Fourier-stack preparation and reconstruction are additional work; they
 are not included in a detector-viewer loading-time claim.
 
-`find_aberrations()` (also available as `fit()` for existing callers) returns
-one `SSBResult`. Both names use the same native-grid search. Its primary field is the complex64
+`find_aberrations()` returns one `SSBResult`. Its primary field is the complex64
 `object_wave` with shape `(scan_row, scan_column)`. `phase` and `amplitude` are
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
 the backend, fitted aberrations, rotation, loss, trial/refinement counts,
@@ -45,16 +46,71 @@ bright-field phase-variance objective, chooses the minimum loss, and performs
 Nelder–Mead refinement. It does not average optimizer candidates.
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
-available refinement mode. In WebGPU, requesting `fit()` fails explicitly and
+available refinement mode. In WebGPU, requesting `find_aberrations()` fails explicitly and
 directs the caller to run the exact 200-trial plus Nelder–Mead workflow on CUDA
 or MPS. The browser never substitutes fewer trials or a reduced objective.
+
+## Find aberrations, then reconstruct
+
+```python
+aberrations = ssb.find_aberrations(tilt=True, save_to="results/aberrations")
+aberrations.report()
+ssb.show_trials(best=5)
+result = ssb.reconstruct(aberrations, upsample=4, save_to="results/4x")
+```
+
+`find_aberrations()` searches on the native scan grid. The public `fit()` name
+has been removed. `reconstruct()` applies the supplied parameters without
+searching. CUDA uses `phase_of_mean` at every output factor; MPS uses
+`mean_phase`. Both return phase-only complex waves with unit amplitude,
+recorded as `amplitude_estimated=False`. That amplitude is not a measured
+specimen transmission. Use explicit `phase_estimator="complex_wave"` for a
+native thin-sample complex-object reconstruction when amplitude is needed;
+the temporal averaging workflow selects that estimator explicitly.
+
+`result.upsample` and `result.scan_sampling_A` record the output factor and
+pixel spacing. Input sampling stays in the saved signature. Changing the
+estimator, sampling, or scientific parameters invalidates saved-result reuse.
+
+### Inspect and replay search trials
+
+```python
+ssb.show_trials(first=5)
+ssb.show_trials(last=5)
+ssb.show_trials(best=5)
+aberrations.trials                 # DataFrame, indexed by stable trial ID
+aberrations.aberrations["C10"]      # nm
+aberrations.aberrations["C12"]      # nm
+aberrations.aberrations["phi12"]    # radians
+aberrations.tilt_mrad              # (row, column) mrad
+aberrations.depth_spread_nm        # model depth spread
+```
+
+Supply exactly one positive selector. Images share phase contrast and include
+scale bars and a parameter table. Trials are replayed from their recorded
+settings rather than stored as a large image stack. Browsing preserves the
+active reconstruction. `best` ranks the latest search only; losses from the
+standard phase-variance objective and the joint tilt objective are not mixed.
+The trial table explicitly names the objective. Local refinement is separate
+from the search trials and its final result appears in `report()`.
+
+```python
+attempts = ssb.reconstruct(aberrations, trials=aberrations.trials.tail(5).index)
+attempts.phase                     # (trial, row, column)
+adjusted = ssb.reconstruct(aberrations, aberrations={"C10": 12.5})
+```
+
+Overrides preserve unspecified coefficients, tilt, depth spread and rotation.
+They leave the supplied result unchanged. Replay uses each trial's original
+rotation branch, even if the subsequent polarity check changed the session's
+rotation. Saved search results retain this history.
 
 ## Finer preview sampling
 
 Fit at native sampling, then reuse the fitted parameters for a finer preview:
 
 ```python
-fitted = workflow.fit(tilt=True)
+fitted = workflow.find_aberrations(tilt=True)
 phase, loss = workflow.preview(
     fitted.aberrations,
     tilt_mrad=fitted.tilt_mrad,
@@ -83,8 +139,11 @@ Rerun the probe fit for older records; the loader does not guess their units.
 - An unsupported backend or scientific request fails explicitly; SSB never
   falls back silently to CPU.
 - `trials` must be non-negative and `refinement` is `"nelder-mead"` or `None`.
-- When an in-memory array uses saved-result reuse, provide `source_path` so a
-  different same-shaped array cannot match the original source accidentally.
+  With `tilt=True`, at least one trial is required. Use `reconstruct()` to
+  apply known parameters without a search.
+- To save results from an in-memory array, provide `source_path` for provenance.
+  Direct arrays never reuse results from disk automatically: a path cannot
+  identify which crop or edited array the scientist supplied.
 - Native Swift requires a complete, finite `MetalSSBGeometry`, a 512×512 scan,
   and a sufficiently large plane-major `uint8` Metal buffer. It raises rather
   than cropping, binning, changing precision, or falling back to CPU.
@@ -95,8 +154,15 @@ Rerun the probe fit for older records; the loader does not guess their units.
 identity, source and output shapes/dtypes, calibration, physical parameters,
 optimizer settings/history, bright-field geometry, loss, timings, backend,
 package source identity, and Git revision. An exact signature match reopens the
-saved result. Any scientific mismatch recomputes instead of reusing stale
+saved result for a file-backed `SSB.open` session. Direct array sessions always
+recompute when saving; no full-array hash or GPU-to-host copy is required to
+check reuse. Any scientific mismatch recomputes instead of reusing stale
 output. Inspect `result.reused`, `result.saved_path`, and `result.metadata`.
+
+Searches start from the current session coefficients, including changes made
+with `reconstruct(aberrations={...})`. Those starting coefficients participate
+in the saved search identity, so a different refinement start cannot inherit
+an older result.
 
 ## Minimal fit
 
@@ -110,14 +176,14 @@ with SSB.open(
     semiangle_mrad=30,
     scan_sampling_A=(0.264, 0.264),
 ) as workflow:
-    result = workflow.fit(save_to="results/ssb")
+    result = workflow.find_aberrations(save_to="results/ssb")
 ```
 
 Use `reconstruct()` when aberrations are known and no optimizer should run:
 
 ```python
 result = workflow.reconstruct(
-    {"C10": 12.5, "C12": 3.0, "phi12": 0.25},
+    aberrations={"C10": 12.5, "C12": 3.0, "phi12": 0.25},
     save_to="results/fixed-ssb",
 )
 ```
@@ -166,7 +232,8 @@ There is no fitted gain, display normalization or detector interpolation in
 this option. Active higher-order magnitudes and non-CUDA backends are not
 supported; zero higher-order magnitudes with retained angles are allowed.
 
-This change preserves `fit`, native `reconstruct`, and saved-result reuse.
+This estimator does not change the native aberration-search objective.
+It is also accepted by `reconstruct`, where it participates in saved-result reuse.
 Live uses the public preview default for supported CUDA C10/C12 outputs.
 If persisting the returned array, record `phase_estimator`,
 `upsampling_factor`, native scan sampling, aberrations, tilt and depth alongside
@@ -189,12 +256,12 @@ implementation, not absolute phase accuracy.
 Standard SSB treats the sample as one thin plane. In a crystal a few nanometres
 thick that leans by a few milliradians, each atomic column walks sideways with
 depth (5 mrad over 10 nm is 0.5 A), which blurs the lattice along the tilt.
-`fit(tilt=True)` fits the aberrations together with the sample tilt and a depth
+`find_aberrations(tilt=True)` fits the aberrations together with the sample tilt and a depth
 spread, in one search with the same trial budget as the standard fit:
 
 ```python
-standard = workflow.fit()              # C10, C12, phi12
-tilted = workflow.fit(tilt=True)       # + sample tilt and depth spread, jointly
+standard = workflow.find_aberrations()              # C10, C12, phi12
+tilted = workflow.find_aberrations(tilt=True)       # + sample tilt and depth spread, jointly
 
 tilted.tilt_mrad          # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness

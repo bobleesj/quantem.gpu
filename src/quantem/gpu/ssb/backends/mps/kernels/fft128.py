@@ -1,6 +1,6 @@
 """MPS/Metal SSB FFT configuration for 128x128 scans."""
 
-from .common import MPSFFTConfig
+from quantem.gpu.ssb.backends.mps.kernels.common import MPSFFTConfig
 
 CONFIG = MPSFFTConfig(
     size=128,

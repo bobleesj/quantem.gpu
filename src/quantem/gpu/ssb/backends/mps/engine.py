@@ -6,7 +6,8 @@ corrected, and accumulated without materializing the full 4D stack or using
 Torch. Interactive reconstruction and Optuna/Nelder-Mead fitting share the
 same exact reconstruction/loss core.
 """
-from __future__ import annotations
+
+from quantem.core.datastructures import Dataset
 
 import json
 import math
@@ -23,10 +24,10 @@ import numpy as np
 
 from quantem.gpu.detector import fit_probe, mean as detector_mean
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
-from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.results import SSBResult
 
-from ._bf_columns import (
+from quantem.gpu.ssb.backends.mps.brightfield_columns import (
     _BfColumnCompanionNotDeclared,
     _resolve_bf_column_companion,
 )
@@ -287,6 +288,72 @@ class _ArrayFrames:
         flat_idx = rows * int(self.det_shape[1]) + cols
         flat = np.asarray(self._flat).reshape(int(self._flat.shape[0]), -1)
         return np.take(flat, flat_idx, axis=1).T
+
+
+def _mps_tensor_view(data):
+    """Borrow contiguous Torch MPS storage without copying detector values."""
+    import ctypes
+    import objc
+    import torch
+    from quantem.gpu.io.backends.mps.dense import _MtlArray, _numpy_view
+
+    data = data.contiguous()
+    if data.storage_offset():
+        data = data.clone()
+    torch.mps.synchronize()
+    buffer = objc.objc_object(
+        c_void_p=ctypes.c_void_p(data.untyped_storage().data_ptr())
+    )
+    view = _numpy_view(buffer, str(data.dtype).removeprefix("torch."), data.numel())
+    view = view.reshape(tuple(data.shape)).view(_MtlArray)
+    view._mtl = buffer
+    # The tensor owns this buffer. Never call release() on the borrowed buffer.
+    view._recycle_decoder = data
+    return view
+
+
+class _MpsTensorFrames:
+    """Gather tensor detector columns on MPS into MLX-owned shared storage."""
+
+    def __init__(self, data):
+        self.tensor = data
+        self.scan_shape = tuple(data.shape[:2]) if data.ndim == 4 else None
+        self.det_shape = tuple(data.shape[-2:])
+        self.shape = (int(data.numel() // np.prod(self.det_shape)), *self.det_shape)
+        self.ndim = 3
+        self.dtype = np.dtype(str(data.dtype).removeprefix("torch."))
+        self._flat = data.reshape(self.shape[0], -1)
+
+    def columns_float32_into(self, rows, cols, out):
+        """Gather with Torch MPS, then copy directly into the MLX Metal buffer."""
+        import Metal
+        import torch
+        from quantem.gpu.io.backends.mps.packed import _complete
+
+        indices = torch.as_tensor(
+            np.asarray(rows) * self.det_shape[1] + np.asarray(cols),
+            dtype=torch.int64, device="mps",
+        )
+        values = self._flat.index_select(1, indices).T.to(torch.float32).contiguous()
+        view = _mps_tensor_view(values)
+        buffer = view._mtl
+        device = buffer.device()
+        target = device.newBufferWithBytesNoCopy_length_options_deallocator_(
+            out, out.nbytes, Metal.MTLResourceStorageModeShared, None,
+        )
+        if target is None:
+            raise RuntimeError("Metal could not wrap the MLX output; use contiguous float32 output.")
+        try:
+            command = device.newCommandQueue().commandBuffer()
+            encoder = command.blitCommandEncoder()
+            encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
+                buffer, 0, target, 0, out.nbytes,
+            )
+            encoder.endEncoding()
+            _complete(command, "SSB MPS column transfer")
+        finally:
+            target.release()
+        return out
 
 
 class _BfColumnDetectorView:
@@ -631,16 +698,26 @@ def _require_mlx():
 def _as_chunked_frames(data):
     from quantem.gpu.detector.backends.mps.kernels import ChunkedFrames
     from quantem.gpu.io.backends.mps import MPSChunked4DSTEM
-    from quantem.gpu.io.load import LoadResult
 
-    if isinstance(data, (MpsBfColumnFrames, ChunkedFrames, _ArrayFrames)):
+    if isinstance(data, (MpsBfColumnFrames, ChunkedFrames, _ArrayFrames, _MpsTensorFrames)):
         return data
-    if isinstance(data, LoadResult):
+    if isinstance(data, Dataset):
         data = data.data
     if isinstance(data, MPSChunked4DSTEM):
         return ChunkedFrames(data, torch_compat=False)
     if isinstance(data, np.ndarray) and data.ndim in (3, 4):
         return _ArrayFrames(data)
+    import torch
+
+    if torch.is_tensor(data) and data.device.type == "mps" and data.ndim in (3, 4):
+        if data.dtype not in (torch.uint8, torch.uint16, torch.uint32):
+            return _MpsTensorFrames(data)
+        view = _mps_tensor_view(data)
+        frames = ChunkedFrames([view.reshape(-1, *data.shape[-2:])], torch_compat=False)
+        frames._torch_source = data
+        if data.ndim == 4:
+            frames.metadata["scan_shape"] = tuple(data.shape[:2])
+        return frames
     raise TypeError(
         "MPS SSB preview expects chunk-backed MPS data from "
         "`quantem.gpu.io.load.load(..., backend='mps')` or a crop-first "
@@ -807,7 +884,7 @@ def _default_phase_col_k_bf(
 def _scan_shape(frames) -> tuple[int, int]:
     from quantem.gpu.detector.backends.mps.kernels import ChunkedFrames
 
-    if isinstance(frames, (MpsBfColumnFrames, _ArrayFrames)):
+    if isinstance(frames, (MpsBfColumnFrames, _ArrayFrames, _MpsTensorFrames)):
         shape = frames.scan_shape
     elif isinstance(frames, ChunkedFrames):
         shape = frames.metadata.get("scan_shape")
@@ -1192,7 +1269,7 @@ def _twiddle_512_metal_header() -> str:
 
 def _small_fft_macros(n: int) -> tuple[str, str, int, bool]:
     """Return Metal digit-reversal macros for fused radix-4 IFFTs."""
-    from .kernels import get_fft_config
+    from quantem.gpu.ssb.backends.mps.kernels import get_fft_config
 
     config = get_fft_config(n)
     if config.specialized:
@@ -4264,7 +4341,7 @@ def _prepare_selection(
             "MPS SSB requires a square scan grid; "
             f"got {scan_shape[0]}x{scan_shape[1]}."
         )
-    from .kernels import MPS_FFT_CONFIGS, get_fft_config
+    from quantem.gpu.ssb.backends.mps.kernels import MPS_FFT_CONFIGS, get_fft_config
 
     if scan_shape[0] in MPS_FFT_CONFIGS:
         get_fft_config(scan_shape[0])
@@ -4344,7 +4421,7 @@ def _prepare_selection(
         stack_mx = None
         direct_mlx_output = isinstance(
             frames,
-            (MpsBfColumnFrames, ChunkedFrames),
+            (MpsBfColumnFrames, ChunkedFrames, _MpsTensorFrames),
         ) and (
             not compact_inactive or dc_value_override is not None
         )
@@ -4378,6 +4455,15 @@ def _prepare_selection(
                 stack_np = stack_np[active_mask_np[start:stop]]
                 if stack_np.shape[0] == 0:
                     continue
+        if stack_mx is not None and (
+            isinstance(frames, _MpsTensorFrames)
+            or getattr(frames, "_torch_source", None) is not None
+        ):
+            # Preserve the previous array-input FFT layout and rounding. The
+            # selected columns were scan-major; materialize that layout on GPU.
+            stack_mx = mx.moveaxis(
+                mx.contiguous(mx.moveaxis(stack_mx, 0, -1)), -1, 0,
+            )
         g_chunk = _fft2_hermitian(
             mx,
             stack_mx if stack_mx is not None else mx.array(stack_np),

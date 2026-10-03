@@ -73,7 +73,7 @@ def probe_loss(session, aberrations: dict) -> dict:
 
 def run_fit(session, label: str, trials: int, refinement: str = "nelder-mead") -> dict:
     started = time.perf_counter()
-    result = session.fit(trials=trials, refinement=refinement, seed=42, verbose=False)
+    result = session.find_aberrations(trials=trials, refinement=refinement, seed=42, verbose=False)
     seconds = time.perf_counter() - started
     return {
         "label": label,

@@ -19,14 +19,13 @@ column-IFFT phase kernel, so it costs about what the standard preview costs; 128
 is the element-wise model as one ``mx.compile`` graph with MLX inverse FFTs: any scan shape, the definition the fast path
 is tested against, and the fallback for shapes the fused kernels do not cover.
 """
-from __future__ import annotations
 
 import math
 from functools import lru_cache
 
 import numpy as np
 
-from .engine import (
+from quantem.gpu.ssb.backends.mps.engine import (
     _PreparedMpsSSB,
     _compute_geometry,
     _expand_hermitian_mx,

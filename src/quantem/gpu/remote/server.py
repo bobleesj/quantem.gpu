@@ -1545,7 +1545,7 @@ class BrowseService:
                 path,
                 backend="cuda",
                 device=gpu,
-                det_bin=det_bin,
+                detector_bin=det_bin,
                 scan_region=scan_region,
                 verbose=False,
             )

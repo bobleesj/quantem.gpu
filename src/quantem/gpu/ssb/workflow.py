@@ -3,7 +3,6 @@
 This module owns the only public stateful SSB entry point. Backend modules own
 device preparation and kernels, but they do not define a second user API.
 """
-from __future__ import annotations
 
 import json
 import math
@@ -15,12 +14,14 @@ from typing import Literal, Self
 
 import numpy as np
 
+from quantem.core.datastructures import Dataset
+
 from quantem.gpu.device import resolve
 from quantem.gpu.io.integrity import SourceIntegrity
 from quantem.gpu.io.models import _release_owned_storage
 from quantem.gpu.io.representation import DataRepresentation
 
-from ._persistence import (
+from quantem.gpu.ssb.persistence import (
     SCHEMA,
     json_value,
     load_result,
@@ -29,8 +30,8 @@ from ._persistence import (
     save_result,
     software_signature,
 )
-from .backends.protocol import SSBProtocol
-from .results import (COLUMN_SIGN_MIN, SSBResult, SSBSeriesResult, column_sign, draw_column_histogram,
+from quantem.gpu.ssb.backends.contract import SSBProtocol
+from quantem.gpu.ssb.results import (COLUMN_SIGN_MIN, SSBResult, SSBSeriesResult, column_sign, draw_column_histogram,
                       physical_rotation_deg, split_rotation)
 
 RefineMethod = Literal["nelder-mead"] | None
@@ -141,15 +142,15 @@ def _search_ranges_to_engine(search_ranges: dict[str, object] | None) -> dict[st
 def _result_from_engine(result: SSBResult) -> SSBResult:
     """Convert a result computed by a backend (Angstrom) to the public nm units, in place."""
     result.aberrations = _aberrations_from_engine(result.aberrations)
-    if result.optuna_trials:
+    if result.trial_records:
         converted = []
-        for trial in result.optuna_trials:
+        for trial in result.trial_records:
             params = dict(trial.get("params") or {})
             for key in ("C10_nm", "C12_nm"):
                 if key in params:
                     params[key] = float(params[key]) / _ENGINE_PER_NM
             converted.append({**trial, "params": params})
-        result.optuna_trials = converted
+        result.trial_records = converted
     return result
 
 
@@ -182,6 +183,7 @@ def _bright_field_crop(
     bf_radius: float | None,
     *,
     calibrate_detector: bool = False,
+    bf_center: tuple[float, float] | None = None,
 ):
     """Decode a BF crop while retaining full-detector CUDA calibration.
 
@@ -218,6 +220,8 @@ def _bright_field_crop(
         weights = dp[rows, cols]
         center = (float((rows * weights).sum() / weights.sum()), float((cols * weights).sum() / weights.sum()))
         radius = float(bf_radius)
+    if bf_center is not None:
+        center = tuple(float(value) for value in bf_center)
     det_rows, det_cols = dp.shape
     # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
     row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
@@ -227,16 +231,14 @@ def _bright_field_crop(
         import cupy as cp
 
         counts = cp.from_dlpack(counts)
-    else:
-        counts = counts.cpu().numpy()
-    loaded.close()
     return counts, (center[0] - row0, center[1] - col0), radius, calibration_radius
 
 
 def _mps_data_with_scan_shape(data: object, scan_shape: tuple[int, int] | None):
     """Apply an explicit scan shape to an in-memory MPS array without copying."""
 
-    if scan_shape is None or not isinstance(data, np.ndarray) or data.ndim != 3:
+    if (scan_shape is None or getattr(data, "ndim", None) != 3
+            or not (isinstance(data, np.ndarray) or type(data).__module__.startswith("torch"))):
         return data
     rows, cols = (int(scan_shape[0]), int(scan_shape[1]))
     if rows * cols != int(data.shape[0]):
@@ -484,7 +486,7 @@ def _screen_fit_settings(screen_path: Path) -> dict[str, object] | None:
             rotation = physical_rotation_deg(float(settings["rotation_angle_deg"]), bool(settings.get("com_reversed", False)))
             return {**settings, "aberrations": _validate_aberrations(settings["aberrations"]), "aberration_unit": ABERRATION_UNIT,
                     "rotation_angle_deg": rotation}
-    metadata_path = screen_path / "ssb-fit" / "ssb-fit.json"
+    metadata_path = screen_path / "ssb-fit" / "ssb-find_aberrations.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
         result = metadata.get("result") or {}
@@ -513,6 +515,13 @@ class SSB:
     WebGPU uses the same parameter and result contract through the exported
     browser workflow. It cannot execute inside the Python process; requesting
     it here fails deterministically and points to the canonical CLI boundary.
+
+    Examples
+    --------
+    >>> ssb = SSB(patterns, voltage_kV=300, semiangle_mrad=30,
+    ...           scan_sampling_A=0.99, det_sampling=0.6081)
+    >>> aberrations = ssb.find_aberrations()
+    >>> result = ssb.reconstruct(aberrations)
     """
 
     def __init__(
@@ -534,6 +543,20 @@ class SSB:
         bf_center: tuple[float, float] | None = None,
     ) -> None:
         self.backend = _resolve_backend(backend)
+        if isinstance(data, Dataset):
+            if data.ndim != 4:
+                raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
+            if data._storage is not None:
+                # Decode only the bright-field evidence into session-owned
+                # tensors. The caller retains ownership of the acquisition.
+                data, bf_center, bf_radius, calibration_radius = _bright_field_crop(
+                    data, self.backend, bf_intensity_threshold, bf_radius,
+                    calibrate_detector=det_sampling is None, bf_center=bf_center,
+                )
+                if det_sampling is None and calibration_radius is not None:
+                    det_sampling = (2.0 * semiangle_mrad) / calibration_radius
+            else:
+                data = data.data
         if self.backend == "mps":
             from quantem.gpu.io.backends.mps.packed import MPSCompactV3Resident
 
@@ -556,15 +579,13 @@ class SSB:
         self.det_sampling = det_sampling
         self._aberrations_explicit = aberrations is not None
         self.aberrations = _validate_aberrations(aberrations)
-        self._fit_start_aberrations = dict(self.aberrations)
-        self._fit_start_aberrations_explicit = self._aberrations_explicit
         # public form: angle below 180 plus whether the CoM is reversed; the engines get the physical angle
         self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
         self.bf_intensity_threshold = float(bf_intensity_threshold)
         self.bf_radius = bf_radius
         # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
         self.bf_center = None if bf_center is None else (float(bf_center[0]), float(bf_center[1]))
-        # latest fit(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
+        # latest find_aberrations(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
         self.tilt_mrad: tuple[float, float] | None = None
         self.depth_spread_nm: float | None = None
         self.source_path = source_path
@@ -584,6 +605,7 @@ class SSB:
         self._reconstruction: SSBResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
+        self._aberration_search: SSBResult | None = None
 
     @classmethod
     def reconstruct_series(
@@ -723,7 +745,7 @@ class SSB:
                         else round(float(settings["bf_radius"]))
                     ),
                 ) as ssb:
-                    reference_result = ssb.fit(
+                    reference_result = ssb.find_aberrations(
                         trials=trials,
                         refinement=refinement,
                         save_to=reference_path / "ssb-fit",
@@ -796,12 +818,12 @@ class SSB:
             ) as ssb:
                 if fixed_probe:
                     result = ssb.reconstruct(
-                        reference_aberrations,
+                        aberrations=reference_aberrations,
                         save_to=screen_path / "ssb-locked",
                         verbose=False,
                     )
                 else:
-                    result = ssb.fit(
+                    result = ssb.find_aberrations(
                         trials=trials,
                         refinement=refinement,
                         save_to=screen_path / "ssb-fit",
@@ -884,7 +906,7 @@ class SSB:
         expected_source_sha256: str | None = None,
         source_integrity: SourceIntegrity | None = None,
         verbose: bool = False,
-    ) -> SSB:
+    ) -> Self:
         """Open one lossless 4D-STEM source and prepare an SSB session.
 
         Exact BF-column storage is chosen automatically when it is available;
@@ -917,7 +939,7 @@ class SSB:
         source_load_seconds: float
         source_storage_path: str
         if selected == "mps" and expected_source_sha256 is None and source_integrity is None:
-            from .backends.mps.engine import (
+            from quantem.gpu.ssb.backends.mps.engine import (
                 _BfColumnCompanionNotDeclared,
                 load_bf_columns_mps,
             )
@@ -938,25 +960,26 @@ class SSB:
             from quantem.gpu.io import load
 
             load_started = time.perf_counter()
-            loaded = load(
+            with load(
                 source,
                 backend=selected,
+                scan_shape=scan_shape,
                 detector_bin=1,
                 dtype=dtype,
                 verbose=verbose,
                 expected_source_sha256=expected_source_sha256,
                 source_integrity=source_integrity,
-            )
-            data, bf_center, bf_radius, calibration_radius = _bright_field_crop(
-                loaded, selected, bf_intensity_threshold, bf_radius,
-                calibrate_detector=det_sampling is None,
-            )
+            ) as loaded:
+                data, bf_center, bf_radius, calibration_radius = _bright_field_crop(
+                    loaded, selected, bf_intensity_threshold, bf_radius,
+                    calibrate_detector=det_sampling is None,
+                )
+                source_dtype = str(loaded.dtype)
+                source_bytes = loaded.logical_bytes
             if det_sampling is None and calibration_radius is not None:
                 det_sampling = (2.0 * semiangle_mrad) / calibration_radius
             source_kind = "detector"
             source_storage_path = str(source)
-            source_dtype = str(loaded.dtype)
-            source_bytes = loaded.logical_bytes
             source_load_seconds = time.perf_counter() - load_started
         session = cls(
             data,
@@ -1002,47 +1025,11 @@ class SSB:
         session.source_load_seconds = source_load_seconds
         return session
 
-    @classmethod
-    def from_array(
-        cls,
-        data: object,
-        *,
-        backend: Literal["auto", "cuda", "mps", "webgpu"] = "auto",
-        voltage_kV: float,
-        semiangle_mrad: float,
-        scan_sampling_A: float | tuple[float, float],
-        scan_shape: tuple[int, int] | None = None,
-        det_sampling: float | tuple[float, float] | None = None,
-        aberrations: dict[str, float] | None = None,
-        rotation_angle_deg: float = 0.0,
-        com_reversed: bool = False,
-        bf_intensity_threshold: float = 0.0,
-        bf_radius: int | None = None,
-        source_path: str | None = None,
-    ) -> SSB:
-        """Create an SSB session from an existing lossless detector array."""
-
-        return cls(
-            data,
-            backend=backend,
-            voltage_kV=voltage_kV,
-            semiangle_mrad=semiangle_mrad,
-            scan_sampling_A=scan_sampling_A,
-            scan_shape=scan_shape,
-            det_sampling=det_sampling,
-            aberrations=aberrations,
-            rotation_angle_deg=rotation_angle_deg,
-            com_reversed=com_reversed,
-            bf_intensity_threshold=bf_intensity_threshold,
-            bf_radius=bf_radius,
-            source_path=source_path,
-        )
-
     def _prepare_cuda(self):
         """Construct the private CUDA implementation once."""
 
         if self._cuda_session is None:
-            from .backends.cuda.backend import CudaSSBBackend
+            from quantem.gpu.ssb.backends.cuda.backend import CudaSSBBackend
 
             self._cuda_session = CudaSSBBackend(
                 data=self._data,
@@ -1066,9 +1053,9 @@ class SSB:
 
         if self.source_path is None:
             raise ValueError(
-                "save_to requires source_path when SSB.from_array() is used. "
-                "Pass the detector source path so saved results cannot be "
-                "reused for a different array accidentally."
+                "save_to requires source_path when constructing SSB from an array. "
+                "Pass the detector source path to record the array's provenance. "
+                "Array inputs are saved but never reused from disk automatically."
             )
         if not Path(self.source_path).expanduser().exists():
             raise FileNotFoundError(
@@ -1109,7 +1096,7 @@ class SSB:
 
     def _result_signature(
         self,
-        operation: Literal["fit", "reconstruct"],
+        operation: Literal["find_aberrations", "reconstruct"],
         settings: dict[str, object],
     ) -> dict[str, object]:
         """Build the exact scientific identity of one SSB operation."""
@@ -1188,13 +1175,12 @@ class SSB:
         self.best_loss = (
             float(result.loss) if result.loss is not None else float("inf")
         )
-        self.trial_history = [dict(trial) for trial in result.optuna_trials or ()]
         self._reconstruction = result
         return result
 
     def _resolve_rotation_branch(self, result: SSBResult, *, refinement: RefineMethod, tilt: bool,
                                  tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
-        """Keep the CoM direction whose phase has bright atom columns (see ``fit(check_rotation=...)``).
+        """Keep the CoM direction whose phase has bright atom columns (see ``find_aberrations(check_rotation=...)``).
 
         The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the same angle with
         every CoM vector reversed. When the fitted atom columns are dark, the CoM is reversed (the angle stays) and the
@@ -1223,10 +1209,17 @@ class SSB:
         if tilt:
             refit = self._fit_tilt(result.n_trials or 200, refinement, tilt_limit_mrad, seed, False)
         else:
-            backend.reconstruct_result(_aberrations_to_engine(start), compute_loss=False)   # the refit starts here
-            refit = _result_from_engine(backend.fit(trials=0, refinement=refinement or "nelder-mead", search_ranges=None,
-                                                    refine_lock=None, seed=seed, verbose=False))
-            refit.n_trials, refit.optuna_trials = result.n_trials, result.optuna_trials
+            refit = _result_from_engine(backend.fit(
+                aberrations=_aberrations_to_engine(start), trials=0,
+                refinement=refinement or "nelder-mead", search_ranges=None,
+                refine_lock=None, seed=seed, verbose=False,
+            ))
+            refit.n_trials = result.n_trials
+            refit.trial_records = []
+        self._label_trials(refit, search=1)
+        refit.trial_records = list(result.trial_records or ()) + list(refit.trial_records or ())
+        for index, trial in enumerate(refit.trial_records):
+            trial["trial"] = index
         refit.column_sign = column_sign(refit.phase)
         refit.rotation_flipped = True
         if refit.elapsed is not None and result.elapsed is not None:
@@ -1236,7 +1229,7 @@ class SSB:
             draw_column_histogram(refit.phase, f"refit at rotation {angle:.1f}°, {state} · column sign {refit.column_sign:+.2f}", limit=limit)
         if verbose:
             print(f"SSB: refit at rotation {angle:.1f}°, {state}: C10 {refit.aberrations['C10']:+.2f} nm, "
-                  f"column sign {refit.column_sign:+.2f}. fit(check_rotation=False) keeps the rotation you give.")
+                  f"column sign {refit.column_sign:+.2f}. find_aberrations(check_rotation=False) keeps the rotation you give.")
         return refit
 
     def _backend_ready(self) -> bool:
@@ -1251,7 +1244,7 @@ class SSB:
             backend = self._prepare_cuda()
         else:
             if self._mps_backend is None:
-                from .backends.mps.backend import MpsSSBBackend
+                from quantem.gpu.ssb.backends.mps.backend import MpsSSBBackend
 
                 self._mps_backend = MpsSSBBackend(
                     self._data,
@@ -1274,7 +1267,100 @@ class SSB:
             )
         return backend
 
-    def fit(
+    @staticmethod
+    def _label_trials(result: SSBResult, *, search: int) -> None:
+        for index, record in enumerate(result.trial_records or ()):
+            angle, reversed_com = split_rotation(
+                record["params"].pop("rotation_angle_deg", result.physical_rotation_deg)
+            )
+            record.update(trial=index, search=search, rotation_angle_deg=angle,
+                          com_reversed=reversed_com)
+            record.setdefault("stage", "search")
+            record.setdefault("objective", "phase_variance")
+            record.setdefault("tilt_row_mrad", 0.0)
+            record.setdefault("tilt_col_mrad", 0.0)
+            record.setdefault("depth_spread_nm", 0.0)
+
+    def _reconstruct_trials(self, parameters, trials, *, upsample, phase_estimator):
+        """Replay selected records without replacing the current search or correction."""
+        from quantem.gpu.ssb.trials import select_records
+
+        parameters = self._aberration_search if parameters is None else parameters
+        if parameters is None:
+            raise ValueError("Run ssb.find_aberrations() before reconstructing trials.")
+        records = select_records(parameters.trial_records, trials)
+        estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
+        saved_rotation = self.rotation_angle_deg, self.com_reversed
+        if self.backend == "cuda":
+            import cupy as xp
+        else:
+            xp = np
+        waves = []
+        try:
+            for record in records:
+                self.set_rotation(record["rotation_angle_deg"], record["com_reversed"])
+                values = record["params"]
+                phase, _ = self._phase(
+                    {"C10": values["C10_nm"], "C12": values["C12_nm"],
+                     "phi12": math.radians(values["phi12_deg"])},
+                    tilt_mrad=(record["tilt_row_mrad"], record["tilt_col_mrad"]),
+                    depth_spread_nm=record["depth_spread_nm"],
+                    upsampling_factor=upsample, phase_estimator=estimator, compute_loss=False,
+                )
+                # Native mean-phase kernels reuse a scratch buffer. Own each
+                # wave before reconstructing the next trial on the same stream.
+                waves.append(xp.exp(1j * phase))
+        finally:
+            self.set_rotation(*saved_rotation)
+        wave = xp.stack(waves)
+        sampling = np.asarray(self.scan_sampling_A) / upsample
+        sampling = float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
+        return SSBResult(
+            object_wave=wave, backend=self.backend, trial_records=records,
+            voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+            scan_sampling_A=sampling, upsample=upsample, phase_estimator=estimator,
+            amplitude_estimated=False, source_path=self.source_path,
+            metadata={"trial_ids": [record["trial"] for record in records]},
+        )
+
+    def show_trials(self, *, best: int | None = None, last: int | None = None,
+                    first: int | None = None, upsample: int = 1):
+        """Show selected attempts as phase images with a compact parameter table.
+
+        Parameters
+        ----------
+        best, last, first
+            Supply exactly one positive count. ``best`` selects the lowest
+            search loss within the latest recorded search; ``last`` and ``first``
+            select completed attempts in time order. Local refinement is not
+            an Optuna trial and is displayed separately in the final report.
+        upsample
+            Output sampling factor; never reruns the parameter search.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Shared-contrast phase panels, calibrated scale bars and trial table.
+            The figure renders once as a bare notebook expression.
+
+        Examples
+        --------
+        >>> aberrations = ssb.find_aberrations(tilt=True)
+        >>> ssb.show_trials(best=5)
+        >>> ssb.show_trials(last=5)
+        >>> ssb.show_trials(first=5)
+        """
+        from quantem.gpu.ssb.trials import choose_trials, plot_trials
+
+        if self._aberration_search is None:
+            raise ValueError("Run ssb.find_aberrations() before showing trials.")
+        records = choose_trials(self._aberration_search.trial_records, best=best, last=last, first=first)
+        result = self.reconstruct(self._aberration_search,
+                                  trials=[record["trial"] for record in records], upsample=upsample)
+        kind = "Best" if best is not None else "Last" if last is not None else "First"
+        return plot_trials(result, kind)
+
+    def find_aberrations(
         self,
         *,
         tilt: bool = False,
@@ -1306,39 +1392,45 @@ class SSB:
         180 degrees), said in one line, and the fit is repeated there with every aberration flipped in sign. In a notebook the phase histogram is drawn after the fit (and after the
         refit). Near zero (no resolved columns) the rotation is kept. ``check_rotation=False`` keeps the rotation as given.
 
-        Set ``save_to`` to reuse an exact prior result when the detector source,
+        Set ``save_to`` to reuse an exact prior result from ``SSB.open`` when the detector source,
         calibration, backend, physical parameters, and fit settings all match.
         Changed settings recompute automatically. Set ``force=True`` to recompute
-        an otherwise matching result.
+        an otherwise matching result. Direct array inputs are saved but always
+        recomputed: a source path does not identify an array's crop or mutations.
+        ``tilt=True`` requires at least one trial; zero trials are supported only
+        for the standard search, starting from the current session coefficients.
         """
 
         if tilt and (search_ranges is not None or refine_lock is not None):
             raise ValueError("search_ranges and refine_lock apply to the standard fit; tilt=True searches its own ranges.")
         if trials < 0:
             raise ValueError(f"trials must be non-negative, got {trials}.")
+        if tilt and int(trials) == 0:
+            raise ValueError(
+                "tilt=True requires at least one trial; use trials=200, "
+                "or reconstruct() to apply known parameters."
+            )
         if refinement not in {"nelder-mead", None}:
             raise ValueError("refinement must be 'nelder-mead' or None.")
         paths = None
         signature = None
         if save_to is not None:
-            paths = result_paths(save_to, "fit")
+            paths = result_paths(save_to, "find_aberrations")
             signature = self._result_signature(
-                "fit",
+                "find_aberrations",
                 {
                     "trials": int(trials),
                     "refinement": refinement,
                     "search_ranges": search_ranges,
                     "refine_lock": refine_lock,
                     "seed": int(seed),
-                    "starting_aberrations": self._fit_start_aberrations,
-                    "starting_aberrations_explicit": (
-                        self._fit_start_aberrations_explicit
-                    ),
+                    "starting_aberrations": self.aberrations,
+                    "starting_aberrations_explicit": self._aberrations_explicit,
                     **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
                     "check_rotation": bool(check_rotation),
                 },
             )
-            if not force:
+            if not force and self.source_kind != "array":
                 reused = load_result(
                     paths=paths,
                     signature=signature,
@@ -1347,13 +1439,19 @@ class SSB:
                 if reused is not None:
                     if verbose:
                         print(f"Matching SSB result found; loading {paths[0]}")
-                    return self._accept_result(reused)
+                    self._aberration_search = self._accept_result(reused)
+                    self.trial_history = list(reused.trial_records or ())
+                    return reused
             if verbose and any(path.exists() for path in paths):
                 print("Saved SSB settings changed; running fit end to end")
         if tilt:
             result = self._accept_result(self._fit_tilt(int(trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
         else:
             result = self._backend_protocol.fit(
+                aberrations=(
+                    _aberrations_to_engine(self.aberrations)
+                    if self._aberrations_explicit else None
+                ),
                 trials=int(trials),
                 refinement=refinement,
                 search_ranges=_search_ranges_to_engine(search_ranges),
@@ -1362,75 +1460,178 @@ class SSB:
                 verbose=verbose,
             )
             result = self._accept_result(_result_from_engine(result))
+        self._label_trials(result, search=0)
         if check_rotation:
             result = self._accept_result(self._resolve_rotation_branch(
                 result, refinement=refinement, tilt=tilt, tilt_limit_mrad=float(tilt_limit_mrad), seed=int(seed),
                 verbose=verbose))
+        estimator = "phase_of_mean" if self.backend == "cuda" else "mean_phase"
+        displayed = self.reconstruct(result, phase_estimator=estimator, compute_loss=False, force=True)
+        result.object_wave = displayed.object_wave
+        result.phase_estimator = displayed.phase_estimator
+        result.amplitude_estimated = False
+        self._accept_result(result)
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
                 print(f"SSB result saved to {paths[0]}")
+        self._aberration_search = result
+        self.trial_history = list(result.trial_records or ())
         return result
-
-    # Microscope workflow name; keep fit available for existing notebooks.
-    find_aberrations = fit
 
     def reconstruct(
         self,
-        aberrations: dict[str, float] | None = None,
+        parameters: SSBResult | None = None,
         *,
+        aberrations: dict[str, float] | None = None,
+        trials: object = None,
+        upsample: int = 1,
+        phase_estimator: Literal["mean_phase", "phase_of_mean", "complex_wave"] | None = None,
         compute_loss: bool = True,
         save_to: str | Path | None = None,
         force: bool = False,
         verbose: bool = False,
     ) -> SSBResult:
-        """Reconstruct the complex object wave at fixed aberrations.
+        """Reconstruct with fixed correction parameters, without refitting.
 
-        Set ``compute_loss=False`` when only the exact reconstructed object is
-        needed. This skips the separate post-reconstruction loss calculation;
-        it does not change the object wave or phase.
+        Parameters
+        ----------
+        parameters
+            Result of ``find_aberrations``. Carries aberrations, specimen tilt,
+            depth spread, and scan-detector rotation. None uses session values.
+        aberrations
+            Partial coefficient overrides: C10/C12 in nm, phi12 in radians.
+            Unspecified coefficients and sample geometry are preserved.
+        trials
+            Trial IDs from ``parameters.trials.index``. Reconstruct these
+            attempts using their original rotation and sample geometry;
+            return a phase stack without changing the active session.
+        upsample
+            Output factor: 1, 2, 3, 4, or 8. Scan positions and measured
+            diffraction patterns are unchanged. Output pixel size decreases
+            by this factor, preserving the physical field of view.
+        phase_estimator
+            CUDA defaults to ``phase_of_mean`` at every output factor. MPS
+            retains ``mean_phase``. The loss is the native-grid search
+            diagnostic, not a score computed from the displayed phase.
+            ``complex_wave`` explicitly retains amplitude for native, thin-sample
+            reconstruction, including coherent temporal averaging.
+        compute_loss
+            Evaluate diagnostic loss on the native grid, regardless of output
+            factor. False skips this diagnostic without changing the image.
+        save_to
+            Directory or .npz file for the result and correction metadata.
+            Exact saved matches from ``SSB.open`` reload without reconstruction.
+            Direct array inputs always recompute because their crop or values
+            can change without changing the source path.
+        force
+            Recompute even when an exact saved result exists.
+        verbose
+            Print output sampling, shape, correction, and persistence status.
+
+        Returns
+        -------
+        SSBResult
+            Calibrated reconstruction. Upsampled, tilt-aware, and wave-average
+            paths recover phase only: their object wave has unit amplitude,
+            explicitly recorded by ``amplitude_estimated=False``.
+
+        Examples
+        --------
+        >>> aberrations = ssb.find_aberrations(tilt=True)
+        >>> result = ssb.reconstruct(aberrations, upsample=4, save_to="results/4x")
         """
-
-        coefs = (
-            self.aberrations
-            if aberrations is None
-            else _validate_aberrations(aberrations)
-        )
-        paths = None
-        signature = None
+        if type(upsample) is not int or upsample not in (1, 2, 3, 4, 8):
+            raise ValueError("upsample must be 1, 2, 3, 4, or 8.")
+        if phase_estimator not in (None, "mean_phase", "phase_of_mean", "complex_wave"):
+            raise ValueError("phase_estimator must be 'mean_phase', 'phase_of_mean', or 'complex_wave'.")
+        if parameters is not None and not isinstance(parameters, SSBResult):
+            raise TypeError("Pass the result of find_aberrations(), or supply coefficients with aberrations={...}.")
+        if trials is not None:
+            if phase_estimator == "complex_wave":
+                raise ValueError("Trial inspection returns phase images; choose mean_phase or phase_of_mean.")
+            if aberrations is not None or save_to is not None:
+                raise ValueError("Replay trials without coefficient overrides or save_to; save the returned result separately.")
+            return self._reconstruct_trials(parameters, trials, upsample=upsample, phase_estimator=phase_estimator)
+        correction = parameters
+        if correction is not None:
+            coefs = dict(correction.aberrations)
+            tilt = correction.tilt_mrad
+            depth = correction.depth_spread_nm
+            if correction.physical_rotation_deg != self.physical_rotation_deg:
+                self.set_rotation(correction.rotation_angle_deg, correction.com_reversed)
+        else:
+            coefs = dict(self.aberrations)
+            tilt = self.tilt_mrad
+            depth = self.depth_spread_nm
+        coefs = _validate_aberrations({**coefs, **(aberrations or {})})
+        estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
+        if estimator == "complex_wave" and (upsample != 1 or depth or any(tilt or ())):
+            raise ValueError("complex_wave requires upsample=1 and no sample tilt/depth; choose a phase estimator instead.")
+        settings = {
+            "aberrations": coefs, "compute_loss": bool(compute_loss),
+            "upsample": upsample, "phase_estimator": estimator,
+            "tilt_mrad": tilt, "depth_spread_nm": depth,
+        }
+        paths = signature = None
         if save_to is not None:
             paths = result_paths(save_to, "reconstruct")
-            signature = self._result_signature(
-                "reconstruct",
-                {"aberrations": coefs, "compute_loss": bool(compute_loss)},
-            )
-            if not force:
-                reused = load_result(
-                    paths=paths,
-                    signature=signature,
-                    backend=self.backend,
-                )
+            signature = self._result_signature("reconstruct", settings)
+            if not force and self.source_kind != "array":
+                reused = load_result(paths=paths, signature=signature, backend=self.backend)
                 if reused is not None:
                     if verbose:
-                        print(f"Matching SSB result found; loading {paths[0]}")
+                        print(f"Loading matching {upsample}x SSB result: {paths[0]}")
                     return self._accept_result(reused)
-            if verbose and any(path.exists() for path in paths):
-                print("Saved SSB settings changed; running reconstruction end to end")
 
-        if (
-            not force
-            and save_to is None
-            and aberrations is None
-            and self._reconstruction is not None
-            and (not compute_loss or self._reconstruction.loss is not None)
-        ):
-            result = self._reconstruction
+        if verbose:
+            rows, cols = self.scan_shape
+            print(f"Reconstructing {upsample}x: {rows * upsample} x {cols * upsample}; "
+                  f"{estimator}; tilt {tilt or (0.0, 0.0)} mrad; "
+                  f"depth spread {depth or 0.0:.3f} nm; loss at native 1x")
+        cached = self._reconstruction
+        if (not force and save_to is None and parameters is None and aberrations is None
+                and cached is not None and cached.upsample == upsample
+                and cached.phase_estimator == estimator
+                and cached.physical_rotation_deg == self.physical_rotation_deg
+                and cached.aberrations == coefs
+                and cached.tilt_mrad == tilt
+                and cached.depth_spread_nm == depth
+                and (not compute_loss or cached.loss is not None)):
+            return cached
+        if estimator == "complex_wave":
+            result = _result_from_engine(self._backend_protocol.reconstruct_result(
+                _aberrations_to_engine(coefs), compute_loss=compute_loss,
+            ))
+            result.phase_estimator = estimator
+            result.amplitude_estimated = True
+            result = self._accept_result(result)
+            if paths is not None and signature is not None:
+                result = self._save_result(result, paths=paths, signature=signature)
+            return result
+        started = time.perf_counter()
+        phase, loss = self._phase(
+            coefs, upsampling_factor=upsample, phase_estimator=estimator,
+            tilt_mrad=tilt or (0.0, 0.0), depth_spread_nm=depth or 0.0,
+            compute_loss=compute_loss,
+        )
+        if self.backend == "cuda":
+            import cupy as cp
+            wave = cp.exp(1j * phase)
         else:
-            result = self._backend_protocol.reconstruct_result(
-                _aberrations_to_engine(coefs),
-                compute_loss=compute_loss,
-            )
-            result = self._accept_result(_result_from_engine(result))
+            wave = np.exp(1j * phase)
+        sampling = np.asarray(self.scan_sampling_A) / upsample
+        sampling = float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
+        result = SSBResult(
+            object_wave=wave, backend=self.backend, aberrations=dict(coefs),
+            tilt_mrad=tilt, depth_spread_nm=depth,
+            rotation_angle_deg=self.rotation_angle_deg, com_reversed=self.com_reversed,
+            loss=loss, elapsed=time.perf_counter() - started, num_bf=self.num_bf,
+            voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+            scan_sampling_A=sampling, upsample=upsample,
+            phase_estimator=estimator, amplitude_estimated=False,
+        )
+        result = self._accept_result(result)
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
@@ -1452,13 +1653,13 @@ class SSB:
     ) -> tuple[np.ndarray, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
 
-        The returned array has the full selected output resolution. "Preview"
+        The returned NumPy array has the full selected output resolution. "Preview"
         means it is not saved and does not replace the fitted calibration or
         stored result; it does not imply a lower-quality reconstruction.
 
         ``aberrations`` C10 / C12 in nm, phi12 in rad. A positive ``depth_spread_nm`` switches to the thick-sample model:
         each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``tilt_mrad``
-        (row, col; scan frame), as fitted by ``fit(tilt=True)``. With no depth spread the tilt has no effect and this is
+        (row, col; scan frame), as fitted by ``find_aberrations(tilt=True)``. With no depth spread the tilt has no effect and this is
         standard SSB. CUDA and MPS backends.
 
         ``upsampling_factor`` selects 1, 2, 3, 4, or 8 times finer output sampling.
@@ -1480,7 +1681,7 @@ class SSB:
         --------
         Fit all correction parameters once, then change only output sampling:
 
-        >>> fitted = ssb.fit(tilt=True)  # native-grid joint fit
+        >>> fitted = ssb.find_aberrations(tilt=True)  # native-grid joint fit
         >>> phase, loss = ssb.preview(
         ...     fitted.aberrations, tilt_mrad=fitted.tilt_mrad,
         ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
@@ -1495,6 +1696,34 @@ class SSB:
         ... )
         """
 
+        phase, loss = self._phase(
+            aberrations, compute_loss=compute_loss,
+            upsampling_factor=upsampling_factor,
+            higher_order_magnitudes=higher_order_magnitudes,
+            higher_order_angles=higher_order_angles, context=context,
+            tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
+            phase_estimator=phase_estimator,
+        )
+        if self.backend == "cuda":
+            import cupy as cp
+
+            phase = cp.asnumpy(phase)
+        return np.asarray(phase, dtype=np.float32), loss
+
+    def _phase(
+        self,
+        aberrations: dict[str, float],
+        *,
+        compute_loss: bool = True,
+        upsampling_factor: int = 1,
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
+        context: AbstractContextManager | None = None,
+        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        depth_spread_nm: float = 0.0,
+        phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
+    ) -> tuple[object, float | None]:
+        """Compute the shared phase without exporting CUDA arrays to the host."""
         coefs = _aberrations_to_engine(_validate_aberrations(aberrations))
         if phase_estimator is None:
             # Keep unsupported native backends/higher-order paths available.
@@ -1601,7 +1830,7 @@ class SSB:
 
     @property
     def supports_tilt(self) -> bool:
-        """True when this session's backend implements the thick-sample model (``fit(tilt=True)``, ``preview(tilt_mrad=...)``)."""
+        """True when this session's backend implements the thick-sample model (``find_aberrations(tilt=True)``, ``preview(tilt_mrad=...)``)."""
         return hasattr(self._backend_protocol, "fit_sample")
 
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
@@ -1615,17 +1844,28 @@ class SSB:
         aberrations = _aberrations_from_engine({key: float(fit[key]) for key in ("C10", "C12", "phi12")})
         tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / _ENGINE_PER_NM
-        phase, loss = self.preview(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
+        phase, loss = self._phase(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
                                    phase_estimator="mean_phase")
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         if self.backend == "cuda":
             import cupy as cp
 
-            object_wave = cp.exp(1j * cp.asarray(phase))
+            object_wave = cp.exp(1j * phase)
         else:
             object_wave = np.exp(1j * np.asarray(phase))
-        return SSBResult(object_wave=object_wave, backend=self.backend, aberrations=aberrations, tilt_mrad=tilt_mrad,
-                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]),
+        records = []
+        for trial in fit["trial_records"]:
+            values = trial["params"]
+            records.append({
+                "number": trial["number"], "loss": trial["loss"],
+                "objective": "negative_thick_agreement", "band_inv_A": fit["band_inv_A"],
+                "params": {"C10_nm": values["C10"] / 10, "C12_nm": values["C12"] / 10,
+                           "phi12_deg": math.degrees(values["phi12"])},
+                "tilt_row_mrad": values["tilt_row_mrad"], "tilt_col_mrad": values["tilt_col_mrad"],
+                "depth_spread_nm": values["thickness"] / 10,
+            })
+        return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, tilt_mrad=tilt_mrad,
+                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]), amplitude_estimated=False, phase_estimator="mean_phase",
                          rotation_angle_deg=self.rotation_angle_deg, com_reversed=self.com_reversed,
                          loss=None if loss is None else float(loss),
                          elapsed=time.perf_counter() - started, n_trials=trials, num_bf=self.num_bf,

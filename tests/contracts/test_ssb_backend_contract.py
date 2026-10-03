@@ -127,10 +127,6 @@ class _Backend:
     def reconstruct_full_with_loss(self, mags_m, angles_rad):
         return self.reconstruct_full(mags_m, angles_rad), 0.0
 
-    @staticmethod
-    def phase_to_numpy(phase) -> np.ndarray:
-        return np.asarray(phase, dtype=np.float32)
-
     def browser_state(self):
         raise NotImplementedError
 
@@ -145,7 +141,7 @@ class _Backend:
 
 
 def _selection():
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
 
     return BrightfieldDisk(
         rows=np.asarray([1], dtype=np.int32),
@@ -320,8 +316,8 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
         "scan_sampling_A": 1.0,
     }
 
-    default = workflow.SSB.from_array(data, **common)
-    explicit = workflow.SSB.from_array(
+    default = workflow.SSB(data, **common)
+    explicit = workflow.SSB(
         data,
         aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0},
         **common,
@@ -358,8 +354,8 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
 
 def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
     """Logical BF membership and nonzero probe support are distinct evidence."""
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
-    from quantem.gpu.ssb.backends.protocol import SSBExportState
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
+    from quantem.gpu.ssb.backends.contract import SSBExportState
 
     selection = BrightfieldDisk(
         rows=np.asarray([0, 1, 2], dtype=np.int32),

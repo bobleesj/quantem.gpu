@@ -1,5 +1,9 @@
 """Bounded precision conversion with persistent scientific error measurements."""
 
+from quantem.core.datastructures import Dataset
+
+from quantem.gpu.io.models import create_dataset
+
 import json
 import math
 import sys
@@ -144,12 +148,12 @@ class _Source:
             )
 
     def _seal(self, path):
-        from .load import _file_source_signature
+        from .readiness import _file_source_signature
 
         self.signatures[str(path)] = _file_source_signature(path)
 
     def check(self):
-        from .load import _file_source_signature
+        from .readiness import _file_source_signature
 
         if any(_file_source_signature(p) != s for p, s in self.signatures.items()):
             raise RuntimeError(
@@ -447,7 +451,6 @@ def load_precision(
     backend="cuda",
 ):
     """Load complete packed precision with bounded conversion and error scratch."""
-    from .models import FourDSTEMData
 
     if backend == "mps":
         from .backends.mps.precision import PrecisionSource, pack
@@ -558,7 +561,7 @@ def load_precision(
             )
             if verbose:
                 print_report(report, shape, resident.nbytes, saved=reuse)
-            return FourDSTEMData(resident, metadata)
+            return create_dataset(resident, metadata)
         except BaseException:
             for chunk in chunks:
                 chunk.release()
@@ -584,7 +587,6 @@ def save_precision(
 ):
     """Save approximate intensities in bounded GPU-compressed HDF5 blocks."""
     from .backends import resolve_backend
-    from .models import FourDSTEMData
     from .save import H5Writer, SaveResult, wait_for_saves
 
     backend = resolve_backend(backend)
@@ -609,7 +611,7 @@ def save_precision(
             "Converted intensities are not raw detector counts; pass calibration through metadata instead of source_master."
         )
     metadata = dict(metadata or {})
-    if isinstance(data, FourDSTEMData):
+    if isinstance(data, Dataset):
         metadata = {**data.metadata, **metadata}
         payload = data.data
     else:
@@ -872,7 +874,6 @@ def _calibrated_blocks(source, scan_region, detector_region):
 
 def _load_regional(source, scan_region, detector_region, verbose, pack, resident_type):
     """Convert each generated or loaded region once and retain calibrated codes."""
-    from .models import FourDSTEMData
 
     r0, r1, c0, c1 = scan_region or (0, source.shape[0], 0, source.shape[1])
     d0, d1, e0, e1 = detector_region or (0, source.shape[2], 0, source.shape[3])
@@ -933,7 +934,7 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
         )
         if verbose:
             print_report(report, shape, resident.nbytes, saved=bool(source.saved))
-        return FourDSTEMData(resident, metadata)
+        return create_dataset(resident, metadata)
     except BaseException:
         for chunk in chunks:
             chunk.release()

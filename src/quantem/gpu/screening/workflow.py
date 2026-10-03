@@ -1083,7 +1083,7 @@ def prepare(
     plan_dtype = (
         _metadata_dtype(metadata, dtype)
         if resolved_backend == "mps"
-        else _screening_output_dtype(dtype)
+        else np.result_type(_metadata_dtype(metadata, dtype), _screening_output_dtype(dtype))
     )
     plan = _memory_plan_for_shapes(
         scan_shape,
@@ -1096,7 +1096,7 @@ def prepare(
     elif (
         resolved_backend == "cuda"
         and int(sample_positions) == 0
-        and plan_dtype == np.dtype(np.uint16)
+        and _screening_output_dtype(dtype) == np.dtype(np.uint16)
     ):
         from ._cuda import _exact_cuda_memory_plan
 

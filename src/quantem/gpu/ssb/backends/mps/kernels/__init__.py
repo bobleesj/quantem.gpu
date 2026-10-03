@@ -1,10 +1,10 @@
 """Deterministic fixed-size MPS/Metal SSB kernel registry."""
 
-from .common import MPSFFTConfig
-from .fft128 import CONFIG as FFT128
-from .fft256 import CONFIG as FFT256
-from .fft512 import CONFIG as FFT512
-from .fft1024 import CONFIG as FFT1024
+from quantem.gpu.ssb.backends.mps.kernels.common import MPSFFTConfig
+from quantem.gpu.ssb.backends.mps.kernels.fft128 import CONFIG as FFT128
+from quantem.gpu.ssb.backends.mps.kernels.fft256 import CONFIG as FFT256
+from quantem.gpu.ssb.backends.mps.kernels.fft512 import CONFIG as FFT512
+from quantem.gpu.ssb.backends.mps.kernels.fft1024 import CONFIG as FFT1024
 
 
 MPS_FFT_CONFIGS: dict[int, MPSFFTConfig] = {

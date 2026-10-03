@@ -1,5 +1,7 @@
 """Portable float32 bit-lane residents with bounded accelerator decoding."""
 
+from quantem.gpu.io.models import create_dataset
+
 import base64
 import copy
 from contextlib import nullcontext
@@ -357,7 +359,6 @@ def load_float_ans(
     device: int | str | None = None,
 ):
     """Authenticate and upload encoded chunks; never expand a complete source."""
-    from .models import FourDSTEMData
 
     started = time.perf_counter()
     source = FloatANSResident(header, backend, device)
@@ -473,7 +474,7 @@ def load_float_ans(
                 "verified_encoded_bytes": header["bytes"],
             },
         )
-        return FourDSTEMData(source, metadata)
+        return create_dataset(source, metadata)
     except BaseException:
         if backend == "mps":
             from .backends.mps.packed import _release

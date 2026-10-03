@@ -10,13 +10,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
-import gc
 import hashlib
 import json
 import math
 import os
 import platform
-import statistics
 import sys
 import time
 from pathlib import Path
@@ -274,7 +272,7 @@ def main() -> None:
             "wall_seconds": wall,
             "elapsed_seconds": float(result.elapsed),
             "timings": {k: float(v) for k, v in result.timings.items()},
-            "records": len(result.optuna_trials),
+            "records": len(result.trial_records),
             "refine_nfev": int(result.refine_nfev),
             "aberrations": {k: float(v) for k, v in result.aberrations.items()},
             "loss": float(result.loss),
@@ -283,7 +281,7 @@ def main() -> None:
             "peak_active_bytes": int(mx.get_peak_memory()),
             "evals_total": counter.eval_calls,
             "evals_per_objective": (
-                counter.eval_calls / max(1, len(result.optuna_trials) + int(result.refine_nfev))
+                counter.eval_calls / max(1, len(result.trial_records) + int(result.refine_nfev))
             ),
             "objective_calls": {
                 "n": len(calls),

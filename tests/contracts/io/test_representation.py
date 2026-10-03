@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from quantem.gpu.io.models import create_dataset
+
 import json
 from importlib import import_module
 from pathlib import Path
@@ -48,7 +50,7 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
     monkeypatch.setattr(
         load_module,
         "_load",
-        lambda *args, **kwargs: load_module.LoadResult(
+        lambda *args, **kwargs: create_dataset(
             values,
             {"backend": "cpu", "source_dtype": "uint16"},
         ),
@@ -61,8 +63,8 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
         verbose=False,
     )
 
-    assert isinstance(loaded, io.FourDSTEMData)
-    assert loaded.representation is io.DataRepresentation.DENSE
+    assert isinstance(loaded, io.Dataset4dstem)
+    assert loaded.representation == io.DataRepresentation.DENSE
     assert loaded.residency == "host"
     assert loaded.shape == (2, 3, 4, 5)
     assert loaded.dtype == np.dtype("uint16")
@@ -142,7 +144,7 @@ def test_detector_bin_is_the_canonical_public_spelling(monkeypatch) -> None:
 
     def fake_load(*args, **kwargs):
         calls.update(kwargs)
-        return load_module.LoadResult(
+        return create_dataset(
             np.zeros((1, 1, 2, 2), dtype=np.uint16),
             {"backend": "cpu"},
         )
@@ -160,41 +162,28 @@ def test_detector_bin_is_the_canonical_public_spelling(monkeypatch) -> None:
     assert calls["det_bin"] == 4
 
 
-def test_conflicting_detector_bin_spellings_fail_closed(monkeypatch) -> None:
-    """A deprecated alias cannot silently override the canonical parameter."""
-    load_module = import_module("quantem.gpu.io.load")
-    monkeypatch.setattr(
-        load_module,
-        "_load",
-        lambda *args, **kwargs: load_module.LoadResult(np.zeros((1, 1)), {}),
-    )
-
-    with pytest.raises(ValueError, match="cannot request different bin factors"):
-        io.load(
-            "ordinary-master.h5",
-            backend="cpu",
-            detector_bin=2,
-            det_bin=4,
-            verbose=False,
-        )
+def test_retired_detector_bin_spelling_is_not_supported() -> None:
+    """The public loader accepts only the documented detector_bin spelling."""
+    with pytest.raises(TypeError, match="unexpected keyword argument 'det_bin'"):
+        io.load("ordinary-master.h5", det_bin=4)
 
 
 def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
     load_module = import_module("quantem.gpu.io.load")
     loaded = load_module._record_dense_representation(
-        io.FourDSTEMData(
+        create_dataset(
             np.asarray([255], dtype=np.uint8),
             {"source_dtype": "uint16", "backend": "cpu"},
         )
     )
     assert not loaded.lossless
-    assert loaded.representation is io.DataRepresentation.DENSE
+    assert loaded.representation == io.DataRepresentation.DENSE
 
 
 def test_float64_result_does_not_claim_exact_uint64_counts() -> None:
     load_module = import_module("quantem.gpu.io.load")
     loaded = load_module._record_dense_representation(
-        io.FourDSTEMData(
+        create_dataset(
             np.asarray([2**60 + 1], dtype=np.float64),
             {"source_dtype": "uint64", "backend": "cpu"},
         )
@@ -267,3 +256,12 @@ def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
     assert loaded.dtype == np.dtype("uint16")
     assert loaded.lossless
     assert loaded.logical_bytes == loaded.resident_bytes == counts.nbytes
+
+
+def test_io_exposes_only_the_current_data_type() -> None:
+    from quantem.gpu.io import models
+
+    assert io.Dataset4dstem is models.Dataset4dstem
+    assert not hasattr(io, "LoadResult")
+    assert not hasattr(models, "LoadResult")
+    assert not hasattr(import_module("quantem.gpu.io.load"), "LoadResult")

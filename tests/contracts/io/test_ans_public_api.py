@@ -1,6 +1,7 @@
 """Public exact file round trips and honest unsupported conversion directions."""
 
-import hashlib
+from quantem.gpu.io.models import create_dataset
+
 
 import numpy as np
 import pytest
@@ -53,7 +54,7 @@ def test_failed_conversion_publication_releases_output_not_source():
         def release(self):
             raise AssertionError("caller-owned input must not be released")
 
-    loaded = io.FourDSTEMData(Source(), {"representation": "encoded"})
+    loaded = create_dataset(Source(), {"representation": "encoded"})
     with pytest.raises(RuntimeError, match="publication failure"):
         loaded.to_representation("packed")
     assert output.released

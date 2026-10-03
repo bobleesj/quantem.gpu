@@ -289,7 +289,7 @@ def _service(
     class FakeSession:
         source_dtype = "uint8"
 
-        def fit(
+        def find_aberrations(
             self,
             *,
             trials,
@@ -323,7 +323,7 @@ def _service(
                 loss=0.04,
                 timings={"optuna_seconds": 0.2},
                 n_trials=trials,
-                optuna_trials=history,
+                trial_records=history,
             )
 
         def set_rotation(self, value):
@@ -1654,7 +1654,7 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
         def __exit__(self, *_args):
             closed.append(True)
 
-        def reconstruct(self, _aberrations, *, compute_loss, force=False):
+        def reconstruct(self, aberrations, *, compute_loss, force=False):
             assert compute_loss is True
             assert force is False
             return SimpleNamespace(
@@ -1706,7 +1706,7 @@ def test_mps_session_closes_and_server_does_not_claim_loopback_transfer(
     assert result["executedDevice"]["implementationRevision"] == "test-revision"
 
     class FailingSession(FakeSession):
-        def reconstruct(self, _aberrations, *, compute_loss, force=False):
+        def reconstruct(self, aberrations, *, compute_loss, force=False):
             raise RuntimeError("opaque MPS stage failed")
 
     monkeypatch.setattr(

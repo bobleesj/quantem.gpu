@@ -1,7 +1,6 @@
 """Portable phase validation is independent of renderer and file paths."""
 import copy
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -75,3 +74,43 @@ def test_real_pair_validation(tmp_path):
     (tmp_path / "phase.npy").unlink()
     with pytest.raises(FileNotFoundError):
         read_result(manifest)
+
+
+def test_numbered_exports_respect_selected_output_folder(tmp_path):
+    """Repeated screening stays in its chosen output tree and preserves counts."""
+    import h5py
+    from quantem.gpu.io.ssb_result import export_result
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    master, member = raw / "gold_master.h5", raw / "gold_data.h5"
+    with h5py.File(member, "w") as handle:
+        handle["data"] = np.arange(16, dtype=np.uint16)
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink(member.name, "data")
+    raw_bytes = {p.name: p.read_bytes() for p in raw.iterdir()}
+    output_folder = tmp_path / "selected/live/screen"
+    run = output_folder / "gold"
+    run.mkdir(parents=True)
+    phase = np.array([[-0., -1.25], [3.5, 1e-20]], dtype=np.float32)
+    np.save(run / "ssb_phase.npy", phase)
+    config = {"source_master": str(master), "computed": {
+        "bf_center": [3, 4], "bf_radius": 5,
+        "ssb": {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": .25,
+                "rotation_angle_deg": 12, "aberration_unit": "nm",
+                "aberrations": {"C10": 7, "C12": 2, "phi12": .1}}}}
+    (run / "config.json").write_text(json.dumps(config))
+    first = export_result(run, master, output_folder=output_folder)
+    assert first == output_folder / "gold_master/ssb.json"
+    assert export_result(run, master, output_folder=output_folder) == first
+    assert read_result(first)[1].tobytes() == phase.tobytes()
+    np.save(run / "ssb_phase.npy", phase + 1)
+    second = export_result(run, master, output_folder=output_folder)
+    assert second == output_folder / "gold_master-02/ssb.json"
+    assert export_result(run, master, output_folder=output_folder) == second
+    assert read_result(first)[1].tobytes() == phase.tobytes()
+    assert read_result(second)[1].tobytes() == (phase + 1).tobytes()
+    assert {p.name: p.read_bytes() for p in raw.iterdir()} == raw_bytes
+    with pytest.raises(ValueError, match="either an output filename or output_folder"):
+        export_result(run, master, tmp_path / "conflict.json", output_folder=output_folder)
+    assert not (tmp_path / "conflict.json").exists()

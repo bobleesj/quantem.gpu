@@ -5,20 +5,18 @@ reuse calibrated SSB parameters, reconstruct each frame's complex object wave,
 apply known scan-coordinate drift as a Fourier phase ramp, and average the
 aligned object waves on the GPU.
 """
-from __future__ import annotations
 
 import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import cupy as cp
 
 from quantem.gpu.ssb.results import SSBResult
 
-if TYPE_CHECKING:
-    from quantem.gpu.ssb.workflow import SSB
+from quantem.gpu.ssb.workflow import SSB
 
 PhaseReference = Literal["first", "none"]
 
@@ -241,7 +239,7 @@ def join_object_waves(
 
 
 def _reconstruct_objects_from_ssb_frames(
-    ssb_frames: Sequence["SSB"],
+    ssb_frames: Sequence[SSB],
     *,
     aberrations: dict[str, float] | None,
     rotation_angle_deg: float | None,
@@ -253,12 +251,12 @@ def _reconstruct_objects_from_ssb_frames(
             coefs.update(aberrations)
         if rotation_angle_deg is not None:
             ssb.set_rotation(rotation_angle_deg)
-        objects.append(cp.asarray(ssb.reconstruct(coefs).object_wave))
+        objects.append(cp.asarray(ssb.reconstruct(aberrations=coefs, phase_estimator="complex_wave").object_wave))
     return objects
 
 
 def ssb_time_series(
-    ssb_frames: Sequence["SSB"],
+    ssb_frames: Sequence[SSB],
     shifts: Sequence[Sequence[float]] | cp.ndarray | None = None,
     *,
     weights: Sequence[float] | cp.ndarray | None = None,
@@ -334,7 +332,7 @@ def ssb_time_series(
 
 
 def ssb_time_average(
-    ssb_frames: Sequence["SSB"],
+    ssb_frames: Sequence[SSB],
     shifts: Sequence[Sequence[float]] | cp.ndarray | None = None,
     *,
     weights: Sequence[float] | cp.ndarray | None = None,

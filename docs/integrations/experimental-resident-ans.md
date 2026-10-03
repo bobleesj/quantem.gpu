@@ -92,7 +92,7 @@ images = session.masked_sums_exact(masks)  # (mask, acquisition, scan_row, scan_
 
 All files must declare the same complete scan and detector geometry. The series
 adapter overlaps independent Metal queues and returns only the requested point
-patterns or detector products; each `FourDSTEMData` owner remains caller-owned
+patterns or detector products; each `Dataset4dstem` owner remains caller-owned
 and must be closed after the session is finished. This is the supported
 multi-file ANS API, not a claim that arbitrary HDF5 folders are encoded as ANS
 automatically.

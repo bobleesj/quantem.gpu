@@ -528,11 +528,8 @@ class LazyMPSDatasets:
         ``ready_only`` is true, partially written masters are ignored until their
         linked data files are present.
         """
-        from quantem.gpu.io.load import (
-            discover_masters,
-            inspect_master_readiness,
-            is_master_ready,
-        )
+        from quantem.gpu.io.load import discover_masters
+        from quantem.gpu.io.readiness import inspect_master_readiness
 
         scan_shape = (
             tuple(int(value) for value in scan_shape)
@@ -621,7 +618,7 @@ class LazyMPSDatasets:
                             "unchanged completion signature on the next poll."
                         )
                         continue
-                elif ready_only and not is_master_ready(master):
+                elif ready_only and not inspect_master_readiness(master).ready:
                     waiting.append(
                         f"{_master_name(master)}: waiting for file completion."
                     )
@@ -877,17 +874,18 @@ def load_mps_datasets(
              if m.endswith("_master.h5") else os.path.basename(m) for m in masters]
 
     def _decode(path):
-        # load() returns a LoadResult(data, meta); data is the MPSChunked4DSTEM
+        # load() returns a Dataset4dstem(data, meta); data is the MPSChunked4DSTEM
         # (chunks + metadata). Wrap in the compute container so MultiChunkedFrames
         # sees a uniform ChunkedFrames.
-        data, _meta = load(
+        loaded = load(
             path,
             backend="mps",
             scan_shape=scan_shape,
-            det_bin=det_bin,
+            detector_bin=det_bin,
             verbose=False,
             dtype=output_dtype,
         )
+        data = loaded.data
         row_prefix = bool(getattr(data, "row_prefix", False)
                           or getattr(data, "metadata", {}).get("row_prefix", False))
         return ChunkedFrames(data, row_prefix=row_prefix)

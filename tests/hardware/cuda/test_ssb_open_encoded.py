@@ -44,7 +44,7 @@ def test_open_bright_field_crop_matches_full_detector(det_sampling):
     cropped.close()
     del cropped
     cp.get_default_memory_pool().free_all_blocks()
-    full = SSB.from_array(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
+    full = SSB(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
     assert crop_bf == full.num_bf
     for factor in factors:
         full_phase, full_loss = full.preview(aberrations, upsampling_factor=factor)
@@ -59,6 +59,32 @@ def _correlation(first: np.ndarray, second: np.ndarray) -> float:
     first = first - first.mean()
     second = second - second.mean()
     return float((first * second).sum() / np.sqrt((first * first).sum() * (second * second).sum()))
+
+
+def test_open_flattened_rectangular_scan_uses_explicit_shape(tmp_path):
+    """Pass the raster shape to encoded loading before extracting the BF disk."""
+    import h5py
+    import hdf5plugin
+
+    from quantem.gpu import SSB
+
+    values = np.zeros((3, 4, 8, 8), dtype=np.uint16)
+    values[:, :, 3:6, 3:6] = np.arange(1, 13).reshape(3, 4, 1, 1)
+    source = tmp_path / "rectangular_master.h5"
+    with h5py.File(source, "w") as handle:
+        handle.create_dataset(
+            "entry/data/data", data=values.reshape(12, 8, 8),
+            chunks=(1, 8, 8), **hdf5plugin.Bitshuffle(cname="lz4"),
+        )
+    with SSB.open(
+        str(source), backend="cuda", scan_shape=(3, 4),
+        voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.5,
+        det_sampling=1.0,
+    ) as session:
+        assert session._data.shape[:2] == (3, 4)
+        np.testing.assert_array_equal(
+            cp.asnumpy(session._data.sum(axis=(2, 3))), values.sum(axis=(2, 3)),
+        )
 
 
 def test_preview_is_in_the_same_scan_order_as_the_result():
@@ -79,7 +105,7 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
 
     aberrations = {"C10": 16.2, "C12": 4.15, "phi12": 0.33}
     session = SSB.open(str(SOURCE), **SETTINGS)
-    result = cp.asnumpy(session.reconstruct(aberrations).phase).astype(np.float64)
+    result = cp.asnumpy(session.reconstruct(aberrations=aberrations).phase).astype(np.float64)
     previews = {
         "chunked with loss": session.preview(aberrations)[0],
         "chunked without loss": session.preview(aberrations, compute_loss=False)[0],

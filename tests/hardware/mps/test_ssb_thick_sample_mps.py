@@ -28,7 +28,7 @@ def _require_mps():
 def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
-    return SSB.from_array(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
+    return SSB(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
                           rotation_angle_deg=0.0)
 
 
@@ -50,7 +50,7 @@ def test_fit_tilt_recovers_known_tilt(name, tilt_mrad):
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
-    result = ssb.fit(tilt=True, verbose=False)
+    result = ssb.find_aberrations(tilt=True, verbose=False)
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
     assert abs(result.tilt_mrad[0] - tilt_mrad[0]) < 1.0
     assert abs(result.tilt_mrad[1] - tilt_mrad[1]) < 1.0
@@ -71,7 +71,7 @@ def _poisson_disk_session():
 def test_batch_fit_matches_reference_fit():
     """The fused Metal batch objective (half-plane band, shared geometry, skipped non-overlap pairs) equals ``thick_fit``."""
     _require_mps()
-    from quantem.gpu.ssb.backends.mps._thick_sample import thick_fit, thick_fit_batch
+    from quantem.gpu.ssb.backends.mps.thick_sample import thick_fit, thick_fit_batch
 
     ssb = _poisson_disk_session()
     backend = ssb._backend_protocol
@@ -89,7 +89,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     """Thickness below the sinc cutoff gives every weight exactly 1: the thick path must reproduce standard MPS SSB."""
     _require_mps()
     ssb = _poisson_disk_session()
-    ssb.reconstruct({"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
     for aberrations in ({"C10": 30.0, "C12": 5.0, "phi12": 0.3}, {"C10": -40.0, "C12": 12.0, "phi12": -1.0}):
         standard, standard_loss = ssb.preview(aberrations)
         thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
@@ -106,7 +106,7 @@ def test_fused_thick_preview_matches_reference_model():
     alone puts both paths 2.5e-6 (reference) to 7e-6 (fused) from float64, on phases of ~5e-3.
     """
     _require_mps()
-    from quantem.gpu.ssb.backends.mps._thick_sample import reconstruct_thick, reconstruct_thick_reference
+    from quantem.gpu.ssb.backends.mps.thick_sample import reconstruct_thick, reconstruct_thick_reference
 
     ssb = _poisson_disk_session()
     backend = ssb._backend_protocol

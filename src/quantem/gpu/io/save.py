@@ -1,5 +1,5 @@
 """CUDA bitshuffle+LZ4 saving for 4D-STEM HDF5 files."""
-from __future__ import annotations
+from quantem.core.datastructures import Dataset
 
 import queue
 import threading
@@ -1839,7 +1839,7 @@ def save(
     compression: str = "auto",
     compression_level: int = 0,
 ) -> SaveResult:
-    """Save 4D-STEM data as an Arina-style bitshuffle+LZ4 HDF5 set.
+    """Save encoded acquisitions as QEM or array results as HDF5.
 
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
     HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
@@ -1851,12 +1851,12 @@ def save(
     The HDF5-specific options and discussion below do not apply to ``.qem``.
     ``compression="auto"`` preserves the existing default encoding: ANS for
     QuantEM files and bitshuffle/LZ4 for Arina files.
-    ``io.load`` detects the format from the file, not its extension; select only
-    the desired in-memory ``representation``::
+    A ``.qem`` destination selects QuantEM format automatically. Reopening
+    preserves the encoded workflow::
 
-        with io.load("acquisition.h5", backend="mps", representation="encoded") as acquisition:
-            io.save("acquisition.qem", acquisition, format="quantem", backend="mps")
-        # Later: io.load("acquisition.qem", representation="packed", backend="mps")
+        with io.load("acquisition.h5") as acquisition:
+            io.save("acquisition.qem", acquisition)
+        # Later: io.load("acquisition.qem")
 
     Output: a master HDF5 file pointing to ``*_data_NNNNNN.h5`` external files
     with per-frame HDF5 chunks. Matches Arina row/column native chunking. The
@@ -1867,79 +1867,29 @@ def save(
     ``format="arina"`` names the acquisition/layout and writes HDF5 files;
     compression is selected separately.
 
-    Drift-correction recipe (the canonical use case)
-    ------------------------------------------------
-    Bilinear merging of a 0°/+90° pair produces a float32 4D-STEM where every
-    detector cell holds a weighted average of two integer counts. Lossless
-    float32 + LZ4 compresses these fractional values to ~2× ratio (huge files,
-    slow). Quantizing back to ``uint16`` recovers the integer-count statistics
-    of the underlying detector, gives 10× better compression, runs ~4× faster,
-    and keeps max error 0.5 counts which is far below the detector's own
-    Poisson noise (~√N counts at signal level N)::
-
-        # Drift-corrected merged float32 → save as uint16 (recommended):
-        save("corrected_master.h5", merged_f32,
-             scan_shape=(512, 512),
-             dtype="u16")            # ← the single line that matters
-
-    Float→integer casts use ``cp.rint`` (round-half-to-even) followed by
-    ``cp.clip`` to the dtype range, NOT truncation. Max error is exactly half
-    a count for any value in range; truncation would double it.
-
-    Performance - a 512^2 x 192^2 float32 bilinear-merged stack
-    -----------------------------------------------------------
-    Measured on RTX PRO 6000 Blackwell (workstation), real bilinear-merged data:
-
-        =========================== ============= ============= ====== ========
-        dtype                       wall          file size     ratio  GB/s in
-        =========================== ============= ============= ====== ========
-        ``float32`` (lossless)      ~49 s         19.5 GB       1.98x  0.78
-        ``uint16`` (round-quantize) ~41 s         3.4 GB        11.24x 0.94
-        =========================== ============= ============= ====== ========
-
-    For smaller (256²) scans the wall scales linearly. Pure synthetic data
-    compresses 22× rather than 2× because random integer counts have heavy
-    bit-level repetition; bilinear-merged real data is the realistic ceiling.
-
-    Quality — what "max_err = 0.5 counts" means
-    -------------------------------------------
-    The detector measures integer photon counts. Poisson noise floor at signal
-    level N counts is √N, so:
-
-        =========== =============== =====================================
-        Mean signal Noise floor (σ)  uint16 quant error / σ
-        =========== =============== =====================================
-        100 counts  10 counts        0.5 / 10 = 5%
-        1000        ~32              0.5 / 32 = 1.6%
-        4000        ~63              0.5 / 63 = 0.8%
-        =========== =============== =====================================
-
-    Quantization is well below the data's own statistical noise. For
-    ptychography, drift correction, virtual imaging, etc., this is
-    indistinguishable from lossless. If 0.5 counts still feels too coarse,
-    scale up before quantizing — store ``round(merged * 10)`` as uint16,
-    divide by 10 on read; max error becomes 0.05 counts at ~30% ratio cost.
-
-    Why ``uint16`` not ``int16``
-    -----------------------------
-    Detector counts are non-negative by physics. Unsigned uses the full
-    [0, 65535] range; signed wastes a bit on the negative half and risks
-    clipping bright Bragg spots > 32767. Use ``np.uint16``.
+    Preserve numerical values
+    -------------------------
+    Omit ``dtype`` to retain the input precision. Drift correction and other
+    processing can produce fractional or negative values; converting them to
+    unsigned counts changes those values and does not restore the original
+    detector statistics. Float-to-integer export rounds to nearest, ties to
+    even, and clips to the requested range. Rounding error is at most half a
+    count only for finite values within that range; clipping can be larger.
+    Validate any approximate export for the intended scientific analysis.
 
     Approximate precision exports
     -----------------------------
-    ``dtype="float16"`` preserves fractional weak intensities with reduced
-    floating-point precision. ``dtype="scaled_uint16"`` automatically calibrates
-    bounded scan regions in one pass. Both record GPU-measured conversion errors and reopen
-    through ``io.load`` as packed intensities in their original units.
+    ``dtype="scaled_uint16"`` calibrates bounded scan regions and records
+    GPU-measured conversion errors. Save this approximate result as HDF5;
+    the QEM precision codec is not implemented. It reopens through ``io.load``
+    as ANS-encoded scaled counts in the original intensity units.
     Keep float32 for an unchanged scientific archive. ``dtype`` changes storage
     precision at this boundary, not the precision of the upstream algorithm.
-    Float16 uses magnitude-dependent floating-point spacing without calibration;
-    scaled uint16 uses a uniform step within each automatically selected region.
+    Scaled uint16 uses a uniform step within each automatically selected region.
     Plain uint16 conversion does not provide this calibration. The supported
     spelling is ``"scaled_uint16"``, not ``"uint16_scaled"``.
-    Packing is lossless relative to the converted stored values. Reopening
-    either precision returns float32 reconstructed intensities, not the original
+    Compression is lossless relative to the converted stored codes. Reopening
+    returns float32 reconstructed intensities, not the original
     pre-conversion float32 values. RMSE and maximum error describe this storage
     difference. Omit ``dtype`` when saving an already-loaded precision resident
     to preserve its codes and calibration without another conversion.
@@ -1950,7 +1900,7 @@ def save(
     dense per-position offsets (ready for ptycho without re-evaluation). Pass
     them via ``metadata=`` (root attrs) or write into the master file::
 
-        save("corrected_master.h5", merged_f32, dtype=np.uint16, metadata={
+        save("corrected_master.h5", merged_f32, metadata={
             "drift_model": "spline_n16",
             "drift_knots": knots,                     # (n_imgs, 2, n_knots)
             "drift_probe_positions_px": probe_pos,    # (N_scan_pos, 2)
@@ -1978,9 +1928,8 @@ def save(
         Scan grid shape. Required for 3D inputs; inferred from 4D inputs.
     dtype : str or np.dtype or None
         Output dtype. ``None`` uses input dtype. Short aliases such as
-        ``"u16"`` and ``"f32"`` are accepted. **For drift-corrected
-        bilinear-merged float32 inputs, pass "u16" explicitly** (10×
-        smaller, 4× faster, sub-noise-floor error).
+        ``"u16"`` and ``"f32"`` are accepted. Changing the dtype can change
+        measurements; preserve float32 when exact fractional values matter.
     batch_size : int
         Frames compressed per GPU pass. ``None`` uses the backend default.
     format : {"arina", "quantem"}
@@ -2004,7 +1953,7 @@ def save(
     See also
     --------
     quantem.gpu.io.load : Round-trip read of these files; bit-exact for
-        lossless dtypes; near-lossless (≤0.5 count) for uint16-quantized.
+        lossless storage. Precision conversions require their own error checks.
     """
     import time
 
@@ -2012,9 +1961,8 @@ def save(
         data = cp.from_dlpack(data.detach())
 
     from ._precision import precision_name, save_precision
-    from .models import FourDSTEMData
 
-    if precision_name(dtype) or (isinstance(data, FourDSTEMData) and "precision" in data.metadata):
+    if precision_name(dtype) or (isinstance(data, Dataset) and "precision" in data.metadata):
         if Path(filepath).suffix.lower() == ".qem":
             raise NotImplementedError(
                 "QEM precision codecs are not implemented. Save this scaled/quantized "
@@ -2043,7 +1991,6 @@ def save(
         compression = "ans" if normalized_format == "quantem" else "lz4"
 
     if normalized_format == "quantem":
-        from .models import FourDSTEMData
 
         if compression != "ans":
             raise ValueError(
@@ -2055,9 +2002,13 @@ def save(
                 f"ANS has no compression_level control; got {compression_level!r}. "
                 "Remove compression_level to preserve the exact codec contract."
             )
-        if isinstance(data, FourDSTEMData):
-            metadata = dict(data.metadata) if metadata is None else metadata
+        if isinstance(data, Dataset):
+            from .dataset_metadata import dataset_metadata
+
+            metadata = dataset_metadata(data) if metadata is None else metadata
             data = data.data
+            if torch is not None and isinstance(data, torch.Tensor) and data.is_cuda:
+                data = cp.from_dlpack(data.detach())
         if dtype is not None or scan_shape is not None or source_master is not None:
             raise ValueError("Saving a native 4D acquisition preserves its own geometry; remove dtype, scan_shape, and source_master controls.")
         if backend == "cpu" and isinstance(data, np.ndarray):

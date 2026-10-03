@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from quantem.core.datastructures import Dataset
+
+from quantem.gpu.io.models import create_dataset
+from quantem.gpu.io.dataset_metadata import dataset_metadata
+
 import math
 from typing import Literal
 
 import numpy as np
+
 
 Interpolation = Literal["auto", "nearest", "bilinear"]
 OutputShape = Literal["full", "same"]
@@ -23,23 +29,55 @@ def _array_kind(data) -> str:
         return "numpy"
     raise TypeError(
         "rotate_scan expects a 4D NumPy, CuPy, or Torch array, or the "
-        f"LoadResult returned by quantem.gpu.io.load; got {type(data).__name__}."
+        f"Dataset4dstem returned by quantem.gpu.io.load; got {type(data).__name__}."
     )
 
 
 def _unwrap(data):
     """Return numeric data and a function that restores a load result."""
-    fields = getattr(data, "_fields", ())
-    if "data" not in fields or "metadata" not in fields:
+    if not isinstance(data, Dataset):
         return data, None, None
-    return data.data, data, dict(data.metadata)
+    return data.data, data, dataset_metadata(data)
 
 
 def _restore_load_result(template, array, metadata):
     """Restore a public load result with transformed data and metadata."""
     if template is None:
         return array
-    return template._replace(data=array, metadata=metadata)
+    result = create_dataset(data=array, metadata=metadata)
+    result.metadata.update(dataset_metadata(result))
+    return result
+
+
+def _rotate_calibration(template, metadata, angle, result_shape):
+    """Keep the native axes aligned with the actual rotated pixel indices."""
+    sampling = np.asarray(template.sampling, dtype=float).copy()
+    origin = np.asarray(template.origin, dtype=float).copy()
+    units = list(template.units)
+    source_shape = tuple(template.shape[:2])
+    turns = _quarter_turn(angle)
+    if turns is None:
+        # For equal positive spacing, the pixel rotation is also a physical
+        # rotation. Preserve the field center when the output canvas expands.
+        origin[:2] += (np.asarray(source_shape) - np.asarray(result_shape[:2])) * sampling[:2] / 2
+    else:
+        axes = (1, 0) if turns % 2 else (0, 1)
+        directions = ((1, 1), (-1, 1), (-1, -1), (1, -1))[turns]
+        sampling[:2] = [template.sampling[axis] * direction
+                        for axis, direction in zip(axes, directions)]
+        origin[:2] = [template.origin[axis] + (source_shape[axis] - 1) * template.sampling[axis]
+                      if direction < 0 else template.origin[axis]
+                      for axis, direction in zip(axes, directions)]
+        units[:2] = [template.units[axis] for axis in axes]
+        full_shape = np.asarray([source_shape[axis] for axis in axes])
+        target_shape = np.asarray(result_shape[:2])
+        copy_shape = np.minimum(full_shape, target_shape)
+        # Match the integer center-crop/pad rule used by _center_to_shape.
+        offset = (full_shape - copy_shape) // 2 - (target_shape - copy_shape) // 2
+        origin[:2] += offset * sampling[:2]
+    metadata.update(sampling=sampling.tolist(), origin=origin.tolist(), units=units,
+                    working_shape=list(result_shape), scan_shape=tuple(result_shape[:2]),
+                    n_frames=int(np.prod(result_shape[:2])))
 
 
 def _quarter_turn(angle_degrees: float) -> int | None:
@@ -476,7 +514,7 @@ def rotate_scan(
     ----------
     data
         A 4D NumPy, CuPy, or Torch array ordered as ``(scan_row, scan_col,
-        detector_row, detector_col)``, or a ``LoadResult`` returned by
+        detector_row, detector_col)``, or a ``Dataset4dstem`` returned by
         :func:`quantem.gpu.io.load`.
     angle_degrees
         Counterclockwise rotation in the displayed scan plane.
@@ -495,9 +533,11 @@ def rotate_scan(
 
     Returns
     -------
-    array or LoadResult
+    array or Dataset4dstem
         Rotated data in the same resident array family. A load result retains
-        its metadata and records scan-rotation provenance.
+        its metadata and records scan-rotation provenance. Exact quarter turns
+        swap or reverse native scan axes, including their signed sampling and
+        origins. Detector-axis calibration stays unchanged.
     tuple, optional
         ``(rotated, valid_mask)`` when ``return_valid_mask=True``.
 
@@ -509,7 +549,10 @@ def rotate_scan(
         If the input is not scan-axis-leading 4D-STEM data or an option is
         incompatible with dtype-preserving interpolation.
     NotImplementedError
-        If an arbitrary-angle rotation is requested on an unsupported device.
+        If an arbitrary-angle rotation is requested on an unsupported device,
+        or a native dataset has unequal, mixed-unit, or reversed scan spacing.
+        Such grids need a calibrated physical-coordinate resampler; the
+        pixel-coordinate rotation must not silently change their metric.
 
     Examples
     --------
@@ -543,6 +586,15 @@ def rotate_scan(
         )
 
     array, template, metadata = _unwrap(data)
+    if template is not None and _quarter_turn(angle) is None:
+        row_spacing, col_spacing = template.sampling[:2]
+        if (row_spacing <= 0 or not math.isclose(row_spacing, col_spacing, rel_tol=1e-12, abs_tol=0)
+                or template.units[0] != template.units[1]):
+            raise NotImplementedError(
+                "Arbitrary-angle native scan rotation requires equal positive "
+                "row/column sampling in the same unit. Use exact 90-degree "
+                "turns or first resample onto a calibrated isotropic grid."
+            )
     (rotated, valid), resolved_interpolation = _rotate_array(
         array,
         angle,
@@ -551,6 +603,7 @@ def rotate_scan(
         float(fill_value),
     )
     if metadata is not None:
+        _rotate_calibration(template, metadata, angle, rotated.shape)
         history = list(metadata.get("scan_rotation_history", ()))
         history.append(
             {

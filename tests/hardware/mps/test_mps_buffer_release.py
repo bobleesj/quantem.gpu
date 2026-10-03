@@ -1396,12 +1396,12 @@ def test_repeated_load_does_not_accumulate():
     if len(masters) < 2:
         pytest.skip("needs at least 2 masters")
 
-    result = load(masters[0], det_bin=1, backend="mps", verbose=False)
+    result = load(masters[0], detector_bin=1, backend="mps", verbose=False)
     one_tilt = _allocated_bytes()
     del result
     gc.collect()
     for path in masters[1:]:
-        result = load(path, det_bin=1, backend="mps", verbose=False)
+        result = load(path, detector_bin=1, backend="mps", verbose=False)
         del result
         gc.collect()
     assert _allocated_bytes() <= one_tilt * 1.5, (

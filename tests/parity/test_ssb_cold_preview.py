@@ -17,7 +17,7 @@ def test_cold_preview_then_changed_defocus():
     pytest.importorskip('cupy')
     data = load(source, backend='cuda', representation='dense',
                 scan_region=(0, 64, 0, 64), verbose=False)
-    with SSB.from_array(data.data, backend='cuda', voltage_kV=300,
+    with SSB(data.data, backend='cuda', voltage_kV=300,
                         semiangle_mrad=30, scan_sampling_A=0.373,
                         rotation_angle_deg=169.9) as ssb:
         recipe = dict(C10=12.8, C12=2.0, phi12=0.64)

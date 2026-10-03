@@ -1,5 +1,4 @@
 """Shared configuration for fixed-size MPS/Metal SSB FFT kernels."""
-from __future__ import annotations
 
 from dataclasses import dataclass
 

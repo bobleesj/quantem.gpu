@@ -352,7 +352,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
     expected_suffix: str,
 ) -> None:
     """C1: export uses the smallest lossless dtype without changing counts."""
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
     from quantem.gpu.ssb.backends.mps.backend import MpsSSBBackend
     from quantem.gpu.ssb.backends.mps.engine import MpsBfColumnFrames
 
@@ -418,7 +418,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
     """C1: exact BF columns expose the same neutral contract as CUDA."""
     pytest.importorskip("mlx.core")
     from quantem.gpu.ssb.backends import SSBProtocol
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
     from quantem.gpu.ssb.backends.mps.engine import MpsBfColumnFrames
     from quantem.gpu.ssb.backends.mps.backend import MpsSSBBackend
 
@@ -470,7 +470,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
 
 def test_brightfield_selection_is_validated_and_immutable() -> None:
     """C1a: one typed BF value owns validated row/column geometry."""
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
 
     rows = np.asarray([0, 1, 2], dtype=np.int64)
     cols = np.asarray([1, 2, 3], dtype=np.int64)
@@ -495,7 +495,7 @@ def test_brightfield_selection_is_validated_and_immutable() -> None:
 
 def test_brightfield_selection_rejects_duplicate_coordinates() -> None:
     """C1b: duplicate scientific evidence fails at construction."""
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
 
     with pytest.raises(ValueError, match="duplicates"):
         BrightfieldDisk(
@@ -1861,7 +1861,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
         bf_radius=3,
     )
 
-    optimized = workflow.fit(
+    optimized = workflow.find_aberrations(
         trials=0,
         refinement=None,
         verbose=False,

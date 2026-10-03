@@ -13,15 +13,16 @@ def test_public_ssb_api_has_one_workflow() -> None:
 
     for name in (
         "open",
-        "from_array",
-        "fit",
+        "find_aberrations",
+        "show_trials",
         "reconstruct",
         "preview",
         "close",
     ):
         assert hasattr(SSB, name)
     for stale_name in (
-        "load_evidence",
+        "from_array",
+        "fit",        "load_evidence",
         "run",
         "optimize_aberrations",
         "compute_backend",
@@ -45,7 +46,7 @@ def test_ssb_operations_share_saved_result_controls() -> None:
 
     from quantem.gpu import SSB
 
-    for operation in (SSB.fit, SSB.reconstruct):
+    for operation in (SSB.find_aberrations, SSB.reconstruct):
         signature = inspect.signature(operation)
         assert signature.parameters["save_to"].default is None
         assert signature.parameters["force"].default is False
@@ -70,7 +71,7 @@ def test_every_public_ssb_entry_point_defaults_to_full_bright_field() -> None:
 
     from quantem.gpu import SSB
 
-    for entry_point in (SSB, SSB.open, SSB.from_array):
+    for entry_point in (SSB, SSB.open):
         signature = inspect.signature(entry_point)
         assert signature.parameters["bf_intensity_threshold"].default == 0.0
 
@@ -114,7 +115,7 @@ def test_reference_512_contract_matches_public_optimizer_defaults() -> None:
             encoding="utf-8"
         )
     )
-    signature = inspect.signature(SSB.fit)
+    signature = inspect.signature(SSB.find_aberrations)
     optimizer = contract["optimizer"]
     precision = SSBPrecision()
 
@@ -195,6 +196,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             "scan_sampling_A": 0.2,
             "rotation_angle_deg": 173.0,
             "bf_radius": 55.0,
+            "aberration_unit": "nm",
             "aberrations": aberrations,
             "loss": 0.01 * index,
         }
@@ -231,12 +233,12 @@ def test_reconstruct_series_reuses_only_exact_results(
                 reused=True,
             )
 
-        def fit(self, **kwargs):
+        def find_aberrations(self, **kwargs):
             assert kwargs["save_to"].name == "ssb-fit"
             return self._result(0.1 * self.index)
 
-        def reconstruct(self, fitted, **kwargs):
-            assert fitted == aberrations
+        def reconstruct(self, **kwargs):
+            assert kwargs["aberrations"] == aberrations
             assert kwargs["save_to"].name == "ssb-locked"
             return self._result(0.3 + 0.1 * self.index)
 
@@ -405,7 +407,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         def __exit__(self, *args):
             return None
 
-        def fit(self, **kwargs):
+        def find_aberrations(self, **kwargs):
             return SSBResult(
                 object_wave=np.exp(
                     1j * np.full((2, 3), 0.1 * self.index, dtype=np.float32)
@@ -469,7 +471,7 @@ files:
         def __exit__(self, *args):
             return None
 
-        def fit(self, **kwargs):
+        def find_aberrations(self, **kwargs):
             return SSBResult(
                 object_wave=np.full((3, 4), 1 + 1j, dtype=np.complex64),
                 backend="cuda",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from quantem.gpu.io.models import create_dataset
+
 import sys
 import threading
 import types
@@ -57,7 +59,7 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
         return np.full((1, 1, 1), 255, dtype=np.uint8)
 
     monkeypatch.setattr(decoder, "load_master", fake_load_master, raising=False)
-    data, metadata = load_module._load_view(
+    loaded = load_module._load_view(
         "fixture.h5",
         "mps",
         dataset_path="entry/data/data",
@@ -67,6 +69,7 @@ def test_mps_dataset_path_u8_declares_clipping_before_detector_bin(monkeypatch) 
         verbose=False,
     )
 
+    data, metadata = loaded.data, loaded.metadata
     assert str(data.dtype) == "torch.uint8"
     assert calls["output_dtype"] == np.dtype(np.uint8)
     assert calls["device"] == "mps"
@@ -176,7 +179,9 @@ def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
 
     def fake_load(path, **kwargs):
         calls.append({"path": path, "kwargs": kwargs})
-        return SimpleNamespace(row_prefix=False, metadata={}), {}
+        return create_dataset(
+            SimpleNamespace(row_prefix=False, metadata={}), {}
+        )
 
     class FakeChunkedFrames:
         def __init__(self, data, *, row_prefix=False):
@@ -205,7 +210,7 @@ def test_mps_multi_dataset_loader_threads_output_dtype(monkeypatch) -> None:
     assert lazy.det_bin == 4
     assert calls[0]["path"] == "tilt_0_master.h5"
     assert calls[0]["kwargs"]["backend"] == "mps"
-    assert calls[0]["kwargs"]["det_bin"] == 4
+    assert calls[0]["kwargs"]["detector_bin"] == 4
     assert calls[0]["kwargs"]["dtype"] is np.uint8
 
 

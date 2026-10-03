@@ -917,7 +917,7 @@ class SSBProtocolService:
         }
         with self._session_device_context(gpu):
             started = time.perf_counter()
-            result = session.fit(
+            result = session.find_aberrations(
                 trials=200,
                 refinement=None,
                 search_ranges=backend_ranges,
@@ -941,7 +941,7 @@ class SSBProtocolService:
             "phi12": float(result.aberrations["phi12"]),
             "scanRotation": specification["fixedScanRotationDegrees"],
         }
-        trial_history = list(result.optuna_trials or ())
+        trial_history = list(result.trial_records or ())
         optimizer_history_count, baseline_history_count, recorded_history_count = (
             _fit_history_counts(
                 backend_kind=self.backend_kind,
@@ -2397,14 +2397,14 @@ class SSBProtocolService:
                 open_seconds = time.perf_counter() - opened
                 started = time.perf_counter()
                 result = session.reconstruct(
-                    aberrations, compute_loss=bool(request["computeLoss"])
+                    aberrations=aberrations, compute_loss=bool(request["computeLoss"])
                 )
                 first_seconds = time.perf_counter() - started
                 warm_seconds = None
                 if request.get("measureWarm", False):
                     started = time.perf_counter()
                     result = session.reconstruct(
-                        aberrations,
+                        aberrations=aberrations,
                         compute_loss=bool(request["computeLoss"]),
                         force=True,
                     )
@@ -2491,14 +2491,14 @@ class SSBProtocolService:
             open_seconds = time.perf_counter() - opened
             started = time.perf_counter()
             result = session.reconstruct(
-                aberrations, compute_loss=bool(request["computeLoss"])
+                aberrations=aberrations, compute_loss=bool(request["computeLoss"])
             )
             first_seconds = time.perf_counter() - started
             warm_seconds = None
             if request.get("measureWarm", False):
                 started = time.perf_counter()
                 result = session.reconstruct(
-                    aberrations,
+                    aberrations=aberrations,
                     compute_loss=bool(request["computeLoss"]),
                     force=True,
                 )

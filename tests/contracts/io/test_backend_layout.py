@@ -1,10 +1,9 @@
-"""Representation-named IO modules preserve old imports and lazy platforms."""
+"""Canonical I/O modules replace retired aliases and keep platforms lazy."""
 
-import ast
 import subprocess
 import sys
 from importlib import import_module
-from importlib.resources import files
+from importlib.util import find_spec
 
 import pytest
 
@@ -27,40 +26,23 @@ import pytest
         )),
     ],
 )
-def test_legacy_imports_are_the_same_implementation(
+def test_only_canonical_backend_imports_are_supported(
     backend, legacy, canonical, symbols,
 ):
+    prefix = f"quantem.gpu.io.backends.{backend}"
+    assert find_spec(f"{prefix}.{legacy}") is None
     if (backend, canonical) == ("mps", "dense"):
         pytest.importorskip("Metal")
-    prefix = f"quantem.gpu.io.backends.{backend}"
-    old = import_module(f"{prefix}.{legacy}")
     current = import_module(f"{prefix}.{canonical}")
     for name in symbols:
-        assert getattr(old, name) is getattr(current, name)
-
-    # Compatibility paths cannot hide another decoder or cache implementation.
-    source = files(prefix).joinpath(f"{legacy}.py").read_text()
-    tree = ast.parse(source)
-    assert isinstance(tree.body[0], ast.Expr)  # module documentation
-    assert all(isinstance(node, ast.ImportFrom) for node in tree.body[1:])
+        assert callable(getattr(current, name))
 
 
-@pytest.mark.parametrize("standalone_namespace", [True, False])
-def test_common_io_imports_do_not_load_accelerator_runtimes(standalone_namespace):
-    script = f"""
+def test_common_io_imports_do_not_load_accelerator_runtimes():
+    script = """
 import sys
-import types
-from pathlib import Path
-
-if {standalone_namespace!r}:
-    # Test this distribution independently of an installed quantem parent.
-    # The parent package may import third-party GPU code before GPU IO runs.
-    parent = types.ModuleType('quantem')
-    parent.__path__ = [str(Path('src/quantem').resolve())]
-    sys.modules['quantem'] = parent
-else:
-    # Also test normal coexistence, attributing imports to the correct owner.
-    import quantem
+import quantem
+# Native QuantEM is the dataset owner and a required dependency.
 before = set(sys.modules)
 from quantem.gpu import io
 from quantem.gpu.io.backends.mps import series

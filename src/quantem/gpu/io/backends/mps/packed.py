@@ -3,7 +3,7 @@
 The backend keeps each authenticated direct bit-packed shard resident in shared
 Apple unified-memory buffers and dispatches Metal kernels without constructing
 the dense four-dimensional volume. Its schema-specific API remains an explicit
-``mps.compact_v3`` import while scientist-facing source selection stays with the
+``mps.packed`` import while scientist-facing source selection stays with the
 canonical QuantEM I/O loader.
 """
 

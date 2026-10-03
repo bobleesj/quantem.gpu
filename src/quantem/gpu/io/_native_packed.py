@@ -1,5 +1,7 @@
 """Bounded native packing through existing GPU kernels."""
 
+from quantem.gpu.io.models import create_dataset
+
 import hashlib
 import json
 import math
@@ -14,14 +16,14 @@ import h5py
 import numpy as np
 
 from .inspect import inspect
-from .models import FourDSTEMData
+from .models import Dataset4dstem
+from .readiness import _file_source_signature
 from quantem.gpu.io.backends.cuda._ans import CudaPackedResidentCounts, _kernels
 from quantem.gpu.io.load import (
     _decompress_prepared,
     _discover_chunk_names,
     _prepare_master_frames,
     _SparseFrameReadSession,
-    _file_source_signature,
 )
 
 _PACKING_PLAN_CACHE_ENV = "QUANTEM_GPU_PACKING_PLAN_CACHE_DIR"
@@ -199,7 +201,7 @@ def load_h5_packed(
     device: int | str | None,
     verbose: bool,
     hot_pixel_correction: str = "median",
-) -> FourDSTEMData:
+) -> Dataset4dstem:
     """Pack native counts with bounded buffers and an automatic width plan."""
     path = Path(path)
     # Amortize HDF5 preparation and CUDA decompressor launches while keeping
@@ -405,4 +407,4 @@ def load_h5_packed(
                 f"{correction['method']} correction, "
                 f"{correction['pixel_count']} stored detector-mask pixels."
             )
-        return FourDSTEMData(owner, metadata)
+        return create_dataset(owner, metadata)

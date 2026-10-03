@@ -4,7 +4,7 @@ The Metal decoder stays lazy so platform-independent modules such as
 ``mps.series`` remain importable on Linux and Windows.
 
 The accepted schema-specific QGIX v3 backend remains a real explicit submodule
-at ``mps.packed`` (with ``mps.compact_v3`` retained for compatibility).
+at ``mps.packed``.
 It is not re-exported here because scientist-facing
 source selection belongs to the canonical QuantEM I/O loader rather than a
 second backend-specific load verb.

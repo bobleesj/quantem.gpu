@@ -310,7 +310,7 @@
             "reference-oracle-is-separate"
           ],
           "gates": [
-            "src/quantem/gpu/io/backends/cpu/reference.py",
+            "src/quantem/gpu/io/backends/cpu/dense.py",
             "tests/contracts/io/test_load.py"
           ]
         },

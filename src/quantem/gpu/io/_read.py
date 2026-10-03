@@ -79,6 +79,24 @@ def _check_allocation(shape, dtype, device):
             )
 
 
+def resident_device(payload):
+    """Normalize backend resident device identifiers without decoding."""
+    import torch
+
+    device = getattr(payload, "device", None)
+    if not isinstance(device, torch.device):
+        device_id = getattr(payload, "_device_id", None)
+        if device_id is None:
+            device_id = getattr(device, "id", None)
+        if device_id is not None:
+            device = torch.device("cuda", int(device_id))
+        elif isinstance(device, (int, np.integer)):
+            device = torch.device("cuda", int(device))
+        else:
+            device = torch.device(str(device)) if device is not None else None
+    return device
+
+
 def read(data, *, scan_region=None, detector_region=None):
     """Return a requested logical region as a Torch tensor on the source GPU."""
     import torch
@@ -93,17 +111,7 @@ def read(data, *, scan_region=None, detector_region=None):
         detector_region, shape[2:], "detector_region"
     )
     payload = data.data
-    device = getattr(payload, "device", None)
-    if not isinstance(device, torch.device):
-        device_id = getattr(payload, "_device_id", None)
-        if device_id is None:
-            device_id = getattr(device, "id", None)
-        if device_id is not None:
-            device = torch.device("cuda", int(device_id))
-        elif isinstance(device, (int, np.integer)):
-            device = torch.device("cuda", int(device))
-        else:
-            device = torch.device(str(device)) if device is not None else None
+    device = resident_device(payload)
     if device is None or device.type not in {"cuda", "mps"}:
         raise TypeError("read() requires a CUDA or MPS resident source.")
     output_shape = (
@@ -125,6 +133,7 @@ def read(data, *, scan_region=None, detector_region=None):
     # Bound decoded scratch by scan rows. Integer CUDA streams can select
     # detector pixels directly; other representations decode whole frames.
     from quantem.gpu._compact.streamed import StreamedCounts
+    from ._float_ans import FloatANSResident, MAX_DECODE_BYTES
 
     # Calibrated subclasses have different decode semantics; keep their path.
     selected_region = None
@@ -133,36 +142,40 @@ def read(data, *, scan_region=None, detector_region=None):
                            detector_column0, detector_column1)
     frame_shape = output_shape[2:] if selected_region else shape[2:]
     frame_bytes = math.prod(frame_shape) * np.dtype(data.dtype).itemsize
-    block_rows = max(1, _BLOCK_BYTES // (frame_bytes * (column1 - column0)))
+    decode_bytes = (
+        min(_BLOCK_BYTES, MAX_DECODE_BYTES)
+        if isinstance(payload, FloatANSResident)
+        else _BLOCK_BYTES
+    )
+    block_columns = min(column1 - column0, max(1, decode_bytes // frame_bytes))
+    block_rows = max(1, decode_bytes // (frame_bytes * block_columns))
     tensor = None
     for block_row0 in range(row0, row1, block_rows):
         block_row1 = min(row1, block_row0 + block_rows)
-        block = _decode_rows(
-            payload, shape, block_row0, block_row1, column0, column1,
-            detector_region=selected_region,
-        )
-        if selected_region is None:
-            block = block[
-                :, detector_row0:detector_row1, detector_column0:detector_column1
-            ]
-        if tensor is None:
-            tensor = torch.empty(
-                (math.prod(output_shape[:2]), *output_shape[2:]),
-                dtype=block.dtype,
-                device=block.device,
+        for block_column0 in range(column0, column1, block_columns):
+            block_column1 = min(column1, block_column0 + block_columns)
+            block = _decode_rows(
+                payload, shape, block_row0, block_row1,
+                block_column0, block_column1, detector_region=selected_region,
             )
-        first = (block_row0 - row0) * (column1 - column0)
-        tensor[first : first + block.shape[0]] = block
-        del block
-    valid_pixels = getattr(payload, "valid_pixels", None)
-    if valid_pixels is not None and not bool(np.asarray(valid_pixels).all()):
-        selected_valid = np.asarray(valid_pixels)[
-            detector_row0:detector_row1,
-            detector_column0:detector_column1,
-        ]
-        for invalid_row, invalid_column in np.argwhere(~selected_valid):
-            tensor[..., int(invalid_row), int(invalid_column)] = 0
-    return tensor.reshape(output_shape)
+            if selected_region is None:
+                block = block[
+                    :, detector_row0:detector_row1, detector_column0:detector_column1
+                ]
+            if tensor is None:
+                tensor = torch.empty(
+                    output_shape, dtype=block.dtype, device=block.device
+                )
+            tensor[
+                block_row0 - row0 : block_row1 - row0,
+                block_column0 - column0 : block_column1 - column0,
+            ] = block.reshape(
+                block_row1 - block_row0,
+                block_column1 - block_column0,
+                *output_shape[2:],
+            )
+            del block
+    return tensor
 
 
 def _decode_rows(

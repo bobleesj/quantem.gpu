@@ -1,6 +1,6 @@
 """MPS/Metal SSB FFT configuration for specialized 512x512 kernels."""
 
-from .common import MPSFFTConfig
+from quantem.gpu.ssb.backends.mps.kernels.common import MPSFFTConfig
 
 CONFIG = MPSFFTConfig(
     size=512,

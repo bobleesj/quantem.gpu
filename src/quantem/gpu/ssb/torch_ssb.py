@@ -25,7 +25,6 @@ Tilt fit objective (what finds the tilt; the phase-variance loss does not): leas
 Units follow the engine: C10, C12, thickness in Angstrom; phi12 rad; tilt mrad in the scan frame; q, k in 1/Angstrom. The public
 ``SSB`` session converts from nm.
 """
-from __future__ import annotations
 
 import math
 from typing import Self
@@ -176,8 +175,8 @@ class TorchSSB:
         return float((weight[keep] * numerator[keep].abs() ** 2 / denominator[keep]).sum())
 
     def fit_sample(self, *, band_inv_A: tuple[float, float] = (0.2, 0.9), **options) -> dict[str, object]:
-        """Fit C10, C12, phi12, tilt and thickness (search shared with the CUDA / MPS backends: ``ssb._thick_fit``)."""
-        from ._thick_fit import fit_sample_search
+        """Fit C10, C12, phi12, tilt and thickness (search shared with the CUDA / MPS backends: ``ssb.thick_sample_fit``)."""
+        from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
 
         return fit_sample_search(lambda c10, c12, phi12, tilt, t: self.fit_power(c10, c12, phi12, tilt, t, band_inv_A),
                                  band_inv_A=band_inv_A, **options)

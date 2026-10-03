@@ -300,14 +300,14 @@ def main() -> None:
         _clear_runtime_caches()
         t0 = time.perf_counter()
         if args.scan_region is None:
-            loaded = load(master, backend="cuda", det_bin=args.det_bin, verbose=False)
+            loaded = load(master, backend="cuda", detector_bin=args.det_bin, verbose=False)
         else:
             loaded = load(
                 master,
                 backend="cuda",
                 scan_region=tuple(args.scan_region),
                 scan_shape=(512, 512),
-                det_bin=args.det_bin,
+                detector_bin=args.det_bin,
                 verbose=False,
             )
         data = loaded.data

@@ -62,15 +62,37 @@ with io.load("acquisition.qem") as data:
     metadata = data.metadata
 ```
 
-Indexing a 4D owner returns a PyTorch tensor on the source GPU, requiring
-GPU-enabled PyTorch. Integers remove axes; slices and one ellipsis support
-negative indices and steps. Boolean masks, index arrays and new axes are not
-supported. This selects measurements without interpolation. Strides decode a
-bounding region; empty selections currently decode one pixel to obtain the
-backend tensor type. Use `.data` and `.metadata` for the owner's fields;
-`owner[0]` now means the first scan row, not its storage field.
-For a list of acquisitions, select the owner first: `series[1][10, 12]`.
-The existing `read(scan_region=..., detector_region=...)` remains available.
+`io.load` returns the native `quantem.core.datastructures.Dataset4dstem`,
+not a tuple or a second GPU-specific dataset class. Its storage may be NumPy,
+PyTorch, or encoded device buffers. QuantEM.GPU supplies the encoded storage;
+the native class preserves calibration and units when selecting data.
+
+| Attribute or expression | Meaning |
+| --- | --- |
+| `data.shape` | Scan row, scan column, detector row, detector column sizes |
+| `data.ndim` | Number of logical axes |
+| `data.size` | Total number of logical detector values, not bytes |
+| `len(data)` | Size of the first scan axis |
+| `data.dtype` | Stored scientific dtype |
+| `data.metadata` | Calibration, provenance, and storage metadata |
+| `data.logical_bytes` | Size of the complete uncompressed array |
+| `data.resident_bytes` | Size reported by the resident storage owner |
+
+Indexing returns a native dataset whose `.tensor` is on the source GPU.
+A single scalar selection returns a scalar tensor. Integers remove axes;
+slices and one ellipsis support negative indices and steps. Index arrays, Boolean masks, and new axes are not supported.
+This selects measurements without interpolation. Strides may decode a bounding
+region. Request only the working region that fits the GPU memory budget.
+
+Iterating over `data` yields scan rows, as array iteration does; it is not a
+way to retrieve storage fields. Use `.data` only when an advanced operation
+needs the encoded storage object. `np.asarray(data)` on encoded storage is rejected to prevent an
+accidental whole-acquisition host copy. If a host array is needed, explicitly
+select a bounded dataset first: `data[10, 12].numpy()`.
+Use `data[10, 12].tensor` for direct PyTorch operations.
+For several acquisitions, select the owner first: `series[1][10, 12]`.
+The explicit `read(scan_region=..., detector_region=...)` operation is also
+available for region-based pipeline code.
 
 ### Notebooks and scripts
 
@@ -97,7 +119,7 @@ an operation handle or viewer after closing its acquisition.
 ### Inspect the loaded acquisition
 
 Use the same entry point for complete fields, scan crops, detector crops, and
-stochastic scan batches. It returns `FourDSTEMData`, which keeps backend-native
+stochastic scan batches. It returns `Dataset4dstem`, which keeps backend-native
 data and its scientific/storage metadata together:
 
 ```python
@@ -198,7 +220,7 @@ are not documented in the companion remain unspecified.
 from quantem.gpu import detector, io
 
 with io.load("data_roi0_Ndp128_dp.hdf5", backend="mps") as loaded:
-    pattern = detector.prepare(loaded).frame(0)
+    pattern = loaded[0, 0]
     io.save("acquisition.qem", loaded)
 ```
 
@@ -219,17 +241,15 @@ float acquisition geometry to 128 × 128 and does not read these gzip stacks.
 from quantem.gpu import io, detector
 
 loaded = io.load("scan_master.h5", backend="cuda")
-session = detector.prepare(loaded)
-pattern = session.frame(0, output="native")
+pattern = loaded[0, 0]
 ```
 
 This default CUDA path streams bounded chunks of a complete uint8/uint16 H5
 acquisition, preserves every stored count, and builds exact spatial sums while
 those chunks are available. The library's default H5 representation on
 accelerator backends is encoded. Existing encoded files keep their original
-buffers. Prepare a list
-of equally shaped acquisitions for joint native DP and detector queries:
-`detector.prepare([first, second])`.
+buffers. Keep acquisitions separately with `io.load(paths, stack=False)` and select
+an owner for each detector or reconstruction operation.
 
 The runtime H5 resident uses a separate internal encoded profile from the portable
 encoded file format. Its `resident_profile`, `physical_resident_bytes`, `index_bytes`
@@ -247,12 +267,9 @@ metadata. Open a complete calibrated 4D diffraction image directly:
 from quantem.gpu import detector, io
 
 loaded = io.load("STEM SI.dm4", backend="cuda")
-session = detector.prepare(loaded)
-pattern = session.frame(0, output="native")
-mask = detector.detector_mask((431.5, 431.5), 0, 126, loaded.shape[-2:])
-bright_field = session.masked_sum(mask, output="native")
-# Finish using the session before releasing its source.
-session.close()
+pattern = loaded[0, 0]
+bright_field = detector.bf(loaded, center=(431.5, 431.5), radius=126)
+# Close after all operations and viewers finish using the acquisition.
 loaded.close()
 ```
 

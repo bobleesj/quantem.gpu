@@ -13,7 +13,7 @@ from pathlib import Path
 import cupy as cp
 import numpy as np
 
-from quantem.gpu.io.backends.cuda.compact_h5 import load_compact_h5_cuda
+from quantem.gpu.io.backends.cuda.packed import load_compact_h5_cuda
 
 
 def _sha256_file(path: Path) -> str:

@@ -1,3 +1,5 @@
+
+from quantem.gpu.io.models import create_dataset
 import json
 from importlib.resources import files
 
@@ -5,7 +7,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu import geometry
-from quantem.gpu.io.load import LoadResult
+from quantem.gpu.io import Dataset4dstem
 
 
 def _scan_rotation_gold() -> tuple[np.ndarray, list[dict]]:
@@ -70,7 +72,7 @@ def _bilinear_reference(
 def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
     raw, cases = _scan_rotation_gold()
     case = cases[0]
-    loaded = LoadResult(
+    loaded = create_dataset(
         raw,
         {
             "scan_shape": raw.shape[:2],
@@ -85,7 +87,7 @@ def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
     assert oriented.data.flags.c_contiguous
     assert oriented.data.dtype == np.uint16
     assert oriented.metadata["source"] == "acquisition_020"
-    assert oriented.metadata["scan_shape"] == tuple(case["output_shape"][:2])
+    assert oriented.metadata["scan_shape"] == case["output_shape"][:2]
     assert oriented.metadata["scan_sampling"] == (0.5, 0.25)
     assert oriented.metadata["scan_rotation_history"][-1] == {
         "angle_degrees": -90.0,
@@ -127,6 +129,81 @@ def test_rotate_scan_preserves_torch_residency_and_counts() -> None:
     assert rotated.device == raw.device
     assert rotated.dtype == torch.uint16
     assert rotated.is_contiguous()
+
+
+def test_native_quarter_turns_preserve_detector_and_scan_coordinates():
+    """Repeated exact turns retain the original calibrated physical samples."""
+    values = _indexed_4dstem(scan_shape=(2, 4))
+    native = Dataset4dstem.from_array(
+        values, sampling=(0.5, 0.7, 0.1, 0.2), origin=(1, 2, 3, 4),
+        units=("nm", "nm", "1/nm", "1/nm"), signal_units="electrons",
+    )
+    native.metadata["experiment"] = "synthetic"
+    rotated = native
+    for turn in range(1, 5):
+        previous = rotated
+        rotated = geometry.rotate_scan(previous, 90)
+        np.testing.assert_array_equal(rotated.data, np.rot90(values, turn, axes=(0, 1)))
+        np.testing.assert_allclose(rotated.origin[:2], [
+            previous.origin[1] + (previous.shape[1] - 1) * previous.sampling[1],
+            previous.origin[0],
+        ])
+        np.testing.assert_allclose(rotated.sampling[:2], [-previous.sampling[1], previous.sampling[0]])
+        np.testing.assert_array_equal(rotated.origin[2:], native.origin[2:])
+        np.testing.assert_array_equal(rotated.sampling[2:], native.sampling[2:])
+        assert rotated.units == native.units
+        assert rotated.signal_units == "electrons"
+        assert rotated.metadata["experiment"] == "synthetic"
+        assert rotated.metadata["working_shape"] == list(rotated.shape)
+    np.testing.assert_allclose(rotated.origin, native.origin)
+    np.testing.assert_allclose(rotated.sampling, native.sampling)
+
+
+def test_native_quarter_turn_same_canvas_keeps_crop_origin():
+    native = Dataset4dstem.from_array(
+        _indexed_4dstem(scan_shape=(2, 4)), sampling=(0.5, 0.7, 0.1, 0.2),
+        origin=(1, 2, 3, 4), units=("nm", "nm", "1/nm", "1/nm"),
+    )
+    rotated = geometry.rotate_scan(native, 90, output_shape="same")
+    np.testing.assert_allclose(rotated.origin, (3.4, 0.5, 3, 4))
+    np.testing.assert_allclose(rotated.sampling, (-0.7, 0.5, 0.1, 0.2))
+    assert rotated.shape == native.shape
+
+
+def test_native_arbitrary_rotation_requires_isotropic_scan_calibration():
+    native = Dataset4dstem.from_array(
+        _indexed_4dstem(scan_shape=(2, 4)), sampling=(0.5, 0.7, 0.1, 0.2),
+        origin=(1, 2, 3, 4), units=("nm", "nm", "1/nm", "1/nm"),
+    )
+    with pytest.raises(NotImplementedError, match="calibrated isotropic grid"):
+        geometry.rotate_scan(native, 30)
+    native.sampling = (0.5, 0.5, 0.1, 0.2)
+    rotated = geometry.rotate_scan(native, 30)
+    old_center = native.origin[:2] + (np.asarray(native.shape[:2]) - 1) * native.sampling[:2] / 2
+    new_center = rotated.origin[:2] + (np.asarray(rotated.shape[:2]) - 1) * rotated.sampling[:2] / 2
+    np.testing.assert_allclose(new_center, old_center)
+    np.testing.assert_array_equal(rotated.sampling, native.sampling)
+    assert rotated.units == native.units
+
+
+def test_qem_rotation_roundtrip_preserves_signed_axis_calibration(tmp_path):
+    from quantem.gpu import io
+
+    native = Dataset4dstem.from_array(
+        _indexed_4dstem(scan_shape=(2, 4)), sampling=(0.5, 0.7, 0.1, 0.2),
+        origin=(1, 2, 3, 4), units=("nm", "nm", "1/nm", "1/nm"),
+    )
+    source_path = tmp_path / "source.qem"
+    io.save(source_path, native, backend="cpu")
+    with io.load(source_path, backend="cpu", verbose=False) as source:
+        rotated = geometry.rotate_scan(geometry.rotate_scan(source, 90), 90)
+        result_path = tmp_path / "rotated.qem"
+        io.save(result_path, rotated, backend="cpu")
+        with io.load(result_path, backend="cpu", verbose=False) as restored:
+            np.testing.assert_array_equal(restored.data, np.rot90(native.data, 2, axes=(0, 1)))
+            np.testing.assert_array_equal(restored.sampling, rotated.sampling)
+            np.testing.assert_array_equal(restored.origin, rotated.origin)
+            assert restored.units == native.units
 
 
 def test_rotate_scan_mps_matches_shared_gold() -> None:

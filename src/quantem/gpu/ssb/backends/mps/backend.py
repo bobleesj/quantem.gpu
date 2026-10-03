@@ -1,5 +1,4 @@
 """Backend-neutral MPS implementation of interactive SSB reconstruction."""
-from __future__ import annotations
 
 import dataclasses
 import math
@@ -12,9 +11,10 @@ from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import electron_wavelength_angstrom
 from quantem.gpu.ssb.results import SSBResult
 
-from ..protocol import SSBExportState, SSBPrecision
-from .engine import (
+from quantem.gpu.ssb.backends.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.backends.mps.engine import (
     MpsBfColumnFrames,
+    _MpsTensorFrames,
     _as_chunked_frames,
     _as_sampling,
     _default_object_redraw_chunk_bf,
@@ -29,7 +29,7 @@ from .engine import (
     _retarget_prepared_rotation,
     _scan_shape,
 )
-from .optimizer import optimize as optimize_mps
+from quantem.gpu.ssb.backends.mps.optimizer import optimize as optimize_mps
 
 
 def _clear_mps_io_cache() -> None:
@@ -242,7 +242,9 @@ class MpsSSBBackend:
             else None
         )
         mean_diffraction = (
-            None if stored_dc is not None else np.asarray(detector_mean(self._frames))
+            None if stored_dc is not None else np.asarray(detector_mean(
+                self._frames.tensor if isinstance(self._frames, _MpsTensorFrames) else self._frames
+            ))
         )
         self._selection = _resolve_bf_selection(
             self._frames,
@@ -291,6 +293,7 @@ class MpsSSBBackend:
     def fit(
         self,
         *,
+        aberrations: dict[str, float] | None,
         trials: int,
         refinement: str | None,
         search_ranges: dict[str, tuple[float, float] | float] | None,
@@ -306,7 +309,7 @@ class MpsSSBBackend:
             semiangle_mrad=self._semiangle_mrad,
             scan_sampling_A=self._scan_sampling,
             det_sampling=self._det_sampling,
-            aberrations=self._aberrations,
+            aberrations=aberrations,
             search_ranges=search_ranges,
             n_trials=int(trials),
             refine=refinement,
@@ -441,7 +444,7 @@ class MpsSSBBackend:
         ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit, Angstrom; 0 = standard SSB).
         Same contract as ``CudaSSBBackend.preview_sample``.
         """
-        from ._thick_sample import reconstruct_thick
+        from quantem.gpu.ssb.backends.mps.thick_sample import reconstruct_thick
 
         if self._prepared is None:
             self.cache_rotation(math.radians(self._rotation_angle_deg))
@@ -459,7 +462,7 @@ class MpsSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
-        from .optimizer import fit_sample
+        from quantem.gpu.ssb.backends.mps.optimizer import fit_sample
 
         if self._prepared is None:
             self.cache_rotation(math.radians(self._rotation_angle_deg))

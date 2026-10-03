@@ -56,7 +56,7 @@ def _watch() -> None:
 
 
 def calibrated_selection(detector_shape: tuple[int, int]):
-    from quantem.gpu.ssb.bf_selector import BrightfieldDisk
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
 
     rows, cols = np.mgrid[0 : detector_shape[0], 0 : detector_shape[1]]
     rows = rows.reshape(-1).astype(np.int32)

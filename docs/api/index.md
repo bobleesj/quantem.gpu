@@ -63,7 +63,7 @@ gates; it is not part of the stable entry points above.
 The API is still release-candidate level. Prefer public functions documented
 here over internal backend modules.
 
-`quantem.gpu.io.load` returns `FourDSTEMData`. Its
+`quantem.gpu.io.load` returns `Dataset4dstem`. Its
 `DataRepresentation` is `packed` or `dense`; scientific dtype,
 physical residency, and storage schema remain independent metadata.
 Both paths remain supported; see [Dense and lossless-packed data](representations.md)

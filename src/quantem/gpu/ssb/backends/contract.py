@@ -1,5 +1,4 @@
 """Strict backend contract for single-sideband ptychography."""
-from __future__ import annotations
 
 from dataclasses import dataclass
 from contextlib import AbstractContextManager
@@ -8,8 +7,8 @@ from typing import Literal, Protocol, runtime_checkable
 
 import numpy as np
 
-from ..bf_selector import BrightfieldDisk
-from ..results import SSBResult
+from quantem.gpu.ssb.brightfield import BrightfieldDisk
+from quantem.gpu.ssb.results import SSBResult
 
 
 @dataclass(frozen=True)
@@ -83,6 +82,7 @@ class SSBProtocol(Protocol):
     def fit(
         self,
         *,
+        aberrations: dict[str, float] | None,
         trials: int,
         refinement: str | None,
         search_ranges: dict[str, tuple[float, float] | float] | None,
@@ -107,7 +107,7 @@ class SSBProtocol(Protocol):
         compute_loss: bool,
         higher_order_magnitudes: np.ndarray | None,
         higher_order_angles: np.ndarray | None,
-    ) -> tuple[np.ndarray, float | None]: ...
+    ) -> tuple[object, float | None]: ...
 
     def preview_context(self, num_bf: int) -> AbstractContextManager | None: ...
 
