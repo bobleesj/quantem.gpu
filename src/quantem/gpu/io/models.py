@@ -1,6 +1,5 @@
 """Backend-neutral loaded data and ownership contracts."""
 
-from collections.abc import Iterator
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -96,17 +95,6 @@ class ResidentStorage:
 
         return detector.mean(self.data)
 
-    def __len__(self) -> int:
-        """Return the first logical axis length, as for a NumPy array."""
-        if not self.shape:
-            raise TypeError("This acquisition has no logical shape.")
-        return self.shape[0]
-
-    def __iter__(self) -> Iterator[Any]:
-        """Read one scan row at a time; metadata is never an array element."""
-        for row in range(len(self)):
-            yield self[row]
-
     def __array__(self, dtype=None, copy=None):
         """Reject implicit full-acquisition conversion to host memory."""
         raise TypeError(
@@ -118,7 +106,7 @@ class ResidentStorage:
     def __repr__(self) -> str:
         """Summarize the acquisition without decoding detector values."""
         return (
-            f"Dataset4dstem(shape={self.shape}, dtype={self.dtype}, "
+            f"ResidentStorage(shape={self.shape}, dtype={self.dtype}, "
             f"representation={self.representation.value!r})"
         )
 
@@ -302,9 +290,6 @@ class ResidentStorage:
             scan_region=scan_region,
             detector_region=detector_region,
         )
-
-    def __enter__(self):
-        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         _release_owned_storage(self.data, failure=exc_value)

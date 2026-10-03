@@ -81,7 +81,7 @@ container checksum alone does not establish acquisition identity.
 | --- | --- | --- |
 | Seven-tilt detector-conditioned byte rANS | Same recurrence and literal profile; block-local offsets and per-model/per-column tables differ | `_ans_legacy._legacy_rans_arguments(record)` maps offsets and selectors into the canonical decoder without decoding or copying payload bytes |
 | `quantem.gpu.count-ans.v1` | Canonical self-contained format | Reference encoder, container reader, CUDA decoder |
-| `quantem-resident-source112-index180-v1` | `source112-tans1024-pair-v1` source plus `position9-flag1-count8-rank256-v1` sparse index | `_source112_archive._convert_source112_acquisition` decodes bounded source254 archive windows and streams complete acquisitions through the canonical writer |
+| `quantem-resident-source112-index180-v1` | `source112-tans1024-pair-v1` source plus `position9-flag1-count8-rank256-v1` sparse index | Read-only bounded access through `_source112_archive._Source112Archive`; convert the original acquisition to write QEM |
 
 The legacy adapter verifies the payload digest in the retained build record,
 checks exact offset partitioning and model structure, and returns a read-only
@@ -99,16 +99,11 @@ imports a native application's process or device state.
 `_source112_archive._Source112Archive` reads the four native source components from
 the immutable source254 archive. It verifies record and global-table hashes,
 the dense/sparse partition, seek coverage and literal ownership of hardware
-counts. It ignores interaction indexes. `_convert_source112_acquisition` iterates
-all 262,144 native scan positions in 512-pattern decoding windows and passes
-256-pattern blocks to the same canonical writer. Only one source chunk and one
-decoded window are needed at a time; no full dense acquisition is constructed.
-This explicit archival conversion requires host staging for the CPU reference
-encoder. It is not the interactive viewer or a zero-upload display path.
+counts. It ignores interaction indexes. Reads decode bounded windows without
+constructing a full dense acquisition.
 
 The retained source112 archive is read-only. Its former conversion utility only
-wrote the legacy `.ans` container, which is no longer supported, so it now
-refuses and writes nothing. Convert the original acquisition instead: load it
+wrote the legacy `.ans` container and has been removed. Convert the original acquisition instead: load it
 with `representation="encoded"` and save that resident as `.qem`.
 There is no implicit crop, binning, clipping or invalid-pixel replacement. All
 66 full-acquisition reencodes have not been run in this validation session;

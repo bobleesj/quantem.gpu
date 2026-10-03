@@ -956,27 +956,6 @@ def _release_metal_buffer(buf) -> None:
         pass
 
 
-class _MtlOwner:
-    """Sole owner of one MTLBuffer, releasing it when the last user goes away.
-
-    Metal buffers cannot carry a weakref, so the lifetime has to hang off a
-    plain Python object. Every array reading the buffer references the same
-    owner, so the release happens exactly once, after the final view is gone.
-    """
-
-    __slots__ = ("buf",)
-
-    def __init__(self, buf):
-        self.buf = buf
-
-    def release(self) -> None:
-        buf, self.buf = self.buf, None
-        _release_metal_buffer(buf)
-
-    def __del__(self):
-        self.release()
-
-
 def _numpy_view(mtl_buf, dtype, count):
     """Get a writable numpy view of a Metal buffer (zero-copy, unified memory)."""
     mv = mtl_buf.contents().as_buffer(mtl_buf.length())

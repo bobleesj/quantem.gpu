@@ -15,7 +15,7 @@ launch details through the public API.
 | Detector dispatch | `src/quantem/gpu/detector/workflow.py` and `compute/backends.py` | select resident CUDA reducers and normalize small results |
 | Detector kernels | `src/quantem/gpu/detector/compute/cuda/kernels.py` | masks, exact sums, selected frames, and moments |
 | DPC | `src/quantem/gpu/dpc/compute/cuda/backend.py` | CUDA CoM/DPC primitives under the shared workflow |
-| SSB | `src/quantem/gpu/ssb/compute/cuda` | prepared geometry, size-specific FFT kernels, objective, optimizer |
+| SSB | `src/quantem/gpu/ssb/backends/cuda` | prepared geometry, size-specific FFT kernels, objective, optimizer |
 | Display | `src/quantem/gpu/display/cuda.py` | resident display statistics and transformations |
 
 The ordinary IO call path is:
@@ -25,7 +25,7 @@ io.load(..., backend="cuda")
   → io.backends.protocol.resolve_backend
   → io.load source/index/read planning
   → bounded source decode + ANS encoding
-  → encoded FourDSTEMData + provenance
+  → native Dataset4dstem with encoded storage and provenance
 ```
 
 Detector and reconstruction calls dispatch from their public workflow to the
@@ -33,10 +33,10 @@ CUDA adapter only after inspecting the resident data type. Backend-specific
 classes and RawKernel launch shapes do not appear in the public API.
 
 ```python
-from quantem.gpu import detector, io
+from quantem.gpu import io
 
 with io.load("scan_master.h5", backend="cuda") as loaded:
-    diffraction = detector.prepare(loaded).frame(0, output="native")
+    diffraction = loaded[0, 0]
 ```
 
 Saved `.qem` acquisitions use the same public loader and remain encoded.

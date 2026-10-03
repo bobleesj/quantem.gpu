@@ -25,39 +25,6 @@ def _allocated_bytes() -> int:
     return int(torch.mps.driver_allocated_memory())
 
 
-def test_owner_releases_buffer_when_dropped():
-    """An owned buffer returns its memory once the owner goes away.
-
-    ``newBufferWithLength_options_`` hands back a +1-retained object on top of
-    the retain PyObjC takes for its wrapper, so the memory comes back only when
-    both are undone: the explicit release, then the dropped Python reference.
-    Dropping the reference alone is what leaked ~45 GB per tilt load.
-    """
-    from quantem.gpu.io.backends.mps import dense as be
-
-    nbytes = 1 << 30
-    baseline = _allocated_bytes()
-    owner = be._MtlOwner(be._metal_buffer_alloc(nbytes))
-    assert _allocated_bytes() - baseline >= nbytes // 2
-    del owner
-    gc.collect()
-    assert _allocated_bytes() - baseline < nbytes // 2
-
-
-def test_release_is_idempotent():
-    """The owner wrapper detaches its buffer before a second release.
-
-    Raw ``MTLBuffer.release()`` is not idempotent. The wrapper makes its own
-    repeated call safe by clearing the one owned reference after the first.
-    """
-    from quantem.gpu.io.backends.mps import dense as be
-
-    owner = be._MtlOwner(be._metal_buffer_alloc(1 << 20))
-    owner.release()
-    owner.release()
-    be._release_metal_buffer(None)
-
-
 def test_mtl_array_view_keeps_buffer_alive():
     """Slices must not outlive the buffer they read from.
 
@@ -889,7 +856,7 @@ def test_partial_bitshuffle_tail_preserves_exact_fast_sidecar(tmp_path):
 def test_partial_bitshuffle_tail_preserves_selective_order_and_duplicates(
     tmp_path,
 ):
-    """Selective MPS IO reads only requested tail frames in requested order."""
+    """Native indexing preserves tail counts and repeated position requests."""
     from quantem.gpu.io import load
     from quantem.gpu.io.backends.mps import dense as be
 
@@ -900,19 +867,17 @@ def test_partial_bitshuffle_tail_preserves_selective_order_and_duplicates(
     )
     master = _write_bslz4_master(tmp_path, "tail_selective", values)
     try:
-        result = load(
+        with load(
             str(master),
-            scan_indices=[3, 1, 3, 0],
             scan_shape=(2, 2),
             backend="mps",
             verbose=False,
-        )
-        np.testing.assert_array_equal(result.data, values[[3, 1, 3, 0]])
-        np.testing.assert_array_equal(
-            result.metadata["scan_indices"],
-            [3, 1, 3, 0],
-        )
-        _release_test_arrays(be, result.data)
+        ) as result:
+            selected = np.stack([
+                result[row, col].numpy()
+                for row, col in [(1, 1), (0, 1), (1, 1), (0, 0)]
+            ])
+            np.testing.assert_array_equal(selected, values[[3, 1, 3, 0]])
     finally:
         be.clear_mps_cache()
 
@@ -1002,101 +967,6 @@ def test_partial_bitshuffle_tail_preserves_sharded_output_offsets(tmp_path):
         result = be.load_master(str(master), det_bin=2, verbose=False)
         np.testing.assert_array_equal(result, expected.astype(np.uint16))
         _release_test_arrays(be, result)
-    finally:
-        be.clear_mps_cache()
-
-
-def test_partial_bitshuffle_tail_preserves_prepared_bin_and_masked_u8(
-    tmp_path,
-):
-    """Selective exact binning and explicit clipped output use the real mask."""
-    from quantem.gpu.io import load
-    from quantem.gpu.io.backends.mps import dense as be
-
-    values = (np.arange(4 * 96 * 96, dtype=np.uint16) % 600).reshape(
-        4,
-        96,
-        96,
-    )
-    values[:, -2:, -2:] = np.iinfo(np.uint16).max
-    pixel_mask = np.zeros((96, 96), dtype=bool)
-    pixel_mask[-2:, -2:] = True
-    master = _write_bslz4_master(
-        tmp_path,
-        "tail_prepared",
-        values,
-        pixel_mask=pixel_mask,
-    )
-    order = [3, 1, 3, 0]
-    expected = values[order].copy()
-    expected[:, pixel_mask] = 0
-    expected_bin = expected.reshape(4, 48, 2, 48, 2).sum(
-        axis=(2, 4),
-        dtype=np.uint64,
-    )
-    try:
-        binned = load(
-            str(master),
-            scan_indices=order,
-            scan_shape=(2, 2),
-            detector_bin=2,
-            backend="mps",
-            verbose=False,
-        )
-        np.testing.assert_array_equal(
-            binned.data,
-            expected_bin.astype(np.uint16),
-        )
-
-        clipped = load(
-            str(master),
-            scan_indices=order,
-            scan_shape=(2, 2),
-            dtype="u8",
-            backend="mps",
-            verbose=False,
-        )
-        np.testing.assert_array_equal(
-            clipped.data,
-            np.minimum(expected, 255).astype(np.uint8),
-        )
-        _release_test_arrays(be, binned.data, clipped.data)
-    finally:
-        be.clear_mps_cache()
-
-
-def test_partial_bitshuffle_tail_preserves_prepared_uint32_narrow(tmp_path):
-    """Selective uint32-to-uint16 narrowing stays exact after mask application."""
-    from quantem.gpu.io import load
-    from quantem.gpu.io.backends.mps import dense as be
-
-    values = (np.arange(4 * 48 * 48, dtype=np.uint32) * 7).reshape(
-        4,
-        48,
-        48,
-    )
-    pixel_mask = np.zeros((48, 48), dtype=bool)
-    pixel_mask[-1, -1] = True
-    values[:, -1, -1] = np.iinfo(np.uint32).max
-    master = _write_bslz4_master(
-        tmp_path,
-        "tail_prepared_u32",
-        values,
-        pixel_mask=pixel_mask,
-    )
-    expected = values[[2, 0]].copy()
-    expected[:, pixel_mask] = 0
-    try:
-        result = load(
-            str(master),
-            scan_indices=[2, 0],
-            scan_shape=(2, 2),
-            dtype="u16",
-            backend="mps",
-            verbose=False,
-        )
-        np.testing.assert_array_equal(result.data, expected.astype(np.uint16))
-        _release_test_arrays(be, result.data)
     finally:
         be.clear_mps_cache()
 
@@ -1362,8 +1232,9 @@ def test_whole_shard_batch_is_bounded_to_one_gigabyte(monkeypatch):
             created.append(kwargs)
             self.gpu_batch = kwargs["gpu_batch"]
 
+    be.clear_mps_cache()
     monkeypatch.setattr(be, "MPSDecompressor", FakeDecompressor)
-    be._decompressor_cache.clear()
+    monkeypatch.setattr(be, "_decompressor_cache", {})
     frame_bytes = 192 * 192 * 2
 
     small = be._get_decompressor(

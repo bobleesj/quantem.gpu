@@ -624,43 +624,6 @@ def test_mps_tiled_row_intermediate_preserves_exact_column_result() -> None:
     )
 
 
-def test_mps_exact_pair_row_storage_uses_bounded_classes(monkeypatch) -> None:
-    """Exact pair packs reuse aligned classes without accepting oversized packs."""
-    from quantem.gpu.ssb.backends.mps import engine
-
-    monkeypatch.setattr(
-        engine,
-        "_exact_pair_row_policy_512",
-        lambda _batch=2: (300, (288, 320)),
-    )
-    storage_class = engine._exact_pair_row_storage_bf_512
-
-    assert storage_class(176) == 288
-    assert storage_class(256) == 288
-    assert storage_class(257) == 288
-    assert storage_class(288) == 288
-    assert storage_class(289) == 320
-    assert storage_class(300) == 320
-    with pytest.raises(ValueError, match="321 BF planes"):
-        storage_class(321)
-
-
-def test_mps_exact_pair_row_storage_uses_high_memory_class(monkeypatch) -> None:
-    """Large-memory Macs may reduce launches without changing BF boundaries."""
-    from quantem.gpu.ssb.backends.mps import engine
-
-    monkeypatch.setattr(
-        engine,
-        "_exact_pair_row_policy_512",
-        lambda _batch=2: (716, (720,)),
-    )
-
-    assert engine._exact_pair_row_storage_bf_512(321) == 720
-    assert engine._exact_pair_row_storage_bf_512(720) == 720
-    with pytest.raises(ValueError, match="721 BF planes"):
-        engine._exact_pair_row_storage_bf_512(721)
-
-
 def test_mps_exact_pair_row_policy_selects_m5_max(monkeypatch) -> None:
     """The measured topology must not spread to unmeasured high-memory chips."""
     from quantem.gpu.ssb.backends.mps import engine

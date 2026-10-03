@@ -313,14 +313,15 @@ public API on either accelerator:
 from quantem.gpu import detector, io
 
 with io.load("measurements.qem", backend="cuda") as loaded:  # or "mps"
-    session = detector.prepare(loaded)
-    pattern = session.frame(0)
-    mean_pattern = session.mean_dp()
+    pattern = loaded[0, 0]
+    mean_pattern = detector.mean(loaded)
     io.save("measurements-copy.qem", loaded)
 ```
 
-The acquisition remains encoded on-device. Only requested small products
-return to NumPy; there is no CPU scientific fallback or complete dense-cube
+The acquisition remains encoded on-device. The selected pattern is a calibrated
+native dataset; `pattern.tensor` exposes its device tensor and `pattern.numpy()`
+copies that selection to the host. The mean pattern is returned as NumPy.
+There is no CPU scientific fallback or complete dense-cube
 allocation. Copying retains original IEEE float bits, calibration, source
 documents and the saved background recipe. The output must not already exist.
 See the [float codec contract](qem-codecs.md)

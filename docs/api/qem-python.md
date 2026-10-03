@@ -13,10 +13,10 @@ available across cells. Call `acquisition.close()` after the last viewer or
 calculation finishes. The script examples below use `with` for automatic cleanup.
 
 ```python
-from quantem.gpu import detector, io
+from quantem.gpu import io
 
 with io.load("acquisition.npy") as acquisition:
-    pattern = detector.prepare(acquisition).frame(0)
+    pattern = acquisition[0, 0]
     io.save("acquisition.qem", acquisition)
 ```
 

@@ -154,20 +154,3 @@ class _Source112Archive:
         self._chunk = None
         self._ids = None
         self.dense = self.sparse = self.tables = None
-
-
-def _convert_source112_acquisition(path, output, *, acquisition: int, device: int = 0):
-    """Refuse the removed conversion instead of writing an unsupported container.
-
-    The conversion used to emit the legacy ``.ans`` container. That container is
-    no longer supported, and re-encoding this archive through a different codec
-    would change its stored bytes. Nothing is written.
-    """
-    if not 0 <= acquisition < 66:
-        raise ValueError("Select an acquisition index from 0 to 65.")
-    raise NotImplementedError(
-        "Converting a retained source112 archive to a saved copy is not available: "
-        "the legacy .ans container was removed and this archive has no .qem encoder. "
-        f"Read {Path(path).name} with _Source112Archive, or convert the original "
-        "acquisition instead. Nothing was written."
-    )

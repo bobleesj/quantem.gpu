@@ -15,7 +15,7 @@ MLX/PyObjC/Metal and chunk-backed unified-memory representations.
 | Detector adapter | `src/quantem/gpu/detector/compute/mps/kernels.py` | chunk-backed frame and reduction interface |
 | Detector shader | `src/quantem/gpu/detector/compute/mps/metal/reductions.msl` | exact sums and detector moments |
 | DPC | `src/quantem/gpu/dpc/compute/mps/backend.py` | MPS CoM/DPC primitives under the shared workflow |
-| SSB | `src/quantem/gpu/ssb/compute/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
+| SSB | `src/quantem/gpu/ssb/backends/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
 
 The IO call path is:
 
@@ -24,7 +24,7 @@ io.load(..., backend="mps")
   → backend validation
   → source and chunk planning
   → bounded source decode + ANS encoding
-  → encoded FourDSTEMData + provenance
+  → native Dataset4dstem with encoded storage and provenance
 ```
 
 Python owns validation and typed results. Metal owns bounded device decode and
@@ -32,10 +32,10 @@ reductions. MLX owns the current Python MPS FFT/reconstruction path. Those are
 implementation layers of one MPS runtime, not separate public workflows.
 
 ```python
-from quantem.gpu import detector, io
+from quantem.gpu import io
 
 with io.load("scan_master.h5", backend="mps") as loaded:
-    diffraction = detector.prepare(loaded).frame(0, output="native")
+    diffraction = loaded[0, 0]
 ```
 
 Saved `.qem` acquisitions remain encoded:

@@ -186,23 +186,6 @@ def _bf_storage_chunk_packs(
     return packs
 
 
-def _exact_pair_row_storage_bf_512(
-    chunk_bf: int,
-    storage_classes: tuple[int, ...] | None = None,
-) -> int:
-    """Return the smallest retained allocation class for one exact pair pack."""
-    chunk_bf = int(chunk_bf)
-    if storage_classes is None:
-        _pack_limit, storage_classes = _exact_pair_row_policy_512()
-    for storage_class in storage_classes:
-        if chunk_bf <= storage_class:
-            return storage_class
-    raise ValueError(
-        f"Exact 512 pair pack of {chunk_bf} BF planes exceeds "
-        f"the {storage_classes[-1]}-plane storage class."
-    )
-
-
 def _exact_pair_row_allocation_bf_512(
     pack_bf: int,
     storage_classes: tuple[int, ...] | None = None,
