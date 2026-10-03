@@ -1,5 +1,9 @@
 # quantem.gpu
 
+> **Active development and exploration.** This codebase is evolving rapidly;
+> APIs and behavior may change. Review recent commits before updating, and
+> record the exact commit (`git rev-parse HEAD`) used for your results.
+
 GPU-accelerated 4D-STEM analysis in Python: load acquisitions, explore
 virtual detectors, calculate CoM/DPC, and reconstruct phase with
 single-sideband ptychography (SSB). Use NVIDIA CUDA on Linux or Python MPS
