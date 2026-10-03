@@ -1,6 +1,7 @@
 """Capture native dataset calibration at storage boundaries."""
 
 from copy import deepcopy
+from math import isclose
 
 from quantem.core.datastructures import Dataset
 
@@ -32,19 +33,19 @@ def dataset_metadata(data: Dataset) -> dict:
         factors = lengths if axis < 2 else reciprocals
         if unit in factors:
             axis_sampling.append(
-                dict(
-                    value=abs(float(value)) * factors[unit],
-                    unit="angstrom" if axis < 2 else "1/angstrom",
-                    provenance="native_dataset_calibration",
-                )
+                {
+                    "value": abs(float(value)) * factors[unit],
+                    "unit": "angstrom" if axis < 2 else "1/angstrom",
+                    "provenance": "native_dataset_calibration",
+                }
             )
         elif axis >= 2 and unit in {"mrad", "rad"}:
             axis_sampling.append(
-                dict(
-                    value=abs(float(value)) * (1000 if unit == "rad" else 1),
-                    unit="mrad",
-                    provenance="native_dataset_calibration",
-                )
+                {
+                    "value": abs(float(value)) * (1000 if unit == "rad" else 1),
+                    "unit": "mrad",
+                    "provenance": "native_dataset_calibration",
+                }
             )
         else:
             axis_sampling.append(None)
@@ -60,6 +61,25 @@ def dataset_metadata(data: Dataset) -> dict:
         from ._qem_metadata import microscopy_metadata
 
         scientific = microscopy_metadata(metadata["scientific_metadata"])
+        overrides = scientific.get("calibration_overrides", {})
+        for first, prefix in (
+            (0, "scan_controller/regular_scan/pixel_size_"),
+            (2, "imaging_system/reciprocal_pixel_size_"),
+        ):
+            keys = [prefix + suffix for suffix in ("row", "column")]
+            pair = axis_sampling[first : first + 2]
+            if any(key in overrides for key in keys) and any(
+                sampling is None
+                or overrides.get(key, {}).get("unit") != sampling["unit"]
+                or not isclose(
+                    overrides[key]["value"], sampling["value"], rel_tol=1e-12
+                )
+                for key, sampling in zip(keys, pair)
+            ):
+                # A selection or recalibration supersedes the original pair.
+                # Retaining it would replace the current axes when reopened.
+                for key in keys:
+                    overrides.pop(key, None)
         for axis, size, sampling in zip(scientific["axes"], data.shape, axis_sampling):
             axis["size"] = int(size)
             if sampling is None:

@@ -2,8 +2,8 @@
 
 import numpy as np
 import pytest
-
 from quantem.core.datastructures import Dataset2d, Dataset4dstem
+
 from quantem.gpu import io
 
 
@@ -56,3 +56,73 @@ def test_native_metadata_export_uses_current_calibration(tmp_path, direction):
         assert loaded.metadata["scan_sampling_A"] == pytest.approx([0.5, 0.6])
         assert loaded.metadata["detector_sampling"] == pytest.approx([0.02, 0.03])
         assert loaded.metadata["detector_sampling_unit"] == "1/angstrom"
+
+
+@pytest.mark.parametrize("step", [1, 2])
+def test_calibrated_selection_roundtrip_supersedes_stale_overrides(tmp_path, step):
+    from copy import deepcopy
+
+    from quantem.gpu.io._qem_metadata import acquisition_metadata
+
+    values = np.arange(4 * 3 * 8 * 8, dtype=np.uint16).reshape(4, 3, 8, 8)
+    scientific = acquisition_metadata(
+        values.shape,
+        {
+            "scan_sampling_A": [1, 2],
+            "detector_sampling": [0.01, 0.02],
+            "detector_sampling_unit": "1/angstrom",
+            "voltage_kV": 300,
+            "source_metadata": {"acquisition": "calibrated reference"},
+        },
+    )
+    scientific["calibration_overrides"] = {
+        path: {
+            "value": value,
+            "unit": unit,
+            "provenance": "user_override",
+            "evidence": "measured standard",
+        }
+        for path, value, unit in (
+            ("scan_controller/regular_scan/pixel_size_row", 0.4, "angstrom"),
+            ("scan_controller/regular_scan/pixel_size_column", 0.6, "angstrom"),
+            ("imaging_system/reciprocal_pixel_size_row", 0.02, "1/angstrom"),
+            ("imaging_system/reciprocal_pixel_size_column", 0.03, "1/angstrom"),
+            ("electron_source/accelerating_voltage", 200, "kV"),
+        )
+    }
+    original = deepcopy(scientific)
+    source_path = tmp_path / "calibrated.qem"
+    selected_path = tmp_path / "selected.qem"
+    io.save(
+        source_path,
+        values,
+        metadata={"scientific_metadata": scientific},
+        backend="cpu",
+    )
+    with io.load(
+        source_path, backend="cpu", representation="dense", verbose=False
+    ) as loaded:
+        selected = loaded[::step, :, ::step, :]
+        io.save(selected_path, selected, backend="cpu")
+        assert loaded.metadata["scientific_metadata"] == original
+    with io.load(
+        selected_path, backend="cpu", representation="dense", verbose=False
+    ) as reopened:
+        np.testing.assert_array_equal(reopened.array, values[::step, :, ::step, :])
+        np.testing.assert_allclose(
+            reopened.sampling, [0.4 * step, 0.6, 0.02 * step, 0.03]
+        )
+        assert reopened.metadata["scan_sampling_A"] == pytest.approx([0.4 * step, 0.6])
+        assert reopened.metadata["detector_sampling"] == pytest.approx([0.02 * step, 0.03])
+        assert reopened.metadata["detector_sampling_unit"] in {"1/angstrom", "1/Å"}
+        saved = reopened.metadata["scientific_metadata"]
+        assert saved["source_metadata"] == original["source_metadata"]
+        expected_overrides = original["calibration_overrides"]
+        if step != 1:
+            expected_overrides = {
+                "electron_source/accelerating_voltage": expected_overrides[
+                    "electron_source/accelerating_voltage"
+                ]
+            }
+        assert saved["calibration_overrides"] == expected_overrides
+        assert reopened.metadata["voltage_kV"] == 200
