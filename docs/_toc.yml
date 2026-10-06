@@ -1,0 +1,191 @@
+format: jb-book
+root: intro
+parts:
+- caption: Start here
+  chapters:
+  - file: install
+- caption: Python workflows
+  chapters:
+  - file: python-workflow
+    title: "Gold: I/O, DPC and SSB"
+    sections:
+    - file: examples/qem_portable
+      title: "Advanced: probe and reconstruction"
+  - file: api/qem-python
+    title: Save and share your data
+- caption: API reference
+  chapters:
+  - file: api/index
+    title: Python API
+    sections:
+    - file: api/io
+      title: Load data and select patterns
+    - file: api/images_dpc
+      title: BF, ADF, and DPC images
+    - file: api/ssb
+      title: SSB phase and aberrations
+    - file: api/movie
+    - file: api/core
+      title: Devices, optics, parallax, and scan rotation
+- caption: Developer guide
+  chapters:
+  - file: developer/index
+    title: Developer guide
+    sections:
+    - file: kernels/index
+      title: Scientific operations
+      sections:
+      - file: concepts/scientific-contract
+        title: Scientific contract
+      - file: kernels/data-model
+        title: Data model and coordinates
+      - file: kernels/load-decode-bin
+        title: Load, decode, and bin
+      - file: kernels/virtual-detectors
+        title: BF, DF, and ADF reductions
+      - file: kernels/com-dpc-idpc
+        title: CoM, DPC, and iDPC
+      - file: kernels/ssb
+        title: Single-sideband ptychography
+      - file: kernels/scan-regions
+        title: Explicit scan regions
+      - file: kernels/display-export
+        title: Display and export kernels
+        sections:
+        - file: kernels/metal-image-statistics
+    - file: platforms/index
+      title: Backend implementations
+      sections:
+      - file: platforms/mps
+        title: Python MPS
+      - file: platforms/cuda
+      - file: platforms/swift-metal
+        sections:
+        - file: platforms/swift-metal-additions
+          title: Native Swift and Metal
+      - file: platforms/webgpu
+      - file: platforms/android-vulkan
+        title: Android Vulkan
+      - file: platforms/cpu-reference
+        title: CPU reference
+    - file: developer/integration
+      title: Native application integration
+      sections:
+      - file: api/native_4dstem_io
+        title: Load native acquisitions
+        sections:
+        - file: api/native-acquisition-formats
+        - file: api/original-hdf5-metal-packing
+          title: Original HDF5 packed loading
+        - file: api/native_resident
+      - file: api/metal_image
+    - file: developer/file-formats
+      title: File formats and codecs
+      sections:
+      - file: api/qem-format
+        title: QEM specification
+        sections:
+        - file: api/qem-codecs
+        - file: api/qem-metadata-mapping
+        - file: api/qem-interoperability
+        - file: integrations/k3-dm4-qem
+      - file: api/representations
+        title: Dense and lossless-packed data
+      - file: api/compact_4dstem_h5
+        title: Prepared packed format
+        sections:
+        - file: api/native_lossless_pack_v1_producer
+          title: Native Lossless Pack Format v1 producer
+      - file: developer/count-ans
+        title: Count-ANS container
+      - file: developer/paired-resident
+        title: Paired-count resident layout
+    - file: remote/index
+      title: QuantEM.GPU Remote
+      sections:
+      - file: remote/deployment
+        title: Deploy a Linux CUDA host
+      - file: remote/connect
+        title: Connect locally or over SSH
+      - file: remote/protocol
+        title: Protocol and integration
+      - file: remote/admission
+        title: GPU admission and residency
+    - file: performance/index
+      title: Testing and benchmarks
+      sections:
+      - file: dashboard
+        title: Implementation overview
+      - file: developer/testing
+      - file: performance/coverage
+        title: Coverage and runbooks
+      - file: performance/backend-readiness
+        title: Evidence-backed readiness
+      - file: performance/results
+        title: Verified benchmark results
+      - file: performance/changes
+        title: Revision and change ledger
+      - file: backends
+        title: Backend coverage
+      - file: performance/methodology
+      - file: performance/cuda-count-codecs
+        title: CUDA codec speed and peak memory
+      - file: performance/continuous-profiling
+        title: Continuous profiling
+      - file: performance/parity
+      - file: maintainer/ans-io-acceptance
+      - file: maintainer/backend-optimization-matrix
+        title: Optimization ledger
+      - file: maintainer/backend-4dstem-load-checklist
+        title: Load acceptance evidence
+      - file: maintainer/ssb-performance
+      - file: maintainer/ssb-performance-checkpoints
+        title: SSB performance evidence
+    - file: developer/kernel-lifecycle
+      title: Contributing changes
+      sections:
+      - file: concepts/kernel-architecture
+        title: Kernel architecture
+      - file: maintainer/backend-layout-and-parity
+        title: Repository architecture
+      - file: developer/adding-backend
+      - file: developer/representation-integration
+        title: Count and Fourier representation integration
+      - file: developer/reproducing-resident-analysis
+        title: Reproducing resident count analysis
+      - file: developer/writing
+        title: Writing, notation, and units
+    - file: maintainer/index
+      title: Historical records
+      sections:
+      - file: maintainer/2026-09-08-packed-resident-optimization
+        title: Packed-resident optimization evidence
+      - file: maintainer/migration
+      - file: maintainer/native-metal-hdf5-postmortem
+      - file: maintainer/m2-air-lz4-match-unroll-2026-08-18
+        title: M2 Air Metal evidence
+      - file: maintainer/remote-cuda-real-data-2026-08-15
+        title: Remote CUDA evidence
+      - file: maintainer/ssb-architecture
+      - file: maintainer/2026-09-24-ssb-units-and-thick-sample
+        title: SSB units and thick-sample model (2026-09-24)
+      - file: maintainer/downstream-sync
+        title: Downstream sync after the restructure (2026-10-05)
+      - file: maintainer/2026-10-05-ssb-detector-sampling
+        title: SSB detector sampling and fit state (2026-10-05)
+      - file: maintainer/native-metal-ssb-migration
+        title: Native Metal SSB migration
+      - file: maintainer/virtual-image-kernel-checklist
+      - file: maintainer/history/index
+        title: Historical experiments
+        sections:
+        - file: maintainer/history/webgpu-gqk-memory-2026-07
+          title: WebGPU G(q,k) memory history
+        - file: maintainer/history/webgpu-frame-coop-u16-clip8-2026-07-25
+          title: WebGPU frame-cooperative decode
+      - file: integrations/experimental-resident-ans
+        title: Experimental resident ANS
+      - file: api/experimental_metal_entropy_series
+        title: Experimental Metal entropy series (2026-09-08)
+      - file: maintainer/install-rc8
+        title: Reproduce the rc8 installation

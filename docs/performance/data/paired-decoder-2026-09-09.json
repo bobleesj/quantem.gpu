@@ -1,0 +1,21 @@
+{
+ "schema_version": 1,
+ "evidence_id": "paired-decoder-2026-09-09",
+ "date": "2026-09-09",
+ "qualification": "physical device measurement; single run per row; not a release gate",
+ "device": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition, CUDA, device 0 shared with an interactive desktop",
+ "provenance": {"package": "quantem.gpu", "branch": "main", "kernel": "pm_residual_u32 (paired.cu)"},
+ "input": {"acquisitions": 12, "shape": [512, 512, 192, 192], "dtype": "uint16", "poses": "356 recorded centre-drag detector geometries (annulus 40.25-91.75 px) replayed in order through detector.prepare / masked_sum"},
+ "protocol": "replay the recorded poses with the previous decoder and the grouped-refill decoder on the same resident sources; CUDA events around the plan+residual launches; Nsight Compute on launch 40 of the same replay; outputs compared as SHA-256 of every masked sum, five frames and fifteen block decodes",
+ "rows": [
+  {"measurement": "plan+residual per query, previous decoder", "value_ms_mean": 1.0, "value_ms_p50": 0.87, "value_ms_p90": 1.7, "residual_pixels_mean": 403},
+  {"measurement": "plan+residual per query, grouped-refill decoder", "value_ms_mean": 0.72, "value_ms_p50": 0.74, "value_ms_p90": 1.43, "residual_pixels_mean": 403},
+  {"measurement": "Nsight Compute, one launch: executed warp instructions", "previous": 860460818, "grouped_refill": 618095203, "per_coded_pair_per_warp_previous": 67, "per_coded_pair_per_warp_grouped": 48},
+  {"measurement": "Nsight Compute, one launch: duration ms", "previous": 1.07, "grouped_refill": 0.795, "issue_active_previous": 0.71, "issue_active_grouped": 0.69, "note": "compute-bound (ALU pipe 81 percent) at twelve sources; the residual decoder is 88 percent of a viewer's query time and the plan kernel 10 percent (nsys over a 4 s centre drag at 69 sources)"},
+  {"measurement": "exactness", "masked_sums_identical": 356, "frames_identical": 5, "block_decodes_identical": 15, "io_contract_tests_passed": 241}
+ ],
+ "rejected": [
+  {"variant": "eager refill on the critical path (load, combine, pop each pair)", "result_ms_mean": 1.3, "why": "fewer instructions (789M) but the refill load waits before every symbol; eligible warps 1.45 versus 3.48"},
+  {"variant": "two streams per thread", "why": "56 registers, slower (0909-99)"}
+ ]
+}

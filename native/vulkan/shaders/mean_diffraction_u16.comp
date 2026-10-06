@@ -1,0 +1,53 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer PackedCounts {
+    uint words[];
+} counts;
+
+layout(set = 0, binding = 1, std430) readonly buffer PackedMembership {
+    uint words[];
+} membership;
+
+layout(set = 0, binding = 2, std430) buffer ScanProducts {
+    uint64_t values[];
+} products;
+
+layout(set = 0, binding = 3, std430) buffer DiffractionSums {
+    uint64_t values[];
+} diffractionSums;
+
+layout(set = 0, binding = 4, std430) buffer SelectedDiffraction {
+    uint words[];
+} selectedDiffraction;
+
+layout(push_constant) uniform Parameters {
+    uint scanCount;
+    uint detectorRows;
+    uint detectorColumns;
+    uint globalScanOffset;
+    uint totalScanCount;
+    uint selectedGlobalScan;
+    uint reserved0;
+    uint reserved1;
+} parameters;
+
+uint readPackedUint16(uint logicalIndex) {
+    uint word = counts.words[logicalIndex >> 1u];
+    return (word >> ((logicalIndex & 1u) * 16u)) & 0xffffu;
+}
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    uint detectorPixels = parameters.detectorRows * parameters.detectorColumns;
+    if (pixel >= detectorPixels) {
+        return;
+    }
+    uint64_t sum = 0ul;
+    for (uint scan = 0u; scan < parameters.scanCount; ++scan) {
+        sum += uint64_t(readPackedUint16(scan * detectorPixels + pixel));
+    }
+    diffractionSums.values[pixel] += sum;
+}

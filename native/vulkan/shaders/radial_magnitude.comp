@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 4, std430) readonly buffer Columns { vec2 values[]; } columns;
+layout(set = 0, binding = 5, std430) writeonly buffer Magnitude { float values[]; } magnitude;
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    if (index>=262144u) return;
+    uint row=index/512u, column=index%512u;
+    uint centered=((row+256u)%512u)*512u+(column+256u)%512u;
+    magnitude.values[centered]=length(columns.values[index]);
+}

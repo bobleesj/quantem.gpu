@@ -1,0 +1,105 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer PackedCounts {
+    uint words[];
+} counts;
+
+layout(set = 0, binding = 1, std430) readonly buffer PackedMembership {
+    uint words[];
+} membership;
+
+layout(set = 0, binding = 2, std430) writeonly buffer ScanProducts {
+    uint64_t values[];
+} products;
+
+layout(set = 0, binding = 3, std430) buffer DiffractionSums {
+    uint64_t values[];
+} diffractionSums;
+
+layout(set = 0, binding = 4, std430) writeonly buffer SelectedDiffraction {
+    uint words[];
+} selectedDiffraction;
+
+layout(push_constant) uniform Parameters {
+    uint scanCount;
+    uint detectorRows;
+    uint detectorColumns;
+    uint globalScanOffset;
+    uint totalScanCount;
+    uint selectedGlobalScan;
+    uint reserved0;
+    uint reserved1;
+} parameters;
+
+shared uint64_t reduction[6][64];
+
+uint readPackedUint16(uint logicalIndex) {
+    uint word = counts.words[logicalIndex >> 1u];
+    return (word >> ((logicalIndex & 1u) * 16u)) & 0xffffu;
+}
+
+uint readPackedByte(uint logicalIndex) {
+    uint word = membership.words[logicalIndex >> 2u];
+    return (word >> ((logicalIndex & 3u) * 8u)) & 0xffu;
+}
+
+void main() {
+    uint localScan = gl_WorkGroupID.x;
+    uint lane = gl_LocalInvocationID.x;
+    if (localScan >= parameters.scanCount) {
+        return;
+    }
+
+    uint detectorPixels = parameters.detectorRows * parameters.detectorColumns;
+    uint base = localScan * detectorPixels;
+    uint64_t total = 0ul;
+    uint64_t band1 = 0ul;
+    uint64_t band2 = 0ul;
+    uint64_t band4 = 0ul;
+    uint64_t rowMoment = 0ul;
+    uint64_t columnMoment = 0ul;
+    for (uint pixel = lane; pixel < detectorPixels; pixel += 64u) {
+        uint64_t value = uint64_t(readPackedUint16(base + pixel));
+        uint member = readPackedByte(pixel);
+        total += value;
+        if ((member & 1u) != 0u) band1 += value;
+        if ((member & 2u) != 0u) band2 += value;
+        if ((member & 4u) != 0u) band4 += value;
+        rowMoment += value * uint64_t(pixel / parameters.detectorColumns);
+        columnMoment += value * uint64_t(pixel % parameters.detectorColumns);
+    }
+
+    reduction[0][lane] = total;
+    reduction[1][lane] = band1;
+    reduction[2][lane] = band2;
+    reduction[3][lane] = band4;
+    reduction[4][lane] = rowMoment;
+    reduction[5][lane] = columnMoment;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (lane < stride) {
+            for (uint product = 0u; product < 6u; ++product) {
+                reduction[product][lane] += reduction[product][lane + stride];
+            }
+        }
+        barrier();
+    }
+
+    uint globalScan = parameters.globalScanOffset + localScan;
+    if (lane == 0u) {
+        for (uint product = 0u; product < 6u; ++product) {
+            products.values[product * parameters.totalScanCount + globalScan] =
+                reduction[product][0];
+        }
+    }
+    if (globalScan == parameters.selectedGlobalScan) {
+        uint wordsPerFrame = (detectorPixels + 1u) >> 1u;
+        uint baseWord = base >> 1u;
+        for (uint word = lane; word < wordsPerFrame; word += 64u) {
+            selectedDiffraction.words[word] = counts.words[baseWord + word];
+        }
+    }
+}

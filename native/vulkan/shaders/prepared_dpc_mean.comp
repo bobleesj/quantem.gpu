@@ -1,0 +1,40 @@
+#version 450
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0, std430) readonly buffer RowCom { float row_com[]; };
+layout(set = 0, binding = 1, std430) readonly buffer ColumnCom { float column_com[]; };
+layout(set = 0, binding = 2, std430) writeonly buffer Mean { float mean[]; };
+layout(push_constant) uniform Parameters { uint scan_count; } parameters;
+shared float row_partial[256];
+shared float column_partial[256];
+
+void main() {
+  const uint lane = gl_LocalInvocationID.x;
+  float row_sum = 0.0, row_compensation = 0.0;
+  float column_sum = 0.0, column_compensation = 0.0;
+  for (uint scan = lane; scan < parameters.scan_count; scan += 256u) {
+    const float row_value = row_com[scan] - row_compensation;
+    const float row_next = row_sum + row_value;
+    row_compensation = (row_next - row_sum) - row_value;
+    row_sum = row_next;
+    const float column_value = column_com[scan] - column_compensation;
+    const float column_next = column_sum + column_value;
+    column_compensation = (column_next - column_sum) - column_value;
+    column_sum = column_next;
+  }
+  row_partial[lane] = row_sum;
+  column_partial[lane] = column_sum;
+  barrier();
+  for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+    if (lane < stride) {
+      row_partial[lane] += row_partial[lane + stride];
+      column_partial[lane] += column_partial[lane + stride];
+    }
+    barrier();
+  }
+  if (lane == 0u) {
+    const float denominator = max(float(parameters.scan_count), 1.0);
+    mean[0] = row_partial[0] / denominator;
+    mean[1] = column_partial[0] / denominator;
+  }
+}

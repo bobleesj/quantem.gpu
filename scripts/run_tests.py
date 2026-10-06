@@ -1,0 +1,67 @@
+"""Run named regression suites or current pytest paths.
+
+Examples
+--------
+python scripts/run_tests.py contracts parity -q
+python scripts/run_tests.py hardware/cuda -q
+python scripts/run_tests.py tests/contracts/io/test_load.py -q
+
+Hardware opt-ins and pytest options are unchanged. A skipped device gate is
+not a hardware pass. Historical commands remain reproducible at their pinned revision.
+"""
+
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+SUITES = {
+    "all": "tests",
+    "contracts": "tests/contracts",
+    "parity": "tests/parity",
+    "hardware": "tests/hardware",
+    "hardware/cuda": "tests/hardware/cuda",
+    "hardware/mps": "tests/hardware/mps",
+    "hardware/metal": "tests/hardware/metal",
+    "e2e": "tests/e2e",
+    "infrastructure": "tests/infrastructure",
+}
+
+
+def main(argv=None):
+    """Execute pytest without changing scientific gates or tolerance settings."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ["--list"]:
+        for name, path in SUITES.items():
+            print(f"{name:18} {path}")
+        return 0
+    translated = []
+    for value in arguments or ["all"]:
+        path, separator, node = value.partition("::")
+        target = SUITES.get(path, path)
+        translated.append(target + separator + node)
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (str(ROOT / "src"), environment.get("PYTHONPATH")) if value
+    )
+    return subprocess.run(
+        [sys.executable, "-c", """
+import sys
+from pathlib import Path
+import quantem
+
+root = Path.cwd()
+quantem.__path__ = [str(root / "src/quantem"), *quantem.__path__]
+import quantem.gpu
+import pytest
+
+if not Path(quantem.gpu.__file__).resolve().is_relative_to(root / "src"):
+    raise RuntimeError("Tests imported another checkout; refusing stale installed code.")
+raise SystemExit(pytest.main(sys.argv[1:]))
+""", *translated], cwd=ROOT, env=environment
+    ).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,399 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// IMPORTANT: All frame-indexed address calculations use ulong casts to
+// prevent uint32 overflow. Without this, frame_id * frame_bytes overflows
+// at frame ~58K for 73,728-byte frames (58255 × 73728 = 4,295,024,640 > 2^32),
+// causing all subsequent frames to read/write address 0 and produce zeros.
+
+// ---- LZ4 decompression constants ----
+constant uint DECOMP_THREADS_PER_CHUNK = 32;
+constant uint DECOMP_INPUT_BUFFER_SIZE = 256;  // 32 * sizeof(ulong)
+constant uint DECOMP_BUFFER_PREFETCH_DIST = 128;
+
+inline void syncCTA() {
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+inline ushort readWordDevice(const device uchar* address) {
+    return ushort(address[0]) | (ushort(address[1]) << 8);
+}
+inline ushort readWordTG(threadgroup const uchar* address) {
+    return ushort(address[0]) | (ushort(address[1]) << 8);
+}
+
+struct token_type { uint num_literals; uint num_matches; };
+
+inline token_type decodePair(uchar num) {
+    return token_type{uint((num & 0xf0) >> 4), uint(num & 0x0f)};
+}
+
+// ---- Cooperative copy functions ----
+inline void coopCopyNoOverlap(
+    device uchar* dest, const device uchar* source,
+    uint length, uint tid, uint stride
+) {
+    for (uint i = tid; i < length; i += stride)
+        dest[i] = source[i];
+}
+inline void coopCopyNoOverlapFromTG(
+    device uchar* dest, threadgroup const uchar* source,
+    uint length, uint tid, uint stride
+) {
+    for (uint i = tid; i < length; i += stride)
+        dest[i] = source[i];
+}
+inline void coopCopyRepeat(
+    device uchar* dest, const device uchar* source,
+    uint dist, uint length, uint tid, uint stride
+) {
+    for (uint i = tid; i < length; i += stride)
+        dest[i] = source[i % dist];
+}
+inline void coopCopyRepeatFromTG(
+    device uchar* dest, threadgroup const uchar* source,
+    uint dist, uint length, uint tid, uint stride
+) {
+    for (uint i = tid; i < length; i += stride)
+        dest[i] = source[i % dist];
+}
+inline void coopCopyOverlap(
+    device uchar* dest, const device uchar* source,
+    uint dist, uint length, uint tid, uint stride
+) {
+    if (dist < length) coopCopyRepeat(dest, source, dist, length, tid, stride);
+    else               coopCopyNoOverlap(dest, source, length, tid, stride);
+}
+inline void coopCopyOverlapFromTG(
+    device uchar* dest, threadgroup const uchar* source,
+    uint dist, uint length, uint tid, uint stride
+) {
+    if (dist < length) coopCopyRepeatFromTG(dest, source, dist, length, tid, stride);
+    else               coopCopyNoOverlapFromTG(dest, source, length, tid, stride);
+}
+
+// ---- Buffer load: fill threadgroup cache from device memory ----
+inline void bufferLoadAt(
+    threadgroup uchar* buffer,
+    const device uchar* compData,
+    uint comp_length,
+    thread long& buf_offset,
+    uint tid
+) {
+    ulong addr = ulong(compData) + ulong(buf_offset);
+    ulong aligned = (addr / 8) * 8;
+    buf_offset = long(aligned - ulong(compData));
+    if (uint(buf_offset) + DECOMP_INPUT_BUFFER_SIZE <= comp_length) {
+        const device ulong* src = (const device ulong*)(compData + buf_offset);
+        threadgroup ulong* dst = (threadgroup ulong*)buffer;
+        dst[tid] = src[tid];
+    } else {
+        for (uint i = tid; i < DECOMP_INPUT_BUFFER_SIZE; i += DECOMP_THREADS_PER_CHUNK) {
+            if (uint(buf_offset) + i < comp_length)
+                buffer[i] = compData[buf_offset + i];
+        }
+    }
+    syncCTA();
+}
+
+inline uint readLSIC(
+    threadgroup const uchar* buffer,
+    const device uchar* compData,
+    long buf_offset, uint buf_end,
+    thread uint& idx
+) {
+    uint num = 0;
+    uchar next = 0xff;
+    while (next == 0xff && idx < buf_end) {
+        next = buffer[idx - uint(buf_offset)];
+        idx++;
+        num += next;
+    }
+    while (next == 0xff) {
+        next = compData[idx];
+        idx++;
+        num += next;
+    }
+    return num;
+}
+
+inline void decompressStream(
+    threadgroup uchar* buffer,
+    device uchar* decompData,
+    const device uchar* compData,
+    uint comp_end,
+    uint tid
+) {
+    long buf_offset = 0;
+    bufferLoadAt(buffer, compData, comp_end, buf_offset, tid);
+    uint decomp_idx = 0;
+    uint comp_idx = 0;
+    while (comp_idx < comp_end) {
+        uint buf_end = uint(buf_offset) + DECOMP_INPUT_BUFFER_SIZE;
+        if (comp_idx + DECOMP_BUFFER_PREFETCH_DIST > buf_end) {
+            buf_offset = long(comp_idx);
+            bufferLoadAt(buffer, compData, comp_end, buf_offset, tid);
+        }
+        buf_end = uint(buf_offset) + DECOMP_INPUT_BUFFER_SIZE;
+        token_type tok = decodePair(buffer[comp_idx - uint(buf_offset)]);
+        comp_idx++;
+        uint num_literals = tok.num_literals;
+        if (tok.num_literals == 15)
+            num_literals += readLSIC(buffer, compData, buf_offset, buf_end, comp_idx);
+        uint literalStart = comp_idx;
+        if (num_literals + comp_idx > buf_end)
+            coopCopyNoOverlap(decompData + decomp_idx, compData + comp_idx,
+                              num_literals, tid, DECOMP_THREADS_PER_CHUNK);
+        else
+            coopCopyNoOverlapFromTG(decompData + decomp_idx,
+                                    buffer + (comp_idx - uint(buf_offset)),
+                                    num_literals, tid, DECOMP_THREADS_PER_CHUNK);
+        comp_idx += num_literals;
+        decomp_idx += num_literals;
+        if (comp_idx < comp_end) {
+            ushort match_offset;
+            if (comp_idx + 2 > buf_end)
+                match_offset = readWordDevice(compData + comp_idx);
+            else
+                match_offset = readWordTG(buffer + (comp_idx - uint(buf_offset)));
+            comp_idx += 2;
+            uint match_len = 4 + tok.num_matches;
+            if (tok.num_matches == 15)
+                match_len += readLSIC(buffer, compData, buf_offset, buf_end, comp_idx);
+            if (match_offset <= num_literals
+                && (long(literalStart) >= buf_offset
+                    && literalStart + num_literals <= buf_end)) {
+                coopCopyOverlapFromTG(
+                    decompData + decomp_idx,
+                    buffer + (literalStart + (num_literals - match_offset) - uint(buf_offset)),
+                    match_offset, match_len, tid, DECOMP_THREADS_PER_CHUNK);
+                syncCTA();
+            } else {
+                syncCTA();
+                coopCopyOverlap(
+                    decompData + decomp_idx,
+                    decompData + decomp_idx - match_offset,
+                    match_offset, match_len, tid, DECOMP_THREADS_PER_CHUNK);
+            }
+            decomp_idx += match_len;
+        }
+    }
+}
+
+inline uint read32be(const device uchar* p) {
+    return (uint(p[0]) << 24) | (uint(p[1]) << 16) | (uint(p[2]) << 8) | uint(p[3]);
+}
+
+// =====================================================================
+// Kernel 1: Batched LZ4 decompression
+// Grid:  (n_frames, 1, (max_blocks+1)/2)
+// Block: (32, 2, 1)
+// =====================================================================
+kernel void h5lz4dc_batched(
+    const device uchar* compressed          [[buffer(0)]],
+    const device uint*  chunk_offsets        [[buffer(1)]],
+    const device uint*  block_starts         [[buffer(2)]],
+    const device uint*  block_counts         [[buffer(3)]],
+    const device uint*  block_offsets        [[buffer(4)]],
+    constant uint&      blocksize            [[buffer(5)]],
+    constant uint&      frame_bytes          [[buffer(6)]],
+    device uchar*       decompressed         [[buffer(7)]],
+    uint3 tpig  [[threadgroup_position_in_grid]],
+    uint3 tpit  [[thread_position_in_threadgroup]],
+    uint3 tptg  [[threads_per_threadgroup]]
+) {
+    uint frame_id       = tpig.x;
+    uint block_in_frame = tpig.z * tptg.y + tpit.y;
+    uint chunk_offset   = chunk_offsets[frame_id];
+    uint block_offset   = block_offsets[frame_id];
+    uint num_blocks     = block_counts[frame_id];
+    threadgroup uchar tg_buffer[256 * LZ4_BLOCKS_PER_TG];
+    if (block_in_frame < num_blocks) {
+        uint blk_start = block_starts[block_offset + block_in_frame];
+        const device uchar* input = compressed + chunk_offset + blk_start + 4;
+        uint comp_size = read32be(compressed + chunk_offset + blk_start);
+        device uchar* output = decompressed + ulong(frame_id) * ulong(frame_bytes)
+                               + block_in_frame * blocksize;
+        decompressStream(tg_buffer + tpit.y * 256, output, input, comp_size, tpit.x);
+    }
+}
+
+// =====================================================================
+// Kernel 2a: Batched bitshuffle unshuffle (8192-byte blocks, 32-bit elems)
+//
+// Optimized: 32 SIMD groups per threadgroup (1024 threads), each group
+// unshuffles 32 elements using shared memory to cache bit planes.
+//
+// Grid:  (n_frames, 1, ceil(total_groups / 32))
+// Block: (32, 32, 1)  →  32 SIMD groups of 32 threads
+// =====================================================================
+kernel void shuf_8192_32_batched(
+    const device uint*  in   [[buffer(0)]],
+    device uint*        out  [[buffer(1)]],
+    constant uint&      frame_u32s        [[buffer(2)]],
+    constant uint&      groups_per_block  [[buffer(3)]],
+    constant uint&      total_groups      [[buffer(4)]],
+    uint3 tpig       [[threadgroup_position_in_grid]],
+    uint  lane       [[thread_index_in_simdgroup]],
+    uint  sg_id      [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame_id  = tpig.x;
+    uint group_id  = tpig.z * 32 + sg_id;
+    if (group_id >= total_groups) return;
+    uint block_id       = group_id / groups_per_block;
+    uint group_in_block = group_id % groups_per_block;
+    const device uint* block_in = in + ulong(frame_id) * ulong(frame_u32s)
+                                     + block_id * 2048;
+    // Cache 32 bit planes in shared memory (one set per SIMD group)
+    threadgroup uint planes[32][32];
+    planes[sg_id][lane] = block_in[lane * groups_per_block + group_in_block];
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    uint result = 0;
+    for (int j = 0; j < 32; j++)
+        if (planes[sg_id][j] & (1U << lane))
+            result |= (1U << j);
+    out[ulong(frame_id) * ulong(frame_u32s) + group_id * 32 + lane] = result;
+}
+
+// =====================================================================
+// Kernel 2b: Batched bitshuffle unshuffle (8192-byte blocks, 16-bit elems)
+//
+// Optimized: 32 SIMD groups per threadgroup (1024 threads), each group
+// unshuffles 32 elements using shared memory to cache bit planes.
+// 32x fewer threadgroup launches vs one-group-per-threadgroup version.
+//
+// Grid:  (n_frames, 1, ceil(groups_per_frame / 32))
+// Block: (32, 32, 1)  →  32 SIMD groups of 32 threads
+// =====================================================================
+kernel void shuf_8192_16_batched(
+    const device uint*  in   [[buffer(0)]],
+    device ushort*      out  [[buffer(1)]],
+    constant uint&      frame_u16s        [[buffer(2)]],
+    constant uint&      groups_per_block  [[buffer(3)]],
+    constant uint&      total_groups      [[buffer(4)]],
+    uint3 tpig       [[threadgroup_position_in_grid]],
+    uint  lane       [[thread_index_in_simdgroup]],
+    uint  sg_id      [[simdgroup_index_in_threadgroup]]
+) {
+    uint frame_id  = tpig.x;
+    uint group_id  = tpig.z * 32 + sg_id;
+
+    if (group_id >= total_groups) return;
+
+    uint block_id       = group_id / groups_per_block;
+    uint group_in_block = group_id % groups_per_block;
+
+    const device uint* block_in = in + ulong(frame_id) * ulong(frame_u16s / 2)
+                                     + block_id * 2048;
+
+    // Cache 16 bit planes in shared memory (one set per SIMD group)
+    threadgroup uint planes[32][16];
+    if (lane < 16)
+        planes[sg_id][lane] = block_in[lane * groups_per_block + group_in_block];
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    ushort result = 0;
+    for (int j = 0; j < 16; j++)
+        if (planes[sg_id][j] & (1U << lane))
+            result |= ushort(1U << j);
+
+    out[ulong(frame_id) * ulong(frame_u16s) + group_id * 32 + lane] = result;
+}
+
+// Final partial-block unshuffle. This is the Metal port of QuantEM.GPU's
+// canonical CUDA tail kernels: the shortened block uses its actual bit-plane
+// stride instead of the complete 8192-byte block stride. The host admits only
+// tails containing a multiple of eight elements.
+kernel void shuf_tail_16_batched(
+    const device uchar* in          [[buffer(0)]],
+    device ushort*      out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint tail_bytes = frame_bytes % 8192u;
+    if (tail_bytes == 0u) return;
+    uint frame = group_position.x;
+    uint full_blocks = frame_bytes / 8192u;
+    uint tail_elements = tail_bytes / 2u;
+    uint bitplane_bytes = tail_elements / 8u;
+    uint element = group_position.z * 256u + thread_index;
+    if (element >= tail_elements) return;
+
+    const device uchar* block = in
+        + ulong(frame) * ulong(frame_bytes)
+        + ulong(full_blocks) * 8192u;
+    uint byte_in_plane = element / 8u;
+    uint bit_in_byte = element % 8u;
+    ushort value = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+        if (block[ulong(bit) * bitplane_bytes + byte_in_plane]
+            & (1u << bit_in_byte)) {
+            value |= ushort(1u << bit);
+        }
+    }
+    out[ulong(frame) * ulong(frame_bytes / 2u)
+        + ulong(full_blocks) * 4096u + element] = value;
+}
+
+kernel void shuf_tail_32_batched(
+    const device uchar* in          [[buffer(0)]],
+    device uint*        out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint tail_bytes = frame_bytes % 8192u;
+    if (tail_bytes == 0u) return;
+    uint frame = group_position.x;
+    uint full_blocks = frame_bytes / 8192u;
+    uint tail_elements = tail_bytes / 4u;
+    uint bitplane_bytes = tail_elements / 8u;
+    uint element = group_position.z * 256u + thread_index;
+    if (element >= tail_elements) return;
+
+    const device uchar* block = in
+        + ulong(frame) * ulong(frame_bytes)
+        + ulong(full_blocks) * 8192u;
+    uint byte_in_plane = element / 8u;
+    uint bit_in_byte = element % 8u;
+    uint value = 0u;
+    for (uint bit = 0u; bit < 32u; ++bit) {
+        if (block[ulong(bit) * bitplane_bytes + byte_in_plane]
+            & (1u << bit_in_byte)) {
+            value |= 1u << bit;
+        }
+    }
+    out[ulong(frame) * ulong(frame_bytes / 4u)
+        + ulong(full_blocks) * 2048u + element] = value;
+}
+
+// Unshuffle uint8 frames, complete 8 KiB blocks and the shorter final block
+// alike: a block of n bytes holds 8 bit planes of n / 8 bytes, and byte e of the
+// block takes bit b from bit (e % 8) of byte e / 8 of plane b. Frames along X,
+// 256 output bytes per threadgroup along Z; the Metal port of CUDA's
+// shuf_8_batched.
+kernel void shuf_8_batched(
+    const device uchar* in          [[buffer(0)]],
+    device uchar*       out         [[buffer(1)]],
+    constant uint&      frame_bytes [[buffer(2)]],
+    uint3 group_position            [[threadgroup_position_in_grid]],
+    uint thread_index               [[thread_index_in_threadgroup]]
+) {
+    uint frame = group_position.x;
+    uint byte_in_frame = group_position.z * 256u + thread_index;
+    if (byte_in_frame >= frame_bytes) return;
+    uint block_start = (byte_in_frame / 8192u) * 8192u;
+    uint bitplane_bytes = min(frame_bytes - block_start, 8192u) / 8u;
+    uint element = byte_in_frame - block_start;
+    const device uchar* source = in
+        + ulong(frame) * ulong(frame_bytes) + block_start + element / 8u;
+    uint bit_in_byte = element % 8u;
+    uchar value = 0u;
+    for (uint bit = 0u; bit < 8u; ++bit) {
+        if (source[ulong(bit) * bitplane_bytes] & (1u << bit_in_byte)) {
+            value |= uchar(1u << bit);
+        }
+    }
+    out[ulong(frame) * ulong(frame_bytes) + byte_in_frame] = value;
+}

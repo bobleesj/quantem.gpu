@@ -1,0 +1,86 @@
+# Choose a kernel runtime
+
+For Python notebooks and scripts, begin with [installation](../install.md) and
+the [Python API guide](../api/index.md). This section is for implementation work.
+
+The scientific operation determines what must be computed; the runtime page
+explains how to implement it efficiently on a particular device.
+
+| You are implementing for | Start here | Build and memory model |
+|---|---|---|
+| Apple GPU from Python | [Python MPS](mps.md) | Python adapters over MLX/PyObjC/Metal and unified memory |
+| NVIDIA GPU | [CUDA](cuda.md) | Python/CuPy with CUDA kernels and dedicated VRAM |
+| Native Apple client/library | [Native Swift and Metal](swift-metal.md) | SwiftPM products, Metal resources, and unified memory |
+| Browser GPU | [WebGPU](webgpu.md) | TypeScript/WGSL, browser security, and explicit GPU buffers |
+| Native Android client/library | [Android Vulkan](android-vulkan.md) | NDK C++/C ABI, Vulkan shaders, and admitted packed residency |
+| Independent adjudication | [CPU reference](cpu-reference.md) | deterministic small NumPy/reference implementations |
+
+## Shared implementation shape
+
+Each runtime follows the same layered contract:
+
+```text
+public scientific API
+    ↓
+device and operation dispatcher
+    ↓
+runtime adapter
+    ↓
+kernel, shader, or reference operation
+    ↓
+typed result and scientific provenance
+```
+
+The public API owns coordinates, shapes, dtypes, units, errors, and provenance.
+The dispatcher selects only an explicitly available implementation. The
+runtime adapter owns allocation, layout, compilation, queueing, and
+synchronization. Kernels may optimize those private details but must return the
+same scientific result.
+
+Loaded data uses one vocabulary across runtimes:
+
+| Field | Values | Meaning |
+|---|---|---|
+| `representation` | `encoded`, `paired`, `packed`, `dense` | physical count layout; runtime support varies |
+| `dtype` | scientific value type | the value range and arithmetic contract |
+| `residency` | host or runtime device location | where the physical payload remains |
+| `storage_schema` | versioned internal format | which decoder/profile produced it; Python metadata names it `resident_profile` |
+
+CUDA and Python MPS expose this through `io.Dataset4dstemGPU`, native Swift/Metal
+through `Metal4DSTEMResidentReceipt`, and WebGPU through
+`LocalH5LoadResult`. Vulkan load plans and
+packed-session admission retain their documented dense/packed contracts.
+Python CUDA/MPS acquisition loading defaults to ANS and CUDA also accepts
+`paired`; Python `dense` requires `backend="cpu"`, and Python has no `packed`
+representation. A representation enum is not a promise that every runtime can
+load that layout. See the
+[representation support matrix](../api/representations.md) before assuming an
+operation accepts a representation on a given runtime.
+
+## Repository map by layer
+
+| Runtime | Discovery/dispatch | IO/decode | Detector and DPC | Reconstruction/display | Primary tests |
+|---|---|---|---|---|---|
+| Python MPS | `device/select.py`, operation protocols | `io/hdf5/mps`, `resident/mps` | `detector/counts.py`, `detector/mps`, `resident/mps` | `ssb/mps` | `test_mps_*`, MPS sections of parity tests |
+| CUDA | `device/select.py`, operation protocols | `io/hdf5/cuda`, `resident/cuda` | `detector/cuda` | `ssb/cuda` | `test_cuda_*`, `test_realdata_parity.py` |
+| Swift/Metal | SwiftPM products in `Package.swift` | `Native4DSTEMIO`, `Metal4DSTEMKernels` | `Metal4DSTEMKernels` | `MetalImageFFT`, `MetalDisplayKernels`, `MetalImageRuntime` | `native/swift/Tests` |
+| WebGPU | `device/webgpu.ts` and TypeScript adapters | `io/hdf5/webgpu` | detector/DPC WebGPU modules | SSB and display WebGPU modules | `test_webgpu_*`, browser hardware gates |
+| CPU reference | explicit `backend="cpu"` | `io/hdf5/cpu.py` | NumPy paths in detector/DPC workflows | small independent reference fixtures | product/parity tests |
+
+Open the runtime page for exact source files, call path, memory behavior,
+profiling boundaries, build commands, and acceptance gates.
+
+Before working in a platform folder, read the corresponding page under
+[Scientific kernels](../kernels/index.md). The platform may optimize layout,
+fusion, queueing, and transfers; it must preserve the operation's
+`(row, column) ≡ (r, c)` contract and provenance.
+
+`backend="auto"` is suitable for ordinary Python use. Tests and benchmarks
+select a runtime explicitly so missing hardware and unsupported paths fail
+honestly. Capability status is maintained in [Backend coverage](../backends.md);
+current measurements live in
+[Verified benchmark results](../performance/results.md).
+
+Serving CUDA to another process is not a kernel implementation. See
+[QuantEM.GPU Remote](../remote/index.md) for local loopback and SSH-tunneled
+deployment.

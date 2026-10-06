@@ -1,0 +1,612 @@
+# Native 4D-STEM load and cache contract
+
+The repository-root Swift package exposes reusable HDF5 discovery, exact load
+geometry, Metal kernels, and resident-cache integrity for native macOS clients.
+It does not own SwiftUI, folder-selection policy, memory-pressure UI, cache
+admission or eviction, or application state.
+
+## Products and dependencies
+
+See [Native acquisition formats and metadata](native-acquisition-formats.md)
+for ARINA/NXem, EMPAD-G1/G2, EMD, K3 DM4 and compressed-snapshot detection, reader versions, exact
+metadata paths, units, missing-field behavior and native-client integration.
+
+Native clients compose three products for local 4D-STEM loading:
+
+| Product | Owns | Dependencies |
+|---|---|---|
+| `Native4DSTEMIO` | HDF5 and EMD catalog discovery, QH5 indexing, validated bounded source windows, source identity, value audits, resident-cache and exact-summary IO | `CNativeHDF5`, vendored `CHDF5.xcframework`, zlib, Foundation, CryptoKit |
+| `Metal4DSTEMKernels` | Exact load geometry, streaming geometry, typed exact binning, QH5 decode, BF/ABF/ADF, CoM, and DPC/iDPC primitives | Metal, Foundation, CryptoKit |
+| `Metal4DSTEMStreamingIO` | Bounded native QH5 mapping and decode, overflow-safe exact products, source audit, and on-demand native diffraction frames | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
+
+None of these products imports SwiftUI, AppKit, UIKit, or Python.
+
+## Confirmed EMPAD mean-dark correction
+
+`MetalEMPADBackground` implements `empad-mean-dark/v1`: the arithmetic mean of
+all dark frames, subtracted from each selected sample detector pixel. Both
+inputs are decoded float32 acquisitions with detector shape `(128, 128)`;
+their scan shapes may differ. Corrected pixels round to float32 before mask
+integration, mean diffraction or center-of-mass reduction. Negative values are
+retained; there is no clipping, exposure scaling, gain adjustment or binning.
+
+```swift
+let dark = try NativeEMPADSource.open(darkURL)
+let background = try MetalEMPADBackground.load(
+  dark, device: device, memoryBudgetBytes: budget)
+let resident = try MetalEMPADResidentSource.load(
+  sample, device: device, memoryBudgetBytes: budget,
+  subtracting: background)
+```
+
+The caller must confirm that the sample is not already corrected and that the
+dark uses compatible detector settings, signal units and preprocessing. Matching
+formats and recorded exposure times are checked; missing metadata does not prove
+compatibility. Filename patterns and nearby offset files never authorize
+subtraction. Encoded EMPAD2 even/odd offset calibration is not this operation.
+Non-finite dark means, changed sources, a self-reference, incompatible format
+or recorded exposure mismatch fail without publishing a corrected resident.
+
+The original tensor remains losslessly packed. A 64 KiB mean-dark image is
+retained separately and applied in the Metal product kernels, including
+incremental masks, selected/mean diffraction, and center of mass. Receipt raw
+and working hashes still describe the stored original tensor. Calibration
+schema/hash and effective source identity distinguish corrected products;
+corrected diffraction is declared float32 arithmetic, not original-bit parity.
+The mean uses bounded 16 MiB windows and GPU compensated accumulation. Only
+small calibration validation and hashing occur on the CPU.
+
+Source: `Metal4DSTEMStreamingIO/MetalEMPADBackground.swift`,
+`MetalEMPADResidentSource.swift`, and `Metal4DSTEMKernels/Resources/empad_float.metal`.
+Independent NumPy parity: `tests/hardware/metal/test_empad_background.py`, covering
+DP selection, means, BF/ABF/ADF, center of mass, moving masks and negative values.
+This correction API is implemented for native Metal only; no CUDA or WebGPU
+correction parity is claimed here. Clients own confirmation, local persistence,
+reset and checking saved reference fingerprints on reopen.
+
+## Original uint32 ARINA counts
+
+The original-HDF5 packed-resident entry point also accepts little-endian uint32
+bitshuffle/LZ4 detector stacks with complete 8192-byte blocks. For the standard
+192×192 detector this is 18 blocks of 2048 values per frame. Discovery validates
+all linked files before loading; missing shards remain errors.
+
+Metal decodes all 32 bit planes into bounded staging windows and packs every
+count losslessly. No full dense 4D allocation, crop, bin, clipping, or CPU
+decompression is introduced. The in-memory width-header encoding reserves
+nibble 15 for 32-bit cells; the existing uint8/uint16 encoding is unchanged.
+Source dtype remains uint32 even when the observed values fit a smaller range.
+Explicit detector-mask exclusions still apply; maximum uint32 values are not
+automatically reclassified as hot pixels or discarded.
+
+Selected diffraction remains exact UInt32. Virtual detectors and prepared DPC
+totals use UInt64, including sums above UInt32.max. Read exact detector values
+with `virtualDetectorValues64()`. GPU display snapshots are Float32 for these
+residents: inspect `virtualDetectorUsesFloatDisplay` before binding a texture.
+Display/export surfaces must not be described as exact integer sums when a
+Float32 conversion cannot represent every integer. Raw packed counts and the
+separate UInt64 numerical readback remain exact.
+
+This entry point reads the original files again on reload. Persistent packed-file
+preparation and uint16 packing-plan/product-cache reuse are not enabled for
+uint32. The initial wide detector kernel prioritizes exactness; a successful
+load does not imply parity with the tuned uint16 interaction speed.
+
+`tests/hardware/metal/test_uint32_packing.py` covers sparse, boundary and full-range
+counts, complete diffraction, mean diffraction, DPC, UInt64 integration,
+empty masks, delta/rebase updates, shard boundaries and repeated opening.
+
+## Recorded microscope metadata and numerical export
+
+`NativeMicroscopeMetadata(metadata:)` interprets known NXem paths with explicit
+units. It returns optional beam energy (keV), convergence semi-angle (mrad),
+dwell time (µs), camera length (mm), and row/column angular sampling (mrad/pixel).
+Unknown units, nonpositive values and nonfinite measurements remain absent.
+The catalog reads only the matching `_em_metadata.h5` and validates its scan
+dimensions before importing these fields. Clients must retain `NativeDataset`
+metadata when constructing a packed-resident presentation.
+
+`NativeScientificExport.write(images:metadata:to:)` writes copied scalar planes
+and a caller-owned UTF-8 JSON provenance object to a new HDF5 file. Each
+`NativeScientificImage` specifies a unique lowercase name, shape, scalar type
+(`uint32` or `float32`) and exact row-major `Data` bytes. The writer validates
+byte counts and dimensions, stages the file beside the destination, then moves
+it into place without overwriting an existing file. Values are not normalized,
+colored or compressed with a lossy transform. Image datasets live under
+`/images`; `/metadata` is one UTF-8 string. Metadata must be under 16 MiB.
+`NativeScientificExport.metadata(at:)` reads that record without reading image
+planes. App-specific notes, reset behavior and provenance schemas remain the
+client's responsibility.
+
+Hardware-independent metadata fixtures and hardware histogram/export parity
+are covered by `tests/hardware/metal/test_catalog_calibration.py` and
+`test_scientific_export.py`, with their respective Swift harness executables.
+
+## Exact dataset count summary
+
+For a compact resident with prepared DPC totals, `resident.countSummary()`
+reduces those masked per-scan UInt64 totals on Metal. It returns `totalCounts`,
+`scanCount`, `meanCountsPerPattern`, and first-computation GPU/wall timings.
+There is one 8-byte readback and no source read or packed-volume decode.
+Subsequent calls return the resident's cached scalar. Call from the same
+serialized owner queue as other resident operations, not the UI thread.
+Released residents, missing prepared totals or a potentially overflowing
+UInt64 sum fail with an error. The scalar includes all scan positions and
+unmasked detector pixels, independent of the interactive detector aperture.
+
+The backend does not equate counts with incident electrons. Clients may use
+known native electron-count units and calibrated real-space sampling to show
+`meanCountsPerPattern / (rowStepAngstrom * columnStepAngstrom)` as a **detected**
+dose estimate. Unknown signal units, including uncalibrated EMPAD ADU, must not
+be labeled electrons. `CountSummaryParity` in the native hardware harness
+checks the actual Metal reduction against exact UInt64 sums.
+
+## Shared representation contract
+
+Native Swift names its resident representation with this enum:
+
+```swift
+public enum Metal4DSTEMResidentRepresentation: String, Codable, Sendable {
+  case dense
+  case packed
+  case encoded
+}
+```
+
+Python `io.load` accepts `dense`, `encoded`, and `paired`; it has no `packed`
+representation and does not open Swift lossless-packed files.
+
+`Metal4DSTEMResidentReceipt` schema v3 records that representation together
+with source and working shapes, dtypes, logical bytes, physical resident bytes,
+bin/crop, calibration, and provenance. Encoding profiles such as exact
+`uint16`/LZ4 or exact `uint8`/bitpacked remain in `storageSchema`; they are not
+additional representation choices. This keeps application code stable as the
+format evolves.
+
+For source-preserving cache creation, see the
+[native Lossless Pack Format v1 producer](native_lossless_pack_v1_producer.md).
+It exposes an explicit
+inspect-plan-produce lifecycle and records the execution backend. The current
+producer implementation is the bounded CPU reference; requesting an
+unimplemented GPU producer fails rather than falling back silently.
+
+The native HDF5 bridge accepts unsigned 8-bit and unsigned 16-bit detector
+sources. `Metal4DSTEMLoadPlan.sourceBytesPerValue` is therefore exactly 1 or 2.
+The persistent resident cache currently stores `uint16` or `uint32`; audited
+`uint8` is a compact decode/staging representation, not a silently relabeled
+`uint8` resident cache.
+
+## Catalog and load geometry
+
+Prepare a Python-free catalog and construct an explicit load plan:
+
+```swift
+import Metal4DSTEMKernels
+import Native4DSTEMIO
+
+let catalog = try Native4DSTEMCatalogBuilder(cacheDirectory: indexDirectory)
+  .prepare(input: selectedFolder, mode: .indexed)
+let dataset = catalog.datasets[0]
+let indexedSource = try Native4DSTEMIndexedSource.open(dataset: dataset)
+let region = try Metal4DSTEMScanRegion.full(
+  sourceRows: dataset.scanRows,
+  sourceColumns: dataset.scanCols
+)
+let plan = try Metal4DSTEMLoadPlan(
+  sourceScanRows: dataset.scanRows,
+  sourceScanColumns: dataset.scanCols,
+  detectorRows: dataset.detectorRows,
+  detectorColumns: dataset.detectorCols,
+  sourceBytesPerValue: indexedSource.sourceBytesPerValue,
+  scanRegion: region,
+  scanBin: 1,
+  detectorBin: 4
+)
+```
+
+The client must preserve all of these package-provided fields in provenance:
+
+- source and output scan rows and columns;
+- source and output detector rows and columns;
+- source, staging, and output dtype;
+- half-open scan region `[rowStart, rowStop) × [columnStart, columnStop)`;
+- scan and detector bin factors;
+- exact reduction semantics, source-audit identity, staging and output layout,
+  maximum output count, and payload bytes.
+
+The client additionally records its memory budget, chosen plan, and reason for
+any automatic reduction. Those are application-policy fields, not defaults
+selected by QuantEM.GPU.
+
+Do not infer a crop or silently call detector-binned data native resolution.
+QuantEM.GPU does not choose detector bin 1, 2, or 4 from a device name. For the
+specific full-scan 512 by 512, detector 192 by 192 case, exact detector bin 2
+produces a 512 by 512 by 96 by 96 packed-uint16 payload of 4,831,838,208 bytes
+(4.5 GiB) when an identity-bound audit proves every four-pixel sum fits
+`uint16`. That byte calculation is not a physical-device admission decision.
+
+## Bounded native indexed windows
+
+`Native4DSTEMIndexedSource` opens the prepared QH5 sidecars, validates them
+against their exact canonical source paths, sizes, modification times, detector
+geometry, dtype, block geometry, compressed ranges, and complete frame
+coverage. It rejects stale, trailing, repeated, incomplete, or incompatible
+indexes. Moving a source file makes its old path-bound index stale; regenerate
+the index instead of weakening this check.
+
+The public frame order is row-major:
+
+\[
+n = R_r N_{R_c} + R_c,
+\]
+
+where \((R_r, R_c)\) is `(scanRow, scanColumn)`. A caller can partition the
+logical source without changing its scientific shape, dtype, binning, or crop:
+
+```swift
+let decodedBytesForFourScanRows =
+  UInt64(4 * dataset.scanCols) * indexedSource.decodedBytesPerFrame
+let windows = try indexedSource.windows(
+  maximumDecodedBytes: decodedBytesForFourScanRows,
+  alignToScanRows: true
+)
+```
+
+Each `Native4DSTEMIndexedWindow` reports one half-open global frame range, its
+decoded byte count, and the exact shard/chunk/index-word slices required to
+decode it. For a `512 × 512 × 192 × 192 uint16` source, four-row windows are
+150,994,944 bytes (144 MiB) each, 128 windows cover all 262,144 scan positions,
+and `logicalDecodedBytes` remains 19,327,352,832 bytes (18 GiB). An explicit
+eight-row ceiling is 301,989,888 bytes (288 MiB) and produces 64 windows; these
+are different plans and must not share a memory claim.
+
+Opening and partitioning read only prepared index sidecars. They do not open or
+map compressed HDF5 shards, decode frames, allocate a resident volume, execute
+Metal, compute products, or choose a device budget. Consequently, index-open
+latency is not a first-load or first-product benchmark. The consuming layer
+supplies the transient byte ceiling and owns scheduling, cancellation, memory
+admission, and cache lifecycle.
+
+## Bounded native exact products
+
+`Metal4DSTEMStreamingIO` composes the validated index and reusable kernels
+without allocating the logical 18 GiB tensor. The caller supplies every
+detector-band membership byte and an explicit transient ceiling:
+
+```swift
+import Metal4DSTEMStreamingIO
+
+let bands = try Metal4DSTEMDetectorBands(
+  detectorRows: dataset.detectorRows,
+  detectorColumns: dataset.detectorCols,
+  membership: detectorBandBytes
+)
+let streamPlan = try Metal4DSTEMIndexedLoadPlan(
+  source: indexedSource,
+  maximumDecodedWindowBytes: decodedWindowBudget,
+  detectorBands: bands
+)
+
+// The application decides whether this exact plan is admissible.
+let loader = try Metal4DSTEMIndexedLoader(device: selectedDevice)
+let result = try loader.loadExactProducts(
+  source: indexedSource,
+  plan: streamPlan,
+  shouldCancel: cancellationCheck
+)
+```
+
+For native counts \(I[\mathbf R,\mathbf k]\), one pass returns exact `uint64`
+sufficient statistics:
+
+\[
+D[\mathbf k] = \sum_{\mathbf R} I[\mathbf R,\mathbf k], \qquad
+T[\mathbf R] = \sum_{\mathbf k} I[\mathbf R,\mathbf k],
+\]
+
+\[
+M_r[\mathbf R] = \sum_{k_r,k_c} k_r I[\mathbf R,k_r,k_c], \qquad
+M_c[\mathbf R] = \sum_{k_r,k_c} k_c I[\mathbf R,k_r,k_c].
+\]
+
+The three independent band sums use membership bits 1, 2, and 4. A consumer
+may name those masks BF, ABF, and DF only after supplying and retaining the
+corresponding scientific geometry. CoM is derived without another volume pass
+as `(row, column) = (M_r / T, M_c / T)` where `T > 0`. The mean diffraction
+pattern is `D / logicalFrameCount`; `D` itself is never silently normalized.
+
+The plan exposes allocated bytes excluding the current no-copy compressed-file
+mapping, compressed shard bytes, page-rounded mapped-buffer bytes, maximum
+individual Metal buffer bytes, window and slice counts, source and working
+geometry, all dtypes, detector-band SHA-256, bad pixels, and unchanged
+calibration fields. These are resource facts, not an admission decision. The
+result provenance fixes scan bin 1, detector bin 1, crop none, native `uint16`
+staging, exact-integer reduction, row-major public coordinates, and the
+identity-bound value audit.
+
+Decode one full-resolution detector frame without materializing the volume:
+
+```swift
+let diffraction = try loader.diffractionPattern(
+  source: indexedSource,
+  scanRow: selectedRow,
+  scanColumn: selectedColumn
+)
+```
+
+Cancellation is checked between exact slices. The consuming application owns
+latest-request-wins behavior, cache lifecycle, memory pressure, and UI. Package
+tests prove compressed-fixture parity and 64-bit overflow behavior. A physical
+full-source timing remains pending until the execution process exposes Metal;
+index coverage or a synthetic kernel run is not substituted for that gate.
+
+## Typed exact binning
+
+Construct and validate the scientific contract before allocating a resident
+payload or encoding a command:
+
+```swift
+let sourceAudit = try Metal4DSTEMExactSourceAudit(
+  sourceIdentitySHA256: sourceIdentity,
+  sourceDtype: .uint16,
+  badPixelIndices: badPixels,
+  maximumSourceCount: maximum,
+  pixelsAbove255: pixelsAbove255
+)
+let exact = try Metal4DSTEMExactBinner.provenance(
+  plan: plan,
+  sourceAudit: sourceAudit,
+  stagingDtype: .uint16,
+  outputDtype: .uint16
+)
+```
+
+The audit digest binds source identity, source dtype, sorted bad-pixel indices,
+maximum source count, and the above-255 count. Detector bin 2 accepts a
+`uint16` maximum of 16,383 and rejects 16,384 because four equal source counts
+would sum to 65,536. Use `uint32` output when the proven bound does not fit
+`uint16`; do not clip or downcast.
+
+`Metal4DSTEMExactBinner.encodeBatch(...)` accepts a frame-major
+`stagedSource`. It must contain only the selected scan columns, and the audited
+bad pixels must already be zeroed in every frame. The method validates batch
+coverage, offsets, buffer lengths, Metal's 32-bit geometry parameters, dtypes,
+and output bounds before creating a command encoder. It writes either
+detector-word-major `uint32` values or packed `uint16` low/high lanes, including
+a zero high lane for an odd final detector pixel. It does not allocate buffers,
+commit, synchronize, choose a memory budget, or select a bin factor.
+
+Sampling propagation is deliberately narrower than a full calibration
+transform:
+
+```swift
+let sampling = try exact.propagatingSampling(
+  sourceScan: sourceScanSampling,
+  sourceDetector: sourceDetectorSampling
+)
+```
+
+Uniform complete bins scale row and column sampling by the corresponding bin
+factor and report the first working-bin center in source-pixel coordinates.
+Incomplete edge bins return no single uniform working sampling. Detector
+center, affine calibration, masks, and radii require their own typed coordinate
+transform and are not silently rewritten by this API.
+
+## Streaming geometry
+
+`Metal4DSTEMStreamingPlan` is deterministic when given a load plan, scratch
+budget, depth, and staging dtype:
+
+```swift
+let depth = Metal4DSTEMStreamingPlan.recommendedDepth(
+  physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory
+)
+let streaming = try Metal4DSTEMStreamingPlan(
+  loadPlan: plan,
+  scratchBudgetBytes: scratchBudget,
+  preferredDepth: depth,
+  stagingBytesPerValue: 1
+)
+```
+
+The application supplies the memory budget and decides whether the plan is
+admissible. `totalScratchBytes` is not a full-process peak estimate. The client
+must reserve memory for the resident volume, maps, audits, products, FFT work,
+cache IO, and native UI.
+
+## Lossless compact staging
+
+`Native4DSTEMValueRangeAudit` permits a uint16 source to use its low byte only
+when all of the following match the current dataset:
+
+```swift
+let audit = try Native4DSTEMValueRangeAuditIO.read(from: auditURL)
+let isLossless = audit.provesLosslessUInt8(
+  sourceIdentitySHA256: exactSourceIdentitySHA256,
+  sourceDtype: dataset.sourceDtype,
+  badPixelIndices: dataset.badPixelIndices
+)
+```
+
+The audit records the exact source identity, dtype, bad-pixel set, maximum, and
+number of values above 255. A filename or shape match is insufficient. New
+files use schema `quantem.gpu.value-range-audit/v1`; the reader accepts the
+earlier client-specific schema only so existing audited fixtures remain usable.
+
+The accepted Air fast path uses
+`decodeU16AuditedLow8ScalarFunction` followed by
+`binU16AuditedLow8ScalarU16WordMajorFunction`. The binning kernel writes exact
+packed uint16 detector-word-major values and accumulates BF, ABF, ADF, and CoM
+moments. The caller must retain the general uint16 path when the audit does not
+prove compact staging is lossless.
+
+The direct threadgroup decode/bin kernel remains diagnostic. Do not enable it
+as the consumer default. The removed frame-owned binning experiment was never
+dispatched and is not part of this contract.
+
+## Exact sharded working-volume residency
+
+`Metal4DSTEMIndexedBinnedLoadPlan` composes the indexed product pass with one
+complete exact working volume. Despite the historical type name, detector bin 1
+is supported and preserves the native detector grid. The caller selects shared
+or GPU-private residency and a source-transfer strategy explicitly:
+
+```swift
+let residentPlan = try Metal4DSTEMIndexedBinnedLoadPlan(
+  source: indexedSource,
+  maximumDecodedWindowBytes: decodedWindowBudget,
+  detectorBands: bands,
+  detectorBin: 1,
+  sourceAudit: sourceAudit,
+  maximumShardBytes: maximumResidentShardBytes,
+  residentStorage: .privateGPU,
+  sourceTransfer: .bufferedReadAhead(prefetchShardCount: 2)
+)
+
+let resident = try loader.loadExactBinnedShards(
+  source: indexedSource,
+  plan: residentPlan,
+  shouldCancel: cancellationCheck
+)
+```
+
+`resident.workingVolumeShards` are physical Metal shards; together they encode
+the one logical shape and packed-`uint16` detector-word-major layout declared by
+`binningProvenance`. Sharding and private storage do not change scan coverage,
+detector resolution, integer counts, sampling, or output dtype. GPU-private
+shards require an explicit GPU copy before CPU inspection. The result reports
+destination storage, allocation wall, package-owned Metal bytes, retained
+source-buffer bytes, shard geometry, exact products, source audit, and sampling
+propagation.
+
+Callers may instead allocate distinct destination shards and pass them to the
+`destinationShards:` overload. Their count, order, device, storage mode, and
+byte lengths must exactly match the plan. On failure their contents are
+unspecified and must not be published.
+
+`loadExactBinnedCache(...)` writes the same canonical logical bytes through one
+bounded shared staging shard, then atomically publishes the payload and sealed
+metadata. A `.privateGPU` plan remains valid for this file-backed path: its
+resident policy is retained and validated, while the transient cache writer is
+necessarily CPU-addressable. Cache construction is not evidence that an 18 GiB
+private resident volume was admitted.
+
+## Resident cache
+
+`Metal4DSTEMResidentCacheMetadata` format 2 records scientific meaning as well
+as file integrity:
+
+- dataset and ordered source identities;
+- source identity SHA-256 and, whenever narrowing requires it, the complete
+  sealed value-range audit plus its canonical SHA-256;
+- source and output shapes and dtypes;
+- half-open scan region, scan bin, and detector bin;
+- bad-pixel indices, maximum count, and values above 255;
+- payload bytes, payload identity, and payload SHA-256.
+
+Write shared Metal storage without creating another multi-gigabyte copy:
+
+```swift
+let complete = try Metal4DSTEMResidentCacheIO.write(
+  pointer: residentBuffer.contents(),
+  length: residentBuffer.length,
+  payloadURL: payloadURL,
+  metadataURL: metadataURL,
+  metadata: metadata
+)
+```
+
+`write` validates shape, dtype, exact output bound, bin, crop, payload size,
+bad-pixel provenance, and the sealed audit before publishing the payload. It
+writes a temporary payload, renames it, seals the metadata with SHA-256, and
+removes the payload if metadata publication fails. Format 1 metadata is
+invalidated rather than interpreted under the stronger format 2 contract.
+
+On reopen, call `readMetadata(from:)` and then
+`validatePayload(at:metadata:verifySHA256:)`. The default SHA-256 verification
+is the scientific integrity path. Passing `verifySHA256: false` verifies only
+the sealed file identity and size and must be labeled as such by the client.
+An incomplete or rejected cache falls back to the original indexed source; it
+must never change scan coverage, binning, dtype, or metadata silently.
+
+## Exact resident summary
+
+After a resident payload has been sealed, a client may persist exact compact
+products and sufficient statistics with
+`Metal4DSTEMResidentSummaryIO.write(...)`:
+
+```swift
+let summaryMetadata = try Metal4DSTEMResidentSummaryIO.write(
+  to: summaryDirectory,
+  residentMetadata: residentMetadata,
+  detectorBands: detectorBands,
+  selectedScanRow: selectedRow,
+  selectedScanColumn: selectedColumn,
+  artifacts: exactArtifacts
+)
+```
+
+`exactArtifacts` must contain every `Metal4DSTEMResidentSummaryRole`: BF, ABF,
+ADF, total intensity, detector-row moment, detector-column moment, and selected
+diffraction. Virtual images and selected diffraction are little-endian
+`uint32`; total and coordinate moments are little-endian `uint64` so CoM
+derivation cannot overflow at the retained full-scan scale.
+
+Reopen against the same sealed resident metadata and detector-band definition:
+
+```swift
+let summary = try Metal4DSTEMResidentSummaryIO.read(
+  from: summaryDirectory,
+  residentMetadata: residentMetadata,
+  detectorBands: detectorBands
+)
+```
+
+The reader validates the `quantem.gpu.resident-summary/v1` schema, source and
+resident identities, output shape/dtype, half-open scan region, scan and
+detector bins, count audit, detector bands, selected scan coordinate, artifact
+shape/dtype/size, and every artifact SHA-256. A mismatch fails closed; it never
+returns a partly trusted product set.
+
+This is a prepared-product cache. Reading it does not open, read, or decompress
+the original HDF5 source and must not be reported as a source-load benchmark.
+The application owns the decision to create, retain, evict, or present it.
+
+## Package benchmark boundary
+
+`metal-4dstem-binning-benchmark` measures only the synchronized exact-binning
+kernel after a deterministic source buffer is already staged in unified
+memory. Its JSON reports source and working shapes, all three dtypes, bin
+factors, staged and output bytes, device limits, p50/p95/max wall and GPU time,
+and output SHA-256. It explicitly excludes HDF5 discovery, storage reads,
+decompression, cache creation or reopen, scientific products, and UI. Never
+publish its kernel time as a first-load or application wall time.
+
+`metal-4dstem-indexed-load-benchmark` measures the bounded source path and
+requires an exact revision, immutable output directory, explicit detector-band
+file or `--all-bands`, decoded scan-row ceiling, and iteration count. Its JSON
+separates catalog/index preparation, pipeline compilation, plan construction,
+source mapping, synchronized GPU work, and package wall time. It labels source
+page state as unspecified unless the caller passes the public
+`--uncached-source-reads` flag. On macOS that flag applies `F_NOCACHE` to source
+hashing and every indexed source descriptor; the private environment seam alone
+cannot opt a run into controlled reporting. Even a controlled run separately
+records whether the source audit, QH5 index, destination, and process are new or
+prepared. The benchmark writes little-endian `uint64` artifacts and rejects
+changing hashes or provenance between repetitions. Application
+first-usable-product and headed wall time remain separate acceptance boundaries.
+
+## Client ownership
+
+The consuming application owns:
+
+- folder selection, latest-request-wins scheduling, cancellation, and UI;
+- memory budget and reserve selection;
+- the decision and visible reason for automatic detector binning;
+- cache admission, eviction, disk reserve, and memory-pressure response;
+- command-buffer orchestration, presentation, and first-draw measurement.
+
+QuantEM.GPU owns the typed geometry, resource estimates, exact kernels, source
+identity, cache format validation, and numerical reference tests. Clients must
+consume these Swift products through one exact package revision and must not
+copy the Metal or native HDF5 sources into the application.
