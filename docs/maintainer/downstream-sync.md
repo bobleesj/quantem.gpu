@@ -5,21 +5,20 @@ moves to the new import paths. Each synced commit is on its repository's `main`.
 
 ## The synced set
 
-| Repository | Commit on `main` | How it pins quantem.gpu |
+| Repository | Synced commit | How it pins quantem.gpu |
 |---|---|---|
-| quantem.gpu | 57e53c8e (declares torch; rc12 is aafb9275) | release as tag `gpu-v0.0.1rc12` (the release workflow stamps the version from the tag) |
-| quantem.widget | 9d213e76 | `quantem.gpu[movie]>=0.0.1rc12` |
-| quantem.live | f862e846 | `quantem.gpu>=0.0.1rc12` (pyproject and both environment files) |
-| Live4DSTEM | 4f2e141 | `Package.swift` revision 57e53c8e (`Package.resolved` originHash updated) |
-| Live4DSTEM-linux | 6347a5c | `Package.swift` revision and `linux/pyproject.toml` git pin 57e53c8e |
+| quantem.gpu | f9185fb4 (the public history starts here) | release as tag `gpu-v0.0.1rc13` (the release workflow stamps the version from the tag) |
+| quantem.widget | `main` after the rc13 pin | `quantem.gpu[movie]>=0.0.1rc13` |
+| quantem.live | `main` after the rc13 pin | `quantem.gpu>=0.0.1rc13` (pyproject and both environment files) |
+| Live4DSTEM | b6f2c30 | `Package.swift` revision f9185fb4 (`Package.resolved` originHash updated) |
+| Live4DSTEM-linux | a792926 | `Package.swift` revision and `linux/pyproject.toml` git pin f9185fb4 |
 | quantem.thick | 7044371 | imports `quantem.gpu.io.convert` (unpinned) |
-| denoise | 1fe25800 | `fourdstem = ["quantem.gpu>=0.0.1rc12", ...]` |
+| denoise | `main` after the rc13 pin | `fourdstem = ["quantem.gpu>=0.0.1rc13", ...]` |
 
-The Python pins resolve to the `gpu-v0.0.1rc12` release on TestPyPI; the Swift and Linux pins
-name 57e53c8e, the first commit that declares torch (rc12 imports torch without declaring it, so
-an environment without torch needs `pip install torch` for rc12). An editable environment must move quantem.gpu, quantem.widget,
-quantem.live, quantem.thick and denoise together: the callers import modules that only the
-restructured quantem.gpu has.
+The Python pins resolve to the `gpu-v0.0.1rc13` release on TestPyPI, which declares torch;
+the Swift and Linux pins name f9185fb4. An editable environment must move quantem.gpu,
+quantem.widget, quantem.live, quantem.thick and denoise together: the callers import modules
+that only the restructured quantem.gpu has.
 
 ## Behaviour changes that reach callers
 
