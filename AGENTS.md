@@ -12,7 +12,11 @@ history, can be read by anyone. These rules apply to coding agents and humans.
 - Datasets or detector files, other than the small synthetic fixtures under
   `tests/data/`, `tests/detector/data/` and the native test fixtures under
   `native/swift/Tests/**/Fixtures/`.
-- Notebook outputs, other than those of the public gold dataset.
+- Images, figures or notebook outputs of any data other than the public gold
+  nanoparticle dataset. Gold is the only dataset that may appear in this
+  repository, in `docs/_static/`, in notebook outputs and in the docs. A figure
+  of any other acquisition, however anonymous, is not committed; keep it in the
+  private evidence archive and describe the result in words and numbers.
 - Local paths (home directories), machine host names, or tailnet addresses.
 - Names of collaborators, companies or people, other than the authors in
   `CITATION.cff`. Name data by its public dataset id.
