@@ -1,0 +1,122 @@
+{
+ "schema_version": 1,
+ "evidence_id": "paired-loading-2026-09-09",
+ "date": "2026-09-09",
+ "qualification": "physical device measurement; single run; not a release gate",
+ "device": "NVIDIA RTX PRO 6000 Blackwell, CUDA, one device; drives: PCIe 4.0 NVMe SSD for the original HDF5 (direct-read ceiling 5.5 GB/s measured separately), a second NVMe SSD for the saved form",
+ "provenance": {
+  "package": "quantem.gpu",
+  "branch": "main",
+  "parent_commit": "2876b7fb",
+  "loader": "quantem.gpu.io.PairedLoader defaults (6 readers, 10 x 128 MiB pinned slots, 3 x 8192-scan rolling buffers)"
+ },
+ "input": {
+  "acquisitions_offered": 69,
+  "shape": [
+   512,
+   512,
+   192,
+   192
+  ],
+  "dtype": "uint16",
+  "source": "complete bitshuffle+LZ4 HDF5 masters, 27 shards each",
+  "original_bytes_per_acquisition_approx": 2190000000.0
+ },
+ "protocol": "io.load-equivalent PairedLoader.load_many over the acquisition list with a memory-budget admit callback; the first three to sixty-six acquisitions were admitted, the sixty-seventh was refused for memory",
+ "rows": [
+  {
+   "measurement": "series load, original bitshuffle+LZ4 HDF5 to paired resident",
+   "acquisitions": 66,
+   "acquisitions_offered": 69,
+   "value_seconds": 29.34,
+   "statistic": "single run wall",
+   "boundary": "first shard read submitted to last source resident (consumer stream synchronized)",
+   "cache_state": "shards read with direct I/O (page cache bypassed); master metadata pages may be warm",
+   "admission": "1.31 GiB per source plus 1 GiB margin against free device memory plus cached pool bytes"
+  },
+  {
+   "measurement": "per-acquisition resident-ready wall inside the pipeline",
+   "acquisitions": 66,
+   "value_seconds": 1.498,
+   "statistic": "median",
+   "boundary": "first shard read submitted to source resident"
+  },
+  {
+   "measurement": "per-acquisition encode",
+   "acquisitions": 66,
+   "value_seconds": 0.197,
+   "statistic": "median",
+   "boundary": "device encode kernels, consumer stream synchronized"
+  },
+  {
+   "measurement": "per-acquisition index",
+   "acquisitions": 66,
+   "value_seconds": 0.12,
+   "statistic": "median",
+   "boundary": "device index kernels, consumer stream synchronized"
+  },
+  {
+   "measurement": "resident bytes, all sources",
+   "acquisitions": 66,
+   "value_bytes": 93973719027,
+   "memory_kind": "sum of resident arrays (payload, offsets, models, index)"
+  },
+  {
+   "measurement": "index bytes, all sources",
+   "acquisitions": 66,
+   "value_bytes": 7046943828,
+   "memory_kind": "sum of index arrays"
+  },
+  {
+   "measurement": "device bytes in use after load",
+   "acquisitions": 66,
+   "value_bytes": 101593579520,
+   "memory_kind": "cudaMemGetInfo total minus free (includes pool cache and loader staging)"
+  },
+  {
+   "measurement": "detector.prepare over all sources",
+   "acquisitions": 66,
+   "value_seconds": 0.0379,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "first virtual image, all sources, bright-field mask",
+   "acquisitions": 66,
+   "value_seconds": 0.0082,
+   "statistic": "single run wall",
+   "parity": "first source digest equal to the frozen independent raw-count reduction"
+  },
+  {
+   "measurement": "first diffraction pattern, all sources",
+   "acquisitions": 66,
+   "value_seconds": 0.0019,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "save one source as the paired resident form",
+   "acquisitions": 1,
+   "value_seconds": 1.387,
+   "value_bytes": 1366029888,
+   "statistic": "single run wall",
+   "boundary": "write plus fsync to the root drive"
+  },
+  {
+   "measurement": "reopen one saved form through io.load",
+   "acquisitions": 1,
+   "value_seconds": 0.527,
+   "statistic": "single run wall",
+   "boundary": "header read to resident, byte-identical to the streamed source",
+   "cache_state": "file written seconds earlier; root drive"
+  },
+  {
+   "measurement": "series load, original HDF5 to paired resident, chunk tables parsed from the staged image (revision 91d6f5b6)",
+   "acquisitions": 66,
+   "acquisitions_offered": 69,
+   "value_seconds": 28.82,
+   "statistic": "single run wall",
+   "boundary": "first shard read submitted to last source resident",
+   "cache_state": "shards read with direct I/O; no metadata reads during streaming",
+   "note": "0.437 s per acquisition against a 0.40 s direct-read floor for 2.19 GB per acquisition at 5.5 GB/s"
+  }
+ ]
+}

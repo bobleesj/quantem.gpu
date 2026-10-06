@@ -1,0 +1,136 @@
+{
+ "schema_version": 1,
+ "evidence_id": "paired-capacity-2026-09-09",
+ "date": "2026-09-09",
+ "qualification": "physical device measurement; single run; not a release gate",
+ "device": "NVIDIA RTX PRO 6000 Blackwell, CUDA, one device; original HDF5 on a PCIe 4.0 NVMe SSD (5.5 GB/s direct-read ceiling)",
+ "provenance": {
+  "package": "quantem.gpu",
+  "branch": "main",
+  "revision": "10b4d178",
+  "owner": "private capacity script using only PairedLoader, PairedCounts, detector.prepare"
+ },
+ "input": {
+  "acquisitions": 69,
+  "shape": [
+   512,
+   512,
+   192,
+   192
+  ],
+  "dtype": "uint16",
+  "source": "complete bitshuffle+LZ4 HDF5 masters, 27 shards each"
+ },
+ "protocol": "load the series with a memory-budget admit callback, prepare, run five gesture families of 64 fresh masks twice, verify frozen digests, save forms",
+ "rows": [
+  {
+   "measurement": "series load, original HDF5 to resident, 64 with the default loader then 5 with the lean tail loader",
+   "acquisitions": 69,
+   "value_seconds": 38.73,
+   "statistic": "single run wall",
+   "boundary": "first shard read to last source resident",
+   "cache_state": "shards read with direct I/O",
+   "admission": "1.33 GiB per pending source plus 4 GiB (default loader) or 1 GiB (lean tail) against free device memory plus cached pool bytes"
+  },
+  {
+   "measurement": "resident bytes, sum",
+   "acquisitions": 69,
+   "value_bytes": 96928758213,
+   "memory_kind": "sum of resident arrays"
+  },
+  {
+   "measurement": "index bytes, sum",
+   "acquisitions": 69,
+   "value_bytes": 7229892696,
+   "memory_kind": "sum of index arrays"
+  },
+  {
+   "measurement": "peak device bytes in use, sampled every 20 ms",
+   "acquisitions": 69,
+   "value_bytes": 101378293760,
+   "memory_kind": "cudaMemGetInfo total minus free"
+  },
+  {
+   "measurement": "detector.prepare over all sources",
+   "acquisitions": 69,
+   "value_seconds": 0.053,
+   "statistic": "single run wall"
+  },
+  {
+   "measurement": "frozen full-array virtual-image digests (six masks per source) against independent raw-count sums",
+   "acquisitions": 69,
+   "parity": "414 exact"
+  },
+  {
+   "measurement": "headless query wall, center gestures, 64 fresh masks",
+   "acquisitions": 69,
+   "value_ms_p50": 14.13,
+   "value_ms_p95": 16.33,
+   "device_ms_p50": 13.19,
+   "statistic": "second repeat"
+  },
+  {
+   "measurement": "headless query wall, outer gestures, 64 fresh masks",
+   "acquisitions": 69,
+   "value_ms_p50": 4.3,
+   "value_ms_p95": 5.12,
+   "device_ms_p50": 2.92,
+   "statistic": "second repeat"
+  },
+  {
+   "measurement": "headless query wall, large_jumps gestures, 64 fresh masks",
+   "acquisitions": 69,
+   "value_ms_p50": 26.77,
+   "value_ms_p95": 35.6,
+   "device_ms_p50": 25.7,
+   "statistic": "second repeat"
+  },
+  {
+   "measurement": "headless query wall, headed_center gestures, 64 fresh masks",
+   "acquisitions": 69,
+   "value_ms_p50": 17.59,
+   "value_ms_p95": 22.63,
+   "device_ms_p50": 16.5,
+   "statistic": "second repeat"
+  },
+  {
+   "measurement": "headless query wall, scan gestures, 64 fresh masks",
+   "acquisitions": 69,
+   "value_ms_p50": 1.29,
+   "value_ms_p95": 2.05,
+   "device_ms_p50": 1.27,
+   "statistic": "second repeat"
+  },
+  {
+   "measurement": "save every source as the paired resident form (39 on the root drive, 30 on a second drive)",
+   "acquisitions": 69,
+   "value_seconds": 192.0,
+   "value_bytes": 96988762064,
+   "statistic": "sum of per-file write plus fsync"
+  },
+  {
+   "measurement": "reopen every saved form through PairedCounts.load, one shared ResidentFileReader per drive (39 on the root NVMe drive, 30 on a second NVMe drive), two threads",
+   "acquisitions": 69,
+   "value_seconds": 9.58,
+   "statistic": "single run wall",
+   "boundary": "first header read to last source resident",
+   "cache_state": "files written minutes earlier; direct I/O bypasses the page cache",
+   "parity": "414 frozen digests exact after reopen"
+  },
+  {
+   "measurement": "device bytes in use after reopening every form (one arena per file)",
+   "acquisitions": 69,
+   "value_bytes": 98230468608,
+   "memory_kind": "cudaMemGetInfo total minus free"
+  },
+  {
+   "measurement": "series load, original HDF5 to resident, 65 with the default loader then 4 with the lean tail loader, chunk tables parsed from the staged image (revision 91d6f5b6)",
+   "acquisitions": 69,
+   "value_seconds": 32.01,
+   "statistic": "single run wall",
+   "boundary": "first shard read to last source resident",
+   "cache_state": "shards read with direct I/O",
+   "parity": "414 frozen digests exact"
+  }
+ ]
+}

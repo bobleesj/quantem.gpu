@@ -1,0 +1,152 @@
+# Python MPS
+
+Python MPS provides the shared Python contracts on Apple Silicon through
+MLX/PyObjC/Metal and chunk-backed unified-memory representations.
+
+## Dispatch and implementation layers
+
+| Layer | Python MPS/Metal source | Implementation responsibility |
+|---|---|---|
+| Device selection | `src/quantem/gpu/device/select.py` | require macOS Metal/PyObjC or an available Torch MPS device |
+| IO orchestration | `src/quantem/gpu/io/load.py` | source planning, metadata, policy-free precision and region contract |
+| MPS decode adapter | `src/quantem/gpu/io/hdf5/mps/decode.py` | map compressed chunks and submit Metal decode work |
+| Decode shader | `src/quantem/gpu/io/hdf5/mps/kernels/bslz4.msl` | bitshuffle/LZ4 reconstruction and scratch-free exact `uint16` output |
+| Detector adapter | `src/quantem/gpu/resident/mps/frames.py`, `virtual_image.py` and `src/quantem/gpu/detector/mps/dense.py` | chunk-backed frame and reduction interface |
+| Detector shader | `src/quantem/gpu/resident/mps/kernels/reductions.msl` | exact sums and detector moments |
+| DPC | `src/quantem/gpu/dpc/workflow.py` | CoM/DPC from the detector session's Metal moments |
+| SSB | `src/quantem/gpu/ssb/mps` | MLX preparation, size-specific kernels, exact objective, optimizer |
+
+The IO call path is:
+
+```text
+io.load(..., backend="mps")
+  → backend validation
+  → source and chunk planning
+  → bounded source decode + ANS encoding
+  → Dataset4dstemGPU with encoded storage and provenance
+```
+
+Python owns validation and typed results. Metal owns bounded device decode and
+reductions. MLX owns the current Python MPS FFT/reconstruction path. Those are
+implementation layers of one MPS runtime, not separate public workflows.
+
+```python
+from quantem.gpu import io
+
+with io.load("scan_master.h5", backend="mps") as loaded:
+    diffraction = loaded[0, 0]
+```
+
+Saved `.qem` acquisitions remain encoded:
+
+```python
+encoded = io.load("scan.qem", backend="mps")
+assert encoded.representation is io.DataRepresentation.ENCODED
+```
+
+Low-level native readers have separate format contracts. Unsupported
+profiles fail explicitly rather than expanding to a dense tensor.
+
+## Execution and memory model
+
+CPU and GPU share physical memory, but redundant arrays and synchronization are
+still expensive. Large detector data may remain chunk-backed; device kernels
+consume those chunks without materializing a second full host array. Resource
+plans include mapped source, decoded destination, scratch slots, reduction/FFT
+buffers, process reserve, memory pressure, and swap—not compressed file size.
+
+The current loader reads bounded blocks of scan positions, decodes them with
+Metal into a unified-memory buffer, corrects stored detector-mask pixels, and
+ANS encodes the counts, so the dense acquisition never exists. It keeps the
+native detector; there is no load-time detector bin. These are private
+implementation choices; callers keep the same public load verb and explicit
+scientific plan.
+
+Optimize queue overlap, reusable `MTLBuffer` storage, prepared pipelines, and
+fused decode/conversion/bin/reduction while preserving exact counts. A unified
+memory mapping is not an H2D copy, so profiling should report page-in and GPU
+access honestly rather than inventing “upload” time.
+
+Use `loaded.close()` after the final reader of a `Dataset4dstemGPU` has
+finished. Array indexing returns a Torch MPS tensor and requires PyTorch;
+MLX and Metal still implement the accelerated loading and SSB paths.
+
+### Retained dense-loader measurements
+
+The measurements below describe the earlier dense loader at its stated revision,
+not the current ANS default. `MPSChunked4DSTEM` has explicit lifetime ownership.
+Its NumPy views are backed
+by buffers created directly with Metal/PyObjC; deleting the Python wrapper or
+calling `clear_mps_cache()` does not release caller-owned output buffers. Call
+`free()` on a directly owned low-level buffer only after its final reader has
+finished; ordinary acquisition callers use `loaded.close()`. A benchmark that
+repeats loading without release accumulates roughly one resident payload
+per repetition and measures memory pressure rather than steady-state loader
+speed.
+
+For the full `512x512x192x192 uint16` plan, the resident payload is exactly
+19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 MacBook Pro
+(M5 Max, 128 GB) canonical run, the sampled driver peak was 19,801,456,640
+bytes (18.441544 GiB) and the post-release driver allocation was 474,103,808
+bytes. The process RSS high-water was 20,070,498,304 bytes because the same
+process later performed full-volume hash validation; process RSS and Metal
+driver allocation remain separate observations and are not additive. The
+driver value is a sampled peak, not a theoretical allocation estimate.
+
+At clean revision `68dbe3a`, the current exact full-scan p50 values are
+0.406624/0.477740/0.370645/0.340210 seconds for detector bins 1/2/4/8.
+The corresponding p95 values are
+0.428164/1.064425/0.939238/0.341541 seconds. Every row has seven retained
+full-volume canonical-hash, dtype, geometry, metadata, and release passes.
+Bins 1 and 8 follow one same-process warmup; bins 2 and 4 have no same-process
+warmup but leave operating-system source pages unspecified. These are prepared
+or uncontrolled-page package boundaries, not cold arbitrary-source or
+application claims. The older `0bc9378` and `f0f39c9` rows remain historical
+evidence in the results ledger.
+
+The retained binned timings use an identity-bound source audit whose maximum
+count is 53. That proves bin2, bin4, and bin8 exact sums fit `uint16` for this
+fixture (maximum possible sums 212, 848, and 3,392). Do not infer that every
+`uint16` source can retain `uint16` after detector summation; use a wider dtype
+or fail closed unless a complete range audit proves the requested result fits.
+
+## Build and focused checks
+
+```bash
+python -m pip install -e ".[mps,dev]"
+PYTHONPATH=src python -m pytest -q \
+  tests/contracts/test_device.py \
+  tests/contracts/test_mps_chunk_dispatch.py \
+  tests/parity/test_products_parity.py \
+  tests/contracts/test_ssb_mps_close.py
+```
+
+Metal-dependent skips on a non-Mac host are structure checks only. Physical
+MPS signoff records the Mac model, chip, memory, OS, source/cache condition,
+and exact command.
+
+## Profiling
+
+Record physical Mac model/chip/GPU cores, unified memory, source/cache and
+process state, critical-path wall time, and command-buffer GPU intervals. For
+memory, record all of these separately:
+
+- exact logical resident payload from shape and dtype;
+- Metal-driver allocation sampled after load and after output release;
+- Metal-driver allocation after output release;
+- process RSS/footprint; and
+- whole-system pressure and swap.
+
+`torch.mps.current_allocated_memory()` can remain zero for these direct
+Metal/PyObjC buffers. `torch.mps.driver_allocated_memory()` is an instantaneous
+driver-allocation sample; keep it separate from RSS and do not label it a peak
+without continuous sampling. Instruments Metal System Trace is useful when
+available; kernel timestamps and wall-to-first-product remain required.
+
+## Acceptance
+
+The backend preserves `I[R_r,R_c,k_r,k_c]` and
+`(row, column) ≡ (r, c)`. Unsafe plans fail before allocation or return a
+typed cost estimate to the caller; they never crop the scan. Automatic detector
+binning is a visible client policy and records original/output detector shapes,
+dtypes, factor, memory estimate, and reason.

@@ -1,0 +1,472 @@
+"""GIF and MP4 export of STEM result movies: frame layout, labels, contrast, and backend choice."""
+
+import math
+import pathlib
+import subprocess
+import tempfile
+from collections.abc import Sequence
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+from quantem.gpu.movie import cuda, mps
+from quantem.gpu.movie.layout import grid_layout, label_font, label_font_size
+
+MovieData = np.ndarray | Sequence[np.ndarray] | Sequence[Image.Image]
+
+_CUDA_NVENC_MIN_EDGE_PX = 256
+
+
+def _is_pil_frame_sequence(data: object) -> bool:
+    return (
+        isinstance(data, Sequence)
+        and len(data) > 0
+        and all(isinstance(item, Image.Image) for item in data)
+    )
+
+
+def _as_stack_list(data: MovieData) -> list[np.ndarray]:
+    """Normalize public movie data to a list of 3D stacks."""
+
+    if isinstance(data, np.ndarray):
+        arr = np.asarray(data)
+        if arr.ndim == 3:
+            return [arr]
+        if arr.ndim == 4:
+            return [arr[i] for i in range(arr.shape[0])]
+        raise ValueError(
+            "movie data must have shape (frame, row, col) or "
+            f"(movie, frame, row, col), got {arr.shape}"
+        )
+
+    stacks = [np.asarray(item) for item in data]
+    if not stacks:
+        raise ValueError("movie data must contain at least one stack")
+    for index, stack in enumerate(stacks):
+        if stack.ndim != 3:
+            raise ValueError(
+                "each movie stack must have shape (frame, row, col), "
+                f"item {index} has shape {stack.shape}"
+            )
+    return stacks
+
+
+def _validate_stacks(stacks: list[np.ndarray]) -> tuple[int, int, int]:
+    frames, height, width = stacks[0].shape
+    for index, stack in enumerate(stacks[1:], start=1):
+        if stack.shape[0] != frames:
+            raise ValueError(
+                "all movie stacks must have the same number of frames; "
+                f"stack 0 has {frames}, stack {index} has {stack.shape[0]}"
+            )
+        if stack.shape[1:] != (height, width):
+            raise ValueError(
+                "all movie stacks must have the same spatial dimensions; "
+                f"stack 0 has {(height, width)}, stack {index} has {stack.shape[1:]}"
+            )
+    return int(frames), int(height), int(width)
+
+
+def _contrast_limits(
+    stacks: list[np.ndarray],
+    *,
+    percentile: tuple[float, float],
+    shared: bool,
+    ref_stacks: Sequence[np.ndarray] | None,
+) -> list[tuple[float, float]]:
+    pmin, pmax = percentile
+    if shared:
+        refs = (
+            [np.asarray(item) for item in ref_stacks]
+            if ref_stacks is not None
+            else stacks
+        )
+        values = np.concatenate([np.asarray(stack).ravel() for stack in refs])
+        lo, hi = np.percentile(values, [pmin, pmax])
+        if hi <= lo:
+            hi = lo + 1.0
+        return [(float(lo), float(hi))] * len(stacks)
+
+    limits = []
+    for stack in stacks:
+        lo, hi = np.percentile(np.asarray(stack).ravel(), [pmin, pmax])
+        if hi <= lo:
+            hi = lo + 1.0
+        limits.append((float(lo), float(hi)))
+    return limits
+
+
+def _to_uint8(stack: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    scaled = np.clip(
+        (stack.astype(np.float64) - lo) / (hi - lo) * 255.0,
+        0.0,
+        255.0,
+    )
+    return scaled.astype(np.uint8)
+
+
+def _movie_frames(
+    data: MovieData,
+    *,
+    labels: Sequence[str] | None,
+    gap: int,
+    label_height: int,
+    max_width: int | None,
+    cols: int | None,
+    shared_contrast: bool,
+    ref_stacks: Sequence[np.ndarray] | None,
+    percentile: tuple[float, float],
+) -> list[Image.Image]:
+    if _is_pil_frame_sequence(data):
+        return [
+            frame.convert("RGB")
+            for frame in data
+            if isinstance(frame, Image.Image)
+        ]
+
+    stacks = _as_stack_list(data)
+    n_frames, height, width = _validate_stacks(stacks)
+    names = (
+        [str(item) for item in labels]
+        if labels is not None
+        else [f"Movie {i + 1}" for i in range(len(stacks))]
+    )
+    limits = _contrast_limits(
+        stacks,
+        percentile=percentile,
+        shared=shared_contrast,
+        ref_stacks=ref_stacks,
+    )
+    uint8_stacks = [
+        _to_uint8(stack, lo, hi)
+        for stack, (lo, hi) in zip(stacks, limits)
+    ]
+
+    n_movies = len(stacks)
+    n_cols = min(n_movies, 3) if cols is None else max(1, int(cols))
+    n_rows = math.ceil(n_movies / n_cols)
+    gap = max(0, int(gap))
+    label_height = max(0, int(label_height))
+
+    total_width = n_cols * width + (n_cols - 1) * gap
+    cell_height = height + label_height
+    total_height = n_rows * cell_height + (n_rows - 1) * gap
+    scale = 1.0
+    if max_width is not None and total_width > int(max_width):
+        scale = int(max_width) / total_width
+    out_width = max(1, round(total_width * scale))
+    out_height = max(1, round(total_height * scale))
+    frame_width = max(1, round(width * scale))
+    frame_height = max(1, round(height * scale))
+    gap_scaled = max(0, round(gap * scale))
+    label_height_scaled = max(0, round(label_height * scale))
+    cell_height_scaled = frame_height + label_height_scaled
+    fonts = [
+        label_font(label_font_size(label_height_scaled, name.count("\n") + 1))
+        for name in names
+    ]
+
+    frames: list[Image.Image] = []
+    for frame_idx in range(n_frames):
+        canvas = Image.new("RGB", (out_width, out_height), (0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        for movie_idx, stack_u8 in enumerate(uint8_stacks):
+            row, col = divmod(movie_idx, n_cols)
+            tile = Image.fromarray(stack_u8[frame_idx], mode="L").convert("RGB")
+            if scale != 1.0:
+                tile = tile.resize((frame_width, frame_height), Image.LANCZOS)
+            x = col * (frame_width + gap_scaled)
+            y = row * (cell_height_scaled + gap_scaled)
+            canvas.paste(tile, (x, y + label_height_scaled))
+            if movie_idx < len(names) and label_height_scaled > 0:
+                draw.multiline_text(
+                    (x + 4, y + 2),
+                    f"{names[movie_idx]} [{frame_idx + 1}/{n_frames}]",
+                    fill=(255, 255, 255),
+                    font=fonts[movie_idx],
+                    spacing=2,
+                )
+        frames.append(canvas)
+    return frames
+
+
+def save_gif(
+    data: MovieData,
+    path: str | Path,
+    *,
+    labels: Sequence[str] | None = None,
+    fps: float = 10,
+    gap: int = 12,
+    label_height: int = 28,
+    max_width: int | None = 1200,
+    cols: int | None = None,
+    shared_contrast: bool = True,
+    ref_stacks: Sequence[np.ndarray] | None = None,
+    percentile: tuple[float, float] = (1.0, 99.0),
+) -> Path:
+    """Save one or more grayscale movie stacks as an animated GIF."""
+
+    frames = _movie_frames(
+        data,
+        labels=labels,
+        gap=gap,
+        label_height=label_height,
+        max_width=max_width,
+        cols=cols,
+        shared_contrast=shared_contrast,
+        ref_stacks=ref_stacks,
+        percentile=percentile,
+    )
+    return _write_gif(frames, path, float(fps))
+
+
+def save_mp4(
+    data: MovieData,
+    path: str | Path,
+    *,
+    labels: Sequence[str] | None = None,
+    fps: float = 10,
+    gap: int = 12,
+    label_height: int = 28,
+    max_width: int | None = 1200,
+    cols: int | None = None,
+    shared_contrast: bool = True,
+    ref_stacks: Sequence[np.ndarray] | None = None,
+    percentile: tuple[float, float] = (1.0, 99.0),
+    crf: int = 18,
+    backend: str = "auto",
+    **backend_options,
+) -> Path:
+    """Save one or more grayscale movie stacks as an H.264 MP4.
+
+    Parameters
+    ----------
+    backend : {"auto", "cuda", "mps", "cpu"}
+        ``"auto"`` uses the NVIDIA CUDA/NVENC backend when available for array
+        inputs, then the Apple Metal/MPS backend on macOS, otherwise it falls
+        back to the portable CPU writer. ``"cuda"`` requires an NVIDIA CUDA
+        environment. ``"mps"`` requires an Apple Metal environment.
+    """
+
+    backend = str(backend).lower()
+    if backend not in {"auto", "cuda", "mps", "cpu"}:
+        raise ValueError(
+            f"unknown movie backend {backend!r}; use 'auto', 'cuda', 'mps', or 'cpu'"
+        )
+    if backend in {"cuda", "mps"} and _is_pil_frame_sequence(data):
+        raise ValueError(
+            f"backend={backend!r} requires array movie data; rendered PIL frames "
+            "must use backend='cpu'"
+        )
+    if backend in {"auto", "cuda"} and not _is_pil_frame_sequence(data):
+        try_cuda = backend == "cuda"
+        if backend == "auto":
+            stacks = _as_stack_list(data)
+            _frames, height, width = _validate_stacks(stacks)
+            layout = grid_layout(
+                len(stacks),
+                height,
+                width,
+                cols=cols,
+                gap=gap,
+                label_height=label_height,
+                max_width=max_width,
+            )
+            # PyNvVideoCodec may import successfully while NVENC rejects
+            # small H.264 surfaces at encoder initialization time.
+            large_enough = min(layout.width, layout.height) >= _CUDA_NVENC_MIN_EDGE_PX
+            try_cuda = bool(large_enough and cuda.is_available())
+        if try_cuda:
+            stacks = _as_stack_list(data)
+            _validate_stacks(stacks)
+            limits = _contrast_limits(
+                stacks,
+                percentile=percentile,
+                shared=shared_contrast,
+                ref_stacks=ref_stacks,
+            )
+            cuda_options = dict(backend_options)
+            try:
+                return cuda.save_mp4(
+                    stacks,
+                    path,
+                    labels=labels,
+                    fps=float(fps),
+                    gap=gap,
+                    label_height=label_height,
+                    max_width=max_width,
+                    cols=cols,
+                    limits=limits,
+                    qp=int(cuda_options.pop("qp", crf)),
+                    preset=str(cuda_options.pop("preset", "P3")),
+                    tuning_info=str(cuda_options.pop("tuning_info", "high_quality")),
+                    gpu_id=int(cuda_options.pop("gpu_id", 0)),
+                    faststart=bool(cuda_options.pop("faststart", True)),
+                )
+            except (RuntimeError, MemoryError):
+                # "auto" falls back to the CPU writer when NVENC, CUDA or ffmpeg
+                # fails (the writer reports encoder errors as RuntimeError).
+                if backend == "cuda":
+                    raise
+    if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
+        try_mps = backend == "mps" or (backend == "auto" and mps.is_available())
+        if try_mps:
+            stacks = _as_stack_list(data)
+            _validate_stacks(stacks)
+            limits = _contrast_limits(
+                stacks,
+                percentile=percentile,
+                shared=shared_contrast,
+                ref_stacks=ref_stacks,
+            )
+            mps_options = dict(backend_options)
+            try:
+                return mps.save_mp4(
+                    stacks,
+                    path,
+                    labels=labels,
+                    fps=float(fps),
+                    gap=gap,
+                    label_height=label_height,
+                    max_width=max_width,
+                    cols=cols,
+                    limits=limits,
+                    crf=int(crf),
+                    quality=int(mps_options.pop("quality", 65)),
+                    codec=str(mps_options.pop("codec", "auto")),
+                    faststart=bool(mps_options.pop("faststart", True)),
+                )
+            except (RuntimeError, MemoryError):
+                # "auto" falls back to the CPU writer when Metal or ffmpeg fails.
+                if backend == "mps":
+                    raise
+    frames = _movie_frames(
+        data,
+        labels=labels,
+        gap=gap,
+        label_height=label_height,
+        max_width=max_width,
+        cols=cols,
+        shared_contrast=shared_contrast,
+        ref_stacks=ref_stacks,
+        percentile=percentile,
+    )
+    return _write_mp4(frames, path, float(fps), crf=int(crf))
+
+
+def save_movie(
+    data: MovieData,
+    path: str | Path,
+    *,
+    format: str | None = None,
+    **kwargs,
+) -> Path:
+    """Save a GIF or MP4, using ``format`` or the output suffix."""
+
+    suffix = (format or Path(path).suffix.lstrip(".")).lower()
+    if suffix == "gif":
+        return save_gif(data, path, **kwargs)
+    if suffix == "mp4":
+        return save_mp4(data, path, **kwargs)
+    raise ValueError(
+        "movie format must be 'gif' or 'mp4', or path must end with .gif or .mp4"
+    )
+
+
+def _even_rgb_array(frame) -> np.ndarray:
+    """Return an RGB uint8 array padded to even dimensions for H.264."""
+    arr = np.asarray(frame.convert("RGB"), dtype=np.uint8)
+    height, width = arr.shape[:2]
+    pad_h = height % 2
+    pad_w = width % 2
+    if pad_h or pad_w:
+        padded = np.zeros((height + pad_h, width + pad_w, 3), dtype=np.uint8)
+        padded[:height, :width] = arr
+        if pad_h:
+            padded[height:, :width] = arr[height - 1:height]
+        if pad_w:
+            padded[:height, width:] = arr[:, width - 1:width]
+        if pad_h and pad_w:
+            padded[height:, width:] = arr[height - 1, width - 1]
+        arr = padded
+    return arr
+
+
+def _write_gif(frames: list[Image.Image], path: str | pathlib.Path, fps: float) -> pathlib.Path:
+    """Assemble RGB PIL frames into a looping GIF at the given fps."""
+    if not frames:
+        raise ValueError("write_gif requires at least one frame")
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    duration = max(1, round(1000.0 / max(0.1, fps)))
+    frames[0].save(
+        str(path),
+        save_all=True,
+        append_images=frames[1:],
+        duration=duration,
+        loop=0,
+        optimize=True,
+        disposal=2,
+    )
+    return path
+
+
+def _write_mp4(
+    frames: list[Image.Image],
+    path: str | pathlib.Path,
+    fps: float,
+    *,
+    crf: int = 18,
+) -> pathlib.Path:
+    """Assemble RGB PIL frames into an H.264 MP4 using ffmpeg."""
+    if not frames:
+        raise ValueError("write_mp4 requires at least one frame")
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        ffmpeg = "ffmpeg"
+    else:
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    arrays = [_even_rgb_array(frame) for frame in frames]
+    height, width = arrays[0].shape[:2]
+    for index, arr in enumerate(arrays[1:], start=1):
+        if arr.shape[:2] != (height, width):
+            raise ValueError(
+                "all MP4 frames must have the same size; "
+                f"frame 0 is {(height, width)}, frame {index} is {arr.shape[:2]}"
+            )
+    with tempfile.TemporaryDirectory(prefix="quantem-gpu-mp4-") as tmp:
+        tmp_path = pathlib.Path(tmp)
+        for index, arr in enumerate(arrays):
+            Image.fromarray(arr, mode="RGB").save(tmp_path / f"frame_{index:06d}.png")
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-framerate",
+            f"{max(0.1, float(fps))}",
+            "-i",
+            str(tmp_path / "frame_%06d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            str(int(crf)),
+            str(path),
+        ]
+        try:
+            subprocess.run(cmd, check=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "save_mp4 requires ffmpeg on PATH. Install ffmpeg or use save_gif instead."
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"ffmpeg failed while writing MP4: {exc}") from exc
+    return path
+

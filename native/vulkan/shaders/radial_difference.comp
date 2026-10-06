@@ -1,0 +1,10 @@
+#version 450
+layout(local_size_x = 256) in;
+// Each descriptor covers one 1 MiB plane, never the entire 137-plane allocation.
+layout(set = 0, binding = 0, std430) readonly buffer Inner { uint values[]; } inner;
+layout(set = 0, binding = 1, std430) readonly buffer Outer { uint values[]; } outer;
+layout(set = 0, binding = 2, std430) writeonly buffer Image { uint values[]; } image;
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index < 262144u) image.values[index] = outer.values[index] - inner.values[index];
+}

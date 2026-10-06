@@ -1,0 +1,35 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 2, std430) readonly buffer Image { uint values[]; } image;
+layout(set = 0, binding = 3, std430) writeonly buffer Rows { vec2 values[]; } rows;
+layout(set = 0, binding = 6, std430) readonly buffer Twiddles { vec2 values[]; } twiddles;
+shared vec2 scratch[512];
+vec2 multiplyComplex(vec2 a, vec2 b) {
+    return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x);
+}
+float centeredCount(uint value, uint baseline) {
+    // Subtract exactly in integer arithmetic before narrowing, with no unsigned wrap.
+    return value >= baseline ? float(value-baseline) : -float(baseline-value);
+}
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint row = gl_WorkGroupID.x;
+    uint baseline=image.values[row*512u];
+    // FFT(x-c) + N*c at DC equals FFT(x). Conditioning suppresses cancellation
+    // from a large BF background; it is not a scientific mean-removal operation.
+    scratch[bitfieldReverse(lane) >> 23u] = vec2(centeredCount(image.values[row*512u + lane],baseline), 0.0);
+    scratch[bitfieldReverse(lane+256u) >> 23u] = vec2(centeredCount(image.values[row*512u + lane+256u],baseline), 0.0);
+    barrier();
+    for (uint width=2u; width<=512u; width*=2u) {
+        uint halfWidth=width/2u;
+        uint j=lane%halfWidth;
+        uint first=(lane/halfWidth)*width+j;
+        vec2 a=scratch[first];
+        vec2 b=multiplyComplex(scratch[first+halfWidth], twiddles.values[j*(512u/width)]);
+        scratch[first]=a+b;
+        scratch[first+halfWidth]=a-b;
+        barrier();
+    }
+    rows.values[row*512u+lane]=scratch[lane] + (lane==0u ? vec2(float(baseline)*512.0,0.0) : vec2(0.0));
+    rows.values[row*512u+lane+256u]=scratch[lane+256u];
+}

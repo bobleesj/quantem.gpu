@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quantem.gpu"
+version = "0.0.1rc8"
+description = "Multi-backend accelerated STEM load, decompression, and compute for QuantEM"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+requires-python = ">=3.11"
+authors = [
+    {name = "Sangjoon Lee"}
+]
+keywords = [
+    "4dstem",
+    "cuda",
+    "electron-microscopy",
+    "gpu",
+    "mps",
+    "stem",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "h5py",
+    "hdf5plugin",
+    "jinja2",
+    "numba>=0.60",
+    "numpy>=2.0.0",
+    "optuna",
+    "pandas",
+    "pyyaml",
+    "torch>=2.3",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dm = [
+    "ncempy>=1.11",
+]
+cuda = [
+    "cupy-cuda12x[ctk]>=12.0",
+]
+remote = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+movie = [
+    "imageio-ffmpeg",
+    "pillow",
+]
+mps = [
+    "mlx",
+    "pyobjc-framework-Metal; platform_system == 'Darwin'",
+]
+dev = [
+    "fastapi>=0.115",
+    "httpx2",
+    "pytest>=8",
+    "scipy",
+    "uvicorn>=0.30",
+    "websocket-client>=1.8",
+]
+docs = [
+    "jupyter-book>=1.0,<2",
+    "sphinx>=7,<8",
+    "myst-nb>=1.1,<2",
+]
+
+[project.scripts]
+quantem-gpu = "quantem.gpu.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quantem"]
+artifacts = [
+    "src/quantem/gpu/webgpu/*.ts",
+    "src/quantem/gpu/webgpu/*.json",
+    "src/quantem/gpu/display/*.json",
+    "src/quantem/gpu/display/metal/*.metal",
+    "src/quantem/gpu/display/goldens/*.json",
+    "src/quantem/gpu/parity/*.json",
+    "src/quantem/gpu/device/*.ts",
+    "src/quantem/gpu/formats/qem/*.json",
+    "src/quantem/gpu/resident/cuda/kernels/*.cu",
+    "src/quantem/gpu/resident/mps/kernels/*.msl",
+    "src/quantem/gpu/io/hdf5/cuda/kernels/*.cu",
+    "src/quantem/gpu/io/hdf5/mps/kernels/*.msl",
+    "src/quantem/gpu/io/hdf5/mps/kernels/*.metal",
+    "src/quantem/gpu/io/hdf5/webgpu/*.ts",
+    "src/quantem/gpu/detector/cuda/kernels/*.cu",
+    "src/quantem/gpu/detector/webgpu/*.ts",
+    "src/quantem/gpu/geometry/webgpu/*.ts",
+    "src/quantem/gpu/display/webgpu/*.ts",
+    "src/quantem/gpu/dpc/webgpu/*.ts",
+    "src/quantem/gpu/ssb/webgpu/*.ts",
+    "src/quantem/gpu/ssb/webgpu/kernels/*.ts",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "docs",
+    "src/quantem/gpu",
+    "tests",
+    "README.md",
+    "CONTRIBUTING.md",
+    "environment-remote-cuda.yml",
+    "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Plain `pytest` is the interactive tier (about a minute). `pytest -m ""` adds the
+# slow SSB fits and long hardware checks; releases and CI run that.
+addopts = "-m 'not slow'"
+markers = ["slow: takes several seconds or more; skipped by plain pytest, run with -m ''"]
+tmp_path_retention_count = 0
+tmp_path_retention_policy = "none"

@@ -1,0 +1,76 @@
+# CPU reference
+
+For QEM archival portability, `io.load("acquisition.qem", backend="cpu")`
+explicitly decodes original measurements. `io.save("copy.qem", array,
+backend="cpu")` accepts supported 4D NumPy data. The readable implementation in
+`src/quantem/gpu/formats/qem/reference.py` imports no accelerated codec code and uses
+frozen integer entropy tables. It is a correctness reference, not a performance
+fallback. See [QEM Python workflows](../api/qem-python.md).
+
+The CPU path is an explicit independent reference for small deterministic
+fixtures and portable IO checks. It is not a silent production fallback.
+
+```python
+from quantem.gpu import io
+
+reference = io.load(
+    "small_master.h5",
+    backend="cpu",
+    representation="dense",
+)
+```
+
+## Dispatch and implementation layers
+
+| Layer | CPU/reference source | Responsibility |
+|---|---|---|
+| Explicit selection | `src/quantem/gpu/device/select.py` | accept `backend="cpu"`; automatic accelerator selection never chooses it |
+| IO implementation | `src/quantem/gpu/io/hdf5/cpu.py` | h5py/hdf5plugin decode of complete acquisitions and bad-pixel zeroing |
+| Array detector reference | `src/quantem/gpu/detector/tensors.py::ArrayBackend` | NumPy mean diffraction, masks, exact sums, and CoM in uint64/float64 |
+| DPC/iDPC reference | `src/quantem/gpu/dpc/workflow.py` | NumPy rotation, curl objective, and FFT integration |
+| Frozen contracts | `tests/parity`, product and backend tests | adjudicate accelerator outputs without generating goldens from that accelerator |
+
+The reference call path is:
+
+```text
+io.load(..., backend="cpu")
+  → explicit CPU route in io.load
+  → h5py + hdf5plugin decompression
+  → NumPy array + shared Dataset4dstemGPU metadata
+  → NumPy detector/DPC reference operations
+```
+
+## Reference design
+
+Reference code favors directness and independent arithmetic over sharing an
+accelerator optimization. It preserves
+$I[R_r,R_c,k_r,k_c]$ and `(row, column) ≡ (r, c)`, uses widened accumulators,
+retains incomplete edge bins, and records the same provenance.
+
+A reference fixture is small, deterministic, versioned, and generated through
+an explicit recapture command. The backend being adjudicated never creates its
+own golden. Missing accelerated capability fails honestly rather than running
+the reference and later being reported as GPU evidence.
+
+## Arithmetic and independence
+
+Integer detector reductions widen before summation. Bad pixels are zeroed in
+the same scientific order as accelerated paths. Floating references state their
+dtype, normalization, and tolerance. The reference favors direct array
+expressions over sharing a fused accelerator kernel, because common code can
+hide a common bug.
+
+## Focused checks
+
+```bash
+PYTHONPATH=src python -m pytest -q \
+  tests/contracts/test_import_without_cupy.py \
+  tests/contracts/io/test_load.py \
+  tests/parity/test_products_parity.py \
+  tests/parity/test_dpc_rotation_agreement.py
+```
+
+For each frozen fixture, record the generator revision, input checksum,
+shape/dtype, exact parameters, expected-output checksum, comparison metric, and
+tolerance. Updating a golden requires an explicit recapture reason and an
+independent scientific review.

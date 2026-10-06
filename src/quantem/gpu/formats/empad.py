@@ -1,0 +1,297 @@
+"""Explicit NumPy and EMPAD float-export readers for portable QEM conversion."""
+
+import json
+import math
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import numpy as np
+
+
+def _pair(text: str) -> tuple[int, int]:
+    """Parse an EMPAD ``"rows, columns"`` field; a zero would describe an empty scan."""
+    values = tuple(int(part.strip()) for part in text.strip("()[] ").split(","))
+    if len(values) != 2 or min(values) <= 0:
+        raise ValueError(
+            "EMPAD scan shape must give positive (row, column) dimensions."
+        )
+    return values
+
+
+def _xml_root(path: Path) -> tuple[bytes, ET.Element]:
+    """Read bounded detector metadata without accepting external entities."""
+    with path.open("rb") as handle:
+        text = handle.read(4 * 1024 * 1024 + 1)
+    if (
+        len(text) > 4 * 1024 * 1024
+        or b"<!DOCTYPE" in text.upper()
+        or b"<!ENTITY" in text.upper()
+    ):
+        raise ValueError("EMPAD XML must be at most 4 MiB with no DTD or entities.")
+    return text, ET.fromstring(text)
+
+
+def _raw_companion(path: Path) -> Path:
+    """Find metadata naming this RAW file when its XML uses an acquisition name."""
+    adjacent = path.with_suffix(".xml")
+    if adjacent.exists():
+        return adjacent
+    matches = []
+    for candidate in sorted(path.parent.glob("*.xml")):
+        try:
+            _, root = _xml_root(candidate)
+        except (ET.ParseError, ValueError):
+            continue
+        element = root.find("raw_file")
+        filename = (
+            element.attrib.get("filename", "")
+            if element is not None
+            else root.findtext("rawfile/filename", "")
+        )
+        if filename.replace("\\", "/").split("/")[-1] == path.name:
+            matches.append(candidate)
+    if len(matches) > 1:
+        raise ValueError(
+            f"Multiple XML acquisitions name {path.name}; open the intended XML explicitly."
+        )
+    return matches[0] if matches else adjacent
+
+
+def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, dict]:
+    """Map an EMPAD float32 export (RAW plus optional XML) as a dense host array and its metadata.
+
+    The XML gives the scan shape and calibration and is retained verbatim;
+    EMPAD-G1 records are 130 x 128 float32 with two trailing rows that are
+    dropped, EMPAD2 records are 128 x 128. Encoded (uncalibrated) detector
+    words are refused, because treating them as intensities would be wrong.
+    """
+    xml = path if path.suffix.lower() == ".xml" else _raw_companion(path)
+    fields, original, shape, record_rows = {}, {}, scan_shape, 130
+    raw = path
+    if xml.exists():
+        text, root = _xml_root(xml)
+
+        def visit(node, prefix=""):
+            for child in node:
+                component = (
+                    child.attrib.get("mode", "acquire")
+                    if child.tag == "scan_parameters"
+                    else child.tag
+                )
+                if child.tag == "roimask" and "roi_idx" in child.attrib:
+                    component += "[" + child.attrib["roi_idx"] + "]"
+                key = prefix + component
+                if len(child):
+                    visit(child, key + "/")
+                else:
+                    value = (child.text or "").strip()
+                    if key in fields and fields[key] != value:
+                        raise ValueError(f"Conflicting EMPAD XML field {key}.")
+                    fields[key] = value
+
+        visit(root)
+        original = {
+            "empad_xml": text.decode("utf8"),
+            **{"empad/" + k: v for k, v in fields.items()},
+        }
+        modern = fields.get("sensor/type") == "EMPAD2"
+        if "sensor/type" in fields or "rawfile/filename" in fields:
+            if (
+                not modern
+                or fields.get("rawfile/datatype") != "float32"
+                or fields.get("scan/type") != "scan"
+                or _pair(fields.get("sensor/shape", "0,0")) != (128, 128)
+            ):
+                raise ValueError(
+                    "Open an EMPAD raster float32 export, not encoded detector words."
+                )
+            shape, record_rows = _pair(fields["scan/shape"]), 128
+            filename = fields["rawfile/filename"]
+        else:
+            candidates = []
+            for row_key, col_key in (
+                ("pix_y", "pix_x"),
+                ("acquire/scan_resolution_y", "acquire/scan_resolution_x"),
+            ):
+                if row_key in fields or col_key in fields:
+                    candidates.append(
+                        _pair(fields.get(row_key, "0") + "," + fields.get(col_key, "0"))
+                    )
+            if not candidates or any(
+                candidate != candidates[0] for candidate in candidates
+            ):
+                raise ValueError(
+                    "EMPAD XML needs consistent row/column scan dimensions."
+                )
+            shape = candidates[0]
+            element = root.find("raw_file")
+            filename = "" if element is None else element.attrib.get("filename", "")
+            if fields.get("type", "scan") != "scan":
+                raise ValueError("Only EMPAD raster scans are supported.")
+        basename = filename.replace("\\", "/").split("/")[-1]
+        if not basename or Path(basename).suffix.lower() != ".raw":
+            raise ValueError("EMPAD XML must name a sibling .raw file.")
+        raw = xml.parent / basename
+        if path.suffix.lower() == ".raw" and raw.resolve() != path.resolve():
+            raise ValueError(
+                "EMPAD XML names a different RAW file; open the matching XML."
+            )
+        if scan_shape is not None and tuple(scan_shape) != shape:
+            raise ValueError("scan_shape conflicts with EMPAD XML; omit the override.")
+    elif path.suffix.lower() == ".xml":
+        raise FileNotFoundError(path)
+    if (
+        shape is None
+        or len(shape) != 2
+        or any(type(n) is not int or n <= 0 for n in shape)
+    ):
+        raise ValueError(
+            "Headerless EMPAD-G1 RAW requires scan_shape=(rows, columns); the detector record is 130x128 float32."
+        )
+    if raw.stat().st_size != math.prod(shape) * record_rows * 128 * 4:
+        raise ValueError(
+            "EMPAD RAW length disagrees with the declared layout; restore the matching XML/RAW files."
+        )
+    if record_rows == 128 and all(
+        key in fields
+        for key in (
+            "pdcu/SerialNumber",
+            "grabber/avg_scan_even_offset",
+            "grabber/avg_scan_odd_offset",
+        )
+    ):
+        # Match the native reader's bounded format guard. Retained acquisition
+        # offsets alone do not imply uncalibrated detector words.
+        frames = math.prod(shape)
+        with raw.open("rb") as handle:
+            for frame in sorted({0, frames // 2, frames - 1}):
+                handle.seek(frame * 65536)
+                words = np.frombuffer(handle.read(65536), "<u4")
+                if words.size != 128 * 128:
+                    raise ValueError(
+                        "EMPAD RAW ended during validation; restore the complete acquisition."
+                    )
+                if not np.all(words & 0x40000000):
+                    break
+            else:
+                raise NotImplementedError(
+                    "EMPAD2 contains ambiguous encoded detector words despite its float32 label. "
+                    "Use a calibrated float32 export or the matching sensor gain calibration and dark acquisition."
+                )
+    data = np.memmap(raw, dtype="<f4", mode="r", shape=(*shape, record_rows, 128))[
+        :, :, :128, :
+    ]
+    metadata = dict(
+        source_kind="empad-float-export",
+        source_format="EMPAD float32",
+        source_metadata=original,
+        backend="cpu",
+        representation="dense",
+        source_path=str(path),
+        background_applied=False,
+    )
+    if xml.exists():
+        metadata["source_metadata_path"] = str(xml)
+    modern = record_rows == 128
+    for field, target, unit in (
+        (
+            (
+                "iom_measurements/ColumnSourceHighVoltage"
+                if modern
+                else "iom_measurements/high_voltage"
+            ),
+            "electron_source/accelerating_voltage",
+            "V",
+        ),
+        (
+            (
+                "iom_measurements/ColumnOpticsGetCameraLengthNominalCameraLength"
+                if modern
+                else "iom_measurements/nominal_camera_length"
+            ),
+            "imaging_system/camera_length",
+            "m",
+        ),
+        (
+            "scan/exposure_time" if modern else "exposure_time",
+            "scan_controller/regular_scan/dwell_time",
+            "s" if modern else "ms",
+        ),
+    ):
+        if field in fields:
+            original["electron_microscope/" + target] = fields[field] + " " + unit
+
+    def positive(key: str) -> float | None:
+        try:
+            value = float(fields[key])
+        except (KeyError, ValueError):
+            return None
+        return value if math.isfinite(value) and value > 0 else None
+
+    fov_root = "iom_measurements/full_scan_field_of_view/"
+    field_col, field_row, scale_factor = (
+        positive(fov_root + key) for key in ("x", "y", "scale_factor")
+    )
+    fov = fields.get("iom_measurements/optics.get_full_scan_field_of_view")
+    if field_col is not None and field_col == field_row and scale_factor is not None:
+        # EMPAD 1.2 records maximum-axis FOV including the instrument scale.
+        # Sampling stays isotropic for rectangular scans, matching the native reader.
+        metadata["scan_sampling_A"] = [field_col / scale_factor / max(shape) * 1e10] * 2
+    elif fov:
+        values = json.loads(fov)
+        if len(values) == 2 and all(
+            isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in values
+        ):
+            metadata["scan_sampling_A"] = [v / n * 1e10 for v, n in zip(values, shape)]
+    angle = (
+        positive("iom_measurements/calibrated_diffraction_angle") if modern else None
+    )
+    reciprocal = (
+        positive("iom_measurements/calibrated_pixelsize") if not modern else None
+    )
+    if angle is not None:
+        metadata["detector_sampling"] = [angle * 1000] * 2
+        metadata["detector_sampling_unit"] = "mrad"
+        for axis in ("y", "x"):
+            original[
+                "electron_microscope/imaging_system/reciprocal_pixel_size_" + axis
+            ] = f"{angle} rad"
+    elif reciprocal is not None:
+        # EMPAD's legacy field uses the native contract: value * 1e9 in 1/nm,
+        # then *0.1 to reach the QEM microscopy unit 1/angstrom.
+        metadata["detector_sampling"] = [reciprocal * 1e8] * 2
+        metadata["detector_sampling_unit"] = "1/angstrom"
+    metadata["qem_empad"] = dict(
+        format_identifier="empad-float-export/v1",
+        format_name="EMPAD float32",
+        microscope_metadata=original,
+    )
+    return data, metadata
+
+
+def load_array_source(
+    path: str | Path, scan_shape: tuple[int, int] | None = None
+) -> tuple[np.memmap, dict]:
+    """Map an explicit NumPy or EMPAD array source and describe it, without copying it.
+
+    The memory map keeps the stored float32 or integer values; ``io`` decides
+    whether to encode them on the GPU or return them as the CPU reference.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".npy":
+        return _empad(path, scan_shape)
+    data = np.load(path, mmap_mode="r", allow_pickle=False)
+    if data.ndim != 4 or min(data.shape) <= 0:
+        raise ValueError(
+            "NumPy acquisition must have four axes: scan row, scan column, detector row, detector column."
+        )
+    if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
+        raise ValueError("scan_shape disagrees with the NumPy array.")
+    return data, dict(
+        backend="cpu",
+        representation="dense",
+        source_kind="numpy",
+        source_format="NumPy",
+        source_metadata={},
+        source_path=str(path),
+    )

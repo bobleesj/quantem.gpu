@@ -1,0 +1,8 @@
+name: quantem-gpu-remote
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip>=24
+  - pip:
+      - -e .[cuda,remote]

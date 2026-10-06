@@ -1,0 +1,52 @@
+#version 450
+
+// Each invocation inverts one group of 32 uint16 values from the canonical
+// 8192-byte bitshuffle block. Output is two uint16 values per uint32 in exact
+// frame-major detector order, ready for the existing uint16 product kernels.
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Bitshuffled {
+  uint words[];
+} bitshuffled;
+layout(set = 0, binding = 1, std430) buffer DecodedUint16 {
+  uint words[];
+} decoded;
+
+layout(push_constant) uniform UnshuffleParameters {
+  uint block_count;
+  uint groups_per_block;
+  uint values_per_block;
+  uint reserved;
+} parameters;
+
+void main() {
+  uint logical_group = gl_GlobalInvocationID.x +
+      gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+  uint total_groups = parameters.block_count * parameters.groups_per_block;
+  if (logical_group >= total_groups ||
+      parameters.groups_per_block != 128u ||
+      parameters.values_per_block != 4096u) {
+    return;
+  }
+  uint block = logical_group / parameters.groups_per_block;
+  uint group = logical_group % parameters.groups_per_block;
+  uint shuffled_base = block * 2048u;
+  uint output_base = block * (parameters.values_per_block / 2u) + group * 16u;
+  uint planes[16];
+  for (uint bit = 0u; bit < 16u; ++bit) {
+    planes[bit] = bitshuffled.words[
+        shuffled_base + bit * parameters.groups_per_block + group];
+  }
+  for (uint pair = 0u; pair < 16u; ++pair) {
+    uint lane0 = pair * 2u;
+    uint lane1 = lane0 + 1u;
+    uint value0 = 0u;
+    uint value1 = 0u;
+    for (uint bit = 0u; bit < 16u; ++bit) {
+      uint plane = planes[bit];
+      value0 |= ((plane >> lane0) & 1u) << bit;
+      value1 |= ((plane >> lane1) & 1u) << bit;
+    }
+    decoded.words[output_base + pair] = value0 | (value1 << 16u);
+  }
+}

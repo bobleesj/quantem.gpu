@@ -1,0 +1,1686 @@
+#include "CNativeHDF5.h"
+
+#include <hdf5.h>
+
+#include <math.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define QH5_METADATA_LIMIT 100
+
+struct qh5_chunk_writer {
+  hid_t file, dataset;
+  uint64_t frames, next_frame;
+  char *path;
+};
+
+struct qh5_lossless_pack_v1_writer {
+  hid_t file;
+  hid_t shards;
+  char *path;
+  uint32_t next_ordinal;
+  int owns_path;
+};
+
+static pthread_mutex_t qh5_hdf5_lock = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+  char *path;
+} qh5_stack_search;
+
+typedef struct {
+  qh5_chunk_info *chunks;
+  size_t count;
+  int invalid;
+} qh5_chunk_context;
+
+static int qh5_fail(char **message, const char *format, ...) {
+  if (message != NULL) {
+    va_list arguments;
+    va_start(arguments, format);
+    int length = vsnprintf(NULL, 0, format, arguments);
+    va_end(arguments);
+    if (length >= 0) {
+      *message = malloc((size_t)length + 1);
+      if (*message != NULL) {
+        va_start(arguments, format);
+        vsnprintf(*message, (size_t)length + 1, format, arguments);
+        va_end(arguments);
+      }
+    }
+  }
+  return -1;
+}
+
+static char *qh5_copy_string(const char *value) {
+  if (value == NULL) return NULL;
+  size_t length = strlen(value);
+  char *copy = malloc(length + 1);
+  if (copy != NULL) memcpy(copy, value, length + 1);
+  return copy;
+}
+
+static hid_t qh5_open_known_stack(hid_t file) {
+  const char *paths[] = {"/entry/data/data", "entry/data/data", "/data", "data"};
+  for (size_t index = 0; index < sizeof(paths) / sizeof(paths[0]); index++) {
+    hid_t dataset = H5Dopen2(file, paths[index], H5P_DEFAULT);
+    if (dataset < 0) continue;
+    hid_t space = H5Dget_space(dataset);
+    int rank = space >= 0 ? H5Sget_simple_extent_ndims(space) : -1;
+    if (space >= 0) H5Sclose(space);
+    if (rank == 3) return dataset;
+    H5Dclose(dataset);
+  }
+  return -1;
+}
+
+static herr_t qh5_find_stack_callback(
+  hid_t object,
+  const char *name,
+  const H5O_info2_t *object_info,
+  void *context_pointer
+) {
+  if (object_info->type != H5O_TYPE_DATASET) return 0;
+  qh5_stack_search *context = context_pointer;
+  hid_t dataset = H5Dopen2(object, name, H5P_DEFAULT);
+  if (dataset < 0) return 0;
+  hid_t space = H5Dget_space(dataset);
+  int rank = space >= 0 ? H5Sget_simple_extent_ndims(space) : -1;
+  if (space >= 0) H5Sclose(space);
+  H5Dclose(dataset);
+  if (rank != 3) return 0;
+  context->path = qh5_copy_string(name);
+  return context->path == NULL ? -1 : 1;
+}
+
+static hid_t qh5_open_stack(hid_t file) {
+  hid_t dataset = qh5_open_known_stack(file);
+  if (dataset >= 0) return dataset;
+  qh5_stack_search search = {.path = NULL};
+  herr_t result = H5Ovisit3(
+    file,
+    H5_INDEX_NAME,
+    H5_ITER_NATIVE,
+    qh5_find_stack_callback,
+    &search,
+    H5O_INFO_BASIC
+  );
+  if (result < 0 || search.path == NULL) {
+    free(search.path);
+    return -1;
+  }
+  dataset = H5Dopen2(file, search.path, H5P_DEFAULT);
+  free(search.path);
+  return dataset;
+}
+
+static int qh5_read_stack_geometry(
+  hid_t dataset,
+  qh5_stack_info *stack,
+  char **error_message
+) {
+  hid_t space = H5Dget_space(dataset);
+  if (space < 0) return qh5_fail(error_message, "Could not inspect detector-stack dimensions");
+  hsize_t dimensions[3] = {0, 0, 0};
+  int rank = H5Sget_simple_extent_dims(space, dimensions, NULL);
+  H5Sclose(space);
+  if (rank != 3 || dimensions[0] == 0 || dimensions[1] == 0 || dimensions[2] == 0) {
+    return qh5_fail(error_message, "The detector stack must have three non-empty dimensions");
+  }
+
+  hid_t type = H5Dget_type(dataset);
+  if (type < 0) return qh5_fail(error_message, "Could not inspect detector-stack dtype");
+  H5T_class_t type_class = H5Tget_class(type);
+  H5T_sign_t sign = H5Tget_sign(type);
+  size_t source_bytes = H5Tget_size(type);
+  H5T_order_t byte_order = H5Tget_order(type);
+  H5Tclose(type);
+  if (type_class != H5T_INTEGER || sign != H5T_SGN_NONE || (source_bytes != 1 && source_bytes != 2 && source_bytes != 4)) {
+    return qh5_fail(
+      error_message,
+      "QuantEM.GPU native HDF5 supports uint8/uint16/uint32 detector counts; this stack uses an unsupported dtype"
+    );
+  }
+
+  if (source_bytes > 1 && byte_order != H5T_ORDER_LE) {
+    return qh5_fail(error_message,
+      "Native packed loading requires little-endian integer detector counts; export this stack in little-endian HDF5 before loading");
+  }
+
+  hid_t creation = H5Dget_create_plist(dataset);
+  if (creation < 0 || H5Pget_layout(creation) != H5D_CHUNKED) {
+    if (creation >= 0) H5Pclose(creation);
+    return qh5_fail(error_message, "The detector stack is not chunked HDF5 data");
+  }
+  hsize_t chunk_dimensions[3] = {0, 0, 0};
+  int chunk_rank = H5Pget_chunk(creation, 3, chunk_dimensions);
+  H5Pclose(creation);
+  if (chunk_rank != 3) {
+    return qh5_fail(error_message, "The detector stack has unsupported HDF5 chunk geometry");
+  }
+
+  stack->frame_count = dimensions[0];
+  stack->detector_rows = dimensions[1];
+  stack->detector_columns = dimensions[2];
+  stack->source_bytes = (uint32_t)source_bytes;
+  stack->chunk_frames = chunk_dimensions[0];
+  stack->chunk_rows = chunk_dimensions[1];
+  stack->chunk_columns = chunk_dimensions[2];
+  return 0;
+}
+
+static herr_t qh5_chunk_callback(
+  const hsize_t *offset,
+  unsigned filter_mask,
+  haddr_t address,
+  hsize_t size,
+  void *context_pointer
+) {
+  (void)filter_mask;
+  qh5_chunk_context *context = context_pointer;
+  if (offset[1] != 0 || offset[2] != 0 || offset[0] >= context->count || size == 0
+      || address == HADDR_UNDEF || context->chunks[offset[0]].size != 0) {
+    context->invalid = 1;
+    return -1;
+  }
+  context->chunks[offset[0]].offset = address;
+  context->chunks[offset[0]].size = size;
+  return 0;
+}
+
+static int qh5_inspect_stack_unlocked(
+  const char *path,
+  int include_chunks,
+  qh5_stack_info *stack,
+  qh5_chunk_info **chunks,
+  size_t *chunk_count,
+  char **error_message
+) {
+  if (path == NULL || stack == NULL || chunks == NULL || chunk_count == NULL) {
+    return qh5_fail(error_message, "Invalid native HDF5 stack request");
+  }
+  *chunks = NULL;
+  *chunk_count = 0;
+  if (error_message != NULL) *error_message = NULL;
+  memset(stack, 0, sizeof(*stack));
+  H5Eset_auto2(H5E_DEFAULT, NULL, NULL);
+
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  if (file < 0) return qh5_fail(error_message, "Could not open HDF5 file %s", path);
+  hid_t dataset = qh5_open_stack(file);
+  if (dataset < 0) {
+    H5Fclose(file);
+    return qh5_fail(error_message, "No 3-D detector stack was found in %s", path);
+  }
+  int status = qh5_read_stack_geometry(dataset, stack, error_message);
+  if (status == 0 && include_chunks) {
+    if (stack->chunk_frames != 1 || stack->chunk_rows != stack->detector_rows
+        || stack->chunk_columns != stack->detector_columns) {
+      status = qh5_fail(
+        error_message,
+        "%s is not one full detector frame per HDF5 chunk",
+        path
+      );
+    } else if (stack->frame_count > SIZE_MAX / sizeof(qh5_chunk_info)) {
+      status = qh5_fail(error_message, "%s contains too many detector frames", path);
+    } else {
+      qh5_chunk_info *table = calloc((size_t)stack->frame_count, sizeof(*table));
+      if (table == NULL) {
+        status = qh5_fail(error_message, "Could not allocate the HDF5 chunk index");
+      } else {
+        qh5_chunk_context context = {
+          .chunks = table,
+          .count = (size_t)stack->frame_count,
+          .invalid = 0,
+        };
+        herr_t iteration = H5Dchunk_iter(dataset, H5P_DEFAULT, qh5_chunk_callback, &context);
+        if (iteration < 0 || context.invalid) {
+          free(table);
+          status = qh5_fail(error_message, "%s has invalid detector chunk coordinates", path);
+        } else {
+          for (size_t index = 0; index < context.count; index++) {
+            if (table[index].size == 0) {
+              free(table);
+              status = qh5_fail(error_message, "%s is missing detector frame %zu", path, index);
+              break;
+            }
+          }
+          if (status == 0) {
+            *chunks = table;
+            *chunk_count = context.count;
+          }
+        }
+      }
+    }
+  }
+  H5Dclose(dataset);
+  H5Fclose(file);
+  return status;
+}
+
+int qh5_inspect_stack(
+  const char *path,
+  int include_chunks,
+  qh5_stack_info *stack,
+  qh5_chunk_info **chunks,
+  size_t *chunk_count,
+  char **error_message
+) {
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = qh5_inspect_stack_unlocked(
+    path,
+    include_chunks,
+    stack,
+    chunks,
+    chunk_count,
+    error_message
+  );
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+static int qh5_append_string(char ***values, size_t *count, const char *value) {
+  if (*count >= SIZE_MAX / sizeof(**values)) return -1;
+  char *copy = qh5_copy_string(value);
+  if (copy == NULL) return -1;
+  char **grown = realloc(*values, (*count + 1) * sizeof(**values));
+  if (grown == NULL) {
+    free(copy);
+    return -1;
+  }
+  grown[*count] = copy;
+  *values = grown;
+  (*count)++;
+  return 0;
+}
+
+static herr_t qh5_external_link_callback(
+  hid_t group,
+  const char *name,
+  const H5L_info2_t *link_info,
+  void *context_pointer
+) {
+  qh5_master_info *info = context_pointer;
+  if (link_info->type != H5L_TYPE_EXTERNAL || link_info->u.val_size == 0) return 0;
+  void *value = malloc(link_info->u.val_size);
+  if (value == NULL) return -1;
+  if (H5Lget_val(group, name, value, link_info->u.val_size, H5P_DEFAULT) < 0) {
+    free(value);
+    return -1;
+  }
+  unsigned flags = 0;
+  const char *filename = NULL;
+  const char *object_name = NULL;
+  herr_t result = H5Lunpack_elink_val(
+    value,
+    link_info->u.val_size,
+    &flags,
+    &filename,
+    &object_name
+  );
+  (void)flags;
+  (void)object_name;
+  if (result >= 0 && filename != NULL) {
+    result = qh5_append_string(&info->external_files, &info->external_file_count, filename);
+  }
+  free(value);
+  return result;
+}
+
+static int qh5_read_external_files(hid_t file, qh5_master_info *info) {
+  hid_t group = H5Gopen2(file, "/entry/data", H5P_DEFAULT);
+  if (group < 0) return 0;
+  hsize_t index = 0;
+  herr_t result = H5Literate2(
+    group,
+    H5_INDEX_NAME,
+    H5_ITER_INC,
+    &index,
+    qh5_external_link_callback,
+    info
+  );
+  H5Gclose(group);
+  return result < 0 ? -1 : 0;
+}
+
+static int qh5_read_integer_dataset(hid_t file, const char *path, uint64_t *value) {
+  hid_t dataset = H5Dopen2(file, path, H5P_DEFAULT);
+  if (dataset < 0) return 0;
+  hid_t space = H5Dget_space(dataset);
+  hssize_t points = space >= 0 ? H5Sget_simple_extent_npoints(space) : -1;
+  if (space >= 0) H5Sclose(space);
+  unsigned long long raw = 0;
+  int found = points == 1 && H5Dread(dataset, H5T_NATIVE_ULLONG, H5S_ALL, H5S_ALL, H5P_DEFAULT, &raw) >= 0;
+  H5Dclose(dataset);
+  if (found) *value = (uint64_t)raw;
+  return found;
+}
+
+static int qh5_read_scan_shape_at(hid_t file, const char *path, qh5_master_info *info) {
+  hid_t object = H5Oopen(file, path, H5P_DEFAULT);
+  if (object < 0) return 0;
+  hid_t attribute = H5Aopen(object, "scan_shape", H5P_DEFAULT);
+  H5Oclose(object);
+  if (attribute < 0) return 0;
+  hid_t space = H5Aget_space(attribute);
+  hssize_t points = space >= 0 ? H5Sget_simple_extent_npoints(space) : -1;
+  if (space >= 0) H5Sclose(space);
+  long long values[2] = {0, 0};
+  int found = points == 2
+    && H5Aread(attribute, H5T_NATIVE_LLONG, values) >= 0
+    && values[0] > 0 && values[1] > 0;
+  H5Aclose(attribute);
+  if (found) {
+    info->scan_rows = (uint64_t)values[0];
+    info->scan_columns = (uint64_t)values[1];
+    info->has_scan_shape = 1;
+  }
+  return found;
+}
+
+static int qh5_read_bad_pixels(
+  hid_t file,
+  uint64_t detector_rows,
+  uint64_t detector_columns,
+  qh5_master_info *info
+) {
+  hid_t dataset = H5Dopen2(
+    file,
+    "/entry/instrument/detector/detectorSpecific/pixel_mask",
+    H5P_DEFAULT
+  );
+  if (dataset < 0) return 0;
+  hid_t space = H5Dget_space(dataset);
+  hsize_t dimensions[2] = {0, 0};
+  int rank = space >= 0 ? H5Sget_simple_extent_dims(space, dimensions, NULL) : -1;
+  if (space >= 0) H5Sclose(space);
+  if (rank != 2 || dimensions[0] != detector_rows || dimensions[1] != detector_columns) {
+    H5Dclose(dataset);
+    return -1;
+  }
+  if (detector_rows != 0 && detector_columns > SIZE_MAX / detector_rows) {
+    H5Dclose(dataset);
+    return -1;
+  }
+  size_t count = (size_t)(detector_rows * detector_columns);
+  if (count > SIZE_MAX / sizeof(unsigned long long)) {
+    H5Dclose(dataset);
+    return -1;
+  }
+  unsigned long long *values = malloc(count * sizeof(*values));
+  if (values == NULL || H5Dread(dataset, H5T_NATIVE_ULLONG, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) {
+    free(values);
+    H5Dclose(dataset);
+    return -1;
+  }
+  H5Dclose(dataset);
+  info->detector_mask_values = malloc(count * sizeof(*info->detector_mask_values));
+  if (info->detector_mask_values == NULL) {
+    free(values);
+    return -1;
+  }
+  for (size_t index = 0; index < count; index++) {
+    if (values[index] > UINT32_MAX) {
+      free(values);
+      return -1;
+    }
+    info->detector_mask_values[index] = (uint32_t)values[index];
+  }
+  info->detector_mask_count = count;
+  size_t bad_count = 0;
+  for (size_t index = 0; index < count; index++) bad_count += values[index] != 0;
+  if (bad_count != 0) {
+    info->bad_pixel_indices = malloc(bad_count * sizeof(*info->bad_pixel_indices));
+    if (info->bad_pixel_indices == NULL) {
+      free(values);
+      return -1;
+    }
+    size_t output = 0;
+    for (size_t index = 0; index < count; index++) {
+      if (values[index] != 0) info->bad_pixel_indices[output++] = index;
+    }
+  }
+  info->bad_pixel_count = bad_count;
+  free(values);
+  return 1;
+}
+
+static char *qh5_read_attribute_string(hid_t object, const char *name);
+
+static char *qh5_read_string_value(hid_t container, int is_attribute) {
+  hid_t type = is_attribute ? H5Aget_type(container) : H5Dget_type(container);
+  hid_t space = is_attribute ? H5Aget_space(container) : H5Dget_space(container);
+  if (type < 0 || space < 0 || H5Tget_class(type) != H5T_STRING
+      || H5Sget_simple_extent_npoints(space) != 1) {
+    if (type >= 0) H5Tclose(type);
+    if (space >= 0) H5Sclose(space);
+    return NULL;
+  }
+  char *result = NULL;
+  if (H5Tis_variable_str(type)) {
+    char *value = NULL;
+    herr_t status = is_attribute
+      ? H5Aread(container, type, &value)
+      : H5Dread(container, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, &value);
+    if (status >= 0 && value != NULL) result = qh5_copy_string(value);
+    if (value != NULL) H5free_memory(value);
+  } else {
+    size_t length = H5Tget_size(type);
+    char *value = calloc(length + 1, 1);
+    if (value != NULL) {
+      herr_t status = is_attribute
+        ? H5Aread(container, type, value)
+        : H5Dread(container, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, value);
+      if (status >= 0) {
+        value[length] = '\0';
+        while (length > 0 && (value[length - 1] == '\0' || value[length - 1] == ' ')) {
+          value[--length] = '\0';
+        }
+        result = qh5_copy_string(value);
+      }
+      free(value);
+    }
+  }
+  H5Tclose(type);
+  H5Sclose(space);
+  return result;
+}
+
+static char *qh5_read_attribute_string(hid_t object, const char *name) {
+  hid_t attribute = H5Aopen(object, name, H5P_DEFAULT);
+  if (attribute < 0) return NULL;
+  char *value = qh5_read_string_value(attribute, 1);
+  H5Aclose(attribute);
+  return value;
+}
+
+static char *qh5_read_dataset_string(hid_t file, const char *path) {
+  hid_t dataset = H5Dopen2(file, path, H5P_DEFAULT);
+  if (dataset < 0) return NULL;
+  char *value = qh5_read_string_value(dataset, 0);
+  H5Dclose(dataset);
+  return value;
+}
+
+static int qh5_read_length_meters_with_policy(
+    hid_t file,
+    const char *path,
+    double *value_meters,
+    int require_explicit_units) {
+  hid_t dataset = H5Dopen2(file, path, H5P_DEFAULT);
+  if (dataset < 0) return 0;
+  hid_t space = H5Dget_space(dataset);
+  hssize_t points = space >= 0 ? H5Sget_simple_extent_npoints(space) : -1;
+  if (space >= 0) H5Sclose(space);
+  double value = 0;
+  int found = points == 1
+    && H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &value) >= 0
+    && isfinite(value) && value > 0;
+  char *units = found ? qh5_read_attribute_string(dataset, "units") : NULL;
+  H5Dclose(dataset);
+  if (!found) {
+    free(units);
+    return 0;
+  }
+  if (require_explicit_units && (units == NULL || units[0] == '\0')) {
+    free(units);
+    return 0;
+  }
+  double factor = 0;
+  const char *unit = units == NULL || units[0] == '\0' ? "m" : units;
+  if (strcasecmp(unit, "m") == 0) factor = 1;
+  else if (strcasecmp(unit, "mm") == 0) factor = 1e-3;
+  else if (strcasecmp(unit, "um") == 0 || strcmp(unit, "µm") == 0) factor = 1e-6;
+  else if (strcasecmp(unit, "nm") == 0) factor = 1e-9;
+  free(units);
+  if (factor == 0) return 0;
+  *value_meters = value * factor;
+  return 1;
+}
+
+static int qh5_read_length_meters(hid_t file, const char *path, double *value_meters) {
+  return qh5_read_length_meters_with_policy(file, path, value_meters, 0);
+}
+
+static void qh5_read_reciprocal_sampling(hid_t file, qh5_master_info *info) {
+  double distance = 0;
+  double row_pitch = 0;
+  double column_pitch = 0;
+  if (qh5_read_length_meters(file, "/entry/instrument/detector/detector_distance", &distance)
+      && qh5_read_length_meters(file, "/entry/instrument/detector/y_pixel_size", &row_pitch)
+      && qh5_read_length_meters(file, "/entry/instrument/detector/x_pixel_size", &column_pitch)) {
+    info->reciprocal_row_mrad = atan(row_pitch / distance) * 1000;
+    info->reciprocal_column_mrad = atan(column_pitch / distance) * 1000;
+    info->has_reciprocal_sampling = 1;
+  }
+}
+
+static void qh5_read_scan_pixel_size(hid_t file, qh5_master_info *info) {
+  // NXem scan-controller metadata uses x=column and y=row. Never substitute
+  // detector sensor pitch for specimen scan sampling.
+  char *scan_type = qh5_read_dataset_string(file,
+    "/electron_microscope/scan_controller/scan_type");
+  uint64_t rows = 0, columns = 0, frames = 0;
+  double row = 0, column = 0;
+  if (scan_type != NULL && strcmp(scan_type, "regular") == 0
+      && qh5_read_integer_dataset(file, "/electron_microscope/scan_controller/regular_scan/n_pixels_y", &rows)
+      && qh5_read_integer_dataset(file, "/electron_microscope/scan_controller/regular_scan/n_pixels_x", &columns)
+      && qh5_read_integer_dataset(file, "/electron_microscope/scan_controller/regular_scan/n_frames", &frames)
+      && rows > 0 && columns > 0 && frames == 1
+      && qh5_read_length_meters_with_policy(file, "/electron_microscope/scan_controller/regular_scan/pixel_size_y", &row, 1)
+      && qh5_read_length_meters_with_policy(file, "/electron_microscope/scan_controller/regular_scan/pixel_size_x", &column, 1)) {
+    info->has_scan_shape = 1;
+    info->scan_rows = rows;
+    info->scan_columns = columns;
+    info->has_scan_pixel_size = 1;
+    info->scan_pixel_row_nm = row * 1e9;
+    info->scan_pixel_column_nm = column * 1e9;
+    free(scan_type);
+    return;
+  }
+  free(scan_type);
+  const char *row_paths[] = {
+    "/entry/instrument/scan/y_pixel_size",
+    "/entry/instrument/scan/step_y",
+    "/entry/measurement/scan_step_y",
+    "/entry/scan/y_pixel_size",
+  };
+  const char *column_paths[] = {
+    "/entry/instrument/scan/x_pixel_size",
+    "/entry/instrument/scan/step_x",
+    "/entry/measurement/scan_step_x",
+    "/entry/scan/x_pixel_size",
+  };
+  double row_meters = 0;
+  double column_meters = 0;
+  int found_row = 0;
+  int found_column = 0;
+  for (size_t index = 0; index < sizeof(row_paths) / sizeof(row_paths[0]); index++) {
+    if (qh5_read_length_meters_with_policy(file, row_paths[index], &row_meters, 1)) {
+      found_row = 1;
+      break;
+    }
+  }
+  for (size_t index = 0; index < sizeof(column_paths) / sizeof(column_paths[0]); index++) {
+    if (qh5_read_length_meters_with_policy(file, column_paths[index], &column_meters, 1)) {
+      found_column = 1;
+      break;
+    }
+  }
+  if (found_row && found_column) {
+    info->scan_pixel_row_nm = row_meters * 1e9;
+    info->scan_pixel_column_nm = column_meters * 1e9;
+    info->has_scan_pixel_size = 1;
+  }
+}
+
+static char *qh5_format_numeric(hid_t container, int is_attribute) {
+  hid_t type = is_attribute ? H5Aget_type(container) : H5Dget_type(container);
+  hid_t space = is_attribute ? H5Aget_space(container) : H5Dget_space(container);
+  if (type < 0 || space < 0) {
+    if (type >= 0) H5Tclose(type);
+    if (space >= 0) H5Sclose(space);
+    return NULL;
+  }
+  hssize_t points_value = H5Sget_simple_extent_npoints(space);
+  H5T_class_t type_class = H5Tget_class(type);
+  if (points_value < 1 || points_value > 16
+      || (type_class != H5T_INTEGER && type_class != H5T_FLOAT)) {
+    H5Tclose(type);
+    H5Sclose(space);
+    return NULL;
+  }
+  size_t points = (size_t)points_value;
+  char *result = calloc(points * 32 + 1, 1);
+  if (result == NULL) {
+    H5Tclose(type);
+    H5Sclose(space);
+    return NULL;
+  }
+  size_t used = 0;
+  if (type_class == H5T_FLOAT) {
+    double values[16] = {0};
+    herr_t status = is_attribute
+      ? H5Aread(container, H5T_NATIVE_DOUBLE, values)
+      : H5Dread(container, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values);
+    if (status < 0) used = SIZE_MAX;
+    for (size_t index = 0; used != SIZE_MAX && index < points; index++) {
+      int count = snprintf(result + used, points * 32 + 1 - used, "%s%.17g", index ? ", " : "", values[index]);
+      if (count < 0) used = SIZE_MAX;
+      else used += (size_t)count;
+    }
+  } else if (H5Tget_sign(type) == H5T_SGN_NONE) {
+    unsigned long long values[16] = {0};
+    herr_t status = is_attribute
+      ? H5Aread(container, H5T_NATIVE_ULLONG, values)
+      : H5Dread(container, H5T_NATIVE_ULLONG, H5S_ALL, H5S_ALL, H5P_DEFAULT, values);
+    if (status < 0) used = SIZE_MAX;
+    for (size_t index = 0; used != SIZE_MAX && index < points; index++) {
+      int count = snprintf(result + used, points * 32 + 1 - used, "%s%llu", index ? ", " : "", values[index]);
+      if (count < 0) used = SIZE_MAX;
+      else used += (size_t)count;
+    }
+  } else {
+    long long values[16] = {0};
+    herr_t status = is_attribute
+      ? H5Aread(container, H5T_NATIVE_LLONG, values)
+      : H5Dread(container, H5T_NATIVE_LLONG, H5S_ALL, H5S_ALL, H5P_DEFAULT, values);
+    if (status < 0) used = SIZE_MAX;
+    for (size_t index = 0; used != SIZE_MAX && index < points; index++) {
+      int count = snprintf(result + used, points * 32 + 1 - used, "%s%lld", index ? ", " : "", values[index]);
+      if (count < 0) used = SIZE_MAX;
+      else used += (size_t)count;
+    }
+  }
+  H5Tclose(type);
+  H5Sclose(space);
+  if (used == SIZE_MAX) {
+    free(result);
+    return NULL;
+  }
+  return result;
+}
+
+static char *qh5_format_value(hid_t container, int is_attribute) {
+  char *string_value = qh5_read_string_value(container, is_attribute);
+  return string_value != NULL ? string_value : qh5_format_numeric(container, is_attribute);
+}
+
+static int qh5_append_metadata(qh5_master_info *info, const char *key, char *value) {
+  if (value == NULL || value[0] == '\0') {
+    free(value);
+    return 0;
+  }
+  if (info->metadata_count >= QH5_METADATA_LIMIT) {
+    free(value);
+    return 0;
+  }
+  qh5_metadata_item *grown = realloc(
+    info->metadata,
+    (info->metadata_count + 1) * sizeof(*info->metadata)
+  );
+  if (grown == NULL) {
+    free(value);
+    return -1;
+  }
+  info->metadata = grown;
+  qh5_metadata_item *item = &info->metadata[info->metadata_count];
+  item->key = qh5_copy_string(key);
+  item->value = value;
+  if (item->key == NULL) {
+    free(value);
+    return -1;
+  }
+  info->metadata_count++;
+  return 0;
+}
+
+typedef struct {
+  qh5_master_info *info;
+  const char *object_name;
+  int failed;
+} qh5_attribute_context;
+
+static herr_t qh5_attribute_callback(
+  hid_t object,
+  const char *attribute_name,
+  const H5A_info_t *attribute_info,
+  void *context_pointer
+) {
+  (void)attribute_info;
+  qh5_attribute_context *context = context_pointer;
+  if (strcmp(attribute_name, "units") == 0
+      || context->info->metadata_count >= QH5_METADATA_LIMIT) return 0;
+  hid_t attribute = H5Aopen(object, attribute_name, H5P_DEFAULT);
+  if (attribute < 0) return 0;
+  char *value = qh5_format_value(attribute, 1);
+  H5Aclose(attribute);
+  size_t length = strlen(context->object_name) + strlen(attribute_name) + 2;
+  char *key = malloc(length);
+  if (key == NULL) {
+    free(value);
+    context->failed = 1;
+    return -1;
+  }
+  snprintf(key, length, "%s@%s", context->object_name, attribute_name);
+  int result = qh5_append_metadata(context->info, key, value);
+  free(key);
+  if (result < 0) context->failed = 1;
+  return result;
+}
+
+typedef struct {
+  qh5_master_info *info;
+  int failed;
+} qh5_metadata_context;
+
+static herr_t qh5_metadata_callback(
+  hid_t root,
+  const char *name,
+  const H5O_info2_t *object_info,
+  void *context_pointer
+) {
+  qh5_metadata_context *context = context_pointer;
+  if (context->info->metadata_count >= QH5_METADATA_LIMIT) return 1;
+  if (strcmp(name, ".") == 0) return 0;
+  if (strcmp(name, "entry/data") == 0 || strncmp(name, "entry/data/", 11) == 0) return 0;
+  hid_t object = H5Oopen(root, name, H5P_DEFAULT);
+  if (object < 0) return 0;
+  size_t name_length = strlen(name);
+  int is_pixel_mask = name_length >= strlen("pixel_mask")
+    && strcmp(name + name_length - strlen("pixel_mask"), "pixel_mask") == 0;
+  if (object_info->type == H5O_TYPE_DATASET && !is_pixel_mask) {
+    char *value = qh5_format_value(object, 0);
+    char *units = qh5_read_attribute_string(object, "units");
+    if (value != NULL && units != NULL && units[0] != '\0') {
+      size_t length = strlen(value) + strlen(units) + 2;
+      char *combined = malloc(length);
+      if (combined == NULL) {
+        free(value);
+        value = NULL;
+        context->failed = 1;
+      } else {
+        snprintf(combined, length, "%s %s", value, units);
+        free(value);
+        value = combined;
+      }
+    }
+    free(units);
+    if (qh5_append_metadata(context->info, name, value) < 0) context->failed = 1;
+  }
+  if (!context->failed && context->info->metadata_count < QH5_METADATA_LIMIT) {
+    qh5_attribute_context attributes = {
+      .info = context->info,
+      .object_name = name,
+      .failed = 0,
+    };
+    hsize_t index = 0;
+    H5Aiterate2(
+      object,
+      H5_INDEX_NAME,
+      H5_ITER_INC,
+      &index,
+      qh5_attribute_callback,
+      &attributes
+    );
+    context->failed = attributes.failed;
+  }
+  H5Oclose(object);
+  return context->failed ? -1 : 0;
+}
+
+static int qh5_read_display_metadata(hid_t file, qh5_master_info *info) {
+  qh5_metadata_context context = {.info = info, .failed = 0};
+  herr_t result = H5Ovisit3(
+    file,
+    H5_INDEX_NAME,
+    H5_ITER_NATIVE,
+    qh5_metadata_callback,
+    &context,
+    H5O_INFO_BASIC
+  );
+  return result < 0 || context.failed ? -1 : 0;
+}
+
+int qh5_export_scientific_image(const char *path, const char *name,
+  const void *values, uint64_t rows, uint64_t columns, uint32_t scalar_type,
+  const char *metadata_json, int create, char **error_message) {
+  if (!path || !name || !name[0] || !values || !rows || !columns || (create && !metadata_json) ||
+      (scalar_type != 1 && scalar_type != 2))
+    return qh5_fail(error_message, "Invalid scientific image export");
+  for (const char *p = name; *p; ++p) {
+    if (!( (*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_'))
+      return qh5_fail(error_message, "Image names must use lowercase letters, numbers and underscores");
+  }
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t file = create ? H5Fcreate(path, H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT)
+    : H5Fopen(path, H5F_ACC_RDWR, H5P_DEFAULT);
+  int status = file < 0 ? -1 : 0;
+  if (status == 0 && create) {
+    hid_t scalar = H5Screate(H5S_SCALAR);
+    hid_t type = H5Tcopy(H5T_C_S1);
+    H5Tset_size(type, strlen(metadata_json) + 1);
+    H5Tset_cset(type, H5T_CSET_UTF8);
+    hid_t dataset = H5Dcreate2(file, "metadata", type, scalar, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (dataset < 0 || H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata_json) < 0) status = -1;
+    if (dataset >= 0) H5Dclose(dataset);
+    H5Tclose(type); H5Sclose(scalar);
+    hid_t group = H5Gcreate2(file, "images", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (group < 0) status = -1;
+    else H5Gclose(group);
+  }
+  if (status == 0) {
+    hsize_t dims[2] = {rows, columns};
+    hid_t space = H5Screate_simple(2, dims, NULL);
+    hid_t type = scalar_type == 1 ? H5T_STD_U32LE : H5T_IEEE_F32LE;
+    hid_t memory_type = scalar_type == 1 ? H5T_NATIVE_UINT32 : H5T_NATIVE_FLOAT;
+    char image_path[256];
+    if (snprintf(image_path, sizeof(image_path), "images/%s", name) >= sizeof(image_path)) status = -1;
+    hid_t dataset = status == 0 ? H5Dcreate2(file, image_path, type, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT) : -1;
+    if (dataset < 0 || H5Dwrite(dataset, memory_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) status = -1;
+    if (dataset >= 0) H5Dclose(dataset);
+    H5Sclose(space);
+  }
+  if (file >= 0 && H5Fclose(file) < 0) status = -1;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status == 0 ? 0 : qh5_fail(error_message, "Could not write scientific HDF5 image %s", name);
+}
+
+static double qh5_positive_scalar(hid_t file, const char *path) {
+  hid_t ds = H5Dopen2(file, path, H5P_DEFAULT);
+  if (ds < 0) return 0;
+  hid_t sp = H5Dget_space(ds);
+  double value = 0;
+  if (sp < 0 || H5Sget_simple_extent_npoints(sp) != 1 ||
+      H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &value) < 0 ||
+      !isfinite(value) || value <= 0) value = 0;
+  if (sp >= 0) H5Sclose(sp);
+  H5Dclose(ds);
+  return value;
+}
+
+/* A named dp stack is not an arbitrary HDF5 array. Require an explicit scan
+   shape, either on the dataset or in the simulation's recorded parameters.
+   Never infer a square scan just because the frame count is a square. */
+static int qh5_inspect_named_float_stack(hid_t file, qh5_emd_float_info *info) {
+  H5L_info2_t link;
+  if (file < 0 || H5Lget_info2(file, "/dp", &link, H5P_DEFAULT) < 0
+      || link.type != H5L_TYPE_HARD) return 0;
+  hid_t dataset = H5Dopen2(file, "/dp", H5P_DEFAULT);
+  hid_t space = dataset >= 0 ? H5Dget_space(dataset) : -1;
+  hid_t type = dataset >= 0 ? H5Dget_type(dataset) : -1;
+  hid_t plist = dataset >= 0 ? H5Dget_create_plist(dataset) : -1;
+  hsize_t dims[3] = {0};
+  int valid = space >= 0 && H5Sget_simple_extent_ndims(space) == 3
+    && type >= 0 && H5Tequal(type, H5T_IEEE_F32LE) > 0
+    && plist >= 0 && H5Pget_layout(plist) == H5D_CONTIGUOUS
+    && H5Pget_external_count(plist) == 0;
+  if (valid) {
+    H5Sget_simple_extent_dims(space, dims, NULL);
+    valid = dims[0] > 0 && dims[1] == 128 && dims[2] == 128
+      && dims[0] <= UINT64_MAX / 65536;
+  }
+  uint64_t rows = 0, columns = 0;
+  if (valid && H5Aexists(dataset, "scan_shape") > 0) {
+    hid_t attribute = H5Aopen(dataset, "scan_shape", H5P_DEFAULT);
+    hid_t attribute_space = attribute >= 0 ? H5Aget_space(attribute) : -1;
+    hid_t attribute_type = attribute >= 0 ? H5Aget_type(attribute) : -1;
+    long long shape[2] = {0};
+    valid = attribute_space >= 0 && H5Sget_simple_extent_npoints(attribute_space) == 2
+      && attribute_type >= 0 && H5Tget_class(attribute_type) == H5T_INTEGER
+      && H5Aread(attribute, H5T_NATIVE_LLONG, shape) >= 0
+      && shape[0] > 0 && shape[1] > 0;
+    if (valid) { rows = (uint64_t)shape[0]; columns = (uint64_t)shape[1]; }
+    if (attribute_type >= 0) H5Tclose(attribute_type);
+    if (attribute_space >= 0) H5Sclose(attribute_space);
+    if (attribute >= 0) H5Aclose(attribute);
+  } else if (valid) {
+    double slow = qh5_positive_scalar(file, "/abtem_params/N_scan_slow");
+    double fast = qh5_positive_scalar(file, "/abtem_params/N_scan_fast");
+    valid = slow >= 1 && fast >= 1 && slow < 4294967296.0 && fast < 4294967296.0
+      && floor(slow) == slow && floor(fast) == fast;
+    if (valid) { rows = (uint64_t)slow; columns = (uint64_t)fast; }
+  }
+  haddr_t offset = valid ? H5Dget_offset(dataset) : HADDR_UNDEF;
+  valid = valid && columns > 0 && rows <= UINT64_MAX / columns
+    && rows * columns == dims[0] && offset != HADDR_UNDEF
+    && H5Dget_storage_size(dataset) == dims[0] * 65536;
+  if (valid) {
+    info->rows = rows; info->columns = columns; info->offset = offset;
+    info->bytes = dims[0] * 65536; info->generic = 1;
+  }
+  if (plist >= 0) H5Pclose(plist);
+  if (type >= 0) H5Tclose(type);
+  if (space >= 0) H5Sclose(space);
+  if (dataset >= 0) H5Dclose(dataset);
+  return valid;
+}
+
+int qh5_inspect_emd_float(const char *path, qh5_emd_float_info *info, char **error_message) {
+  if (!path || !info) return qh5_fail(error_message, "Invalid EMD request");
+  memset(info, 0, sizeof(*info));
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  H5Eset_auto2(H5E_DEFAULT, NULL, NULL);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  int local = file >= 0;
+  const char *components[] = {"/datacube_root", "/datacube_root/datacube", "/datacube_root/datacube/data"};
+  for (int i = 0; local && i < 3; ++i) {
+    H5L_info2_t link;
+    local = H5Lget_info2(file, components[i], &link, H5P_DEFAULT) >= 0 && link.type == H5L_TYPE_HARD;
+  }
+  hid_t ds = local ? H5Dopen2(file, "/datacube_root/datacube/data", H5P_DEFAULT) : -1;
+  hid_t sp = ds >= 0 ? H5Dget_space(ds) : -1;
+  hid_t ty = ds >= 0 ? H5Dget_type(ds) : -1;
+  hid_t pl = ds >= 0 ? H5Dget_create_plist(ds) : -1;
+  char *program = file >= 0 ? qh5_read_attribute_string(file, "authoring_program") : NULL;
+  hsize_t dims[4] = {0};
+  int major = -1;
+  hid_t attr = file >= 0 ? H5Aopen(file, "version_major", H5P_DEFAULT) : -1;
+  hid_t asp = attr >= 0 ? H5Aget_space(attr) : -1;
+  if (asp >= 0 && H5Sget_simple_extent_npoints(asp) == 1) H5Aread(attr, H5T_NATIVE_INT, &major);
+  if (asp >= 0) H5Sclose(asp);
+  if (attr >= 0) H5Aclose(attr);
+  int valid = program && !strcmp(program, "emdfile") && major == 1 &&
+    sp >= 0 && H5Sget_simple_extent_ndims(sp) == 4 && ty >= 0 &&
+    H5Tequal(ty, H5T_IEEE_F32LE) > 0 && pl >= 0 && H5Pget_layout(pl) == H5D_CONTIGUOUS &&
+    H5Pget_external_count(pl) == 0;
+  if (valid) {
+    H5Sget_simple_extent_dims(sp, dims, NULL);
+    haddr_t offset = H5Dget_offset(ds);
+    valid = dims[0] > 0 && dims[1] > 0 && dims[2] == 128 && dims[3] == 128 &&
+      dims[0] <= UINT64_MAX / 65536 / dims[1] && offset != HADDR_UNDEF;
+    if (valid) {
+      info->rows = dims[0]; info->columns = dims[1]; info->offset = offset;
+      info->bytes = dims[0] * dims[1] * 65536;
+      valid = H5Dget_storage_size(ds) == info->bytes;
+    }
+  }
+  if (valid) {
+    const char *cal = "/datacube_root/metadatabundle/calibration/";
+    char path_buffer[256];
+    snprintf(path_buffer, sizeof(path_buffer), "%sR_pixel_units", cal);
+    char *ru = qh5_read_dataset_string(file, path_buffer);
+    snprintf(path_buffer, sizeof(path_buffer), "%sQ_pixel_units", cal);
+    char *qu = qh5_read_dataset_string(file, path_buffer);
+    if (ru && (!strcmp(ru, "A") || !strcmp(ru, "Å")))
+      info->scan_angstrom = qh5_positive_scalar(file, "/datacube_root/metadatabundle/calibration/R_pixel_size");
+    if (qu && !strcmp(qu, "mrad"))
+      info->angle_mrad = qh5_positive_scalar(file, "/datacube_root/metadatabundle/calibration/Q_pixel_size");
+    free(ru); free(qu);
+    info->semiangle_mrad = qh5_positive_scalar(file, "/datacube_root/metadatabundle/calibration/convergence_semiangle_mrad");
+    info->voltage = qh5_positive_scalar(file, "/datacube_root/datacube/metadatabundle/SoM2k/high tension");
+    info->camera_meters = qh5_positive_scalar(file, "/datacube_root/datacube/metadatabundle/SoM2k/camera length");
+  }
+  free(program);
+  if (pl >= 0) H5Pclose(pl);
+  if (ty >= 0) H5Tclose(ty);
+  if (sp >= 0) H5Sclose(sp);
+  if (ds >= 0) H5Dclose(ds);
+  if (!valid && file >= 0) valid = qh5_inspect_named_float_stack(file, info);
+  if (file >= 0) H5Fclose(file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return valid ? 0 : qh5_fail(error_message,
+    "Open an EMD 1.x float32 datacube or a contiguous float32 /dp stack with a 128×128 detector and explicit scan_shape or abtem_params/N_scan_slow,N_scan_fast. Float64 and compressed stacks require a different exact reader; do not cast the measurements.");
+}
+
+char *qh5_read_scientific_metadata(const char *path) {
+  if (!path) return NULL;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  hid_t dataset = file >= 0 ? H5Dopen2(file, "metadata", H5P_DEFAULT) : -1;
+  hid_t type = dataset >= 0 ? H5Dget_type(dataset) : -1;
+  int bounded = type >= 0 && H5Tget_class(type) == H5T_STRING && !H5Tis_variable_str(type)
+    && H5Tget_size(type) <= 16 * 1024 * 1024;
+  char *value = bounded ? qh5_format_value(dataset, 0) : NULL;
+  if (type >= 0) H5Tclose(type);
+  if (dataset >= 0) H5Dclose(dataset);
+  if (file >= 0) H5Fclose(file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return value;
+}
+
+static int qh5_inspect_master_unlocked(
+  const char *path,
+  uint64_t detector_rows,
+  uint64_t detector_columns,
+  qh5_master_info *info,
+  char **error_message
+) {
+  if (path == NULL || info == NULL) return qh5_fail(error_message, "Invalid native HDF5 metadata request");
+  memset(info, 0, sizeof(*info));
+  if (error_message != NULL) *error_message = NULL;
+  H5Eset_auto2(H5E_DEFAULT, NULL, NULL);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  if (file < 0) return qh5_fail(error_message, "Could not open HDF5 metadata file %s", path);
+
+  int status = 0;
+  if (qh5_read_external_files(file, info) < 0) {
+    status = qh5_fail(error_message, "Could not inspect external HDF5 data links in %s", path);
+  }
+  if (status == 0 && !qh5_read_scan_shape_at(file, "/entry/data/data", info)) {
+    qh5_read_scan_shape_at(file, "/entry/data", info);
+  }
+  uint64_t expected = 0;
+  if (status == 0
+      && (qh5_read_integer_dataset(file, "/entry/instrument/detector/detectorSpecific/ntrigger", &expected)
+          || qh5_read_integer_dataset(file, "/entry/instrument/detector/detectorSpecific/nimages", &expected))) {
+    info->expected_frames = expected;
+    info->has_expected_frames = 1;
+  }
+  if (status == 0 && detector_rows > 0 && detector_columns > 0) {
+    int mask = qh5_read_bad_pixels(file, detector_rows, detector_columns, info);
+    if (mask < 0) status = qh5_fail(error_message, "The HDF5 pixel mask does not match the detector shape");
+  }
+  if (status == 0) qh5_read_reciprocal_sampling(file, info);
+  if (status == 0) qh5_read_scan_pixel_size(file, info);
+  const char *date_paths[] = {
+    "/entry/instrument/detector/detectorSpecific/data_collection_date",
+    "/entry/start_time",
+    "/entry/instrument/start_time",
+  };
+  if (status == 0) {
+    for (size_t index = 0; index < sizeof(date_paths) / sizeof(date_paths[0]); index++) {
+      info->acquisition_date = qh5_read_dataset_string(file, date_paths[index]);
+      if (info->acquisition_date != NULL && info->acquisition_date[0] != '\0') break;
+      free(info->acquisition_date);
+      info->acquisition_date = NULL;
+    }
+  }
+  if (status == 0 && qh5_read_display_metadata(file, info) < 0) {
+    status = qh5_fail(error_message, "Could not collect HDF5 display metadata from %s", path);
+  }
+  H5Fclose(file);
+  if (status != 0) qh5_free_master_info(info);
+  return status;
+}
+
+int qh5_inspect_master(
+  const char *path,
+  uint64_t detector_rows,
+  uint64_t detector_columns,
+  qh5_master_info *info,
+  char **error_message
+) {
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = qh5_inspect_master_unlocked(
+    path,
+    detector_rows,
+    detector_columns,
+    info,
+    error_message
+  );
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+typedef struct {
+  char *group_name;
+  int allocation_failed;
+} qh5_velox_search;
+
+static herr_t qh5_velox_image_callback(
+  hid_t image_root,
+  const char *name,
+  const H5L_info2_t *link_info,
+  void *context_pointer
+) {
+  (void)link_info;
+  qh5_velox_search *search = context_pointer;
+  hid_t group = H5Gopen2(image_root, name, H5P_DEFAULT);
+  if (group < 0) return 0;
+  hid_t data = H5Dopen2(group, "Data", H5P_DEFAULT);
+  hid_t metadata = H5Dopen2(group, "Metadata", H5P_DEFAULT);
+  hid_t space = data >= 0 ? H5Dget_space(data) : -1;
+  hsize_t dimensions[3] = {0, 0, 0};
+  int rank = space >= 0 ? H5Sget_simple_extent_dims(space, dimensions, NULL) : -1;
+  if (space >= 0) H5Sclose(space);
+  if (data >= 0) H5Dclose(data);
+  if (metadata >= 0) H5Dclose(metadata);
+  H5Gclose(group);
+  if (rank != 3 || dimensions[0] == 0 || dimensions[1] == 0 || dimensions[2] != 1
+      || metadata < 0) return 0;
+  search->group_name = qh5_copy_string(name);
+  if (search->group_name == NULL) {
+    search->allocation_failed = 1;
+    return -1;
+  }
+  return 1;
+}
+
+static int qh5_prepare_velox_image_unlocked(
+  const char *source_path,
+  const char *raw_output_path,
+  qh5_velox_image_info *info,
+  char **error_message
+) {
+  if (source_path == NULL || info == NULL) {
+    return qh5_fail(error_message, "Invalid native Velox EMD request");
+  }
+  memset(info, 0, sizeof(*info));
+  if (error_message != NULL) *error_message = NULL;
+  H5Eset_auto2(H5E_DEFAULT, NULL, NULL);
+
+  hid_t file = H5Fopen(source_path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  if (file < 0) return qh5_fail(error_message, "Could not open Velox EMD file %s", source_path);
+  hid_t image_root = H5Gopen2(file, "/Data/Image", H5P_DEFAULT);
+  if (image_root < 0) {
+    H5Fclose(file);
+    return qh5_fail(error_message, "The EMD file has no Velox Data/Image group");
+  }
+
+  qh5_velox_search search = {.group_name = NULL, .allocation_failed = 0};
+  hsize_t index = 0;
+  herr_t iteration = H5Literate2(
+    image_root,
+    H5_INDEX_NAME,
+    H5_ITER_INC,
+    &index,
+    qh5_velox_image_callback,
+    &search
+  );
+  if (iteration < 0 || search.allocation_failed) {
+    H5Gclose(image_root);
+    H5Fclose(file);
+    free(search.group_name);
+    return qh5_fail(error_message, "Could not inspect Velox Data/Image entries");
+  }
+  if (search.group_name == NULL) {
+    H5Gclose(image_root);
+    H5Fclose(file);
+    return qh5_fail(
+      error_message,
+      "The EMD file has no supported 2-D Velox image and Metadata JSON pair"
+    );
+  }
+
+  hid_t group = H5Gopen2(image_root, search.group_name, H5P_DEFAULT);
+  hid_t data = group >= 0 ? H5Dopen2(group, "Data", H5P_DEFAULT) : -1;
+  hid_t metadata = group >= 0 ? H5Dopen2(group, "Metadata", H5P_DEFAULT) : -1;
+  int status = 0;
+  hsize_t dimensions[3] = {0, 0, 0};
+  hid_t data_space = data >= 0 ? H5Dget_space(data) : -1;
+  int rank = data_space >= 0
+    ? H5Sget_simple_extent_dims(data_space, dimensions, NULL) : -1;
+  if (data_space >= 0) H5Sclose(data_space);
+  if (rank != 3 || dimensions[0] == 0 || dimensions[1] == 0 || dimensions[2] != 1) {
+    status = qh5_fail(error_message, "Velox scalar image must have shape (row, column, 1)");
+  }
+
+  hid_t data_type = status == 0 ? H5Dget_type(data) : -1;
+  size_t source_bytes = data_type >= 0 ? H5Tget_size(data_type) : 0;
+  if (status == 0
+      && (data_type < 0 || H5Tget_class(data_type) != H5T_INTEGER
+          || H5Tget_sign(data_type) != H5T_SGN_NONE
+          || (source_bytes != 1 && source_bytes != 2))) {
+    status = qh5_fail(
+      error_message,
+      "QuantEM.GPU native EMD supports uint8/uint16 scalar images; this image uses an unsupported dtype"
+    );
+  }
+  if (data_type >= 0) H5Tclose(data_type);
+
+  hid_t metadata_space = status == 0 ? H5Dget_space(metadata) : -1;
+  hssize_t metadata_points = metadata_space >= 0
+    ? H5Sget_simple_extent_npoints(metadata_space) : -1;
+  if (metadata_space >= 0) H5Sclose(metadata_space);
+  unsigned char *metadata_bytes = NULL;
+  if (status == 0 && (metadata_points <= 0 || (uint64_t)metadata_points >= SIZE_MAX)) {
+    status = qh5_fail(error_message, "Velox Metadata JSON is empty or too large");
+  }
+  if (status == 0) {
+    metadata_bytes = calloc((size_t)metadata_points + 1, 1);
+    if (metadata_bytes == NULL
+        || H5Dread(
+          metadata,
+          H5T_NATIVE_UCHAR,
+          H5S_ALL,
+          H5S_ALL,
+          H5P_DEFAULT,
+          metadata_bytes
+        ) < 0) {
+      status = qh5_fail(error_message, "Could not read Velox Metadata JSON");
+    }
+  }
+
+  if (status == 0 && raw_output_path != NULL) {
+    if (dimensions[0] > SIZE_MAX / dimensions[1]
+        || dimensions[0] * dimensions[1] > SIZE_MAX / source_bytes) {
+      status = qh5_fail(error_message, "The Velox scalar image is too large");
+    } else {
+      size_t byte_count = (size_t)(dimensions[0] * dimensions[1] * source_bytes);
+      void *values = malloc(byte_count);
+      hid_t memory_type = source_bytes == 1 ? H5T_STD_U8LE : H5T_STD_U16LE;
+      if (values == NULL
+          || H5Dread(data, memory_type, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) {
+        free(values);
+        status = qh5_fail(error_message, "Could not read the Velox scalar image");
+      } else {
+        FILE *output = fopen(raw_output_path, "wb");
+        int write_failed = output == NULL;
+        if (!write_failed && fwrite(values, 1, byte_count, output) != byte_count) {
+          write_failed = 1;
+        }
+        if (!write_failed && fflush(output) != 0) write_failed = 1;
+        if (output != NULL && fclose(output) != 0) write_failed = 1;
+        if (write_failed) {
+          remove(raw_output_path);
+          status = qh5_fail(error_message, "Could not write the native Velox image cache");
+        }
+        free(values);
+      }
+    }
+  }
+
+  if (status == 0) {
+    size_t path_length = strlen("Data/Image//Metadata") + strlen(search.group_name) + 1;
+    info->metadata_path = malloc(path_length);
+    if (info->metadata_path == NULL) {
+      status = qh5_fail(error_message, "Could not allocate Velox metadata provenance");
+    } else {
+      snprintf(
+        info->metadata_path,
+        path_length,
+        "Data/Image/%s/Metadata",
+        search.group_name
+      );
+      info->rows = dimensions[0];
+      info->columns = dimensions[1];
+      info->source_bytes = (uint32_t)source_bytes;
+      info->metadata_json = (char *)metadata_bytes;
+      metadata_bytes = NULL;
+    }
+  }
+
+  free(metadata_bytes);
+  if (metadata >= 0) H5Dclose(metadata);
+  if (data >= 0) H5Dclose(data);
+  if (group >= 0) H5Gclose(group);
+  H5Gclose(image_root);
+  H5Fclose(file);
+  free(search.group_name);
+  if (status != 0) qh5_free_velox_image_info(info);
+  return status;
+}
+
+int qh5_prepare_velox_image(
+  const char *source_path,
+  const char *raw_output_path,
+  qh5_velox_image_info *info,
+  char **error_message
+) {
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = qh5_prepare_velox_image_unlocked(
+    source_path,
+    raw_output_path,
+    info,
+    error_message
+  );
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+static int qh5_write_u32_dataset(
+  hid_t group,
+  const char *name,
+  const uint32_t *values,
+  uint64_t word_count,
+  uint64_t *file_offset,
+  uint64_t *file_bytes,
+  char **error_message
+) {
+  if (word_count == 0 || values == NULL || word_count > (uint64_t)((hsize_t)-1)) {
+    return qh5_fail(error_message, "Lossless Pack Format v1 %s has an invalid word count", name);
+  }
+  hsize_t dimensions[] = {(hsize_t)word_count};
+  hid_t space = H5Screate_simple(1, dimensions, NULL);
+  hid_t properties = H5Pcreate(H5P_DATASET_CREATE);
+  hid_t dataset = -1;
+  int status = 0;
+  if (space < 0 || properties < 0 || H5Pset_layout(properties, H5D_CONTIGUOUS) < 0) {
+    status = qh5_fail(error_message, "Could not configure contiguous Lossless Pack Format v1 %s storage", name);
+  }
+  if (status == 0) {
+    dataset = H5Dcreate2(
+      group,
+      name,
+      H5T_STD_U32LE,
+      space,
+      H5P_DEFAULT,
+      properties,
+      H5P_DEFAULT
+    );
+    if (dataset < 0 || H5Dwrite(
+      dataset,
+      H5T_NATIVE_UINT32,
+      H5S_ALL,
+      H5S_ALL,
+      H5P_DEFAULT,
+      values
+    ) < 0) {
+      status = qh5_fail(error_message, "Could not write contiguous Lossless Pack Format v1 %s storage", name);
+    }
+  }
+  if (status == 0 && H5Fflush(group, H5F_SCOPE_GLOBAL) < 0) {
+    status = qh5_fail(error_message, "Could not flush Lossless Pack Format v1 %s storage", name);
+  }
+  if (status == 0) {
+    haddr_t offset = H5Dget_offset(dataset);
+    if (offset == HADDR_UNDEF || word_count > UINT64_MAX / sizeof(uint32_t)) {
+      status = qh5_fail(error_message, "Lossless Pack Format v1 %s storage is not directly addressable", name);
+    } else {
+      *file_offset = (uint64_t)offset;
+      *file_bytes = word_count * sizeof(uint32_t);
+    }
+  }
+  if (dataset >= 0) H5Dclose(dataset);
+  if (properties >= 0) H5Pclose(properties);
+  if (space >= 0) H5Sclose(space);
+  return status;
+}
+
+int qh5_lossless_pack_v1_writer_open(
+  const char *path,
+  uint64_t user_block_bytes,
+  qh5_lossless_pack_v1_writer **writer,
+  char **error_message
+) {
+  if (error_message != NULL) *error_message = NULL;
+  if (path == NULL || writer == NULL || user_block_bytes < 512) {
+    return qh5_fail(error_message, "Invalid Lossless Pack Format v1 writer request");
+  }
+  *writer = NULL;
+  qh5_lossless_pack_v1_writer *created = calloc(1, sizeof(*created));
+  if (created == NULL) return qh5_fail(error_message, "Could not allocate the Lossless Pack Format v1 writer");
+  created->file = -1;
+  created->shards = -1;
+  created->path = qh5_copy_string(path);
+  if (created->path == NULL) {
+    free(created);
+    return qh5_fail(error_message, "Could not retain the Lossless Pack Format v1 temporary path");
+  }
+
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t properties = H5Pcreate(H5P_FILE_CREATE);
+  int status = 0;
+  if (properties < 0 || H5Pset_userblock(properties, (hsize_t)user_block_bytes) < 0) {
+    status = qh5_fail(error_message, "Could not configure the Lossless Pack Format v1 user block");
+  }
+  if (status == 0) {
+    created->file = H5Fcreate(path, H5F_ACC_EXCL, properties, H5P_DEFAULT);
+    if (created->file < 0) {
+      status = qh5_fail(error_message, "Could not create Lossless Pack Format v1 temporary output %s", path);
+    } else {
+      created->owns_path = 1;
+    }
+  }
+  hid_t root = -1;
+  if (status == 0) {
+    root = H5Gcreate2(
+      created->file,
+      "/quantem_gpu",
+      H5P_DEFAULT,
+      H5P_DEFAULT,
+      H5P_DEFAULT
+    );
+    created->shards = root >= 0
+      ? H5Gcreate2(root, "shards", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT)
+      : -1;
+    if (root < 0 || created->shards < 0) {
+      status = qh5_fail(error_message, "Could not create the Lossless Pack Format v1 HDF5 groups");
+    }
+  }
+  if (root >= 0) H5Gclose(root);
+  if (properties >= 0) H5Pclose(properties);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+
+  if (status != 0) {
+    qh5_lossless_pack_v1_writer_abort(created);
+    return status;
+  }
+  *writer = created;
+  return 0;
+}
+
+int qh5_lossless_pack_v1_writer_append_shard(
+  qh5_lossless_pack_v1_writer *writer,
+  uint32_t ordinal,
+  const uint32_t *payload,
+  uint64_t payload_words,
+  const uint32_t *headers,
+  uint64_t header_words,
+  qh5_lossless_pack_v1_shard_layout *layout,
+  char **error_message
+) {
+  if (error_message != NULL) *error_message = NULL;
+  if (writer == NULL || writer->file < 0 || writer->shards < 0 || layout == NULL
+      || ordinal != writer->next_ordinal) {
+    return qh5_fail(error_message, "Lossless Pack Format v1 shards must be appended once in ordinal order");
+  }
+  memset(layout, 0, sizeof(*layout));
+  char name[16];
+  snprintf(name, sizeof(name), "%03u", ordinal);
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t group = H5Gcreate2(
+    writer->shards,
+    name,
+    H5P_DEFAULT,
+    H5P_DEFAULT,
+    H5P_DEFAULT
+  );
+  int status = 0;
+  if (group < 0) {
+    status = qh5_fail(error_message, "Could not create Lossless Pack Format v1 shard %u", ordinal);
+  }
+  if (status == 0) {
+    status = qh5_write_u32_dataset(
+      group,
+      "payload_u32",
+      payload,
+      payload_words,
+      &layout->payload_offset,
+      &layout->payload_bytes,
+      error_message
+    );
+  }
+  if (status == 0) {
+    status = qh5_write_u32_dataset(
+      group,
+      "compact_headers_u32",
+      headers,
+      header_words,
+      &layout->headers_offset,
+      &layout->headers_bytes,
+      error_message
+    );
+  }
+  if (group >= 0) H5Gclose(group);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  if (status == 0) writer->next_ordinal += 1;
+  return status;
+}
+
+int qh5_lossless_pack_v1_writer_close(
+  qh5_lossless_pack_v1_writer *writer,
+  char **error_message
+) {
+  if (error_message != NULL) *error_message = NULL;
+  if (writer == NULL) return qh5_fail(error_message, "Invalid Lossless Pack Format v1 writer close request");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = 0;
+  if (writer->file >= 0 && H5Fflush(writer->file, H5F_SCOPE_GLOBAL) < 0) {
+    status = qh5_fail(error_message, "Could not flush the Lossless Pack Format v1 container");
+  }
+  if (writer->shards >= 0 && H5Gclose(writer->shards) < 0 && status == 0) {
+    status = qh5_fail(error_message, "Could not close the Lossless Pack Format v1 shard group");
+  }
+  writer->shards = -1;
+  if (writer->file >= 0 && H5Fclose(writer->file) < 0 && status == 0) {
+    status = qh5_fail(error_message, "Could not close the Lossless Pack Format v1 container");
+  }
+  writer->file = -1;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  if (status != 0 && writer->owns_path && writer->path != NULL) remove(writer->path);
+  free(writer->path);
+  free(writer);
+  return status;
+}
+
+void qh5_lossless_pack_v1_writer_abort(qh5_lossless_pack_v1_writer *writer) {
+  if (writer == NULL) return;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  if (writer->shards >= 0) H5Gclose(writer->shards);
+  if (writer->file >= 0) H5Fclose(writer->file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  if (writer->owns_path && writer->path != NULL) remove(writer->path);
+  free(writer->path);
+  free(writer);
+}
+
+void qh5_free_chunks(qh5_chunk_info *chunks) {
+  free(chunks);
+}
+
+void qh5_free_master_info(qh5_master_info *info) {
+  if (info == NULL) return;
+  free(info->bad_pixel_indices);
+  free(info->detector_mask_values);
+  free(info->acquisition_date);
+  for (size_t index = 0; index < info->metadata_count; index++) {
+    free(info->metadata[index].key);
+    free(info->metadata[index].value);
+  }
+  free(info->metadata);
+  for (size_t index = 0; index < info->external_file_count; index++) free(info->external_files[index]);
+  free(info->external_files);
+  memset(info, 0, sizeof(*info));
+}
+
+void qh5_free_velox_image_info(qh5_velox_image_info *info) {
+  if (info == NULL) return;
+  free(info->metadata_json);
+  free(info->metadata_path);
+  memset(info, 0, sizeof(*info));
+}
+
+void qh5_free_error(char *error_message) {
+  free(error_message);
+}
+
+int qh5_chunk_writer_open(const char *path, const uint64_t shape[4],
+  qh5_chunk_writer **output, char **error_message) {
+  return qh5_chunk_writer_open_typed(path, shape, 2, output, error_message);
+}
+
+int qh5_chunk_writer_open_typed(const char *path, const uint64_t shape[4],
+  uint32_t item_bytes, qh5_chunk_writer **output, char **error_message) {
+  if (item_bytes != 2 && item_bytes != 4)
+    return qh5_fail(error_message, "Choose uint16 or float32 output storage.");
+  if (!path || !shape || !output || !shape[0] || !shape[1] || !shape[2] || !shape[3])
+    return qh5_fail(error_message, "Provide a path and a positive 4D shape.");
+  *output = NULL;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  qh5_chunk_writer *writer = calloc(1, sizeof(*writer));
+  if (!writer) { pthread_mutex_unlock(&qh5_hdf5_lock); return qh5_fail(error_message, "Cannot allocate an HDF5 writer."); }
+  writer->file = H5Fcreate(path, H5F_ACC_EXCL, H5P_DEFAULT, H5P_DEFAULT);
+  writer->dataset = -1;
+  hid_t links = H5Pcreate(H5P_LINK_CREATE);
+  H5Pset_create_intermediate_group(links, 1);
+  hsize_t dimensions[3] = {shape[0] * shape[1], shape[2], shape[3]};
+  hsize_t chunk[3] = {1, shape[2], shape[3]};
+  hid_t space = H5Screate_simple(3, dimensions, NULL);
+  hid_t properties = H5Pcreate(H5P_DATASET_CREATE);
+  unsigned int codec[5] = {0, 4, item_bytes, 0, 2};
+  H5Pset_chunk(properties, 3, chunk);
+  H5Pset_filter(properties, 32008, H5Z_FLAG_OPTIONAL, 5, codec);
+  H5Pset_fill_time(properties, H5D_FILL_TIME_NEVER);
+  if (writer->file >= 0) writer->dataset = H5Dcreate2(writer->file, "/entry/data/data",
+    item_bytes == 4 ? H5T_IEEE_F32LE : H5T_STD_U16LE, space, links, properties, H5P_DEFAULT);
+  H5Pclose(properties); H5Pclose(links); H5Sclose(space);
+  int status = 0;
+  if (writer->dataset < 0) status = qh5_fail(error_message, "Cannot create a new compressed HDF5 file at %s.", path);
+  if (!status) {
+    hsize_t two = 2;
+    space = H5Screate_simple(1, &two, NULL);
+    hid_t attribute = H5Acreate2(writer->dataset, "scan_shape", H5T_STD_U64LE, space, H5P_DEFAULT, H5P_DEFAULT);
+    if (attribute < 0 || H5Awrite(attribute, H5T_NATIVE_UINT64, shape) < 0)
+      status = qh5_fail(error_message, "Cannot write the scan shape.");
+    if (attribute >= 0) H5Aclose(attribute);
+    H5Sclose(space);
+  }
+  writer->frames = dimensions[0];
+  writer->path = qh5_copy_string(path);
+  if (status) {
+    if (writer->dataset >= 0) H5Dclose(writer->dataset);
+    if (writer->file >= 0) { H5Fclose(writer->file); remove(path); }
+    free(writer->path); free(writer);
+  } else *output = writer;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+int qh5_chunk_writer_append(qh5_chunk_writer *writer, uint64_t first_frame,
+  uint64_t frame_count, const uint8_t *chunks, uint64_t stride,
+  const uint32_t *sizes, char **error_message) {
+  if (!writer || !chunks || !sizes || first_frame != writer->next_frame ||
+      !frame_count || frame_count > writer->frames - first_frame)
+    return qh5_fail(error_message, "Write consecutive nonempty frame regions within the declared shape.");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int status = 0;
+  for (uint64_t i = 0; i < frame_count; ++i) {
+    hsize_t offset[3] = {first_frame + i, 0, 0};
+    if (!sizes[i] || sizes[i] > stride || H5Dwrite_chunk(writer->dataset, H5P_DEFAULT,
+        0, offset, sizes[i], chunks + i * stride) < 0) {
+      status = qh5_fail(error_message, "Cannot write compressed frame %llu.", (unsigned long long)(first_frame + i));
+      break;
+    }
+  }
+  if (!status) writer->next_frame += frame_count;
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+int qh5_chunk_writer_attribute(qh5_chunk_writer *writer, const char *name,
+  const char *value, char **error_message) {
+  if (!writer || !name || !value) return qh5_fail(error_message, "Provide an open writer and text metadata.");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t type = H5Tcopy(H5T_C_S1), space = H5Screate(H5S_SCALAR);
+  H5Tset_size(type, strlen(value) + 1);
+  H5Tset_cset(type, H5T_CSET_UTF8);
+  hid_t attribute = H5Acreate2(writer->file, name, type, space, H5P_DEFAULT, H5P_DEFAULT);
+  int status = attribute < 0 || H5Awrite(attribute, type, value) < 0
+    ? qh5_fail(error_message, "Cannot write metadata attribute %s.", name) : 0;
+  if (attribute >= 0) H5Aclose(attribute);
+  H5Tclose(type); H5Sclose(space);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+int qh5_chunk_writer_close(qh5_chunk_writer *writer, char **error_message) {
+  if (!writer) return qh5_fail(error_message, "The writer is already closed.");
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  int complete = writer->next_frame == writer->frames;
+  int data_status = H5Dclose(writer->dataset), file_status = H5Fclose(writer->file);
+  int status = complete && data_status >= 0 && file_status >= 0 ? 0
+    : qh5_fail(error_message, "The HDF5 export is incomplete; repeat the export.");
+  if (status) remove(writer->path);
+  free(writer->path); free(writer);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return status;
+}
+
+void qh5_chunk_writer_abort(qh5_chunk_writer *writer) {
+  if (!writer) return;
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  H5Dclose(writer->dataset); H5Fclose(writer->file); remove(writer->path);
+  free(writer->path); free(writer);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+}
+
+char *qh5_read_root_attribute(const char *path, const char *name) {
+  pthread_mutex_lock(&qh5_hdf5_lock);
+  hid_t file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+  hid_t attribute = file >= 0 && H5Aexists(file, name) > 0 ? H5Aopen(file, name, H5P_DEFAULT) : -1;
+  hid_t type = attribute >= 0 ? H5Aget_type(attribute) : -1;
+  char *result = NULL;
+  if (type >= 0 && H5Tget_class(type) == H5T_STRING) {
+    if (H5Tis_variable_str(type)) {
+      char *value = NULL;
+      if (H5Aread(attribute, type, &value) >= 0 && value) result = qh5_copy_string(value);
+      if (value) H5free_memory(value);
+    } else {
+      size_t size = H5Tget_size(type);
+      if (size < 1024 * 1024) {
+        result = calloc(size + 1, 1);
+        if (result && H5Aread(attribute, type, result) < 0) { free(result); result = NULL; }
+      }
+    }
+  }
+  if (type >= 0) H5Tclose(type);
+  if (attribute >= 0) H5Aclose(attribute);
+  if (file >= 0) H5Fclose(file);
+  pthread_mutex_unlock(&qh5_hdf5_lock);
+  return result;
+}

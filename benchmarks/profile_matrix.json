@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "protocol_version": "quantem-gpu-profile/v1",
+  "required_evidence": {
+    "protocol_version": "quantem-gpu-cell-evidence/v1",
+    "required_outcomes": ["scientific-parity", "real-data-e2e"]
+  },
+  "parity_matrix": "tests/parity/backend_matrix.json",
+  "tiers": {
+    "pr-smoke": {
+      "purpose": "Disprove API, packaging, source-contract, and small synthetic parity regressions quickly.",
+      "timing_policy": "No PR timing is promoted as a hardware performance result."
+    },
+    "scheduled-profile": {
+      "purpose": "Measure stable frozen configurations on specified physical device configurations and retain run-level distributions.",
+      "cadence": "Weekly when the owning runner is available, and after a relevant kernel or IO change."
+    },
+    "release-signoff": {
+      "purpose": "Run real full-source, minimum-memory, and application wall-clock gates before a performance claim or release.",
+      "cadence": "Manual and coordinated; never inferred from a larger device or prepared cache."
+    },
+    "diagnostic": {
+      "purpose": "Profile a hypothesis with counters or traces without changing the accepted dashboard baseline.",
+      "cadence": "As needed; every run still has a manifest and terminal status."
+    }
+  },
+  "platforms": {
+    "cpu-reference": {
+      "authority": "macbook-pro-m5-max-128gb",
+      "runner": "portable-cpu",
+      "minimum_memory_gate": null
+    },
+    "cuda": {
+      "authority": "linux-dual-blackwell-96gb",
+      "runner": "physical-cuda",
+      "minimum_memory_gate": "6 GiB dedicated VRAM"
+    },
+    "mps": {
+      "authority": "macbook-pro-m5-max-128gb",
+      "runner": "physical-python-mps",
+      "minimum_memory_gate": "8 GB unified RAM"
+    },
+    "swift-metal": {
+      "authority": "macbook-pro-m5-max-128gb",
+      "runner": "physical-native-swift-metal",
+      "minimum_memory_gate": "8 GB unified RAM"
+    },
+    "webgpu": {
+      "authority": "macbook-pro-m5-max-128gb",
+      "runner": "physical-hardware-browser",
+      "minimum_memory_gate": "8 GB total laptop RAM"
+    },
+    "vulkan": {
+      "authority": "android-physical-device-unqualified",
+      "runner": "physical-android-vulkan",
+      "minimum_memory_gate": null
+    }
+  },
+  "capabilities": {
+    "io.packed-display-precision": {"required_metrics": ["total_wall_ms", "resident_bytes", "float_error_metrics"]},
+    "io.empad-float-resident": {
+      "required_metrics": ["total_wall_ms", "peak_memory", "resident_bytes", "output_hashes"]
+    },
+    "geometry.scan-quarter-turn": {
+      "required_metrics": [
+        "rotation_ms",
+        "output_hashes"
+      ]
+    },
+    "io.decode-bin-provenance": {
+      "required_metrics": [
+        "open_metadata_ms",
+        "read_decode_ms",
+        "reduction_layout_ms",
+        "first_usable_product_ms",
+        "total_wall_ms",
+        "peak_memory"
+      ]
+    },
+    "io.selective-scan-loading": {
+      "required_metrics": [
+        "selection_prepare_ms",
+        "compressed_bytes_read",
+        "compressed_bytes_decoded",
+        "transfer_bytes",
+        "total_wall_ms",
+        "peak_memory",
+        "output_hashes"
+      ]
+    },
+    "detector.integer-products": {
+      "required_metrics": [
+        "mean_dp_ms",
+        "bf_ms",
+        "adf_ms",
+        "df_ms",
+        "output_hashes"
+      ]
+    },
+    "screening.prepared-products": {
+      "required_metrics": [
+        "build_wall_ms",
+        "reopen_wall_ms",
+        "pass_count",
+        "mask_identity",
+        "output_hashes"
+      ]
+    },
+    "dpc.com-rotation-idpc": {
+      "required_metrics": [
+        "com_row_column_ms",
+        "rotation_ms",
+        "idpc_ms",
+        "float_error_metrics"
+      ]
+    },
+    "display.transform-histogram-color-fft": {
+      "required_metrics": [
+        "first_execution_ms",
+        "warm_p50_ms",
+        "warm_p95_ms",
+        "output_hashes"
+      ]
+    },
+    "ssb.object-phase-loss": {
+      "required_metrics": [
+        "object_ms",
+        "phase_ms",
+        "loss_ms",
+        "phase_error_metrics",
+        "output_hashes"
+      ]
+    },
+    "ssb.calibration-200-nelder-mead": {
+      "required_metrics": [
+        "tpe_200_ms",
+        "nelder_mead_ms",
+        "total_fit_ms",
+        "fitted_parameters",
+        "repeatability_hashes"
+      ]
+    }
+  },
+  "comparison_contract": {
+    "comparison_key": [
+      "protocol_version",
+      "cell_id",
+      "source_identity",
+      "source_shape",
+      "source_dtype",
+      "scan_region",
+      "detector_region",
+      "scan_bin",
+      "detector_bin",
+      "mask_signature",
+      "precision",
+      "cache_state",
+      "timing_boundary",
+      "device_id",
+      "runtime_version",
+      "source_revision"
+    ],
+    "cross_key_comparison": "forbidden",
+    "parity_failure": "block",
+    "default_regression_mode": "report-only",
+    "minimum_accepted_sessions_before_hard_threshold": 5,
+    "required_statistics": [
+      "repetitions",
+      "warmups",
+      "p50",
+      "p95",
+      "maximum",
+      "run_level_records"
+    ]
+  },
+  "required_run_fields": [
+    "experiment_id",
+    "status",
+    "code_revision",
+    "dirty_diff_sha256",
+    "source_identity",
+    "parameters",
+    "backend",
+    "device",
+    "runtime_versions",
+    "cache_state",
+    "timing_boundary",
+    "run_level_timings",
+    "memory",
+    "parity",
+    "output_hashes",
+    "timestamps"
+  ],
+  "cells": [
+    {"id": "io.packed-display-precision::cpu-reference", "capability": "io.packed-display-precision", "backend": "cpu-reference", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::cuda", "capability": "io.packed-display-precision", "backend": "cuda", "support_level": "required-hardware", "pr_gate": "precision-export-selection-and-detector-parity", "scheduled_profile": "none", "release_signoff": false, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "Scoped GPU tests and real full-output load/save/reopen executed. Complete release-signoff evidence is not registered; no Metal or minimum-memory qualification is inferred."},
+    {"id": "io.packed-display-precision::mps", "capability": "io.packed-display-precision", "backend": "mps", "support_level": "required-hardware", "pr_gate": "precision-export-selection-and-detector-parity", "scheduled_profile": "none", "release_signoff": false, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "Physical Apple-device full 512x512x192x192 conversion and save/reopen plus NumPy-oracle parity executed. File-backed conversion includes 36 GiB source I/O; resident-tensor and minimum-memory release signoff remain pending."},
+    {"id": "io.packed-display-precision::swift-metal", "capability": "io.packed-display-precision", "backend": "swift-metal", "support_level": "partial-hardware", "pr_gate": "native-scaled-storage-parity", "scheduled_profile": "none", "release_signoff": false, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "Scoped native tests and the seven-tilt MAPED consumer executed on a physical Apple device. Scaled uint16 is covered; native float16 export, all geometry/query contracts and minimum-memory release qualification are not complete."},
+    {"id": "io.packed-display-precision::webgpu", "capability": "io.packed-display-precision", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.packed-display-precision::vulkan", "capability": "io.packed-display-precision", "backend": "vulkan", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.empad-float-resident::cpu-reference", "capability": "io.empad-float-resident", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "original-byte-and-float-reference", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "Original-byte oracle and public-file checks exist; complete cell-scoped signoff evidence is not retained yet."},
+    {"id": "io.empad-float-resident::swift-metal", "capability": "io.empad-float-resident", "backend": "swift-metal", "support_level": "partial-hardware", "pr_gate": "native-empad-source-and-resident-parity", "scheduled_profile": "none", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "Initial native float packing, selected DP and aperture parity on Apple M5. Full consumer, DPC, cancellation and release qualification remain pending; no FPS or load-time claim."},
+    {"id": "io.empad-float-resident::cuda", "capability": "io.empad-float-resident", "backend": "cuda", "support_level": "partial-hardware", "pr_gate": "synthetic-empad-hardware-parity", "scheduled_profile": "none", "release_signoff": false, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "io.load reads EMPAD records into a float32 ANS resident; hardware tests use synthetic records only. No real EMPAD acquisition or cell-scoped signoff evidence is retained."},
+    {"id": "io.empad-float-resident::mps", "capability": "io.empad-float-resident", "backend": "mps", "support_level": "partial-hardware", "pr_gate": "synthetic-empad-hardware-parity", "scheduled_profile": "none", "release_signoff": false, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "io.load reads EMPAD records into a float32 ANS resident; hardware tests use synthetic records only. No real EMPAD acquisition or cell-scoped signoff evidence is retained."},
+    {"id": "io.empad-float-resident::webgpu", "capability": "io.empad-float-resident", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.empad-float-resident::vulkan", "capability": "io.empad-float-resident", "backend": "vulkan", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "geometry.scan-quarter-turn::cpu-reference", "capability": "geometry.scan-quarter-turn", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "frozen-reference-fixture", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "geometry.scan-quarter-turn::cuda", "capability": "geometry.scan-quarter-turn", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "geometry.scan-quarter-turn::mps", "capability": "geometry.scan-quarter-turn", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "geometry.scan-quarter-turn::swift-metal", "capability": "geometry.scan-quarter-turn", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "geometry.scan-quarter-turn::webgpu", "capability": "geometry.scan-quarter-turn", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+
+    {"id": "io.decode-bin-provenance::cpu-reference", "capability": "io.decode-bin-provenance", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "io.decode-bin-provenance::cuda", "capability": "io.decode-bin-provenance", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "September 5 scoped execution at f9beefee90413c282e3b6facedc74a1dfbe0c64d on GPU 0, NVIDIA RTX PRO 6000 Blackwell Workstation Edition: two full 512x512x192x192 and 1024x1024x192x192 uint16 QGIX-v1 prepared-source public IO/in-process HTTP cases passed. Live TCP A-B-A retained exact source/working dtype, bin 1, no crop, authenticated residency receipts and 18 frozen product hashes. Maintainer-retained campaign evidence (not distributed with the repository): cuda-real-512-1024.log SHA256 e2f8cca8a69b9216821d0e35ad19b5942105b7c1ae66f5b2591f3b393e078580; live-service-a-b-a.jsonl SHA256 5e15eb2475b7292e77146171501357400e9fe00cc2a7b788c0d71e2749e0f9aa. These prepared-artifact checks have uncontrolled OS cache and do not establish original compressed-HDF5 cold decode/bin/loading, every raw value reconstructed on this revision, other representation/bin plans, complete profiling metrics, or consumer first presentation. Complete cell-scoped signoff evidence is still missing; no cold-load or performance promotion."},
+    {"id": "io.decode-bin-provenance::mps", "capability": "io.decode-bin-provenance", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "io.decode-bin-provenance::swift-metal", "capability": "io.decode-bin-provenance", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap"},
+    {"id": "io.decode-bin-provenance::webgpu", "capability": "io.decode-bin-provenance", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+
+    {"id": "io.selective-scan-loading::cpu-reference", "capability": "io.selective-scan-loading", "backend": "cpu-reference", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.selective-scan-loading::cuda", "capability": "io.selective-scan-loading", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap"},
+    {"id": "io.selective-scan-loading::mps", "capability": "io.selective-scan-loading", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap"},
+    {"id": "io.selective-scan-loading::swift-metal", "capability": "io.selective-scan-loading", "backend": "swift-metal", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "io.selective-scan-loading::webgpu", "capability": "io.selective-scan-loading", "backend": "webgpu", "support_level": "partial-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap"},
+
+    {"id": "detector.integer-products::cpu-reference", "capability": "detector.integer-products", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "detector.integer-products::cuda", "capability": "detector.integer-products", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "September 5 scoped execution at f9beefee90413c282e3b6facedc74a1dfbe0c64d on GPU 0, NVIDIA RTX PRO 6000 Blackwell Workstation Edition: the CUDA contract log records 13 passes; two full native-uint16 512x512x192x192 and 1024x1024x192x192 prepared QGIX-v1 public/HTTP cases passed frozen BF/ABF/ADF, CoM and selected-DP hashes, empty/repeated masks and lifetime checks. Live TCP A-B-A passed all 18 product hashes; CoM uses authenticated prepared moments, not fresh DPC reconstruction. Maintainer-retained campaign evidence (not distributed with the repository): cuda-contract.log SHA256 86f5c7beb3c8dee0049db3925fab2b651c7cbdc90f68fd8d155403b48848655a; cuda-real-512-1024.log SHA256 e2f8cca8a69b9216821d0e35ad19b5942105b7c1ae66f5b2591f3b393e078580; live-service-a-b-a.jsonl SHA256 5e15eb2475b7292e77146171501357400e9fe00cc2a7b788c0d71e2749e0f9aa. Mean-DP, all-frame/reduction and representation-wide real-data coverage, whole-cell profiling and structured signoff remain incomplete. No full raw reconstruction, cold-HDF5, headed consumer or FPS qualification is inferred."},
+    {"id": "detector.integer-products::mps", "capability": "detector.integer-products", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "detector.integer-products::swift-metal", "capability": "detector.integer-products", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap"},
+    {"id": "detector.integer-products::webgpu", "capability": "detector.integer-products", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap", "evidence_note": "Two headed Chrome runs separated by reload passed at 2026-09-06 02:30:36 and 02:31:24 UTC, source f9beefee90413c282e3b6facedc74a1dfbe0c64d, Apple M5 Max, hardware adapter apple metal-3, runtime Chrome/152.0.0.0. The frozen compact-v1 uint16 adapter checked moving/resized/repeated literal masks, ordered/duplicate selected DPs, invalid requests, exact recovery, empty rebase, release and an odd integer sum above float32 exact range; zero FFT dispatches and clean GPU validation/uncaptured-error scopes. Unrelated extension console errors were retained. Maintainer-retained campaign evidence (not distributed with the repository): webgpu-runtime/RESULT.md SHA256 472fb3f3e9903bc586cd16b19cfab545be41dd26f0b025f35e4813197bdfef58; run-1788661836541047000.json SHA256 f1cf6148a8ce50270db5784fadc989402126d8df27432abb38d071d89f592ce4; run-1788661884338930000.json SHA256 f1dcd45cad3b7e3927fc056282d43b9108c92b365df9d5396d70a040fc4ed644. Small synthetic runtime evidence only: full real-acquisition/browser 512/1024 loading, mean-DP/all-frame cell coverage and signoff remain missing; dense exact products and duplicate-counting selected-frame sums are unsupported by this adapter. Radius conveniences, phone behavior, cold IO and FPS are not qualified."},
+
+    {"id": "screening.prepared-products::cpu-reference", "capability": "screening.prepared-products", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "screening.prepared-products::cuda", "capability": "screening.prepared-products", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap"},
+    {"id": "screening.prepared-products::mps", "capability": "screening.prepared-products", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "screening.prepared-products::swift-metal", "capability": "screening.prepared-products", "backend": "swift-metal", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "screening.prepared-products::webgpu", "capability": "screening.prepared-products", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+
+    {"id": "dpc.com-rotation-idpc::cpu-reference", "capability": "dpc.com-rotation-idpc", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "dpc.com-rotation-idpc::cuda", "capability": "dpc.com-rotation-idpc", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "dpc.com-rotation-idpc::mps", "capability": "dpc.com-rotation-idpc", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "dpc.com-rotation-idpc::swift-metal", "capability": "dpc.com-rotation-idpc", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap"},
+    {"id": "dpc.com-rotation-idpc::webgpu", "capability": "dpc.com-rotation-idpc", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap"},
+
+    {"id": "display.transform-histogram-color-fft::cpu-reference", "capability": "display.transform-histogram-color-fft", "backend": "cpu-reference", "support_level": "reference", "pr_gate": "portable-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "display.transform-histogram-color-fft::cuda", "capability": "display.transform-histogram-color-fft", "backend": "cuda", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+    {"id": "display.transform-histogram-color-fft::mps", "capability": "display.transform-histogram-color-fft", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "display.transform-histogram-color-fft::swift-metal", "capability": "display.transform-histogram-color-fft", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "display.transform-histogram-color-fft::webgpu", "capability": "display.transform-histogram-color-fft", "backend": "webgpu", "support_level": "required-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+
+    {"id": "ssb.object-phase-loss::cpu-reference", "capability": "ssb.object-phase-loss", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "frozen-reference-fixture", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.object-phase-loss::cuda", "capability": "ssb.object-phase-loss", "backend": "cuda", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.object-phase-loss::mps", "capability": "ssb.object-phase-loss", "backend": "mps", "support_level": "required", "pr_gate": "source-contract-and-synthetic-parity", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.object-phase-loss::swift-metal", "capability": "ssb.object-phase-loss", "backend": "swift-metal", "support_level": "required", "pr_gate": "swift-test-and-metal-compile", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.object-phase-loss::webgpu", "capability": "ssb.object-phase-loss", "backend": "webgpu", "support_level": "partial-hardware", "pr_gate": "source-contract-and-browser-smoke", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-hardware-browser", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+
+    {"id": "ssb.calibration-200-nelder-mead::cpu-reference", "capability": "ssb.calibration-200-nelder-mead", "backend": "cpu-reference", "support_level": "reference-fixture", "pr_gate": "frozen-reference-fixture", "scheduled_profile": "weekly", "release_signoff": true, "runner": "portable-cpu", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.calibration-200-nelder-mead::cuda", "capability": "ssb.calibration-200-nelder-mead", "backend": "cuda", "support_level": "required", "pr_gate": "deterministic-short-history", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-cuda", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.calibration-200-nelder-mead::mps", "capability": "ssb.calibration-200-nelder-mead", "backend": "mps", "support_level": "required", "pr_gate": "deterministic-short-history", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-python-mps", "state": "evidence-gap"},
+    {"id": "ssb.calibration-200-nelder-mead::swift-metal", "capability": "ssb.calibration-200-nelder-mead", "backend": "swift-metal", "support_level": "required", "pr_gate": "deterministic-short-history", "scheduled_profile": "weekly", "release_signoff": true, "runner": "physical-native-swift-metal", "state": "evidence-gap", "evidence_note": "No cell-scoped immutable signoff evidence was linked when the readiness join was introduced. Historical benchmark artifacts remain retained; test presence alone is not release evidence."},
+    {"id": "ssb.calibration-200-nelder-mead::webgpu", "capability": "ssb.calibration-200-nelder-mead", "backend": "webgpu", "support_level": "not-implemented", "pr_gate": "unsupported-contract", "scheduled_profile": "none", "release_signoff": false, "runner": "portable-ci", "state": "unsupported"},
+
+    {"id":"geometry.scan-quarter-turn::vulkan","capability":"geometry.scan-quarter-turn","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"io.decode-bin-provenance::vulkan","capability":"io.decode-bin-provenance","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"io.selective-scan-loading::vulkan","capability":"io.selective-scan-loading","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"detector.integer-products::vulkan","capability":"detector.integer-products","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"screening.prepared-products::vulkan","capability":"screening.prepared-products","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"dpc.com-rotation-idpc::vulkan","capability":"dpc.com-rotation-idpc","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"display.transform-histogram-color-fft::vulkan","capability":"display.transform-histogram-color-fft","backend":"vulkan","support_level":"partial-hardware","pr_gate":"native-contract-and-android-build","scheduled_profile":"none","release_signoff":false,"runner":"physical-android-vulkan","state":"evidence-gap"},
+    {"id":"ssb.object-phase-loss::vulkan","capability":"ssb.object-phase-loss","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"},
+    {"id":"ssb.calibration-200-nelder-mead::vulkan","capability":"ssb.calibration-200-nelder-mead","backend":"vulkan","support_level":"not-implemented","pr_gate":"unsupported-contract","scheduled_profile":"none","release_signoff":false,"runner":"portable-ci","state":"unsupported"}
+  ]
+}

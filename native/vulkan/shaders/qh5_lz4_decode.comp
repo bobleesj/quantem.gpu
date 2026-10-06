@@ -1,0 +1,344 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_memory_scope_semantics : require
+
+// Direct Vulkan port of the retained Live4DSTEM Metal topology. Every lane in
+// one native 64-lane subgroup parses the same independent LZ4 stream, while
+// each lane owns disjoint absolute output words. Matches that point into the
+// immediately preceding literal run read those bytes from compressed storage;
+// only older-history matches require a subgroup memory fence. The 8 KiB block
+// stays in shared memory and is bit-unshuffled directly to exact uint16 output.
+layout(local_size_x = 64) in;
+
+layout(set = 0, binding = 0, std430) readonly buffer Compressed {
+  uint words[];
+} compressed_source;
+layout(set = 0, binding = 1, std430) readonly buffer BlockMetadata {
+  uvec2 blocks[];
+} metadata;
+layout(set = 0, binding = 2, std430) buffer DecodedUint16 {
+  uint words[];
+} decoded;
+layout(set = 0, binding = 3, std430) buffer DecodeStatus {
+  uint values[];
+} status;
+layout(set = 0, binding = 4, std430) readonly buffer ExcludedPixels {
+  uint words[];
+} excluded_pixels;
+layout(set = 0, binding = 5, std430) readonly buffer PackedDescriptors {
+  uint words[];
+} packed_descriptors;
+layout(set = 0, binding = 6, std430) buffer PackedPayload {
+  uint words[];
+} packed_payload;
+
+layout(push_constant) uniform DecodeParameters {
+  uint block_count;
+  uint compressed_byte_count;
+  uint decoded_block_bytes;
+  uint reserved;
+} parameters;
+
+shared uint shuffled_words[2048];
+shared uint packing_error;
+
+uint read_byte(uint address) {
+  return (compressed_source.words[address >> 2u] >>
+          ((address & 3u) * 8u)) & 0xffu;
+}
+
+uint read_u16_le(uint address) {
+  uint word_index = address >> 2u;
+  uint shift = (address & 3u) * 8u;
+  uint value = compressed_source.words[word_index] >> shift;
+  if (shift == 24u) {
+    value |= compressed_source.words[word_index + 1u] << 8u;
+  }
+  return value & 0xffffu;
+}
+
+uint read_shared_byte(uint address) {
+  return (shuffled_words[address >> 2u] >>
+          ((address & 3u) * 8u)) & 0xffu;
+}
+
+bool is_excluded(uint pixel) {
+  return excluded_pixels.words[pixel] != 0u;
+}
+
+bool extend_length(inout uint position, uint end, inout uint length) {
+  if (length != 15u) {
+    return true;
+  }
+  uint next = 255u;
+  while (next == 255u) {
+    if (position >= end) {
+      return false;
+    }
+    next = read_byte(position++);
+    if (length > 0xffffffffu - next) {
+      return false;
+    }
+    length += next;
+  }
+  return true;
+}
+
+uint first_owned_word(uint first_word, uint lane) {
+  return first_word + ((lane + 64u - (first_word & 63u)) & 63u);
+}
+
+void copy_compressed_words(uint destination, uint source, uint count,
+                           uint lane) {
+  if (count == 0u) {
+    return;
+  }
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  for (uint word_index = first_owned_word(first_word, lane);
+       word_index <= last_word; word_index += 64u) {
+    uint value = shuffled_words[word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint shift = byte_index * 8u;
+        uint byte_value = read_byte(source + address - destination);
+        value = (value & ~(0xffu << shift)) | (byte_value << shift);
+      }
+    }
+    shuffled_words[word_index] = value;
+  }
+}
+
+void copy_repeat_compressed_words(uint destination, uint source, uint period,
+                                  uint count, uint lane) {
+  if (count == 0u) {
+    return;
+  }
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  uint period_mask = period - 1u;
+  bool power_of_two = period != 0u && (period & period_mask) == 0u;
+  for (uint word_index = first_owned_word(first_word, lane);
+       word_index <= last_word; word_index += 64u) {
+    uint value = shuffled_words[word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint relative = address - destination;
+        uint repeated = power_of_two ? (relative & period_mask)
+                                     : (relative % period);
+        uint shift = byte_index * 8u;
+        uint byte_value = read_byte(source + repeated);
+        value = (value & ~(0xffu << shift)) | (byte_value << shift);
+      }
+    }
+    shuffled_words[word_index] = value;
+  }
+}
+
+void copy_repeat_shared_words(uint destination, uint source, uint period,
+                              uint count, uint lane) {
+  if (count == 0u) {
+    return;
+  }
+  uint first_word = destination >> 2u;
+  uint last_word = (destination + count - 1u) >> 2u;
+  uint period_mask = period - 1u;
+  bool power_of_two = period != 0u && (period & period_mask) == 0u;
+  for (uint word_index = first_owned_word(first_word, lane);
+       word_index <= last_word; word_index += 64u) {
+    uint value = shuffled_words[word_index];
+    uint word_byte = word_index * 4u;
+    for (uint byte_index = 0u; byte_index < 4u; ++byte_index) {
+      uint address = word_byte + byte_index;
+      if (address >= destination && address - destination < count) {
+        uint relative = address - destination;
+        uint repeated = power_of_two ? (relative & period_mask)
+                                     : (relative % period);
+        uint shift = byte_index * 8u;
+        uint byte_value = read_shared_byte(source + repeated);
+        value = (value & ~(0xffu << shift)) | (byte_value << shift);
+      }
+    }
+    shuffled_words[word_index] = value;
+  }
+}
+
+void sync_subgroup() {
+  subgroupMemoryBarrier();
+  subgroupBarrier();
+}
+
+void main() {
+  uint dispatch_block = gl_WorkGroupID.x;
+  uint lane = gl_LocalInvocationID.x;
+  if (dispatch_block >= parameters.block_count) {
+    return;
+  }
+  bool low8 = (parameters.reserved & 0x80000000u) != 0u;
+  bool direct_pack = (parameters.reserved & 0x40000000u) != 0u;
+  uint blocks_per_frame = parameters.reserved & 0xffu;
+  uint tile_count = (parameters.reserved >> 8u) & 0xffu;
+  uint block = dispatch_block;
+  uvec2 record = metadata.blocks[block];
+  uint output_limit = low8 ? 4096u : parameters.decoded_block_bytes;
+  uint input_start = record.x;
+  uint input_end = record.x + record.y;
+  uint input_position = input_start;
+  uint output_position = 0u;
+  uint token_count = 0u;
+  uint decode_error = 0u;
+  if (record.y == 0u || record.x > parameters.compressed_byte_count ||
+      record.y > parameters.compressed_byte_count - record.x ||
+      parameters.decoded_block_bytes != 8192u) {
+    decode_error = 2u;
+  }
+
+  while (decode_error == 0u && input_position < input_end &&
+         output_position < output_limit) {
+    if (++token_count > parameters.decoded_block_bytes) {
+      decode_error = 3u;
+      break;
+    }
+    uint token = read_byte(input_position++);
+    uint literal_count = token >> 4u;
+    if (!extend_length(input_position, input_end, literal_count) ||
+        literal_count > input_end - input_position ||
+        output_position > parameters.decoded_block_bytes ||
+        literal_count > parameters.decoded_block_bytes - output_position) {
+      decode_error = 4u;
+      break;
+    }
+    uint literal_start = input_position;
+    uint literal_copy = min(literal_count, output_limit - output_position);
+    copy_compressed_words(output_position, literal_start, literal_copy, lane);
+    input_position += literal_count;
+    output_position += literal_copy;
+    if (output_position == output_limit || input_position == input_end) {
+      break;
+    }
+    if (input_end - input_position < 2u) {
+      decode_error = 5u;
+      break;
+    }
+    uint match_offset = read_u16_le(input_position);
+    input_position += 2u;
+    if (match_offset == 0u || match_offset > output_position) {
+      decode_error = 6u;
+      break;
+    }
+    uint match_count = token & 0x0fu;
+    if (!extend_length(input_position, input_end, match_count) ||
+        match_count > 0xffffffffu - 4u) {
+      decode_error = 7u;
+      break;
+    }
+    match_count += 4u;
+    if (match_count > parameters.decoded_block_bytes - output_position) {
+      decode_error = 8u;
+      break;
+    }
+    uint match_copy = min(match_count, output_limit - output_position);
+    if (match_offset <= literal_count) {
+      copy_repeat_compressed_words(
+          output_position, literal_start + literal_count - match_offset,
+          match_offset, match_copy, lane);
+    } else {
+      sync_subgroup();
+      copy_repeat_shared_words(output_position,
+                               output_position - match_offset,
+                               match_offset, match_copy, lane);
+    }
+    output_position += match_copy;
+  }
+
+  sync_subgroup();
+  if (decode_error == 0u && output_position == output_limit && low8) {
+    if (lane == 0u)
+      packing_error = 0u;
+    sync_subgroup();
+    for (uint group = lane; group < 128u; group += 64u) {
+      uint planes[8];
+      for (uint bit = 0u; bit < 8u; ++bit) {
+        planes[bit] = shuffled_words[bit * 128u + group];
+      }
+      uint detector_base =
+          (block % blocks_per_frame) * 4096u + group * 32u;
+      uint frame = block / blocks_per_frame;
+      uint tile = frame / 128u;
+      uint scan_in_tile = frame % 128u;
+      for (uint quad = 0u; quad < 8u; ++quad) {
+        uint packed = 0u;
+        for (uint component = 0u; component < 4u; ++component) {
+          uint bit_lane = quad * 4u + component;
+          uint value = 0u;
+          for (uint bit = 0u; bit < 8u; ++bit) {
+            value |= ((planes[bit] >> bit_lane) & 1u) << bit;
+          }
+          uint detector_pixel = detector_base + bit_lane;
+          if (is_excluded(detector_pixel))
+            value = 0u;
+          if (direct_pack) {
+            uint descriptor = packed_descriptors.words[
+                detector_pixel * tile_count + tile];
+            uint width = descriptor & 31u;
+            uint limit = width == 0u ? 1u : (1u << width);
+            if (width > 16u || value >= limit) {
+              atomicOr(packing_error, 10u);
+            } else if (value != 0u) {
+              uint bit = scan_in_tile * width;
+              uint output_word = (descriptor >> 5u) + bit / 32u;
+              uint shift = bit % 32u;
+              atomicOr(packed_payload.words[output_word], value << shift,
+                       gl_ScopeDevice, gl_StorageSemanticsBuffer,
+                       gl_SemanticsRelaxed);
+              if (shift + width > 32u) {
+                atomicOr(packed_payload.words[output_word + 1u],
+                         value >> (32u - shift), gl_ScopeDevice,
+                         gl_StorageSemanticsBuffer, gl_SemanticsRelaxed);
+              }
+            }
+          } else {
+            packed |= value << (component * 8u);
+          }
+        }
+        if (!direct_pack) {
+          uint output_base = block * 1024u + group * 8u;
+          decoded.words[output_base + quad] = packed;
+        }
+      }
+    }
+  } else if (decode_error == 0u &&
+             output_position == parameters.decoded_block_bytes) {
+    for (uint group = lane; group < 128u; group += 64u) {
+      uint planes[16];
+      for (uint bit = 0u; bit < 16u; ++bit) {
+        planes[bit] = shuffled_words[bit * 128u + group];
+      }
+      uint output_base = block * 2048u + group * 16u;
+      for (uint pair = 0u; pair < 16u; ++pair) {
+        uint lane0 = pair * 2u;
+        uint lane1 = lane0 + 1u;
+        uint value0 = 0u;
+        uint value1 = 0u;
+        for (uint bit = 0u; bit < 16u; ++bit) {
+          uint plane = planes[bit];
+          value0 |= ((plane >> lane0) & 1u) << bit;
+          value1 |= ((plane >> lane1) & 1u) << bit;
+        }
+        decoded.words[output_base + pair] = value0 | (value1 << 16u);
+      }
+    }
+  }
+  sync_subgroup();
+  if (lane == 0u) {
+    status.values[block] = decode_error != 0u
+        ? decode_error
+        : (output_position != output_limit
+               ? 9u
+               : (direct_pack ? packing_error : 0u));
+  }
+}

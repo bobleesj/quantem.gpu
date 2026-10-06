@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "release_pin_review_2026_09_21": "The docs/intro.md change from 5dc01a8 to 0dc80ef only updates the installation pin from 0.0.1rc6 to 0.0.1rc8. No numerical evidence or qualification claim changed.",
+  "source_revision": "68dbe3aa5f816e2d1c1ae976e1874790cffb4319",
+  "source_revision_scope": "Latest clean canonical source/working metadata and cross-backend logical-pixel parity revision used by the current Python MPS and CPU rows. Native Swift/Metal rows remain bound to clean revision 5106ca4, and the current exact full-volume WebGPU distribution is bound to clean revision d8e6f56; every retained physical measurement keeps its own revision, fixture identity, cache state, and timing boundary.",
+  "documentation_update": "2026-09-04: refreshed representation/result/API vocabulary only; no benchmark value, acceptance state, fixture, device, cache state, or measurement revision changed. 2026-09-05: normalized executable test paths using tests/path_migrations.json; affected current pages and registry were verified as exact path-only substitutions. 2026-09-06: updated only the public packed name in CUDA/MPS/WebGPU platform pages and the WebGPU resident receipt reference from v2 to v3, relative to e78c46f2191ab0c50cc5fe72ce1b934cce19aaa8. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. Historical transcripts and all numerical evidence remain unchanged. 2026-09-08: added a separate experimental CUDA count-codec page and anonymous measured summary; appended compressed-resident accounting to methodology. Existing numerical results and qualification states remain unchanged; the new record does not qualify the public ANS API. 2026-10-04: native Swift sources moved from src/quantem/gpu/swift to native/swift; the dashboard and Swift/Metal platform pages received path-only substitutions, and the platform page one sentence naming the Metal resources that live in the Python package. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. 2026-10-05: Python modules and kernels moved into the layered tree (device, formats, resident, io/hdf5, and cuda/mps/webgpu directly under each package, without backends/ or compute/); fingerprinted pages received path-only substitutions. No measured value, acceptance state, dataset, device, cache state, or measurement revision changed. 2026-10-05 (final pass): io.load keeps complete native acquisitions, so the registry drops the removed Python features it measured: the python-selective-load runbook and its selective gates (and the two CPU-reference selector gates that described that io.load contract), the CUDA, Python MPS and CPU-reference detector-bin 2/4/8 load and detector-product gates, and the 13 retained Python MPS and CPU-reference bin-2/4/8 load and product measurements that only those gates used; DPC and FFT measurements taken on bin-2 input remain because they measure current features. The screening runbook drops the removed --memory-budget-gb option; two support-basis paths follow the HDF5 decoders to io/hdf5/. The SSB performance and WebGPU G(q,k) history pages received path-only substitutions. benchmark_hdf5_load.py and benchmark_detector_products.py keep native counts and hash an encoded acquisition through bounded scan-row reads (the same SHA-256 as the dense C-order array); _benchmark_support.py drops a dead MPS cache import. No value of a current feature, acceptance state, dataset, device, cache state, or measurement revision changed. 2026-10-05 (removed-feature text): docs/dashboard.md, docs/platforms/cuda.md, docs/platforms/mps.md, docs/platforms/webgpu.md, docs/platforms/swift-metal.md, docs/backends.md, docs/performance/changes.md, docs/performance/cuda-count-codecs.md, docs/maintainer/backend-4dstem-load-checklist.md and docs/maintainer/backend-optimization-matrix.md changed only text describing removed features: io.load dtype casts and scan selectors, binned and dense Python MPS loading, binned CUDA residents in the C-matrix prose, the screening budget planner, packed representations, the CUDA display module, and paths of deleted modules. The dashboard drops the three calculated Python MPS detector-bin-2/4/8 minimum-device rows, and backends.md marks the removed Python MPS detector bin NA. No measured value, dataset, device, cache state, or measurement revision changed, and no acceptance state of a surviving feature changed. 2026-10-05 (fix-all follow-up): docs/dashboard.md, docs/platforms/cuda.md, docs/platforms/webgpu.md, docs/maintainer/backend-4dstem-load-checklist.md, benchmarks/benchmark_registry.json, docs/_generated/benchmark_coverage.md changed only text and gate states describing removed loaders: Python io.load dtype casts (uint8 outputs, uint32 widening, audited uint8 staging) are not supported on CUDA, Python MPS and the CPU reference, uint32 sources are held as exact uint16 codes or refused, Python CUDA/MPS loading has no detector bin (the dense CUDA bin 1/2/4/8, Python MPS bin-1 and screening streaming-plan rows are replaced by the encoded load), Python MPS detector bin is a Gap, CUDA bitshuffle/LZ4 uint8 decode is not implemented, and the WebGPU .qem reader is named RansResidentSet.loadQemFile/loadQemFiles (detector/webgpu/qem-source.ts). The encoded CUDA payload of three real 512x512x192x192 uint16 acquisitions (2,127,983,353 to 3,374,307,987 bytes, NVIDIA RTX PRO 6000 Blackwell, 2026-10-05) is a new measurement. No retained measured value, dataset, device, cache state or measurement revision changed. 2026-10-05 (uint8 decode): docs/maintainer/backend-4dstem-load-checklist.md, benchmarks/benchmark_registry.json, docs/_generated/benchmark_coverage.md record that CUDA and Python MPS now decode native uint8 bitshuffle/LZ4 sources exactly (gates unsupported -> partial; checklist Gap -> Partial). No retained measured value changed. 2026-10-05 (standards and anonymization): scripts/benchmark_registry.py, scripts/benchmark_detector_products.py, scripts/benchmark_hdf5_load.py and scripts/benchmark_support.py (renamed from _benchmark_support.py) drop `from __future__ import annotations` and import benchmark_support by its new name; each file's syntax tree is otherwise identical to the previous fingerprint. Retained experiment records name their computers maca, macb, macc and cudahost instead of private host nicknames, and one dataset id drops its device description; public measurement ids, hardware labels and registry gates are unchanged. No measured value, acceptance state, dataset, device, cache state or measurement revision changed. 2026-10-06: runtime_spatial.metal is runtime_spatial.msl (a source appended to the count-ANS runtime, which Xcode must not compile on its own); docs/platforms/swift-metal.md received that file-name substitution only. No measured value, acceptance state, dataset, device, cache state or measurement revision changed. 2026-10-06: experiment evidence moved to a private archive; pages that linked into experiments/ now name experiment ids, docs/maintainer/ssb-performance.md names the rewritten commit hashes of the same comparisons, and scripts/benchmark_registry.py resolves experiments/ paths against that archive. No measured value, acceptance state, dataset, device, cache state or measurement revision changed. 2026-10-06 (history rewrite): commit hashes cited in pages now name the rewritten public history. No measured value, acceptance state, dataset, device, cache state or measurement revision changed.",
+  "purpose": "Fingerprints for the current benchmark dashboard, its authoritative registry and rendering inputs, provenance ledger, parity and methodology contracts, and canonical historical evidence. Landing, API, and backend capability pages intentionally do not duplicate measurements.",
+  "fingerprint_review_2026_09_08": "Audited against e305f92^ and bd6d337^, whose registry and changes-page hashes match the prior fingerprints. e305f92 added the original-packed runbook; 3a843bb added the independently retained 20260906-original-packed-metal measurement and selected it as the current row; bd6d337 added an explicitly unqualified investigation link. Regenerated-table validation passes. No retained measurement, numerical oracle, tolerance, or historical row was changed in this review; only these three document/input fingerprints and stale current-row expectations were synchronized.",
+  "ssb_performance_merge_2026_10_05": "docs/maintainer/ssb-performance.md gained the three dated CUDA joint-calibration entries from main (bbe978e1 coalesced 512 calibration FFT writes, dee4a1e4 shared probe geometry in the thick-sample batch kernel, c33b8e8e reuse of the joint fit for the 180-degree rotation check) when main was merged into the layered tree. Earlier rows, measured values, acceptance states, datasets, devices and measurement revisions are unchanged.",
+  "pages": [
+    {
+      "path": "docs/intro.md",
+      "sha256": "0fa09477da25eabc7da18a0194ce3115e4d3ff509ac956c4d8ab3b5acd85c7fb",
+      "role": "Python user landing page and benchmark routing without copied measurements"
+    },
+    {
+      "path": "docs/dashboard.md",
+      "sha256": "e550bd08eef6c8d4fd06082a1ebee6c8e94996c7b4c7fafe475c1fcd1a692d11",
+      "role": "Single human-facing current capability, speed, memory, dtype, residency, detector-product, and parity overview"
+    },
+    {
+      "path": "docs/platforms/cuda.md",
+      "sha256": "50db7763869b8f56f663b66e64d29d8026b0a219ae2f5c7e78730b8971ea193d",
+      "role": "CUDA 6 GiB minimum-device acceptance contract"
+    },
+    {
+      "path": "docs/platforms/mps.md",
+      "sha256": "1753c74ae1827e7d9a3431f341dbce26da64baf4781ecda2dc0737e946622879",
+      "role": "Python MPS direct-Metal lifetime and resident-versus-peak memory contract"
+    },
+    {
+      "path": "docs/platforms/webgpu.md",
+      "sha256": "c064074a83af638f3daa03a16a58f7b99031998512b5886affcdc881c9b15070",
+      "role": "WebGPU 8 GB laptop acceptance contract"
+    },
+    {
+      "path": "docs/platforms/swift-metal.md",
+      "sha256": "bb03fd0cd7f31a46a11b915573ba5e0472aaf2ce48991abfe3ff50f9be80612d",
+      "role": "Native Swift Metal exact resident-summary, bounded indexed-streaming, and ownership contract"
+    },
+    {
+      "path": "docs/backends.md",
+      "sha256": "997a3ffb876add8d3be30ce31b00e58e40ad3d7163b48ebb31d37571a604321f",
+      "role": "Capability and implementation-source map without copied timings"
+    },
+    {
+      "path": "docs/performance/coverage.md",
+      "sha256": "8aa22a2316cad56027b9bd4aec05cff9b3ec39db7326ef6f655b042ad1f94a7b",
+      "role": "Filterable exact benchmark gates, retained measurements, missing coverage, and reproducible runbooks"
+    },
+    {
+      "path": "docs/performance/results.md",
+      "sha256": "69bd849013d28c1276aa6926be97e9fa8fbb6a920bfc744540d6d281fd3ccd0a",
+      "role": "Authoritative current benchmark provenance ledger"
+    },
+    {
+      "path": "docs/performance/changes.md",
+      "sha256": "f9a2a7c211259de1c012e80e34048a63408cbcdc9ca3a9ee80ffb70a258d6d68",
+      "role": "Benchmark promotion, rejection, and supersession decisions without copied values"
+    },
+    {
+      "path": "docs/performance/methodology.md",
+      "sha256": "cbce84cac556167e88dcc6c5a06dcc40eb7daabc0093229ea3eed7a3096e9efd",
+      "role": "Benchmark state, provenance, and scientific-resolution contract"
+    },
+    {
+      "path": "docs/performance/continuous-profiling.md",
+      "sha256": "7ac9d3ede625fff1f0b39910d0694ad98e45267c97c1abd4eb4f5a2fea5a5c89",
+      "role": "Cross-platform cadence, comparison-key, run-registry, and promotion contract"
+    },
+    {
+      "path": "docs/performance/parity.md",
+      "sha256": "d901e1cf9021878f7585d4730bb64abd1b11f8f0caa7be6929a2d987ca8422a2",
+      "role": "Current cross-platform numerical acceptance gates"
+    },
+    {
+      "path": "docs/maintainer/backend-optimization-matrix.md",
+      "sha256": "f4ac505f760a0fb8f6831c24ecac448c12a716f1d1d4f7dea0bdfa36b87d25c7",
+      "role": "Accepted and rejected optimization ledger"
+    },
+    {
+      "path": "docs/maintainer/backend-4dstem-load-checklist.md",
+      "sha256": "53a44ae13909b5f52e9f1a90d1d476e81d04385da825832a1db24b1aced94db9",
+      "role": "Load and product acceptance evidence"
+    },
+    {
+      "path": "docs/maintainer/ssb-performance.md",
+      "sha256": "5d4d788b31906f68df0f60102f4e26cbcc2b280a4f23cee5a7067cf084c98008",
+      "role": "Chronological SSB optimization and rejected-experiment history"
+    },
+    {
+      "path": "docs/maintainer/native-metal-ssb-migration.md",
+      "sha256": "04fa4856a67f87088c68c41a88601e383203ea4a3c079c69d5418b6d67461a9c",
+      "role": "Native Swift Metal SSB lineage, parity, and benchmark record"
+    },
+    {
+      "path": "docs/maintainer/native-metal-hdf5-postmortem.md",
+      "sha256": "2d02fdf74f4fd7e5edbd6f3309d2290139da71aa775ea90ebacbdb589e76e731",
+      "role": "Native Metal loader postmortem"
+    },
+    {
+      "path": "docs/maintainer/history/webgpu-gqk-memory-2026-07.md",
+      "sha256": "18cfee014a6f63e84cf367c3c3bf0cc2125d06c11760ffdd42fc11bae5816837",
+      "role": "WebGPU G(q,k) memory history"
+    },
+    {
+      "path": "docs/maintainer/m2-air-lz4-match-unroll-2026-08-18.md",
+      "sha256": "fc5ce5fcc3295cec11a411161de7270f196857e927013971935f8512ee2125a1",
+      "role": "Physical M2 Air Metal load/decode evidence"
+    },
+    {
+      "path": "docs/performance/cuda-count-codecs.md",
+      "sha256": "504ec6f63ece9ad70a1378c5cc4df0aa58f92fccebfb2d80f61cc1491ee19f54",
+      "role": "CUDA count-codec investigation: separate resident layout, shared scratch and unmeasured standalone peak"
+    }
+  ],
+  "authoritative_inputs": [
+    {
+      "path": "benchmarks/benchmark_registry.json",
+      "sha256": "503a4fb07c21a617147148723c61ad8342fdac64e305877a24487c8da1e54af2",
+      "role": "Atomic Platform, Computer, module, detector-bin, dtype/residency configuration, state, measurement, and runbook registry"
+    },
+    {
+      "path": "docs/_generated/benchmark_coverage.md",
+      "sha256": "c9b31897fbe00878e930fb2e7080a6239ce7cb6bd20506ce4bd50bbc8775b25e",
+      "role": "Generated filterable detector-product, dtype/residency, coverage, retained-measurement, and runbook tables"
+    },
+    {
+      "path": "docs/_static/benchmark-tables.js",
+      "sha256": "bc3845e490c5900cf1911c60cfcd7ac77515fed9571479f22e618fe189ec5e4f",
+      "role": "Client-side Platform and Computer table filtering"
+    },
+    {
+      "path": "scripts/benchmark_registry.py",
+      "sha256": "5d7f3cd715243800acd5ce35634534ee9712eee27cd8f8108413336d94018d7c",
+      "role": "Registry validation, detector-product and dtype/residency rendering, next-gate selection, and reproducible-command entry point"
+    },
+    {
+      "path": "scripts/benchmark_detector_products.py",
+      "sha256": "2ab70274fc646f037f61cbebb8a6d701252ef5a9c20933bfd9fac793a8efe6ba",
+      "role": "Exact CPU, CUDA, and Python MPS resident detector-product timing, parity, overflow, and memory entry point"
+    },
+    {
+      "path": "scripts/benchmark_hdf5_load.py",
+      "sha256": "bd1115b475e614f95ce27a2447ddd3307f23008a7254c4da69b85a19a308a824",
+      "role": "Shared public HDF5 load, logical-volume parity, metadata, and release boundary"
+    },
+    {
+      "path": "scripts/benchmark_support.py",
+      "sha256": "1ae45a310a0c93ce8955df2c903d7e627c020b75e4b4478e83793e5ec467b49e",
+      "role": "Shared immutable hashing, atomic report, accelerator/process, and whole-system memory telemetry"
+    },
+    {
+      "path": "experiments/20260822-platform-computer-profile/manifest.json",
+      "sha256": "7a3eb8c443ebcadf9b2f483e9acd06188e73c4fc883e9cd7847c70188041dc73",
+      "role": "Completed physical-device matrix ledger with accepted, partial, refuted, blocked, and pending atomic gates"
+    },
+    {
+      "path": "docs/performance/data/cuda-count-codecs-2026-09-08.json",
+      "sha256": "551de00663a1ddb9f74ad7f32bd873cef0afdbc1f01b92c523978a6797594120",
+      "role": "Anonymous portable GPU codec timing and memory record; prototype scope, source/evidence hashes and null full-load peak gates"
+    }
+  ],
+  "workflow_navigation_review_2026_10_03": "Relative to 7cb147cd, docs/intro.md changes only the workflow link description and adds the advanced Gold tutorial link. No measured values, benchmark routing, or qualification claims changed."
+}

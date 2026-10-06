@@ -1,0 +1,49 @@
+
+        uint elem = thread_position_in_grid.x;
+        if (elem >= TOTAL) return;
+
+        uint byte_in_frame = elem % FRAME_BYTES;
+        uint frame = elem / FRAME_BYTES;
+        uint block = byte_in_frame / 8192;
+        uint block_start = block * 8192;
+        uint block_bytes = FRAME_BYTES - block_start;
+        if (block_bytes > 8192) {
+            block_bytes = 8192;
+        }
+        uint byte_in_block = byte_in_frame - block_start;
+        uint bitplane_bytes = block_bytes / OUT_BITS;
+        uint bit = byte_in_block / bitplane_bytes;
+        uint byte_in_plane = byte_in_block - bit * bitplane_bytes;
+        uint input_base = block_start / OUT_BYTES + byte_in_plane * 8;
+
+        uchar packed = 0;
+        for (uint k = 0; k < 8; k++) {
+            uint input_idx = input_base + k;
+            if (input_idx >= FRAME_ELEMS) continue;
+            uint val = 0;
+            if (OUTPUT_FLOAT != 0) {
+                val = as_type<uint>(src_f32[ulong(frame) * FRAME_ELEMS + input_idx]);
+            } else if (OUT_BITS == 8) {
+                if (INPUT_FLOAT != 0) {
+                    float x = src_f32[ulong(frame) * FRAME_ELEMS + input_idx];
+                    x = clamp(rint(x), 0.0f, 255.0f);
+                    val = uint(x);
+                } else if (INPUT_U8 != 0) {
+                    val = uint(src_u8[ulong(frame) * FRAME_ELEMS + input_idx]);
+                } else {
+                    uint x = uint(src_u16[ulong(frame) * FRAME_ELEMS + input_idx]);
+                    val = x > 255u ? 255u : x;
+                }
+            } else if (INPUT_FLOAT != 0) {
+                float x = src_f32[ulong(frame) * FRAME_ELEMS + input_idx];
+                x = clamp(rint(x), 0.0f, 65535.0f);
+                val = uint(x);
+            } else {
+                val = uint(src_u16[ulong(frame) * FRAME_ELEMS + input_idx]);
+            }
+            if ((val & (1u << bit)) != 0) {
+                packed |= uchar(1u << k);
+            }
+        }
+        out[elem] = packed;
+    

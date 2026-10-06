@@ -1,0 +1,94 @@
+
+        uint chunk = thread_position_in_grid.x / THREADS;
+        uint tid = thread_position_in_threadgroup.x;
+        if (chunk >= N_CHUNKS || tid != 0) return;
+
+        uint frame = chunk / BLOCKS_PER_FRAME;
+        uint block = chunk - frame * BLOCKS_PER_FRAME;
+        uint block_start = block * BLOCK_SIZE;
+        uint chunk_size = FRAME_BYTES - block_start;
+        if (chunk_size > BLOCK_SIZE) {
+            chunk_size = BLOCK_SIZE;
+        }
+        const device uchar* in = shuffled + ulong(frame) * FRAME_BYTES + block_start;
+        device uchar* outp = out + ulong(chunk) * MAX_OUT;
+        uint in_pos = 0;
+        uint out_pos = 0;
+        uint anchor = 0;
+
+        while (chunk_size > 12 && in_pos < chunk_size - 12) {
+            uchar run_value = in[ulong(in_pos)];
+            if (in[ulong(in_pos + 1)] == run_value
+                    && in[ulong(in_pos + 2)] == run_value
+                    && in[ulong(in_pos + 3)] == run_value
+                    && in_pos + 6 < chunk_size) {
+                uint run_len = 4;
+                while (in_pos + run_len < chunk_size
+                       && in[ulong(in_pos + run_len)] == run_value) {
+                    run_len++;
+                }
+                uint match_start = in_pos + 1;
+                uint max_match = chunk_size - match_start - 5;
+                uint mlen = run_len - 1;
+                if (mlen > max_match) {
+                    mlen = max_match;
+                }
+                if (mlen >= 4) {
+                    uint literal_len = match_start - anchor;
+                    uint ml = mlen - 4;
+                    uchar token = uchar((literal_len >= 15 ? 15 : literal_len) << 4)
+                                | uchar(ml >= 15 ? 15 : ml);
+                    outp[out_pos++] = token;
+
+                    if (literal_len >= 15) {
+                        uint rem = literal_len - 15;
+                        while (rem >= 255) {
+                            outp[out_pos++] = uchar(255);
+                            rem -= 255;
+                        }
+                        outp[out_pos++] = uchar(rem);
+                    }
+
+                    for (uint i = 0; i < literal_len; i++) {
+                        outp[out_pos++] = in[ulong(anchor + i)];
+                    }
+
+                    outp[out_pos++] = uchar(1);
+                    outp[out_pos++] = uchar(0);
+
+                    if (ml >= 15) {
+                        uint rem = ml - 15;
+                        while (rem >= 255) {
+                            outp[out_pos++] = uchar(255);
+                            rem -= 255;
+                        }
+                        outp[out_pos++] = uchar(rem);
+                    }
+
+                    in_pos = match_start + mlen;
+                    anchor = in_pos;
+                    continue;
+                }
+            }
+            in_pos++;
+        }
+
+        uint literal_len = chunk_size - anchor;
+        if (literal_len > 0) {
+            uchar token = uchar((literal_len >= 15 ? 15 : literal_len) << 4);
+            outp[out_pos++] = token;
+            if (literal_len >= 15) {
+                uint rem = literal_len - 15;
+                while (rem >= 255) {
+                    outp[out_pos++] = uchar(255);
+                    rem -= 255;
+                }
+                outp[out_pos++] = uchar(rem);
+            }
+            for (uint i = 0; i < literal_len; i++) {
+                outp[out_pos++] = in[ulong(anchor + i)];
+            }
+        }
+
+        sizes[chunk] = out_pos;
+    

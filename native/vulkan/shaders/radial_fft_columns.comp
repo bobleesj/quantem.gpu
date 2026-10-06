@@ -1,0 +1,32 @@
+#version 450
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 3, std430) readonly buffer Rows { vec2 values[]; } rows;
+layout(set = 0, binding = 4, std430) writeonly buffer Columns { vec2 values[]; } columns;
+layout(set = 0, binding = 6, std430) readonly buffer Twiddles { vec2 values[]; } twiddles;
+shared vec2 scratch[512];
+vec2 multiplyComplex(vec2 a, vec2 b) {
+    return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x);
+}
+void main() {
+    uint lane=gl_LocalInvocationID.x;
+    uint column=gl_WorkGroupID.x;
+    // Only the row-sum (DC) column necessarily carries the nonnegative image's
+    // large background. Other columns are complex oscillations: subtracting one
+    // arbitrary phase there can introduce, rather than remove, cancellation.
+    vec2 baseline=column==0u ? rows.values[0] : vec2(0.0);
+    scratch[bitfieldReverse(lane) >> 23u]=rows.values[lane*512u+column]-baseline;
+    scratch[bitfieldReverse(lane+256u) >> 23u]=rows.values[(lane+256u)*512u+column]-baseline;
+    barrier();
+    for (uint width=2u; width<=512u; width*=2u) {
+        uint halfWidth=width/2u;
+        uint j=lane%halfWidth;
+        uint first=(lane/halfWidth)*width+j;
+        vec2 a=scratch[first];
+        vec2 b=multiplyComplex(scratch[first+halfWidth],twiddles.values[j*(512u/width)]);
+        scratch[first]=a+b;
+        scratch[first+halfWidth]=a-b;
+        barrier();
+    }
+    columns.values[lane*512u+column]=scratch[lane] + (lane==0u ? baseline*512.0 : vec2(0.0));
+    columns.values[(lane+256u)*512u+column]=scratch[lane+256u];
+}

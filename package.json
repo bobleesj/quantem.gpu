@@ -1,0 +1,12 @@
+{
+  "name": "quantem-gpu-dev",
+  "private": true,
+  "description": "Development tools for the WebGPU TypeScript sources and their contract tests; not part of the Python package. Install with `npm ci`.",
+  "license": "MIT",
+  "devDependencies": {
+    "@webgpu/types": "^0.1.68",
+    "esbuild": "^0.28.1",
+    "jsfive": "^0.4.0",
+    "typescript": "^5.8.3"
+  }
+}

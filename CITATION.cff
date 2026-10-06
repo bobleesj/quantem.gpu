@@ -1,0 +1,47 @@
+cff-version: 1.2.0
+message: >-
+  If quantEM's interactive widgets, GPU-accelerated I/O, or data processing
+  and reconstruction tools contributed to your research, please cite the
+  paper listed in preferred-citation.
+type: software
+title: quantem.gpu
+authors:
+  - family-names: Lee
+    given-names: Sangjoon
+repository-code: https://github.com/bobleesj/quantem.gpu
+url: https://bobleesj.github.io/quantem.gpu/
+license: MIT
+preferred-citation:
+  type: article
+  title: Interactive Framework for Real-Time 4DSTEM Analysis and Reconstruction
+  authors:
+    - family-names: Lee
+      given-names: Sangjoon
+    - family-names: Millsaps
+      given-names: William
+    - family-names: Obrero
+      given-names: Caitlyn
+    - family-names: Yoon
+      given-names: Dasol
+    - family-names: Ehrhardt
+      given-names: Karen M
+    - family-names: Marchese
+      given-names: Nicholas
+    - family-names: Lim
+      given-names: Cedric
+    - family-names: Mali
+      given-names: Darshan
+    - family-names: Mukherjee
+      given-names: Pinaki
+    - family-names: Barnum
+      given-names: Andrew
+    - family-names: Ophus
+      given-names: Colin
+  journal: Microscopy and Microanalysis
+  volume: "32"
+  issue: Supplement_1
+  start: ozag053.941
+  year: 2026
+  month: 7
+  doi: 10.1093/mam/ozag053.941
+  url: https://doi.org/10.1093/mam/ozag053.941
