@@ -28,6 +28,7 @@ prepared formats have their own callers and acceptance boundaries.
 | Implementation task | Contract |
 |---|---|
 | Understand encoded, paired, and dense layouts | [Count representations](../api/representations.md) |
+| Keep float32 results as calibrated uint16 | [Scaled uint16 resident intensities](../integrations/scaled-uint16.md) |
 | Implement the Swift/Metal prepared packed-file layout | [Lossless Pack Format v1](../api/compact_4dstem_h5.md) |
 | Produce that format from a native application | [Native producer](../api/native_lossless_pack_v1_producer.md) |
 | Maintain the internal count-ANS container | [Count-ANS](count-ans.md) |

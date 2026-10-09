@@ -24,6 +24,9 @@ parts:
       title: BF, ADF, and DPC images
     - file: api/ssb
       title: SSB phase and aberrations
+      sections:
+      - file: api/ssb-phase-artifact
+        title: Portable SSB results
     - file: api/movie
     - file: api/core
       title: Devices, optics, parallax, and scan rotation
@@ -91,6 +94,8 @@ parts:
         - file: integrations/k3-dm4-qem
       - file: api/representations
         title: Dense and lossless-packed data
+      - file: integrations/scaled-uint16
+        title: Scaled uint16 resident intensities
       - file: api/compact_4dstem_h5
         title: Prepared packed format
         sections:
@@ -175,6 +180,8 @@ parts:
         title: SSB detector sampling and fit state (2026-10-05)
       - file: maintainer/2026-10-07-mps-uint32-masters-and-cuda13-extra
         title: MPS uint32 masters and the CUDA 13 extra (2026-10-07)
+      - file: maintainer/2026-10-08-uint32-flagged-markers-and-gold-convert-size
+        title: uint32 flagged markers and convert size (2026-10-08)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
       - file: maintainer/virtual-image-kernel-checklist
