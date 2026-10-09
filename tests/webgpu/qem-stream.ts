@@ -296,3 +296,29 @@ test("only a body that is not a byte stream falls back to the default reader", a
     assert.equal(result, outcome, refusal.name);
   }
 });
+
+test("a corrupt served file reports its checksum, not the cancellation of its download", async () => {
+  // Five 64 MiB chunks from a server faster than hashing: when chunk 0 fails,
+  // later chunks are already read and the stream waits at a yield.
+  const bytes = syntheticQem([[200 << 20], [60 << 20]]);
+  const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
+  bytes[body + 1000] ^= 1;
+  globalThis.fetch = (async (_url: URL, init: RequestInit = {}) => {
+    if (init.method === "HEAD") return new Response(null, { headers: { "Content-Length": String(bytes.length) } });
+    const [first, last] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!.slice(1).map(Number);
+    const served = bytes.subarray(first, last + 1);
+    if (served.length < 1 << 20) return new Response(served.slice(), { status: 206 });
+    let at = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { init.signal?.addEventListener("abort", () => controller.error(init.signal!.reason)); },
+      pull(controller) {
+        if (at >= served.length) { controller.close(); return; }
+        controller.enqueue(served.slice(at, at + (8 << 20)));
+        at += 8 << 20;
+      },
+    });
+    return { status: 206, body: stream } as unknown as Response;
+  }) as typeof fetch;
+  const [file] = await qemHttpFiles("/", ["corrupt.qem"]);
+  await assert.rejects(qemFileSource(file, () => {}, fakeDevice().device), /payload checksum mismatch/);
+});
