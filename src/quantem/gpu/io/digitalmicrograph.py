@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from quantem.gpu.device import select
+from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import (
     allocate_shared,
     buffer_view,
@@ -28,6 +29,7 @@ from quantem.gpu.resident.mps.spatial import build_index
 
 class NoDiffractionImage(ValueError):
     """The DM document contains only survey images or spectra."""
+
 
 @dataclass(frozen=True)
 class DMSource:
@@ -67,7 +69,7 @@ def read_dm_source(
     path = Path(path).expanduser().resolve()
     stat = path.stat()
     with dm.fileDM(path) as source:
-        candidates = [i for i, ndim in enumerate(source.dataShape) if ndim == 4]
+        candidates = [image for image, ndim in enumerate(source.dataShape) if ndim == 4]
         if not candidates:
             raise NoDiffractionImage(f"{path.name} contains no four-dimensional diffraction image.")
         if len(candidates) != 1:
@@ -136,7 +138,7 @@ def read_dm_source(
         )
         if all(unit in {"nm", "µm", "um", "Å", "A"} for unit in units[:2]):
             factors = {"nm": 10, "µm": 10000, "um": 10000, "Å": 1, "A": 1}
-            metadata["scan_sampling_A"] = [sampling[i] * factors[units[i]] for i in range(2)]
+            metadata["scan_sampling_A"] = [sampling[axis] * factors[units[axis]] for axis in range(2)]
         if units[2:] == ["1/nm", "1/nm"]:
             metadata["detector_sampling_inv_A"] = [value / 10 for value in sampling[2:]]
     return DMSource(path, offset, shape, dtype, metadata, (stat.st_size, stat.st_mtime_ns))
@@ -194,7 +196,7 @@ def load_dm(path, *, backend, representation, scan_shape, device, verbose):
         )
     import cupy as cp
 
-    selected = cp.cuda.Device().id if device is None else int(str(device).removeprefix("cuda:"))
+    selected = cuda_device_index(device)
     with cp.cuda.Device(selected):
         resident = StreamedCounts(source.shape, source.dtype)
         # Two 512-frame buffers bound staging even for large camera frames.
@@ -267,22 +269,22 @@ def _load_counts_mps(source: DMSource, started: float, verbose: bool) -> Dataset
     staging window before it is reused.
     """
     resident = MPSStreamedCounts(source.shape, source.dtype)
-    scans, pixels = math.prod(source.shape[:2]), math.prod(source.shape[2:])
-    block = min(scans, 512)
+    frames, pixels = math.prod(source.shape[:2]), math.prod(source.shape[2:])
+    chunk_frames = min(frames, 512)
     staging = None
     try:
-        staging = allocate_shared(block * pixels * source.dtype.itemsize, "DM4 staging")
+        staging = allocate_shared(chunk_frames * pixels * source.dtype.itemsize, "DM4 staging")
         with source.path.open("rb", buffering=0) as handle:
             handle.seek(source.offset)
-            for first in range(0, scans, block):
-                count = min(block, scans - first)
+            for first in range(0, frames, chunk_frames):
+                count = min(chunk_frames, frames - first)
                 view = buffer_view(staging, count * pixels * source.dtype.itemsize)
-                at = 0
-                while at < len(view):
-                    got = handle.readinto(view[at:])
-                    if not got:
+                cursor = 0
+                while cursor < len(view):
+                    length = handle.readinto(view[cursor:])
+                    if not length:
                         raise ValueError("Incomplete DM4 counts; finish the download.")
-                    at += got
+                    cursor += length
                 resident.append(shared_array(staging, source.dtype, (count, *source.shape[2:])))
                 resident.spatial_chunks.append(build_index(resident, staging, count))
         source.assert_unchanged()

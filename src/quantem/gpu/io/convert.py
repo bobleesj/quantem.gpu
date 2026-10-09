@@ -41,6 +41,8 @@ _HASH_BLOCK = 64 << 20
 _READABLE_VALUES = 64
 _EMBEDDED_MASTER_LIMIT = 8 << 20
 _SESSION_FILE = "dataset.yaml"
+_MAX_CIF_DOCUMENTS = 8                 # of the 16 source documents a .qem carries; the rest stay for the source's own metadata
+_MAX_CIF_BYTES = 2 << 20               # of the 4 MiB attachment budget
 
 
 @dataclass
@@ -103,12 +105,7 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     sidecar = Path(master).parent / _SESSION_FILE
     if not sidecar.is_file():
         return {}, None
-    text = sidecar.read_bytes()
-    try:
-        document = yaml.safe_load(text) or {}
-    except yaml.YAMLError as error:
-        raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
-    evidence = f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
+    document, evidence = _session_document(sidecar)
     sections = {name: document.get(name) or {} for name in ("microscope", "files", "calibrations", "session")} if isinstance(document, dict) else {}
     if not sections or not all(isinstance(section, dict) for section in sections.values()):
         raise ValueError(f"{sidecar}: microscope, files, calibrations and session must be mappings")
@@ -163,7 +160,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     Raises
     ------
     ValueError
-        The session file is not readable YAML, or its specimen is malformed (``_qem_metadata.validate_sample``).
+        The session file is not readable YAML, or its specimen is malformed (``formats.qem.metadata.validate_sample``).
 
     Examples
     --------
@@ -173,11 +170,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     sidecar = Path(master).parent / _SESSION_FILE
     if not sidecar.is_file():
         return None, []
-    text = sidecar.read_bytes()
-    try:
-        document = yaml.safe_load(text) or {}
-    except yaml.YAMLError as error:
-        raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
+    document, evidence = _session_document(sidecar)
     if not isinstance(document, dict):
         raise ValueError(f"{sidecar}: the top level must be a mapping")
     declared = document.get("specimen")
@@ -190,7 +183,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     if not isinstance(declared, dict) or not isinstance(declared.get("components") or {}, dict) or not isinstance(files, dict):
         raise ValueError(f"{sidecar}: specimen and its components, and files, must be mappings")
     key, entry, matched_by = session_file_entry(files, Path(master))
-    evidence = f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}" + (f", files[{key}] by {matched_by}" if entry else "")
+    evidence += f", files[{key}] by {matched_by}" if entry else ""
     sample: dict = {"provenance": _SESSION_FILE, "evidence": evidence}
     for name in ("id", "name", "geometry", "description", "orientation_relationship"):
         if declared.get(name) is not None:
@@ -198,12 +191,15 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     if declared.get("growth_direction") is not None:
         sample["growth_direction"] = _indices(declared["growth_direction"], f"{sidecar}: growth_direction")
     thickness = (entry or {}).get("thickness") or {}
-    if not isinstance(thickness, dict) or not all(isinstance(v, list) and all(isinstance(e, dict) for e in v) for v in thickness.values()):
+    if not isinstance(thickness, dict) or not all(
+        isinstance(estimates, list) and all(isinstance(estimate, dict) for estimate in estimates)
+        for estimates in thickness.values()
+    ):
         raise ValueError(f"{sidecar}: files[{key}].thickness maps each component to a list of estimates")
     documents: dict[Path, dict] = {}
     components = {}
-    for label, component in (declared.get("components") or {}).items():
-        component = {} if component is None else component
+    for label, declared_component in (declared.get("components") or {}).items():
+        component = {} if declared_component is None else declared_component
         if not isinstance(component, dict):
             raise ValueError(f"{sidecar}: component {label} must be a mapping (role, chemical_formula, cif, zone_axis)")
         written = {name: str(component[name]) for name in ("role", "chemical_formula") if component.get(name)}
@@ -211,7 +207,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
             written["zone_axis"] = _indices(component["zone_axis"], f"{sidecar}: component {label} zone_axis")
         if component.get("cif"):
             written["cif"] = _cif_document(sidecar, str(label), str(component["cif"]), documents)
-        estimates = [_thickness_estimate(e, f"{sidecar}: files[{key}].thickness.{label}") for e in thickness.get(label, [])]
+        estimates = [_thickness_estimate(estimate, f"{sidecar}: files[{key}].thickness.{label}") for estimate in thickness.get(label, [])]
         if estimates:
             written["thickness_estimates"] = estimates
         components[str(label)] = written
@@ -223,7 +219,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
             raise ValueError(f"{sidecar}: files[{key}].components_in_view is a list of component labels")
         sample["components_in_view"] = [str(label) for label in in_view]
     attached = list(documents.values())
-    if len(attached) > _MAX_CIF_DOCUMENTS or sum(len(d["content"].encode("utf-8")) for d in attached) > _MAX_CIF_BYTES:
+    if len(attached) > _MAX_CIF_DOCUMENTS or sum(len(attachment["content"].encode("utf-8")) for attachment in attached) > _MAX_CIF_BYTES:
         raise ValueError(f"{sidecar}: more CIF text than a .qem carries ({_MAX_CIF_DOCUMENTS} files, {_MAX_CIF_BYTES >> 20} MiB)")
     try:
         validate_sample(sample)
@@ -232,8 +228,18 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     return sample, attached
 
 
-_MAX_CIF_DOCUMENTS = 8                 # of the 16 source documents a .qem carries; the rest stay for the source's own metadata
-_MAX_CIF_BYTES = 2 << 20               # of the 4 MiB attachment budget
+def _session_document(sidecar: Path) -> tuple[object, str]:
+    """Parse a session file, with the evidence string that names its exact bytes.
+
+    Calibration and specimen both cite the file by SHA-256, so a copy records
+    which version of ``dataset.yaml`` its values came from.
+    """
+    text = sidecar.read_bytes()
+    try:
+        document = yaml.safe_load(text) or {}
+    except yaml.YAMLError as error:
+        raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
+    return document, f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
 
 
 def _cif_document(sidecar: Path, label: str, name: str, documents: dict[Path, dict]) -> dict:
@@ -244,7 +250,7 @@ def _cif_document(sidecar: Path, label: str, name: str, documents: dict[Path, di
     if not cif.is_relative_to(folder) or not cif.is_file():
         raise ValueError(f"{sidecar}: component {label} names {name}, which is not a file in the session folder")
     if cif not in documents:
-        taken = {d["filename"] for d in documents.values()}
+        taken = {document["filename"] for document in documents.values()}
         filename = f"{cif.stem}.cif.json" if f"{cif.stem}.cif.json" not in taken else f"{cif.stem}_{len(documents)}.cif.json"
         content = json.dumps({"cif": cif.read_text(errors="replace")})
         documents[cif] = {"filename": filename, "mediaType": "application/json", "content": content,
@@ -256,15 +262,15 @@ def _indices(value, where: str) -> list[int]:
     """A direction [u, v, w] (or hexagonal [u, v, t, w]): a list of integers, or text "[1-10]" (single-digit indices, a
     minus applying to the next digit) or "[1 -1 0]" (separated). Anything else is refused, not rounded."""
     if isinstance(value, (list, tuple)):
-        if not all(type(v) is int for v in value):
+        if not all(type(index) is int for index in value):
             raise ValueError(f"{where}: {value!r} must be integers")
         indices = list(value)
     elif isinstance(value, str):
         text = value.strip().strip("[]() ")
         parts = re.split(r"[,\s]+", text) if re.search(r"[,\s]", text) else re.findall(r"-?\d", text)
-        if "".join(parts).replace("-", "") != re.sub(r"[^0-9]", "", text) or not all(re.fullmatch(r"-?\d+", p) for p in parts):
+        if "".join(parts).replace("-", "") != re.sub(r"[^0-9]", "", text) or not all(re.fullmatch(r"-?\d+", part) for part in parts):
             raise ValueError(f"{where}: {value!r} is not a direction")
-        indices = [int(p) for p in parts]
+        indices = [int(part) for part in parts]
     else:
         raise ValueError(f"{where}: {value!r} is not a direction")
     if len(indices) not in (3, 4) or not any(indices):
@@ -287,7 +293,7 @@ def _thickness_estimate(estimate: dict, where: str) -> dict:
         bounds = estimate["range_nm"]
         if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
             raise ValueError(f"{where}: range_nm {bounds!r} is [low, high]")
-        out["range"] = [number(v, "range_nm") * 10 for v in bounds]
+        out["range"] = [number(bound, "range_nm") * 10 for bound in bounds]
     region = estimate.get("region")
     if region is not None:
         out["region"] = region
@@ -496,7 +502,6 @@ def restore_master(qem: Path, destination: Path) -> Path:
     --------
     >>> restored = restore_master(Path("scan.qem"), Path("restored_master.h5"))
     """
-
     header, _ = read_header(qem)
     embedded = header["metadata"].get("source_master_file")
     if not embedded:
@@ -526,10 +531,14 @@ def restore_master(qem: Path, destination: Path) -> Path:
 def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> dict:
     """Compare every saved value with the detector files read through h5py.
 
-    Every stored value is compared, including flagged detector pixels. Reads
-    and comparisons are bounded; the full acquisition stays encoded on GPU.
+    Every stored value is compared, including flagged detector pixels. A
+    flagged pixel's value above 65535 (the uint32 detector marker, which uint16
+    cannot hold) must be stored as 0, and the number of such values must match
+    the copy's record; every other value must equal the source. Reads and
+    comparisons are bounded; the full acquisition stays encoded on GPU.
     """
     header, _ = read_header(qem)
+    recorded_markers = int(header.get("metadata", {}).get("flagged_markers_stored_as_zero") or 0)
     rows, columns, detector_rows, detector_columns = header["shape"]
     mask = read_pixel_mask(master)
     valid = np.ones((detector_rows, detector_columns), bool) if mask is None else mask == 0
@@ -549,7 +558,7 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                     parts.append(dataset[low - start: high - start])
             return np.concatenate(parts)
 
-        differing = compared = 0
+        differing = compared = markers = 0
         step = max(1, (64 << 20) // (pixels * 16))
         with load(qem, backend=backend, representation="encoded", verbose=False) as saved:
             # Public read() masks flagged pixels for analysis. Verification must
@@ -559,21 +568,30 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                 decode = saved.data._decode_scan_range_torch
             else:
                 decode = saved.data.decode_scan_range_device
+            flagged_t = None
             for first in range(0, rows * columns, step):
                 stop = min(rows * columns, first + step)
                 copy = _torch_value(decode(first, stop))
                 raw = frames(first, stop)
                 source = torch.from_numpy(raw).to(copy.device).reshape(copy.shape)
                 # int32 holds uint16 exactly and maps uint32 one-to-one, so a wide
-                # source count can never compare equal by wrapping.
-                differing += int((copy.to(torch.int32) != source.to(torch.int32)).sum())
+                # source count can never compare equal by wrapping; above 65535
+                # is then above 65535 or negative.
+                source = source.to(torch.int32)
+                if flagged_t is None:
+                    flagged_t = torch.from_numpy(~valid).to(copy.device)
+                stored_as_zero = flagged_t & ((source > 0xFFFF) | (source < 0))
+                markers += int(stored_as_zero.sum())
+                expected = source.masked_fill(stored_as_zero, 0)
+                differing += int((copy.to(torch.int32) != expected).sum())
                 compared += pixels * (stop - first)
     flagged = int((~valid).sum())
     return dict(
-        identical=differing == 0,
+        identical=differing == 0 and markers == recorded_markers,
         compared_values=compared,
         differing_values=differing,
         flagged_pixels=flagged,
+        flagged_markers_stored_as_zero=markers,
     )
 
 
@@ -638,7 +656,7 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                 write = False
             if write:
                 metadata = dict(acquisition.metadata)
-                metadata["source_files"] = _source_files([master, *files])
+                metadata["source_files"] = _source_files(paths)
                 metadata["source_metadata"] = master_metadata(master)
                 embedded = _embedded_master(master)
                 if embedded is None:

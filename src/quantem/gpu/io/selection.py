@@ -28,8 +28,8 @@ def _apply_scan_shape(
             raise ValueError(
                 f"scan_shape {shape} incompatible with frame count {data.shape[0]}"
             )
-        dr, dc = data.shape[-2:]
-        data = data.reshape(scan_r, scan_c, dr, dc)
+        det_rows, det_cols = data.shape[-2:]
+        data = data.reshape(scan_r, scan_c, det_rows, det_cols)
     elif data.ndim == 4:
         if tuple(int(v) for v in data.shape[:2]) != (int(scan_r), int(scan_c)):
             return data

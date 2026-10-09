@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import fields
 from datetime import UTC, datetime
 from importlib.metadata import version
@@ -46,8 +47,11 @@ def save_result(
         "signature": signature,
         "result": json_value(result_metadata),
     }
-    _save_npz(array_path, result)
-    _save_json(metadata_path, metadata)
+    arrays = {"object_wave": host_array(result.object_wave)}
+    if result.rotation_check_phases is not None:
+        arrays["rotation_check_phases"] = result.rotation_check_phases
+    _write_atomically(array_path, "wb", lambda file: np.savez(file, **arrays))
+    _write_atomically(metadata_path, "w", lambda file: file.write(json.dumps(metadata, indent=2) + "\n"), encoding="utf-8")
     result.reused = False
     result.saved_path = array_path
     result.metadata = metadata
@@ -172,11 +176,11 @@ def path_signature(path: str | Path) -> dict[str, object]:
         files.append(
             {
                 "path": str(item),
-                "size": int(stat.st_size),
-                "mtime_ns": int(stat.st_mtime_ns),
-                "ctime_ns": int(stat.st_ctime_ns),
-                "device": int(stat.st_dev),
-                "inode": int(stat.st_ino),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "ctime_ns": stat.st_ctime_ns,
+                "device": stat.st_dev,
+                "inode": stat.st_ino,
             }
         )
     return {"path": str(resolved), "files": files}
@@ -242,41 +246,20 @@ def _git_provenance() -> dict[str, object] | None:
     }
 
 
-def _save_npz(path: Path, result: SSBResult) -> None:
-    """Atomically save the object wave and any recorded rotation-check images."""
+def _write_atomically(path: Path, mode: str, write: Callable, **open_options: str) -> None:
+    """Write one saved-result file through a sibling temporary file renamed over ``path``.
 
+    A crash or a concurrent reader never sees a half-written array or metadata file: ``os.replace`` swaps the
+    complete file in one step, and the temporary file is removed when writing fails.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    arrays = {"object_wave": host_array(result.object_wave)}
-    if result.rotation_check_phases is not None:
-        arrays["rotation_check_phases"] = result.rotation_check_phases
     temporary = tempfile.NamedTemporaryFile(
-        mode="wb", prefix=f".{path.name}.", dir=path.parent, delete=False
+        mode=mode, prefix=f".{path.name}.", dir=path.parent, delete=False, **open_options
     )
     temporary_path = Path(temporary.name)
     try:
         with temporary:
-            np.savez(temporary, **arrays)
-        os.replace(temporary_path, path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-
-
-def _save_json(path: Path, metadata: dict[str, object]) -> None:
-    """Atomically save readable SSB provenance."""
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        prefix=f".{path.name}.",
-        dir=path.parent,
-        delete=False,
-    )
-    temporary_path = Path(temporary.name)
-    try:
-        with temporary:
-            json.dump(metadata, temporary, indent=2)
-            temporary.write("\n")
+            write(temporary)
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)

@@ -37,7 +37,6 @@ dependencies = [
     "jinja2",
     "numba>=0.60",
     "numpy>=2.0.0",
-    "optuna",
     "pandas",
     "pyyaml",
     "torch>=2.3",
@@ -48,8 +47,25 @@ dependencies = [
 dm = [
     "ncempy>=1.11",
 ]
+cpu = []
+# One extra per GPU runtime. A marker makes a wrong pick install no GPU package; the runtime notice names the right extra.
+# [ctk] brings the CUDA libraries CuPy compiles and links against, so no system toolkit is needed.
+# CuPy for CUDA 13 shares the CUDA 13 libraries of PyPI torch 2.11+ (driver >= 580); [ctk] starts at 14.0.
+# The torch floor keeps pip from backtracking to a CUDA 12 torch to fit the newest cuda-toolkit.
+# optuna and scipy drive the SSB aberration fits, which run on CUDA and Metal only.
+# optuna 5.0 lands the 100 nm defocus fit 3% short (test_fitted_c10_is_nm); 4.x stays within 2%.
+# CuPy publishes no Windows on ARM64 wheel, so [cuda] adds nothing there (that machine has no CUDA).
 cuda = [
-    "cupy-cuda12x[ctk]>=12.0",
+    "cupy-cuda13x[ctk]>=14.0; sys_platform != 'darwin' and platform_machine != 'ARM64'",
+    "torch>=2.11; sys_platform != 'darwin'",
+    "optuna<5",
+    "scipy",
+]
+mps = [
+    "mlx; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "pyobjc-framework-Metal; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "optuna<5",
+    "scipy",
 ]
 remote = [
     "fastapi>=0.115",
@@ -58,10 +74,6 @@ remote = [
 movie = [
     "imageio-ffmpeg",
     "pillow",
-]
-mps = [
-    "mlx",
-    "pyobjc-framework-Metal; platform_system == 'Darwin'",
 ]
 dev = [
     "fastapi>=0.115",

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import torch
 
 from quantem.gpu.device import select
 from quantem.gpu.device.cuda_runtime import cp
@@ -33,11 +34,6 @@ from quantem.gpu.resident import precision as conversion
 from quantem.gpu.resident.cuda import precision as cuda
 from quantem.gpu.resident.mps import precision as metal
 from quantem.gpu.resident.mps.arrays import MetalArray
-
-try:
-    import torch
-except ImportError:  # minimal IO installs convert NumPy and CuPy sources without Torch
-    torch = None
 
 
 def precision_name(dtype):
@@ -90,18 +86,15 @@ def load_precision(
 
     with context:
         source = _Source(path, scan_shape=scan_shape, dataset_path=dataset_path, backend=backend)
+        context.callback(source.close)
         storage = precision_name(dtype) or (source.saved or {}).get("storage")
         if storage is None:
             # One unconverted file among saved precision exports, without a dtype.
-            source.close()
             raise ValueError(
                 "Choose dtype='float16' or 'scaled_uint16' for precision loading."
             )
         if source.saved is None or source.saved.get("version") == 2:
-            try:
-                return _load_regional(source, scan_region, detector_region, verbose, pack, resident_type)
-            finally:
-                source.close()
+            return _load_regional(source, scan_region, detector_region, verbose, pack, resident_type)
         chunks = []
         try:
             reuse = storage == source.saved["storage"]
@@ -109,8 +102,8 @@ def load_precision(
             if not reuse:
                 report["prior_conversion"] = source.saved
             row0, row1, col0, col1 = scan_region or (0, source.shape[0], 0, source.shape[1])
-            dr0, dr1, dc0, dc1 = detector_region or (0, source.shape[2], 0, source.shape[3])
-            shape = (row1 - row0, col1 - col0, dr1 - dr0, dc1 - dc0)
+            detector_row0, detector_row1, detector_col0, detector_col1 = detector_region or (0, source.shape[2], 0, source.shape[3])
+            shape = (row1 - row0, col1 - col0, detector_row1 - detector_row0, detector_col1 - detector_col0)
             for block in source.blocks(scan_region, detector_region):
                 if reuse:
                     encoded = block
@@ -160,8 +153,6 @@ def load_precision(
             for chunk in chunks:
                 chunk.release()
             raise
-        finally:
-            source.close()
 
 
 def save_precision(
@@ -233,15 +224,15 @@ def save_precision(
                 def convert_regional_blocks():
                     reports = []
                     first = 0
-                    for block in source.blocks():
-                        frames = math.prod(block.shape[:-2])
-                        block = _as_frames(block, shape[2:])
+                    for source_block in source.blocks():
+                        frames = math.prod(source_block.shape[:-2])
+                        block = _as_frames(source_block, shape[2:])
                         encoded, region = _convert_region(source, block)
                         region.update(first_frame=first, stop_frame=first + frames)
                         reports.append(region)
                         first += frames
                         yield encoded
-                        del encoded, block
+                        del encoded, block, source_block
                     if first != math.prod(shape[:2]):
                         raise ValueError("The source did not produce its complete scan; repeat the export.")
                     report.update(_regional_report(shape, reports))
@@ -357,8 +348,8 @@ def save_precision(
 
 def print_report(report, shape, resident_bytes, *, saved=False):
     """Print measured precision and residency without leaking source paths."""
+    origin = "Saved conversion report (not remeasured)" if saved else "GPU measured across all loaded values"
     if report.get("version") == 2:
-        origin = "Saved conversion report (not remeasured)" if saved else "GPU measured across all loaded values"
         print(f"{report['source_dtype']} → scaled_uint16 | {resident_bytes / 2**30:.3f} GiB ANS | "
               f"RMSE {report['rmse']:.7g}, max {report['max_abs_error']:.7g}, "
               f"overflow {report['overflow']} | {origin}")
@@ -370,7 +361,7 @@ def print_report(report, shape, resident_bytes, *, saved=False):
     )
     print(f"  scale {report['scale']:.7g}, offset {report['offset']:.7g}")
     print(
-        f"  {'Saved conversion report (not remeasured)' if saved else 'GPU measured across all loaded values'} | RMSE {report['rmse']:.7g}, "
+        f"  {origin} | RMSE {report['rmse']:.7g}, "
         f"max {report['max_abs_error']:.7g}, positive→zero {report['positive_to_zero']:,}, "
         f"overflow {report['overflow']}, values {report['values']:,}"
     )
@@ -446,7 +437,6 @@ class _Source:
                 self.stack.callback(self.reader.close)
                 for entry in self.reader.source_infos:
                     self._seal(entry["path"])
-            self.path = str(source)
             self._seal(source)
         if len(self.shape) != 4 or min(self.shape) < 1:
             self.stack.close()
@@ -465,7 +455,7 @@ class _Source:
             )
 
     def restore_saved_regions(self):
-        """Yield float32 intensities, each region restored with its own saved calibration.
+        """Make :meth:`blocks` yield float32 intensities, each region restored with its own saved calibration.
 
         Converting a saved regional export again must start from intensities,
         not codes whose scale changes from region to region.
@@ -479,7 +469,7 @@ class _Source:
 
     def check(self):
         """Refuse to continue if any sealed source file changed."""
-        if any(file_signature(p) != s for p, s in self.signatures.items()):
+        if any(file_signature(path) != signature for path, signature in self.signatures.items()):
             raise RuntimeError(
                 "Source changed during conversion; retry with immutable input files."
             )
@@ -508,8 +498,8 @@ class _Source:
             raise ValueError(
                 f"scan_region must lie within {self.shape[:2]}; got {region}."
             )
-        dr0, dr1, dc0, dc1 = detector_region or (0, det_rows, 0, det_cols)
-        if not (0 <= dr0 < dr1 <= det_rows and 0 <= dc0 < dc1 <= det_cols):
+        detector_row0, detector_row1, detector_col0, detector_col1 = detector_region or (0, det_rows, 0, det_cols)
+        if not (0 <= detector_row0 < detector_row1 <= det_rows and 0 <= detector_col0 < detector_col1 <= det_cols):
             raise ValueError(
                 f"detector_region must lie within {self.shape[2:]}; got {detector_region}."
             )
@@ -564,9 +554,9 @@ class _Source:
                     cursor += length
                 values = metal.upload(host) if self.backend == "mps" else cp.asarray(host)
             if self.backend == "mps":
-                yield metal.crop(values, (dr0, dr1, dc0, dc1))
+                yield metal.crop(values, (detector_row0, detector_row1, detector_col0, detector_col1))
             else:
-                yield cp.ascontiguousarray(values[:, dr0:dr1, dc0:dc1])
+                yield cp.ascontiguousarray(values[:, detector_row0:detector_row1, detector_col0:detector_col1])
             del values
         self.check()
 
@@ -677,8 +667,8 @@ def _calibrated_blocks(source, scan_region, detector_region):
             del block
         return
     rows, cols = source.shape[:2]
-    r0, r1, c0, c1 = scan_region or (0, rows, 0, cols)
-    selected = [row * cols + col for row in range(r0, r1) for col in range(c0, c1)]
+    row0, row1, col0, col1 = scan_region or (0, rows, 0, cols)
+    selected = [row * cols + col for row in range(row0, row1) for col in range(col0, col1)]
     regions = source.saved["regions"]
     ends = [item["stop_frame"] for item in regions]
     cursor = 0
@@ -719,16 +709,16 @@ def _slice_frames(block, first, stop):
 
 def _load_regional(source, scan_region, detector_region, verbose, pack, resident_type):
     """Convert each generated or loaded region once and retain calibrated codes."""
-    r0, r1, c0, c1 = scan_region or (0, source.shape[0], 0, source.shape[1])
-    d0, d1, e0, e1 = detector_region or (0, source.shape[2], 0, source.shape[3])
-    shape = (r1 - r0, c1 - c0, d1 - d0, e1 - e0)
+    row0, row1, col0, col1 = scan_region or (0, source.shape[0], 0, source.shape[1])
+    detector_row0, detector_row1, detector_col0, detector_col1 = detector_region or (0, source.shape[2], 0, source.shape[3])
+    shape = (row1 - row0, col1 - col0, detector_row1 - detector_row0, detector_col1 - detector_col0)
     chunks, reports = [], []
     first = 0
     previous_saved = None
     try:
-        for block, saved in _calibrated_blocks(source, scan_region, detector_region):
-            frames = math.prod(block.shape[:-2])
-            block = _as_frames(block, shape[2:])
+        for region_block, saved in _calibrated_blocks(source, scan_region, detector_region):
+            frames = math.prod(region_block.shape[:-2])
+            block = _as_frames(region_block, shape[2:])
             if saved:
                 encoded = block
                 report = dict(saved)
@@ -743,7 +733,7 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
             chunks.append(pack(encoded, (1, frames, *shape[2:])))
             first += frames
             # Packing is complete; do not overlap this region with the next producer call.
-            del encoded, block
+            del encoded, block, region_block
         if first != math.prod(shape[:2]):
             raise ValueError(
                 "The source did not produce the complete declared scan; repeat the merge."
@@ -794,7 +784,7 @@ def _convert_region(source, block):
     else:
         # One host copy for both limits; a region's calibration needs them
         # before its codes can be produced, so this sync cannot be deferred.
-        low, high = (float(v) for v in cp.stack([original.min(), original.max()]).get())
+        low, high = (float(value) for value in cp.stack([original.min(), original.max()]).get())
         if not math.isfinite(low) or not math.isfinite(high):
             raise ValueError(
                 "Precision conversion requires finite intensities; preserve float32."
@@ -863,5 +853,5 @@ def _cuda_device(source) -> int:
 
 
 def _is_tensor(value) -> bool:
-    """Recognize a Torch tensor while Torch stays optional for NumPy and CuPy sources."""
-    return torch is not None and isinstance(value, torch.Tensor)
+    """Recognize a Torch tensor."""
+    return isinstance(value, torch.Tensor)

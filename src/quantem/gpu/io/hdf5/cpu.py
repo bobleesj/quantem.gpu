@@ -51,6 +51,7 @@ def load_reference(
         if mask is not None:
             meta["pixel_mask"] = mask
         if auto_narrow and data.dtype == np.uint32 and int(data.max()) < 65536:
+            # Every count fits, so uint16 halves the array without changing a value.
             data = data.astype(np.uint16)
         data = _apply_scan_shape(data, scan_shape, meta, scan_order)
         # Report the same detector geometry and dtype keys as an encoded load,
@@ -129,7 +130,8 @@ def load_master(
     Frames keep the stored dtype; :func:`load_reference` owns the scan-shape
     unflatten, narrowing and metadata. ``pixel_mask`` (the raw detector mask,
     nonzero = dead) zeroes dead pixels, whose stored value is an Arina sentinel
-    such as 65535 rather than a count.
+    such as 65535 rather than a count. A mask of another shape raises
+    ``ValueError`` rather than being skipped.
     """
     with h5py.File(filepath, "r") as master:
         sources = detector_sources(master)
@@ -146,11 +148,15 @@ def load_master(
     (_, det_row, det_col), dtype = datasets[0]
     output = np.empty((sum(shape[0] for shape, _ in datasets), det_row, det_col), dtype=dtype)
 
-    bad = None
+    dead_pixels = None
     if pixel_mask is not None:
-        bad = np.asarray(pixel_mask) != 0
-        if bad.shape != (det_row, det_col):
-            bad = None  # mask shape mismatch → skip rather than corrupt
+        dead_pixels = np.asarray(pixel_mask) != 0
+        if dead_pixels.shape != (det_row, det_col):
+            # Skipping the mask would keep dead-pixel sentinels as counts without saying so.
+            raise ValueError(
+                f"{filepath}: the pixel mask is {dead_pixels.shape[0]} x {dead_pixels.shape[1]}, but the frames are "
+                f"{det_row} x {det_col}; load with apply_mask=False to read the stored values without it."
+            )
 
     offset = 0
     source_iter = sources
@@ -159,9 +165,9 @@ def load_master(
     for source in source_iter:
         with h5py.File(source.path, "r") as handle:
             raw = handle[source.dataset_path][:]  # hdf5plugin decompresses here
-        if bad is not None:
-            raw[:, bad] = 0
-        n = raw.shape[0]
-        output[offset : offset + n] = raw
-        offset += n
+        if dead_pixels is not None:
+            raw[:, dead_pixels] = 0
+        frame_count = raw.shape[0]
+        output[offset : offset + frame_count] = raw
+        offset += frame_count
     return output

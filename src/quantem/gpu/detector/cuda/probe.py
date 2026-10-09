@@ -44,6 +44,7 @@ def detect_bf_radius(
         raise ValueError(
             f"Diffraction pattern has zero-size dimension: shape {mean_dp.shape}"
         )
+    # Threshold, centroid and radial profile run in float32 whatever the pattern's dtype.
     dp = mean_dp.astype(cp.float32)
     dp_max = float(cp.nanmax(dp))
     if not np.isfinite(dp_max) or dp_max <= 0:
@@ -77,20 +78,20 @@ def detect_bf_radius(
     col_offsets = cp.arange(n_k_col, dtype=cp.float32) - col_center
     row_grid, col_grid = cp.meshgrid(row_offsets, col_offsets, indexing='ij')
     distance = cp.sqrt(row_grid**2 + col_grid**2)
-    max_r = min(row_center, col_center, n_k_row - row_center, n_k_col - col_center)
-    if max_r < 2:
+    max_radius = min(row_center, col_center, n_k_row - row_center, n_k_col - col_center)
+    if max_radius < 2:
         return (row_center, col_center), max(1, min(n_k_row, n_k_col) // 4)
     radius_bin = cp.rint(distance).astype(cp.int32).ravel()
     dp_flat = dp.ravel()
-    profile = cp.zeros(max_r, dtype=cp.float32)
-    counts = cp.zeros(max_r, dtype=cp.float32)
-    valid = radius_bin < max_r
+    profile = cp.zeros(max_radius, dtype=cp.float32)
+    counts = cp.zeros(max_radius, dtype=cp.float32)
+    valid = radius_bin < max_radius
     cp.add.at(profile, radius_bin[valid], dp_flat[valid])
     cp.add.at(counts, radius_bin[valid], cp.ones_like(dp_flat[valid]))
     nonzero = counts > 0
     profile[nonzero] /= counts[nonzero]
     # Smoothing keeps detector noise from triggering the half-maximum crossing early.
-    if int(profile.size) > 5:
+    if profile.size > 5:
         sigma = 2.0
         kernel_size = 13  # 6 sigma + 1, odd so the kernel has a center tap
         taps = cp.arange(kernel_size, dtype=cp.float32) - kernel_size // 2
@@ -101,10 +102,7 @@ def detect_bf_radius(
         center_intensity = float(profile_smooth[:5].mean())
         half_max = center_intensity * 0.5
         below_half = cp.where(profile_smooth < half_max)[0]
-        if below_half.size > 0:
-            radius = int(below_half[0])
-        else:
-            radius = int(profile.size) // 2
+        radius = int(below_half[0]) if below_half.size > 0 else profile.size // 2
     else:
         radius = min(n_k_row, n_k_col) // 4
     radius = max(1, radius)

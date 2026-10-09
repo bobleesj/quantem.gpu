@@ -17,8 +17,8 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
     """Compress a contiguous 16-bit or 32-bit frame batch on GPU."""
     max_out = BLOCK_SIZE * 2
     cuda_max_z = 65535
-    n = int(data_gpu.shape[0])
-    n_blocks = n * n_8kb
+    frame_count = int(data_gpu.shape[0])
+    n_blocks = frame_count * n_8kb
     itemsize = int(data_gpu.dtype.itemsize)
     n_full_8kb = frame_bytes // BLOCK_SIZE
     tail_bytes = frame_bytes % BLOCK_SIZE
@@ -31,10 +31,10 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
                 f"elements; got frame_bytes={frame_bytes}, dtype={data_gpu.dtype}."
             )
 
-    shuffled = cp.empty(n * frame_bytes, dtype=cp.uint8)
+    shuffled = cp.empty(frame_count * frame_bytes, dtype=cp.uint8)
     if itemsize == 1:
-        data_u8 = data_gpu.reshape(n, -1).view(cp.uint8)
-        total_bytes = np.uint64(n * frame_bytes)
+        data_u8 = data_gpu.reshape(frame_count, -1).view(cp.uint8)
+        total_bytes = np.uint64(frame_count * frame_bytes)
         kernel("bitshuffle_fwd_8")(
             ((int(total_bytes) + 255) // 256,), (256,),
             (
@@ -45,9 +45,9 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
             ),
         )
     elif itemsize == 2:
-        data_u16 = data_gpu.reshape(n, -1).view(cp.uint16)
-        for start in range(0, n, cuda_max_z):
-            end = min(start + cuda_max_z, n)
+        data_u16 = data_gpu.reshape(frame_count, -1).view(cp.uint16)
+        for start in range(0, frame_count, cuda_max_z):
+            end = min(start + cuda_max_z, frame_count)
             batch_n = end - start
             out = shuffled[start * frame_bytes:end * frame_bytes]
             if n_full_8kb:
@@ -72,9 +72,9 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
                 )
     elif itemsize == 4:
         frame_u32s = frame_bytes // 4
-        data_u32 = data_gpu.reshape(n, -1).view(cp.uint32)
-        for start in range(0, n, cuda_max_z):
-            end = min(start + cuda_max_z, n)
+        data_u32 = data_gpu.reshape(frame_count, -1).view(cp.uint32)
+        for start in range(0, frame_count, cuda_max_z):
+            end = min(start + cuda_max_z, frame_count)
             batch_n = end - start
             out = shuffled[start * frame_bytes:end * frame_bytes]
             if n_full_8kb:
@@ -100,15 +100,15 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
     else:
         raise TypeError(f"Unsupported save dtype itemsize: {itemsize}")
 
-    comp_buf = cp.empty(n_blocks * max_out, dtype=cp.uint8)
-    sizes_gpu = cp.empty(n_blocks, dtype=cp.uint32)
+    compressed = cp.empty(n_blocks * max_out, dtype=cp.uint8)
+    block_sizes = cp.empty(n_blocks, dtype=cp.uint32)
     if tail_bytes:
         kernel("lz4_compress_var_kernel")(
             (n_blocks,), (32,),
             (
                 shuffled,
-                comp_buf,
-                sizes_gpu,
+                compressed,
+                block_sizes,
                 np.uint32(frame_bytes),
                 np.uint32(BLOCK_SIZE),
                 np.uint32(max_out),
@@ -119,35 +119,31 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
     else:
         kernel("lz4_compress_kernel")(
             (n_blocks,), (32,),
-            (shuffled, comp_buf, sizes_gpu, np.uint32(BLOCK_SIZE), np.uint32(n_blocks)),
+            (shuffled, compressed, block_sizes, np.uint32(BLOCK_SIZE), np.uint32(n_blocks)),
         )
     del shuffled
 
-    packed, chunk_starts, chunk_sizes = _pack_chunks_gpu(
-        comp_buf, sizes_gpu, n, n_8kb, frame_bytes, max_out
-    )
-    del comp_buf, sizes_gpu
-    return packed, chunk_starts, chunk_sizes
+    return _pack_chunks(compressed, block_sizes, frame_count, n_8kb, frame_bytes, max_out)
 
 
-def _pack_chunks_gpu(comp_buf, sizes_gpu, n_frames, n_8kb, frame_bytes, max_out):
+def _pack_chunks(compressed, block_sizes, n_frames, n_8kb, frame_bytes, max_out):
     """Pack bitshuffle+LZ4 blocks into HDF5 chunk bytes on GPU."""
-    sizes_2d = sizes_gpu.reshape(n_frames, n_8kb)
+    sizes_2d = block_sizes.reshape(n_frames, n_8kb)
     frame_comp_sizes = sizes_2d.sum(axis=1, dtype=cp.uint64)
     header_overhead = np.uint64(12 + n_8kb * 4)
-    chunk_sizes_gpu = frame_comp_sizes + header_overhead
-    chunk_starts_gpu = cp.empty(n_frames + 1, dtype=cp.uint64)
-    chunk_starts_gpu[0] = 0
-    chunk_starts_gpu[1:] = cp.cumsum(chunk_sizes_gpu)
-    packed_bytes = int(chunk_starts_gpu[-1].get())
-    packed_gpu = cp.empty(packed_bytes, dtype=cp.uint8)
+    chunk_sizes_device = frame_comp_sizes + header_overhead
+    chunk_starts_device = cp.empty(n_frames + 1, dtype=cp.uint64)
+    chunk_starts_device[0] = 0
+    chunk_starts_device[1:] = cp.cumsum(chunk_sizes_device)
+    packed_bytes = int(chunk_starts_device[-1].get())
+    packed_device = cp.empty(packed_bytes, dtype=cp.uint8)
     kernel("pack_h5_chunks_kernel")(
         (n_frames,), (256,),
         (
-            comp_buf,
-            sizes_gpu,
-            chunk_starts_gpu,
-            packed_gpu,
+            compressed,
+            block_sizes,
+            chunk_starts_device,
+            packed_device,
             np.uint32(n_frames),
             np.uint32(n_8kb),
             np.uint32(max_out),
@@ -156,8 +152,8 @@ def _pack_chunks_gpu(comp_buf, sizes_gpu, n_frames, n_8kb, frame_bytes, max_out)
         ),
     )
     cp.cuda.Stream.null.synchronize()
-    packed = packed_gpu.get()
-    chunk_starts = chunk_starts_gpu[:-1].get().astype(np.int64, copy=False)
-    chunk_sizes = chunk_sizes_gpu.get().astype(np.int64, copy=False)
-    del packed_gpu, chunk_starts_gpu, chunk_sizes_gpu, frame_comp_sizes
+    packed = packed_device.get()
+    # int64, the same chunk table the Metal compressor hands the writer.
+    chunk_starts = chunk_starts_device[:-1].get().astype(np.int64, copy=False)
+    chunk_sizes = chunk_sizes_device.get().astype(np.int64, copy=False)
     return packed, chunk_starts, chunk_sizes

@@ -43,7 +43,7 @@ def _round_up(value: int, alignment: int) -> int:
 
 _SOURCE = (Path(__file__).with_name("kernels") / "paired.cu").read_text()
 _NAMES = (
-    "pack_offsets", "unpack_offsets", "tables", "encode", "compact", "decode", "decode_range",
+    "pack_offsets", "unpack_offsets", "tables", "encode", "compact", "decode_range",
     "frame_u8", "frame_u16", "plan_u32", "plan_u64", "residual_u32", "residual_u64",
     "fields", "field_sizes", "pack_fields", "unpack_fields", "index_u32", "index_u64", "weights",
 )
@@ -156,8 +156,6 @@ class PairedCounts(StreamedCounts):
     512
     """
 
-    query_abi = QUERY_ABI
-
     def __init__(self, shape: tuple[int, int, int, int], dtype, valid=None):
         super().__init__(shape, dtype, valid)
         if math.prod(self.shape[:2]) % self.interval:
@@ -259,12 +257,12 @@ class PairedCounts(StreamedCounts):
             fields = field_count(self.shape[2:])
             values = cp.empty((scans, fields), cp.uint32)
             self.kernels["fields"](((scans * fields + 3) // 4,), (128,), (raw, np.int32(raw.dtype.itemsize), self.valid, values, u32(scans), u32(self.shape[2]), u32(self.shape[3]), u32(fields), self.polar_permutation))
-            nstreams = scans // self.interval * fields
-            widths, lengths = cp.empty(nstreams, cp.uint8), cp.empty(nstreams, cp.uint64)
+            index_streams = scans // self.interval * fields
+            widths, lengths = cp.empty(index_streams, cp.uint8), cp.empty(index_streams, cp.uint64)
             index_args = (u32(scans), u32(fields), u32(self.interval))
-            index_grid = ((nstreams + 127) // 128,)
+            index_grid = ((index_streams + 127) // 128,)
             self.kernels["field_sizes"](index_grid, (128,), (values, widths, lengths, *index_args))
-            starts = cp.empty(nstreams + 1, cp.uint64)
+            starts = cp.empty(index_streams + 1, cp.uint64)
             starts[0] = 0
             cp.cumsum(lengths, dtype=cp.uint64, out=starts[1:])
             words = cp.empty(int(starts[-1].get()), cp.uint32)
@@ -304,7 +302,7 @@ class PairedCounts(StreamedCounts):
             raise ValueError("The resident source has been released.")
         if first % self.interval or scans < 1:
             raise ValueError(f"Decode ranges start on a {self.interval}-scan block; got first={first}, scans={scans}.")
-        chunk = next((c for c in self.chunks if c.first <= first < c.first + c.scans), None)
+        chunk = next((candidate for candidate in self.chunks if candidate.first <= first < candidate.first + candidate.scans), None)
         if chunk is None or first + scans > chunk.first + chunk.scans:
             raise ValueError(f"Scans {first}..{first + scans} are not inside one resident chunk.")
         pixels = math.prod(self.shape[2:])
@@ -501,7 +499,7 @@ class PairedFeed:
         import cupy as cp
 
         self.sources = list(sources)
-        if not self.sources or any(tuple(s.shape[2:]) != tuple(self.sources[0].shape[2:]) for s in self.sources):
+        if not self.sources or any(tuple(source.shape[2:]) != tuple(self.sources[0].shape[2:]) for source in self.sources):
             raise ValueError("Feed sources must share one detector geometry.")
         interval = self.sources[0].interval
         if block_scans < interval or block_scans % interval or depth < 1:

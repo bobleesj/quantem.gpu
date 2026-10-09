@@ -67,7 +67,7 @@ class MpsSSBBackend:
     ) -> None:
         self._frames = as_chunked_frames(data)
         self._scan_shape = frames_scan_shape(self._frames)
-        self._detector_shape = tuple(int(x) for x in self._frames.shape[-2:])
+        self._detector_shape = tuple(int(size) for size in self._frames.shape[-2:])
         self._voltage_kV = float(voltage_kV)
         self._semiangle_mrad = float(semiangle_mrad)
         self._scan_sampling = as_sampling(scan_sampling)
@@ -129,7 +129,6 @@ class MpsSSBBackend:
             calibration = (detector_pixel_mrad, detector_pixel_mrad)
         self._det_sampling = calibration
         self._rotation_angle_deg = float(rotation_angle_deg)
-        self._aberrations = dict(aberrations or {})
         self._prepared = None
         self._fit_preview_phase = None
         self._fit_preview_loss = None
@@ -180,7 +179,6 @@ class MpsSSBBackend:
         # cache. The retained prepared FFT remains active; release only unused
         # cache before subsequent slider reconstructions.
         require_mlx().clear_cache()
-        self._aberrations = dict(result.aberrations)
         return result
 
     def reconstruct_result(
@@ -212,7 +210,6 @@ class MpsSSBBackend:
                 compute_loss=True,
                 compute_object=False,
             )
-        self._aberrations = dict(aberrations)
         result = SSBResult(
             object_wave=np.asarray(object_wave).astype(np.complex64, copy=False),
             backend="mps",
@@ -698,6 +695,11 @@ class _MpsBfSubset:
         return int(self._current().num_bf)
 
     def _current(self) -> PreparedMpsSSB:
+        """The subset for the backend's current prepared evidence.
+
+        A new preparation or a rotation retarget replaces the prepared arrays, so
+        comparing them by identity tells whether the cached subset still applies.
+        """
         backend = self._backend
         if backend._prepared is None:
             backend.cache_rotation(math.radians(backend._rotation_angle_deg))
@@ -706,7 +708,7 @@ class _MpsBfSubset:
         if self._num_bf >= int(prepared.num_bf):
             # all BF pixels: use the session itself instead of a full copy of G
             return prepared
-        if self._source is None or any(a is not b for a, b in zip(source, self._source)):
+        if self._source is None or any(current is not cached for current, cached in zip(source, self._source)):
             self._subset = _subset_prepared(prepared, self._num_bf)
             self._source = source
         return self._subset

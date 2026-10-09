@@ -136,26 +136,26 @@ def master_frame_sources(filepath: str) -> list[dict]:
 
     source_infos: list[dict] = []
     for source in sources:
-        with h5py.File(source.path, "r") as df:
-            ds = df[source.dataset_path]
-            if ds.ndim != 3:
+        with h5py.File(source.path, "r") as detector_file:
+            dataset = detector_file[source.dataset_path]
+            if dataset.ndim != 3:
                 raise ValueError(
                     "load(..., scan_region=...) currently supports flattened "
-                    f"3D detector chunks; got {ds.shape} in {source.path}"
+                    f"3D detector chunks; got {dataset.shape} in {source.path}"
                 )
-            if ds.chunks is None or int(ds.chunks[0]) != 1:
+            if dataset.chunks is None or int(dataset.chunks[0]) != 1:
                 raise ValueError(
                     "load(..., scan_region=...) requires one detector frame per "
-                    f"HDF5 chunk; got chunks={ds.chunks} in {source.path}"
+                    f"HDF5 chunk; got chunks={dataset.chunks} in {source.path}"
                 )
-            chunk_infos = chunk_locations(ds)
+            chunk_infos = chunk_locations(dataset)
             source_infos.append(
                 {
                     "path": source.path,
                     "dataset_path": source.dataset_path,
-                    "n_frames": int(ds.shape[0]),
-                    "frame_shape": tuple(int(v) for v in ds.shape[1:]),
-                    "dtype": ds.dtype,
+                    "n_frames": int(dataset.shape[0]),
+                    "frame_shape": tuple(int(size) for size in dataset.shape[1:]),
+                    "dtype": dataset.dtype,
                     "chunk_infos": np.asarray(chunk_infos, dtype=np.uint64),
                 }
             )
@@ -174,8 +174,8 @@ def _file_stat_signature(path: str) -> dict[str, str | int]:
     stat = os.stat(path)
     return {
         "path": os.path.abspath(path),
-        "size": int(stat.st_size),
-        "mtime_ns": int(stat.st_mtime_ns),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
     }
 
 
@@ -222,7 +222,7 @@ def _load_frame_source_disk_cache(
             for index, info in enumerate(metadata.get("source_infos", [])):
                 item = dict(info)
                 item["dtype"] = np.dtype(item["dtype"])
-                item["frame_shape"] = tuple(int(v) for v in item["frame_shape"])
+                item["frame_shape"] = tuple(int(size) for size in item["frame_shape"])
                 chunk_infos = np.asarray(cached[f"chunks_{index}"], dtype=np.uint64)
                 if chunk_infos.ndim != 2 or chunk_infos.shape[1:] != (2,):
                     return None
@@ -249,7 +249,7 @@ def _write_frame_source_disk_cache(
     for index, info in enumerate(source_infos):
         item = dict(info)
         item["dtype"] = np.dtype(item["dtype"]).str
-        item["frame_shape"] = [int(v) for v in item["frame_shape"]]
+        item["frame_shape"] = [int(size) for size in item["frame_shape"]]
         arrays[f"chunks_{index}"] = np.asarray(
             item.pop("chunk_infos"), dtype=np.uint64
         )
@@ -318,7 +318,11 @@ def _native_iterator():
 
 
 def _collect_chunk(offset, filter_mask, address, size, context):
-    """Append to a capacity-checked array owned by the synchronous caller."""
+    """Append to a capacity-checked array owned by the synchronous caller.
+
+    The five parameters are fixed by HDF5's ``H5D_chunk_iter_op_t`` callback;
+    only the chunk's file address and stored size are recorded.
+    """
     header = carray(context, (2,), dtype=np.uint64)
     capacity, count = header[0], header[1]
     if count >= capacity:
@@ -390,7 +394,7 @@ def _parse_frame_header(
     """
     offset = chunk_offsets[i]
     chunk = pinned_buffer[offset : offset + chunk_sizes[i]]
-    uncomp_size = (
+    uncompressed_size = (
         int(chunk[0]) << 56
         | int(chunk[1]) << 48
         | int(chunk[2]) << 40
@@ -406,19 +410,19 @@ def _parse_frame_header(
         | int(chunk[10]) << 8
         | int(chunk[11])
     )
-    n_blocks = (uncomp_size + block_size - 1) // block_size
+    n_blocks = (uncompressed_size + block_size - 1) // block_size
     block_counts_out[i] = n_blocks
-    pos = 12
-    base_idx = i * n_blocks_per_frame
-    for b in range(n_blocks):
-        block_starts_out[base_idx + b] = pos
-        comp_size = (
-            int(chunk[pos]) << 24
-            | int(chunk[pos + 1]) << 16
-            | int(chunk[pos + 2]) << 8
-            | int(chunk[pos + 3])
+    position = 12
+    first_block = i * n_blocks_per_frame
+    for block in range(n_blocks):
+        block_starts_out[first_block + block] = position
+        compressed_size = (
+            int(chunk[position]) << 24
+            | int(chunk[position + 1]) << 16
+            | int(chunk[position + 2]) << 8
+            | int(chunk[position + 3])
         )
-        pos += 4 + comp_size
+        position += 4 + compressed_size
 
 
 @njit(cache=True, parallel=True)

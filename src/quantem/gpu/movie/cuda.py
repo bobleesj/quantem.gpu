@@ -78,7 +78,6 @@ def _imports() -> tuple[object, object, object]:
 
 def is_available() -> bool:
     """Return whether the CUDA/NVENC backend can be used in this process."""
-
     try:
         _imports()
     except RuntimeError:
@@ -87,6 +86,15 @@ def is_available() -> bool:
 
 
 def _kernels(cp: object) -> tuple[object, object]:
+    """Compile the two kernels that draw one NV12 grid frame on the GPU.
+
+    ``scale_grid_nv12`` writes the luma plane: each pixel of a panel samples
+    its movie by nearest neighbor and maps ``(value - vmin) * scale`` to
+    0..255, label rows and gaps stay black, and the chroma plane is the
+    neutral 128. ``stamp_label`` then draws one label's black outline and white
+    text masks into the luma plane. The frame never leaves the GPU before
+    NVENC encodes it.
+    """
     scale_grid = cp.RawKernel(
         r'''
         extern "C" __global__
@@ -196,7 +204,13 @@ def _ffmpeg_mux_command(
     *,
     faststart: bool,
 ) -> list[str]:
-    cmd = [
+    """Return the ffmpeg command that wraps NVENC's raw H.264 stream in an MP4 container.
+
+    NVENC emits an elementary stream without timestamps, so ffmpeg generates
+    them at ``fps`` and copies the video without re-encoding;
+    ``faststart`` moves the index to the front so players can start early.
+    """
+    command = [
         imageio_ffmpeg.get_ffmpeg_exe(),
         "-y",
         "-hide_banner",
@@ -215,9 +229,9 @@ def _ffmpeg_mux_command(
         "-an",
     ]
     if faststart:
-        cmd.extend(["-movflags", "+faststart"])
-    cmd.append(str(mp4_path))
-    return cmd
+        command.extend(["-movflags", "+faststart"])
+    command.append(str(mp4_path))
+    return command
 
 
 def _packet_bytes(packets: list[dict[str, object]]) -> bytes:
@@ -249,140 +263,142 @@ def save_mp4(
         If the CUDA movie dependencies are missing, NVENC cannot encode
         frames of this size, or ffmpeg cannot write the MP4.
     """
-
     cp, imageio_ffmpeg, nvc = _imports()
-    cp.cuda.Device(int(gpu_id)).use()
-
     if not stacks:
         raise ValueError("movie.cuda.save_mp4 requires at least one stack")
-    frames, height, width = stacks[0].shape
-    n_panels = len(stacks)
-    layout = grid_layout(
-        n_panels,
-        height,
-        width,
-        cols=cols,
-        gap=gap,
-        label_height=label_height,
-        max_width=max_width,
-    )
-    out_width, out_height = layout.width, layout.height
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    stacks_gpu = [cp.asarray(np.asarray(stack, dtype=np.float32)) for stack in stacks]
-    vmin = cp.asarray([lo for lo, _hi in limits], dtype=cp.float32)
-    scale = cp.asarray([255.0 / max(hi - lo, 1e-6) for lo, hi in limits], dtype=cp.float32)
-    label_masks = [
-        [
-            LabelMask(
-                label.x,
-                label.y,
-                *(cp.asarray(mask) for mask in label_mask(label.text, label_font(label.font_size))),
-            )
-            for label in frame_labels
-        ]
-        for frame_labels in panel_labels(layout, labels, n_panels, frames)
-    ]
-
-    scale_grid, stamp_label = _kernels(cp)
-    nv12_buffers = [
-        cp.empty((out_height + out_height // 2, out_width), dtype=cp.uint8)
-        for _ in range(4)
-    ]
-    nv12_frames = [Nv12Frame(buf) for buf in nv12_buffers]
-    config = {
-        "codec": "h264",
-        "gpu_id": int(gpu_id),
-        "preset": str(preset).upper(),
-        "tuning_info": str(tuning_info),
-        "rc": "constqp",
-        "qp": str(int(qp)),
-        # The elementary-stream mux path does not carry reordering metadata.
-        # Scientific frame sequences therefore require decode order to match
-        # acquisition order exactly.
-        "bf": "0",
-        "fps": max(0.1, float(fps)),
-    }
-    # The encoder copies each NV12 frame on this stream, after the kernels
-    # that render it and before the kernels that render the frame reusing its
-    # buffer; on its own stream the copy could run first and encode the stale
-    # frame from four frames earlier under GPU load. A blocking stream also
-    # waits for the uploads above, made on the default stream.
-    stream = cp.cuda.Stream()
-    try:
-        encoder = nvc.CreateEncoder(
-            out_width, out_height, "NV12", False,
-            cudacontext=int(cp.cuda.driver.ctxGetCurrent()), cudastream=stream.ptr, **config,
+    # A device context, not Device.use(): the caller's current device is restored on return.
+    with cp.cuda.Device(int(gpu_id)):
+        frames, height, width = stacks[0].shape
+        n_panels = len(stacks)
+        layout = grid_layout(
+            n_panels,
+            height,
+            width,
+            cols=cols,
+            gap=gap,
+            label_height=label_height,
+            max_width=max_width,
         )
-    except nvc.PyNvVCException as exc:
-        # NVENC refuses some frame sizes and runs out of sessions only here;
-        # a RuntimeError lets backend="auto" fall back to the CPU writer.
-        raise RuntimeError(
-            f"NVENC could not start an H.264 encoder for {out_width} x {out_height} frames: {exc}"
-        ) from exc
-    block = 256
-    total = out_width * out_height * 3 // 2
-    grid = ((total + block - 1) // block,)
+        out_width, out_height = layout.width, layout.height
 
-    with stream, tempfile.NamedTemporaryFile(suffix=".h264", delete=False) as tmp:
-        elementary_path = Path(tmp.name)
-        for frame_idx in range(frames):
-            ring_idx = frame_idx % len(nv12_buffers)
-            frame_ptrs = cp.asarray(
-                [stack[frame_idx].data.ptr for stack in stacks_gpu],
-                dtype=cp.uintp,
-            )
-            scale_grid(
-                grid,
-                (block,),
-                (
-                    frame_ptrs,
-                    vmin,
-                    scale,
-                    nv12_buffers[ring_idx],
-                    np.int32(n_panels),
-                    np.int32(width),
-                    np.int32(height),
-                    np.int32(width * height),
-                    np.int32(out_width),
-                    np.int32(out_height),
-                    np.int32(layout.frame_width),
-                    np.int32(layout.frame_height),
-                    np.int32(layout.label_height),
-                    np.int32(layout.gap),
-                    np.int32(layout.columns),
-                ),
-            )
-            for mask in label_masks[frame_idx]:
-                mask_h, mask_w = mask.white.shape
-                mask_total = int(mask_h * mask_w)
-                mask_grid = ((mask_total + block - 1) // block,)
-                stamp_label(
-                    mask_grid,
-                    (block,),
-                    (
-                        nv12_buffers[ring_idx],
-                        np.int32(out_width),
-                        np.int32(out_height),
-                        mask.white,
-                        mask.black,
-                        np.int32(mask_w),
-                        np.int32(mask_h),
-                        np.int32(mask.x),
-                        np.int32(mask.y),
-                    ),
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # scale_grid_nv12 reads float32 frames, minimums and scales.
+        device_stacks = [cp.asarray(np.asarray(stack, dtype=np.float32)) for stack in stacks]
+        vmin = cp.asarray([low for low, _ in limits], dtype=cp.float32)
+        scale = cp.asarray([255.0 / max(high - low, 1e-6) for low, high in limits], dtype=cp.float32)
+        label_masks = [
+            [
+                LabelMask(
+                    label.x,
+                    label.y,
+                    *(cp.asarray(mask) for mask in label_mask(label.text, label_font(label.font_size))),
                 )
-            pic_params = nvc.NV_ENC_PIC_PARAMS()
-            pic_params.inputTimeStamp = frame_idx
-            tmp.write(_packet_bytes(encoder.Encode(nv12_frames[ring_idx], pic_params)))
-        tmp.write(_packet_bytes(encoder.EndEncode()))
-    try:
-        cmd = _ffmpeg_mux_command(imageio_ffmpeg, elementary_path, path, fps, faststart=faststart)
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"ffmpeg failed while muxing NVENC MP4: {exc}") from exc
-    finally:
-        elementary_path.unlink(missing_ok=True)
-    stream.synchronize()
+                for label in frame_labels
+            ]
+            for frame_labels in panel_labels(layout, labels, n_panels, frames)
+        ]
+
+        scale_grid, stamp_label = _kernels(cp)
+        nv12_buffers = [
+            cp.empty((out_height + out_height // 2, out_width), dtype=cp.uint8)
+            for _ in range(4)
+        ]
+        nv12_frames = [Nv12Frame(buffer) for buffer in nv12_buffers]
+        config = {
+            "codec": "h264",
+            "gpu_id": int(gpu_id),
+            "preset": str(preset).upper(),
+            "tuning_info": str(tuning_info),
+            "rc": "constqp",
+            "qp": str(int(qp)),
+            # The elementary-stream mux path does not carry reordering metadata.
+            # Scientific frame sequences therefore require decode order to match
+            # acquisition order exactly.
+            "bf": "0",
+            "fps": max(0.1, float(fps)),
+        }
+        # The encoder copies each NV12 frame on this stream, after the kernels
+        # that render it and before the kernels that render the frame reusing its
+        # buffer; on its own stream the copy could run first and encode the stale
+        # frame from four frames earlier under GPU load. A blocking stream also
+        # waits for the uploads above, made on the default stream.
+        stream = cp.cuda.Stream()
+        try:
+            encoder = nvc.CreateEncoder(
+                out_width, out_height, "NV12", False,
+                cudacontext=int(cp.cuda.driver.ctxGetCurrent()), cudastream=stream.ptr, **config,
+            )
+        except nvc.PyNvVCException as exc:
+            # NVENC refuses some frame sizes and runs out of sessions only here;
+            # a RuntimeError lets backend="auto" fall back to the CPU writer.
+            raise RuntimeError(
+                f"NVENC could not start an H.264 encoder for {out_width} x {out_height} frames: {exc}"
+            ) from exc
+        block = 256
+        total = out_width * out_height * 3 // 2
+        grid = ((total + block - 1) // block,)
+
+        # The elementary stream is a temporary file; it is removed whether encoding or muxing fails or not.
+        elementary_path = None
+        try:
+            with stream, tempfile.NamedTemporaryFile(suffix=".h264", delete=False) as elementary_stream:
+                elementary_path = Path(elementary_stream.name)
+                for frame_index in range(frames):
+                    ring_index = frame_index % len(nv12_buffers)
+                    frame_pointers = cp.asarray(
+                        [stack[frame_index].data.ptr for stack in device_stacks],
+                        dtype=cp.uintp,
+                    )
+                    scale_grid(
+                        grid,
+                        (block,),
+                        (
+                            frame_pointers,
+                            vmin,
+                            scale,
+                            nv12_buffers[ring_index],
+                            np.int32(n_panels),
+                            np.int32(width),
+                            np.int32(height),
+                            np.int32(width * height),
+                            np.int32(out_width),
+                            np.int32(out_height),
+                            np.int32(layout.frame_width),
+                            np.int32(layout.frame_height),
+                            np.int32(layout.label_height),
+                            np.int32(layout.gap),
+                            np.int32(layout.columns),
+                        ),
+                    )
+                    for mask in label_masks[frame_index]:
+                        mask_height, mask_width = mask.white.shape
+                        mask_grid = ((mask_height * mask_width + block - 1) // block,)
+                        stamp_label(
+                            mask_grid,
+                            (block,),
+                            (
+                                nv12_buffers[ring_index],
+                                np.int32(out_width),
+                                np.int32(out_height),
+                                mask.white,
+                                mask.black,
+                                np.int32(mask_width),
+                                np.int32(mask_height),
+                                np.int32(mask.x),
+                                np.int32(mask.y),
+                            ),
+                        )
+                    picture_params = nvc.NV_ENC_PIC_PARAMS()
+                    picture_params.inputTimeStamp = frame_index
+                    elementary_stream.write(_packet_bytes(encoder.Encode(nv12_frames[ring_index], picture_params)))
+                elementary_stream.write(_packet_bytes(encoder.EndEncode()))
+            command = _ffmpeg_mux_command(imageio_ffmpeg, elementary_path, path, fps, faststart=faststart)
+            subprocess.run(command, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"ffmpeg failed while muxing NVENC MP4: {exc}") from exc
+        finally:
+            if elementary_path is not None:
+                elementary_path.unlink(missing_ok=True)
+        stream.synchronize()
     return path

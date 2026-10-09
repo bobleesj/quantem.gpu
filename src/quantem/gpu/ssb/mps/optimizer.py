@@ -50,14 +50,14 @@ def optimize(
     """
     import optuna
 
-    t0 = time.perf_counter()
+    started = time.perf_counter()
     timings: dict[str, float] = {}
     scan_shape = prepared.scan_shape
     fit_chunk_bf = effective_phase_loss_chunk_bf(max(1, int(chunk_bf)), scan_shape)
 
     start = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
     if aberrations:
-        start.update({k: float(v) for k, v in aberrations.items() if k in start})
+        start.update({name: float(value) for name, value in aberrations.items() if name in start})
     ranges = _ranges_from_start(start, search_ranges)
     trials: list[dict] = []
 
@@ -72,9 +72,9 @@ def optimize(
         return float(loss)
 
     def evaluate_batch(params: list[dict[str, float]]) -> np.ndarray:
-        c10 = np.asarray([p["C10"] for p in params], dtype=np.float32)
-        c12 = np.asarray([p["C12"] for p in params], dtype=np.float32)
-        phi = np.asarray([p["phi12"] for p in params], dtype=np.float32)
+        c10 = np.asarray([candidate["C10"] for candidate in params], dtype=np.float32)
+        c12 = np.asarray([candidate["C12"] for candidate in params], dtype=np.float32)
+        phi = np.asarray([candidate["phi12"] for candidate in params], dtype=np.float32)
         return reconstruct_prepared_batch_exact_loss(
             prepared,
             C10=c10,
@@ -185,7 +185,7 @@ def optimize(
     object_wave = np.asarray(object_wave_mx).astype(np.complex64, copy=False)
     timings["final_object_seconds"] = time.perf_counter() - final_object_started
     final_loss_started = time.perf_counter()
-    _object_wave, _full_loss, phase = reconstruct_prepared(
+    _object_wave, full_loss, phase = reconstruct_prepared(
         prepared,
         C10=best["C10"],
         C12=best["C12"],
@@ -195,8 +195,8 @@ def optimize(
         compute_object=False,
     )
     timings["final_phase_loss_seconds"] = time.perf_counter() - final_loss_started
-    final_loss = _full_loss if _full_loss is not None else best_loss
-    elapsed = time.perf_counter() - t0
+    final_loss = full_loss if full_loss is not None else best_loss
+    elapsed = time.perf_counter() - started
     final_loss_value = float(final_loss if final_loss is not None else best_loss)
     if phase is None:
         raise RuntimeError("MPS optimizer did not produce its final exact phase.")
@@ -237,7 +237,6 @@ def optimize(
         trial_records=normalized_trials,
     )
     return result, np.asarray(phase, dtype=np.float32)
-
 
 
 # =========================================================================

@@ -15,6 +15,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import shared_array
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.qem import metadata as qem_metadata
@@ -88,8 +89,8 @@ def load_array_resident(
             )
         )
         verified_values = 0
-        for block in blocks:
-            block = np.ascontiguousarray(block)
+        for audit_block in blocks:
+            block = np.ascontiguousarray(audit_block)
             if block.dtype != dtype or block.size * 24 > MAX_INGEST_BYTES:
                 raise ValueError(
                     "Float audit block exceeds its dtype or scratch contract."
@@ -103,7 +104,7 @@ def load_array_resident(
                 )
             peak_bytes = max(peak_bytes, block.size * 24)
             verified_values += block.size
-            del block, restored
+            del audit_block, block, restored
         if verified_values != math.prod(shape):
             raise ValueError(
                 "Float audit did not cover every measurement; reopen the acquisition."
@@ -129,9 +130,8 @@ def load_array_resident(
         minimum, maximum = np.iinfo(dtype).max, np.iinfo(dtype).min
         for first in range(0, math.prod(shape[:2]), audit_scans):
             block = read_frames(first, min(first + audit_scans, math.prod(shape[:2])))
-            minimum, maximum = min(minimum, int(block.min())), max(
-                maximum, int(block.max())
-            )
+            minimum = min(minimum, int(block.min()))
+            maximum = max(maximum, int(block.max()))
             peak_bytes = max(peak_bytes, block.nbytes)
             if minimum < 0 or maximum > 65535:
                 raise NotImplementedError(
@@ -172,11 +172,7 @@ def load_array_resident(
     if backend == "cuda":
         import cupy as cp
 
-        selected = (
-            cp.cuda.Device().id
-            if device is None
-            else int(str(device).removeprefix("cuda:"))
-        )
+        selected = cuda_device_index(device)
         context = cp.cuda.Device(selected)
     elif backend != "mps":
         raise ValueError("Encoded ingestion requires backend='cuda' or 'mps'.")
@@ -346,7 +342,6 @@ def _read_four_dimensional_frames(data, result, first, stop):
 def load_hdf5_array_resident(
     path,
     *,
-    scan_shape,
     dataset_path,
     backend,
     device,
@@ -372,6 +367,7 @@ def load_hdf5_array_resident(
             data.ndim == 3
             and data.chunks is not None
             and data.chunks[0] == 1
+            # 32008 is the registered HDF5 filter id of bitshuffle+LZ4.
             and 32008
             in {
                 data.id.get_create_plist().get_filter(index)[0]
@@ -380,10 +376,12 @@ def load_hdf5_array_resident(
             for data in datasets
         )
         # Keep the existing accelerated bitshuffle/LZ4 reader for its native layout.
+        # It corrects flagged uint32 pixels before verifying that every count fits uint16.
         if (
             dataset_path is None
             and direct
-            and np.dtype(info.dtype) in (np.dtype("uint8"), np.dtype("uint16"))
+            and np.dtype(info.dtype)
+            in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32"))
         ):
             return None
         if backend == "cuda" and np.dtype(info.dtype) == np.dtype("uint32"):
@@ -427,7 +425,6 @@ def load_hdf5_array_resident(
                         source_sel=np.s_[local : local + end - cursor],
                         dest_sel=np.s_[cursor - first : end - first],
                     )
-                    cursor = end
                 else:
                     _read_four_dimensional_frames(
                         data,
@@ -435,7 +432,7 @@ def load_hdf5_array_resident(
                         local,
                         local + end - cursor,
                     )
-                    cursor = end
+                cursor = end
             return result
 
         # A full-scan storage chunk must be audited once, not once per scan row.

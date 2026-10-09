@@ -155,20 +155,6 @@ extern "C" __global__ void sc_compact(
     for (u32 i=4;i<size;++i) payload[begin+i]=scratch[u64(size-1-i)*streams+stream];
 }
 
-extern "C" __global__ void sc_decode(
-    const u8* payload, const u32* offsets, const u8* models,
-    const u32* decoding, u16* raw, u32* errors, u32 scans, u32 pixels,
-    u32 interval, u32 streams
-) {
-    u32 stream=blockIdx.x*blockDim.x+threadIdx.x;
-    if (stream>=streams) return;
-    u32 first=(stream/pixels)*interval, pixel=stream%pixels;
-    StreamReader reader(payload,offsets,models,decoding,stream);
-    for (u32 i=0;i<min(interval,scans-first);++i)
-        raw[u64(first+i)*pixels+pixel]=reader.next();
-    if (!reader.finished()) atomicOr(errors,1u);
-}
-
 template<typename Output>
 __device__ void sc_decode_range(
     const u8* payload, const u32* offsets, const u8* models,

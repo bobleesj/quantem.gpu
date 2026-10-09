@@ -42,6 +42,7 @@ def fit_aberrations_svd_polar(
         ``C10`` and ``C12`` in angstroms, ``phi12`` and ``rotation_angle`` in
         radians.
     """
+    # The fit runs in float64 whatever the sampling's type.
     kxa_1d = np.fft.fftfreq(gpts[0], sampling[0]).astype(np.float64)
     kya_1d = np.fft.fftfreq(gpts[1], sampling[1]).astype(np.float64)
     kxa_2d = np.broadcast_to(kxa_1d[:, None], gpts)
@@ -52,12 +53,12 @@ def fit_aberrations_svd_polar(
     basis = np.stack([kx_bf, ky_bf], axis=1) * float(wavelength)
 
     shifts_f64 = np.asarray(shifts_ang, dtype=np.float64)
-    m_np, _, _, _ = np.linalg.lstsq(basis, shifts_f64, rcond=None)
+    m_np = np.linalg.lstsq(basis, shifts_f64, rcond=None)[0]
     # Polar decomposition m = rotation @ aberration from the SVD m = U S Vh.
     m = cp.asarray(m_np, dtype=cp.float64)
     U, S, Vh = cp.linalg.svd(m)
     m_rotation = U @ Vh
-    m_aberration = cp.conj(Vh.T) @ cp.diag(S).astype(m.dtype) @ Vh
+    m_aberration = cp.conj(Vh.T) @ cp.diag(S) @ Vh
 
     rotation_rad = float(-cp.arctan2(m_rotation[1, 0], m_rotation[0, 0]).get())
     wrapped = (rotation_rad + np.pi) % (2 * np.pi) - np.pi

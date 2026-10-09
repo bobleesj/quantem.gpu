@@ -8,6 +8,7 @@ from functools import wraps
 import numpy as np
 import torch
 
+from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.resident.cuda.float_ans import CUDAFloatLanes
 from quantem.gpu.resident.mps.float_ans import MPSFloatLanes
 
@@ -54,11 +55,7 @@ class FloatANSResident:
         if backend == "cuda":
             import cupy as cp
 
-            selected = (
-                cp.cuda.Device().id
-                if device is None
-                else int(str(device).removeprefix("cuda:"))
-            )
+            selected = cuda_device_index(device)
             with cp.cuda.Device(selected):
                 self._lanes = CUDAFloatLanes(lane_shape, np.uint16)
             self.device = selected
@@ -166,7 +163,6 @@ class FloatANSResident:
 
             with cp.cuda.Device(self.device):
                 return cp.asarray(values)
-
         return torch.as_tensor(values, device="mps")
 
     def _empty(self, shape, *, zero=False):
@@ -176,7 +172,6 @@ class FloatANSResident:
 
             with cp.cuda.Device(self.device):
                 return (cp.zeros if zero else cp.empty)(shape, cp.float32)
-
         return (torch.zeros if zero else torch.empty)(
             shape, dtype=torch.float32, device="mps"
         )
@@ -201,7 +196,6 @@ class FloatANSResident:
             import cupy as cp
 
             return cp.where(condition, values, other)
-
         return torch.where(condition, values, other)
 
     @_device_scoped
@@ -319,13 +313,12 @@ class FloatANSResident:
                 )
                 if total is None:
                     total = reduced
-                else:
-                    if self.backend == "cuda":
-                        import cupy as cp
+                elif self.backend == "cuda":
+                    import cupy as cp
 
-                        total = cp.maximum(total, reduced)
-                    else:
-                        total = torch.maximum(total, reduced)
+                    total = cp.maximum(total, reduced)
+                else:
+                    total = torch.maximum(total, reduced)
             else:
                 reduced = self._sum(selected, 0)
                 total = reduced if total is None else total + reduced

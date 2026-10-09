@@ -8,6 +8,7 @@
 // decoder as the URL path. The microscope evidence and decompressor are unchanged.
 
 import {
+  cachedPipeline,
   decodeBslz4Batch,
   decodeBslz4MaskedSumLow8Batch,
   maskedSumBlockIds,
@@ -299,29 +300,28 @@ export async function collectShow4DSTEMLocalH5Files(
   maxFiles = 10000,
 ): Promise<File[]> {
   const files: File[] = [];
+  const visit = async (handle: Show4DSTEMFileSystemHandle): Promise<void> => {
+    if (handle.kind === "directory" || "values" in handle || "entries" in handle) {
+      await walk(handle as Show4DSTEMFileSystemDirectoryHandle);
+    } else if (handle.kind === "file" || "getFile" in handle) {
+      const file = await (handle as Show4DSTEMFileSystemFileHandle).getFile();
+      if (/\.(h5|qh5idx|qbslz4)$/i.test(file.name)) files.push(file);
+    }
+  };
+  // Browsers expose either values() or entries() on a directory handle.
   const walk = async (dir: Show4DSTEMFileSystemDirectoryHandle): Promise<void> => {
     if (files.length >= maxFiles) return;
     if (typeof dir.values === "function") {
       for await (const handle of dir.values()) {
         if (files.length >= maxFiles) return;
-        if (handle.kind === "directory" || "values" in handle || "entries" in handle) {
-          await walk(handle as Show4DSTEMFileSystemDirectoryHandle);
-        } else if (handle.kind === "file" || "getFile" in handle) {
-          const file = await (handle as Show4DSTEMFileSystemFileHandle).getFile();
-          if (/\.(h5|qh5idx|qbslz4)$/i.test(file.name)) files.push(file);
-        }
+        await visit(handle);
       }
       return;
     }
     if (typeof dir.entries === "function") {
       for await (const [, handle] of dir.entries()) {
         if (files.length >= maxFiles) return;
-        if (handle.kind === "directory" || "values" in handle || "entries" in handle) {
-          await walk(handle as Show4DSTEMFileSystemDirectoryHandle);
-        } else if (handle.kind === "file" || "getFile" in handle) {
-          const file = await (handle as Show4DSTEMFileSystemFileHandle).getFile();
-          if (/\.(h5|qh5idx|qbslz4)$/i.test(file.name)) files.push(file);
-        }
+        await visit(handle);
       }
     }
   };
@@ -372,13 +372,10 @@ function localDataFilesForMaster(masterUrl: string): File[] {
 
 function localSidecarCandidatesForDataPath(dataPath: string): File[] {
   const stem = basename(dataPath).replace(/\.h5$/i, "");
-  const seen = new Set<File>();
   const out: File[] = [];
   for (const file of localFilesByName.values()) {
     if (!/\.qbslz4$/i.test(file.name)) continue;
     if (!file.name.startsWith(stem)) continue;
-    if (seen.has(file)) continue;
-    seen.add(file);
     out.push(file);
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -644,12 +641,12 @@ function readFiles(
 ): Promise<ReadResult>[] {
   if (workerCount <= 0) {
     return files.map(async (file, id) => {
-      const t0 = performance.now();
+      const readBegin = performance.now();
       const blockIndexFile = blockIndexLookup?.(file.name);
       if (blockIndexFile) {
         const [buffer, indexBuffer] = await Promise.all([file.arrayBuffer(), blockIndexFile.arrayBuffer()]);
-        const readMs = performance.now() - t0;
-        const pt = performance.now();
+        const readMs = performance.now() - readBegin;
+        const parseBegin = performance.now();
         return {
           id,
           name: file.name,
@@ -657,11 +654,11 @@ function readFiles(
           fileBytes: file.size,
           blockIndexBytes: blockIndexFile.size,
           readMs,
-          parseMs: performance.now() - pt,
+          parseMs: performance.now() - parseBegin,
         };
       }
       const buffer = await file.arrayBuffer();
-      return { id, name: file.name, buffer, fileBytes: file.size, readMs: performance.now() - t0 };
+      return { id, name: file.name, buffer, fileBytes: file.size, readMs: performance.now() - readBegin };
     });
   }
   const results: Array<Promise<ReadResult>> = [];
@@ -946,73 +943,52 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   dst[scan * cfg2.x + outPix] = bitcast<u32>(sum);
 }`;
 
-let detectorBinPipe: GPUComputePipeline | null = null;
-let zeroBadPixelsPipe: GPUComputePipeline | null = null;
-
 function getZeroBadPixelsPipe(device: GPUDevice): GPUComputePipeline {
-  if (!zeroBadPixelsPipe) {
-    zeroBadPixelsPipe = device.createComputePipeline({
-      layout: "auto",
-      compute: {
-        module: device.createShaderModule({ code: ZERO_BAD_PIXELS_WGSL }),
-        entryPoint: "main",
-      },
-    });
-  }
-  return zeroBadPixelsPipe;
+  return cachedPipeline(device, ZERO_BAD_PIXELS_WGSL);
 }
 
 function getDetectorBinPipe(device: GPUDevice): GPUComputePipeline {
-  if (!detectorBinPipe) {
-    detectorBinPipe = device.createComputePipeline({
-      layout: "auto",
-      compute: {
-        module: device.createShaderModule({ code: DETECTOR_BIN_WGSL }),
-        entryPoint: "main",
-      },
-    });
-  }
-  return detectorBinPipe;
+  return cachedPipeline(device, DETECTOR_BIN_WGSL);
 }
 
-function localUniform(device: GPUDevice, vals: number[]): GPUBuffer {
-  const arr = new Uint32Array(vals);
+function localUniform(device: GPUDevice, values: number[]): GPUBuffer {
+  const words = new Uint32Array(values);
   const buffer = device.createBuffer({
-    size: Math.max(16, arr.byteLength),
+    size: Math.max(16, words.byteLength),
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  device.queue.writeBuffer(buffer, 0, arr.buffer, arr.byteOffset, arr.byteLength);
+  device.queue.writeBuffer(buffer, 0, words.buffer, words.byteOffset, words.byteLength);
   return buffer;
 }
 
 function badPixelClearSpecs(badPixels: Uint32Array, detSize: number, mode: number): Uint32Array {
   const clear = new Map<number, number>();
   for (let i = 0; i < badPixels.length; i++) {
-    const idx = badPixels[i];
-    if (idx >= detSize) continue;
-    let word = idx;
+    const pixel = badPixels[i];
+    if (pixel >= detSize) continue;
+    let word = pixel;
     let mask = 0;
     if (mode === 1) {
-      word = idx >> 2;
-      const shift = (idx & 3) * 8;
+      word = pixel >> 2;
+      const shift = (pixel & 3) * 8;
       mask = (~(0xff << shift)) >>> 0;
     } else if (mode === 0) {
-      word = idx >> 1;
-      const shift = (idx & 1) * 16;
+      word = pixel >> 1;
+      const shift = (pixel & 1) * 16;
       mask = (~(0xffff << shift)) >>> 0;
     } else if (mode === 3) {
-      word = idx;
+      word = pixel;
       mask = 0;
     }
     clear.set(word, (clear.get(word) ?? 0xffffffff) & mask);
   }
   const specs = new Uint32Array(Math.max(2, clear.size * 2));
-  let pos = 0;
+  let cursor = 0;
   for (const [word, mask] of clear) {
-    specs[pos++] = word >>> 0;
-    specs[pos++] = mask >>> 0;
+    specs[cursor++] = word >>> 0;
+    specs[cursor++] = mask >>> 0;
   }
-  return specs.subarray(0, pos);
+  return specs.subarray(0, cursor);
 }
 
 async function binDetectorChunks(
@@ -1098,12 +1074,42 @@ async function binDetectorChunks(
     pass.dispatchWorkgroups(Math.ceil(outputDetSize / 16), Math.ceil(nScans[i] / 16));
   }
   pass.end();
-  const t0 = performance.now();
+  const submitted = performance.now();
   device.queue.submit([enc.finish()]);
   await device.queue.onSubmittedWorkDone();
-  const ms = performance.now() - t0;
-  temps.forEach((buf) => buf.destroy());
+  const ms = performance.now() - submitted;
+  temps.forEach((buffer) => buffer.destroy());
   return { buffers: outs, detRows: outputDetRows, detCols: outputDetCols, detSize: outputDetSize, mode: 2, ms };
+}
+
+/** Master-file bad pixels and frame count; embedded bad pixels take precedence.
+ * A master that jsfive cannot parse leaves the widget-supplied shape in charge. */
+async function readMasterBadPixelsAndFrames(
+  master: File,
+  embeddedBadPixels: Uint32Array,
+): Promise<{ badPixels: Uint32Array; totalFrames: number }> {
+  let badPixels = embeddedBadPixels;
+  let totalFrames = 0;
+  try {
+    const info = readH5MasterInfo(await master.arrayBuffer(), master.name);
+    if (badPixels.length === 0 && info.badPixels.length) badPixels = new Uint32Array(info.badPixels);
+    totalFrames = Math.max(0, Math.round(Number(info.totalFrames || 0)));
+  } catch {
+    // Continue with shape metadata from the widget traits.
+  }
+  return { badPixels, totalFrames };
+}
+
+/** Adapter facts recorded in every load profile so benchmarks can reject software adapters. */
+function adapterProfile(device: GPUDevice) {
+  return {
+    adapterInfo: getGPUInfo(),
+    softwareAdapter: isSoftwareGPUAdapter(),
+    timestampQuery: Boolean(device.features.has("timestamp-query")),
+    subgroups: Boolean(device.features.has("subgroups" as GPUFeatureName)),
+    maxBufferGB: +(Number(device.limits.maxBufferSize || 0) / 1e9).toFixed(2),
+    maxStorageBufferGB: +(Number(device.limits.maxStorageBufferBindingSize || 0) / 1e9).toFixed(2),
+  };
 }
 
 export async function loadShow4DSTEMLocalH5Master(
@@ -1132,20 +1138,13 @@ export async function loadShow4DSTEMLocalH5Master(
   const defaultGroupSize = low8Only ? (region && scanCount <= 256 * 256 ? 4 : 8) : 4;
   const groupSize = safeInt(options.groupSize, defaultGroupSize, 1, 16);
   const decodeBatch = safeInt(options.decodeBatch, low8Only ? (region && scanCount <= 256 * 256 ? 8 : 1) : 4, 1, 16);
-  const t0 = performance.now();
+  const started = performance.now();
 
-  let badPixels = parseEmbeddedBadPixels(options.embeddedBadPixelsJson) || new Uint32Array(0);
-  let totalFrames = 0;
-  const mt = performance.now();
+  const embeddedBadPixels = parseEmbeddedBadPixels(options.embeddedBadPixelsJson) || new Uint32Array(0);
+  const masterBegin = performance.now();
   setLocalH5Debug("product:read-master", { scanRows, scanCols, outputRows, outputCols });
-  try {
-    const info = readH5MasterInfo(await master.arrayBuffer(), master.name);
-    if (badPixels.length === 0 && info.badPixels.length) badPixels = new Uint32Array(info.badPixels);
-    totalFrames = Math.max(0, Math.round(Number(info.totalFrames || 0)));
-  } catch {
-    // Continue with shape metadata from the widget traits.
-  }
-  const masterReadMs = performance.now() - mt;
+  const { badPixels, totalFrames } = await readMasterBadPixelsAndFrames(master, embeddedBadPixels);
+  const masterReadMs = performance.now() - masterBegin;
 
   const reads = readFiles(dataItems.map((item) => item.file), workerCount, frameIndexFor, localBlockIndexFor);
   const gpuChunks: LocalH5GpuChunk[] = [];
@@ -1188,9 +1187,9 @@ export async function loadShow4DSTEMLocalH5Master(
   };
   const drain = async (): Promise<void> => {
     if (!pendingDecode) return;
-    const dt = performance.now();
+    const drainBegin = performance.now();
     const decoded = await pendingDecode;
-    decompressMs += performance.now() - dt;
+    decompressMs += performance.now() - drainBegin;
     if (!decoded) throw new Error("WebGPU unavailable for local HDF5 decode.");
     device = decoded.device;
     if (decoded.buffers.length) mode = detBin > 1 ? 2 : decoded.mode;
@@ -1223,18 +1222,18 @@ export async function loadShow4DSTEMLocalH5Master(
     pendingSpecs = [];
   };
 
-  for (let g = 0; g < dataItems.length; g += groupSize) {
+  for (let groupStart = 0; groupStart < dataItems.length; groupStart += groupSize) {
     const specs: ParsedSpec[] = [];
-    for (let i = g; i < Math.min(g + groupSize, dataItems.length); i++) {
+    for (let i = groupStart; i < Math.min(groupStart + groupSize, dataItems.length); i++) {
       const item = dataItems[i];
-      const wt = performance.now();
+      const waitBegin = performance.now();
       const read = await reads[i];
-      readWaitMs += performance.now() - wt;
+      readWaitMs += performance.now() - waitBegin;
       readWorkerMs += read.readMs;
       fileBytes += read.fileBytes;
       blockIndexBytes += read.blockIndexBytes || 0;
 
-      const pt = performance.now();
+      const parseBegin = performance.now();
       const frameIndex = frameIndexFor(read.name);
       const vol = read.volume
         ? read.volume
@@ -1243,7 +1242,7 @@ export async function loadShow4DSTEMLocalH5Master(
           : readH5Volume(read.buffer!, read.name);
       if (read.blockIndexBytes) blockIndexFiles += 1;
       else if (read.volume || frameIndex) frameIndexFiles += 1;
-      parseMs += read.volume ? (read.parseMs ?? 0) : performance.now() - pt;
+      parseMs += read.volume ? (read.parseMs ?? 0) : performance.now() - parseBegin;
       if (sourceDtype !== "unknown" && sourceDtype !== vol.srcDtype) {
         throw new Error(`Mixed HDF5 source dtypes are not supported in one local load: ${sourceDtype} and ${vol.srcDtype}.`);
       }
@@ -1308,11 +1307,11 @@ export async function loadShow4DSTEMLocalH5Master(
       });
       sourceFrames = item.startScan === undefined ? sourceFrames + vol.nFrames : Math.max(sourceFrames, fileSourceStart + vol.nFrames);
     }
-    const ptPack = performance.now();
+    const packBegin = performance.now();
     const decodeSpecs = sliceFullStackSpecsByScanRegion(specs, scanRows, scanCols, region);
-    packMs += performance.now() - ptPack;
-    compressedBytes += decodeSpecs.reduce((n, spec) => n + spec.compressed.byteLength, 0);
-    frames += decodeSpecs.reduce((n, spec) => n + spec.nScan, 0);
+    packMs += performance.now() - packBegin;
+    compressedBytes += decodeSpecs.reduce((total, spec) => total + spec.compressed.byteLength, 0);
+    frames += decodeSpecs.reduce((total, spec) => total + spec.nScan, 0);
     await drain();
     if (decodeSpecs.length) {
       pendingSpecs = decodeSpecs;
@@ -1324,7 +1323,7 @@ export async function loadShow4DSTEMLocalH5Master(
   if (!profileDevice) throw new Error("WebGPU unavailable for local HDF5 decode.");
   const profile: LocalH5LoadProfile = {
     acquisitionMode: "local-file",
-    totalMs: Math.round(performance.now() - t0),
+    totalMs: Math.round(performance.now() - started),
     masterReadMs: Math.round(masterReadMs),
     readWaitMs: Math.round(readWaitMs),
     readWorkerMs: Math.round(readWorkerMs),
@@ -1373,12 +1372,7 @@ export async function loadShow4DSTEMLocalH5Master(
         : frameIndexFiles === dataItems.length
           ? "frame-index"
           : "mixed",
-    adapterInfo: getGPUInfo(),
-    softwareAdapter: isSoftwareGPUAdapter(),
-    timestampQuery: Boolean(profileDevice.features.has("timestamp-query")),
-    subgroups: Boolean(profileDevice.features.has("subgroups" as GPUFeatureName)),
-    maxBufferGB: +(Number(profileDevice.limits.maxBufferSize || 0) / 1e9).toFixed(2),
-    maxStorageBufferGB: +(Number(profileDevice.limits.maxStorageBufferBindingSize || 0) / 1e9).toFixed(2),
+    ...adapterProfile(profileDevice),
   };
   if (fullOutputHashRequested(options)) {
     exposeGpuResidentLogicalPixelHash(
@@ -1432,19 +1426,12 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
   const outputScanCount = outputRows * outputCols;
   const workerCount = safeInt(options.workerCount, 0, 0, 16);
   const requestedProductBatch = options.productBatch ?? options.decodeBatch;
-  const t0 = performance.now();
+  const started = performance.now();
 
-  let badPixels = parseEmbeddedBadPixels(options.embeddedBadPixelsJson) || new Uint32Array(0);
-  let totalFrames = 0;
-  const mt = performance.now();
-  try {
-    const info = readH5MasterInfo(await master.arrayBuffer(), master.name);
-    if (badPixels.length === 0 && info.badPixels.length) badPixels = new Uint32Array(info.badPixels);
-    totalFrames = Math.max(0, Math.round(Number(info.totalFrames || 0)));
-  } catch {
-    // Continue with shape metadata from the widget traits.
-  }
-  const masterReadMs = performance.now() - mt;
+  const embeddedBadPixels = parseEmbeddedBadPixels(options.embeddedBadPixelsJson) || new Uint32Array(0);
+  const masterBegin = performance.now();
+  const { badPixels, totalFrames } = await readMasterBadPixelsAndFrames(master, embeddedBadPixels);
+  const masterReadMs = performance.now() - masterBegin;
 
   const sidecarSelection = filterSelectedBlockSidecarsForScanRegion(
     await chooseSelectedBlockSidecars(masterUrl, options.mask, badPixels),
@@ -1476,17 +1463,17 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
   let frames = 0;
   const readWallStart = performance.now();
   for (let i = 0; i < sourceFiles.length; i++) {
-    const wt = performance.now();
+    const waitBegin = performance.now();
     const read = await reads[i];
-    readWaitMs += performance.now() - wt;
+    readWaitMs += performance.now() - waitBegin;
     readWorkerMs += read.readMs;
     fileBytes += read.fileBytes;
 
-    const pt = performance.now();
+    const parseBegin = performance.now();
     if (sourceMode === "selected-block-sidecar") {
       if (!read.buffer) throw new Error(`Local selected-block worker did not return bytes for ${read.name}.`);
       const vol = readBslz4SelectedBlockVolume(read.buffer, read.name);
-      parseMs += performance.now() - pt;
+      parseMs += performance.now() - parseBegin;
       if (sourceDtype !== "unknown" && sourceDtype !== vol.srcDtype) {
         throw new Error(`Mixed selected-block source dtypes are not supported in one local product load: ${sourceDtype} and ${vol.srcDtype}.`);
       }
@@ -1511,7 +1498,7 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
         ? readH5VolumeFromFrameIndex(read.buffer!, read.name, frameIndex)
         : readH5Volume(read.buffer!, read.name);
       if (frameIndex) frameIndexFiles += 1;
-      parseMs += performance.now() - pt;
+      parseMs += performance.now() - parseBegin;
       if (sourceDtype !== "unknown" && sourceDtype !== vol.srcDtype) {
         throw new Error(`Mixed HDF5 source dtypes are not supported in one local product load: ${sourceDtype} and ${vol.srcDtype}.`);
       }
@@ -1543,9 +1530,9 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
   const productSpecs = region
     ? sliceMaskedSumSpecsByScanRegion(specs, scanRows, scanCols, region)
     : specs;
-  const framesComputed = productSpecs.reduce((n, spec) => n + (spec.frameCount ?? spec.nFrames), 0);
+  const framesComputed = productSpecs.reduce((total, spec) => total + (spec.frameCount ?? spec.nFrames), 0);
   const productBatch = chooseMaskedSumProductBatch(requestedProductBatch, outputScanCount, productSpecs.length);
-  const pt = performance.now();
+  const productBegin = performance.now();
   setLocalH5Debug("product:dispatch", {
     sourceMode,
     specs: specs.length,
@@ -1554,14 +1541,14 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
     productBatch,
   });
   const product = await decodeBslz4MaskedSumLow8Batch(productSpecs, options.mask, outputScanCount, badPixels, productBatch);
-  const productMs = performance.now() - pt;
+  const productMs = performance.now() - productBegin;
   if (!product) throw new Error("WebGPU unavailable for local HDF5 product-first masked sum.");
   setLocalH5Debug("product:done", { productMs: Math.round(productMs) });
   const profileDevice = product.device;
   const profile: LocalH5MaskedSumProfile = {
     acquisitionMode: sourceMode === "selected-block-sidecar" ? "local-file-selected-block-sidecar" : "local-file-product-first",
     sourceMode,
-    totalMs: Math.round(performance.now() - t0),
+    totalMs: Math.round(performance.now() - started),
     masterReadMs: Math.round(masterReadMs),
     readWaitMs: Math.round(readWaitMs),
     readWorkerMs: Math.round(readWorkerMs),
@@ -1587,12 +1574,7 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
     blockIndexFiles: 0,
     parseMode: sourceMode === "selected-block-sidecar" ? "selected-block-sidecar" : frameIndexFiles === 0 ? "h5-btree" : frameIndexFiles === sourceFiles.length ? "frame-index" : "mixed",
     productProfile: product.profile,
-    adapterInfo: getGPUInfo(),
-    softwareAdapter: isSoftwareGPUAdapter(),
-    timestampQuery: Boolean(profileDevice.features.has("timestamp-query")),
-    subgroups: Boolean(profileDevice.features.has("subgroups" as GPUFeatureName)),
-    maxBufferGB: +(Number(profileDevice.limits.maxBufferSize || 0) / 1e9).toFixed(2),
-    maxStorageBufferGB: +(Number(profileDevice.limits.maxStorageBufferBindingSize || 0) / 1e9).toFixed(2),
+    ...adapterProfile(profileDevice),
   };
   return { device: profileDevice, buffer: product.buffer, scanRows: outputRows, scanCols: outputCols, profile };
 }

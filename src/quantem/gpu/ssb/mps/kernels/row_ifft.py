@@ -819,7 +819,7 @@ def row_ifft_small_from_dynamic_geometry(
         cos2phi12=cos2phi12,
         sin2phi12=sin2phi12,
     )[0]
-    extra = [] if thick is None else [mx.array([float(v) for v in thick], dtype=mx.float32)]
+    extra = [] if thick is None else [mx.array([float(value) for value in thick], dtype=mx.float32)]
     t = n // 4
     return kernel(
         inputs=[

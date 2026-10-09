@@ -336,6 +336,7 @@ class BrowseService:
 
 def _coordinate(moment: np.ndarray, total: np.ndarray) -> np.ndarray:
     """Divide an exact detector moment by the exact count total as float32, 0 where empty."""
+    # float64 holds the integer moments and totals exactly (below 2**53) before the float32 result.
     result = np.zeros(total.shape, dtype=np.float64)
     np.divide(moment.astype(np.float64), total.astype(np.float64), out=result, where=total > 0)
     return result.astype(np.float32)

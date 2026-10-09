@@ -21,7 +21,7 @@ _BLOCK_BYTES = 256 * 1024**2
 
 
 def read(data, *, scan_region=None, detector_region=None):
-    """Return a requested logical region as a Torch tensor on the source GPU."""
+    """Return a requested logical region as a Torch tensor on the source GPU, or on the CPU for the CPU reference."""
     shape = tuple(data.shape)
     if len(shape) != 4:
         raise ValueError(f"read() requires 4D-STEM shape; got {shape}.")
@@ -30,6 +30,14 @@ def read(data, *, scan_region=None, detector_region=None):
         detector_region, shape[2:], "detector_region"
     )
     payload = data.data
+    if isinstance(payload, np.ndarray):
+        # The dense CPU reference (backend="cpu") is already a host array.
+        return torch.from_numpy(payload[
+            row0:row1,
+            column0:column1,
+            detector_row0:detector_row1,
+            detector_column0:detector_column1,
+        ]).contiguous()
     device = resident_device(payload)
     if device is None or device.type not in {"cuda", "mps"}:
         raise TypeError("read() requires a CUDA or MPS resident source.")
@@ -90,6 +98,7 @@ def read(data, *, scan_region=None, detector_region=None):
                 block_column1 - block_column0,
                 *output_shape[2:],
             )
+            # Free this block before the next decode, so one block of scratch is live.
             del block
     return tensor
 
@@ -102,6 +111,7 @@ def resident_device(payload):
     callers may wrap owners of their own, so every spelling is accepted here.
     ``None`` means the payload reports no device.
     """
+    # Read by attribute: CuPy is never imported here, and callers' own owners reach this.
     device = getattr(payload, "device", None)
     if not isinstance(device, torch.device):
         device_id = getattr(payload, "_device_id", None)

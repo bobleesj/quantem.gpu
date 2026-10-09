@@ -137,13 +137,12 @@ def bright_field_spectra(
         row_chunk = bf_inds_row[bf_start:bf_end]
         col_chunk = bf_inds_col[bf_start:bf_end]
         vbf_flat = flat_data[:, row_chunk, col_chunk]
-        k = bf_end - bf_start
-        vbf_int = cp.ascontiguousarray(vbf_flat.T.reshape(k, scan_row, scan_col))
+        vbf_int = cp.ascontiguousarray(vbf_flat.T.reshape(bf_end - bf_start, scan_row, scan_col))
         del vbf_flat
         vbf_stack = vbf_int.astype(cp.complex64)
         del vbf_int
         fft_chunk = cp.fft.fft2(vbf_stack)
-        half_chunk = cp.ascontiguousarray(fft_chunk[:, :, :scan_col // 2 + 1])
+        half_chunk = cp.ascontiguousarray(fft_chunk[:, :, :stored_col])
         G_qk[bf_start:bf_end] = half_chunk
         del half_chunk
         del fft_chunk

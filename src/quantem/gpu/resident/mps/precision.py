@@ -3,7 +3,6 @@
 import bisect
 import math
 import struct
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -49,7 +48,7 @@ def upload(values):
     """Transfer bytes only; scientific conversion happens in Metal kernels."""
     if isinstance(values, MetalArray):
         return values
-    if _is_tensor(values):
+    if isinstance(values, torch.Tensor):
         if values.device.type == "mps":
             # Keep an MPS tensor on Metal. It is consumed by the direct-tensor
             # save path; converting it through NumPy would violate the GPU-only
@@ -64,16 +63,7 @@ def upload(values):
 
 def is_mps_tensor(value):
     """Whether ``value`` is a PyTorch tensor on the Apple GPU."""
-    return _is_tensor(value) and value.device.type == "mps"
-
-
-def _is_tensor(value):
-    """Whether ``value`` is a PyTorch tensor, without importing PyTorch."""
-    # PyTorch is not a dependency of the Metal backend (the ``mps`` extra omits
-    # it), so a top-level import would break NumPy-only callers; a tensor can
-    # exist only once some caller imported torch.
-    torch = sys.modules.get("torch")
-    return torch is not None and isinstance(value, torch.Tensor)
+    return isinstance(value, torch.Tensor) and value.device.type == "mps"
 
 
 def tensor_range(values):
@@ -241,7 +231,12 @@ def source_range(blocks, saved):
         stats = MetalArray((params[14], 4), np.float32)
         _dispatch("range", [values, stats], params, scalars)
         # These are small GPU-reduced statistics, never input intensities.
-        for minimum, maximum, invalid, subnormal in stats.get().tolist():
+        rows = stats.get().tolist()
+        # PyObjC frees a Metal buffer only on release; the caller's block is not ours to release.
+        stats.release()
+        if values is not block:
+            values.release()
+        for minimum, maximum, invalid, subnormal in rows:
             if invalid:
                 raise ValueError("Precision conversion requires finite intensities; preserve this source as float32.")
             if subnormal:
@@ -252,12 +247,17 @@ def source_range(blocks, saved):
 
 def has_invalid_pixels(mask):
     """Whether the detector mask marks any pixel invalid."""
-    values = restore(upload(mask), None)
+    uploaded = upload(mask)
+    values = restore(uploaded, None)
     params, scalars = _parameters(values)
     params[14] = params[15] = min(params[0], 8192)
     stats = MetalArray((params[14], 4), np.float32)
     _dispatch("range", [values, stats], params, scalars)
-    return any(row[1] != 0 for row in stats.get().tolist())
+    rows = stats.get().tolist()
+    # PyObjC frees a Metal buffer only on release; release is idempotent when values is uploaded.
+    for temporary in (stats, values, uploaded):
+        temporary.release()
+    return any(row[1] != 0 for row in rows)
 
 
 def encode(values, report):
@@ -387,6 +387,7 @@ def _part_buffers(part, first=0, stop=None):
 class PrecisionSource(DetectorQueries):
     """Keep every encoded intensity resident and restore units inside queries."""
 
+    # quantem.widget's Show4DSTEM reads this flag to keep the source on its GPU path, without a NumPy copy.
     _is_gpu_frames = True
     ndim = 4
     dtype = np.dtype("float32")
@@ -475,7 +476,10 @@ class PrecisionSource(DetectorQueries):
         return output
 
     def frame(self, index):
-        return self.frame_native(index).get()
+        native = self.frame_native(index)
+        values = native.get()
+        native.release()
+        return values
 
     def __getitem__(self, position):
         if isinstance(position, (int, np.integer)):
@@ -515,7 +519,7 @@ class PrecisionSource(DetectorQueries):
     def masked_sum_native(self, mask, *, out=None):
         self._check()
         binary = None
-        values = mask.detach().cpu().numpy() if _is_tensor(mask) else np.asarray(mask)
+        values = mask.detach().cpu().numpy() if isinstance(mask, torch.Tensor) else np.asarray(mask)
         if values.shape == self.det_shape and np.all((values == 0) | (values == 1)):
             binary = values.astype(bool)
         weights = None if binary is not None else upload(mask)
@@ -569,7 +573,9 @@ class PrecisionSource(DetectorQueries):
             params[0], params[8], params[9] = value.size, 2 if reduce == "max" else 0, len(indices) if reduce == "mean" else 1
             _dispatch("reduce", [value, result], params, scalars)
             value.release()
-        return result.get()
+        pattern = result.get()
+        result.release()
+        return pattern
 
     def center_of_mass(self, mask=None):
         weights = torch.ones(self.det_shape, device="mps") if mask is None else torch.as_tensor(mask, device="mps", dtype=torch.float32)

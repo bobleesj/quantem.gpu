@@ -58,7 +58,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             for item in acquisitions
         ]
         self.index_owners = tuple(sources)
-        if not sources or not all(isinstance(s, StreamedCounts) for s in sources):
+        if not sources or not all(isinstance(source, StreamedCounts) for source in sources):
             raise TypeError(
                 "Streamed joint queries require complete streamed count sources."
             )
@@ -70,9 +70,9 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             math.prod(self.scan_shape),
             math.prod(self.det_shape),
         )
-        self.interval = min(s.interval for s in sources)
+        self.interval = min(source.interval for source in sources)
         self.fields = field_count(self.det_shape)
-        self.frame_dtype = np.result_type(*[s.dtype for s in sources])
+        self.frame_dtype = np.result_type(*[source.dtype for source in sources])
         maximum = self.pixels * int(np.iinfo(self.frame_dtype).max)
         if maximum * len(sources) > np.iinfo(np.uint64).max:
             raise OverflowError("The complete series exceeds exact uint64 sum bounds.")
@@ -117,7 +117,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                 "This chunk count exceeds the joint CUDA launch limit; use larger loading chunks."
             )
         self.residual_warps = min(4, math.ceil(self.max_scans / self.interval))
-        self.valid_pixels = np.stack([s.valid_pixels for s in sources])
+        self.valid_pixels = np.stack([source.valid_pixels for source in sources])
         with cp.cuda.Device(self.device):
             self.descriptors = cp.asarray(rows, dtype=cp.uint64)
             self.chunk_count = len(rows)
@@ -154,10 +154,11 @@ class StreamedSeriesCompute(CudaSeriesCompute):
         self._inflight = []   # (begin, end, done, errors_slot, started, info) for queries launched with wait=False
         self._launches = 0
         self._tainted_from = None   # launch index of a failed query; later incremental queries built on it
+        # Every query's error slot, not only the first: an ``out`` overlapping any of them is refused.
         self.keepalive.extend(
             (
                 self.descriptors,
-                self.errors,
+                self.error_slots,
                 self.previous,
                 self.selected_fields,
                 self.field_coefficients,
@@ -165,7 +166,7 @@ class StreamedSeriesCompute(CudaSeriesCompute):
                 self.pixel_coefficients,
             )
         )
-        regions = {(a.data.ptr, a.data.ptr + a.nbytes) for a in self.keepalive}
+        regions = {(array.data.ptr, array.data.ptr + array.nbytes) for array in self.keepalive}
         self.regions = np.asarray(sorted(regions), np.uint64)
         self.backend_metadata = {
             "backend": "cuda",
@@ -174,8 +175,8 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             "frame_dtype": self.frame_dtype.name,
             "sum_dtype": self.sum_dtype.name,
             "series_shape": self.series_shape,
-            "resident_bytes": sum(b - a for a, b in regions),
-            "index_bytes": sum(s.index_nbytes for s in sources),
+            "resident_bytes": sum(end - start for start, end in regions),
+            "index_bytes": sum(source.index_nbytes for source in sources),
         }
         self.lock, self.last = threading.Lock(), {}
 

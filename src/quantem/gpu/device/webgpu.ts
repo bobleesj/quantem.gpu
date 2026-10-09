@@ -10,7 +10,7 @@ const lostCallbacks: Array<() => void> = [];
 
 // Register a reset to run when the GPU device is lost (process crash, tab suspend).
 // Consumers (e.g. the FFT cache) use this to drop their device-bound state.
-export function onGPULost(cb: () => void): void { lostCallbacks.push(cb); }
+export function onGPULost(callback: () => void): void { lostCallbacks.push(callback); }
 
 // Memoize the in-flight requestDevice so concurrent first callers share ONE device.
 // Without this guard, decode + colormap + FFT + render all call getGPUDevice() before
@@ -26,7 +26,10 @@ export function getGPUDevice(): Promise<GPUDevice | null> {
 async function createGPUDevice(): Promise<GPUDevice | null> {
   if (typeof navigator === "undefined" || !navigator.gpu) return null;
   try {
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+    // powerPreference selects the discrete GPU of a dual-GPU Mac. Chromium on Windows ignores it and
+    // logs a console warning on every request (crbug.com/369219127), so it is left out there.
+    const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform;
+    const adapter = await navigator.gpu.requestAdapter(platform === "Windows" ? {} : { powerPreference: "high-performance" });
     if (!adapter) return null;
     try {
       // Newer Chrome exposes the sync `adapter.info`; older builds used the async
@@ -36,7 +39,7 @@ async function createGPUDevice(): Promise<GPUDevice | null> {
       if (info) {
         gpuInfo = info.description || `${info.vendor || ""} ${info.architecture || ""} ${info.device || ""}`.trim() || "Generic WebGPU Adapter";
       }
-    } catch (_e) { /* adapter info not available */ }
+    } catch { /* adapter info not available */ }
     // Raise device limits to the adapter max. Defaults are conservative
     // (maxStorageBufferBindingSize 128 MB, maxTextureDimension2D 8192); without
     // this, buffers > 128 MB silently invalidate bind groups and wide panels fail.
@@ -48,16 +51,16 @@ async function createGPUDevice(): Promise<GPUDevice | null> {
       "maxComputeInvocationsPerWorkgroup",
       "maxComputeWorkgroupSizeX",
     ] as const) {
-      const v = adapter.limits[key] || 0;
-      if (v > 0) requiredLimits[key] = v;
+      const limit = adapter.limits[key] || 0;
+      if (limit > 0) requiredLimits[key] = limit;
     }
-    const feats: GPUFeatureName[] = [];
-    if (adapter.features.has("timestamp-query")) feats.push("timestamp-query");   // for kernel profiling
-    if (adapter.features.has("subgroups")) feats.push("subgroups" as GPUFeatureName);   // warp reduction in maskedSum/CoM
-    gpuDevice = await adapter.requestDevice({ requiredFeatures: feats, requiredLimits });
+    const features: GPUFeatureName[] = [];
+    if (adapter.features.has("timestamp-query")) features.push("timestamp-query");   // for kernel profiling
+    if (adapter.features.has("subgroups")) features.push("subgroups" as GPUFeatureName);   // warp reduction in maskedSum/CoM
+    gpuDevice = await adapter.requestDevice({ requiredFeatures: features, requiredLimits });
     // On loss, drop BOTH the device and the memoized promise so the next getGPUDevice()
     // rebuilds a fresh device (and consumers re-create their device-bound pipelines via onGPULost).
-    gpuDevice.lost.then(() => { gpuDevice = null; devicePromise = null; lostCallbacks.forEach((cb) => cb()); });
+    gpuDevice.lost.then(() => { gpuDevice = null; devicePromise = null; lostCallbacks.forEach((callback) => callback()); });
     return gpuDevice;
   } catch { devicePromise = null; return null; }
 }

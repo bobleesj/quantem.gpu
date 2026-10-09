@@ -83,10 +83,11 @@ class CudaKernelCompute(DetectorQueries):
         else:
             image = cp.empty(self.n_frames, dtype=cp.float32)
             self._sum_selected("selected_sum_f32", self._indices(mask), image)
-        return image.reshape(self.scan_shape).get().astype(np.float32, copy=False)
+        return image.reshape(self.scan_shape).get()
 
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
         """Exact uint64 virtual image: selected pixels, or total minus complement for dense masks."""
+        _require_counts(self._frames, "Exact detector sums")
         mask = self._mask(det_mask)
         selected = int(mask.sum())
         if selected == 0:
@@ -99,7 +100,7 @@ class CudaKernelCompute(DetectorQueries):
             image = self._total_counts() - self._selected_sum_uint64(self._indices(~mask))
         else:
             image = self._selected_sum_uint64(self._indices(mask))
-        return image.reshape(self.scan_shape).get().astype(np.uint64, copy=False)
+        return image.reshape(self.scan_shape).get()
 
     def mean_dp(self) -> np.ndarray:
         return mean_dp(self._data).get()
@@ -125,15 +126,17 @@ class CudaKernelCompute(DetectorQueries):
 
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
         """Exact uint64 sum of selected frames without a gathered frame tensor."""
+        _require_counts(self._frames, "Exact scan ROI sums")
         indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
         if self._suffix is None:
             pattern = self._frames.reshape(self.n_frames, -1).take(cp.asarray(indices), axis=0).sum(axis=0, dtype=cp.uint64)
         else:
             pattern = self._reduce_selected_frames("selected_frame_sum_u64", indices, cp.uint64)
-        return pattern.reshape(self.det_shape).get().astype(np.uint64, copy=False)
+        return pattern.reshape(self.det_shape).get()
 
     def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
         """Exact maximum of selected frames without a gathered frame tensor."""
+        _require_counts(self._frames, "Exact scan ROI maxima")
         indices = np.asarray(scan_indices, dtype=np.int32).reshape(-1)
         if self._suffix is None:
             pattern = self._frames.reshape(self.n_frames, -1).take(cp.asarray(indices), axis=0).max(axis=0)
@@ -179,7 +182,7 @@ class CudaKernelCompute(DetectorQueries):
                     np.int32(self.n_frames),
                 ),
             )
-        result = com_col.get().astype(np.float32, copy=False), com_row.get().astype(np.float32, copy=False)
+        result = com_col.get(), com_row.get()
         if det_mask is None:
             self._full_center_of_mass = result
         return result
@@ -260,3 +263,14 @@ class CudaKernelCompute(DetectorQueries):
 
             self._torch = TorchBackend(torch.from_dlpack(self._data))
         return self._torch
+
+
+def _require_counts(frames, product: str) -> None:
+    """Refuse float data for an exact integer product, as the Torch and NumPy backends do.
+
+    A uint64 sum or uint32 maximum of float intensities truncates every
+    sub-unity value to 0, so only integer counts have an exact product; float
+    data reduces through ``masked_sum`` and ``reduce_frames`` instead.
+    """
+    if frames.dtype.kind not in "ui":
+        raise TypeError(f"{product} require integer detector data.")

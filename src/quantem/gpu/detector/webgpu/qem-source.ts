@@ -20,8 +20,8 @@ type Header = {
   metadata: Record<string, unknown>;
   scientific_metadata: Record<string, unknown>;
 };
-// Incremental SHA-256 keeps payload verification bounded; WebCrypto.digest
-// requires an entire multi-gigabyte section in one ArrayBuffer.
+// Incremental SHA-256 of the authenticated JSON header. Payload chunks are
+// verified with WebCrypto, which needs one whole ArrayBuffer per digest.
 export class SectionSHA256 {
   private state = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
   private block = new Uint8Array(64);
@@ -138,32 +138,32 @@ export async function qemFileSource(
         .join(""),
     "header checksum mismatch",
   );
-  const h = parseManifest(new TextDecoder().decode(json)) as unknown as Header;
+  const header = parseManifest(new TextDecoder().decode(json)) as Header;
   requireQem(
-    h && typeof h === "object" && !Array.isArray(h),
+    header && typeof header === "object" && !Array.isArray(header),
     "header must be a JSON object",
   );
   requireQem(
-    h.container === "quantem.qem" && h.container_version === 1,
+    header.container === "quantem.qem" && header.container_version === 1,
     "unsupported container version",
   );
   requireQem(
-    h.codec === "runtime-column-rans-spatial-v2" &&
-      h.profile === h.codec &&
-      ["uint8", "uint16"].includes(h.dtype),
+    header.codec === "runtime-column-rans-spatial-v2" &&
+      header.profile === header.codec &&
+      ["uint8", "uint16"].includes(header.dtype),
     "this browser supports integer QEM only; open float32 QEM in the native application or a Python GPU session",
   );
   requireQem(
-    Array.isArray(h.shape) &&
-      h.shape.length === 4 &&
-      h.shape.every((value) => Number.isSafeInteger(value) && value > 0),
+    Array.isArray(header.shape) &&
+      header.shape.length === 4 &&
+      header.shape.every((value) => Number.isSafeInteger(value) && value > 0),
     "invalid four-dimensional geometry",
   );
   requireQem(
-    h.metadata && typeof h.metadata === "object" && !Array.isArray(h.metadata),
+    header.metadata && typeof header.metadata === "object" && !Array.isArray(header.metadata),
     "metadata must be an object",
   );
-  const scientific = h.scientific_metadata;
+  const scientific = header.scientific_metadata;
   requireQem(
     scientific &&
       [
@@ -179,7 +179,7 @@ export async function qemFileSource(
       axes.length === 4 &&
       axes.every(
         (axis, index) =>
-          axis && axis.name === names[index] && axis.size === h.shape[index],
+          axis && axis.name === names[index] && axis.size === header.shape[index],
       ),
     "scientific axes disagree with stored geometry",
   );
@@ -199,50 +199,50 @@ export async function qemFileSource(
     );
   }
   requireQem(
-    h.interval === 512 &&
-      Number.isSafeInteger(h.bytes) &&
-      body + h.bytes === file.size,
+    header.interval === 512 &&
+      Number.isSafeInteger(header.bytes) &&
+      body + header.bytes === file.size,
     "invalid interval or payload bounds",
   );
-  const [rows, cols, detRows, detCols] = h.shape,
+  const [rows, cols, detRows, detCols] = header.shape,
     scans = rows * cols,
     K = detRows * detCols;
   requireQem(
     Number.isSafeInteger(scans) &&
       scans < 2 ** 32 &&
       K < 2 ** 24 &&
-      K * (h.dtype === "uint8" ? 255 : 65535) < 2 ** 32,
+      K * (header.dtype === "uint8" ? 255 : 65535) < 2 ** 32,
     "geometry exceeds browser integer-product capacity; use the native GPU application",
   );
   const chunkBytes = 64 << 20;
   requireQem(
-    Array.isArray(h.sha256) &&
-      h.sha256.length === Math.ceil(h.bytes / chunkBytes),
+    Array.isArray(header.sha256) &&
+      header.sha256.length === Math.ceil(header.bytes / chunkBytes),
     "missing payload checksums",
   );
-  for (let index = 0; index < h.sha256.length; index++) {
-    onStatus(`Verifying .qem ${index + 1}/${h.sha256.length}`);
+  for (let index = 0; index < header.sha256.length; index++) {
+    onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
     const begin = index * chunkBytes;
-    const end = Math.min(h.bytes, (index + 1) * chunkBytes);
+    const end = Math.min(header.bytes, (index + 1) * chunkBytes);
     // QEM hashes independent 64 MiB chunks. WebCrypto uses the platform's
     // SHA-256 implementation without a JavaScript loop over every byte.
     // Keep verification bounded to one chunk and retain every integrity check.
     const bytes = await file.slice(body + begin, body + end).arrayBuffer();
     const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
     const actual = Array.from(hash, value => value.toString(16).padStart(2, "0")).join("");
-    requireQem(actual === h.sha256[index], "payload checksum mismatch");
+    requireQem(actual === header.sha256[index], "payload checksum mismatch");
   }
   requireQem(
-    typeof h.valid === "string" &&
-      /^[0-9a-f]*$/.test(h.valid) &&
-      h.valid.length === Math.ceil(K / 8) * 2,
+    typeof header.valid === "string" &&
+      /^[0-9a-f]*$/.test(header.valid) &&
+      header.valid.length === Math.ceil(K / 8) * 2,
     "invalid detector validity mask",
   );
   const badPixels: number[] = [];
   for (let k = 0; k < K; k++)
     if (
       !(
-        parseInt(h.valid.slice((k >> 3) * 2, (k >> 3) * 2 + 2), 16) &
+        parseInt(header.valid.slice((k >> 3) * 2, (k >> 3) * 2 + 2), 16) &
         (128 >> (k & 7))
       )
     )
@@ -271,10 +271,10 @@ export async function qemFileSource(
   let nextScan = 0,
     previousEnd = 0;
   requireQem(
-    Array.isArray(h.chunks) && h.chunks.length > 0,
+    Array.isArray(header.chunks) && header.chunks.length > 0,
     "missing encoded chunks",
   );
-  for (const chunk of h.chunks) {
+  for (const chunk of header.chunks) {
     requireQem(
       chunk.first === nextScan &&
         Number.isSafeInteger(chunk.scans) &&
@@ -294,7 +294,7 @@ export async function qemFileSource(
           Number.isSafeInteger(span.count) &&
           span.count >= 0 &&
           span.offset === Math.ceil(previousEnd / 8) * 8 &&
-          span.offset + span.count * widths[index] <= h.bytes,
+          span.offset + span.count * widths[index] <= header.bytes,
         "invalid chunk array bounds",
       );
       previousEnd = span.offset + span.count * widths[index];
@@ -366,17 +366,17 @@ export async function qemFileSource(
     nextScan += chunk.scans;
   }
   requireQem(
-    nextScan === scans && previousEnd === h.bytes,
+    nextScan === scans && previousEnd === header.bytes,
     "incomplete scan coverage or undeclared payload",
   );
   const mapped: RansManifest = {
     scan_shape: [rows, cols],
     detector_shape: [detRows, detCols],
-    native_dtype: h.dtype as "uint8" | "uint16",
+    native_dtype: header.dtype as "uint8" | "uint16",
     bad_pixels: badPixels,
     source_metadata: {
-      ...h.metadata,
-      scientific_metadata: h.scientific_metadata,
+      ...header.metadata,
+      scientific_metadata: header.scientific_metadata,
     },
     tilts: [
       {

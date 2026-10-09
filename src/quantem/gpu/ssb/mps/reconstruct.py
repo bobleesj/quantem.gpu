@@ -199,13 +199,13 @@ def reconstruct_prepared(
                     )
                     chunk_sumsq = None
             else:
-                obj_chunk = ifft2_chunked(mx, corrected)
+                object_chunk = ifft2_chunked(mx, corrected)
                 if compute_object:
-                    accumulator = accumulator + mx.sum(obj_chunk, axis=0)
+                    accumulator = accumulator + mx.sum(object_chunk, axis=0)
                 if compute_loss:
-                    chunk_sum, chunk_sumsq = phase_sums_from_complex(mx, obj_chunk)
+                    chunk_sum, chunk_sumsq = phase_sums_from_complex(mx, object_chunk)
                 else:
-                    chunk_sum = phase_sum_from_complex(mx, obj_chunk)
+                    chunk_sum = phase_sum_from_complex(mx, object_chunk)
                     chunk_sumsq = None
         if compute_loss:
             phase_sum = phase_sum + chunk_sum
@@ -214,8 +214,8 @@ def reconstruct_prepared(
             phase_sum = phase_sum + chunk_sum
         mx.eval(
             *[
-                arr for arr in (accumulator, phase_sum, phase_sumsq)
-                if arr is not None
+                array for array in (accumulator, phase_sum, phase_sumsq)
+                if array is not None
             ]
         )
 

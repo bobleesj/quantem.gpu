@@ -4,12 +4,11 @@
 export function findDataRange(data: Float32Array): { min: number; max: number } {
   let min = Infinity, max = -Infinity;
   for (let i = 0; i < data.length; i++) {
-    const v = data[i];
-    if (!isFinite(v)) continue;
-    if (v < min) min = v;
-    if (v > max) max = v;
+    const value = data[i];
+    if (!isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
   }
-  // If no finite values found, return zeros
   if (min === Infinity) return { min: 0, max: 0 };
   return { min, max };
 }
@@ -48,11 +47,11 @@ export function percentileClip(
   let min = Infinity, max = -Infinity;
   let finiteCount = 0;
   for (let i = 0; i < len; i++) {
-    const v = data[i];
-    if (!isFinite(v)) continue;
+    const value = data[i];
+    if (!isFinite(value)) continue;
     finiteCount++;
-    if (v < min) min = v;
-    if (v > max) max = v;
+    if (value < min) min = value;
+    if (value > max) max = value;
   }
   if (finiteCount === 0) return { vmin: 0, vmax: 0, min: 0, max: 0 };
   if (min === max) return { vmin: min, vmax: max, min, max };
@@ -70,32 +69,24 @@ export function percentileClip(
   // Walk cumulative histogram to find percentile values. Linear-interpolate
   // between bin edges where the target count is crossed so the result is
   // continuous in the data, not snapped to 1024 discrete bin midpoints.
-  const lowCount = finiteCount * (pLow / 100);
-  const highCount = finiteCount * (pHigh / 100);
-  let cumSum = 0;
-  let vmin = min, vmax = max;
-  let prevSum = 0;
-  for (let i = 0; i < NUM_BINS; i++) {
-    prevSum = cumSum;
-    cumSum += bins[i];
-    if (cumSum >= lowCount) {
-      const frac = (lowCount - prevSum) / Math.max(1, cumSum - prevSum);
-      vmin = min + ((i + frac) / NUM_BINS) * range;
-      break;
-    }
-  }
-  cumSum = 0;
-  prevSum = 0;
-  for (let i = 0; i < NUM_BINS; i++) {
-    prevSum = cumSum;
-    cumSum += bins[i];
-    if (cumSum >= highCount) {
-      const frac = (highCount - prevSum) / Math.max(1, cumSum - prevSum);
-      vmax = min + ((i + frac) / NUM_BINS) * range;
-      break;
-    }
-  }
+  const vmin = histogramQuantile(bins, finiteCount * (pLow / 100), min, range) ?? min;
+  const vmax = histogramQuantile(bins, finiteCount * (pHigh / 100), min, range) ?? max;
   return { vmin, vmax, min, max };
+}
+
+/** Data value where the cumulative histogram first reaches `targetCount`, linearly
+ *  interpolated inside that bin; null when the target is never reached. */
+function histogramQuantile(bins: Uint32Array, targetCount: number, min: number, range: number): number | null {
+  let cumSum = 0;
+  for (let i = 0; i < bins.length; i++) {
+    const prevSum = cumSum;
+    cumSum += bins[i];
+    if (cumSum >= targetCount) {
+      const frac = (targetCount - prevSum) / Math.max(1, cumSum - prevSum);
+      return min + ((i + frac) / bins.length) * range;
+    }
+  }
+  return null;
 }
 
 /** Compute mean, min, max, and standard deviation of a Float32Array. */
@@ -104,12 +95,12 @@ export function computeStats(data: Float32Array): { mean: number; min: number; m
   let sum = 0, min = Infinity, max = -Infinity;
   let count = 0;
   for (let i = 0; i < data.length; i++) {
-    const v = data[i];
-    if (!isFinite(v)) continue;
+    const value = data[i];
+    if (!isFinite(value)) continue;
     count++;
-    sum += v;
-    if (v < min) min = v;
-    if (v > max) max = v;
+    sum += value;
+    if (value < min) min = value;
+    if (value > max) max = value;
   }
   if (count === 0) return { mean: 0, min: 0, max: 0, std: 0 };
   const mean = sum / count;
@@ -150,8 +141,8 @@ export function computeHistogramFromBytes(
   } else {
     min = Infinity; max = -Infinity;
     for (let i = 0; i < data.length; i++) {
-      const v = data[i];
-      if (isFinite(v)) { if (v < min) min = v; if (v > max) max = v; }
+      const value = data[i];
+      if (isFinite(value)) { if (value < min) min = value; if (value > max) max = value; }
     }
     if (!isFinite(min) || !isFinite(max)) return bins;
   }
@@ -163,12 +154,12 @@ export function computeHistogramFromBytes(
   }
   const range = max - min;
   for (let i = 0; i < data.length; i++) {
-    const v = data[i];
-    if (isFinite(v)) {
+    const value = data[i];
+    if (isFinite(value)) {
       // Clamp into last bin so max-value pixels aren't silently dropped.
-      let idx = Math.floor(((v - min) / range) * numBins);
-      if (idx === numBins) idx = numBins - 1;
-      if (idx >= 0 && idx < numBins) bins[idx]++;
+      let bin = Math.floor(((value - min) / range) * numBins);
+      if (bin === numBins) bin = numBins - 1;
+      if (bin >= 0 && bin < numBins) bins[bin]++;
     }
   }
   const maxCount = Math.max(...bins);

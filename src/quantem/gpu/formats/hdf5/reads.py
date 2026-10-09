@@ -73,11 +73,11 @@ class FrameReader:
         self.thread_pool = ThreadPoolExecutor(max_workers=12)
         pool_seconds = time.perf_counter() - pool_started
         self._initial_timing = {
-            "source_index": float(source_seconds),
-            "chunk_index_array_build": float(chunk_index_seconds),
-            "persistent_file_open": float(file_open_seconds),
-            "persistent_thread_pool_create": float(pool_seconds),
-            "persistent_session_total": float(time.perf_counter() - started),
+            "source_index": source_seconds,
+            "chunk_index_array_build": chunk_index_seconds,
+            "persistent_file_open": file_open_seconds,
+            "persistent_thread_pool_create": pool_seconds,
+            "persistent_session_total": time.perf_counter() - started,
         }
 
     def prepare(self, frame_indices: np.ndarray) -> dict:
@@ -88,7 +88,7 @@ class FrameReader:
         input of ``io.hdf5.cuda.decode.decompress_prepared`` and the Metal
         ``load_prepared_frames``.
         """
-        t_total = time.perf_counter()
+        total_started = time.perf_counter()
         selected = np.asarray(frame_indices, dtype=np.int64).reshape(-1)
         if selected.size == 0:
             raise ValueError("frame_indices must contain at least one frame")
@@ -101,7 +101,7 @@ class FrameReader:
         # One-time initialization costs are reported with the first prepared batch.
         session_timing = self._initial_timing
         self._initial_timing = {name: 0.0 for name in session_timing}
-        source_seconds = float(session_timing.pop("source_index"))
+        source_seconds = session_timing.pop("source_index")
         frame_shape = source_infos[0]["frame_shape"]
         dtype = source_infos[0]["dtype"]
         for info in source_infos[1:]:
@@ -115,7 +115,7 @@ class FrameReader:
                 f"Requested frame {int(selected.max())}, but only {total_available} frames are available"
             )
 
-        t_plan = time.perf_counter()
+        plan_started = time.perf_counter()
         # Reading a gap this small is cheaper than issuing another read.
         max_gap_bytes = 4096
         fast_plan = _contiguous_frame_read_plan(
@@ -136,18 +136,19 @@ class FrameReader:
             chunk_offsets_arr = np.empty(selected.size, dtype=np.uint64)
             chunk_sizes_arr = np.empty(selected.size, dtype=np.uint32)
             entries_by_source: dict[int, list[tuple[int, int, int]]] = {}
-            for order_pos, global_idx in enumerate(selected):
-                source_idx = bisect.bisect_right(source_starts, int(global_idx)) - 1
-                local_idx = int(global_idx) - int(source_starts[source_idx])
-                chunk_infos = source_infos[source_idx]["chunk_infos"]
-                if local_idx >= len(chunk_infos):
+            # Python ints throughout: NumPy promotes uint64 offsets mixed with int64 to float64.
+            for order_position, global_index in enumerate(selected):
+                source_index = bisect.bisect_right(source_starts, int(global_index)) - 1
+                local_index = int(global_index) - int(source_starts[source_index])
+                chunk_infos = source_infos[source_index]["chunk_infos"]
+                if local_index >= len(chunk_infos):
                     raise ValueError(
-                        f"Requested local frame {local_idx}, but only "
+                        f"Requested local frame {local_index}, but only "
                         f"{len(chunk_infos)} HDF5 chunks were indexed"
                     )
-                byte_offset, chunk_size = chunk_infos[local_idx]
-                entries_by_source.setdefault(source_idx, []).append(
-                    (order_pos, int(byte_offset), int(chunk_size))
+                byte_offset, chunk_size = chunk_infos[local_index]
+                entries_by_source.setdefault(source_index, []).append(
+                    (order_position, int(byte_offset), int(chunk_size))
                 )
 
             read_plan_by_source = {}
@@ -164,13 +165,13 @@ class FrameReader:
                 read_plan_by_source.setdefault(source_index, []).append(
                     (int(start), int(destination), span_nbytes)
                 )
-                for order_pos, byte_offset, chunk_size in span:
-                    chunk_offsets_arr[order_pos] = destination + int(byte_offset - start)
-                    chunk_sizes_arr[order_pos] = int(chunk_size)
+                for order_position, byte_offset, chunk_size in span:
+                    chunk_offsets_arr[order_position] = destination + int(byte_offset - start)
+                    chunk_sizes_arr[order_position] = int(chunk_size)
                 return destination + span_nbytes
 
-            for source_idx, entries in entries_by_source.items():
-                entries = sorted(entries, key=lambda item: item[1])
+            for source_index, unsorted_entries in entries_by_source.items():
+                entries = sorted(unsorted_entries, key=lambda item: item[1])
                 span_start = entries[0][1]
                 span_end = entries[0][1] + entries[0][2]
                 span_entries = [entries[0]]
@@ -183,41 +184,41 @@ class FrameReader:
                         span_entries.append(entry)
                     else:
                         cursor = append_span(
-                            source_idx, span_start, span_end, span_entries, cursor
+                            source_index, span_start, span_end, span_entries, cursor
                         )
                         span_start = int(byte_offset)
                         span_end = next_end
                         span_entries = [entry]
-                cursor = append_span(source_idx, span_start, span_end, span_entries, cursor)
-        plan_seconds = time.perf_counter() - t_plan
+                cursor = append_span(source_index, span_start, span_end, span_entries, cursor)
+        plan_seconds = time.perf_counter() - plan_started
 
         total_compressed = int(cursor)
-        t_alloc = time.perf_counter()
+        alloc_started = time.perf_counter()
         read_buffer = _alloc_pinned_fast(total_compressed)
-        alloc_seconds = time.perf_counter() - t_alloc
+        alloc_seconds = time.perf_counter() - alloc_started
         libc = _get_libc()
 
-        def read_exact_at(fd: int, dst_offset: int, nbytes: int, file_offset: int) -> None:
+        def read_exact_at(fd: int, destination_offset: int, nbytes: int, file_offset: int) -> None:
             # preadv writes straight into the page-locked buffer (Linux and macOS).
-            mv = memoryview(read_buffer)[dst_offset:dst_offset + nbytes]
+            destination_view = memoryview(read_buffer)[destination_offset:destination_offset + nbytes]
             remaining = int(nbytes)
             view_offset = 0
             while remaining > 0:
-                got = os.preadv(
+                bytes_read = os.preadv(
                     fd,
-                    [mv[view_offset:view_offset + remaining]],
+                    [destination_view[view_offset:view_offset + remaining]],
                     int(file_offset + view_offset),
                 )
-                if got == 0:
+                if bytes_read == 0:
                     raise OSError("short read while loading selected HDF5 chunks")
-                remaining -= int(got)
-                view_offset += int(got)
+                remaining -= bytes_read
+                view_offset += bytes_read
 
         def read_source(
             item: tuple[int, list[tuple[int, int, int]]],
         ) -> tuple[float, float]:
-            source_idx, reads = item
-            fd = self.fds[source_idx]
+            source_index, reads = item
+            fd = self.fds[source_index]
             advice_seconds = 0.0
             if libc is not None:
                 advice_started = time.perf_counter()
@@ -230,8 +231,8 @@ class FrameReader:
                     )
                 advice_seconds = time.perf_counter() - advice_started
             pread_started = time.perf_counter()
-            for file_offset, dst_offset, nbytes in reads:
-                read_exact_at(fd, dst_offset, nbytes, file_offset)
+            for file_offset, destination_offset, nbytes in reads:
+                read_exact_at(fd, destination_offset, nbytes, file_offset)
             return advice_seconds, time.perf_counter() - pread_started
 
         # Split only the already-selected spans. Independent preadv calls write
@@ -245,12 +246,12 @@ class FrameReader:
                     read_jobs.append(
                         (source_index, [(file_offset + offset, destination + offset, length)])
                     )
-        t_read = time.perf_counter()
+        read_started = time.perf_counter()
         if len(read_jobs) > 1:
             read_metrics = list(self.thread_pool.map(read_source, read_jobs))
         else:
             read_metrics = [read_source(item) for item in read_jobs]
-        read_seconds = time.perf_counter() - t_read
+        read_seconds = time.perf_counter() - read_started
         fadvise_seconds = sum(metric[0] for metric in read_metrics)
         pread_seconds = sum(metric[1] for metric in read_metrics)
 
@@ -259,7 +260,7 @@ class FrameReader:
         block_starts_flat = np.zeros(selected.size * n_blocks_per_frame, dtype=np.uint32)
         block_counts = np.zeros(selected.size, dtype=np.uint32)
         block_offsets_arr = np.zeros(selected.size + 1, dtype=np.uint32)
-        t_headers = time.perf_counter()
+        headers_started = time.perf_counter()
         parse_headers(
             read_buffer,
             chunk_sizes_arr,
@@ -272,8 +273,8 @@ class FrameReader:
         )
         block_offsets_arr[1:selected.size + 1] = np.cumsum(block_counts[:selected.size])
         total_blocks = int(block_offsets_arr[selected.size])
-        header_seconds = time.perf_counter() - t_headers
-        total_seconds = time.perf_counter() - t_total
+        header_seconds = time.perf_counter() - headers_started
+        total_seconds = time.perf_counter() - total_started
 
         return {
             "read_buffer": read_buffer[:total_compressed],
@@ -286,14 +287,15 @@ class FrameReader:
             "frame_bytes": frame_bytes,
             "dtype": dtype,
             "prepare_timing_s": {
-                "source_index": float(source_seconds),
-                "read_plan": float(plan_seconds),
-                "pinned_alloc": float(alloc_seconds),
-                "compressed_read": float(read_seconds),
+                "source_index": source_seconds,
+                "read_plan": plan_seconds,
+                "pinned_alloc": alloc_seconds,
+                "compressed_read": read_seconds,
+                # float: an empty job list sums to the integer 0.
                 "compressed_pread_cpu": float(pread_seconds),
                 "posix_fadvise_cpu": float(fadvise_seconds),
-                "header_parse": float(header_seconds),
-                "total": float(total_seconds),
+                "header_parse": header_seconds,
+                "total": total_seconds,
                 **session_timing,
             },
         }
@@ -394,12 +396,11 @@ def _contiguous_frame_read_plan(
         ) + 1
         group_starts = np.concatenate((np.array([0]), split_points))
         group_stops = np.concatenate((split_points, np.array([offsets.size])))
+        group_bounds = list(zip(group_starts.tolist(), group_stops.tolist(), strict=True))
 
         destination_start = cursor
         source_plan: list[tuple[int, int, int]] = []
-        for group_start, group_stop in zip(group_starts, group_stops, strict=True):
-            group_start = int(group_start)
-            group_stop = int(group_stop)
+        for group_start, group_stop in group_bounds:
             span_start = int(offsets[group_start])
             span_stop = int(running_ends[group_stop - 1])
             span_nbytes = span_stop - span_start
@@ -413,17 +414,14 @@ def _contiguous_frame_read_plan(
         group_cursors = np.cumsum(
             np.asarray([0] + [item[2] for item in source_plan[:-1]], dtype=np.uint64)
         ) + np.uint64(destination_start)
-        for group_number, (group_start, group_stop) in enumerate(
-            zip(group_starts, group_stops, strict=True)
-        ):
-            group_start = int(group_start)
-            group_stop = int(group_stop)
+        for group_number, (group_start, group_stop) in enumerate(group_bounds):
             group_destinations[group_start:group_stop] = (
                 group_cursors[group_number]
                 + offsets[group_start:group_stop]
                 - offsets[group_start]
             )
         chunk_offsets[order_start:order_stop] = group_destinations
+        # The header parser and decoders read uint32 sizes; the range was checked above.
         chunk_sizes[order_start:order_stop] = sizes_u64.astype(np.uint32, copy=False)
 
     if sum(len(plan) for plan in read_plan.values()) == 0:

@@ -51,7 +51,7 @@ def search_ranges_to_engine(search_ranges: dict[str, object] | None) -> dict[str
     for key in ("C10_nm", "C12_nm"):
         if key in scaled and scaled[key] is not None:
             value = scaled[key]
-            scaled[key] = tuple(float(v) * ENGINE_PER_NM for v in value) if isinstance(value, (tuple, list)) else float(value) * ENGINE_PER_NM
+            scaled[key] = tuple(float(bound) * ENGINE_PER_NM for bound in value) if isinstance(value, (tuple, list)) else float(value) * ENGINE_PER_NM
     return scaled
 
 

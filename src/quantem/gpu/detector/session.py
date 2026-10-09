@@ -23,6 +23,7 @@ from quantem.gpu.detector.tensors import ArrayBackend, TorchBackend
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.paired import PairedCounts
+from quantem.gpu.resident.cuda.precision import PrecisionSource as CUDAPrecisionSource
 from quantem.gpu.resident.float_ans import FloatANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from quantem.gpu.resident.mps.frames import ChunkedFrames
@@ -81,11 +82,6 @@ class DetectorSession:
         valid = self._backend.valid_pixels
         return None if valid is None else np.array(valid, dtype=bool, copy=True)
 
-    @property
-    def timings(self) -> dict:
-        """Completed backend timings for the last request, excluding display."""
-        return dict(self._backend.last)
-
     def frame(self, index: int, *, output: str = "numpy", out=None, wait: bool = True):
         """Return one detector frame.
 
@@ -102,6 +98,10 @@ class DetectorSession:
             Point patterns retain uint8/uint16 with leading ``series_shape``.
             The operation finishes before returning; do not reuse ``out`` while
             a consumer still reads it. Without ``out``, the result owns storage.
+        wait
+            ``False`` (native output on a streamed CUDA series) returns once
+            the decode is queued; the pattern is complete after :meth:`finish`.
+            Every other source completes the pattern before returning.
 
         Examples
         --------
@@ -116,7 +116,8 @@ class DetectorSession:
             )
         if output == "numpy":
             return np.array(self._backend.frame(index), copy=True)
-        if wait:
+        if wait or not isinstance(self._backend, StreamedSeriesCompute):
+            # Only streamed series queue queries; every other source completes the pattern here.
             return self._backend.frame_native(index, out=out)
         return self._backend.frame_native(index, out=out, wait=False)
 
@@ -175,10 +176,11 @@ class DetectorSession:
             return. Finish reading it before reusing this buffer. Without
             ``out``, each native result owns separate storage.
         wait
-            ``False`` (native output on a streamed CUDA series only) returns as
+            ``False`` (native output on a streamed CUDA series) returns as
             soon as the kernels are queued; the result is complete after
             :meth:`finish`, which also raises for a malformed stream. Several
             queries may be in flight so the host plans while the device works.
+            Every other source completes the image before returning.
         block_stride
             Paired native series only. ``k > 1`` sums every k-th 512-scan block
             (every k-th scan row of a 512-wide raster) and leaves the other rows
@@ -196,9 +198,10 @@ class DetectorSession:
             raise ValueError("block_stride needs a paired native series with output='native'.")
         if output == "numpy":
             return _reduced_to_numpy(self._backend.masked_sum(mask)).reshape((*self.series_shape, *self.scan_shape))
-        # Only streamed series take the queueing and stride options; other backends keep the plain call.
+        # Only streamed series take the queueing and stride options; other backends keep the plain call
+        # and complete the image before returning, which a caller of wait=False reads after finish().
         options = {} if block_stride == 1 else {"block_stride": block_stride}
-        if not wait:
+        if not wait and isinstance(self._backend, StreamedSeriesCompute):
             options["wait"] = False
         return self._backend.masked_sum_native(mask, out=out, **options)
 
@@ -322,33 +325,6 @@ class DetectorSession:
         col = _reduced_to_numpy(com_col).reshape(self.scan_shape)
         return row, col
 
-    @property
-    def supports_fast(self) -> bool:
-        """Whether this session provides an accelerated interaction sidecar."""
-        return isinstance(self._backend, MetalRawBackend)
-
-    @property
-    def fast_ready(self) -> bool:
-        """Whether the interaction sidecar is ready."""
-        return self.supports_fast and self._backend.has_fast
-
-    @property
-    def fast_bin(self) -> int:
-        """Detector binning used only by the optional interaction sidecar."""
-        return int(self._backend.fast_bin) if self.supports_fast else 1
-
-    def prepare_fast(self, *, verbose: bool = False) -> bool:
-        """Prepare the optional interaction sidecar."""
-        if not self.supports_fast:
-            return False
-        return bool(self._backend.ensure_fast_sidecar(verbose=verbose))
-
-    def cache_fast_presets(self, masks: dict[str, np.ndarray]) -> dict:
-        """Cache named interaction masks when supported."""
-        if not self.supports_fast:
-            return {}
-        return self._backend.cache_fast_presets(masks)
-
     def close(self) -> None:
         """Release this session's ownership of backend caches."""
         self._backend = None
@@ -403,9 +379,7 @@ def resolve_backend(data):
         return CudaSeriesCompute(data)
     data = _unwrap_core_4dstem(data)
     # Scaled-precision residents answer detector queries on their own encoded data.
-    if isinstance(data, MPSPrecisionSource) or _is_loaded_instance(
-        data, "quantem.gpu.resident.cuda.precision", "PrecisionSource"
-    ):
+    if isinstance(data, (MPSPrecisionSource, CUDAPrecisionSource)):
         return data
     if isinstance(data, FloatANSResident):
         return FloatANSDetectorCompute(data)

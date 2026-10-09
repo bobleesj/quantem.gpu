@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.device.metal_runtime import numpy_view
+from quantem.gpu.device.metal_runtime import numpy_view, release_buffer
 from quantem.gpu.movie.layout import grid_layout, label_font, label_mask, panel_labels
 
 _METAL_SOURCE = r"""
@@ -116,6 +116,11 @@ class LabelMask:
 
 
 def _imports() -> tuple[object, object, object, object]:
+    """Import Metal and the optional imageio-ffmpeg only when a movie is rendered.
+
+    The module then imports on every platform; a missing Mac, PyObjC Metal or
+    Apple GPU raises RuntimeError, which ``is_available`` reports as False.
+    """
     if sys.platform != "darwin":
         raise RuntimeError(
             f"MPS movie export requires macOS; current platform is {sys.platform}."
@@ -136,7 +141,6 @@ def _imports() -> tuple[object, object, object, object]:
 
 def is_available() -> bool:
     """Return whether the MPS movie backend can be used in this process."""
-
     try:
         _imports()
     except RuntimeError:
@@ -144,19 +148,19 @@ def is_available() -> bool:
     return True
 
 
-def _buffer(device: object, Metal: object, nbytes: int) -> object:
-    buf = device.newBufferWithLength_options_(int(nbytes), Metal.MTLResourceStorageModeShared)
-    if buf is None:
+def _buffer(device: object, metal: object, nbytes: int) -> object:
+    buffer = device.newBufferWithLength_options_(int(nbytes), metal.MTLResourceStorageModeShared)
+    if buffer is None:
         raise MemoryError(f"Metal buffer allocation failed ({int(nbytes) / 1e9:.2f} GB).")
-    return buf
+    return buffer
 
 
-def _buffer_from_array(device: object, Metal: object, array: np.ndarray) -> object:
-    arr = np.ascontiguousarray(array)
-    buf = _buffer(device, Metal, arr.nbytes)
-    view = numpy_view(buf, arr.dtype, arr.size).reshape(arr.shape)
-    view[...] = arr
-    return buf
+def _buffer_from_array(device: object, metal: object, array: np.ndarray) -> object:
+    values = np.ascontiguousarray(array)
+    buffer = _buffer(device, metal, values.nbytes)
+    view = numpy_view(buffer, values.dtype, values.size).reshape(values.shape)
+    view[...] = values
+    return buffer
 
 
 def _uint32(value: int) -> bytes:
@@ -165,18 +169,18 @@ def _uint32(value: int) -> bytes:
 
 def _compile_pipelines(device: object) -> tuple[object, object]:
     options = None
-    library, err = device.newLibraryWithSource_options_error_(_METAL_SOURCE, options, None)
-    if err:
-        raise RuntimeError(f"MPS movie shader compile failed: {err}")
-    scale_fn = library.newFunctionWithName_("scale_grid_nv12")
-    label_fn = library.newFunctionWithName_("stamp_label")
-    scale_pipe, err = device.newComputePipelineStateWithFunction_error_(scale_fn, None)
-    if err:
-        raise RuntimeError(f"MPS movie scale pipeline compile failed: {err}")
-    label_pipe, err = device.newComputePipelineStateWithFunction_error_(label_fn, None)
-    if err:
-        raise RuntimeError(f"MPS movie label pipeline compile failed: {err}")
-    return scale_pipe, label_pipe
+    library, error = device.newLibraryWithSource_options_error_(_METAL_SOURCE, options, None)
+    if error:
+        raise RuntimeError(f"MPS movie shader compile failed: {error}")
+    scale_function = library.newFunctionWithName_("scale_grid_nv12")
+    label_function = library.newFunctionWithName_("stamp_label")
+    scale_pipeline, error = device.newComputePipelineStateWithFunction_error_(scale_function, None)
+    if error:
+        raise RuntimeError(f"MPS movie scale pipeline compile failed: {error}")
+    label_pipeline, error = device.newComputePipelineStateWithFunction_error_(label_function, None)
+    if error:
+        raise RuntimeError(f"MPS movie label pipeline compile failed: {error}")
+    return scale_pipeline, label_pipeline
 
 
 def _ffmpeg_exe(imageio_ffmpeg: object | None) -> str:
@@ -198,11 +202,16 @@ def _encode_nv12(
     quality: int,
     faststart: bool,
 ) -> None:
+    """Encode the raw NV12 frames at ``raw_path`` as H.264 with ffmpeg.
+
+    ``codec="auto"`` tries the VideoToolbox hardware encoder first and falls
+    back to libx264 when it fails; an explicit codec gets one attempt.
+    """
     ffmpeg = _ffmpeg_exe(imageio_ffmpeg)
     codecs = ["h264_videotoolbox", "libx264"] if codec == "auto" else [codec]
     last_error: subprocess.CalledProcessError | None = None
-    for item in codecs:
-        cmd = [
+    for name in codecs:
+        command = [
             ffmpeg,
             "-y",
             "-hide_banner",
@@ -219,18 +228,23 @@ def _encode_nv12(
             "-i",
             str(raw_path),
             "-c:v",
-            str(item),
+            str(name),
         ]
-        if item == "libx264":
-            cmd.extend(["-pix_fmt", "yuv420p", "-crf", str(int(crf))])
-        elif item == "h264_videotoolbox":
-            cmd.extend(["-b:v", "0", "-q:v", str(int(quality))])
+        if name == "libx264":
+            command.extend(["-pix_fmt", "yuv420p", "-crf", str(int(crf))])
+        elif name == "h264_videotoolbox":
+            command.extend(["-b:v", "0", "-q:v", str(int(quality))])
         if faststart:
-            cmd.extend(["-movflags", "+faststart"])
-        cmd.append(str(mp4_path))
+            command.extend(["-movflags", "+faststart"])
+        command.append(str(mp4_path))
         try:
-            subprocess.run(cmd, check=True)
+            subprocess.run(command, check=True)
             return
+        except FileNotFoundError as exc:
+            # A RuntimeError lets save_mp4's "auto" backend fall back to the CPU writer.
+            raise RuntimeError(
+                "MPS MP4 export needs ffmpeg: pip install imageio-ffmpeg, or put ffmpeg on PATH"
+            ) from exc
         except subprocess.CalledProcessError as exc:
             last_error = exc
             if codec != "auto":
@@ -255,8 +269,7 @@ def save_mp4(
     faststart: bool = True,
 ) -> Path:
     """Save a grayscale movie grid as H.264 MP4 using Apple Metal rendering."""
-
-    Metal, device, queue, imageio_ffmpeg = _imports()
+    metal, device, queue, imageio_ffmpeg = _imports()
     if not stacks:
         raise ValueError("movie.mps.save_mp4 requires at least one stack")
     frames, height, width = stacks[0].shape
@@ -274,85 +287,95 @@ def save_mp4(
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    stack4 = np.stack([np.asarray(stack, dtype=np.float32) for stack in stacks], axis=0)
-    stack_mtl = _buffer_from_array(device, Metal, np.ascontiguousarray(stack4))
-    limits_arr = np.asarray(limits, dtype=np.float32)
-    vmin_mtl = _buffer_from_array(device, Metal, np.ascontiguousarray(limits_arr[:, 0]))
-    scale = np.asarray(
-        [255.0 / max(float(hi) - float(lo), 1e-6) for lo, hi in limits],
-        dtype=np.float32,
-    )
-    scale_mtl = _buffer_from_array(device, Metal, scale)
-    nv12_bytes = out_width * out_height * 3 // 2
-    nv12_mtl = _buffer(device, Metal, nv12_bytes)
-    nv12_np = numpy_view(nv12_mtl, np.uint8, nv12_bytes)
-    scale_pipe, label_pipe = _compile_pipelines(device)
+    panel_stacks = np.stack([np.asarray(stack, dtype=np.float32) for stack in stacks], axis=0)
+    # PyObjC never frees a new Metal buffer when its wrapper is collected, so every buffer
+    # allocated here is released explicitly, also when rendering or encoding fails.
+    buffers = []
 
-    label_masks = []
-    for frame_labels in panel_labels(layout, labels, n_panels, frames):
-        frame_masks = []
-        for label in frame_labels:
-            white, black = label_mask(label.text, label_font(label.font_size))
-            frame_masks.append(
-                LabelMask(
-                    label.x,
-                    label.y,
-                    white.shape[1],
-                    white.shape[0],
-                    _buffer_from_array(device, Metal, white),
-                    _buffer_from_array(device, Metal, black),
-                )
-            )
-        label_masks.append(frame_masks)
+    def kept(buffer):
+        buffers.append(buffer)
+        return buffer
 
-    block = 256
-    grid = Metal.MTLSizeMake((nv12_bytes + block - 1) // block, 1, 1)
-    threads = Metal.MTLSizeMake(block, 1, 1)
-    with tempfile.NamedTemporaryFile(suffix=".nv12", delete=False) as tmp:
-        raw_path = Path(tmp.name)
-        for frame_idx in range(frames):
-            cmd = queue.commandBuffer()
-            enc = cmd.computeCommandEncoder()
-            enc.setComputePipelineState_(scale_pipe)
-            enc.setBuffer_offset_atIndex_(stack_mtl, 0, 0)
-            enc.setBuffer_offset_atIndex_(vmin_mtl, 0, 1)
-            enc.setBuffer_offset_atIndex_(scale_mtl, 0, 2)
-            enc.setBuffer_offset_atIndex_(nv12_mtl, 0, 3)
-            enc.setBytes_length_atIndex_(_uint32(frame_idx), 4, 4)
-            enc.setBytes_length_atIndex_(_uint32(n_panels), 4, 5)
-            enc.setBytes_length_atIndex_(_uint32(frames), 4, 6)
-            enc.setBytes_length_atIndex_(_uint32(width), 4, 7)
-            enc.setBytes_length_atIndex_(_uint32(height), 4, 8)
-            enc.setBytes_length_atIndex_(_uint32(out_width), 4, 9)
-            enc.setBytes_length_atIndex_(_uint32(out_height), 4, 10)
-            enc.setBytes_length_atIndex_(_uint32(layout.frame_width), 4, 11)
-            enc.setBytes_length_atIndex_(_uint32(layout.frame_height), 4, 12)
-            enc.setBytes_length_atIndex_(_uint32(layout.label_height), 4, 13)
-            enc.setBytes_length_atIndex_(_uint32(layout.gap), 4, 14)
-            enc.setBytes_length_atIndex_(_uint32(layout.columns), 4, 15)
-            enc.dispatchThreadgroups_threadsPerThreadgroup_(grid, threads)
-            for mask in label_masks[frame_idx]:
-                mask_total = int(mask.width * mask.height)
-                mask_grid = Metal.MTLSizeMake((mask_total + block - 1) // block, 1, 1)
-                enc.setComputePipelineState_(label_pipe)
-                enc.setBuffer_offset_atIndex_(nv12_mtl, 0, 0)
-                enc.setBuffer_offset_atIndex_(mask.white, 0, 1)
-                enc.setBuffer_offset_atIndex_(mask.black, 0, 2)
-                enc.setBytes_length_atIndex_(_uint32(out_width), 4, 3)
-                enc.setBytes_length_atIndex_(_uint32(out_height), 4, 4)
-                enc.setBytes_length_atIndex_(_uint32(mask.width), 4, 5)
-                enc.setBytes_length_atIndex_(_uint32(mask.height), 4, 6)
-                enc.setBytes_length_atIndex_(_uint32(mask.x), 4, 7)
-                enc.setBytes_length_atIndex_(_uint32(mask.y), 4, 8)
-                enc.dispatchThreadgroups_threadsPerThreadgroup_(mask_grid, threads)
-            enc.endEncoding()
-            cmd.commit()
-            cmd.waitUntilCompleted()
-            status = int(cmd.status())
-            if status != 4:
-                raise RuntimeError(f"MPS movie command failed with Metal status={status}.")
-            tmp.write(nv12_np.tobytes())
+    raw_path = None
     try:
+        stack_mtl = kept(_buffer_from_array(device, metal, np.ascontiguousarray(panel_stacks)))
+        limits_array = np.asarray(limits, dtype=np.float32)
+        vmin_mtl = kept(_buffer_from_array(device, metal, np.ascontiguousarray(limits_array[:, 0])))
+        scale = np.asarray(
+            [255.0 / max(float(hi) - float(lo), 1e-6) for lo, hi in limits],
+            dtype=np.float32,
+        )
+        scale_mtl = kept(_buffer_from_array(device, metal, scale))
+        nv12_bytes = out_width * out_height * 3 // 2
+        nv12_mtl = kept(_buffer(device, metal, nv12_bytes))
+        nv12_np = numpy_view(nv12_mtl, np.uint8, nv12_bytes)
+        scale_pipeline, label_pipeline = _compile_pipelines(device)
+
+        label_masks = []
+        for frame_labels in panel_labels(layout, labels, n_panels, frames):
+            frame_masks = []
+            for label in frame_labels:
+                white, black = label_mask(label.text, label_font(label.font_size))
+                frame_masks.append(
+                    LabelMask(
+                        label.x,
+                        label.y,
+                        white.shape[1],
+                        white.shape[0],
+                        kept(_buffer_from_array(device, metal, white)),
+                        kept(_buffer_from_array(device, metal, black)),
+                    )
+                )
+            label_masks.append(frame_masks)
+
+        block = 256
+        grid = metal.MTLSizeMake((nv12_bytes + block - 1) // block, 1, 1)
+        threads = metal.MTLSizeMake(block, 1, 1)
+        with tempfile.NamedTemporaryFile(suffix=".nv12", delete=False) as raw_file:
+            raw_path = Path(raw_file.name)
+            for frame_index in range(frames):
+                command = queue.commandBuffer()
+                encoder = command.computeCommandEncoder()
+                encoder.setComputePipelineState_(scale_pipeline)
+                encoder.setBuffer_offset_atIndex_(stack_mtl, 0, 0)
+                encoder.setBuffer_offset_atIndex_(vmin_mtl, 0, 1)
+                encoder.setBuffer_offset_atIndex_(scale_mtl, 0, 2)
+                encoder.setBuffer_offset_atIndex_(nv12_mtl, 0, 3)
+                encoder.setBytes_length_atIndex_(_uint32(frame_index), 4, 4)
+                encoder.setBytes_length_atIndex_(_uint32(n_panels), 4, 5)
+                encoder.setBytes_length_atIndex_(_uint32(frames), 4, 6)
+                encoder.setBytes_length_atIndex_(_uint32(width), 4, 7)
+                encoder.setBytes_length_atIndex_(_uint32(height), 4, 8)
+                encoder.setBytes_length_atIndex_(_uint32(out_width), 4, 9)
+                encoder.setBytes_length_atIndex_(_uint32(out_height), 4, 10)
+                encoder.setBytes_length_atIndex_(_uint32(layout.frame_width), 4, 11)
+                encoder.setBytes_length_atIndex_(_uint32(layout.frame_height), 4, 12)
+                encoder.setBytes_length_atIndex_(_uint32(layout.label_height), 4, 13)
+                encoder.setBytes_length_atIndex_(_uint32(layout.gap), 4, 14)
+                encoder.setBytes_length_atIndex_(_uint32(layout.columns), 4, 15)
+                encoder.dispatchThreadgroups_threadsPerThreadgroup_(grid, threads)
+                for mask in label_masks[frame_index]:
+                    mask_total = int(mask.width * mask.height)
+                    mask_grid = metal.MTLSizeMake((mask_total + block - 1) // block, 1, 1)
+                    encoder.setComputePipelineState_(label_pipeline)
+                    encoder.setBuffer_offset_atIndex_(nv12_mtl, 0, 0)
+                    encoder.setBuffer_offset_atIndex_(mask.white, 0, 1)
+                    encoder.setBuffer_offset_atIndex_(mask.black, 0, 2)
+                    encoder.setBytes_length_atIndex_(_uint32(out_width), 4, 3)
+                    encoder.setBytes_length_atIndex_(_uint32(out_height), 4, 4)
+                    encoder.setBytes_length_atIndex_(_uint32(mask.width), 4, 5)
+                    encoder.setBytes_length_atIndex_(_uint32(mask.height), 4, 6)
+                    encoder.setBytes_length_atIndex_(_uint32(mask.x), 4, 7)
+                    encoder.setBytes_length_atIndex_(_uint32(mask.y), 4, 8)
+                    encoder.dispatchThreadgroups_threadsPerThreadgroup_(mask_grid, threads)
+                encoder.endEncoding()
+                command.commit()
+                command.waitUntilCompleted()
+                # 4 is MTLCommandBufferStatusCompleted.
+                status = int(command.status())
+                if status != 4:
+                    raise RuntimeError(f"MPS movie command failed with Metal status={status}.")
+                raw_file.write(nv12_np.tobytes())
         _encode_nv12(
             raw_path,
             path,
@@ -366,7 +389,10 @@ def save_mp4(
             faststart=bool(faststart),
         )
     finally:
-        raw_path.unlink(missing_ok=True)
+        for buffer in buffers:
+            release_buffer(buffer)
+        if raw_path is not None:
+            raw_path.unlink(missing_ok=True)
     return path
 
 

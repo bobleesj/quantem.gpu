@@ -11,13 +11,18 @@ export function dequantizeUint8(
   output: Float32Array = new Float32Array(values.length),
 ): Float32Array {
   if (output.length < values.length) throw new Error("dequantizeUint8 output is shorter than input");
-  const finiteLow = Number.isFinite(low) ? low : 0;
-  const finiteHigh = Number.isFinite(high) ? high : finiteLow;
-  const scale = finiteHigh > finiteLow ? (finiteHigh - finiteLow) / 255 : 0;
+  const { finiteLow, scale } = uint8Range(low, high);
   for (let index = 0; index < values.length; index++) {
     output[index] = values[index] * scale + finiteLow;
   }
   return output;
+}
+
+/** Offset and step of the uint8 code range; non-finite bounds collapse to a constant image. */
+function uint8Range(low: number, high: number): { finiteLow: number; scale: number } {
+  const finiteLow = Number.isFinite(low) ? low : 0;
+  const finiteHigh = Number.isFinite(high) ? high : finiteLow;
+  return { finiteLow, scale: finiteHigh > finiteLow ? (finiteHigh - finiteLow) / 255 : 0 };
 }
 
 const DEQUANTIZE_UINT8_WGSL = /* wgsl */ `
@@ -61,9 +66,7 @@ export async function dequantizeUint8WebGPU(
   high: number,
 ): Promise<Float32Array> {
   if (values.length === 0) return new Float32Array(0);
-  const finiteLow = Number.isFinite(low) ? low : 0;
-  const finiteHigh = Number.isFinite(high) ? high : finiteLow;
-  const scale = finiteHigh > finiteLow ? (finiteHigh - finiteLow) / 255 : 0;
+  const { finiteLow, scale } = uint8Range(low, high);
   const packed = packUint8(values);
   const device = await requireHardwareGPUDevice("Uint8 scientific-value decoding");
   const sourceBuffer = device.createBuffer({

@@ -316,10 +316,7 @@ class Catalog:
             stat = master.stat()
         except OSError:
             return self.inspect(master)
-        if master_signature is None or master_signature[1:] != (
-            int(stat.st_size),
-            int(stat.st_mtime_ns),
-        ):
+        if master_signature is None or master_signature[1:] != (stat.st_size, stat.st_mtime_ns):
             return self.inspect(master)
         return inspection
 
@@ -356,7 +353,7 @@ def file_signature(master: Path) -> tuple[tuple[str, int, int], ...]:
             stat = path.stat()
         except OSError:
             continue
-        signature.append((str(path), int(stat.st_size), int(stat.st_mtime_ns)))
+        signature.append((str(path), stat.st_size, stat.st_mtime_ns))
     return tuple(signature)
 
 
@@ -383,8 +380,8 @@ def _members_unchanged(source_files: list[dict[str, object]]) -> bool:
         if expected.get("missing", False) or expected.get("unreadable", False):
             return False
         if (
-            int(expected.get("size", -1)) != int(stat.st_size)
-            or int(expected.get("mtime_ns", -1)) != int(stat.st_mtime_ns)
+            int(expected.get("size", -1)) != stat.st_size
+            or int(expected.get("mtime_ns", -1)) != stat.st_mtime_ns
         ):
             return False
     return True

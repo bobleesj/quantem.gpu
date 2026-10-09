@@ -34,6 +34,7 @@ def restore(values, report, backend: str):
     if not isinstance(values, cp.ndarray):
         values = cp.from_dlpack(values.detach())
     if report and report["storage"] == "scaled_uint16":
+        # The calibration applies in float64 and rounds once to float32.
         return (values.astype(cp.float64) * report["scale"] + report["offset"]).astype(
             cp.float32
         )
@@ -72,6 +73,7 @@ def measure(original, restored, report, backend: str, *, encoded=None) -> None:
     if report.get("storage") == "scaled_uint16" and encoded is not None:
         measure_scaled_uint16(original, encoded, report)
         return
+    # A float64 difference keeps float32 rounding out of the measured error.
     difference = restored.astype(cp.float64) - original.astype(cp.float64)
     report["values"] += original.size
     report["squared_error"] += float(cp.sum(difference * difference).get())

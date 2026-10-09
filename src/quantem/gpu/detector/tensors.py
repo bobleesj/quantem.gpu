@@ -94,16 +94,13 @@ class TorchBackend(DetectorQueries):
             return np.zeros(self.scan_shape, dtype=np.float32)
         # Dense tensordot is better once the ROI covers a large detector fraction.
         if selected <= det_pixels // 4:
-            cols = torch.nonzero(mask, as_tuple=False).reshape(-1)
+            pixel_indices = torch.nonzero(mask, as_tuple=False).reshape(-1)
             flat = self._flat.reshape(self.n_frames, det_pixels)
             out = torch.empty(self.n_frames, dtype=torch.float32, device=self.device)
             step = max(1, _SPARSE_MASK_CHUNK_BYTE_BUDGET // max(1, selected * 4))
             for start in range(0, self.n_frames, step):
                 stop = min(self.n_frames, start + step)
-                chunk = flat[start:stop].index_select(1, cols)
-                if not torch.is_floating_point(chunk):
-                    chunk = chunk.float()
-                out[start:stop] = chunk.sum(dim=1)
+                out[start:stop] = flat[start:stop].index_select(1, pixel_indices).sum(dim=1)
             return out.reshape(self.scan_shape).cpu().numpy()
         weights = torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device).float()
         out = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
@@ -283,8 +280,9 @@ class ArrayBackend(DetectorQueries):
         pixels = self._flat.reshape(self.n_frames, -1)
         accumulator = _host_accumulator(pixels.dtype)
         image = np.empty(self.n_frames, dtype=accumulator)
-        for start in range(0, self.n_frames, self._frames_per_chunk()):
-            stop = start + self._frames_per_chunk()
+        step = self._frames_per_chunk()
+        for start in range(0, self.n_frames, step):
+            stop = start + step
             image[start:stop] = pixels[start:stop][:, mask].sum(axis=1, dtype=accumulator)
         return image.astype(np.float32).reshape(self.scan_shape)
 
@@ -294,8 +292,9 @@ class ArrayBackend(DetectorQueries):
         if not np.issubdtype(pixels.dtype, np.integer):
             raise TypeError("Exact detector sums require integer detector data.")
         image = np.empty(self.n_frames, dtype=np.uint64)
-        for start in range(0, self.n_frames, self._frames_per_chunk()):
-            stop = start + self._frames_per_chunk()
+        step = self._frames_per_chunk()
+        for start in range(0, self.n_frames, step):
+            stop = start + step
             image[start:stop] = pixels[start:stop][:, mask].sum(axis=1, dtype=np.uint64)
         return image.reshape(self.scan_shape)
 
@@ -333,8 +332,9 @@ class ArrayBackend(DetectorQueries):
         cols = np.arange(self.det_shape[1], dtype=np.float64)[None, None, :]
         com_row = np.empty(self.n_frames, dtype=np.float64)
         com_col = np.empty(self.n_frames, dtype=np.float64)
-        for start in range(0, self.n_frames, self._frames_per_chunk()):
-            stop = start + self._frames_per_chunk()
+        step = self._frames_per_chunk()
+        for start in range(0, self.n_frames, step):
+            stop = start + step
             weighted = np.asarray(self._flat[start:stop], dtype=np.float64) * mask
             total = np.maximum(weighted.sum(axis=(1, 2)), 1e-10)
             com_row[start:stop] = (weighted * rows).sum(axis=(1, 2)) / total

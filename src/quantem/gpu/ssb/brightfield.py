@@ -109,26 +109,25 @@ def crop_bright_field(
     ``detector.fit_probe`` evaluated in float64; ``fit_probe``'s float32 would move the centre in its last bits and
     with it the pixels the session reads.
     """
-    dp = np.asarray(detector.mean(loaded), dtype=np.float64)
+    mean_pattern = np.asarray(detector.mean(loaded), dtype=np.float64)
     # The calibration reads the full detector: the crop below cuts the disk edge off.
-    calibration_radius = disk_edge_radius(dp) if calibrate_detector else None
-    selected = dp > dp.max() * float(threshold)
+    calibration_radius = disk_edge_radius(mean_pattern) if calibrate_detector else None
     if bf_radius is None:
-        probe = dp > dp.mean() + dp.std()
-        total = int(probe.sum())
+        disk = mean_pattern > mean_pattern.mean() + mean_pattern.std()
+        total = int(disk.sum())
         if total == 0:
             raise ValueError("No bright-field disk found in the mean diffraction pattern.")
-        rows, cols = np.nonzero(probe)
+        rows, cols = np.nonzero(disk)
         center = (float(rows.mean()), float(cols.mean()))
         radius = math.sqrt(total / math.pi)
     else:
-        rows, cols = np.nonzero(selected)
-        weights = dp[rows, cols]
+        rows, cols = np.nonzero(mean_pattern > mean_pattern.max() * float(threshold))
+        weights = mean_pattern[rows, cols]
         center = (float((rows * weights).sum() / weights.sum()), float((cols * weights).sum() / weights.sum()))
         radius = float(bf_radius)
     if bf_center is not None:
         center = tuple(float(value) for value in bf_center)
-    det_rows, det_cols = dp.shape
+    det_rows, det_cols = mean_pattern.shape
     # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
     row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
     row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)

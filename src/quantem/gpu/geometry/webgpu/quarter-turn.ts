@@ -198,12 +198,12 @@ export async function rotateScanQuarterTurnWebGPU(
     totalWords,
     groupColumns,
   ]);
+  const retainedPipeline = await pipeline(device);
   const parameterBuffer = device.createBuffer({
     size: parameters.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   device.queue.writeBuffer(parameterBuffer, 0, parameters);
-  const retainedPipeline = await pipeline(device);
   const bindGroup = device.createBindGroup({
     layout: retainedPipeline.getBindGroupLayout(0),
     entries: [
@@ -219,5 +219,7 @@ export async function rotateScanQuarterTurnWebGPU(
   pass.dispatchWorkgroups(groupColumns, groupRows);
   pass.end();
   device.queue.submit([encoder.finish()]);
+  // The submitted dispatch keeps the uniform alive until it completes; nothing else reads it.
+  parameterBuffer.destroy();
   return { buffer: destination, scanRows: outputRows, scanColumns: outputColumns };
 }

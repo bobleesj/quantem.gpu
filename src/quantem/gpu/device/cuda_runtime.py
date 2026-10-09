@@ -2,7 +2,8 @@
 
 ``preload_libraries`` loads CuPy's pip-wheel CUDA libraries by absolute path before CuPy needs them.
 ``cupy-cuda12x`` from pip links CUDA 12 libraries (``libcufft.so.11``, ``libcublas.so.12``, ...) that live in the
-``nvidia-*-cu12`` wheels under ``site-packages/nvidia/<name>/lib``; CuPy finds them through ``cuda.pathfinder`` when it
+``nvidia-*-cu12`` wheels under ``site-packages/nvidia/<name>/lib``; the CUDA 13 wheels that ``cupy-cuda13x`` and PyPI
+torch share put every library in ``site-packages/nvidia/cu13/lib``. CuPy finds them through ``cuda.pathfinder`` when it
 imports its FFT/BLAS modules. In an environment whose PyTorch uses conda's CUDA 13, importing torch first loads CUDA 13's
 cuFFT; pathfinder then sees "cufft already loaded" and skips the CUDA 12 file, and CuPy's FFT fails with
 ``ImportError: libcufft.so.11: cannot open shared object file`` (every notebook that imports quantem.widget, which imports
@@ -24,12 +25,21 @@ from pathlib import Path
 
 import numpy as np
 
-# dependency order: nvJitLink before cuSPARSE / cuSOLVER, cuBLAS before cuSOLVER
-_WHEELS = ("nvjitlink", "cuda_nvrtc", "cublas", "cufft", "curand", "cusparse", "cusolver")
+# (CUDA 12 wheel folder, CUDA 13 library prefix) in dependency order:
+# nvJitLink before cuSPARSE / cuSOLVER, cuBLAS before cuSOLVER
+_WHEELS = (
+    ("nvjitlink", "libnvJitLink"),
+    ("cuda_nvrtc", "libnvrtc"),
+    ("cublas", "libcublas"),
+    ("cufft", "libcufft"),
+    ("curand", "libcurand"),
+    ("cusparse", "libcusparse"),
+    ("cusolver", "libcusolver"),
+)
 
 
 def preload_libraries() -> list[str]:
-    """dlopen (RTLD_GLOBAL) every shared library of the installed ``nvidia.<name>`` CUDA wheels; returns the loaded paths."""
+    """dlopen (RTLD_GLOBAL) every shared library of the installed ``nvidia`` CUDA 12 and 13 wheels; returns the loaded paths."""
     try:
         spec = find_spec("nvidia")
     except (ImportError, ValueError):
@@ -38,8 +48,12 @@ def preload_libraries() -> list[str]:
         return []
     loaded = []
     for root in spec.submodule_search_locations:
-        for name in _WHEELS:
-            for path in sorted((Path(root) / name / "lib").glob("lib*.so.*")):
+        for folder, prefix in _WHEELS:
+            paths = [
+                *sorted((Path(root) / folder / "lib").glob("lib*.so.*")),
+                *sorted((Path(root) / "cu13" / "lib").glob(f"{prefix}*.so.*")),
+            ]
+            for path in paths:
                 try:
                     ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
                     loaded.append(str(path))
@@ -108,6 +122,14 @@ def current_context() -> tuple[int, int]:
     return device, context
 
 
+def cuda_device_index(device) -> int:
+    """Return the CUDA device a call runs on: ``device`` given as ``1``, ``"1"`` or ``"cuda:1"``, else the current one.
+
+    Every CUDA loader accepts these spellings, so they are parsed in one place.
+    """
+    return cp.cuda.Device().id if device is None else int(str(device).removeprefix("cuda:"))
+
+
 _LIBC = None
 _PINNED_BUFS: list[dict] = []
 _PINNED_BUFS_LOCK = threading.Lock()
@@ -119,7 +141,6 @@ def _get_libc():
     """Lazy-load libc for posix_fadvise. None on non-Linux platforms."""
     global _LIBC
     if _LIBC is None:
-        import ctypes
         import ctypes.util
         lib_name = ctypes.util.find_library("c")
         if lib_name is None:
@@ -130,10 +151,8 @@ def _get_libc():
             except OSError:
                 _LIBC = False
             else:
-                if not hasattr(libc, "posix_fadvise"):
-                    _LIBC = False
-                else:
-                    _LIBC = libc
+                # macOS libc loads but has no posix_fadvise.
+                _LIBC = libc if hasattr(libc, "posix_fadvise") else False
     return _LIBC if _LIBC is not False else None
 
 
@@ -147,7 +166,6 @@ def _pinned_registration_size(nbytes: int) -> int:
     to 4 MiB so nearby batches reuse those two slots. The extra pinned memory is
     bounded below 4 MiB per slot; small sparse selections keep exact sizing.
     """
-
     nbytes = int(nbytes)
     if nbytes <= 0:
         raise ValueError("Pinned buffer size must be positive")
@@ -203,10 +221,10 @@ def _release_pinned(view: np.ndarray, *, prune: bool = True) -> None:
     is the same fit rule used by :func:`_alloc_pinned_fast`. ``view`` is the
     sliced array; its ``.base`` is the full registered array we cached.
 
-    Group-pipelined loads pass ``prune=False`` while disk preparation and GPU
-    decode overlap. They prune once after the pipeline drains, so the next
-    group can reuse every in-flight staging slot instead of repeatedly
-    unregistering and registering a nearby-sized buffer.
+    Group-pipelined loads pass ``prune=False`` when they close, so the next
+    group can reuse every staging slot instead of repeatedly unregistering
+    and registering a nearby-sized buffer. The next pruning release discards
+    the redundant ones.
     """
     base = view.base if view.base is not None else view
     with _PINNED_BUFS_LOCK:
@@ -218,15 +236,8 @@ def _release_pinned(view: np.ndarray, *, prune: bool = True) -> None:
                 return
 
 
-def _prune_pinned_free(*, retain_per_size_class: int = 1) -> None:
-    """Discard redundant idle staging buffers after a pipeline drains."""
-    with _PINNED_BUFS_LOCK:
-        _prune_pinned_free_locked(retain_per_size_class=retain_per_size_class)
-
-
-def _prune_pinned_free_locked(*, retain_per_size_class: int = 1) -> None:
+def _prune_pinned_free_locked() -> None:
     """Prune redundant free buffers while ``_PINNED_BUFS_LOCK`` is held."""
-    retain_per_size_class = max(1, int(retain_per_size_class))
     retained: list[dict] = []
     redundant: list[dict] = []
     for entry in sorted(
@@ -234,11 +245,7 @@ def _prune_pinned_free_locked(*, retain_per_size_class: int = 1) -> None:
         key=lambda item: item["size"],
         reverse=True,
     ):
-        covering = sum(
-            keeper["size"] <= int(entry["size"] * 1.5)
-            for keeper in retained
-        )
-        if covering >= retain_per_size_class:
+        if any(keeper["size"] <= int(entry["size"] * 1.5) for keeper in retained):
             redundant.append(entry)
         else:
             retained.append(entry)

@@ -54,10 +54,6 @@ class ChunkedFrames:
         chunk = bisect.bisect_right(self.offsets, index) - 1
         return np.asarray(self.chunks[chunk][index - self.offsets[chunk]])
 
-    def columns_float32(self, rows, cols, *, out: np.ndarray | None = None) -> np.ndarray:
-        """Gather detector pixels ``(rows, cols)`` over all scan positions as ``(pixel, frame)`` float32."""
-        return self.vi.gather_columns_float32(rows, cols, out=out)
-
     def columns_float32_into(self, rows, cols, out: np.ndarray) -> np.ndarray:
         """Gather detector pixels directly into caller-owned unified GPU memory."""
         return self.vi.gather_columns_float32(rows, cols, out=out)

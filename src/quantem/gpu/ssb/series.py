@@ -171,6 +171,7 @@ def reconstruct_series(
                 )
         if not fixed_probe:
             write_fit_metadata(screen_path, settings, result)
+        # one float32 stack whatever array type the backend's phase is
         phases.append(np.asarray(host_array(result.phase), dtype=np.float32))
         bright_field, dark_field = virtual_images(
             screen_path,
@@ -197,9 +198,9 @@ def reconstruct_series(
             }
         )
     return SSBSeriesResult(
-        phase=np.stack(phases).astype(np.float32, copy=False),
-        bright_field=np.stack(bright_fields).astype(np.float32, copy=False),
-        dark_field=np.stack(dark_fields).astype(np.float32, copy=False),
+        phase=np.stack(phases),
+        bright_field=np.stack(bright_fields),
+        dark_field=np.stack(dark_fields),
         frames=frame_numbers,
         datasets=tuple(path.name for path in selected_paths),
         master_names=tuple(f"{path.name}_master.h5" for path in selected_paths),

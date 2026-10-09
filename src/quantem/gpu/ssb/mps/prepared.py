@@ -442,14 +442,14 @@ def resolve_bf_selection(
             )
         return data.selection
 
-    dp = detector_mean(data) if mean_diffraction is None else mean_diffraction
+    mean_pattern = detector_mean(data) if mean_diffraction is None else mean_diffraction
     if detected_radius_px is None:
-        detected_radius_px = disk_edge_radius(dp)
+        detected_radius_px = disk_edge_radius(mean_pattern)
     if bf_radius is None:
-        probe_center, probe_radius = fit_probe(dp)
-    mask = dp > float(dp.max()) * float(threshold)
-    rr, cc = np.nonzero(mask)
-    if rr.size == 0:
+        probe_center, probe_radius = fit_probe(mean_pattern)
+    mask = mean_pattern > float(mean_pattern.max()) * float(threshold)
+    rows, cols = np.nonzero(mask)
+    if rows.size == 0:
         raise ValueError(
             f"No bright-field pixels found with threshold={threshold:.2f}."
         )
@@ -461,33 +461,33 @@ def resolve_bf_selection(
     elif bf_radius is None:
         center = (float(probe_center[0]), float(probe_center[1]))
     else:
-        weights = dp[rr, cc].astype(np.float32, copy=False)
+        weights = mean_pattern[rows, cols].astype(np.float32, copy=False)
         weight_sum = float(weights.sum())
         if weight_sum > 0:
             center = (
-                float((rr.astype(np.float32) * weights).sum() / weight_sum),
-                float((cc.astype(np.float32) * weights).sum() / weight_sum),
+                float((rows.astype(np.float32) * weights).sum() / weight_sum),
+                float((cols.astype(np.float32) * weights).sum() / weight_sum),
             )
         else:
-            center = (float(rr.mean()), float(cc.mean()))
+            center = (float(rows.mean()), float(cols.mean()))
     selected_radius = float(probe_radius if bf_radius is None else bf_radius)
-    dist2 = (rr.astype(np.float32) - center[0]) ** 2 + (
-        cc.astype(np.float32) - center[1]
+    distance_sq = (rows.astype(np.float32) - center[0]) ** 2 + (
+        cols.astype(np.float32) - center[1]
     ) ** 2
-    keep = dist2 <= selected_radius**2
-    rr = rr[keep]
-    cc = cc[keep]
-    if rr.size == 0:
+    keep = distance_sq <= selected_radius**2
+    rows = rows[keep]
+    cols = cols[keep]
+    if rows.size == 0:
         raise ValueError(
             f"No BF pixels selected with threshold={threshold} and radius={bf_radius}."
         )
     return BrightfieldDisk(
-        rows=rr.astype(np.int32),
-        cols=cc.astype(np.int32),
+        rows=rows.astype(np.int32),
+        cols=cols.astype(np.int32),
         center_row_col=center,
         radius_px=selected_radius,
         detected_radius_px=float(detected_radius_px),
-        detector_shape=tuple(int(value) for value in dp.shape),
+        detector_shape=tuple(int(value) for value in mean_pattern.shape),
     )
 
 
@@ -553,11 +553,11 @@ def pk_batch_from_prepared(
             prepared.ang_y_rad,
             prepared.ang_x_rad,
         )
-    sl = slice(int(start), int(stop))
-    alpha = alpha_k2[sl][None, :]
-    cos2 = cos2_k[sl][None, :]
-    sin2 = sin2_k[sl][None, :]
-    aperture = aperture_k[sl][None, :]
+    bf_slice = slice(int(start), int(stop))
+    alpha = alpha_k2[bf_slice][None, :]
+    cos2 = cos2_k[bf_slice][None, :]
+    sin2 = sin2_k[bf_slice][None, :]
+    aperture = aperture_k[bf_slice][None, :]
     c10 = c10[:, None]
     c12 = c12[:, None]
     cos2phi12 = cos2phi12[:, None]
@@ -617,6 +617,12 @@ def bf_storage_chunk_packs(
 
 
 def compute_geometry(mx, dx, dy, wavelength, semiangle_rad, ang_y_rad, ang_x_rad):
+    """Probe geometry at reciprocal vectors ``(dx, dy)``: alpha^2, cos 2phi, sin 2phi and the soft aperture.
+
+    alpha = lambda |(dx, dy)| is the scattering angle and phi its azimuth. The aperture is
+    ``(semiangle - alpha) / w + 1/2`` clipped to [0, 1], where ``w`` is the angular width of one detector pixel along
+    ``(dx, dy)``: a one-pixel linear edge instead of a hard cut. The origin, which has no direction, is fully inside.
+    """
     dx2 = dx * dx
     dy2 = dy * dy
     r2 = dx2 + dy2
@@ -642,7 +648,7 @@ def as_sampling(value: float | tuple[float, float]) -> tuple[float, float]:
 
 def expand_hermitian_mx(mx, g_qk, full_cols: int):
     """Expand an MLX Hermitian half-plane stack to a full Fourier grid."""
-    shape = tuple(int(v) for v in g_qk.shape)
+    shape = tuple(int(size) for size in g_qk.shape)
     if len(shape) < 3:
         raise ValueError(f"Expected at least 3D G_qk, got shape {shape}.")
     full_cols = int(full_cols)

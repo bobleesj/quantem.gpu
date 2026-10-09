@@ -57,6 +57,7 @@ def align_vbf_stack_multiscale_cp(
     # The shifts found at one binning move these spectra by phase ramps before
     # the next binning, so the stack is Fourier transformed only once.
     stack_fft = cp.fft.fft2(vbf_stack, axes=(1, 2))
+    # float32 frequencies keep the phase ramps complex64, the precision of the spectra.
     f_row = cp.fft.fftfreq(H, d=1.0).astype(cp.float32).reshape(1, -1, 1)
     f_col = cp.fft.fftfreq(W, d=1.0).astype(cp.float32).reshape(1, 1, -1)
     for level, bin_factor in enumerate(bin_factors):
@@ -76,6 +77,7 @@ def align_vbf_stack_multiscale_cp(
                 bins = np.nonzero(counts > member)[0]
                 binned_fft[cp.asarray(bins)] += stack_fft[cp.asarray(order[starts[bins] + member])]
         vbf_binned = cp.fft.ifft2(binned_fft, axes=(1, 2)).real
+        # The shifts accumulate and return in float32.
         shifts = cross_correlation_shift_batch_cp(
             current_reference, vbf_binned, upsample_factor
         ).astype(cp.float32)
@@ -115,8 +117,8 @@ def _bin_mapping_only(bf_mask, inds_i, inds_j, bin_factor):
     unique_coords_np, inverse_np = np.unique(coords_np, return_inverse=True)
     mapping = cp.asarray(inverse_np, dtype=cp.int64)
     unique_coords = cp.asarray(unique_coords_np, dtype=cp.int64)
-    inds_ib = (unique_coords // Rb).astype(cp.int64)
-    inds_jb = (unique_coords % Rb).astype(cp.int64)
+    inds_ib = unique_coords // Rb
+    inds_jb = unique_coords % Rb
     bf_mask_b = cp.zeros((Qb, Rb), dtype=cp.bool_)
     bf_mask_b[inds_ib, inds_jb] = True
     return bf_mask_b, inds_ib, inds_jb, mapping

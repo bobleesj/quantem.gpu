@@ -30,32 +30,11 @@ export function cropMaskedRegion(
   imageHeight: number,
   region: MaskedCropRegion,
 ): MaskedCrop | null {
-  const shape = region.shape || "circle";
-  let column0: number;
-  let row0: number;
-  let column1: number;
-  let row1: number;
-
-  if (shape === "rectangle") {
-    const halfWidth = region.width / 2;
-    const halfHeight = region.height / 2;
-    column0 = Math.max(0, Math.floor(region.col - halfWidth));
-    row0 = Math.max(0, Math.floor(region.row - halfHeight));
-    column1 = Math.min(imageWidth, Math.ceil(region.col + halfWidth));
-    row1 = Math.min(imageHeight, Math.ceil(region.row + halfHeight));
-  } else {
-    column0 = Math.max(0, Math.floor(region.col - region.radius));
-    row0 = Math.max(0, Math.floor(region.row - region.radius));
-    column1 = Math.min(imageWidth, Math.ceil(region.col + region.radius));
-    row1 = Math.min(imageHeight, Math.ceil(region.row + region.radius));
-  }
-
-  const cropW = column1 - column0;
-  const cropH = row1 - row0;
-  if (cropW < 2 || cropH < 2) return null;
-
+  const bounds = cropBounds(imageWidth, imageHeight, region);
+  if (!bounds) return null;
+  const { column0, row0, cropW, cropH } = bounds;
   const cropped = new Float32Array(cropW * cropH);
-  if (shape === "circle" || shape === "annular") {
+  if (bounds.disk) {
     const radiusSquared = region.radius * region.radius;
     for (let cropRow = 0; cropRow < cropH; cropRow++) {
       for (let cropColumn = 0; cropColumn < cropW; cropColumn++) {
@@ -529,9 +508,11 @@ fn main() {
 }
 `;
 
+/** Upload `source`, run one compute shader over it, and read back `outputCount`
+ * float32 results. Every buffer is released even when the readback fails. */
 async function runFloatKernel(
   operation: string,
-  source: Float32Array,
+  source: Float32Array | Uint32Array,
   outputCount: number,
   params: ArrayBuffer,
   shader: string,
@@ -581,71 +562,6 @@ async function runFloatKernel(
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bindGroup);
     pass.dispatchWorkgroups(dispatch[0], dispatch[1], dispatch[2] ?? 1);
-    pass.end();
-    encoder.copyBufferToBuffer(outputBuffer, 0, readBuffer, 0, outputCount * 4);
-    device.queue.submit([encoder.finish()]);
-    await readBuffer.mapAsync(GPUMapMode.READ);
-    const output = new Float32Array(readBuffer.getMappedRange().slice(0));
-    readBuffer.unmap();
-    return output;
-  } finally {
-    sourceBuffer.destroy();
-    outputBuffer.destroy();
-    paramsBuffer.destroy();
-    readBuffer.destroy();
-  }
-}
-
-async function runUint8LineProfileKernel(
-  source: Uint8Array,
-  outputCount: number,
-  params: ArrayBuffer,
-): Promise<Float32Array> {
-  const device = await requireHardwareGPUDevice("Quantized line-profile sampling");
-  const packed = new Uint32Array(Math.max(1, Math.ceil(source.length / 4)));
-  for (let index = 0; index < source.length; index++) {
-    packed[index >> 2] |= source[index] << ((index & 3) * 8);
-  }
-  const sourceBuffer = device.createBuffer({
-    size: packed.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  });
-  const outputBuffer = device.createBuffer({
-    size: outputCount * 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-  });
-  const paramsBuffer = device.createBuffer({
-    size: params.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-  const readBuffer = device.createBuffer({
-    size: outputCount * 4,
-    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-  });
-  try {
-    device.queue.writeBuffer(
-      sourceBuffer,
-      0,
-      packed.buffer as ArrayBuffer,
-      packed.byteOffset,
-      packed.byteLength,
-    );
-    device.queue.writeBuffer(paramsBuffer, 0, params);
-    const module = device.createShaderModule({ code: UINT8_LINE_PROFILE_WGSL });
-    const pipeline = device.createComputePipeline({ layout: "auto", compute: { module, entryPoint: "main" } });
-    const bindGroup = device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: sourceBuffer } },
-        { binding: 1, resource: { buffer: outputBuffer } },
-        { binding: 2, resource: { buffer: paramsBuffer } },
-      ],
-    });
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(Math.ceil(outputCount / 256));
     pass.end();
     encoder.copyBufferToBuffer(outputBuffer, 0, readBuffer, 0, outputCount * 4);
     device.queue.submit([encoder.finish()]);
@@ -758,7 +674,19 @@ export async function sampleLineProfileUint8WebGPU(
   u32[0] = width; u32[1] = height; u32[2] = sampleCount; u32[3] = Math.max(1, Math.round(profileWidth));
   f32[4] = finiteLow; f32[5] = finiteHigh > finiteLow ? (finiteHigh - finiteLow) / 255 : 0;
   f32[6] = row0; f32[7] = column0; f32[8] = row1; f32[9] = column1;
-  return runUint8LineProfileKernel(data.subarray(0, width * height), sampleCount, params);
+  const pixels = data.subarray(0, width * height);
+  const packed = new Uint32Array(Math.max(1, Math.ceil(pixels.length / 4)));
+  for (let index = 0; index < pixels.length; index++) {
+    packed[index >> 2] |= pixels[index] << ((index & 3) * 8);
+  }
+  return runFloatKernel(
+    "Quantized line-profile sampling",
+    packed,
+    sampleCount,
+    params,
+    UINT8_LINE_PROFILE_WGSL,
+    [Math.ceil(sampleCount / 256), 1],
+  );
 }
 
 /** Rotate a float32 stack on a hardware WebGPU adapter. */

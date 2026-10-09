@@ -15,17 +15,13 @@ from pathlib import Path
 import h5py
 import hdf5plugin
 import numpy as np
+import torch
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats.hdf5.frames import BLOCK_SIZE
 from quantem.gpu.io.hdf5.cuda.encode import compress_batch
 from quantem.gpu.io.hdf5.mps.encode import NativeU16Compressor, compress_tensor_batch
 from quantem.gpu.resident.mps.arrays import MetalArray
-
-try:
-    import torch
-except ImportError:  # pragma: no cover - only for minimal IO-only installs
-    torch = None
 
 # Compression codecs available to save() / H5Writer. Default 'lz4' uses the
 # GPU bitshuffle+LZ4 fast path that streams compressed bytes via
@@ -93,7 +89,7 @@ class H5Writer:
         )
         self._frame_bytes = self._det_row * self._det_col * self._dtype.itemsize
         self._n_8kb = (self._frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
-        self._scan_shape = None if scan_shape is None else tuple(int(x) for x in scan_shape)
+        self._scan_shape = None if scan_shape is None else tuple(int(size) for size in scan_shape)
         self._metadata = metadata
         self._source_master = source_master
         self._frames_per_file = int(frames_per_file)
@@ -117,6 +113,11 @@ class H5Writer:
         _ensure_writer_thread()
 
     def _open_data_file(self):
+        """Start the next external data file for at most ``frames_per_file`` frames.
+
+        Readers locate frames through each file's 1-based ``image_nr_low`` and
+        ``image_nr_high`` range, so the range is recorded for the master too.
+        """
         self._file_index += 1
         self._current_file_start = self._frame_offset
         remaining = self._n_frames - self._frame_offset
@@ -162,7 +163,7 @@ class H5Writer:
         # Precision exports hand over 16-bit codes already in a shared Metal buffer.
         native_metal = isinstance(data_gpu, MetalArray) and data_gpu.dtype == self._dtype
         native_mps = (
-            torch is not None and torch.is_tensor(data_gpu)
+            torch.is_tensor(data_gpu)
             and data_gpu.device.type == "mps" and np.dtype(str(data_gpu.dtype).removeprefix("torch.")) == self._dtype
         )
         if (native_metal or native_mps) and (self._dtype.itemsize != 2 or self._compression != "lz4"):
@@ -202,34 +203,25 @@ class H5Writer:
                 self._open_data_file()
             room = self._current_file_n - self._current_file_offset
             n_part = min(room, batch_n - batch_start)
-            if native_metal:
-                if self._metal_compressor is None:
-                    self._metal_compressor = NativeU16Compressor(
-                        batch_n, self._frame_bytes, self._n_8kb
+            if native_metal or native_mps or self._compression == "lz4":
+                if native_metal:
+                    if self._metal_compressor is None:
+                        self._metal_compressor = NativeU16Compressor(
+                            batch_n, self._frame_bytes, self._n_8kb
+                        )
+                    packed, starts, sizes = self._metal_compressor.compress(
+                        data_gpu, batch_start, n_part
                     )
-                packed, starts, sizes = self._metal_compressor.compress(
-                    data_gpu, batch_start, n_part
-                )
-                _write_queue.put((
-                    _write_batch_to_h5,
-                    (self._current_ds, packed, starts, sizes,
-                     self._current_file_offset, n_part),
-                ))
-            elif native_mps:
-                part = data_gpu[batch_start:batch_start + n_part]
-                packed, starts, sizes = compress_tensor_batch(
-                    part, self._n_8kb, self._frame_bytes, self._dtype
-                )
-                _write_queue.put((
-                    _write_batch_to_h5,
-                    (self._current_ds, packed, starts, sizes,
-                     self._current_file_offset, n_part),
-                ))
-            elif self._compression == "lz4":
-                part = data_gpu[batch_start:batch_start + n_part]
-                packed, starts, sizes = compress_batch(
-                    part, self._n_8kb, self._frame_bytes
-                )
+                elif native_mps:
+                    part = data_gpu[batch_start:batch_start + n_part]
+                    packed, starts, sizes = compress_tensor_batch(
+                        part, self._n_8kb, self._frame_bytes, self._dtype
+                    )
+                else:
+                    part = data_gpu[batch_start:batch_start + n_part]
+                    packed, starts, sizes = compress_batch(
+                        part, self._n_8kb, self._frame_bytes
+                    )
                 _write_queue.put((
                     _write_batch_to_h5,
                     (self._current_ds, packed, starts, sizes,
@@ -278,39 +270,6 @@ class H5Writer:
         if wait:
             wait_for_saves()
 
-    def abort(self) -> None:
-        """Close and remove an incomplete streamed output after a failed producer."""
-        self._closed = True
-        # Cleanup after a failed producer must not replace the producer's
-        # error, so write and close failures here are ignored.
-        try:
-            self._close_data_file()
-        except (RuntimeError, OSError):
-            # wait_for_saves has already drained the queue before surfacing a
-            # writer error, so closing the handle here cannot race queued work.
-            try:
-                if self._current_file is not None:
-                    self._current_file.close()
-            except (RuntimeError, OSError):
-                pass
-            self._current_file = None
-            self._current_ds = None
-        if self._metal_compressor is not None:
-            try:
-                self._metal_compressor.close()
-            except (RuntimeError, OSError):
-                pass
-            self._metal_compressor = None
-        for path in self._data_files:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        try:
-            self._filepath.unlink(missing_ok=True)
-        except OSError:
-            pass
-
     def __enter__(self):
         return self
 
@@ -352,7 +311,7 @@ def save_compressed_arina_h5(
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     dtype = _normalize_save_dtype(dtype)
-    shape = tuple(int(x) for x in data.shape)
+    shape = tuple(int(size) for size in data.shape)
     if len(shape) == 4:
         inferred_scan = shape[:2]
         if scan_shape is not None and tuple(scan_shape) != inferred_scan:
@@ -402,15 +361,15 @@ def save_compressed_arina_h5(
         frame_ranges.append((start + 1, end))
         tmp_data = data_path.with_suffix(data_path.suffix + ".tmp")
         with h5py.File(tmp_data, "w") as handle:
-            dset = handle.create_dataset(
+            dataset = handle.create_dataset(
                 "entry/data/data",
                 shape=(end - start, det_row, det_col),
                 dtype=dtype,
                 chunks=(1, det_row, det_col),
                 **_portable_h5_filters(compression, compression_level, shuffle),
             )
-            dset.attrs["image_nr_low"] = np.uint64(start + 1)
-            dset.attrs["image_nr_high"] = np.uint64(end)
+            dataset.attrs["image_nr_low"] = np.uint64(start + 1)
+            dataset.attrs["image_nr_high"] = np.uint64(end)
             if use_mps_backend:
                 _raise_write_error()
                 _ensure_writer_thread()
@@ -424,7 +383,7 @@ def save_compressed_arina_h5(
                     _write_queue.put((
                         _write_batch_to_h5,
                         (
-                            dset,
+                            dataset,
                             packed,
                             chunk_starts,
                             chunk_sizes,
@@ -437,7 +396,7 @@ def save_compressed_arina_h5(
                 out_offset = 0
                 for batch_start in range(start, end, batch_size):
                     batch_end = min(batch_start + batch_size, end)
-                    dset[out_offset:out_offset + (batch_end - batch_start)] = (
+                    dataset[out_offset:out_offset + (batch_end - batch_start)] = (
                         _cast_host_for_save(flat[batch_start:batch_end], dtype)
                     )
                     out_offset += batch_end - batch_start
@@ -468,9 +427,9 @@ def _raise_write_error():
     global _write_error
     if _write_error is None:
         return
-    err = _write_error
+    error = _write_error
     _write_error = None
-    raise RuntimeError("Background HDF5 write failed") from err
+    raise RuntimeError("Background HDF5 write failed") from error
 
 
 def _writer_loop():
@@ -487,8 +446,8 @@ def _writer_loop():
                 return
             func, args = job
             func(*args)
-        except BaseException as exc:  # propagate on wait_for_saves()
-            _write_error = exc
+        except BaseException as error:  # propagate on wait_for_saves()
+            _write_error = error
         finally:
             _write_queue.task_done()
 
@@ -502,26 +461,26 @@ def _ensure_writer_thread():
             _write_thread.start()
 
 
-def _write_batch_to_h5(ds, packed, chunk_starts, chunk_sizes, frame_offset,
+def _write_batch_to_h5(dataset, packed, chunk_starts, chunk_sizes, frame_offset,
                        n_frames):
     """Write packed compressed chunks to an open flattened HDF5 dataset."""
-    packed_mv = memoryview(packed)
-    for i in range(n_frames):
-        start = int(chunk_starts[i])
-        size = int(chunk_sizes[i])
-        ds.id.write_direct_chunk(
-            (frame_offset + i, 0, 0), packed_mv[start:start + size]
+    packed_view = memoryview(packed)
+    for frame in range(n_frames):
+        start = int(chunk_starts[frame])
+        size = int(chunk_sizes[frame])
+        dataset.id.write_direct_chunk(
+            (frame_offset + frame, 0, 0), packed_view[start:start + size]
         )
 
 
-def _write_batch_via_filter(ds, host_frames, frame_offset, n_frames):
+def _write_batch_via_filter(dataset, host_frames, frame_offset, n_frames):
     """Write a CPU host-side frame batch through the dataset's filter pipeline.
 
     Used for non-LZ4 codecs (zstd, blosc2_zstd) where compression runs on CPU
     inside HDF5 instead of in our GPU pipeline. ``host_frames`` is a contiguous
     numpy array of shape (n_frames, det_row, det_col).
     """
-    ds[frame_offset:frame_offset + n_frames] = host_frames
+    dataset[frame_offset:frame_offset + n_frames] = host_frames
 
 
 def _write_master_file(
@@ -546,17 +505,19 @@ def _write_master_file(
     else:
         mode = "w"
 
-    with h5py.File(master_path, mode) as f:
-        entry = f.require_group("entry")
+    detector_shape = tuple(int(size) for size in det_shape)
+    n_frames = int(sum(high - low + 1 for low, high in frame_ranges))
+    with h5py.File(master_path, mode) as master:
+        entry = master.require_group("entry")
         if "data" in entry:
             del entry["data"]
         data_group = entry.create_group("data")
         if source_master is not None:
-            with h5py.File(source_master, "r") as src:
-                src_data = src.get("entry/data")
-                if src_data is not None:
-                    for key, val in src_data.attrs.items():
-                        data_group.attrs[key] = val
+            with h5py.File(source_master, "r") as source:
+                source_data = source.get("entry/data")
+                if source_data is not None:
+                    for key, value in source_data.attrs.items():
+                        data_group.attrs[key] = value
         else:
             data_group.attrs["NX_class"] = np.bytes_(b"NXdata")
         data_group.attrs["signal"] = np.bytes_(b"data_000001")
@@ -565,50 +526,50 @@ def _write_master_file(
                 Path(data_file).name, "/entry/data/data"
             )
         if scan_shape is not None:
-            data_group.attrs["scan_shape"] = tuple(int(x) for x in scan_shape)
-            f.attrs["scan_shape"] = tuple(int(x) for x in scan_shape)
-        data_group.attrs["det_shape"] = tuple(int(x) for x in det_shape)
+            data_group.attrs["scan_shape"] = tuple(int(size) for size in scan_shape)
+            master.attrs["scan_shape"] = tuple(int(size) for size in scan_shape)
+        data_group.attrs["det_shape"] = detector_shape
         data_group.attrs["dtype"] = str(np.dtype(dtype))
-        data_group.attrs["n_frames"] = int(sum(hi - lo + 1 for lo, hi in frame_ranges))
+        data_group.attrs["n_frames"] = n_frames
         data_group.attrs["data_file_frame_ranges"] = np.asarray(frame_ranges, dtype=np.uint64)
-        f.attrs["detector_shape"] = tuple(int(x) for x in det_shape)
-        f.attrs["dtype"] = str(np.dtype(dtype))
-        f.attrs["n_frames"] = int(sum(hi - lo + 1 for lo, hi in frame_ranges))
-        _metadata_attrs(f, metadata)
+        master.attrs["detector_shape"] = detector_shape
+        master.attrs["dtype"] = str(np.dtype(dtype))
+        master.attrs["n_frames"] = n_frames
+        _metadata_attrs(master, metadata)
 
 
 def _copy_master_shell(source_master, output_master):
     """Copy source Arina master metadata, excluding entry/data links."""
-    with h5py.File(source_master, "r") as src, h5py.File(output_master, "w") as dst:
-        for key, val in src.attrs.items():
-            dst.attrs[key] = val
-        for name in src:
+    with h5py.File(source_master, "r") as source, h5py.File(output_master, "w") as output:
+        for key, value in source.attrs.items():
+            output.attrs[key] = value
+        for name in source:
             if name != "entry":
-                src.copy(name, dst, name=name, expand_external=False)
-        if "entry" in src:
-            src_entry = src["entry"]
-            dst_entry = dst.require_group("entry")
-            for key, val in src_entry.attrs.items():
-                dst_entry.attrs[key] = val
-            for name in src_entry:
+                source.copy(name, output, name=name, expand_external=False)
+        if "entry" in source:
+            source_entry = source["entry"]
+            output_entry = output.require_group("entry")
+            for key, value in source_entry.attrs.items():
+                output_entry.attrs[key] = value
+            for name in source_entry:
                 if name == "data":
                     continue
-                src.copy(src_entry[name], dst_entry, name=name, expand_external=False)
+                source.copy(source_entry[name], output_entry, name=name, expand_external=False)
         else:
-            dst.require_group("entry")
+            output.require_group("entry")
 
 
-def _metadata_attrs(f, metadata):
+def _metadata_attrs(handle, metadata):
     """Write metadata as HDF5 attributes, storing unsupported values as text."""
     if metadata is None:
         return
-    for key, val in metadata.items():
-        if val is None:
+    for key, value in metadata.items():
+        if value is None:
             continue
         try:
-            f.attrs[key] = val
+            handle.attrs[key] = value
         except (TypeError, ValueError):
-            f.attrs[key] = str(val)
+            handle.attrs[key] = str(value)
 
 
 def _master_prefix(master_path):
@@ -730,7 +691,7 @@ def _default_save_dtype(data_dtype):
 
 def _infer_save_dtype(data):
     """Return the default output dtype for a public save call."""
-    if torch is not None and torch.is_tensor(data):
+    if torch.is_tensor(data):
         torch_to_numpy = {
             torch.uint8: np.uint8,
             torch.uint16: np.uint16,
@@ -739,11 +700,11 @@ def _infer_save_dtype(data):
         }
         try:
             return _default_save_dtype(torch_to_numpy[data.dtype])
-        except KeyError as exc:
+        except KeyError as error:
             raise ValueError(
                 f"Unsupported input dtype {data.dtype}; pass dtype='u16', "
                 "'u8', 'u32', or 'f32' explicitly."
-            ) from exc
+            ) from error
     return _default_save_dtype(np.asarray(data).dtype)
 
 
@@ -754,21 +715,21 @@ def _cast_host_for_save(block, dtype):
     a plain cast truncates and wraps out-of-range values.
     """
     if cp is not None and isinstance(block, cp.ndarray):
-        arr = cp.asnumpy(block)
-    elif torch is not None and torch.is_tensor(block):
-        arr = block.detach().cpu().numpy()
+        host = cp.asnumpy(block)
+    elif torch.is_tensor(block):
+        host = block.detach().cpu().numpy()
     else:
-        arr = np.asarray(block)
-    if arr.dtype == dtype:
-        return np.ascontiguousarray(arr)
-    if np.issubdtype(arr.dtype, np.floating) and np.issubdtype(dtype, np.integer):
+        host = np.asarray(block)
+    if host.dtype == dtype:
+        return np.ascontiguousarray(host)
+    if np.issubdtype(host.dtype, np.floating) and np.issubdtype(dtype, np.integer):
         lo, hi = int(np.iinfo(dtype).min), int(np.iinfo(dtype).max)
-        arr = np.clip(np.rint(arr), lo, hi).astype(dtype)
+        host = np.clip(np.rint(host), lo, hi).astype(dtype)
     else:
-        arr = arr.astype(dtype)
-    return np.ascontiguousarray(arr)
+        host = host.astype(dtype)
+    return np.ascontiguousarray(host)
 
 
 def _is_mps_array(data) -> bool:
-    """Return True for a Torch MPS tensor without importing torch on CUDA hosts."""
-    return torch is not None and torch.is_tensor(data) and data.device.type == "mps"
+    """Return True for a Torch MPS tensor."""
+    return torch.is_tensor(data) and data.device.type == "mps"

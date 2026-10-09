@@ -40,7 +40,7 @@ class Inspection:
     def _summary(self):
         """Return concise header evidence, without dumping masks or metadata."""
         # pandas only formats this summary; importing it on first display keeps
-        # it out of every load, and environments without it can still load.
+        # it out of every load.
         import pandas as pd
 
         def geometry(shape):
@@ -113,6 +113,7 @@ def inspect(
         metadata['resident_profile'] = header.get('codec', header.get('profile', 'Unknown'))
         mask = None
         if "valid" in header:
+            # Same convention as an Arina pixel_mask: uint32, nonzero marks an invalid pixel.
             mask = (~decode_valid(header["valid"], shape[2:])).astype(np.uint32)
         return Inspection(
             matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
@@ -280,6 +281,7 @@ def _inspect_paired(path: Path, scan_shape) -> Inspection:
     metadata = dict(representation="paired", resident_profile=QUERY_ABI, working_shape=shape,
                     scan_shape=shape[:2], detector_shape=shape[2:], dtype=header["dtype"],
                     resident_bytes=resident_bytes, chunks=len(header["chunks"]))
+    # Same convention as an Arina pixel_mask: uint32, nonzero marks an invalid pixel.
     mask = (~decode_valid(header["valid"], shape[2:])).astype(np.uint32)
     return Inspection(matches, "header_complete_payload_unverified" if matches else "scan_shape_mismatch",
                       "Load to reopen the exact resident arrays.", metadata, mask, "paired",

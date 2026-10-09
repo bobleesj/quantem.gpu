@@ -85,26 +85,26 @@ export class NativeGridFFT {
     if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows<1 || cols<1 || data.length!==rows*cols) {
       throw new Error("Native FFT requires a nonempty rows × columns input.");
     }
-    const d=this.device, buffers: GPUBuffer[]=[];
+    const device=this.device, buffers: GPUBuffer[]=[];
     const make=(size: number, usage=GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST) => {
-      if (size>d.limits.maxStorageBufferBindingSize || size>d.limits.maxBufferSize) {
+      if (size>device.limits.maxStorageBufferBindingSize || size>device.limits.maxBufferSize) {
         throw new Error("Native FFT exceeds the browser GPU buffer limit.");
       }
-      const b=d.createBuffer({size,usage}); buffers.push(b); return b;
+      const buffer=device.createBuffer({size,usage}); buffers.push(buffer); return buffer;
     };
     try {
       const complex=new Float32Array(data.length*2);
       for(let i=0;i<data.length;i++) complex[2*i]=data[i];
-      let source=make(complex.byteLength); d.queue.writeBuffer(source,0,complex);
-      const encoder=d.createCommandEncoder();
+      let source=make(complex.byteLength); device.queue.writeBuffer(source,0,complex);
+      const encoder=device.createCommandEncoder();
       const dispatch=(name: string, values: number[], count: number, bindings: [number,GPUBuffer][]) => {
         const params=make(32,GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST);
-        d.queue.writeBuffer(params,0,new Uint32Array(values));
+        device.queue.writeBuffer(params,0,new Uint32Array(values));
         const pipeline=this.pipelines[name];
-        const group=d.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:
+        const group=device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:
           [{binding:0,resource:{buffer:params}},...bindings.map(([binding,buffer])=>({binding,resource:{buffer}}))]});
         const pass=encoder.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0,group);
-        if (Math.ceil(count/256)>d.limits.maxComputeWorkgroupsPerDimension) {
+        if (Math.ceil(count/256)>device.limits.maxComputeWorkgroupsPerDimension) {
           throw new Error("Native FFT exceeds the browser GPU dispatch limit.");
         }
         pass.dispatchWorkgroups(Math.ceil(count/256)); pass.end();
@@ -119,13 +119,13 @@ export class NativeGridFFT {
           const angle=-Math.PI*((k*k)%(2*n))/n;
           chirps[2*k]=Math.cos(angle); chirps[2*k+1]=Math.sin(angle);
         }
-        const chirp=make(chirps.byteLength); d.queue.writeBuffer(chirp,0,chirps);
+        const chirp=make(chirps.byteLength); device.queue.writeBuffer(chirp,0,chirps);
         const twiddleValues=new Float32Array(m);
         for(let k=0;k<m/2;k++) {
           twiddleValues[2*k]=Math.cos(-2*Math.PI*k/m);
           twiddleValues[2*k+1]=Math.sin(-2*Math.PI*k/m);
         }
-        const twiddles=make(twiddleValues.byteLength); d.queue.writeBuffer(twiddles,0,twiddleValues);
+        const twiddles=make(twiddleValues.byteLength); device.queue.writeBuffer(twiddles,0,twiddleValues);
         const params=(stage=0,inverse=0)=>[n,m,batches,axis,cols,rows,stage,inverse];
         dispatch("prepare",params(),m*(batches+1),[[1,work],[2,source],[3,chirp]]);
         for(let inverse=0;inverse<2;inverse++) {
@@ -142,10 +142,10 @@ export class NativeGridFFT {
       dispatch("logMagnitude",[0,0,0,0,cols,rows,0,0],data.length,[[2,source],[5,output]]);
       const read=make(data.byteLength,GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ);
       encoder.copyBufferToBuffer(output,0,read,0,data.byteLength);
-      d.queue.submit([encoder.finish()]);
+      device.queue.submit([encoder.finish()]);
       await read.mapAsync(GPUMapMode.READ);
       const result=new Float32Array(read.getMappedRange().slice(0)); read.unmap();
       return result;
-    } finally { for(const b of buffers) b.destroy(); }
+    } finally { for(const buffer of buffers) buffer.destroy(); }
   }
 }

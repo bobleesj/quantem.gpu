@@ -121,23 +121,23 @@ def get_metadata(filepath: str) -> dict:
         if data_group is not None:
             copy_attributes(data_group.attrs)
 
-        data_ds = handle.get("entry/data/data")
-        if data_ds is None and data_group is not None:
+        detector_dataset = handle.get("entry/data/data")
+        if detector_dataset is None and data_group is not None:
             for key in sorted(data_group.keys()):
                 if key.startswith("data_"):
                     try:
-                        data_ds = data_group[key]
+                        detector_dataset = data_group[key]
                     except (OSError, KeyError):
-                        data_ds = None
+                        detector_dataset = None
                     break
-        if data_ds is not None:
-            if "scan_shape" in data_ds.attrs:
-                metadata.setdefault("scan_shape", tuple(int(size) for size in data_ds.attrs["scan_shape"]))
-            if "det_shape" in data_ds.attrs:
-                metadata.setdefault("detector_shape", tuple(int(size) for size in data_ds.attrs["det_shape"]))
-            metadata.setdefault("source_dtype", str(data_ds.dtype))
-            if data_ds.ndim >= 3:
-                metadata.setdefault("n_frames", int(np.prod(data_ds.shape[:-2])))
+        if detector_dataset is not None:
+            if "scan_shape" in detector_dataset.attrs:
+                metadata.setdefault("scan_shape", tuple(int(size) for size in detector_dataset.attrs["scan_shape"]))
+            if "det_shape" in detector_dataset.attrs:
+                metadata.setdefault("detector_shape", tuple(int(size) for size in detector_dataset.attrs["det_shape"]))
+            metadata.setdefault("source_dtype", str(detector_dataset.dtype))
+            if detector_dataset.ndim >= 3:
+                metadata.setdefault("n_frames", int(np.prod(detector_dataset.shape[:-2])))
     _derive_fields(metadata)
     _decode_quantem_records(metadata)
     return metadata

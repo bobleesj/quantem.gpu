@@ -42,7 +42,6 @@ _EXACT_PAIR_LOGICAL_BOUNDARY_BF_512 = 512
 _EXACT_SCALAR_ROW_PACK_DEPTH_512 = 5
 
 
-
 def reconstruct_prepared_batch_exact_loss(
     prepared: PreparedMpsSSB,
     *,

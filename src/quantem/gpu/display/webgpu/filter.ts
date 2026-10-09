@@ -40,8 +40,8 @@ export const BROWSER_FILTER_MODES = new Set([
 
 /** Mirror of display_filter._normalize_mode for the mode spellings the UI can produce. */
 export function normalizeFilterMode(mode: string): string {
-  const m = String(mode ?? "").trim().toLowerCase().replace(/-/g, "_");
-  if (m === "" || m === "none" || m === "off" || m === "raw") return "none";
+  const spelling = String(mode ?? "").trim().toLowerCase().replace(/-/g, "_");
+  if (spelling === "" || spelling === "none" || spelling === "off" || spelling === "raw") return "none";
   const aliases: Record<string, string> = {
     bin2anscombe: "bin2_anscombe",
     bin_anscombe: "bin2_anscombe",
@@ -50,7 +50,7 @@ export function normalizeFilterMode(mode: string): string {
     anscombe_gaussian: "anscombe",
     denova_tv1_2: "denova_tv12",
   };
-  return aliases[m] ?? m;
+  return aliases[spelling] ?? spelling;
 }
 
 export function browserFilterSupported(mode: string): boolean {
@@ -84,11 +84,11 @@ export function resolvePanelDenoiseKnobs(
   bins: number[] | null | undefined,
   fallback: { mode: string; sigma: number; bin: number },
 ): { mode: string; sigma: number; bin: number } {
-  const idx = Math.max(0, Math.round(panel));
+  const index = Math.max(0, Math.round(panel));
   return {
-    mode: modes && idx < modes.length ? modes[idx] : fallback.mode,
-    sigma: Number(sigmas && idx < sigmas.length ? sigmas[idx] : fallback.sigma),
-    bin: Number(bins && idx < bins.length ? bins[idx] : fallback.bin),
+    mode: modes && index < modes.length ? modes[index] : fallback.mode,
+    sigma: Number(sigmas && index < sigmas.length ? sigmas[index] : fallback.sigma),
+    bin: Number(bins && index < bins.length ? bins[index] : fallback.bin),
   };
 }
 
@@ -98,9 +98,9 @@ export function gaussianKernel1d(sigma: number, truncate = 4.0): Float32Array {
   const weights = new Float64Array(2 * radius + 1);
   let sum = 0;
   for (let i = -radius; i <= radius; i++) {
-    const w = sigma > 0 ? Math.exp(-0.5 * (i * i) / (sigma * sigma)) : (i === 0 ? 1 : 0);
-    weights[i + radius] = w;
-    sum += w;
+    const weight = sigma > 0 ? Math.exp(-0.5 * (i * i) / (sigma * sigma)) : (i === 0 ? 1 : 0);
+    weights[i + radius] = weight;
+    sum += weight;
   }
   const out = new Float32Array(weights.length);
   for (let i = 0; i < weights.length; i++) out[i] = weights[i] / sum;
@@ -507,13 +507,25 @@ export class GPUDisplayFilterEngine {
     return buffer;
   }
 
-  private dispatch2d(pipeline: GPUComputePipeline, entries: GPUBindGroupEntry[], w: number, h: number): void {
-    const bind = this.device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
+  private dispatch2d(pipeline: GPUComputePipeline, entries: GPUBindGroupEntry[], width: number, height: number): void {
+    const bindGroup = this.device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
     pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bind);
-    pass.dispatchWorkgroups(Math.ceil(w / 16), Math.ceil(h / 16));
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(Math.ceil(width / 16), Math.ceil(height / 16));
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  /** Submit one pointwise pass of 256-thread workgroups over `count` pixels. */
+  private dispatch1d(pipeline: GPUComputePipeline, entries: GPUBindGroupEntry[], count: number): void {
+    const bindGroup = this.device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(Math.ceil(count / 256));
     pass.end();
     this.device.queue.submit([encoder.finish()]);
   }
@@ -626,21 +638,11 @@ export class GPUDisplayFilterEngine {
     new Uint32Array(raw)[1] = mode;
     new Float32Array(raw)[2] = scale;
     const params = this.uniform(raw);
-    const bind = this.device.createBindGroup({
-      layout: this.anscombePipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: plane.buffer } },
-        { binding: 1, resource: { buffer: out } },
-        { binding: 2, resource: { buffer: params } },
-      ],
-    });
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.anscombePipeline);
-    pass.setBindGroup(0, bind);
-    pass.dispatchWorkgroups(Math.ceil(count / 256));
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
+    this.dispatch1d(this.anscombePipeline, [
+      { binding: 0, resource: { buffer: plane.buffer } },
+      { binding: 1, resource: { buffer: out } },
+      { binding: 2, resource: { buffer: params } },
+    ], count);
     return { buffer: out, width: plane.width, height: plane.height };
   }
 
@@ -687,21 +689,11 @@ export class GPUDisplayFilterEngine {
     f32[3] = 1.0 / Math.max(hi - lo, 1e-30);
     f32[4] = gamma;
     const params = this.uniform(raw);
-    const bind = this.device.createBindGroup({
-      layout: this.stretchPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: plane.buffer } },
-        { binding: 1, resource: { buffer: out } },
-        { binding: 2, resource: { buffer: params } },
-      ],
-    });
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.stretchPipeline);
-    pass.setBindGroup(0, bind);
-    pass.dispatchWorkgroups(Math.ceil(count / 256));
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
+    this.dispatch1d(this.stretchPipeline, [
+      { binding: 0, resource: { buffer: plane.buffer } },
+      { binding: 1, resource: { buffer: out } },
+      { binding: 2, resource: { buffer: params } },
+    ], count);
     return { buffer: out, width: plane.width, height: plane.height };
   }
 
@@ -760,10 +752,6 @@ export class GPUDisplayFilterEngine {
       } else if (resolved.bin >= 2) {
         plane = this.stageBin2(plane, null);
         if (resolved.bin === 4) plane = this.stageBin2(plane, null);
-      }
-      // stageBin2 zooms back to the input shape, so this is a safety net only.
-      if (plane.width !== width || plane.height !== height) {
-        plane = this.stageResample(plane, width, height);
       }
       return await this.readPlane(plane);
     } finally {

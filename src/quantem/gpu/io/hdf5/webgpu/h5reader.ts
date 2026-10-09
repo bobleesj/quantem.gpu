@@ -93,8 +93,8 @@ const PIXEL_MASK_CANDIDATES = [
 ];
 const H5_BLOCK_INDEX_MAGIC = "QH5IDX01";
 
-function readBE32(b: Uint8Array, off: number): number {
-  return ((b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]) >>> 0;
+function readBE32(bytes: Uint8Array, offset: number): number {
+  return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
 }
 
 function align4(n: number): number {
@@ -162,20 +162,20 @@ function frameOffsets(ds: any): number[] {
 //   dims = _chunk_dims (ndims+1 = 4 for a 3D stack); frame index = coord[0];
 //   level>0 -> child_addr is a child NODE (recurse); level==0 -> raw chunk offset (emit).
 function fastFrameOffsets(buffer: ArrayBuffer, chunkAddress: number, chunkDims: number, nFrames: number): number[] {
-  const dv = new DataView(buffer);
+  const view = new DataView(buffer);
   const out: number[] = new Array(nFrames);
   const coordBytes = chunkDims * 8;
   const entryStride = 8 + coordBytes + 8;   // chunk_size+filter_mask, coords, child addr
   const addrInEntry = 8 + coordBytes;
-  const readU64 = (off: number) => dv.getUint32(off, true) + dv.getUint32(off + 4, true) * 4294967296;
+  const readU64 = (offset: number) => view.getUint32(offset, true) + view.getUint32(offset + 4, true) * 4294967296;
   const walk = (nodeOffset: number): void => {
-    const level = dv.getUint8(nodeOffset + 5);
-    const entries = dv.getUint16(nodeOffset + 6, true);
-    let p = nodeOffset + 24;   // first entry, after the 24-byte node header
+    const level = view.getUint8(nodeOffset + 5);
+    const entries = view.getUint16(nodeOffset + 6, true);
+    let entry = nodeOffset + 24;   // first entry, after the 24-byte node header
     if (level === 0) {
-      for (let i = 0; i < entries; i++) { out[readU64(p + 8)] = readU64(p + addrInEntry); p += entryStride; }
+      for (let i = 0; i < entries; i++) { out[readU64(entry + 8)] = readU64(entry + addrInEntry); entry += entryStride; }
     } else {
-      for (let i = 0; i < entries; i++) { walk(readU64(p + addrInEntry)); p += entryStride; }
+      for (let i = 0; i < entries; i++) { walk(readU64(entry + addrInEntry)); entry += entryStride; }
     }
   };
   walk(chunkAddress);
@@ -185,12 +185,12 @@ function fastFrameOffsets(buffer: ArrayBuffer, chunkAddress: number, chunkDims: 
 // Find the 3D detector-stack dataset inside the file (scan frames x detRows x detCols).
 function findStack(file: any): any {
   for (const path of PATH_CANDIDATES) {
-    try { const d = file.get(path); if (d && d.shape && d.shape.length === 3) return d; } catch { /* not present */ }
+    try { const dataset = file.get(path); if (dataset && dataset.shape && dataset.shape.length === 3) return dataset; } catch { /* not present */ }
   }
   // Fallback: first 3D dataset anywhere in the tree.
-  const walk = (grp: any): any => {
-    for (const key of grp.keys) {
-      const child = grp.get(key);
+  const walk = (group: any): any => {
+    for (const key of group.keys) {
+      const child = group.get(key);
       if (child?.shape?.length === 3) return child;
       if (child?.keys) { const found = walk(child); if (found) return found; }
     }
@@ -235,7 +235,7 @@ function readScalarNumber(file: any, path: string): number | undefined {
 function readDataFileIndexes(buffer: ArrayBuffer): number[] {
   const bytes = new Uint8Array(buffer);
   const found = new Set<number>();
-  const isDigit = (b: number): boolean => b >= 48 && b <= 57;
+  const isDigit = (byte: number): boolean => byte >= 48 && byte <= 57;
   for (let i = 0; i + 15 <= bytes.byteLength; i++) {
     if (
       bytes[i] !== 95      // _
@@ -261,7 +261,7 @@ function readDataFileIndexes(buffer: ArrayBuffer): number[] {
       continue;
     }
     let value = 0;
-    for (let d = 0; d < 6; d++) value = value * 10 + (bytes[i + 6 + d] - 48);
+    for (let digit = 0; digit < 6; digit++) value = value * 10 + (bytes[i + 6 + digit] - 48);
     if (value > 0) found.add(value);
   }
   return Array.from(found).sort((a, b) => a - b);
@@ -293,11 +293,11 @@ export function readH5Volume(buffer: ArrayBuffer, name: string, framesPerChunk?:
   // packed-count request. A MAPED-merged stack is float32 ("<f4"). The element byte width drives
   // the bitshuffle plane count (8/16/32) - float32 is 4-byte, so it de-bitshuffles exactly
   // like uint32 (32 planes); only the display reinterprets the decoded 4 bytes as f32.
-  const dt = String(ds.dtype);
+  const dtype = String(ds.dtype);
   const srcDtype: "uint8" | "uint16" | "uint32" | "float32" =
-    /f4|float32/.test(dt) ? "float32"
-      : /(^|[<>|])u1|uint8|int8/.test(dt) ? "uint8"
-      : /(^|[<>|])u4|uint32|int32/.test(dt) ? "uint32"
+    /f4|float32/.test(dtype) ? "float32"
+      : /(^|[<>|])u1|uint8|int8/.test(dtype) ? "uint8"
+      : /(^|[<>|])u4|uint32|int32/.test(dtype) ? "uint32"
       : "uint16";
   const offsets = frameOffsets(ds);
   return readH5VolumeFromFrameIndex(buffer, name, { detRows, detCols, nFrames, srcDtype, frameOffsets: offsets }, framesPerChunk);
@@ -375,9 +375,9 @@ function parseH5BlockIndex(buffer: ArrayBuffer, name: string): { meta: H5BlockIn
   if (magic !== H5_BLOCK_INDEX_MAGIC) {
     throw new Error(`HDF5 block-index sidecar ${name} is not a ${H5_BLOCK_INDEX_MAGIC} file.`);
   }
-  const dv = new DataView(buffer);
-  const jsonLen = dv.getUint32(8, true);
-  const blockMetaWords = dv.getUint32(12, true);
+  const view = new DataView(buffer);
+  const jsonLen = view.getUint32(8, true);
+  const blockMetaWords = view.getUint32(12, true);
   const jsonStart = 16;
   const jsonStop = jsonStart + jsonLen;
   if (jsonStop > buffer.byteLength) {
@@ -446,15 +446,15 @@ export function readBslz4SelectedBlockVolume(buffer: ArrayBuffer, name: string):
   if (magic !== "QBSLZ4S1") {
     throw new Error(`Selected-block file ${name} is not a QBSLZ4S1 file.`);
   }
-  const dv = new DataView(buffer);
-  const jsonLen = dv.getUint32(8, true);
-  const blockMetaWords = dv.getUint32(12, true);
+  const view = new DataView(buffer);
+  const jsonLen = view.getUint32(8, true);
+  const blockMetaWords = view.getUint32(12, true);
   const jsonStart = 16;
   const jsonStop = jsonStart + jsonLen;
   const metaStart = align4(jsonStop);
   const compressedStart = metaStart + blockMetaWords * 4;
   const meta = JSON.parse(new TextDecoder().decode(bytes.subarray(jsonStart, jsonStop))) as Bslz4SelectedBlockMetadata;
-  const selectedBlockIds = Array.from(meta.selectedBlockIds || []).map((v) => Math.round(Number(v)));
+  const selectedBlockIds = Array.from(meta.selectedBlockIds || []).map((id) => Math.round(Number(id)));
   const blockMeta = new Uint32Array(buffer, metaStart, blockMetaWords);
   const compressed = bytes.subarray(compressedStart);
   const detRows = Math.round(Number(meta.detRows));
@@ -504,6 +504,6 @@ export function readBslz4SelectedBlockMetadata(buffer: ArrayBuffer, name: string
     detCols: Math.round(Number(meta.detCols)),
     nFrames: Math.round(Number(meta.nFrames)),
     blockElems: Math.round(Number(meta.blockElems)),
-    selectedBlockIds: Array.from(meta.selectedBlockIds || []).map((v) => Math.round(Number(v))),
+    selectedBlockIds: Array.from(meta.selectedBlockIds || []).map((id) => Math.round(Number(id))),
   };
 }

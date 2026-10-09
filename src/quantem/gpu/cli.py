@@ -16,7 +16,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Accelerated 4D-STEM compute services.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    convert = commands.add_parser(
+    convert_command = commands.add_parser(
         "convert",
         help="convert Arina HDF5 acquisitions into verified .qem copies",
         description=(
@@ -26,17 +26,17 @@ def _parser() -> argparse.ArgumentParser:
             "Source files are never modified or removed."
         ),
     )
-    convert.add_argument("source", type=Path, help="a *_master.h5 file, or a folder of acquisitions")
-    convert.add_argument("--out", type=Path, help="write copies here, mirroring the folder layout (default: beside each master)")
-    convert.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
-    convert.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
-    convert.add_argument("--no-verify", action="store_true", help="skip comparing each copy with its source files")
-    validate = commands.add_parser(
+    convert_command.add_argument("source", type=Path, help="a *_master.h5 file, or a folder of acquisitions")
+    convert_command.add_argument("--out", type=Path, help="write copies here, mirroring the folder layout (default: beside each master)")
+    convert_command.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
+    convert_command.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
+    convert_command.add_argument("--no-verify", action="store_true", help="skip comparing each copy with its source files")
+    validate_command = commands.add_parser(
         "validate",
         help="check .qem integrity and metadata without a GPU",
     )
-    validate.add_argument("paths", nargs="+", type=Path, help=".qem files to check")
-    serve = commands.add_parser(
+    validate_command.add_argument("paths", nargs="+", type=Path, help=".qem files to check")
+    serve_command = commands.add_parser(
         "serve",
         help="serve native 4D-STEM browsing over loopback",
         description=(
@@ -44,8 +44,8 @@ def _parser() -> argparse.ArgumentParser:
             "listens only on 127.0.0.1 and is intended to be reached through SSH."
         ),
     )
-    serve.add_argument("data_folder", help="folder containing *_master.h5 sessions")
-    gpu_selection = serve.add_mutually_exclusive_group()
+    serve_command.add_argument("data_folder", help="folder containing *_master.h5 sessions")
+    gpu_selection = serve_command.add_mutually_exclusive_group()
     gpu_selection.add_argument(
         "--gpu",
         type=int,
@@ -56,8 +56,11 @@ def _parser() -> argparse.ArgumentParser:
         default="auto",
         help="CUDA device pool: auto or comma-separated indices (default: auto)",
     )
-    serve.add_argument("--port", type=int, default=8780, help="loopback port (default: 8780)")
-    serve.add_argument(
+    serve_command.add_argument(
+        "--port", type=int, default=8780,
+        help="loopback port (default: 8780; another local service may already use it, then pass --port)",
+    )
+    serve_command.add_argument(
         "--implementation-revision",
         default=__version__,
         help=(
@@ -90,6 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit("--gpus must be 'auto' or comma-separated CUDA indices") from exc
         if not gpus or any(gpu < 0 for gpu in gpus):
             raise SystemExit("--gpus must contain CUDA indices zero or greater")
+    if not Path(args.data_folder).is_dir():
+        raise SystemExit(f"quantem-gpu serve: {args.data_folder} is not a folder")
     try:
         import uvicorn
     except ImportError as exc:
@@ -121,12 +126,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _convert(args: argparse.Namespace) -> int:
     """Convert every acquisition under the source and print sizes before and after."""
-    masters = convert.find_masters(args.source)
+    try:
+        masters = convert.find_masters(args.source)
+    except FileNotFoundError as error:
+        raise SystemExit(f"quantem-gpu convert: {error}") from None
     if not masters:
         raise SystemExit(f"No *_master.h5 acquisitions under {args.source}")
     print(
-        f"{len(masters)} acquisition(s). Stored counts, including flagged pixels, are preserved. "
-        "Source files are not modified."
+        f"{len(masters)} acquisition(s). Every detector count and the pixel mask are kept exactly; "
+        "flagged pixels holding the uint32 marker (above 65535) are stored as 0. Source files are not modified."
     )
     if args.dry:
         print("Dry run: GPU encoding estimates payload size; metadata and file overhead are additional. No copies written.")
@@ -168,9 +176,9 @@ def _convert(args: argparse.Namespace) -> int:
             check = result.verification
             line += f"  verified: {check['compared_values']:,} values identical"
             if check["flagged_pixels"]:
-                line += (
-                    f"; {check['flagged_pixels']} flagged pixels also verified"
-                )
+                line += f"; {check['flagged_pixels']} flagged pixels also verified"
+            if check.get("flagged_markers_stored_as_zero"):
+                line += f" ({check['flagged_markers_stored_as_zero']:,} uint32 markers stored as 0)"
         elif result.verified is False:
             failed += 1
             line += f"  VERIFICATION FAILED, no copy published: {result.verification}"

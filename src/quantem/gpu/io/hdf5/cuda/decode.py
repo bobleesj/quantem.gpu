@@ -76,10 +76,10 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
     ``(n_frames, det_row, det_col)``; stored values are not altered.
     """
     read_buffer = prepared["read_buffer"]
-    chunk_offsets_arr = prepared["chunk_offsets"]
-    block_starts_flat = prepared["block_starts"]
+    chunk_offsets = prepared["chunk_offsets"]
+    block_starts = prepared["block_starts"]
     block_counts = prepared["block_counts"]
-    block_offsets_arr = prepared["block_offsets"]
+    block_offsets = prepared["block_offsets"]
     total_frames = prepared["total_frames"]
     frame_shape = prepared["frame_shape"]
     frame_bytes = prepared["frame_bytes"]
@@ -99,13 +99,13 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
     # out-of-order selections use one full compressed upload.
     offsets_monotonic = bool(
         total_frames <= 1
-        or np.all(chunk_offsets_arr[1:] >= chunk_offsets_arr[:-1])
+        or np.all(chunk_offsets[1:] >= chunk_offsets[:-1])
     )
     streaming_upload = offsets_monotonic and n_batches > 1
 
-    block_starts_gpu = cp.asarray(block_starts_flat)
-    block_counts_gpu = cp.asarray(block_counts)
-    block_offsets_gpu = cp.asarray(block_offsets_arr)
+    block_starts_device = cp.asarray(block_starts)
+    block_counts_device = cp.asarray(block_counts)
+    block_offsets_device = cp.asarray(block_offsets)
     if streaming_upload:
         # Precompute every batch's compressed slice + rebased chunk offsets
         # once. block_starts are chunk-relative so they need no rebasing.
@@ -114,91 +114,99 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         max_batch_compressed = 0
         for frame_start in range(0, total_frames, max_batch):
             frame_stop = min(frame_start + max_batch, total_frames)
-            byte_start = int(chunk_offsets_arr[frame_start])
+            byte_start = int(chunk_offsets[frame_start])
             byte_stop = (
                 len(read_buffer)
                 if frame_stop == total_frames
-                else int(chunk_offsets_arr[frame_stop])
+                else int(chunk_offsets[frame_stop])
             )
             all_rebased[frame_start:frame_stop] = (
-                chunk_offsets_arr[frame_start:frame_stop] - np.uint64(byte_start)
+                chunk_offsets[frame_start:frame_stop] - np.uint64(byte_start)
             )
             max_batch_compressed = max(max_batch_compressed, byte_stop - byte_start)
             batch_slices.append((byte_start, byte_stop))
-        all_rebased_gpu = cp.asarray(all_rebased)
+        all_rebased_device = cp.asarray(all_rebased)
         # Double-buffered async H2D: upload batch N+1 into the spare buffer on
         # a copy stream while batch N's kernels run on the main stream. The
         # read_buffer is page-locked so .set(stream=) is a true async DMA;
         # events keep the copy stream from overwriting a buffer whose LZ4
         # kernel has not finished reading it.
-        comp_bufs = [cp.empty(max_batch_compressed, dtype=cp.uint8) for _ in range(2)]
+        compressed_slots = [cp.empty(max_batch_compressed, dtype=cp.uint8) for _ in range(2)]
         copy_stream = cp.cuda.Stream(non_blocking=True)
         copy_done = [cp.cuda.Event() for _ in range(2)]
         kernel_done = [cp.cuda.Event() for _ in range(2)]
         main_stream = cp.cuda.get_current_stream()
 
-        def upload_batch(batch_idx, slot):
-            byte_start, byte_stop = batch_slices[batch_idx]
-            comp_bufs[slot][: byte_stop - byte_start].set(
+        def upload_batch(batch_index, slot):
+            byte_start, byte_stop = batch_slices[batch_index]
+            compressed_slots[slot][: byte_stop - byte_start].set(
                 read_buffer[byte_start:byte_stop], stream=copy_stream
             )
             copy_stream.record(copy_done[slot])
 
         upload_batch(0, 0)
-        compressed_gpu = None
-        chunk_offsets_gpu = None
+        compressed_device = None
+        chunk_offsets_device = None
     else:
-        compressed_gpu = cp.empty(len(read_buffer), dtype=cp.uint8)
-        compressed_gpu.set(read_buffer)
-        chunk_offsets_gpu = cp.asarray(chunk_offsets_arr)
+        compressed_device = cp.empty(len(read_buffer), dtype=cp.uint8)
+        compressed_device.set(read_buffer)
+        chunk_offsets_device = cp.asarray(chunk_offsets)
     batch_scratch_bytes = max_batch * frame_bytes
     lz4_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     shuf_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     result = cp.empty((total_frames,) + frame_shape, dtype=source_dtype)
 
-    max_blocks_val = int(block_counts.max())
+    max_blocks = int(block_counts.max())
     n_full_8kb = frame_bytes // BLOCK_SIZE
     tail_bytes = frame_bytes % BLOCK_SIZE
+    # Bitshuffle leaves a final remainder of fewer than 8 elements
+    # unshuffled, which these decoders do not read.
+    if tail_bytes % source_itemsize or (tail_bytes // source_itemsize) % 8:
+        raise ValueError(
+            "GPU bitshuffle/LZ4 load supports partial final blocks "
+            "only when the partial detector frame contains a "
+            f"multiple of 8 elements; got frame_shape={frame_shape}."
+        )
 
-    for batch_idx, start in enumerate(range(0, total_frames, max_batch)):
+    for batch_index, start in enumerate(range(0, total_frames, max_batch)):
         end = min(start + max_batch, total_frames)
         batch_n = end - start
         # Streaming upload (double-buffered async): this batch's bytes are
         # already in flight on the copy stream; wait for them, then prefetch
         # the next batch into the spare buffer so its H2D overlaps this
         # batch's kernels. block_starts are chunk-relative (no rebasing);
-        # chunk_offsets were rebased per-batch into all_rebased_gpu.
+        # chunk_offsets were rebased per-batch into all_rebased_device.
         if streaming_upload:
-            slot = batch_idx % 2
+            slot = batch_index % 2
             main_stream.wait_event(copy_done[slot])
-            if batch_idx + 1 < n_batches:
-                next_slot = (batch_idx + 1) % 2
-                if batch_idx >= 1:
+            if batch_index + 1 < n_batches:
+                next_slot = (batch_index + 1) % 2
+                if batch_index >= 1:
                     copy_stream.wait_event(kernel_done[next_slot])
-                upload_batch(batch_idx + 1, next_slot)
-            cur_compressed = comp_bufs[slot]
-            batch_chunk_offsets_gpu = all_rebased_gpu[start:]
+                upload_batch(batch_index + 1, next_slot)
+            batch_compressed = compressed_slots[slot]
+            batch_chunk_offsets = all_rebased_device[start:]
         else:
-            cur_compressed = compressed_gpu
-            batch_chunk_offsets_gpu = chunk_offsets_gpu[start:]
+            batch_compressed = compressed_device
+            batch_chunk_offsets = chunk_offsets_device[start:]
 
         # 1. LZ4 decompress this batch into lz4_scratch (from offset 0).
         kernel("h5lz4dc_batched")(
-            ((max_blocks_val + 1) // 2, 1, batch_n),
+            ((max_blocks + 1) // 2, 1, batch_n),
             (32, 2, 1),
             (
-                cur_compressed,
-                batch_chunk_offsets_gpu,
-                block_starts_gpu,
-                block_counts_gpu[start:],
-                block_offsets_gpu[start:],
+                batch_compressed,
+                batch_chunk_offsets,
+                block_starts_device,
+                block_counts_device[start:],
+                block_offsets_device[start:],
                 np.uint32(BLOCK_SIZE),
                 np.uint32(frame_bytes),
                 lz4_scratch,
             ),
         )
         # LZ4 is the only consumer of the compressed buffer; once it has run
-        # the copy stream may refill this slot for batch_idx+2.
+        # the copy stream may refill this slot for batch_index+2.
         if streaming_upload:
             main_stream.record(kernel_done[slot])
 
@@ -207,15 +215,7 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         #    and slicing a uint8 buffer then .view()ing into a wider
         #    dtype can leave CuPy confused about strides.
         if source_itemsize == 1:
-            # One kernel unshuffles complete blocks and the final partial
-            # block; bitshuffle leaves a final remainder of fewer than 8
-            # elements unshuffled, which this decoder does not read.
-            if tail_bytes % 8:
-                raise ValueError(
-                    "GPU bitshuffle/LZ4 load supports partial final blocks "
-                    "only when the partial detector frame contains a "
-                    f"multiple of 8 elements; got frame_shape={frame_shape}."
-                )
+            # One kernel unshuffles complete blocks and the final partial block.
             batch_bytes = batch_n * frame_bytes
             kernel("shuf_8_batched")(
                 ((batch_bytes + 255) // 256,),
@@ -235,12 +235,6 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                 )
             if tail_bytes:
                 tail_elems = tail_bytes // source_itemsize
-                if tail_bytes % source_itemsize or tail_elems % 8:
-                    raise ValueError(
-                        "GPU bitshuffle/LZ4 load supports partial final blocks "
-                        "only when the partial detector frame contains a "
-                        f"multiple of 8 elements; got frame_shape={frame_shape}."
-                    )
                 kernel("shuf_tail_16_batched")(
                     ((tail_elems + 255) // 256, 1, batch_n),
                     (256, 1, 1),
@@ -264,12 +258,6 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                 )
             if tail_bytes:
                 tail_elems = tail_bytes // source_itemsize
-                if tail_bytes % source_itemsize or tail_elems % 8:
-                    raise ValueError(
-                        "GPU bitshuffle/LZ4 load supports partial final blocks "
-                        "only when the partial detector frame contains a "
-                        f"multiple of 8 elements; got frame_shape={frame_shape}."
-                    )
                 kernel("shuf_tail_32_batched")(
                     ((tail_elems + 255) // 256, 1, batch_n),
                     (256, 1, 1),
@@ -283,9 +271,9 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         # 3. View the batch prefix of shuf_scratch as source dtype +
         #    batch shape. View the full uint8 scratch first THEN slice
         #    (doing it the other way can silently reinterpret strides).
-        n_src_per_frame = frame_bytes // source_itemsize
+        values_per_frame = frame_bytes // source_itemsize
         result[start:end] = (
-            shuf_scratch.view(source_dtype)[: batch_n * n_src_per_frame]
+            shuf_scratch.view(source_dtype)[: batch_n * values_per_frame]
             .reshape((batch_n,) + frame_shape)
         )
 

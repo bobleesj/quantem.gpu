@@ -2,7 +2,6 @@
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.resident.queries import DetectorQueries
 
 
@@ -46,22 +45,21 @@ class FloatANSDetectorCompute(DetectorQueries):
         return _host(self.source.reduce_frames_device(indices, reduce), self.source.backend)
 
     def center_of_mass(self, mask=None):
-        """Return mean-subtracted ``(column, row)`` centers; empty or non-finite frames are NaN."""
+        """Absolute detector ``(column, row)`` centres, flat float32, as every detector backend defines them.
+
+        ``row = sum(row * I) / sum(I)`` over the (masked) pattern, in detector
+        pixels and not mean-subtracted (``dpc.center_of_mass`` does that). A
+        pattern whose total is 0, such as an empty frame, gives 0 like the count
+        backends, so one empty frame cannot turn the DPC field into NaN. A
+        pattern holding inf or NaN measurements has no centre and gives NaN.
+        """
         with self.source.device_context():
             total, row, column = self.source.products_device(mask, moments=True)
-            valid = (total != 0) & (abs(total) < float("inf"))
-            denominator = self.source._where(valid, total, 1)
-            row = self.source._where(valid, row / denominator, float("nan"))
-            column = self.source._where(valid, column / denominator, float("nan"))
-            if self.source.backend == "cuda":
-                row -= cp.nanmean(row)
-                column -= cp.nanmean(column)
-            else:
-                import torch
-
-                row -= torch.nanmean(row)
-                column -= torch.nanmean(column)
-            return _host(column, self.source.backend), _host(row, self.source.backend)
+            empty = total == 0
+            denominator = self.source._where(empty, 1, total)
+            row = self.source._where(empty, 0, row / denominator)
+            column = self.source._where(empty, 0, column / denominator)
+            return _host(column, self.source.backend).reshape(-1), _host(row, self.source.backend).reshape(-1)
 
     def masked_sum_exact(self, mask):
         raise TypeError(

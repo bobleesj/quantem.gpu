@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import (
     allocate_shared,
     buffer_view,
@@ -42,6 +43,7 @@ from quantem.gpu.formats.qem.snapshot import (
     write_envelope,
 )
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.hdf5.cpu import record_dense_representation
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts
 from quantem.gpu.resident.float_ans import FloatANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts, _Chunk
@@ -136,7 +138,7 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
         data, metadata = load_array(path)
         if scan_shape is not None and tuple(scan_shape) != data.shape[:2]:
             raise ValueError("scan_shape disagrees with the saved QEM file.")
-        return Dataset4dstemGPU(data, metadata)
+        return record_dense_representation(Dataset4dstemGPU(data, metadata))
     selected_backend = resolve_backend(backend)
     if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
         raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")
@@ -192,7 +194,7 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
     import cupy as cp
 
     shape = tuple(header["shape"])
-    selected = cp.cuda.Device().id if device is None else int(str(device).removeprefix("cuda:"))
+    selected = cuda_device_index(device)
     valid = decode_valid(header["valid"], shape[2:])
     with cp.cuda.Device(selected):
         source = StreamedCounts(shape, np.dtype(header["dtype"]), valid)
@@ -210,12 +212,12 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                     slot = number % 2
                     count = min(BLOCK_BYTES, header["bytes"] - number * BLOCK_BYTES)
                     view = memoryview(buffers[slot][:count])
-                    at = 0
-                    while at < count:
-                        got = handle.readinto(view[at:])
-                        if not got:
+                    cursor = 0
+                    while cursor < count:
+                        length = handle.readinto(view[cursor:])
+                        if not length:
                             raise ValueError("ANS snapshot ended during loading; recopy it.")
-                        at += got
+                        cursor += length
                     if hashlib.sha256(view).hexdigest() != header["sha256"][number]:
                         raise ValueError(f"ANS checksum mismatch in block {number}; recopy the file.")
                     return count

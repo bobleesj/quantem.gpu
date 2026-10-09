@@ -92,7 +92,7 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
         visit(root)
         original = {
             "empad_xml": text.decode("utf8"),
-            **{"empad/" + k: v for k, v in fields.items()},
+            **{"empad/" + key: value for key, value in fields.items()},
         }
         modern = fields.get("sensor/type") == "EMPAD2"
         if "sensor/type" in fields or "rawfile/filename" in fields:
@@ -143,7 +143,7 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
     if (
         shape is None
         or len(shape) != 2
-        or any(type(n) is not int or n <= 0 for n in shape)
+        or any(type(size) is not int or size <= 0 for size in shape)
     ):
         raise ValueError(
             "Headerless EMPAD-G1 RAW requires scan_shape=(rows, columns); the detector record is 130x128 float32."
@@ -240,9 +240,10 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
     elif fov:
         values = json.loads(fov)
         if len(values) == 2 and all(
-            isinstance(v, (int, float)) and math.isfinite(v) and v > 0 for v in values
+            isinstance(extent, (int, float)) and math.isfinite(extent) and extent > 0
+            for extent in values
         ):
-            metadata["scan_sampling_A"] = [v / n * 1e10 for v, n in zip(values, shape)]
+            metadata["scan_sampling_A"] = [extent / count * 1e10 for extent, count in zip(values, shape)]
     angle = (
         positive("iom_measurements/calibrated_diffraction_angle") if modern else None
     )

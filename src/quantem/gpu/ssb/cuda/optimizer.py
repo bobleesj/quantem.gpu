@@ -62,8 +62,8 @@ def batch_optimize(
     study = optuna.create_study(direction="minimize", sampler=sampler)
     # one output buffer for every batch
     out_buffer = cp.empty(batch_size, dtype=cp.float32)
-    pbar = tqdm(total=n_trials, desc="SSB optimize", disable=not verbose,
-                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
+    progress = tqdm(total=n_trials, desc="SSB optimize", disable=not verbose,
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
     trial_history = []
     n_completed = 0
     while n_completed < n_trials:
@@ -77,19 +77,19 @@ def batch_optimize(
             c12_arr[i] = _suggest(trial, "C12_nm", aberrations.get("C12_nm", aberration_defaults.get("C12", 0.0)))
             phi12_deg = _suggest(trial, "phi12_deg", aberrations.get("phi12_deg", math.degrees(aberration_defaults.get("phi12", 0.0))))
             phi12_arr[i] = math.radians(phi12_deg)
-        losses_gpu = objective.loss_batch(c10_arr, c12_arr, phi12_arr, out=out_buffer[:current_batch])
-        losses_cpu = cp.asnumpy(losses_gpu[:current_batch])
+        losses = objective.loss_batch(c10_arr, c12_arr, phi12_arr, out=out_buffer[:current_batch])
+        host_losses = cp.asnumpy(losses[:current_batch])
         for i, trial in enumerate(trials):
-            study.tell(trial, float(losses_cpu[i]))
+            study.tell(trial, float(host_losses[i]))
             trial_history.append({
                 "number": trial.number,
                 "params": {"C10_nm": float(c10_arr[i]), "C12_nm": float(c12_arr[i]),
                            "phi12_deg": math.degrees(float(phi12_arr[i]))},
-                "loss": float(losses_cpu[i]),
+                "loss": float(host_losses[i]),
             })
         n_completed += current_batch
-        pbar.update(current_batch)
-    pbar.close()
+        progress.update(current_batch)
+    progress.close()
     return study.best_params, study.best_value, trial_history
 
 
@@ -151,16 +151,15 @@ def batch_nelder_mead(
     for i in range(n):
         simplex[i + 1] = x0.copy()
         # Standard Nelder-Mead initial step: 5% of value or 0.00025
-        h = max(abs(x0[i]) * 0.05, 0.00025)
-        simplex[i + 1, i] += h
+        simplex[i + 1, i] += max(abs(x0[i]) * 0.05, 0.00025)
 
     # Evaluate all 4 vertices in one batch call
     f_values = np.empty(n + 1, dtype=np.float64)
     c10_arr = simplex[:, 0].astype(np.float32)
     c12_arr = simplex[:, 1].astype(np.float32)
     phi12_arr = simplex[:, 2].astype(np.float32)
-    losses_gpu = objective.loss_batch(c10_arr, c12_arr, phi12_arr)
-    f_values[:] = cp.asnumpy(losses_gpu).astype(np.float64)
+    losses = objective.loss_batch(c10_arr, c12_arr, phi12_arr)
+    f_values[:] = cp.asnumpy(losses).astype(np.float64)
     n_evals = n + 1
 
     # Standard Nelder-Mead coefficients
@@ -169,7 +168,7 @@ def batch_nelder_mead(
     rho = 0.5     # contraction
     sigma = 0.5   # shrink
 
-    for iteration in range(max_iter):
+    for _ in range(max_iter):
         # Sort vertices by function value
         order = np.argsort(f_values, kind="stable")
         simplex = simplex[order]
@@ -231,21 +230,21 @@ def batch_nelder_mead(
         # Shrink: move all vertices toward best - batch evaluate n vertices
         for i in range(1, n + 1):
             simplex[i] = simplex[0] + sigma * (simplex[i] - simplex[0])
-        losses_gpu = objective.loss_batch(
+        losses = objective.loss_batch(
             simplex[1:, 0].astype(np.float32),
             simplex[1:, 1].astype(np.float32),
             simplex[1:, 2].astype(np.float32),
         )
-        f_values[1:] = cp.asnumpy(losses_gpu).astype(np.float64)
+        f_values[1:] = cp.asnumpy(losses).astype(np.float64)
         n_evals += 3
 
     best_idx = np.argsort(f_values, kind="stable")[0]
     return simplex[best_idx], float(f_values[best_idx]), n_evals
 
 
-def _eval_single(objective: PhaseVarianceObjective, x: np.ndarray) -> float:
+def _eval_single(objective: PhaseVarianceObjective, point: np.ndarray) -> float:
     """Loss of one simplex point, the four Nelder-Mead moves' shared call."""
-    return float(objective.loss(float(x[0]), float(x[1]), float(x[2])))
+    return float(objective.loss(float(point[0]), float(point[1]), float(point[2])))
 
 
 # =========================================================================

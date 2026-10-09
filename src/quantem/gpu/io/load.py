@@ -144,6 +144,12 @@ def load(
         detector coverage, binning, calibration, or scientific dtype.
     backend
         ``"auto"``, ``"cuda"``, ``"mps"``, or explicit reference ``"cpu"``.
+    device
+        Omit to let ``backend`` choose. ``"cpu"`` loads the dense CPU
+        reference (the same as ``backend="cpu"``), ``"mps"`` the Apple GPU,
+        ``"cuda"`` or ``"cuda:N"`` (or the integer ``N``) a CUDA GPU.
+        ``"auto"`` picks CUDA, then MPS, then CPU, and prints which; the
+        meaning is the same as ``quantem.gpu.device.resolve_device``.
     stack
         Omit to retain compressed or independently calibrated acquisitions as
         a list, while stacking CPU reference arrays. Use ``False``
@@ -159,6 +165,7 @@ def load(
     Dataset4dstemGPU or list[Dataset4dstemGPU]
         Data stays backend-resident.
     """
+    backend, device = _device_backend(backend, device)
     # Residency policy does not depend on whether a device is available.
     if (
         representation is not None
@@ -412,6 +419,26 @@ def load(
         stack=True if stack is None else stack,
         verbose=verbose,
     )
+
+
+def _device_backend(backend: str, device: int | str | None) -> tuple[str, int | str | None]:
+    """Turn a ``device=`` name into the backend it implies and the CUDA device the loaders take.
+
+    ``device="cpu"`` and ``backend="cpu"`` must mean the same thing, as must
+    ``device="mps"`` and ``backend="mps"``; a device naming a different
+    backend than an explicit ``backend=`` is a contradiction, not a choice.
+    """
+    if device is None or isinstance(device, int):
+        return backend, device
+    requested = str(device).strip().lower()
+    if requested == "auto":
+        requested = select.resolve_device("auto")
+    implied = "cuda" if requested.startswith("cuda") else requested
+    if implied not in {"cuda", "mps", "cpu"}:
+        raise ValueError(f"Unknown device {device!r}; use 'auto', 'cuda', 'cuda:N', 'mps', or 'cpu'.")
+    if backend not in (None, "auto", implied):
+        raise ValueError(f"device={device!r} contradicts backend={backend!r}; pass one of them.")
+    return implied, (requested if requested.startswith("cuda:") else None)
 
 
 def _selected_representation(

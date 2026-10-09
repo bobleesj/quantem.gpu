@@ -36,18 +36,11 @@ from quantem.gpu.ssb.mps.prepared import (
 from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 
 _FUSED_SHAPES = ((128, 128), (256, 256), (1024, 1024))
-
-
-# bytes of one complex64 plane-sized temporary per BF pixel, times the live temporaries of a chunk
+# A chunk of the element-wise model keeps _LIVE_PLANES complex64 plane-sized temporaries per BF pixel; _chunk_bf sizes
+# chunks so they stay near _CHUNK_BYTES.
 _CHUNK_BYTES = 256 << 20
-
-
 _LIVE_PLANES = 6
-
-
 THICK_FIT_MAX_BATCH = 8
-
-
 _K_CHUNK = 256      # bright-field pixels summed per thread; the partial sums over chunks are reduced afterwards
 
 
@@ -180,15 +173,17 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
     out = np.empty(len(params))
     for start in range(0, len(params), THICK_FIT_MAX_BATCH):
         rows = params[start:start + THICK_FIT_MAX_BATCH]
-        b = len(rows)
+        batch_size = len(rows)
         trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
                           rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
         numer_real, numer_imag, denom = kernel(
             inputs=[g, flat, band_qx, band_qy, prepared.kx, prepared.ky, mx.array(trial.ravel()), scalars],
-            template=[("B", b), ("N_BAND", n_band), ("NUM_BF", storage_bf), ("PLANE", plane), ("K_CHUNK", _K_CHUNK)],
+            template=[
+                ("B", batch_size), ("N_BAND", n_band), ("NUM_BF", storage_bf), ("PLANE", plane), ("K_CHUNK", _K_CHUNK),
+            ],
             grid=(n_band, k_chunks, 1),
             threadgroup=(256, 1, 1),
-            output_shapes=[(k_chunks, b, n_band)] * 3,
+            output_shapes=[(k_chunks, batch_size, n_band)] * 3,
             output_dtypes=[mx.float32] * 3,
         )
         sums = mx.stack([mx.sum(numer_real, axis=0), mx.sum(numer_imag, axis=0), mx.sum(denom, axis=0)])
@@ -196,7 +191,7 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
         den = sums[2]
         ok = den > 0
         power = np.where(ok, (sums[0] ** 2 + sums[1] ** 2) / np.where(ok, den, 1.0), 0.0)
-        out[start:start + b] = (weight[None] * power).sum(axis=1)
+        out[start:start + batch_size] = (weight[None] * power).sum(axis=1)
     return out
 
 
@@ -250,6 +245,10 @@ def _compiled_terms():
 
 
 def _params(prepared: PreparedMpsSSB, C10, C12, phi12, tilt_mrad, thickness):
+    """Pack every scalar of the thick-sample model into one float32 array, in the order ``_compiled_terms`` reads.
+
+    One array argument keeps the compiled graph from being traced again for each new parameter value.
+    """
     mx = prepared.mx
     return mx.array(
         [
@@ -264,7 +263,7 @@ def _params(prepared: PreparedMpsSSB, C10, C12, phi12, tilt_mrad, thickness):
 def _chunk_terms(prepared: PreparedMpsSSB, start: int, stop: int, params):
     """Full-plane G for storage BF pixels [start, stop) and the model terms for them."""
     mx = prepared.mx
-    ny, nx = prepared.scan_shape
+    _, nx = prepared.scan_shape
     # G is stored as the Hermitian half plane of a real BF image; the model needs every q
     g_full = expand_hermitian_mx(mx, prepared.g_qk[start:stop], int(nx))
     kx = prepared.kx[start:stop].reshape(-1, 1, 1)
@@ -366,7 +365,7 @@ def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     if prepared.thick_band is not None and prepared.thick_band[0] == key:
         return prepared.thick_band[1]
     mx = prepared.mx
-    ny, nx = (int(v) for v in prepared.scan_shape)
+    _, nx = (int(size) for size in prepared.scan_shape)
     cols = int(prepared.g_qk.shape[-1])
     half = cols != nx
     q_row = np.asarray(prepared.q_row, dtype=np.float32).reshape(-1)

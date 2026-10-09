@@ -4,7 +4,6 @@ import math
 from collections.abc import Sequence
 from numbers import Real
 
-# Physical constants
 PLANCK_H = 6.62607015e-34  # Planck constant (J·s)
 ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
 ELECTRON_CHARGE = 1.602176634e-19  # Elementary charge (C)

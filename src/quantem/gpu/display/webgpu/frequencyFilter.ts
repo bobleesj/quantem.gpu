@@ -58,15 +58,15 @@ function applyMask(
 ): void {
   const nx = Math.max(1, width / 2);
   const ny = Math.max(1, height / 2);
-  for (let y = 0; y < height; y++) {
-    const fy = Math.min(y, height - y) / ny;
-    for (let x = 0; x < width; x++) {
-      const fx = Math.min(x, width - x) / nx;
+  for (let row = 0; row < height; row++) {
+    const fy = Math.min(row, height - row) / ny;
+    for (let column = 0; column < width; column++) {
+      const fx = Math.min(column, width - column) / nx;
       const radius = Math.min(1, Math.hypot(fx, fy));
       const mask = frequencyMaskValue(radius, options);
-      const idx = y * width + x;
-      real[idx] *= mask;
-      imag[idx] *= mask;
+      const index = row * width + column;
+      real[index] *= mask;
+      imag[index] *= mask;
     }
   }
 }
@@ -142,6 +142,8 @@ async function applyFrequencyFilterWebGPUResident(
     size: 32,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
+  // Created on demand; destroyed with the others even when the readback map rejects.
+  let readBuffer: GPUBuffer | null = null;
   try {
     device.queue.writeBuffer(dataBuffer, 0, complex);
     await fft.fft2DResident(dataBuffer, paddedWidth, paddedHeight, false);
@@ -175,7 +177,7 @@ async function applyFrequencyFilterWebGPUResident(
     device.queue.submit([encoder.finish()]);
     await fft.fft2DResident(dataBuffer, paddedWidth, paddedHeight, true);
 
-    const readBuffer = device.createBuffer({
+    readBuffer = device.createBuffer({
       size: complex.byteLength,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
@@ -185,7 +187,6 @@ async function applyFrequencyFilterWebGPUResident(
     await readBuffer.mapAsync(GPUMapMode.READ);
     const result = new Float32Array(readBuffer.getMappedRange().slice(0));
     readBuffer.unmap();
-    readBuffer.destroy();
     const output = new Float32Array(width * height);
     for (let row = 0; row < height; row++) {
       for (let column = 0; column < width; column++) {
@@ -196,6 +197,7 @@ async function applyFrequencyFilterWebGPUResident(
   } finally {
     dataBuffer.destroy();
     paramsBuffer.destroy();
+    readBuffer?.destroy();
   }
 }
 

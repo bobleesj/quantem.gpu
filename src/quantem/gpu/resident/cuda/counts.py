@@ -22,7 +22,6 @@ _SOURCE = (Path(__file__).with_name("kernels") / "streamed.cu").read_text()
 _NAMES = (
     "encode",
     "compact",
-    "decode",
     "decode_range_u8",
     "decode_range_u16",
     "fields",
@@ -79,6 +78,27 @@ def retain(arrays) -> tuple:
     # without this wait, loads under GPU contention kept another chunk's counts.
     cp.cuda.get_current_stream().synchronize()
     return tuple(views)
+
+
+def error_flags(errors, device: int):
+    """The caller's decode-failure flags, or new zeroed ones when the caller passes none.
+
+    Decode kernels OR their stream failures into one uint32 on the source
+    device. A caller that passes its own flags decodes several ranges and checks
+    them once, so no decode synchronizes; a decode given none checks its own.
+    """
+    import cupy as cp
+
+    if errors is None:
+        return cp.zeros(1, cp.uint32)
+    if (
+        not isinstance(errors, cp.ndarray)
+        or errors.shape != (1,)
+        or errors.dtype != cp.uint32
+        or errors.device.id != device
+    ):
+        raise ValueError("errors must be one uint32 value on the source CUDA device.")
+    return errors
 
 
 @dataclass
@@ -138,7 +158,7 @@ class StreamedCounts:
 
     @property
     def index_nbytes(self) -> int:
-        return sum(sum(a.nbytes for a in chunk.arrays[3:]) for chunk in self.chunks)
+        return sum(sum(array.nbytes for array in chunk.arrays[3:]) for chunk in self.chunks)
 
     def __array__(self, dtype=None, copy=None):
         raise TypeError(
@@ -236,15 +256,15 @@ class StreamedCounts:
                     u32(fields),
                 ),
             )
-            nstreams = math.ceil(scans / self.interval) * fields
+            index_streams = math.ceil(scans / self.interval) * fields
             widths, lengths = (
-                cp.empty(nstreams, cp.uint8),
-                cp.empty(nstreams, cp.uint64),
+                cp.empty(index_streams, cp.uint8),
+                cp.empty(index_streams, cp.uint64),
             )
             args = (u32(scans), u32(fields), u32(self.interval))
-            grid = ((nstreams + 127) // 128,)
+            grid = ((index_streams + 127) // 128,)
             self.kernels["field_sizes"](grid, (128,), (values, widths, lengths, *args))
-            starts = cp.empty(nstreams + 1, cp.uint64)
+            starts = cp.empty(index_streams + 1, cp.uint64)
             starts[0] = 0
             cp.cumsum(lengths, dtype=cp.uint64, out=starts[1:])
             words = cp.empty(int(starts[-1].get()), cp.uint32)
@@ -254,36 +274,6 @@ class StreamedCounts:
             cp.cuda.get_current_stream().synchronize()
             self.load_metrics["index_seconds"] += time.perf_counter() - started
             return words, starts, widths
-
-    def decode_chunk(self, index: int):
-        """Return one complete chunk on CUDA for explicit reconstruction checks."""
-        import cupy as cp
-
-        if self.is_released:
-            raise ValueError("The resident source has been released.")
-        chunk = self.chunks[index]
-        pixels = math.prod(self.shape[2:])
-        streams = math.ceil(chunk.scans / self.interval) * pixels
-        with cp.cuda.Device(self.device):
-            raw = cp.empty((chunk.scans, *self.shape[2:]), cp.uint16)
-            errors = cp.zeros(1, cp.uint32)
-            self.kernels["decode"](
-                ((streams + 127) // 128,),
-                (128,),
-                (
-                    *chunk.arrays[:3],
-                    self.decoding,
-                    raw,
-                    errors,
-                    np.uint32(chunk.scans),
-                    np.uint32(pixels),
-                    np.uint32(self.interval),
-                    np.uint32(streams),
-                ),
-            )
-            if int(errors.get()[0]):
-                raise ValueError("An encoded count stream failed reconstruction.")
-            return raw.astype(self.dtype, copy=False)
 
     def decode_scan_range_device(
         self, first: int, stop: int, *, errors=None, detector_region=None
@@ -306,17 +296,7 @@ class StreamedCounts:
             )
         owns_errors = errors is None
         with cp.cuda.Device(self.device):
-            if errors is None:
-                errors = cp.zeros(1, cp.uint32)
-            elif (
-                not isinstance(errors, cp.ndarray)
-                or errors.shape != (1,)
-                or errors.dtype != cp.uint32
-                or errors.device.id != self.device
-            ):
-                raise ValueError(
-                    "errors must be one uint32 value on the source CUDA device."
-                )
+            errors = error_flags(errors, self.device)
             pixels = math.prod(self.shape[2:])
             if detector_region is None:
                 detector_region = (0, self.shape[2], 0, self.shape[3])
@@ -373,17 +353,13 @@ class StreamedCounts:
             total = cp.zeros(self.shape[2:], cp.uint64)
             errors = cp.zeros(1, cp.uint32)
             valid = self.valid.astype(self.dtype, copy=False)
-            blocks = (
-                self.decode_scan_range_device(
-                    chunk.first,
-                    chunk.first + chunk.scans,
-                    errors=errors,
+            for chunk in self.chunks:
+                decoded = self.decode_scan_range_device(
+                    chunk.first, chunk.first + chunk.scans, errors=errors
                 )
-                for chunk in self.chunks
-            )
-            for decoded in blocks:
                 decoded *= valid[None]
                 total += cp.sum(decoded, axis=0, dtype=cp.uint64)
+                # Free this chunk's counts before the next one is decoded.
                 del decoded
             cp.cuda.get_current_stream().synchronize()
             if int(errors.get()[0]):

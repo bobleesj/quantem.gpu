@@ -44,8 +44,8 @@ def cross_correlation_shift_batch_cp(
 
     # Step 2: Batched argmax
     flat_idx = cp.argmax(cc_real.reshape(N, -1), axis=1)  # (N,)
-    x0 = (flat_idx // N_w).astype(cp.int64)
-    y0 = (flat_idx % N_w).astype(cp.int64)
+    x0 = flat_idx // N_w
+    y0 = flat_idx % N_w
 
     # Step 3: Batched parabolic refinement
     idx = cp.arange(N)
@@ -128,10 +128,8 @@ def _upsampled_correlation_batch_cp(
     factor_row = -2j * math.pi / (M * float(upsample_factor))
     factor_col = -2j * math.pi / (N_w * float(upsample_factor))
 
-    # row_kern: (N, numRow, M) = exp(factor_row * row_coords[:,:,None] * row_freq[None,None,:])
-    row_kern = cp.exp(factor_row * row_coords[:, :, None] * row_freq[None, None, :])
-    # col_kern: (N, N_w, numCol) = exp(factor_col * col_freq[None,:,None] * col_coords[:,None,:])
-    col_kern = cp.exp(factor_col * col_freq[None, :, None] * col_coords[:, None, :])
+    row_kern = cp.exp(factor_row * row_coords[:, :, None] * row_freq[None, None, :])  # (N, numRow, M)
+    col_kern = cp.exp(factor_col * col_freq[None, :, None] * col_coords[:, None, :])  # (N, N_w, numCol)
 
     # Cast to match cc dtype for matmul
     cc_conj = cp.conj(cc_batch)  # (N, M, N_w)
@@ -169,6 +167,4 @@ def _upsampled_correlation_batch_cp(
         dy[idx_v] = cp.where(denom_c != 0, (v_cp_val - v_cm) / denom_c, 0.0)
 
     xy_sub = xy_sub - global_shift
-    xy_shift = xy_shift + (xy_sub + cp.stack([dx, dy], axis=1)) / float(upsample_factor)
-
-    return xy_shift
+    return xy_shift + (xy_sub + cp.stack([dx, dy], axis=1)) / float(upsample_factor)

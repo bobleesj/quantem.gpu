@@ -1,5 +1,6 @@
 """Private CUDA compute implementation for the public SSB workflow."""
 
+import gc
 import math
 import time
 from typing import ClassVar, Self
@@ -31,7 +32,8 @@ class CudaSSBBackend:
         Counts, 3D ``(scan, det_row, det_col)`` (square scan unless ``scan_shape`` is given) or 4D
         ``(scan_row, scan_col, det_row, det_col)``, in their native dtype: reductions accumulate in uint64, and only the
         selected bright-field pixels are cast to complex64. Scans that are not 128, 256, 512 or 1024 square are
-        center-cropped or padded with the mean pattern to the next supported size.
+        padded with the mean pattern to the next of those sizes, with a printed notice; scans larger than 1024
+        raise ``ValueError`` rather than being cropped.
     semiangle : float
         Probe convergence semiangle in mrad.
     scan_sampling : float or (float, float)
@@ -75,7 +77,6 @@ class CudaSSBBackend:
         aberrations: dict[str, float] | None = None,
         rotation_angle_deg: float = 0.0,
     ):
-        # Convert rotation angle from degrees (public API) to radians (internal)
         rotation_angle_rad = math.radians(rotation_angle_deg)
 
         # quantem.gpu SSB is GPU-only. Ensure the input is a CuPy array but
@@ -84,15 +85,13 @@ class CudaSSBBackend:
         # 512x512x192x192 scan). Reductions promote internally via uint64
         # accumulators, so the raw block stays in its source dtype.
         data = cp.asarray(data)
-
-        # Reshape 3D → 4D
         if data.ndim == 3:
             if scan_shape is None:
-                n = data.shape[0]
-                side = int(n ** 0.5)
-                if side * side != n:
+                num_frames = data.shape[0]
+                side = int(num_frames ** 0.5)
+                if side * side != num_frames:
                     raise ValueError(
-                        f"scan_shape is required: {n} frames is not a perfect square. "
+                        f"scan_shape is required: {num_frames} frames is not a perfect square. "
                         f"Pass scan_shape=(rows, cols)."
                     )
                 scan_shape = (side, side)
@@ -102,49 +101,46 @@ class CudaSSBBackend:
         elif data.ndim != 4:
             raise ValueError("data must be 3D or 4D.")
 
-        # SSB supports 128x128, 256x256, 512x512, and 1024x1024 scan sizes. Auto-pad with mean DP
-        # (or center-crop) to the closest supported shape so callers can pass
-        # arbitrary scan dims (e.g. drift-corrected cubes).
-        H, W = data.shape[0], data.shape[1]
-        supported_scan_shapes = ((128, 128), (256, 256), (512, 512), (1024, 1024))
-        if (H, W) not in supported_scan_shapes:
-            longest = max(H, W)
-            target = (
-                128 if longest <= 128 else
-                256 if longest <= 256 else
-                512 if longest <= 512 else
-                1024
+        # The CUDA FFT kernels take square scans of 128, 256, 512 or 1024 positions. A smaller or non-square scan is
+        # padded with its mean pattern to the next of those sizes so callers can pass arbitrary scans (simulations,
+        # drift-corrected cubes); every measured position is kept and the padding is announced. A scan larger than
+        # 1024 is refused: fitting it would mean dropping measured positions.
+        scan_rows, scan_cols = int(data.shape[0]), int(data.shape[1])
+        if max(scan_rows, scan_cols) > 1024:
+            raise ValueError(
+                f"CUDA SSB reconstructs scans of at most 1024 x 1024 positions; got {scan_rows}x{scan_cols}. Select a "
+                "square region of 128, 256, 512 or 1024 positions per side, or use backend='mps', which takes any "
+                "square scan. SSB never crops a scan."
             )
-            if H > target or W > target:
-                # center crop oversize axes
-                r0 = max(0, (H - target) // 2)
-                c0 = max(0, (W - target) // 2)
-                data = data[r0:r0 + min(target, H), c0:c0 + min(target, W)]
-                H, W = data.shape[0], data.shape[1]
-            if H < target or W < target:
-                # Pad with the mean DP: preserves realistic DP statistics so
-                # probe detection + BF/DF integrals stay well-conditioned.
-                # Chunked int64 sum avoids the 4× float32 transient that
-                # `data.reshape(...).mean()` would allocate (would OOM on
-                # 17 GB cube → 68 GB transient).
-                pad_top = (target - H) // 2
-                pad_left = (target - W) // 2
-                det_h, det_w = data.shape[2], data.shape[3]
-                flat = data.reshape(-1, det_h * det_w)
-                is_integer = np.issubdtype(data.dtype, np.integer)
-                sum_dtype = cp.int64 if is_integer else cp.float64
-                acc = cp.zeros(det_h * det_w, dtype=sum_dtype)
-                for s in range(0, flat.shape[0], 16 * W):
-                    acc += flat[s:s + 16 * W].astype(sum_dtype).sum(axis=0)
-                mean_pattern = (acc.reshape(det_h, det_w).astype(cp.float64)
-                                / flat.shape[0]).astype(data.dtype)
-                padded = cp.broadcast_to(
-                    mean_pattern[None, None], (target, target, det_h, det_w),
-                ).copy()
-                padded[pad_top:pad_top + H, pad_left:pad_left + W] = data
-                data = padded
+        if (scan_rows, scan_cols) not in ((128, 128), (256, 256), (512, 512), (1024, 1024)):
+            target = next(side for side in (128, 256, 512, 1024) if max(scan_rows, scan_cols) <= side)
+            print(
+                f"CUDA SSB: padded the {scan_rows}x{scan_cols} scan to {target}x{target} with its mean pattern, as the "
+                "CUDA FFT takes 128, 256, 512 or 1024 square scans; the phase covers the padded grid. Pass a square "
+                "scan of one of those sizes to reconstruct without padding."
+            )
+            # Pad with the mean DP: preserves realistic DP statistics so
+            # probe detection + BF/DF integrals stay well-conditioned.
+            # Chunked int64 sum avoids the 4× float32 transient that
+            # `data.reshape(...).mean()` would allocate (would OOM on
+            # 17 GB cube → 68 GB transient).
+            pad_top = (target - scan_rows) // 2
+            pad_left = (target - scan_cols) // 2
+            det_rows, det_cols = data.shape[2], data.shape[3]
+            flat = data.reshape(-1, det_rows * det_cols)
+            is_integer = np.issubdtype(data.dtype, np.integer)
+            sum_dtype = cp.int64 if is_integer else cp.float64
+            pattern_sum = cp.zeros(det_rows * det_cols, dtype=sum_dtype)
+            for start in range(0, flat.shape[0], 16 * scan_cols):
+                pattern_sum += flat[start:start + 16 * scan_cols].astype(sum_dtype).sum(axis=0)
+            mean_pattern = (pattern_sum.reshape(det_rows, det_cols).astype(cp.float64)
+                            / flat.shape[0]).astype(data.dtype)
+            padded = cp.broadcast_to(
+                mean_pattern[None, None], (target, target, det_rows, det_cols),
+            ).copy()
+            padded[pad_top:pad_top + scan_rows, pad_left:pad_left + scan_cols] = data
+            data = padded
 
-        # Handle scalar sampling values
         if isinstance(scan_sampling, (int, float)):
             scan_sampling = (float(scan_sampling), float(scan_sampling))
 
@@ -156,8 +152,6 @@ class CudaSSBBackend:
             det_sampling = (float(det_sampling), float(det_sampling))
         if aberrations is None:
             aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
-
-        # Store user parameters
         self.voltage_kV = voltage_kV
         self.semiangle_mrad = semiangle
         self.semiangle_cutoff = semiangle
@@ -166,8 +160,6 @@ class CudaSSBBackend:
         self.bf_intensity_threshold = float(bf_intensity_threshold)
         self.aberrations = aberrations.copy()
         self._rotation_angle_rad = rotation_angle_rad
-
-        # Compute derived parameters
         scan_gpts = data.shape[:2]
         det_gpts = data.shape[2:]
         wavelength = wavelength_A_from_kV(voltage_kV)
@@ -181,8 +173,6 @@ class CudaSSBBackend:
             1.0 / (reciprocal_sampling[0] * det_gpts[0]),
             1.0 / (reciprocal_sampling[1] * det_gpts[1]),
         )
-
-        # Store internal parameters
         self.gpts = det_gpts
         self.wavelength = wavelength
         self.sampling = sampling
@@ -200,12 +190,10 @@ class CudaSSBBackend:
 
         self._scan_shape = scan_gpts
 
-        # scan spatial frequencies (1/A)
+        # scan spatial frequencies (1/A), float32 as the kernels read them
         q_row_1d = cp.fft.fftfreq(scan_gpts[0], scan_sampling[0]).astype(cp.float32)
         q_col_1d = cp.fft.fftfreq(scan_gpts[1], scan_sampling[1]).astype(cp.float32)
         self.q_row, self.q_col = cp.meshgrid(q_row_1d, q_col_1d, indexing='ij')
-
-        # Optimization state
         self._best_loss: float = float('inf')
         self._accelerator: SSBEngine | None = None
         self._elapsed_optimize: float = 0.0
@@ -214,14 +202,6 @@ class CudaSSBBackend:
         self._refine_nfev: int | None = None
         self._n_trials: int | None = None
         self._trial_records: list[dict] = []
-
-    def _free_buffers(self) -> None:
-        """Free optimization buffers, keep G_qk for reconstruction."""
-        import gc
-        if self._accelerator is not None:
-            self._accelerator.release_reconstruction_buffers()
-        gc.collect()
-        cp.get_default_memory_pool().free_all_blocks()
 
     def free(self) -> None:
         """
@@ -239,11 +219,13 @@ class CudaSSBBackend:
         Call this when the SSB pipeline is done and you need VRAM for
         the next stage (e.g., iterative ptychography).
         """
-        self._free_buffers()
-        del self.G_qk
+        if self._accelerator is not None:
+            self._accelerator.release_reconstruction_buffers()
+        gc.collect()
+        cp.get_default_memory_pool().free_all_blocks()
         self.G_qk = None
         if self._accelerator is not None:
-            # Clear the engine's internal cache (geometry arrays etc.)
+            # the geometry arrays too, so the pool flush below returns their memory
             self._accelerator._cache.clear()
             self._accelerator = None
         cp.get_default_memory_pool().free_all_blocks()
@@ -351,18 +333,11 @@ class CudaSSBBackend:
         accel = self._get_accelerator()
         accel.cache_rotation(self._rotation_angle_rad)
         try:
-            obj = accel.reconstruct_object(
+            object_wave = accel.reconstruct_object(
                 self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"],
             )
         except cp.cuda.memory.OutOfMemoryError:
-            num_bf = len(self.bf_inds_row)
-            free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
-            raise MemoryError(
-                f"Out of GPU VRAM during SSB reconstruction "
-                f"({num_bf} BF pixels, {free_gb:.1f} GB free).\n"
-                f"Try: SSB(..., bf_radius=<smaller>) to reduce BF pixel count, "
-                f"or restart the kernel to free stale GPU memory."
-            ) from None
+            raise self._out_of_memory("reconstruction") from None
         loss = None
         if compute_loss:
             # The fits' evaluator: a fixed-order reduction, so the loss depends only on the data and the aberrations.
@@ -375,7 +350,7 @@ class CudaSSBBackend:
             scan_sampling = scan_sampling[0]
         brightfield = self.browser_state().brightfield
         return SSBResult(
-            object_wave=obj,
+            object_wave=object_wave,
             backend="cuda",
             aberrations=self.aberrations.copy(),
             rotation_angle_deg=math.degrees(self._rotation_angle_rad),
@@ -487,9 +462,9 @@ class CudaSSBBackend:
         """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
         accel.cache_rotation(self._rotation_angle_rad)
-        args = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
+        coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.reconstruct(
-            *args, tilt_mrad, thickness, compute_loss=False,
+            *coefficients, tilt_mrad, thickness, compute_loss=False,
             upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
         )
@@ -497,10 +472,10 @@ class CudaSSBBackend:
         if compute_loss:
             if thickness > 0:
                 _, loss = accel.thick.reconstruct(
-                    *args, tilt_mrad, thickness, compute_loss=True,
+                    *coefficients, tilt_mrad, thickness, compute_loss=True,
                 )
             else:
-                _, loss = self.reconstruct_with_loss(*args)
+                _, loss = self.reconstruct_with_loss(*coefficients)
         return phase, loss
 
     def preview_sample(
@@ -513,7 +488,8 @@ class CudaSSBBackend:
         """Phase (and phase-variance loss) for a thick, tilted sample: ``ThickSample.reconstruct``.
 
         ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit; 0 = standard SSB exactly)."""
-        accel = self._get_accelerator(); accel.cache_rotation(self._rotation_angle_rad)
+        accel = self._get_accelerator()
+        accel.cache_rotation(self._rotation_angle_rad)
         phase, loss = accel.thick.reconstruct(
             aberrations["C10"], aberrations["C12"], aberrations["phi12"],
             (float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
@@ -523,7 +499,8 @@ class CudaSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
-        accel = self._get_accelerator(); accel.cache_rotation(self._rotation_angle_rad)
+        accel = self._get_accelerator()
+        accel.cache_rotation(self._rotation_angle_rad)
         return fit_sample(accel, **options)
 
     def close(self) -> None:
@@ -533,12 +510,27 @@ class CudaSSBBackend:
 
     def _print_summary(self, stage: str, elapsed: float) -> None:
         """Print one-line optimization summary."""
-        a = self.aberrations   # engine units (Angstrom); the public API and this line report nm
+        aberrations = self.aberrations   # engine units (Angstrom); the public API and this line report nm
         print(
             f"  {stage}: loss={self._best_loss:.6f}  "
-            f"C10={a['C10'] / 10.0:.2f} nm  C12={a['C12'] / 10.0:.2f} nm  "
-            f"phi12={math.degrees(a['phi12']):.1f}°  "
+            f"C10={aberrations['C10'] / 10.0:.2f} nm  C12={aberrations['C12'] / 10.0:.2f} nm  "
+            f"phi12={math.degrees(aberrations['phi12']):.1f}°  "
             f"{elapsed:.1f}s"
+        )
+
+    def _out_of_memory(self, stage: str) -> MemoryError:
+        """The error that replaces a device out-of-memory failure during ``stage``.
+
+        It names the two numbers that decide whether SSB fits on the device, the bright-field pixel count (a smaller
+        ``bf_radius`` reduces it) and the free device memory (stale arrays in the session hold it).
+        """
+        num_bf = len(self.bf_inds_row)
+        free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
+        return MemoryError(
+            f"Out of GPU VRAM during SSB {stage} "
+            f"({num_bf} BF pixels, {free_gb:.1f} GB free).\n"
+            f"Try: SSB(..., bf_radius=<smaller>) to reduce BF pixel count, "
+            f"or restart the kernel to free stale GPU memory."
         )
 
     # =====================================================================
@@ -571,7 +563,7 @@ class CudaSSBBackend:
         verbose : bool, default True
             Print the progress bar and the memory header.
         """
-        t0 = time.perf_counter()
+        started = time.perf_counter()
         if aberrations is None:
             aberrations = dict(self._DEFAULT_OPTIMIZE_RANGES)
         accel = self._get_accelerator()
@@ -581,7 +573,7 @@ class CudaSSBBackend:
         if verbose:
             vram_free, vram_total = cp.cuda.runtime.memGetInfo()
             free_gb, total_gb = vram_free / 1e9, vram_total / 1e9
-            print(f"Optimizing aberrations ({n_trials} trials, {int(accel.num_bf)} BF pixels)")
+            print(f"Optimizing aberrations ({n_trials} trials, {accel.num_bf} BF pixels)")
             print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB")
         try:
             best_params, best_value, trial_history = batch_optimize(
@@ -594,30 +586,24 @@ class CudaSSBBackend:
                 verbose=verbose,
             )
         except cp.cuda.memory.OutOfMemoryError:
-            num_bf = len(self.bf_inds_row)
-            free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
-            raise MemoryError(
-                f"Out of GPU VRAM during SSB optimization "
-                f"({num_bf} BF pixels, {free_gb:.1f} GB free).\n"
-                f"Try: SSB(..., bf_radius=<smaller>) to reduce BF pixel count, "
-                f"or restart the kernel to free stale GPU memory."
-            ) from None
+            raise self._out_of_memory("optimization") from None
         # the full trial history is persisted with the result (about 5 KB for 200 trials)
         self._trial_records = trial_history
         self._best_loss = best_value
         # an optimized parameter takes its best value; a locked one keeps the value it was given
-        for opt_key, aberr_key, convert in [
+        for search_key, aberration_key, convert in [
             ("C10_nm", "C10", None),
             ("C12_nm", "C12", None),
             ("phi12_deg", "phi12", math.radians),
         ]:
-            if opt_key in best_params:
-                val = best_params[opt_key]
-                self.aberrations[aberr_key] = convert(val) if convert else val
-            elif opt_key in aberrations and not isinstance(aberrations[opt_key], tuple):
-                val = aberrations[opt_key]
-                self.aberrations[aberr_key] = convert(val) if convert else val
-        self._elapsed_optimize = time.perf_counter() - t0
+            if search_key in best_params:
+                value = best_params[search_key]
+            elif search_key in aberrations and not isinstance(aberrations[search_key], tuple):
+                value = aberrations[search_key]
+            else:
+                continue
+            self.aberrations[aberration_key] = convert(value) if convert else value
+        self._elapsed_optimize = time.perf_counter() - started
         self._n_trials = n_trials
         if verbose:
             self._print_summary("Optimize", self._elapsed_optimize)
@@ -648,13 +634,13 @@ class CudaSSBBackend:
         lock : list[str], optional
             Aberrations to hold fixed; locked refinement is not implemented on the GPU and raises.
         """
-        t0 = time.perf_counter()
+        started = time.perf_counter()
         accel = self._get_accelerator()
         accel.cache_rotation(self._rotation_angle_rad)
         lock = set(lock or [])
         all_keys = ["C10", "C12", "phi12"]
-        free_keys = [k for k in all_keys if k not in lock]
-        x0 = np.array([self.aberrations[k] for k in free_keys])
+        free_keys = [key for key in all_keys if key not in lock]
+        x0 = np.array([self.aberrations[key] for key in free_keys])
         if free_keys != all_keys:
             locked = ", ".join(sorted(lock)) or "unknown"
             raise ValueError(
@@ -677,17 +663,17 @@ class CudaSSBBackend:
             effective_max_iter = 160
         best_x, best_loss, n_evals = batch_nelder_mead(
             accel.objective,
-            x0.astype(np.float64),
+            x0.astype(np.float64),  # the simplex is float64 even for integer starting coefficients
             xatol=effective_xatol,
             fatol=effective_fatol,
             max_iter=effective_max_iter,
         )
-        for i, k in enumerate(free_keys):
-            self.aberrations[k] = float(best_x[i])
+        for index, key in enumerate(free_keys):
+            self.aberrations[key] = float(best_x[index])
         self._best_loss = float(best_loss)
-        nfev = int(n_evals)
+        nfev = n_evals
         method = "nelder-mead"
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - started
         self._elapsed_refine = elapsed
         self._refine_method = method
         self._refine_nfev = nfev

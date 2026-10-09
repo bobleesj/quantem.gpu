@@ -77,7 +77,7 @@ class MPSStreamedCounts:
     """
 
     interval = 512
-    summary_batch_mode = "individual"
+    # quantem.widget's Show4DSTEM reads this flag to keep the source on its GPU path, without a NumPy copy.
     _is_gpu_frames = True
     ndim = 4
     det_bin = 1
@@ -272,6 +272,12 @@ class MPSStreamedCounts:
         output,
         output_offset_bytes: int = 0,
     ):
+        """Append one chunk's decode of ``count`` scans from ``local_first`` to ``command``.
+
+        Only the interval streams that overlap those scans are dispatched, so a
+        range read never decodes the rest of the chunk. Values land
+        ``output_offset_bytes`` into ``output``.
+        """
         pixels = math.prod(self.shape[2:])
         first_stream = (local_first // self.interval) * pixels
         stop_stream = math.ceil((local_first + count) / self.interval) * pixels
