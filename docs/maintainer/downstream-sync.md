@@ -83,8 +83,8 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.device._cupy` | `quantem.gpu.device.cuda_runtime` |  |
 | `quantem.gpu.device.backend` | `quantem.gpu.device.select` |  |
 | `quantem.gpu.display.backends` | deleted |  |
-| `quantem.gpu.display.backends.cpu` | `quantem.gpu.display.cpu` |  |
-| `quantem.gpu.display.backends.cuda` | `quantem.gpu.display.cpu` |  |
+| `quantem.gpu.display.backends.cpu` | deleted |  |
+| `quantem.gpu.display.backends.cuda` | deleted |  |
 | `quantem.gpu.display.backends.webgpu` | deleted |  |
 | `quantem.gpu.display.cuda` | deleted |  |
 | `quantem.gpu.display.reference` | deleted |  |
@@ -159,7 +159,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.io.backends.webgpu` | deleted |  |
 | `quantem.gpu.io.constants` | deleted |  |
 | `quantem.gpu.io.integrity` | deleted | 1 of 1 names deleted |
-| `quantem.gpu.io.load` | `quantem.gpu.io.selection`, `quantem.gpu.io.load`, `quantem.gpu.io.resample` | 5 of 8 names deleted |
+| `quantem.gpu.io.load` | `quantem.gpu.io.selection`, `quantem.gpu.io.load` | 6 of 8 names deleted |
 | `quantem.gpu.io.models` | `quantem.gpu.io.dataset`, `quantem.gpu.formats.hdf5.readiness` |  |
 | `quantem.gpu.io.qem_conversion` | `quantem.gpu.io.convert` |  |
 | `quantem.gpu.io.qem_validation` | `quantem.gpu.cli`, `quantem.gpu.formats.qem.validation` |  |

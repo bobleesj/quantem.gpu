@@ -6,6 +6,29 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Exact detector products (`masked_sum_exact`, `reduce_frames_exact`,
+  `reduce_frames_max`) on CuPy float arrays raise `TypeError`, as on Torch and
+  NumPy; they returned truncated integers (0 for 0.75) before. The float ANS
+  centre of mass is the absolute detector centre like every other source, 0 for
+  an empty frame, so one empty frame no longer makes the DPC field NaN.
+- CUDA SSB refuses scans larger than 1024 positions per side instead of
+  center-cropping them, and prints one line when it pads a smaller or
+  non-square scan with its mean pattern.
+- WebGPU scan-ROI patterns read float32 data as float32 and sum counts exactly
+  in 64 bits; a 32-bit sum wrapped above 2^32. `applySlots` reads back adopted
+  slots and slots with spare RGBA capacity.
+- The CPU HDF5 reference raises when the pixel mask shape differs from the
+  frames instead of skipping the mask. The CPU movie writer uses the CUDA and
+  MPS grid, so its frames no longer clip the last column of a scaled grid.
+- `wait=False` on `frame` and `masked_sum` completes the result on sources that
+  do not queue queries; it raised `TypeError` on dense CUDA series before.
+
+- `[cuda]` installs CuPy for CUDA 13 (`cupy-cuda13x[ctk]>=14.0`) with PyTorch 2.11
+  or newer, so CuPy and PyPI torch share one CUDA 13 toolkit with uv and pip alike
+  (uv picked a CuPy without NVRTC before). CUDA needs an NVIDIA driver 580 or newer.
+- MPS opens Arina `uint32` masters with flagged pixels, as CUDA does: the default
+  median correction replaces the 0xFFFFFFFF flagged pixels on the GPU before every
+  count is checked to fit `uint16`. It raised `NotImplementedError` before.
 - PyTorch 2.3 or newer is a dependency: `import quantem.gpu` loads the readers
   that return PyTorch tensors.
 - Restructure the package into layers (`device`, `formats`, `resident`, `io`,

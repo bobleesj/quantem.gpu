@@ -9,6 +9,8 @@ full operation-specific reference page. All coordinates exposed to users are
 | Call | Purpose | Failure behavior |
 |---|---|---|
 | `device.profile(device=None)` | notebook-friendly environment and selected-device summary | automatic selection may report CPU for diagnostics |
+| `device.resolve_device(device="auto")` | resolve `"auto"`, `"cuda"`, `"cuda:N"`, `"mps"` or `"cpu"` to a Torch device string for code that also runs on CPU | `"auto"` picks CUDA, then MPS, then CPU and prints its choice once |
+| `device.runtime_notice()` | the one-line install hint when a GPU is present but its runtime is missing, else `None` | printed once at first GPU use |
 | `device.detect()` | choose a native CUDA or MPS accelerator | raises when neither GPU runtime is available |
 | `device.resolve(name="auto")` | validate `cuda`, `mps`, or explicit browser `webgpu` | raises on an unavailable or unknown runtime |
 

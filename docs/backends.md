@@ -100,6 +100,6 @@ source, tests, documentation, and measured evidence land together.
 | HDF5 bitshuffle/LZ4 decode | `quantem.gpu.io.hdf5.cuda` | `quantem.gpu.io.hdf5.mps` | `io/hdf5/webgpu` | Corrected-frame checksum parity and load-stage timing. |
 | BF/DF/ADF masked sums | `quantem.gpu.detector.cuda` / `detector` | `quantem.gpu.resident.mps` | `detector/webgpu` / `local-h5.ts` | Exact integer product parity and first/warm interaction timing. |
 | CoM/DPC | `quantem.gpu.detector.cuda` | `quantem.gpu.resident.mps` | `dpc/webgpu` | Row/col CoM and centered DPC parity within `1e-5`. |
-| Display colormap/histogram/log/FFT | None; CPU reference `quantem.gpu.display.cpu` | `MetalDisplayKernels` | `quantem.gpu.display.webgpu` | Exact uint8 RGBA and 256-bin counts for linear/signed-log float32 fixtures; FFT agreement within the stated float precision. |
+| Display colormap/histogram/log/FFT | None; test-only CPU reference `tests/parity/display_reference.py` | `MetalDisplayKernels` | `quantem.gpu.display.webgpu` | Exact uint8 RGBA and 256-bin counts for linear/signed-log float32 fixtures; FFT agreement within the stated float precision. |
 | SSB object, phase, loss | `quantem.gpu.ssb.cuda` | `quantem.gpu.ssb.mps`; native `MetalSSBKernels` | `ssb/webgpu` | Same complete BF disk, aberrations, float32/complex64 parity, and interactive redraw timing. |
 | Movie rendering | `quantem.gpu.movie.cuda` | `quantem.gpu.movie.mps` | NA | Frame parity and encoded movie smoke tests. |

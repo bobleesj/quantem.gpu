@@ -140,9 +140,10 @@ from the header rather than assuming 128×128; do not assume that an installed
 native application build includes this reader. The 128×128 byte layout and
 arithmetic are unchanged.
 
-BF/ABF/ADF reductions use compensated float32 sums. CoM is mean-subtracted in
-`(row, column)` order; invalid or zero-total frames remain NaN and are excluded
-from the scan mean. Raw DP reads retain source bits, while detector-session
+BF/ABF/ADF reductions use compensated float32 sums. The detector session's CoM
+is the absolute detector centre in `(row, column)` order, as on every backend: a
+zero-total frame gives 0, a frame holding inf or NaN measurements gives NaN, and
+`dpc.center_of_mass` subtracts the scan mean. Raw DP reads retain source bits, while detector-session
 products apply a saved mean-dark plane once. Neither saving nor raw reads bake
 that correction into the measurements.
 
