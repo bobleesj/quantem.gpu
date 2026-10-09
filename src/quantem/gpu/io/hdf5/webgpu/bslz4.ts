@@ -6,7 +6,7 @@
 // server. Two passes, both verified bit-exact vs h5py on real gold (192x192
 // uint16): Pass1 LZ4-decodes each independent block, Pass2 inverts the bit
 // transpose. Output is packed in [scanPos][detPixel] order - the exact layout
-// Show4DSTEMCompute reads in uint8/uint16/uint32/float32 mode, so it feeds
+// DetectorCompute reads in uint8/uint16/uint32/float32 mode, so it feeds
 // masked_sum / reduce_frames with no copy.
 //
 // Per-frame chunk layout (one HDF5 chunk = one diffraction pattern):
@@ -1028,19 +1028,35 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   }
 }`;
 
-const FUSED_F32_PIPE_CACHE = new Map<string, GPUComputePipeline>();
-function getFusedF32Pipe(device: GPUDevice, blockElems: number): GPUComputePipeline {
-  const code = FUSED_F32_WGSL.replace(/__NPB__/g, `${blockElems / 8}u`).replace(/__BE__/g, `${blockElems}u`);
-  let p = FUSED_F32_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_F32_PIPE_CACHE.set(code, p); }
-  return p;
+// Compiled pipelines per device, by WGSL source. A pipeline belongs to the device that built it:
+// after a device is lost, the replacement device must compile its own, so the cache is keyed by
+// device first (a WeakMap, so a lost device's pipelines are collected with it).
+const PIPELINES = new WeakMap<GPUDevice, Map<string, GPUComputePipeline>>();
+
+/** Compile a specialized WGSL source once per device and reuse the pipeline for every later chunk. */
+export function cachedPipeline(device: GPUDevice, code: string): GPUComputePipeline {
+  let pipelines = PIPELINES.get(device);
+  if (!pipelines) {
+    pipelines = new Map();
+    PIPELINES.set(device, pipelines);
+  }
+  let pipeline = pipelines.get(code);
+  if (!pipeline) {
+    pipeline = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } });
+    pipelines.set(code, pipeline);
+  }
+  return pipeline;
 }
 
-// Fused float32 decode job: one workgroup/block, float32 stack out (1 u32/pixel, mode 2).
-function buildFusedJobF32(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { compressed, blockMeta, nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
-  const totalBlocks = nFrames * nBlocksPerFrame;
-  const stackWords = nFrames * detSize;   // 1 u32/pixel
+function getFusedF32Pipe(device: GPUDevice, blockElems: number): GPUComputePipeline {
+  const code = FUSED_F32_WGSL.replace(/__NPB__/g, `${blockElems / 8}u`).replace(/__BE__/g, `${blockElems}u`);
+  return cachedPipeline(device, code);
+}
+
+// Raw bytes come either pre-uploaded through the staging pool (batch path) or, for the
+// single decode path, through a mappedAtCreation buffer here; the block table is always uploaded.
+function uploadFusedInputs(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuffer | RawInput): { rawBuf: GPUBuffer | RawInput; metaBuf: GPUBuffer } {
+  const { compressed, blockMeta } = spec;
   let rawBuf: GPUBuffer | RawInput;
   if (preRaw) { rawBuf = preRaw; }
   else {
@@ -1052,18 +1068,35 @@ function buildFusedJobF32(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuffer
   }
   const metaBuf = device.createBuffer({ size: blockMeta.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(metaBuf, 0, blockMeta.buffer as ArrayBuffer, blockMeta.byteOffset, blockMeta.byteLength);
-  const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-  const gx = Math.min(totalBlocks, MAX_WG), gy = Math.ceil(totalBlocks / MAX_WG);
-  const cfg = uniform(device, [totalBlocks, gx, nBlocksPerFrame, detSize]);
-  const pipe = getFusedF32Pipe(device, blockElems);
+  return { rawBuf, metaBuf };
+}
+
+// Every fused kernel binds raw bytes, block table, output stack and dims at 0-3 and runs one 2D grid.
+function fusedJob(
+  device: GPUDevice, pipe: GPUComputePipeline, rawBuf: GPUBuffer | RawInput, metaBuf: GPUBuffer,
+  stack: GPUBuffer, cfg: GPUBuffer, gx: number, gy: number, mode: number,
+): DecodeJob {
   const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
     { binding: 0, resource: rawBinding(rawBuf) }, { binding: 1, resource: { buffer: metaBuf } },
     { binding: 2, resource: { buffer: stack } }, { binding: 3, resource: { buffer: cfg } } ] });
   return {
-    stack, mode: 2,
+    stack, mode,
     record(enc) { const pass = enc.beginComputePass(); pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(gx, gy); pass.end(); },
     releaseTemps() { releaseRaw(rawBuf); metaBuf.destroy(); cfg.destroy(); },
   };
+}
+
+// Fused float32 decode job: one workgroup/block, float32 stack out (1 u32/pixel, mode 2).
+function buildFusedJobF32(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuffer | RawInput): DecodeJob {
+  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const totalBlocks = nFrames * nBlocksPerFrame;
+  const stackWords = nFrames * detSize;   // 1 u32/pixel
+  const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
+  const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const gx = Math.min(totalBlocks, MAX_WG), gy = Math.ceil(totalBlocks / MAX_WG);
+  const cfg = uniform(device, [totalBlocks, gx, nBlocksPerFrame, detSize]);
+  const pipe = getFusedF32Pipe(device, blockElems);
+  return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, 2);
 }
 
 // STRATEGY D (parallel LZ4 via round-based dataflow). PARITY-VERIFIED bit-exact vs the serial
@@ -1203,25 +1236,18 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   }
 }`;
 
-const FUSED_D_PIPE_CACHE = new Map<string, GPUComputePipeline>();
 function getFusedDPipe(device: GPUDevice, blockElems: number, nbits: number): GPUComputePipeline {
   const npb = blockElems / 8;
   const code = FUSED_D_WGSL.replace(/__NPB__/g, `${npb}u`).replace(/__BE__/g, `${blockElems}u`).replace(/__NBITS__/g, `${nbits}u`).replace(/__MAXROUNDS__/g, `256u`);
-  let p = FUSED_D_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_D_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
-const FUSED_PIPE_CACHE = new Map<string, GPUComputePipeline>();
 function getFusedPipe(device: GPUDevice, blockElems: number, nbits: number): GPUComputePipeline {
   const npb = blockElems / 8;
   const code = FUSED_U16U8_WGSL.replace(/__NPB__/g, `${npb}u`).replace(/__BE__/g, `${blockElems}u`).replace(/__NBITS__/g, `${nbits}u`);
-  let p = FUSED_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
-const FUSED_LOW8_PIPE_CACHE = new Map<string, GPUComputePipeline>();
 function getFusedLow8Pipe(device: GPUDevice, blockElems: number): GPUComputePipeline {
   const npb = blockElems / 8;
   const template = bslz4CoopLow8() ? FUSED_COOP_LOW8_WGSL : FUSED_LOW8_WGSL;
@@ -1229,12 +1255,9 @@ function getFusedLow8Pipe(device: GPUDevice, blockElems: number): GPUComputePipe
     .replace(/__NPB__/g, `${npb}u`)
     .replace(/__SH_WORDS__/g, `${Math.ceil(blockElems / 4)}u`)
     .replace(/__BE__/g, `${blockElems}u`);
-  let p = FUSED_LOW8_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_LOW8_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
-const FUSED_FRAME_LOW8_PIPE_CACHE = new Map<string, GPUComputePipeline>();
 function getFusedFrameLow8Pipe(device: GPUDevice, blockElems: number): GPUComputePipeline {
   const npb = blockElems / 8;
   const framesPerWg = bslz4SingleParseLow8() || bslz4Low8U32Shared() || bslz4FrameSerialLow8() || bslz4WordLow8() ? 1 : bslz4FramesPerWorkgroup();
@@ -1255,12 +1278,9 @@ function getFusedFrameLow8Pipe(device: GPUDevice, blockElems: number): GPUComput
     .replace(/__WG__/g, `${wgSize}u`)
     .replace(/__BE_ARRAY__/g, `${blockElems}`)
     .replace(/__BE__/g, `${blockElems}u`);
-  let p = FUSED_FRAME_LOW8_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_FRAME_LOW8_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
-const FUSED_FRAME_FULL_PIPE_CACHE = new Map<string, GPUComputePipeline>();
 function getFusedFrameFullPipe(device: GPUDevice, blockElems: number, out: "u16" | "clip8"): GPUComputePipeline {
   const wgSize = bslz4FrameWorkgroupSize();
   const code = (out === "u16" ? FUSED_FRAME_U16_WGSL : FUSED_FRAME_CLIP8_WGSL)
@@ -1269,9 +1289,7 @@ function getFusedFrameFullPipe(device: GPUDevice, blockElems: number, out: "u16"
     .replace(/__WG__/g, `${wgSize}u`)
     .replace(/__BB__/g, `${blockElems * 2}u`)
     .replace(/__BE__/g, `${blockElems}u`);
-  let p = FUSED_FRAME_FULL_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); FUSED_FRAME_FULL_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
 type IntegralSrcDtype = "uint8" | "uint16" | "uint32";
@@ -1279,69 +1297,33 @@ type IntegralSrcDtype = "uint8" | "uint16" | "uint32";
 // One fused decode job: upload the raw bytes + block table, dispatch one workgroup per
 // block (2D grid for the >65535 case). No interBuf. Integer source -> uint8 output only.
 function buildFusedJob(device: GPUDevice, spec: Bslz4Spec, srcDtype: IntegralSrcDtype, preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { compressed, blockMeta, nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
   const nbits = srcDtype === "uint32" ? 32 : srcDtype === "uint16" ? 16 : 8;
   const totalBlocks = nFrames * nBlocksPerFrame;
   const frameLow8 = bslz4FrameLow8();
   const stackWords = Math.ceil(nFrames * detSize / 4);
-  // raw buffer: either pre-uploaded via the staging pool (batch path) or, for the single
-  // decode path, mappedAtCreation here.
-  let rawBuf: GPUBuffer | RawInput;
-  if (preRaw) { rawBuf = preRaw; }
-  else {
-    const rawSize = Math.ceil(compressed.byteLength / 4) * 4;
-    const buffer = device.createBuffer({ size: rawSize, usage: GPUBufferUsage.STORAGE, mappedAtCreation: true });
-    copyWide(buffer.getMappedRange(), compressed);
-    buffer.unmap();
-    rawBuf = rawInput(buffer, rawSize);
-  }
-  const metaBuf = device.createBuffer({ size: blockMeta.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(metaBuf, 0, blockMeta.buffer as ArrayBuffer, blockMeta.byteOffset, blockMeta.byteLength);
+  const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
   const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const frameGroup = frameLow8 && !bslz4Low8U32Shared() && !bslz4SingleParseLow8() && !bslz4FrameSerialLow8() ? bslz4FramesPerWorkgroup() : 1;
   const dispatchUnits = frameLow8 ? Math.ceil(nFrames / frameGroup) : totalBlocks;
   const gx = Math.min(dispatchUnits, MAX_WG), gy = Math.ceil(dispatchUnits / MAX_WG);
   const cfg = uniform(device, [frameLow8 ? nFrames : dispatchUnits, gx, nBlocksPerFrame, detSize]);
   const pipe = frameLow8 ? getFusedFrameLow8Pipe(device, blockElems) : bslz4Low8Only() ? getFusedLow8Pipe(device, blockElems) : getFusedPipe(device, blockElems, nbits);
-  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
-    { binding: 0, resource: rawBinding(rawBuf) }, { binding: 1, resource: { buffer: metaBuf } },
-    { binding: 2, resource: { buffer: stack } }, { binding: 3, resource: { buffer: cfg } } ] });
-  return {
-    stack, mode: 1,
-    record(enc) { const pass = enc.beginComputePass(); pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(gx, gy); pass.end(); },
-    releaseTemps() { releaseRaw(rawBuf); metaBuf.destroy(); cfg.destroy(); },
-  };
+  return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, 1);
 }
 
 // Fused frame-cooperative FULL-block job for uint16 sources: out "u16" packs
 // 2 px/u32 (mode 0, lossless); out "clip8" saturates to 255 and packs 4 px/u32
 // (mode 1, exact clip). Dispatch is one workgroup per frame.
 function buildFusedJobFrameFull(device: GPUDevice, spec: Bslz4Spec, out: "u16" | "clip8", preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { compressed, blockMeta, nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
   const stackWords = Math.ceil(nFrames * detSize / (out === "u16" ? 2 : 4));
-  let rawBuf: GPUBuffer | RawInput;
-  if (preRaw) { rawBuf = preRaw; }
-  else {
-    const rawSize = Math.ceil(compressed.byteLength / 4) * 4;
-    const buffer = device.createBuffer({ size: rawSize, usage: GPUBufferUsage.STORAGE, mappedAtCreation: true });
-    copyWide(buffer.getMappedRange(), compressed);
-    buffer.unmap();
-    rawBuf = rawInput(buffer, rawSize);
-  }
-  const metaBuf = device.createBuffer({ size: blockMeta.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(metaBuf, 0, blockMeta.buffer as ArrayBuffer, blockMeta.byteOffset, blockMeta.byteLength);
+  const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
   const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const gx = Math.min(nFrames, MAX_WG), gy = Math.ceil(nFrames / MAX_WG);
   const cfg = uniform(device, [nFrames, gx, nBlocksPerFrame, detSize]);
   const pipe = getFusedFrameFullPipe(device, blockElems, out);
-  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
-    { binding: 0, resource: rawBinding(rawBuf) }, { binding: 1, resource: { buffer: metaBuf } },
-    { binding: 2, resource: { buffer: stack } }, { binding: 3, resource: { buffer: cfg } } ] });
-  return {
-    stack, mode: out === "u16" ? 0 : 1,
-    record(enc) { const pass = enc.beginComputePass(); pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(gx, gy); pass.end(); },
-    releaseTemps() { releaseRaw(rawBuf); metaBuf.destroy(); cfg.destroy(); },
-  };
+  return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, out === "u16" ? 0 : 1);
 }
 
 // Strategy-D fused job: identical I/O contract to buildFusedJob (same bindings, same stack
@@ -1350,33 +1332,16 @@ function buildFusedJobFrameFull(device: GPUDevice, spec: Bslz4Spec, out: "u16" |
 // it self-terminates at maxDepth+1 rounds for ANY LZ4 dependency depth. __MAXROUNDS__ (4096) is
 // only a runaway backstop, far above the ~60 worst case on real Arina uint16+uint32 blocks.
 function buildFusedJobD(device: GPUDevice, spec: Bslz4Spec, srcDtype: IntegralSrcDtype, preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { compressed, blockMeta, nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
   const nbits = srcDtype === "uint32" ? 32 : srcDtype === "uint16" ? 16 : 8;
   const totalBlocks = nFrames * nBlocksPerFrame;
   const stackWords = Math.ceil(nFrames * detSize / 4);
-  let rawBuf: GPUBuffer | RawInput;
-  if (preRaw) { rawBuf = preRaw; }
-  else {
-    const rawSize = Math.ceil(compressed.byteLength / 4) * 4;
-    const buffer = device.createBuffer({ size: rawSize, usage: GPUBufferUsage.STORAGE, mappedAtCreation: true });
-    copyWide(buffer.getMappedRange(), compressed);
-    buffer.unmap();
-    rawBuf = rawInput(buffer, rawSize);
-  }
-  const metaBuf = device.createBuffer({ size: blockMeta.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(metaBuf, 0, blockMeta.buffer as ArrayBuffer, blockMeta.byteOffset, blockMeta.byteLength);
+  const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
   const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const gx = Math.min(totalBlocks, MAX_WG), gy = Math.ceil(totalBlocks / MAX_WG);
   const cfg = uniform(device, [totalBlocks, gx, nBlocksPerFrame, detSize]);
   const pipe = getFusedDPipe(device, blockElems, nbits);
-  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
-    { binding: 0, resource: rawBinding(rawBuf) }, { binding: 1, resource: { buffer: metaBuf } },
-    { binding: 2, resource: { buffer: stack } }, { binding: 3, resource: { buffer: cfg } } ] });
-  return {
-    stack, mode: 1,
-    record(enc) { const pass = enc.beginComputePass(); pass.setPipeline(pipe); pass.setBindGroup(0, bg); pass.dispatchWorkgroups(gx, gy); pass.end(); },
-    releaseTemps() { releaseRaw(rawBuf); metaBuf.destroy(); cfg.destroy(); },
-  };
+  return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, 1);
 }
 
 // Bit-exact parity + GPU-time check for Strategy D vs the serial Fallback, on ONE spec.
@@ -1427,7 +1392,6 @@ export interface Bslz4Spec {
 
 // Compute pipelines are independent of the data (only of the pass2 template), so compile
 // them ONCE and reuse across every chunk + dataset - recompiling per chunk was wasteful.
-const PIPE_CACHE = new Map<string, { p1: GPUComputePipeline; p2: GPUComputePipeline }>();
 type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";
 type DecodeDtype = "uint8" | "uint16" | "uint32" | "float32";
 
@@ -1450,15 +1414,7 @@ function getPipes(device: GPUDevice, srcDtype: SourceDtype, dtype: DecodeDtype, 
   const nativeU32 = dtype === "uint32";
   const pass2tpl = srcDtype === "float32" ? PASS2_F32_WGSL : srcDtype === "uint8" ? PASS2_U8SRC_WGSL : nativeU32 ? PASS2_F32_WGSL : (u8 ? PASS2_U8_WGSL : PASS2_WGSL);
   const pass2 = pass2tpl.replace("__NBLK__", `${nBlocksPerFrame}u`).replace("__FRAMEPIX__", `${detSize}u`);
-  let pipes = PIPE_CACHE.get(pass2);
-  if (!pipes) {
-    pipes = {
-      p1: device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: PASS1_WGSL }), entryPoint: "main" } }),
-      p2: device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: pass2 }), entryPoint: "main" } }),
-    };
-    PIPE_CACHE.set(pass2, pipes);
-  }
-  return pipes;
+  return { p1: cachedPipeline(device, PASS1_WGSL), p2: cachedPipeline(device, pass2) };
 }
 
 interface RawInput {
@@ -1673,7 +1629,6 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
 	  if(lx == 0u){ sums[cfg.w + frm] = f32(frameSum); }
 	}`;
 
-const MASKED_SUM_LOW8_PIPE_CACHE = new Map<string, GPUComputePipeline>();
 function useMaskedSumGroupMask(scanCount: number): boolean {
   const forced = (globalThis as { __QT_BSLZ4_MASKED_SUM_GROUPMASK?: unknown }).__QT_BSLZ4_MASKED_SUM_GROUPMASK;
   if (forced !== undefined) return forced !== false;
@@ -1705,9 +1660,7 @@ function getMaskedSumLow8PixelPipe(device: GPUDevice, blockElems: number, wgSize
     .replace(/__SH_WORDS__/g, `${shWords}`)
     .replace(/__WG_HALF__/g, `${Math.floor(wgSize / 2)}u`)
     .replace(/__WG__/g, `${wgSize}u`);
-  let p = MASKED_SUM_LOW8_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); MASKED_SUM_LOW8_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
 function getMaskedSumLow8GroupMaskPipe(device: GPUDevice, blockElems: number, wgSize: 64 | 128 | 256, compactShared: boolean): GPUComputePipeline {
@@ -1719,9 +1672,7 @@ function getMaskedSumLow8GroupMaskPipe(device: GPUDevice, blockElems: number, wg
     .replace(/__SH_WORDS__/g, `${shWords}`)
     .replace(/__WG_HALF__/g, `${Math.floor(wgSize / 2)}u`)
     .replace(/__WG__/g, `${wgSize}u`);
-  let p = MASKED_SUM_LOW8_PIPE_CACHE.get(code);
-  if (!p) { p = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } }); MASKED_SUM_LOW8_PIPE_CACHE.set(code, p); }
-  return p;
+  return cachedPipeline(device, code);
 }
 
 function maskedSumBlocks(mask: Uint32Array, badPixels: Uint32Array | undefined, blockElems: number): {
@@ -1900,33 +1851,7 @@ function compactSelectedBslz4Blocks(spec: Bslz4MaskedSumSpec, blockIds: number[]
   if (nFrames === 0 || blockIds.length === 0) {
     return { ...spec, compressed: new Uint8Array(0), blockMeta: new Uint32Array(2), nFrames: 0, nBlocksPerFrame: blockIds.length, selectedBlockIds: blockIds };
   }
-  const lengths: number[] = [];
-  let total = 0;
-  for (let f = 0; f < nFrames; f++) {
-    const sourceFrame = firstFrame + f;
-    for (const pos of positions) {
-      const src = (sourceFrame * spec.nBlocksPerFrame + pos) * 2;
-      const clen = spec.blockMeta[src + 1];
-      lengths.push(clen);
-      total += clen;
-    }
-  }
-  const compressed = new Uint8Array(total);
-  const blockMeta = new Uint32Array(Math.max(1, nFrames * blockIds.length * 2));
-  let dst = 0;
-  let m = 0;
-  for (let f = 0; f < nFrames; f++) {
-    const sourceFrame = firstFrame + f;
-    for (let bi = 0; bi < positions.length; bi++) {
-      const src = (sourceFrame * spec.nBlocksPerFrame + positions[bi]) * 2;
-      const coff = spec.blockMeta[src];
-      const clen = lengths[m++];
-      blockMeta[(f * blockIds.length + bi) * 2] = dst;
-      blockMeta[(f * blockIds.length + bi) * 2 + 1] = clen;
-      compressed.set(spec.compressed.subarray(coff, coff + clen), dst);
-      dst += clen;
-    }
-  }
+  const { compressed, blockMeta } = gatherCompressedBlocks(spec, positions, firstFrame, nFrames);
   return {
     ...spec,
     compressed,
@@ -1943,11 +1868,21 @@ function compactBslz4Blocks(spec: Bslz4Spec, blockIds: number[], frameStart = 0,
   if (blockIds.length === 0) return { ...spec, compressed: new Uint8Array(0), blockMeta: new Uint32Array(2), nBlocksPerFrame: 0 };
   const firstFrame = Math.max(0, Math.min(spec.nFrames, Math.round(frameStart)));
   const nFrames = Math.max(0, Math.min(spec.nFrames - firstFrame, Math.round(frameCount)));
+  const { compressed, blockMeta } = gatherCompressedBlocks(spec, blockIds, firstFrame, nFrames);
+  return { ...spec, compressed, blockMeta, nFrames, nBlocksPerFrame: blockIds.length };
+}
+
+/** Copy blocks `sourceBlocks` (positions within each source frame) of `nFrames` frames
+ * into one contiguous LZ4 stream with a rebased [offset, length] table, so the decoder
+ * reads only the detector blocks a product needs. */
+function gatherCompressedBlocks(
+  spec: Bslz4Spec, sourceBlocks: number[], firstFrame: number, nFrames: number,
+): { compressed: Uint8Array; blockMeta: Uint32Array } {
   const lengths: number[] = [];
   let total = 0;
   for (let f = 0; f < nFrames; f++) {
     const sourceFrame = firstFrame + f;
-    for (const block of blockIds) {
+    for (const block of sourceBlocks) {
       const src = (sourceFrame * spec.nBlocksPerFrame + block) * 2;
       const clen = spec.blockMeta[src + 1];
       lengths.push(clen);
@@ -1955,23 +1890,22 @@ function compactBslz4Blocks(spec: Bslz4Spec, blockIds: number[], frameStart = 0,
     }
   }
   const compressed = new Uint8Array(total);
-  const blockMeta = new Uint32Array(Math.max(1, nFrames * blockIds.length * 2));
+  const blockMeta = new Uint32Array(Math.max(1, nFrames * sourceBlocks.length * 2));
   let dst = 0;
   let m = 0;
   for (let f = 0; f < nFrames; f++) {
     const sourceFrame = firstFrame + f;
-    for (let bi = 0; bi < blockIds.length; bi++) {
-      const block = blockIds[bi];
-      const src = (sourceFrame * spec.nBlocksPerFrame + block) * 2;
+    for (let bi = 0; bi < sourceBlocks.length; bi++) {
+      const src = (sourceFrame * spec.nBlocksPerFrame + sourceBlocks[bi]) * 2;
       const coff = spec.blockMeta[src];
       const clen = lengths[m++];
-      blockMeta[(f * blockIds.length + bi) * 2] = dst;
-      blockMeta[(f * blockIds.length + bi) * 2 + 1] = clen;
+      blockMeta[(f * sourceBlocks.length + bi) * 2] = dst;
+      blockMeta[(f * sourceBlocks.length + bi) * 2 + 1] = clen;
       compressed.set(spec.compressed.subarray(coff, coff + clen), dst);
       dst += clen;
     }
   }
-  return { ...spec, compressed, blockMeta, nFrames, nBlocksPerFrame: blockIds.length };
+  return { compressed, blockMeta };
 }
 
 interface MaskedSumJob {
@@ -2176,6 +2110,21 @@ async function uploadViaStagingWithProfile(device: GPUDevice, specs: Bslz4Spec[]
   copyWaitMs: number;
 }> {
   const align4 = (n: number) => Math.ceil(n / 4) * 4;
+  const rawBufs = await fillStaging(device, specs);
+  const enc = device.createCommandEncoder();
+  specs.forEach((s, i) => enc.copyBufferToBuffer(STAGING[i], 0, rawBufs[i], 0, align4(s.compressed.byteLength)));
+  const tCopy = performance.now();
+  device.queue.submit([enc.finish()]);   // ordered before the decode submit; next group's mapAsync waits on it
+  const copyDone = device.queue.onSubmittedWorkDone().then(() => undefined);
+  STAGING_READY = copyDone;
+  const copyWaitMs = waitForCopy ? await copyDone.then(() => performance.now() - tCopy) : 0;
+  return { rawBufs, copyWaitMs };
+}
+
+// Wait for the previous group's staging copy, then wide-copy each spec into its pooled
+// staging buffer and allocate the STORAGE buffer the decoder will read.
+async function fillStaging(device: GPUDevice, specs: Bslz4Spec[]): Promise<GPUBuffer[]> {
+  const align4 = (n: number) => Math.ceil(n / 4) * 4;
   const maxBytes = specs.reduce((m, s) => Math.max(m, align4(s.compressed.byteLength)), 0);
   await STAGING_READY.catch(() => undefined);
   ensureStaging(device, specs.length, maxBytes);
@@ -2187,14 +2136,7 @@ async function uploadViaStagingWithProfile(device: GPUDevice, specs: Bslz4Spec[]
     copyWide(STAGING[i].getMappedRange(0, sz), s.compressed);
     STAGING[i].unmap();
   }
-  const enc = device.createCommandEncoder();
-  specs.forEach((s, i) => enc.copyBufferToBuffer(STAGING[i], 0, rawBufs[i], 0, align4(s.compressed.byteLength)));
-  const tCopy = performance.now();
-  device.queue.submit([enc.finish()]);   // ordered before the decode submit; next group's mapAsync waits on it
-  const copyDone = device.queue.onSubmittedWorkDone().then(() => undefined);
-  STAGING_READY = copyDone;
-  const copyWaitMs = waitForCopy ? await copyDone.then(() => performance.now() - tCopy) : 0;
-  return { rawBufs, copyWaitMs };
+  return rawBufs;
 }
 
 async function uploadViaStaging(device: GPUDevice, specs: Bslz4Spec[]): Promise<GPUBuffer[]> {
@@ -2206,17 +2148,7 @@ async function stageUploadCopies(device: GPUDevice, specs: Bslz4Spec[]): Promise
   recordCopies: (enc: GPUCommandEncoder) => void;
 }> {
   const align4 = (n: number) => Math.ceil(n / 4) * 4;
-  const maxBytes = specs.reduce((m, s) => Math.max(m, align4(s.compressed.byteLength)), 0);
-  await STAGING_READY.catch(() => undefined);
-  ensureStaging(device, specs.length, maxBytes);
-  const rawBufs = specs.map((s) => device.createBuffer({ size: align4(s.compressed.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }));
-  for (let i = 0; i < specs.length; i++) {
-    const s = specs[i];
-    const sz = align4(s.compressed.byteLength);
-    await STAGING[i].mapAsync(GPUMapMode.WRITE, 0, sz);
-    copyWide(STAGING[i].getMappedRange(0, sz), s.compressed);
-    STAGING[i].unmap();
-  }
+  const rawBufs = await fillStaging(device, specs);
   return {
     rawBufs,
     recordCopies(enc: GPUCommandEncoder) {
@@ -2427,20 +2359,22 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
     const tGpu = performance.now();
     return { done: device.queue.onSubmittedWorkDone().then(() => performance.now() - tGpu) };
   };
+  const acceptPreparedGroup = (prepared: PreparedDecodeGroup, gpuMs: number): void => {
+    profile.gpuWaitMs += gpuMs;
+    if (profileSplit) profile.decodeComputeWaitMs = (profile.decodeComputeWaitMs ?? 0) + gpuMs;
+    profile.uploadMs += prepared.uploadMs;
+    profile.uploadCopyWaitMs = (profile.uploadCopyWaitMs ?? 0) + prepared.uploadCopyWaitMs;
+    profile.buildMs += prepared.buildMs;
+    for (const j of prepared.jobs) { j.releaseTemps(); buffers.push(j.stack); mode = j.mode; }
+    prepared.releaseUpload?.();
+    profile.groups++;
+  };
   if (pipelineStaging) {
     if (profileSplit) {
       for (let g = 0; g < specs.length; g += groupSize) {
         const prepared = await prepareStagingGroup(specs.slice(g, g + groupSize));
         const submitted = submitPreparedGroup(prepared);
-        const gpuMs = await submitted.done;
-        profile.gpuWaitMs += gpuMs;
-        profile.decodeComputeWaitMs = (profile.decodeComputeWaitMs ?? 0) + gpuMs;
-        profile.uploadMs += prepared.uploadMs;
-        profile.uploadCopyWaitMs = (profile.uploadCopyWaitMs ?? 0) + prepared.uploadCopyWaitMs;
-        profile.buildMs += prepared.buildMs;
-        for (const j of prepared.jobs) { j.releaseTemps(); buffers.push(j.stack); mode = j.mode; }
-        prepared.releaseUpload?.();
-        profile.groups++;
+        acceptPreparedGroup(prepared, await submitted.done);
       }
       profile.totalMs = performance.now() - tAll;
       return { device, buffers, mode, profile };
@@ -2451,15 +2385,7 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
       const submitted = submitPreparedGroup(prepared);
       const nextStart = g + groupSize;
       nextPrepared = nextStart < specs.length ? prepareStagingGroup(specs.slice(nextStart, nextStart + groupSize)) : null;
-      const gpuMs = await submitted.done;
-      profile.gpuWaitMs += gpuMs;
-      if (profileSplit) profile.decodeComputeWaitMs = (profile.decodeComputeWaitMs ?? 0) + gpuMs;
-      profile.uploadMs += prepared.uploadMs;
-      profile.uploadCopyWaitMs = (profile.uploadCopyWaitMs ?? 0) + prepared.uploadCopyWaitMs;
-      profile.buildMs += prepared.buildMs;
-      for (const j of prepared.jobs) { j.releaseTemps(); buffers.push(j.stack); mode = j.mode; }
-      prepared.releaseUpload?.();
-      profile.groups++;
+      acceptPreparedGroup(prepared, await submitted.done);
     }
     profile.totalMs = performance.now() - tAll;
     return { device, buffers, mode, profile };
@@ -2507,7 +2433,7 @@ export async function decodeBslz4Batch(specs: Bslz4Spec[], dtype: DecodeDtype = 
 // Decode a bslz4 stack to a packed GPU buffer ([scanPos][detPixel]). dtype "uint8"
 // (clip 0-255, 4 px/u32, offline default - half the memory), "uint16"
 // (lossless, 2 px/u32), or "uint32" (lossless, 1 px/u32). Layout matches
-// Show4DSTEMCompute.sample() for that mode exactly.
+// DetectorCompute's sample() for that mode exactly.
 // Returns null if WebGPU is unavailable. Throws (validation) only on misuse.
 export async function decodeBslz4ToStack(spec: Bslz4Spec, dtype: DecodeDtype = "uint8", srcDtype: SourceDtype = "uint16"): Promise<{ device: GPUDevice; buffer: GPUBuffer; mode: number } | null> {
   validateDecodeDtypes(dtype, srcDtype);
@@ -2533,8 +2459,8 @@ export async function decodeBslz4ToStack(spec: Bslz4Spec, dtype: DecodeDtype = "
   return { device, buffer: job.stack, mode: job.mode };
 }
 
-function uniform(device: GPUDevice, vals: number[]): GPUBuffer {
-  const b = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(b, 0, new Uint32Array(vals).buffer);
-  return b;
+function uniform(device: GPUDevice, values: number[]): GPUBuffer {
+  const buffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(buffer, 0, new Uint32Array(values).buffer);
+  return buffer;
 }

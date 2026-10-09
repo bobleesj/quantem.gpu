@@ -11,7 +11,7 @@ export interface RansByteSource {
 
 function localParts(name: string): string[] {
   const parts = name.split("/");
-  if (!name || parts.some(p => !p || p === "." || p === ".." || /[:\\?#]/.test(p))) {
+  if (!name || parts.some(part => !part || part === "." || part === ".." || /[:\\?#]/.test(part))) {
     throw new Error(`Invalid rANS relative file path: ${name}`);
   }
   return parts;

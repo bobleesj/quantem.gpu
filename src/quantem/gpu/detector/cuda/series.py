@@ -158,7 +158,7 @@ class CudaSeriesCompute(DetectorQueries):
             self.kernels = _kernels(self.device)
             cp.cuda.get_current_stream().synchronize()
         self.keepalive.extend((self.valid, self.descriptors, self.mask, self.errors))
-        regions = {(a.data.ptr, a.data.ptr + a.nbytes) for a in self.keepalive}
+        regions = {(array.data.ptr, array.data.ptr + array.nbytes) for array in self.keepalive}
         self.regions = np.asarray(sorted(regions), dtype=np.uint64)
         self.backend_metadata = {
             "backend": "cuda",

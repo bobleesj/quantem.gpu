@@ -117,6 +117,7 @@ def run_cuda(
     # ramp factorizes into a row part and a column part, in cycles per scan
     # pixel on the output grid.
     out_rows, out_cols = upsampling_factor * scan_rows, upsampling_factor * scan_cols
+    # The ramps are evaluated in float64 and rounded once to complex64.
     shifts_f64 = global_shifts.astype(cp.float64)
     ramp_row = cp.exp(
         -2j * cp.pi * shifts_f64[:, 0:1] * cp.fft.fftfreq(out_rows, d=1.0 / upsampling_factor)[None, :]

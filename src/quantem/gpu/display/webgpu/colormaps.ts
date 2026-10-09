@@ -1,7 +1,6 @@
 import { validateUint32ImageView, type Uint32ImageView } from "./borrowed-image";
 export type { Uint32ImageView } from "./borrowed-image";
 // Canonical reusable WebGPU display implementation owned by quantem.gpu.
-// quantem.widget imports this source through its generated engine tree.
 
 import colormapPoints from "../colormaps.json";
 
@@ -94,14 +93,11 @@ export function renderToOffscreenReuse(
 }
 
 // ============================================================================
-// WebGPU-accelerated colormap engine
+// WebGPU colormap engine (compute shader, ~300x faster than CPU loop on 4K data)
 // ============================================================================
 
 // 2D dispatch (16×16 workgroups) to stay within WebGPU's 65535 workgroup limit.
-// 1D dispatch with wg=256 needs ceil(4096*4096/256)=65536 — exceeds the limit by 1.
-// ============================================================================
-// WebGPU colormap engine (compute shader, ~300x faster than CPU loop on 4K data)
-// ============================================================================
+// 1D dispatch with wg=256 needs ceil(4096*4096/256)=65536, which exceeds the limit by 1.
 
 // Temporal mean of N window frames -> one output frame, on the GPU. One thread
 // per output pixel sums that pixel across the N frames (loop on the GPU, parallel
@@ -1181,10 +1177,6 @@ function flushParamsBufQueue(start = 0): void {
   for (const b of paramsBufQueue.splice(start)) b.destroy();
 }
 
-/**
- * GPU-accelerated colormap engine. Holds persistent data buffers on GPU;
- * histogram slider changes only update a small uniform — no data re-upload.
- */
 export type GPUBufferOwnership = "owned" | "borrowed";
 
 type GPUSlot = {
@@ -1195,7 +1187,6 @@ type GPUSlot = {
   paramsBuffer: GPUBuffer;
   blitParamsBuffer: GPUBuffer;
   histBinsBuffer: GPUBuffer;
-  histReadBuffer: GPUBuffer;
   // Lazily allocated per-slot 16-byte buffer holding { vmin, vmax, _p0, _p1 }.
   // Populated by computeRange* on GPU and consumed directly by the range-aware
   // colormap shader (no CPU readback between passes).
@@ -1225,6 +1216,10 @@ type GPUSlot = {
   dataKind: "f32" | "u8";
 };
 
+/**
+ * GPU-accelerated colormap engine. Holds persistent data buffers on GPU;
+ * histogram slider changes only update a small uniform, with no data re-upload.
+ */
 export class GPUColormapEngine {
   private device: GPUDevice;
   private pipeline: GPUComputePipeline | null = null;
@@ -1303,6 +1298,23 @@ export class GPUColormapEngine {
 
   getDevice(): GPUDevice { return this.device; }
 
+  /** Compile one compute entry point of a WGSL source. */
+  private computePipeline(code: string, entryPoint = "main"): GPUComputePipeline {
+    const module = this.device.createShaderModule({ code });
+    return this.device.createComputePipeline({ layout: "auto", compute: { module, entryPoint } });
+  }
+
+  /** Compile a fullscreen-triangle vertex/fragment pipeline that draws into one `format` target. */
+  private renderPipeline(code: string, format: GPUTextureFormat): GPURenderPipeline {
+    const module = this.device.createShaderModule({ code });
+    return this.device.createRenderPipeline({
+      layout: "auto",
+      vertex: { module, entryPoint: "vs" },
+      fragment: { module, entryPoint: "fs", targets: [{ format }] },
+      primitive: { topology: "triangle-list" },
+    });
+  }
+
   private destroySlot(slot: GPUSlot): void {
     if (slot.dataOwnership === "owned") slot.dataBuffer.destroy();
     slot.rgbaBuffer.destroy();
@@ -1310,12 +1322,55 @@ export class GPUColormapEngine {
     slot.paramsBuffer.destroy();
     slot.blitParamsBuffer.destroy();
     slot.histBinsBuffer.destroy();
-    slot.histReadBuffer.destroy();
     slot.rangeBuffer?.destroy();
     slot.rangePartialsBuffer?.destroy();
     slot.liveRange?.partials.destroy();
     slot.liveRange?.parameters.destroy();
     for (const buf of slot.directRegionParamsBuffers) buf?.destroy();
+  }
+
+  /** Allocate the persistent per-slot display buffers around one image data buffer. */
+  private createSlot(
+    dataBuffer: GPUBuffer,
+    dataOwnership: GPUBufferOwnership,
+    dataKind: GPUSlot["dataKind"],
+    count: number,
+    width: number,
+    height: number,
+    rgbaCapacity: number,
+    readBytes: number,
+    directOnly: boolean,
+  ): GPUSlot {
+    const create = (size: number, usage: GPUBufferUsageFlags) => this.device.createBuffer({ size, usage });
+    return {
+      dataBuffer,
+      dataOwnership,
+      rgbaBuffer: create(rgbaCapacity * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
+      // Persistent read buffer, reused on every applySlots call (no create/destroy overhead)
+      readBuffer: create(readBytes, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST),
+      // Persistent params buffer, reused (just writeBuffer on each call).
+      // Size 64 covers the 24-byte colormap/histogram structs, 32-byte scaled
+      // colormap structs, and 64-byte direct grid colormap struct.
+      paramsBuffer: create(64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
+      blitParamsBuffer: create(8, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
+      // Persistent histogram bins (256 bins × 4 bytes = 1KB); readback buffers are per call.
+      histBinsBuffer: create(256 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC),
+      rangeBuffer: null,
+      rangePartialsBuffer: null,
+      directGridBindGroup: null,
+      directSlotBindGroup: null,
+      directRegionParamsBuffers: [],
+      directRegionBindGroups: [],
+      directRegionLutNames: [],
+      sharedGridBindGroup: null,
+      sharedGridBlitBindGroup: null,
+      count,
+      rgbaCapacity,
+      width,
+      height,
+      directOnly,
+      dataKind,
+    };
   }
 
   private createLutBuffer(lut: Uint8Array): GPUBuffer {
@@ -1359,39 +1414,19 @@ export class GPUColormapEngine {
   }
 
   private ensurePipeline(): void {
-    if (this.pipeline) return;
-    const module = this.device.createShaderModule({ code: COLORMAP_SHADER });
-    this.pipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.pipeline ??= this.computePipeline(COLORMAP_SHADER);
   }
 
   private ensureScaledPipeline(): void {
-    if (this.scaledPipeline) return;
-    const module = this.device.createShaderModule({ code: SCALED_COLORMAP_SHADER });
-    this.scaledPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.scaledPipeline ??= this.computePipeline(SCALED_COLORMAP_SHADER);
   }
 
   private ensureScaledUint8Pipeline(): void {
-    if (this.scaledUint8Pipeline) return;
-    const module = this.device.createShaderModule({ code: SCALED_UINT8_COLORMAP_SHADER });
-    this.scaledUint8Pipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.scaledUint8Pipeline ??= this.computePipeline(SCALED_UINT8_COLORMAP_SHADER);
   }
 
   private ensureAveragePipeline(): void {
-    if (this.avgPipeline) return;
-    const module = this.device.createShaderModule({ code: AVERAGE_SHADER });
-    this.avgPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.avgPipeline ??= this.computePipeline(AVERAGE_SHADER);
   }
 
   /**
@@ -1463,83 +1498,30 @@ export class GPUColormapEngine {
   }
 
   private ensureSharedGridPipeline(): void {
-    if (this.sharedGridPipeline) return;
-    const module = this.device.createShaderModule({ code: SHARED_GRID_COLORMAP_SHADER });
-    this.sharedGridPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.sharedGridPipeline ??= this.computePipeline(SHARED_GRID_COLORMAP_SHADER);
   }
 
   private ensureDirectGridPipeline(format: GPUTextureFormat): void {
-    if (this.directGridPipeline) return;
-    const module = this.device.createShaderModule({ code: DIRECT_GRID_COLORMAP_SHADER });
-    this.directGridPipeline = this.device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module, entryPoint: "vs" },
-      fragment: {
-        module,
-        entryPoint: "fs",
-        targets: [{ format }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
+    this.directGridPipeline ??= this.renderPipeline(DIRECT_GRID_COLORMAP_SHADER, format);
   }
 
   private ensureDirectGridRangesPipeline(format: GPUTextureFormat): void {
-    if (this.directGridRangesPipeline) return;
-    const module = this.device.createShaderModule({ code: DIRECT_GRID_RANGES_COLORMAP_SHADER });
-    this.directGridRangesPipeline = this.device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module, entryPoint: "vs" },
-      fragment: {
-        module,
-        entryPoint: "fs",
-        targets: [{ format }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
+    this.directGridRangesPipeline ??= this.renderPipeline(DIRECT_GRID_RANGES_COLORMAP_SHADER, format);
   }
 
   private ensureDirectSlotPipeline(format: GPUTextureFormat): void {
-    if (this.directSlotPipeline) return;
-    const module = this.device.createShaderModule({ code: DIRECT_SLOT_COLORMAP_SHADER });
-    this.directSlotPipeline = this.device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module, entryPoint: "vs" },
-      fragment: {
-        module,
-        entryPoint: "fs",
-        targets: [{ format }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
+    this.directSlotPipeline ??= this.renderPipeline(DIRECT_SLOT_COLORMAP_SHADER, format);
   }
 
   private ensureDirectSlotGpuRangePipeline(format: GPUTextureFormat, integerCounts = false): void {
     if (integerCounts ? this.directSlotGpuRangeU32Pipeline : this.directSlotGpuRangePipeline) return;
-    const module = this.device.createShaderModule({ code: directSlotGpuRangeShader(integerCounts) });
-    const pipeline = this.device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module, entryPoint: "vs" },
-      fragment: {
-        module,
-        entryPoint: "fs",
-        targets: [{ format }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
+    const pipeline = this.renderPipeline(directSlotGpuRangeShader(integerCounts), format);
     if (integerCounts) this.directSlotGpuRangeU32Pipeline = pipeline;
     else this.directSlotGpuRangePipeline = pipeline;
   }
 
   private ensurePackedPanelTransformPipeline(): void {
-    if (this.packedPanelTransformPipeline) return;
-    const module = this.device.createShaderModule({ code: PACKED_PANEL_TRANSFORM_SHADER });
-    this.packedPanelTransformPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.packedPanelTransformPipeline ??= this.computePipeline(PACKED_PANEL_TRANSFORM_SHADER);
   }
 
   /** Upload LUT to GPU (only when colormap name changes). */
@@ -1568,7 +1550,7 @@ export class GPUColormapEngine {
   uploadData(idx: number, data: Float32Array, width?: number, height?: number, rgbaCapacityHint?: number, directOnly: boolean = false): void {
     this.ensurePipeline();
     while (this.slots.length <= idx) this.slots.push(null as never);
-    // Validate dimensions — if width*height doesn't match data length, derive from sqrt
+    // Validate dimensions: if width*height doesn't match data length, derive from sqrt
     // (catches stale closure values like width=1 from mount effects)
     const validDims = width && height && width > 1 && height > 1 && width * height === data.length;
     const w = validDims ? width : Math.round(Math.sqrt(data.length));
@@ -1589,60 +1571,7 @@ export class GPUColormapEngine {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
     this.device.queue.writeBuffer(dataBuffer, 0, data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
-    const rgbaBuffer = this.device.createBuffer({
-      size: rgbaSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    // Persistent read buffer — reused on every applySlots call (no create/destroy overhead)
-    const readBuffer = this.device.createBuffer({
-      size: rgbaSize,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-    // Persistent params buffer — reused (just writeBuffer on each call).
-    // Size 64 covers the 24-byte colormap/histogram structs, 32-byte scaled
-    // colormap structs, and 64-byte direct grid colormap struct.
-    const paramsBuffer = this.device.createBuffer({
-      size: 64,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const blitParamsBuffer = this.device.createBuffer({
-      size: 8,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    // Persistent histogram buffers (256 bins × 4 bytes = 1KB each)
-    const histBinsBuffer = this.device.createBuffer({
-      size: 256 * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    const histReadBuffer = this.device.createBuffer({
-      size: 256 * 4,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-    });
-    this.slots[idx] = {
-      dataBuffer,
-      dataOwnership: "owned",
-      rgbaBuffer,
-      readBuffer,
-      paramsBuffer,
-      blitParamsBuffer,
-      histBinsBuffer,
-      histReadBuffer,
-      rangeBuffer: null,
-      rangePartialsBuffer: null,
-      directGridBindGroup: null,
-      directSlotBindGroup: null,
-      directRegionParamsBuffers: [],
-      directRegionBindGroups: [],
-      directRegionLutNames: [],
-      sharedGridBindGroup: null,
-      sharedGridBlitBindGroup: null,
-      count: data.length,
-      rgbaCapacity,
-      width: w,
-      height: h,
-      directOnly,
-      dataKind: "f32",
-    };
+    this.slots[idx] = this.createSlot(dataBuffer, "owned", "f32", data.length, w, h, rgbaCapacity, rgbaSize, directOnly);
   }
 
   /** Upload one native uint8 image without expanding it to float32. */
@@ -1684,32 +1613,12 @@ export class GPUColormapEngine {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
     this.device.queue.writeBuffer(dataBuffer, 0, upload.buffer as ArrayBuffer, upload.byteOffset, upload.byteLength);
-    const rgbaSize = rgbaCapacity * 4;
-    this.slots[idx] = {
-      dataBuffer,
-      dataOwnership: "owned",
-      rgbaBuffer: this.device.createBuffer({ size: rgbaSize, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
-      readBuffer: this.device.createBuffer({ size: rgbaSize, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
-      paramsBuffer: this.device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-      blitParamsBuffer: this.device.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
-      histBinsBuffer: this.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
-      histReadBuffer: this.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
-      rangeBuffer: null,
-      rangePartialsBuffer: null,
-      directGridBindGroup: null,
-      directSlotBindGroup: null,
-      directRegionParamsBuffers: [],
-      directRegionBindGroups: [],
-      directRegionLutNames: [],
-      sharedGridBindGroup: null,
-      sharedGridBlitBindGroup: null,
-      count: data.length,
-      rgbaCapacity,
-      width,
-      height,
-      directOnly: false,
-      dataKind: "u8",
-    };
+    this.slots[idx] = this.createSlot(dataBuffer, "owned", "u8", data.length, width, height, rgbaCapacity, rgbaCapacity * 4, false);
+  }
+
+  /** Display caller-owned storage; the caller retains its lifetime. */
+  borrowBuffer(idx: number, buffer: GPUBuffer, width: number, height: number): void {
+    this.adoptBuffer(idx, buffer, width, height, "borrowed");
   }
 
   /**
@@ -1724,11 +1633,6 @@ export class GPUColormapEngine {
    * @example
    * engine.adoptBuffer(41, residentDisplay.buffer, 512, 512, "borrowed");
    */
-  /** Display caller-owned storage; the caller retains its lifetime. */
-  borrowBuffer(idx: number, buffer: GPUBuffer, width: number, height: number): void {
-    this.adoptBuffer(idx, buffer, width, height, "borrowed");
-  }
-
   adoptBuffer(idx: number, buffer: GPUBuffer, width: number, height: number, ownership: GPUBufferOwnership = "owned"): void {
     while (this.slots.length <= idx) this.slots.push(null as never);
     const old = this.slots[idx];
@@ -1742,55 +1646,21 @@ export class GPUColormapEngine {
     }
     if (old) this.retireSlot(old);
     const count = Math.max(1, width * height);
-    const rgbaCapacity = count;
-    const rgbaBuffer = this.device.createBuffer({
-      size: rgbaCapacity * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    this.slots[idx] = {
-      dataBuffer: buffer,
-      dataOwnership: ownership,
-      rgbaBuffer,
-      readBuffer: this.device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-      }),
-      paramsBuffer: this.device.createBuffer({
-        size: 64,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      }),
-      blitParamsBuffer: this.device.createBuffer({
-        size: 8,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      }),
-      histBinsBuffer: this.device.createBuffer({
-        size: 256 * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-      }),
-      histReadBuffer: this.device.createBuffer({
-        size: 256 * 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-      }),
-      rangeBuffer: null,
-      rangePartialsBuffer: null,
-      directGridBindGroup: null,
-      directSlotBindGroup: null,
-      directRegionParamsBuffers: [],
-      directRegionBindGroups: [],
-      directRegionLutNames: [],
-      sharedGridBindGroup: null,
-      sharedGridBlitBindGroup: null,
-      count,
-      rgbaCapacity,
-      width,
-      height,
-      directOnly: false,
-      dataKind: "f32",
-    };
+    this.slots[idx] = this.createSlot(buffer, ownership, "f32", count, width, height, count, 16, false);
+  }
+
+  /** The slot's RGBA readback buffer, grown to its pixel count on first use: an adopted slot starts with a 16-byte placeholder. */
+  private readBufferFor(slot: GPUSlot): GPUBuffer {
+    const bytes = slot.count * 4;
+    if (slot.readBuffer.size < bytes) {
+      slot.readBuffer.destroy();
+      slot.readBuffer = this.device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    }
+    return slot.readBuffer;
   }
 
   // Params buffer: 24 bytes = { width: u32, height: u32, vmin: f32, vmax: f32, log_scale: u32, _pad: u32 }
-  private _writeParams(buf: ArrayBuffer, width: number, height: number, vmin: number, vmax: number, logScale: boolean): void {
+  private writeParams(buf: ArrayBuffer, width: number, height: number, vmin: number, vmax: number, logScale: boolean): void {
     const u = new Uint32Array(buf);
     const f = new Float32Array(buf);
     u[0] = width;
@@ -1823,8 +1693,8 @@ export class GPUColormapEngine {
       if (!slot || slot.directOnly || slot.rgbaCapacity < slot.count) continue;
       const range = ranges[k] || { vmin: 0, vmax: 1 };
 
-      // Reuse persistent paramsBuffer — just write new values
-      this._writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
+      // Reuse the persistent paramsBuffer; only its values change.
+      this.writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
       this.device.queue.writeBuffer(slot.paramsBuffer, 0, params);
 
       const bindGroup = this.device.createBindGroup({
@@ -1843,8 +1713,7 @@ export class GPUColormapEngine {
       pass.dispatchWorkgroups(Math.ceil(slot.width / 16), Math.ceil(slot.height / 16));
       pass.end();
 
-      // Copy to persistent read buffer
-      encoder.copyBufferToBuffer(slot.rgbaBuffer, 0, slot.readBuffer, 0, slot.count * 4);
+      encoder.copyBufferToBuffer(slot.rgbaBuffer, 0, this.readBufferFor(slot), 0, slot.count * 4);
       activeSlots.push({ idx: i, slot, count: slot.count });
     }
     this.device.queue.submit([encoder.finish()]);
@@ -1852,7 +1721,8 @@ export class GPUColormapEngine {
 
     const results: { idx: number; rgba: Uint8ClampedArray }[] = [];
     for (const s of activeSlots) {
-      const mapped = s.slot.readBuffer.getMappedRange();
+      // The read buffer can hold more than this image (an rgbaCapacityHint above its pixel count).
+      const mapped = s.slot.readBuffer.getMappedRange(0, s.count * 4);
       const rgba = new Uint8ClampedArray(s.count * 4);
       rgba.set(new Uint8ClampedArray(mapped));
       s.slot.readBuffer.unmap();
@@ -1904,7 +1774,7 @@ export class GPUColormapEngine {
     if (!this.pipeline || !slot || slot.directOnly || slot.rgbaCapacity < slot.count) return null;
     const lutBuffer = this.namedLutBuffer(lutName, lut);
     const params = new ArrayBuffer(24);
-    this._writeParams(params, slot.width, slot.height, vmin, vmax, logScale);
+    this.writeParams(params, slot.width, slot.height, vmin, vmax, logScale);
     this.device.queue.writeBuffer(slot.paramsBuffer, 0, params);
     const bindGroup = this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),
@@ -1921,11 +1791,11 @@ export class GPUColormapEngine {
     pass.setBindGroup(0, bindGroup);
     pass.dispatchWorkgroups(Math.ceil(slot.width / 16), Math.ceil(slot.height / 16));
     pass.end();
-    encoder.copyBufferToBuffer(slot.rgbaBuffer, 0, slot.readBuffer, 0, slot.count * 4);
+    encoder.copyBufferToBuffer(slot.rgbaBuffer, 0, this.readBufferFor(slot), 0, slot.count * 4);
     this.device.queue.submit([encoder.finish()]);
     await slot.readBuffer.mapAsync(GPUMapMode.READ);
     const rgba = new Uint8ClampedArray(slot.count * 4);
-    rgba.set(new Uint8ClampedArray(slot.readBuffer.getMappedRange()));
+    rgba.set(new Uint8ClampedArray(slot.readBuffer.getMappedRange(0, slot.count * 4)));
     slot.readBuffer.unmap();
     return rgba;
   }
@@ -1954,7 +1824,7 @@ export class GPUColormapEngine {
       if (!slot || slot.directOnly || slot.rgbaCapacity < slot.count || !offscreens[k] || !imgDatas[k]) continue;
       const range = ranges[k] || { vmin: 0, vmax: 1 };
 
-      this._writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
+      this.writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
       this.device.queue.writeBuffer(slot.paramsBuffer, 0, params);
 
       const bindGroup = this.device.createBindGroup({
@@ -1972,7 +1842,7 @@ export class GPUColormapEngine {
       pass.setBindGroup(0, bindGroup);
       pass.dispatchWorkgroups(Math.ceil(slot.width / 16), Math.ceil(slot.height / 16));
       pass.end();
-      encoder.copyBufferToBuffer(slot.rgbaBuffer, 0, slot.readBuffer, 0, slot.count * 4);
+      encoder.copyBufferToBuffer(slot.rgbaBuffer, 0, this.readBufferFor(slot), 0, slot.count * 4);
       activeSlots.push({ k, idx: i, slot });
     }
     this.device.queue.submit([encoder.finish()]);
@@ -1981,7 +1851,7 @@ export class GPUColormapEngine {
     // Write directly from GPU mapped memory → ImageData → offscreen canvas
     let rendered = 0;
     for (const s of activeSlots) {
-      const mapped = s.slot.readBuffer.getMappedRange();
+      const mapped = s.slot.readBuffer.getMappedRange(0, s.slot.count * 4);
       const imgData = imgDatas[s.k]!;
       imgData.data.set(new Uint8ClampedArray(mapped));
       s.slot.readBuffer.unmap();
@@ -1992,17 +1862,7 @@ export class GPUColormapEngine {
   }
 
   private ensureBlitPipeline(format: GPUTextureFormat): void {
-    if (this.blitPipeline) return;
-    const module = this.device.createShaderModule({ code: BLIT_SHADER });
-    this.blitPipeline = this.device.createRenderPipeline({
-      layout: "auto",
-      vertex: { module, entryPoint: "vs" },
-      fragment: {
-        module, entryPoint: "fs",
-        targets: [{ format }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
+    this.blitPipeline ??= this.renderPipeline(BLIT_SHADER, format);
   }
 
   /**
@@ -2020,7 +1880,6 @@ export class GPUColormapEngine {
   ): number {
     if (!this.pipeline || !this.lutBuffer || indices.length === 0) return 0;
 
-    // Get texture format from first valid context
     const fmt = navigator.gpu.getPreferredCanvasFormat();
     this.ensureBlitPipeline(fmt);
     if (!this.blitPipeline) return 0;
@@ -2038,7 +1897,7 @@ export class GPUColormapEngine {
       const range = ranges[k] || { vmin: 0, vmax: 1 };
 
       // 1. Compute colormap (same as renderSlots)
-      this._writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
+      this.writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
       this.device.queue.writeBuffer(slot.paramsBuffer, 0, params);
 
       const computeGroup = this.device.createBindGroup({
@@ -2107,18 +1966,13 @@ export class GPUColormapEngine {
     ranges: { vmin: number; vmax: number }[],
     logScale: boolean = false,
   ): ImageBitmap[] | null {
-    const canvases = this._encodeSlotsToOffscreen(indices, ranges, logScale);
+    const canvases = this.encodeSlotsToOffscreen(indices, ranges, logScale);
     if (!canvases) return null;
-    return this._transferOffscreens(canvases);
+    return this.transferOffscreens(canvases);
   }
 
   private ensureRgbPipeline(): void {
-    if (this.rgbPipeline) return;
-    const module = this.device.createShaderModule({ code: RGB_PASSTHROUGH_SHADER });
-    this.rgbPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.rgbPipeline ??= this.computePipeline(RGB_PASSTHROUGH_SHADER);
   }
 
   /**
@@ -2229,13 +2083,37 @@ export class GPUColormapEngine {
     ranges: { vmin: number; vmax: number }[],
     logScale: boolean = false,
   ): Promise<ImageBitmap[] | null> {
-    const canvases = this._encodeSlotsToOffscreen(indices, ranges, logScale);
+    const canvases = this.encodeSlotsToOffscreen(indices, ranges, logScale);
     if (!canvases) return null;
     await this.device.queue.onSubmittedWorkDone();
-    return this._transferOffscreens(canvases);
+    return this.transferOffscreens(canvases);
   }
 
-  private _transferOffscreens(canvases: (OffscreenCanvas | null)[]): ImageBitmap[] {
+  /**
+   * Render into a fresh OffscreenCanvas and snapshot it only after the GPU queue
+   * drains. Browser presentation textures may be discarded after compositing,
+   * and an early transfer can capture the render pass clear color instead of
+   * the durable scientific frame.
+   */
+  private async renderToImageBitmapAsync(
+    width: number,
+    height: number,
+    render: (context: GPUCanvasContext) => boolean,
+  ): Promise<ImageBitmap | null> {
+    const canvas = new OffscreenCanvas(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
+    if (!context) return null;
+    context.configure({
+      device: this.device,
+      format: navigator.gpu.getPreferredCanvasFormat(),
+      alphaMode: "opaque",
+    });
+    if (!render(context)) return null;
+    await this.device.queue.onSubmittedWorkDone();
+    return canvas.transferToImageBitmap();
+  }
+
+  private transferOffscreens(canvases: (OffscreenCanvas | null)[]): ImageBitmap[] {
     const bitmaps: ImageBitmap[] = [];
     for (const oc of canvases) {
       if (oc) bitmaps.push(oc.transferToImageBitmap());
@@ -2244,7 +2122,7 @@ export class GPUColormapEngine {
     return bitmaps;
   }
 
-  private _encodeSlotsToOffscreen(
+  private encodeSlotsToOffscreen(
     indices: number[],
     ranges: { vmin: number; vmax: number }[],
     logScale: boolean = false,
@@ -2266,7 +2144,7 @@ export class GPUColormapEngine {
       const range = ranges[k] || { vmin: 0, vmax: 1 };
 
       // Compute colormap
-      this._writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
+      this.writeParams(params, slot.width, slot.height, range.vmin, range.vmax, logScale);
       this.device.queue.writeBuffer(slot.paramsBuffer, 0, params);
 
       const computeGroup = this.device.createBindGroup({
@@ -2326,11 +2204,7 @@ export class GPUColormapEngine {
 
   private ensureVolumePipeline(): void {
     if (this.volumePipeline) return;
-    const module = this.device.createShaderModule({ code: VOLUME_SLICE_SHADER });
-    this.volumePipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.volumePipeline = this.computePipeline(VOLUME_SLICE_SHADER);
     if (!this.volParamsBuffer) {
       this.volParamsBuffer = this.device.createBuffer({
         size: VOLUME_PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -2340,11 +2214,7 @@ export class GPUColormapEngine {
 
   private ensureVolumeTexturePipeline(): void {
     if (this.volumeTexturePipeline) return;
-    const module = this.device.createShaderModule({ code: VOLUME_TEXTURE_SLICE_SHADER });
-    this.volumeTexturePipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.volumeTexturePipeline = this.computePipeline(VOLUME_TEXTURE_SLICE_SHADER);
     if (!this.volParamsBuffer) {
       this.volParamsBuffer = this.device.createBuffer({
         size: VOLUME_PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -2988,20 +2858,7 @@ export class GPUColormapEngine {
       sharedSource?: boolean;
     },
   ): Promise<ImageBitmap | null> {
-    const canvas = new OffscreenCanvas(
-      Math.max(1, Math.round(opts.width)),
-      Math.max(1, Math.round(opts.height)),
-    );
-    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
-    if (!context) return null;
-    context.configure({
-      device: this.device,
-      format: navigator.gpu.getPreferredCanvasFormat(),
-      alphaMode: "opaque",
-    });
-    if (!this.renderSharedGridDirectToCanvas(idx, range, logScale, context, opts)) return null;
-    await this.device.queue.onSubmittedWorkDone();
-    return canvas.transferToImageBitmap();
+    return this.renderToImageBitmapAsync(opts.width, opts.height, (context) => this.renderSharedGridDirectToCanvas(idx, range, logScale, context, opts));
   }
 
   renderPanelSlotsDirectToCanvas(
@@ -3182,20 +3039,7 @@ export class GPUColormapEngine {
       smooth?: boolean;
     },
   ): Promise<ImageBitmap | null> {
-    const canvas = new OffscreenCanvas(
-      Math.max(1, Math.round(opts.width)),
-      Math.max(1, Math.round(opts.height)),
-    );
-    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
-    if (!context) return null;
-    context.configure({
-      device: this.device,
-      format: navigator.gpu.getPreferredCanvasFormat(),
-      alphaMode: "opaque",
-    });
-    if (!this.renderPanelSlotsDirectToCanvas(indices, range, logScale, context, opts)) return null;
-    await this.device.queue.onSubmittedWorkDone();
-    return canvas.transferToImageBitmap();
+    return this.renderToImageBitmapAsync(opts.width, opts.height, (context) => this.renderPanelSlotsDirectToCanvas(indices, range, logScale, context, opts));
   }
 
   renderSlotDirectWithGpuRangeToCanvas(
@@ -3435,27 +3279,7 @@ export class GPUColormapEngine {
       smooth?: boolean;
     },
   ): Promise<ImageBitmap | null> {
-    const canvas = new OffscreenCanvas(
-      Math.max(1, Math.round(opts.width)),
-      Math.max(1, Math.round(opts.height)),
-    );
-    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
-    if (!context) return null;
-    context.configure({
-      device: this.device,
-      format: navigator.gpu.getPreferredCanvasFormat(),
-      alphaMode: "opaque",
-    });
-    if (!this.renderSlotDirectWithGpuRangeToCanvas(
-      idx,
-      vminPct,
-      vmaxPct,
-      logScale,
-      context,
-      opts,
-    )) return null;
-    await this.device.queue.onSubmittedWorkDone();
-    return canvas.transferToImageBitmap();
+    return this.renderToImageBitmapAsync(opts.width, opts.height, (context) => this.renderSlotDirectWithGpuRangeToCanvas(idx, vminPct, vmaxPct, logScale, context, opts));
   }
 
   renderCombinedGridRangesDirectToCanvas(
@@ -3900,26 +3724,7 @@ export class GPUColormapEngine {
       smooth?: boolean;
     },
   ): Promise<ImageBitmap | null> {
-    const canvas = new OffscreenCanvas(
-      Math.max(1, Math.round(opts.width)),
-      Math.max(1, Math.round(opts.height)),
-    );
-    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
-    if (!context) return null;
-    context.configure({
-      device: this.device,
-      format: navigator.gpu.getPreferredCanvasFormat(),
-      alphaMode: "opaque",
-    });
-    if (!this.renderCombinedPanelRegionsDirectToCanvas(
-      slotIdx,
-      range,
-      logScale,
-      context,
-      opts,
-    )) return null;
-    await this.device.queue.onSubmittedWorkDone();
-    return canvas.transferToImageBitmap();
+    return this.renderToImageBitmapAsync(opts.width, opts.height, (context) => this.renderCombinedPanelRegionsDirectToCanvas(slotIdx, range, logScale, context, opts));
   }
 
   /**
@@ -4157,11 +3962,7 @@ fn reduce(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_i
   }
 }
 `;
-    const module = this.device.createShaderModule({ code });
-    this.rangePipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "reduce" },
-    });
+    this.rangePipeline = this.computePipeline(code, "reduce");
   }
 
   private ensureRangeUint8Pipeline(): void {
@@ -4208,11 +4009,7 @@ fn reduce(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_i
   }
 }
 `;
-    const module = this.device.createShaderModule({ code });
-    this.rangeUint8Pipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "reduce" },
-    });
+    this.rangeUint8Pipeline = this.computePipeline(code, "reduce");
   }
 
   /**
@@ -4403,7 +4200,7 @@ fn finalize(@builtin(local_invocation_index) lid: u32) {
     // on GPU so we never round-trip back through JS for those scalars.
     // Also accepts a region (offset + size into the full data buffer) and a
     // stride so the colormap output is the panel sub-image, sourced from
-    // the full frame in-place — no slab extraction in JS.
+    // the full frame in-place, with no slab extraction in JS.
     const code = DISPLAY_NORMALIZE_WGSL + /* wgsl */ `
 struct Params {
   width: u32,        // output (panel) width
@@ -4441,11 +4238,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   rgba[out_idx] = rgb | 0xFF000000u;
 }
 `;
-    const module = this.device.createShaderModule({ code });
-    this.colormapRangePipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "main" },
-    });
+    this.colormapRangePipeline = this.computePipeline(code, "main");
   }
 
   private ensureSlotRangeBuffer(slot: GPUSlot): GPUBuffer {
@@ -4462,7 +4255,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
   /**
    * Reduce a rectangular region of slot `idx`'s data buffer to (vmin, vmax)
    * on GPU and stash the result in `slot.rangeBuffer`. Caller chains a
-   * `renderSlotsWithGpuRange` pass that reads it directly — no CPU sync.
+   * `renderSlotsWithGpuRange` pass that reads it directly, with no CPU sync.
    *
    * `region` is { x, y, width, height } in pixels into the slot's full frame
    * (which has stride `slot.width`). Omit `region` to scan the whole slot.
@@ -4536,9 +4329,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
       pass.dispatchWorkgroups(1);
     }
     pass.end();
-    // paramsBuf can be destroyed once the encoder is submitted; defer to caller.
-    // Stash on the slot's rangeBuffer-adjacent state via the returned descriptor.
-    // Simpler: rely on JS GC for the small (32B) buffer. Mark it for destroy.
+    // The caller destroys paramsBuf through flushParamsBufQueue after it submits the encoder.
     paramsBufQueue.push(paramsBuf);
     return true;
   }
@@ -4654,13 +4445,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     this.device.queue.submit([encoder.finish()]);
     for (const b of tempBuffers) b.destroy();
     flushParamsBufQueue();
-
-    const bitmaps: ImageBitmap[] = [];
-    for (const oc of canvases) {
-      if (oc) bitmaps.push(oc.transferToImageBitmap());
-      else bitmaps.push(null as never);
-    }
-    return bitmaps;
+    return this.transferOffscreens(canvases);
   }
 
   /**
@@ -4776,7 +4561,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
     await this.device.queue.onSubmittedWorkDone();
     for (const b of tempBuffers) b.destroy();
     flushParamsBufQueue();
-    return this._transferOffscreens(canvases);
+    return this.transferOffscreens(canvases);
   }
 
   /**
@@ -4875,10 +4660,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     this.device.queue.submit([encoder.finish()]);
     for (const b of tempBuffers) b.destroy();
-
-    const bitmaps: ImageBitmap[] = [];
-    for (const oc of canvases) bitmaps.push(oc ? oc.transferToImageBitmap() : null as never);
-    return bitmaps;
+    return this.transferOffscreens(canvases);
   }
 
   /**
@@ -4890,7 +4672,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
    *      rgba buffer (sized to the panel sub-image)
    *   3. Blit per-panel rgba → OffscreenCanvas texture
    * Then synchronously transferToImageBitmap per panel. Zero CPU round-trips
-   * for vmin/vmax — replaces the JS slab-extract + findDataRange loop.
+   * for vmin/vmax; replaces the JS slab-extract + findDataRange loop.
    *
    * `slotIdx` is the GPU slot holding the full frame.
    * `regions[k]` is the sub-rect of panel k inside the full frame.
@@ -5014,13 +4796,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
 
     this.device.queue.submit([encoder.finish()]);
     for (const b of tempBuffers) b.destroy();
-
-    const bitmaps: ImageBitmap[] = [];
-    for (const oc of canvases) {
-      if (oc) bitmaps.push(oc.transferToImageBitmap());
-      else bitmaps.push(null as never);
-    }
-    return bitmaps;
+    return this.transferOffscreens(canvases);
   }
 
   // ── GPU histogram ──
@@ -5105,11 +4881,7 @@ fn histogram(@builtin(global_invocation_id) gid: vec3u) {
   atomicAdd(&bins[bin], 1u);
 }
 `;
-    const module = this.device.createShaderModule({ code });
-    this.histUint8Pipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "histogram" },
-    });
+    this.histUint8Pipeline = this.computePipeline(code, "histogram");
   }
 
   private ensureHistRegionPipeline(): void {
@@ -5141,11 +4913,7 @@ fn histogram(@builtin(global_invocation_id) gid: vec3u) {
   atomicAdd(&bins[bin], 1u);
 }
 `;
-    const module = this.device.createShaderModule({ code });
-    this.histRegionPipeline = this.device.createComputePipeline({
-      layout: "auto",
-      compute: { module, entryPoint: "histogram" },
-    });
+    this.histRegionPipeline = this.computePipeline(code, "histogram");
   }
 
   /**
@@ -5352,8 +5120,8 @@ fn histogram(@builtin(global_invocation_id) gid: vec3u) {
       histPass.dispatchWorkgroups(Math.ceil(slot.width / 16), Math.ceil(slot.height / 16));
       histPass.end();
 
-      // Use a per-call readback buffer. `slot.histReadBuffer` was persistent,
-      // which made overlapping histogram requests fail with "outstanding map
+      // Use a per-call readback buffer. A persistent per-slot one made
+      // overlapping histogram requests fail with "outstanding map
       // pending" when Show2D refreshed auto-contrast and the visible histogram
       // during fast interaction.
       const readBuffer = this.device.createBuffer({

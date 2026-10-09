@@ -411,7 +411,6 @@ def _strong_cached_source_match(
     ``None`` asks the caller to use full HDF5 inspection for a reduced
     signature. A malformed complete signature returns ``False``.
     """
-
     if not isinstance(cached_source, dict):
         return False
     files = cached_source.get("files")
@@ -551,16 +550,14 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
         # A cache without the phase predates phase caching; rebuild it.
         if not _cache_matches(metadata, master) or "dpc_phase" not in data.files:
             return None
-        params = metadata["parameters"]
+        parameters = metadata["parameters"]
         com_row = np.asarray(data["com_row"], dtype=np.float32)
         exact_present = [
             name in data.files for name in _EXACT_COUNT_PRODUCT_FIELDS
         ]
         if any(exact_present) and not all(exact_present):
             return None
-        exact_products: dict[str, np.ndarray | None] = {
-            name: None for name in _EXACT_COUNT_PRODUCT_FIELDS
-        }
+        exact_products: dict[str, np.ndarray | None] = dict.fromkeys(_EXACT_COUNT_PRODUCT_FIELDS)
         if all(exact_present):
             for name in _EXACT_COUNT_PRODUCT_FIELDS:
                 array = np.asarray(data[name])
@@ -574,10 +571,10 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             dpc_phase=np.asarray(data["dpc_phase"], dtype=np.float32),
             com_row=com_row,
             com_col=np.asarray(data["com_col"], dtype=np.float32),
-            probe_center=tuple(float(v) for v in params["center"]),
-            probe_radius=float(params["radius_px"]),
-            rotation_deg=float(params["rotation_deg"]),
-            transposed=bool(params["transposed"]),
+            probe_center=tuple(float(value) for value in parameters["center"]),
+            probe_radius=float(parameters["radius_px"]),
+            rotation_deg=float(parameters["rotation_deg"]),
+            transposed=bool(parameters["transposed"]),
             metadata=metadata,
             cache_path=path,
             from_cache=True,

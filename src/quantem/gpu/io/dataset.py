@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from math import prod
+from pathlib import Path
 
 import numpy as np
 
@@ -34,7 +35,9 @@ class Dataset4dstemGPU:
         )
 
     def __array__(self, dtype=None, copy=None):
-        """Reject implicit full-acquisition conversion to host memory."""
+        """Return the dense CPU reference as NumPy; reject implicit full-acquisition copies from a GPU."""
+        if isinstance(self.data, np.ndarray):
+            return np.array(self.data, dtype=dtype, copy=copy)
         raise TypeError(
             "Acquisition data stays on the GPU. Select a bounded region first, "
             "then use data[row, column].cpu().numpy() for a NumPy array. "
@@ -52,6 +55,26 @@ class Dataset4dstemGPU:
     def ndim(self) -> int:
         """Return the number of logical array axes."""
         return len(self.shape)
+
+    @property
+    def name(self) -> str:
+        """Name of the acquisition: ``metadata['name']``, else its source file.
+
+        A master is named without ``_master.h5``, another file without its
+        extension. quantem core datasets carry a ``name``; a loaded acquisition
+        reports one the same way, so code that titles or labels data reads it
+        from either. Empty when the metadata names no source.
+
+        Examples
+        --------
+        >>> load("scan_001_master.h5").name
+        'scan_001'
+        """
+        name = self.metadata.get("name")
+        if name:
+            return str(name)
+        file = Path(str(self.metadata.get("source_path", ""))).name
+        return file.removesuffix("_master.h5") if file.endswith("_master.h5") else Path(file).stem
 
     @property
     def size(self) -> int:
@@ -257,7 +280,7 @@ class Dataset4dstemGPU:
         if sum(item is Ellipsis for item in keys) > 1:
             raise IndexError("Use at most one ellipsis.")
         if any(item is Ellipsis for item in keys):
-            position = next(i for i, item in enumerate(keys) if item is Ellipsis)
+            position = next(axis for axis, item in enumerate(keys) if item is Ellipsis)
             keys = (
                 keys[:position]
                 + (slice(None),) * (5 - len(keys))

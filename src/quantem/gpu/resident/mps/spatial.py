@@ -274,8 +274,8 @@ def weighted_sum(resident, weights) -> np.ndarray:
     totals = np.zeros(resident.shape[:2], np.uint64)
     output = MetalArray(resident.shape[:2], np.uint64)
     try:
-        for shift, digit in weight_digits(values, np.iinfo(resident.dtype).max):
-            digit = digit.ravel()
+        for shift, digit_plane in weight_digits(values, np.iinfo(resident.dtype).max):
+            digit = digit_plane.ravel()
             selected = np.flatnonzero(digit).astype(np.uint32)
             ids = upload_shared(selected, "weighted pixels")
             coefficients = None

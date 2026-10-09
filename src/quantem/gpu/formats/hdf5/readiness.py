@@ -67,18 +67,18 @@ def file_signature(path: str) -> dict[str, str | int | bool]:
         return {"path": absolute, "unreadable": True, "error": str(exc)}
     signature: dict[str, str | int | bool] = {
         "path": absolute,
-        "size": int(stat.st_size),
-        "mtime_ns": int(stat.st_mtime_ns),
-        "ctime_ns": int(stat.st_ctime_ns),
-        "device": int(stat.st_dev),
-        "inode": int(stat.st_ino),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "ctime_ns": stat.st_ctime_ns,
+        "device": stat.st_dev,
+        "inode": stat.st_ino,
     }
     if os.path.islink(absolute):
         try:
             link_stat = os.lstat(absolute)
             signature["symlink_target"] = os.readlink(absolute)
-            signature["symlink_mtime_ns"] = int(link_stat.st_mtime_ns)
-            signature["symlink_ctime_ns"] = int(link_stat.st_ctime_ns)
+            signature["symlink_mtime_ns"] = link_stat.st_mtime_ns
+            signature["symlink_ctime_ns"] = link_stat.st_ctime_ns
         except OSError:
             signature["symlink_unreadable"] = True
     return signature
@@ -107,7 +107,7 @@ def _master_source_signature(
     }
 
 
-def _normalise_readiness_scan_shape(
+def _normalize_readiness_scan_shape(
     scan_shape: tuple[int, int] | None,
 ) -> tuple[int, int] | None:
     """Validate an explicit readiness frame-count contract."""
@@ -211,13 +211,13 @@ def inspect_master_readiness(
     ValueError
         If ``scan_shape`` is not exactly two positive integers.
     """
-    explicit_scan_shape = _normalise_readiness_scan_shape(scan_shape)
+    explicit_scan_shape = _normalize_readiness_scan_shape(scan_shape)
     master_path = _absolute_source_path(filepath)
     source_paths = {master_path}
     datasets: list[dict] = []
     initial_files = {master_path: file_signature(master_path)}
     expected_frames = (
-        int(explicit_scan_shape[0] * explicit_scan_shape[1])
+        explicit_scan_shape[0] * explicit_scan_shape[1]
         if explicit_scan_shape is not None
         else None
     )
@@ -233,9 +233,9 @@ def inspect_master_readiness(
 
     def result(ready: bool, reason: str, action: str) -> MasterReadiness:
         return MasterReadiness(
-            ready=bool(ready),
-            reason=str(reason),
-            action=str(action),
+            ready=ready,
+            reason=reason,
+            action=action,
             source_kind=source_kind,
             actual_frames=actual_frames,
             expected_frames=expected_frames,
@@ -265,7 +265,7 @@ def inspect_master_readiness(
             f"({master_stat.get('error', 'unknown filesystem error')})",
             "Fix file permissions or storage availability, then poll again.",
         )
-    if int(master_stat.get("size", 0)) <= 0:
+    if master_stat.get("size", 0) <= 0:
         return result(
             False,
             f"master file is empty: {master_path}",
@@ -313,7 +313,7 @@ def inspect_master_readiness(
                         "Wait for acquisition metadata to finish writing, or repair "
                         "ntrigger before loading.",
                     )
-                images_per_trigger = int(1 if nimages is None else nimages)
+                images_per_trigger = 1 if nimages is None else nimages
                 if images_per_trigger < 1:
                     return result(
                         False,
@@ -322,7 +322,7 @@ def inspect_master_readiness(
                         "Wait for acquisition metadata to finish writing, or repair "
                         "nimages before loading.",
                     )
-                expected_frames = int(ntrigger * images_per_trigger)
+                expected_frames = ntrigger * images_per_trigger
                 expected_basis = (
                     f"master metadata ntrigger={ntrigger}, nimages={images_per_trigger}"
                 )
@@ -338,15 +338,15 @@ def inspect_master_readiness(
 
             for source in sources:
                 source_path, dataset_path = source.path, source.dataset_path
+                record: dict = {
+                    "name": source.name,
+                    "kind": "external" if source.external else "inline",
+                    "file": source_path,
+                    "dataset": dataset_path,
+                }
+                datasets.append(record)
                 if source.external:
                     initial_files[source_path] = file_signature(source_path)
-                    record: dict = {
-                        "name": source.name,
-                        "kind": "external",
-                        "file": source_path,
-                        "dataset": dataset_path,
-                    }
-                    datasets.append(record)
                     source_stat = initial_files[source_path]
                     if source_stat.get("missing", False):
                         return result(
@@ -364,7 +364,7 @@ def inspect_master_readiness(
                             "Fix file permissions or storage availability, then "
                             "poll again.",
                         )
-                    if int(source_stat.get("size", 0)) <= 0:
+                    if source_stat.get("size", 0) <= 0:
                         return result(
                             False,
                             f"linked detector file is empty: {source_path}",
@@ -395,13 +395,6 @@ def inspect_master_readiness(
                         dtype_str = np.dtype(dataset.dtype).str
                         metadata_shape = _attribute_scan_shape(dataset.attrs)
                 else:
-                    record = {
-                        "name": source.name,
-                        "kind": "inline",
-                        "file": source_path,
-                        "dataset": dataset_path,
-                    }
-                    datasets.append(record)
                     try:
                         dataset = master[dataset_path]
                         shape = tuple(int(value) for value in dataset.shape)
@@ -442,7 +435,7 @@ def inspect_master_readiness(
                 detector_shapes.add(current_detector_shape)
                 dtypes.add(dtype_str)
 
-            actual_frames = int(observed_frames)
+            actual_frames = observed_frames
             if len(detector_shapes) != 1:
                 observed = ", ".join(str(shape) for shape in sorted(detector_shapes))
                 return result(
@@ -478,7 +471,7 @@ def inspect_master_readiness(
                 and len(metadata_scan_shapes) == 1
             ):
                 metadata_scan_shape = next(iter(metadata_scan_shapes))
-                expected_frames = int(metadata_scan_shape[0] * metadata_scan_shape[1])
+                expected_frames = metadata_scan_shape[0] * metadata_scan_shape[1]
                 expected_basis = f"HDF5 scan_shape={metadata_scan_shape}"
             if actual_frames < 1:
                 return result(
@@ -533,27 +526,21 @@ def inspect_master_readiness(
     ]
     if changed:
         names = ", ".join(os.path.basename(path) for path in changed)
-        return MasterReadiness(
-            ready=False,
-            reason=f"source files changed during readiness inspection: {names}",
-            action=(
-                "Wait for acquisition or copy writes to finish, then compare a "
-                "fresh readiness signature on the next poll."
-            ),
-            source_kind=source_kind,
-            actual_frames=actual_frames,
-            expected_frames=expected_frames,
-            detector_shape=detector_shape,
-            dtype=common_dtype,
-            source_signature=final_signature,
+        reason = f"source files changed during readiness inspection: {names}"
+        action = (
+            "Wait for acquisition or copy writes to finish, then compare a "
+            "fresh readiness signature on the next poll."
         )
-    return MasterReadiness(
-        ready=True,
-        reason=(
+    else:
+        reason = (
             "master and detector sources are complete, readable, and internally "
             "consistent"
-        ),
-        action="Ready to open with Show4DSTEM.",
+        )
+        action = "Ready to open with Show4DSTEM."
+    return MasterReadiness(
+        ready=not changed,
+        reason=reason,
+        action=action,
         source_kind=source_kind,
         actual_frames=actual_frames,
         expected_frames=expected_frames,

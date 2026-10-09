@@ -1,8 +1,6 @@
 """Custom fixed-size CUDA FFT kernels for SSB (128x128).
 
-128 = 4^3 x 2: three radix-4 stages plus a final radix-2 stage.  The
-optimizer row-sparse path evaluates every row at 128x128, matching the
-CUDA reference-equivalent row mask pinned for the MPS reference path.
+128 = 4^3 x 2: three radix-4 stages plus a final radix-2 stage.
 """
 
 from functools import lru_cache

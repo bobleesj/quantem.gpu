@@ -384,7 +384,7 @@ def _phase_cols_small_scalar_pair_kernel(
 
 def phase_cols_small_sum_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
     """Fuse 128/256/1024-column IFFT and phase accumulation without loss work."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if (
         len(shape) != 3
         or shape[-2] != shape[-1]
@@ -422,7 +422,7 @@ def phase_cols_small_sum_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
 
 def phase_cols_small_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
     """Fuse 128/256/1024-column IFFT, phase sum, and scalar phase-squared loss."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if (
         len(shape) != 3
         or shape[-2] != shape[-1]
@@ -465,7 +465,7 @@ def phase_cols_small_scalar_loss_batch_from_row_ifft(
     packed_pair: bool = False,
 ):
     """Run exact small-scan column FFT and reductions for candidate batches."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if (
         len(shape) != 4
         or shape[-2] != shape[-1]

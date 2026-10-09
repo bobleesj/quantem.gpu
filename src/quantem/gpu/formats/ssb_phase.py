@@ -31,7 +31,7 @@ def acquisition_identity(master: Path) -> str:
         raise ValueError("This export currently requires an ARINA master with external data members.")
     members = [Path(source.path) for source in sources]
     digest = hashlib.sha256(b"live4dstem.dataset/v0.1\0")
-    for index, path in enumerate([master] + members):
+    for index, path in enumerate([master, *members]):
         before = path.stat()
         with path.open("rb") as stream:
             member = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -67,42 +67,42 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
     path = manifest.parent / name
     if path.resolve().parent != manifest.parent.resolve():
         raise ValueError("The companion phase must be inside the result folder.")
-    rows, cols = record["rows"], record["columns"]
-    if (type(rows) is not int or type(cols) is not int
-            or not (0 < rows <= 4096 and 0 < cols <= 4096)
-            or path.stat().st_size > rows * cols * 4 + 65536):
+    rows, columns = record["rows"], record["columns"]
+    if (type(rows) is not int or type(columns) is not int
+            or not (0 < rows <= 4096 and 0 < columns <= 4096)
+            or path.stat().st_size > rows * columns * 4 + 65536):
         raise ValueError("Invalid SSB phase dimensions or file size.")
     with path.open("rb") as stream:
         if stream.read(8) != b"\x93NUMPY\x01\x00":
             raise ValueError("Expected NumPy v1 phase data.")
     array = np.load(path, allow_pickle=False)
     identity = record["sourceIdentity"]
-    if (array.dtype.str != "<f4" or array.shape != (rows, cols)
+    if (array.dtype.str != "<f4" or array.shape != (rows, columns)
             or not array.flags.c_contiguous or not np.isfinite(array).all()
             or record.get("phaseUnits") != "rad"
             or record.get("phaseEncoding") != "float32-le-row-major"
-            or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity)
+            or len(identity) != 64 or any(character not in "0123456789abcdef" for character in identity)
             or (expected_identity is not None and identity != expected_identity)
             or hashlib.sha256(array.tobytes()).hexdigest() != record["phaseSHA256"]):
         raise ValueError("SSB result has wrong source identity, dtype, shape or checksum.")
-    cal = record["calibration"]
+    calibration = record["calibration"]
     for key in ("beamEnergyKeV", "semiangleMrad", "scanStepRowAngstroms",
                 "scanStepColumnAngstroms", "detectorStepRowMrad", "detectorStepColumnMrad"):
-        if not np.isfinite(cal[key]) or cal[key] <= 0:
+        if not np.isfinite(calibration[key]) or calibration[key] <= 0:
             raise ValueError(f"Invalid calibration: {key}.")
     if not all(np.isfinite(record[key]) for key in
                ("c10Nanometers", "c12Nanometers", "phi12Radians", "rotationDegrees")):
         raise ValueError("Non-finite SSB aberrations.")
-    if not all(np.isfinite(cal[key]) for key in ("centerRow", "centerColumn")):
+    if not all(np.isfinite(calibration[key]) for key in ("centerRow", "centerColumn")):
         raise ValueError("Non-finite detector center.")
-    radius = cal.get("brightfieldRadiusPixels")
+    radius = calibration.get("brightfieldRadiusPixels")
     if radius is not None and (not np.isfinite(radius) or radius <= 0):
         raise ValueError("Bright-field radius must be positive.")
     if not isinstance(record.get("provenance"), dict) or not record["provenance"]:
         raise ValueError("SSB result needs recorded provenance.")
     if not all(isinstance(value, str) for value in record["provenance"].values()):
         raise ValueError("Provenance values must be strings.")
-    if any(type(pixel) is not int or pixel < 0 for pixel in cal.get("excludedDetectorPixels", []) or []):
+    if any(type(pixel) is not int or pixel < 0 for pixel in calibration.get("excludedDetectorPixels", []) or []):
         raise ValueError("Excluded detector pixels must be nonnegative integer indices.")
     if not isinstance(record["runMetadata"], dict):
         raise ValueError("SSB run metadata must be a readable JSON object.")
@@ -157,8 +157,9 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
             or any(size < 1 or size > 4096 for size in phase.shape)
             or not np.isfinite(phase).all()):
         raise ValueError("Expected a finite 2D float32 SSB phase, at most 4096 pixels per axis; no implicit precision conversion is allowed.")
+    # The checksum and the .npy companion describe little-endian row-major float32 bytes.
     phase = np.ascontiguousarray(phase, dtype="<f4")
-    values = phase.astype("<f4", copy=False).tobytes(order="C")
+    phase_bytes = phase.tobytes(order="C")
     radius = float(computed["bf_radius"])
     semiangle = float(ssb["semiangle_mrad"])
     step = float(ssb["scan_sampling_A"])
@@ -174,7 +175,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         format="live.ssb",
         schemaVersion=1, sourceIdentity=identity, rows=phase.shape[0], columns=phase.shape[1],
         phaseEncoding="float32-le-row-major", phaseUnits="rad",
-        phaseSHA256=hashlib.sha256(values).hexdigest(),
+        phaseSHA256=hashlib.sha256(phase_bytes).hexdigest(),
         calibration=calibration, c10Nanometers=float(aberrations["C10"]),
         c12Nanometers=float(aberrations["C12"]), phi12Radians=float(aberrations["phi12"]),
         rotationDegrees=float(ssb["rotation_angle_deg"]),

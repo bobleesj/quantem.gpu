@@ -1221,9 +1221,6 @@ void ifft512_rows_var_radix8_t64(const float2* __restrict__ data,
 class CustomFFT512(CustomFFTBase):
     """Custom 512x512 IFFT kernels for SSB."""
 
-    # the fused column-IFFT accumulate kernels write each pixel at col * 512 + row (see SSBEngine._row_col_phase)
-    accumulates_column_major = True
-
     def __init__(self) -> None:
         super().__init__(
             size=512,
@@ -1253,6 +1250,49 @@ class CustomFFT512(CustomFFTBase):
         self._rows_var_batch = self._module.get_function("ifft512_rows_var_radix8_t64")
         self._rows_var_block = (64, 1, 1)
         self._rows_var_grid_y = 512
+
+    def _rows_radix8(
+        self,
+        data: cp.ndarray,
+        G_qk: cp.ndarray,
+        cache: dict,
+        pk: cp.ndarray,
+        C10: float,
+        C12: float,
+        cos2phi12: float,
+        sin2phi12: float,
+        factor: float,
+        dc_value: complex,
+        num_bf: int,
+        gqk_cols: int,
+    ) -> None:
+        """Radix-8 row pass of both column-accumulate paths: correct G_qk for C10/C12 and IFFT each row into ``data``.
+
+        ``phase_scale`` (factor x wavelength^2) evaluates chi directly from |q -/+ k|^2, and ``inner2`` (the squared
+        radius inside the soft aperture edge, or -1) lets the kernel return aperture 1 there without evaluating the edge.
+        """
+        N = self._size
+        (kx_bf, ky_bf, qx_1d, qy_1d,
+         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        phase_scale = np.float32(factor * wavelength * wavelength)
+        max_ang = max(float(ang_y_rad), float(ang_x_rad))
+        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
+        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
+        grid_rows = (1, N // 4, num_bf)
+        self._rows_fused_pk_r8(
+            grid_rows,
+            (64, 4, 1),
+            (
+                kx_bf, ky_bf, qx_1d, qy_1d,
+                np.float32(wavelength), np.float32(semiangle_rad),
+                np.float32(ang_y_rad), np.float32(ang_x_rad),
+                np.float32(C10), np.float32(C12),
+                np.float32(cos2phi12), np.float32(sin2phi12),
+                np.float32(factor), phase_scale, inner2, pk, G_qk, data,
+                np.float32(dc_value.real), np.float32(dc_value.imag),
+                np.int32(num_bf), np.int32(gqk_cols),
+            ),
+        )
 
     def ifft2_fused_pk_col_accumulate(
         self,
@@ -1288,45 +1328,11 @@ class CustomFFT512(CustomFFTBase):
                 k_bf,
             )
         N = self._size
-        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
-            raise ValueError("Requires complex64 input")
-        if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
-            raise ValueError(f"Expects shape (num_bf, {N}, {N})")
-        num_bf = int(data.shape[0])
-        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
-            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
-        if G_qk.shape[2] not in (N, N // 2 + 1):
-            raise ValueError(
-                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
-            )
-        gqk_cols = int(G_qk.shape[2])
-        if pk.shape != (num_bf,):
-            raise ValueError("pk must have shape (num_bf,)")
+        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
         n_groups = (num_bf + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):
             raise ValueError(f"partial buffers must have shape ({n_groups}, {N}, {N})")
-        (kx_bf, ky_bf, qx_1d, qy_1d,
-         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-        phase_scale = np.float32(factor * wavelength * wavelength)
-        max_ang = max(float(ang_y_rad), float(ang_x_rad))
-        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
-        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
-
-        grid_rows = (1, N // 4, num_bf)
-        self._rows_fused_pk_r8(
-            grid_rows,
-            (64, 4, 1),
-            (
-                kx_bf, ky_bf, qx_1d, qy_1d,
-                np.float32(wavelength), np.float32(semiangle_rad),
-                np.float32(ang_y_rad), np.float32(ang_x_rad),
-                np.float32(C10), np.float32(C12),
-                np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), phase_scale, inner2, pk, G_qk, data,
-                np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(gqk_cols),
-            ),
-        )
+        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
         grid_cols = (1, self._rows_var_grid_y, n_groups)
         self._rows_var_batch(
             grid_cols,
@@ -1359,45 +1365,11 @@ class CustomFFT512(CustomFFTBase):
     ) -> None:
         """Row FFT + fused column IFFT with phase-sum accumulation only."""
         N = self._size
-        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
-            raise ValueError("Requires complex64 input")
-        if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
-            raise ValueError(f"Expects shape (num_bf, {N}, {N})")
-        num_bf = int(data.shape[0])
-        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
-            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
-        if G_qk.shape[2] not in (N, N // 2 + 1):
-            raise ValueError(
-                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
-            )
-        gqk_cols = int(G_qk.shape[2])
-        if pk.shape != (num_bf,):
-            raise ValueError("pk must have shape (num_bf,)")
+        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
         n_groups = (num_bf + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N):
             raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
-        (kx_bf, ky_bf, qx_1d, qy_1d,
-         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-        phase_scale = np.float32(factor * wavelength * wavelength)
-        max_ang = max(float(ang_y_rad), float(ang_x_rad))
-        inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
-        inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
-
-        grid_rows = (1, N // 4, num_bf)
-        self._rows_fused_pk_r8(
-            grid_rows,
-            (64, 4, 1),
-            (
-                kx_bf, ky_bf, qx_1d, qy_1d,
-                np.float32(wavelength), np.float32(semiangle_rad),
-                np.float32(ang_y_rad), np.float32(ang_x_rad),
-                np.float32(C10), np.float32(C12),
-                np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), phase_scale, inner2, pk, G_qk, data,
-                np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(gqk_cols),
-            ),
-        )
+        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
         if k_bf == self._colvar_group:
             if (
                 self._phase_sum_dummy_sumsq is None

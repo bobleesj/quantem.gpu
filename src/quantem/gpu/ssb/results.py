@@ -390,7 +390,7 @@ class SSBResult(Mapping[str, float]):
             panel_size = (6, 6)
         else:
             raise ValueError(f"Choose view='phase', 'probe' or 'rotation'; got {view!r}.")
-        figure, axes = show_2d(
+        figure, _ = show_2d(
             arrays, title=titles,
             norm=({"interval_type": "manual", "vmin": self.phase_limits[0],
                    "vmax": self.phase_limits[1]} if view == "phase" else "minmax"),
@@ -462,23 +462,6 @@ class SSBSeriesResult:
             **show_kwargs,
         )
 
-    def metrics(self):
-        """Return one readable row per SSB acquisition."""
-        import pandas as pd
-
-        return (
-            pd.DataFrame(self.records)
-            .style.format(
-                {
-                    "C10 (nm)": "{:.3f}",
-                    "C12 (nm)": "{:.3f}",
-                    "phi12 (rad)": "{:.5f}",
-                    "loss": "{:.7f}",
-                }
-            )
-            .hide(axis="index")
-        )
-
     def metadata(self):
         """Return compact source and reconstruction metadata as a readable table."""
         import pandas as pd
@@ -543,6 +526,7 @@ def column_sign(phase: object) -> float:
     histogram has a long tail on the positive side (few bright columns over a flatter background). Rotating the scan by
     180 degrees negates the phase and the sign. SSB loses the absolute phase level, hence the median rather than zero.
     """
+    # float64 so the third moment of a large image is not rounded away
     values = host_array(phase).astype(np.float64).ravel()
     values = values - np.median(values)
     variance = float(np.mean(values * values))
@@ -601,8 +585,6 @@ def _is_cupy_array(value: object) -> bool:
 
 def _format_aberrations(aberrations: dict) -> str:
     """Format SSB aberration dict as aligned key-value lines."""
-    if not aberrations:
-        return "  (none)"
     lines = []
     if "C10" in aberrations:
         lines.append(f"  Defocus (C10)  {aberrations['C10']:.1f} nm")
@@ -697,14 +679,14 @@ def _phase_comparison(first, second, *, axsize: tuple[float, float]):
         raise ValueError("Crop edges do not match the second grid. Call show(compare=...) on the coarser result.")
     all_bounds = [bounds, np.rint(mapped).astype(int)]
     crops = [phase[begin[0]:end[0], begin[1]:end[1]]
-             for phase, (begin, end) in zip(phases, all_bounds)]
+             for phase, (begin, end) in zip(phases, all_bounds, strict=True)]
     titles = [f"{result.upsample}× phase · full field (rad)" for result in (first, second)]
     crop_titles = [f"{result.upsample}× phase · marked crop (rad)" for result in (first, second)]
     if (first.tilt_mrad is None) != (second.tilt_mrad is None):
         labels = ["Tilt fixed at zero" if result.tilt_mrad is None else "Tilt-corrected"
                   for result in (first, second)]
         titles = [f"{label} · {result.upsample}× phase (rad)"
-                  for label, result in zip(labels, (first, second))]
+                  for label, result in zip(labels, (first, second), strict=True)]
         crop_titles = [f"{label} · marked crop (rad)" for label in labels]
     bars = [{"sampling": step[1], "units": "Å", "fontsize": 13} for step in sampling]
     figure, axes = plt.subplots(2, 2, figsize=(2 * axsize[0], 2 * axsize[1]))
@@ -716,7 +698,7 @@ def _phase_comparison(first, second, *, axsize: tuple[float, float]):
         tight_layout=False,
     )
     image_axes = [axis for axis in figure.axes if axis.images]
-    for axis, (begin, end) in zip(image_axes[:2], all_bounds):
+    for axis, (begin, end) in zip(image_axes[:2], all_bounds, strict=True):
         axis.add_patch(Rectangle(
             (begin[1] - .5, begin[0] - .5), end[1] - begin[1], end[0] - begin[0],
             fill=False, edgecolor="#00D5FF", linewidth=2,

@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import torch
 from numba import njit, prange
 
 from quantem.gpu.device.metal_runtime import (
@@ -24,11 +25,6 @@ from quantem.gpu.device.metal_runtime import (
     release_buffer,
 )
 from quantem.gpu.formats.hdf5.frames import BLOCK_SIZE
-
-try:
-    import torch
-except ImportError:  # pragma: no cover - only for minimal IO-only installs
-    torch = None
 
 _MPS_LZ4_HASH_SIZE = 2048
 _MPS_LZ4_HASH_SHIFT = 21
@@ -53,10 +49,10 @@ class NativeU16Compressor:
         self.offsets = np.arange(self.max_blocks, dtype=np.int64) * self.max_out
         self._start_buf, self._start_np = self._u32_buffer()
         self._n_buf, self._n_np = self._u32_buffer()
-        self._frame_bytes_buf, self._frame_bytes_np = self._u32_buffer(self.frame_bytes)
+        self._frame_bytes_buf, _ = self._u32_buffer(self.frame_bytes)
         self._n_chunks_buf, self._n_chunks_np = self._u32_buffer()
-        self._n_8kb_buf, self._n_8kb_np = self._u32_buffer(self.n_8kb)
-        self._max_out_buf, self._max_out_np = self._u32_buffer(self.max_out)
+        self._n_8kb_buf, _ = self._u32_buffer(self.n_8kb)
+        self._max_out_buf, _ = self._u32_buffer(self.max_out)
         self._buffers = [
             self.shuffled,
             self.comp,
@@ -71,14 +67,14 @@ class NativeU16Compressor:
 
     def _u32_buffer(self, value: int = 0):
         """One uint32 kernel argument in its own shared buffer, with a host view to update it."""
-        buf = allocate_shared(4, "kernel argument")
-        view = numpy_view(buf, np.uint32, 1)
+        buffer = allocate_shared(4, "kernel argument")
+        view = numpy_view(buffer, np.uint32, 1)
         view[0] = np.uint32(value)
-        return buf, view
+        return buffer, view
 
     def close(self) -> None:
-        for buf in self._buffers:
-            release_buffer(buf)
+        for buffer in self._buffers:
+            release_buffer(buffer)
         self._buffers = []
 
     def __del__(self):
@@ -102,35 +98,35 @@ class NativeU16Compressor:
         self._n_np[0] = np.uint32(n_frames)
         self._n_chunks_np[0] = np.uint32(n_blocks)
 
-        cmd = metal_queue().commandBuffer()
-        enc = cmd.computeCommandEncoder()
-        enc.setComputePipelineState_(pipelines["bshuf_u16_save"])
-        enc.setBuffer_offset_atIndex_(chunk._mtl, 0, 0)
-        enc.setBuffer_offset_atIndex_(self.shuffled, 0, 1)
-        enc.setBuffer_offset_atIndex_(self._start_buf, 0, 2)
-        enc.setBuffer_offset_atIndex_(self._n_buf, 0, 3)
-        enc.setBuffer_offset_atIndex_(self._frame_bytes_buf, 0, 4)
-        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+        command = metal_queue().commandBuffer()
+        encoder = command.computeCommandEncoder()
+        encoder.setComputePipelineState_(pipelines["bshuf_u16_save"])
+        encoder.setBuffer_offset_atIndex_(chunk._mtl, 0, 0)
+        encoder.setBuffer_offset_atIndex_(self.shuffled, 0, 1)
+        encoder.setBuffer_offset_atIndex_(self._start_buf, 0, 2)
+        encoder.setBuffer_offset_atIndex_(self._n_buf, 0, 3)
+        encoder.setBuffer_offset_atIndex_(self._frame_bytes_buf, 0, 4)
+        encoder.dispatchThreadgroups_threadsPerThreadgroup_(
             metal.MTLSizeMake(
                 (n_frames * self.frame_bytes + 255) // 256, 1, 1
             ),
             metal.MTLSizeMake(256, 1, 1),
         )
-        enc.setComputePipelineState_(pipelines["lz4_rle_save"])
-        enc.setBuffer_offset_atIndex_(self.shuffled, 0, 0)
-        enc.setBuffer_offset_atIndex_(self.comp, 0, 1)
-        enc.setBuffer_offset_atIndex_(self.sizes, 0, 2)
-        enc.setBuffer_offset_atIndex_(self._n_chunks_buf, 0, 3)
-        enc.setBuffer_offset_atIndex_(self._frame_bytes_buf, 0, 4)
-        enc.setBuffer_offset_atIndex_(self._n_8kb_buf, 0, 5)
-        enc.setBuffer_offset_atIndex_(self._max_out_buf, 0, 6)
-        enc.dispatchThreadgroups_threadsPerThreadgroup_(
+        encoder.setComputePipelineState_(pipelines["lz4_rle_save"])
+        encoder.setBuffer_offset_atIndex_(self.shuffled, 0, 0)
+        encoder.setBuffer_offset_atIndex_(self.comp, 0, 1)
+        encoder.setBuffer_offset_atIndex_(self.sizes, 0, 2)
+        encoder.setBuffer_offset_atIndex_(self._n_chunks_buf, 0, 3)
+        encoder.setBuffer_offset_atIndex_(self._frame_bytes_buf, 0, 4)
+        encoder.setBuffer_offset_atIndex_(self._n_8kb_buf, 0, 5)
+        encoder.setBuffer_offset_atIndex_(self._max_out_buf, 0, 6)
+        encoder.dispatchThreadgroups_threadsPerThreadgroup_(
             metal.MTLSizeMake(n_blocks, 1, 1),
             metal.MTLSizeMake(32, 1, 1),
         )
-        enc.endEncoding()
-        cmd.commit()
-        cmd.waitUntilCompleted()
+        encoder.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
 
         return pack_chunks(
             self.comp_np,
@@ -176,10 +172,10 @@ def compress_tensor_batch(data_mps, n_8kb, frame_bytes, output_dtype):
                 f"elements; got frame_bytes={frame_bytes}, output dtype={output_dtype}."
             )
 
-    n = int(data_mps.shape[0])
+    n_frames = int(data_mps.shape[0])
     frame_elems = frame_bytes // itemsize
-    total = n * frame_bytes
-    data_mps = data_mps.reshape(n, -1).contiguous()
+    total = n_frames * frame_bytes
+    data_mps = data_mps.reshape(n_frames, -1).contiguous()
     # Torch and MLX use separate Metal command queues. The DLPack capsule
     # shares storage but does not make an asynchronous Torch cat/cast visible
     # to MLX; synchronize before the MLX bitshuffle kernel consumes it.
@@ -212,7 +208,7 @@ def compress_tensor_batch(data_mps, n_8kb, frame_bytes, output_dtype):
     mx.eval(shuffled)
 
     max_out = _MPS_LZ4_MAX_OUT
-    n_blocks = n * n_8kb
+    n_blocks = n_frames * n_8kb
     # Shuffled uint16 counts are long zero runs; the run-length encoder is
     # faster there, while the hash encoder also finds repeats in other dtypes.
     if output_dtype == np.dtype(np.uint16):
@@ -250,7 +246,7 @@ def compress_tensor_batch(data_mps, n_8kb, frame_bytes, output_dtype):
     comp_np = np.array(comp_buf, copy=False)
     sizes_np = np.array(sizes, copy=False)
     offsets_np = np.arange(n_blocks, dtype=np.int64) * int(max_out)
-    return pack_chunks(comp_np, sizes_np, offsets_np, n, n_8kb, frame_bytes)
+    return pack_chunks(comp_np, sizes_np, offsets_np, n_frames, n_8kb, frame_bytes)
 
 
 @lru_cache(maxsize=1)

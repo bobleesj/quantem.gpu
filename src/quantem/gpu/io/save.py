@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Self
 
 import numpy as np
+import torch
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats.qem.reference import save_array
@@ -26,11 +27,6 @@ from quantem.gpu.io.precision import precision_name, save_precision
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.float_ans import FloatANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
-
-try:
-    import torch
-except ImportError:  # pragma: no cover - only for minimal IO-only installs
-    torch = None
 
 
 @dataclass
@@ -180,7 +176,7 @@ def save(
     quantem.gpu.io.load : Round-trip read of these files; bit-exact for
         lossless storage. Precision conversions require their own error checks.
     """
-    if torch is not None and isinstance(data, torch.Tensor) and data.is_cuda:
+    if isinstance(data, torch.Tensor) and data.is_cuda:
         data = cp.from_dlpack(data.detach())
 
     if precision_name(dtype) or (isinstance(data, Dataset4dstemGPU) and "precision" in data.metadata):
@@ -225,7 +221,7 @@ def save(
         if isinstance(data, Dataset4dstemGPU):
             metadata = dict(data.metadata) if metadata is None else metadata
             data = data.data
-            if torch is not None and isinstance(data, torch.Tensor) and data.is_cuda:
+            if isinstance(data, torch.Tensor) and data.is_cuda:
                 data = cp.from_dlpack(data.detach())
         if dtype is not None or scan_shape is not None or source_master is not None:
             raise ValueError("Saving a native 4D acquisition preserves its own geometry; remove dtype, scan_shape, and source_master controls.")
@@ -249,7 +245,7 @@ def save(
             "Load the acquisition with representation='encoded' first; nothing was written."
         )
 
-    t0 = time.perf_counter()
+    started = time.perf_counter()
     if compression == "ans":
         raise ValueError(
             "compression='ans' is not supported for format='arina'; "
@@ -289,7 +285,7 @@ def save(
             compression_backend=compression_backend,
         )
         if verbose:
-            elapsed = time.perf_counter() - t0
+            elapsed = time.perf_counter() - started
             print(f"Saved {filepath} [{normalized_backend}/{compression}] in {elapsed:.2f}s")
         result = SaveResult(str(filepath), normalized_backend, complete=True)
         return result.wait() if wait else result
@@ -301,8 +297,8 @@ def save(
         )
 
     cuda_batch_size = 4096 if batch_size is None else int(batch_size)
-    data_gpu, dtype, scan_shape = _prepare_save_data(data, dtype, scan_shape)
-    n_frames, det_row, det_col = (int(x) for x in data_gpu.shape)
+    frames, dtype, scan_shape = _prepare_save_data(data, dtype, scan_shape)
+    n_frames, det_row, det_col = (int(size) for size in frames.shape)
 
     writer = H5Writer(
         filepath,
@@ -318,20 +314,20 @@ def save(
     )
     try:
         for start in range(0, n_frames, cuda_batch_size):
-            writer.write(data_gpu[start:start + cuda_batch_size])
+            writer.write(frames[start:start + cuda_batch_size])
     finally:
         writer.close(wait=wait)
 
     if verbose:
-        elapsed = time.perf_counter() - t0
+        elapsed = time.perf_counter() - started
         file_size = _output_file_size(filepath)
-        raw = n_frames * det_row * det_col * dtype.itemsize
+        raw_bytes = n_frames * det_row * det_col * dtype.itemsize
         codec = writer._compression
         if codec != "lz4":
             codec = f"{codec}@{writer._compression_level}"
         print(
-            f"Saved {filepath} [{codec}]: {raw / 1e9:.2f} GB -> "
-            f"{file_size / 1e9:.2f} GB ({raw / file_size:.1f}x) in {elapsed:.2f}s"
+            f"Saved {filepath} [{codec}]: {raw_bytes / 1e9:.2f} GB -> "
+            f"{file_size / 1e9:.2f} GB ({raw_bytes / file_size:.1f}x) in {elapsed:.2f}s"
         )
     result = SaveResult(str(filepath), "cuda", complete=bool(wait))
     return result.wait() if wait else result
@@ -345,24 +341,24 @@ def _prepare_save_data(data, dtype, scan_shape):
     """
     input_dtype = data.dtype if isinstance(data, cp.ndarray) else np.asarray(data).dtype
     dtype = _normalize_save_dtype(dtype if dtype is not None else _default_save_dtype(input_dtype))
-    data_gpu = data if isinstance(data, cp.ndarray) else cp.asarray(np.asarray(data))
-    if data_gpu.dtype != dtype:
-        if (np.issubdtype(data_gpu.dtype, np.floating)
+    frames = data if isinstance(data, cp.ndarray) else cp.asarray(np.asarray(data))
+    if frames.dtype != dtype:
+        if (np.issubdtype(frames.dtype, np.floating)
                 and np.issubdtype(dtype, np.integer)):
             lo, hi = int(np.iinfo(dtype).min), int(np.iinfo(dtype).max)
-            data_gpu = cp.clip(cp.rint(data_gpu), lo, hi).astype(dtype)
+            frames = cp.clip(cp.rint(frames), lo, hi).astype(dtype)
         else:
-            data_gpu = data_gpu.astype(dtype)
-    if data_gpu.ndim == 4:
-        inferred_scan = tuple(int(x) for x in data_gpu.shape[:2])
+            frames = frames.astype(dtype)
+    if frames.ndim == 4:
+        inferred_scan = tuple(int(size) for size in frames.shape[:2])
         if scan_shape is not None and tuple(scan_shape) != inferred_scan:
             raise ValueError(f"scan_shape={scan_shape} does not match data shape {inferred_scan}")
         scan_shape = inferred_scan
-        data_gpu = data_gpu.reshape(-1, data_gpu.shape[-2], data_gpu.shape[-1])
-    elif data_gpu.ndim != 3:
+        frames = frames.reshape(-1, frames.shape[-2], frames.shape[-1])
+    elif frames.ndim != 3:
         raise ValueError("save() expects 3D frames or 4D-STEM data")
-    data_gpu = cp.ascontiguousarray(data_gpu)
-    return data_gpu, dtype, scan_shape
+    frames = cp.ascontiguousarray(frames)
+    return frames, dtype, scan_shape
 
 
 def _is_cuda_array(data) -> bool:

@@ -3,45 +3,90 @@
 import importlib.util
 import os
 import platform
+import shutil
 import sys
 from typing import Literal, TypeAlias
 
 DeviceName = Literal["cuda", "mps", "webgpu"]
 NativeDeviceName = Literal["cuda", "mps"]
 
+INSTALL_CUDA = 'pip install "quantem.gpu[cuda]"'
+INSTALL_WIDGET_CUDA = 'pip install "quantem.widget[cuda]"'
+INSTALL_MPS = 'pip install "quantem.gpu[mps]"'
+INSTALL_WIDGET_MPS = 'pip install "quantem.widget[mps]"'
+# Each line prints once per process: the notice once, each auto choice once.
+_printed: set[str] = set()
 
-def least_busy_cuda_device(count: int | None = None) -> int:
-    """Return the visible CUDA device best suited to a large resident workflow.
 
-    Free memory is the admission constraint. Devices with comparable free memory
-    are ranked by utilization so an interactive workload does not silently slow a
-    large merge. NVML is optional; Torch free-memory ranking remains available.
+def resolve_device(device: str | None = "auto") -> str:
+    """Resolve ``device=`` to a Torch device string, the same way in every caller that accepts CPU.
+
+    ``"auto"`` (or ``None``) picks the best available device, CUDA, then
+    Apple MPS, then CPU, and prints one line naming the choice, once per
+    process, so CPU is never selected silently. ``"cuda"``, ``"cuda:N"``,
+    ``"mps"`` and ``"cpu"`` select that device and raise when it is not
+    available. When a GPU is present but its runtime is not installed, one
+    line names the ``pip`` command that enables it (see ``runtime_notice``).
+
+    The GPU-only loaders keep ``resolve_backend``, whose ``"auto"`` never
+    selects the CPU; this resolver is for computations that also run on CPU.
+
+    Parameters
+    ----------
+    device : str or None, default "auto"
+        ``"auto"``, ``"cuda"``, ``"cuda:N"``, ``"mps"`` or ``"cpu"``.
+
+    Returns
+    -------
+    str
+        ``"cuda:N"``, ``"mps"`` or ``"cpu"``.
     """
-    import torch
+    _print_once(runtime_notice())
+    resolved = str(profile(device)["device"])
+    if device is None or str(device).strip().lower() in {"", "auto"}:
+        _print_once(f'quantem.gpu: device="auto" selected {resolved}.')
+    return resolved
 
-    visible = torch.cuda.device_count() if count is None else int(count)
-    if visible < 1:
-        raise RuntimeError("No visible CUDA device is available.")
 
-    def by_free_memory() -> int:
-        free = [torch.cuda.mem_get_info(index)[0] for index in range(visible)]
-        return max(range(visible), key=lambda index: free[index])
+def runtime_notice() -> str | None:
+    """Return one line naming the missing GPU runtime and its install command, or None.
 
-    try:
-        import pynvml
-    except ImportError:
-        return by_free_memory()
-    try:
-        pynvml.nvmlInit()
-        ranked = []
-        for index in range(visible):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
-            utilization = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
-            free = pynvml.nvmlDeviceGetMemoryInfo(handle).free
-            ranked.append((-(free // (20 * 1024**3)), utilization, -free, index))
-        return min(ranked)[3]
-    except pynvml.NVMLError:
-        return by_free_memory()
+    An NVIDIA GPU (``nvidia-smi`` on the path or a loaded NVIDIA driver) is
+    unused without CuPy, and an Apple-silicon GPU without PyObjC Metal and
+    MLX; the ``[cuda]`` and ``[mps]`` extras install them. Without this line
+    the package would quietly run on the CPU, or refuse, on a machine that has
+    a GPU.
+    """
+    if sys.platform == "darwin":
+        if platform.machine() != "arm64":
+            return None
+        missing = [
+            package
+            for module, package in (("Metal", "pyobjc-framework-Metal"), ("mlx", "mlx"))
+            if importlib.util.find_spec(module) is None
+        ]
+        if not missing:
+            return None
+        gpu, runtime = "this Mac's Apple GPU", " and ".join(missing)
+        install, widget = INSTALL_MPS, INSTALL_WIDGET_MPS
+    else:
+        if shutil.which("nvidia-smi") is None and not os.path.exists("/proc/driver/nvidia"):
+            return None
+        if importlib.util.find_spec("cupy") is not None:
+            return None
+        gpu, runtime = "an NVIDIA GPU", "CuPy"
+        install, widget = INSTALL_CUDA, INSTALL_WIDGET_CUDA
+    return (
+        f"quantem.gpu: {gpu} is present but {runtime} is not installed, so the GPU is not used. "
+        f"Install it with: {install} (widget: {widget})"
+    )
+
+
+def _print_once(line: str | None) -> None:
+    """Print ``line`` the first time it occurs in this process."""
+    if line is not None and line not in _printed:
+        _printed.add(line)
+        print(line)
 
 
 def release_cached_memory() -> None:
@@ -75,11 +120,9 @@ def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
     cuda_available = False
     cuda_count = 0
     mps_available = False
-    torch_module = None
     try:
         import torch
 
-        torch_module = torch
         cuda_available = bool(torch.cuda.is_available())
         cuda_count = int(torch.cuda.device_count()) if cuda_available else 0
         mps_available = bool(torch.backends.mps.is_available())
@@ -101,14 +144,14 @@ def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
     elif requested == "mps":
         if not mps_available:
             raise RuntimeError(
-                "MPS device is unavailable; use profile() for automatic selection."
+                'MPS device is unavailable; use device="auto" for automatic selection.'
             )
         backend = "mps"
         resolved_device = "mps"
     elif requested == "cuda" or requested.startswith("cuda:"):
-        if not cuda_available or torch_module is None:
+        if not cuda_available:
             raise RuntimeError(
-                "CUDA device is unavailable; use profile() for automatic selection."
+                'CUDA device is unavailable; use device="auto" for automatic selection.'
             )
         if requested == "cuda":
             cuda_index = 0
@@ -158,11 +201,7 @@ def _cuda_probe() -> tuple[bool, str | None]:
     except ModuleNotFoundError:
         cupy_spec = None
     if cupy_spec is None:
-        note = "CuPy is not installed"
-        # An NVIDIA device node on Linux means CUDA would work with CuPy installed.
-        if sys.platform.startswith("linux") and os.path.exists("/dev/nvidia0"):
-            note += "; install the CuPy build matching the installed CUDA runtime"
-        return False, note
+        return False, f"CuPy is not installed; install it with {INSTALL_CUDA}"
     try:
         import cupy as cp
 
@@ -198,7 +237,7 @@ def detect() -> NativeDeviceName:
     not a scientific fallback. Browser WebGPU must be selected explicitly by
     the browser-facing caller.
     """
-
+    _print_once(runtime_notice())
     cuda_available, cuda_error = _cuda_probe()
     if cuda_available:
         return "cuda"
@@ -206,16 +245,17 @@ def detect() -> NativeDeviceName:
     if mps_available:
         return "mps"
     raise RuntimeError(
-        f"No QuantEM GPU backend is available. CUDA: {cuda_error}. MPS: {mps_error}."
+        f"No QuantEM GPU backend is available. CUDA: {cuda_error}. MPS: {mps_error}. "
+        'Pass device="cpu" where a CPU path exists.'
     )
 
 
 def resolve(name: str | None = "auto") -> DeviceName:
     """Validate and resolve a CUDA, MPS, or browser WebGPU backend name."""
-
     requested = "auto" if name is None else str(name).lower()
     if requested == "auto":
         return detect()
+    _print_once(runtime_notice())
     if requested == "webgpu":
         return "webgpu"
     if requested == "cuda":

@@ -85,7 +85,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
     if codec == FLOAT_CODEC:
         shape = header.get("shape")
         if (not isinstance(shape, list) or len(shape) != 4
-                or any(type(n) is not int or not 0 < n < 1 << 24 for n in shape)
+                or any(type(size) is not int or not 0 < size < 1 << 24 for size in shape)
                 or type(header.get("bytes")) is not int or header["bytes"] <= 0
                 or start + header["bytes"] != size
                 or not isinstance(header.get("sha256"), list)
@@ -106,7 +106,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
         shape = header["shape"]
         if (header["profile"] != INTEGER_CODEC or header["version"] != 1
                 or header["interval"] != 512 or header["dtype"] not in ("uint8", "uint16")
-                or len(shape) != 4 or any(type(n) is not int or n <= 0 for n in shape)):
+                or len(shape) != 4 or any(type(size) is not int or size <= 0 for size in shape)):
             raise ValueError("Unsupported ANS snapshot geometry or codec version.")
         pixels, fields = math.prod(shape[2:]), field_count(shape[2:])
         if len(bytes.fromhex(header["valid"])) != (pixels + 7) // 8:
@@ -128,7 +128,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
                             4: blocks * fields + 1, 5: blocks * fields}
                 cursor = (cursor + 7) & ~7
                 if (type(count) is not int or count < 0 or spec["offset"] != cursor
-                        or index in expected and count != expected[index]):
+                        or (index in expected and count != expected[index])):
                     raise ValueError("Invalid ANS array span.")
                 cursor += count * np.dtype(ARRAY_DTYPES[index]).itemsize
         if first != math.prod(shape[:2]) or header["bytes"] != cursor or start + cursor != size:
@@ -231,6 +231,11 @@ def validate_declared_processing(header: dict) -> None:
                 "Flagged detector pixels were replaced but processing does not declare "
                 "flagged_pixel_replacement; re-export the original acquisition."
             )
+    if retained.get("flagged_markers_stored_as_zero") and "flagged_marker_zeroing" not in declared:
+        raise ValueError(
+            "Flagged-pixel markers were stored as 0 but processing does not declare "
+            "flagged_marker_zeroing; re-export the original acquisition."
+        )
     source_dtype, stored_dtype = retained.get("source_dtype"), header.get("dtype")
     if source_dtype and stored_dtype and source_dtype != stored_dtype:
         operation = (
@@ -292,8 +297,8 @@ def _validate_scaled_layout(header: dict) -> None:
             cursor = (cursor + 7) & ~7
             count = spec.get("count")
             if (type(count) is not int or count < 0 or spec.get("offset") != cursor
-                    or index == 1 and count != streams + 1
-                    or index == 2 and count != streams):
+                    or (index == 1 and count != streams + 1)
+                    or (index == 2 and count != streams)):
                 raise ValueError("Invalid scaled .qem array span; save the result again.")
             cursor += count * itemsize
         first += scans
@@ -326,13 +331,14 @@ def validate_float_layout(handle, header: dict, start: int) -> None:
             if (type(length) is not int or length <= 0
                     or chunk[name + "_offset"] != cursor
                     or length > header["bytes"] - cursor
-                    or name == "offset" and length != (lanes + 1) * 4
-                    or name == "model" and length != lanes):
+                    or (name == "offset" and length != (lanes + 1) * 4)
+                    or (name == "model" and length != lanes)):
                 raise ValueError("Invalid float ANS array bounds.")
             if name != "payload":
                 handle.seek(start + cursor)
                 arrays[name] = handle.read(length)
             cursor += length
+        # int64 so a decreasing offset gives a negative length instead of wrapping.
         offsets = np.frombuffer(arrays["offset"], "<u4").astype(np.int64)
         models = np.frombuffer(arrays["model"], "u1")
         lengths = np.diff(offsets)

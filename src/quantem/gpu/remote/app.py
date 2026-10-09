@@ -268,7 +268,7 @@ def _wire_image(image: np.ndarray) -> tuple[bytes, str]:
         if np.issubdtype(image.dtype, np.signedinteger) and image.size and image.min() < 0:
             raise HTTPException(500, "Remote compute produced negative detector counts.")
         maximum = int(image.max()) if image.size else 0
-        if maximum > int(np.iinfo(np.uint32).max):
+        if maximum > np.iinfo(np.uint32).max:
             raise HTTPException(
                 409,
                 "Exact detector counts exceed uint32 display capacity. "

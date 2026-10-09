@@ -2,16 +2,18 @@
 
 from quantem.gpu.device.select import (
     detect,
-    least_busy_cuda_device,
     profile,
     release_cached_memory,
     resolve,
+    resolve_device,
+    runtime_notice,
 )
 
 __all__ = [
     "detect",
-    "least_busy_cuda_device",
     "profile",
     "release_cached_memory",
     "resolve",
+    "resolve_device",
+    "runtime_notice",
 ]

@@ -163,7 +163,7 @@ def phase_cols512_sum_from_row_ifft(
     tiled_input: bool = False,
 ):
     """Fuse masked radix-8 column IFFT and phase accumulation."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if len(shape) != 3 or shape[-2:] != (512, 512):
         raise ValueError(f"Expected row-IFFT chunk shape (BF, 512, 512), got {shape}.")
     batch_sum, _batch_sumsq = phase_cols512_scalar_loss_batch_from_row_ifft(
@@ -178,7 +178,7 @@ def phase_cols512_sum_from_row_ifft(
 
 def phase_cols512_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
     """Fuse 512-column IFFT, phase sum, and scalar phase-squared loss."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if len(shape) != 3 or shape[-2:] != (512, 512):
         raise ValueError(f"Expected row-IFFT chunk shape (BF, 512, 512), got {shape}.")
     num_bf = int(shape[0])
@@ -469,7 +469,7 @@ def phase_cols512_scalar_loss_batch_from_row_ifft(
     bf_stop: int | None = None,
 ):
     """Fuse 512-column IFFT and scalar loss for candidate-batched row IFFT."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if len(shape) != 4 or shape[-2:] != (512, 512):
         raise ValueError(
             "Expected row-IFFT chunk shape (batch, BF, 512, 512), "
@@ -517,7 +517,7 @@ def phase_cols512_pack_loss_batch_from_row_ifft(
     active_bf,
 ):
     """Evaluate original BF boundaries together while keeping separate sums."""
-    shape = tuple(int(x) for x in row_ifft.shape)
+    shape = tuple(int(size) for size in row_ifft.shape)
     if len(shape) != 4 or shape[-2:] != (512, 512):
         raise ValueError(
             "Expected row-IFFT pack shape (batch, BF, 512, 512), "

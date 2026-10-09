@@ -49,17 +49,6 @@ def fit_sample_search(
     warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
     half_pi = math.pi / 2.0
 
-    def standard(trial):
-        return -objective(trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max),
-                          trial.suggest_float("phi12", -half_pi, half_pi), (0.0, 0.0), 0.0)
-
-    def thick(trial):
-        return -objective(trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max),
-                          trial.suggest_float("phi12", -half_pi, half_pi),
-                          (trial.suggest_float("tilt_row_mrad", -tilt_limit_mrad, tilt_limit_mrad),
-                           trial.suggest_float("tilt_col_mrad", -tilt_limit_mrad, tilt_limit_mrad)),
-                          trial.suggest_float("thickness", *thickness_range))
-
     def suggest(trial, with_sample: bool) -> list[float]:
         row = [trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max), trial.suggest_float("phi12", -half_pi, half_pi)]
         if with_sample:
@@ -69,18 +58,22 @@ def fit_sample_search(
             row += [0.0, 0.0, 0.0]
         return row
 
+    def evaluate(trial, with_sample: bool) -> float:
+        row = suggest(trial, with_sample)
+        return -objective(row[0], row[1], row[2], (row[3], row[4]), row[5])
+
     def run(study, n_trials: int, with_sample: bool, progress=None) -> None:
         if objective_batch is None:
-            study.optimize(thick if with_sample else standard, n_trials=int(n_trials),
-                           callbacks=[lambda s, t: progress.update(1)] if progress is not None else None)
+            study.optimize(lambda trial: evaluate(trial, with_sample), n_trials=int(n_trials),
+                           callbacks=[lambda _study, _trial: progress.update(1)] if progress is not None else None)
             return
         # ask/tell in batches: TPE proposes batch_size trials, the backend evaluates them in one pass
         done = 0
         while done < n_trials:
             batch = [study.ask() for _ in range(min(batch_size, n_trials - done))]
-            values = objective_batch(np.array([suggest(t, with_sample) for t in batch], dtype=np.float64))
-            for t, v in zip(batch, values):
-                study.tell(t, -float(v))
+            values = objective_batch(np.array([suggest(trial, with_sample) for trial in batch], dtype=np.float64))
+            for trial, value in zip(batch, values, strict=True):
+                study.tell(trial, -float(value))
             done += len(batch)
             if progress is not None:
                 progress.update(len(batch))
@@ -89,8 +82,8 @@ def fit_sample_search(
         # chi depends on 2 (phi - phi12): phi12 is periodic in pi, so it wraps instead of being bounded
         return (phi + half_pi) % math.pi - half_pi
 
-    def single(x) -> float:
-        row = np.array([[x[0], abs(x[1]), wrap_phi(x[2]), x[3], x[4], abs(x[5])]], dtype=np.float64)
+    def single(point) -> float:
+        row = np.array([[point[0], abs(point[1]), wrap_phi(point[2]), point[3], point[4], abs(point[5])]], dtype=np.float64)
         return float(objective_batch(row)[0]) if objective_batch is not None else objective(row[0, 0], row[0, 1], row[0, 2], (row[0, 3], row[0, 4]), row[0, 5])
 
     thin = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=seed, multivariate=True))
@@ -111,26 +104,27 @@ def fit_sample_search(
               thickness_range]
     # Polish from the best few distinct trials and keep the best: one start is fragile - a float-level difference between
     # backends sent the MPS search on the logic crop to a worse local optimum (fit 4.0e12 vs 5.9e12 at the CUDA answer).
-    ranked = sorted((t for t in study.trials if t.value is not None), key=lambda t: t.value)
+    ranked = sorted((trial for trial in study.trials if trial.value is not None), key=lambda trial: trial.value)
     starts: list[np.ndarray] = []
-    for t in ranked:
-        x = np.array([t.params[name] for name in PARAMETERS])
-        if all(np.max(np.abs(x - y) / np.array([50.0, 20.0, 0.3, 2.0, 2.0, 50.0])) > 1.0 for y in starts):
-            starts.append(x)
+    for trial in ranked:
+        point = np.array([trial.params[name] for name in PARAMETERS])
+        if all(np.max(np.abs(point - start) / np.array([50.0, 20.0, 0.3, 2.0, 2.0, 50.0])) > 1.0 for start in starts):
+            starts.append(point)
         if len(starts) == polish_starts:
             break
     if polish_starts == 0:      # refinement=None: the best trial as is
         best = {name: float(study.best_params[name]) for name in PARAMETERS}
         fit = float(-study.best_value)
     else:
-        polished = [minimize(lambda x: -single(x) / scale, x0, method="Nelder-Mead", bounds=bounds,
-                             options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for x0 in starts]
-        polish = min(polished, key=lambda r: r.fun)
-        best = dict(zip(PARAMETERS, (float(v) for v in polish.x)))
+        polished = [minimize(lambda point: -single(point) / scale, start, method="Nelder-Mead", bounds=bounds,
+                             options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for start in starts]
+        polish = min(polished, key=lambda outcome: outcome.fun)
+        best = dict(zip(PARAMETERS, (float(value) for value in polish.x), strict=True))
         fit = float(-polish.fun) * scale
     best["C12"], best["thickness"], best["phi12"] = abs(best["C12"]), abs(best["thickness"]), wrap_phi(best["phi12"])
     standard_fit = float(-thin.best_value)
     return {**best, "fit": fit, "standard_fit": standard_fit, "gain": fit / standard_fit if standard_fit > 0 else float("nan"),
-            "standard": {k: float(v) for k, v in thin.best_params.items()}, "band_inv_A": list(band_inv_A), "trials": int(trials),
-            "trial_records": [{"number": t.number, "params": dict(t.params), "loss": float(t.value)}
-                              for t in study.trials if t.value is not None and math.isfinite(t.value)]}
+            "standard": {name: float(value) for name, value in thin.best_params.items()}, "band_inv_A": list(band_inv_A),
+            "trials": int(trials),
+            "trial_records": [{"number": trial.number, "params": dict(trial.params), "loss": float(trial.value)}
+                              for trial in study.trials if trial.value is not None and math.isfinite(trial.value)]}

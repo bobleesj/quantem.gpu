@@ -32,7 +32,7 @@ def rotate_array(
     ``"bilinear"``, which returns float32. Returns a CuPy array.
     """
     source = cp.ascontiguousarray(data)
-    source_rows, source_columns = (int(value) for value in source.shape[:2])
+    source_rows, source_columns = source.shape[:2]
     output_rows, output_columns = output_shape
     detector_size = int(np.prod(source.shape[2:], dtype=np.int64))
     angle_radians = math.radians(angle_degrees)

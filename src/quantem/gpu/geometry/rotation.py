@@ -365,30 +365,18 @@ def _exact_rotation(
 
 def _center_to_shape(data, output_shape: tuple[int, int], fill_value: float):
     """Center-crop or pad an exact rotation to one scan shape."""
-    source_rows, source_columns = (int(value) for value in data.shape[:2])
+    source_rows, source_columns = data.shape[:2]
     output_rows, output_columns = output_shape
+    shape = (output_rows, output_columns, *data.shape[2:])
     kind = _array_kind(data)
     if kind == "torch":
         import torch
 
-        result = torch.full(
-            (output_rows, output_columns, *data.shape[2:]),
-            fill_value,
-            dtype=data.dtype,
-            device=data.device,
-        )
+        result = torch.full(shape, fill_value, dtype=data.dtype, device=data.device)
     elif kind == "cupy":
-        result = cp.full(
-            (output_rows, output_columns, *data.shape[2:]),
-            fill_value,
-            dtype=data.dtype,
-        )
+        result = cp.full(shape, fill_value, dtype=data.dtype)
     else:
-        result = np.full(
-            (output_rows, output_columns, *data.shape[2:]),
-            fill_value,
-            dtype=data.dtype,
-        )
+        result = np.full(shape, fill_value, dtype=data.dtype)
     copy_rows = min(source_rows, output_rows)
     copy_columns = min(source_columns, output_columns)
     source_row = (source_rows - copy_rows) // 2

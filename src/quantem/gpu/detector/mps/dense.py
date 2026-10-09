@@ -59,10 +59,6 @@ class MetalRawBackend(DetectorQueries):
             threading.Thread(target=self._build_fast, daemon=True).start()
 
     @property
-    def has_fast(self) -> bool:
-        return isinstance(self.frames, ChunkedFrames) and self.frames.fast_vi is not None
-
-    @property
     def fast_bin(self) -> int:
         return self.frames.fast_bin if isinstance(self.frames, ChunkedFrames) else 2
 
@@ -125,29 +121,6 @@ class MetalRawBackend(DetectorQueries):
             return com_col * factor, com_row * factor
         mask = None if det_mask is None else np.ascontiguousarray(det_mask)
         return self.frames.vi.center_of_mass(mask)
-
-    def ensure_fast_sidecar(self, verbose: bool = False) -> bool:
-        """Block until the sidecar is ready; True when ready or when data binned at load needs none."""
-        if self.frames.det_bin > 1:
-            return True
-        if not isinstance(self.frames, ChunkedFrames):
-            return False
-        self.frames.ensure_fast_interaction(verbose=verbose)
-        return self.frames.fast_vi is not None
-
-    def cache_fast_presets(self, masks: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Virtual images on the sidecar for named detector masks (``{"bf": mask, ...}``).
-
-        Returns ``(scan_row, scan_col)`` float32 images; the caller stores the bytes.
-        """
-        if not self.has_fast:
-            return {}
-        return {
-            name: np.asarray(self.frames.fast_vi.masked_sum(bin_mask(np.ascontiguousarray(mask), self.fast_bin)))
-            .reshape(self.scan_shape)
-            .astype(np.float32, copy=False)
-            for name, mask in masks.items()
-        }
 
     # ---
 

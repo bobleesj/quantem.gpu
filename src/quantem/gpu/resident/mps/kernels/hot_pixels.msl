@@ -76,6 +76,8 @@ kernel void hot_zero(
     if (item >= p[3]) return;
     if (p[4] == 1)
         correct_one(frames, valid, bad, p, item, false);
-    else
+    else if (p[4] == 2)
         correct_one(reinterpret_cast<device ushort *>(frames), valid, bad, p, item, false);
+    else
+        correct_one(reinterpret_cast<device uint *>(frames), valid, bad, p, item, false);
 }

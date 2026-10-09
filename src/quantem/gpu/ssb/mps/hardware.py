@@ -81,14 +81,14 @@ def _default_phase_loss_chunk_bf(
     if scan_shape is None:
         return chunk
 
-    ny, nx = (max(1, int(scan_shape[0])), max(1, int(scan_shape[1])))
-    if max(ny, nx) <= 256:
+    scan_rows, scan_cols = (max(1, int(scan_shape[0])), max(1, int(scan_shape[1])))
+    if max(scan_rows, scan_cols) <= 256:
         if total >= 96 * 1024**3:
             return 16384
         if total >= 64 * 1024**3:
             return 8192
         return 4096
-    if max(ny, nx) >= 1024:
+    if max(scan_rows, scan_cols) >= 1024:
         # Full-BF 1024 phase/loss on MLX/Metal hits a scheduling and
         # allocation cliff at very large chunks. After scalar-loss reduction,
         # 512 BF is the best measured default on a 96 GB-class Apple GPU.

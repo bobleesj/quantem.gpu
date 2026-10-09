@@ -1,7 +1,5 @@
 """GIF and MP4 export of STEM result movies: frame layout, labels, contrast, and backend choice."""
 
-import math
-import pathlib
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -28,16 +26,15 @@ def _is_pil_frame_sequence(data: object) -> bool:
 
 def _as_stack_list(data: MovieData) -> list[np.ndarray]:
     """Normalize public movie data to a list of 3D stacks."""
-
     if isinstance(data, np.ndarray):
-        arr = np.asarray(data)
-        if arr.ndim == 3:
-            return [arr]
-        if arr.ndim == 4:
-            return [arr[i] for i in range(arr.shape[0])]
+        array = np.asarray(data)
+        if array.ndim == 3:
+            return [array]
+        if array.ndim == 4:
+            return [array[index] for index in range(array.shape[0])]
         raise ValueError(
             "movie data must have shape (frame, row, col) or "
-            f"(movie, frame, row, col), got {arr.shape}"
+            f"(movie, frame, row, col), got {array.shape}"
         )
 
     stacks = [np.asarray(item) for item in data]
@@ -53,6 +50,11 @@ def _as_stack_list(data: MovieData) -> list[np.ndarray]:
 
 
 def _validate_stacks(stacks: list[np.ndarray]) -> tuple[int, int, int]:
+    """Return the common (frames, height, width) of the stacks, or raise naming the first mismatch.
+
+    Every writer tiles one frame of each movie into the same grid frame, so a
+    stack with another frame count or image size cannot be laid out.
+    """
     frames, height, width = stacks[0].shape
     for index, stack in enumerate(stacks[1:], start=1):
         if stack.shape[0] != frames:
@@ -65,7 +67,7 @@ def _validate_stacks(stacks: list[np.ndarray]) -> tuple[int, int, int]:
                 "all movie stacks must have the same spatial dimensions; "
                 f"stack 0 has {(height, width)}, stack {index} has {stack.shape[1:]}"
             )
-    return int(frames), int(height), int(width)
+    return frames, height, width
 
 
 def _contrast_limits(
@@ -75,31 +77,58 @@ def _contrast_limits(
     shared: bool,
     ref_stacks: Sequence[np.ndarray] | None,
 ) -> list[tuple[float, float]]:
-    pmin, pmax = percentile
+    """Return each movie's display range ``(low, high)`` from the given percentiles.
+
+    Percentiles rather than min and max keep a few hot or dead pixels from
+    flattening the contrast. ``shared`` uses one range for every movie, taken
+    from ``ref_stacks`` when given, so panels stay comparable; a flat image
+    gets a range of one so the scaling never divides by zero.
+    """
+    low_percentile, high_percentile = percentile
     if shared:
-        refs = (
+        reference_stacks = (
             [np.asarray(item) for item in ref_stacks]
             if ref_stacks is not None
             else stacks
         )
-        values = np.concatenate([np.asarray(stack).ravel() for stack in refs])
-        lo, hi = np.percentile(values, [pmin, pmax])
-        if hi <= lo:
-            hi = lo + 1.0
-        return [(float(lo), float(hi))] * len(stacks)
+        values = np.concatenate([np.asarray(stack).ravel() for stack in reference_stacks])
+        low, high = np.percentile(values, [low_percentile, high_percentile])
+        if high <= low:
+            high = low + 1.0
+        return [(float(low), float(high))] * len(stacks)
 
     limits = []
     for stack in stacks:
-        lo, hi = np.percentile(np.asarray(stack).ravel(), [pmin, pmax])
-        if hi <= lo:
-            hi = lo + 1.0
-        limits.append((float(lo), float(hi)))
+        low, high = np.percentile(np.asarray(stack).ravel(), [low_percentile, high_percentile])
+        if high <= low:
+            high = low + 1.0
+        limits.append((float(low), float(high)))
     return limits
 
 
-def _to_uint8(stack: np.ndarray, lo: float, hi: float) -> np.ndarray:
+def _stacks_with_limits(
+    data: MovieData,
+    *,
+    percentile: tuple[float, float],
+    shared_contrast: bool,
+    ref_stacks: Sequence[np.ndarray] | None,
+) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
+    """Validate array movie data and set its display ranges once for a GPU writer."""
+    stacks = _as_stack_list(data)
+    _validate_stacks(stacks)
+    return stacks, _contrast_limits(
+        stacks, percentile=percentile, shared=shared_contrast, ref_stacks=ref_stacks
+    )
+
+
+def _to_uint8(stack: np.ndarray, low: float, high: float) -> np.ndarray:
+    """Map ``[low, high]`` linearly onto 0..255 and clip, for 8-bit GIF and MP4 frames.
+
+    The scaling runs in float64 so integer counts above 2**24 are represented
+    exactly before the final truncation to uint8.
+    """
     scaled = np.clip(
-        (stack.astype(np.float64) - lo) / (hi - lo) * 255.0,
+        (stack.astype(np.float64) - low) / (high - low) * 255.0,
         0.0,
         255.0,
     )
@@ -118,19 +147,22 @@ def _movie_frames(
     ref_stacks: Sequence[np.ndarray] | None,
     percentile: tuple[float, float],
 ) -> list[Image.Image]:
+    """Render the portable CPU writer's RGB frames: the movies tiled in a labeled grid.
+
+    Pre-rendered PIL frames pass through unchanged apart from RGB conversion.
+    Array stacks are scaled to 8 bits with their display ranges, resized with
+    Lanczos when the grid exceeds ``max_width``, and labeled
+    ``"<name> [frame/frames]"`` above each panel.
+    """
     if _is_pil_frame_sequence(data):
-        return [
-            frame.convert("RGB")
-            for frame in data
-            if isinstance(frame, Image.Image)
-        ]
+        return [frame.convert("RGB") for frame in data]
 
     stacks = _as_stack_list(data)
     n_frames, height, width = _validate_stacks(stacks)
     names = (
         [str(item) for item in labels]
         if labels is not None
-        else [f"Movie {i + 1}" for i in range(len(stacks))]
+        else [f"Movie {index + 1}" for index in range(len(stacks))]
     )
     limits = _contrast_limits(
         stacks,
@@ -139,52 +171,45 @@ def _movie_frames(
         ref_stacks=ref_stacks,
     )
     uint8_stacks = [
-        _to_uint8(stack, lo, hi)
-        for stack, (lo, hi) in zip(stacks, limits)
+        _to_uint8(stack, low, high)
+        for stack, (low, high) in zip(stacks, limits)
     ]
 
-    n_movies = len(stacks)
-    n_cols = min(n_movies, 3) if cols is None else max(1, int(cols))
-    n_rows = math.ceil(n_movies / n_cols)
-    gap = max(0, int(gap))
-    label_height = max(0, int(label_height))
-
-    total_width = n_cols * width + (n_cols - 1) * gap
-    cell_height = height + label_height
-    total_height = n_rows * cell_height + (n_rows - 1) * gap
-    scale = 1.0
-    if max_width is not None and total_width > int(max_width):
-        scale = int(max_width) / total_width
-    out_width = max(1, round(total_width * scale))
-    out_height = max(1, round(total_height * scale))
-    frame_width = max(1, round(width * scale))
-    frame_height = max(1, round(height * scale))
-    gap_scaled = max(0, round(gap * scale))
-    label_height_scaled = max(0, round(label_height * scale))
-    cell_height_scaled = frame_height + label_height_scaled
+    # The GPU writers' layout, so every backend places panels on the same grid: panel sizes and
+    # gaps are rounded first and the canvas is their sum, padded to even sides for H.264.
+    layout = grid_layout(
+        len(stacks),
+        height,
+        width,
+        cols=cols,
+        gap=gap,
+        label_height=label_height,
+        max_width=max_width,
+    )
+    resized = (layout.frame_width, layout.frame_height) != (width, height)
     fonts = [
-        label_font(label_font_size(label_height_scaled, name.count("\n") + 1))
+        label_font(label_font_size(layout.label_height, name.count("\n") + 1))
         for name in names
     ]
 
     frames: list[Image.Image] = []
-    for frame_idx in range(n_frames):
-        canvas = Image.new("RGB", (out_width, out_height), (0, 0, 0))
+    for frame_index in range(n_frames):
+        canvas = Image.new("RGB", (layout.width, layout.height), (0, 0, 0))
         draw = ImageDraw.Draw(canvas)
-        for movie_idx, stack_u8 in enumerate(uint8_stacks):
-            row, col = divmod(movie_idx, n_cols)
-            tile = Image.fromarray(stack_u8[frame_idx], mode="L").convert("RGB")
-            if scale != 1.0:
-                tile = tile.resize((frame_width, frame_height), Image.LANCZOS)
-            x = col * (frame_width + gap_scaled)
-            y = row * (cell_height_scaled + gap_scaled)
-            canvas.paste(tile, (x, y + label_height_scaled))
-            if movie_idx < len(names) and label_height_scaled > 0:
+        for movie_index, stack_uint8 in enumerate(uint8_stacks):
+            row, col = divmod(movie_index, layout.columns)
+            tile = Image.fromarray(stack_uint8[frame_index], mode="L").convert("RGB")
+            if resized:
+                tile = tile.resize((layout.frame_width, layout.frame_height), Image.LANCZOS)
+            left = col * (layout.frame_width + layout.gap)
+            top = row * (layout.frame_height + layout.label_height + layout.gap)
+            canvas.paste(tile, (left, top + layout.label_height))
+            if movie_index < len(names) and layout.label_height > 0:
                 draw.multiline_text(
-                    (x + 4, y + 2),
-                    f"{names[movie_idx]} [{frame_idx + 1}/{n_frames}]",
+                    (left + 4, top + 2),
+                    f"{names[movie_index]} [{frame_index + 1}/{n_frames}]",
                     fill=(255, 255, 255),
-                    font=fonts[movie_idx],
+                    font=fonts[movie_index],
                     spacing=2,
                 )
         frames.append(canvas)
@@ -206,7 +231,6 @@ def save_gif(
     percentile: tuple[float, float] = (1.0, 99.0),
 ) -> Path:
     """Save one or more grayscale movie stacks as an animated GIF."""
-
     frames = _movie_frames(
         data,
         labels=labels,
@@ -248,7 +272,6 @@ def save_mp4(
         back to the portable CPU writer. ``"cuda"`` requires an NVIDIA CUDA
         environment. ``"mps"`` requires an Apple Metal environment.
     """
-
     backend = str(backend).lower()
     if backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError(
@@ -263,7 +286,7 @@ def save_mp4(
         try_cuda = backend == "cuda"
         if backend == "auto":
             stacks = _as_stack_list(data)
-            _frames, height, width = _validate_stacks(stacks)
+            _, height, width = _validate_stacks(stacks)
             layout = grid_layout(
                 len(stacks),
                 height,
@@ -278,13 +301,8 @@ def save_mp4(
             large_enough = min(layout.width, layout.height) >= _CUDA_NVENC_MIN_EDGE_PX
             try_cuda = bool(large_enough and cuda.is_available())
         if try_cuda:
-            stacks = _as_stack_list(data)
-            _validate_stacks(stacks)
-            limits = _contrast_limits(
-                stacks,
-                percentile=percentile,
-                shared=shared_contrast,
-                ref_stacks=ref_stacks,
+            stacks, limits = _stacks_with_limits(
+                data, percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks
             )
             cuda_options = dict(backend_options)
             try:
@@ -312,13 +330,8 @@ def save_mp4(
     if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
         try_mps = backend == "mps" or (backend == "auto" and mps.is_available())
         if try_mps:
-            stacks = _as_stack_list(data)
-            _validate_stacks(stacks)
-            limits = _contrast_limits(
-                stacks,
-                percentile=percentile,
-                shared=shared_contrast,
-                ref_stacks=ref_stacks,
+            stacks, limits = _stacks_with_limits(
+                data, percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks
             )
             mps_options = dict(backend_options)
             try:
@@ -363,7 +376,6 @@ def save_movie(
     **kwargs,
 ) -> Path:
     """Save a GIF or MP4, using ``format`` or the output suffix."""
-
     suffix = (format or Path(path).suffix.lstrip(".")).lower()
     if suffix == "gif":
         return save_gif(data, path, **kwargs)
@@ -376,28 +388,28 @@ def save_movie(
 
 def _even_rgb_array(frame) -> np.ndarray:
     """Return an RGB uint8 array padded to even dimensions for H.264."""
-    arr = np.asarray(frame.convert("RGB"), dtype=np.uint8)
-    height, width = arr.shape[:2]
-    pad_h = height % 2
-    pad_w = width % 2
-    if pad_h or pad_w:
-        padded = np.zeros((height + pad_h, width + pad_w, 3), dtype=np.uint8)
-        padded[:height, :width] = arr
-        if pad_h:
-            padded[height:, :width] = arr[height - 1:height]
-        if pad_w:
-            padded[:height, width:] = arr[:, width - 1:width]
-        if pad_h and pad_w:
-            padded[height:, width:] = arr[height - 1, width - 1]
-        arr = padded
-    return arr
+    rgb = np.asarray(frame.convert("RGB"), dtype=np.uint8)
+    height, width = rgb.shape[:2]
+    pad_rows = height % 2
+    pad_columns = width % 2
+    if pad_rows or pad_columns:
+        padded = np.zeros((height + pad_rows, width + pad_columns, 3), dtype=np.uint8)
+        padded[:height, :width] = rgb
+        if pad_rows:
+            padded[height:, :width] = rgb[height - 1:height]
+        if pad_columns:
+            padded[:height, width:] = rgb[:, width - 1:width]
+        if pad_rows and pad_columns:
+            padded[height:, width:] = rgb[height - 1, width - 1]
+        rgb = padded
+    return rgb
 
 
-def _write_gif(frames: list[Image.Image], path: str | pathlib.Path, fps: float) -> pathlib.Path:
+def _write_gif(frames: list[Image.Image], path: str | Path, fps: float) -> Path:
     """Assemble RGB PIL frames into a looping GIF at the given fps."""
     if not frames:
         raise ValueError("write_gif requires at least one frame")
-    path = pathlib.Path(path)
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     duration = max(1, round(1000.0 / max(0.1, fps)))
     frames[0].save(
@@ -414,15 +426,15 @@ def _write_gif(frames: list[Image.Image], path: str | pathlib.Path, fps: float) 
 
 def _write_mp4(
     frames: list[Image.Image],
-    path: str | pathlib.Path,
+    path: str | Path,
     fps: float,
     *,
     crf: int = 18,
-) -> pathlib.Path:
+) -> Path:
     """Assemble RGB PIL frames into an H.264 MP4 using ffmpeg."""
     if not frames:
         raise ValueError("write_mp4 requires at least one frame")
-    path = pathlib.Path(path)
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         import imageio_ffmpeg
@@ -432,17 +444,17 @@ def _write_mp4(
         ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     arrays = [_even_rgb_array(frame) for frame in frames]
     height, width = arrays[0].shape[:2]
-    for index, arr in enumerate(arrays[1:], start=1):
-        if arr.shape[:2] != (height, width):
+    for index, rgb in enumerate(arrays[1:], start=1):
+        if rgb.shape[:2] != (height, width):
             raise ValueError(
                 "all MP4 frames must have the same size; "
-                f"frame 0 is {(height, width)}, frame {index} is {arr.shape[:2]}"
+                f"frame 0 is {(height, width)}, frame {index} is {rgb.shape[:2]}"
             )
-    with tempfile.TemporaryDirectory(prefix="quantem-gpu-mp4-") as tmp:
-        tmp_path = pathlib.Path(tmp)
-        for index, arr in enumerate(arrays):
-            Image.fromarray(arr, mode="RGB").save(tmp_path / f"frame_{index:06d}.png")
-        cmd = [
+    with tempfile.TemporaryDirectory(prefix="quantem-gpu-mp4-") as frame_folder_name:
+        frame_folder = Path(frame_folder_name)
+        for index, rgb in enumerate(arrays):
+            Image.fromarray(rgb, mode="RGB").save(frame_folder / f"frame_{index:06d}.png")
+        command = [
             ffmpeg,
             "-y",
             "-hide_banner",
@@ -451,7 +463,7 @@ def _write_mp4(
             "-framerate",
             f"{max(0.1, float(fps))}",
             "-i",
-            str(tmp_path / "frame_%06d.png"),
+            str(frame_folder / "frame_%06d.png"),
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -461,7 +473,7 @@ def _write_mp4(
             str(path),
         ]
         try:
-            subprocess.run(cmd, check=True)
+            subprocess.run(command, check=True)
         except FileNotFoundError as exc:
             raise RuntimeError(
                 "save_mp4 requires ffmpeg on PATH. Install ffmpeg or use save_gif instead."

@@ -1,4 +1,8 @@
 /** WebGPU shaders for DPC centering and integrated-DPC reconstruction. */
+
+// CoM -> DPC mean reduction. One workgroup reduces the scan-position CoM arrays
+// to their global row/col means. DPC display is then centered without pulling the
+// two full CoM maps back to JavaScript.
 export const DPC_MEAN_WGSL = `
 @group(0) @binding(0) var<storage,read> com: array<f32>;       // [row...][col...]
 @group(0) @binding(1) var<storage,read_write> mean: array<f32>; // mean[0]=row, mean[1]=col
@@ -207,7 +211,3 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (i >= u.x) { return; }
   phase[i] = -phaseComplex[i].x;
 }`;
-
-// Dense DF/ADF helper: out = full-detector total - complement sum. This mirrors
-// CUDA/MPS dense-mask behavior so dragging a large annulus reads the smaller
-// complement after the per-scan total image is cached.

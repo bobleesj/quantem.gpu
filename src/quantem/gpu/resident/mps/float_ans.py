@@ -69,7 +69,7 @@ class MPSFloatLanes(MPSStreamedCounts):
         selected = scratch = None
         try:
             selected = upload_shared(mask.astype(np.uint8), "Float detector mask")
-            scratch = allocate_shared(max(c.scans for c in self.chunks) * lanes * 2, "Bounded float entropy scratch")
+            scratch = allocate_shared(max(chunk.scans for chunk in self.chunks) * lanes * 2, "Bounded float entropy scratch")
             self._clear_errors()
             command = metal_queue().commandBuffer()
             for chunk in self.chunks:

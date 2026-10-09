@@ -79,9 +79,9 @@ def _frame_count(filepath: str) -> int | None:
     """
     try:
         with h5py.File(filepath, "r") as master:
-            det = "entry/instrument/detector/detectorSpecific/"
-            nimages = int(master[det + "nimages"][()]) if det + "nimages" in master else 1
-            ntrigger = int(master[det + "ntrigger"][()]) if det + "ntrigger" in master else None
+            specific = "entry/instrument/detector/detectorSpecific/"
+            nimages = int(master[specific + "nimages"][()]) if specific + "nimages" in master else 1
+            ntrigger = int(master[specific + "ntrigger"][()]) if specific + "ntrigger" in master else None
             if ntrigger is not None:
                 return nimages * ntrigger
             sources = detector_sources(master)

@@ -1,9 +1,7 @@
 """Custom fixed-size CUDA FFT kernels for SSB (1024x1024).
 
-1024 = 4^5.  This backend provides the full reconstruct path and the
-row-subsampled batched optimizer objective used by the 256/512 CUDA paths:
-fused gamma multiplication, row IFFT, column IFFT, and fused column phase
-accumulation.
+1024 = 4^5.  This backend provides the full reconstruct path: fused gamma
+multiplication, row IFFT, column IFFT, and fused column phase accumulation.
 """
 
 from functools import lru_cache
@@ -1011,9 +1009,6 @@ class CustomFFT1024(CustomFFTBase):
             cols_block=(256, 1, 1),
             cols_grid_y=1024,
         )
-        self._cols_accumulate_sum = self._module.get_function(
-            "ifft1024_cols_accumulate_sum_t256_mr2"
-        )
         self._cols_accumulate_split512 = self._module.get_function(
             "ifft1024_cols_accumulate_split512_t64"
         )
@@ -1025,6 +1020,44 @@ class CustomFFT1024(CustomFFTBase):
         )
         self._cols_split512_block = (64, 1, 1)
         self._rows_split512_block = (64, 1, 1)
+
+    def _rows_split512(
+        self,
+        data: cp.ndarray,
+        G_qk: cp.ndarray,
+        cache: dict,
+        pk: cp.ndarray,
+        C10: float,
+        C12: float,
+        cos2phi12: float,
+        sin2phi12: float,
+        factor: float,
+        dc_value: complex,
+        num_bf: int,
+        gqk_cols: int,
+    ) -> None:
+        """Row pass of both column-accumulate paths: correct G_qk for C10/C12 and IFFT each row into ``data``.
+
+        Each 1024-point row is two 512-point transforms joined by a final radix-2 step, stored transposed (row ``r``
+        becomes column ``r`` of the plane), the layout the split-512 column kernels read.
+        """
+        (kx_bf, ky_bf, qx_1d, qy_1d,
+         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
+        grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
+        self._rows_fused_pk_split512(
+            grid_rows,
+            self._rows_split512_block,
+            (
+                kx_bf, ky_bf, qx_1d, qy_1d,
+                np.float32(wavelength), np.float32(semiangle_rad),
+                np.float32(ang_y_rad), np.float32(ang_x_rad),
+                np.float32(C10), np.float32(C12),
+                np.float32(cos2phi12), np.float32(sin2phi12),
+                np.float32(factor), pk, G_qk, data,
+                np.float32(dc_value.real), np.float32(dc_value.imag),
+                np.int32(num_bf), np.int32(-gqk_cols),
+            ),
+        )
 
     def ifft2_fused_pk_col_accumulate(
         self,
@@ -1044,41 +1077,11 @@ class CustomFFT1024(CustomFFTBase):
     ) -> None:
         """Row FFT + fused column IFFT with transposed scratch accumulation."""
         N = self._size
-        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
-            raise ValueError("Requires complex64 input")
-        if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
-            raise ValueError(f"Expects shape (num_bf, {N}, {N})")
-        num_bf = int(data.shape[0])
-        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
-            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
-        if G_qk.shape[2] not in (N, N // 2 + 1):
-            raise ValueError(
-                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
-            )
-        gqk_cols = int(G_qk.shape[2])
-        if pk.shape != (num_bf,):
-            raise ValueError("pk must have shape (num_bf,)")
+        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
         n_groups = (num_bf + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):
             raise ValueError(f"partial buffers must have shape ({n_groups}, {N}, {N})")
-        (kx_bf, ky_bf, qx_1d, qy_1d,
-         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-
-        grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
-        self._rows_fused_pk_split512(
-            grid_rows,
-            self._rows_split512_block,
-            (
-                kx_bf, ky_bf, qx_1d, qy_1d,
-                np.float32(wavelength), np.float32(semiangle_rad),
-                np.float32(ang_y_rad), np.float32(ang_x_rad),
-                np.float32(C10), np.float32(C12),
-                np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), pk, G_qk, data,
-                np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(-gqk_cols),
-            ),
-        )
+        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
         grid_cols = (1, self._cols_grid_y, n_groups)
         self._cols_accumulate_split512(
             grid_cols,
@@ -1103,41 +1106,11 @@ class CustomFFT1024(CustomFFTBase):
     ) -> None:
         """Row FFT + fused column IFFT with phase-sum accumulation only."""
         N = self._size
-        if data.dtype != cp.complex64 or G_qk.dtype != cp.complex64 or pk.dtype != cp.complex64:
-            raise ValueError("Requires complex64 input")
-        if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
-            raise ValueError(f"Expects shape (num_bf, {N}, {N})")
-        num_bf = int(data.shape[0])
-        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
-            raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
-        if G_qk.shape[2] not in (N, N // 2 + 1):
-            raise ValueError(
-                f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
-            )
-        gqk_cols = int(G_qk.shape[2])
-        if pk.shape != (num_bf,):
-            raise ValueError("pk must have shape (num_bf,)")
+        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
         n_groups = (num_bf + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N):
             raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
-        (kx_bf, ky_bf, qx_1d, qy_1d,
-         wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-
-        grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
-        self._rows_fused_pk_split512(
-            grid_rows,
-            self._rows_split512_block,
-            (
-                kx_bf, ky_bf, qx_1d, qy_1d,
-                np.float32(wavelength), np.float32(semiangle_rad),
-                np.float32(ang_y_rad), np.float32(ang_x_rad),
-                np.float32(C10), np.float32(C12),
-                np.float32(cos2phi12), np.float32(sin2phi12),
-                np.float32(factor), pk, G_qk, data,
-                np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(-gqk_cols),
-            ),
-        )
+        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
         grid_cols = (1, self._cols_grid_y, n_groups)
         self._cols_accumulate_sum_split512(
             grid_cols,

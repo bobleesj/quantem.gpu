@@ -222,6 +222,7 @@ class MpsBfColumnFrames:
     MLX storage; the full detector stack is never materialized.
     """
 
+    # quantem.widget's Show4DSTEM reads this flag to keep the source on its GPU path, without a NumPy copy.
     _is_gpu_frames = True
 
     def __init__(
@@ -295,7 +296,7 @@ class MpsBfColumnFrames:
             if dc_value is None
             else complex(np.complex64(dc_value))
         )
-        sum_t0 = time.perf_counter()
+        started = time.perf_counter()
         self._detector_sum = None
         if detector_sum is not None:
             exact_sum = np.asarray(detector_sum)
@@ -312,10 +313,7 @@ class MpsBfColumnFrames:
             self._detector_sum = exact_sum.copy()
         elif self.dc_value is None:
             self._detector_sum = self._detector_sum_mps()
-        self.load_seconds = time.perf_counter() - sum_t0
-        self.gather_seconds = 0.0
-        self.gather_calls = 0
-        self.gather_bytes = 0
+        self.load_seconds = time.perf_counter() - started
         if verbose:
             gib = actual_bytes / 1024**3
             rate = gib / max(self.load_seconds, 1e-9)
@@ -369,6 +367,11 @@ class MpsBfColumnFrames:
         return detector_sum
 
     def _indices(self, rows, cols) -> np.ndarray:
+        """Map detector ``(row, col)`` coordinates to stored column indices.
+
+        A coordinate the export did not keep raises instead of reading an
+        unrelated column.
+        """
         rows = np.asarray(rows, dtype=np.int32).reshape(-1)
         cols = np.asarray(cols, dtype=np.int32).reshape(-1)
         if rows.shape != cols.shape:
@@ -394,7 +397,6 @@ class MpsBfColumnFrames:
         out: np.ndarray,
     ) -> np.ndarray:
         """Copy requested exact columns directly into MLX unified storage."""
-        t0 = time.perf_counter()
         indices = self._indices(rows, cols)
         expected_shape = (int(indices.size), self._n)
         if tuple(int(value) for value in out.shape) != expected_shape:
@@ -404,9 +406,6 @@ class MpsBfColumnFrames:
         for start in range(0, int(indices.size), 32):
             stop = min(start + 32, int(indices.size))
             out[start:stop] = self._columns[indices[start:stop]]
-        self.gather_seconds += time.perf_counter() - t0
-        self.gather_calls += 1
-        self.gather_bytes += int(indices.size) * self._n * self._np_dtype.itemsize
         return out
 
 
@@ -456,28 +455,28 @@ class ArrayFrames:
     """
 
     def __init__(self, data):
-        arr = np.asarray(data)
-        if arr.ndim == 4:
-            self.scan_shape = (int(arr.shape[0]), int(arr.shape[1]))
-            self.det_shape = (int(arr.shape[2]), int(arr.shape[3]))
-            self._flat = arr.reshape(-1, *self.det_shape)
-        elif arr.ndim == 3:
+        array = np.asarray(data)
+        if array.ndim == 4:
+            self.scan_shape = (int(array.shape[0]), int(array.shape[1]))
+            self.det_shape = (int(array.shape[2]), int(array.shape[3]))
+            self._flat = array.reshape(-1, *self.det_shape)
+        elif array.ndim == 3:
             self.scan_shape = None
-            self.det_shape = (int(arr.shape[1]), int(arr.shape[2]))
-            self._flat = arr
+            self.det_shape = (int(array.shape[1]), int(array.shape[2]))
+            self._flat = array
         else:
             raise TypeError(
                 "MPS SSB preview expects 3D/4D detector data or chunk-backed "
-                f"MPS data, got shape {arr.shape}."
+                f"MPS data, got shape {array.shape}."
             )
-        self.shape = tuple(int(x) for x in self._flat.shape)
+        self.shape = tuple(int(size) for size in self._flat.shape)
         self.ndim = 3
         self.dtype = self._flat.dtype
         self.detector_sum = None
 
     def __array__(self, dtype=None):
-        arr = np.asarray(self._flat)
-        return arr.astype(dtype, copy=False) if dtype is not None else arr
+        array = np.asarray(self._flat)
+        return array.astype(dtype, copy=False) if dtype is not None else array
 
     def reshape(self, *shape, **kwargs):
         return self._flat.reshape(*shape, **kwargs)
@@ -490,9 +489,9 @@ class ArrayFrames:
         cols = np.asarray(cols, dtype=np.intp).reshape(-1)
         if rows.shape != cols.shape:
             raise ValueError("rows and cols must have matching shapes.")
-        flat_idx = rows * int(self.det_shape[1]) + cols
+        flat_indices = rows * int(self.det_shape[1]) + cols
         flat = np.asarray(self._flat).reshape(int(self._flat.shape[0]), -1)
-        return np.take(flat, flat_idx, axis=1).T
+        return np.take(flat, flat_indices, axis=1).T
 
     def columns_float32_into(self, rows, cols, out: np.ndarray) -> np.ndarray:
         """Copy the requested columns as ``(BF, scan)`` float32 into ``out``, the column contract of every MPS source.
@@ -546,6 +545,11 @@ class MpsTensorFrames:
 
 
 def frames_scan_shape(frames) -> tuple[int, int]:
+    """Return the ``(row, col)`` scan shape of an MPS frame source.
+
+    A source that does not record one (3D frames) must hold a square scan, the
+    only shape its frame count alone determines.
+    """
     if isinstance(frames, (MpsBfColumnFrames, ArrayFrames, MpsTensorFrames)):
         shape = frames.scan_shape
     elif isinstance(frames, ChunkedFrames):
@@ -554,9 +558,9 @@ def frames_scan_shape(frames) -> tuple[int, int]:
         raise TypeError(f"Unsupported MPS frame source: {type(frames).__name__}.")
     if shape is not None:
         return int(shape[0]), int(shape[1])
-    n = int(frames.shape[0])
-    side = int(round(n ** 0.5))
-    if side * side != n:
+    frame_count = int(frames.shape[0])
+    side = round(frame_count ** 0.5)
+    if side * side != frame_count:
         raise ValueError("scan_shape is required for non-square frame counts.")
     return side, side
 

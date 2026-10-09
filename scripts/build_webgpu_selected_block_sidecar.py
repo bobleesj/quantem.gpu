@@ -99,7 +99,7 @@ def _build_one(
     block_meta = np.empty((n_frames * len(selected_blocks), 2), dtype=np.uint32)
     row = 0
     selected_set = set(selected_blocks)
-    for frame, addr in enumerate(offsets[:n_frames]):
+    for addr in offsets[:n_frames]:
         pos = int(addr) + 12
         for block in range(n_blocks):
             clen = _read_be32(data, pos)

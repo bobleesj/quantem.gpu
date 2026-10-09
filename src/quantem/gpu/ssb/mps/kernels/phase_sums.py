@@ -44,7 +44,7 @@ def _phase_sums_kernel(batch: int, chunk: int, ny: int, nx: int):
 
 def phase_sums_from_complex(mx, obj_chunk):
     """Metal fused atan2/sum/sumsq over BF pixels for a chunked object stack."""
-    shape = tuple(int(x) for x in obj_chunk.shape)
+    shape = tuple(int(size) for size in obj_chunk.shape)
     if len(shape) == 3:
         chunk, ny, nx = shape
         obj = obj_chunk[None, :, :, :]
@@ -105,7 +105,7 @@ def _phase_sum_kernel(batch: int, chunk: int, ny: int, nx: int):
 
 def phase_sum_from_complex(mx, obj_chunk):
     """Metal fused atan2/sum over BF pixels for a chunked object stack."""
-    shape = tuple(int(x) for x in obj_chunk.shape)
+    shape = tuple(int(size) for size in obj_chunk.shape)
     if len(shape) == 3:
         chunk, ny, nx = shape
         obj = obj_chunk[None, :, :, :]

@@ -126,11 +126,6 @@ def json_metadata(value):
     )
 
 
-def reject_constant(value):
-    """Reject NaN and infinity so a manifest always round-trips exactly."""
-    raise ValueError(f"QEM metadata cannot contain nonfinite number {value}.")
-
-
 RETIRED_QUANTITIES = (
     "scan_controller/regular_scan/pixel_size_y",
     "scan_controller/regular_scan/pixel_size_x",
@@ -174,6 +169,14 @@ def _processing_records(metadata: dict) -> list[dict]:
             method=str(correction.get("method")),
             pixel_count=int(correction.get("pixel_count", 0)),
         ))
+    markers = int(metadata.get("flagged_markers_stored_as_zero") or 0)
+    if markers:
+        # Flagged pixels are excluded from every measurement; their uint32
+        # detector marker cannot be held by uint16, so it is stored as 0.
+        records.append(dict(
+            operation="flagged_marker_zeroing", changes_measurements=False,
+            value_count=markers,
+        ))
     return records
 
 
@@ -208,7 +211,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
     source = dict(metadata.get("source_metadata") or _nexus_source_metadata(metadata))
     quantities = {}
 
-    def quantity(path, factors, output_unit, source_path=None):
+    def record_quantity(path, factors, output_unit, source_path=None):
         source_path = source_path or "electron_microscope/" + path
         text = str(source.get(source_path, ""))
         parts = text.split()
@@ -224,23 +227,23 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                 dict(value=value, unit=output_unit, provenance="source_metadata"), path
             )
 
-    quantity("electron_source/accelerating_voltage", {"V": 1, "kV": 1000}, "V")
+    record_quantity("electron_source/accelerating_voltage", {"V": 1, "kV": 1000}, "V")
     if "electron_source/accelerating_voltage" not in quantities:
-        quantity(
+        record_quantity(
             "electron_source/accelerating_voltage",
             {"eV": 1, "keV": 1000},
             "V",
             "entry/instrument/detector/incident_energy",
         )
-    quantity(
+    record_quantity(
         "illumination_system/semi_convergence_angle", {"rad": 1000, "mrad": 1}, "mrad"
     )
-    quantity(
+    record_quantity(
         "scan_controller/regular_scan/dwell_time",
         {"s": 1, "ms": 0.001, "us": 1e-6, "µs": 1e-6, "μs": 1e-6},
         "s",
     )
-    quantity("imaging_system/camera_length", {"m": 1, "cm": 0.01, "mm": 0.001}, "m")
+    record_quantity("imaging_system/camera_length", {"m": 1, "cm": 0.01, "mm": 0.001}, "m")
     # ARINA's electron-energy setting uses an NXmx photon-energy field.
     # Do not reinterpret a generic X-ray NXmx energy as accelerating voltage.
     if "ARINA" in str(source.get("entry/instrument/detector/description", "")).upper():
@@ -264,7 +267,7 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                 ), path)
     # Source files name these by x and y; the saved copy names them by array axis.
     for axis, source_axis in (("row", "y"), ("column", "x")):
-        quantity(
+        record_quantity(
             f"imaging_system/reciprocal_pixel_size_{axis}",
             {"rad": 1000, "mrad": 1},
             "mrad",
@@ -289,8 +292,8 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
     axes = [dict(name=name, size=int(size)) for name, size in zip(AXIS_NAMES, shape)]
     scan = metadata.get("scan_sampling_A")
     if scan is not None and len(scan) == 2:
-        for axis, suffix, value in zip(axes, ("row", "column"), scan):
-            value = float(value) * 1e-10
+        for axis, suffix, sampling_angstrom in zip(axes, ("row", "column"), scan):
+            value = float(sampling_angstrom) * 1e-10
             if math.isfinite(value) and value > 0:
                 sampling = dict(value=value, unit="m", provenance="source_metadata")
                 axis["sampling"] = _microscopy_quantity(sampling, "scan")
@@ -303,8 +306,8 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
     if "detector_sampling" not in metadata and "detector_sampling_inv_A" in metadata:
         unit = "1/angstrom"
     if detector is not None and unit is not None and len(detector) == 2:
-        for axis, value in zip(axes[2:], detector):
-            value = float(value)
+        for axis, detector_step in zip(axes[2:], detector):
+            value = float(detector_step)
             if math.isfinite(value) and value > 0:
                 axis["sampling"] = _microscopy_quantity(
                     dict(value=value, unit=unit, provenance="source_metadata"), "detector"
@@ -382,7 +385,7 @@ def validate_header(header: dict) -> None:
 
 def _validate_source_documents(documents: list[dict]) -> None:
     """Authenticate bounded original attachments without interpreting unknown fields."""
-    def reject_constant(value: str) -> None:
+    def reject_json_constant(value: str) -> None:
         raise ValueError(f"QEM metadata JSON contains non-standard constant {value}.")
 
     if not isinstance(documents, list) or len(documents) > 16:
@@ -407,7 +410,7 @@ def _validate_source_documents(documents: list[dict]) -> None:
             except ET.ParseError as error:
                 raise ValueError("QEM metadata attachment contains malformed XML.") from error
         elif document.get("mediaType") == "application/json":
-            if not isinstance(json.loads(content, parse_constant=reject_constant), dict):
+            if not isinstance(json.loads(content, parse_constant=reject_json_constant), dict):
                 raise ValueError("QEM metadata JSON must contain named fields.")
         else:
             raise ValueError("QEM metadata attachments support XML and JSON only.")
@@ -451,10 +454,10 @@ def _validate_scientific(scientific: dict) -> None:
         if sampling is not None:
             _require_provenance(sampling)
         duplicate = quantities.get(path)
-        if scientific["schema"] == SCHEMA and duplicate is not None:
-            if (sampling is None or sampling["unit"] != duplicate["unit"]
-                    or not math.isclose(sampling["value"], duplicate["value"], rel_tol=1e-14)):
-                raise ValueError(f"Conflicting QEM axis and microscope calibration at {path}.")
+        if scientific["schema"] == SCHEMA and duplicate is not None and (
+                sampling is None or sampling["unit"] != duplicate["unit"]
+                or not math.isclose(sampling["value"], duplicate["value"], rel_tol=1e-14)):
+            raise ValueError(f"Conflicting QEM axis and microscope calibration at {path}.")
     if "sample" in scientific:
         validate_sample(scientific["sample"])
     for path, quantity in quantities.items():
@@ -555,8 +558,8 @@ def _scan_region(region) -> bool:
         return False
     if set(region) == {"point"}:
         return _integers(region["point"], 2, minimum=0)
-    return (set(region) == {"rows", "cols"} and all(_integers(region[k], 2, minimum=0) and region[k][0] < region[k][1]
-                                                    for k in ("rows", "cols")))
+    return (set(region) == {"rows", "cols"} and all(_integers(region[axis], 2, minimum=0) and region[axis][0] < region[axis][1]
+                                                    for axis in ("rows", "cols")))
 
 
 def _require_indices(value, name: str) -> None:
@@ -566,7 +569,7 @@ def _require_indices(value, name: str) -> None:
 
 def _integers(value, length: int, minimum: int | None = None) -> bool:
     return (isinstance(value, list) and len(value) == length
-            and all(type(v) is int and (minimum is None or v >= minimum) for v in value))
+            and all(type(entry) is int and (minimum is None or entry >= minimum) for entry in value))
 
 
 def _positive(value) -> bool:
@@ -657,7 +660,7 @@ def _validate_overrides(overrides: dict) -> None:
     for prefix, _ in pairs:
         row, column = overrides.get(prefix + "row"), overrides.get(prefix + "column")
         if ((row is None) != (column is None)
-                or row is not None and row["unit"] != column["unit"]):
+                or (row is not None and row["unit"] != column["unit"])):
             raise ValueError("QEM calibration requires both row and column in the same units.")
 
 

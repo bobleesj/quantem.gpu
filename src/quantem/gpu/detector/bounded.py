@@ -38,15 +38,14 @@ class BoundedDetectorCompute(DetectorQueries):
             for _, _, _, block_t in self._blocks():
                 # A float32 block sum of at most 32 integer patterns is exact; the total is not.
                 total += block_t.sum((0, 1)).cpu().numpy()
-        elif self.n_frames == self._native.num_frames:
+            return (total / self.n_frames).astype(np.float32)
+        if self.n_frames == self._native.num_frames:
             # The session sums integer counts exactly and float intensities (MAPED merges,
             # saved precision) in float64, then divides once, like every mean pattern.
             return self._valid_counts(self._native.mean_dp()).astype(np.float32)
-        else:
-            return self._valid_counts(
-                self._native.reduce_frames(self._owner_indices(range(self.n_frames)), "mean")
-            ).astype(np.float32)
-        return (total / self.n_frames).astype(np.float32)
+        return self._valid_counts(
+            self._native.reduce_frames(self._owner_indices(range(self.n_frames)), "mean")
+        ).astype(np.float32)
 
     def masked_sum(self, mask):
         mask_t = torch.as_tensor(mask, device=self.device, dtype=torch.bool)
@@ -87,10 +86,9 @@ class BoundedDetectorCompute(DetectorQueries):
             for value_t in self._patterns(indices):
                 maximum_t = value_t if maximum_t is None else torch.maximum(maximum_t, value_t)
             return maximum_t.cpu().numpy()
-        else:
-            total = np.zeros(self.det_shape, np.float64)
-            for value_t in self._patterns(indices):
-                total += value_t.cpu().numpy()
+        total = np.zeros(self.det_shape, np.float64)
+        for value_t in self._patterns(indices):
+            total += value_t.cpu().numpy()
         # Divided in float64 and rounded once, like every mean pattern.
         return (total / len(indices) if reduce == "mean" else total).astype(np.float32)
 

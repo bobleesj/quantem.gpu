@@ -31,13 +31,18 @@ class MPSHotPixelCorrector:
             self.bad = upload_shared(np.flatnonzero(~valid).astype(np.int32), "hot-pixel coordinates")
 
     def apply(self, values) -> None:
-        """Correct one Metal ``(scan, detector_row, detector_col)`` batch."""
+        """Correct one Metal ``(scan, detector_row, detector_col)`` batch.
+
+        uint32 batches are Arina counts corrected before they are stored as
+        uint16: the median reads only valid neighbors, so a 0xFFFFFFFF flagged
+        pixel never enters a replacement value.
+        """
         if not self.record["applied"]:
             return
         dtype = np.dtype(values.dtype)
-        if dtype not in (np.dtype("uint8"), np.dtype("uint16")):
+        if dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32")):
             raise TypeError(
-                "Metal hot-pixel correction requires native uint8/uint16 counts."
+                "Metal hot-pixel correction requires native uint8/uint16/uint32 counts."
             )
         if tuple(values.shape[-2:]) != tuple(self.mask.shape):
             raise ValueError(

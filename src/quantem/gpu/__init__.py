@@ -43,7 +43,6 @@ __all__ = [
 
 def __getattr__(name: str):
     """Load one public scientific namespace lazily."""
-
     if name in _NAMESPACES:
         module = import_module(f"quantem.gpu.{name}")
         globals()[name] = module

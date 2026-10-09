@@ -51,7 +51,7 @@ fn sampleF(gp: u32, mode: u32) -> f32 {
   return f32(sample(gp, mode));
 }`;
 
-// One WORKGROUP per scan position; its 64 threads COOPERATIVELY sum the aperture pixels, then
+// One WORKGROUP per scan position; its WGSZ threads COOPERATIVELY sum the aperture pixels, then
 // a shared-memory tree reduction writes one VI value. The old "one thread per scan position"
 // kernel was uncoalesced: thread sl read data[sl*detSize + idx[j]], so a warp's 64 threads
 // touched 64 addresses detSize apart = 64 cache lines per access = ~1/64 of memory bandwidth
@@ -98,32 +98,63 @@ ${sg
   if (tid == 0u && sl < u.y) { vi[u.x + sl] = part[0]; }`}
 }`;
 
-// One thread per detector pixel; ACCUMULATES this chunk's in-ROI scan positions
-// into the DP (chunks dispatched serially, so += across chunks is safe). dims:
-// startScan, nScanInChunk, detSize, mode; plus extra: total scanMask is global,
-// indexed by startScan+sl.
+// ACCUMULATES each chunk's in-ROI scan positions into the DP. dims: startScan,
+// nScanInChunk, detSize, mode; scanMask is global, indexed by startScan+sl.
 // One thread per (detector pixel, FRAME-BLOCK): the 2D grid parallelizes the reduction over
 // FRAMES too, not just pixels. The old "one thread per pixel, serial loop over all frames"
 // launched only detSize (~37K) threads -> ~12% occupancy on a big GPU (88% idle), so the
 // memory-bound sum ran ~70x over its bandwidth floor. Here gid.y splits the frames into
-// FRAME_BLOCKS strided slices; each thread sums its slice locally (bit-exact integer) then does
-// ONE atomicAdd into dp[k]. ~FRAME_BLOCKS x more threads saturate the GPU; atomic contention is
+// FRAME_BLOCKS strided slices; each thread sums its slice locally then adds ONE value into
+// the pixel's accumulator. ~FRAME_BLOCKS x more threads saturate the GPU; atomic contention is
 // only FRAME_BLOCKS-way per pixel (one add per thread), trivially cheap vs the memory traffic.
+//
+// Integer counts accumulate in 64 bits, exact like the CUDA uint64 path: a single u32 wrapped
+// after 2^32 counts (65535 x 65537 frames, or two uint32 frames). Each thread carries its slice
+// sum as a (low, high) word pair, and the pixel accumulator is dp[2k] (low) and dp[2k + 1]
+// (high). atomicAdd returns the previous low word, so a wrap of the shared low word is detected
+// exactly and carried into the high word.
 const FRAME_BLOCKS = 64;
 const REDUCE_FRAMES_WGSL = `
 @group(0) @binding(0) var<storage,read> data: array<u32>;
 @group(0) @binding(1) var<storage,read> scanMask: array<u32>;  // GLOBAL scanCount
-@group(0) @binding(2) var<storage,read_write> dp: array<atomic<u32>>;  // detSize, INTEGER (exact)
+@group(0) @binding(2) var<storage,read_write> dp: array<atomic<u32>>;  // 2 * detSize: (low, high) words per pixel
 @group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
 ${SAMPLE}
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k = gid.x; let detSize = u.z; if (k >= detSize) { return; }
-  var sum: u32 = 0u;   // integer accumulate: bit-exact, no f32 rounding on large/dead-pixel sums
+  var low: u32 = 0u; var high: u32 = 0u;
   for (var sl: u32 = gid.y; sl < u.y; sl = sl + ${FRAME_BLOCKS}u) {   // strided frame slice
-    if (scanMask[u.x + sl] != 0u) { sum = sum + sample(sl * detSize + k, u.w); }
+    if (scanMask[u.x + sl] != 0u) {
+      let next = low + sample(sl * detSize + k, u.w);   // u32 addition wraps; the wrap is the carry
+      high = high + select(0u, 1u, next < low); low = next;
+    }
   }
-  if (sum != 0u) { atomicAdd(&dp[k], sum); }   // one add per thread; skip empty slices
+  if (low == 0u && high == 0u) { return; }   // skip empty slices
+  let previous = atomicAdd(&dp[2u * k], low);
+  high = high + select(0u, 1u, previous + low < previous);
+  if (high != 0u) { atomicAdd(&dp[2u * k + 1u], high); }
+}`;
+
+// Float32 data (mode 2) holds IEEE-754 bit patterns, which the integer sample() would misread
+// as packed uint16 counts. WGSL has no float atomics, so each thread adds its f32 slice sum to
+// its own slot partial[gid.y * detSize + k] (one writer per slot per dispatch; the chunk
+// dispatches of one pass run in order), and the host adds the FRAME_BLOCKS partials of each
+// pixel in float64.
+const REDUCE_FRAMES_FLOAT_WGSL = `
+@group(0) @binding(0) var<storage,read> data: array<u32>;
+@group(0) @binding(1) var<storage,read> scanMask: array<u32>;  // GLOBAL scanCount
+@group(0) @binding(2) var<storage,read_write> partial: array<f32>;  // FRAME_BLOCKS * detSize
+@group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let k = gid.x; let detSize = u.z; if (k >= detSize) { return; }
+  var sum: f32 = 0.0;
+  for (var sl: u32 = gid.y; sl < u.y; sl = sl + ${FRAME_BLOCKS}u) {
+    if (scanMask[u.x + sl] != 0u) { sum = sum + bitcast<f32>(data[sl * detSize + k]); }
+  }
+  let slot = gid.y * detSize + k;
+  partial[slot] = partial[slot] + sum;
 }`;
 
 // Extract ONE frame's diffraction pattern (detSize values) from a chunk buffer -
@@ -139,8 +170,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   frame[k] = sampleF(u.x + k, u.z);
 }`;
 
-// One thread per scan position: intensity-weighted centroid (center of mass) of the
-// detector over the active mask pixels. Output is the per-position CoM in detector px:
+// Intensity-weighted centroid (center of mass) of the detector over the active
+// mask pixels. Output is the per-position CoM in detector px:
 // comY at [gi], comX at [scanCount+gi]. Drives CoMx/CoMy/CoMmag/iCoM (DPC).
 // One WORKGROUP per scan position (same coalescing fix as MASKED_SUM): WGSZ threads cooperatively
 // accumulate the intensity-weighted centroid over the aperture, three shared-memory reductions
@@ -287,9 +318,9 @@ ${sg
   }`}
 }`;
 
-// CoM -> DPC mean reduction. One workgroup reduces the scan-position CoM arrays
-// to their global row/col means. DPC display is then centered without pulling the
-// two full CoM maps back to JavaScript.
+// Dense DF/ADF helper: out = full-detector total - complement sum. This mirrors
+// CUDA/MPS dense-mask behavior so dragging a large annulus reads the smaller
+// complement after the per-scan total image is cached.
 const SUBTRACT_FROM_TOTAL_WGSL = `
 @group(0) @binding(0) var<storage,read> total: array<f32>;
 @group(0) @binding(1) var<storage,read> subtract: array<f32>;
@@ -487,6 +518,7 @@ type CoMEncoder = (pass: GPUComputePassEncoder, indices: GPUBuffer, output: GPUB
 
 interface Chunk { buffer: GPUBuffer; startScan: number; nScan: number; }
 
+// Widget model traits are untyped JSON values read across the anywidget boundary.
 interface TraitReader { get(name: string): any; }
 
 // Detector mask for the offline WebGPU virtual-image sum. Mirrors the Python
@@ -573,6 +605,7 @@ export class DetectorCompute {
   private maskedSignedDeltaU8WordMajorPipe: GPUComputePipeline;
   private applySignedDeltaPipe: GPUComputePipeline;
   private reduceFramesPipe: GPUComputePipeline;
+  private reduceFramesFloatPipe: GPUComputePipeline;
   private frameAtPipe: GPUComputePipeline;
   private chunks: Chunk[];
   private dpcBufferCache = new Map<string, { buffer: GPUBuffer; n: number }>();
@@ -596,35 +629,38 @@ export class DetectorCompute {
   private constructor(device: GPUDevice, chunks: Chunk[], scanCount: number, detSize: number, mode: number) {
     this.device = device; this.chunks = chunks; this.scanCount = scanCount; this.detSize = detSize; this.mode = mode;
     const sg = device.features.has("subgroups");   // warp reduction in maskedSum/CoM when available
-    const ms = device.createShaderModule({ code: maskedSumSrc(sg) });
-    const rf = device.createShaderModule({ code: REDUCE_FRAMES_WGSL });
-    this.maskedSumPipe = device.createComputePipeline({ layout: "auto", compute: { module: ms, entryPoint: "main" } });
-    this.maskedComPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedComSrc(sg) }), entryPoint: "main" } });
-    this.dpcMeanPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_MEAN_WGSL }), entryPoint: "main" } });
-    this.dpcComponentPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_COMPONENT_WGSL }), entryPoint: "main" } });
-    this.dpcComponentPairPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_COMPONENT_PAIR_WGSL }), entryPoint: "main" } });
-    this.dpcMagnitudePipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_MAGNITUDE_WGSL }), entryPoint: "main" } });
-    this.dpcOutputMeanPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_OUTPUT_MEAN_WGSL }), entryPoint: "main" } });
-    this.dpcOutputUlpCorrectPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: DPC_OUTPUT_ULP_CORRECT_WGSL }), entryPoint: "main" } });
-    this.idpcPackPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_PACK_WGSL }), entryPoint: "main" } });
-    this.idpcPoissonPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_POISSON_WGSL }), entryPoint: "main" } });
-    this.idpcExtractPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: IDPC_EXTRACT_WGSL }), entryPoint: "main" } });
-    const fftModule = device.createShaderModule({ code: FFT_2D_SHADER });
+    const shader = (code: string) => device.createShaderModule({ code });
+    const pipeline = (module: GPUShaderModule, entryPoint = "main") => device.createComputePipeline({ layout: "auto", compute: { module, entryPoint } });
+    const maskedSumModule = shader(maskedSumSrc(sg));
+    const reduceFramesModule = shader(REDUCE_FRAMES_WGSL);
+    this.maskedSumPipe = pipeline(maskedSumModule);
+    this.maskedComPipe = pipeline(shader(maskedComSrc(sg)));
+    this.dpcMeanPipe = pipeline(shader(DPC_MEAN_WGSL));
+    this.dpcComponentPipe = pipeline(shader(DPC_COMPONENT_WGSL));
+    this.dpcComponentPairPipe = pipeline(shader(DPC_COMPONENT_PAIR_WGSL));
+    this.dpcMagnitudePipe = pipeline(shader(DPC_MAGNITUDE_WGSL));
+    this.dpcOutputMeanPipe = pipeline(shader(DPC_OUTPUT_MEAN_WGSL));
+    this.dpcOutputUlpCorrectPipe = pipeline(shader(DPC_OUTPUT_ULP_CORRECT_WGSL));
+    this.idpcPackPipe = pipeline(shader(IDPC_PACK_WGSL));
+    this.idpcPoissonPipe = pipeline(shader(IDPC_POISSON_WGSL));
+    this.idpcExtractPipe = pipeline(shader(IDPC_EXTRACT_WGSL));
+    const fftModule = shader(FFT_2D_SHADER);
     this.fftPipes = {
-      bitReverseRows: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "bitReverseRows" } }),
-      bitReverseCols: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "bitReverseCols" } }),
-      butterflyRows: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "butterflyRows" } }),
-      butterflyCols: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "butterflyCols" } }),
-      normalize: device.createComputePipeline({ layout: "auto", compute: { module: fftModule, entryPoint: "normalize2D" } }),
+      bitReverseRows: pipeline(fftModule, "bitReverseRows"),
+      bitReverseCols: pipeline(fftModule, "bitReverseCols"),
+      butterflyRows: pipeline(fftModule, "butterflyRows"),
+      butterflyCols: pipeline(fftModule, "butterflyCols"),
+      normalize: pipeline(fftModule, "normalize2D"),
     };
-    this.subtractPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: SUBTRACT_FROM_TOTAL_WGSL }), entryPoint: "main" } });
-    this.maskedSignedDeltaPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedSignedDeltaSrc(sg) }), entryPoint: "main" } });
-    this.maskedSignedDeltaU8WordPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedSignedDeltaU8WordSrc(sg) }), entryPoint: "main" } });
-    this.u8WordMajorTransposePipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: U8_WORD_MAJOR_TRANSPOSE_WGSL }), entryPoint: "main" } });
-    this.maskedSignedDeltaU8WordMajorPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: maskedSignedDeltaU8WordMajorSrc(sg) }), entryPoint: "main" } });
-    this.applySignedDeltaPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: APPLY_SIGNED_DELTA_WGSL }), entryPoint: "main" } });
-    this.reduceFramesPipe = device.createComputePipeline({ layout: "auto", compute: { module: rf, entryPoint: "main" } });
-    this.frameAtPipe = device.createComputePipeline({ layout: "auto", compute: { module: device.createShaderModule({ code: FRAME_WGSL }), entryPoint: "main" } });
+    this.subtractPipe = pipeline(shader(SUBTRACT_FROM_TOTAL_WGSL));
+    this.maskedSignedDeltaPipe = pipeline(shader(maskedSignedDeltaSrc(sg)));
+    this.maskedSignedDeltaU8WordPipe = pipeline(shader(maskedSignedDeltaU8WordSrc(sg)));
+    this.u8WordMajorTransposePipe = pipeline(shader(U8_WORD_MAJOR_TRANSPOSE_WGSL));
+    this.maskedSignedDeltaU8WordMajorPipe = pipeline(shader(maskedSignedDeltaU8WordMajorSrc(sg)));
+    this.applySignedDeltaPipe = pipeline(shader(APPLY_SIGNED_DELTA_WGSL));
+    this.reduceFramesPipe = pipeline(reduceFramesModule);
+    this.reduceFramesFloatPipe = pipeline(shader(REDUCE_FRAMES_FLOAT_WGSL));
+    this.frameAtPipe = pipeline(shader(FRAME_WGSL));
   }
 
   getDevice(): GPUDevice {
@@ -743,24 +779,13 @@ export class DetectorCompute {
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
     const decodeTemps = this.encodeMaskedCoM(pass, idxBuf, com, detCols, n, integerFlags);
-    pass.setPipeline(this.dpcMeanPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
-    pass.dispatchWorkgroups(1);
+    this.encodeCoMMean(pass, com, mean, meanDims);
     pass.setPipeline(this.dpcComponentPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcComponentPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } },
       { binding: 2, resource: { buffer: cache } }, { binding: 3, resource: { buffer: compDims } } ] }));
     pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
-    pass.setPipeline(this.dpcOutputMeanPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: cache } }, { binding: 1, resource: { buffer: residualMean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
-    pass.dispatchWorkgroups(1);
-    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: cache } }, { binding: 1, resource: { buffer: residualMean } },
-      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: compDims } } ] }));
-    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+    this.encodeDpcOutputCorrection(pass, cache, residualMean, mean, meanDims, compDims);
     pass.end();
     enc.copyBufferToBuffer(cache, 0, out, 0, this.scanCount * 4);
     device.queue.submit([enc.finish()]);
@@ -768,7 +793,7 @@ export class DetectorCompute {
     return {
       buffer: out,
       n,
-      cleanup: () => { decodeTemps.forEach((b) => b.destroy()); idxBuf.destroy(); com.destroy(); mean.destroy(); residualMean.destroy(); meanDims.destroy(); compDims.destroy(); },
+      cleanup: () => { decodeTemps.forEach((buffer) => buffer.destroy()); idxBuf.destroy(); com.destroy(); mean.destroy(); residualMean.destroy(); meanDims.destroy(); compDims.destroy(); },
     };
   }
 
@@ -805,34 +830,15 @@ export class DetectorCompute {
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
     const decodeTemps = this.encodeMaskedCoM(pass, idxBuf, com, detCols, n, integerFlags);
-    pass.setPipeline(this.dpcMeanPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
-    pass.dispatchWorkgroups(1);
+    this.encodeCoMMean(pass, com, mean, meanDims);
     pass.setPipeline(this.dpcComponentPairPipe);
     pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcComponentPairPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } },
       { binding: 2, resource: { buffer: rowCache } }, { binding: 3, resource: { buffer: colCache } },
       { binding: 4, resource: { buffer: meanDims } } ] }));
     pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
-    pass.setPipeline(this.dpcOutputMeanPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: rowCache } }, { binding: 1, resource: { buffer: rowResidualMean } }, { binding: 2, resource: { buffer: rowDims } } ] }));
-    pass.dispatchWorkgroups(1);
-    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: rowCache } }, { binding: 1, resource: { buffer: rowResidualMean } },
-      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: rowDims } } ] }));
-    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
-    pass.setPipeline(this.dpcOutputMeanPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: colCache } }, { binding: 1, resource: { buffer: colResidualMean } }, { binding: 2, resource: { buffer: colDims } } ] }));
-    pass.dispatchWorkgroups(1);
-    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
-    pass.setBindGroup(0, device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: colCache } }, { binding: 1, resource: { buffer: colResidualMean } },
-      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: colDims } } ] }));
-    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+    this.encodeDpcOutputCorrection(pass, rowCache, rowResidualMean, mean, rowDims, rowDims);
+    this.encodeDpcOutputCorrection(pass, colCache, colResidualMean, mean, colDims, colDims);
     pass.end();
     device.queue.submit([enc.finish()]);
     this.storeDpcCache(rowKey, rowCache, n);
@@ -843,6 +849,35 @@ export class DetectorCompute {
       n,
       cleanup: () => this.retireBuffers([...decodeTemps, idxBuf, com, mean, rowResidualMean, colResidualMean, meanDims, rowDims, colDims]),
     };
+  }
+
+  /** Reduce the scan-position CoM maps to their global row/col means for DPC centering. */
+  private encodeCoMMean(pass: GPUComputePassEncoder, com: GPUBuffer, mean: GPUBuffer, meanDims: GPUBuffer): void {
+    pass.setPipeline(this.dpcMeanPipe);
+    pass.setBindGroup(0, this.device.createBindGroup({ layout: this.dpcMeanPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: com } }, { binding: 1, resource: { buffer: mean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
+    pass.dispatchWorkgroups(1);
+  }
+
+  /** Re-center one DPC component on its residual mean, then pick the same one-ulp
+   * rounding side as the NumPy/CUDA reference without a CPU readback. */
+  private encodeDpcOutputCorrection(
+    pass: GPUComputePassEncoder,
+    component: GPUBuffer,
+    residualMean: GPUBuffer,
+    mean: GPUBuffer,
+    meanDims: GPUBuffer,
+    componentDims: GPUBuffer,
+  ): void {
+    pass.setPipeline(this.dpcOutputMeanPipe);
+    pass.setBindGroup(0, this.device.createBindGroup({ layout: this.dpcOutputMeanPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: component } }, { binding: 1, resource: { buffer: residualMean } }, { binding: 2, resource: { buffer: meanDims } } ] }));
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.dpcOutputUlpCorrectPipe);
+    pass.setBindGroup(0, this.device.createBindGroup({ layout: this.dpcOutputUlpCorrectPipe.getBindGroupLayout(0), entries: [
+      { binding: 0, resource: { buffer: component } }, { binding: 1, resource: { buffer: residualMean } },
+      { binding: 2, resource: { buffer: mean } }, { binding: 3, resource: { buffer: componentDims } } ] }));
+    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
   }
 
   /** Centered CoM-vector magnitude retained in a WebGPU buffer. */
@@ -1023,10 +1058,7 @@ export class DetectorCompute {
   // disk (~9k of 36864 px) or ADF annulus is then 4-10x fewer reads per scan pos.
   async maskedSum(mask: Uint32Array): Promise<Float32Array> {
     const device = this.device;
-    const bad = this.badPx.length ? new Set(this.badPx) : null;
-    const idxArr = new Uint32Array(this.detSize); let n = 0;
-    for (let k = 0; k < this.detSize; k++) if (mask[k] !== 0 && !(bad && bad.has(k))) idxArr[n++] = k;  // skip hot px
-    const idx = idxArr.subarray(0, n || 1);   // active pixel indices (>=1 to keep a valid binding)
+    const { idx, n } = this.detectorIndices(mask);   // active non-hot pixels (>=1 entry keeps a valid binding)
     const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
     const vi = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const temps: GPUBuffer[] = [];
@@ -1050,7 +1082,7 @@ export class DetectorCompute {
     await rb.mapAsync(GPUMapMode.READ);
     const out = new Float32Array(rb.getMappedRange().slice(0)); rb.unmap(); rb.destroy();
     if (n === 0) out.fill(0);   // empty mask -> all zero (idx had a dummy entry)
-    idxBuf.destroy(); vi.destroy(); temps.forEach((b) => b.destroy()); return out;
+    idxBuf.destroy(); vi.destroy(); temps.forEach((buffer) => buffer.destroy()); return out;
   }
 
   // GPU-RESIDENT virtual image: identical to maskedSum but returns the vi GPU buffer WITHOUT
@@ -1086,15 +1118,7 @@ export class DetectorCompute {
     const owner = computes[0];
     if (!owner) return { buffers: [], n: 0, path: "batched-submit" };
     const device = owner.device;
-    for (const compute of computes) {
-      if (compute.device !== device) throw new Error("Batched masked sums require all volumes on the same WebGPU device.");
-      if (compute.scanCount !== owner.scanCount || compute.detSize !== owner.detSize || compute.mode !== owner.mode) {
-        throw new Error("Batched masked sums require matching scan shape, detector shape, and dtype.");
-      }
-      if (compute.badPixelKey() !== owner.badPixelKey()) {
-        throw new Error("Batched masked sums require matching detector bad-pixel masks.");
-      }
-    }
+    owner.assertBatchCompatible(computes);
     const selected = owner.detectorIndices(mask);
     const buffers = computes.map(() =>
       device.createBuffer({ size: owner.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
@@ -1149,6 +1173,31 @@ export class DetectorCompute {
       const useWordMajor = (globalThis as { __QT_U8_WORD_MAJOR_DELTA?: unknown }).__QT_U8_WORD_MAJOR_DELTA === true;
       const entryBuf = owner.upload(packed.entries, GPUBufferUsage.STORAGE);
       const enc = owner.device.createCommandEncoder();
+      // Both word layouts apply the same signed per-word coefficients in place on the previous images.
+      const applyWordDelta = (
+        pipeline: GPUComputePipeline,
+        rowsFor: (compute: DetectorCompute) => { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[],
+      ) => {
+        const pass = enc.beginComputePass();
+        pass.setPipeline(pipeline);
+        const layout = pipeline.getBindGroupLayout(0);
+        for (let i = 0; i < computes.length; i++) {
+          for (const cd of rowsFor(computes[i])) {
+            const bind = owner.device.createBindGroup({ layout, entries: [
+              { binding: 0, resource: { buffer: cd.chunk } },
+              { binding: 1, resource: { buffer: entryBuf } },
+              { binding: 2, resource: { buffer: previous[i] } },
+              { binding: 3, resource: { buffer: cd.dims } },
+              { binding: 4, resource: { buffer: cd.dims2 } },
+            ] });
+            pass.setBindGroup(0, bind);
+            pass.dispatchWorkgroups(cd.gx, cd.gy);
+          }
+        }
+        pass.end();
+        owner.device.queue.submit([enc.finish()]);
+        owner.retireBuffers([entryBuf]);
+      };
       if (useWordMajor) {
         let ready = true;
         for (const compute of computes) {
@@ -1158,26 +1207,7 @@ export class DetectorCompute {
           }
         }
         if (ready) {
-          const pass = enc.beginComputePass();
-          pass.setPipeline(owner.maskedSignedDeltaU8WordMajorPipe);
-          const layout = owner.maskedSignedDeltaU8WordMajorPipe.getBindGroupLayout(0);
-          for (let i = 0; i < computes.length; i++) {
-            const compute = computes[i];
-            for (const cd of compute.u8WordMajorDeltaDims(packed.n)) {
-              const bind = owner.device.createBindGroup({ layout, entries: [
-                { binding: 0, resource: { buffer: cd.chunk } },
-                { binding: 1, resource: { buffer: entryBuf } },
-                { binding: 2, resource: { buffer: previous[i] } },
-                { binding: 3, resource: { buffer: cd.dims } },
-                { binding: 4, resource: { buffer: cd.dims2 } },
-              ] });
-              pass.setBindGroup(0, bind);
-              pass.dispatchWorkgroups(cd.gx, cd.gy);
-            }
-          }
-          pass.end();
-          owner.device.queue.submit([enc.finish()]);
-          owner.retireBuffers([entryBuf]);
+          applyWordDelta(owner.maskedSignedDeltaU8WordMajorPipe, (compute) => compute.u8WordMajorDeltaDims(packed.n));
           return {
             buffers: previous,
             path: "delta-u8-word-major",
@@ -1187,26 +1217,7 @@ export class DetectorCompute {
           };
         }
       }
-      const pass = enc.beginComputePass();
-      pass.setPipeline(owner.maskedSignedDeltaU8WordPipe);
-      const layout = owner.maskedSignedDeltaU8WordPipe.getBindGroupLayout(0);
-      for (let i = 0; i < computes.length; i++) {
-        const compute = computes[i];
-        for (const cd of compute.u8WordDeltaDims(packed.n)) {
-          const bind = owner.device.createBindGroup({ layout, entries: [
-            { binding: 0, resource: { buffer: cd.chunk } },
-            { binding: 1, resource: { buffer: entryBuf } },
-            { binding: 2, resource: { buffer: previous[i] } },
-            { binding: 3, resource: { buffer: cd.dims } },
-            { binding: 4, resource: { buffer: cd.dims2 } },
-          ] });
-          pass.setBindGroup(0, bind);
-          pass.dispatchWorkgroups(cd.gx, cd.gy);
-        }
-      }
-      pass.end();
-      owner.device.queue.submit([enc.finish()]);
-      owner.retireBuffers([entryBuf]);
+      applyWordDelta(owner.maskedSignedDeltaU8WordPipe, (compute) => compute.u8WordDeltaDims(packed.n));
       return {
         buffers: previous,
         path: "delta-u8-words",
@@ -1503,15 +1514,19 @@ export class DetectorCompute {
     return [];
   }
 
-  // DP over a real-space ROI: f32[detSize]. scanMask is GLOBAL; chunks accumulate
-  // in INTEGER (u32, bit-exact) - the mean divide happens once in f64 at readback,
-  // so the result matches the torch/CUDA integer-sum-then-divide exactly (even on
-  // saturated 65535 dead pixels, where f32 accumulation would drift ~1 count).
+  // DP over a real-space ROI: f32[detSize]. scanMask is GLOBAL; integer chunks accumulate
+  // exactly in 64 bits - the mean divide happens once in f64 at readback, so the result
+  // matches the torch/CUDA integer-sum-then-divide exactly (even on saturated 65535 dead
+  // pixels, where f32 accumulation would drift ~1 count and a u32 sum would wrap). Float32
+  // data sums per-slice in f32 and adds the slices in f64.
   async reduceFrames(scanMask: Uint32Array, mean = true): Promise<Float32Array> {
     const device = this.device;
+    const float = this.mode === 2;
+    const words = float ? FRAME_BLOCKS * this.detSize : 2 * this.detSize;
+    const pipe = float ? this.reduceFramesFloatPipe : this.reduceFramesPipe;
     const maskBuf = this.upload(scanMask, GPUBufferUsage.STORAGE);
-    const dp = device.createBuffer({ size: this.detSize * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
-    device.queue.writeBuffer(dp, 0, new Uint32Array(this.detSize));  // zero-init integer accumulator
+    const dp = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(dp, 0, new Uint32Array(words));  // zero-init accumulator
     const temps: GPUBuffer[] = [];
     // Record EVERY chunk's reduce pass into ONE command encoder + ONE submit. Per-chunk submits
     // (27 buffers for a 27-file dataset) each pay kernel-launch + queue round-trip overhead and
@@ -1519,10 +1534,10 @@ export class DetectorCompute {
     const grid = Math.ceil(this.detSize / 64);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    pass.setPipeline(this.reduceFramesPipe);
+    pass.setPipeline(pipe);
     for (const ch of this.chunks) {
       const dims = this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]); temps.push(dims);
-      const bind = device.createBindGroup({ layout: this.reduceFramesPipe.getBindGroupLayout(0), entries: [
+      const bind = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
         { binding: 0, resource: { buffer: ch.buffer } }, { binding: 1, resource: { buffer: maskBuf } },
         { binding: 2, resource: { buffer: dp } }, { binding: 3, resource: { buffer: dims } } ] });
       pass.setBindGroup(0, bind); pass.dispatchWorkgroups(grid, FRAME_BLOCKS);
@@ -1531,22 +1546,34 @@ export class DetectorCompute {
     // Fold the dp -> readback copy into the SAME encoder: one submit, one GPU->CPU sync. A
     // separate readU32 would submit + fence a second time (~30-50ms of mapAsync round-trip for
     // a 147 KB buffer - all latency, no bandwidth), doubling the sync cost of a tiny readback.
-    const rb = device.createBuffer({ size: this.detSize * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    enc.copyBufferToBuffer(dp, 0, rb, 0, this.detSize * 4);
+    const rb = device.createBuffer({ size: words * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    enc.copyBufferToBuffer(dp, 0, rb, 0, words * 4);
     device.queue.submit([enc.finish()]);
     await rb.mapAsync(GPUMapMode.READ);
-    const sums = new Uint32Array(rb.getMappedRange().slice(0)); rb.unmap(); rb.destroy();
-    temps.forEach((b) => b.destroy());
+    const mapped = rb.getMappedRange().slice(0); rb.unmap(); rb.destroy();
+    temps.forEach((buffer) => buffer.destroy());
+    maskBuf.destroy(); dp.destroy();
     const n = mean ? (scanMask.reduce((a, v) => a + (v ? 1 : 0), 0) || 1) : 1;
     const out = new Float32Array(this.detSize);
-    for (let i = 0; i < this.detSize; i++) out[i] = sums[i] / n;  // f64 divide -> f32 store
+    if (float) {
+      const partial = new Float32Array(mapped);
+      for (let i = 0; i < this.detSize; i++) {
+        let total = 0;
+        for (let block = 0; block < FRAME_BLOCKS; block++) total += partial[block * this.detSize + i];
+        out[i] = total / n;   // f64 sum and divide -> f32 store
+      }
+    } else {
+      const sums = new Uint32Array(mapped);
+      // high * 2^32 + low is exact in f64 below 2^53 counts per pixel.
+      for (let i = 0; i < this.detSize; i++) out[i] = (sums[2 * i + 1] * 4294967296 + sums[2 * i]) / n;
+    }
     for (const bp of this.badPx) out[bp] = 0;   // auto-filter hot px (matches CUDA apply_mask)
-    maskBuf.destroy(); dp.destroy(); return out;
+    return out;
   }
 
-  private upload(arr: Uint32Array, usage: number): GPUBuffer {
-    const b = this.device.createBuffer({ size: Math.max(16, arr.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
-    this.device.queue.writeBuffer(b, 0, arr.buffer as ArrayBuffer, arr.byteOffset, arr.byteLength); return b;
+  private upload(words: Uint32Array, usage: number): GPUBuffer {
+    const buffer = this.device.createBuffer({ size: Math.max(16, words.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(buffer, 0, words.buffer as ArrayBuffer, words.byteOffset, words.byteLength); return buffer;
   }
   private maskedCoMSelection(mask: Uint32Array, detCols: number): { idx: Uint32Array; n: number; integerFlags: number } {
     if (mask.length !== this.detSize) {
@@ -1649,21 +1676,21 @@ export class DetectorCompute {
     this.retireBuffers([dims]);
     return out;
   }
-  private uniform(vals: number[]): GPUBuffer {
-    const b = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const a = new Uint32Array(vals); this.device.queue.writeBuffer(b, 0, a.buffer as ArrayBuffer, a.byteOffset, a.byteLength); return b;
+  private uniform(values: number[]): GPUBuffer {
+    const buffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const words = new Uint32Array(values); this.device.queue.writeBuffer(buffer, 0, words.buffer as ArrayBuffer, words.byteOffset, words.byteLength); return buffer;
   }
   private idpcPackParams(cosTheta: number, sinTheta: number, useTranspose: boolean): GPUBuffer {
-    const buf = new ArrayBuffer(32);
-    const u32 = new Uint32Array(buf);
-    const f32 = new Float32Array(buf);
+    const params = new ArrayBuffer(32);
+    const u32 = new Uint32Array(params);
+    const f32 = new Float32Array(params);
     u32[0] = this.scanCount;
     u32[1] = useTranspose ? 1 : 0;
     f32[4] = cosTheta;
     f32[5] = sinTheta;
-    const b = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.device.queue.writeBuffer(b, 0, buf);
-    return b;
+    const buffer = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(buffer, 0, params);
+    return buffer;
   }
   private isPowerOfTwo(value: number): boolean {
     const n = Math.max(0, Math.round(value));
@@ -1730,7 +1757,7 @@ export class DetectorCompute {
     void this.device.queue.onSubmittedWorkDone()
       .catch(() => {})
       .finally(() => {
-        for (const b of buffers) b.destroy();
+        for (const buffer of buffers) buffer.destroy();
       });
   }
   private dispatch(pipe: GPUComputePipeline, bind: GPUBindGroup, groups: number, gy = 1) {

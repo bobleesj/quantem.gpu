@@ -23,6 +23,7 @@ from numba import njit
 from quantem.gpu.device.cuda_runtime import (
     _alloc_pinned_fast,
     _release_pinned,
+    cuda_device_index,
 )
 from quantem.gpu.formats.hdf5.frames import (
     BLOCK_SIZE,
@@ -85,7 +86,6 @@ class PairedLoader:
         if rolling_scans < PairedCounts.interval or rings < 2:
             raise ValueError(f"rolling_scans must be at least {PairedCounts.interval} and rings at least 2; got {rolling_scans} and {rings}.")
         self.rolling_scans, self.rings = int(rolling_scans), int(rings)
-        self._release = _release_pinned
         self.capacity = (int(capacity) + _ALIGN - 1) & ~(_ALIGN - 1)
         self.staging = [_alloc_pinned_fast(self.capacity) for _ in range(slots)]
         if any(int(view.ctypes.data) % _ALIGN for view in self.staging):
@@ -109,7 +109,7 @@ class PairedLoader:
         self.producer_stream.synchronize()
         self.consumer_stream.synchronize()
         for view in self.staging:
-            self._release(view, prune=False)
+            _release_pinned(view, prune=False)
         self.closed = True
 
     def __enter__(self):
@@ -117,12 +117,6 @@ class PairedLoader:
 
     def __exit__(self, *exc):
         self.close()
-
-    def load(self, path, *, scan_shape=None, device=None):
-        """Load one acquisition; returns ``(source, timings)``. See :meth:`load_many`."""
-        for _, source, timings in self.load_many([path], scan_shape=scan_shape, device=device):
-            return source, timings
-        raise ValueError(f"{path} was not admitted.")
 
     def stream(self, paths, *, scan_shape=None, device=None, admit=None, verbose=False):
         """Yield ``(path, Dataset4dstemGPU)`` per admitted acquisition, as :func:`io.load` returns.
@@ -149,7 +143,7 @@ class PairedLoader:
         if self.closed:
             raise RuntimeError("The paired loader is closed.")
         paths = [str(path) for path in paths]
-        selected = cp.cuda.Device().id if device is None else int(str(device).removeprefix("cuda:"))
+        selected = cuda_device_index(device)
         if not paths or (admit is not None and not admit(paths[0])):
             return
         handoff: Queue = Queue()
@@ -198,6 +192,7 @@ class PairedLoader:
                                 shards=len(description["shards"]), resident_bytes=source.nbytes,
                             )
                             yield description["path"], source, dict(stats, metadata=description["metadata"], pixel_mask=description["pixel_mask"], shape=description["shape"], dtype=description["dtype"])
+                            # Let the caller's release free this source while the next one streams.
                             source = None
                 future.result()
                 if failure:
@@ -262,16 +257,16 @@ class PairedLoader:
             staging = self.staging[slot]
             size, read_seconds = _read_direct(shard["path"], staging)
             started = time.perf_counter()
-            offsets, sizes, n, frame_shape, dtype = _chunk_table(staging, size, shard["dataset_path"], shard["path"])
+            offsets, sizes, frame_count, frame_shape, dtype = _chunk_table(staging, size, shard["dataset_path"], shard["path"])
             if frame_shape != shard["detector_shape"] or dtype != np.dtype("uint16"):
                 raise ValueError(f"{shard['path']}: dataset is {frame_shape} {dtype}, the master declares {shard['detector_shape']} uint16.")
             if int(offsets[-1] + sizes[-1]) > size:
                 raise ValueError(f"{shard['path']}: chunk table extends past the file end.")
-            starts = np.empty(n * shard["blocks"], np.uint32)
+            starts = np.empty(frame_count * shard["blocks"], np.uint32)
             status = _walk_block_starts(staging, offsets, sizes, shard["blocks"], shard["frame_bytes"], BLOCK_SIZE, starts)
             if status:
                 raise ValueError(f"{shard['path']}: chunk headers do not describe {shard['frame_bytes']}-byte frames in {shard['blocks']} LZ4 blocks (code {status}).")
-            return dict(slot=slot, offsets=offsets, starts=starts, frames=n, size=size, read_seconds=read_seconds, header_seconds=time.perf_counter() - started)
+            return dict(slot=slot, offsets=offsets, starts=starts, frames=frame_count, size=size, read_seconds=read_seconds, header_seconds=time.perf_counter() - started)
         except BaseException:
             self.free_slots.put(slot)
             raise
@@ -351,31 +346,31 @@ class PairedLoader:
                     stats["header_seconds"].append(current["header_seconds"])
                     extend()
                     submit_ahead()
-                    n, size = current["frames"], current["size"]
-                    buffers.reserve(n, stream)
+                    frame_count, size = current["frames"], current["size"]
+                    buffers.reserve(frame_count, stream)
                     piece = buffers.lz4_frames
                     if copy_events[pair] is not None:
                         copy_events[pair].synchronize()
                         self.free_slots.put(copy_events[pair].slot)
                         copy_events[pair] = None
-                    host_offsets = np.frombuffer(buffers.host_offsets[pair], np.uint64, n)
-                    host_starts = np.frombuffer(buffers.host_starts[pair], np.uint32, blocks * n)
+                    host_offsets = np.frombuffer(buffers.host_offsets[pair], np.uint64, frame_count)
+                    host_starts = np.frombuffer(buffers.host_starts[pair], np.uint32, blocks * frame_count)
                     host_offsets[:] = current["offsets"]
                     host_starts[:] = current["starts"]
                     with stream:
                         buffers.compressed[pair][:size].set(self.staging[current["slot"]][:size], stream=stream)
-                        buffers.offsets[pair][:n].set(host_offsets, stream=stream)
-                        buffers.starts[pair][: blocks * n].set(host_starts, stream=stream)
+                        buffers.offsets[pair][:frame_count].set(host_offsets, stream=stream)
+                        buffers.starts[pair][: blocks * frame_count].set(host_starts, stream=stream)
                         done = cp.cuda.Event()
                         done.record(stream)
                         done.slot = current["slot"]
                         copy_events[pair] = done
                         current = None
-                        at = 0
-                        while at < n:
-                            take = min(rolling_scans - filled, n - at, piece)
+                        cursor = 0
+                        while cursor < frame_count:
+                            take = min(rolling_scans - filled, frame_count - cursor, piece)
                             # LZ4 output is staged per piece so a lean loader needs only rolling_scans frames of it.
-                            decode_lz4(((blocks + 1) // 2, 1, take), (32, 2, 1), (buffers.compressed[pair], buffers.offsets[pair][at:], buffers.starts[pair][at * blocks :], buffers.counts, buffers.block_offsets, np.uint32(BLOCK_SIZE), np.uint32(frame_bytes), buffers.lz4[pair]), stream=stream)
+                            decode_lz4(((blocks + 1) // 2, 1, take), (32, 2, 1), (buffers.compressed[pair], buffers.offsets[pair][cursor:], buffers.starts[pair][cursor * blocks :], buffers.counts, buffers.block_offsets, np.uint32(BLOCK_SIZE), np.uint32(frame_bytes), buffers.lz4[pair]), stream=stream)
                             if filled == 0 and ring_event is not None:
                                 stream.wait_event(ring_event)
                             decoded = buffers.lz4[pair]
@@ -384,7 +379,7 @@ class PairedLoader:
                                 unshuffle((full_blocks, 1, take), (256, 1, 1), (decoded, target, np.uint32(frame_bytes)), stream=stream)
                             if tail_bytes:
                                 unshuffle_tail(((tail_bytes // 2 + 255) // 256, 1, take), (256, 1, 1), (decoded, target, np.uint32(frame_bytes)), stream=stream)
-                            at += take
+                            cursor += take
                             filled += take
                             ready += take
                             last = ready == total
@@ -424,9 +419,9 @@ class _DeviceBuffers:
         import cupy as cp
 
         self.frame_bytes, self.blocks = description["frame_bytes"], description["blocks"]
-        det_shape = description["shape"][2:]
+        detector_shape = description["shape"][2:]
         scans = min(rolling_scans, math.prod(description["shape"][:2])) // PairedCounts.interval * PairedCounts.interval
-        self.rolling = [cp.empty((scans, *det_shape), cp.uint16) for _ in range(rings)]
+        self.rolling = [cp.empty((scans, *detector_shape), cp.uint16) for _ in range(rings)]
         self.compressed = [cp.empty(capacity, cp.uint8) for _ in range(2)]
         self.lz4_frames = scans
         self.lz4 = [cp.empty(scans * self.frame_bytes, cp.uint8) for _ in range(2)]
@@ -451,6 +446,7 @@ class _DeviceBuffers:
         cp.cuda.Stream.null.synchronize()  # the tables are filled on the null stream; the producer stream does not wait for it
 
     def release(self) -> None:
+        """Drop the device and pinned buffers so their memory returns before the loader closes."""
         self.rolling = self.compressed = self.lz4 = self.offsets = self.starts = self.counts = self.block_offsets = None
         self.host_offsets = self.host_starts = None
 
@@ -465,7 +461,7 @@ def _chunk_table(staging: np.ndarray, size: int, dataset_path: str, path: str):
         table = chunk_locations(dataset)
         if len(table) != dataset.shape[0]:
             raise ValueError(f"{path}: {len(table)} stored chunks for {dataset.shape[0]} frames; every frame must be written.")
-        return np.ascontiguousarray(table[:, 0]), np.ascontiguousarray(table[:, 1]), int(dataset.shape[0]), tuple(int(v) for v in dataset.shape[1:]), np.dtype(dataset.dtype)
+        return np.ascontiguousarray(table[:, 0]), np.ascontiguousarray(table[:, 1]), int(dataset.shape[0]), tuple(int(axis_size) for axis_size in dataset.shape[1:]), np.dtype(dataset.dtype)
 
 
 class _ImageFile:
@@ -549,10 +545,10 @@ def _fresh_timings(description: dict) -> dict:
 
 def _read_direct(path: str, staging: np.ndarray) -> tuple[int, float]:
     """Read one whole shard with direct I/O into page-aligned pinned staging."""
-    fd = os.open(path, os.O_RDONLY | os.O_DIRECT)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECT)
     started = time.perf_counter()
     try:
-        before = os.fstat(fd)
+        before = os.fstat(descriptor)
         size = before.st_size
         padded = (size + _ALIGN - 1) & ~(_ALIGN - 1)
         if size <= 0 or padded > staging.size:
@@ -560,16 +556,16 @@ def _read_direct(path: str, staging: np.ndarray) -> tuple[int, float]:
         view = memoryview(staging)
         offset = 0
         while offset < size:
-            got = os.preadv(fd, [view[offset:padded]], offset)
-            if got <= 0 or (offset + got < size and got % _ALIGN):
+            length = os.preadv(descriptor, [view[offset:padded]], offset)
+            if length <= 0 or (offset + length < size and length % _ALIGN):
                 raise OSError(f"Short direct read of {path} at byte {offset}.")
-            offset += got
-        after = os.fstat(fd)
+            offset += length
+        after = os.fstat(descriptor)
         if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
             raise ValueError(f"{path} changed while it was being read.")
         return size, time.perf_counter() - started
     finally:
-        os.close(fd)
+        os.close(descriptor)
 
 
 # --- io.load entry points -------------------------------------------------------

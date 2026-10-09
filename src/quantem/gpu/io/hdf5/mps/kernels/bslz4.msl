@@ -397,3 +397,32 @@ kernel void shuf_8_batched(
     }
     out[ulong(frame) * ulong(frame_bytes) + byte_in_frame] = value;
 }
+
+// Copy decoded uint32 counts into uint16 storage. Arina writes uint32 files
+// whose counts fit 16 bits; a valid count above 65535 is flagged, never clipped,
+// and the caller rejects the batch. above[0] is that flag, above[1] counts
+// flagged-pixel markers stored as 0. One thread per count; the Metal port of
+// CUDA's range check followed by astype(uint16).
+kernel void narrow_u32_u16(
+    const device uint* in       [[buffer(0)]],
+    device ushort*     out      [[buffer(1)]],
+    device atomic_uint* above   [[buffer(2)]],
+    constant uint&     count    [[buffer(3)]],
+    const device uchar* valid   [[buffer(4)]],
+    constant uint&     pixels   [[buffer(5)]],
+    uint index                  [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    uint value = in[index];
+    if (value > 0xFFFFu) {
+        if (valid[index % pixels]) {
+            atomic_fetch_or_explicit(&above[0], 1u, memory_order_relaxed);
+        } else {
+            // A flagged pixel's uint32 detector marker: pixel_mask keeps the
+            // position and reads exclude it, so it is stored as 0 and counted.
+            atomic_fetch_add_explicit(&above[1], 1u, memory_order_relaxed);
+            value = 0u;
+        }
+    }
+    out[index] = ushort(value);
+}

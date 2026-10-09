@@ -28,13 +28,20 @@ class CUDAFloatLanes(counts.StreamedCounts):
     """Reuse count tables/storage without exposing count-valued float products."""
 
     def decode_scan_range_device(self, first, stop, *, errors=None):
+        """Decode scans ``[first, stop)`` as uint16 bit lanes.
+
+        ``errors`` (one uint32 on the device) collects stream failures for the
+        caller to check after several decodes, as for count residents; without
+        it this decode checks its own and raises.
+        """
         import cupy as cp
 
+        owns_errors = errors is None
         with cp.cuda.Device(self.device):
             lanes = int(np.prod(self.shape[2:]))
             direct, entropy = _kernels(self.device, lanes)[:2]
             output = cp.empty((stop - first, *self.shape[2:]), cp.uint16)
-            errors = cp.zeros(1, cp.uint32)
+            errors = counts.error_flags(errors, self.device)
             for chunk in self.chunks:
                 begin, end = (
                     max(first, chunk.first),
@@ -62,7 +69,7 @@ class CUDAFloatLanes(counts.StreamedCounts):
                         count,
                     ),
                 )
-            if int(errors.get()[0]):
+            if owns_errors and int(errors.get()[0]):
                 raise ValueError(
                     "Float ANS stream failed reconstruction; recopy the source."
                 )
@@ -76,7 +83,7 @@ class CUDAFloatLanes(counts.StreamedCounts):
             lanes = int(np.prod(self.shape[2:]))
             entropy, reduce = _kernels(self.device, lanes)[2:]
             selected = cp.asarray(mask, dtype=cp.uint8)
-            scratch = cp.empty((max(c.scans for c in self.chunks), lanes), cp.uint16)
+            scratch = cp.empty((max(chunk.scans for chunk in self.chunks), lanes), cp.uint16)
             output = cp.empty(self.shape[:2], cp.float32)
             errors = cp.zeros(1, cp.uint32)
             for chunk in self.chunks:

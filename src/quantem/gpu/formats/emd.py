@@ -1,12 +1,10 @@
-"""Read EMD files: NCEM dimension calibration and Velox scope metadata.
+"""Read EMD files: NCEM dimension calibration.
 
-Neither reader guesses unknown units or axis spacing; missing fields stay
+The reader does not guess unknown units or axis spacing; missing fields stay
 missing so callers can merge what was found.
 """
 
-import json
 import math
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -34,10 +32,10 @@ def dataset_metadata(data: h5py.Dataset, metadata: dict) -> dict:
         if "/" in key and value is not None
     }
     dimensions = []
-    for obj in (data.file, data.parent, data):
-        for name, value in obj.attrs.items():
+    for node in (data.file, data.parent, data):
+        for name, value in node.attrs.items():
             if np.asarray(value).size <= 100:
-                retained[obj.name + "@" + name] = _value(value)
+                retained[node.name + "@" + name] = _value(value)
     for index, size in enumerate(data.shape, 1):
         dimension = data.parent.get(f"dim{index}")
         if not isinstance(dimension, h5py.Dataset):
@@ -69,6 +67,8 @@ def dataset_metadata(data: h5py.Dataset, metadata: dict) -> dict:
             fields[field] = stored if isinstance(stored, str) else ""
         spacing = None
         if values.dtype.kind in "fiu" and len(values) >= 2:
+            # float64 so a decreasing unsigned axis cannot wrap and float32
+            # rounding cannot fail the 1e-6 regularity test.
             difference = np.diff(values.astype(np.float64))
             if (
                 np.all(np.isfinite(difference))
@@ -122,105 +122,3 @@ def dataset_metadata(data: h5py.Dataset, metadata: dict) -> dict:
         result["detector_sampling"] = detector
         result["detector_sampling_unit"] = units[0]
     return result
-
-
-def read_emd_metadata(emd_path) -> dict:
-    """Extract scope-side fields from a Velox EMD file.
-
-    Reads the first image's ``Data/Image/<hash>/Metadata`` JSON (Velox
-    stores metadata as a uint8 byte vector per frame). Returns a dict
-    with whichever of the following keys were found; missing keys are
-    omitted so callers can merge via ``dict.update`` without clobbering:
-
-    - ``stem_magnification``    : float, e.g. 5_100_000 for 5.1 Mx
-    - ``field_of_view_nm``      : float, FullScanFieldOfView.x in nm
-    - ``voltage_kV``            : float, AccelerationVoltage / 1000
-    - ``semiangle_mrad``        : float, probe semiangle when exposed
-
-    Returns ``{}`` on any parse failure so callers can always `.update()`
-    the result into an existing config dict without guarding. The EMD
-    format version varies across microscope builds, so missing-field
-    handling is the common path, not the edge case.
-    """
-    path = Path(emd_path)
-    if not path.is_file():
-        return {}
-    try:
-        with h5py.File(path, "r") as handle:
-            if "Data/Image" not in handle:
-                return {}
-            image_group = handle["Data/Image"]
-            first_hash = next(iter(image_group.keys()), None)
-            if first_hash is None:
-                return {}
-            meta_ds = image_group[first_hash].get("Metadata")
-            if meta_ds is None:
-                return {}
-            # Velox stores metadata as a (nbytes, nframes) uint8 JSON buffer.
-            # Frame 0 is sufficient; per-frame blobs are near-identical.
-            raw = meta_ds[:, 0] if meta_ds.ndim == 2 else meta_ds[()]
-            raw_bytes = bytes(np.asarray(raw).tolist()).rstrip(b"\x00")
-            document = json.loads(raw_bytes)
-    except (OSError, ValueError, KeyError):
-        return {}
-
-    result: dict = {}
-    optics = document.get("Optics") or {}
-    custom = document.get("CustomProperties") or {}
-
-    # Velox wraps most scalars as {"type": "double", "value": "5100000"};
-    # AccelerationVoltage is historically a bare string. Accept both.
-    def as_float(value):
-        if isinstance(value, dict):
-            value = value.get("value")
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    magnification = as_float(custom.get("StemMagnification"))
-    if magnification is not None:
-        result["stem_magnification"] = magnification
-
-    fov = optics.get("FullScanFieldOfView")
-    if isinstance(fov, dict):
-        fov_x = as_float(fov.get("x"))
-        if fov_x is not None:
-            # Velox reports FOV in metres; screener works in nm.
-            result["field_of_view_nm"] = fov_x * 1e9
-
-    voltage = as_float(optics.get("AccelerationVoltage"))
-    if voltage is not None:
-        result["voltage_kV"] = voltage / 1000.0
-
-    semiangle = as_float(optics.get("ConvergenceSemiAngle") or optics.get("SemiConvergenceAngle"))
-    if semiangle is not None:
-        # Velox stores the convergence angle in radians.
-        result["semiangle_mrad"] = semiangle * 1000.0
-    return result
-
-
-def find_emd_sibling(master_path) -> Path | None:
-    """Locate a Velox EMD next to an Arina master file.
-
-    Arina writes ``<stem>_master.h5`` alongside data chunk files; when
-    the operator also exports the scan to Velox, the EMD usually lands
-    in the same folder. Strategy:
-
-    1. Prefer a file named ``<stem>.emd`` (strict match).
-    2. Fall back to any ``*.emd`` in the same directory - Dectris
-       operators often batch-rename after the fact.
-
-    Returns ``None`` when no EMD sibling is found.
-    """
-    master = Path(master_path)
-    folder = master.parent
-    stem = master.stem
-    stem = stem.removesuffix("_master")
-    candidates = list(folder.glob(f"{stem}.emd")) + list(folder.glob(f"{stem}*.emd"))
-    if candidates:
-        return candidates[0]
-    others = list(folder.glob("*.emd"))
-    return others[0] if len(others) == 1 else None

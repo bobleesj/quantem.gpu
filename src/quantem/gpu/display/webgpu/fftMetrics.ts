@@ -108,18 +108,18 @@ export function computeFftQualityMetrics(
       const dx = x - cx;
       const rSq = dx * dx + dy * dy;
       if (rSq <= dcSq || rSq >= rMaxSq) continue;
-      const v = finiteMagnitude(mag[row + x]);
-      const power = v * v;
+      const value = finiteMagnitude(mag[row + x]);
+      const power = value * value;
       totalPower += power;
       if (rSq < rLoSq || rSq > rHiSq) continue;
       bandPower += power;
       bandCount++;
-      bandSum += v;
-      bandSumSq += v * v;
-      if (v > strongest) strongest = v;
+      bandSum += value;
+      bandSumSq += value * value;
+      if (value > strongest) strongest = value;
       const theta = Math.atan2(dy, dx);
       const bin = Math.max(0, Math.min(angleBins - 1, Math.floor(((theta + Math.PI) / (2 * Math.PI)) * angleBins)));
-      angleSum[bin] += v;
+      angleSum[bin] += value;
       angleCount[bin]++;
     }
   }
@@ -172,8 +172,8 @@ export function computeFftQualityMetrics(
       let angleSq = 0;
       for (let i = 0; i < angleBins; i++) {
         if (angleCount[i] === 0) continue;
-        const d = angleMeans[i] - angleMean;
-        angleSq += d * d;
+        const deviation = angleMeans[i] - angleMean;
+        angleSq += deviation * deviation;
       }
       ring = Math.max(0, 1 - Math.sqrt(angleSq / validAngles) / angleMean);
     }

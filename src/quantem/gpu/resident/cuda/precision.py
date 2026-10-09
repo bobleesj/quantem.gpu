@@ -40,9 +40,9 @@ def _regional_calibration(report):
     exponent = -math.frexp(maximum)[1] if maximum else 0
     pairs = []
     for value in (report["scale"], report["offset"]):
-        value = math.ldexp(value, exponent)
-        high = struct.unpack("f", struct.pack("f", value))[0]
-        pairs += [np.float32(high), np.float32(value - high)]
+        scaled = math.ldexp(value, exponent)
+        high = struct.unpack("f", struct.pack("f", scaled))[0]
+        pairs += [np.float32(high), np.float32(scaled - high)]
     return *pairs, np.int32(exponent)
 
 
@@ -233,9 +233,8 @@ class PrecisionSource(DetectorQueries):
         """Return the logical float32 element count for array-style consumers."""
         return math.prod(self.shape)
 
-    def _restore(self, codes, report=None):
+    def _restore(self, codes, report):
         """Convert stored codes back to float32 intensities with the part's calibration."""
-        report = self.precision if report is None else report
         return (
             codes.astype(cp.float64) * report["scale"]
             + report["offset"]

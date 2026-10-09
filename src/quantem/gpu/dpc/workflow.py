@@ -93,6 +93,7 @@ def run(data, scan_shape=None, *, rotation_angle_deg=None, rotation_steps=180,
     if verbose:
         print(f"DPC: rotation {angle:.1f} deg (transpose={transposed}), "
               f"{com_row.shape[0]}x{com_row.shape[1]} in {elapsed:.2f}s")
+    # A forced angle rotates in float64; every DPC product is float32.
     return DPCResult(phase=phase, com_row=com_row, com_col=com_col,
                      com_row_aligned=aligned_row.astype(np.float32),
                      com_col_aligned=aligned_col.astype(np.float32),
@@ -119,7 +120,7 @@ def integrate(com_row, com_col) -> np.ndarray:
     phase_fft = (-1j * 0.25) * (k_row * spectrum_row + k_col * spectrum_col) / k_squared
     phase_fft[0, 0] = 0
     phase = np.real(np.fft.ifft2(phase_fft)).astype(np.float32)
-    return (-(phase - phase.mean())).astype(np.float32, copy=False)
+    return -(phase - phase.mean())
 
 
 def find_optimal_rotation(com_row, com_col, rotation_steps=180):

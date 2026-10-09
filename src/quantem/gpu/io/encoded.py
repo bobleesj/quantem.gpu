@@ -15,7 +15,7 @@ from contextlib import ExitStack
 import h5py
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.device.cuda_runtime import cp, cuda_device_index
 from quantem.gpu.device.metal_runtime import release_buffer
 from quantem.gpu.formats.hdf5.reads import FrameReader
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
@@ -51,7 +51,7 @@ def load_h5_ans(
     info.metadata["source_path"] = str(path)
     inspected = time.perf_counter()
     generic = arrays.load_hdf5_array_resident(
-        path, scan_shape=scan_shape, dataset_path=dataset_path, backend=backend,
+        path, dataset_path=dataset_path, backend=backend,
         device=device, verbose=verbose, hot_pixel_correction=hot_pixel_correction,
         info=info, auto_narrow=auto_narrow,
     )
@@ -67,18 +67,14 @@ def load_h5_ans(
     shape = (*info.scan_shape, *info.detector_shape)
     stored_dtype = np.dtype(info.dtype)
     # Arina writes uint32 files whose counts still fit 16 bits. They are encoded
-    # as uint16 only after every stored chunk proves that no count is changed.
+    # as uint16 only after every stored chunk proves that no valid count is changed.
     dtype = np.dtype("uint16") if stored_dtype == np.dtype("uint32") else stored_dtype
     if dtype not in (np.dtype("uint8"), np.dtype("uint16")):
         raise TypeError(
             "Compact count loading preserves native uint8/uint16 counts, and "
             "uint32 counts that fit uint16. Use dense loading for other dtypes."
         )
-    selected = (
-        cp.cuda.Device().id
-        if device is None
-        else int(str(device).removeprefix("cuda:"))
-    )
+    selected = cuda_device_index(device)
     with cp.cuda.Device(selected), ExitStack() as stack:
         # Runs last: hand this load's read, decode and encode scratch back once
         # the reader and corrector are closed. The encoded chunks are not pooled.
@@ -88,6 +84,8 @@ def load_h5_ans(
         valid = np.ones(info.detector_shape, bool)
         if info.pixel_mask is not None and not corrector.record["applied"]:
             valid &= np.asarray(info.pixel_mask) == 0
+        flagged = cp.asarray(np.flatnonzero(~valid), dtype=cp.int32)
+        zeroed_markers = 0
         cp.get_default_memory_pool().free_all_blocks()
         source = StreamedCounts(shape, dtype, valid)
         free, _ = cp.cuda.runtime.memGetInfo()
@@ -127,18 +125,9 @@ def load_h5_ans(
             stop = min(first + chunk_scans, math.prod(info.scan_shape))
             before = time.perf_counter()
             if dataset is not None:
-                host = np.empty((stop - first, *info.detector_shape), stored_dtype)
                 # A chunk can cut a rectangular scan row. Only storage copying
                 # runs on CPU; counts and all scientific reductions stay native.
-                cursor = first
-                while cursor < stop:
-                    row, col = divmod(cursor, shape[1])
-                    count = min(shape[1] - col, stop - cursor)
-                    host[cursor - first : cursor - first + count] = dataset[
-                        row, col : col + count
-                    ]
-                    cursor += count
-                raw = cp.asarray(host)
+                raw = cp.asarray(arrays.read_frame_block(dataset, shape, first, stop))
             else:
                 prepared = reader.prepare(np.arange(first, stop))
                 for key, value in prepared["prepare_timing_s"].items():
@@ -155,11 +144,21 @@ def load_h5_ans(
                     # Their requested correction replaces them anyway; clear
                     # only those pixels before validating every retained count.
                     raw.reshape(raw.shape[0], -1)[:, corrector.bad] = 0
+                elif flagged.size:
+                    # Kept flagged pixels hold the detector's 0xffffffff marker,
+                    # which no uint16 can hold. pixel_mask keeps their positions
+                    # and reads exclude them, so a flagged value above 65535 is
+                    # stored as 0 and counted; every valid count must still fit.
+                    pixels = raw.reshape(raw.shape[0], -1)
+                    kept = pixels[:, flagged]
+                    markers = kept > 0xFFFF
+                    zeroed_markers += int(cp.count_nonzero(markers))
+                    pixels[:, flagged] = cp.where(markers, 0, kept)
                 if bool(cp.any(raw > 0xFFFF)):
                     raise ValueError(
-                        f"Frames {first} to {stop - 1} hold counts above 65535, so the uint32 "
-                        "acquisition cannot be encoded as exact uint16 counts. Keep the original "
-                        "file; this encoded writer does not support these uint32 values."
+                        f"Frames {first} to {stop - 1} hold counts above 65535 at unflagged pixels, "
+                        "so the uint32 acquisition cannot be encoded as exact uint16 counts. Keep "
+                        "the original file; this encoded writer does not support these uint32 values."
                     )
                 raw = raw.astype(cp.uint16)
             corrector.apply(raw)
@@ -174,7 +173,7 @@ def load_h5_ans(
             index_bytes=source.index_nbytes,
             pixel_mask=info.pixel_mask,
             resident_profile=INTEGER_CODEC,
-            **_correction_metadata(corrector.record),
+            **_correction_metadata(corrector.record, zeroed_markers),
             load_timings=dict(
                 source.load_metrics,
                 read_upload_seconds=read_seconds,
@@ -194,27 +193,33 @@ def load_h5_ans(
 def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal."""
     # Metal decoding is imported only on the MPS path, like every platform decoder.
-    from quantem.gpu.io.hdf5.mps.decode import load_prepared_frames
+    from quantem.gpu.io.hdf5.mps.decode import exact_uint16, load_prepared_frames
 
     started = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
         raise ValueError(f"{info.reason}: {info.action}")
     shape = (*info.scan_shape, *info.detector_shape)
-    dtype = np.dtype(info.dtype)
+    stored_dtype = np.dtype(info.dtype)
+    # As on CUDA, Arina uint32 counts are stored as uint16 only after every
+    # decoded batch proves that no valid count changes.
+    dtype = np.dtype("uint16") if stored_dtype == np.dtype("uint32") else stored_dtype
     if dtype not in (np.dtype("uint8"), np.dtype("uint16")):
         raise TypeError(
-            "Encoded loading preserves native uint8/uint16 detector counts."
+            "Encoded loading preserves native uint8/uint16 detector counts, and "
+            "uint32 counts that fit uint16."
         )
     corrector = MPSHotPixelCorrector(info.pixel_mask, hot_pixel_correction)
     valid = np.ones(info.detector_shape, bool)
     if info.pixel_mask is not None and not corrector.record["applied"]:
         valid &= np.asarray(info.pixel_mask) == 0
     source = MPSStreamedCounts(shape, dtype, valid)
+    zeroed_markers = 0
     reader = FrameReader(str(path))
     scans = math.prod(info.scan_shape)
-    # Bound simultaneous decoded counts and ANS encoding scratch on smaller Macs.
+    # Bound simultaneous decoded counts and ANS encoding scratch on smaller Macs;
+    # uint32 batches hold half the scans, so their decoded bytes stay the same.
     # Keep batches aligned to the codec interval so exact stored counts are unchanged.
-    chunk_scans = min(8192, scans)
+    chunk_scans = min(8192 if stored_dtype.itemsize <= 2 else 4096, scans)
     if chunk_scans >= 512:
         chunk_scans = chunk_scans // 512 * 512
     read_decode_seconds = 0.0
@@ -236,7 +241,15 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
                 raw = load_prepared_frames(prepared)
                 read_decode_seconds += time.perf_counter() - before
                 try:
+                    # The median reads only valid neighbors, so flagged uint32
+                    # sentinels are replaced before the range check, as on CUDA.
                     corrector.apply(raw)
+                    if stored_dtype != dtype:
+                        narrowed, zeroed = exact_uint16(raw, ranges[index][0], valid)
+                        zeroed_markers += zeroed
+                        buffer, raw._mtl = raw._mtl, None
+                        release_buffer(buffer)
+                        raw = narrowed
                     source.append(raw)
                     # Pack the exact spatial index from the same staging window so
                     # detector products and .qem saving stay available after the
@@ -263,9 +276,9 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     metadata = dict(info.metadata)
     metadata.update(
         resident_metadata(shape, dtype, source.nbytes, backend="mps"),
-        source_dtype=dtype.name,
+        source_dtype=stored_dtype.name,
         source_read_passes=1,
-        source_logical_tensor_bytes=math.prod(shape) * dtype.itemsize,
+        source_logical_tensor_bytes=math.prod(shape) * stored_dtype.itemsize,
         index_bytes=sum(
             int(buffer.length())
             for chunk in source.spatial_chunks
@@ -273,7 +286,7 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         ),
         pixel_mask=info.pixel_mask,
         resident_profile=INTEGER_CODEC,
-        **_correction_metadata(corrector.record),
+        **_correction_metadata(corrector.record, zeroed_markers),
         load_timings=dict(
             source.load_metrics,
             read_upload_seconds=read_decode_seconds,
@@ -286,25 +299,31 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     return Dataset4dstemGPU(source, metadata)
 
 
-def _correction_metadata(record: dict) -> dict:
+def _correction_metadata(record: dict, zeroed_markers: int = 0) -> dict:
     """Record how stored detector-mask pixels were handled and what that means for exactness.
 
     A corrected pixel no longer holds the file's count, so the working data is
     exact (its own codes decode bit for bit) but no longer the file's counts.
+    ``zeroed_markers`` counts flagged-pixel values above 65535 (the uint32
+    detector marker) stored as 0 when uncorrected uint32 counts become uint16:
+    every valid count and every other flagged value is still the file's, and
+    ``pixel_mask`` keeps the flagged positions.
     """
     applied = record["applied"]
-    if not applied:
-        policy = "preserve-stored-counts"
-    elif record["method"] == "median":
-        policy = "gpu-median-corrected"
+    if applied:
+        policy = f"gpu-{record['method']}-corrected"
+    elif zeroed_markers:
+        policy = "flagged-markers-stored-as-zero"
     else:
-        policy = "gpu-zero-corrected"
+        policy = "preserve-stored-counts"
+    exact = not applied and not zeroed_markers
     return dict(
-        lossless_exact=not applied,
-        file_counts_exact=not applied,
+        lossless_exact=exact,
+        file_counts_exact=exact,
         detector_mask_policy=policy,
         hot_pixel_correction=record,
         working_counts_exact=True,
+        flagged_markers_stored_as_zero=int(zeroed_markers),
     )
 
 
@@ -317,14 +336,17 @@ def _loaded_report(shape, device_name: str, metadata: dict) -> str:
     """
     correction = metadata["hot_pixel_correction"]
     count = int(correction["pixel_count"])
+    flagged = f"{count} bad pixel{'s' if count != 1 else ''}"
     if count == 0:
         outcome = "no bad pixels flagged"
     elif correction["method"] == "median":
-        outcome = f"{count} bad pixel{'s' if count != 1 else ''} replaced by neighbor median"
+        outcome = f"{flagged} replaced by neighbor median"
     elif correction["method"] == "zero":
-        outcome = f"{count} bad pixel{'s' if count != 1 else ''} set to zero"
+        outcome = f"{flagged} set to zero"
+    elif metadata.get("flagged_markers_stored_as_zero"):
+        outcome = f"{flagged} kept in the mask, their uint32 marker stored as 0"
     else:
-        outcome = f"{count} bad pixel{'s' if count != 1 else ''} left as recorded"
+        outcome = f"{flagged} left as recorded"
     seconds = metadata["load_timings"]["resident_ready_seconds"]
     return (
         f"Loaded {shape[0]} x {shape[1]} scan, {shape[2]} x {shape[3]} detector, "

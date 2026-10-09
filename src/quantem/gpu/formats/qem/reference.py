@@ -31,6 +31,12 @@ _LOWER = 1 << 23
 
 @cache
 def _tables() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Expand the frozen rANS frequencies once per process into (frequencies, starts, symbols).
+
+    ``starts`` is each symbol's cumulative offset in its model's 1024 slots and
+    ``symbols`` maps every slot back to its symbol, the lookup both the encoder
+    and the decoder of this reference need for every count.
+    """
     record = json.loads(Path(__file__).with_name("qem-rans-tables-v1.json").read_text())
     frequencies = np.asarray(record["frequencies"], dtype=np.int64)
     starts = np.cumsum(frequencies, axis=1) - frequencies
@@ -48,6 +54,7 @@ def count_tables() -> tuple[np.ndarray, np.ndarray]:
     CPU reference decoder reads, so every decoder uses the same model. The
     arrays are shared by every caller; upload them, never modify them.
     """
+    # uint32 words: the packed fields are shifted into the 32-bit table entries the kernels read.
     frequencies, starts, symbols = (table.astype(np.uint32) for table in _tables())
     encoding = (frequencies << 16) | starts
     decoding = np.stack([
@@ -134,13 +141,14 @@ def _encode_stream(values: np.ndarray) -> tuple[int, bytes]:
         state = (state // frequency << 10) + state % frequency + start
     encoded = state.to_bytes(4, "little") + bytes(reversed(emitted))
     if len(encoded) >= values.size * 2:
+        # The raw model stores each count as one little-endian uint16 word.
         model, encoded = 254, values.astype("<u2").tobytes()
     nonzero = np.flatnonzero(values)
     if values.max() <= 128 and nonzero.size * 2 < len(encoded):
         model = 252
         encoded = b"".join(
-            ((int(i) << 7) | (int(values[i]) - 1)).to_bytes(2, "little")
-            for i in nonzero
+            ((int(position) << 7) | (int(values[position]) - 1)).to_bytes(2, "little")
+            for position in nonzero
         )
     return model, encoded
 
@@ -307,7 +315,7 @@ def save_array(
                     format_identifier="numpy-float32",
                     format_name="NumPy float32",
                     microscope_metadata={
-                        str(k): str(v) for k, v in scientific["source_metadata"].items()
+                        str(key): str(value) for key, value in scientific["source_metadata"].items()
                     },
                 ),
             )
