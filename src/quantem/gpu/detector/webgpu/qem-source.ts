@@ -8,6 +8,8 @@ export interface QemByteFile {
   name: string;
   size: number;
   slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
+  /** Consecutive chunkBytes-sized pieces of [start, end), read in order from one stream. */
+  chunks?(start: number, end: number, chunkBytes: number): AsyncGenerator<ArrayBuffer, void, unknown>;
 }
 
 type Span = { offset: number; count: number };
@@ -127,7 +129,62 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
     const header = await fetch(url, { method: "HEAD", cache: "no-store" });
     const size = Number(header.headers.get("Content-Length"));
     requireQem(header.ok && Number.isSafeInteger(size) && size >= 56, `cannot open ${name}; keep the data file beside the viewer`);
-    return { name, size, slice(start = 0, end = size) {
+    return { name, size, async *chunks(start: number, end: number, chunkBytes: number) {
+      // One ranged response carries every authentication chunk instead of one
+      // request per 64 MiB; each chunk is still hashed on its own.
+      const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` } });
+      requireQem(response.status === 206 && response.body, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
+      // A byte stream fills each chunk in place (BYOB); any other stream is copied from its parts.
+      let reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>;
+      let byob = true;
+      try { reader = response.body.getReader({ mode: "byob" }); }
+      catch { reader = response.body.getReader(); byob = false; }
+      let remaining = end - start;
+      try {
+        if (byob) {
+          // The `min` read option (Chrome 125, Node 22) is missing from TypeScript 5.9's DOM types.
+          const byteReader = reader as unknown as { read(view: Uint8Array, options: { min: number }): Promise<ReadableStreamReadResult<Uint8Array<ArrayBuffer>>> };
+          while (remaining > 0) {
+            const wanted = Math.min(chunkBytes, remaining);
+            let chunk = new Uint8Array(wanted), filled = 0;
+            while (filled < wanted) {
+              const part = await byteReader.read(chunk.subarray(filled), { min: wanted - filled });
+              requireQem(part.value && part.value.byteLength > 0, `truncated stream in ${name}`);
+              filled += part.value.byteLength;
+              remaining -= part.value.byteLength;
+              // Every BYOB read transfers the buffer it fills; continue in the returned one.
+              chunk = new Uint8Array(part.value.buffer, 0, wanted);
+            }
+            yield chunk.buffer;
+          }
+          const tail = await byteReader.read(new Uint8Array(1), { min: 1 });
+          requireQem(tail.done && !tail.value?.byteLength, `oversized stream in ${name}`);
+          return;
+        }
+        const defaultReader = reader as ReadableStreamDefaultReader<Uint8Array>;
+        let chunk = new Uint8Array(Math.min(chunkBytes, remaining)), filled = 0;
+        while (remaining > 0) {
+          const part = await defaultReader.read();
+          requireQem(!part.done, `truncated stream in ${name}`);
+          for (let at = 0; at < part.value.length;) {
+            requireQem(remaining > 0, `oversized stream in ${name}`);
+            const count = Math.min(chunk.length - filled, part.value.length - at);
+            chunk.set(part.value.subarray(at, at + count), filled);
+            at += count; filled += count; remaining -= count;
+            if (filled === chunk.length) {
+              yield chunk.buffer;
+              filled = 0;
+              if (remaining > 0) chunk = new Uint8Array(Math.min(chunkBytes, remaining));
+            }
+          }
+        }
+        requireQem((await defaultReader.read()).done, `oversized stream in ${name}`);
+      } finally {
+        // Stops the download when admission ends early, on success or failure.
+        await reader.cancel();
+        reader.releaseLock();
+      }
+    }, slice(start = 0, end = size) {
       return { async arrayBuffer() {
         const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` } });
         requireQem(response.status === 206, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
@@ -251,17 +308,46 @@ export async function qemFileSource(
       header.sha256.length === Math.ceil(header.bytes / chunkBytes),
     "missing payload checksums",
   );
-  for (let index = 0; index < header.sha256.length; index++) {
-    onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
+  requireQem(globalThis.crypto?.subtle, "checksum verification requires HTTPS or localhost; serve the viewer securely");
+  // QEM hashes independent 64 MiB chunks. WebCrypto uses the platform's
+  // SHA-256 implementation without a JavaScript loop over every byte.
+  // A served file streams the chunks through one response.
+  const stream = file.chunks?.(body, file.size, chunkBytes);
+  const verifiedChunk = async (index: number) => {
     const begin = index * chunkBytes;
     const end = Math.min(header.bytes, (index + 1) * chunkBytes);
-    // QEM hashes independent 64 MiB chunks. WebCrypto uses the platform's
-    // SHA-256 implementation without a JavaScript loop over every byte.
-    // Keep verification bounded to one chunk and retain every integrity check.
-    const bytes = await file.slice(body + begin, body + end).arrayBuffer();
+    // Request before the first await: queued stream reads resolve in call order.
+    const bytes = stream
+      ? await stream.next().then(part => part.done ? new ArrayBuffer(0) : part.value)
+      : await file.slice(body + begin, body + end).arrayBuffer();
+    requireQem(bytes.byteLength === end - begin, "truncated authentication chunk");
     const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
     const actual = Array.from(hash, value => value.toString(16).padStart(2, "0")).join("");
     requireQem(actual === header.sha256[index], "payload checksum mismatch");
+    return new Uint8Array(bytes);
+  };
+  // Four reads and digests stay in flight, so reading overlaps hashing while
+  // at most four 64 MiB chunks are held.
+  type Verified = { bytes: Uint8Array } | { error: unknown };
+  const pending: Promise<Verified>[] = [];
+  let next = 0;
+  const enqueue = () => {
+    const index = next++;
+    pending.push(verifiedChunk(index).then(bytes => ({ bytes }), error => ({ error })));
+  };
+  for (let depth = 0; depth < 4 && next < header.sha256.length; depth++) enqueue();
+  try {
+    for (let index = 0; index < header.sha256.length; index++) {
+      onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
+      const result = await pending.shift()!;
+      if ("error" in result) throw result.error;
+      if (next < header.sha256.length) enqueue();
+    }
+    if (stream) requireQem((await stream.next()).done, "unexpected trailing authentication chunk");
+  } finally {
+    // Settle every outstanding read before the stream closes.
+    await Promise.all(pending);
+    await stream?.return(undefined);
   }
   requireQem(
     typeof header.valid === "string" &&
