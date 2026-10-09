@@ -71,12 +71,7 @@ def test_readiness_keeps_missing_features_and_measurements_visible() -> None:
             for cell in entry["cells"]
             if cell["release_signoff"] and cell["evidence"] != "ready"
         ]
-        if backend == "vulkan":
-            assert entry["signoff"] == "not-scheduled"
-            assert entry["performance"]["state"] == "not-recorded"
-            assert entry["performance"]["measurements"] == []
-        else:
-            assert entry["signoff"] == "blocked"
+        assert entry["signoff"] == "blocked"
     # Existing workload-specific measurements are not erased by correcting
     # unlinked coarse readiness declarations.
     retained = status["backends"]["swift-metal"]["performance"]["measurements"]
@@ -215,13 +210,13 @@ def test_cli_and_generated_document_are_the_same_readiness_view() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     result = subprocess.run(
-        [sys.executable, "scripts/backend_status.py", "json", "--backend", "vulkan"],
+        [sys.executable, "scripts/backend_status.py", "json", "--backend", "webgpu"],
         text=True,
         capture_output=True,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout) == status["backends"]["vulkan"]
+    assert json.loads(result.stdout) == status["backends"]["webgpu"]
 
 
 def test_cli_rejects_stale_generated_docs_and_duplicate_json_claims(

@@ -14,7 +14,6 @@ Use `python scripts/backend_status.py json --backend BACKEND` for all records.
 | mps | blocked | recorded |
 | swift-metal | blocked | recorded |
 | webgpu | blocked | recorded |
-| vulkan | not-scheduled | not-recorded |
 
 ## cpu-reference
 
@@ -150,23 +149,3 @@ Blocking signoff cells:
 - `dpc.com-rotation-idpc::webgpu`
 - `display.transform-histogram-color-fft::webgpu`
 - `ssb.object-phase-loss::webgpu`
-
-## vulkan
-
-| Capability | Implementation | Evidence | Signoff |
-|---|---|---|---|
-| io.packed-display-precision | not-implemented | unsupported | not-scheduled |
-| io.empad-float-resident | not-implemented | unsupported | not-scheduled |
-| geometry.scan-quarter-turn | not-implemented | unsupported | not-scheduled |
-| io.decode-bin-provenance | partial | evidence-gap | not-scheduled |
-| io.selective-scan-loading | not-implemented | unsupported | not-scheduled |
-| detector.integer-products | partial | evidence-gap | not-scheduled |
-| screening.prepared-products | partial | evidence-gap | not-scheduled |
-| dpc.com-rotation-idpc | partial | evidence-gap | not-scheduled |
-| display.transform-histogram-color-fft | partial | evidence-gap | not-scheduled |
-| ssb.object-phase-loss | not-implemented | unsupported | not-scheduled |
-| ssb.calibration-200-nelder-mead | not-implemented | unsupported | not-scheduled |
-
-Blocking signoff cells:
-
-No release signoff is scheduled.

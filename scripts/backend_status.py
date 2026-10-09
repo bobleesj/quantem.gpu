@@ -1,7 +1,7 @@
 """Join scientific capability, retained evidence, and benchmark coverage.
 
 This is a generated view, not another registry. Run ``backend_status.py check``
-in CI, ``summary`` for the current blockers, or ``json --backend vulkan`` for
+in CI, ``summary`` for the current blockers, or ``json --backend webgpu`` for
 the complete records and their separate performance comparison conditions.
 """
 
@@ -34,7 +34,6 @@ BACKENDS = {
     "mps": "Python MPS",
     "swift-metal": "Native Swift/Metal",
     "webgpu": "WebGPU",
-    "vulkan": "Vulkan",
 }
 IMPLEMENTATION = {
     "reference": "implemented",
@@ -188,7 +187,7 @@ def build_status(
     --------
     >>> # Inspect one runtime without substituting an untested fallback:
     >>> # status = build_status(capabilities, profiles, benchmarks)
-    >>> # status["backends"]["vulkan"]["blocking_cells"]
+    >>> # status["backends"]["webgpu"]["blocking_cells"]
     """
     errors = []
     policy = profile_matrix.get("required_evidence", {})

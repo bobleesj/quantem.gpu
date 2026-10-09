@@ -5,8 +5,7 @@
     "cuda",
     "mps",
     "swift-metal",
-    "webgpu",
-    "vulkan"
+    "webgpu"
   ],
   "contract": {
     "coordinate_order": "row-column",
@@ -80,13 +79,6 @@
             "docs/maintainer/migration.md"
           ],
           "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
-        },
-        "vulkan": {
-          "level": "not-implemented",
-          "gates": [
-            "docs/maintainer/migration.md"
-          ],
-          "qualification": "CUDA save/load, selections and detector queries; Metal and browser-only precision formats are not implemented."
         }
       }
     },
@@ -100,21 +92,13 @@
         "swift-metal": {"level": "partial-hardware", "gates": ["tests/hardware/metal/test_empad_source.py", "tests/hardware/metal/test_empad_public.py"], "qualification": "Native original EMPAD source, exact float-word packing, DP and aperture kernels. Consumer integration, DPC, full cancellation and native release gates remain pending."},
         "cuda": {"level": "partial-hardware", "gates": ["tests/hardware/test_array_ans_workflows.py", "docs/maintainer/empad-contract.md"], "qualification": "io.load reads EMPAD XML/RAW and EMPAD2 XML records through formats.empad.load_array_source into a float32 ANS resident with unchanged IEEE bits. The QEM_TEST_BACKEND=cuda hardware tests use synthetic records: native frames and .qem round trips are bit-exact, EMPAD record footer words are excluded, several XML detector regions are kept as metadata, and encoded EMPAD2 sensor words are rejected. No real EMPAD acquisition, DPC or performance qualification is retained."},
         "mps": {"level": "partial-hardware", "gates": ["tests/hardware/test_array_ans_workflows.py", "docs/maintainer/empad-contract.md"], "qualification": "io.load reads EMPAD XML/RAW and EMPAD2 XML records through formats.empad.load_array_source into a float32 ANS resident with unchanged IEEE bits. The QEM_TEST_BACKEND=mps hardware tests use synthetic records: native frames and .qem round trips are bit-exact, EMPAD record footer words are excluded, several XML detector regions are kept as metadata, and encoded EMPAD2 sensor words are rejected. No real EMPAD acquisition, DPC or performance qualification is retained."},
-        "webgpu": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]},
-        "vulkan": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]}
+        "webgpu": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]}
       }
     },
     {
       "id": "geometry.scan-quarter-turn",
       "parity": "Byte-exact scan-row/column quarter turns with unchanged detector patterns, dtype, and coordinate convention.",
       "coverage": {
-        "vulkan": {
-          "level": "not-implemented",
-          "qualification": "No Vulkan scan-quarter-turn primitive is exported.",
-          "gates": [
-            "native/vulkan/README.md"
-          ]
-        },
         "cpu-reference": {
           "level": "reference-fixture",
           "gates": ["tests/parity/test_geometry.py", "src/quantem/gpu/parity/scan_rotation_v1.json"]
@@ -141,16 +125,6 @@
       "id": "io.decode-bin-provenance",
       "parity": "Exact corrected integer values, shape, dtype, crop/bin geometry, and provenance.",
       "coverage": {
-        "vulkan": {
-          "level": "partial-hardware",
-          "qualification": "Indexed uint16 decode and dense staging; packed residency with expanded 32/128-scan uint16 descriptors or compact 32-scan uint8 headers. Scan bin1, detector bin1, crop none only. Expanded32 and compact malformed-header regressions require Android execution; fresh shared-pin full-real-source device qualification remains pending.",
-          "gates": [
-            "native/vulkan/tests/contract_tests.cpp",
-            "native/vulkan/tests/qh5_indexed_source_tests.cpp",
-            "native/vulkan/tests/packed_admission_tests.cpp",
-            "native/vulkan/tests/packed_detector_session_tests.cpp"
-          ]
-        },
         "cpu-reference": {
           "level": "reference",
           "gates": ["tests/contracts/io/test_load.py", "tests/contracts/io/test_public_api.py"]
@@ -232,18 +206,6 @@
         "unsupported_backend": "error-without-fallback"
       },
       "coverage": {
-        "vulkan": {
-          "level": "not-implemented",
-          "qualification": "Single-position diffraction is available, but the canonical rectangle scan-selection contract is not implemented.",
-          "gates": [
-            "native/vulkan/tests/selected_diffraction_c_api_tests.cpp",
-            "native/vulkan/README.md"
-          ],
-          "implemented_selectors": [],
-          "implemented_subset": [
-            "single-position-indexed-accessor"
-          ]
-        },
         "cpu-reference": {
           "level": "not-implemented",
           "implemented_selectors": [],
@@ -317,14 +279,6 @@
       "parity": "Exact mean-DP integer accumulation and BF/ABF/ADF/DF sums using one mask definition.",
       "contract_profiles": ["quantem.gpu.resident-integer-products/v1"],
       "coverage": {
-        "vulkan": {
-          "level": "partial-hardware",
-          "qualification": "Bounded native integer products and packed BF/DF/ADF/selected diffraction exist; shared-pin physical full-source parity remains pending.",
-          "gates": [
-            "native/vulkan/tests/packed_detector_tests.cpp",
-            "native/vulkan/tests/packed_selected_diffraction_tests.cpp"
-          ]
-        },
         "cpu-reference": {
           "level": "reference",
           "gates": ["tests/parity/test_products_parity.py", "tests/parity/test_integer_detector_products.py", "tests/parity/test_resident_integer_contract.py"]
@@ -352,14 +306,6 @@
       "id": "screening.prepared-products",
       "parity": "Same source identity, load plan, mean DP, BF/DF, CoM row/column, rotation, iDPC, cache signature, and provenance; ADF is not yet part of ScreeningResult.",
       "coverage": {
-        "vulkan": {
-          "level": "partial-hardware",
-          "qualification": "Source-bound prepared detector maps and moments exist; the complete screening preparation/cache contract is not implemented.",
-          "gates": [
-            "native/vulkan/tests/packed_detector_session_tests.cpp",
-            "native/vulkan/README.md"
-          ]
-        },
         "cpu-reference": {
           "level": "reference",
           "gates": ["tests/contracts/test_screening.py", "docs/api/core.md"]
@@ -386,15 +332,6 @@
       "id": "dpc.com-rotation-idpc",
       "parity": "Same row/column CoM convention, rotation, centering, FFT normalization, and frozen float metric.",
       "coverage": {
-        "vulkan": {
-          "level": "partial-hardware",
-          "qualification": "Prepared exact moments and centered CoM exist; a complete shared rotation/iDPC workflow is not qualified.",
-          "gates": [
-            "native/vulkan/shaders/prepared_dpc_com.comp",
-            "native/vulkan/shaders/prepared_dpc_center.comp",
-            "native/vulkan/tests/packed_detector_session_tests.cpp"
-          ]
-        },
         "cpu-reference": {
           "level": "reference",
           "gates": ["tests/parity/test_dpc_rotation_agreement.py", "tests/parity/test_products_parity.py"]
@@ -421,14 +358,6 @@
       "id": "display.transform-histogram-color-fft",
       "parity": "Exact histogram/RGBA integer outputs and frozen float32 transform/FFT metrics.",
       "coverage": {
-        "vulkan": {
-          "level": "partial-hardware",
-          "qualification": "Native radial FFT is limited to 512-square scans; other display operations and physical shared-pin qualification remain pending.",
-          "gates": [
-            "native/vulkan/tests/radial_fft_tests.cpp",
-            "native/vulkan/README.md"
-          ]
-        },
         "cpu-reference": {
           "level": "reference",
           "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_fft_parity.py"]
@@ -456,13 +385,6 @@
       "id": "ssb.object-phase-loss",
       "parity": "Same BF selection, aberrations, precision, objective, optimizer settings, and frozen phase/loss metric.",
       "coverage": {
-        "vulkan": {
-          "level": "not-implemented",
-          "qualification": "No shared Vulkan SSB implementation.",
-          "gates": [
-            "native/vulkan/README.md"
-          ]
-        },
         "cpu-reference": {
           "level": "reference-fixture",
           "gates": ["tests/parity/fixtures/ssb_reference_512_mps.json", "tests/contracts/test_ssb_backend_contract.py"]
@@ -489,13 +411,6 @@
       "id": "ssb.calibration-200-nelder-mead",
       "parity": "Same full active BF selection, seed, 200 exact TPE candidates, candidate history, Nelder-Mead refinement, fitted aberrations, loss, precision, and final independent reconstruction.",
       "coverage": {
-        "vulkan": {
-          "level": "not-implemented",
-          "qualification": "No shared Vulkan SSB optimizer implementation.",
-          "gates": [
-            "native/vulkan/README.md"
-          ]
-        },
         "cpu-reference": {
           "level": "reference-fixture",
           "gates": ["tests/parity/fixtures/ssb_reference_512_mps.json", "tests/infrastructure/test_ssb_structure.py"]

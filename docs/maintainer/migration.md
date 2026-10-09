@@ -28,7 +28,7 @@ keeping second copies.
 Explicit dense array algorithms and CPU references remain supported. Public
 GPU acquisition loading uses ANS; the Python package has no packed readers or
 packed load representation. Packed formats remain in the native Swift/Metal
-and Android/Vulkan code. Representation, location, and scientific dtype
+code. Representation, location, and scientific dtype
 remain separate facts. Unsupported inputs never silently expand into a dense
 volume.
 
@@ -43,7 +43,6 @@ not a new qualification registry. Exact gates remain in
 | Python MPS | ANS acquisition loading; detector reductions and encoded products | Native Swift format qualification is separate from Python support. |
 | Native Swift/Metal | Indexed dense and both packed profiles; source inspection, admission, authenticated loads, detector and prepared products | App adoption and physical end-to-end qualification must use an exact package revision. |
 | WebGPU | Dense HDF5 reader, encoded `.qem` and rANS sources, batched detector updates, resident display and lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
-| Android/Vulkan | Native packed detector session, BF/DF/ADF, selected diffraction, bounded dense decode/staging | Experimental. Compact headers support widths 0–8, expanded descriptors 0–16. No full dense-volume residency, shared SSB, or general 1024 FFT claim. |
 | CPU reference | Explicit dense reference workflows and test decoders | Not an automatic fallback or a public accelerated packed loader. |
 
 These source changes do **not** establish full-file cold loading in 1–2 seconds
@@ -58,13 +57,12 @@ its substitute.
 The [repository architecture](backend-layout-and-parity.md) defines one owner
 per implementation. IO models, file formats, selection, and pinned staging have
 separate modules. Scientific backend code lives in `cuda/`, `mps/`, and
-`webgpu/` directly under the package that owns the science; native Swift and
-Android Vulkan sources live in `native/swift` and `native/vulkan` at the
-repository root.
+`webgpu/` directly under the package that owns the science; native Swift
+sources live in `native/swift` at the repository root. The Android Vulkan
+sources (`native/vulkan`) were removed in October 2026; no consumer built them.
 
 - The import-only `compute/` and `backends/` modules and the earlier IO
   compatibility files are removed. Import from the package that owns the code.
-- Retain the native library names in `native/vulkan/CMakeLists.txt`.
 - Remove unused private helpers only after checking callers. The reviewed
   cleanup removes obsolete loading, detector, and screening helpers.
 - Common imports no longer import CuPy or replace the caller's pinned-memory
@@ -88,9 +86,8 @@ Python callers use `DataRepresentation.DENSE`, `.ENCODED`, or `.PAIRED`
 `MPSResidentRepresentation` type aliases and the
 `lossless_packed` selector are removed. Update receipt parsers deliberately;
 unknown schema versions must fail closed. Apple capability records are v4 and
-publication records are v2. WebGPU uses the same three Swift names, and
-Vulkan uses `dense`, `packed`, and `ans`; that does not qualify ANS loading or
-kernels on those backends.
+publication records are v2. WebGPU uses the same three Swift names; that does
+not qualify ANS loading or kernels on that backend.
 
 Save calls accept only `format="arina"` or `format="quantem"`; remove the old
 HDF5 format aliases. File encodings themselves are unchanged. Ordinary native
@@ -106,7 +103,7 @@ Each result is caller-owned and must be closed after its final consumer.
 
 1. Pin each consumer to a reviewed package revision. Read the complete
    WebGPU source graph from the `webgpu/sources.json` manifest; build native
-   clients from SwiftPM or the Vulkan CMake entry, without copying kernels.
+   clients from SwiftPM, without copying kernels.
 2. Adapt receipt parsers to v3 and Apple capability controls to v4. Keep unsupported
    operations unavailable rather than expanding or downcasting implicitly.
 3. Verify original compressed HDF5 and prepared packed inputs separately,

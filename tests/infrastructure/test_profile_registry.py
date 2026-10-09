@@ -64,13 +64,6 @@ def test_profile_matrix_keeps_current_gaps_and_unsupported_paths_explicit() -> N
     assert cells["io.selective-scan-loading::mps"]["state"] == "evidence-gap"
     assert cells["io.selective-scan-loading::swift-metal"]["state"] == "unsupported"
     assert cells["io.selective-scan-loading::webgpu"]["state"] == "evidence-gap"
-    assert cells["io.selective-scan-loading::vulkan"]["state"] == "unsupported"
-    assert cells["io.decode-bin-provenance::vulkan"]["state"] == "evidence-gap"
-
-    for cell in cells.values():
-        if cell["backend"] == "vulkan":
-            assert cell["scheduled_profile"] == "none"
-            assert cell["release_signoff"] is False
 
     for cell in cells.values():
         if cell["support_level"] == "not-implemented":

@@ -161,7 +161,7 @@ comparison; this is verification, not the interactive or loading timing path.
 No FPS, cold-I/O, 512 × 512 scaling, application or release claim follows from
 these tests. Python `io.load` on CUDA and MPS encodes EMPAD float exports as
 float ANS residents, a separate representation that these tests do not cover.
-WebGPU and Vulkan EMPAD loading remain unsupported; the canonical backend
+WebGPU EMPAD loading remains unsupported; the canonical backend
 matrices record the native path as partial.
 
 ## Native consumer and cooperative aperture experiment

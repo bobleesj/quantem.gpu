@@ -132,12 +132,11 @@ incompatibility that must not be hidden by a backend adapter:
 | --- | --- |
 | Python `detector.detector_mask` and convenience BF/ADF | Both inner and outer boundaries included; distance is evaluated through the existing float32 square-root path. |
 | WebGPU `detector/webgpu/geometry.ts` | Both boundaries included, using JavaScript squared-distance arithmetic. |
-| Vulkan packed `circular_detector_mask` | Inner included, outer excluded; separately evaluated float32 products and addition. |
 | Native Swift/Metal mask-driven reductions | Consume caller-supplied masks; the caller's geometry must be declared independently. |
 
 The frozen counterexample is a 3 by 3 detector, center `(1, 1)`, inner radius
-zero, and outer radius one. The closed-edge mask selects **five** pixels; the
-packed Vulkan half-open mask selects **one**. These are different scientific
+zero, and outer radius one. The closed-edge mask selects **five** pixels; a
+half-open mask (inner included, outer excluded) selects **one**. These are different scientific
 requests even if the displayed radii look identical. The fixture includes both
 literal masks and names its moving-aperture provenance
 `binary32-inner-inclusive-outer-exclusive`. That name does not change the
@@ -163,9 +162,6 @@ tests retain the specific ownership and publication checks:
 
 - `tests/hardware/test_native_ssb.py`: SSB refuses encoded storage, never
   releases borrowed data, and releases the acquisition `SSB.open` loads.
-- `native/vulkan/tests/packed_admission_tests.cpp`: failed-load recovery,
-  full/delta/repeated masks, selected-DP interleaving, and no requested FFT.
-  The Android binary requires actual device execution.
 
 ### Frozen vectors and executed scope
 
@@ -211,8 +207,6 @@ Each backend still needs retained execution and scope-specific adjudication
 through its genuine entry point; building an adapter is not that evidence.
 Passing these small cases does not qualify complete real acquisitions,
 application switching, cold loading, minimum-memory hardware, or presentation.
-Vulkan's packed session currently
-requires a 512 or 1024 square scan, so it cannot silently relabel the tiny
-fixture as a full-size device test. Keep these gaps separate from
+Keep these gaps separate from
 existing independent backend tests and from the canonical capability/evidence
 matrices.

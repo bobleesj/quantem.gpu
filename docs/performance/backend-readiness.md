@@ -7,7 +7,7 @@ performance records remain separate. Query or regenerate it with:
 ```bash
 python scripts/backend_status.py check
 python scripts/backend_status.py summary
-python scripts/backend_status.py json --backend vulkan
+python scripts/backend_status.py json --backend webgpu
 python scripts/backend_status.py render
 ```
 

@@ -50,7 +50,7 @@ extraction. Compact counts do not imply equally compact Fourier coefficients.
 
 | Component | Current public boundary | Research lane | Next acceptance gate |
 |---|---|---|---|
-| Direct bit-packed counts | Native Metal and native Vulkan readers; no Python or WebGPU reader | Supported packed profiles | Repeat exact counts, exclusions, corruption, lifetime, and products. |
+| Direct bit-packed counts | Native Metal readers; no Python or WebGPU reader | Supported packed profiles | Repeat exact counts, exclusions, corruption, lifetime, and products. |
 | Existing uint16/LZ4 packed counts | Documented native Metal path; no Python or WebGPU reader | Retained alongside bit-packing | Preserve authentication and distinguish resident bytes from full-file staging peak. |
 | Standalone exact count-ANS envelope | `io.save` from a CUDA/MPS resident or the explicit CPU reference; `io.load` as ANS on Python MPS/CUDA, dense on CPU | New `quantem.gpu.count-ans.v1` integration | Physical CUDA, native file reader, GPU saving/reverse conversions, complete real data, and peak-memory qualification. |
 | Range ANS (rANS) counts | Not a general public `io.load` profile | CUDA and native Metal research consumers | Remove fixed geometry and research paths; freeze a portable stream/table contract and independent complete-count parity. |
@@ -59,8 +59,8 @@ extraction. Compact counts do not imply equally compact Fourier coefficients.
 | Compressed stationary final Fourier fields | No public cross-backend compressed-Fourier option | Opt-in native Swift/Metal research implementation | Extract the qualified consumer and lifecycle; preserve coefficient bits, object/loss parity, invalidation, and packing peak. |
 
 Python MPS and native Swift/Metal are distinct consumer paths even when both
-execute Metal kernels. A native test does not qualify the Python API. CUDA,
-WebGPU, and Vulkan do not inherit compressed-Fourier support from Metal tests.
+execute Metal kernels. A native test does not qualify the Python API. CUDA
+and WebGPU do not inherit compressed-Fourier support from Metal tests.
 A bounded decode test is not proof of full-dataset residency or display speed.
 
 ## Extraction sequence
