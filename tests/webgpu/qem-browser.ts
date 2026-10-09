@@ -68,6 +68,62 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
       if (!rejected) throw new Error("Modified payload was not rejected by checksum admission");
     }
     results.payload_corruption_rejected = true;
+    // Groups smaller than a chunk on the real device: the split staged payload and
+    // the GPU copy of the block a split cuts must decode exactly.
+    for (const item of cases.filter(item => item.name.endsWith("-qem-blocks"))) {
+      const bytes = new Uint8Array(await (await fetch(base + item.name + ".qem")).arrayBuffer());
+      const body = 56 + Number(new DataView(bytes.buffer).getBigUint64(8, true));
+      const header = JSON.parse(new TextDecoder().decode(bytes.subarray(56, body)));
+      const K = item.shape[2] * item.shape[3], scans = item.shape[0] * item.shape[1];
+      let largestBlock = 0, largestChunk = 0;
+      for (const chunk of header.chunks) {
+        const start = body + chunk.arrays[1].offset;
+        const table = new Uint32Array(bytes.slice(start, start + chunk.arrays[1].count * 4).buffer);
+        for (let block = 0; (block + 1) * K < table.length; block++) largestBlock = Math.max(largestBlock, table[(block + 1) * K] - table[block * K]);
+        largestChunk = Math.max(largestChunk, chunk.arrays[0].count);
+      }
+      // One word above the largest block: a split then falls inside a block, never on its start.
+      const limit = Math.ceil(largestBlock / 4) * 4 + 4;
+      if (limit >= largestChunk) throw new Error(`${item.name} has no chunk larger than its group limit`);
+      const limits = { maxStorageBufferBindingSize: limit, maxBufferSize: limit,
+        maxComputeWorkgroupsPerDimension: device.limits.maxComputeWorkgroupsPerDimension,
+        minStorageBufferOffsetAlignment: device.limits.minStorageBufferOffsetAlignment };
+      // Count copies out of staged groups (mapped at creation, copy sources) to prove a block was cut.
+      const staged = new Set<GPUBuffer>();
+      let copiedBlocks = 0;
+      const smallGroups = new Proxy(device, { get(target, key) {
+        if (key === "limits") return limits;
+        if (key === "createBuffer") return (descriptor: GPUBufferDescriptor) => {
+          const buffer = target.createBuffer(descriptor);
+          if (descriptor.mappedAtCreation && descriptor.usage & GPUBufferUsage.COPY_SRC) staged.add(buffer);
+          return buffer;
+        };
+        if (key === "createCommandEncoder") return (descriptor?: GPUCommandEncoderDescriptor) => {
+          const encoder = target.createCommandEncoder(descriptor);
+          const copy = encoder.copyBufferToBuffer.bind(encoder) as (...args: unknown[]) => void;
+          (encoder as unknown as { copyBufferToBuffer: (...args: unknown[]) => void }).copyBufferToBuffer = (source, ...rest) => {
+            if (staged.has(source as GPUBuffer)) copiedBlocks++;
+            copy(source, ...rest);
+          };
+          return encoder;
+        };
+        const value = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      } });
+      const rawBytes = await (await fetch(base + item.name + ".bin")).arrayBuffer();
+      const counts = item.dtype === "uint8" ? new Uint8Array(rawBytes) : new Uint16Array(rawBytes);
+      const source = await RansResidentSet.loadQemFile(smallGroups, new File([bytes], item.name + ".qem"));
+      try {
+        if (!copiedBlocks) throw new Error(`${item.name}: no block was cut and copied at a ${limit}-byte group limit`);
+        for (const scan of [0, 255, 256, 511, 512, scans - 1]) exact(`${item.name} split pattern ${scan}`, await source.computes[0].frameAt(scan), Float32Array.from(counts.subarray(scan * K, (scan + 1) * K)));
+        for (const mask of [new Uint32Array(K).fill(1), Uint32Array.from({ length: K }, (_, k) => k % 2)]) {
+          const expected = new Float32Array(scans);
+          for (let scan = 0; scan < scans; scan++) for (let k = 0; k < K; k++) if (mask[k]) expected[scan] += counts[scan * K + k];
+          exact(`${item.name} split mask`, await source.computes[0].maskedSum(mask), expected);
+        }
+      } finally { source.dispose(); }
+    }
+    results.split_groups_exact = true;
     const floating = new File([await (await fetch(base + "float.qem")).arrayBuffer()], "float.qem");
     let floatRejected = false;
     try { await RansResidentSet.loadQemFile(device, floating); }

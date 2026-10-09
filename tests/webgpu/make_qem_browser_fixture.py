@@ -28,6 +28,12 @@ def generate(directory: Path) -> None:
         save_array(directory / (name + ".qem"), data, chunk_scans=512)
         data.tofile(directory / (name + ".bin"))
         records.append(dict(name=name, shape=list(data.shape), dtype=np.dtype(dtype).name, block_frames=512))
+        # Two blocks in one chunk: once staged on the GPU, the second block starts
+        # mid-word (byte 1425 of the uint8 payload).
+        blocks = np.dtype(dtype).name + "-qem-blocks"
+        save_array(directory / (blocks + ".qem"), data, chunk_scans=1024)
+        data.tofile(directory / (blocks + ".bin"))
+        records.append(dict(name=blocks, shape=list(data.shape), dtype=np.dtype(dtype).name, block_frames=512))
     zeros = np.zeros((17, 33, 2, 3), dtype=np.uint16)
     save_array(directory / "zero.qem", zeros, chunk_scans=512)
     zeros.tofile(directory / "zero.bin")
