@@ -247,3 +247,12 @@ test("a count view that a display cannot bind is refused when it is lent", async
   assert.throws(() => set.imageViewsU32([0, 1], 1), /Acquisition 1 cannot be lent as a count view: its image starts at byte 2148/);
   set.dispose();
 });
+
+test("cancellation during the decoder build releases the set instead of returning it", async () => {
+  const gpu = fakeDevice();
+  const controller = new AbortController();
+  // The checkpoint build is the load's first wait on submitted GPU work.
+  gpu.device.queue.onSubmittedWorkDone = async () => controller.abort();
+  await assert.rejects(RansResidentSet.loadQemFile(gpu.device, countingFile(unaligned), () => {}, [], controller.signal), { name: "AbortError" });
+  assert.ok(gpu.buffers.length > 0 && gpu.buffers.every(buffer => buffer.destroyed));
+});
