@@ -12,10 +12,10 @@ const files = (count: number) => Array.from({ length: count }, (_, index) => ({ 
 type FakeSet = { name: string; disposed: boolean };
 /** Replace loadQemFile with loads that the test resolves or rejects by file name. */
 function controlledLoads() {
-  const loads = new Map<string, { resolve: (shape?: number[]) => void; reject: (error: Error) => void }>();
+  const loads = new Map<string, { resolve: (shape?: number[]) => void; reject: (error: Error) => void; signal?: AbortSignal }>();
   const sets: FakeSet[] = [];
-  (RansResidentSet as unknown as { loadQemFile: unknown }).loadQemFile = (_device: GPUDevice, file: QemByteFile) =>
-    new Promise((resolve, reject) => loads.set(file.name, {
+  (RansResidentSet as unknown as { loadQemFile: unknown }).loadQemFile = (_device: GPUDevice, file: QemByteFile, _status: unknown, _badPixels: unknown, signal?: AbortSignal) =>
+    new Promise((resolve, reject) => loads.set(file.name, { signal,
       resolve: (shape = [1, 2, 3, 4]) => {
         const set = { name: file.name, disposed: false, shape, nativeDtype: "uint16", badPx: new Uint32Array(0),
           computes: [{ name: file.name }], dispose() { this.disposed = true; } };
@@ -83,6 +83,26 @@ test("disposal ends quietly and cancellation rejects, releasing loads that finis
     for (const name of ["t2.qem", "t3.qem"]) loads.get(name)!.resolve();
     if (stop === "dispose") await series.completion;
     else await assert.rejects(series.completion, { name: "AbortError" });
+    await settle();
+    assert.deepEqual(sets.filter(set => !set.disposed).map(set => set.name), stop === "dispose" ? [] : ["t0.qem"]);
+    series.dispose();
+  }
+});
+
+test("disposal and cancellation stop loads in flight instead of waiting for them", async () => {
+  for (const stop of ["dispose", "abort"]) {
+    const controller = new AbortController();
+    const { loads, sets, series } = await loadSeries(4, controller);
+    await settle();
+    const inFlight = ["t1.qem", "t2.qem", "t3.qem"].map(name => loads.get(name)!);
+    assert.ok(inFlight.every(load => load.signal && !load.signal.aborted));
+    if (stop === "dispose") series.dispose(); else controller.abort();
+    // The loads never finish on their own: completion must not wait for them.
+    const settled = await Promise.race([series.completion.then(() => "resolved", error => error.name), new Promise(resolve => setTimeout(() => resolve("waiting"), 200))]);
+    assert.equal(settled, stop === "dispose" ? "resolved" : "AbortError");
+    assert.ok(inFlight.every(load => load.signal!.aborted), "every load in flight is told to stop");
+    inFlight.forEach(load => load.resolve());
+    await settle();
     assert.deepEqual(sets.filter(set => !set.disposed).map(set => set.name), stop === "dispose" ? [] : ["t0.qem"]);
     series.dispose();
   }

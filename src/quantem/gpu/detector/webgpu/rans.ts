@@ -351,17 +351,20 @@ export class RansResidentSet {
     return this.loadSource(device, ransHttpSource(baseUrl), onStatus);
   }
 
-  /** Load one .qem count acquisition through the same GPU decoder. */
-  static async loadQemFile(device: GPUDevice, file: QemByteFile, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
-    return this.loadQemFiles(device, [file], onStatus, badPixels);
+  /** Load one .qem count acquisition through the same GPU decoder; `signal` cancels it, downloads included. */
+  static async loadQemFile(device: GPUDevice, file: QemByteFile, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], signal?: AbortSignal): Promise<RansResidentSet> {
+    return this.loadQemFiles(device, [file], onStatus, badPixels, signal);
   }
 
   /** Load an ordered, compatible series of .qem count acquisitions into one batched resident set. */
-  static async loadQemFiles(device: GPUDevice, files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
+  static async loadQemFiles(device: GPUDevice, files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], signal?: AbortSignal): Promise<RansResidentSet> {
     const started = performance.now();
-    const source = await qemFilesSource(files, onStatus, badPixels, device);
+    const source = await qemFilesSource(files, onStatus, badPixels, device, signal);
     // The source owns its staged payload until the resident set takes it over.
-    try { return await this.loadSource(device, source, onStatus, started); }
+    try {
+      signal?.throwIfAborted();
+      return await this.loadSource(device, source, onStatus, started);
+    }
     catch (error) { source.dispose?.(); throw error; }
   }
 
