@@ -23,8 +23,10 @@ every count unchanged?
   allocations; a 4.29 GB mapping failed on Apple Metal WebGPU). Offset and model
   tables are copied from the same authenticated bytes. The decoder binds the
   staged groups with each block's byte offset (pad bits 28-29) instead of
-  reading the payload again. A file whose chunk exceeds one group keeps the
-  per-block upload path, now also capped at 256 MiB per group.
+  reading the payload again. A chunk larger than one group is split across
+  groups on a word boundary, and each block a split cuts is copied whole on the
+  GPU from the authenticated groups, so nothing is read after authentication.
+  The per-block upload path of other sources is capped at 256 MiB per group too.
 - Series compatibility is decided from the authenticated headers before any
   payload is read or staged. `RansResidentSeries` loads one resident set per
   acquisition with three files of look-ahead and publishes them in file order;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { qemFileSource, qemHttpFiles } from "../../src/quantem/gpu/detector/webgpu/qem-source";
+import { fakeDevice, type FakeBuffer } from "./fake-gpu";
 
 const fixture = new Uint8Array(readFileSync("tests/data/qem-v2/u16-multiple-chunks.qem"));
 Object.assign(globalThis, { location: { href: "http://localhost/viewer/index.html" } });
@@ -28,7 +29,7 @@ test("served files are read through uncached ranges and admit the same streams a
   const requests = serve(fixture);
   const [file] = await qemHttpFiles("data/", ["u16-multiple-chunks.qem"]);
   assert.equal(file.size, fixture.length);
-  const served = await qemFileSource(file);
+  const served = await qemFileSource(file, () => {}, fakeDevice().device);
   const local = await qemFileSource(new File([fixture], "u16-multiple-chunks.qem"));
   const manifest = JSON.parse(new TextDecoder().decode(await local.read("manifest.json")));
   const blocks = manifest.tilts[0].blocks_meta as { index: number; byte_start: number; byte_end: number }[];
@@ -37,7 +38,8 @@ test("served files are read through uncached ranges and admit the same streams a
     assert.deepEqual(new Uint8Array(await served.read(name)), new Uint8Array(await local.read(name)), name);
   }
   for (const block of blocks) {
-    assert.deepEqual(new Uint8Array(await served.read("payload", block.byte_start, block.byte_end)), fixture.subarray(block.byte_start, block.byte_end));
+    const segment = served.residentPayload!("payload", block.byte_start, block.byte_end)!;
+    assert.deepEqual(new Uint8Array((segment.buffer as unknown as FakeBuffer).bytes, segment.offset, block.byte_end - block.byte_start), fixture.subarray(block.byte_start, block.byte_end));
   }
   assert.equal(requests[0].method, "HEAD");
   assert.ok(requests.every(request => request.url === "http://localhost/viewer/data/u16-multiple-chunks.qem"));
