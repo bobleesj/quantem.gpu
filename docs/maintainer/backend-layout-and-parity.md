@@ -101,7 +101,7 @@ src/quantem/gpu/                  # layers import downward only:
     __init__.py                   # shared display-math contract
     colormaps.json                # colormap control points for every backend
     metal/display.metal           # native Metal display shader
-    cpu.py, webgpu/
+    webgpu/
   ssb/
     __init__.py                   # one SSB workflow and result contract
     contract.py, cuda/, mps/, webgpu/

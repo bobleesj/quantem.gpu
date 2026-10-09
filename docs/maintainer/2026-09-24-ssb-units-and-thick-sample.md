@@ -69,8 +69,8 @@ Tests: `tests/hardware/cuda/test_ssb_thick_sample.py`, `tests/hardware/mps/test_
 ## 3. cuFFT import order
 
 `ImportError: libcufft.so.11` in every notebook that imports quantem.widget (torch) before SSB: torch (conda CUDA 13) loads
-its cuFFT first and cuda.pathfinder then skips CuPy's CUDA 12 wheel library. `quantem.gpu._cuda_libraries.preload()` at
-package import dlopens the nvidia-*-cu12 wheel libraries by path (different sonames, both coexist). Test in
+its cuFFT first and cuda.pathfinder then skips CuPy's CUDA 12 wheel library. `quantem.gpu._cuda_libraries.preload()` (now
+`quantem.gpu.device.cuda_runtime.preload_libraries()`) at package import dlopens the nvidia-*-cu12 wheel libraries by path (different sonames, both coexist). Test in
 `test_ssb_thick_sample.py::test_cupy_fft_loads_after_torch_cufft`.
 
 ## 4. Speed: standard vs thick-sample, CUDA vs MPS (measured 2026-09-24)
@@ -102,7 +102,7 @@ through `preview_context(num_bf // 4)`. Fit = `SSB.find_aberrations(trials=200, 
   kernels: 1.6x the standard preview at 128^2, 15x at 512^2 (394 ms: the ShowPtycho tilt slider is not interactive at
   full field).
 - MPS fuses the depth weights into the row-IFFT kernel, but that kernel exists only for 128/256/1024 scans
-  (`backends/mps/_thick_sample.py:39`, `engine.py:1587`); 512^2, the common full scan, falls back to the MLX reference graph
+  (then `backends/mps/_thick_sample.py:39` and `engine.py:1587`, now `ssb/mps/thick_sample.py`); 512^2, the common full scan, falls back to the MLX reference graph
   (2.8 s, 22x standard).
 - CUDA drag (25 % BF) is slower than the full preview at 512^2 (44 vs 27 ms): the drag path does not scale with the subset.
 - Crop-to-full tilt is stable on both samples (logic -10.3/-9.8/-9.1 row; film about 5 mrad along -col).
