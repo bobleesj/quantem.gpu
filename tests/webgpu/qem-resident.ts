@@ -219,3 +219,14 @@ test("unit rows follow their groups when per-block uploads and staged segments i
   set.dispose();
   staged.dispose!();
 });
+
+test("a count view that a display cannot bind is refused when it is lent", async () => {
+  // 537 scans: the second acquisition's image starts at byte 2148, not on a 256-byte boundary.
+  const fixture = new Uint8Array(readFileSync("tests/data/qem-v2/u16-multiple-chunks.qem"));
+  const gpu = fakeDevice();
+  const set = await RansResidentSet.loadQemFiles(gpu.device, [countingFile(fixture, "a.qem"), countingFile(fixture, "b.qem")]);
+  assert.equal(set.scanCount, 537);
+  for (const view of set.imageViewsU32([0], 1)) validateUint32ImageView(view, gpu.device, set.scanCount);
+  assert.throws(() => set.imageViewsU32([0, 1], 1), /Acquisition 1 cannot be lent as a count view: its image starts at byte 2148/);
+  set.dispose();
+});
