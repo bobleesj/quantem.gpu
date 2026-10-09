@@ -7,7 +7,7 @@ import base64
 import numpy as np
 import pytest
 
-from quantem.gpu import detector, io
+from quantem.gpu import detector, dpc, io
 from quantem.gpu.resident.float_ans import FloatANSResident, MAX_DECODE_BYTES
 from quantem.gpu.formats.qem.validation import validate_qem
 from quantem.gpu.formats.qem.snapshot import read_header
@@ -123,21 +123,17 @@ def test_float_products_and_selected_mean_stay_on_device(tmp_path):
         expected_row = np.divide(
             (weights * rr).sum((2, 3)),
             total,
-            out=np.full_like(total, np.nan),
+            out=np.zeros_like(total),
             where=total != 0,
         )
         expected_column = np.divide(
             (weights * cc).sum((2, 3)),
             total,
-            out=np.full_like(total, np.nan),
+            out=np.zeros_like(total),
             where=total != 0,
         )
-        np.testing.assert_allclose(
-            row, expected_row - np.nanmean(expected_row), atol=2e-3, rtol=2e-5
-        )
-        np.testing.assert_allclose(
-            column, expected_column - np.nanmean(expected_column), atol=2e-3, rtol=2e-5
-        )
+        np.testing.assert_allclose(row, expected_row, atol=2e-3, rtol=2e-5)
+        np.testing.assert_allclose(column, expected_column, atol=2e-3, rtol=2e-5)
         assert loaded.data.peak_decode_bytes <= MAX_DECODE_BYTES
 
 
@@ -162,8 +158,8 @@ def test_float_background_is_applied_once_and_survives_export(tmp_path):
     path = tmp_path / "background.qem"
     io.save(path, raw, backend="cpu", batch_size=2, metadata={"qem_empad": empad})
     copied = tmp_path / "copy.qem"
-    for path in (path, copied):
-        with io.load(path, backend=backend) as loaded:
+    for saved in (path, copied):
+        with io.load(saved, backend=backend) as loaded:
             session = detector.prepare(loaded)
             np.testing.assert_array_equal(
                 _host(loaded.data.extract_diffraction_device(0, 0)), raw[0, 0]
@@ -201,6 +197,10 @@ def test_float_reductions_keep_cancellation_and_nonfinite_semantics(tmp_path):
 
 
 def test_float_com_does_not_overflow_or_hide_invalid_frames(tmp_path):
+    """Absolute detector centres like the count backends: 0 for an empty frame, NaN for an inf one.
+
+    An empty frame is a defined 0, so the mean-subtracted DPC field stays finite.
+    """
     backend = _backend()
     raw = np.zeros((1, 4, 128, 128), dtype=np.float32)
     raw[0, 0, 10, 20] = 1e38
@@ -210,9 +210,14 @@ def test_float_com_does_not_overflow_or_hide_invalid_frames(tmp_path):
     io.save(path, raw, backend="cpu", batch_size=2)
     with io.load(path, backend=backend) as loaded:
         row, column = detector.prepare(loaded).center_of_mass()
-        np.testing.assert_array_equal(row[0, :2], [-10, 10])
-        np.testing.assert_array_equal(column[0, :2], [-10, 10])
-        assert np.isnan(row[0, 2:]).all() and np.isnan(column[0, 2:]).all()
+        np.testing.assert_array_equal(row[0, :3], [10, 30, 0])
+        np.testing.assert_array_equal(column[0, :3], [20, 40, 0])
+        assert np.isnan(row[0, 3]) and np.isnan(column[0, 3])
+        without_inf = np.ones((128, 128), bool)
+        without_inf[2, 3] = False
+        com_row, com_column = dpc.center_of_mass(loaded, mask=without_inf)
+        np.testing.assert_array_equal(com_row, [[0, 20, -10, -10]])
+        np.testing.assert_array_equal(com_column, [[5, 25, -15, -15]])
 
 
 def test_corrupt_upload_releases_partial_resident(tmp_path, monkeypatch):
@@ -256,4 +261,33 @@ def test_cuda_resident_survives_client_device_switch(tmp_path):
             np.testing.assert_array_equal(
                 session.reduce_frames([0, 1]), np.ones((128, 128))
             )
-            np.testing.assert_array_equal(session.center_of_mass()[0], [[0, 0]])
+            np.testing.assert_array_equal(session.center_of_mass()[0], [[63.5, 63.5]])
+
+
+def test_cuda_float_decode_reports_failures_into_the_callers_flags(tmp_path):
+    """A caller's errors buffer collects stream failures instead of being replaced by a private one.
+
+    Several decodes then share one check, as for count residents; a decode given no buffer still raises.
+    """
+    if _backend() != "cuda":
+        pytest.skip("CUDA float lane decode")
+    import cupy as cp
+
+    words = np.zeros((4, 32, 128, 128), np.uint32)
+    words[..., :64, :] = np.random.default_rng(1).integers(0, 3, (4, 32, 64, 128))
+    path = tmp_path / "entropy.qem"
+    io.save(path, words.view(np.float32), backend="cpu", batch_size=128)
+    with io.load(path, backend="cuda") as loaded:
+        lanes = loaded.data._lanes
+        chunk = lanes.chunks[0]
+        clean = cp.zeros(1, cp.uint32)
+        lanes.decode_scan_range_device(0, chunk.scans, errors=clean)
+        assert int(clean.get()[0]) == 0
+        chunk.arrays[0][:] ^= np.uint8(0x5A)  # corrupt the entropy-coded payload on the device
+        flags = cp.zeros(1, cp.uint32)
+        lanes.decode_scan_range_device(0, chunk.scans, errors=flags)
+        assert int(flags.get()[0]) != 0
+        with pytest.raises(ValueError, match="failed reconstruction"):
+            lanes.decode_scan_range_device(0, chunk.scans)
+        with pytest.raises(ValueError, match="one uint32 value"):
+            lanes.decode_scan_range_device(0, chunk.scans, errors=cp.zeros(1, cp.int64))

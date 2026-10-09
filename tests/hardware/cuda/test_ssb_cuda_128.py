@@ -804,7 +804,8 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
     _clean_gpu()
 
 
-def test_ssb_roi96_auto_pads_to_128_not_256() -> None:
+def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
+    """The padding keeps every measured position and announces itself with how to avoid it."""
     cp = _cupy()
     from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
 
@@ -824,9 +825,20 @@ def test_ssb_roi96_auto_pads_to_128_not_256() -> None:
     )
 
     assert ssb._scan_shape == (128, 128)
+    assert "padded the 96x96 scan to 128x128 with its mean pattern" in capsys.readouterr().out
     accel = ssb._get_accelerator()
     accel.cache_rotation(0.0)
     assert accel._custom_fft._size == 128
+
+
+def test_ssb_refuses_to_crop_a_scan_larger_than_1024() -> None:
+    """A scan beyond the largest CUDA FFT is refused, never center-cropped to 1024 positions."""
+    cp = _cupy()
+    from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+
+    data = cp.ones((1025, 2, 8, 8), dtype=cp.uint16)
+    with pytest.raises(ValueError, match="at most 1024 x 1024 positions; got 1025x2"):
+        CudaSSBBackend(data, voltage_kV=300, semiangle=21.4, scan_sampling=0.5, det_sampling=1.0, bf_radius=2)
 
 
 @pytest.mark.parametrize(("size", "num_bf"), [(128, 40), (256, 20), (512, 8), (1024, 3)])

@@ -13,7 +13,7 @@ def test_upsampling_matches_zero_inserted_scan(factor):
     import torch
     from tests.parity.torch_ssb import TorchSSB
 
-    ssb, engine = _synthetic_session()
+    ssb, _ = _synthetic_session()
     try:
         coefs = {'C10': 30.0, 'C12': 5.0, 'phi12': 0.3}
         native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase")

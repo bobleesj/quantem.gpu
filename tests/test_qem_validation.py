@@ -83,6 +83,19 @@ def test_stored_changes_must_be_declared_in_processing():
     with pytest.raises(ValueError, match="matching exact_float_narrowing"):
         snapshot.validate_declared_processing(header)
 
+    # Uncorrected uint32 flagged-pixel markers stored as 0 are declared, never silent.
+    markers = dict(source_dtype="uint32", dtype="uint16", working_counts_exact=True,
+                   file_counts_exact=False, flagged_markers_stored_as_zero=4096)
+    scientific = metadata.acquisition_metadata((2, 2, 8, 8), markers)
+    operations = {record["operation"]: record for record in scientific["processing"]}
+    assert operations["flagged_marker_zeroing"] == dict(
+        operation="flagged_marker_zeroing", changes_measurements=False, value_count=4096)
+    snapshot.validate_declared_processing(dict(dtype="uint16", metadata=markers, scientific_metadata=scientific))
+    scientific["processing"] = [record for record in scientific["processing"]
+                                if record["operation"] != "flagged_marker_zeroing"]
+    with pytest.raises(ValueError, match="flagged_marker_zeroing"):
+        snapshot.validate_declared_processing(dict(dtype="uint16", metadata=markers, scientific_metadata=scientific))
+
 
 def test_validate_command_reports_shared_reference(capsys):
     """Validate a downloaded reference through the documented public command."""
@@ -92,3 +105,21 @@ def test_validate_command_reports_shared_reference(capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["integrity"] == "verified"
     assert report["measurements_changed_by"] == []
+
+
+def test_convert_command_names_a_missing_source_in_one_line(tmp_path):
+    """A mistyped source path, expect one quantem-gpu line and exit status 1, not a traceback."""
+    from quantem.gpu.cli import main
+
+    with pytest.raises(SystemExit) as stop:
+        main(["convert", str(tmp_path / "scan_master.h5")])
+    assert stop.value.code == f"quantem-gpu convert: {tmp_path / 'scan_master.h5'} is neither a master file nor a folder."
+
+
+def test_serve_command_refuses_a_missing_data_folder(tmp_path):
+    """A mistyped data folder, expect one quantem-gpu line before any server starts (it used to serve nothing)."""
+    from quantem.gpu.cli import main
+
+    with pytest.raises(SystemExit) as stop:
+        main(["serve", str(tmp_path / "missing"), "--port", "18799"])
+    assert stop.value.code == f"quantem-gpu serve: {tmp_path / 'missing'} is not a folder"

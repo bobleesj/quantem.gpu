@@ -34,7 +34,7 @@ def test_direct_chunk_locations_match_saved_frames(tmp_path, userblock):
             # Raw bytes at each returned address must be the actual chunks.
             with path.open("rb") as source:
                 allocated = []
-                dataset.id.chunk_iter(lambda info: allocated.append(info))
+                dataset.id.chunk_iter(allocated.append)
                 for info, (offset, size) in zip(allocated, actual, strict=True):
                     source.seek(int(offset))
                     assert source.read(int(size)) == dataset.id.read_direct_chunk(

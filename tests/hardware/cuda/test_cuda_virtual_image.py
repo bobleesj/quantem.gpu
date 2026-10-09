@@ -306,6 +306,48 @@ def test_cuda_exact_masked_sum_preserves_counts_above_float32_limit() -> None:
     np.testing.assert_array_equal(result, np.full((2, 3), 40_000_000, np.uint64))
 
 
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int32, np.float32, np.float64])
+def test_cuda_exact_products_agree_with_torch_and_numpy(dtype) -> None:
+    """CuPy, Torch and NumPy sources agree: exact uint64 for counts, the same TypeError for float data.
+
+    A uint64 sum of float intensities would read 0.75 as 0, so float data has no exact product.
+    """
+    cp = _cupy_with_device()
+    torch = pytest.importorskip("torch")
+    from quantem.gpu import detector
+
+    rng = np.random.default_rng(83)
+    values = rng.integers(0, 200, size=(4, 5, 12, 10)).astype(dtype)
+    mask = _mask((12, 10), 3.0)
+    indices = [0, 3, 8, 17]
+    frames = values.reshape(-1, 12, 10)[indices]
+    products = {
+        "masked_sum_exact": (lambda session: session.masked_sum_exact(mask), values[..., mask].sum(axis=-1, dtype=np.uint64)),
+        "reduce_frames_exact": (lambda session: session.reduce_frames_exact(indices), frames.sum(axis=0, dtype=np.uint64)),
+        "reduce_frames_max": (lambda session: session.reduce_frames_max(indices), frames.max(axis=0).astype(np.uint64)),
+    }
+    if np.issubdtype(dtype, np.floating):
+        values = values + 0.75
+    sessions = {
+        "numpy": detector.prepare(values),
+        "torch": detector.prepare(torch.as_tensor(values, device="cuda")),
+        "cupy": detector.prepare(cp.asarray(values)),
+    }
+    for product, expected in products.values():
+        if np.issubdtype(dtype, np.floating):
+            messages = set()
+            for session in sessions.values():
+                with pytest.raises(TypeError, match="require integer detector data") as error:
+                    product(session)
+                messages.add(str(error.value))
+            assert len(messages) == 1
+        else:
+            for session in sessions.values():
+                result = product(session)
+                assert result.dtype == np.uint64
+                np.testing.assert_array_equal(result, expected)
+
 def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
     cp = _cupy_with_device()
     from quantem.gpu.detector.cuda.dense import CudaKernelCompute

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from quantem.gpu.display import colormap_lut, colormap_names
-from quantem.gpu.display.cpu import colorize, histogram, normalize, transform
+from tests.parity.display_reference import colorize, histogram, normalize, transform
 
 
 def _fixture() -> np.ndarray:

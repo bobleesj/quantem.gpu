@@ -375,3 +375,152 @@ def test_mps_backend_rejects_rendered_frames(tmp_path: Path) -> None:
         assert "requires array movie data" in str(exc)
     else:
         raise AssertionError("MPS backend should reject pre-rendered frames")
+
+
+@pytest.mark.skipif(
+    not __import__("quantem.gpu.movie", fromlist=["cuda"]).cuda.is_available(),
+    reason="CUDA/NVENC movie export is unavailable",
+)
+def test_cuda_movie_removes_its_elementary_stream_when_encoding_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failed NVENC frame leaves no temporary .h264 file behind and keeps the caller's current device."""
+    import tempfile
+
+    import cupy as cp
+
+    from quantem.gpu.movie import cuda
+
+    imports = cuda._imports
+
+    def failing_encoder_imports():
+        cp_module, imageio_ffmpeg, nvc = imports()
+
+        class FailingNvc:
+            NV_ENC_PIC_PARAMS = nvc.NV_ENC_PIC_PARAMS
+            PyNvVCException = nvc.PyNvVCException
+
+            @staticmethod
+            def CreateEncoder(*args, **kwargs):
+                encoder = nvc.CreateEncoder(*args, **kwargs)
+
+                class Failing:
+                    def Encode(self, frame, parameters):
+                        if parameters.inputTimeStamp == 1:
+                            raise RuntimeError("encoder failed on frame 1")
+                        return encoder.Encode(frame, parameters)
+
+                    def EndEncode(self):
+                        return encoder.EndEncode()
+
+                return Failing()
+
+        return cp_module, imageio_ffmpeg, FailingNvc
+
+    monkeypatch.setattr(cuda, "_imports", failing_encoder_imports)
+    current = cp.cuda.Device().id
+    before = set(Path(tempfile.gettempdir()).glob("*.h264"))
+    with pytest.raises(RuntimeError, match="encoder failed on frame 1"):
+        cuda.save_mp4(
+            [_nvenc_stack()], tmp_path / "failed.mp4", labels=None, fps=4, gap=0, label_height=0,
+            max_width=None, cols=None, limits=[(0.0, 600.0)],
+        )
+    assert set(Path(tempfile.gettempdir()).glob("*.h264")) == before
+    assert cp.cuda.Device().id == current
+
+
+@pytest.mark.skipif(
+    not __import__("quantem.gpu.movie", fromlist=["cuda"]).cuda.is_available(),
+    reason="CUDA/NVENC movie export is unavailable",
+)
+def test_cuda_movie_on_another_gpu_restores_the_current_device(tmp_path: Path) -> None:
+    """gpu_id selects the encoding device for this call only; Device.use() used to leave it current."""
+    import cupy as cp
+
+    from quantem.gpu.movie import cuda
+
+    if cp.cuda.runtime.getDeviceCount() < 2:
+        pytest.skip("Requires two CUDA devices")
+    with cp.cuda.Device(0):
+        cuda.save_mp4(
+            [_nvenc_stack()], tmp_path / "other.mp4", labels=None, fps=4, gap=0, label_height=0,
+            max_width=None, cols=None, limits=[(0.0, 600.0)], gpu_id=1,
+        )
+        assert cp.cuda.Device().id == 0
+
+
+@pytest.mark.skipif(
+    not __import__("quantem.gpu.movie", fromlist=["mps"]).mps.is_available(),
+    reason="MPS movie export is unavailable",
+)
+@pytest.mark.parametrize("fail", [False, True])
+def test_mps_movie_releases_every_metal_buffer(tmp_path: Path, monkeypatch, fail: bool) -> None:
+    """Each Metal buffer save_mp4 allocates is released once, also when encoding fails, and no .nv12 file remains.
+
+    PyObjC never frees a new Metal buffer when its wrapper is collected.
+    """
+    import tempfile
+
+    from quantem.gpu.movie import mps
+
+    allocated, released = [], []
+    buffer, release = mps._buffer, mps.release_buffer
+
+    def counted_buffer(device, metal, nbytes):
+        allocated.append(buffer(device, metal, nbytes))
+        return allocated[-1]
+
+    def counted_release(value):
+        released.append(value)
+        release(value)
+
+    monkeypatch.setattr(mps, "_buffer", counted_buffer)
+    monkeypatch.setattr(mps, "release_buffer", counted_release)
+    if fail:
+        def failing_encode(*args, **kwargs):
+            raise RuntimeError("encode failed")
+
+        monkeypatch.setattr(mps, "_encode_nv12", failing_encode)
+    before = set(Path(tempfile.gettempdir()).glob("*.nv12"))
+    arguments = dict(labels=["a", "b"], fps=4, gap=2, label_height=16, max_width=None, cols=None,
+                     limits=[(0.0, 600.0), (0.0, 600.0)])
+    if fail:
+        with pytest.raises(RuntimeError, match="encode failed"):
+            mps.save_mp4([_nvenc_stack(), _nvenc_stack(1.0)], tmp_path / "labels.mp4", **arguments)
+    else:
+        mps.save_mp4([_nvenc_stack(), _nvenc_stack(1.0)], tmp_path / "labels.mp4", **arguments)
+    assert len(allocated) > 4 and sorted(map(id, released)) == sorted(map(id, allocated))
+    assert set(Path(tempfile.gettempdir()).glob("*.nv12")) == before
+
+
+@pytest.mark.parametrize(("width", "panels", "max_width"), [(21, 3, 61), (10, 4, 25), (13, 2, None)])
+def test_cpu_movie_frames_use_the_gpu_writers_grid(width: int, panels: int, max_width: int | None) -> None:
+    """The portable writer's canvas and panel placement equal grid_layout, as the CUDA and MPS writers use.
+
+    It used to round the whole canvas separately from the panels, so a scaled grid could clip its last
+    column (61 wide for three 21-pixel panels that need 64) or end one pixel short of the GPU movie.
+    """
+    from quantem.gpu.movie.layout import grid_layout
+
+    stacks = [np.full((2, 9, width), 100.0 * (index + 1), np.float32) for index in range(panels)]
+    frames = export._movie_frames(
+        stacks, labels=None, gap=3, label_height=0, max_width=max_width, cols=None,
+        shared_contrast=True, ref_stacks=[np.array([0.0, 100.0 * (panels + 1)], np.float32)], percentile=(0.0, 100.0),
+    )
+    layout = grid_layout(panels, 9, width, cols=None, gap=3, label_height=0, max_width=max_width)
+    assert frames[0].size == (layout.width, layout.height)
+    pixels = np.asarray(frames[0])[..., 0]
+    for index in range(panels):
+        row, col = divmod(index, layout.columns)
+        top = row * (layout.frame_height + layout.label_height + layout.gap) + layout.label_height
+        left = col * (layout.frame_width + layout.gap)
+        panel = pixels[top:top + layout.frame_height, left:left + layout.frame_width]
+        assert panel.shape == (layout.frame_height, layout.frame_width) and panel.min() > 0
+
+
+def test_mps_movie_without_ffmpeg_raises_the_error_auto_falls_back_on(tmp_path, monkeypatch):
+    """No ffmpeg on PATH and no imageio-ffmpeg: a RuntimeError naming the fix, so backend="auto" uses the CPU writer."""
+    from quantem.gpu.movie import mps
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(RuntimeError, match="needs ffmpeg: pip install imageio-ffmpeg"):
+        mps._encode_nv12(tmp_path / "frames.nv12", tmp_path / "movie.mp4", imageio_ffmpeg=None, width=16, height=16,
+                         fps=10.0, codec="auto", crf=20, quality=65, faststart=True)

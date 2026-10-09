@@ -156,6 +156,26 @@ def test_dense_cpu_load_and_inspect_preserve_real_hdf5_counts(tmp_path) -> None:
     assert loaded.logical_bytes == loaded.resident_bytes == counts.nbytes
 
 
+
+def test_cpu_reference_refuses_a_pixel_mask_of_another_shape(tmp_path) -> None:
+    """A mismatched dead-pixel mask raises; skipping it kept 65535 sentinels as counts without notice."""
+    import h5py
+
+    from quantem.gpu.io.hdf5.cpu import load_master
+
+    source = tmp_path / "native_master.h5"
+    counts = np.arange(6 * 4 * 5, dtype=np.uint16).reshape(6, 4, 5)
+    counts[:, 1, 2] = 65535
+    with h5py.File(source, "w") as handle:
+        handle.create_dataset("entry/data/data", data=counts)
+    mask = np.zeros((4, 5), np.uint32)
+    mask[1, 2] = 1
+    expected = counts.copy()
+    expected[:, 1, 2] = 0
+    np.testing.assert_array_equal(load_master(str(source), pixel_mask=mask, verbose=False), expected)
+    with pytest.raises(ValueError, match="pixel mask is 5 x 4, but the frames are 4 x 5; load with apply_mask=False"):
+        load_master(str(source), pixel_mask=mask.T, verbose=False)
+
 def test_io_exposes_only_the_current_data_type() -> None:
     from quantem.gpu.io import dataset
 

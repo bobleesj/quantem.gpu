@@ -96,3 +96,12 @@ def test_origin_coordinates_follow_normalized_units(
     reopened = Dataset4dstemGPU(None, effective_metadata(unknown, scientific))
     assert reopened.sampling == (None,) * 4
     assert reopened.units == (None,) * 4
+
+
+def test_name_is_the_recorded_name_else_the_source_file():
+    """A loaded acquisition names itself as a quantem core dataset does, without decoding data."""
+    shape = {"working_shape": (2, 2, 4, 4)}
+    assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan_001_master.h5"}).name == "scan_001"
+    assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan.npy"}).name == "scan"
+    assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan.npy", "name": "gold"}).name == "gold"
+    assert Dataset4dstemGPU(None, shape).name == ""

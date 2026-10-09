@@ -1126,6 +1126,13 @@ def test_cli_rejects_invalid_gpu_pool_before_launching():
         )
 
 
+def test_cli_serve_help_says_the_default_port_may_be_taken(capsys):
+    with pytest.raises(SystemExit):
+        _parser().parse_args(["serve", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "default: 8780; another local service may already use it, then pass --port" in help_text
+
+
 def test_cli_serves_without_an_explicit_implementation_revision():
     arguments = _parser().parse_args(["serve", "/data", "--gpus", "auto", "--port", "8780"])
 

@@ -23,13 +23,11 @@ launch the expensive CPU reference automatically.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -4,7 +4,7 @@ Why ports instead of running the JS directly: pytest can't drive a TypeScript
 module without a Node bridge or browser harness, both of which add fragility
 and slow CI. Instead we mirror quantem.gpu display/webgpu/fft.ts line-for-line below
 and assert against numpy.fft. If the JS algorithm has a bug, the line-port
-inherits it and this test fails — surfacing the bug at unit-test speed.
+inherits it and this test fails, surfacing the bug at unit-test speed.
 
 When the canonical quantem.gpu FFT source changes, update the ports here. The
 side-by-side structure makes drift visually obvious during review.
