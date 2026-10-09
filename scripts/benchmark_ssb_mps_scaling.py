@@ -12,7 +12,6 @@ they cannot thermally bias the primary workflow timing.
 """
 
 import argparse
-import contextlib
 import dataclasses
 import datetime as dt
 import gc
@@ -26,7 +25,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Iterator
 
 import mlx.core as mx
 import numpy as np
@@ -207,27 +205,6 @@ def _resized_prepared(prepared, size: int, scan_sampling_a: float):
     return resized
 
 
-@contextlib.contextmanager
-def _prepared_optimizer(prepared, selection) -> Iterator[None]:
-    patched = {
-        "as_chunked_frames": optimizer.as_chunked_frames,
-        "frames_scan_shape": optimizer.frames_scan_shape,
-        "resolve_bf_selection": optimizer.resolve_bf_selection,
-        "prepare_selection": optimizer.prepare_selection,
-        "detector_mean": optimizer.detector_mean,
-    }
-    optimizer.as_chunked_frames = lambda data: data
-    optimizer.frames_scan_shape = lambda frames: prepared.scan_shape
-    optimizer.resolve_bf_selection = lambda *args, **kwargs: selection
-    optimizer.prepare_selection = lambda *args, **kwargs: prepared
-    optimizer.detector_mean = lambda frames: np.zeros(selection.detector_shape, np.float32)
-    try:
-        yield
-    finally:
-        for name, value in patched.items():
-            setattr(optimizer, name, value)
-
-
 def _load_reference_engine(path: Path | None):
     if path is None:
         return None
@@ -309,19 +286,18 @@ def _pair_report(
 def _fit_report(prepared, selection, args: argparse.Namespace):
     mx.reset_peak_memory()
     started = time.perf_counter()
-    with _prepared_optimizer(prepared, selection):
-        result = optimizer.optimize(
-            object(),
-            voltage_kV=args.voltage_kv,
-            semiangle_mrad=args.semiangle_mrad,
-            scan_sampling_A=args.scan_sampling_a,
-            det_sampling=None,
-            aberrations=None,
-            n_trials=args.trials,
-            refine="nelder-mead",
-            seed=args.seed,
-            verbose=False,
-        )
+    result, _ = optimizer.optimize(
+        prepared,
+        selection,
+        voltage_kV=args.voltage_kv,
+        semiangle_mrad=args.semiangle_mrad,
+        scan_sampling_A=args.scan_sampling_a,
+        aberrations=None,
+        n_trials=args.trials,
+        refine="nelder-mead",
+        seed=args.seed,
+        verbose=False,
+    )
     return {
         "wall_seconds": time.perf_counter() - started,
         "elapsed_seconds": result.elapsed,

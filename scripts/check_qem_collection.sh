@@ -3,7 +3,7 @@ set -u
 # Original inputs remain untouched; discard only our sequential validation copies.
 cd "$(dirname "$0")/.."
 qem_root=${1:?Provide the local detector testing collection}
-qem_executable="$(swift build -c release --show-bin-path)/qem-roundtrip"
+qem_executable=$(bash scripts/build_qem_roundtrip.sh) || exit 1
 qem_directory=$(mktemp -d /tmp/qem-collection-XXXXXX)
 qem_output="$qem_directory/roundtrip.qem"
 qem_pass=0

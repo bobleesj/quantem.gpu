@@ -53,9 +53,9 @@ def record(session, *, trials: int, seed: int, batch: int) -> dict:
 
     original_optimize = mps_backend.optimize_mps
 
-    def optimize_with_batch(data, **kwargs):
+    def optimize_with_batch(*args, **kwargs):
         kwargs["optuna_batch_size"] = int(batch)
-        return original_optimize(data, **kwargs)
+        return original_optimize(*args, **kwargs)
 
     Study.tell = recording_tell
     mps_backend.optimize_mps = optimize_with_batch
