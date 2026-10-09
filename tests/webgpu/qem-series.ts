@@ -1,6 +1,7 @@
 /// <reference types="@webgpu/types" />
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
 import { DetectorCompute } from "../../src/quantem/gpu/detector/webgpu/backend";
+import { RansResidentSeries } from "../../src/quantem/gpu/detector/webgpu/rans-series";
 
 /** Ordered public-encoder files must drive one exact batched resident series. */
 export async function runQemSeriesParity(device: GPUDevice, baseURL: string): Promise<Record<string, boolean>> {
@@ -69,6 +70,39 @@ export async function runQemSeriesParity(device: GPUDevice, baseURL: string): Pr
       }
       results.ordered_patterns_exact = true; results.single_set_batch_delta_exact = true; results.borrowed_views_exact = true;
     } finally { buffers.forEach(buffer => buffer.destroy()); source.dispose(); }
+    // One resident set per acquisition: the compare-grid batch must integrate each set's own image.
+    const series = await RansResidentSeries.load(device, files, () => {}, () => {}, new AbortController().signal);
+    let seriesBuffers: GPUBuffer[] = [];
+    try {
+      await series.completion;
+      if (series.loadedAcquisitions !== 2 || series.computes[0].set === series.computes[1].set) throw new Error("Series acquisitions were not loaded separately");
+      const computes = series.computes as unknown as DetectorCompute[];
+      const scans = series.computes[0].scanCount, K = series.computes[0].detSize;
+      const exact = async (mask: Uint32Array) => {
+        for (let tilt = 0; tilt < 2; tilt++) {
+          const readback = device.createBuffer({ size: scans * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+          const encoder = device.createCommandEncoder();
+          encoder.copyBufferToBuffer(seriesBuffers[tilt], 0, readback, 0, scans * 4);
+          device.queue.submit([encoder.finish()]);
+          await readback.mapAsync(GPUMapMode.READ);
+          const actual = new Float32Array(readback.getMappedRange().slice(0));
+          readback.destroy();
+          for (let scan = 0; scan < scans; scan++) {
+            let expected = 0;
+            for (let k = 0; k < K; k++) if (mask[k]) expected += originals[tilt][scan * K + k];
+            if (actual[scan] !== expected) throw new Error(`Series panel ${tilt} differs at scan ${scan}`);
+          }
+        }
+      };
+      const mask = new Uint32Array([1, 1, 0, 0, 1, 0]);
+      seriesBuffers = DetectorCompute.maskedSumBuffersBatch(computes, mask).buffers;
+      await exact(mask);
+      const next = new Uint32Array([0, 1, 1, 0, 0, 1]);
+      const added = next.map((value, k) => value && !mask[k] ? 1 : 0), removed = next.map((value, k) => mask[k] && !value ? 1 : 0);
+      seriesBuffers = DetectorCompute.maskedSumDeltaBuffersBatch(computes, seriesBuffers, added, removed).buffers;
+      await exact(next);
+      results.per_acquisition_series_batch_exact = true;
+    } finally { seriesBuffers.forEach(buffer => buffer.destroy()); series.dispose(); }
     const maskedSource = await RansResidentSet.loadQemFiles(device, files, () => {}, [1, 1]);
     try {
       if (maskedSource.badPx.length !== 1 || maskedSource.badPx[0] !== 1) throw new Error("Bad-pixel indices were not deduplicated");
