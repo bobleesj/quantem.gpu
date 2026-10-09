@@ -278,3 +278,21 @@ test("a server that ignores the range stops sending once the response is refused
   await assert.rejects(file.chunks!(0, bytes.length, 16).next(), /ignored a byte range/);
   assert.equal(cancelled, 2);
 });
+
+test("only a body that is not a byte stream falls back to the default reader", async () => {
+  const bytes = pattern(64);
+  for (const [refusal, outcome] of [[TypeError, "read"], [RangeError, "rejected"]] as const) {
+    globalThis.fetch = (async (_url: URL, init: RequestInit = {}) => {
+      if (init.method === "HEAD") return new Response(null, { headers: { "Content-Length": String(bytes.length) } });
+      const stream = new Response(bytes.slice()).body!;
+      const body = { getReader: (options?: { mode?: string }) => {
+        if (options?.mode === "byob") throw new refusal("no BYOB reader");
+        return stream.getReader();
+      } };
+      return { status: 206, body } as unknown as Response;
+    }) as typeof fetch;
+    const [file] = await qemHttpFiles("/", ["a.qem"]);
+    const result = await collect(file, bytes.length, 16, 1).then(() => "read", () => "rejected");
+    assert.equal(result, outcome, refusal.name);
+  }
+});
