@@ -5,6 +5,7 @@ import test from "node:test";
 import { fakeDevice, type FakeBuffer } from "./fake-gpu";
 import { qemFileSource, qemFilesSource, qemHttpFiles } from "../../src/quantem/gpu/detector/webgpu/qem-source";
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
+import { RansResidentSeries } from "../../src/quantem/gpu/detector/webgpu/rans-series";
 import { validateUint32ImageView } from "../../src/quantem/gpu/display/webgpu/borrowed-image";
 import type { RansByteSource } from "../../src/quantem/gpu/detector/webgpu/rans-source";
 import { syntheticQem } from "./qem-synthetic";
@@ -255,4 +256,27 @@ test("cancellation during the decoder build releases the set instead of returnin
   gpu.device.queue.onSubmittedWorkDone = async () => controller.abort();
   await assert.rejects(RansResidentSet.loadQemFile(gpu.device, countingFile(unaligned), () => {}, [], controller.signal), { name: "AbortError" });
   assert.ok(gpu.buffers.length > 0 && gpu.buffers.every(buffer => buffer.destroyed));
+});
+
+test("a series names each acquisition once in its status, and alone when its loader reports nothing", async () => {
+  const gpu = fakeDevice();
+  const statuses: string[] = [];
+  const files = [countingFile(unaligned, "t0.qem"), countingFile(unaligned, "t1.qem")];
+  const series = await RansResidentSeries.load(gpu.device, files, text => statuses.push(text), () => {}, new AbortController().signal);
+  await series.completion;
+  const report = statuses.join("\n");
+  for (const status of statuses.slice(0, -1)) {
+    // One "position/count name" prefix; the inner loader text never repeats it.
+    assert.match(status, /^[12]\/2 t[01]\.qem(: (?!\d+\/\d+ )\S.*)?$/, report);
+  }
+  assert.equal(statuses.at(-1), "", "the finished series clears its status");
+  for (const [position, name] of [["1/2", "t0.qem"], ["2/2", "t1.qem"]]) {
+    assert.ok(statuses.some(status => new RegExp(`^${position} ${name}: Verifying \\.qem \\d+/\\d+$`).test(status)), report);
+    assert.ok(statuses.includes(`${position} ${name}`), report);
+  }
+  series.dispose();
+  const single: string[] = [];
+  (await RansResidentSet.loadQemFile(gpu.device, countingFile(unaligned, "t0.qem"), text => single.push(text))).dispose();
+  assert.ok(single.some(status => /^Verifying \.qem \d+\/\d+$/.test(status)), "a single file needs no position prefix");
+  assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
 });

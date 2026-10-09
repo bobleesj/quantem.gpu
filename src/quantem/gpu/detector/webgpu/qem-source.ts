@@ -733,6 +733,12 @@ export async function readQemSeriesHeaders(files: ArrayLike<QemByteFile>, signal
   return headers;
 }
 
+/** Report a file's loader status once under `prefix`, its position and name. An
+ * empty status ends that file's load, so it leaves the prefix without a separator. */
+export function prefixedStatus(prefix: string, onStatus: (text: string) => void): (text: string) => void {
+  return text => onStatus(text ? `${prefix}: ${text}` : prefix);
+}
+
 /** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
 export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal): Promise<RansByteSource> {
   const ordered = Array.from(files);
@@ -745,7 +751,9 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
   const manifests: RansManifest[] = [];
   try {
     for (let index = 0; index < ordered.length; index++) {
-      const source = await admitQemFile(ordered[index], headers[index], text => onStatus(`${index + 1}/${ordered.length} ${ordered[index].name}: ${text}`), device, signal);
+      // One file needs no position; a series names it once around this source.
+      const status = ordered.length > 1 ? prefixedStatus(`${index + 1}/${ordered.length} ${ordered[index].name}`, onStatus) : onStatus;
+      const source = await admitQemFile(ordered[index], headers[index], status, device, signal);
       // Owned from here, so a later failure releases its staged storage.
       sources.push(source);
       manifests.push(JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))) as RansManifest);

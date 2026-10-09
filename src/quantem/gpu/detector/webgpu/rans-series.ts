@@ -5,7 +5,7 @@
  * so a viewer shows and compares panels while the rest of the series loads.
  */
 import { RansResidentSet, type RansDetectorCompute } from "./rans";
-import { readQemSeriesHeaders, type QemByteFile } from "./qem-source";
+import { prefixedStatus, readQemSeriesHeaders, type QemByteFile } from "./qem-source";
 
 // Acquisitions loading at once, the next one to publish included: file
 // authentication overlaps the decoder build of earlier files while host
@@ -53,9 +53,10 @@ export class RansResidentSeries {
     let frontier = 1;
     const begin = (index: number) => {
       if (index >= files.length || pending.has(index) || cancel.aborted) return;
+      const report = prefixedStatus(`${index + 1}/${files.length} ${files[index].name}`, status);
       pending.set(index, RansResidentSet.loadQemFile(this.device, files[index], text => {
         // Only the next acquisition to publish reports its progress.
-        if (index === frontier && !cancel.aborted) status(`${index + 1}/${files.length} ${files[index].name}: ${text}`);
+        if (index === frontier && !cancel.aborted) report(text);
       }, badPixels, cancel).then(set => ({ set }), error => ({ error })));
     };
     try {
@@ -101,7 +102,7 @@ export class RansResidentSeries {
     // Every header first: a mismatched file fails before any payload is read. Each
     // load still compares its authenticated set, in case a file changes meanwhile.
     await readQemSeriesHeaders(files, signal);
-    const first = await RansResidentSet.loadQemFile(device, files[0], text => status(`1/${files.length} ${files[0].name}: ${text}`), badPixels, signal);
+    const first = await RansResidentSet.loadQemFile(device, files[0], prefixedStatus(`1/${files.length} ${files[0].name}`, status), badPixels, signal);
     if (signal.aborted) { first.dispose(); signal.throwIfAborted(); }
     // The first progress call runs in the constructor, before any other load starts.
     try { return new RansResidentSeries(first, files, device, started, status, progress, signal, badPixels); }
