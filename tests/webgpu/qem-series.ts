@@ -54,7 +54,20 @@ export async function runQemSeriesParity(device: GPUDevice, baseURL: string): Pr
         mask.set(next); await verify();
         for (const buffer of previous) if (!buffers.includes(buffer)) buffer.destroy();
       }
-      results.ordered_patterns_exact = true; results.single_set_batch_delta_exact = true;
+      // Borrowed views address the same canonical counts readImageU32 snapshots.
+      const views = source.imageViewsU32([1, 0], 1);
+      for (const [index, tilt] of [1, 0].entries()) {
+        const readback = device.createBuffer({ size: scans * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(views[index].buffer, views[index].byteOffset, readback, 0, scans * 4);
+        device.queue.submit([encoder.finish()]);
+        await readback.mapAsync(GPUMapMode.READ);
+        const borrowed = new Uint32Array(readback.getMappedRange().slice(0));
+        readback.destroy();
+        const exact = await source.readImageU32(tilt);
+        if (borrowed.some((value, scan) => value !== exact[scan])) throw new Error(`Borrowed count view of acquisition ${tilt} differs from its exact image`);
+      }
+      results.ordered_patterns_exact = true; results.single_set_batch_delta_exact = true; results.borrowed_views_exact = true;
     } finally { buffers.forEach(buffer => buffer.destroy()); source.dispose(); }
     const maskedSource = await RansResidentSet.loadQemFiles(device, files, () => {}, [1, 1]);
     try {

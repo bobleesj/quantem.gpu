@@ -5,6 +5,7 @@ import test from "node:test";
 import { fakeDevice, type FakeBuffer } from "./fake-gpu";
 import { qemFileSource, qemFilesSource } from "../../src/quantem/gpu/detector/webgpu/qem-source";
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
+import { validateUint32ImageView } from "../../src/quantem/gpu/display/webgpu/borrowed-image";
 import type { RansByteSource } from "../../src/quantem/gpu/detector/webgpu/rans-source";
 import { syntheticQem } from "./qem-synthetic";
 
@@ -28,9 +29,10 @@ function countingFile(bytes: Uint8Array, name = "acquisition.qem") {
 type Block = { index: number; byte_start: number; byte_end: number };
 const blocksOf = async (source: RansByteSource) =>
   JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))).tilts[0].blocks_meta as Block[];
-/** Distinct buffers at one binding of the decoder's eight-entry bind groups (0 payload, 6 units). */
-const boundBuffers = (groups: GPUBindGroupDescriptor[], binding: number) => [...new Set(groups
-  .filter(group => [...group.entries].length === 8)
+/** Distinct buffers at one binding of bind groups with `entries` entries:
+ * the decoder's eight (0 payload, 6 units) or the image update's four (1 uint32 images). */
+const boundBuffers = (groups: GPUBindGroupDescriptor[], binding: number, entries = 8) => [...new Set(groups
+  .filter(group => [...group.entries].length === entries)
   .map(group => ([...group.entries].find(entry => entry.binding === binding)!.resource as GPUBufferBinding).buffer as unknown as FakeBuffer))];
 const stagedBytes = (segment: { buffer: GPUBuffer; offset: number }, length: number) =>
   new Uint8Array((segment.buffer as unknown as FakeBuffer).bytes, segment.offset, length);
@@ -150,4 +152,17 @@ test("mapped payload groups stay within 256 MiB even when the device allows more
   const set = await RansResidentSet.loadQemFile(uploaded.device, countingFile(syntheticQem([[129 << 20, 128 << 20]])));
   assert.ok(largest(uploaded.buffers) <= 256 << 20, `largest uploaded group ${largest(uploaded.buffers)} bytes`);
   set.dispose();
+});
+
+test("borrowed count views address each acquisition's exact uint32 image", async () => {
+  const gpu = fakeDevice();
+  const set = await RansResidentSet.loadQemFiles(gpu.device, [countingFile(unaligned, "a.qem"), countingFile(unaligned, "b.qem")]);
+  const [images] = boundBuffers(gpu.bindGroups, 1, 4);
+  const views = set.imageViewsU32([1, 0], 7);
+  assert.deepEqual(views.map(view => [view.buffer, view.byteOffset, view.count, view.divisor]),
+    [[images, set.scanCount * 4, set.scanCount, 7], [images, 0, set.scanCount, 7]]);
+  for (const view of views) validateUint32ImageView(view, gpu.device, set.scanCount);
+  assert.throws(() => set.imageViewsU32([2], 1), /within 0\.\.1/);
+  set.dispose();
+  assert.throws(() => set.imageViewsU32([0], 1), /disposed/);
 });

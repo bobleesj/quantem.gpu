@@ -14,6 +14,7 @@
 import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, payloadGroupLimit, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
 import { qemFilesSource, type QemByteFile } from "./qem-source";
 import { DetectorCompute } from "./backend";
+import type { Uint32ImageView } from "../../display/webgpu/borrowed-image";
 
 const WINDOW = 256;
 const LOWER = 8388608;
@@ -800,6 +801,18 @@ export class RansResidentSet {
       await readback.mapAsync(GPUMapMode.READ);
       return new Uint32Array(readback.getMappedRange().slice(0));
     } finally { readback.destroy(); }
+  }
+
+  /** Lend the exact uint32 detector sums of the given acquisitions to a display.
+   * The views stay valid until this set is disposed; the borrower must not write
+   * or destroy the buffer, and shows f32(count) / divisor.
+   */
+  imageViewsU32(tilts: number[], divisor: number): Uint32ImageView[] {
+    if (this.disposed) throw new Error("rANS resident set disposed");
+    if (tilts.some(tilt => !Number.isInteger(tilt) || tilt < 0 || tilt >= this.T)) {
+      throw new Error(`Acquisition indices must be within 0..${this.T - 1}; select acquisitions in this resident set`);
+    }
+    return tilts.map(tilt => ({ device: this.device, buffer: this.images, byteOffset: tilt * this.scanCount * 4, count: this.scanCount, divisor }));
   }
 
   /** Read float32 display sums; use readImageU32 for exact quantitative counts. */
