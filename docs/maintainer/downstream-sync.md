@@ -51,7 +51,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu._compact.planner` | deleted | 1 of 1 names deleted |
 | `quantem.gpu._compact.source` | deleted | 2 of 2 names deleted |
 | `quantem.gpu._compact.streamed` | `quantem.gpu.resident.cuda.counts`, `quantem.gpu.formats.qem.snapshot`, `quantem.gpu.detector.cuda.dense` |  |
-| `quantem.gpu._cuda_libraries` | deleted | 1 of 1 names deleted |
+| `quantem.gpu._cuda_libraries` | `quantem.gpu.device.cuda_runtime` | `preload` is `preload_libraries` |
 | `quantem.gpu.detector.backends` | deleted |  |
 | `quantem.gpu.detector.backends.bounded` | `quantem.gpu.detector.bounded` |  |
 | `quantem.gpu.detector.backends.counts` | `quantem.gpu.detector.counts` | 1 of 2 names deleted |
@@ -222,5 +222,5 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.ssb.temporal` | deleted | 6 of 6 names deleted |
 | `quantem.gpu.ssb.torch_ssb` | deleted | 1 of 1 names deleted |
 | `quantem.gpu.ssb.workflow` | `quantem.gpu.ssb.units`, `quantem.gpu.ssb.contract`, `quantem.gpu.ssb.workflow` |  |
-| `quantem.gpu.swift.Benchmarks.MetalImageFFTBenchmark.compare_torch_fft` | `quantem.gpu.cli` | 6 of 7 names deleted |
-| `quantem.gpu.webgpu` | deleted | 3 of 3 names deleted |
+| `quantem.gpu.swift.Benchmarks.MetalImageFFTBenchmark.compare_torch_fft` | `native/swift/Benchmarks/MetalImageFFTBenchmark/compare_torch_fft.py` | a script beside the Swift benchmark, not a package module |
+| `quantem.gpu.webgpu` | deleted | 3 of 3 names deleted; the package now holds only `sources.json` and `index.ts` for browser builds |
