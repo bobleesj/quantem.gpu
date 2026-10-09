@@ -7,6 +7,12 @@ export interface RansDirectoryHandle {
 export interface RansByteSource {
   mode: "http" | "local-folder";
   read(name: string, start?: number, end?: number): Promise<ArrayBuffer>;
+  /** Where an authenticated payload range lies on the GPU. A .qem source admitted with a
+   * device stages every block and throws for any other range; a source that answers
+   * undefined sends that block to the per-block upload path. */
+  residentPayload?(name: string, start: number, end: number): { buffer: GPUBuffer; offset: number } | undefined;
+  /** Release staged GPU storage; a loaded resident set owns it instead. */
+  dispose?(): void;
 }
 
 function localParts(name: string): string[] {
@@ -87,6 +93,14 @@ export async function ransLocalFilesSource(files: ArrayLike<File>): Promise<Rans
     },
   });
   return ransLocalSource(directory(prefix));
+}
+
+/** Largest mapped GPU payload group. Browsers refuse mapped allocations far below
+ * the advertised device limits (a 4.29 GB mapping failed on Apple Metal WebGPU);
+ * several groups of at most 256 MiB still keep the whole series resident.
+ */
+export function payloadGroupLimit(device: GPUDevice): number {
+  return Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 256 * 1024 * 1024);
 }
 
 /** Per-read elapsed durations overlap; wait time counts exposed await intervals. */
