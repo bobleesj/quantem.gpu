@@ -10,6 +10,8 @@ export interface QemByteFile {
   slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
   /** Consecutive chunkBytes-sized pieces of [start, end), read in order from one stream. */
   chunks?(start: number, end: number, chunkBytes: number): AsyncGenerator<ArrayBuffer, void, unknown>;
+  /** Return a chunk the caller has finished with; the stream may refill it. */
+  recycleChunk?(buffer: ArrayBuffer): void;
 }
 
 type Span = { offset: number; count: number };
@@ -129,6 +131,14 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
     const header = await fetch(url, { method: "HEAD", cache: "no-store" });
     const size = Number(header.headers.get("Content-Length"));
     requireQem(header.ok && Number.isSafeInteger(size) && size >= 56, `cannot open ${name}; keep the data file beside the viewer`);
+    // Finished 64 MiB chunks carry later ones instead of a new allocation per
+    // chunk. At most four wait here, and none outlives the stream that read them.
+    const reusable: ArrayBuffer[] = [];
+    let streaming = false;
+    const acquire = (wanted: number) => {
+      const index = reusable.findIndex(buffer => buffer.byteLength === wanted);
+      return new Uint8Array(index < 0 ? new ArrayBuffer(wanted) : reusable.splice(index, 1)[0]);
+    };
     return { name, size, async *chunks(start: number, end: number, chunkBytes: number) {
       // One ranged response carries every authentication chunk instead of one
       // request per 64 MiB; each chunk is still hashed on its own.
@@ -140,13 +150,14 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
       try { reader = response.body.getReader({ mode: "byob" }); }
       catch { reader = response.body.getReader(); byob = false; }
       let remaining = end - start;
+      streaming = true;
       try {
         if (byob) {
           // The `min` read option (Chrome 125, Node 22) is missing from TypeScript 5.9's DOM types.
           const byteReader = reader as unknown as { read(view: Uint8Array, options: { min: number }): Promise<ReadableStreamReadResult<Uint8Array<ArrayBuffer>>> };
           while (remaining > 0) {
             const wanted = Math.min(chunkBytes, remaining);
-            let chunk = new Uint8Array(wanted), filled = 0;
+            let chunk = acquire(wanted), filled = 0;
             while (filled < wanted) {
               const part = await byteReader.read(chunk.subarray(filled), { min: wanted - filled });
               requireQem(part.value && part.value.byteLength > 0, `truncated stream in ${name}`);
@@ -162,7 +173,7 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
           return;
         }
         const defaultReader = reader as ReadableStreamDefaultReader<Uint8Array>;
-        let chunk = new Uint8Array(Math.min(chunkBytes, remaining)), filled = 0;
+        let chunk = acquire(Math.min(chunkBytes, remaining)), filled = 0;
         while (remaining > 0) {
           const part = await defaultReader.read();
           requireQem(!part.done, `truncated stream in ${name}`);
@@ -174,16 +185,21 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
             if (filled === chunk.length) {
               yield chunk.buffer;
               filled = 0;
-              if (remaining > 0) chunk = new Uint8Array(Math.min(chunkBytes, remaining));
+              if (remaining > 0) chunk = acquire(Math.min(chunkBytes, remaining));
             }
           }
         }
         requireQem((await defaultReader.read()).done, `oversized stream in ${name}`);
       } finally {
         // Stops the download when admission ends early, on success or failure.
+        streaming = false;
+        reusable.length = 0;
         await reader.cancel();
         reader.releaseLock();
       }
+    }, recycleChunk(buffer: ArrayBuffer) {
+      // A BYOB read transfers a reused buffer: the caller must not keep any view of it.
+      if (streaming && reusable.length < 4) reusable.push(buffer);
     }, slice(start = 0, end = size) {
       return { async arrayBuffer() {
         const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` } });
@@ -328,7 +344,7 @@ export async function qemFileSource(
   };
   // Four reads and digests stay in flight, so reading overlaps hashing while
   // at most four 64 MiB chunks are held.
-  type Verified = { bytes: Uint8Array } | { error: unknown };
+  type Verified = { bytes: Uint8Array<ArrayBuffer> } | { error: unknown };
   const pending: Promise<Verified>[] = [];
   let next = 0;
   const enqueue = () => {
@@ -341,6 +357,8 @@ export async function qemFileSource(
       onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
       const result = await pending.shift()!;
       if ("error" in result) throw result.error;
+      // Only an authenticated chunk is released, once nothing reads it again.
+      file.recycleChunk?.(result.bytes.buffer);
       if (next < header.sha256.length) enqueue();
     }
     if (stream) requireQem((await stream.next()).done, "unexpected trailing authentication chunk");
