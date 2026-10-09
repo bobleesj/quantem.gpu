@@ -166,3 +166,32 @@ test("borrowed count views address each acquisition's exact uint32 image", async
   set.dispose();
   assert.throws(() => set.imageViewsU32([0], 1), /disposed/);
 });
+
+test("unit rows follow their groups when per-block uploads and staged segments interleave", async () => {
+  // 4096-byte groups. Acquisitions 0 and 2 take the per-block upload path and
+  // share a group around the staged acquisition 1, as a mixed series would.
+  const gpu = fakeDevice({ maxBufferSize: 4096, maxStorageBufferBindingSize: 4096 });
+  const bytes = [syntheticQem([[1500, 1500, 1500]]), syntheticQem([[1000, 1000, 1000]]), syntheticQem([[1500, 1500, 1500]])];
+  const staged = await qemFilesSource(bytes.map((file, index) => countingFile(file, `t${index}.qem`)), () => {}, [], gpu.device);
+  const uploaded = /^acquisition-([02])\/payload$/;
+  const mixed: RansByteSource = { ...staged,
+    residentPayload: (name, start, end) => uploaded.test(name) ? undefined : staged.residentPayload!(name, start, end),
+    read: async (name, start, end) => {
+      const acquisition = uploaded.exec(name);
+      return acquisition ? bytes[Number(acquisition[1])].slice(start, end).buffer : staged.read(name, start, end);
+    },
+  };
+  const loadSource = (RansResidentSet as unknown as { loadSource(device: GPUDevice, source: RansByteSource, status: () => void): Promise<RansResidentSet> }).loadSource;
+  const set = await loadSource.call(RansResidentSet, gpu.device, mixed, () => {});
+  const groups = (set as unknown as { groups: { unit0: number; units: { out_base: number; payload_word: number }[] }[] }).groups;
+  const table = new Uint32Array((set as unknown as { unitsBuf: FakeBuffer }).unitsBuf.bytes);
+  assert.ok(groups.some(group => group.units.length > 1 && new Set(group.units.map(unit => Math.floor(unit.out_base / 1536))).size > 1), "one upload group holds blocks of acquisitions 0 and 2");
+  for (const group of groups) {
+    group.units.forEach((unit, index) => {
+      const row = group.unit0 + index;
+      assert.deepEqual([table[row * 8], table[row * 8 + 6]], [unit.payload_word, unit.out_base], `row ${row}`);
+    });
+  }
+  set.dispose();
+  staged.dispose!();
+});
