@@ -288,7 +288,7 @@ class PairedCounts(StreamedCounts):
         The range must start on a coding block (multiple of 512 scans) and lie inside
         one resident chunk; ``out`` is an optional ``(scans, rows, cols)`` uint16 device
         array. Kernels run on the current stream, so a caller may prefetch blocks on a
-        side stream; see :class:`PairedFeed` for the double-buffered iterator.
+        side stream.
 
         Examples
         --------
@@ -459,113 +459,6 @@ def _read_header(path):
         length = int.from_bytes(handle.read(8), "little")
         data_start = int.from_bytes(handle.read(8), "little")
         return json.loads(handle.read(length)), data_start
-
-
-class PairedFeed:
-    """Iterate decoded scan blocks of one or more paired sources with device prefetch.
-
-    Blocks are decoded on a private stream ``depth`` buffers ahead of the consumer;
-    each yielded block is already ordered before the caller's current stream, and
-    the buffer is reused only after the caller's stream has passed the next
-    iteration. ``order="scan"`` yields block 0 of every source, then block 1, so a
-    joint time-series reconstruction sees all acquisitions of one scan range
-    together; ``order="source"`` walks each acquisition to its end first.
-
-    Parameters
-    ----------
-    sources
-        Complete :class:`PairedCounts` sources with one detector geometry.
-    block_scans
-        Scans per block; a multiple of 512.
-    depth
-        Blocks decoded ahead of the consumer (buffers in flight).
-    amplitude
-        Also provide ``block.amplitude``, ``sqrt`` of the counts as float32,
-        computed on the prefetch stream.
-
-    Examples
-    --------
-    >>> for block in PairedFeed(sources, amplitude=True):
-    ...     update(block.source, block.first, block.amplitude)
-    """
-
-    class Block:
-        __slots__ = ("source", "first", "scans", "raw", "amplitude")
-
-        def __init__(self, source, first, scans, raw, amplitude):
-            self.source, self.first, self.scans, self.raw, self.amplitude = source, first, scans, raw, amplitude
-
-    def __init__(self, sources, *, block_scans: int = 512, depth: int = 2, amplitude: bool = False, order: str = "scan"):
-        import cupy as cp
-
-        self.sources = list(sources)
-        if not self.sources or any(tuple(source.shape[2:]) != tuple(self.sources[0].shape[2:]) for source in self.sources):
-            raise ValueError("Feed sources must share one detector geometry.")
-        interval = self.sources[0].interval
-        if block_scans < interval or block_scans % interval or depth < 1:
-            raise ValueError(f"block_scans must be a positive multiple of {interval} and depth at least 1; got {block_scans}, {depth}.")
-        if order not in ("scan", "source"):
-            raise ValueError(f"order must be 'scan' or 'source'; got {order!r}.")
-        self.block_scans, self.depth, self.amplitude, self.order = int(block_scans), int(depth), bool(amplitude), order
-        self.stream = cp.cuda.Stream(non_blocking=True)
-        # (source index, first scan, scans) per block, never crossing a resident chunk.
-        per_source = []
-        for index, source in enumerate(self.sources):
-            items = []
-            for chunk in source.chunks:
-                at = chunk.first
-                while at < chunk.first + chunk.scans:
-                    scans = min(self.block_scans, chunk.first + chunk.scans - at)
-                    items.append((index, at, scans))
-                    at += scans
-            per_source.append(items)
-        if order == "scan" and len({len(items) for items in per_source}) == 1:
-            self.plan = [item for group in zip(*per_source) for item in group]
-        else:
-            # Sources of different lengths cannot interleave; walk each to its end.
-            self.plan = [item for items in per_source for item in items]
-
-    def __len__(self):
-        return len(self.plan)
-
-    def __iter__(self):
-        import cupy as cp
-
-        shape = (self.block_scans, *self.sources[0].shape[2:])
-        with cp.cuda.Device(self.sources[0].device):
-            raws = [cp.empty(shape, cp.uint16) for _ in range(self.depth + 1)]
-            amplitudes = [cp.empty(shape, cp.float32) for _ in range(self.depth + 1)] if self.amplitude else [None] * (self.depth + 1)
-            released = [None] * (self.depth + 1)  # event on the consumer stream after it finished with that buffer
-            ready = {}
-            consumer = cp.cuda.get_current_stream()
-
-            def launch(position):
-                slot = position % (self.depth + 1)
-                index, first, scans = self.plan[position]
-                if released[slot] is not None:
-                    self.stream.wait_event(released[slot])
-                with self.stream:
-                    self.sources[index].decode_blocks(first, scans, out=raws[slot][:scans])
-                    if self.amplitude:
-                        cp.sqrt(raws[slot][:scans], out=amplitudes[slot][:scans])
-                    event = cp.cuda.Event()
-                    event.record(self.stream)
-                ready[position] = event
-
-            for position in range(min(self.depth, len(self.plan))):
-                launch(position)
-            for position in range(len(self.plan)):
-                slot = position % (self.depth + 1)
-                index, first, scans = self.plan[position]
-                consumer.wait_event(ready.pop(position))
-                amplitude = amplitudes[slot][:scans] if self.amplitude else None
-                yield PairedFeed.Block(index, first, scans, raws[slot][:scans], amplitude)
-                done = cp.cuda.Event()
-                done.record(consumer)
-                released[slot] = done
-                if position + self.depth < len(self.plan):
-                    launch(position + self.depth)
-            self.stream.synchronize()
 
 
 class ResidentFileReader:

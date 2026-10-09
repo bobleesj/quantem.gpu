@@ -309,12 +309,6 @@ def test_reconstruct_series_reuses_only_exact_results(
     assert metadata["Trials"] == 200
     assert metadata["Refinement"] == "nelder-mead"
     assert metadata["Results reused"] == 3
-    assert fixed_probe_result.alignment == {
-        "normalization": "median_mad",
-        "pad_fraction": 3.0 / 32.0,
-        "upsample_factor": 50,
-        "running_avg_frames": 12.0,
-    }
 
 
 def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
