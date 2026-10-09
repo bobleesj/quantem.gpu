@@ -3,6 +3,13 @@ import tables from "../../formats/qem/qem-rans-tables-v1.json";
 import type { RansByteSource } from "./rans-source";
 import type { RansManifest } from "./rans";
 
+/** Byte access to one .qem acquisition: a local File or a file served beside the viewer. */
+export interface QemByteFile {
+  name: string;
+  size: number;
+  slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
+}
+
 type Span = { offset: number; count: number };
 type Chunk = { first: number; scans: number; arrays: Span[] };
 type Header = {
@@ -108,9 +115,33 @@ const digest = (bytes: Uint8Array) => {
   return hash.finish();
 };
 
+/** Open .qem files served beside the viewer by a Range-capable HTTP server.
+ * Every request bypasses the browser HTTP cache: admission authenticates every
+ * byte it reads, and caching multi-gigabyte ranges only adds disk writes.
+ */
+export async function qemHttpFiles(base: string, names: string[]): Promise<QemByteFile[]> {
+  return Promise.all(names.map(async name => {
+    // Plain file names only: a path could reach files outside the served folder.
+    requireQem(name.length > 0 && !/[\\/]/.test(name) && name !== "." && name !== "..", "invalid QEM file name");
+    const url = new URL(encodeURIComponent(name), new URL(base, location.href));
+    const header = await fetch(url, { method: "HEAD", cache: "no-store" });
+    const size = Number(header.headers.get("Content-Length"));
+    requireQem(header.ok && Number.isSafeInteger(size) && size >= 56, `cannot open ${name}; keep the data file beside the viewer`);
+    return { name, size, slice(start = 0, end = size) {
+      return { async arrayBuffer() {
+        const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` } });
+        requireQem(response.status === 206, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
+        const bytes = await response.arrayBuffer();
+        requireQem(bytes.byteLength === end - start, `truncated range in ${name}`);
+        return bytes;
+      } };
+    } };
+  }));
+}
+
 /** Admit one .qem count acquisition without expanding detector counts. */
 export async function qemFileSource(
-  file: File,
+  file: QemByteFile,
   onStatus: (text: string) => void = () => {},
 ): Promise<RansByteSource> {
   requireQem(file.size >= 56, "truncated envelope");
@@ -433,7 +464,7 @@ export async function qemFileSource(
 }
 
 /** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
-export async function qemFilesSource(files: ArrayLike<File>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansByteSource> {
+export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansByteSource> {
   const ordered = Array.from(files);
   requireQem(ordered.length > 0, "select at least one .qem file");
   const sources: RansByteSource[] = [];
