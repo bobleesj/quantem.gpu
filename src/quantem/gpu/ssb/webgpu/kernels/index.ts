@@ -6,7 +6,7 @@ import { FFT1024 } from "./fft1024";
 
 export type SupportedSsbSize = WebGPUFFTConfig["size"];
 
-export const WEBGPU_FFT_CONFIGS: ReadonlyMap<number, WebGPUFFTConfig> = new Map([
+const WEBGPU_FFT_CONFIGS: ReadonlyMap<number, WebGPUFFTConfig> = new Map([
   [FFT128.size, FFT128],
   [FFT256.size, FFT256],
   [FFT512.size, FFT512],

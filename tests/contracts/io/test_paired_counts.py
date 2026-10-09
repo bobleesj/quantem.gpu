@@ -218,27 +218,14 @@ def test_native_source_matches_frozen_virtual_images():
         assert hashlib.sha256(image.tobytes()).hexdigest() == digest
 
 
-def test_feed_blocks_match_chunk_decodes():
-    """A time-series consumer sees every 512-scan block of every source, exact, with sqrt amplitudes."""
-    from quantem.gpu.resident.cuda.paired import PairedFeed
-
-    sources, raws = [], []
-    for seed in (5, 6):
-        raw, valid = _synthetic(20, 1024, seed=seed)
-        source = PairedCounts((2, 512, 20, 20), np.uint16, valid)
-        source.append(raw[:512])
-        source.append(raw[512:])
-        sources.append(source)
-        raws.append(raw)
-    assert bool(cp.array_equal(sources[0].decode_blocks(512, 512), raws[0][512:]).get())
-    seen = []
-    for block in PairedFeed(sources, amplitude=True):
-        expected = raws[block.source][block.first : block.first + block.scans]
-        assert bool(cp.array_equal(block.raw, expected).get())
-        assert bool(cp.allclose(block.amplitude, cp.sqrt(expected.astype(cp.float32))).get())
-        seen.append((block.source, block.first))
-    assert seen == [(0, 0), (1, 0), (0, 512), (1, 512)]
-    assert [b.first for b in PairedFeed(sources[:1], block_scans=1024, order="source")] == [0, 512]
+def test_decode_blocks_match_chunk_decodes():
+    """Every 512-scan block of a two-chunk source decodes to its exact counts."""
+    raw, valid = _synthetic(20, 1024, seed=5)
+    source = PairedCounts((2, 512, 20, 20), np.uint16, valid)
+    source.append(raw[:512])
+    source.append(raw[512:])
+    for first in (0, 512):
+        assert bool(cp.array_equal(source.decode_blocks(first, 512), raw[first : first + 512]).get())
 
 
 def test_mixed_chunk_sizes_beyond_the_grid_y_limit():

@@ -10,7 +10,7 @@ history, can be read by anyone. These rules apply to coding agents and humans.
   same `experiments/<id>/` layout). Write the dated summary under `docs/`
   (question, setup, numbers, conclusion) and refer to the experiment by its id.
 - Datasets or detector files, other than the small synthetic fixtures under
-  `tests/data/`, `tests/detector/data/` and the native test fixtures under
+  `tests/data/` and the native test fixtures under
   `native/swift/Tests/**/Fixtures/`.
 - Images, figures or notebook outputs of any data other than the public gold
   nanoparticle dataset. Gold is the only dataset that may appear in this

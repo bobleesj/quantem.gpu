@@ -202,7 +202,6 @@ def encode_ans(codes, shape):
 class PrecisionSource(DetectorQueries):
     """Own all encoded intensities; decode only bounded query intermediates."""
 
-    _is_gpu_frames = True
     ndim = 4
     dtype = np.dtype("float32")
 
