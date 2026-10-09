@@ -12,7 +12,7 @@
  */
 
 import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
-import { qemFilesSource } from "./qem-source";
+import { qemFilesSource, type QemByteFile } from "./qem-source";
 import { DetectorCompute } from "./backend";
 
 const WINDOW = 256;
@@ -349,12 +349,12 @@ export class RansResidentSet {
   }
 
   /** Load one .qem count acquisition through the same GPU decoder. */
-  static async loadQemFile(device: GPUDevice, file: File, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
+  static async loadQemFile(device: GPUDevice, file: QemByteFile, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
     return this.loadQemFiles(device, [file], onStatus, badPixels);
   }
 
   /** Load an ordered, compatible series of .qem count acquisitions into one batched resident set. */
-  static async loadQemFiles(device: GPUDevice, files: ArrayLike<File>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
+  static async loadQemFiles(device: GPUDevice, files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
     const started = performance.now();
     return this.loadSource(device, await qemFilesSource(files, onStatus, badPixels), onStatus, started);
   }
