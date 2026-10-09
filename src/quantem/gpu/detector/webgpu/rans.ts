@@ -443,7 +443,7 @@ export class RansResidentSet {
     const limit = payloadGroupLimit(device);
     type Pending = { payload: GPUBuffer; payBytes: number; offParts: Uint32Array[]; offLen: number; units: UnitRec[]; resident: boolean };
     const groups: Group[] = []; let current: Pending | null = null;
-    const pending: Pending[] = []; let payloadBytes = 0; const allUnits: UnitRec[] = [];
+    const pending: Pending[] = []; let payloadBytes = 0;
     // Plan from authenticated export lengths before reading. Upload each block
     // directly into its final packed GPU buffer instead of retaining the series
     // and making a second multi-gigabyte concatenation in JavaScript memory.
@@ -500,7 +500,7 @@ export class RansResidentSet {
         payloadBytes += block.bytes;
         const modelBase = modelBases[tiltIndex][block.model];
         const unit: UnitRec = { payload_word: Math.floor(offset / 4), offsets_base: group.offLen, ...modelBase, chk_base: group.units.length * K * windows * 2, out_base: tiltIndex * N + block.index * frames, tilt: tiltIndex, block: block.index, frameFlags: ((block.frames ?? 0) | ((offset % 4) << 28) | (tilt.binary_lookup ? 0x80000000 : 0) | (manifest.native_dtype === "uint8" ? 0x40000000 : 0)) >>> 0 };
-        group.offParts.push(blockOffsets); group.offLen += blockOffsets.length; group.units.push(unit); allUnits.push(unit);
+        group.offParts.push(blockOffsets); group.offLen += blockOffsets.length; group.units.push(unit);
       }
     } catch (error) {
       // The read helper drains its bounded requests before this storage is freed.
@@ -514,7 +514,10 @@ export class RansResidentSet {
     if (active) active.payload.unmap();
     mapped = null;
     loadProfile.payloadStageMs += performance.now() - unmapBegin;
-    const unitTable = new Uint32Array(allUnits.length * 8); allUnits.forEach((unit, i) => unitTable.set([unit.payload_word, unit.offsets_base, unit.colmeta_word, unit.entries_word, unit.lut_word, unit.chk_base, unit.out_base, unit.frameFlags], i * 8));
+    // Rows follow the groups, as every group's unit0 does: per-block uploads and
+    // staged segments interleave in plan order, so plan order is not group order.
+    const units = pending.flatMap(group => group.units);
+    const unitTable = new Uint32Array(units.length * 8); units.forEach((unit, i) => unitTable.set([unit.payload_word, unit.offsets_base, unit.colmeta_word, unit.entries_word, unit.lut_word, unit.chk_base, unit.out_base, unit.frameFlags], i * 8));
     const unitsBuf = upload(unitTable, GPUBufferUsage.STORAGE);
     const out = device.createBuffer({ size: (T * N * 2 + 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const images = device.createBuffer({ size: T * N * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
