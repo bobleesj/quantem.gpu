@@ -1,5 +1,13 @@
 # CUDA memory pool retention after ANS loading and MAPED merging - 2026-10-04
 
+Paths and line numbers below are those of 2026-10-04, before the restructure.
+`_compact/streamed.py` (with `retain`) is now `resident/cuda/counts.py`,
+`io/_streamed.py` is `io/encoded.py`, `io/backends/cuda/precision.py` is
+`resident/cuda/precision.py`, `io/_precision.py` is `io/precision.py`,
+`io/_array_resident.py` is `io/arrays.py`, `io/_streamed_file.py` is
+`io/qem.py`, and `backends/cuda/packed.py` and `backends/cuda/_ans.py` are
+gone. [Downstream sync](maintainer/downstream-sync.md) maps every module.
+
 ## Question
 
 After MAPED merges seven ANS tilts on CUDA and closes them (`release_tilts=True`),

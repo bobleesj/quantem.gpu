@@ -55,7 +55,7 @@ cpu = []
 # The torch floor keeps pip from backtracking to a CUDA 12 torch to fit the newest cuda-toolkit.
 # optuna and scipy drive the SSB aberration fits, which run on CUDA and Metal only.
 # optuna 5.0 lands the 100 nm defocus fit 3% short (test_fitted_c10_is_nm); 4.x stays within 2%.
-# CuPy publishes no Windows on ARM64 wheel, so [cuda] adds nothing there (that machine has no CUDA).
+# [cuda] skips CuPy on Windows on ARM64, which has no CUDA.
 cuda = [
     "cupy-cuda13x[ctk]>=14.0; sys_platform != 'darwin' and platform_machine != 'ARM64'",
     "torch>=2.11; sys_platform != 'darwin'",
