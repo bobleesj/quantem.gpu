@@ -6,6 +6,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Removed `PairedFeed`, the double-buffered block iterator over paired-count
+  sources; nothing outside its own test used it. `PairedCounts.decode_blocks`
+  reads the same 512-scan blocks.
+
 ## rc14 - 2026-10-08
 
 Includes everything since rc5; rc6 to rc13 were published without rolling this file.
