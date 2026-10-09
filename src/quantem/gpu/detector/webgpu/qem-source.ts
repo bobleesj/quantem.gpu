@@ -203,9 +203,11 @@ export async function qemHttpFiles(base: string, names: string[], signal?: Abort
         requireQem((await defaultReader.read()).done, `oversized stream in ${name}`);
       } finally {
         // Stops the download when admission ends early, on success or failure.
+        // An aborted request has already ended it; cancelling that errored body
+        // would reject and replace the error admission is reporting.
         streaming = false;
         reusable.length = 0;
-        await reader.cancel();
+        if (!stop?.aborted) await reader.cancel();
         reader.releaseLock();
       }
     }, recycleChunk(buffer: ArrayBuffer) {
