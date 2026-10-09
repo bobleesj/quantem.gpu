@@ -689,7 +689,7 @@ async function admitQemFile(
         return { buffer: region.group.buffer!, offset: region.offset + start - body - region.start };
       },
       dispose() { for (const group of groups) group.buffer?.destroy(); },
-      async read(name, start, end) {
+      async read(name) {
         if (name === "manifest.json")
           return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
         if (name === "entries") return entries.buffer;
