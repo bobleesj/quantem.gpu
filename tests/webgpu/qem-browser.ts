@@ -82,13 +82,31 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
         for (let block = 0; (block + 1) * K < table.length; block++) largestBlock = Math.max(largestBlock, table[(block + 1) * K] - table[block * K]);
         largestChunk = Math.max(largestChunk, chunk.arrays[0].count);
       }
-      const limit = Math.ceil(largestBlock / 4) * 4;
-      if (limit >= largestChunk) throw new Error(`${item.name} has no chunk larger than its largest block`);
+      // One word above the largest block: a split then falls inside a block, never on its start.
+      const limit = Math.ceil(largestBlock / 4) * 4 + 4;
+      if (limit >= largestChunk) throw new Error(`${item.name} has no chunk larger than its group limit`);
       const limits = { maxStorageBufferBindingSize: limit, maxBufferSize: limit,
         maxComputeWorkgroupsPerDimension: device.limits.maxComputeWorkgroupsPerDimension,
         minStorageBufferOffsetAlignment: device.limits.minStorageBufferOffsetAlignment };
+      // Count copies out of staged groups (mapped at creation, copy sources) to prove a block was cut.
+      const staged = new Set<GPUBuffer>();
+      let copiedBlocks = 0;
       const smallGroups = new Proxy(device, { get(target, key) {
         if (key === "limits") return limits;
+        if (key === "createBuffer") return (descriptor: GPUBufferDescriptor) => {
+          const buffer = target.createBuffer(descriptor);
+          if (descriptor.mappedAtCreation && descriptor.usage & GPUBufferUsage.COPY_SRC) staged.add(buffer);
+          return buffer;
+        };
+        if (key === "createCommandEncoder") return (descriptor?: GPUCommandEncoderDescriptor) => {
+          const encoder = target.createCommandEncoder(descriptor);
+          const copy = encoder.copyBufferToBuffer.bind(encoder) as (...args: unknown[]) => void;
+          (encoder as unknown as { copyBufferToBuffer: (...args: unknown[]) => void }).copyBufferToBuffer = (source, ...rest) => {
+            if (staged.has(source as GPUBuffer)) copiedBlocks++;
+            copy(source, ...rest);
+          };
+          return encoder;
+        };
         const value = Reflect.get(target, key, target);
         return typeof value === "function" ? value.bind(target) : value;
       } });
@@ -96,6 +114,7 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
       const counts = item.dtype === "uint8" ? new Uint8Array(rawBytes) : new Uint16Array(rawBytes);
       const source = await RansResidentSet.loadQemFile(smallGroups, new File([bytes], item.name + ".qem"));
       try {
+        if (!copiedBlocks) throw new Error(`${item.name}: no block was cut and copied at a ${limit}-byte group limit`);
         for (const scan of [0, 255, 256, 511, 512, scans - 1]) exact(`${item.name} split pattern ${scan}`, await source.computes[0].frameAt(scan), Float32Array.from(counts.subarray(scan * K, (scan + 1) * K)));
         for (const mask of [new Uint32Array(K).fill(1), Uint32Array.from({ length: K }, (_, k) => k % 2)]) {
           const expected = new Float32Array(scans);
