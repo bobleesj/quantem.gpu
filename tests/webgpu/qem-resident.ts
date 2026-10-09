@@ -93,8 +93,7 @@ test("failed admissions and loads release every staged buffer", async () => {
   }
   const faulty = fakeDevice(undefined, 1);
   await assert.rejects(RansResidentSet.loadQemFile(faulty.device, countingFile(unaligned)), /did not terminate exactly/);
-  const staged = boundBuffers(faulty.bindGroups, 0);
-  assert.ok(staged.length === 1 && staged[0].destroyed, "a decoder fault releases the staged payload");
+  assert.ok(faulty.buffers.every(buffer => buffer.destroyed), "a decoder fault releases every buffer of the load");
   const mismatch = fakeDevice();
   await assert.rejects(RansResidentSet.loadQemFiles(mismatch.device, [countingFile(unaligned), countingFile(syntheticQem([[64]]))]), /matching native geometry/);
   assert.equal(mismatch.buffers.length, 0, "a mismatched series is rejected from its headers, before staging");

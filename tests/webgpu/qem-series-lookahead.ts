@@ -107,3 +107,14 @@ test("disposal and cancellation stop loads in flight instead of waiting for them
     series.dispose();
   }
 });
+
+test("a progress callback that throws releases the first acquisition", async () => {
+  const { loads, sets } = controlledLoads();
+  const loading = RansResidentSeries.load(device, files(3), () => {}, () => { throw new Error("panel failed"); }, new AbortController().signal);
+  await settle();
+  loads.get("t0.qem")!.resolve();
+  await assert.rejects(loading, /panel failed/);
+  assert.deepEqual(sets.map(set => [set.name, set.disposed]), [["t0.qem", true]]);
+  await settle();
+  assert.deepEqual([...loads.keys()], ["t0.qem"], "no other acquisition starts loading");
+});

@@ -100,7 +100,9 @@ export class RansResidentSeries {
     const started = performance.now();
     const first = await RansResidentSet.loadQemFile(device, files[0], text => status(`1/${files.length} ${files[0].name}: ${text}`), badPixels, signal);
     if (signal.aborted) { first.dispose(); signal.throwIfAborted(); }
-    return new RansResidentSeries(first, files, device, started, status, progress, signal, badPixels);
+    // The first progress call runs in the constructor, before any other load starts.
+    try { return new RansResidentSeries(first, files, device, started, status, progress, signal, badPixels); }
+    catch (error) { first.dispose(); throw error; }
   }
 
   get payloadBytes() { return this.sets.reduce((sum, set) => sum + set.payloadBytes, 0); }

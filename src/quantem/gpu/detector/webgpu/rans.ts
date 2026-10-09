@@ -572,10 +572,11 @@ export class RansResidentSet {
     const checkpointMs = performance.now() - checkpointBegin;
     const faultReadback = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }); const faultEncoder = device.createCommandEncoder(); faultEncoder.copyBufferToBuffer(out, T * N * 2 * 4, faultReadback, 0, 16); device.queue.submit([faultEncoder.finish()]);
     await faultReadback.mapAsync(GPUMapMode.READ); const faults = new Uint32Array(faultReadback.getMappedRange().slice(0))[0]; faultReadback.unmap(); faultReadback.destroy();
-    if (faults) throw new Error(`rANS streams did not terminate exactly (${faults} columns); the export is corrupt`);
-    onStatus("");
     const set = new RansResidentSet(device, manifest, { groups, out, images, imagesF32, colsBuf, unitsBuf, intPipe, gatherPipe, applyPipe, applyGroup, imageCountParams, payloadBytes, loadMs, checkpointMs, readyMs: performance.now() - started, loadProfile, acquisitionMode: source.mode });
     set._setTables(tablesBuf);
+    // A rejected export keeps nothing on the device.
+    if (faults) { set.dispose(); throw new Error(`rANS streams did not terminate exactly (${faults} columns); the export is corrupt`); }
+    onStatus("");
     return set;
   }
 
