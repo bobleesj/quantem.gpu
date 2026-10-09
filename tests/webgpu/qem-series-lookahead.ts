@@ -4,10 +4,14 @@ import test from "node:test";
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
 import { RansResidentSeries } from "../../src/quantem/gpu/detector/webgpu/rans-series";
 import type { QemByteFile } from "../../src/quantem/gpu/detector/webgpu/qem-source";
+import { syntheticQem } from "./qem-synthetic";
 
 const settle = async () => { for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const device = {} as GPUDevice;
-const files = (count: number) => Array.from({ length: count }, (_, index) => ({ name: `t${index}.qem`, size: 0 }) as unknown as QemByteFile);
+// Real headers: the series reads every one before it starts loading.
+const acquisition = syntheticQem([[64]]);
+const files = (count: number) => Array.from({ length: count }, (_, index) => new File([acquisition], `t${index}.qem`) as QemByteFile);
+const started = async (loads: Map<string, unknown>, name: string) => { while (!loads.has(name)) await new Promise(resolve => setTimeout(resolve, 0)); };
 
 type FakeSet = { name: string; disposed: boolean };
 /** Replace loadQemFile with loads that the test resolves or rejects by file name. */
@@ -31,13 +35,13 @@ async function loadSeries(count: number, controller = new AbortController()) {
   const control = controlledLoads();
   const published: number[] = [];
   const loading = RansResidentSeries.load(device, files(count), () => {}, series => published.push(series.loadedAcquisitions), controller.signal);
-  await settle();
+  await started(control.loads, "t0.qem");
   control.loads.get("t0.qem")!.resolve();
   const series = await loading;
   return { ...control, series, published };
 }
 
-test("the first acquisition is published alone, the rest in file order with three loads ahead", async () => {
+test("the first acquisition is published alone, the rest in file order with three loads in flight", async () => {
   const { loads, series, published, started } = await loadSeries(6);
   assert.deepEqual(published, [1]);
   await settle();
@@ -111,10 +115,21 @@ test("disposal and cancellation stop loads in flight instead of waiting for them
 test("a progress callback that throws releases the first acquisition", async () => {
   const { loads, sets } = controlledLoads();
   const loading = RansResidentSeries.load(device, files(3), () => {}, () => { throw new Error("panel failed"); }, new AbortController().signal);
-  await settle();
+  await started(loads, "t0.qem");
   loads.get("t0.qem")!.resolve();
   await assert.rejects(loading, /panel failed/);
   assert.deepEqual(sets.map(set => [set.name, set.disposed]), [["t0.qem", true]]);
   await settle();
   assert.deepEqual([...loads.keys()], ["t0.qem"], "no other acquisition starts loading");
+});
+
+test("a series whose headers disagree fails before any acquisition loads", async () => {
+  const { loads } = controlledLoads();
+  const mismatched = [...files(2), new File([syntheticQem([[64], [64]])], "t2.qem") as QemByteFile];
+  const outcome = await Promise.race([
+    RansResidentSeries.load(device, mismatched, () => {}, () => {}, new AbortController().signal).then(() => "loaded", error => String(error)),
+    new Promise(resolve => setTimeout(() => resolve("waiting on the first load"), 500)),
+  ]);
+  assert.match(String(outcome), /t2\.qem has shape 1x1024x1x1/);
+  assert.equal(loads.size, 0, "no payload of any file was read");
 });

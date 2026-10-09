@@ -29,7 +29,8 @@ every count unchanged?
   The per-block upload path of other sources is capped at 256 MiB per group too.
 - Series compatibility is decided from the authenticated headers before any
   payload is read or staged. `RansResidentSeries` loads one resident set per
-  acquisition with three files of look-ahead and publishes them in file order;
+  acquisition, three loads in flight (the next one to publish and two ahead),
+  after checking every header, and publishes them in file order;
   compare-grid batches group computes by set and submit once.
 
 ## Setup

@@ -225,7 +225,7 @@ export async function qemHttpFiles(base: string, names: string[], signal?: Abort
 // QEM hashes its payload in independent 64 MiB chunks.
 const chunkBytes = 64 << 20;
 
-type QemHeader = { header: Header; body: number; badPixels: number[] };
+export type QemHeader = { header: Header; body: number; badPixels: number[] };
 
 /** Authenticate and check one .qem header, chunk layout and validity mask included, without reading its payload.
  * A series can then be rejected before any payload is read or staged on the GPU.
@@ -700,22 +700,31 @@ async function admitQemFile(
   }
 }
 
-/** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
-export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal): Promise<RansByteSource> {
+/** Read and authenticate every header of an ordered series and require one
+ * geometry, dtype and validity mask, so a mismatched series is rejected before
+ * any payload is read or staged on the GPU.
+ */
+export async function readQemSeriesHeaders(files: ArrayLike<QemByteFile>, signal?: AbortSignal): Promise<QemHeader[]> {
   const ordered = Array.from(files);
   requireQem(ordered.length > 0, "select at least one .qem file");
-  // Compatibility follows from the authenticated headers, so a mismatched
-  // series is rejected before any payload is read or staged on the GPU.
-  // Each header is read once: its checksums authenticate the payload admitted below.
   const headers: QemHeader[] = [];
   for (const file of ordered) headers.push(await readQemHeader(file, signal));
   const first = headers[0].header;
-  headers.forEach(({ header, badPixels: invalid }, index) => {
+  headers.forEach(({ header, badPixels }, index) => {
     if (JSON.stringify(header.shape) !== JSON.stringify(first.shape) || header.dtype !== first.dtype) {
       throw new Error(`QEM file ${ordered[index].name} has shape ${header.shape.join("x")} and dtype ${header.dtype}; ${ordered[0].name} has ${first.shape.join("x")} ${first.dtype}. Select acquisitions with matching native geometry and dtype.`);
     }
-    requireQem(JSON.stringify(invalid) === JSON.stringify(headers[0].badPixels), "series detector validity masks differ; open each acquisition separately");
+    requireQem(JSON.stringify(badPixels) === JSON.stringify(headers[0].badPixels), "series detector validity masks differ; open each acquisition separately");
   });
+  return headers;
+}
+
+/** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
+export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal): Promise<RansByteSource> {
+  const ordered = Array.from(files);
+  // Each header is read once: its checksums authenticate the payload admitted below.
+  const headers = await readQemSeriesHeaders(ordered, signal);
+  const first = headers[0].header;
   const detectorPixels = first.shape[2] * first.shape[3];
   requireQem(badPixels.every(index => Number.isInteger(index) && index >= 0 && index < detectorPixels), `badPixels must contain detector indices from 0 to ${detectorPixels - 1}`);
   const sources: RansByteSource[] = [];
