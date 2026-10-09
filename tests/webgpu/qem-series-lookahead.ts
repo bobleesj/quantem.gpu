@@ -7,13 +7,14 @@ import type { QemByteFile } from "../../src/quantem/gpu/detector/webgpu/qem-sour
 import { syntheticQem } from "./qem-synthetic";
 
 const settle = async () => { for (let turn = 0; turn < 10; turn++) await new Promise(resolve => setTimeout(resolve, 0)); };
-const device = {} as GPUDevice;
+let submissions = 0;
+const device = { createCommandEncoder: () => ({ finish: () => ({}) }), queue: { submit() { submissions++; } } } as unknown as GPUDevice;
 // Real headers: the series reads every one before it starts loading.
 const acquisition = syntheticQem([[64]]);
 const files = (count: number) => Array.from({ length: count }, (_, index) => new File([acquisition], `t${index}.qem`) as QemByteFile);
 const started = async (loads: Map<string, unknown>, name: string) => { while (!loads.has(name)) await new Promise(resolve => setTimeout(resolve, 0)); };
 
-type FakeSet = { name: string; disposed: boolean };
+type FakeSet = { name: string; disposed: boolean; normalized: unknown[] };
 /** Replace loadQemFile with loads that the test resolves or rejects by file name. */
 function controlledLoads() {
   const loads = new Map<string, { resolve: (shape?: number[]) => void; reject: (error: Error) => void; signal?: AbortSignal }>();
@@ -21,8 +22,9 @@ function controlledLoads() {
   (RansResidentSet as unknown as { loadQemFile: unknown }).loadQemFile = (_device: GPUDevice, file: QemByteFile, _status: unknown, _badPixels: unknown, signal?: AbortSignal) =>
     new Promise((resolve, reject) => loads.set(file.name, { signal,
       resolve: (shape = [1, 2, 3, 4]) => {
-        const set = { name: file.name, disposed: false, shape, nativeDtype: "uint16", badPx: new Uint32Array(0),
-          computes: [{ name: file.name }], dispose() { this.disposed = true; } };
+        const set = { name: file.name, disposed: false, shape, nativeDtype: "uint16", badPx: new Uint32Array(0), acquisitionMode: "http",
+          computes: [{ name: file.name }], normalized: [] as unknown[], dispose() { this.disposed = true; },
+          normalizeDisplayBuffers(buffers: GPUBuffer[], area: number, encoder: GPUCommandEncoder) { this.normalized.push([buffers, area, Boolean(encoder)]); } };
         sets.push(set);
         resolve(set);
       },
@@ -132,4 +134,19 @@ test("a series whose headers disagree fails before any acquisition loads", async
   ]);
   assert.match(String(outcome), /t2\.qem has shape 1x1024x1x1/);
   assert.equal(loads.size, 0, "no payload of any file was read");
+});
+
+test("the series labels its source as its sets do and normalizes each display through its own set", async () => {
+  const { loads, sets, series } = await loadSeries(3);
+  await settle();
+  loads.get("t1.qem")!.resolve(); loads.get("t2.qem")!.resolve();
+  await series.completion;
+  assert.equal(series.acquisitionMode, "http");
+  assert.ok(!("loadMs" in series) && !("checkpointMs" in series), "durations of overlapping loads are not summed");
+  const before = submissions;
+  const buffers = [{ label: "panel-a" }, { label: "panel-c" }] as unknown as GPUBuffer[];
+  series.normalizeAcquisitionDisplays(buffers, 7, [0, 2]);
+  assert.deepEqual(sets.map(set => set.normalized), [[[[buffers[0]], 7, true]], [], [[[buffers[1]], 7, true]]]);
+  assert.equal(submissions - before, 1);
+  series.dispose();
 });
