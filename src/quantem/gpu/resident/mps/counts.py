@@ -77,8 +77,6 @@ class MPSStreamedCounts:
     """
 
     interval = 512
-    # quantem.widget's Show4DSTEM reads this flag to keep the source on its GPU path, without a NumPy copy.
-    _is_gpu_frames = True
     ndim = 4
     det_bin = 1
 

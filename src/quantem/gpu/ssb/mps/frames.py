@@ -222,9 +222,6 @@ class MpsBfColumnFrames:
     MLX storage; the full detector stack is never materialized.
     """
 
-    # quantem.widget's Show4DSTEM reads this flag to keep the source on its GPU path, without a NumPy copy.
-    _is_gpu_frames = True
-
     def __init__(
         self,
         path: str | Path,
