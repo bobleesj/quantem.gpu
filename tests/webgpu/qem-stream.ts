@@ -95,7 +95,7 @@ test("stopping after the first chunk cancels the download", async () => {
 });
 
 test("admission verifies every 64 MiB chunk from one ranged response", async () => {
-  const bytes = syntheticQem([40 << 20, 40 << 20]);
+  const bytes = syntheticQem([[40 << 20], [40 << 20]]);
   const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
   for (const byob of [true, false]) {
     const log = serve(bytes, byob, 0, 1 << 20);
@@ -116,7 +116,7 @@ test("admission verifies every 64 MiB chunk from one ranged response", async () 
 });
 
 test("local reads keep four authentication chunks in flight", async () => {
-  const bytes = syntheticQem([200 << 20, 60 << 20]);
+  const bytes = syntheticQem([[200 << 20], [60 << 20]]);
   const waiting: (() => void)[] = [];
   let inFlight = 0, peak = 0;
   const file: QemByteFile = { name: "five-chunks.qem", size: bytes.length, slice(start = 0, end = bytes.length) {
@@ -187,7 +187,7 @@ test("recycled chunks never outlive a completed or failed stream", async () => {
 });
 
 test("admission recycles a chunk only after its checksum matched", async () => {
-  const bytes = syntheticQem([40 << 20, 40 << 20]);
+  const bytes = syntheticQem([[40 << 20], [40 << 20]]);
   const digest = crypto.subtle.digest.bind(crypto.subtle);
   const digested = new Set<unknown>();
   crypto.subtle.digest = async (algorithm: AlgorithmIdentifier, data: BufferSource) => {
