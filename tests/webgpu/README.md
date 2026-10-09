@@ -55,6 +55,18 @@ python tests/webgpu/run_qem_browser.py \
   --chrome /path/to/chrome
 ```
 
+`--expect-adapter` fails the gate on any other adapter, such as a software
+fallback. On Linux, the Vulkan flags and `VK_ICD_FILENAMES` select the vendor's
+device, for example:
+
+```bash
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json \
+python tests/webgpu/run_qem_browser.py \
+  --esbuild node_modules/.bin/esbuild --chrome /usr/bin/google-chrome \
+  --expect-adapter nvidia/blackwell --chrome-arg=--enable-features=Vulkan \
+  --chrome-arg=--ignore-gpu-blocklist --chrome-arg=--disable-gpu-sandbox
+```
+
 This generates tiny synthetic uint8/uint16 .qem acquisitions, bundles the
 canonical decoder, and removes fixtures and browser state on exit. It tests
 zero, constant, literal, sparse-event, and entropy streams (including escaped

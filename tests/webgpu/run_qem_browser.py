@@ -19,6 +19,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--esbuild", required=True, type=Path)
     parser.add_argument("--chrome", required=True, type=Path)
+    parser.add_argument(
+        "--expect-adapter", metavar="VENDOR/ARCHITECTURE",
+        help="fail unless WebGPU reports this adapter, e.g. nvidia/blackwell",
+    )
+    parser.add_argument(
+        "--chrome-arg", action="append", default=[],
+        help="extra Chrome flag, e.g. --enable-features=Vulkan; repeat as needed",
+    )
     args = parser.parse_args()
     sources = Path(__file__).resolve().parent
     with tempfile.TemporaryDirectory(prefix="qem-browser-parity-") as temporary:
@@ -48,7 +56,7 @@ def main() -> None:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(
                     executable_path=str(args.chrome), headless=False,
-                    args=["--enable-unsafe-webgpu"],
+                    args=["--enable-unsafe-webgpu", *args.chrome_arg],
                 )
                 try:
                     page = browser.new_page()
@@ -59,10 +67,14 @@ def main() -> None:
                     page.add_script_tag(url="/rans-integer-readback.js")
                     page.add_script_tag(url="/reduce-frames-parity.js")
                     page.add_script_tag(url="/apply-slots-readback.js")
-                    result = page.evaluate("""async () => {
+                    result = page.evaluate("""async (expected) => {
                       const adapter = await navigator.gpu.requestAdapter();
                       if (!adapter || adapter.info.isFallbackAdapter) {
                         throw new Error('A physical WebGPU adapter is required');
+                      }
+                      const found = adapter.info.vendor + '/' + adapter.info.architecture;
+                      if (expected && found !== expected) {
+                        throw new Error(`Expected the ${expected} adapter, found ${found}`);
                       }
                       const device = await adapter.requestDevice();
                       try {
@@ -85,7 +97,7 @@ def main() -> None:
                           apply_slots: await ApplySlotsReadback.runApplySlotsReadback(device),
                         };
                       } finally { device.destroy(); }
-                    }""")
+                    }""", args.expect_adapter)
                     print(json.dumps(result, indent=2))
                 finally:
                     browser.close()
