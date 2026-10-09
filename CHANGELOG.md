@@ -6,6 +6,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+- Removed `PairedFeed`, the double-buffered block iterator over paired-count
+  sources; nothing outside its own test used it. `PairedCounts.decode_blocks`
+  reads the same 512-scan blocks.
+
 ## rc14 - 2026-10-08
 
 Includes everything since rc5; rc6 to rc13 were published without rolling this file.
@@ -152,7 +156,7 @@ Includes everything since rc5; rc6 to rc13 were published without rolling this f
   recorded centre drags, byte-identical outputs (`docs/performance/data/paired-decoder-2026-09-09.json`).
   Incremental masks whose change touches no index leaf skip the index pass and
   copy the previous sums.
-- Add the opt-in paired-count tANS resident layout (`quantem.gpu._compact.paired`):
+- Add the opt-in paired-count tANS resident layout (`quantem.gpu.resident.cuda.paired`):
   `PairedCounts` codes complete 512-scan blocks with 32 Poisson pair models and an
   adaptive polar interaction index, `detector.prepare` selects the paired query
   kernels automatically, and `PairedCounts.save`/`load` reopen the exact resident
