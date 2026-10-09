@@ -43,7 +43,9 @@ python -m pip install -e ".[cpu]"    # no GPU: the dense CPU reference only (Lin
 
 Pick the extra for the GPU you have. A wrong pick installs no GPU package, and
 if a GPU is present but its runtime is not installed, quantem.gpu prints one
-line with the `pip` command that enables it. An Intel Mac is not supported.
+line with the `pip` command that enables it. An Intel Mac is not supported
+(PyTorch publishes no torch 2.3 or newer for it). On Windows on ARM, `[cuda]`
+skips CuPy, and PyPI has no torch or hdf5plugin wheel for ARM64 Python.
 The Mac SSB backend uses MLX and Metal. Array indexing returns PyTorch tensors;
 quantem.gpu installs PyTorch 2.3 or newer (2.11 or newer with `[cuda]`, the first
 PyPI release built on CUDA 13), and a particular CUDA build of PyTorch can be

@@ -46,11 +46,13 @@ python -m pip install -e ".[cpu]"
 dense CPU reference, `io.load(path, device="cpu")`. Tested on Linux and
 Windows.
 
-An Intel Mac is not supported by quantem.gpu: it has no Intel Mac backend, and
-the `[mps]` extra installs nothing there. Each GPU extra carries a platform
-marker, so a wrong pick installs no GPU package. When a GPU is present but its
-runtime is missing, quantem.gpu prints one line with the install command for
-that GPU.
+An Intel Mac is not supported by quantem.gpu: PyTorch publishes no wheel newer
+than torch 2.2 for it and quantem.gpu needs torch 2.3, and the `[mps]` extra
+installs no GPU package there. On Windows on ARM, `[cuda]` skips CuPy, and PyPI
+has no torch or hdf5plugin wheel for ARM64 Python. Each GPU extra carries a
+platform marker, so a wrong pick installs no GPU package. When a GPU is present
+but its runtime is missing, quantem.gpu prints one line with the install command
+for that GPU.
 
 The Mac SSB backend uses MLX and Metal. The NumPy-like indexing interface,
 such as `data[10, 12]`, returns PyTorch tensors, so quantem.gpu installs
