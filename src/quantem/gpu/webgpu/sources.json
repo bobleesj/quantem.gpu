@@ -3,6 +3,7 @@
   "detector/webgpu/exact-com.ts",
   "detector/webgpu/geometry.ts",
   "detector/webgpu/qem-source.ts",
+  "detector/webgpu/rans-series.ts",
   "detector/webgpu/rans-source.ts",
   "detector/webgpu/rans.ts",
   "device/webgpu.ts",

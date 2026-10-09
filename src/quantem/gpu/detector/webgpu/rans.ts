@@ -740,8 +740,9 @@ export class RansResidentSet {
    * from CPU division by one ULP; it is not an exact-count representation.
    * Empty masks use area 1. No
    * image readback or upload occurs; one encoder covers all supplied panels.
+   * With `encoder`, the work is recorded there and the caller submits it.
    */
-  normalizeDisplayBuffers(buffers: GPUBuffer[], maskArea: number): void {
+  normalizeDisplayBuffers(buffers: GPUBuffer[], maskArea: number, encoder?: GPUCommandEncoder): void {
     if (this.disposed) throw new Error("rANS resident set disposed");
     if (!Number.isInteger(maskArea) || maskArea < 0 || maskArea > this.detSize) {
       throw new Error(`Detector mask area must be an integer from 0 to ${this.detSize}; count the selected mask pixels`);
@@ -756,8 +757,8 @@ export class RansResidentSet {
       layout: "auto", compute: { module: device.createShaderModule({ code: NORMALIZE_DISPLAY_WGSL }), entryPoint: "normalize_display" },
     });
     const pipeline = this.normalizeDisplayPipe;
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginComputePass(); pass.setPipeline(pipeline);
+    const commands = encoder ?? device.createCommandEncoder();
+    const pass = commands.beginComputePass(); pass.setPipeline(pipeline);
     buffers.forEach((buffer, index) => {
       let params = this.normalizeDisplayParams[index];
       if (!params) {
@@ -775,7 +776,7 @@ export class RansResidentSet {
       ] });
       pass.setBindGroup(0, group); pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
     });
-    pass.end(); device.queue.submit([encoder.finish()]);
+    pass.end(); if (!encoder) device.queue.submit([commands.finish()]);
   }
 
   /** Return a caller-owned copy for a single-view display. */
