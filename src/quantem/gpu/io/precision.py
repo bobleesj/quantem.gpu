@@ -3,7 +3,7 @@
 ``io.load(..., dtype="scaled_uint16")`` converts float32 intensities to uint16
 codes with one scale and offset per automatically chosen region, keeps the
 codes ANS encoded on the GPU, and records the conversion error measured on
-the GPU. ``io.save(..., dtype=...)`` writes such codes (or float16) to HDF5
+the GPU. ``io.save(..., dtype="scaled_uint16")`` writes such codes to HDF5
 with the same report, so reopening restores the original units. Sources are
 read in bounded blocks: a file, an accelerator array, or a generated block
 source from an algorithm package (``shape``, ``dtype``, ``blocks()``).
@@ -68,7 +68,7 @@ def load_precision(
 
     ``io.load`` admits only scaled uint16 here: new conversions and saved
     regional (version 2) exports go region by region; a saved single-scale
-    (version 1) export keeps its codes, and a saved float16 export is converted.
+    (version 1) export keeps its codes, and a legacy float16 export is converted.
     """
     context = ExitStack()
     if backend == "mps":
@@ -91,7 +91,7 @@ def load_precision(
         if storage is None:
             # One unconverted file among saved precision exports, without a dtype.
             raise ValueError(
-                "Choose dtype='float16' or 'scaled_uint16' for precision loading."
+                "Choose dtype='scaled_uint16' for precision loading."
             )
         if source.saved is None or source.saved.get("version") == 2:
             return _load_regional(source, scan_region, detector_region, verbose, pack, resident_type)
@@ -170,6 +170,13 @@ def save_precision(
     source_master,
 ) -> str:
     """Save approximate intensities in bounded GPU-compressed HDF5 blocks; return the backend used."""
+    if precision_name(dtype) == "float16":
+        # io.load reopens only scaled uint16 precision, so a float16 file could not be read back.
+        raise ValueError(
+            "dtype='float16' is not a precision export: io.load cannot reopen it. "
+            "Save with dtype='scaled_uint16' for calibrated scaled uint16 storage, "
+            "or omit dtype to keep float32."
+        )
     backend = select.resolve_backend(backend)
     if backend == "mps":
         resident_type = metal.PrecisionSource
@@ -205,7 +212,7 @@ def save_precision(
         )
     if not same_precision and precision_name(dtype) is None:
         raise ValueError(
-            "Choose float16 or scaled_uint16, or save the original float32 source."
+            "Choose dtype='scaled_uint16', or save the original float32 source."
         )
     source = None
     writer = None
@@ -216,7 +223,7 @@ def save_precision(
                 report = dict(payload.precision)
                 shape = payload.shape
                 encoded_blocks = payload.encoded_blocks()
-            elif precision_name(dtype) == "scaled_uint16":
+            else:
                 source = _Source(payload, scan_shape=scan_shape, backend=backend)
                 shape = source.shape
                 report = {"version": 2, "storage": "scaled_uint16"}
@@ -238,65 +245,11 @@ def save_precision(
                     report.update(_regional_report(shape, reports))
 
                 encoded_blocks = convert_regional_blocks()
-            elif backend == "mps" and metal.is_mps_tensor(payload):
-                if len(payload.shape) == 3:
-                    if scan_shape is None:
-                        raise ValueError("scan_shape is required for a flat MPS tensor.")
-                    shape = tuple(scan_shape) + tuple(payload.shape[-2:])
-                    tensor = payload.reshape(shape)
-                elif len(payload.shape) == 4:
-                    shape = tuple(payload.shape)
-                    tensor = payload
-                else:
-                    raise ValueError("Precision export needs a 4D MPS tensor or a flat tensor with scan_shape.")
-                report = _new_report(tensor, precision_name(dtype), metal.tensor_range(tensor))
-
-                def convert_tensor_blocks():
-                    frames = math.prod(shape[:2])
-                    pixels = math.prod(shape[2:])
-                    # A large bounded batch reduces Metal launch overhead while
-                    # keeping an explicit ceiling for 24 GB laptops.
-                    batch = max(128, min(frames, (512 * 1024**2 // (pixels * 4) // 128) * 128))
-                    flat = tensor.reshape(frames, *shape[2:])
-                    for first in range(0, frames, batch):
-                        original = flat[first : min(first + batch, frames)]
-                        encoded = conversion.encode(original, report, "mps")
-                        conversion.measure(
-                            original,
-                            conversion.restore(encoded, report, "mps"),
-                            report,
-                            "mps",
-                            encoded=encoded,
-                        )
-                        yield encoded
-
-                encoded_blocks = convert_tensor_blocks()
-            else:
-                source = _Source(payload, scan_shape=scan_shape, backend=backend)
-                shape = source.shape
-                if source.saved and source.saved.get("version") == 2:
-                    source.restore_saved_regions()
-                report = _new_report(source, precision_name(dtype))
-
-                def convert_blocks():
-                    for block in source.blocks():
-                        original = conversion.restore(block, source.saved, backend)
-                        encoded = conversion.encode(original, report, backend)
-                        restored = (
-                            None
-                            if backend == "cuda" and report["storage"] == "scaled_uint16"
-                            else conversion.restore(encoded, report, backend)
-                        )
-                        conversion.measure(original, restored, report, backend, encoded=encoded)
-                        yield encoded
-
-                encoded_blocks = convert_blocks()
-            storage_dtype = np.float16 if report["storage"] == "float16" else np.uint16
             metadata.update(
                 scan_shape=shape[:2],
                 detector_shape=shape[2:],
                 n_frames=math.prod(shape[:2]),
-                dtype=str(np.dtype(storage_dtype)),
+                dtype="uint16",
             )
             metadata[PRECISION_ATTRIBUTE] = json.dumps(
                 {**report, "complete": False}, allow_nan=False
@@ -307,7 +260,7 @@ def save_precision(
                 shape[2:],
                 scan_shape=shape[:2],
                 metadata=metadata,
-                dtype=storage_dtype,
+                dtype=np.uint16,
                 frames_per_file=frames_per_file,
                 compression="lz4",
             )
@@ -316,8 +269,6 @@ def save_precision(
                 # The bounded writer queue applies backpressure while preserving
                 # overlap with the next region. File boundaries drain separately.
             wait_for_saves()
-            if not same_precision and report.get("version") != 2:
-                _finish_report(report)
             # A generated source may carry its own records, such as a merge summary;
             # save_metadata is an optional field of the generated-source contract.
             generated_metadata = getattr(payload, "save_metadata", None)
@@ -614,10 +565,6 @@ def _new_report(source, storage, limits=None):
     ``limits`` the caller measures.
     """
     low, high = _range(source) if limits is None else limits
-    if storage == "float16" and max(abs(low), abs(high)) > 65504:
-        raise ValueError(
-            "Values exceed float16's finite range; use scaled_uint16 or preserve float32."
-        )
     saved = source.saved if isinstance(source, _Source) else None
     report = {
         "version": 1,

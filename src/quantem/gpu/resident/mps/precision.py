@@ -97,9 +97,7 @@ def tensor_restore(values, report):
 
 
 def tensor_encode(values, report):
-    """Encode a float tensor as float16 or scaled uint16 codes."""
-    if report["storage"] == "float16":
-        return values.to(torch.float16)
+    """Encode a float tensor as scaled uint16 codes."""
     return torch.round((values.to(torch.float32) - report["offset"]) / report["scale"]).clamp(0, 65535).to(torch.uint16)
 
 
@@ -261,9 +259,8 @@ def has_invalid_pixels(mask):
 
 
 def encode(values, report):
-    """Encode float32 intensities as float16 or scaled uint16 codes on Metal."""
-    dtype = np.float16 if report["storage"] == "float16" else np.uint16
-    result = MetalArray(values.shape, dtype)
+    """Encode float32 intensities as scaled uint16 codes on Metal."""
+    result = MetalArray(values.shape, np.uint16)
     params, scalars = _parameters(values, report)
     _dispatch("encode", [values, result], params, scalars)
     return result
@@ -321,10 +318,7 @@ def measure(original, restored, report):
 
 def encode_measure(values, report):
     """Encode values and measure restored-unit error in one Metal pass."""
-    result = MetalArray(
-        values.shape,
-        np.float16 if report["storage"] == "float16" else np.uint16,
-    )
+    result = MetalArray(values.shape, np.uint16)
     params, scalars = _parameters(values, report)
     params[14] = params[15] = min(params[0], _MEASUREMENT_PARTIALS)
     errors = MetalArray((params[14], 4), np.float32)

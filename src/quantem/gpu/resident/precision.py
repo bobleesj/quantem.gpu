@@ -42,16 +42,11 @@ def restore(values, report, backend: str):
 
 
 def encode(values, report, backend: str):
-    """Convert float32 intensities to the requested stored codes (float16 or scaled uint16)."""
+    """Convert float32 intensities to scaled uint16 codes."""
     if backend == "mps":
         if isinstance(values, MetalArray):
             return metal.encode(values, report)
         return metal.tensor_encode(values, report)
-    import cupy as cp
-
-    if report["storage"] == "float16":
-        return values.astype(cp.float16)
-
     return encode_scaled_uint16(values, report)
 
 

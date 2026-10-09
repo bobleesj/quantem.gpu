@@ -108,7 +108,8 @@ def save(
     precision at this boundary, not the precision of the upstream algorithm.
     Scaled uint16 uses a uniform step within each automatically selected region.
     Plain uint16 conversion does not provide this calibration. The supported
-    spelling is ``"scaled_uint16"``, not ``"uint16_scaled"``.
+    spelling is ``"scaled_uint16"``, not ``"uint16_scaled"``. ``dtype="float16"``
+    is refused, because ``io.load`` cannot reopen a float16 export.
     Compression is lossless relative to the converted stored codes. Reopening
     returns float32 reconstructed intensities, not the original
     pre-conversion float32 values. RMSE and maximum error describe this storage
