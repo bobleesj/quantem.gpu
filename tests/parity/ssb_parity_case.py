@@ -452,22 +452,6 @@ def acquisition_scan_shape(case: SSBParityCase) -> tuple[int, int] | None:
     return (int(shape[0]), int(shape[1]))
 
 
-def scan_region_is_whole_acquisition(case: SSBParityCase) -> bool:
-    """Return whether the case region covers the complete native acquisition.
-
-    The native (encoded/H5-to-ANS) loader preserves whole acquisitions only, so
-    a case that asks for the entire scan must not pass a selection. Deciding
-    this from the file's own scan shape keeps the exported bytes identical to a
-    full-acquisition load instead of silently narrowing it.
-    """
-
-    native = acquisition_scan_shape(case)
-    if native is None:
-        return False
-    row0, row1, col0, col1 = (int(v) for v in case.scan_region)
-    return (row0, row1, col0, col1) == (0, native[0], 0, native[1])
-
-
 def extract_bf_columns(
     case: SSBParityCase,
     rows: np.ndarray,
@@ -905,21 +889,3 @@ def compare_products(
             }
         )
     return metrics
-
-
-def write_reference(case: SSBParityCase, meta: dict[str, object]) -> Path:
-    """Compute and store the float64 oracle for every case aberration."""
-
-    root = case_root(case)
-    reference_dir = root / "reference"
-    reference_dir.mkdir(parents=True, exist_ok=True)
-    summaries = []
-    for index, (c10, c12, phi12) in enumerate(case.aberrations):
-        result, summary = reference_products(case, meta, c10, c12, phi12)
-        np.save(reference_dir / f"object-{index}.npy", result.object_wave)
-        np.save(reference_dir / f"phase-{index}.npy", result.mean_phase)
-        summaries.append(summary)
-    (reference_dir / "summary.json").write_text(
-        json.dumps(summaries, indent=2, sort_keys=True), encoding="utf-8"
-    )
-    return reference_dir

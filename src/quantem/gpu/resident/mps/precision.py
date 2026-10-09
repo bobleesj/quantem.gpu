@@ -387,8 +387,6 @@ def _part_buffers(part, first=0, stop=None):
 class PrecisionSource(DetectorQueries):
     """Keep every encoded intensity resident and restore units inside queries."""
 
-    # quantem.widget's Show4DSTEM reads this flag to keep the source on its GPU path, without a NumPy copy.
-    _is_gpu_frames = True
     ndim = 4
     dtype = np.dtype("float32")
     det_bin = 1

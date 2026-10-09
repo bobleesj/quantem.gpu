@@ -44,11 +44,12 @@ jobs:
           node-version: "22"
       - name: Install browser contract tools
         run: npm ci
-      - name: Check browser entry point
+      # sources.json lists every file quantem.widget bundles; the entry point alone never reached ssb/webgpu.
+      - name: Type-check the bundled browser sources
         run: >-
           npx --no-install tsc --noEmit --strict --skipLibCheck --target ES2022
-          --module ESNext --moduleResolution bundler --types @webgpu/types
-          src/quantem/gpu/webgpu/index.ts
+          --module ESNext --moduleResolution bundler --resolveJsonModule --types @webgpu/types
+          $(node -p "require('./src/quantem/gpu/webgpu/sources.json').filter((path) => path.endsWith('.ts')).map((path) => 'src/quantem/gpu/' + path).join(' ')")
       - name: Validate profiling registry
         run: |
           python scripts/check_profile_registry.py
