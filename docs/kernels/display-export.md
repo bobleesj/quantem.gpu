@@ -70,7 +70,7 @@ latency must be measured separately from the scientific load/reduction time.
 | Layer | Source |
 |---|---|
 | Python display math | `src/quantem/gpu/display` |
-| WebGPU display kernels | `src/quantem/gpu/display/webgpu` |
+| Browser display kernels | none; the browser client owns display |
 | Native Metal display | `MetalDisplayKernels` and `MetalImageRuntime` |
 | Native FFT views | `MetalImageFFT` |
 | Movie encoding | `src/quantem/gpu/movie` |

@@ -2,10 +2,9 @@
 /** Browser parity workflow. Bundle with esbuild, then call runRansProductParity(device).
  * The caller supplies an authenticated hardware device; no adapter is selected here.
  */
-import { RansResidentSet, ransMaskedSumBuffersBatch, ransMaskedSumDeltaBuffersBatch, type RansManifest } from "../../src/quantem/gpu/detector/webgpu/rans";
+import { RansResidentSet, type RansManifest } from "../../src/quantem/gpu/detector/webgpu/rans";
 import { DetectorCompute } from "../../src/quantem/gpu/detector/webgpu/backend";
 
-import { GPUColormapEngine } from "../../src/quantem/gpu/display/webgpu/colormaps";
 
 type Fixture = { manifest: RansManifest; files: Map<string, Uint8Array>; counts: Uint16Array[] };
 function fixture(frames: number, blocks: number, K: number, tilts: number, saturated = false): Fixture {
@@ -152,141 +151,6 @@ export async function runRansProductParity(device: GPUDevice): Promise<Record<st
   device.pushErrorScope("validation");
   try { return await runProducts(device); }
   finally {
-    const validation = await device.popErrorScope();
-    if (validation) throw new Error(validation.message);
-  }
-}
-
-/** Bound mean-intensity display differences against stock float32(sum / mask area).
- * Raw resident integer sums and default single-view sum buffers stay unchanged.
- */
-export async function runRansDisplayNormalizationParity(device: GPUDevice): Promise<Record<string, boolean | number>> {
-  device.pushErrorScope("validation");
-  const results: Record<string, boolean | number> = { max_preview_ulps: 0, max_linear_range_ulps: 0, max_log_range_ulps: 0, max_rgba_channel_error: 0 };
-  const compareUlps = (label: string, actual: Float32Array, expected: Float32Array, allowed: number): number => {
-    if (actual.length !== expected.length) throw new Error(`${label}: lengths differ`);
-    const a = new Uint32Array(actual.buffer, actual.byteOffset, actual.length);
-    const b = new Uint32Array(expected.buffer, expected.byteOffset, expected.length);
-    let max = 0;
-    for (let index = 0; index < a.length; index++) {
-      if (!Number.isFinite(actual[index]) || !Number.isFinite(expected[index]) || actual[index] < 0 || expected[index] < 0) throw new Error(`${label}: invalid nonnegative preview`);
-      const ulps = Math.abs(a[index] - b[index]);
-      if (ulps > allowed) throw new Error(`${label}[${index}]: ${actual[index]} != ${expected[index]} (${ulps} ULP, allowed ${allowed})`);
-      max = Math.max(max, ulps);
-    }
-    return max;
-  };
-  const readWords = async (buffer: GPUBuffer, count: number): Promise<Uint32Array> => {
-    const target = device.createBuffer({ size: count * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    try {
-      const encoder = device.createCommandEncoder(); encoder.copyBufferToBuffer(buffer, 0, target, 0, count * 4);
-      device.queue.submit([encoder.finish()]); await target.mapAsync(GPUMapMode.READ);
-      return new Uint32Array(target.getMappedRange().slice(0));
-    } finally { target.destroy(); }
-  };
-  try {
-    for (const highCounts of [false, true]) {
-      const K = highCounts ? 512 : 12, tilts = 7, scans = 256;
-      const data = fixture(scans, 1, K, tilts, highCounts);
-      const set = await loadFixture(device, data);
-      const engine = new GPUColormapEngine(device);
-      engine.uploadLUT("normalization-parity-gray", Uint8Array.from({ length: 768 }, (_, index) => Math.floor(index / 3)));
-      const canonical = (set as unknown as { images: GPUBuffer }).images;
-      let previousMask: Uint32Array | null = null, buffers: GPUBuffer[] = [];
-      try {
-        // A non-power-of-two divisor and sums just beyond float32's exact-int
-        // boundary distinguish division from rounded reciprocal multiplication.
-        for (const area of highCounts ? [257, 511] : [4, 9]) {
-          const mask = Uint32Array.from({ length: K }, (_, index) => +(index < area));
-          if (!previousMask) buffers = ransMaskedSumBuffersBatch(set.computes, mask).buffers;
-          else {
-            const added = Uint32Array.from(mask, (value, index) => +(value && !previousMask![index]));
-            const removed = Uint32Array.from(mask, (value, index) => +(!value && previousMask![index]));
-            const refreshed = ransMaskedSumDeltaBuffersBatch(set.computes, added, removed, buffers).buffers;
-            if (refreshed.some((buffer, index) => buffer !== buffers[index])) throw new Error("Delta replaced persistent display buffers");
-          }
-          const expectedCounts = data.counts.map(raw => Uint32Array.from({ length: scans }, (_, scan) => {
-            let sum = 0;
-            for (let k = 0; k < K; k++) if (mask[k] && !(data.manifest.bad_pixels ?? []).includes(k)) sum += raw[scan * K + k];
-            return sum;
-          }));
-          for (let tilt = 0; tilt < tilts; tilt++) {
-            compare("default sum copy", new Float32Array((await readWords(buffers[tilt], scans)).buffer), Float32Array.from(expectedCounts[tilt]));
-          }
-          set.normalizeDisplayBuffers(buffers, area);
-          const stored = await readWords(canonical, scans * tilts);
-          for (let tilt = 0; tilt < tilts; tilt++) {
-            for (let scan = 0; scan < scans; scan++) if (stored[tilt * scans + scan] !== expectedCounts[tilt][scan]) throw new Error("Display normalization changed exact resident counts");
-            const expected = Float32Array.from(expectedCounts[tilt], sum => Math.fround(sum) / area);
-            const previewUlps = compareUlps("normalized copy", new Float32Array((await readWords(buffers[tilt], scans)).buffer), expected, 1);
-            results.max_preview_ulps = Math.max(Number(results.max_preview_ulps), previewUlps);
-            compare("single view remains summed", await set.readImage(tilt), Float32Array.from(expectedCounts[tilt]));
-            engine.adoptBuffer(tilt * 2, buffers[tilt], 16, 16);
-            engine.uploadData(tilt * 2 + 1, expected, 16, 16);
-            for (const log of [false, true]) {
-              engine.computeRangeRegion(tilt * 2, undefined, log);
-              engine.computeRangeRegion(tilt * 2 + 1, undefined, log);
-              const display = engine as unknown as {
-                slots: { rangeBuffer: GPUBuffer; dataBuffer: GPUBuffer }[];
-                lutBuffer: GPUBuffer; colormapRangePipeline: GPUComputePipeline;
-                ensureColormapRangePipeline(): void;
-              };
-              const actualRange = await readWords(display.slots[tilt * 2].rangeBuffer, 4);
-              const expectedRange = await readWords(display.slots[tilt * 2 + 1].rangeBuffer, 4);
-              const rangeUlps = compareUlps(`${log ? "log" : "linear"} range`, new Float32Array(actualRange.buffer, 0, 2), new Float32Array(expectedRange.buffer, 0, 2), log ? 2 : 1);
-              const key = log ? "max_log_range_ulps" : "max_linear_range_ulps";
-              results[key] = Math.max(Number(results[key]), rangeUlps);
-              // Use the stock range-driven colormap pipeline for both inputs.
-              // Grayscale makes a one-bin quantization shift exactly one 8-bit
-              // channel level, avoiding a palette's unrelated adjacent-bin jumps.
-              display.ensureColormapRangePipeline();
-              const params = [0, 1].map(() => {
-                const buffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM, mappedAtCreation: true });
-                const u32 = new Uint32Array(buffer.getMappedRange());
-                u32.set([16, 16, 0, 0, +log, 0, 0, 16]);
-                const f32 = new Float32Array(u32.buffer); f32[2] = 0; f32[3] = 100;
-                buffer.unmap(); return buffer;
-              });
-              const rgba = [0, 1].map(() => device.createBuffer({ size: scans * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }));
-              try {
-                const encoder = device.createCommandEncoder(); const pass = encoder.beginComputePass();
-                const pipeline = display.colormapRangePipeline; pass.setPipeline(pipeline);
-                for (let index = 0; index < 2; index++) {
-                  const slot = display.slots[tilt * 2 + index];
-                  pass.setBindGroup(0, device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
-                    { binding: 0, resource: { buffer: params[index] } }, { binding: 1, resource: { buffer: slot.dataBuffer } },
-                    { binding: 2, resource: { buffer: display.lutBuffer } }, { binding: 3, resource: { buffer: rgba[index] } },
-                    { binding: 4, resource: { buffer: slot.rangeBuffer } },
-                  ] }));
-                  pass.dispatchWorkgroups(1, 1);
-                }
-                pass.end(); device.queue.submit([encoder.finish()]);
-                const actualRgba = new Uint8Array((await readWords(rgba[0], scans)).buffer);
-                const referenceRgba = new Uint8Array((await readWords(rgba[1], scans)).buffer);
-                for (let channel = 0; channel < actualRgba.length; channel++) {
-                  const error = Math.abs(actualRgba[channel] - referenceRgba[channel]);
-                  if (error > 1) throw new Error(`Normalized ${log ? "log" : "linear"} RGBA channel ${channel} differs by ${error}/255`);
-                  results.max_rgba_channel_error = Math.max(Number(results.max_rgba_channel_error), error);
-                }
-              } finally { params.forEach(buffer => buffer.destroy()); rgba.forEach(buffer => buffer.destroy()); }
-            }
-          }
-          previousMask = mask;
-          results[`${highCounts ? "high_counts" : "mixed"}_area_${area}_within_display_bounds`] = true;
-        }
-        for (const area of [-1, 0.5, NaN, Infinity, K + 1]) {
-          let rejected = false; try { set.normalizeDisplayBuffers(buffers, area); } catch { rejected = true; }
-          if (!rejected) throw new Error("Invalid mask area accepted");
-        }
-        let rejected = false; try { set.normalizeDisplayBuffers([canonical], 2); } catch { rejected = true; }
-        if (!rejected) throw new Error("Canonical source accepted as a display copy");
-      } finally { engine.destroy(); set.dispose(); }
-    }
-    results.canonical_integer_sums_exact = true;
-    results.default_sum_buffers_exact = true;
-    results.all_passed = true;
-    return results;
-  } finally {
     const validation = await device.popErrorScope();
     if (validation) throw new Error(validation.message);
   }

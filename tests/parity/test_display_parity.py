@@ -1,5 +1,3 @@
-from importlib.resources import files
-
 import numpy as np
 import pytest
 
@@ -116,52 +114,7 @@ def test_float32_extreme_range_does_not_overflow_normalization(scale: str) -> No
         assert normalized[1] < 0.5 < normalized[4]
 
 
-def test_webgpu_display_sources_are_packaged_and_share_colormap_data() -> None:
-    root = files("quantem.gpu")
-    colormaps = root.joinpath("display/webgpu/colormaps.ts").read_text(
-        encoding="utf-8"
-    )
-    fft = root.joinpath("display/webgpu/fft.ts").read_text(encoding="utf-8")
-    fft_metrics = root.joinpath("display/webgpu/fftMetrics.ts").read_text(
-        encoding="utf-8"
-    )
-    geometry = root.joinpath("display/webgpu/geometry.ts").read_text(
-        encoding="utf-8"
-    )
-    quantization = root.joinpath("display/webgpu/quantization.ts").read_text(
-        encoding="utf-8"
-    )
-    stats = root.joinpath("display/webgpu/stats.ts").read_text(encoding="utf-8")
-
-    assert 'import colormapPoints from "../colormaps.json";' in colormaps
-    assert "export class GPUColormapEngine" in colormaps
-    assert "computeHistogramBatch" in colormaps
-    assert "uploadUint8Data" in colormaps
-    assert "SCALED_UINT8_COLORMAP_SHADER" in colormaps
-    assert 'dataKind: "f32" | "u8"' in colormaps
-    assert "renderSlotScaledToImageBitmapAsync" in colormaps
-    assert "renderPanelSlotsToImageBitmapAsync" in colormaps
-    assert "renderSharedGridToImageBitmapAsync" in colormaps
-    assert "renderCombinedPanelRegionsToImageBitmapAsync" in colormaps
-    assert "renderSlotDirectWithGpuRangeToImageBitmapAsync" in colormaps
-    assert "await this.device.queue.onSubmittedWorkDone()" in colormaps
-    assert "let stride = grid.x * 256u" in colormaps
-    assert "this.device.limits.maxComputeWorkgroupsPerDimension" in colormaps
-    assert "log(1.0 + max(val, 0.0))" not in colormaps
-    assert "val = -log(1.0 - val)" in colormaps
-    assert "export class WebGPUFFT" in fft
-    assert "export function autoEnhanceFFT" in fft
-    assert "reciprocalCoordinatesFromShiftedOffset" in fft
-    assert "export function shiftedMagnitude" in fft
-    assert "export function computeFftQualityMetrics" in fft_metrics
-    assert "export function cropMaskedRegion" in geometry
-    assert "export async function rotateStackInPlaneWebGPU" in geometry
-    assert "export async function sampleLineProfileUint8WebGPU" in geometry
-    assert "export async function dequantizeUint8WebGPU" in quantization
-    assert "export function applyLogScale" in stats
-
-
-def test_python_metal_and_webgpu_expose_identical_colormap_names() -> None:
+def test_python_and_metal_expose_identical_colormap_names() -> None:
     assert colormap_names() == (
         "gray",
         "viridis",

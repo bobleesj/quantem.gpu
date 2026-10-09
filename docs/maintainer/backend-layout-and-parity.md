@@ -45,8 +45,8 @@ for supported formats and operations. Representation names do not imply that
 every backend accepts every source or offers every operation.
 
 The WebGPU entry provides `loadLocalH5Master`, `loadLocalH5MaskedSum`,
-`setLocalFiles`, `clearLocalFiles`, `DetectorCompute`, and
-`GPUColormapEngine`. Register the selected HDF5 master/chunk files with
+`setLocalFiles`, `clearLocalFiles`, and `DetectorCompute`; browser display is
+quantem.widget's. Register the selected HDF5 master/chunk files with
 `setLocalFiles` before using the dense loader. `clearLocalFiles` releases
 registry references, not GPU buffers.
 

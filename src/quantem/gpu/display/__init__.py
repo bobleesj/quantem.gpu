@@ -1,9 +1,9 @@
 """Shared scientific image-display resources for every GPU client.
 
-The bundled colormap control points are the single source used by Python,
-CUDA, Metal/Swift, and WebGPU. Native Swift clients consume the Metal source
-through the repository's ``MetalDisplayKernels`` package; browser clients
-export the TypeScript/WGSL dependency graph through :mod:`quantem.gpu.webgpu`.
+The bundled colormap control points are the single source used by Python and
+Metal/Swift. Native Swift clients consume the Metal source through the
+repository's ``MetalDisplayKernels`` package. Browser display is owned by
+quantem.widget, whose colormap lookup tables match :func:`colormap_lut`.
 """
 
 import json

@@ -14,7 +14,7 @@
 import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, payloadGroupLimit, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
 import { qemFilesSource, type QemByteFile } from "./qem-source";
 import { DetectorCompute } from "./backend";
-import type { Uint32ImageView } from "../../display/webgpu/borrowed-image";
+import type { Uint32ImageView } from "./borrowed-image";
 
 const WINDOW = 256;
 const LOWER = 8388608;

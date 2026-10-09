@@ -117,13 +117,5 @@ export class RansResidentSeries {
   readImage(tilt: number) { return this.sets[tilt].readImage(0); }
   readImageU32(tilt: number) { return this.sets[tilt].readImageU32(0); }
 
-  /** Normalize display copies of several acquisitions in one submission; acquisition
-   * `acquisitions[i]` made `buffers[i]` (RansResidentSet.normalizeDisplayBuffers for one set). */
-  normalizeAcquisitionDisplays(buffers: GPUBuffer[], maskArea: number, acquisitions: number[]): void {
-    const encoder = this.device.createCommandEncoder();
-    buffers.forEach((buffer, index) => this.sets[acquisitions[index]].normalizeDisplayBuffers([buffer], maskArea, encoder));
-    this.device.queue.submit([encoder.finish()]);
-  }
-
   dispose(): void { this.disposed = true; this.stopping.abort(); for (const set of this.sets) set.dispose(); }
 }

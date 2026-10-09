@@ -1,6 +1,7 @@
-/** A read-only display view of source-owned exact counts. The consumer must not
- * destroy or write the buffer. The owner keeps it alive until submitted work ends.
- * Display values are f32(count) / divisor, including before log/range transforms.
+/** A read-only view of source-owned exact uint32 counts that a resident set lends
+ * to a display. The consumer must not destroy or write the buffer. The owner keeps
+ * it alive until submitted work ends. Display values are f32(count) / divisor,
+ * including before log/range transforms.
  */
 export type Uint32ImageView = Readonly<{
   device: GPUDevice;

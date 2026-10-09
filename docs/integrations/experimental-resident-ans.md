@@ -115,9 +115,9 @@ payloads as part of branch or benchmark cleanup.
 
 - Build Show4DSTEM with `QUANTEM_GPU_SRC` pointing to this package's `src` tree.
 - Run count-ANS integer round trips and browser-export tests for native dtypes.
-- Run `tests/webgpu/display-readback-lifecycle.ts` for ownership failures.
-- On an identified real adapter, run native source parity and
-  `tests/webgpu/resident-pattern-mean-parity.ts`.
+- Run quantem.widget's display tests for display buffer ownership and resident
+  pattern means; quantem.gpu no longer ships a browser display.
+- On an identified real adapter, run native source parity.
 - Drive selected and averaged scan drags with the button held, then verify the
   endpoint against original counts. Separately check detector drags, contrast,
   zoom, copy, progressive loading, cancellation, and device loss.

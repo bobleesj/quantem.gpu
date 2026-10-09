@@ -30,7 +30,7 @@ or consumer application to learn another load mode.
 | Load, decode, crop, and bin | `src/quantem/gpu/io` | `io/hdf5/{cpu.py,cuda,mps,webgpu}`, `resident/{cuda,mps}` | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
 | BF/DF/ADF and mean diffraction | `src/quantem/gpu/detector` | `detector/{cuda,mps,webgpu}`, `resident/mps` | `Metal4DSTEMKernels` |
 | CoM, DPC, and iDPC | `src/quantem/gpu/dpc` | `dpc/webgpu`; CUDA and MPS through the detector session | `Metal4DSTEMKernels`, `MetalImageFFT` |
-| Display statistics and transforms | `src/quantem/gpu/display` | `display/webgpu` | `MetalDisplayKernels`, `MetalImageRuntime` |
+| Display statistics and transforms | `src/quantem/gpu/display` | none; browser clients own display | `MetalDisplayKernels`, `MetalImageRuntime` |
 | Single-sideband ptychography | `src/quantem/gpu/ssb` | `ssb/{cuda,mps,webgpu}` | `MetalSSBKernels` |
 
 `detector/session.py` selects the detector implementation for each resident
@@ -41,8 +41,10 @@ level. Public APIs belong to the scientific domain; ordinary callers should not
 import a backend module directly.
 
 Browser consumers can import `src/quantem/gpu/webgpu/index.ts`: it re-exports
-the existing dense HDF5 IO, detector, and display colormap implementations
-without copying kernels. Build tools read `src/quantem/gpu/webgpu/sources.json`,
+the existing dense HDF5 IO and detector implementations without copying
+kernels. Browser display (colormaps, statistics, FFT) belongs to the browser
+client; resident sets lend it exact counts as `Uint32ImageView`
+(`detector/webgpu/borrowed-image.ts`). Build tools read `src/quantem/gpu/webgpu/sources.json`,
 which lists the complete dependency graph of `index.ts`.
 Swift consumers continue to use the repository-root `Package.swift`.
 

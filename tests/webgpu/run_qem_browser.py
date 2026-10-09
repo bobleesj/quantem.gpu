@@ -38,7 +38,6 @@ def main() -> None:
             ("qem-series", "QemSeriesParity"),
             ("rans-integer-readback", "RansIntegerReadbackParity"),
             ("reduce-frames-parity", "ReduceFramesParity"),
-            ("apply-slots-readback", "ApplySlotsReadback"),
         ):
             subprocess.run(
                 [str(args.esbuild), str(sources / f"{filename}.ts"), "--bundle",
@@ -66,7 +65,6 @@ def main() -> None:
                     page.add_script_tag(url="/qem-series.js")
                     page.add_script_tag(url="/rans-integer-readback.js")
                     page.add_script_tag(url="/reduce-frames-parity.js")
-                    page.add_script_tag(url="/apply-slots-readback.js")
                     result = page.evaluate("""async (expected) => {
                       const adapter = await navigator.gpu.requestAdapter();
                       if (!adapter || adapter.info.isFallbackAdapter) {
@@ -94,7 +92,6 @@ def main() -> None:
                           integer_readback: await RansIntegerReadbackParity.runRansIntegerReadbackParity(
                             device, location.origin + '/fixtures/saturated.qem'),
                           reduce_frames: await ReduceFramesParity.runReduceFramesParity(device),
-                          apply_slots: await ApplySlotsReadback.runApplySlotsReadback(device),
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)
