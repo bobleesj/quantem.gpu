@@ -572,14 +572,16 @@ export class RansResidentSet {
     return set;
   }
 
-  /** Decode only the listed columns (bit0 add, bit1 subtract) for the given acquisitions; images stay on the GPU. */
-  integrate(tilts: Set<number> | null, added: Uint8Array | Uint32Array | null, removed: Uint8Array | Uint32Array | null): number {
+  /** Decode only the listed columns (bit0 add, bit1 subtract) for the given acquisitions; images stay on the GPU.
+   * With `encoder`, the work is recorded there and the caller submits it.
+   */
+  integrate(tilts: Set<number> | null, added: Uint8Array | Uint32Array | null, removed: Uint8Array | Uint32Array | null, encoder?: GPUCommandEncoder): number {
     if (this.disposed) throw new Error("rANS resident set disposed");
     let n = 0;
     for (let k = 0; k < this.K; k++) { const flags = (added && added[k] ? 1 : 0) | (removed && removed[k] ? 2 : 0); if (flags) this.colsList[n++] = k | (flags << 24); }
     if (!n) return 0;
     this.device.queue.writeBuffer(this.colsBuf, 0, this.colsList.buffer as ArrayBuffer, 0, n * 4);
-    const enc = this.device.createCommandEncoder(); const pass = enc.beginComputePass(); pass.setPipeline(this.intPipe);
+    const enc = encoder ?? this.device.createCommandEncoder(); const pass = enc.beginComputePass(); pass.setPipeline(this.intPipe);
     for (const group of this.groups) {
       const spans: { unit0: number; n: number; params: GPUBuffer; group: GPUBindGroup }[] = tilts
         ? [...group.spans].filter(([tilt]) => tilts.has(tilt)).map(([, span]) => span)
@@ -590,7 +592,7 @@ export class RansResidentSet {
       }
     }
     pass.setPipeline(this.applyPipe); pass.setBindGroup(0, this.applyGroup); pass.dispatchWorkgroups(Math.ceil(this.T * this.scanCount / 256));
-    pass.end(); this.device.queue.submit([enc.finish()]);
+    pass.end(); if (!encoder) this.device.queue.submit([enc.finish()]);
     return n;
   }
 
@@ -713,17 +715,18 @@ export class RansResidentSet {
   /** Copy current images into caller-owned display buffers in one submission.
    * Existing destinations remain stable across drag steps; queue order ensures
    * the preceding render consumes its image before the next copy overwrites it.
+   * With `encoder`, the copies are recorded there and the caller submits them.
    */
-  imageBuffersF32(tilts: number[], previous?: GPUBuffer[]): GPUBuffer[] {
+  imageBuffersF32(tilts: number[], previous?: GPUBuffer[], encoder?: GPUCommandEncoder): GPUBuffer[] {
     const bytes = this.scanCount * 4;
     const buffers = previous ?? tilts.map(() => this.device.createBuffer({
       size: bytes,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     }));
     buffers.forEach(buffer => this.displayCopies.add(buffer));
-    const encoder = this.device.createCommandEncoder();
-    tilts.forEach((tilt, index) => encoder.copyBufferToBuffer(this.imagesF32, tilt * bytes, buffers[index], 0, bytes));
-    this.device.queue.submit([encoder.finish()]);
+    const copies = encoder ?? this.device.createCommandEncoder();
+    tilts.forEach((tilt, index) => copies.copyBufferToBuffer(this.imagesF32, tilt * bytes, buffers[index], 0, bytes));
+    if (!encoder) this.device.queue.submit([copies.finish()]);
     return buffers;
   }
 
@@ -896,36 +899,61 @@ export function isRansBatch(computes: unknown[]): computes is RansDetectorComput
   return computes.length > 0 && computes.every((compute) => Boolean((compute as { isRansResident?: boolean }).isRansResident));
 }
 export function ransMaskedSumBuffersBatch(computes: RansDetectorCompute[], mask: Uint32Array): { buffers: GPUBuffer[]; n: number; path: "batched-submit" } {
-  const set = computes[0].set;
-  const next = computes[0].effective(mask);
-  const shared = computes.every((compute) => compute.currentMask !== null && sameMask(compute.currentMask, computes[0].currentMask!));
-  if (computes.every((compute) => compute.currentMask === null)) {
-    const tilts = new Set(computes.map((compute) => compute.tilt));
-    set.resetImages(tilts);
-    set.integrate(tilts, next, null);
-    for (const compute of computes) compute.currentMask = next.slice();
-  } else if (shared) {
-    // Every panel carries the same mask history: one column diff, one integrate over all of them.
-    const { add, sub, changed } = maskDelta(next, computes[0].currentMask!);
-    if (changed) set.integrate(new Set(computes.map((compute) => compute.tilt)), add, sub);
-    for (const compute of computes) compute.currentMask = next.slice();
-  } else {
-    for (const compute of computes) compute.update(mask);
-  }
-  return { buffers: set.imageBuffersF32(computes.map((compute) => compute.tilt)), n: computes[0].scanCount, path: "batched-submit" };
+  const buffers = eachResidentSet(computes, (members, _indices, encoder) => {
+    const set = members[0].set;
+    const next = members[0].effective(mask);
+    const shared = members.every((compute) => compute.currentMask !== null && sameMask(compute.currentMask, members[0].currentMask!));
+    if (members.every((compute) => compute.currentMask === null)) {
+      const tilts = new Set(members.map((compute) => compute.tilt));
+      set.resetImages(tilts);
+      set.integrate(tilts, next, null, encoder);
+      for (const compute of members) compute.currentMask = next.slice();
+    } else if (shared) {
+      // Every panel carries the same mask history: one column diff, one integrate over all of them.
+      const { add, sub, changed } = maskDelta(next, members[0].currentMask!);
+      if (changed) set.integrate(new Set(members.map((compute) => compute.tilt)), add, sub, encoder);
+      for (const compute of members) compute.currentMask = next.slice();
+    } else {
+      for (const compute of members) compute.update(mask);
+    }
+    return set.imageBuffersF32(members.map((compute) => compute.tilt), undefined, encoder);
+  });
+  return { buffers, n: computes[0].scanCount, path: "batched-submit" };
 }
 
 export function ransMaskedSumDeltaBuffersBatch(computes: RansDetectorCompute[], addedMask: Uint32Array, removedMask: Uint32Array, previous?: GPUBuffer[]): { buffers: GPUBuffer[]; path: "delta"; addedPixels: number; removedPixels: number } {
   let addedPixels = 0, removedPixels = 0;
   for (let k = 0; k < addedMask.length; k++) { if (addedMask[k]) addedPixels++; if (removedMask[k]) removedPixels++; }
-  const set = computes[0].set;
-  const add = computes[0].effective(addedMask), sub = computes[0].effective(removedMask);
-  for (const compute of computes) {
-    if (!compute.currentMask) throw new Error("rANS delta update before the first full mask");
-    for (let k = 0; k < add.length; k++) { if (add[k]) compute.currentMask[k] = 1; if (sub[k]) compute.currentMask[k] = 0; }
+  // Checked before any set records work: a later failure would leave earlier
+  // sets' masks advanced while their images were never updated.
+  if (computes.some((compute) => !compute.currentMask)) throw new Error("rANS delta update before the first full mask");
+  const buffers = eachResidentSet(computes, (members, indices, encoder) => {
+    const set = members[0].set;
+    const add = members[0].effective(addedMask), sub = members[0].effective(removedMask);
+    for (const compute of members) {
+      for (let k = 0; k < add.length; k++) { if (add[k]) compute.currentMask![k] = 1; if (sub[k]) compute.currentMask![k] = 0; }
+    }
+    set.integrate(new Set(members.map((compute) => compute.tilt)), add, sub, encoder);
+    return set.imageBuffersF32(members.map((compute) => compute.tilt), previous && indices.map(index => previous[index]), encoder);
+  });
+  return { buffers, path: "delta", addedPixels, removedPixels };
+}
+
+/** Run `batch` once per resident set and submit all of their work together.
+ * A .qem series loads every acquisition as its own set; batching only the first
+ * set would integrate and copy its images into every panel. Buffers come back
+ * in the order of `computes`.
+ */
+function eachResidentSet(computes: RansDetectorCompute[], batch: (members: RansDetectorCompute[], indices: number[], encoder: GPUCommandEncoder) => GPUBuffer[]): GPUBuffer[] {
+  const device = computes[0].set.device;
+  const encoder = device.createCommandEncoder();
+  const buffers: GPUBuffer[] = new Array(computes.length);
+  for (const set of new Set(computes.map((compute) => compute.set))) {
+    const indices = computes.flatMap((compute, index) => compute.set === set ? [index] : []);
+    batch(indices.map(index => computes[index]), indices, encoder).forEach((buffer, member) => { buffers[indices[member]] = buffer; });
   }
-  set.integrate(new Set(computes.map((compute) => compute.tilt)), add, sub);
-  return { buffers: set.imageBuffersF32(computes.map((compute) => compute.tilt), previous), path: "delta", addedPixels, removedPixels };
+  device.queue.submit([encoder.finish()]);
+  return buffers;
 }
 
 /** Detector columns that enter (`add`) or leave (`sub`) the mask between two effective masks. */
