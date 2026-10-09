@@ -285,7 +285,6 @@ interface Group { payload: GPUBuffer; offsets: GPUBuffer; chk: GPUBuffer; params
 interface UnitRec { payload_word: number; offsets_base: number; colmeta_word: number; entries_word: number; lut_word: number; chk_base: number; out_base: number; tilt: number; block: number; frameFlags: number }
 
 const pad4 = (n: number) => Math.ceil(n / 4) * 4;
-function concatU8(parts: Uint8Array[]): Uint8Array { const total = parts.reduce((a, b) => a + pad4(b.length), 0); const o = new Uint8Array(total); let off = 0; for (const p of parts) { o.set(p, off); off += pad4(p.length); } return o; }
 function concatU32(parts: Uint32Array[]): Uint32Array { const total = parts.reduce((a, b) => a + b.length, 0); const o = new Uint32Array(total); let off = 0; for (const p of parts) { o.set(p, off); off += p.length; } return o; }
 
 /** All acquisitions of one exported rANS series, resident in browser GPU memory. */
@@ -427,11 +426,18 @@ export class RansResidentSet {
         colmetaParts.push(columnMeta); colmetaLen += columnMeta.length;
       }
     }
-    const colmetaAll = concatU32(colmetaParts), entriesAll = concatU32(entriesParts), lutAll = concatU8(lutParts);
-    const tablesWords = new Uint32Array(colmetaAll.length + entriesAll.length + lutAll.length / 4);
-    tablesWords.set(colmetaAll, 0); tablesWords.set(entriesAll, colmetaAll.length); tablesWords.set(new Uint32Array(lutAll.buffer, 0, lutAll.length / 4), colmetaAll.length + entriesAll.length);
-    for (const bases of modelBases) for (const base of bases) { base.entries_word += colmetaAll.length; base.lut_word += colmetaAll.length + entriesAll.length; }
-    const tablesBuf = upload(tablesWords, GPUBufferUsage.STORAGE);
+    // Each part is copied straight into the final mapping, so the column
+    // metadata, the largest table, is never concatenated on the host.
+    const tablesBuf = device.createBuffer({ size: (colmetaLen + entriesLen) * 4 + lutBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+    const tableBytes = new Uint8Array(tablesBuf.getMappedRange());
+    let tableAt = 0;
+    for (const part of [...colmetaParts, ...entriesParts]) {
+      tableBytes.set(new Uint8Array(part.buffer, part.byteOffset, part.byteLength), tableAt);
+      tableAt += part.byteLength;
+    }
+    for (const part of lutParts) { tableBytes.set(part, tableAt); tableAt += pad4(part.byteLength); }
+    tablesBuf.unmap();
+    for (const bases of modelBases) for (const base of bases) { base.entries_word += colmetaLen; base.lut_word += colmetaLen + entriesLen; }
     // Payload blocks packed into as few buffers as the group limit allows; each buffer is one dispatch.
     const limit = payloadGroupLimit(device);
     type Pending = { payload: GPUBuffer; payBytes: number; offParts: Uint32Array[]; offLen: number; units: UnitRec[]; resident: boolean };
