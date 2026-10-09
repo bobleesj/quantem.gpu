@@ -363,7 +363,10 @@ export class RansResidentSet {
     // The source owns its staged payload until the resident set takes it over.
     try {
       signal?.throwIfAborted();
-      return await this.loadSource(device, source, onStatus, started);
+      const set = await this.loadSource(device, source, onStatus, started);
+      // Cancelled while the decoder was being built: nothing of the load survives.
+      if (signal?.aborted) { set.dispose(); signal.throwIfAborted(); }
+      return set;
     }
     catch (error) { source.dispose?.(); throw error; }
   }
