@@ -135,3 +135,83 @@ test("local reads keep four authentication chunks in flight", async () => {
   await admitted;
   assert.equal(peak, 4);
 });
+
+test("a recycled chunk carries a later chunk with both readers", async () => {
+  const bytes = pattern(16 * 6);
+  for (const byob of [true, false]) {
+    serve(bytes, byob);
+    const [file] = await qemHttpFiles("/", ["a.qem"]);
+    const stream = file.chunks!(0, bytes.length, 16);
+    const first = (await stream.next()).value as ArrayBuffer;
+    assert.deepEqual(new Uint8Array(first), bytes.subarray(0, 16));
+    file.recycleChunk!(first);
+    const second = (await stream.next()).value as ArrayBuffer;
+    assert.deepEqual(new Uint8Array(second), bytes.subarray(16, 32));
+    // BYOB transfers the reused buffer, detaching the caller's old reference.
+    if (byob) assert.equal(first.byteLength, 0);
+    else assert.equal(second, first);
+    await stream.return(undefined);
+  }
+});
+
+test("at most four recycled chunks wait for reuse", async () => {
+  const bytes = pattern(16 * 8);
+  serve(bytes, false);
+  const [file] = await qemHttpFiles("/", ["a.qem"]);
+  const stream = file.chunks!(0, bytes.length, 16);
+  await stream.next();
+  const offered = Array.from({ length: 6 }, () => new ArrayBuffer(16));
+  offered.forEach(buffer => file.recycleChunk!(buffer));
+  const later: ArrayBuffer[] = [];
+  for await (const chunk of stream) later.push(chunk);
+  assert.equal(later.length, 7);
+  assert.deepEqual(later.map(chunk => offered.indexOf(chunk)), [0, 1, 2, 3, -1, -1, -1]);
+});
+
+test("recycled chunks never outlive a completed or failed stream", async () => {
+  const bytes = pattern(16 * 4);
+  for (const extra of [0, -1]) {
+    serve(bytes, false, extra);
+    const [file] = await qemHttpFiles("/", ["a.qem"]);
+    const stream = file.chunks!(0, bytes.length, 16);
+    const kept = [(await stream.next()).value as ArrayBuffer, new ArrayBuffer(16)];
+    kept.forEach(buffer => file.recycleChunk!(buffer));
+    await (async () => { for await (const chunk of stream) kept.push(chunk); })().catch(() => {});
+    kept.forEach(buffer => file.recycleChunk!(buffer));
+    serve(bytes, false);
+    const reread = await collect(file, bytes.length, 16, 1);
+    assert.deepEqual(Buffer.concat(reread), Buffer.from(bytes));
+    const fresh = file.chunks!(0, bytes.length, 16);
+    for await (const chunk of fresh) assert.ok(!kept.includes(chunk), "a buffer from an earlier stream was reused");
+  }
+});
+
+test("admission recycles a chunk only after its checksum matched", async () => {
+  const bytes = syntheticQem([40 << 20, 40 << 20]);
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  const digested = new Set<unknown>();
+  crypto.subtle.digest = async (algorithm: AlgorithmIdentifier, data: BufferSource) => {
+    const hash = await digest(algorithm, data);
+    digested.add(data);
+    return hash;
+  };
+  try {
+    for (const corrupt of [false, true]) {
+      const served = bytes.slice();
+      if (corrupt) served[served.length - 1000] ^= 1;
+      serve(served, false, 0, 1 << 20);
+      const [file] = await qemHttpFiles("/", ["two-chunks.qem"]);
+      const recycled: ArrayBuffer[] = [];
+      const recycle = file.recycleChunk!.bind(file);
+      file.recycleChunk = buffer => {
+        assert.ok(digested.has(buffer), "recycled before its digest finished");
+        recycled.push(buffer);
+        recycle(buffer);
+      };
+      const admitted = qemFileSource(file);
+      if (corrupt) await assert.rejects(admitted, /payload checksum mismatch/);
+      else await admitted;
+      assert.equal(recycled.length, corrupt ? 1 : 2, "the chunk that failed authentication is never recycled");
+    }
+  } finally { crypto.subtle.digest = digest; }
+});
