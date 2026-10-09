@@ -9,7 +9,6 @@ EXPECTED_BACKENDS = {
     "mps",
     "swift-metal",
     "webgpu",
-    "vulkan",
 }
 EXPECTED_CAPABILITIES = {
     "io.packed-display-precision",
@@ -167,7 +166,6 @@ def test_selective_scan_loading_support_matches_retained_sources() -> None:
     coverage = selective["coverage"]
 
     assert {backend: entry["level"] for backend, entry in coverage.items()} == {
-        "vulkan": "not-implemented",
         "cpu-reference": "not-implemented",
         "cuda": "required",
         "mps": "required",
@@ -179,7 +177,6 @@ def test_selective_scan_loading_support_matches_retained_sources() -> None:
     assert coverage["mps"]["implemented_selectors"] == ["scan_region"]
     assert coverage["swift-metal"]["implemented_selectors"] == []
     assert coverage["webgpu"]["implemented_selectors"] == ["scan_region"]
-    assert coverage["vulkan"]["implemented_selectors"] == []
     assert "single-position-indexed-accessor" in coverage["swift-metal"][
         "implemented_subset"
     ]

@@ -67,8 +67,6 @@ parts:
         - file: platforms/swift-metal-additions
           title: Native Swift and Metal
       - file: platforms/webgpu
-      - file: platforms/android-vulkan
-        title: Android Vulkan
       - file: platforms/cpu-reference
         title: CPU reference
     - file: developer/integration

@@ -17,8 +17,6 @@ public workflow or result type.
   and `Package.swift` copies them into the resource bundles.
 - Browser consumers enter through `src/quantem/gpu/webgpu/index.ts`; its
   exports point to the existing domain-owned implementations.
-- Native Vulkan builds enter through `native/vulkan/CMakeLists.txt`, outside
-  the Python package; C ABI and library/target names are unchanged.
 - Browser kernels remain beside their scientific domain. WebGPU is a browser
   runtime, not a Python device name and not a synonym for Metal.
 - CPU/NumPy is an explicit reference backend for tests. Production scientific
@@ -118,7 +116,6 @@ native/                           # not part of the Python wheel
     Tests/
     Benchmarks/
     Vendor/                       # CHDF5.xcframework
-  vulkan/{include,src,shaders,tests,benchmarks}/
 
 tests/
   contracts/                      # public API, provenance, and failure rules
@@ -183,11 +180,6 @@ npm install --no-save --package-lock=false esbuild jsfive typescript @webgpu/typ
 python scripts/run_tests.py tests/contracts/test_webgpu_entrypoint.py -q
 # Every source in webgpu/sources.json, with quantem.widget's compiler options.
 npm run typecheck
-
-# Native Vulkan: portable host contracts only; no GPU performance claim.
-cmake -S native/vulkan -B /tmp/qgpu-vulkan-host
-cmake --build /tmp/qgpu-vulkan-host
-ctest --test-dir /tmp/qgpu-vulkan-host --output-on-failure
 
 # Native Apple: unchanged SwiftPM entry.
 swift test -j 4

@@ -12,7 +12,6 @@ explains how to implement it efficiently on a particular device.
 | NVIDIA GPU | [CUDA](cuda.md) | Python/CuPy with CUDA kernels and dedicated VRAM |
 | Native Apple client/library | [Native Swift and Metal](swift-metal.md) | SwiftPM products, Metal resources, and unified memory |
 | Browser GPU | [WebGPU](webgpu.md) | TypeScript/WGSL, browser security, and explicit GPU buffers |
-| Native Android client/library | [Android Vulkan](android-vulkan.md) | NDK C++/C ABI, Vulkan shaders, and admitted packed residency |
 | Independent adjudication | [CPU reference](cpu-reference.md) | deterministic small NumPy/reference implementations |
 
 ## Shared implementation shape
@@ -48,8 +47,7 @@ Loaded data uses one vocabulary across runtimes:
 
 CUDA and Python MPS expose this through `io.Dataset4dstemGPU`, native Swift/Metal
 through `Metal4DSTEMResidentReceipt`, and WebGPU through
-`LocalH5LoadResult`. Vulkan load plans and
-packed-session admission retain their documented dense/packed contracts.
+`LocalH5LoadResult`.
 Python CUDA/MPS acquisition loading defaults to ANS and CUDA also accepts
 `paired`; Python `dense` requires `backend="cpu"`, and Python has no `packed`
 representation. A representation enum is not a promise that every runtime can

@@ -43,7 +43,7 @@ Keep these three axes separate:
 
 | Axis | Public values | Question answered |
 |---|---|---|
-| Representation | `encoded`, `paired`, `dense` in Python; native Swift/Metal and Vulkan also use `packed` | How are all logical counts encoded? |
+| Representation | `encoded`, `paired`, `dense` in Python; native Swift/Metal also uses `packed` | How are all logical counts encoded? |
 | Dtype | `uint8`, `uint16`, `uint32`, and supported floating types | What scientific value type is exposed? |
 | Residency | host, CUDA device, Apple unified/device memory, or WebGPU device | Where is the physical payload retained? |
 

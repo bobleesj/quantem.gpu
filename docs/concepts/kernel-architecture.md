@@ -16,7 +16,7 @@ different definitions of the science.
 
 Representation distinguishes `encoded`, `paired`, `packed`, and `dense`
 storage; each runtime supports its documented subset. Python accepts
-`encoded`, `paired`, and `dense`; `packed` is a native Swift/Metal and Vulkan
+`encoded`, `paired`, and `dense`; `packed` is a native Swift/Metal
 storage form. Python GPU acquisition loading defaults to ANS-encoded storage,
 and Python dense loading requires the explicit `backend="cpu"` reference.
 Dtype, device/host residency, file schema, and codec profile are separate
@@ -44,7 +44,6 @@ Browser consumers can import `src/quantem/gpu/webgpu/index.ts`: it re-exports
 the existing dense HDF5 IO, detector, and display colormap implementations
 without copying kernels. Build tools read `src/quantem/gpu/webgpu/sources.json`,
 which lists the complete dependency graph of `index.ts`.
-Native Vulkan sources, headers, shaders, and tests live in `native/vulkan`.
 Swift consumers continue to use the repository-root `Package.swift`.
 
 See the [layout migration map](../maintainer/backend-layout-and-parity.md) for
