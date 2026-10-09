@@ -12,7 +12,10 @@ maps WebGPU to Metal internally.
 | BF/DF/ADF and moments | `src/quantem/gpu/detector/webgpu` |
 | DPC/iDPC | `src/quantem/gpu/dpc/webgpu` |
 | SSB | `src/quantem/gpu/ssb/webgpu` |
-| Display statistics/FFT/color | `src/quantem/gpu/display/webgpu` |
+
+quantem.gpu ships no WebGPU display kernels (statistics, FFT, color); the
+browser client owns display and receives exact counts as `Uint32ImageView` from
+`detector/webgpu/borrowed-image.ts`.
 
 The browser call path is:
 

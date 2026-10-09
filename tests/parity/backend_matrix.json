@@ -360,11 +360,11 @@
       "coverage": {
         "cpu-reference": {
           "level": "reference",
-          "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_fft_parity.py"]
+          "gates": ["tests/parity/test_display_parity.py"]
         },
         "cuda": {
           "level": "not-implemented",
-          "qualification": "quantem.gpu has no CUDA display module; display transforms run in the test-only CPU reference (tests/parity/display_reference.py), WebGPU and native Swift/Metal.",
+          "qualification": "quantem.gpu has no CUDA display module; display transforms run in the test-only CPU reference (tests/parity/display_reference.py) and native Swift/Metal.",
           "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_shared_goldens.py"]
         },
         "mps": {
@@ -376,8 +376,9 @@
           "gates": ["native/swift/Tests/MetalDisplayKernelsTests/MetalDisplayKernelsTests.swift", "native/swift/Tests/MetalImageFFTTests/MetalImageFFTTests.swift"]
         },
         "webgpu": {
-          "level": "required-hardware",
-          "gates": ["tests/parity/test_display_fft_parity.py", "tests/parity/test_display_shared_goldens.py", "tests/e2e/test_webgpu_widget_sync.py"]
+          "level": "not-implemented",
+          "qualification": "quantem.gpu ships no WebGPU display kernels; browser display is owned by quantem.widget (js/display), and resident sets lend it exact counts as Uint32ImageView.",
+          "gates": ["tests/contracts/test_webgpu_export.py"]
         }
       }
     },

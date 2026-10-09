@@ -4,7 +4,3 @@ export {
   DetectorCompute,
   buildFullDetectorMask,
 } from "../detector/webgpu/backend";
-export {
-  GPUColormapEngine,
-  createGPUColormapEngine,
-} from "../display/webgpu/colormaps";

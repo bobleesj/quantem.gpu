@@ -1644,7 +1644,7 @@
       "owner": "Portable CI runner plus specified backend computer",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_dpc_rotation_agreement.py tests/parity/test_products_parity.py tests/parity/test_display_fft_parity.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_dpc_rotation_agreement.py tests/parity/test_products_parity.py",
       "preflight": [
         "Preserve explicit row/column order and frozen Fourier conventions.",
         "Record full-precision max, p99, normalized error, and signal range on hardware."
@@ -1661,7 +1661,7 @@
       "owner": "Portable CI runner plus specified backend computer",
       "tier": "PR smoke",
       "evidence_level": "parity preflight",
-      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_display_parity.py tests/parity/test_display_fft_parity.py tests/parity/test_display_shared_goldens.py",
+      "command": "PYTHONPATH=src python -m pytest -q tests/parity/test_display_parity.py tests/parity/test_display_shared_goldens.py",
       "preflight": [
         "Keep source dtype, transform, normalization, color limits, and FFT convention fixed.",
         "Measure physical first execution and warm publication separately."

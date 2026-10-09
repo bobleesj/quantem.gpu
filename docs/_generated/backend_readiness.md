@@ -136,7 +136,7 @@ Blocking signoff cells:
 | detector.integer-products | implemented | evidence-gap | blocked |
 | screening.prepared-products | not-implemented | unsupported | not-scheduled |
 | dpc.com-rotation-idpc | implemented | evidence-gap | blocked |
-| display.transform-histogram-color-fft | implemented | evidence-gap | blocked |
+| display.transform-histogram-color-fft | not-implemented | unsupported | not-scheduled |
 | ssb.object-phase-loss | partial | evidence-gap | blocked |
 | ssb.calibration-200-nelder-mead | not-implemented | unsupported | not-scheduled |
 
@@ -147,5 +147,4 @@ Blocking signoff cells:
 - `io.selective-scan-loading::webgpu`
 - `detector.integer-products::webgpu`
 - `dpc.com-rotation-idpc::webgpu`
-- `display.transform-histogram-color-fft::webgpu`
 - `ssb.object-phase-loss::webgpu`

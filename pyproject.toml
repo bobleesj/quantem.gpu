@@ -113,7 +113,6 @@ artifacts = [
     "src/quantem/gpu/detector/cuda/kernels/*.cu",
     "src/quantem/gpu/detector/webgpu/*.ts",
     "src/quantem/gpu/geometry/webgpu/*.ts",
-    "src/quantem/gpu/display/webgpu/*.ts",
     "src/quantem/gpu/dpc/webgpu/*.ts",
     "src/quantem/gpu/ssb/webgpu/*.ts",
     "src/quantem/gpu/ssb/webgpu/kernels/*.ts",

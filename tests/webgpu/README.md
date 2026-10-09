@@ -33,18 +33,6 @@ On 2026-09-07 the real NVIDIA/Blackwell run passed all checks. CoM/DPC maximum
 absolute differences were at most `1.20e-7`; iDPC at most `3.13e-7`. Exact pattern,
 ROI, and wide-moment checks passed with zero tolerance.
 
-## Parallel display ranges
-
-Bundle `parallel-display-range.ts` with `--global-name=ParallelRangeParity` and
-call `await ParallelRangeParity.runParallelRangeParity(device)` on the confirmed
-hardware device. The test compares ranges and normalized RGBA pixels exactly
-against the retained single-workgroup region pipeline. Cases include signed
-values, signed logarithms, nonfinite values, constant images, extreme finite
-values, rectangular subregions, and seven slots recorded into one encoder.
-It also verifies that repeated slot updates reuse the partial-range scratch.
-All cases passed on NVIDIA/Blackwell on 2026-09-07; no performance assertion is
-part of this correctness gate.
-
 ## Integer .qem browser admission
 
 Run the disposable, headed physical-adapter gate:
@@ -107,50 +95,6 @@ delta exactly, saved validity masks and scientific metadata, and
 shape/dtype/mask mismatches rejected before GPU allocation. The fixture generator also supplies the
 saturated QEM acquisition for the integer readback gate below.
 
-## Compare-preview normalization
-
-The same `rans-products.ts` bundle exposes
-`runRansDisplayNormalizationParity(device)`. Run on the confirmed hardware
-adapter. It checks seven normalized display copies at two detector areas,
-exact integer resident sums before/after normalization, unchanged default
-single-view sum buffers, and a subsequent delta reusing the normalized copies.
-It compares every preview float to the stock operation
-`Float32(Float32(sum) / maskArea)`, including saturated masks with sums beyond
-2^24. Preview division permits at most **one float32 ULP** difference because
-hardware WGSL division need not round identically to JavaScript division.
-Canonical integer sums and default unnormalized sum copies remain exact,
-with zero tolerance. Linear GPU ranges allow one ULP and logarithmic ranges
-allow two ULP against the CPU preview passed through the same GPU range shader.
-The stock range-driven colormap shader, with a grayscale lookup table, must
-produce RGBA channels within one 8-bit level. This bounds intensity-bin changes;
-it does not assert that every arbitrary color palette has adjacent colors
-within one level. The helper reports observed maximum errors separately.
-No bitwise identity is claimed for normalized previews. Invalid areas and passing the
-canonical integer buffer to the display helper must fail.
-
-The widget should call `set.normalizeDisplayBuffers(buffers, maskArea)` once
-after each rANS batch copy, before adopting compare display buffers. The next
-delta refreshes these copies from canonical sums before normalization; repeated
-normalization without that copy refresh is not a supported workflow. This
-changes only floating-point previews, never the canonical integer counts.
-
-## Batched direct compare canvases
-
-Bundle `batch-canvas-parity.ts` with `--global-name=BatchCanvasParity` and call
-`await BatchCanvasParity.runBatchCanvasParity(device)` on the authenticated
-hardware adapter. Fake canvas contexts expose actual renderable GPU textures,
-so this test requires neither desktop pointer control nor a visible canvas.
-Seven distinct source shapes exercise independent render uniforms, single- and
-multi-workgroup ranges, signed/nonnegative/constant/high values, linear/log
-coloring, zoom, pan and smooth sampling. Every rendered RGBA byte must equal
-the seven serial single-slot calls that reproduce the pre-batch submission
-sequence. Each batch must submit once, versus seven submissions for serial.
-
-Lifecycle checks reject duplicate indices and mismatched context counts, verify
-empty/missing batches do not submit, and hold an unsubmitted range encoder
-across an empty batch plus a throwing texture acquisition. That held encoder
-must remain valid, failed presentation must not submit a partial frame, and a
-subsequent normal batch must still render all seven surfaces.
 ## Exact quantitative detector readback
 
 Use `await set.readImageU32(tilt)` for quantitative detector sums. It returns
@@ -187,13 +131,6 @@ QEM gate above runs it. It reduces two-chunk uint16, uint32 and float32 stacks
 whose integer per-pixel sums exceed 2^32 and compares every sum and mean
 exactly against float64 sums rounded once to float32. A 32-bit accumulator
 wraps these sums, and reading float32 data as packed uint16 counts fails them.
-
-## Raw RGBA readback of display slots
-
-`apply-slots-readback.ts` exports `runApplySlotsReadback(device)`; the headed
-QEM gate runs it. `applySlots` must return each image's exact RGBA bytes for an
-uploaded slot, a slot uploaded with spare RGBA capacity, and an adopted buffer,
-with no validation error.
 
 ## Decoder pipelines per device (CPU-only)
 
@@ -248,16 +185,3 @@ payload group. `payloadReadMs` sums overlapping per-request elapsed durations;
 `payloadReadWaitMs` counts exposed await intervals and is not their sum.
 These unit tests establish correctness and bounded concurrency only. Compare
 real FileList loading separately before reporting any load-time improvement.
-
-## Borrowed integer mean displays
-
-`borrowed-count-display.ts` is a CPU-only Node test of device/extent admission,
-source ownership, typed bindings and float fallback. Bundle with esbuild's
-`--platform=node` and run `node --test` on the output.
-
-`borrowed-count-display-parity.ts` exports `runBorrowedCountDisplayParity(device)`
-for an identified hardware adapter. It compares integer views with canonical
-GPU `f32(count) / divisor` conversion, including counts above float32 exact
-integer range, linear/log scaling, smoothing, three mean areas, and both range
-reduction paths. Every RGBA and range byte must agree; original uint32 counts
-must remain unchanged. This is correctness evidence, not a throughput test.

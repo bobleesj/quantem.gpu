@@ -1,8 +1,8 @@
 """CPU float reference for the shared scientific image-display arithmetic.
 
-Test-only: the parity tests compare WebGPU, Metal, and the bundled goldens
-against these functions. The reference fixes the arithmetic shared by CUDA, Metal, and WebGPU display
-paths: finite float32 values are optionally mapped with signed ``log1p``,
+Test-only: the parity tests compare the Python lookup tables, Metal, and the
+bundled goldens against these functions. The reference fixes the arithmetic
+shared by the Metal display and quantem.widget's browser display: finite float32 values are optionally mapped with signed ``log1p``,
 normalized between transformed display limits, assigned to 256 histogram bins,
 and mapped through a 256-entry RGB lookup table.
 """

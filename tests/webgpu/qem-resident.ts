@@ -6,7 +6,7 @@ import { fakeDevice, type FakeBuffer } from "./fake-gpu";
 import { qemFileSource, qemFilesSource, qemHttpFiles } from "../../src/quantem/gpu/detector/webgpu/qem-source";
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
 import { RansResidentSeries } from "../../src/quantem/gpu/detector/webgpu/rans-series";
-import { validateUint32ImageView } from "../../src/quantem/gpu/display/webgpu/borrowed-image";
+import { validateUint32ImageView } from "../../src/quantem/gpu/detector/webgpu/borrowed-image";
 import type { RansByteSource } from "../../src/quantem/gpu/detector/webgpu/rans-source";
 import { syntheticQem } from "./qem-synthetic";
 
