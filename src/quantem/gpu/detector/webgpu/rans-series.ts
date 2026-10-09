@@ -5,7 +5,7 @@
  * so a viewer shows and compares panels while the rest of the series loads.
  */
 import { RansResidentSet, type RansDetectorCompute, type RansLoadProfile } from "./rans";
-import type { QemByteFile } from "./qem-source";
+import { readQemSeriesHeaders, type QemByteFile } from "./qem-source";
 
 // Acquisitions loading at once, the next one to publish included: file
 // authentication overlaps the decoder build of earlier files while host
@@ -98,6 +98,9 @@ export class RansResidentSeries {
     progress: (series: RansResidentSeries) => void, signal: AbortSignal, badPixels: number[] = []): Promise<RansResidentSeries> {
     if (!files.length) throw new Error("Select at least one .qem acquisition.");
     const started = performance.now();
+    // Every header first: a mismatched file fails before any payload is read. Each
+    // load still compares its authenticated set, in case a file changes meanwhile.
+    await readQemSeriesHeaders(files, signal);
     const first = await RansResidentSet.loadQemFile(device, files[0], text => status(`1/${files.length} ${files[0].name}: ${text}`), badPixels, signal);
     if (signal.aborted) { first.dispose(); signal.throwIfAborted(); }
     // The first progress call runs in the constructor, before any other load starts.

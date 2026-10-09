@@ -216,8 +216,9 @@ whose payloads cross 64 MiB chunks and the 256 MiB group limit cheaply.
 - `rans-batch.ts`: a compare-grid batch over separately loaded sets integrates
   every set's own image in one submission.
 - `qem-series-lookahead.ts`: a series publishes its first file at once and the
-  rest in file order with three loads ahead, and releases every unpublished set
-  on failure, mismatch, disposal or cancellation.
+  rest in file order with three loads in flight, rejects mismatched headers
+  before any load, stops loads in flight without waiting for them, and releases
+  every unpublished set on failure, mismatch, disposal or cancellation.
 
 ## Bounded payload read-ahead (CPU-only)
 
