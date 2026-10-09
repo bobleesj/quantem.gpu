@@ -6,6 +6,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc14 - 2026-10-08
+
+Includes everything since rc5; rc6 to rc13 were published without rolling this file.
+
 - Exact detector products (`masked_sum_exact`, `reduce_frames_exact`,
   `reduce_frames_max`) on CuPy float arrays raise `TypeError`, as on Torch and
   NumPy; they returned truncated integers (0 for 0.75) before. The float ANS
