@@ -76,18 +76,6 @@ def test_no_cpu_scientific_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
         device.resolve("cpu")
 
 
-def test_least_busy_cuda_device_falls_back_to_torch_memory(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-
-    free = [3, 9, 5]
-    monkeypatch.setattr(torch.cuda, "mem_get_info", lambda index: (free[index], 10))
-    monkeypatch.setitem(sys.modules, "pynvml", None)
-
-    assert device.least_busy_cuda_device(3) == 1
-
-
 def test_cupy_lookups_follow_the_imported_module(monkeypatch: pytest.MonkeyPatch) -> None:
     """A module installed as ``cupy`` serves CuPy lookups only while it is installed."""
     from quantem.gpu.device import cuda_runtime

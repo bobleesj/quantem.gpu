@@ -4,8 +4,7 @@ from importlib.resources import files
 import numpy as np
 import pytest
 
-from quantem.gpu.display.geometry import rotate_stack_inplane
-from quantem.gpu.display.cpu import dequantize_uint8
+from tests.parity.display_reference import dequantize_uint8, rotate_stack_inplane
 
 
 def _goldens() -> dict:

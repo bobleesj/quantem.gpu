@@ -192,7 +192,7 @@ def test_one_wide_scan_uses_actual_length_encoding_scratch(tmp_path):
         handle["entry/data/data"] = raw
     loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
     np.testing.assert_array_equal(
-        loaded.data.decode_chunk(0).get(), raw.reshape(1, 2048, 2048)
+        loaded.data.decode_scan_range_device(0, 1).get(), raw.reshape(1, 2048, 2048)
     )
 
 
@@ -208,9 +208,7 @@ def test_sparse_events_and_rare_counts_reconstruct_every_scan(tmp_path):
     with h5py.File(path, "w") as handle:
         handle["entry/data/data"] = raw
     loaded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
-    decoded = np.concatenate(
-        [loaded.data.decode_chunk(i).get() for i in range(len(loaded.data.chunks))]
-    )
+    decoded = loaded.data.decode_scan_range_device(0, 1025).get()
     np.testing.assert_array_equal(decoded.reshape(raw.shape), raw)
     session = detector.prepare(loaded)
     for mask in [

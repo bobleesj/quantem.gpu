@@ -435,7 +435,7 @@
         },
         "cuda": {
           "level": "not-implemented",
-          "qualification": "quantem.gpu has no CUDA display module; display transforms run in the CPU reference (quantem.gpu.display.cpu), WebGPU and native Swift/Metal.",
+          "qualification": "quantem.gpu has no CUDA display module; display transforms run in the test-only CPU reference (tests/parity/display_reference.py), WebGPU and native Swift/Metal.",
           "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_shared_goldens.py"]
         },
         "mps": {

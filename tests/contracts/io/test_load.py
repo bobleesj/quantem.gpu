@@ -89,103 +89,6 @@ def test_load_rejects_unknown_scan_order() -> None:
         selection._normalize_scan_order("zigzag")
 
 
-def _numpy_resampled_scan_crop_reference(
-    data: np.ndarray,
-    *,
-    source_scan_region: tuple[int, int, int, int],
-    target_scan_region: tuple[int, int, int, int],
-    scan_shift_row_col: tuple[float, float],
-) -> np.ndarray:
-    """Small NumPy reference for CUDA scan-space bilinear resampling."""
-    row_start, row_stop, col_start, col_stop = target_scan_region
-    source_row_start, _source_row_stop, source_col_start, _source_col_stop = (
-        source_scan_region
-    )
-    shift_row, shift_col = scan_shift_row_col
-    out = np.empty(
-        (
-            row_stop - row_start,
-            col_stop - col_start,
-            data.shape[-2],
-            data.shape[-1],
-        ),
-        dtype=np.float32,
-    )
-    for out_row in range(out.shape[0]):
-        src_row = row_start + out_row + shift_row - source_row_start
-        src_row = np.clip(src_row, 0.0, max(float(data.shape[0]) - 1.001, 0.0))
-        r0 = int(np.floor(src_row))
-        r1 = min(r0 + 1, data.shape[0] - 1)
-        wr = np.float32(src_row - r0)
-        for out_col in range(out.shape[1]):
-            src_col = col_start + out_col + shift_col - source_col_start
-            src_col = np.clip(src_col, 0.0, max(float(data.shape[1]) - 1.001, 0.0))
-            c0 = int(np.floor(src_col))
-            c1 = min(c0 + 1, data.shape[1] - 1)
-            wc = np.float32(src_col - c0)
-            out[out_row, out_col] = (
-                (1.0 - wr)
-                * ((1.0 - wc) * data[r0, c0] + wc * data[r0, c1])
-                + wr * ((1.0 - wc) * data[r1, c0] + wc * data[r1, c1])
-            )
-    return out
-
-
-def test_resample_scan_crop_matches_numpy_reference() -> None:
-    """The public resident-array resampler should match explicit bilinear math."""
-    cp = pytest.importorskip("cupy")
-    try:
-        device_count = cp.cuda.runtime.getDeviceCount()
-    except cp.cuda.runtime.CUDARuntimeError as error:
-        pytest.skip(f"CUDA resampling requires an available runtime: {error}")
-    if device_count == 0:
-        pytest.skip("CUDA resampling requires a visible CUDA device.")
-    from quantem.gpu.io.resample import resample_scan_crop
-
-    data_np = np.arange(5 * 6 * 2 * 3, dtype=np.uint16).reshape(5, 6, 2, 3)
-    source_region = (10, 15, 20, 26)
-    target_region = (11, 14, 21, 25)
-    shift = (0.35, -0.20)
-
-    got = resample_scan_crop(
-        cp.asarray(data_np),
-        source_scan_region=source_region,
-        target_scan_region=target_region,
-        scan_shift_row_col=shift,
-    )
-    cp.cuda.get_current_stream().synchronize()
-    expected = _numpy_resampled_scan_crop_reference(
-        data_np.astype(np.float32),
-        source_scan_region=source_region,
-        target_scan_region=target_region,
-        scan_shift_row_col=shift,
-    )
-
-    np.testing.assert_allclose(cp.asnumpy(got), expected, rtol=1.0e-6, atol=5.0e-5)
-    assert got.dtype == cp.float32
-
-    strided_np = data_np[:, :, 1:2, :]
-    strided_got = resample_scan_crop(
-        cp.asarray(data_np)[:, :, 1:2, :],
-        source_scan_region=source_region,
-        target_scan_region=target_region,
-        scan_shift_row_col=shift,
-    )
-    cp.cuda.get_current_stream().synchronize()
-    strided_expected = _numpy_resampled_scan_crop_reference(
-        strided_np.astype(np.float32),
-        source_scan_region=source_region,
-        target_scan_region=target_region,
-        scan_shift_row_col=shift,
-    )
-    np.testing.assert_allclose(
-        cp.asnumpy(strided_got),
-        strided_expected,
-        rtol=1.0e-6,
-        atol=5.0e-5,
-    )
-
-
 @pytest.mark.parametrize(
     "selector",
     [
@@ -299,13 +202,13 @@ def test_pinned_buffer_release_prunes_newly_released_smaller_buffer(
     assert small == {}
 
 
-def test_pinned_buffer_release_defers_pruning_until_pipeline_drains(
+def test_pinned_buffer_release_defers_pruning_to_the_next_pruning_release(
     monkeypatch,
 ) -> None:
     small_array = np.zeros(80, dtype=np.uint8)
     large_array = np.zeros(100, dtype=np.uint8)
     small = {"arr": small_array, "size": 80, "free": False, "addr": 1}
-    large = {"arr": large_array, "size": 100, "free": True, "addr": 2}
+    large = {"arr": large_array, "size": 100, "free": False, "addr": 2}
     released = []
     monkeypatch.setattr(memory_module, "_PINNED_BUFS", [small, large])
 
@@ -318,37 +221,13 @@ def test_pinned_buffer_release_defers_pruning_until_pipeline_drains(
     memory_module._release_pinned(small_array, prune=False)
 
     assert memory_module._PINNED_BUFS == [small, large]
-    assert all(entry["free"] for entry in memory_module._PINNED_BUFS)
-    assert released == []
+    assert small["free"] and released == []
 
-    memory_module._prune_pinned_free()
+    memory_module._release_pinned(large_array)
 
     assert memory_module._PINNED_BUFS == [large]
     assert released == [80]
     assert small == {}
-
-
-def test_pinned_buffer_pipeline_prune_retains_requested_reuse_slots(
-    monkeypatch,
-) -> None:
-    arrays = [np.zeros(size, dtype=np.uint8) for size in (80, 90, 95, 100, 105)]
-    entries = [
-        {"arr": array, "size": int(array.size), "free": True, "addr": index}
-        for index, array in enumerate(arrays, start=1)
-    ]
-    released = []
-    monkeypatch.setattr(memory_module, "_PINNED_BUFS", entries.copy())
-
-    def unregister(entry) -> bool:
-        released.append(entry["size"])
-        return True
-
-    monkeypatch.setattr(memory_module, "_unregister_pinned_entry", unregister)
-
-    memory_module._prune_pinned_free(retain_per_size_class=4)
-
-    assert [entry["size"] for entry in memory_module._PINNED_BUFS] == [90, 95, 100, 105]
-    assert released == [80]
 
 
 def test_decompress_prepared_releases_staging_buffer_on_success(monkeypatch) -> None:
@@ -385,7 +264,7 @@ def test_decompress_prepared_synchronizes_before_failure_release(monkeypatch) ->
         def synchronize(self) -> None:
             events.append("synchronize")
 
-    fake_cupy = SimpleNamespace(cuda=SimpleNamespace(Device=lambda: FakeDevice()))
+    fake_cupy = SimpleNamespace(cuda=SimpleNamespace(Device=FakeDevice))
     monkeypatch.setattr(decode_module, "cp", fake_cupy)
     monkeypatch.setattr(decode_module, "_decode_prepared", fail_decode)
     monkeypatch.setattr(

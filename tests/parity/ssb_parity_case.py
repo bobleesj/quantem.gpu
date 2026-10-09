@@ -516,7 +516,7 @@ def verify_counts_against_hdf5(
 
     side = case.scan_side
     row0, _row1, col0, col1 = (int(v) for v in case.scan_region)
-    native_rows, native_cols = acquisition_scan_shape(case) or (side, side)
+    _, native_cols = acquisition_scan_shape(case) or (side, side)
     if col1 > native_cols:
         raise ValueError(
             f"Case {case.name!r} asks for columns {col0}:{col1}, beyond the "

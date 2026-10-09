@@ -40,3 +40,18 @@ def test_original_h5_joint_queries_preserve_raw_counts(tmp_path):
         session.masked_sum(np.ones((2, 3), bool), output="native").get(),
         np.broadcast_to(raw.sum(-1).reshape(4, 8), (2, 4, 8)),
     )
+
+
+def test_dense_series_accepts_wait_false_and_completes_before_returning():
+    """wait=False queues only on streamed series; a dense series used to raise TypeError for the keyword."""
+    cp = pytest.importorskip("cupy")
+    if cp.cuda.runtime.getDeviceCount() == 0:
+        pytest.skip("CUDA device required")
+    values = (np.arange(4 * 5 * 6 * 7) % 251).astype(np.uint16).reshape(4, 5, 6, 7)
+    data = cp.asarray(values)
+    session = detector.prepare([data, data])
+    pattern = session.frame(7, output="native", wait=False)
+    image = session.masked_sum(np.ones((6, 7), bool), output="native", wait=False)
+    session.finish()
+    np.testing.assert_array_equal(pattern.get(), np.stack([values.reshape(20, 6, 7)[7]] * 2))
+    np.testing.assert_array_equal(image.get(), np.stack([values.sum(axis=(2, 3), dtype=np.uint64)] * 2))

@@ -38,7 +38,7 @@ def test_masks_and_frames_match_direct_sums(q, scans):
     raw, valid = _synthetic(q, scans)
     source = PairedCounts((1, scans, q, q), np.uint16, valid)
     source.append(raw)
-    assert bool(cp.array_equal(source.decode_chunk(0), raw).get())
+    assert bool(cp.array_equal(source.decode_scan_range_device(0, scans), raw).get())
     session = detector.prepare([source])
     assert isinstance(session._backend, PairedSeriesCompute)
     masks = [np.ones((q, q), bool), np.zeros((q, q), bool)]
@@ -162,7 +162,7 @@ def test_saved_form_reopens_byte_identical(tmp_path):
     assert written["bytes"] == (tmp_path / "counts.paired").stat().st_size
     for before, after in zip(source.chunks[0].arrays, reopened.chunks[0].arrays):
         assert bool(cp.array_equal(before, after).get())
-    assert bool(cp.array_equal(reopened.decode_chunk(0), raw).get())
+    assert bool(cp.array_equal(reopened.decode_scan_range_device(0, reopened.chunks[0].scans), raw).get())
 
 
 def test_saved_forms_open_into_a_caller_block_with_one_shared_reader(tmp_path):
@@ -194,7 +194,7 @@ def test_saved_forms_open_into_a_caller_block_with_one_shared_reader(tmp_path):
     for item, raw in zip(loaded, raws):
         for array in item.data.chunks[0].arrays:
             assert block.data.ptr <= array.data.ptr and array.data.ptr + array.nbytes <= block.data.ptr + block.nbytes
-        assert bool(cp.array_equal(item.data.decode_chunk(0), raw).get())
+        assert bool(cp.array_equal(item.data.decode_scan_range_device(0, item.data.chunks[0].scans), raw).get())
 
 
 @pytest.mark.skipif(not os.environ.get("QUANTEM_GPU_PAIRED_REFERENCE"), reason="set QUANTEM_GPU_PAIRED_REFERENCE to a JSON reference on a native H5 source")
@@ -245,7 +245,7 @@ def test_mixed_chunk_sizes_beyond_the_grid_y_limit():
     """A series whose tail was appended in 512-scan pieces still answers masks exactly."""
     raw, valid = _synthetic(17, 512)
     sources = []
-    for n in range(2):
+    for _ in range(2):
         source = PairedCounts((1, 512 * 2, 17, 17), np.uint16, valid)
         source.append(cp.concatenate([raw, raw]))  # one 1024-scan chunk
         sources.append(source)
@@ -302,11 +302,11 @@ def test_block_stride_sums_every_kth_block_exactly_and_resets_the_baseline(q, sc
             assert bool(cp.array_equal(strided[0, 0, rows], expected[0, 0, rows]).get())
         else:
             assert int(strided[0, 0, rows].min().get()) == 7 and int(strided[0, 0, rows].max().get()) == 7
-    assert session.timings["block_stride"] == stride and not session.timings["incremental"]
+    assert session._backend.last["block_stride"] == stride and not session._backend.last["incremental"]
     # A second query at the same stride builds on the first incrementally and stays exact.
     nudged = detector.detector_mask((q * 0.5 - 1.25, q * 0.5 + 2.25), 1.0, q * 0.4, (q, q), dtype=np.float64)
     session.masked_sum(nudged, output="native", out=out, block_stride=stride)
-    assert session.timings["incremental"]
+    assert session._backend.last["incremental"]
     nudged_expected = raw[:, cp.asarray(nudged & valid)].sum(axis=1, dtype=cp.uint64).reshape(1, 1, scans)
     for block in range(blocks):
         rows = slice(block * 512, (block + 1) * 512)
@@ -314,11 +314,11 @@ def test_block_stride_sums_every_kth_block_exactly_and_resets_the_baseline(q, sc
             assert bool(cp.array_equal(out[0, 0, rows], nudged_expected[0, 0, rows]).get())
     # The next ordinary query starts from a fresh full plan and is exact everywhere.
     following = session.masked_sum(masks[1], output="native")
-    assert not session.timings["incremental"]
+    assert not session._backend.last["incremental"]
     assert bool(cp.array_equal(following.reshape(1, 1, scans), expected).get())
     # And incremental queries work again afterwards.
     again = session.masked_sum(masks[0], output="native")
-    assert session.timings["incremental"]
+    assert session._backend.last["incremental"]
     assert bool(cp.array_equal(again, exact).get())
     with pytest.raises(ValueError):
         session.masked_sum(masks[0], output="numpy", block_stride=2)

@@ -1,7 +1,5 @@
 from importlib.resources import files
 
-import pytest
-
 
 def source_text(name: str) -> str:
     """Read one domain-owned WebGPU source resource."""

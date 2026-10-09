@@ -296,3 +296,40 @@ def test_count_and_precision_results_are_one_metal_array_type():
             mean.release()
             codes.release()
         assert mean.is_released and codes.is_released
+
+
+def test_mps_precision_releases_its_metal_temporaries(tmp_path, monkeypatch):
+    """Frames, scan-ROI patterns, range statistics and mask checks release every temporary they allocate.
+
+    PyObjC frees a Metal buffer only on release; these temporaries used to wait for the garbage collector.
+    """
+    from quantem.gpu import io
+    from quantem.gpu.detector import prepare
+    from quantem.gpu.resident.mps import arrays
+    from quantem.gpu.resident.mps import precision as metal
+
+    created = []
+    initialize = arrays.MetalArray.__init__
+
+    def recorded(self, *args, **kwargs):
+        initialize(self, *args, **kwargs)
+        created.append(self)
+
+    values = (np.sin(np.arange(8 * 8 * 16 * 16, dtype=np.float32)) * 1000).reshape(8, 8, 16, 16)
+    source = tmp_path / "source.npy"
+    np.save(source, values)
+    loaded = io.load(source, dtype="scaled_uint16", backend="mps", verbose=False)
+    session = prepare(loaded)
+    block = metal.upload(values[0, 0])
+    mask = np.ones((16, 16), bool)
+    mask[3, 4] = False
+    monkeypatch.setattr(arrays.MetalArray, "__init__", recorded)
+    session.frame(5)
+    session.reduce_frames([0, 3, 9], "mean")
+    session.reduce_frames([0, 3, 9], "max")
+    assert metal.has_invalid_pixels(mask)
+    assert metal.source_range([block], None) == (float(values[0, 0].min()), float(values[0, 0].max()))
+    assert created and all(array.is_released for array in created)
+    assert not block.is_released
+    block.release()
+    loaded.close()

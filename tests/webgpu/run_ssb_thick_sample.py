@@ -33,7 +33,7 @@ def run(thickness_A: float, tilt_mrad: tuple[float, float], num_points: int = 20
     kx = (radius * np.cos(angle)).astype(np.float32); ky = (radius * np.sin(angle)).astype(np.float32)
     qx = rng.uniform(-2.0, 2.0, num_points).astype(np.float32); qy = rng.uniform(-2.0, 2.0, num_points).astype(np.float32)
     G = (rng.standard_normal(num_points) + 1j * rng.standard_normal(num_points)).astype(np.complex64)
-    f32 = lambda v: cp.float32(v)
+    f32 = cp.float32
     cuda = thick_correct_kernel(
         cp.asarray(G), cp.asarray(qx), cp.asarray(qy), cp.asarray(kx), cp.asarray(ky),
         f32(wavelength), f32(semiangle), f32(params["ang_y_rad"]), f32(params["ang_x_rad"]),

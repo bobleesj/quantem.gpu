@@ -127,7 +127,6 @@ with io.load(args.input, backend=args.backend) as loaded:
         expected = np.fromfile(args.reference + "." + name, np.float32).reshape(
             128, 128
         )
-        expected -= np.nanmean(expected)
         report["products"][name] = difference(actual, expected)
         np.testing.assert_allclose(actual, expected, rtol=2e-4, atol=3e-4)
     report["peak_decode_bytes"] = source.peak_decode_bytes

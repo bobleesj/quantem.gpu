@@ -21,8 +21,7 @@ def _bright_disk_counts() -> np.ndarray:
     det_rows, det_cols = np.mgrid[:32, :32]
     disk = (det_rows - 16) ** 2 + (det_cols - 15) ** 2 <= 6**2
     base = np.where(disk, 800, 5).astype(np.uint16)
-    counts = base[None, None] + rng.integers(0, 50, (8, 8, 32, 32), dtype=np.uint16)
-    return counts
+    return base[None, None] + rng.integers(0, 50, (8, 8, 32, 32), dtype=np.uint16)
 
 
 def test_float_mean_dp_matches_scaled_counts():
@@ -93,7 +92,7 @@ def test_automatic_disk_follows_array_edits_and_detector_crops():
     data = _bright_disk_counts()
     bright = detector.bf(data)
     data[:] = np.roll(data, (3, -2), axis=(-2, -1))
-    center, radius = detector.fit_probe(detector.mean(data))
+    center, _ = detector.fit_probe(detector.mean(data))
     assert center == (19.0, 13.0)
     np.testing.assert_array_equal(detector.bf(data), bright)
 

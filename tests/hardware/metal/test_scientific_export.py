@@ -1,7 +1,6 @@
 """Read native HDF5 exports independently and compare every original scalar bit."""
 import json
 import os
-from pathlib import Path
 import subprocess
 
 import h5py

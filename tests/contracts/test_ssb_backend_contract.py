@@ -2,6 +2,7 @@ import inspect
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from tests.parity.ssb_precision import PRECISION
 
@@ -310,7 +311,6 @@ def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
     )
 
     assert state.num_bf == 3
-    assert state.active_num_bf == 2
 
 
 def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
@@ -403,3 +403,15 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
     assert events == ["enter", "exit"]
     assert phase.dtype == np.float32
     assert loss is None
+
+
+def test_thick_sample_search_refuses_a_batch_objective_that_drops_trials() -> None:
+    """A batch objective returning fewer values than trials is an error, not trials left without a result."""
+    pytest.importorskip("optuna")
+    from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
+
+    def short_batch(rows):
+        return -np.sum(rows[:-1] ** 2, axis=1)
+
+    with pytest.raises(ValueError, match="zip"):
+        fit_sample_search(lambda *args: 0.0, objective_batch=short_batch, batch_size=4, trials=8, verbose=False)

@@ -156,6 +156,28 @@ The historical integer gate passed on NVIDIA/Blackwell on 2026-09-07. That
 result predates the QEM container migration and does not certify the current
 reader; run the current headed QEM gate above for a fresh result.
 
+## Scan-ROI patterns of dense residents
+
+`reduce-frames-parity.ts` exports `runReduceFramesParity(device)`; the headed
+QEM gate above runs it. It reduces two-chunk uint16, uint32 and float32 stacks
+whose integer per-pixel sums exceed 2^32 and compares every sum and mean
+exactly against float64 sums rounded once to float32. A 32-bit accumulator
+wraps these sums, and reading float32 data as packed uint16 counts fails them.
+
+## Raw RGBA readback of display slots
+
+`apply-slots-readback.ts` exports `runApplySlotsReadback(device)`; the headed
+QEM gate runs it. `applySlots` must return each image's exact RGBA bytes for an
+uploaded slot, a slot uploaded with spare RGBA capacity, and an adopted buffer,
+with no validation error.
+
+## Decoder pipelines per device (CPU-only)
+
+`pipeline-device-cache.ts` is a Node test with fake devices: a device created
+after a device loss must compile its own decoder pipelines instead of reusing
+the lost device's. Bundle with esbuild's `--platform=node --format=esm` and run
+`node --test` on the output.
+
 ## Bounded payload read-ahead (CPU-only)
 
 Bundle `rans-read-ahead.ts` with esbuild's `--platform=node --format=esm`, then

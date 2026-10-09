@@ -76,3 +76,22 @@ def test_bounded_float_reads_refuse_exact_sums_on_both_outputs(tmp_path):
         for output in ("numpy", "native"):
             with pytest.raises(TypeError, match="float"):
                 session.masked_sum_exact(_disk(DETECTOR_SHAPE), output=output)
+
+
+def test_cuda_native_out_must_not_overlap_any_query_error_slot(tmp_path):
+    """Every in-flight query's error counter is resident storage that ``out`` may not alias, not only the first."""
+    if _backend() != "cuda":
+        pytest.skip("CUDA native output buffers")
+    import cupy as cp
+
+    mask = _disk(DETECTOR_SHAPE)
+    with _load(tmp_path, _counts(51), "cuda") as loaded:
+        session = detector.prepare(loaded)
+        slots, regions = session._backend.error_slots, session._backend.regions
+        for slot in range(slots.size):
+            address = slots.data.ptr + slot * slots.itemsize
+            assert np.any((regions[:, 0] <= address) & (address < regions[:, 1])), f"error slot {slot} unregistered"
+        exact = session.masked_sum_exact(mask, output="native")
+        overlapping = cp.ndarray(exact.shape, exact.dtype, memptr=slots.data + 3 * slots.itemsize)
+        with pytest.raises(ValueError, match="must not overlap"):
+            session.masked_sum_exact(mask, output="native", out=overlapping)

@@ -31,7 +31,7 @@ def test_original_h5_streams_into_exact_paired_sources(tmp_path):
     assert loaded.metadata["representation"] == "paired"
     assert loaded.metadata["resident_profile"] == "paired-polar-counts-v1"
     assert loaded.metadata["load_timings"]["shards"] == 4
-    assert bool(cp.array_equal(loaded.data.decode_chunk(0), cp.asarray(counts.reshape(1024, 24, 24))).get())
+    assert bool(cp.array_equal(loaded.data.decode_scan_range_device(0, 1024), cp.asarray(counts.reshape(1024, 24, 24))).get())
     series = io.load([first, second], backend="cuda", representation="paired", dtype="native", apply_mask=False, verbose=False)
     assert [item.metadata["shape"] if "shape" in item.metadata else item.data.shape for item in series] == [(32, 32, 24, 24)] * 2
     session = detector.prepare([item.data for item in series])
@@ -51,7 +51,7 @@ def test_saved_form_is_detected_and_reopens_without_decoding(tmp_path):
     assert reopened.metadata["representation"] == "paired"
     for before, after in zip(loaded.data.chunks[0].arrays, reopened.data.chunks[0].arrays):
         assert bool(cp.array_equal(before, after).get())
-    assert bool(cp.array_equal(reopened.data.decode_chunk(0), cp.asarray(counts.reshape(1024, 24, 24))).get())
+    assert bool(cp.array_equal(reopened.data.decode_scan_range_device(0, 1024), cp.asarray(counts.reshape(1024, 24, 24))).get())
     np.testing.assert_array_equal(reopened.data.detector_total_device().get(),
                                   counts.sum(axis=(0, 1), dtype=np.uint64))
     with pytest.raises(NotImplementedError, match="must remain ANS encoded"):
