@@ -22,7 +22,12 @@ polling, or metadata access without an accelerator.
 Metadata parsing may run on the host, but detector decoding and compression do
 not silently fall back to CPU. `backend="auto"` selects CUDA or MPS and raises
 with a corrective message when neither accelerated backend is available. The
-explicit `backend="cpu"` path exists for reference and parity tests.
+explicit `backend="cpu"` path exists for reference and parity tests, and for
+computers without a GPU: `io.load(path, device="cpu")` is the same request and
+returns a dense host acquisition whose indexing gives CPU tensors and which
+`numpy.asarray` converts. `device=` takes the names used across QuantEM:
+`"auto"` (CUDA, then MPS, then CPU, printing which), `"cuda"`, `"cuda:N"`,
+`"mps"` and `"cpu"`.
 
 ## `discover`
 
@@ -361,13 +366,17 @@ needs no sidecar. The session's values override what the master records (an Arin
 `photon_energy` field can hold a stale voltage). Only the fields used are attached (`dataset.json`), not the
 session notes. The command line names the calibrated fields for each copy. After writing, every value is
 compared with the detector files read through h5py before the copy is published.
-Flagged pixels are preserved and checked too: conversion disables display-time
-hot-pixel correction. CUDA `uint32` files are stored as `uint16` only after every
-stored value is shown to fit, with the original dtype retained in metadata.
-Larger values are refused, even at flagged pixels. `float32` acquisitions are
+Flagged pixels are kept and checked too: conversion disables display-time
+hot-pixel correction, and the detector pixel mask is saved with the copy. CUDA and
+MPS store `uint32` files as `uint16` only after every count at an unflagged pixel
+is shown to fit, with the original dtype retained in metadata; a larger count at
+an unflagged pixel is refused. Arina marks flagged pixels of a `uint32` file with
+0xFFFFFFFF, which `uint16` cannot hold: a flagged value above 65535 is stored as
+0, counted in `flagged_markers_stored_as_zero` and declared as the
+`flagged_marker_zeroing` processing step, and verification checks that mapping.
+Reads exclude flagged pixels through the pixel mask, so no measurement changes. `float32` acquisitions are
 not supported by this collection command (other `.qem` writers support them).
-Use `--backend cuda` or `--backend mps` to select a device backend; the Metal
-collection loader currently accepts uint8/uint16, not uint32. An
+Use `--backend cuda` or `--backend mps` to select a device backend. An
 acquisition whose copy would be larger than its HDF5 files is reported and left
 as HDF5. Oversized masters that cannot be embedded are not converted, so long
 metadata tables cannot be silently lost. Source files are never modified or

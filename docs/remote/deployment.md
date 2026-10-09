@@ -45,6 +45,9 @@ conda run -n quantem-gpu-remote \
   --implementation-revision <exact-git-sha>
 ```
 
+Port 8780 is the default; if another local service already listens there
+(for example a dashboard), pass a free `--port` and forward that port instead.
+
 `--implementation-revision` is the revision reported to clients in the
 capabilities response. Without it the service reports the
 installed package version; pass the exact Git commit for a recorded

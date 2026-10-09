@@ -173,6 +173,8 @@ parts:
         title: Downstream sync after the restructure (2026-10-05)
       - file: maintainer/2026-10-05-ssb-detector-sampling
         title: SSB detector sampling and fit state (2026-10-05)
+      - file: maintainer/2026-10-07-mps-uint32-masters-and-cuda13-extra
+        title: MPS uint32 masters and the CUDA 13 extra (2026-10-07)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
       - file: maintainer/virtual-image-kernel-checklist

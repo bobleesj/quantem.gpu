@@ -17,14 +17,16 @@ Use Python 3.11 or newer:
 python -m pip install -e ".[dev,docs]"
 ```
 
-On Apple platforms, install the MPS dependencies when the change exercises the
-Python MPS backend:
+Install the GPU runtime when the change exercises a GPU backend: the `cuda`
+extra installs CuPy for an NVIDIA GPU, and the `mps` extra installs Metal and
+MLX on an Apple silicon Mac:
 
 ```bash
-python -m pip install -e ".[dev,docs,mps]"
+python -m pip install -e ".[dev,docs,cuda]"   # NVIDIA
+python -m pip install -e ".[dev,docs,mps]"    # Apple silicon
 ```
 
-CUDA tests require a compatible NVIDIA driver and the `cuda` extra. Native
+CUDA tests require an NVIDIA driver 580 or newer (CUDA 13) and the `cuda` extra. Native
 Swift/Metal changes require Xcode command-line tools. The WebGPU contract tests
 need Node.js 22 or newer and the JavaScript development tools pinned in
 `package-lock.json`:
