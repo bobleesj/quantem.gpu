@@ -639,6 +639,13 @@ async function admitQemFile(
       }
       device!.queue.submit([encoder.finish()]);
       regions.push(...copied);
+      // A staged piece holding no whole block only fed the copies: release it,
+      // since no resident set will ever bind it. WebGPU completes the submitted
+      // copies first; waiting here would hold back the staged uploads.
+      const bound = new Set(blockMeta.map(block => regions.find(region => block.byte_start - body >= region.start && block.byte_end - body <= region.end)!.group));
+      for (const group of groups) if (!bound.has(group)) group.buffer!.destroy();
+      groups.splice(0, groups.length, ...groups.filter(group => bound.has(group)));
+      regions.splice(0, regions.length, ...regions.filter(region => bound.has(region.group)));
     }
     const mapped: RansManifest = {
       scan_shape: [rows, cols],

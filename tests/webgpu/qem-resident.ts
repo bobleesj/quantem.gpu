@@ -104,41 +104,49 @@ test("failed admissions and loads release every staged buffer", async () => {
   assert.ok(laterFailure.buffers.length > 0 && laterFailure.buffers.every(buffer => buffer.destroyed), "the first file's staged payload is released");
 });
 
-test("a chunk larger than a group is split and its cut block copied on the GPU; nothing is read after authentication", async () => {
-  // The first chunk (6012 bytes) exceeds a 4096-byte group: its last block straddles the split.
-  const bytes = syntheticQem([[1001, 3006, 2005], [4, 999]]);
-  const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
+test("a chunk larger than a group is split and its cut blocks copied on the GPU; nothing is read after authentication", async () => {
+  // 4096-byte groups. Expected groups: staged groups holding whole blocks plus groups of copied blocks;
+  // a staged piece that holds only the tail of a cut block is released once the copies are made.
+  const layouts: [number[][], number][] = [
+    [[[1001, 3006, 2005], [4, 999]], 3],
+    [[[1000, 3000, 2000]], 2],
+    [[[3000, 3000, 3000, 3000]], 4],
+  ];
   Object.assign(globalThis, { location: { href: "http://localhost/" } });
-  let authenticated = false;
-  const later: string[] = [];
-  globalThis.fetch = (async (_url: URL, init: RequestInit = {}) => {
-    if (init.method === "HEAD") return new Response(null, { headers: { "Content-Length": String(bytes.length) } });
-    const range = (init.headers as Record<string, string>).Range;
-    const [first, last] = /bytes=(\d+)-(\d+)/.exec(range)!.slice(1).map(Number);
-    const served = bytes.slice(first, last + 1);
-    // Anything served after the authentication stream is tampered and must never reach the decoder.
-    if (authenticated) { later.push(range); served.fill(0xa5); }
-    if (first === body && last === bytes.length - 1) authenticated = true;
-    return new Response(served, { status: 206 });
-  }) as typeof fetch;
-  const gpu = fakeDevice({ maxBufferSize: 4096, maxStorageBufferBindingSize: 4096 });
-  const [file] = await qemHttpFiles("/", ["split.qem"]);
-  const set = await RansResidentSet.loadQemFile(gpu.device, file);
-  assert.deepEqual(later, [], "no byte is read after the authentication stream");
-  const blocks = await blocksOf(await qemFileSource(new File([bytes], "plain.qem")));
-  const groups = (set as unknown as { groups: { payload: FakeBuffer; units: { block: number; payload_word: number; frameFlags: number }[] }[] }).groups;
-  assert.equal(groups.length, 3, "two staged groups and one group of copied blocks");
-  let bound = 0;
-  for (const group of groups) {
-    for (const unit of group.units) {
-      const block = blocks[unit.block], at = unit.payload_word * 4 + ((unit.frameFlags >>> 28) & 3);
-      assert.deepEqual(new Uint8Array(group.payload.bytes, at, block.byte_end - block.byte_start), bytes.subarray(block.byte_start, block.byte_end), `block ${unit.block}`);
-      bound++;
+  for (const [layout, expectedGroups] of layouts) {
+    const bytes = syntheticQem(layout);
+    const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
+    let authenticated = false;
+    const later: string[] = [];
+    globalThis.fetch = (async (_url: URL, init: RequestInit = {}) => {
+      if (init.method === "HEAD") return new Response(null, { headers: { "Content-Length": String(bytes.length) } });
+      const range = (init.headers as Record<string, string>).Range;
+      const [first, last] = /bytes=(\d+)-(\d+)/.exec(range)!.slice(1).map(Number);
+      const served = bytes.slice(first, last + 1);
+      // Anything served after the authentication stream is tampered and must never reach the decoder.
+      if (authenticated) { later.push(range); served.fill(0xa5); }
+      if (first === body && last === bytes.length - 1) authenticated = true;
+      return new Response(served, { status: 206 });
+    }) as typeof fetch;
+    const gpu = fakeDevice({ maxBufferSize: 4096, maxStorageBufferBindingSize: 4096 });
+    const [file] = await qemHttpFiles("/", ["split.qem"]);
+    const set = await RansResidentSet.loadQemFile(gpu.device, file);
+    assert.deepEqual(later, [], "no byte is read after the authentication stream");
+    const blocks = await blocksOf(await qemFileSource(new File([bytes], "plain.qem")));
+    const groups = (set as unknown as { groups: { payload: FakeBuffer; units: { block: number; payload_word: number; frameFlags: number }[] }[] }).groups;
+    assert.equal(groups.length, expectedGroups, JSON.stringify(layout));
+    let bound = 0;
+    for (const group of groups) {
+      for (const unit of group.units) {
+        const block = blocks[unit.block], at = unit.payload_word * 4 + ((unit.frameFlags >>> 28) & 3);
+        assert.deepEqual(new Uint8Array(group.payload.bytes, at, block.byte_end - block.byte_start), bytes.subarray(block.byte_start, block.byte_end), `block ${unit.block}`);
+        bound++;
+      }
     }
+    assert.equal(bound, blocks.length);
+    set.dispose();
+    assert.ok(gpu.buffers.every(buffer => buffer.destroyed), `every buffer is released for ${JSON.stringify(layout)}`);
   }
-  assert.equal(bound, blocks.length);
-  set.dispose();
-  assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
 });
 
 test("a series forwards each acquisition's staged payload", async () => {
@@ -175,6 +183,7 @@ test("mapped payload groups stay within 256 MiB even when the device allows more
   const set = await RansResidentSet.loadQemFile(uploaded.device, countingFile(syntheticQem([[129 << 20, 128 << 20]])));
   assert.ok(largest(uploaded.buffers) <= 256 << 20, `largest uploaded group ${largest(uploaded.buffers)} bytes`);
   set.dispose();
+  assert.ok(uploaded.buffers.every(buffer => buffer.destroyed), "the 1 MiB piece holding only a block's tail is released too");
 });
 
 test("borrowed count views address each acquisition's exact uint32 image", async () => {
