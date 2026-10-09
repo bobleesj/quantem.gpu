@@ -7,7 +7,9 @@ export interface RansDirectoryHandle {
 export interface RansByteSource {
   mode: "http" | "local-folder";
   read(name: string, start?: number, end?: number): Promise<ArrayBuffer>;
-  /** Where an authenticated payload range already lies on the GPU; undefined when it was not staged. */
+  /** Where an authenticated payload range lies on the GPU. A .qem source admitted with a
+   * device stages every block and throws for any other range; a source that answers
+   * undefined sends that block to the per-block upload path. */
   residentPayload?(name: string, start: number, end: number): { buffer: GPUBuffer; offset: number } | undefined;
   /** Release staged GPU storage; a loaded resident set owns it instead. */
   dispose?(): void;
