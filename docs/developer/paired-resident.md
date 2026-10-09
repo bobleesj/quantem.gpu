@@ -37,10 +37,8 @@ dense or ANS-file paths changes when this layout is not requested.
    (or `io.load` on the file) reopens them with direct I/O and no decode.
 6. Reconstruction consumers read native count blocks back from the resident
    form: `PairedCounts.decode_blocks(first, scans)` decodes whole 512-scan
-   blocks of one chunk, and `PairedFeed(sources, amplitude=True)` iterates the
-   blocks of a series on a prefetch stream (`depth` buffers ahead, events in
-   both directions) so a joint time-series ptychography update never touches a
-   dense copy of the data.
+   blocks of one chunk, so a joint time-series ptychography update never
+   touches a dense copy of the data.
 
 Axes are `(scan_row, scan_col, detector_row, detector_col)`; equations use
 $I[R_r,R_c,k_r,k_c]$ with $\mathbf R=(R_r,R_c)$ and $\mathbf k=(k_r,k_c)$.
@@ -68,7 +66,7 @@ ABI string; any change needs a new ABI.
 | piece | location |
 | --- | --- |
 | kernels: tables, encode, compact, decode, decode_range, frame, plan, residual, polar fields, index pack/sum, offsets, planner weights | `src/quantem/gpu/resident/cuda/kernels/paired.cu` |
-| `PairedCounts`, polar layout, saved form, `decode_blocks`, `PairedFeed` | `src/quantem/gpu/resident/cuda/paired.py` |
+| `PairedCounts`, polar layout, saved form, `decode_blocks` | `src/quantem/gpu/resident/cuda/paired.py` |
 | `PairedSeriesCompute` and its polar planner | `src/quantem/gpu/detector/cuda/paired_series.py` |
 | planner hooks in the streamed base | `src/quantem/gpu/detector/cuda/streamed_series.py` (`_plan`, `_cost`) |
 | dispatch | `src/quantem/gpu/detector/session.py` |
@@ -82,9 +80,7 @@ The contract tests build synthetic sources with a wide literal row, a
 saturated row and an invalid pixel at 17x17, 19x19 and 257x257 detectors,
 compare every mask and frame with direct sums (including `uint64` sums above
 `2**32`), reject a reserved header bit and a shortened stream extent, and
-reopen a saved form byte-identically, and iterate two sources through
-`PairedFeed` checking every block and amplitude against the raw counts. The
-loading tests write four-shard
+reopen a saved form byte-identically. The loading tests write four-shard
 Arina-style masters with `save_compressed_arina_h5`, stream one and two of them
 through `io.load(representation="paired")`, compare every count, a detector
 mask and a frame with direct sums, and reopen a saved form through `io.load`
@@ -155,8 +151,10 @@ Reopening carves every array of a file from one device allocation; with one
 allocation per chunk array the driver's allocation granularity cost about 7 GB
 across the series and only 66 files fit.
 
-Feeding a reconstruction from the resident form (three 512x512x192x192 sources,
-`PairedFeed(depth=2)`, consumer idle, same device shared with a desktop):
+Feeding a reconstruction from the resident form, measured on 2026-09-09 with a
+double-buffered block iterator over three 512x512x192x192 sources (`PairedFeed`,
+`depth=2`, consumer idle, same device shared with a desktop). That iterator has
+since been removed; `PairedCounts.decode_blocks` reads the same blocks:
 
 | measurement | per acquisition |
 | --- | --- |
