@@ -617,11 +617,14 @@ async function admitQemFile(
     const cut = !device ? [] : blockMeta.filter(block => !regions.some(region => block.byte_start - body >= region.start && block.byte_end - body <= region.end));
     if (cut.length) {
       const copies: PayloadGroup[] = [], copied: Region[] = [];
+      // Copy groups are never mapped, so only the device's binding limit applies:
+      // a block close to the mapped cap still fits with its word-aligned ends.
+      const copyLimit = Math.min(device!.limits.maxStorageBufferBindingSize, device!.limits.maxBufferSize);
       for (const block of cut) {
         const start = Math.floor((block.byte_start - body) / 4) * 4, end = Math.ceil((block.byte_end - body) / 4) * 4;
-        requireQem(end - start <= groupLimit, "encoded block exceeds GPU buffer limits; use the native GPU application");
+        requireQem(end - start <= copyLimit, "encoded block exceeds GPU buffer limits; use the native GPU application");
         let group: PayloadGroup | undefined = copies[copies.length - 1];
-        if (!group || group.size + end - start > groupLimit) { group = { size: 0, end: 0 }; copies.push(group); }
+        if (!group || group.size + end - start > copyLimit) { group = { size: 0, end: 0 }; copies.push(group); }
         copied.push({ start, end, offset: group.size, group });
         group.size += end - start;
       }
