@@ -153,7 +153,11 @@ export async function qemHttpFiles(base: string, names: string[], signal?: Abort
       let reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>;
       let byob = true;
       try { reader = response.body.getReader({ mode: "byob" }); }
-      catch { reader = response.body.getReader(); byob = false; }
+      catch (error) {
+        // Only a body that is not a byte stream refuses a BYOB reader, with a TypeError.
+        if (!(error instanceof TypeError)) throw error;
+        reader = response.body.getReader(); byob = false;
+      }
       let remaining = end - start;
       streaming = true;
       try {
