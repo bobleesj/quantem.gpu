@@ -18,11 +18,11 @@ export class FakeBuffer {
     this.usage = descriptor.usage;
     this.mappedAtCreation = Boolean(descriptor.mappedAtCreation);
     this.mapped = this.mappedAtCreation;
-    this.bytes = new ArrayBuffer(this.mappedAtCreation ? descriptor.size : 0);
+    this.bytes = new ArrayBuffer(descriptor.size);
   }
   getMappedRange() { return this.bytes; }
   unmap() { this.mapped = false; }
-  async mapAsync() { this.bytes = new ArrayBuffer(this.size); this.mapped = true; }
+  async mapAsync() { this.mapped = true; }
   destroy() { this.destroyed = true; }
 }
 
@@ -48,7 +48,11 @@ export function fakeDevice(limits = { maxBufferSize: 2 ** 32, maxStorageBufferBi
     createPipelineLayout: () => ({}),
     createComputePipeline: () => ({ getBindGroupLayout: () => ({}) }),
     createBindGroup(descriptor: GPUBindGroupDescriptor) { bindGroups.push(descriptor); return {}; },
-    createCommandEncoder: () => ({ beginComputePass: () => pass, copyBufferToBuffer() {}, finish: () => ({}) }),
+    // Copies run at once: the tests only read results after the matching submit.
+    createCommandEncoder: () => ({ beginComputePass: () => pass, finish: () => ({}),
+      copyBufferToBuffer(source: FakeBuffer, sourceOffset: number, target: FakeBuffer, targetOffset: number, size: number) {
+        new Uint8Array(target.bytes, targetOffset, size).set(new Uint8Array(source.bytes, sourceOffset, size));
+      } }),
     queue: { writeBuffer() {}, submit() { submissions++; }, onSubmittedWorkDone: async () => {} },
   };
   return { device: device as unknown as GPUDevice, buffers, bindGroups, submissions: () => submissions };

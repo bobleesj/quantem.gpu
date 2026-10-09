@@ -68,8 +68,12 @@ A passed gate is numerical browser coverage, not a UI or performance claim.
 QEMDATA1 envelope and runtime-column-rans-spatial-v2 integer codec. Headers and
 payload chunks are authenticated before GPU upload: each 64 MiB chunk's stream
 bytes are copied into resident GPU groups of at most 256 MiB only after its
-SHA-256 matches, so the payload is read once. A file whose chunk exceeds one
-group keeps the per-block upload path. Only encoded tables are prepared on the
+SHA-256 matches, so the payload is read once and only hashed bytes are
+decoded. A chunk larger than one group is split across groups on a word
+boundary; each block a split cuts is copied whole on the GPU from the
+authenticated groups. Nothing is read after authentication. The gate repeats
+the two-block fixtures with group limits below one chunk on the real device.
+Only encoded tables are prepared on the
 host; measurement decoding remains in WGSL. QEM detector validity masks reach
 the displayed products without rewriting stored counts. Series must share
 geometry, dtype, and validity masks; this is decided from the authenticated
@@ -204,7 +208,9 @@ whose payloads cross 64 MiB chunks and the 256 MiB group limit cheaply.
   only after their checksum matched.
 - `qem-resident.ts`: stream bytes are staged once and bound with their byte
   offset, tables equal a plain admission, failures release every staged buffer,
-  oversized chunks fall back to per-block uploads, groups stay within 256 MiB,
+  oversized chunks are split with their cut blocks copied on the GPU while
+  bytes served after authentication never reach the decoder, uploads and
+  staged segments keep unit rows in group order, groups stay within 256 MiB,
   series forward staged payload per acquisition, and borrowed count views
   address the canonical uint32 images.
 - `rans-batch.ts`: a compare-grid batch over separately loaded sets integrates

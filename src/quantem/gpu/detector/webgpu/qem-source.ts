@@ -413,27 +413,32 @@ async function admitQemFile(
     { offset: chunk.arrays[2].offset, target: new Uint8Array(chunk.arrays[2].count) },
   ]);
   // With a device, stream bytes are copied into resident GPU groups as their
-  // chunks authenticate, so the payload is read once. A chunk larger than one
-  // group cannot be split before its offset table arrives; such a file keeps
-  // the decoder's per-block upload path.
+  // chunks authenticate: the payload is read once and only hashed bytes are
+  // ever decoded. A chunk larger than one group is split across groups on a
+  // word boundary; the blocks a split cuts are copied whole on the GPU once
+  // the authenticated offset tables locate them.
   type PayloadGroup = { size: number; end: number; buffer?: GPUBuffer; mapped?: Uint8Array };
+  type Region = { start: number; end: number; offset: number; group: PayloadGroup };
   const groups: PayloadGroup[] = [];
-  const regions: { start: number; end: number; offset: number; group: PayloadGroup }[] = [];
+  const regions: Region[] = [];
   const groupLimit = device ? payloadGroupLimit(device) : 0;
-  if (device && header.chunks.every(chunk => chunk.arrays[0].count <= groupLimit)) {
+  if (device) {
     for (const chunk of header.chunks) {
-      const { offset: start, count } = chunk.arrays[0];
-      let group = groups[groups.length - 1];
+      let { offset: start, count } = chunk.arrays[0];
+      let group: PayloadGroup | undefined = groups[groups.length - 1];
       let offset = group ? Math.ceil(group.size / 4) * 4 : 0;
-      if (!group || offset + count > groupLimit) {
-        group = { size: 0, end: 0 };
-        groups.push(group);
-        offset = 0;
+      if (group && offset + count > groupLimit) group = undefined;
+      for (;;) {
+        if (!group) { group = { size: 0, end: 0 }; groups.push(group); offset = 0; }
+        const piece = count > groupLimit - offset ? Math.floor((groupLimit - offset) / 4) * 4 : count;
+        group.size = offset + piece;
+        // An empty region must not delay unmapping the group's last copied bytes.
+        if (piece) group.end = start + piece;
+        regions.push({ start, end: start + piece, offset, group });
+        start += piece; count -= piece;
+        if (!count) break;
+        group = undefined;
       }
-      group.size = offset + count;
-      // An empty region must not delay unmapping the group's last copied bytes.
-      if (count) group.end = start + count;
-      regions.push({ start, end: start + count, offset, group });
     }
   }
   requireQem(globalThis.crypto?.subtle, "checksum verification requires HTTPS or localhost; serve the viewer securely");
@@ -475,7 +480,7 @@ async function admitQemFile(
           if (last <= first) continue;
           const group = region.group;
           if (!group.buffer) {
-            group.buffer = device!.createBuffer({ size: Math.ceil(group.size / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+            group.buffer = device!.createBuffer({ size: Math.ceil(group.size / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
             group.mapped = new Uint8Array(group.buffer.getMappedRange());
           }
           group.mapped!.set(bytes.subarray(first - start, last - start), region.offset + first - region.start);
@@ -581,6 +586,36 @@ async function admitQemFile(
         columns.push(metadata);
       }
     }
+    // Copy each block cut by a group split, whole and from authenticated bytes,
+    // so the decoder binds every block in one buffer. Word-aligned extents keep
+    // the GPU copies valid; the decoder skips the unaligned head through its
+    // byte offset and never reads past the block's end.
+    const cut = !device ? [] : blockMeta.filter(block => !regions.some(region => block.byte_start - body >= region.start && block.byte_end - body <= region.end));
+    if (cut.length) {
+      const copies: PayloadGroup[] = [], copied: Region[] = [];
+      for (const block of cut) {
+        const start = Math.floor((block.byte_start - body) / 4) * 4, end = Math.ceil((block.byte_end - body) / 4) * 4;
+        requireQem(end - start <= groupLimit, "encoded block exceeds GPU buffer limits; use the native GPU application");
+        let group: PayloadGroup | undefined = copies[copies.length - 1];
+        if (!group || group.size + end - start > groupLimit) { group = { size: 0, end: 0 }; copies.push(group); }
+        copied.push({ start, end, offset: group.size, group });
+        group.size += end - start;
+      }
+      for (const group of copies) {
+        group.buffer = device!.createBuffer({ size: group.size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        groups.push(group);
+      }
+      const encoder = device!.createCommandEncoder();
+      for (const target of copied) {
+        for (const source of regions) {
+          // A staged region's last word is padding when its length is not a whole number of words.
+          const first = Math.max(target.start, source.start), last = Math.min(target.end, source.start + Math.ceil((source.end - source.start) / 4) * 4);
+          if (last > first) encoder.copyBufferToBuffer(source.group.buffer!, source.offset + first - source.start, target.group.buffer!, target.offset + first - target.start, last - first);
+        }
+      }
+      device!.queue.submit([encoder.finish()]);
+      regions.push(...copied);
+    }
     const mapped: RansManifest = {
       scan_shape: [rows, cols],
       detector_shape: [detRows, detCols],
@@ -614,7 +649,7 @@ async function admitQemFile(
     return {
       mode: "local-folder",
       residentPayload(name, start, end) {
-        if (!regions.length) return undefined;
+        // Staged regions come first, so only a cut block resolves to its copy.
         const region = regions.find(region => start - body >= region.start && end - body <= region.end);
         requireQem(name === "payload" && region && end >= start, "invalid resident payload range");
         return { buffer: region.group.buffer!, offset: region.offset + start - body - region.start };
@@ -625,20 +660,9 @@ async function admitQemFile(
           return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
         if (name === "entries") return entries.buffer;
         if (name === "lookup") return new ArrayBuffer(4);
-        if (name === "payload") {
-          requireQem(
-            start !== undefined &&
-              end !== undefined &&
-              blockMeta.some(
-                (block) =>
-                  start >= block.byte_start &&
-                  end <= block.byte_end &&
-                  end >= start,
-              ),
-            "invalid payload request",
-          );
-          return file.slice(start, end).arrayBuffer();
-        }
+        // Payload bytes are decoded only from the authenticated GPU groups; reading
+        // the file again would bypass its checksums.
+        requireQem(name !== "payload", "payload bytes stay in authenticated GPU groups; load the file with a WebGPU device");
         const column = /^columns-(\d+)$/.exec(name);
         if (column) return columns[Number(column[1])].buffer;
         const offset = /^t0-offsets-(\d+)\.u32$/.exec(name);
