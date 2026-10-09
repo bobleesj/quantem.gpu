@@ -108,6 +108,12 @@ code.literal {
   flex: 1 1 12rem;
 }
 
+/* A filter sizes to its longest option; without a cap, a long cell value
+   widened the whole page past the viewport. */
+.qgpu-table-tools select {
+  max-width: 100%;
+}
+
 .qgpu-table-count {
   color: var(--pst-color-text-muted);
   font-variant-numeric: tabular-nums;
