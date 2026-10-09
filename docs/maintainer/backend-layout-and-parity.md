@@ -181,9 +181,8 @@ python scripts/run_tests.py tests/contracts/io/test_load.py -q
 # Browser: install the development tools, then bundle and execute import checks.
 npm install --no-save --package-lock=false esbuild jsfive typescript @webgpu/types
 python scripts/run_tests.py tests/contracts/test_webgpu_entrypoint.py -q
-npx --no-install tsc --noEmit --skipLibCheck --target ES2022 \
-  --module ESNext --moduleResolution bundler --types @webgpu/types \
-  src/quantem/gpu/webgpu/index.ts
+# Every source in webgpu/sources.json, with quantem.widget's compiler options.
+npm run typecheck
 
 # Native Vulkan: portable host contracts only; no GPU performance claim.
 cmake -S native/vulkan -B /tmp/qgpu-vulkan-host

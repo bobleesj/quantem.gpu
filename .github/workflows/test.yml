@@ -45,11 +45,9 @@ jobs:
       - name: Install browser contract tools
         run: npm ci
       # sources.json lists every file quantem.widget bundles; the entry point alone never reached ssb/webgpu.
+      # npm run typecheck uses the widget's compiler options, so an unused parameter fails here, not in the widget.
       - name: Type-check the bundled browser sources
-        run: >-
-          npx --no-install tsc --noEmit --strict --skipLibCheck --target ES2022
-          --module ESNext --moduleResolution bundler --resolveJsonModule --types @webgpu/types
-          $(node -p "require('./src/quantem/gpu/webgpu/sources.json').filter((path) => path.endsWith('.ts')).map((path) => 'src/quantem/gpu/' + path).join(' ')")
+        run: npm run typecheck
       - name: Validate profiling registry
         run: |
           python scripts/check_profile_registry.py

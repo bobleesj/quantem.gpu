@@ -3,6 +3,9 @@
   "private": true,
   "description": "Development tools for the WebGPU TypeScript sources and their contract tests; not part of the Python package. Install with `npm ci`.",
   "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc --noEmit --strict --noUnusedLocals --noUnusedParameters --noFallthroughCasesInSwitch --isolatedModules --skipLibCheck --target ES2020 --lib ES2020,DOM,DOM.Iterable --module ESNext --moduleResolution bundler --resolveJsonModule --types @webgpu/types $(node -p \"require('./src/quantem/gpu/webgpu/sources.json').filter((path) => path.endsWith('.ts')).map((path) => 'src/quantem/gpu/' + path).join(' ')\")"
+  },
   "devDependencies": {
     "@webgpu/types": "^0.1.68",
     "esbuild": "^0.28.1",
