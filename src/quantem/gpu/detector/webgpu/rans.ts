@@ -36,13 +36,16 @@ fn byte_at(c: ptr<function, Col>, at: u32) -> u32 { let w = (*c).pay + (at >> 2u
 fn open_col(u: Unit, k: u32) -> Col {
   var c: Col;
   c.pay = u.payload_word; c.ebase = u.entries_word;
-  c.cursor = offsets[u.offsets_base + k]; c.end = offsets[u.offsets_base + k + 1u];
+  // A block staged inside a resident payload group may start mid-word: bits
+  // 28-29 of pad carry its byte offset within payload_word.
+  let byte_bias = (u.pad >> 28u) & 3u;
+  c.cursor = offsets[u.offsets_base + k] + byte_bias; c.end = offsets[u.offsets_base + k + 1u] + byte_bias;
   c.right0 = tables[u.colmeta_word + k * 3u + 1u];
   c.left0 = tables[u.colmeta_word + k * 3u]; c.mode = tables[u.colmeta_word + k * 3u + 2u]; c.raw = c.mode == 1u;
   c.bad = false; c.state = LOWER; c.lutbyte = u.lut_word * 4u + k * 256u;
   return c;
 }
-fn unit_frames(u: Unit) -> u32 { return select(p.frames, u.pad & 0x3fffffffu, (u.pad & 0x3fffffffu) != 0u); }
+fn unit_frames(u: Unit) -> u32 { return select(p.frames, u.pad & 0x0fffffffu, (u.pad & 0x0fffffffu) != 0u); }
 fn start_col(c: ptr<function, Col>) {
   if ((*c).mode >= 3u) { if ((*c).mode == 5u) { (*c).state = 0u; } return; }
   if ((*c).raw) { return; }
@@ -356,7 +359,10 @@ export class RansResidentSet {
   /** Load an ordered, compatible series of .qem count acquisitions into one batched resident set. */
   static async loadQemFiles(device: GPUDevice, files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansResidentSet> {
     const started = performance.now();
-    return this.loadSource(device, await qemFilesSource(files, onStatus, badPixels), onStatus, started);
+    const source = await qemFilesSource(files, onStatus, badPixels, device);
+    // The source owns its staged payload until the resident set takes it over.
+    try { return await this.loadSource(device, source, onStatus, started); }
+    catch (error) { source.dispose?.(); throw error; }
   }
 
   /** Load an exact exported series from a user-selected local folder. */
@@ -428,18 +434,33 @@ export class RansResidentSet {
     const tablesBuf = upload(tablesWords, GPUBufferUsage.STORAGE);
     // Payload blocks packed into as few buffers as the binding limit allows; each buffer is one dispatch.
     const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
-    type Pending = { payload: GPUBuffer; payBytes: number; offParts: Uint32Array[]; offLen: number; units: UnitRec[] };
+    type Pending = { payload: GPUBuffer; payBytes: number; offParts: Uint32Array[]; offLen: number; units: UnitRec[]; resident: boolean };
     const groups: Group[] = []; let current: Pending | null = null;
     const pending: Pending[] = []; let payloadBytes = 0; const allUnits: UnitRec[] = [];
     // Plan from authenticated export lengths before reading. Upload each block
     // directly into its final packed GPU buffer instead of retaining the series
     // and making a second multi-gigabyte concatenation in JavaScript memory.
     const plans: { tiltIndex: number; block: RansTiltMeta["blocks_meta"][number]; group: Pending; offset: number }[] = [];
+    // A payload the source already staged on the GPU is bound where it lies.
+    const residentGroups = new Map<GPUBuffer, Pending>();
     for (let tiltIndex = 0; tiltIndex < T; tiltIndex++) for (const block of tilts[tiltIndex].blocks_meta) {
       const size = Math.max(4, pad4(block.bytes));
       if (!Number.isSafeInteger(block.bytes) || block.bytes < 0 || size > limit) throw new Error(`rANS block ${block.index} exceeds device buffer limits or has invalid length`);
+      const tilt = tilts[tiltIndex];
+      const segment = tilt.payload_url && block.byte_start !== undefined && block.byte_end !== undefined
+        ? source.residentPayload?.(tilt.payload_url, block.byte_start, block.byte_end) : undefined;
+      if (segment) {
+        let group = residentGroups.get(segment.buffer);
+        if (!group) {
+          group = { payload: segment.buffer, payBytes: segment.buffer.size, offParts: [], offLen: 0, units: [], resident: true };
+          residentGroups.set(segment.buffer, group);
+          pending.push(group);
+        }
+        plans.push({ tiltIndex, block, group, offset: segment.offset });
+        continue;
+      }
       if (!current || current.payBytes + size > limit) {
-        current = { payload: null as unknown as GPUBuffer, payBytes: 0, offParts: [], offLen: 0, units: [] };
+        current = { payload: null as unknown as GPUBuffer, payBytes: 0, offParts: [], offLen: 0, units: [], resident: false };
         pending.push(current);
       }
       plans.push({ tiltIndex, block, group: current, offset: current.payBytes }); current.payBytes += size;
@@ -449,7 +470,7 @@ export class RansResidentSet {
     let active: Pending | null = null;
     try {
       for (const { tiltIndex, block, group, offset } of plans) {
-        if (active !== group) {
+        if (!group.resident && active !== group) {
           const stageBegin = performance.now();
           if (active) active.payload.unmap();
           mapped = null;
@@ -467,17 +488,18 @@ export class RansResidentSet {
         if (linked && block.byte_end! - start !== block.bytes) throw new Error(`${name}: manifest payload range length mismatch`);
         // Four bounded reads feed one mapped payload group. Read service times
         // overlap; payloadReadWaitMs measures only waits exposed to this loop.
-        await copyRansPayload(source, name, start, block.bytes, mapped!, offset, loadProfile);
+        if (!group.resident) await copyRansPayload(source, name, start, block.bytes, mapped!, offset, loadProfile);
         const blockOffsets = new Uint32Array(await readFile(`${prefix}offsets-${String(block.index).padStart(2, "0")}.u32`));
         payloadBytes += block.bytes;
         const modelBase = modelBases[tiltIndex][block.model];
-        const unit: UnitRec = { payload_word: offset / 4, offsets_base: group.offLen, ...modelBase, chk_base: group.units.length * K * windows * 2, out_base: tiltIndex * N + block.index * frames, tilt: tiltIndex, block: block.index, frameFlags: ((block.frames ?? 0) | (tilt.binary_lookup ? 0x80000000 : 0) | (manifest.native_dtype === "uint8" ? 0x40000000 : 0)) >>> 0 };
+        const unit: UnitRec = { payload_word: Math.floor(offset / 4), offsets_base: group.offLen, ...modelBase, chk_base: group.units.length * K * windows * 2, out_base: tiltIndex * N + block.index * frames, tilt: tiltIndex, block: block.index, frameFlags: ((block.frames ?? 0) | ((offset % 4) << 28) | (tilt.binary_lookup ? 0x80000000 : 0) | (manifest.native_dtype === "uint8" ? 0x40000000 : 0)) >>> 0 };
         group.offParts.push(blockOffsets); group.offLen += blockOffsets.length; group.units.push(unit); allUnits.push(unit);
       }
     } catch (error) {
       // The read helper drains its bounded requests before this storage is freed.
+      // Staged groups stay with the source, which releases them itself.
       mapped = null;
-      for (const group of pending) group.payload?.destroy();
+      for (const group of pending) if (!group.resident) group.payload?.destroy();
       tablesBuf.destroy();
       throw error;
     }

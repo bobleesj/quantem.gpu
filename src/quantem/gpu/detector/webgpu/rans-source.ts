@@ -7,6 +7,10 @@ export interface RansDirectoryHandle {
 export interface RansByteSource {
   mode: "http" | "local-folder";
   read(name: string, start?: number, end?: number): Promise<ArrayBuffer>;
+  /** Where an authenticated payload range already lies on the GPU; undefined when it was not staged. */
+  residentPayload?(name: string, start: number, end: number): { buffer: GPUBuffer; offset: number } | undefined;
+  /** Release staged GPU storage; a loaded resident set owns it instead. */
+  dispose?(): void;
 }
 
 function localParts(name: string): string[] {

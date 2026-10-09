@@ -212,11 +212,15 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
   }));
 }
 
-/** Admit one .qem count acquisition without expanding detector counts. */
-export async function qemFileSource(
-  file: QemByteFile,
-  onStatus: (text: string) => void = () => {},
-): Promise<RansByteSource> {
+// QEM hashes its payload in independent 64 MiB chunks.
+const chunkBytes = 64 << 20;
+
+type QemHeader = { header: Header; body: number; badPixels: number[] };
+
+/** Authenticate and check one .qem header, chunk layout and validity mask included, without reading its payload.
+ * A series can then be rejected before any payload is read or staged on the GPU.
+ */
+async function readQemHeader(file: QemByteFile): Promise<QemHeader> {
   requireQem(file.size >= 56, "truncated envelope");
   const prefix = new Uint8Array(await file.slice(0, 56).arrayBuffer());
   requireQem(
@@ -318,16 +322,123 @@ export async function qemFileSource(
       K * (header.dtype === "uint8" ? 255 : 65535) < 2 ** 32,
     "geometry exceeds browser integer-product capacity; use the native GPU application",
   );
-  const chunkBytes = 64 << 20;
   requireQem(
     Array.isArray(header.sha256) &&
       header.sha256.length === Math.ceil(header.bytes / chunkBytes),
     "missing payload checksums",
   );
+  requireQem(
+    Array.isArray(header.chunks) && header.chunks.length > 0,
+    "missing encoded chunks",
+  );
+  // The authenticated header fixes every chunk span before any payload is
+  // read, so admission only ever copies declared bytes.
+  const widths = [1, 4, 1, 4, 8, 1];
+  let nextScan = 0,
+    previousEnd = 0;
+  for (const chunk of header.chunks) {
+    requireQem(
+      chunk.first === nextScan &&
+        Number.isSafeInteger(chunk.scans) &&
+        chunk.scans > 0 &&
+        chunk.first + chunk.scans <= scans &&
+        (chunk.first + chunk.scans === scans || chunk.scans % 512 === 0),
+      "noncontiguous or unaligned scan chunks",
+    );
+    requireQem(
+      Array.isArray(chunk.arrays) && chunk.arrays.length === 6,
+      "missing typed chunk arrays",
+    );
+    chunk.arrays.forEach((span, index) => {
+      requireQem(
+        Number.isSafeInteger(span.offset) &&
+          Number.isSafeInteger(span.count) &&
+          span.count >= 0 &&
+          span.offset === Math.ceil(previousEnd / 8) * 8 &&
+          span.offset + span.count * widths[index] <= header.bytes,
+        "invalid chunk array bounds",
+      );
+      previousEnd = span.offset + span.count * widths[index];
+    });
+    const blocks = Math.ceil(chunk.scans / 512);
+    requireQem(
+      chunk.arrays[1].count === blocks * K + 1 && chunk.arrays[2].count === blocks * K,
+      "invalid stream table dimensions",
+    );
+    nextScan += chunk.scans;
+  }
+  requireQem(
+    nextScan === scans && previousEnd === header.bytes,
+    "incomplete scan coverage or undeclared payload",
+  );
+  requireQem(
+    typeof header.valid === "string" &&
+      /^[0-9a-f]*$/.test(header.valid) &&
+      header.valid.length === Math.ceil(K / 8) * 2,
+    "invalid detector validity mask",
+  );
+  const badPixels: number[] = [];
+  for (let k = 0; k < K; k++)
+    if (
+      !(
+        parseInt(header.valid.slice((k >> 3) * 2, (k >> 3) * 2 + 2), 16) &
+        (128 >> (k & 7))
+      )
+    )
+      badPixels.push(k);
+  return { header, body, badPixels };
+}
+
+/** Admit one .qem count acquisition without expanding detector counts. */
+export async function qemFileSource(
+  file: QemByteFile,
+  onStatus: (text: string) => void = () => {},
+  device?: GPUDevice,
+): Promise<RansByteSource> {
+  return admitQemFile(file, await readQemHeader(file), onStatus, device);
+}
+
+/** Authenticate and stage the payload described by an already checked header. */
+async function admitQemFile(
+  file: QemByteFile,
+  { header, body, badPixels }: QemHeader,
+  onStatus: (text: string) => void,
+  device?: GPUDevice,
+): Promise<RansByteSource> {
+  const [rows, cols, detRows, detCols] = header.shape,
+    K = detRows * detCols;
+  // Offset and model tables are copied out of authenticated chunks, never re-read.
+  const tableCopies = header.chunks.flatMap(chunk => [
+    { offset: chunk.arrays[1].offset, target: new Uint8Array(chunk.arrays[1].count * 4) },
+    { offset: chunk.arrays[2].offset, target: new Uint8Array(chunk.arrays[2].count) },
+  ]);
+  // With a device, stream bytes are copied into resident GPU groups as their
+  // chunks authenticate, so the payload is read once. A chunk larger than one
+  // group cannot be split before its offset table arrives; such a file keeps
+  // the decoder's per-block upload path.
+  type PayloadGroup = { size: number; end: number; buffer?: GPUBuffer; mapped?: Uint8Array };
+  const groups: PayloadGroup[] = [];
+  const regions: { start: number; end: number; offset: number; group: PayloadGroup }[] = [];
+  const groupLimit = device ? Math.min(device.limits.maxBufferSize, device.limits.maxStorageBufferBindingSize) : 0;
+  if (device && header.chunks.every(chunk => chunk.arrays[0].count <= groupLimit)) {
+    for (const chunk of header.chunks) {
+      const { offset: start, count } = chunk.arrays[0];
+      let group = groups[groups.length - 1];
+      let offset = group ? Math.ceil(group.size / 4) * 4 : 0;
+      if (!group || offset + count > groupLimit) {
+        group = { size: 0, end: 0 };
+        groups.push(group);
+        offset = 0;
+      }
+      group.size = offset + count;
+      // An empty region must not delay unmapping the group's last copied bytes.
+      if (count) group.end = start + count;
+      regions.push({ start, end: start + count, offset, group });
+    }
+  }
   requireQem(globalThis.crypto?.subtle, "checksum verification requires HTTPS or localhost; serve the viewer securely");
-  // QEM hashes independent 64 MiB chunks. WebCrypto uses the platform's
-  // SHA-256 implementation without a JavaScript loop over every byte.
-  // A served file streams the chunks through one response.
+  // WebCrypto uses the platform's SHA-256 implementation without a JavaScript
+  // loop over every byte. A served file streams the chunks through one response.
   const stream = file.chunks?.(body, file.size, chunkBytes);
   const verifiedChunk = async (index: number) => {
     const begin = index * chunkBytes;
@@ -353,266 +464,256 @@ export async function qemFileSource(
   };
   for (let depth = 0; depth < 4 && next < header.sha256.length; depth++) enqueue();
   try {
-    for (let index = 0; index < header.sha256.length; index++) {
-      onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
-      const result = await pending.shift()!;
-      if ("error" in result) throw result.error;
-      // Only an authenticated chunk is released, once nothing reads it again.
-      file.recycleChunk?.(result.bytes.buffer);
-      if (next < header.sha256.length) enqueue();
-    }
-    if (stream) requireQem((await stream.next()).done, "unexpected trailing authentication chunk");
-  } finally {
-    // Settle every outstanding read before the stream closes.
-    await Promise.all(pending);
-    await stream?.return(undefined);
-  }
-  requireQem(
-    typeof header.valid === "string" &&
-      /^[0-9a-f]*$/.test(header.valid) &&
-      header.valid.length === Math.ceil(K / 8) * 2,
-    "invalid detector validity mask",
-  );
-  const badPixels: number[] = [];
-  for (let k = 0; k < K; k++)
-    if (
-      !(
-        parseInt(header.valid.slice((k >> 3) * 2, (k >> 3) * 2 + 2), 16) &
-        (128 >> (k & 7))
-      )
-    )
-      badPixels.push(k);
-  const entries = new Uint32Array(64 * 33 * 2);
-  tables.frequencies.forEach((frequencies, model) => {
-    let cumulative = 0;
-    frequencies.forEach((frequency, symbol) => {
-      const at = (model * 33 + symbol) * 2;
-      entries[at] = (cumulative << 16) | symbol;
-      entries[at + 1] = frequency;
-      cumulative += frequency;
-    });
-    requireQem(cumulative === 1024, "invalid fixed probability table");
-  });
-  const blockMeta: {
-    index: number;
-    bytes: number;
-    model: number;
-    byte_start: number;
-    byte_end: number;
-    frames: number;
-  }[] = [];
-  const offsets: Uint32Array<ArrayBuffer>[] = [],
-    columns: Uint32Array<ArrayBuffer>[] = [];
-  let nextScan = 0,
-    previousEnd = 0;
-  requireQem(
-    Array.isArray(header.chunks) && header.chunks.length > 0,
-    "missing encoded chunks",
-  );
-  for (const chunk of header.chunks) {
-    requireQem(
-      chunk.first === nextScan &&
-        Number.isSafeInteger(chunk.scans) &&
-        chunk.scans > 0 &&
-        chunk.first + chunk.scans <= scans &&
-        (chunk.first + chunk.scans === scans || chunk.scans % 512 === 0),
-      "noncontiguous or unaligned scan chunks",
-    );
-    requireQem(
-      Array.isArray(chunk.arrays) && chunk.arrays.length === 6,
-      "missing typed chunk arrays",
-    );
-    const widths = [1, 4, 1, 4, 8, 1];
-    chunk.arrays.forEach((span, index) => {
-      requireQem(
-        Number.isSafeInteger(span.offset) &&
-          Number.isSafeInteger(span.count) &&
-          span.count >= 0 &&
-          span.offset === Math.ceil(previousEnd / 8) * 8 &&
-          span.offset + span.count * widths[index] <= header.bytes,
-        "invalid chunk array bounds",
-      );
-      previousEnd = span.offset + span.count * widths[index];
-    });
-    const [payload, offsetSpan, modelSpan] = chunk.arrays,
-      blocks = Math.ceil(chunk.scans / 512);
-    requireQem(
-      offsetSpan.count === blocks * K + 1 && modelSpan.count === blocks * K,
-      "invalid stream table dimensions",
-    );
-    const read = (span: Span, size: number) =>
-      file
-        .slice(body + span.offset, body + span.offset + span.count * size)
-        .arrayBuffer();
-    const local = new Uint32Array(await read(offsetSpan, 4)),
-      models = new Uint8Array(await read(modelSpan, 1));
-    requireQem(
-      local[0] === 0 && local[local.length - 1] === payload.count,
-      "stream table does not partition payload",
-    );
-    for (let block = 0; block < blocks; block++) {
-      const first = block * K,
-        start = local[first],
-        end = local[first + K],
-        frames = Math.min(512, chunk.scans - block * 512);
-      const relative = new Uint32Array(K + 1),
-        metadata = new Uint32Array(K * 3);
-      for (let k = 0; k < K; k++) {
-        const model = models[first + k],
-          size = local[first + k + 1] - local[first + k];
-        requireQem(
-          local[first + k + 1] >= local[first + k] &&
-            (model < 64
-              ? size >= 4
-              : model === 252
-                ? size % 2 === 0 && size <= frames * 2
-                : model === 253
-                  ? size === 0
-                  : model === 254
-                    ? size === frames * 2
-                    : model === 255 && size === 2),
-          "invalid encoded stream mode or length",
-        );
-        metadata.set(
-          model < 64
-            ? [model * 33, (model + 1) * 33, 2]
-            : [
-                0,
-                0,
-                model === 252 ? 5 : model === 253 ? 3 : model === 254 ? 1 : 4,
-              ],
-          k * 3,
-        );
-        relative[k] = local[first + k] - start;
+    try {
+      for (let index = 0; index < header.sha256.length; index++) {
+        onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
+        const result = await pending.shift()!;
+        if ("error" in result) throw result.error;
+        const bytes = result.bytes, start = index * chunkBytes, end = start + bytes.length;
+        for (const region of regions) {
+          const first = Math.max(start, region.start), last = Math.min(end, region.end);
+          if (last <= first) continue;
+          const group = region.group;
+          if (!group.buffer) {
+            group.buffer = device!.createBuffer({ size: Math.ceil(group.size / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+            group.mapped = new Uint8Array(group.buffer.getMappedRange());
+          }
+          group.mapped!.set(bytes.subarray(first - start, last - start), region.offset + first - region.start);
+          if (last === group.end) { group.buffer.unmap(); group.mapped = undefined; }
+        }
+        for (const { offset, target } of tableCopies) {
+          const first = Math.max(start, offset), last = Math.min(end, offset + target.length);
+          if (last > first) target.set(bytes.subarray(first - start, last - start), first - offset);
+        }
+        // Hashed and copied: nothing reads this chunk again, so its buffer may carry a later one.
+        file.recycleChunk?.(bytes.buffer);
+        if (next < header.sha256.length) enqueue();
       }
-      relative[K] = end - start;
-      const index = blockMeta.length;
-      blockMeta.push({
-        index,
-        bytes: end - start,
-        model: index,
-        byte_start: body + payload.offset + start,
-        byte_end: body + payload.offset + end,
-        frames,
+      // Resume the stream once more: its check for an oversized response runs after the last chunk.
+      if (stream) requireQem((await stream.next()).done, "unexpected trailing authentication chunk");
+    } finally {
+      // The stream can only close after its queued reads settle; a failure must
+      // also wait for them so no chunk arrives after the groups are released.
+      await Promise.all(pending);
+      await stream?.return(undefined);
+    }
+    for (const group of groups) {
+      // A group whose chunks hold no stream bytes still needs a bindable buffer.
+      group.buffer ??= device!.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      if (group.mapped) { group.buffer.unmap(); group.mapped = undefined; }
+    }
+    const entries = new Uint32Array(64 * 33 * 2);
+    tables.frequencies.forEach((frequencies, model) => {
+      let cumulative = 0;
+      frequencies.forEach((frequency, symbol) => {
+        const at = (model * 33 + symbol) * 2;
+        entries[at] = (cumulative << 16) | symbol;
+        entries[at + 1] = frequency;
+        cumulative += frequency;
       });
-      offsets.push(relative);
-      columns.push(metadata);
-    }
-    nextScan += chunk.scans;
-  }
-  requireQem(
-    nextScan === scans && previousEnd === header.bytes,
-    "incomplete scan coverage or undeclared payload",
-  );
-  const mapped: RansManifest = {
-    scan_shape: [rows, cols],
-    detector_shape: [detRows, detCols],
-    native_dtype: header.dtype as "uint8" | "uint16",
-    bad_pixels: badPixels,
-    source_metadata: {
-      ...header.metadata,
-      scientific_metadata: header.scientific_metadata,
-    },
-    tilts: [
-      {
-        tilt: 0,
-        K,
-        frames: 512,
-        blocks: blockMeta.length,
-        scale: 10,
-        model_frames: 512,
-        binary_lookup: true,
-        payload_url: "payload",
-        blocks_meta: blockMeta,
-        models: blockMeta.map((block) => ({
-          index: block.index,
-          symbols: 64 * 33,
-          colmeta_url: `columns-${block.index}`,
-          entries_url: "entries",
-          lut_url: "lookup",
-        })),
-      },
-    ],
-  };
-  return {
-    mode: "local-folder",
-    async read(name, start, end) {
-      if (name === "manifest.json")
-        return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
-      if (name === "entries") return entries.buffer;
-      if (name === "lookup") return new ArrayBuffer(4);
-      if (name === "payload") {
-        requireQem(
-          start !== undefined &&
-            end !== undefined &&
-            blockMeta.some(
-              (block) =>
-                start >= block.byte_start &&
-                end <= block.byte_end &&
-                end >= start,
-            ),
-          "invalid payload request",
-        );
-        return file.slice(start, end).arrayBuffer();
-      }
-      const column = /^columns-(\d+)$/.exec(name);
-      if (column) return columns[Number(column[1])].buffer;
-      const offset = /^t0-offsets-(\d+)\.u32$/.exec(name);
+      requireQem(cumulative === 1024, "invalid fixed probability table");
+    });
+    const blockMeta: {
+      index: number;
+      bytes: number;
+      model: number;
+      byte_start: number;
+      byte_end: number;
+      frames: number;
+    }[] = [];
+    const offsets: Uint32Array<ArrayBuffer>[] = [],
+      columns: Uint32Array<ArrayBuffer>[] = [];
+    for (const [chunkIndex, chunk] of header.chunks.entries()) {
+      const payload = chunk.arrays[0],
+        blocks = Math.ceil(chunk.scans / 512);
+      const local = new Uint32Array(tableCopies[chunkIndex * 2].target.buffer),
+        models = tableCopies[chunkIndex * 2 + 1].target;
       requireQem(
-        offset && offsets[Number(offset[1])],
-        "invalid stream table request",
+        local[0] === 0 && local[local.length - 1] === payload.count,
+        "stream table does not partition payload",
       );
-      return offsets[Number(offset[1])].buffer;
-    },
-  };
+      for (let block = 0; block < blocks; block++) {
+        const first = block * K,
+          start = local[first],
+          end = local[first + K],
+          frames = Math.min(512, chunk.scans - block * 512);
+        const relative = new Uint32Array(K + 1),
+          metadata = new Uint32Array(K * 3);
+        for (let k = 0; k < K; k++) {
+          const model = models[first + k],
+            size = local[first + k + 1] - local[first + k];
+          requireQem(
+            local[first + k + 1] >= local[first + k] &&
+              (model < 64
+                ? size >= 4
+                : model === 252
+                  ? size % 2 === 0 && size <= frames * 2
+                  : model === 253
+                    ? size === 0
+                    : model === 254
+                      ? size === frames * 2
+                      : model === 255 && size === 2),
+            "invalid encoded stream mode or length",
+          );
+          metadata.set(
+            model < 64
+              ? [model * 33, (model + 1) * 33, 2]
+              : [
+                  0,
+                  0,
+                  model === 252 ? 5 : model === 253 ? 3 : model === 254 ? 1 : 4,
+                ],
+            k * 3,
+          );
+          relative[k] = local[first + k] - start;
+        }
+        relative[K] = end - start;
+        const index = blockMeta.length;
+        blockMeta.push({
+          index,
+          bytes: end - start,
+          model: index,
+          byte_start: body + payload.offset + start,
+          byte_end: body + payload.offset + end,
+          frames,
+        });
+        offsets.push(relative);
+        columns.push(metadata);
+      }
+    }
+    const mapped: RansManifest = {
+      scan_shape: [rows, cols],
+      detector_shape: [detRows, detCols],
+      native_dtype: header.dtype as "uint8" | "uint16",
+      bad_pixels: badPixels,
+      source_metadata: {
+        ...header.metadata,
+        scientific_metadata: header.scientific_metadata,
+      },
+      tilts: [
+        {
+          tilt: 0,
+          K,
+          frames: 512,
+          blocks: blockMeta.length,
+          scale: 10,
+          model_frames: 512,
+          binary_lookup: true,
+          payload_url: "payload",
+          blocks_meta: blockMeta,
+          models: blockMeta.map((block) => ({
+            index: block.index,
+            symbols: 64 * 33,
+            colmeta_url: `columns-${block.index}`,
+            entries_url: "entries",
+            lut_url: "lookup",
+          })),
+        },
+      ],
+    };
+    return {
+      mode: "local-folder",
+      residentPayload(name, start, end) {
+        if (!regions.length) return undefined;
+        const region = regions.find(region => start - body >= region.start && end - body <= region.end);
+        requireQem(name === "payload" && region && end >= start, "invalid resident payload range");
+        return { buffer: region.group.buffer!, offset: region.offset + start - body - region.start };
+      },
+      dispose() { for (const group of groups) group.buffer?.destroy(); },
+      async read(name, start, end) {
+        if (name === "manifest.json")
+          return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
+        if (name === "entries") return entries.buffer;
+        if (name === "lookup") return new ArrayBuffer(4);
+        if (name === "payload") {
+          requireQem(
+            start !== undefined &&
+              end !== undefined &&
+              blockMeta.some(
+                (block) =>
+                  start >= block.byte_start &&
+                  end <= block.byte_end &&
+                  end >= start,
+              ),
+            "invalid payload request",
+          );
+          return file.slice(start, end).arrayBuffer();
+        }
+        const column = /^columns-(\d+)$/.exec(name);
+        if (column) return columns[Number(column[1])].buffer;
+        const offset = /^t0-offsets-(\d+)\.u32$/.exec(name);
+        requireQem(
+          offset && offsets[Number(offset[1])],
+          "invalid stream table request",
+        );
+        return offsets[Number(offset[1])].buffer;
+      },
+    };
+  } catch (error) {
+    // Staged groups belong to this admission until it returns a source.
+    for (const group of groups) group.buffer?.destroy();
+    throw error;
+  }
 }
 
 /** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
-export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = []): Promise<RansByteSource> {
+export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice): Promise<RansByteSource> {
   const ordered = Array.from(files);
   requireQem(ordered.length > 0, "select at least one .qem file");
+  // Compatibility follows from the authenticated headers, so a mismatched
+  // series is rejected before any payload is read or staged on the GPU.
+  // Each header is read once: its checksums authenticate the payload admitted below.
+  const headers: QemHeader[] = [];
+  for (const file of ordered) headers.push(await readQemHeader(file));
+  const first = headers[0].header;
+  headers.forEach(({ header, badPixels: invalid }, index) => {
+    if (JSON.stringify(header.shape) !== JSON.stringify(first.shape) || header.dtype !== first.dtype) {
+      throw new Error(`QEM file ${ordered[index].name} has shape ${header.shape.join("x")} and dtype ${header.dtype}; ${ordered[0].name} has ${first.shape.join("x")} ${first.dtype}. Select acquisitions with matching native geometry and dtype.`);
+    }
+    requireQem(JSON.stringify(invalid) === JSON.stringify(headers[0].badPixels), "series detector validity masks differ; open each acquisition separately");
+  });
+  const detectorPixels = first.shape[2] * first.shape[3];
+  requireQem(badPixels.every(index => Number.isInteger(index) && index >= 0 && index < detectorPixels), `badPixels must contain detector indices from 0 to ${detectorPixels - 1}`);
   const sources: RansByteSource[] = [];
   const manifests: RansManifest[] = [];
-  for (let index = 0; index < ordered.length; index++) {
-    const source = await qemFileSource(ordered[index], text => onStatus(`${index + 1}/${ordered.length} ${ordered[index].name}: ${text}`));
-    const manifest = JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))) as RansManifest;
-    if (index > 0) {
-      const first = manifests[0];
-      requireQem(JSON.stringify(manifest.bad_pixels) === JSON.stringify(first.bad_pixels), "series detector validity masks differ; open each acquisition separately");
-      const shape = [...manifest.scan_shape!, ...manifest.detector_shape!];
-      const expected = [...first.scan_shape!, ...first.detector_shape!];
-      if (JSON.stringify(shape) !== JSON.stringify(expected) || manifest.native_dtype !== first.native_dtype) {
-        throw new Error(`QEM file ${ordered[index].name} has shape ${shape.join("x")} and dtype ${manifest.native_dtype}; ${ordered[0].name} has ${expected.join("x")} ${first.native_dtype}. Select acquisitions with matching native geometry and dtype.`);
-      }
-      const profile = manifest.tilts[0], firstProfile = first.tilts[0];
-      if (profile.frames !== firstProfile.frames || profile.scale !== firstProfile.scale) {
-        throw new Error(`QEM file ${ordered[index].name} uses block_frames=${profile.frames}, scale=${profile.scale}; ${ordered[0].name} uses block_frames=${firstProfile.frames}, scale=${firstProfile.scale}. Re-encode the series with the same block_frames and scale before loading it together.`);
-      }
+  try {
+    for (let index = 0; index < ordered.length; index++) {
+      const source = await admitQemFile(ordered[index], headers[index], text => onStatus(`${index + 1}/${ordered.length} ${ordered[index].name}: ${text}`), device);
+      // Owned from here, so a later failure releases its staged storage.
+      sources.push(source);
+      manifests.push(JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))) as RansManifest);
     }
-    sources.push(source); manifests.push(manifest);
+    const combined: RansManifest = {
+      ...manifests[0],
+      bad_pixels: [...new Set([...(manifests[0].bad_pixels ?? []), ...badPixels])],
+      source_metadata: ordered.length === 1 ? manifests[0].source_metadata : {
+        acquisitions: ordered.map((file, index) => ({ file: file.name, metadata: manifests[index].source_metadata })),
+      },
+      tilts: manifests.map((manifest, index) => {
+        const tilt = manifest.tilts[0]; const prefix = `acquisition-${index}/`;
+        return { ...tilt, tilt: index, payload_url: prefix + tilt.payload_url,
+          models: tilt.models.map(model => ({ ...model, colmeta_url: prefix + model.colmeta_url,
+            entries_url: prefix + model.entries_url, lut_url: prefix + model.lut_url })),
+        };
+      }),
+    };
+    return { mode: "local-folder",
+      residentPayload(name, start, end) {
+        const namespaced = /^acquisition-(\d+)\/(.+)$/.exec(name);
+        requireQem(namespaced, "invalid resident acquisition name");
+        return sources[Number(namespaced[1])].residentPayload!(namespaced[2], start, end);
+      },
+      dispose() { for (const source of sources) source.dispose!(); },
+      async read(name, start, end) {
+        if (name === "manifest.json") return new TextEncoder().encode(JSON.stringify(combined)).buffer;
+        const namespaced = /^acquisition-(\d+)\/(.+)$/.exec(name);
+        if (namespaced) return sources[Number(namespaced[1])].read(namespaced[2], start, end);
+        const offsets = /^t(\d+)-offsets-(\d+)\.u32$/.exec(name);
+        requireQem(offsets, `unknown series table ${name}`);
+        return sources[Number(offsets[1])].read(`t0-offsets-${offsets[2]}.u32`);
+      } };
+  } catch (error) {
+    for (const source of sources) source.dispose!();
+    throw error;
   }
-  const detectorPixels = manifests[0].tilts[0].K;
-  requireQem(badPixels.every(index => Number.isInteger(index) && index >= 0 && index < detectorPixels), `badPixels must contain detector indices from 0 to ${detectorPixels - 1}`);
-  const combined: RansManifest = {
-    ...manifests[0],
-    bad_pixels: [...new Set([...(manifests[0].bad_pixels ?? []), ...badPixels])],
-    source_metadata: ordered.length === 1 ? manifests[0].source_metadata : {
-      acquisitions: ordered.map((file, index) => ({ file: file.name, metadata: manifests[index].source_metadata })),
-    },
-    tilts: manifests.map((manifest, index) => {
-      const tilt = manifest.tilts[0]; const prefix = `acquisition-${index}/`;
-      return { ...tilt, tilt: index, payload_url: prefix + tilt.payload_url,
-        models: tilt.models.map(model => ({ ...model, colmeta_url: prefix + model.colmeta_url,
-          entries_url: prefix + model.entries_url, lut_url: prefix + model.lut_url })),
-      };
-    }),
-  };
-  return { mode: "local-folder", async read(name, start, end) {
-    if (name === "manifest.json") return new TextEncoder().encode(JSON.stringify(combined)).buffer;
-    const namespaced = /^acquisition-(\d+)\/(.+)$/.exec(name);
-    if (namespaced) return sources[Number(namespaced[1])].read(namespaced[2], start, end);
-    const offsets = /^t(\d+)-offsets-(\d+)\.u32$/.exec(name);
-    requireQem(offsets, `unknown series table ${name}`);
-    return sources[Number(offsets[1])].read(`t0-offsets-${offsets[2]}.u32`);
-  } };
 }
