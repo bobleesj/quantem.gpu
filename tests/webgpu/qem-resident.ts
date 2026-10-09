@@ -132,3 +132,22 @@ test("a series forwards each acquisition's staged payload", async () => {
   source.dispose!();
   assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
 });
+
+test("mapped payload groups stay within 256 MiB even when the device allows more", async () => {
+  const largest = (buffers: FakeBuffer[]) => Math.max(...buffers.filter(buffer => buffer.mappedAtCreation).map(buffer => buffer.size));
+  // Two chunks that fit one group each but not one group together: staged in two groups.
+  const staged = fakeDevice();
+  const twoChunks = syntheticQem([[129 << 20], [128 << 20]]);
+  const source = await qemFileSource(countingFile(twoChunks), () => {}, staged.device);
+  for (const block of await blocksOf(source)) {
+    const segment = source.residentPayload!("payload", block.byte_start, block.byte_end)!;
+    assert.deepEqual(stagedBytes(segment, 1 << 16), twoChunks.subarray(block.byte_start, block.byte_start + (1 << 16)));
+  }
+  assert.ok(largest(staged.buffers) <= 256 << 20, `largest staged group ${largest(staged.buffers)} bytes`);
+  source.dispose!();
+  // One chunk larger than a group: its blocks are uploaded into groups of at most 256 MiB.
+  const uploaded = fakeDevice();
+  const set = await RansResidentSet.loadQemFile(uploaded.device, countingFile(syntheticQem([[129 << 20, 128 << 20]])));
+  assert.ok(largest(uploaded.buffers) <= 256 << 20, `largest uploaded group ${largest(uploaded.buffers)} bytes`);
+  set.dispose();
+});

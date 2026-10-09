@@ -1,6 +1,6 @@
 /** Authenticated integer QEM admission; detector measurements remain encoded. */
 import tables from "../../formats/qem/qem-rans-tables-v1.json";
-import type { RansByteSource } from "./rans-source";
+import { payloadGroupLimit, type RansByteSource } from "./rans-source";
 import type { RansManifest } from "./rans";
 
 /** Byte access to one .qem acquisition: a local File or a file served beside the viewer. */
@@ -419,7 +419,7 @@ async function admitQemFile(
   type PayloadGroup = { size: number; end: number; buffer?: GPUBuffer; mapped?: Uint8Array };
   const groups: PayloadGroup[] = [];
   const regions: { start: number; end: number; offset: number; group: PayloadGroup }[] = [];
-  const groupLimit = device ? Math.min(device.limits.maxBufferSize, device.limits.maxStorageBufferBindingSize) : 0;
+  const groupLimit = device ? payloadGroupLimit(device) : 0;
   if (device && header.chunks.every(chunk => chunk.arrays[0].count <= groupLimit)) {
     for (const chunk of header.chunks) {
       const { offset: start, count } = chunk.arrays[0];
