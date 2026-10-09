@@ -421,16 +421,6 @@ class SSBSeriesResult:
     trials: int
     refinement: str | None
 
-    @property
-    def alignment(self) -> dict[str, float | str]:
-        """Validated registration preparation for an SSB phase series."""
-        return {
-            "normalization": "median_mad",
-            "pad_fraction": 3.0 / 32.0,
-            "upsample_factor": 50,
-            "running_avg_frames": 12.0,
-        }
-
     def show(self, **kwargs: object):
         """Return the native-resolution SSB series in Show3D."""
         from quantem.widget import Show3D

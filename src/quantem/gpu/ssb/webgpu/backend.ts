@@ -97,10 +97,6 @@ export function setSSBLocalFiles(files: ArrayLike<File>): void {
   };
 }
 
-export function ssbHasLocalSource(): boolean {
-  return localSourceResolver !== null;
-}
-
 export function ssbNeedsLocalSource(): boolean {
   try {
     return globalThis.location?.protocol === "file:" && !localSourceResolver;

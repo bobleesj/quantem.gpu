@@ -32,7 +32,7 @@ DATA_SUFFIXES = (
     ".npz",
     ".qem",
 )
-FIXTURE_DIRECTORIES = ("tests/data/", "tests/detector/data/")
+FIXTURE_DIRECTORIES = ("tests/data/",)
 # h5py's global lock object shares its name with a private host; only these exact lines may use it.
 H5PY_LOCK = "ph" + "il"  # built from parts so this guard does not trip on itself
 H5PY_LOCK_LINES = {f"from h5py._objects import {H5PY_LOCK}", f"with {H5PY_LOCK}:"}
