@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { qemFileSource, qemHttpFiles, type QemByteFile } from "../../src/quantem/gpu/detector/webgpu/qem-source";
 import { syntheticQem } from "./qem-synthetic";
+import { fakeDevice } from "./fake-gpu";
 
 Object.assign(globalThis, { location: { href: "http://localhost/" } });
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -214,4 +215,52 @@ test("admission recycles a chunk only after its checksum matched", async () => {
       assert.equal(recycled.length, corrupt ? 1 : 2, "the chunk that failed authentication is never recycled");
     }
   } finally { crypto.subtle.digest = digest; }
+});
+
+/** Serve `bytes`; the payload stream stops after `deliver` bytes and only an abort of its request ends it. */
+function stalling(bytes: Uint8Array, deliver: number) {
+  const log = { aborted: false, afterAbort: 0 };
+  globalThis.fetch = (async (_url: URL, init: RequestInit = {}) => {
+    if (log.aborted) log.afterAbort++;
+    if (init.method === "HEAD") return new Response(null, { headers: { "Content-Length": String(bytes.length) } });
+    const [first, last] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!.slice(1).map(Number);
+    const body = bytes.slice(first, last + 1);
+    if (body.length < 1 << 20) return new Response(body, { status: 206 });
+    let at = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { init.signal?.addEventListener("abort", () => { log.aborted = true; controller.error(init.signal!.reason); }); },
+      pull(controller) {
+        if (at >= deliver) return new Promise(() => {});
+        controller.enqueue(body.slice(at, at + (1 << 20)));
+        at += 1 << 20;
+      },
+    });
+    return { status: 206, body: stream } as unknown as Response;
+  }) as typeof fetch;
+  return log;
+}
+const within = <T>(promise: Promise<T>, milliseconds: number) => Promise.race([promise,
+  new Promise<never>((_, reject) => setTimeout(() => reject(new Error("still waiting on the stalled download")), milliseconds).unref())]);
+
+test("cancelling admission ends the download at once and releases staged buffers", async () => {
+  const bytes = syntheticQem([[40 << 20], [40 << 20]]);
+  const log = stalling(bytes, 70 << 20);
+  const gpu = fakeDevice();
+  const controller = new AbortController();
+  const [file] = await qemHttpFiles("/", ["stalled.qem"], controller.signal);
+  const admitted = qemFileSource(file, text => { if (text.startsWith("Verifying .qem 2/")) controller.abort(); }, gpu.device, controller.signal);
+  await assert.rejects(within(admitted, 2000), { name: "AbortError" });
+  assert.ok(log.aborted, "the payload request itself was aborted");
+  assert.equal(log.afterAbort, 0, "nothing is requested after cancellation");
+  assert.ok(gpu.buffers.length > 0 && gpu.buffers.every(buffer => buffer.destroyed));
+});
+
+test("a failed admission ends its download instead of waiting for reads in flight", async () => {
+  const bytes = syntheticQem([[40 << 20], [40 << 20]]);
+  const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
+  bytes[body + 1000] ^= 1;
+  const log = stalling(bytes, 70 << 20);
+  const [file] = await qemHttpFiles("/", ["corrupt.qem"]);
+  await assert.rejects(within(qemFileSource(file, () => {}, fakeDevice().device), 2000), /payload checksum mismatch/);
+  assert.ok(log.aborted);
 });

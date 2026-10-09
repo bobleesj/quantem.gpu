@@ -8,8 +8,9 @@ export interface QemByteFile {
   name: string;
   size: number;
   slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
-  /** Consecutive chunkBytes-sized pieces of [start, end), read in order from one stream. */
-  chunks?(start: number, end: number, chunkBytes: number): AsyncGenerator<ArrayBuffer, void, unknown>;
+  /** Consecutive chunkBytes-sized pieces of [start, end), read in order from one stream;
+   * `cancel` ends the download itself. */
+  chunks?(start: number, end: number, chunkBytes: number, cancel?: AbortSignal): AsyncGenerator<ArrayBuffer, void, unknown>;
   /** Return a chunk the caller has finished with; the stream may refill it. */
   recycleChunk?(buffer: ArrayBuffer): void;
 }
@@ -122,13 +123,14 @@ const digest = (bytes: Uint8Array) => {
 /** Open .qem files served beside the viewer by a Range-capable HTTP server.
  * Every request bypasses the browser HTTP cache: admission authenticates every
  * byte it reads, and caching multi-gigabyte ranges only adds disk writes.
+ * `signal` aborts every request these files make.
  */
-export async function qemHttpFiles(base: string, names: string[]): Promise<QemByteFile[]> {
+export async function qemHttpFiles(base: string, names: string[], signal?: AbortSignal): Promise<QemByteFile[]> {
   return Promise.all(names.map(async name => {
     // Plain file names only: a path could reach files outside the served folder.
     requireQem(name.length > 0 && !/[\\/]/.test(name) && name !== "." && name !== "..", "invalid QEM file name");
     const url = new URL(encodeURIComponent(name), new URL(base, location.href));
-    const header = await fetch(url, { method: "HEAD", cache: "no-store" });
+    const header = await fetch(url, { method: "HEAD", cache: "no-store", signal });
     const size = Number(header.headers.get("Content-Length"));
     requireQem(header.ok && Number.isSafeInteger(size) && size >= 56, `cannot open ${name}; keep the data file beside the viewer`);
     // Finished 64 MiB chunks carry later ones instead of a new allocation per
@@ -139,10 +141,11 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
       const index = reusable.findIndex(buffer => buffer.byteLength === wanted);
       return new Uint8Array(index < 0 ? new ArrayBuffer(wanted) : reusable.splice(index, 1)[0]);
     };
-    return { name, size, async *chunks(start: number, end: number, chunkBytes: number) {
+    return { name, size, async *chunks(start: number, end: number, chunkBytes: number, cancel?: AbortSignal) {
       // One ranged response carries every authentication chunk instead of one
       // request per 64 MiB; each chunk is still hashed on its own.
-      const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` } });
+      const stop = cancel && signal ? AbortSignal.any([signal, cancel]) : cancel ?? signal;
+      const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal: stop });
       requireQem(response.status === 206 && response.body, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
       // A byte stream fills each chunk in place (BYOB); any other stream is copied from its parts.
       let reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>;
@@ -202,7 +205,7 @@ export async function qemHttpFiles(base: string, names: string[]): Promise<QemBy
       if (streaming && reusable.length < 4) reusable.push(buffer);
     }, slice(start = 0, end = size) {
       return { async arrayBuffer() {
-        const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` } });
+        const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal });
         requireQem(response.status === 206, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
         const bytes = await response.arrayBuffer();
         requireQem(bytes.byteLength === end - start, `truncated range in ${name}`);
@@ -220,7 +223,8 @@ type QemHeader = { header: Header; body: number; badPixels: number[] };
 /** Authenticate and check one .qem header, chunk layout and validity mask included, without reading its payload.
  * A series can then be rejected before any payload is read or staged on the GPU.
  */
-async function readQemHeader(file: QemByteFile): Promise<QemHeader> {
+async function readQemHeader(file: QemByteFile, signal?: AbortSignal): Promise<QemHeader> {
+  signal?.throwIfAborted();
   requireQem(file.size >= 56, "truncated envelope");
   const prefix = new Uint8Array(await file.slice(0, 56).arrayBuffer());
   requireQem(
@@ -394,8 +398,9 @@ export async function qemFileSource(
   file: QemByteFile,
   onStatus: (text: string) => void = () => {},
   device?: GPUDevice,
+  signal?: AbortSignal,
 ): Promise<RansByteSource> {
-  return admitQemFile(file, await readQemHeader(file), onStatus, device);
+  return admitQemFile(file, await readQemHeader(file, signal), onStatus, device, signal);
 }
 
 /** Authenticate and stage the payload described by an already checked header. */
@@ -404,6 +409,7 @@ async function admitQemFile(
   { header, body, badPixels }: QemHeader,
   onStatus: (text: string) => void,
   device?: GPUDevice,
+  signal?: AbortSignal,
 ): Promise<RansByteSource> {
   const [rows, cols, detRows, detCols] = header.shape,
     K = detRows * detCols;
@@ -444,10 +450,14 @@ async function admitQemFile(
   requireQem(globalThis.crypto?.subtle, "checksum verification requires HTTPS or localhost; serve the viewer securely");
   // WebCrypto uses the platform's SHA-256 implementation without a JavaScript
   // loop over every byte. A served file streams the chunks through one response.
-  const stream = file.chunks?.(body, file.size, chunkBytes);
+  // Cancellation, or any failure, ends that download instead of waiting for reads in flight.
+  const stopping = new AbortController();
+  const cancel = signal ? AbortSignal.any([signal, stopping.signal]) : stopping.signal;
+  const stream = file.chunks?.(body, file.size, chunkBytes, cancel);
   const verifiedChunk = async (index: number) => {
     const begin = index * chunkBytes;
     const end = Math.min(header.bytes, (index + 1) * chunkBytes);
+    cancel.throwIfAborted();
     // Request before the first await: queued stream reads resolve in call order.
     const bytes = stream
       ? await stream.next().then(part => part.done ? new ArrayBuffer(0) : part.value)
@@ -472,6 +482,7 @@ async function admitQemFile(
     try {
       for (let index = 0; index < header.sha256.length; index++) {
         onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
+        signal?.throwIfAborted();
         const result = await pending.shift()!;
         if ("error" in result) throw result.error;
         const bytes = result.bytes, start = index * chunkBytes, end = start + bytes.length;
@@ -499,6 +510,8 @@ async function admitQemFile(
     } finally {
       // The stream can only close after its queued reads settle; a failure must
       // also wait for them so no chunk arrives after the groups are released.
+      // Ending the download first makes those reads settle at once.
+      stopping.abort();
       await Promise.all(pending);
       await stream?.return(undefined);
     }
@@ -681,14 +694,14 @@ async function admitQemFile(
 }
 
 /** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
-export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice): Promise<RansByteSource> {
+export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal): Promise<RansByteSource> {
   const ordered = Array.from(files);
   requireQem(ordered.length > 0, "select at least one .qem file");
   // Compatibility follows from the authenticated headers, so a mismatched
   // series is rejected before any payload is read or staged on the GPU.
   // Each header is read once: its checksums authenticate the payload admitted below.
   const headers: QemHeader[] = [];
-  for (const file of ordered) headers.push(await readQemHeader(file));
+  for (const file of ordered) headers.push(await readQemHeader(file, signal));
   const first = headers[0].header;
   headers.forEach(({ header, badPixels: invalid }, index) => {
     if (JSON.stringify(header.shape) !== JSON.stringify(first.shape) || header.dtype !== first.dtype) {
@@ -702,7 +715,7 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
   const manifests: RansManifest[] = [];
   try {
     for (let index = 0; index < ordered.length; index++) {
-      const source = await admitQemFile(ordered[index], headers[index], text => onStatus(`${index + 1}/${ordered.length} ${ordered[index].name}: ${text}`), device);
+      const source = await admitQemFile(ordered[index], headers[index], text => onStatus(`${index + 1}/${ordered.length} ${ordered[index].name}: ${text}`), device, signal);
       // Owned from here, so a later failure releases its staged storage.
       sources.push(source);
       manifests.push(JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))) as RansManifest);

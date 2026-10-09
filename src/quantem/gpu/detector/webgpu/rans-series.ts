@@ -26,6 +26,8 @@ export class RansResidentSeries {
   loadedAcquisitions = 1;
   private readonly sets: RansResidentSet[];
   private disposed = false;
+  // Aborted on disposal or when loading ends early, so unpublished loads stop downloading.
+  private readonly stopping = new AbortController();
   private finishedAt: number;
 
   private constructor(first: RansResidentSet, files: QemByteFile[], readonly device: GPUDevice,
@@ -46,13 +48,15 @@ export class RansResidentSeries {
     progress: (series: RansResidentSeries) => void, signal: AbortSignal, badPixels: number[]): Promise<void> {
     type Loaded = { set: RansResidentSet } | { error: unknown };
     const pending = new Map<number, Promise<Loaded>>();
+    const cancel = AbortSignal.any([signal, this.stopping.signal]);
+    const cancelled = new Promise<Loaded>(resolve => cancel.addEventListener("abort", () => resolve({ error: cancel.reason }), { once: true }));
     let frontier = 1;
     const begin = (index: number) => {
-      if (index >= files.length || pending.has(index) || this.disposed || signal.aborted) return;
+      if (index >= files.length || pending.has(index) || cancel.aborted) return;
       pending.set(index, RansResidentSet.loadQemFile(this.device, files[index], text => {
         // Only the next acquisition to publish reports its progress.
-        if (index === frontier && !this.disposed && !signal.aborted) status(`${index + 1}/${files.length} ${files[index].name}: ${text}`);
-      }, badPixels).then(set => ({ set }), error => ({ error })));
+        if (index === frontier && !cancel.aborted) status(`${index + 1}/${files.length} ${files[index].name}: ${text}`);
+      }, badPixels, cancel).then(set => ({ set }), error => ({ error })));
     };
     try {
       // Let the first panel paint before more loads compete for the device.
@@ -62,15 +66,12 @@ export class RansResidentSeries {
         frontier = index;
         if (this.disposed) return;
         signal.throwIfAborted();
-        const loaded = await pending.get(index)!;
-        pending.delete(index);
         // Teardown ends quietly and cancellation with an AbortError, whichever
-        // step they interrupt; a load that finishes afterwards is only released.
-        if (this.disposed || signal.aborted) {
-          if ("set" in loaded) loaded.set.dispose();
-          if (this.disposed) return;
-          signal.throwIfAborted();
-        }
+        // step they interrupt, without waiting for the load in flight.
+        const loaded = await Promise.race([pending.get(index)!, cancelled]);
+        if (this.disposed) return;
+        signal.throwIfAborted();
+        pending.delete(index);
         if ("error" in loaded) throw loaded.error;
         const next = loaded.set;
         if (JSON.stringify(next.shape) !== JSON.stringify(first.shape) || next.nativeDtype !== first.nativeDtype || JSON.stringify([...next.badPx]) !== JSON.stringify([...first.badPx])) {
@@ -85,9 +86,10 @@ export class RansResidentSeries {
       }
       status("");
     } finally {
-      // A load cannot be interrupted mid-authentication: wait for each one and
-      // release every unpublished set on cancellation, disposal or failure.
-      for (const loaded of await Promise.all(pending.values())) if ("set" in loaded) loaded.set.dispose();
+      // Unpublished loads are stopped rather than awaited; a set that still
+      // finishes is released when it arrives.
+      this.stopping.abort();
+      for (const load of pending.values()) void load.then(loaded => { if ("set" in loaded) loaded.set.dispose(); });
     }
   }
 
@@ -96,7 +98,7 @@ export class RansResidentSeries {
     progress: (series: RansResidentSeries) => void, signal: AbortSignal, badPixels: number[] = []): Promise<RansResidentSeries> {
     if (!files.length) throw new Error("Select at least one .qem acquisition.");
     const started = performance.now();
-    const first = await RansResidentSet.loadQemFile(device, files[0], text => status(`1/${files.length} ${files[0].name}: ${text}`), badPixels);
+    const first = await RansResidentSet.loadQemFile(device, files[0], text => status(`1/${files.length} ${files[0].name}: ${text}`), badPixels, signal);
     if (signal.aborted) { first.dispose(); signal.throwIfAborted(); }
     return new RansResidentSeries(first, files, device, started, status, progress, signal, badPixels);
   }
@@ -121,5 +123,5 @@ export class RansResidentSeries {
     this.device.queue.submit([encoder.finish()]);
   }
 
-  dispose(): void { this.disposed = true; for (const set of this.sets) set.dispose(); }
+  dispose(): void { this.disposed = true; this.stopping.abort(); for (const set of this.sets) set.dispose(); }
 }
