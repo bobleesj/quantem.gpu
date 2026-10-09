@@ -6,9 +6,58 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc15 - 2026-10-09
+
+- WebGPU loads a served `.qem` through uncached HTTP ranges (`qemHttpFiles`)
+  and reads every payload byte once: four 64 MiB chunks are authenticated in
+  flight, their read buffers are recycled, and the stream bytes are staged in
+  mapped GPU groups of at most 256 MiB that the decoder binds directly. A
+  512 x 512 x 192 x 192 uint16 file of 1.19 GB (1.85 GB) is resident in 2.7 s
+  (4.1 to 4.2 s) on an RTX PRO 6000 in Chrome, from 4.7 to 5.5 s (7.1 to
+  9.5 s) when the whole file was fetched first; every count is unchanged. A
+  chunk larger than one group is split on the GPU, and the per-block upload of
+  other sources is capped at 256 MiB per group (a 4.29 GB mapping failed on
+  Apple Metal).
+- `RansResidentSeries` loads a `.qem` series as one resident set per
+  acquisition, three loads in flight, after every header has been checked for
+  one geometry, dtype and validity mask; a mismatched series is rejected before
+  any payload is read. Masked sums batch across separately loaded sets.
+  Cancelling or failing a download or series load releases its GPU buffers.
+  The series status names each file once (`2/7 t1.qem: Verifying .qem 5/18`),
+  and a one-file load adds no `1/1` prefix.
+- Resident rANS sets lend their exact uint32 detector sums to a display as
+  borrowed views (`imageViewsU32`), and refuse an acquisition whose image does
+  not start on the device's storage offset alignment. The view type
+  `Uint32ImageView` and `validateUint32ImageView` live in
+  `detector/webgpu/borrowed-image.ts`, beside the resident sets that produce
+  them.
+- quantem.gpu no longer ships a browser display:
+  `src/quantem/gpu/display/webgpu` (colormap engine, display statistics, FFT,
+  filters and geometry, about 8,300 lines) is deleted, and `webgpu/index.ts`
+  no longer exports `GPUColormapEngine` or `createGPUColormapEngine`.
+  quantem.widget owns browser display. `webgpu/sources.json` lists no display
+  files. The Metal display
+  (`display/metal/display.metal`), `display/colormaps.json` and the Python
+  `quantem.gpu.display` LUT functions remain.
+- `io.save(..., dtype="float16")` raises a `ValueError` that names
+  `dtype="scaled_uint16"`: `io.load` refused the float16 export it wrote.
+  Saved version-1 single-scale scaled uint16 files still reopen.
+- The Android Vulkan sources (`native/vulkan`, about 15,200 lines) are deleted;
+  no consumer or CI job built them. The backend registries, `backend_status.py`
+  and the documentation list five backends (CPU reference, CUDA, Python MPS,
+  native Swift/Metal, WebGPU).
+- `quantem.gpu.io.__all__` lists `Dataset4dstemGPU`, the type `load` returns.
+  The classifiers declare Python 3.14.
 - Removed `PairedFeed`, the double-buffered block iterator over paired-count
   sources; nothing outside its own test used it. `PairedCounts.decode_blocks`
-  reads the same 512-scan blocks.
+  reads the same 512-scan blocks. Also removed: `SSBSeriesResult.alignment`,
+  the WebGPU exports `resetGPUDevice`, `ssbHasLocalSource`,
+  `show4DSTEMLocalH5Files` (use `collectShow4DSTEMLocalH5Files`) and
+  `WEBGPU_FFT_CONFIGS`, and unreferenced Swift helpers, scripts and harnesses.
+- CI type-checks every WebGPU source listed in `webgpu/sources.json`, not only
+  the entry point, with quantem.widget's compiler options (`npm run typecheck`,
+  including `noUnusedParameters`). The install notes give the Intel Mac and
+  Windows on ARM limits of the extras.
 
 ## rc14 - 2026-10-08
 
