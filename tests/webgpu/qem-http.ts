@@ -41,6 +41,7 @@ test("served files are read through uncached ranges and admit the same streams a
     const segment = served.residentPayload!("payload", block.byte_start, block.byte_end)!;
     assert.deepEqual(new Uint8Array((segment.buffer as unknown as FakeBuffer).bytes, segment.offset, block.byte_end - block.byte_start), fixture.subarray(block.byte_start, block.byte_end));
   }
+  assert.deepEqual([served.mode, local.mode], ["http", "local-folder"]);
   assert.equal(requests[0].method, "HEAD");
   assert.ok(requests.every(request => request.url === "http://localhost/viewer/data/u16-multiple-chunks.qem"));
   assert.ok(requests.every(request => request.cache === "no-store"), "every request bypasses the HTTP cache");

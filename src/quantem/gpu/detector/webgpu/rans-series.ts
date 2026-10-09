@@ -4,7 +4,7 @@
  * behind it with a bounded look-ahead and are published strictly in file order,
  * so a viewer shows and compares panels while the rest of the series loads.
  */
-import { RansResidentSet, type RansDetectorCompute, type RansLoadProfile } from "./rans";
+import { RansResidentSet, type RansDetectorCompute } from "./rans";
 import { readQemSeriesHeaders, type QemByteFile } from "./qem-source";
 
 // Acquisitions loading at once, the next one to publish included: file
@@ -16,7 +16,7 @@ export class RansResidentSeries {
   /** Filled in file order; entries from loadedAcquisitions on are not loaded yet. */
   readonly computes: RansDetectorCompute[];
   readonly acquisitionCount: number;
-  readonly acquisitionMode = "local-folder" as const;
+  readonly acquisitionMode: RansResidentSet["acquisitionMode"];
   readonly shape: RansResidentSet["shape"];
   readonly nativeDtype: RansResidentSet["nativeDtype"];
   readonly badPx: Uint32Array;
@@ -37,7 +37,7 @@ export class RansResidentSeries {
     this.computes = new Array(files.length);
     this.computes[0] = first.computes[0];
     this.sets = [first];
-    this.shape = first.shape; this.nativeDtype = first.nativeDtype; this.badPx = first.badPx;
+    this.shape = first.shape; this.nativeDtype = first.nativeDtype; this.badPx = first.badPx; this.acquisitionMode = first.acquisitionMode;
     this.finishedAt = performance.now();
     progress(this);
     this.completion = this.publishRemaining(first, files, status, progress, signal, badPixels);
@@ -108,23 +108,19 @@ export class RansResidentSeries {
     catch (error) { first.dispose(); throw error; }
   }
 
+  // Loads overlap in time, so durations are not summed here: each set keeps its
+  // own loadMs and checkpointMs, and readyMs is the elapsed time of the series.
   get payloadBytes() { return this.sets.reduce((sum, set) => sum + set.payloadBytes, 0); }
-  get loadMs() { return this.sets.reduce((sum, set) => sum + set.loadMs, 0); }
-  get checkpointMs() { return this.sets.reduce((sum, set) => sum + set.checkpointMs, 0); }
   /** Time from the start of loading to the latest published acquisition. */
   get readyMs() { return this.finishedAt - this.started; }
-  get loadProfile(): RansLoadProfile {
-    const total: RansLoadProfile = { metadataReadMs: 0, payloadReadMs: 0, payloadReadWaitMs: 0, payloadStageMs: 0, payloadChunks: 0, payloadBuffers: 0 };
-    for (const set of this.sets) for (const key of Object.keys(total) as (keyof RansLoadProfile)[]) total[key] += set.loadProfile[key];
-    return total;
-  }
   readImage(tilt: number) { return this.sets[tilt].readImage(0); }
   readImageU32(tilt: number) { return this.sets[tilt].readImageU32(0); }
 
-  /** Normalize display copies of several acquisitions in one submission; `tilts[i]` owns `buffers[i]`. */
-  normalizeDisplayBuffers(buffers: GPUBuffer[], maskArea: number, tilts: number[]): void {
+  /** Normalize display copies of several acquisitions in one submission; acquisition
+   * `acquisitions[i]` made `buffers[i]` (RansResidentSet.normalizeDisplayBuffers for one set). */
+  normalizeAcquisitionDisplays(buffers: GPUBuffer[], maskArea: number, acquisitions: number[]): void {
     const encoder = this.device.createCommandEncoder();
-    buffers.forEach((buffer, index) => this.sets[tilts[index]].normalizeDisplayBuffers([buffer], maskArea, encoder));
+    buffers.forEach((buffer, index) => this.sets[acquisitions[index]].normalizeDisplayBuffers([buffer], maskArea, encoder));
     this.device.queue.submit([encoder.finish()]);
   }
 

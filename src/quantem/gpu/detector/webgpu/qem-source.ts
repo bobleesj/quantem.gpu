@@ -7,6 +7,8 @@ import type { RansManifest } from "./rans";
 export interface QemByteFile {
   name: string;
   size: number;
+  /** "http" for a served file; a local File leaves it unset. */
+  mode?: "http";
   slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
   /** Consecutive chunkBytes-sized pieces of [start, end), read in order from one stream;
    * `cancel` ends the download itself. */
@@ -141,7 +143,7 @@ export async function qemHttpFiles(base: string, names: string[], signal?: Abort
       const index = reusable.findIndex(buffer => buffer.byteLength === wanted);
       return new Uint8Array(index < 0 ? new ArrayBuffer(wanted) : reusable.splice(index, 1)[0]);
     };
-    return { name, size, async *chunks(start: number, end: number, chunkBytes: number, cancel?: AbortSignal) {
+    return { name, size, mode: "http" as const, async *chunks(start: number, end: number, chunkBytes: number, cancel?: AbortSignal) {
       // One ranged response carries every authentication chunk instead of one
       // request per 64 MiB; each chunk is still hashed on its own.
       const stop = cancel && signal ? AbortSignal.any([signal, cancel]) : cancel ?? signal;
@@ -667,7 +669,7 @@ async function admitQemFile(
       ],
     };
     return {
-      mode: "local-folder",
+      mode: file.mode ?? "local-folder",
       residentPayload(name, start, end) {
         // Staged regions come first, so only a cut block resolves to its copy.
         const region = regions.find(region => start - body >= region.start && end - body <= region.end);
@@ -750,7 +752,7 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
         };
       }),
     };
-    return { mode: "local-folder",
+    return { mode: sources[0].mode,
       residentPayload(name, start, end) {
         const namespaced = /^acquisition-(\d+)\/(.+)$/.exec(name);
         requireQem(namespaced, "invalid resident acquisition name");
