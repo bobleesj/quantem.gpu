@@ -178,12 +178,21 @@ test("mapped payload groups stay within 256 MiB even when the device allows more
   }
   assert.ok(largest(staged.buffers) <= 256 << 20, `largest staged group ${largest(staged.buffers)} bytes`);
   source.dispose!();
-  // One chunk larger than a group: split across groups of at most 256 MiB, its cut block copied.
+  // One chunk larger than a group: split at 256 MiB. Its second block (256 MiB - 2 bytes,
+  // starting at byte 7) is cut; its word-aligned copy needs 256 MiB + 4 bytes, which only
+  // an unmapped copy group may hold. The 5-byte piece left after the split holds no block.
   const uploaded = fakeDevice();
-  const set = await RansResidentSet.loadQemFile(uploaded.device, countingFile(syntheticQem([[129 << 20, 128 << 20]])));
-  assert.ok(largest(uploaded.buffers) <= 256 << 20, `largest uploaded group ${largest(uploaded.buffers)} bytes`);
+  const edge = syntheticQem([[7, (256 << 20) - 2]]);
+  const set = await RansResidentSet.loadQemFile(uploaded.device, countingFile(edge));
+  assert.ok(largest(uploaded.buffers) <= 256 << 20, `largest mapped group ${largest(uploaded.buffers)} bytes`);
+  const [, block] = await blocksOf(await qemFileSource(new File([edge], "plain.qem")));
+  const cutGroup = (set as unknown as { groups: { payload: FakeBuffer; units: { block: number; payload_word: number; frameFlags: number }[] }[] }).groups
+    .find(group => group.units.some(unit => unit.block === 1))!;
+  const unit = cutGroup.units.find(unit => unit.block === 1)!;
+  const at = unit.payload_word * 4 + ((unit.frameFlags >>> 28) & 3);
+  assert.ok(Buffer.from(cutGroup.payload.bytes, at, block.byte_end - block.byte_start).equals(edge.subarray(block.byte_start, block.byte_end)));
   set.dispose();
-  assert.ok(uploaded.buffers.every(buffer => buffer.destroyed), "the 1 MiB piece holding only a block's tail is released too");
+  assert.ok(uploaded.buffers.every(buffer => buffer.destroyed), "the piece holding only a block's tail is released too");
 });
 
 test("borrowed count views address each acquisition's exact uint32 image", async () => {
