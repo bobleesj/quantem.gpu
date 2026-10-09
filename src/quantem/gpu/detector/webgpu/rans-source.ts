@@ -93,6 +93,14 @@ export async function ransLocalFilesSource(files: ArrayLike<File>): Promise<Rans
   return ransLocalSource(directory(prefix));
 }
 
+/** Largest mapped GPU payload group. Browsers refuse mapped allocations far below
+ * the advertised device limits (a 4.29 GB mapping failed on Apple Metal WebGPU);
+ * several groups of at most 256 MiB still keep the whole series resident.
+ */
+export function payloadGroupLimit(device: GPUDevice): number {
+  return Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize, 256 * 1024 * 1024);
+}
+
 /** Per-read elapsed durations overlap; wait time counts exposed await intervals. */
 export interface RansPayloadProfile {
   payloadReadMs: number;

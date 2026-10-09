@@ -11,7 +11,7 @@
  * verified to terminate each column stream exactly at build time.
  */
 
-import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
+import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, payloadGroupLimit, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
 import { qemFilesSource, type QemByteFile } from "./qem-source";
 import { DetectorCompute } from "./backend";
 
@@ -432,8 +432,8 @@ export class RansResidentSet {
     tablesWords.set(colmetaAll, 0); tablesWords.set(entriesAll, colmetaAll.length); tablesWords.set(new Uint32Array(lutAll.buffer, 0, lutAll.length / 4), colmetaAll.length + entriesAll.length);
     for (const bases of modelBases) for (const base of bases) { base.entries_word += colmetaAll.length; base.lut_word += colmetaAll.length + entriesAll.length; }
     const tablesBuf = upload(tablesWords, GPUBufferUsage.STORAGE);
-    // Payload blocks packed into as few buffers as the binding limit allows; each buffer is one dispatch.
-    const limit = Math.min(device.limits.maxStorageBufferBindingSize, device.limits.maxBufferSize);
+    // Payload blocks packed into as few buffers as the group limit allows; each buffer is one dispatch.
+    const limit = payloadGroupLimit(device);
     type Pending = { payload: GPUBuffer; payBytes: number; offParts: Uint32Array[]; offLen: number; units: UnitRec[]; resident: boolean };
     const groups: Group[] = []; let current: Pending | null = null;
     const pending: Pending[] = []; let payloadBytes = 0; const allUnits: UnitRec[] = [];
