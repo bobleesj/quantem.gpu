@@ -264,3 +264,17 @@ test("a failed admission ends its download instead of waiting for reads in fligh
   await assert.rejects(within(qemFileSource(file, () => {}, fakeDevice().device), 2000), /payload checksum mismatch/);
   assert.ok(log.aborted);
 });
+
+test("a server that ignores the range stops sending once the response is refused", async () => {
+  const bytes = pattern(1 << 16);
+  let cancelled = 0;
+  globalThis.fetch = (async (_url: URL, init: RequestInit = {}) => {
+    if (init.method === "HEAD") return new Response(null, { headers: { "Content-Length": String(bytes.length) } });
+    const body = new ReadableStream<Uint8Array>({ pull(controller) { controller.enqueue(bytes.slice(0, 1024)); }, cancel() { cancelled++; } });
+    return { status: 200, body } as unknown as Response;
+  }) as typeof fetch;
+  const [file] = await qemHttpFiles("/", ["whole.qem"]);
+  await assert.rejects(file.slice(0, 56).arrayBuffer(), /ignored a byte range/);
+  await assert.rejects(file.chunks!(0, bytes.length, 16).next(), /ignored a byte range/);
+  assert.equal(cancelled, 2);
+});

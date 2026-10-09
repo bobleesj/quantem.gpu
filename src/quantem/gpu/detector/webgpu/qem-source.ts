@@ -146,6 +146,8 @@ export async function qemHttpFiles(base: string, names: string[], signal?: Abort
       // request per 64 MiB; each chunk is still hashed on its own.
       const stop = cancel && signal ? AbortSignal.any([signal, cancel]) : cancel ?? signal;
       const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal: stop });
+      // A server that ignores the range would otherwise go on sending the whole file.
+      if (response.status !== 206) await response.body?.cancel();
       requireQem(response.status === 206 && response.body, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
       // A byte stream fills each chunk in place (BYOB); any other stream is copied from its parts.
       let reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>;
@@ -206,6 +208,7 @@ export async function qemHttpFiles(base: string, names: string[], signal?: Abort
     }, slice(start = 0, end = size) {
       return { async arrayBuffer() {
         const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal });
+        if (response.status !== 206) await response.body?.cancel();
         requireQem(response.status === 206, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
         const bytes = await response.arrayBuffer();
         requireQem(bytes.byteLength === end - start, `truncated range in ${name}`);
