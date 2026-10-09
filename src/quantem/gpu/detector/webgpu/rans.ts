@@ -816,6 +816,13 @@ export class RansResidentSet {
     if (tilts.some(tilt => !Number.isInteger(tilt) || tilt < 0 || tilt >= this.T)) {
       throw new Error(`Acquisition indices must be within 0..${this.T - 1}; select acquisitions in this resident set`);
     }
+    // A storage binding must start on the device's offset alignment (256 bytes);
+    // later acquisitions start at acquisition * scanCount * 4 bytes.
+    const alignment = this.device.limits.minStorageBufferOffsetAlignment;
+    const unaligned = tilts.find(tilt => tilt * this.scanCount * 4 % alignment !== 0);
+    if (unaligned !== undefined) {
+      throw new Error(`Acquisition ${unaligned} cannot be lent as a count view: its image starts at byte ${unaligned * this.scanCount * 4}, not a multiple of ${alignment}. Load one acquisition per resident set (RansResidentSeries) or display copies from imageBuffersF32.`);
+    }
     return tilts.map(tilt => ({ device: this.device, buffer: this.images, byteOffset: tilt * this.scanCount * 4, count: this.scanCount, divisor }));
   }
 
