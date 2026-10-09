@@ -31,8 +31,6 @@ def encode_precision_reference(values: np.ndarray, report: dict) -> np.ndarray:
             result[first:stop] = encode_precision_reference(flat[first:stop], region)
         return result.reshape(values.shape)
 
-    if report["storage"] == "float16":
-        return values.astype(np.float16)
     return np.rint(
         (values.astype(np.float64) - report["offset"]) / report["scale"]
     ).clip(0, 65535).astype(np.uint16)
@@ -50,8 +48,6 @@ def restore_precision_reference(values: np.ndarray, report: dict) -> np.ndarray:
             result[first:stop] = restore_precision_reference(flat[first:stop], region)
         return result.reshape(values.shape)
 
-    if report["storage"] == "float16":
-        return codes.astype(np.float32)
     return (
         codes.astype(np.float64) * report["scale"] + report["offset"]
     ).astype(np.float32)

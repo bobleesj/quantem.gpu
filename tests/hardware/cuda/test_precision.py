@@ -169,27 +169,29 @@ def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys
     loaded.close()
 
 
+@pytest.mark.parametrize("dtype", ["float16", "f16", np.float16])
+def test_float16_export_is_refused_and_names_scaled_uint16(tmp_path, dtype):
+    values = cp.linspace(0, 100, 4 * 4 * 8 * 8, dtype=cp.float32).reshape(4, 4, 8, 8)
+    path = tmp_path / "half_master.h5"
+    with pytest.raises(ValueError, match="dtype='scaled_uint16'"):
+        io.save(path, values, dtype=dtype)
+    assert not list(tmp_path.iterdir()), "a refused export writes no file"
+
+
 @pytest.mark.slow
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])
 def test_precision_export_reopens_and_resaves_without_changing_units(
-    tmp_path, dtype, capsys
+    tmp_path, capsys
 ):
     values = cp.linspace(0, 100, 8 * 8 * 16 * 16, dtype=cp.float32).reshape(
         8, 8, 16, 16
     )
     path = tmp_path / "display_master.h5"
-    io.save(path, values, dtype=dtype)
-    if dtype in {"float16", "f16"}:
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(path, backend="cuda")
-        return
+    io.save(path, values, dtype="scaled_uint16")
     loaded = io.load(path)
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
     expected = (
-        values.astype(cp.float16).astype(cp.float32)
-        if dtype in {"float16", "f16"}
-        else cp.rint(values.astype(cp.float64) / calibration["scale"])
+        cp.rint(values.astype(cp.float64) / calibration["scale"])
         .astype(cp.uint16)
         .astype(cp.float64)
         * calibration["scale"]

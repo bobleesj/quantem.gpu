@@ -293,7 +293,7 @@ def load(
     saved = [saved_precision(path) for path in sources if isinstance(path, (str, os.PathLike)) and Path(path).is_file()]
     if precision or any(saved):
         if any(saved) and dtype not in (None, "native") and precision is None:
-            raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request float16/scaled_uint16 explicitly; raw-code casts are not supported.")
+            raise ValueError("Saved precision includes intensity scaling. Omit dtype to restore its units, or request scaled_uint16 explicitly; raw-code casts are not supported.")
         precision_backend = select.resolve_backend(backend)
         if precision_backend not in {"cuda", "mps"}:
             raise NotImplementedError("Precision loading requires CUDA or Metal; no CPU conversion is used.")
