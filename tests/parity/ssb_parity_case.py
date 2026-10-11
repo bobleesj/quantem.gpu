@@ -259,8 +259,8 @@ def _declaration(case: SSBParityCase) -> dict[str, object]:
         "bf_radius_px": float(case.bf_radius),
         "detector_shape": [192, 192],
         "scan_region": {"shape": [side, side]},
-        "bf_column_companion": True,
-        "source_transport": "bf_columns",
+        "bf_column_companion_path": "bf_columns.u16",
+        "bf_column_encoding": "u16",
         "bf_excluded_detector_pixels": [
             int(row) * 192 + int(col)
             for row, col in detector_dead_pixels(case.source)

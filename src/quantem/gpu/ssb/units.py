@@ -44,14 +44,19 @@ def aberrations_from_engine(aberrations: dict[str, float]) -> dict[str, float]:
 
 
 def search_ranges_to_engine(search_ranges: dict[str, object] | None) -> dict[str, object] | None:
-    """Scale the nm keys of an Optuna search-range dict (``C10_nm``, ``C12_nm``: range tuple or fixed value) into Angstrom."""
+    """Optuna search ranges in engine units: a ``(low, high)`` tuple (a list is read as one) or a fixed value per key.
+
+    The nm keys ``C10_nm`` and ``C12_nm`` are scaled into Angstrom; ``phi12_deg`` stays in degrees.
+    """
     if search_ranges is None:
         return None
-    scaled = dict(search_ranges)
-    for key in ("C10_nm", "C12_nm"):
-        if key in scaled and scaled[key] is not None:
-            value = scaled[key]
-            scaled[key] = tuple(float(bound) * ENGINE_PER_NM for bound in value) if isinstance(value, (tuple, list)) else float(value) * ENGINE_PER_NM
+    scaled = {}
+    for key, value in search_ranges.items():
+        scale = ENGINE_PER_NM if key in ("C10_nm", "C12_nm") else 1.0
+        if isinstance(value, tuple | list):
+            scaled[key] = tuple(float(bound) * scale for bound in value)
+        else:
+            scaled[key] = None if value is None else float(value) * scale
     return scaled
 
 

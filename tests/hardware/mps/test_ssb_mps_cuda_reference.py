@@ -192,137 +192,6 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     session.close()
 
 
-def test_load_bf_columns_mps_resolves_linked_manifest_schema(tmp_path) -> None:
-    """Current exports keep BF storage metadata in the linked root manifest."""
-    from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
-
-    source = tmp_path / "source"
-    source.mkdir()
-    rows = [0, 1, 1]
-    cols = [1, 1, 2]
-    columns = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
-    (source / "bf_columns.u8").write_bytes(columns.tobytes())
-    (tmp_path / "cal.json").write_text(json.dumps({
-        "scan_region": {"shape": [4, 4]},
-        "detector_shape": [2, 3],
-        "bf_rows": rows,
-        "bf_cols": cols,
-        "bf_center": [1.0, 1.5],
-        "bf_radius_px": 1.25,
-        "bf_column_companion": True,
-        "source_transport": "bf_columns",
-        "dc_value": [1.0, 0.0],
-    }))
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "calibration": "cal.json",
-        "source": {
-            "bf_columns": {
-                "kind": "bf_columns",
-                "path": "source/bf_columns.u8",
-                "encoding": "uint8",
-                "dtype": "uint8",
-                "order": "bf,scan",
-                "shape": [3, 16],
-                "scan_shape": [4, 4],
-                "detector_shape": [2, 3],
-                "source_detector_shape": [4, 6],
-                "detector_bin": 2,
-                "bits_per_value": 8,
-                "bytes_per_bf": 16,
-                "max_value": int(columns.max()),
-                "bytes": int(columns.nbytes),
-            }
-        },
-    }))
-
-    frames = load_bf_columns_mps(tmp_path)
-
-    assert frames.source_path == (source / "bf_columns.u8").resolve()
-    assert frames.det_bin == 2
-    assert frames.source_provenance["declaration"] == "manifest"
-    assert frames.source_provenance["detector_bin"] == 2
-    assert frames.source_provenance["detector_bin_source"] == "declared"
-    np.testing.assert_array_equal(frames.columns(rows, cols), columns)
-
-
-def test_load_bf_columns_mps_rejects_detector_coordinate_mismatch(tmp_path) -> None:
-    """Native-grid columns cannot masquerade as detector-binned coordinates."""
-    from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
-
-    source = tmp_path / "source"
-    source.mkdir()
-    columns = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
-    (source / "bf_columns.u8").write_bytes(columns.tobytes())
-    (tmp_path / "cal.json").write_text(json.dumps({
-        "scan_region": {"shape": [4, 4]},
-        "detector_shape": [2, 3],
-        "bf_rows": [0, 1, 1],
-        "bf_cols": [1, 1, 2],
-        "bf_center": [1.0, 1.5],
-        "bf_column_companion": True,
-        "source_transport": "bf_columns",
-    }))
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "calibration": "cal.json",
-        "source": {
-            "bf_columns": {
-                "kind": "bf_columns",
-                "path": "source/bf_columns.u8",
-                "encoding": "uint8",
-                "dtype": "uint8",
-                "order": "bf,scan",
-                "shape": [3, 16],
-                "scan_shape": [4, 4],
-                "detector_shape": [4, 6],
-                "bits_per_value": 8,
-                "bytes_per_bf": 16,
-                "max_value": int(columns.max()),
-                "bytes": int(columns.nbytes),
-            }
-        },
-    }))
-
-    with pytest.raises(ValueError, match="cannot infer detector binning"):
-        load_bf_columns_mps(tmp_path)
-
-
-def test_load_bf_columns_mps_rejects_malformed_declared_manifest(tmp_path) -> None:
-    """A declared companion must fail closed instead of loading full detector data."""
-    from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
-
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "bf_columns.u8").write_bytes(bytes(16))
-    (tmp_path / "cal.json").write_text(json.dumps({
-        "scan_region": {"shape": [4, 4]},
-        "detector_shape": [2, 2],
-        "bf_rows": [0],
-        "bf_cols": [0],
-        "bf_center": [0.0, 0.0],
-        "bf_column_companion": True,
-        "source_transport": "bf_columns",
-    }))
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "calibration": "cal.json",
-        "source": {
-            "bf_columns": {
-                "kind": "bf_columns",
-                "path": "source/bf_columns.u8",
-                "encoding": "uint8",
-                "dtype": "uint8",
-                "order": "scan,bf",
-                "shape": [1, 16],
-                "scan_shape": [4, 4],
-                "detector_shape": [4, 4],
-                "bytes": 16,
-            }
-        },
-    }))
-
-    with pytest.raises(ValueError, match="order must be 'bf,scan'"):
-        load_bf_columns_mps(tmp_path)
-
-
 def test_ssb_open_does_not_swallow_declared_companion_error(
     monkeypatch,
     tmp_path,
@@ -332,7 +201,7 @@ def test_ssb_open_does_not_swallow_declared_companion_error(
     from quantem.gpu.ssb import workflow
     from quantem.gpu.ssb.mps import frames
 
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     monkeypatch.setattr(
         frames,
         "bf_column_locations",
@@ -455,7 +324,7 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
     with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=0.5) as session:
         before, before_loss = session.preview(aberrations)
         path, _seconds = session.export_brightfield(tmp_path / "bf")
-        backend = session._backend_protocol
+        backend = session._backend()
         selection = backend._selection
         flat = counts.reshape(-1, 12, 12)[:, selection.rows, selection.cols]
         np.testing.assert_array_equal(
@@ -476,7 +345,6 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
     """C1: exact BF columns expose the same neutral contract as CUDA."""
     pytest.importorskip("mlx.core")
     from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.contract import SSBProtocol
     from quantem.gpu.ssb.mps.backend import MpsSSBBackend
     from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
 
@@ -513,7 +381,6 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         rotation_angle_deg=4.0,
     )
 
-    assert isinstance(engine, SSBProtocol)
     assert engine.precision == PRECISION
     assert engine.scan_shape == (128, 128)
     assert engine.detector_shape == (4, 4)
@@ -1973,7 +1840,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     assert type(result) is SSBResult
     assert optimized is result
     assert optimized.backend == result.backend == "mps"
-    assert workflow._mps_backend._prepared is not None
+    assert workflow._compute._prepared is not None
     assert result.object_wave.dtype == np.complex64
     assert result.phase.dtype == np.float32
 
@@ -1993,7 +1860,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     )
     np.testing.assert_array_equal(
         phase,
-        workflow._mps_backend._fit_preview_phase,
+        workflow._compute._fit_preview_phase,
     )
     assert loss == optimized.loss
 

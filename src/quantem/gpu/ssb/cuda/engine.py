@@ -18,7 +18,7 @@ import numpy as np
 from quantem.gpu.io.qem import save_streamed
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
-from quantem.gpu.ssb.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.contract import SSBExportState
 from quantem.gpu.ssb.cuda.kernels import get_fft_kernel
 from quantem.gpu.ssb.cuda.kernels.common import pack_aberration_coefs
 from quantem.gpu.ssb.cuda.kernels.engine import (
@@ -28,7 +28,6 @@ from quantem.gpu.ssb.cuda.kernels.engine import (
     pk_kernel_full,
     sum_sumsq_phase_kernel,
 )
-from quantem.gpu.ssb.cuda.objective import PhaseVarianceObjective
 from quantem.gpu.ssb.cuda.thick import ThickSample
 
 # Above this many bytes of corrected planes (num_bf x scan_row x scan_col complex64) the full-BF staging buffer is never
@@ -41,13 +40,52 @@ class _PreparedCudaBfSubset:
     """Reusable CUDA-owned state for an explicitly approximate drag preview.
 
     ``engine`` is the :class:`SSBEngine` whose full-BF state this subset
-    swaps out while it is entered and restores on exit.
+    swaps out while it is entered and restores on exit. What does not depend
+    on the rotation (the subset's rows of G, detector indices and work
+    buffers) is made once; the per-pixel geometry is taken from the engine's
+    current rotation on entry, so a ``set_rotation`` between two uses is
+    followed rather than undone on exit.
     """
 
     def __init__(self, engine, num_bf: int) -> None:
         self._engine = engine
         full_num_bf = engine.num_bf
-        count = max(1, min(int(num_bf), full_num_bf))
+        self.num_bf = max(1, min(int(num_bf), full_num_bf))
+        self._active = False
+        self._full = {}
+        self._subset = {}
+        # the engine geometry the subset's cache was taken from
+        self._geometry_source = None
+        if self.num_bf == full_num_bf:
+            # All BF pixels: the "subset" is the session itself and nothing is swapped. Copying G and a full result
+            # buffer would duplicate ~2 x (BF x scan) complex64 (37 GB at 512 x 512) for an identical preview.
+            return
+        step = max(1, full_num_bf // self.num_bf)
+        self._indices = cp.arange(0, full_num_bf, step, dtype=cp.int64)[:self.num_bf]
+        ny, nx = engine.scan_shape
+        self._subset = {
+            "G_qk": engine.G_qk[self._indices],
+            "bf_inds_row": engine.bf_inds_row[self._indices],
+            "bf_inds_col": engine.bf_inds_col[self._indices],
+            "pk_buffer": cp.empty((self.num_bf,), dtype=cp.complex64),
+            "result_buffer": cp.empty((self.num_bf, ny, nx), dtype=cp.complex64),
+            "mean_phase_buffer": cp.empty((ny, nx), dtype=cp.float32),
+        }
+
+    def __enter__(self) -> Self:
+        if self._active:
+            raise RuntimeError("The prepared SSB BF subset is already active.")
+        self._active = True
+        if not self._subset:
+            return self
+        engine = self._engine
+        if self._geometry_source is not engine._cache:
+            cache = dict(engine._cache)
+            for key in ("kx_bf", "ky_bf", "alpha_k2_1d", "cos2phi_k_1d", "sin2phi_k_1d", "aperture_k_1d"):
+                cache[key] = cp.ascontiguousarray(engine._cache[key][self._indices])
+            cache["num_bf"] = self.num_bf
+            self._subset["cache"] = cache
+            self._geometry_source = engine._cache
         self._full = {
             "G_qk": engine.G_qk,
             "bf_inds_row": engine.bf_inds_row,
@@ -57,49 +95,6 @@ class _PreparedCudaBfSubset:
             "result_buffer": engine._result_buffer,
             "mean_phase_buffer": engine._mean_phase_buffer,
         }
-        self._active = False
-        if count == full_num_bf:
-            # All BF pixels: the "subset" is the session itself. Copying G and a full result buffer would duplicate
-            # ~2 x (BF x scan) complex64 (37 GB at 512 x 512) for an identical preview.
-            self._subset = {**self._full, "cache": {**engine._cache, "num_bf": full_num_bf}}
-            return
-        step = max(1, full_num_bf // count)
-        indices = cp.arange(0, full_num_bf, step, dtype=cp.int64)[:count]
-        cache = dict(engine._cache)
-        for key in (
-            "kx_bf",
-            "ky_bf",
-            "alpha_k2_1d",
-            "cos2phi_k_1d",
-            "sin2phi_k_1d",
-            "aperture_k_1d",
-        ):
-            if key in cache:
-                cache[key] = cp.ascontiguousarray(engine._cache[key][indices])
-        cache["num_bf"] = int(indices.size)
-        ny, nx = engine.scan_shape
-        self._subset = {
-            "G_qk": engine.G_qk[indices],
-            "bf_inds_row": engine.bf_inds_row[indices],
-            "bf_inds_col": engine.bf_inds_col[indices],
-            "cache": cache,
-            "pk_buffer": cp.empty((int(indices.size),), dtype=cp.complex64),
-            "result_buffer": cp.empty(
-                (int(indices.size), ny, nx), dtype=cp.complex64
-            ),
-            "mean_phase_buffer": cp.empty((ny, nx), dtype=cp.float32),
-        }
-
-    @property
-    def num_bf(self) -> int:
-        """Number of BF pixels retained by this prepared subset."""
-
-        return int(self._subset["cache"]["num_bf"])
-
-    def __enter__(self) -> Self:
-        if self._active:
-            raise RuntimeError("The prepared SSB BF subset is already active.")
-        engine = self._engine
         subset = self._subset
         engine.G_qk = subset["G_qk"]
         engine.bf_inds_row = subset["bf_inds_row"]
@@ -109,7 +104,6 @@ class _PreparedCudaBfSubset:
         engine._result_buffer = subset["result_buffer"]
         engine._corrected_buffer = None
         engine._mean_phase_buffer = subset["mean_phase_buffer"]
-        self._active = True
         return self
 
     def __exit__(
@@ -120,6 +114,9 @@ class _PreparedCudaBfSubset:
     ) -> None:
         engine = self._engine
         if not self._active:
+            return
+        self._active = False
+        if not self._subset:
             return
         self._subset["result_buffer"] = engine._result_buffer
         self._subset["mean_phase_buffer"] = engine._mean_phase_buffer
@@ -132,7 +129,6 @@ class _PreparedCudaBfSubset:
         engine._result_buffer = full["result_buffer"]
         engine._corrected_buffer = None
         engine._mean_phase_buffer = full["mean_phase_buffer"]
-        self._active = False
 
     def close(self) -> None:
         """Release the subset buffers after restoring full-BF state."""
@@ -151,9 +147,6 @@ class SSBEngine:
     Pre-computes rotation-dependent quantities and caches them for
     fast aberration-dependent gamma factor computation.
     """
-
-    backend = "cuda"
-    precision = SSBPrecision()
 
     def __init__(
         self,
@@ -212,10 +205,8 @@ class SSBEngine:
         self._custom_fft = None
         self._bf_source_path: pathlib.Path | None = None
         self._bf_source_dtype: np.dtype | None = None
-        self._bf_source_max_value: int | None = None
         self._bf_source_write_seconds: float | None = None
         self._colvar_group = 32
-        self.objective = PhaseVarianceObjective(self)
         self.thick = ThickSample(self)
 
     def gqk_is_half_plane(self) -> bool:
@@ -296,7 +287,6 @@ class SSBEngine:
             dc_value=complex(self._dc_value_host),
             bf_source_path=self._bf_source_path,
             bf_source_dtype=self._bf_source_dtype,
-            bf_source_max_value=self._bf_source_max_value,
         )
 
     def write_exact_bf_source(
@@ -334,7 +324,6 @@ class SSBEngine:
                 source.release()
         self._bf_source_path = path
         self._bf_source_dtype = np.dtype(data.dtype)
-        self._bf_source_max_value = None
         self._bf_source_write_seconds = time.perf_counter() - started
         return path
 
@@ -420,12 +409,11 @@ class SSBEngine:
             self._colvar_group = self._custom_fft._colvar_group
         # Work buffers. _result_buffer is (num_bf, ny, nx) complex64 and
         # holds the corrected planes of every exact loss and reconstruction. On small scans
-        # (e.g. a 256x256 scan, ~600 MB) we pre-allocate it at engine init
-        # for a faster reconstruct call path. On large scans (e.g. held-out data
-        # 512x512, ~19 GB) we defer the allocation - pre-allocating blows
-        # the L40S 48 GB budget during optimize for no reason, since the
-        # chunked reconstruct path will allocate a small chunk buffer
-        # instead.
+        # (e.g. a 256x256 scan, ~600 MB) it is allocated here for a faster
+        # reconstruct call path. On large scans (512x512, ~19 GB) the
+        # allocation is deferred: the chunked paths allocate a small chunk
+        # buffer instead, and the full one would hold that memory through a
+        # whole fit for nothing.
         shape = (num_bf, ny, nx)
         full_bytes = num_bf * ny * nx * 8
         if full_bytes < _STAGING_LIMIT_BYTES:
@@ -460,14 +448,14 @@ class SSBEngine:
         )
         return cos2phi12, sin2phi12
 
-    def _fill_probe_full(self, mags_m: cp.ndarray, angles_rad: cp.ndarray) -> None:
+    def _fill_probe_full(self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray) -> None:
         """``_fill_probe`` for all 14 Krivanek aberrations (the higher-order preview path).
 
         The Chebyshev-ready coefficient arrays are packed on the host once per call.
         """
         cache = self._cache
         probe = self._probe_buffer(int(cache["num_bf"]))
-        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(mags_m, angles_rad)
+        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(magnitudes_A, angles_rad)
         kfactor = cp.float32(2.0 * math.pi / cache["wavelength"])
         pk_kernel_full(
             cache["kx_bf"], cache["ky_bf"], cache["aperture_k_1d"], cp.float32(cache["wavelength"]), kfactor,
@@ -507,11 +495,6 @@ class SSBEngine:
         Returns the mean complex object directly, shape (ny, nx).
         """
         num_bf, ny, nx = self._bf_grid()
-        if chunk_bf >= num_bf:
-            # Not worth chunking - use the full path.
-            self._run_correction_pipeline(C10, C12, phi12)
-            return self._corrected_buffer.mean(axis=0)
-
         # Compute the full pk buffer once (small: num_bf × 8 bytes).
         cos2phi12, sin2phi12 = self._fill_probe(C10, C12, phi12)
 
@@ -551,9 +534,6 @@ class SSBEngine:
         inverse FFT per BF pixel.
         """
         num_bf, ny, nx = self._bf_grid()
-        if ny != nx:
-            raise ValueError("Fourier-sum object path expects square scan grids")
-
         cos2phi12, sin2phi12 = self._fill_probe(C10, C12, phi12)
 
         k_bf = self._colvar_group
@@ -602,17 +582,12 @@ class SSBEngine:
         # small enough at 128x128, so keep large-BF user workflows stable
         # while the 128 Fourier-sum kernel is investigated separately.
         if not (ny == 128 and nx == 128 and num_bf > 1024):
-            try:
-                return self._reconstruct_object_fourier_sum(C10, C12, phi12)
-            except RuntimeError:
-                # a large scan can still finish on the chunked path below
-                if full_bytes <= _STAGING_LIMIT_BYTES:
-                    raise
+            return self._reconstruct_object_fourier_sum(C10, C12, phi12)
         if full_bytes > _STAGING_LIMIT_BYTES:
-            # Target ~2 GB chunk transient. Speed is flat from 64..9070 BF
-            # per chunk on Blackwell (kernel-launch overhead negligible) so
-            # we pick the smaller chunk for maximum L40S headroom. Reference agreement
-            # is at the float32 summation-order floor (~1e-5 max|Δ|).
+            # Target ~2 GB chunk transient. Speed is flat from 64 to 9070 BF
+            # per chunk (launch overhead negligible), so the smaller chunk keeps
+            # the most memory free. Reference agreement is at the float32
+            # summation-order floor (~1e-5 max|Δ|).
             chunk_bf = max(1, _CHUNK_TARGET_BYTES // (ny * nx * 8))
             return self._run_correction_pipeline_chunked(C10, C12, phi12, chunk_bf)
         self._run_correction_pipeline(C10, C12, phi12)
@@ -623,7 +598,7 @@ class SSBEngine:
 
         Computes ``mean_bf(angle(corrected[b]))`` - the average of the
         per-BF-pixel phase images. For large scans (>6 GB full staging
-        buffer) we chunk on the BF axis to stay under the L40S budget;
+        buffer) the BF axis is chunked to bound the transient memory;
         mathematically equivalent via sum-then-divide.
 
         Returns
@@ -643,7 +618,7 @@ class SSBEngine:
     # =====================================================================
 
     def _run_correction_pipeline_full(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
     ) -> None:
         """Full-aberration correction pipeline.  Mirrors
         :meth:`_run_correction_pipeline` but evaluates ``chi_full`` with all
@@ -651,26 +626,26 @@ class SSBEngine:
         Result lands in ``self._corrected_buffer``.
         """
         self._size_result_buffer(*self._bf_grid())
-        self._fill_probe_full(mags_m, angles_rad)
+        self._fill_probe_full(magnitudes_A, angles_rad)
         self._custom_fft.ifft2_inplace_fused_pk_full(
             self._result_buffer,
             self.G_qk,
             self._cache,
             self._pk_buffer,
-            mags_m, angles_rad,
+            magnitudes_A, angles_rad,
             self._dc_value_host,
         )
         self._corrected_buffer = self._result_buffer
 
     def reconstruct_full(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
     ) -> cp.ndarray:
         """Reconstruct mean phase with all 14 Krivanek aberrations.
 
         Parameters
         ----------
-        mags_m : cp.ndarray
-            Aberration magnitudes (meters), shape (14,), float32.
+        magnitudes_A : cp.ndarray
+            Aberration magnitudes in Angstrom, shape (14,), float32.
             Order: C10, C12, C21, C23, C30, C32, C34, C41, C43, C45,
             C50, C52, C54, C56.
         angles_rad : cp.ndarray
@@ -688,7 +663,7 @@ class SSBEngine:
         in the two-term chunked path is 2-term-only, so this path always
         materializes each chunk before phase reduction.
         """
-        mags_m = cp.asarray(mags_m, dtype=cp.float32)
+        magnitudes_A = cp.asarray(magnitudes_A, dtype=cp.float32)
         angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
         num_bf, ny, nx = self._bf_grid()
         if self._custom_fft._size == 128:
@@ -697,12 +672,12 @@ class SSBEngine:
                 "higher-order reconstruction needs a size-specific full-aberration path."
             )
         if num_bf * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._reconstruct_full_chunked(mags_m, angles_rad, compute_loss=False)
-        self._run_correction_pipeline_full(mags_m, angles_rad)
+            return self._reconstruct_full_chunked(magnitudes_A, angles_rad, compute_loss=False)
+        self._run_correction_pipeline_full(magnitudes_A, angles_rad)
         return self._mean_phase_of_corrected(num_bf, ny, nx)
 
     def reconstruct_full_with_loss(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
     ) -> tuple[cp.ndarray, float]:
         """Full-aberration reconstruct + variance loss in a single pass.
 
@@ -718,7 +693,7 @@ class SSBEngine:
         Falls back to a chunked path for scans whose full staging buffer is
         larger than 6 GB.
         """
-        mags_m = cp.asarray(mags_m, dtype=cp.float32)
+        magnitudes_A = cp.asarray(magnitudes_A, dtype=cp.float32)
         angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
         num_bf, ny, nx = self._bf_grid()
         if self._custom_fft._size == 128:
@@ -727,12 +702,12 @@ class SSBEngine:
                 "higher-order loss needs a size-specific full-aberration path."
             )
         if num_bf * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._reconstruct_full_chunked(mags_m, angles_rad, compute_loss=True)
-        self._run_correction_pipeline_full(mags_m, angles_rad)
+            return self._reconstruct_full_chunked(magnitudes_A, angles_rad, compute_loss=True)
+        self._run_correction_pipeline_full(magnitudes_A, angles_rad)
         return self._mean_phase_and_loss_of_corrected(num_bf, ny, nx)
 
     def _reconstruct_full_chunked(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray, *, compute_loss: bool,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray, *, compute_loss: bool,
     ):
         """Chunked full-aberration mean phase (and loss) for scans whose corrected planes exceed 6 GB.
 
@@ -742,7 +717,7 @@ class SSBEngine:
         Returns the mean phase, or (mean phase, loss) when ``compute_loss``.
         """
         num_bf, ny, nx = self._bf_grid()
-        self._fill_probe_full(mags_m, angles_rad)
+        self._fill_probe_full(magnitudes_A, angles_rad)
         chunk_bf = max(1, _CHUNK_TARGET_BYTES // (ny * nx * 8))
         self._size_result_buffer(chunk_bf, ny, nx)
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
@@ -755,7 +730,7 @@ class SSBEngine:
                 self.G_qk[bf_start:bf_end],
                 self._chunk_cache(bf_start, bf_end),
                 self._pk_buffer[bf_start:bf_end],
-                mags_m, angles_rad,
+                magnitudes_A, angles_rad,
                 self._dc_value_host,
             )
             angles_chunk = cp.angle(chunk_planes)

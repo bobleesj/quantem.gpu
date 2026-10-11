@@ -271,6 +271,7 @@ __device__ __forceinline__ float tf_sinc(float x) { return (fabsf(x) < 1e-6f) ? 
 extern "C" __global__ void thick_fit_batch(
     const float2* __restrict__ G, const long long* __restrict__ flat, const float* __restrict__ qxb, const float* __restrict__ qyb,
     const float* __restrict__ kx, const float* __restrict__ ky, const float* __restrict__ trial,
+    float2* __restrict__ partial_numer, float* __restrict__ partial_denom, unsigned int* __restrict__ arrivals,
     float2* __restrict__ numer, float* __restrict__ denom,
     int num_bf, long long plane, int n_band, int B, float wl, float semiangle, float ang_y, float ang_x, float factor,
     int k_chunk)
@@ -289,13 +290,15 @@ extern "C" __global__ void thick_fit_batch(
     }
     __syncthreads();
     int q = blockIdx.x * blockDim.x + threadIdx.x;
-    if (q >= n_band) return;
-    float qx = qxb[q], qy = qyb[q];
-    long long off = flat[q];
+    bool active = q < n_band;
+    float qx = active ? qxb[q] : 0.0f, qy = active ? qyb[q] : 0.0f;
+    long long off = active ? flat[q] : 0;
     float nr[MAXB], ni[MAXB], dd[MAXB];
     for (int b = 0; b < MAXB; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
-    // grid.y splits the bright-field pixels: each block sums its slice and adds it atomically (outputs zeroed by the host)
-    int k0 = blockIdx.y * k_chunk, k1 = min(num_bf, k0 + k_chunk);
+    // grid.y splits the bright-field pixels: each block sums its slice into its own partial, and the last block of a q
+    // group to finish adds the slices in slice order (atomic additions made the sum, and the tilt fit, change from run
+    // to run)
+    int k0 = blockIdx.y * k_chunk, k1 = active ? min(num_bf, k0 + k_chunk) : k0;
     for (int k = k0; k < k1; ++k) {
         float kxv = __ldg(kx + k), kyv = __ldg(ky + k);
         float4 gk = geometry_k[k - k0];
@@ -327,10 +330,30 @@ extern "C" __global__ void thick_fit_batch(
             dd[b] += gr * gr + gi * gi;
         }
     }
+    if (active) {
+        for (int b = 0; b < B; ++b) {
+            long long slot = ((long long)blockIdx.y * B + b) * n_band + q;
+            partial_numer[slot] = make_float2(nr[b], ni[b]);
+            partial_denom[slot] = dd[b];
+        }
+    }
+    __threadfence();
+    __syncthreads();
+    __shared__ bool last;
+    if (threadIdx.x == 0) last = atomicAdd(arrivals + blockIdx.x, 1u) == gridDim.y - 1;
+    __syncthreads();
+    if (!last || !active) return;
     for (int b = 0; b < B; ++b) {
-        float* nq = reinterpret_cast<float*>(numer + (long long)b * n_band + q);
-        atomicAdd(nq, nr[b]); atomicAdd(nq + 1, ni[b]);
-        atomicAdd(denom + (long long)b * n_band + q, dd[b]);
+        float2 n = make_float2(0.0f, 0.0f);
+        float d = 0.0f;
+        for (int slice = 0; slice < (int)gridDim.y; ++slice) {
+            long long slot = ((long long)slice * B + b) * n_band + q;
+            float2 value = __ldcg(partial_numer + slot);
+            n.x += value.x; n.y += value.y;
+            d += __ldcg(partial_denom + slot);
+        }
+        numer[(long long)b * n_band + q] = n;
+        denom[(long long)b * n_band + q] = d;
     }
 }
 """, "thick_fit_batch")
@@ -364,7 +387,7 @@ pk_kernel = cp.ElementwiseKernel(
 #   7: C41/phi41, 8: C43/phi43, 9: C45/phi45,
 #   10: C50, 11: C52/phi52, 12: C54/phi54, 13: C56/phi56
 #
-# Input kx, ky are per-BF-pixel reciprocal-space coordinates (1/m); aperture_k
+# Input kx, ky are per-BF-pixel reciprocal-space coordinates (1/Angstrom); aperture_k
 # is the precomputed soft-edge mask; wavelength and kfactor=2π/wavelength are
 # passed in to avoid recomputation.
 # Fast variant using host-precomputed Chebyshev-ready arrays (see

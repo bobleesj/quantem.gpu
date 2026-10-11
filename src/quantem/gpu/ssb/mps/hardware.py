@@ -1,7 +1,9 @@
 """The Apple GPU side of MPS SSB: the MLX import, the machine's memory and chip, and the measured chunk sizes.
 
-Chunk sizes and pair-packing policies were measured per memory class and chip (M5 Max, 24-128 GB). They change only
-how many bright-field planes a Metal dispatch handles, never the reduction boundaries or the arithmetic.
+Chunk sizes and pair-packing policies were measured per memory class and chip (M5 Max, 24-128 GB). They set how many
+bright-field planes a Metal dispatch handles. The phase and loss chunk also sets where the float32 bright-field sums
+are split (``reconstruct.py`` adds the chunks in order), so two Macs of different memory classes can differ in the
+last bits of a phase or loss.
 """
 
 import subprocess

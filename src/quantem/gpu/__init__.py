@@ -13,18 +13,6 @@ from quantem.gpu.ssb import SSB, SSBResult
 __version__ = version("quantem.gpu")
 
 
-_NAMESPACES = {
-    "detector",
-    "device",
-    "dpc",
-    "geometry",
-    "io",
-    "movie",
-    "optics",
-    "parallax",
-    "screening",
-}
-
 __all__ = [
     "SSB",
     "SSBResult",
@@ -39,6 +27,10 @@ __all__ = [
     "parallax",
     "screening",
 ]
+
+
+# every public name but the SSB entry points is a subpackage, loaded on first use (movie needs the movie extra)
+_NAMESPACES = set(__all__) - {"SSB", "SSBResult", "__version__"}
 
 
 def __getattr__(name: str):

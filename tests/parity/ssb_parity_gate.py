@@ -2,7 +2,7 @@
 
 One command proves that a measured SSB path did not lose precision:
 
-    quantem-ssb-parity --case arina-128-full-disk
+    python tests/parity/ssb_parity_gate.py --case arina-128-full-disk
 
 The gate compares, at byte-identical inputs (one exported exact BF-column
 artifact, one declared geometry, one aberration setting):
@@ -199,7 +199,7 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
                 "loss": None if loss is None else float(loss),
                 "object_seconds": object_seconds,
                 "preview_seconds": preview_seconds,
-                "num_bf": int(getattr(result, "num_bf", 0) or 0),
+                "num_bf": int(result.num_bf),
             }
         )
     return products
@@ -208,12 +208,10 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
 def metal_harness_path() -> Path | None:
     """Return the compiled native parity harness, if it has been built."""
 
-    import json as _json
-
     marker = REPO_ROOT / "build" / "ssb-parity-check.json"
     if not marker.is_file():
         return None
-    payload = _json.loads(marker.read_text(encoding="utf-8"))
+    payload = json.loads(marker.read_text(encoding="utf-8"))
     binary = Path(str(payload["binary"]))
     return binary if binary.is_file() else None
 

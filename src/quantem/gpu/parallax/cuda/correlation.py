@@ -6,14 +6,14 @@ This gives much better subpixel accuracy than parabolic-only refinement.
 
 import math
 
-import cupy as cp
+from quantem.gpu.device.cuda_runtime import cp
 
 
 def cross_correlation_shift_batch_cp(
-    ref: cp.ndarray,
-    stack: cp.ndarray,
+    ref,
+    stack,
     upsample_factor: int = 4,
-) -> cp.ndarray:
+):
     """Measure shifts of all images in a stack relative to a reference.
 
     Ports cross_correlation_shift_torch, batched over the stack: Fourier
@@ -32,7 +32,7 @@ def cross_correlation_shift_batch_cp(
     Returns
     -------
     cp.ndarray, shape (N, 2), float64
-        Shifts [dx, dy] for each image.
+        The (row, col) shift of each image in pixels (``x0``/``dx`` below follow the paper's symbols but are rows).
     """
     N, M_h, N_w = stack.shape
 
@@ -84,10 +84,10 @@ def cross_correlation_shift_batch_cp(
 
 
 def _upsampled_correlation_batch_cp(
-    cc_batch: cp.ndarray,
+    cc_batch,
     upsample_factor: int,
-    xy_shift: cp.ndarray,
-) -> cp.ndarray:
+    xy_shift,
+):
     """Batched DFT upsample refinement for N cross-correlations.
 
     Parameters

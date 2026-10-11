@@ -11,31 +11,33 @@ shifts from locking onto a wrong correlation peak.
 
 import math
 
-import cupy as cp
 import numpy as np
 
+from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.parallax.cuda.correlation import cross_correlation_shift_batch_cp
 
 
 def align_vbf_stack_multiscale_cp(
-    vbf_stack: cp.ndarray,
-    bf_mask: cp.ndarray,
-    inds_row: cp.ndarray,
-    inds_col: cp.ndarray,
+    vbf_stack,
+    inds_row,
+    inds_col,
+    detector_shape: tuple[int, int],
     bin_factors: tuple,
-    reference: cp.ndarray,
+    reference,
     upsample_factor: int = 4,
-) -> cp.ndarray:
+):
     """Measure the shift that aligns each virtual bright-field image to a reference, coarse to fine.
 
     Parameters
     ----------
     vbf_stack : cp.ndarray
         (N, H, W) float32 stack of virtual BF images; left unchanged.
-    bf_mask : cp.ndarray (bool)
-        (Q, R) mask of the BF pixels on the detector.
     inds_row, inds_col : cp.ndarray
-        Detector (row, col) of each image of the stack.
+        Detector (row, col) offset of each image's pixel from the disk
+        centre, wrapped by the detector size (QuantEM's corner-centred
+        indices), so the detector bins are centred on the disk.
+    detector_shape : tuple of int
+        (Q, R) detector size the offsets wrap by.
     bin_factors : tuple of int
         Detector binning factors from coarse to fine (e.g., (3, 2, 1)).
     reference : cp.ndarray
@@ -61,7 +63,7 @@ def align_vbf_stack_multiscale_cp(
     f_row = cp.fft.fftfreq(H, d=1.0).astype(cp.float32).reshape(1, -1, 1)
     f_col = cp.fft.fftfreq(W, d=1.0).astype(cp.float32).reshape(1, 1, -1)
     for level, bin_factor in enumerate(bin_factors):
-        _, _, _, mapping = _bin_mapping_only(bf_mask, inds_row, inds_col, bin_factor)
+        mapping = bin_mapping(inds_row, inds_col, detector_shape, bin_factor)
         # Binning is linear, so each binned image is the inverse transform of
         # its members' summed spectra. Adding the k-th member of every bin in
         # one gather per k fixes the order of every float32 sum, so identical
@@ -92,33 +94,20 @@ def align_vbf_stack_multiscale_cp(
     return global_shifts
 
 
-def _bin_mapping_only(bf_mask, inds_i, inds_j, bin_factor):
-    """Compute binning mapping without touching the VBF stack.
+def bin_mapping(inds_row, inds_col, detector_shape, bin_factor):
+    """Detector bin of every bright-field pixel when the detector is binned by ``bin_factor`` around the disk.
 
-    Returns (bf_mask_b, inds_ib, inds_jb, mapping), no vbf_binned.
+    The pixel-to-bin map of QuantEM's ``_bin_mask_and_stack_centered``: the
+    corner-centred indices are moved by half the detector, which puts the
+    disk in the middle, so no bin straddles the wrap and the bin at the disk
+    centre is whole. Bins are numbered in order of their position.
     """
-    Q, R = bf_mask.shape
-    N_orig = inds_i.size
-
     if bin_factor == 1:
-        return bf_mask.copy(), inds_i.copy(), inds_j.copy(), cp.arange(N_orig, dtype=cp.int64)
-
-    center_i = (inds_i + Q // 2) % Q
-    center_j = (inds_j + R // 2) % R
-    Qb = math.ceil(Q / bin_factor)
-    Rb = math.ceil(R / bin_factor)
+        return cp.arange(inds_row.size, dtype=cp.int64)
+    rows, cols = detector_shape
+    binned_rows, binned_cols = math.ceil(rows / bin_factor), math.ceil(cols / bin_factor)
     offset = bin_factor // 2
-    qb_center = ((center_i + offset) // bin_factor) % Qb
-    rb_center = ((center_j + offset) // bin_factor) % Rb
-    qb = (qb_center - Qb // 2) % Qb
-    rb = (rb_center - Rb // 2) % Rb
-    coords = (qb * Rb + rb).astype(cp.int64)
-    coords_np = cp.asnumpy(coords)
-    unique_coords_np, inverse_np = np.unique(coords_np, return_inverse=True)
-    mapping = cp.asarray(inverse_np, dtype=cp.int64)
-    unique_coords = cp.asarray(unique_coords_np, dtype=cp.int64)
-    inds_ib = unique_coords // Rb
-    inds_jb = unique_coords % Rb
-    bf_mask_b = cp.zeros((Qb, Rb), dtype=cp.bool_)
-    bf_mask_b[inds_ib, inds_jb] = True
-    return bf_mask_b, inds_ib, inds_jb, mapping
+    bin_row = (((inds_row + rows // 2) % rows + offset) // bin_factor % binned_rows - binned_rows // 2) % binned_rows
+    bin_col = (((inds_col + cols // 2) % cols + offset) // bin_factor % binned_cols - binned_cols // 2) % binned_cols
+    bins = cp.asnumpy((bin_row * binned_cols + bin_col).astype(cp.int64))
+    return cp.asarray(np.unique(bins, return_inverse=True)[1], dtype=cp.int64)

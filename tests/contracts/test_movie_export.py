@@ -133,7 +133,8 @@ def test_save_mp4_auto_uses_cuda_backend_when_available(tmp_path: Path, monkeypa
     assert captured == {"shape": (3, 256, 256), "labels": ["raw"], "qp": 22}
 
 
-def test_save_mp4_auto_falls_back_when_cuda_unavailable(tmp_path: Path, monkeypatch) -> None:
+def test_save_mp4_auto_announces_the_cpu_writer_when_no_gpu_writer_exists(tmp_path: Path, monkeypatch, capsys) -> None:
+    """The CPU writer's frames differ from the GPU writers' (Lanczos resize, plain labels), so "auto" says so."""
     from quantem.gpu.movie import cuda
     from quantem.gpu.movie import mps
 
@@ -153,6 +154,11 @@ def test_save_mp4_auto_falls_back_when_cuda_unavailable(tmp_path: Path, monkeypa
 
     assert out.read_bytes() == b"cpu"
     assert captured == {"frames": 3}
+    printed = capsys.readouterr().out.splitlines()
+    assert printed == [
+        "save_mp4: no CUDA/NVENC or Apple Metal movie writer is available; writing with the CPU writer, which "
+        "resizes with Lanczos and draws unoutlined labels. Pass backend='cuda' or 'mps' to get an error instead."
+    ]
 
 
 def test_cuda_backend_rejects_rendered_frames(tmp_path: Path) -> None:
@@ -264,7 +270,7 @@ def test_cuda_movie_reports_an_unencodable_frame_size_as_runtime_error(tmp_path:
 
 
 def test_save_mp4_auto_falls_back_to_cpu_when_the_gpu_writer_fails(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, capsys
 ) -> None:
     from quantem.gpu.movie import cuda, mps
 
@@ -284,6 +290,9 @@ def test_save_mp4_auto_falls_back_to_cpu_when_the_gpu_writer_fails(
     out = movie.save_mp4(_nvenc_stack(), tmp_path / "fallback.mp4", label_height=0, max_width=None)
 
     assert out.read_bytes() == b"cpu"
+    assert capsys.readouterr().out.startswith(
+        "save_mp4: the CUDA/NVENC writer failed (NVENC could not start); writing with the CPU writer"
+    )
 
 
 def test_save_mp4_auto_lets_programming_errors_rise(tmp_path: Path, monkeypatch) -> None:
@@ -340,7 +349,6 @@ def test_save_mp4_auto_uses_mps_when_cuda_unavailable(tmp_path: Path, monkeypatc
         captured["shape"] = stacks[0].shape
         captured["labels"] = kwargs["labels"]
         captured["crf"] = kwargs["crf"]
-        captured["quality"] = kwargs["quality"]
         path = Path(path)
         path.write_bytes(b"mps")
         return path
@@ -354,7 +362,6 @@ def test_save_mp4_auto_uses_mps_when_cuda_unavailable(tmp_path: Path, monkeypatc
         tmp_path / "auto-mps.mp4",
         labels=["raw"],
         crf=20,
-        quality=71,
     )
 
     assert out.read_bytes() == b"mps"
@@ -362,7 +369,6 @@ def test_save_mp4_auto_uses_mps_when_cuda_unavailable(tmp_path: Path, monkeypatc
         "shape": (3, 10, 12),
         "labels": ["raw"],
         "crf": 20,
-        "quality": 71,
     }
 
 

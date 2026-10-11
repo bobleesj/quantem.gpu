@@ -23,25 +23,10 @@ class _Backend:
         raise NotImplementedError
 
     def preview(self, aberrations, **kwargs):
-        del kwargs
-        return self.reconstruct(
-            aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-        ), None
+        return np.zeros(self.scan_shape, dtype=np.float32), None
 
     def cache_rotation(self, rotation_rad: float) -> None:
         self.rotation_rad = float(rotation_rad)
-
-    def reconstruct(self, c10: float, c12: float, phi12: float):
-        return np.zeros(self.scan_shape, dtype=np.float32)
-
-    def reconstruct_with_loss(self, c10: float, c12: float, phi12: float):
-        return self.reconstruct(c10, c12, phi12), 0.0
-
-    def reconstruct_full(self, mags_m, angles_rad):
-        return np.zeros(self.scan_shape, dtype=np.float32)
-
-    def reconstruct_full_with_loss(self, mags_m, angles_rad):
-        return self.reconstruct_full(mags_m, angles_rad), 0.0
 
     def browser_state(self):
         raise NotImplementedError
@@ -232,7 +217,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
     """Backends may apply their canonical fit start only when none was given."""
     from quantem.gpu.ssb import workflow
 
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     data = np.zeros((2, 2, 2, 2), dtype=np.uint8)
     common = {
         "backend": "mps",
@@ -324,15 +309,6 @@ def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
     assert not hasattr(precision, "phase_rtol")
 
 
-def test_compute_backend_contract_is_runtime_checkable() -> None:
-    """C4: UI adapters consume the common compute protocol."""
-    from quantem.gpu.ssb.contract import SSBProtocol
-
-    backend = _Backend()
-
-    assert isinstance(backend, SSBProtocol)
-
-
 def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> None:
     """``SSB`` reaches its CUDA or MPS backend only through ``SSBProtocol`` members."""
     import ast
@@ -344,7 +320,8 @@ def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> 
     for node in ast.walk(ast.parse(inspect.getsource(workflow))):
         if isinstance(node, ast.Attribute) and (
             (isinstance(node.value, ast.Name) and node.value.id == "backend")
-            or (isinstance(node.value, ast.Attribute) and node.value.attr == "_backend_protocol")
+            or (isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "_backend")
         ):
             called.add(node.attr)
     members = set(vars(SSBProtocol)) | set(SSBProtocol.__annotations__)
@@ -388,11 +365,11 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
             events.append("exit")
 
     class Session(SSB):
-        @property
-        def _backend_protocol(self):
+        def _backend(self):
             return self._test_backend
 
     session = Session.__new__(Session)
+    session._device = None
     session._test_backend = _Backend()
     session.backend = session._test_backend.backend
     phase, loss = session.preview(
@@ -415,3 +392,18 @@ def test_thick_sample_search_refuses_a_batch_objective_that_drops_trials() -> No
 
     with pytest.raises(ValueError, match="zip"):
         fit_sample_search(lambda *args: 0.0, objective_batch=short_batch, batch_size=4, trials=8, verbose=False)
+
+
+def test_thick_sample_search_leaves_the_process_warning_filters_alone() -> None:
+    """The tilt search silences optuna's experimental-feature warning for its own sampler only."""
+    pytest.importorskip("optuna")
+    import warnings
+
+    import scipy.optimize  # noqa: F401 (scipy adds its own filters when first imported)
+
+    from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
+
+    before = list(warnings.filters)
+    fit_sample_search(lambda c10, c12, phi12, tilt, thickness: 1.0 + c10 * c10, trials=8, polish_starts=0, verbose=False)
+
+    assert warnings.filters == before

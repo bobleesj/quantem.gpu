@@ -75,7 +75,7 @@ def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
         {
             "scan_shape": raw.shape[:2],
             "working_shape": raw.shape,
-            "scan_sampling": (0.25, 0.5),
+            "scan_sampling_A": (0.25, 0.5),
             "source": "acquisition_020",
         },
     )
@@ -89,7 +89,7 @@ def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
     assert oriented.data.dtype == np.uint16
     assert oriented.metadata["source"] == "acquisition_020"
     assert oriented.metadata["scan_shape"] == tuple(case["output_shape"][:2])
-    assert oriented.metadata["scan_sampling"] == (0.5, 0.25)
+    assert oriented.metadata["scan_sampling_A"] == (0.5, 0.25)
     assert oriented.metadata["scan_rotation_history"][-1] == {
         "angle_degrees": -90.0,
         "interpolation": "exact",

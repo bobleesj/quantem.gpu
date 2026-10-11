@@ -24,16 +24,14 @@ class ThickSample:
     """The thick-sample model on one ``SSBEngine``'s prepared ``G_qk`` and rotation geometry.
 
     The engine owns the evidence and the current rotation; this object owns what only the thick model needs: the
-    spatial-frequency band of the fit objective, its kernel-ready copies, and the float64 wave-sum scratch buffer, each
-    rebuilt only when the band, the grid or the rotation cache changes.
+    spatial-frequency band of the fit objective and the float64 wave-sum scratch buffer, each rebuilt only when the
+    band or the grid changes.
     """
 
     def __init__(self, engine) -> None:
         self.engine = engine
         self._band_key = None
         self._band = None
-        self._batch_key = None
-        self._batch_arrays = None
         self._wave_sum_buffer = None
 
     def reconstruct(
@@ -245,18 +243,6 @@ class ThickSample:
             self.fit(0.0, 0.0, 0.0, (0.0, 0.0), 0.0, band_inv_A)      # builds the band index for this band
         _, _, flat, qx, qy, weight = self._band
         n_band = int(flat.size)
-        if engine.G_qk.dtype != cp.complex64 or not engine.G_qk.flags.c_contiguous:
-            raise TypeError("ThickSample.fit_batch needs a C-contiguous complex64 G_qk")
-        # kernel-ready copies of the band and pixel coordinates, built once per band / rotation (not per call)
-        cache_key = (self._band_key, id(cache))
-        if self._batch_key != cache_key:
-            self._batch_arrays = (
-                cp.ascontiguousarray(qx.ravel().astype(cp.float32)), cp.ascontiguousarray(qy.ravel().astype(cp.float32)),
-                cp.ascontiguousarray(cache["kx_bf"].astype(cp.float32)), cp.ascontiguousarray(cache["ky_bf"].astype(cp.float32)),
-                cp.ascontiguousarray(flat.astype(cp.int64)),
-            )
-            self._batch_key = cache_key
-        qx_b, qy_b, kx, ky, flat64 = self._batch_arrays
         out = np.empty(len(params))
         threads = 256
         blocks = (n_band + threads - 1) // threads
@@ -268,11 +254,15 @@ class ThickSample:
             batch = len(rows)
             trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
                               rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
-            numerator = cp.zeros((batch, n_band), dtype=cp.complex64)
-            denominator = cp.zeros((batch, n_band), dtype=cp.float32)
+            # one partial sum per 256-pixel slice, added in slice order by the kernel
+            partial_numerator = cp.empty((k_blocks, batch, n_band), dtype=cp.complex64)
+            partial_denominator = cp.empty((k_blocks, batch, n_band), dtype=cp.float32)
+            numerator = cp.empty((batch, n_band), dtype=cp.complex64)
+            denominator = cp.empty((batch, n_band), dtype=cp.float32)
             thick_fit_batch_kernel(
                 (blocks, k_blocks), (threads,),
-                (engine.G_qk, flat64, qx_b, qy_b, kx, ky, cp.asarray(trial.ravel()), numerator, denominator,
+                (engine.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], cp.asarray(trial.ravel()),
+                 partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32), numerator, denominator,
                  np.int32(num_bf), np.int64(engine.G_qk.shape[1] * engine.G_qk.shape[2]), np.int32(n_band), np.int32(batch),
                  np.float32(engine.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
                  np.float32(cache["ang_x_rad"]), np.float32(engine._factor), np.int32(k_chunk)),

@@ -11,7 +11,6 @@ from tests.parity.ssb_precision import (
     LOSS_RTOL,
     PHASE_ATOL,
     PHASE_RTOL,
-    PRECISION,
 )
 
 REALDATA_MASTER_ENV = "QUANTEM_GPU_SSB_MASTER"
@@ -323,13 +322,6 @@ def test_cuda_128_rejects_mismatched_bf_count() -> None:
         )
 
 
-def test_cuda_engine_uses_shared_float32_precision_contract() -> None:
-    """CUDA advertises the shared numeric storage contract."""
-    engine = _make_engine()
-
-    assert engine.precision == PRECISION
-
-
 def test_cuda_128_engine_matches_explicit_cupy_reference() -> None:
     cp = _cupy()
     engine = _make_engine()
@@ -461,7 +453,7 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
         before = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave").loss
         session.find_aberrations(trials=4, refinement=None, check_rotation=False, verbose=False)
         after = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave", force=True).loss
-        engine = session._prepare_cuda()._get_accelerator()
+        engine = session._backend()._get_accelerator()
         engine_aberrations = aberrations_to_engine(aberrations)
         _, exact = engine.reconstruct_with_loss(
             engine_aberrations["C10"], engine_aberrations["C12"], engine_aberrations["phi12"],
@@ -483,7 +475,7 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
         scan_sampling_A=0.5, det_sampling=1,
         bf_center=(7.5, 7.5), bf_radius=5,
     ) as ssb:
-        backend = ssb._prepare_cuda()
+        backend = ssb._backend()
         engine = backend._get_accelerator()
         engine.cache_rotation(backend._rotation_angle_rad)
         assert engine.num_bf == 80  # 64-BF chunk, then a 16-BF tail.
@@ -604,9 +596,9 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bf: int) -> None:
     c10_batch = np.asarray([-120.0, -80.0, 20.0, 100.0], dtype=np.float32)
     c12_batch = np.asarray([55.0, 30.0, 40.0, 10.0], dtype=np.float32)
     phi_batch = np.radians(np.asarray([17.0, -5.0, 11.0, 43.0], dtype=np.float32))
-    cp.testing.assert_allclose(
-        herm_engine.objective.loss_batch(c10_batch, c12_batch, phi_batch),
-        full_engine.objective.loss_batch(c10_batch, c12_batch, phi_batch),
+    np.testing.assert_allclose(
+        [herm_engine.reconstruct_with_loss(*point)[1] for point in zip(c10_batch, c12_batch, phi_batch)],
+        [full_engine.reconstruct_with_loss(*point)[1] for point in zip(c10_batch, c12_batch, phi_batch)],
         rtol=LOSS_RTOL,
         atol=LOSS_ATOL,
     )
@@ -635,9 +627,6 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     assert herm.G_qk.nbytes == len(herm.bf_inds_row) * 128 * 65 * 8
 
     herm_result = herm.result()
-    from quantem.gpu.ssb.contract import SSBProtocol
-
-    assert isinstance(herm, SSBProtocol)
     assert herm_result.backend == "cuda"
     assert herm_result.num_bf == len(herm.bf_inds_row)
     assert herm_result.aberrations == herm.aberrations
@@ -655,7 +644,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     full_engine.gpts = herm.gpts
     full_engine.sampling = herm.sampling
     full_engine.wavelength = herm.wavelength
-    full_engine.semiangle_cutoff = herm.semiangle_cutoff
+    full_engine.semiangle_cutoff = herm.semiangle_mrad
     full_engine.angular_sampling = herm.angular_sampling
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._rotation_angle_rad, force=True)
@@ -707,7 +696,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
     full_engine.gpts = herm.gpts
     full_engine.sampling = herm.sampling
     full_engine.wavelength = herm.wavelength
-    full_engine.semiangle_cutoff = herm.semiangle_cutoff
+    full_engine.semiangle_cutoff = herm.semiangle_mrad
     full_engine.angular_sampling = herm.angular_sampling
     full_engine._factor = accel._factor
     full_engine.cache_rotation(herm._rotation_angle_rad, force=True)
@@ -744,25 +733,17 @@ def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     assert ssb.G_qk.nbytes == before_nbytes
 
 
-def test_cuda_128_variance_loss_batch_matches_reference() -> None:
-    cp = _cupy()
+def test_cuda_128_variance_loss_matches_reference() -> None:
+    _cupy()
     engine = _make_engine()
     c10 = np.asarray([-120.0, -80.0, 20.0, 100.0], dtype=np.float32)
     c12 = np.asarray([55.0, 30.0, 40.0, 10.0], dtype=np.float32)
     phi = np.radians(np.asarray([17.0, -5.0, 11.0, 43.0], dtype=np.float32))
 
-    got = engine.objective.loss_batch(c10, c12, phi)
-    expected = []
-    for a, b, c in zip(c10, c12, phi):
-        _phase, loss = _reference_phase_loss(engine, float(a), float(b), float(c))
-        expected.append(loss)
+    got = [engine.reconstruct_with_loss(float(a), float(b), float(c))[1] for a, b, c in zip(c10, c12, phi)]
+    expected = [_reference_phase_loss(engine, float(a), float(b), float(c))[1] for a, b, c in zip(c10, c12, phi)]
 
-    cp.testing.assert_allclose(
-        got,
-        cp.asarray(expected, dtype=cp.float32),
-        rtol=LOSS_RTOL,
-        atol=LOSS_ATOL,
-    )
+    np.testing.assert_allclose(got, expected, rtol=LOSS_RTOL, atol=LOSS_ATOL)
 
 
 def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:

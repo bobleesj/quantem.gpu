@@ -34,11 +34,7 @@ __device__ __forceinline__ float2 cmul_i(float2 a) {
 }
 
 __device__ __forceinline__ float2 ld_float2(const float2* ptr, size_t idx) {
-#if __CUDA_ARCH__ >= 350
     return __ldg(ptr + idx);
-#else
-    return ptr[idx];
-#endif
 }
 
 __device__ __forceinline__ float2 ld_gqk_maybe_herm(
@@ -279,7 +275,7 @@ __device__ __forceinline__ float2 gamma_mul_pk_cartesian_onthefly(
 //
 // ---- Input array layout (all length 14) ----
 //
-//     abr_mag_scaled[i] = mags_m[i] / (n_i + 1)       - scale baked in
+//     abr_mag_scaled[i] = magnitudes_A[i] / (n_i + 1)       - scale baked in
 //     abr_cm[i]         = cos(m_i · angles_rad[i])    - host-precomputed
 //     abr_sm[i]         = sin(m_i · angles_rad[i])    - host-precomputed
 //
@@ -521,7 +517,7 @@ def corrected_fourier_sum_source(size: int) -> str:
     return _CORRECTED_FOURIER_SUM.replace("SIZE", str(size))
 
 
-def build_cuda_code(size: int, twiddle_decl: str, kernel_code: str) -> str:
+def build_cuda_code(twiddle_decl: str, kernel_code: str) -> str:
     """Assemble full CUDA module: twiddle constant + device functions + kernels."""
     return f'extern "C" {{\n{twiddle_decl}\n{_DEVICE_FUNCTIONS_CUDA}\n{kernel_code}\n}}'
 
@@ -548,24 +544,24 @@ _ABR_M_VALUES = np.asarray(
 
 
 def pack_aberration_coefs(
-    mags_m: cp.ndarray, angles_rad: cp.ndarray,
+    magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
 ) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray]:
     """Precompute Chebyshev-ready aberration coefficient arrays.
 
-    Given raw ``mags_m[14]`` and ``angles_rad[14]`` produces three (14,)
+    Given raw ``magnitudes_A[14]`` and ``angles_rad[14]`` produces three (14,)
     float32 CuPy arrays that the CUDA ``chi_full`` device function
     consumes directly:
 
-    - ``abr_mag_scaled[i] = mags_m[i] / (n_i + 1)``
+    - ``abr_mag_scaled[i] = magnitudes_A[i] / (n_i + 1)``
     - ``abr_cm[i]         = cos(m_i · angles_rad[i])``   (=1.0 for m=0)
     - ``abr_sm[i]         = sin(m_i · angles_rad[i])``   (=0.0 for m=0)
 
     Cost: 14 cos + 14 sin on the host plus a 168-byte DtoH copy - negligible
     compared to the per-pixel per-BF work inside the fused FFT kernel.
     """
-    if mags_m.shape != (14,) or angles_rad.shape != (14,):
-        raise ValueError("mags_m and angles_rad must have shape (14,)")
-    host_magnitudes = cp.asnumpy(mags_m).astype(np.float32, copy=False)
+    if magnitudes_A.shape != (14,) or angles_rad.shape != (14,):
+        raise ValueError("magnitudes_A and angles_rad must have shape (14,)")
+    host_magnitudes = cp.asnumpy(magnitudes_A).astype(np.float32, copy=False)
     host_angles = cp.asnumpy(angles_rad).astype(np.float32, copy=False)
     mag_scaled = host_magnitudes * _ABR_N_PLUS_ONE_INV
     theta = _ABR_M_VALUES * host_angles
@@ -594,32 +590,31 @@ class CustomFFTBase:
         *,
         size: int,
         cuda_code: str,
-        kernel_names: tuple[str, ...],
+        rows: str,
+        cols: str,
+        cols_accumulate: str | None,
+        rows_full: str | None,
         twiddle_name: str,
         rows_block: tuple[int, int, int],
         rows_grid_y: int,
         cols_block: tuple[int, int, int],
         cols_grid_y: int,
     ) -> None:
-        """``kernel_names``: the fused row IFFT, the column IFFT, then optionally the column-accumulate and the
-        full-aberration row kernels; a subclass fetches any further kernel it names."""
+        """Compile one size's module and fetch its kernels: the fused row IFFT, the column IFFT, the column-accumulate
+        kernel of ``ifft2_fused_pk_col_accumulate`` (None where a subclass replaces that method) and the
+        full-aberration row kernel (None where the size has none); a subclass fetches any further kernel it uses."""
         self._size = size
         options = ("--std=c++11", "--use_fast_math", "--maxrregcount=96", "-Xptxas=-dlcm=ca")
         self._module = cp.RawModule(
             code=cuda_code,
             options=options,
-            name_expressions=kernel_names,
+            name_expressions=tuple(name for name in (rows, cols, cols_accumulate, rows_full) if name is not None),
         )
         self._fourier_sum = self._module.get_function(f"ssb{size}_corrected_fourier_sum_t256")
-        self._rows_fused_pk = self._module.get_function(kernel_names[0])
-        self._cols = self._module.get_function(kernel_names[1])
-        self._cols_accumulate = (
-            self._module.get_function(kernel_names[2]) if len(kernel_names) > 2 else None
-        )
-        # Used by ifft2_inplace_fused_pk_full when a subclass names it.
-        self._rows_fused_pk_full = (
-            self._module.get_function(kernel_names[3]) if len(kernel_names) > 3 else None
-        )
+        self._rows_fused_pk = self._module.get_function(rows)
+        self._cols = self._module.get_function(cols)
+        self._cols_accumulate = None if cols_accumulate is None else self._module.get_function(cols_accumulate)
+        self._rows_fused_pk_full = None if rows_full is None else self._module.get_function(rows_full)
         self._colvar_group = 32
         self._rows_fused_pk_block = rows_block
         self._rows_fused_pk_grid_y = rows_grid_y
@@ -730,13 +725,13 @@ class CustomFFTBase:
         G_qk: cp.ndarray,
         cache: dict,
         pk: cp.ndarray,
-        mags_m: cp.ndarray,
+        magnitudes_A: cp.ndarray,
         angles_rad: cp.ndarray,
         dc_value: complex,
     ) -> None:
         """Full-aberration version of ``ifft2_inplace_fused_pk``.
 
-        Takes the raw ``mags_m``, ``angles_rad`` arrays (shape (14,)) from
+        Takes the raw ``magnitudes_A``, ``angles_rad`` arrays (shape (14,)) from
         the caller - same public API as before.  Internally precomputes the
         Chebyshev-ready packed arrays and hands them to the `_full` row
         kernel, which replaces 14 ``cosf`` calls per chi evaluation with
@@ -749,11 +744,11 @@ class CustomFFTBase:
             )
         N = self._size
         num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        if mags_m.dtype != cp.float32 or angles_rad.dtype != cp.float32:
-            raise ValueError("mags_m and angles_rad must be float32 CuPy arrays")
-        if mags_m.shape != (14,) or angles_rad.shape != (14,):
-            raise ValueError("mags_m and angles_rad must have shape (14,)")
-        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(mags_m, angles_rad)
+        if magnitudes_A.dtype != cp.float32 or angles_rad.dtype != cp.float32:
+            raise ValueError("magnitudes_A and angles_rad must be float32 CuPy arrays")
+        if magnitudes_A.shape != (14,) or angles_rad.shape != (14,):
+            raise ValueError("magnitudes_A and angles_rad must have shape (14,)")
+        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(magnitudes_A, angles_rad)
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
         grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
@@ -795,8 +790,6 @@ class CustomFFTBase:
         Writes partial sum/sumsq planes instead of the complex result.
         """
         N = self._size
-        if self._cols_accumulate is None:
-            raise RuntimeError("col_accumulate kernel not available")
         num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
         n_groups = (num_bf + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):

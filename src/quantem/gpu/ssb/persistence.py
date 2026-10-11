@@ -62,7 +62,7 @@ def load_result(
     *,
     paths: tuple[Path, Path],
     signature: dict[str, object],
-    backend: Literal["cuda", "mps", "webgpu"],
+    backend: Literal["cuda", "mps"],
 ) -> SSBResult | None:
     """Load one exact saved result, or return ``None`` on any mismatch."""
 
