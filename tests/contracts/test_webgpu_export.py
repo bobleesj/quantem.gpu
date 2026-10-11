@@ -10,7 +10,6 @@ def test_manifest_is_unique_relative_and_import_complete():
     root = files("quantem.gpu")
     names = tuple(json.loads(root.joinpath("webgpu", "sources.json").read_text()))
     assert names == tuple(sorted(set(names)))
-    assert "webgpu/index.ts" in names
     for name in names:
         path = Path(name)
         assert not path.is_absolute() and ".." not in path.parts

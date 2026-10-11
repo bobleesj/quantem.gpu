@@ -1,37 +1,24 @@
 # Resident rANS product parity
 
 `rans-products.ts` exercises the browser decoder and scientific products on a
-caller-supplied WebGPU device. Bundle it with the repository's esbuild (installed
-by `npm ci` at the repository root):
-
-```bash
-npx --no-install esbuild \
-  tests/webgpu/rans-products.ts --bundle --format=iife \
-  --global-name=RansProductParity --outfile=/tmp/rans-products-parity.js
-```
-
-Load that script into a browser test page, confirm the adapter is the intended
-hardware (NVIDIA/Blackwell on the development host), then call:
-
-```javascript
-await RansProductParity.runRansProductParity(device)
-```
-
-The test creates small deterministic rANS exports in memory. Two acquisitions
-mix entropy-coded and literal columns, cross checkpoint and block boundaries,
-and contain a masked saturated detector pixel. Point patterns, virtual images,
-and scan-ROI sums and means are compared exactly against raw counts and the
-stock dense backend. CoM, centered DPC, magnitude, and iDPC compare against the
-same backend at an absolute tolerance of `1e-6`; iDPC includes explicit rotation
-and transpose. Single-pixel and empty masks exercise the corresponding views.
+caller-supplied WebGPU device. It runs in the headed `.qem` gate below on
+fixtures that `make_qem_browser_fixture.generate` writes with the public encoder:
+two acquisitions of a 32 x 32 scan on a 3 x 4 detector whose last pixel is
+saturated and masked, cutting chunk and checkpoint boundaries. Point patterns,
+virtual images, and scan-ROI sums and means are compared exactly against raw
+counts and the stock dense backend. CoM, centered DPC and iDPC must equal the
+same backend exactly (both divide the exact integer moments once); iDPC includes
+explicit rotation and transpose. Single-pixel and empty masks exercise the
+corresponding views.
 
 A 131072-position saturated ROI tests dispatch splitting and sums above 32 bits.
 A 512-column saturated detector tests weighted moments above 32 bits, with an
 exact expected centroid of 255.5 pixels. No performance assertion is made.
 
-On 2026-09-07 the real NVIDIA/Blackwell run passed all checks. CoM/DPC maximum
-absolute differences were at most `1.20e-7`; iDPC at most `3.13e-7`. Exact pattern,
-ROI, and wide-moment checks passed with zero tolerance.
+On 2026-10-10 the real NVIDIA/Blackwell run passed every check with zero
+tolerance. Before the .qem CoM divided its exact moments once (as the dense path
+does), CoM and DPC differed from the dense backend by up to `1.20e-7` (one float32
+ulp) and iDPC by up to `3.13e-7`.
 
 ## Integer .qem browser admission
 
@@ -131,6 +118,38 @@ QEM gate above runs it. It reduces two-chunk uint16, uint32 and float32 stacks
 whose integer per-pixel sums exceed 2^32 and compares every sum and mean
 exactly against float64 sums rounded once to float32. A 32-bit accumulator
 wraps these sums, and reading float32 data as packed uint16 counts fails them.
+
+## Dense HDF5 loading and virtual images
+
+`dense-h5-parity.ts` runs in the same headed gate on Arina-layout bitshuffle-LZ4
+files that `make_qem_browser_fixture.generate_h5` writes with h5py and hdf5plugin
+(uint8, uint16, uint32 and float32 at 64 x 64 and 96 x 96, uint16 at 128 x 128,
+one masked hot pixel). A 96 x 96 frame is not a whole number of bitshuffle
+blocks, so it ends in a shorter block with its own plane stride. The counts
+include 255 < count <= 65535 and full uint16 frames. Every check is exact
+against the raw counts:
+
+- `runDenseDecodeParity`: the full-stack decode at native width, and the uint8
+  output saturating at 255.
+- `runProductFirstParity`: the widget's first virtual image, summed straight from
+  the compressed chunks (pixel and group-mask kernels, full, disk, annulus, one-
+  and two-pixel masks, a scan region). Counts above 255 need all 16 bit planes.
+- `runResidentParity`: virtual images and centers of mass of the resident stack
+  the widget builds from the same files, down to one-pixel masks.
+- `runDenseVirtualImageParity`: totals above 2^24 on the direct and the
+  large-aperture complement path equal the exact integer sum rounded once.
+
+## SSB bright-field subsets
+
+`ssb-bf-subset.ts` builds a synthetic 128 x 128 SSB folder (441 bright-field
+uint16 columns, resident G(q,k) in chunks of 256) and runs in the same headed
+gate. After a full-BF load, reconstructions at 100 and 300 BF pixels (drag
+estimator and committed mean phase with loss) must equal an engine prepared with
+only that subset to 1e-6 rad and 1e-7 relative loss (float32 summation order),
+and returning to the full count must reproduce a fresh full engine exactly.
+`runSsbBuildPeak` prepares 1793 bright-field columns (8 chunks) while counting
+live GPU buffer bytes: the build peak must not exceed the bytes the ready engine
+keeps, so the full-plane G(q,k) of every chunk is never resident at once.
 
 ## Decoder pipelines per device (CPU-only)
 

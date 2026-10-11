@@ -22,7 +22,6 @@ import {
   DPC_COMPONENT_PAIR_WGSL,
   DPC_COMPONENT_WGSL,
   DPC_MEAN_WGSL,
-  DPC_MAGNITUDE_WGSL,
   DPC_OUTPUT_MEAN_WGSL,
   DPC_OUTPUT_ULP_CORRECT_WGSL,
   IDPC_EXTRACT_WGSL,
@@ -69,22 +68,71 @@ fn sampleF(gp: u32, mode: u32) -> f32 {
 // is the full shared tree reduction.
 const WGSZ = 128;
 const SGSZ = 32;   // subgroup (warp) size on the target GPUs
-const maskedSumSrc = (sg: boolean) => `
+
+// Integer counts (modes 0/1/3) sum exactly. Each thread carries its slice as a (low, high) word
+// pair, so a sum never wraps; the scan position's total is written as a pair and WORDS_TO_F32
+// rounds it once. When the host proves the whole total fits u32 (u2.y == 0, every uint8/uint16
+// aperture of a detector up to 256 x 256), the warps reduce the low words with subgroupAdd as
+// the float kernel did; otherwise the pairs reduce through shared memory with explicit carries.
+const maskedSumIntegerSrc = (sg: boolean) => `
+${sg ? "enable subgroups;" : ""}
+@group(0) @binding(0) var<storage,read> data: array<u32>;
+@group(0) @binding(1) var<storage,read> idx: array<u32>;   // ACTIVE detector pixel indices only
+@group(0) @binding(2) var<storage,read_write> words: array<u32>;   // 2*scanCount: (low, high) per position
+@group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
+@group(0) @binding(4) var<uniform> u2: vec4<u32>;  // gridX, wide (1 = the total may exceed u32), 0, 0
+${SAMPLE}
+var<workgroup> partLow: array<u32, ${WGSZ}>;
+var<workgroup> partHigh: array<u32, ${WGSZ}>;
+@compute @workgroup_size(${WGSZ})
+fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
+  let sl = wid.y * u2.x + wid.x; let tid = lid.x;
+  let n = arrayLength(&idx); let base = sl * u.z;
+  var low = 0u; var high = 0u;
+  if (sl < u.y) { for (var j = tid; j < n; j = j + ${WGSZ}u) {
+    let next = low + sample(base + idx[j], u.w);   // u32 addition wraps; the wrap is the carry
+    high = high + select(0u, 1u, next < low); low = next;
+  } }
+  if (u2.y == 0u) {
+${sg
+  ? `    let warpLow = subgroupAdd(low);
+    if (subgroupElect()) { partLow[tid / ${SGSZ}u] = warpLow; }
+    workgroupBarrier();
+    if (tid == 0u && sl < u.y) {
+      var total = 0u; for (var w = 0u; w < ${WGSZ / SGSZ}u; w = w + 1u) { total = total + partLow[w]; }
+      words[2u * (u.x + sl)] = total; words[2u * (u.x + sl) + 1u] = 0u;
+    }`
+  : `    partLow[tid] = low; workgroupBarrier();
+    for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) { if (tid < s) { partLow[tid] = partLow[tid] + partLow[tid + s]; } workgroupBarrier(); }
+    if (tid == 0u && sl < u.y) { words[2u * (u.x + sl)] = partLow[0]; words[2u * (u.x + sl) + 1u] = 0u; }`}
+  } else {
+    partLow[tid] = low; partHigh[tid] = high; workgroupBarrier();
+    for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+      if (tid < s) {
+        let sum = partLow[tid] + partLow[tid + s];
+        partHigh[tid] = partHigh[tid] + partHigh[tid + s] + select(0u, 1u, sum < partLow[tid]);
+        partLow[tid] = sum;
+      }
+      workgroupBarrier();
+    }
+    if (tid == 0u && sl < u.y) { words[2u * (u.x + sl)] = partLow[0]; words[2u * (u.x + sl) + 1u] = partHigh[0]; }
+  }
+}`;
+
+// Float32 data (mode 2) sums its values in f32 with the same cooperative gather.
+const maskedSumFloatSrc = (sg: boolean) => `
 ${sg ? "enable subgroups;" : ""}
 @group(0) @binding(0) var<storage,read> data: array<u32>;
 @group(0) @binding(1) var<storage,read> idx: array<u32>;   // ACTIVE detector pixel indices only
 @group(0) @binding(2) var<storage,read_write> vi: array<f32>;
 @group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, mode
 @group(0) @binding(4) var<uniform> u2: vec4<u32>;  // gridX, 0, 0, 0
-${SAMPLE}
 var<workgroup> part: array<f32, ${WGSZ}>;
 @compute @workgroup_size(${WGSZ})
 fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
   let sl = wid.y * u2.x + wid.x; let tid = lid.x;
-  // f32 accumulate via sampleF: exact for uint8/uint16 counts (sum << 2^24 for a screening
-  // aperture), and the only correct path for float32 (mode 2) values.
   let n = arrayLength(&idx); let base = sl * u.z; var sum: f32 = 0.0;
-  if (sl < u.y) { for (var j = tid; j < n; j = j + ${WGSZ}u) { sum = sum + sampleF(base + idx[j], u.w); } }
+  if (sl < u.y) { for (var j = tid; j < n; j = j + ${WGSZ}u) { sum = sum + bitcast<f32>(data[base + idx[j]]); } }
 ${sg
   ? `  sum = subgroupAdd(sum);                       // per-warp partial
   if (subgroupElect()) { part[tid / ${SGSZ}u] = sum; }   // one slot per warp
@@ -96,6 +144,39 @@ ${sg
   : `  part[tid] = sum; workgroupBarrier();
   for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) { if (tid < s) { part[tid] = part[tid] + part[tid + s]; } workgroupBarrier(); }
   if (tid == 0u && sl < u.y) { vi[u.x + sl] = part[0]; }`}
+}`;
+
+// Exact integer virtual image -> float32, rounded once. `convert` writes the (low, high) totals
+// of one sum; `subtractConvert` writes total - sum, the large-aperture path that reads the
+// smaller complement of the mask. f32(u32) rounds to nearest even; a total above 2^32 keeps its
+// top 32 bits with every dropped bit ORed into the lowest kept bit, so that rounding still sees
+// whether the discarded remainder is zero, then scales by the dropped power of two.
+const WORDS_TO_F32_WGSL = `
+@group(0) @binding(0) var<storage,read> total: array<u32>;
+@group(0) @binding(1) var<storage,read> words: array<u32>;
+@group(0) @binding(2) var<storage,read_write> out: array<f32>;
+@group(0) @binding(3) var<uniform> u: vec4<u32>; // scanCount, 0, 0, 0
+fn pairToF32(low: u32, high: u32) -> f32 {
+  if (high == 0u) { return f32(low); }
+  let shift = 32u - countLeadingZeros(high);
+  if (shift == 32u) { return ldexp(f32(high | select(0u, 1u, low != 0u)), 32); }
+  let kept = (high << (32u - shift)) | (low >> shift);
+  let dropped = low & ((1u << shift) - 1u);
+  return ldexp(f32(kept | select(0u, 1u, dropped != 0u)), i32(shift));
+}
+@compute @workgroup_size(256)
+fn convert(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.x) { return; }
+  out[i] = pairToF32(words[2u * i], words[2u * i + 1u]);
+}
+@compute @workgroup_size(256)
+fn subtractConvert(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u.x) { return; }
+  let low = total[2u * i] - words[2u * i];
+  let high = total[2u * i + 1u] - words[2u * i + 1u] - select(0u, 1u, total[2u * i] < words[2u * i]);
+  out[i] = pairToF32(low, high);
 }`;
 
 // ACCUMULATES each chunk's in-ROI scan positions into the DP. dims: startScan,
@@ -176,6 +257,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // One WORKGROUP per scan position (same coalescing fix as MASKED_SUM): WGSZ threads cooperatively
 // accumulate the intensity-weighted centroid over the aperture, three shared-memory reductions
 // (weight, y*weight, x*weight). gridX in u2.z for the 2D dispatch.
+// Integer modes reduce to exact totals, then threads 0 and 1 divide the row and the column moment
+// by the weight with the one correctly rounded ratioU64 call: Windows FXC (D3D feature level
+// below 12) fails to compile this shader when the exact divisions are inlined four times.
 const maskedComSrc = (sg: boolean) => `
 ${sg ? "enable subgroups;" : ""}
 @group(0) @binding(0) var<storage,read> data: array<u32>;
@@ -229,93 +313,67 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         }
       } }
     }
+    var weight = U64Words(0u, 0u); var rowMoment = U64Words(0u, 0u); var colMoment = U64Words(0u, 0u);
+    if ((u2.w & 1u) != 0u) {
+${sg
+  ? `      let wLo = subgroupAdd(wsumN); let yLo = subgroupAdd(ysumN); let xLo = subgroupAdd(xsumN);
+      if (subgroupElect()) { let w = tid / ${SGSZ}u; pwuLo[w] = wLo; pyuLo[w] = yLo; pxuLo[w] = xLo; }
+      workgroupBarrier();
+      var w = 0u; var y = 0u; var x = 0u;
+      for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwuLo[k]; y = y + pyuLo[k]; x = x + pxuLo[k]; }
+      weight = U64Words(w, 0u); rowMoment = U64Words(y, 0u); colMoment = U64Words(x, 0u);`
+  : `      pwuLo[tid] = wsumN; pyuLo[tid] = ysumN; pxuLo[tid] = xsumN; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) { pwuLo[tid] = pwuLo[tid] + pwuLo[tid + s]; pyuLo[tid] = pyuLo[tid] + pyuLo[tid + s]; pxuLo[tid] = pxuLo[tid] + pxuLo[tid + s]; }
+        workgroupBarrier();
+      }
+      weight = U64Words(pwuLo[0], 0u); rowMoment = U64Words(pyuLo[0], 0u); colMoment = U64Words(pxuLo[0], 0u);`}
+    } else {
+      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
+      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
+      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) {
+          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
+          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
+          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
+          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
+        }
+        workgroupBarrier();
+      }
+      weight = U64Words(pwuLo[0], pwuHi[0]); rowMoment = U64Words(pyuLo[0], pyuHi[0]); colMoment = U64Words(pxuLo[0], pxuHi[0]);
+    }
+    // Thread 0 writes comY and thread 1 comX; ratioU64 returns 0 for a zero weight.
+    if (tid < 2u && sl < u.y) {
+      var moment = rowMoment;
+      if (tid == 1u) { moment = colMoment; }
+      com[u.x + sl + tid * u2.y] = ratioU64(moment, weight);
+    }
   } else {
     if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
       let p = idx[j]; let v = sampleF(base + p, u.w);
       wsum = wsum + v; ysum = ysum + f32(p / detCols) * v; xsum = xsum + f32(p % detCols) * v;
     } }
-  }
 ${sg
-  ? `  if (u.w != 2u) {
-    if ((u2.w & 1u) != 0u) {
-      let wLo = subgroupAdd(wsumN); let yLo = subgroupAdd(ysumN); let xLo = subgroupAdd(xsumN);
-      if (subgroupElect()) { let w = tid / ${SGSZ}u; pwuLo[w] = wLo; pyuLo[w] = yLo; pxuLo[w] = xLo; }
-      workgroupBarrier();
-      if (tid == 0u && sl < u.y) {
-        var w = 0u; var y = 0u; var x = 0u;
-        for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwuLo[k]; y = y + pyuLo[k]; x = x + pxuLo[k]; }
-        let gi = u.x + sl;
-        if (w > 0u) { com[gi] = ratioU32Exact(y, w); com[u2.y + gi] = ratioU32Exact(x, w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    } else {
-      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
-      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
-      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
-      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-        if (tid < s) {
-          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
-          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
-          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
-          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
-        }
-        workgroupBarrier();
-      }
-      if (tid == 0u && sl < u.y) {
-        let w = U64Words(pwuLo[0], pwuHi[0]); let gi = u.x + sl;
-        if (!u64IsZero(w)) { com[gi] = ratioU64(U64Words(pyuLo[0], pyuHi[0]), w); com[u2.y + gi] = ratioU64(U64Words(pxuLo[0], pxuHi[0]), w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    }
-  } else {
-    wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
-  if (subgroupElect()) { let w = tid / ${SGSZ}u; pw[w] = wsum; py[w] = ysum; px[w] = xsum; }
-  workgroupBarrier();
-  if (tid == 0u && sl < u.y) {
-    var w = 0.0; var y = 0.0; var x = 0.0;
-    for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pw[k]; y = y + py[k]; x = x + px[k]; }
-    let gi = u.x + sl;
-    if (w > 0.0) { com[gi] = y / w; com[u2.y + gi] = x / w; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-  }
-  }`
-  : `  if (u.w != 2u) {
-    if ((u2.w & 1u) != 0u) {
-      pwuLo[tid] = wsumN; pyuLo[tid] = ysumN; pxuLo[tid] = xsumN; workgroupBarrier();
-      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-        if (tid < s) { pwuLo[tid] = pwuLo[tid] + pwuLo[tid + s]; pyuLo[tid] = pyuLo[tid] + pyuLo[tid + s]; pxuLo[tid] = pxuLo[tid] + pxuLo[tid + s]; }
-        workgroupBarrier();
-      }
-      if (tid == 0u && sl < u.y) {
-        let w = pwuLo[0]; let gi = u.x + sl;
-        if (w > 0u) { com[gi] = ratioU32Exact(pyuLo[0], w); com[u2.y + gi] = ratioU32Exact(pxuLo[0], w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    } else {
-      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
-      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
-      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
-      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-        if (tid < s) {
-          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
-          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
-          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
-          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
-        }
-        workgroupBarrier();
-      }
-      if (tid == 0u && sl < u.y) {
-        let w = U64Words(pwuLo[0], pwuHi[0]); let gi = u.x + sl;
-        if (!u64IsZero(w)) { com[gi] = ratioU64(U64Words(pyuLo[0], pyuHi[0]), w); com[u2.y + gi] = ratioU64(U64Words(pxuLo[0], pxuHi[0]), w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    }
-  } else {
-    pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
-  for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-    if (tid < s) { pw[tid] = pw[tid] + pw[tid + s]; py[tid] = py[tid] + py[tid + s]; px[tid] = px[tid] + px[tid + s]; }
+  ? `    wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
+    if (subgroupElect()) { let w = tid / ${SGSZ}u; pw[w] = wsum; py[w] = ysum; px[w] = xsum; }
     workgroupBarrier();
+    if (tid == 0u && sl < u.y) {
+      var w = 0.0; var y = 0.0; var x = 0.0;
+      for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pw[k]; y = y + py[k]; x = x + px[k]; }
+      let gi = u.x + sl;
+      if (w > 0.0) { com[gi] = y / w; com[u2.y + gi] = x / w; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+    }`
+  : `    pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
+    for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+      if (tid < s) { pw[tid] = pw[tid] + pw[tid + s]; py[tid] = py[tid] + py[tid + s]; px[tid] = px[tid] + px[tid + s]; }
+      workgroupBarrier();
+    }
+    if (tid == 0u && sl < u.y) {
+      let gi = u.x + sl;
+      if (pw[0] > 0.0) { com[gi] = py[0] / pw[0]; com[u2.y + gi] = px[0] / pw[0]; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+    }`}
   }
-  if (tid == 0u && sl < u.y) {
-    let gi = u.x + sl;
-    if (pw[0] > 0.0) { com[gi] = py[0] / pw[0]; com[u2.y + gi] = px[0] / pw[0]; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-  }
-  }`}
 }`;
 
 // Dense DF/ADF helper: out = full-detector total - complement sum. This mirrors
@@ -448,70 +506,6 @@ ${sg
   }`}
 }`;
 
-const U8_WORD_MAJOR_TRANSPOSE_WGSL = `
-@group(0) @binding(0) var<storage,read> src: array<u32>;
-@group(0) @binding(1) var<storage,read_write> dst: array<u32>;
-@group(0) @binding(2) var<uniform> u: vec4<u32>; // nScanInChunk, detWords, 0, 0
-@compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let scan = gid.x;
-  let word = gid.y;
-  if (scan >= u.x || word >= u.y) { return; }
-  dst[word * u.x + scan] = src[scan * u.y + word];
-}`;
-
-const maskedSignedDeltaU8WordMajorSrc = (sg: boolean) => `
-${sg ? "enable subgroups;" : ""}
-@group(0) @binding(0) var<storage,read> data: array<u32>;
-@group(0) @binding(1) var<storage,read> entries: array<u32>; // flat pairs: detector u32 word, 2-bit lane coeffs
-@group(0) @binding(2) var<storage,read_write> out: array<f32>;
-@group(0) @binding(3) var<uniform> u: vec4<u32>;   // startScan, nScanInChunk, detSize, detWords
-@group(0) @binding(4) var<uniform> u2: vec4<u32>;  // entryCount, 0, 0, 0
-const SCAN_TILE = 16u;
-const ENTRY_TILE = 16u;
-fn laneSignedValue(word: u32, coeffs: u32, lane: u32) -> f32 {
-  let coeff = (coeffs >> (lane * 2u)) & 3u;
-  if (coeff == 0u) { return 0.0; }
-  let sample = f32((word >> (lane * 8u)) & 0xffu);
-  if (coeff == 2u) { return -sample; }
-  return sample;
-}
-var<workgroup> part: array<f32, 256>;
-@compute @workgroup_size(16, 16)
-fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
-  let scanLane = lid.x;
-  let entryLane = lid.y;
-  let sl = wid.x * SCAN_TILE + scanLane;
-  let n = u2.x;
-  var sum = 0.0;
-  if (sl < u.y) {
-    for (var j = entryLane; j < n; j = j + ENTRY_TILE) {
-      let pair = j * 2u;
-      let word = data[entries[pair] * u.y + sl];
-      let coeffs = entries[pair + 1u];
-      sum = sum + laneSignedValue(word, coeffs, 0u);
-      sum = sum + laneSignedValue(word, coeffs, 1u);
-      sum = sum + laneSignedValue(word, coeffs, 2u);
-      sum = sum + laneSignedValue(word, coeffs, 3u);
-    }
-  }
-  let offset = scanLane * ENTRY_TILE + entryLane;
-  part[offset] = sum;
-  workgroupBarrier();
-  if (entryLane < 8u) { part[offset] = part[offset] + part[offset + 8u]; }
-  workgroupBarrier();
-  if (entryLane < 4u) { part[offset] = part[offset] + part[offset + 4u]; }
-  workgroupBarrier();
-  if (entryLane < 2u) { part[offset] = part[offset] + part[offset + 2u]; }
-  workgroupBarrier();
-  if (entryLane < 1u) { part[offset] = part[offset] + part[offset + 1u]; }
-  workgroupBarrier();
-  if (entryLane == 0u && sl < u.y) {
-    let gi = u.x + sl;
-    out[gi] = out[gi] + part[scanLane * ENTRY_TILE];
-  }
-}`;
-
 const MAX_WG = 65535;   // max workgroups per dispatch dimension; >this needs a 2D grid
 
 type CoMEncoder = (pass: GPUComputePassEncoder, indices: GPUBuffer, output: GPUBuffer, detCols: number, count: number) => GPUBuffer[];
@@ -580,12 +574,14 @@ export function buildScanMask(model: TraitReader, scanRows: number, scanCols: nu
 
 export class DetectorCompute {
   private device: GPUDevice;
-  private maskedSumPipe: GPUComputePipeline;
+  private maskedSumIntegerPipe: GPUComputePipeline;
+  private maskedSumFloatPipe: GPUComputePipeline;
+  private wordsConvertPipe: GPUComputePipeline;
+  private wordsSubtractPipe: GPUComputePipeline;
   private maskedComPipe: GPUComputePipeline;
   private dpcMeanPipe: GPUComputePipeline;
   private dpcComponentPipe: GPUComputePipeline;
   private dpcComponentPairPipe: GPUComputePipeline;
-  private dpcMagnitudePipe: GPUComputePipeline;
   private dpcOutputMeanPipe: GPUComputePipeline;
   private dpcOutputUlpCorrectPipe: GPUComputePipeline;
   private idpcPackPipe: GPUComputePipeline;
@@ -601,8 +597,6 @@ export class DetectorCompute {
   private subtractPipe: GPUComputePipeline;
   private maskedSignedDeltaPipe: GPUComputePipeline;
   private maskedSignedDeltaU8WordPipe: GPUComputePipeline;
-  private u8WordMajorTransposePipe: GPUComputePipeline;
-  private maskedSignedDeltaU8WordMajorPipe: GPUComputePipeline;
   private applySignedDeltaPipe: GPUComputePipeline;
   private reduceFramesPipe: GPUComputePipeline;
   private reduceFramesFloatPipe: GPUComputePipeline;
@@ -631,14 +625,16 @@ export class DetectorCompute {
     const sg = device.features.has("subgroups");   // warp reduction in maskedSum/CoM when available
     const shader = (code: string) => device.createShaderModule({ code });
     const pipeline = (module: GPUShaderModule, entryPoint = "main") => device.createComputePipeline({ layout: "auto", compute: { module, entryPoint } });
-    const maskedSumModule = shader(maskedSumSrc(sg));
     const reduceFramesModule = shader(REDUCE_FRAMES_WGSL);
-    this.maskedSumPipe = pipeline(maskedSumModule);
+    this.maskedSumIntegerPipe = pipeline(shader(maskedSumIntegerSrc(sg)));
+    this.maskedSumFloatPipe = pipeline(shader(maskedSumFloatSrc(sg)));
+    const wordsModule = shader(WORDS_TO_F32_WGSL);
+    this.wordsConvertPipe = pipeline(wordsModule, "convert");
+    this.wordsSubtractPipe = pipeline(wordsModule, "subtractConvert");
     this.maskedComPipe = pipeline(shader(maskedComSrc(sg)));
     this.dpcMeanPipe = pipeline(shader(DPC_MEAN_WGSL));
     this.dpcComponentPipe = pipeline(shader(DPC_COMPONENT_WGSL));
     this.dpcComponentPairPipe = pipeline(shader(DPC_COMPONENT_PAIR_WGSL));
-    this.dpcMagnitudePipe = pipeline(shader(DPC_MAGNITUDE_WGSL));
     this.dpcOutputMeanPipe = pipeline(shader(DPC_OUTPUT_MEAN_WGSL));
     this.dpcOutputUlpCorrectPipe = pipeline(shader(DPC_OUTPUT_ULP_CORRECT_WGSL));
     this.idpcPackPipe = pipeline(shader(IDPC_PACK_WGSL));
@@ -655,8 +651,6 @@ export class DetectorCompute {
     this.subtractPipe = pipeline(shader(SUBTRACT_FROM_TOTAL_WGSL));
     this.maskedSignedDeltaPipe = pipeline(shader(maskedSignedDeltaSrc(sg)));
     this.maskedSignedDeltaU8WordPipe = pipeline(shader(maskedSignedDeltaU8WordSrc(sg)));
-    this.u8WordMajorTransposePipe = pipeline(shader(U8_WORD_MAJOR_TRANSPOSE_WGSL));
-    this.maskedSignedDeltaU8WordMajorPipe = pipeline(shader(maskedSignedDeltaU8WordMajorSrc(sg)));
     this.applySignedDeltaPipe = pipeline(shader(APPLY_SIGNED_DELTA_WGSL));
     this.reduceFramesPipe = pipeline(reduceFramesModule);
     this.reduceFramesFloatPipe = pipeline(shader(REDUCE_FRAMES_FLOAT_WGSL));
@@ -665,50 +659,6 @@ export class DetectorCompute {
 
   getDevice(): GPUDevice {
     return this.device;
-  }
-
-  async readFloatBuffer(buf: GPUBuffer, n: number): Promise<Float32Array> {
-    return await this.readF32(buf, n);
-  }
-
-  async checksumFrames(scanIndices: number[]): Promise<Array<{ scanIndex: number; sum: number; min: number; max: number; n: number }>> {
-    const bytesPerPixel = this.mode === 0 ? 2 : (this.mode === 2 || this.mode === 3) ? 4 : 1;
-    const bad = this.badPx.length ? new Set(this.badPx) : null;
-    const out: Array<{ scanIndex: number; sum: number; min: number; max: number; n: number }> = [];
-    for (const rawIndex of scanIndices) {
-      const scanIndex = Math.max(0, Math.min(this.scanCount - 1, Math.round(Number(rawIndex) || 0)));
-      const ch = this.chunks.find((c) => scanIndex >= c.startScan && scanIndex < c.startScan + c.nScan) ?? this.chunks[0];
-      const localBase = (scanIndex - ch.startScan) * this.detSize;
-      const byteOffset = localBase * bytesPerPixel;
-      const byteLength = this.detSize * bytesPerPixel;
-      const rb = this.device.createBuffer({
-        size: Math.max(4, Math.ceil(byteLength / 4) * 4),
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      });
-      const enc = this.device.createCommandEncoder();
-      enc.copyBufferToBuffer(ch.buffer, byteOffset, rb, 0, byteLength);
-      this.device.queue.submit([enc.finish()]);
-      await rb.mapAsync(GPUMapMode.READ);
-      const mapped = rb.getMappedRange();
-      let sum = 0, min = Number.POSITIVE_INFINITY, max = Number.NEGATIVE_INFINITY;
-      if (this.mode === 0) {
-        const values = new Uint16Array(mapped, 0, this.detSize);
-        for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
-      } else if (this.mode === 2) {
-        const values = new Float32Array(mapped, 0, this.detSize);
-        for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
-      } else if (this.mode === 3) {
-        const values = new Uint32Array(mapped, 0, this.detSize);
-        for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
-      } else {
-        const values = new Uint8Array(mapped, 0, this.detSize);
-        for (let i = 0; i < values.length; i++) { const v = bad?.has(i) ? 0 : values[i]; sum += v; if (v < min) min = v; if (v > max) max = v; }
-      }
-      rb.unmap();
-      rb.destroy();
-      out.push({ scanIndex, sum, min, max, n: this.detSize });
-    }
-    return out;
   }
 
   // One frame's diffraction pattern (f32[detSize]) for scan position scanIdx -
@@ -880,44 +830,6 @@ export class DetectorCompute {
     pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
   }
 
-  /** Centered CoM-vector magnitude retained in a WebGPU buffer. */
-  async maskedDpcMagnitudeBuffer(
-    mask: Uint32Array,
-    detCols: number,
-  ): Promise<{ buffer: GPUBuffer; n: number }> {
-    const dpc = this.maskedDpcPairBuffers(mask, detCols);
-    await this.device.queue.onSubmittedWorkDone().catch(() => {});
-    dpc.cleanup?.();
-    const out = this.device.createBuffer({
-      size: this.scanCount * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    });
-    if (dpc.n > 0) {
-      const dims = this.uniform([this.scanCount, 0, 0, 0]);
-      const bind = this.device.createBindGroup({
-        layout: this.dpcMagnitudePipe.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: dpc.row } },
-          { binding: 1, resource: { buffer: dpc.col } },
-          { binding: 2, resource: { buffer: out } },
-          { binding: 3, resource: { buffer: dims } },
-        ],
-      });
-      this.dispatch(this.dpcMagnitudePipe, bind, Math.ceil(this.scanCount / 256));
-      this.retireBuffers([dims]);
-    }
-    return { buffer: out, n: dpc.n };
-  }
-
-  /** Centered CoM-vector magnitude, computed and reduced entirely on WebGPU. */
-  async maskedDpcMagnitude(mask: Uint32Array, detCols: number): Promise<Float32Array> {
-    const { buffer, n } = await this.maskedDpcMagnitudeBuffer(mask, detCols);
-    const values = await this.readF32(buffer, this.scanCount);
-    buffer.destroy();
-    if (n === 0) values.fill(0);
-    return values;
-  }
-
   // GPU-resident fixed-rotation iDPC phase. Auto-rotation is intentionally not
   // hidden here; callers must pass the explicit rotation/transpose policy they
   // want to compare against.
@@ -1057,32 +969,11 @@ export class DetectorCompute {
   // Loops only the ACTIVE (in-aperture) detector pixels, not all detSize - a BF
   // disk (~9k of 36864 px) or ADF annulus is then 4-10x fewer reads per scan pos.
   async maskedSum(mask: Uint32Array): Promise<Float32Array> {
-    const device = this.device;
-    const { idx, n } = this.detectorIndices(mask);   // active non-hot pixels (>=1 entry keeps a valid binding)
-    const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
-    const vi = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    const temps: GPUBuffer[] = [];
-    // One workgroup per scan position (2D grid for >65535), ALL chunks in ONE encoder + submit,
-    // and the readback folded in - so a BF/ADF drag is a single GPU pass + single sync.
-    const enc = device.createCommandEncoder();
-    const pass = enc.beginComputePass(); pass.setPipeline(this.maskedSumPipe);
-    for (const ch of this.chunks) {
-      const gx = Math.min(ch.nScan, MAX_WG), gy = Math.ceil(ch.nScan / MAX_WG);
-      const dims = this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]); temps.push(dims);
-      const dims2 = this.uniform([gx, 0, 0, 0]); temps.push(dims2);
-      const bind = device.createBindGroup({ layout: this.maskedSumPipe.getBindGroupLayout(0), entries: [
-        { binding: 0, resource: { buffer: ch.buffer } }, { binding: 1, resource: { buffer: idxBuf } },
-        { binding: 2, resource: { buffer: vi } }, { binding: 3, resource: { buffer: dims } }, { binding: 4, resource: { buffer: dims2 } } ] });
-      pass.setBindGroup(0, bind); pass.dispatchWorkgroups(gx, gy);
-    }
-    pass.end();
-    const rb = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    enc.copyBufferToBuffer(vi, 0, rb, 0, this.scanCount * 4);
-    device.queue.submit([enc.finish()]);
-    await rb.mapAsync(GPUMapMode.READ);
-    const out = new Float32Array(rb.getMappedRange().slice(0)); rb.unmap(); rb.destroy();
-    if (n === 0) out.fill(0);   // empty mask -> all zero (idx had a dummy entry)
-    idxBuf.destroy(); vi.destroy(); temps.forEach((buffer) => buffer.destroy()); return out;
+    const { idx, n } = this.detectorIndices(mask);
+    const { buffer } = this.maskedSumBufferFromIndices(idx, n);
+    const out = await this.readF32(buffer, this.scanCount);
+    buffer.destroy();
+    return out;
   }
 
   // GPU-RESIDENT virtual image: identical to maskedSum but returns the vi GPU buffer WITHOUT
@@ -1095,14 +986,7 @@ export class DetectorCompute {
     if (selected.n > this.detSize * 0.5) {
       const complement = this.detectorComplementIndices(mask);
       if (complement.n < selected.n) {
-        const total = this.totalSumBuffer();
-        if (complement.n === 0) {
-          return { buffer: this.copyScanBuffer(total), n: selected.n };
-        }
-        const complementSum = this.maskedSumBufferFromIndices(complement.idx, complement.n);
-        const out = this.subtractFromTotalBuffer(total, complementSum.buffer);
-        this.retireBuffers([complementSum.buffer]);
-        return { buffer: out, n: selected.n };
+        return { buffer: this.complementSumBuffer(complement.idx, complement.n), n: selected.n };
       }
     }
     return this.maskedSumBufferFromIndices(selected.idx, selected.n);
@@ -1128,18 +1012,7 @@ export class DetectorCompute {
     const idxBuf = owner.upload(selected.idx, GPUBufferUsage.STORAGE);
     const enc = device.createCommandEncoder();
     const pass = enc.beginComputePass();
-    pass.setPipeline(owner.maskedSumPipe);
-    const layout = owner.maskedSumPipe.getBindGroupLayout(0);
-    for (let i = 0; i < computes.length; i++) {
-      const compute = computes[i];
-      const vi = buffers[i];
-      for (const cd of compute.sumDims()) {
-        const bind = device.createBindGroup({ layout, entries: [
-          { binding: 0, resource: { buffer: cd.chunk } }, { binding: 1, resource: { buffer: idxBuf } },
-          { binding: 2, resource: { buffer: vi } }, { binding: 3, resource: { buffer: cd.dims } }, { binding: 4, resource: { buffer: cd.dims2 } } ] });
-        pass.setBindGroup(0, bind); pass.dispatchWorkgroups(cd.gx, cd.gy);
-      }
-    }
+    computes.forEach((compute, i) => compute.encodeSum(pass, idxBuf, selected.n, buffers[i]));
     pass.end();
     device.queue.submit([enc.finish()]);
     owner.retireBuffers([idxBuf]);
@@ -1151,7 +1024,7 @@ export class DetectorCompute {
     previous: GPUBuffer[],
     addedMask: Uint32Array,
     removedMask: Uint32Array,
-  ): { buffers: GPUBuffer[]; path: "delta" | "delta-u8-words" | "delta-u8-word-major"; addedPixels: number; removedPixels: number; changedWords?: number } {
+  ): { buffers: GPUBuffer[]; path: "delta" | "delta-u8-words"; addedPixels: number; removedPixels: number; changedWords?: number } {
     if (isRansBatch(computes as unknown[])) return ransMaskedSumDeltaBuffersBatch(computes as unknown as RansDetectorCompute[], addedMask, removedMask, previous);
     const owner = computes[0];
     if (!owner || computes.length === 0) return { buffers: [], path: "delta", addedPixels: 0, removedPixels: 0 };
@@ -1170,54 +1043,27 @@ export class DetectorCompute {
           changedWords: 0,
         };
       }
-      const useWordMajor = (globalThis as { __QT_U8_WORD_MAJOR_DELTA?: unknown }).__QT_U8_WORD_MAJOR_DELTA === true;
+      // Apply the signed per-word coefficients in place on the previous images.
       const entryBuf = owner.upload(packed.entries, GPUBufferUsage.STORAGE);
       const enc = owner.device.createCommandEncoder();
-      // Both word layouts apply the same signed per-word coefficients in place on the previous images.
-      const applyWordDelta = (
-        pipeline: GPUComputePipeline,
-        rowsFor: (compute: DetectorCompute) => { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[],
-      ) => {
-        const pass = enc.beginComputePass();
-        pass.setPipeline(pipeline);
-        const layout = pipeline.getBindGroupLayout(0);
-        for (let i = 0; i < computes.length; i++) {
-          for (const cd of rowsFor(computes[i])) {
-            const bind = owner.device.createBindGroup({ layout, entries: [
-              { binding: 0, resource: { buffer: cd.chunk } },
-              { binding: 1, resource: { buffer: entryBuf } },
-              { binding: 2, resource: { buffer: previous[i] } },
-              { binding: 3, resource: { buffer: cd.dims } },
-              { binding: 4, resource: { buffer: cd.dims2 } },
-            ] });
-            pass.setBindGroup(0, bind);
-            pass.dispatchWorkgroups(cd.gx, cd.gy);
-          }
-        }
-        pass.end();
-        owner.device.queue.submit([enc.finish()]);
-        owner.retireBuffers([entryBuf]);
-      };
-      if (useWordMajor) {
-        let ready = true;
-        for (const compute of computes) {
-          if (compute.encodeEnsureU8WordMajor(enc) < 0) {
-            ready = false;
-            break;
-          }
-        }
-        if (ready) {
-          applyWordDelta(owner.maskedSignedDeltaU8WordMajorPipe, (compute) => compute.u8WordMajorDeltaDims(packed.n));
-          return {
-            buffers: previous,
-            path: "delta-u8-word-major",
-            addedPixels: packed.addedPixels,
-            removedPixels: packed.removedPixels,
-            changedWords: packed.n,
-          };
+      const pass = enc.beginComputePass();
+      pass.setPipeline(owner.maskedSignedDeltaU8WordPipe);
+      const layout = owner.maskedSignedDeltaU8WordPipe.getBindGroupLayout(0);
+      for (let i = 0; i < computes.length; i++) {
+        for (const cd of computes[i].u8WordDeltaDims(packed.n)) {
+          pass.setBindGroup(0, owner.device.createBindGroup({ layout, entries: [
+            { binding: 0, resource: { buffer: cd.chunk } },
+            { binding: 1, resource: { buffer: entryBuf } },
+            { binding: 2, resource: { buffer: previous[i] } },
+            { binding: 3, resource: { buffer: cd.dims } },
+            { binding: 4, resource: { buffer: cd.dims2 } },
+          ] }));
+          pass.dispatchWorkgroups(cd.gx, cd.gy);
         }
       }
-      applyWordDelta(owner.maskedSignedDeltaU8WordPipe, (compute) => compute.u8WordDeltaDims(packed.n));
+      pass.end();
+      owner.device.queue.submit([enc.finish()]);
+      owner.retireBuffers([entryBuf]);
       return {
         buffers: previous,
         path: "delta-u8-words",
@@ -1286,22 +1132,6 @@ export class DetectorCompute {
     return { buffers: outputs, path: "delta", addedPixels: added.n, removedPixels: removed.n };
   }
 
-  static prepareU8WordMajorBatch(computes: DetectorCompute[]): { scheduled: number; available: boolean; path: "u8-word-major" } {
-    const owner = computes[0];
-    if (!owner || computes.length === 0) return { scheduled: 0, available: false, path: "u8-word-major" };
-    owner.assertBatchCompatible(computes);
-    if (owner.mode !== 1 || owner.detSize % 4 !== 0) return { scheduled: 0, available: false, path: "u8-word-major" };
-    const enc = owner.device.createCommandEncoder();
-    let scheduled = 0;
-    for (const compute of computes) {
-      const result = compute.encodeEnsureU8WordMajor(enc);
-      if (result < 0) return { scheduled: 0, available: false, path: "u8-word-major" };
-      scheduled += result;
-    }
-    if (scheduled > 0) owner.device.queue.submit([enc.finish()]);
-    return { scheduled, available: true, path: "u8-word-major" };
-  }
-
   private assertBatchCompatible(computes: DetectorCompute[]): void {
     for (const compute of computes) {
       if (compute.device !== this.device) throw new Error("Batched masked sums require all volumes on the same WebGPU device.");
@@ -1350,22 +1180,102 @@ export class DetectorCompute {
   }
 
   private maskedSumBufferFromIndices(idx: Uint32Array, n: number): { buffer: GPUBuffer; n: number } {
-    const device = this.device;
-    const vi = device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const vi = this.device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     if (n === 0) return { buffer: vi, n };
     const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
-    const enc = device.createCommandEncoder();
-    const pass = enc.beginComputePass(); pass.setPipeline(this.maskedSumPipe);
-    for (const cd of this.sumDims()) {   // per-chunk dims are constant -> built once, reused every drag frame
-      const bind = device.createBindGroup({ layout: this.maskedSumPipe.getBindGroupLayout(0), entries: [
-        { binding: 0, resource: { buffer: cd.chunk } }, { binding: 1, resource: { buffer: idxBuf } },
-        { binding: 2, resource: { buffer: vi } }, { binding: 3, resource: { buffer: cd.dims } }, { binding: 4, resource: { buffer: cd.dims2 } } ] });
-      pass.setBindGroup(0, bind); pass.dispatchWorkgroups(cd.gx, cd.gy);
-    }
+    const enc = this.device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    this.encodeSum(pass, idxBuf, n, vi);
     pass.end();
-    device.queue.submit([enc.finish()]);
+    this.device.queue.submit([enc.finish()]);
     this.retireBuffers([idxBuf]);   // vi handed to caller; dims are cached + reused, NOT destroyed
     return { buffer: vi, n };
+  }
+
+  /** Record the masked sum of every chunk into `out` (f32 per scan position). Integer modes sum
+   * exactly into the per-compute word pairs, then round once; float32 data sums in f32. */
+  private encodeSum(pass: GPUComputePassEncoder, idxBuf: GPUBuffer, n: number, out: GPUBuffer): void {
+    if (this.mode === 2) {
+      this.encodeChunkSums(pass, this.maskedSumFloatPipe, idxBuf, out, false);
+      return;
+    }
+    const words = this.sumWordsBuffer();
+    this.encodeChunkSums(pass, this.maskedSumIntegerPipe, idxBuf, words, n * this.maxCount() > 0xffff_ffff);
+    this.encodeWordsToF32(pass, this.wordsConvertPipe, [[1, words], [2, out]]);
+  }
+
+  private encodeChunkSums(pass: GPUComputePassEncoder, pipeline: GPUComputePipeline, idxBuf: GPUBuffer, out: GPUBuffer, wide: boolean): void {
+    pass.setPipeline(pipeline);
+    const layout = pipeline.getBindGroupLayout(0);
+    for (const cd of this.sumDims()) {   // per-chunk dims are constant -> built once, reused every drag frame
+      pass.setBindGroup(0, this.device.createBindGroup({ layout, entries: [
+        { binding: 0, resource: { buffer: cd.chunk } }, { binding: 1, resource: { buffer: idxBuf } },
+        { binding: 2, resource: { buffer: out } }, { binding: 3, resource: { buffer: cd.dims } },
+        { binding: 4, resource: { buffer: wide ? cd.dims2Wide : cd.dims2 } } ] }));
+      pass.dispatchWorkgroups(cd.gx, cd.gy);
+    }
+  }
+
+  private encodeWordsToF32(pass: GPUComputePassEncoder, pipeline: GPUComputePipeline, buffers: [number, GPUBuffer][]): void {
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, this.device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+      ...buffers.map(([binding, buffer]) => ({ binding, resource: { buffer } })),
+      { binding: 3, resource: { buffer: this.scanDims() } } ] }));
+    pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+  }
+
+  /** Large apertures read the smaller complement: image = full-detector total - complement sum.
+   * Integer totals subtract exactly before the one rounding, so this equals the direct sum. */
+  private complementSumBuffer(idx: Uint32Array, n: number): GPUBuffer {
+    const total = this.totalSumBuffer();
+    const out = this.device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    if (this.mode === 2 && n === 0) {
+      enc.copyBufferToBuffer(total, 0, out, 0, this.scanCount * 4);
+      this.device.queue.submit([enc.finish()]);
+      return out;
+    }
+    const idxBuf = this.upload(idx, GPUBufferUsage.STORAGE);
+    const pass = enc.beginComputePass();
+    if (this.mode === 2) {
+      const complement = this.device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE });
+      this.encodeChunkSums(pass, this.maskedSumFloatPipe, idxBuf, complement, false);
+      pass.setPipeline(this.subtractPipe);
+      pass.setBindGroup(0, this.device.createBindGroup({ layout: this.subtractPipe.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: total } }, { binding: 1, resource: { buffer: complement } },
+        { binding: 2, resource: { buffer: out } }, { binding: 3, resource: { buffer: this.scanDims() } } ] }));
+      pass.dispatchWorkgroups(Math.ceil(this.scanCount / 256));
+      this.retireBuffers([complement]);
+    } else {
+      if (n === 0) {
+        this.encodeWordsToF32(pass, this.wordsConvertPipe, [[1, total], [2, out]]);
+      } else {
+        const words = this.sumWordsBuffer();
+        this.encodeChunkSums(pass, this.maskedSumIntegerPipe, idxBuf, words, n * this.maxCount() > 0xffff_ffff);
+        this.encodeWordsToF32(pass, this.wordsSubtractPipe, [[0, total], [1, words], [2, out]]);
+      }
+    }
+    pass.end();
+    this.device.queue.submit([enc.finish()]);
+    this.retireBuffers([idxBuf]);
+    return out;
+  }
+
+  /** Largest stored count of the resident integer dtype. */
+  private maxCount(): number {
+    return this.mode === 1 ? 255 : this.mode === 0 ? 65535 : 0xffff_ffff;
+  }
+
+  private sumWords: GPUBuffer | null = null;
+  private sumWordsBuffer(): GPUBuffer {
+    this.sumWords ??= this.device.createBuffer({ size: this.scanCount * 8, usage: GPUBufferUsage.STORAGE });
+    return this.sumWords;
+  }
+
+  private scanDimsCache: GPUBuffer | null = null;
+  private scanDims(): GPUBuffer {
+    this.scanDimsCache ??= this.uniform([this.scanCount, 0, 0, 0]);
+    return this.scanDimsCache;
   }
 
   // Per-chunk maskedSum dispatch params (chunk buffer, dims uniforms, 2D grid). These never change
@@ -1375,8 +1285,7 @@ export class DetectorCompute {
     chunk: GPUBuffer;
     dims: GPUBuffer;
     dims2: GPUBuffer;
-    startScan: number;
-    nScan: number;
+    dims2Wide: GPUBuffer;
     gx: number;
     gy: number;
   }[] | null = null;
@@ -1388,8 +1297,7 @@ export class DetectorCompute {
           chunk: ch.buffer,
           dims: this.uniform([ch.startScan, ch.nScan, this.detSize, this.mode]),
           dims2: this.uniform([gx, 0, 0, 0]),
-          startScan: ch.startScan,
-          nScan: ch.nScan,
+          dims2Wide: this.uniform([gx, 1, 0, 0]),
           gx,
           gy,
         };
@@ -1420,68 +1328,6 @@ export class DetectorCompute {
       };
     }
     return this.u8WordDeltaDimsCache.rows;
-  }
-
-  private u8WordMajorCache: { rows: { chunk: GPUBuffer; dims: GPUBuffer; startScan: number; nScan: number }[] } | null = null;
-  private u8WordMajorDeltaDimsCache: { entryCount: number; rows: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] } | null = null;
-
-  private encodeEnsureU8WordMajor(enc: GPUCommandEncoder): number {
-    if (this.mode !== 1 || this.detSize % 4 !== 0) return -1;
-    if (this.u8WordMajorCache) return 0;
-    const detWords = this.detSize / 4;
-    const rows = this.chunks.map((ch) => {
-      const chunk = this.device.createBuffer({
-        size: ch.nScan * detWords * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-      });
-      return {
-        chunk,
-        dims: this.uniform([ch.nScan, detWords, 0, 0]),
-        startScan: ch.startScan,
-        nScan: ch.nScan,
-      };
-    });
-    const pass = enc.beginComputePass();
-    pass.setPipeline(this.u8WordMajorTransposePipe);
-    const layout = this.u8WordMajorTransposePipe.getBindGroupLayout(0);
-    for (let i = 0; i < this.chunks.length; i++) {
-      const source = this.chunks[i];
-      const row = rows[i];
-      const bind = this.device.createBindGroup({ layout, entries: [
-        { binding: 0, resource: { buffer: source.buffer } },
-        { binding: 1, resource: { buffer: row.chunk } },
-        { binding: 2, resource: { buffer: row.dims } },
-      ] });
-      pass.setBindGroup(0, bind);
-      pass.dispatchWorkgroups(Math.ceil(source.nScan / 16), Math.ceil(detWords / 16));
-    }
-    pass.end();
-    this.u8WordMajorCache = { rows };
-    return rows.length;
-  }
-
-  private u8WordMajorDeltaDims(entryCount: number) {
-    if (!this.u8WordMajorCache) throw new Error("U8 word-major layout must be prepared before use.");
-    if (!this.u8WordMajorDeltaDimsCache || this.u8WordMajorDeltaDimsCache.entryCount !== entryCount) {
-      if (this.u8WordMajorDeltaDimsCache) {
-        for (const cd of this.u8WordMajorDeltaDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); }
-      }
-      const detWords = this.detSize / 4;
-      this.u8WordMajorDeltaDimsCache = {
-        entryCount,
-        rows: this.u8WordMajorCache.rows.map((ch) => {
-          const gx = Math.ceil(ch.nScan / 16), gy = 1;
-          return {
-            chunk: ch.chunk,
-            dims: this.uniform([ch.startScan, ch.nScan, this.detSize, detWords]),
-            dims2: this.uniform([entryCount, 0, 0, 0]),
-            gx,
-            gy,
-          };
-        }),
-      };
-    }
-    return this.u8WordMajorDeltaDimsCache.rows;
   }
 
   private comDimsCache: { detCols: number; integerFlags: number; rows: { chunk: GPUBuffer; dims: GPUBuffer; dims2: GPUBuffer; gx: number; gy: number }[] } | null = null;
@@ -1572,7 +1418,7 @@ export class DetectorCompute {
   }
 
   private upload(words: Uint32Array, usage: number): GPUBuffer {
-    const buffer = this.device.createBuffer({ size: Math.max(16, words.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+    const buffer = this.device.createBuffer({ size: words.byteLength, usage: usage | GPUBufferUsage.COPY_DST });
     this.device.queue.writeBuffer(buffer, 0, words.buffer as ArrayBuffer, words.byteOffset, words.byteLength); return buffer;
   }
   private maskedCoMSelection(mask: Uint32Array, detCols: number): { idx: Uint32Array; n: number; integerFlags: number } {
@@ -1616,7 +1462,17 @@ export class DetectorCompute {
     if (!this.totalSumCache || this.totalSumCacheKey !== key) {
       if (this.totalSumCache) this.totalSumCache.destroy();
       const full = this.fullDetectorIndices();
-      this.totalSumCache = this.maskedSumBufferFromIndices(full.idx, full.n).buffer;
+      // Integer totals stay as exact (low, high) pairs; float32 totals are f32.
+      const total = this.device.createBuffer({ size: this.scanCount * (this.mode === 2 ? 4 : 8), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+      const idxBuf = this.upload(full.idx, GPUBufferUsage.STORAGE);
+      const enc = this.device.createCommandEncoder();
+      const pass = enc.beginComputePass();
+      if (this.mode === 2) this.encodeChunkSums(pass, this.maskedSumFloatPipe, idxBuf, total, false);
+      else this.encodeChunkSums(pass, this.maskedSumIntegerPipe, idxBuf, total, full.n * this.maxCount() > 0xffff_ffff);
+      pass.end();
+      this.device.queue.submit([enc.finish()]);
+      this.retireBuffers([idxBuf]);
+      this.totalSumCache = total;
       this.totalSumCacheKey = key;
     }
     return this.totalSumCache;
@@ -1664,16 +1520,6 @@ export class DetectorCompute {
     const enc = this.device.createCommandEncoder();
     enc.copyBufferToBuffer(src, 0, out, 0, this.scanCount * 4);
     this.device.queue.submit([enc.finish()]);
-    return out;
-  }
-  private subtractFromTotalBuffer(total: GPUBuffer, subtract: GPUBuffer): GPUBuffer {
-    const out = this.device.createBuffer({ size: this.scanCount * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    const dims = this.uniform([this.scanCount, 0, 0, 0]);
-    const bind = this.device.createBindGroup({ layout: this.subtractPipe.getBindGroupLayout(0), entries: [
-      { binding: 0, resource: { buffer: total } }, { binding: 1, resource: { buffer: subtract } },
-      { binding: 2, resource: { buffer: out } }, { binding: 3, resource: { buffer: dims } } ] });
-    this.dispatch(this.subtractPipe, bind, Math.ceil(this.scanCount / 256));
-    this.retireBuffers([dims]);
     return out;
   }
   private uniform(values: number[]): GPUBuffer {
@@ -1776,10 +1622,10 @@ export class DetectorCompute {
     if (this.totalSumCache) { this.totalSumCache.destroy(); this.totalSumCache = null; this.totalSumCacheKey = null; }
     for (const entry of this.dpcBufferCache.values()) entry.buffer.destroy();
     this.dpcBufferCache.clear();
-    if (this.sumDimsCache) { for (const cd of this.sumDimsCache) { cd.dims.destroy(); cd.dims2.destroy(); } this.sumDimsCache = null; }
+    if (this.sumDimsCache) { for (const cd of this.sumDimsCache) { cd.dims.destroy(); cd.dims2.destroy(); cd.dims2Wide.destroy(); } this.sumDimsCache = null; }
+    this.sumWords?.destroy(); this.sumWords = null;
+    this.scanDimsCache?.destroy(); this.scanDimsCache = null;
     if (this.u8WordDeltaDimsCache) { for (const cd of this.u8WordDeltaDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); } this.u8WordDeltaDimsCache = null; }
-    if (this.u8WordMajorDeltaDimsCache) { for (const cd of this.u8WordMajorDeltaDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); } this.u8WordMajorDeltaDimsCache = null; }
-    if (this.u8WordMajorCache) { for (const cd of this.u8WordMajorCache.rows) { cd.chunk.destroy(); cd.dims.destroy(); } this.u8WordMajorCache = null; }
     if (this.comDimsCache) { for (const cd of this.comDimsCache.rows) { cd.dims.destroy(); cd.dims2.destroy(); } this.comDimsCache = null; }
   }
 }
