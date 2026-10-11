@@ -155,6 +155,7 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
     lz4_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     shuf_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     result = cp.empty((total_frames,) + frame_shape, dtype=source_dtype)
+    errors = cp.zeros(1, dtype=cp.uint32)
 
     max_blocks = int(block_counts.max())
     n_full_8kb = frame_bytes // BLOCK_SIZE
@@ -203,6 +204,7 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                 np.uint32(BLOCK_SIZE),
                 np.uint32(frame_bytes),
                 lz4_scratch,
+                errors,
             ),
         )
         # LZ4 is the only consumer of the compressed buffer; once it has run
@@ -278,6 +280,11 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         )
 
     cp.cuda.Device().synchronize()
+    if int(errors.get()[0]):
+        raise ValueError(
+            "A compressed HDF5 chunk is truncated or corrupt and did not decode to its "
+            "frame size; check that the acquisition finished writing, or copy it again."
+        )
     return result
 
 
