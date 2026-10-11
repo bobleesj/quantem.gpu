@@ -29,12 +29,12 @@ those generated files are not an independently maintained codec.
 | --- | --- | --- |
 | [K3 saved copies](k3-dm4-qem.md), `quantem.qem` | CUDA and Metal encoding, checksummed reopening, spatial queries | Python CUDA/MPS and native Live4DSTEM macOS |
 | Saved `.qem` copies | `io.save`, `io.load`, `io.qem`, CUDA count decoder, native reader | CUDA/MPS resident queries; native Live4DSTEM macOS |
-| Retained detector-rANS manifest | WebGPU `rans.ts` | Show4DSTEM WebGPU export |
+| Saved `.qem` copies in the browser | WebGPU `qem-source.ts` and `rans.ts` (`RansResidentSet.loadQemFile` / `loadQemFiles`) | Show4DSTEM WebGPU export |
 
-These are explicitly identified formats, not interchangeable byte streams.
-The canonical writer is shared; compatibility readers retain older experiments
-without rewriting source data. Full-series conversion of every retained archive
-to the canonical container is not a completed acceptance gate.
+Every route reads the same explicitly identified `.qem` container, and the
+canonical writer is shared. The browser has no loader for the earlier rANS
+export folders. Full-series conversion of every retained archive to the
+canonical container is not a completed acceptance gate.
 
 ## Encode and query canonical counts
 

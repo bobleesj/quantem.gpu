@@ -47,8 +47,9 @@ MPS iDPC differs by `2.84e-5` and is blocked at the frozen `rtol=1e-5`,
 `atol=1e-5` gate.
 
 At detector bin 1, integer products are byte-identical, but the public MPS
-interaction sidecar uses detector bin 2 and therefore changes native-detector
-CoM/iDPC. A direct full-resolution Metal diagnostic passes CoM with `7.63e-6`
+interaction sidecar of that revision used detector bin 2 and therefore changed
+native-detector CoM/iDPC; Metal detector sessions have since dropped that
+sidecar. A direct full-resolution Metal diagnostic passes CoM with `7.63e-6`
 maximum error, while iDPC remains blocked at `7.58e-5`. Detector-bin-2 and
 detector-bin-8 timings have no equivalent retained real-data product bundle and
 remain timing-only. See [Verified benchmark results](results.md) for the full

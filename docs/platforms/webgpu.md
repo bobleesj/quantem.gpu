@@ -29,9 +29,9 @@ client bundles canonical TypeScript resources
 
 The IO implementation is split deliberately: `h5reader.ts` parses source and
 block metadata, `local-h5.ts` owns browser file handles/workers, and
-`bslz4.ts` owns GPU decode/upload variants. Detector geometry is shared in
-`detector/webgpu/geometry.ts`; scientific dispatch lives beside each domain rather
-than in a browser UI.
+`bslz4.ts` owns the GPU decode kernels and the staged upload. Detector
+geometry is shared in `detector/webgpu/geometry.ts`; scientific dispatch lives
+beside each domain rather than in a browser UI.
 
 These files are package resources. A browser client bundles the canonical
 sources rather than maintaining a second scientific implementation.
@@ -70,8 +70,9 @@ PYTHONPATH=src python -m pytest -q \
   tests/e2e/test_webgpu_widget_sync.py
 ```
 
-The source test verifies packaged resources and required kernel contracts. A
-consumer-sync test verifies byte identity when a consumer checkout is supplied.
+The source test verifies that every source listed in `webgpu/sources.json` is
+packaged and readable. A consumer-sync test verifies byte identity when a
+consumer checkout is supplied.
 Neither test proves that a physical browser adapter executed the WGSL.
 
 ## Profiling and acceptance

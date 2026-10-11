@@ -42,7 +42,7 @@ not a new qualification registry. Exact gates remain in
 | Python CUDA | ANS acquisition loading; detector reductions and encoded products within their recorded contracts | Physical CUDA acceptance remains separate from Apple tests. |
 | Python MPS | ANS acquisition loading; detector reductions and encoded products | Native Swift format qualification is separate from Python support. |
 | Native Swift/Metal | Indexed dense and both packed profiles; source inspection, admission, authenticated loads, detector and prepared products | App adoption and physical end-to-end qualification must use an exact package revision. |
-| WebGPU | Dense HDF5 reader, encoded `.qem` and rANS sources, batched detector updates and resident lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
+| WebGPU | Dense HDF5 reader, encoded `.qem` sources, batched detector updates and resident lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
 | CPU reference | Explicit dense reference workflows and test decoders | Not an automatic fallback or a public accelerated packed loader. |
 
 These source changes do **not** establish full-file cold loading in 1–2 seconds
@@ -184,7 +184,7 @@ exact = io.load("merged_master.h5")
 scaled = io.load("merged_master.h5", dtype="scaled_uint16")
 ```
 
-The retired packed `float16` loading profile is rejected; preserve the original
+`dtype="float16"` is refused on load and save; preserve the original
 float32 archive instead. `scaled_uint16` stores `round((intensity - offset) / scale)`
 using recorded regional calibration. Returned patterns and reductions restore
 `code * scale + offset`. These codes are not raw detector counts; code 65535
@@ -207,11 +207,11 @@ io.save("display_master.h5", region)
 reopened = io.load("display_master.h5")
 ```
 
-Bounds use `(row_start, row_stop, col_start, col_stop)`. A list of scan regions
-returns separately owned loaded objects. Global range measurement reads the
-complete source in bounded GPU blocks; error measurement covers the selected
-values. Reopened exports use saved scaling and label the original error report
-as saved, rather than claiming a fresh comparison against the original source.
+Bounds use `(row_start, row_stop, col_start, col_stop)`. Each region's
+intensity range is measured on the GPU before its codes are produced; error
+measurement covers the selected values. Reopened exports use saved scaling and
+label the original error report as saved, rather than claiming a fresh
+comparison against the original source.
 Inspect `reopened.metadata["precision"]` for the persisted report. `close()`
 releases storage after the final consumer. Disk compression is GPU
 bitshuffle/LZ4 for these HDF5 exports; ANS resident size and file size are different.
