@@ -80,8 +80,8 @@ def reconstruct_series(
     Returns
     -------
     SSBSeriesResult
-        One independent-fit or fixed-probe phase stack with display,
-        metrics, and metadata methods.
+        One independent-fit or fixed-probe phase stack, with its bright- and
+        dark-field companions and a ``metadata()`` table.
     """
     source_root = Path(source_directory).expanduser().resolve()
     if not source_root.is_dir():
