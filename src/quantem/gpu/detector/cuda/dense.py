@@ -94,22 +94,29 @@ class CudaKernelCompute(DetectorQueries):
         return mean_dp(self._data).get()
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
-        """Exact uint64 ``sum`` and ``max`` of integer counts (float32 for float data), float32 ``mean``."""
-        indices = cp.asarray(np.asarray(scan_indices, dtype=np.int64))
-        frames = self._frames.reshape(self.n_frames, -1).take(indices, axis=0)
-        # uint64 keeps counts exact; float data needs a float accumulator or every
-        # sub-unity intensity truncates to 0.
-        counts = frames.dtype.kind in "ui"
-        accumulator = cp.uint64 if counts else cp.float64
-        if reduce == "sum":
-            pattern = frames.sum(axis=0, dtype=accumulator)
-            pattern = pattern if counts else pattern.astype(cp.float32)
-        elif reduce == "max":
-            pattern = frames.max(axis=0).astype(cp.uint64 if counts else cp.float32)
-        else:
-            # Divide the exact total in float64 and round once, as MPS does; rounding
-            # the total to float32 first loses counts above 2^24.
-            pattern = (frames.sum(axis=0, dtype=accumulator) / int(indices.size)).astype(cp.float32)
+        """Exact ``sum`` and ``max`` of integer data (uint64, int64 when signed), float32 for float data; float32 ``mean``.
+
+        The total accumulates in uint64, int64 or float64: uint64 wraps the
+        negative values of signed data, and an integer total truncates every
+        sub-unity float intensity to 0. The mean divides the exact total in
+        float64 and rounds once, as MPS does; rounding the total to float32
+        first loses counts above 2^24. Frames are gathered 256 MiB at a time,
+        so a scan region never doubles the resident array.
+        """
+        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        frames = self._frames.reshape(self.n_frames, -1)
+        accumulator = {"u": cp.uint64, "i": cp.int64}.get(frames.dtype.kind, cp.float64)
+        exact = accumulator if frames.dtype.kind in "ui" else cp.float32
+        step = max(1, (256 << 20) // (frames.shape[1] * frames.dtype.itemsize))
+        if reduce == "max":
+            pattern = frames.take(cp.asarray(indices[:step]), axis=0).max(axis=0)
+            for start in range(step, indices.size, step):
+                pattern = cp.maximum(pattern, frames.take(cp.asarray(indices[start : start + step]), axis=0).max(axis=0))
+            return pattern.astype(exact).reshape(self.det_shape).get()
+        total = cp.zeros(frames.shape[1], accumulator)
+        for start in range(0, indices.size, step):
+            total += frames.take(cp.asarray(indices[start : start + step]), axis=0).sum(axis=0, dtype=accumulator)
+        pattern = total.astype(exact) if reduce == "sum" else (total / int(indices.size)).astype(cp.float32)
         return pattern.reshape(self.det_shape).get()
 
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:

@@ -133,6 +133,7 @@ def mean_dp(data):
     cupy.ndarray
         2D array (det_row, det_col), float32.
     """
-    accumulator = cp.uint64 if data.dtype.kind in "ui" else cp.float64
+    # int64 for signed data: a uint64 total of negative values (dark-subtracted int16) wraps.
+    accumulator = {"u": cp.uint64, "i": cp.int64}.get(data.dtype.kind, cp.float64)
     frames = data.reshape(-1, *data.shape[-2:])
     return (frames.sum(axis=0, dtype=accumulator) / frames.shape[0]).astype(cp.float32)
