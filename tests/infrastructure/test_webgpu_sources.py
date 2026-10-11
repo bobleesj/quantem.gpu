@@ -32,7 +32,7 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     dpc_source = source_text("dpc/webgpu/kernels.ts")
     source = detector_source + "\n" + exact_com_source + "\n" + dpc_source
 
-    assert "const maskedSumSrc" in source
+    assert "const maskedSumIntegerSrc" in source
     assert "export function buildDetectorMask" in source
     assert "export function buildFullDetectorMask" in source
     assert "export function buildScanMask" in source
