@@ -108,7 +108,7 @@ def test_cuda_center_of_mass_masked_matches_reference() -> None:
     cp.testing.assert_allclose(got_col, expected_col, rtol=0, atol=1e-6)
 
 
-def test_cuda_dense_mask_uses_integer_complement_and_matches_cupy() -> None:
+def test_cuda_dense_mask_matches_cupy() -> None:
     cp = _cupy_with_device()
     from quantem.gpu.detector.cuda.dense import CudaKernelCompute
 
@@ -212,7 +212,7 @@ def test_cuda_frame_mean_divides_the_exact_total_once() -> None:
     np.testing.assert_array_equal(detector.prepare(cp.asarray(counts)).reduce_frames(indices, "mean"), expected)
 
 
-def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> None:
+def test_cuda_virtual_image_kernel_source_uses_warp_reductions() -> None:
     from pathlib import Path
 
     from quantem.gpu.detector.cuda import dense
@@ -224,10 +224,6 @@ def test_cuda_virtual_image_kernel_source_uses_warp_and_fused_dense_path() -> No
     assert "selected_sum_f32_u32_16f" in _CUDA_VI_CODE
     assert "selected_sum_u64_u16_16f" in _CUDA_VI_CODE
     assert "selected_sum_u64_u32_16f" in _CUDA_VI_CODE
-    assert "selected_sum_from_total_f32_u16_16f" in _CUDA_VI_CODE
-    assert "selected_sum_from_total_f32_u32_16f" in _CUDA_VI_CODE
-    assert "total_sum_u16_4f" in _CUDA_VI_CODE
-    assert "total_sum_u32_4f" in _CUDA_VI_CODE
     assert "center_of_mass_full_u16_4f" in _CUDA_VI_CODE
     assert "center_of_mass_full_u32_4f" in _CUDA_VI_CODE
     assert "center_of_mass_selected_u16_4f" in _CUDA_VI_CODE
@@ -283,14 +279,11 @@ def test_cupy_compute_backend_dispatches_to_cuda_kernel_backend() -> None:
     sparse_mask = _mask((12, 12), 2.0)
     sparse = backend.masked_sum(sparse_mask)
     np.testing.assert_array_equal(sparse, np.full((4, 4), sparse_mask.sum(), np.float32))
-    assert backend._totals is None
     assert len(backend._mask_indices) == 1
 
     dense_mask = ~sparse_mask
     dense = backend.masked_sum(dense_mask)
     np.testing.assert_array_equal(dense, np.full((4, 4), dense_mask.sum(), np.float32))
-    assert backend._totals is not None
-    assert len(backend._mask_indices) == 1
 
 
 def test_cuda_exact_masked_sum_preserves_counts_above_float32_limit() -> None:
@@ -348,29 +341,23 @@ def test_cuda_exact_products_agree_with_torch_and_numpy(dtype) -> None:
                 assert result.dtype == np.uint64
                 np.testing.assert_array_equal(result, expected)
 
-def test_cuda_compute_backend_caches_full_center_of_mass() -> None:
+def test_cuda_session_over_a_filling_buffer_reads_current_counts() -> None:
+    """A session over a buffer that fills in place (a live scan) never serves values from before the fill."""
     cp = _cupy_with_device()
-    from quantem.gpu.detector.cuda.dense import CudaKernelCompute
-    from quantem.gpu.detector.session import resolve_backend
+    from quantem.gpu import detector
 
-    rng = np.random.default_rng(41)
-    data_np = rng.integers(0, 200, size=(4, 5, 13, 11), dtype=np.uint16)
-    data = cp.asarray(data_np)
+    buffer = cp.zeros((4, 5, 13, 11), dtype=cp.uint16)
+    session = detector.prepare(buffer)
+    dark_field = _mask((13, 11), 2.0, invert=True)
+    session.masked_sum(dark_field)
+    session.masked_sum_exact(dark_field)
+    session.center_of_mass()
+    buffer[...] = cp.asarray(np.random.default_rng(41).integers(0, 200, size=buffer.shape, dtype=np.uint16))
+    expected = buffer.reshape(20, -1)[:, cp.asarray(dark_field.ravel())].sum(axis=1, dtype=cp.uint64).reshape(4, 5).get()
+    np.testing.assert_array_equal(session.masked_sum_exact(dark_field), expected)
+    np.testing.assert_array_equal(session.masked_sum(dark_field), expected.astype(np.float32))
     rows = cp.arange(13, dtype=cp.float64)[:, None]
-    cols = cp.arange(11, dtype=cp.float64)[None, :]
-    total = cp.maximum(data.sum(axis=(2, 3), dtype=cp.float64), 1e-10)
-    expected_row = cp.asnumpy(
-        ((data * rows).sum(axis=(2, 3), dtype=cp.float64) / total).astype(cp.float32)
-    )
-    expected_col = cp.asnumpy(
-        ((data * cols).sum(axis=(2, 3), dtype=cp.float64) / total).astype(cp.float32)
-    )
-    backend = resolve_backend(data)
-    assert isinstance(backend, CudaKernelCompute)
-    got_col, got_row = backend.center_of_mass()
-    cached_col, cached_row = backend.center_of_mass()
-
-    assert cached_col is got_col
-    assert cached_row is got_row
-    np.testing.assert_allclose(got_row.reshape(4, 5), expected_row, rtol=0, atol=1e-6)
-    np.testing.assert_allclose(got_col.reshape(4, 5), expected_col, rtol=0, atol=1e-6)
+    total = cp.maximum(buffer.sum(axis=(2, 3), dtype=cp.float64), 1e-10)
+    expected_row = ((buffer * rows).sum(axis=(2, 3), dtype=cp.float64) / total).astype(cp.float32).get()
+    com_row, _ = session.center_of_mass()
+    np.testing.assert_allclose(com_row, expected_row, rtol=0, atol=1e-6)
