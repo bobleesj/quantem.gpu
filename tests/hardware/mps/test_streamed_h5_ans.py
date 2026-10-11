@@ -166,3 +166,25 @@ def test_damaged_lz4_bytes_raise_and_the_gpu_stays_usable(tmp_path):
         "zeroed ValueError", "random ValueError", "half ValueError", "overlong ValueError", "short ValueError",
         "valid batch exact after the damaged ones",
     ]
+
+
+def test_failed_decode_command_raises_instead_of_returning_frames(tmp_path, monkeypatch):
+    """A Metal decode command that ends with an error raises: the frames it never wrote are not returned."""
+    pytest.importorskip("Metal")
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.mps import decode
+
+    class FailedCommand:
+        """The two calls the decoder makes on its submitted command, for one the GPU gave up on."""
+
+        def waitUntilCompleted(self):
+            pass
+
+        def error(self):
+            return "the GPU stopped responding"
+
+    master = _write_bslz4_master(tmp_path, "failed-command", np.arange(4 * 64 * 64, dtype=np.uint16).reshape(4, 64, 64))
+    monkeypatch.setattr(decode.MPSDecompressor, "_submit_gpu", lambda self, *arguments: FailedCommand())
+    with FrameReader(str(master)) as reader:
+        with pytest.raises(RuntimeError, match="the GPU stopped responding"):
+            decode.load_prepared_frames(reader.prepare(np.arange(4)))
