@@ -248,7 +248,7 @@ extern "C" __global__ void h5lz4dc_batched(
         const uint32_t block_start = block_starts[block_offset + block_in_frame];
         const uint8_t* input = compressed + chunk_offset + block_start + 4;
         const uint32_t comp_size = read32be_batch(compressed + chunk_offset + block_start);
-        uint8_t* output = decompressed + frame_id * frame_bytes + block_in_frame * blocksize;
+        uint8_t* output = decompressed + (uint64_t)frame_id * frame_bytes + block_in_frame * blocksize;
         decompressStream(buffer + threadIdx.y * DECOMP_INPUT_BUFFER_SIZE, output, input, comp_size);
     }
 }
@@ -257,8 +257,8 @@ extern "C" __global__ void shuf_8192_32_batched(
     const uint32_t* __restrict__ in, uint32_t* __restrict__ out, const uint32_t frame_u32s
 ) {
     const int frame_id = blockIdx.z;
-    const uint32_t* frame_in = in + frame_id * frame_u32s;
-    uint32_t* frame_out = out + frame_id * frame_u32s;
+    const uint32_t* frame_in = in + (uint64_t)frame_id * frame_u32s;
+    uint32_t* frame_out = out + (uint64_t)frame_id * frame_u32s;
     __shared__ uint32_t smem[32][33];
 
     smem[threadIdx.y][threadIdx.x] = frame_in[threadIdx.x + threadIdx.y * 64 +
@@ -441,8 +441,8 @@ extern "C" __global__ void bitshuffle_fwd_8192_32(
     const uint32_t* __restrict__ in, uint32_t* __restrict__ out, const uint32_t frame_u32s
 ) {
     const int frame_id = blockIdx.z;
-    const uint32_t* frame_in = in + frame_id * frame_u32s;
-    uint32_t* frame_out = out + frame_id * frame_u32s;
+    const uint32_t* frame_in = in + (uint64_t)frame_id * frame_u32s;
+    uint32_t* frame_out = out + (uint64_t)frame_id * frame_u32s;
     __shared__ uint32_t smem[32][33];
 
     // Load from normal layout (same positions as unshuffle output)
