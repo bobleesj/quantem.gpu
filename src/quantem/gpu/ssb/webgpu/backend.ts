@@ -19,12 +19,12 @@ import { RansResidentSet } from "../../detector/webgpu/rans";
 const MAX_BF_WORKGROUPS_PER_SUBMIT = 256;
 const MAX_GQK_CHUNK_BYTES = 1024 * 1024 * 1024;
 // Resident G(q,k) budget. Caps how many BF pixels the session keeps resident
-// so a full-BF drag on a big scan cannot device-lost a small GPU. Override:
-// globalThis.__QUANTEM_SSB_GQK_BUDGET_GB__ = 8.
+// so a full-BF drag on a big scan cannot device-lost a small GPU; the export
+// raises it with cal.json gpu_memory_gb.
 const GQK_GPU_BUDGET_BYTES = 4.5 * 1024 * 1024 * 1024;
 
 function gqkBudgetBytes(cal: SsbCal): number {
-  const raw = cal.gpu_memory_gb ?? (globalThis as { __QUANTEM_SSB_GQK_BUDGET_GB__?: number }).__QUANTEM_SSB_GQK_BUDGET_GB__;
+  const raw = cal.gpu_memory_gb;
   if (Number.isFinite(raw) && Number(raw) > 0) return Number(raw) * 1024 * 1024 * 1024;
   return GQK_GPU_BUDGET_BYTES;
 }
@@ -227,8 +227,8 @@ type SsbCal = {
 type BfColumnSsbSource = {
   kind: "bf_columns";
   url: string;
-  dtype?: "uint4" | "uint8" | "uint16" | "float32";
-  encoding?: "uint4" | "uint8" | "uint16" | "float32" | "qem";
+  dtype?: "uint8" | "uint16";
+  encoding?: "uint8" | "uint16" | "qem";
   numBf: number;
   plane: number;
   scanShape?: [number, number];
@@ -836,14 +836,9 @@ function makeBfColumnGqkShader(n: SupportedSsbSize): string {
   return `
 ${makeSourceFftConstants(n)}
 fn sample(gp: u32, mode: u32) -> u32 {
-  if (mode == 3u) { let w = data[gp >> 3u]; return (w >> ((gp & 7u) * 4u)) & 0xfu; }
   if (mode == 1u) { let w = data[gp >> 2u]; return (w >> ((gp & 3u) * 8u)) & 0xffu; }
   let w = data[gp >> 1u];
   return select(w >> 16u, w & 0xffffu, (gp & 1u) == 0u);
-}
-fn sampleF(gp: u32, mode: u32) -> f32 {
-  if (mode == 2u) { return bitcast<f32>(data[gp]); }
-  return f32(sample(gp, mode));
 }
 fn cmul_source(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
   return vec2<f32>(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x);
@@ -867,7 +862,7 @@ fn bfColumnsToGqk(@builtin(global_invocation_id) gid: vec3<u32>) {
   let bf = gid.y;
   if (scan >= gatherParams.plane || bf >= gatherParams.chunk_bf) { return; }
   let gp = bf * gatherParams.plane + scan;
-  gqk[gp] = vec2<f32>(sampleF(gp, gatherParams.mode), 0.0);
+  gqk[gp] = vec2<f32>(f32(sample(gp, gatherParams.mode)), 0.0);
 }
 
 struct FftParams {
@@ -1305,23 +1300,6 @@ async function fetchPackedBfColumnBytes(
   return out;
 }
 
-function bfColumnMode(source: BfColumnSsbSource): number {
-  const dtype = String(source.encoding || source.dtype || "uint16").toLowerCase();
-  if (dtype === "uint4" || dtype === "u4") return 3;
-  if (dtype === "uint8" || dtype === "u1") return 1;
-  if (dtype === "float32" || dtype === "f4") return 2;
-  return 0;
-}
-
-function bfColumnBytesPerBf(source: BfColumnSsbSource, plane: number): number {
-  const declared = Number(source.bytesPerBf || 0);
-  if (declared > 0) return declared;
-  const mode = bfColumnMode(source);
-  if (mode === 3) return Math.ceil(plane / 2);
-  if (mode === 1) return plane;
-  if (mode === 2) return plane * 4;
-  return plane * 2;
-}
 
 async function buildBfColumnGqkChunks(
   device: GPUDevice,
@@ -1358,8 +1336,9 @@ async function buildBfColumnGqkChunks(
     device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftRows" } }),
     device.createComputePipelineAsync({ layout: "auto", compute: { module, entryPoint: "fftCols" } }),
   ]);
-  const mode = bfColumnMode(source);
-  const bytesPerBf = bfColumnBytesPerBf(source, plane);
+  // uint8 columns pack 4 counts per word (mode 1), uint16 2 (mode 0); .qem columns arrive decoded
+  const mode = source.encoding === "uint8" ? 1 : 0;
+  const bytesPerBf = source.bytesPerBf;
   const gqkChunks: GPUBuffer[] = [];
   const chunkBfCounts: number[] = [];
   const fftParamBuffers: GPUBuffer[] = [];
@@ -1482,23 +1461,6 @@ async function buildBfColumnGqkChunks(
     + `read ${(fetchBytes / 1e9).toFixed(2)} GB ${source.encoding || source.dtype || "uint16"}, `
     + `fetch ${fetchMs.toFixed(1)} ms ANS ${decodeMs.toFixed(1)} ms unpack ${gatherMs.toFixed(1)} ms fft ${fftMs.toFixed(1)} ms total ${totalMs.toFixed(1)} ms`,
   );
-  (globalThis as unknown as { __ssbBfColumnProfile?: unknown }).__ssbBfColumnProfile = {
-    transport: "bf_columns",
-    encodedGB: +(fetchBytes / 1e9).toFixed(3),
-    sourceFrames: plane,
-    activeBf: activeSourceIndices.length,
-    bytesPerBf,
-    encoding: source.encoding || source.dtype || "uint16",
-    admissionMs: Math.round(admissionMs),
-    columnsMs: Math.round(decodeMs - admissionMs),
-    fetchMs: Math.round(fetchMs),
-    fetchWallMs: Math.round(fetchMs),
-    parseMs: 0,
-    decodeMs: Math.round(decodeMs),
-    gatherMs: Math.round(gatherMs),
-    fftMs: Math.round(fftMs),
-    totalMs: Math.round(totalMs),
-  };
   emit({
     stage: "ready",
     message: "WebGPU reducer ready",
@@ -1525,11 +1487,7 @@ function chooseChunkCapacity(nbf: number, plane: number, device: GPUDevice): num
   const safeBuffer = maxBuffer === Number.MAX_SAFE_INTEGER ? maxBuffer : Math.floor(maxBuffer * 0.75);
   const maxBytes = Math.max(1, Math.min(safeStorage, safeBuffer, MAX_GQK_CHUNK_BYTES));
   const maxByComplexBuffer = Math.max(1, Math.floor(maxBytes / (plane * 8)));
-  const override = typeof globalThis !== "undefined"
-    ? (globalThis as { __QUANTEM_SSB_CHUNK_BF_CAP__?: number }).__QUANTEM_SSB_CHUNK_BF_CAP__
-    : undefined;
-  const diagnosticCap = Number.isFinite(override) ? Math.max(1, Math.floor(Number(override))) : Number.MAX_SAFE_INTEGER;
-  const raw = Math.max(1, Math.min(nbf, MAX_BF_WORKGROUPS_PER_SUBMIT, maxByComplexBuffer, diagnosticCap));
+  const raw = Math.max(1, Math.min(nbf, MAX_BF_WORKGROUPS_PER_SUBMIT, maxByComplexBuffer));
   if (raw <= REDUCE_BF_GROUP) return raw;
   return Math.max(REDUCE_BF_GROUP, Math.floor(raw / REDUCE_BF_GROUP) * REDUCE_BF_GROUP);
 }
@@ -2143,15 +2101,11 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       // the same estimator as the Python SSB.result() reference (verified
       // corr 0.997 vs backend, 0.9965 vs the exact browser path at identical
       // state). Loss commits always use the exact per-BF path below.
-      // Opt out with globalThis.__QUANTEM_SSB_OBJ_FAST__ = false.
-      const objFastEnabled = options.phaseEstimator !== "mean_phase" && (globalThis as { __QUANTEM_SSB_OBJ_FAST__?: boolean }).__QUANTEM_SSB_OBJ_FAST__ !== false;
-      if (!computeLoss && objFastEnabled) {
-        const onlyChunk = (globalThis as { __QUANTEM_SSB_OBJ_ONLY_CHUNK__?: number }).__QUANTEM_SSB_OBJ_ONLY_CHUNK__;
+      if (!computeLoss && options.phaseEstimator !== "mean_phase") {
         enc.clearBuffer(buffers.stage, 0, this.plane * 8);
         for (let bfOffset = 0; bfOffset < buffers.activeBfCount; bfOffset += buffers.dispatchChunkCapacity) {
           const chunkBf = Math.min(buffers.dispatchChunkCapacity, buffers.activeBfCount - bfOffset);
           const chunkIndex = Math.floor(bfOffset / buffers.dispatchChunkCapacity);
-          if (Number.isFinite(onlyChunk) && chunkIndex !== Number(onlyChunk)) continue;
           device.queue.writeBuffer(
             buffers.paramsChunks[chunkIndex],
             0,
@@ -2192,19 +2146,6 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           loss: null,
           adapterInfo: getGPUInfo(),
           softwareAdapter: isSoftwareGPUAdapter(),
-        };
-        (globalThis as unknown as { __quantemSsbLast?: unknown }).__quantemSsbLast = {
-          gqkMode: buffers.gqkMode,
-          residentGqkBytes: buffers.gqkResidentBytes,
-          gpuMs: gpuMsFast,
-          bfCount,
-          activeBf: buffers.activeBfCount,
-          c10, c12, phi12Deg,
-          rotationDeg,
-          loss: null,
-          objPath: true,
-          sample: options.sample ?? null,
-          phase: phaseFast,
         };
         return resultFast;
       }
@@ -2289,18 +2230,6 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         loss,
         adapterInfo: getGPUInfo(),
         softwareAdapter: isSoftwareGPUAdapter(),
-      };
-      (globalThis as unknown as { __quantemSsbLast?: unknown }).__quantemSsbLast = {
-        gqkMode: buffers.gqkMode,
-        residentGqkBytes: buffers.gqkResidentBytes,
-        gpuMs,
-        bfCount,
-        activeBf: buffers.activeBfCount,
-        c10, c12, phi12Deg,
-        rotationDeg,
-        loss,
-        sample: options.sample ?? null,
-        phase,
       };
       return result;
     }
