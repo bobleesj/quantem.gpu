@@ -443,3 +443,30 @@ def test_prepared_bitshuffle_stack_found_by_inspect_loads_through_the_dataset_re
     with io.load(stack, backend=backend, verbose=False) as loaded:
         assert loaded.metadata["load_timings"]["storage_reader"] == "bounded-hdf5"
         np.testing.assert_array_equal(_host(loaded[:, :]).reshape(12, 16, 16), counts)
+
+
+@pytest.mark.parametrize("stored", ["every frame", "one frame unfiltered", "last frame never written"])
+def test_gzip_frame_stack_loads_every_stored_value(tmp_path, backend, stored):
+    """A /dp stack of one gzip chunk per pattern (the TCMEP layout) inflates on several cores.
+
+    The stored bytes are read chunk by chunk and inflated in parallel; a chunk
+    whose filter the writer skipped is copied as stored, and a stack with an
+    unwritten chunk keeps HDF5's own read, which fills it with zeros.
+    """
+    import zlib
+
+    intensities = np.random.default_rng(13).gamma(2.0, 40.0, (3 * 300, 16, 16)).astype(np.float32)
+    stack = tmp_path / "data_roi0_dp.hdf5"
+    with h5py.File(stack, "w") as handle:
+        data = handle.create_dataset("dp", shape=intensities.shape, dtype=np.float32, chunks=(1, 16, 16), compression="gzip")
+        frames = len(intensities) - (stored == "last frame never written")
+        for index in range(frames):
+            unfiltered = stored == "one frame unfiltered" and index == 517
+            payload = intensities[index].tobytes() if unfiltered else zlib.compress(intensities[index].tobytes(), 4)
+            data.id.write_direct_chunk((index, 0, 0), payload, filter_mask=int(unfiltered))
+    expected = intensities.copy()
+    expected[frames:] = 0
+    with io.load(stack, backend=backend, dataset_path="dp", scan_shape=(3, 300), verbose=False) as loaded:
+        assert loaded.metadata["load_timings"]["storage_reader"] == "bounded-hdf5"
+        restored = _host(loaded[:, :]).reshape(expected.shape)
+        assert restored.dtype == np.float32 and restored.tobytes() == expected.tobytes()
