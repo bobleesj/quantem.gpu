@@ -1,5 +1,6 @@
 """Accelerator discovery and explicit backend resolution, for devices and for I/O (which also accepts the CPU reference)."""
 
+import gc
 import importlib.util
 import os
 import platform
@@ -90,21 +91,94 @@ def _print_once(line: str | None) -> None:
         print(line)
 
 
-def release_cached_memory() -> None:
-    """Return the unused cached blocks of CuPy and Torch to the GPU without releasing live arrays.
+def release_cached_memory(verbose: bool = False) -> float:
+    """Return the GPU memory this process caches but no longer uses to the driver; returns the gigabytes released.
 
-    Encoded residents use CuPy while SSB, the widget and Torch inputs use
-    Torch's caching allocator; each keeps freed blocks for reuse, so both are
-    emptied for the memory to show as free.
+    Call it after dropping every reference to the arrays (``del`` them, ``close()`` the acquisition): live arrays
+    are never touched. The result is ``(held before - held after) / 1e9``, where held is the memory this process
+    has taken from the driver: on CUDA the bytes Torch's allocator has reserved plus the bytes of CuPy's pool,
+    summed over the GPUs the process has opened, and on Apple silicon the Metal driver's total for the process.
+    Both include cached blocks, so the result is what went back. Torch's MPS tensor counter excludes them and
+    read 0 GB while gigabytes went back. ``cudaMemGetInfo`` counts every process on a GPU: over calls that
+    returned 2.1 GB it read between -13.2 and 2.2 GB while other jobs were allocating, so it is printed, not
+    returned.
+
+    Why each step is needed: garbage is collected first because a reference cycle (a widget and its observers)
+    keeps arrays alive after ``del``. Torch's caching allocator, CuPy's memory pool and MLX keep freed blocks for
+    reuse, so a dropped acquisition still counts as used and the next load can run out of memory until each
+    cache is emptied. CuPy's pool counts and frees the blocks of its current GPU only, so each opened GPU is
+    visited, and its cached FFT plans are dropped first because a plan keeps its work area in the pool. CuPy's
+    pinned pool holds page-locked host buffers of the transfers: host memory, returned here and not part of the
+    result. A GPU the process has not opened is not visited: it holds none of its blocks, and visiting it would
+    open it (550 MiB of driver context, or an error when that GPU cannot be opened).
+
+    What stays: arrays something still refers to, including the locals of a failed call that the traceback of
+    the last error keeps (``sys.last_exc`` in a notebook), and the FFT plans of other threads. On CUDA it needs
+    Torch built with CUDA; beside a CPU-only Torch, CuPy's pool is left alone.
+
+    Parameters
+    ----------
+    verbose : bool, default False
+        Print one line per opened GPU: the gigabytes this process released, and the GPU's memory in use and free
+        as the driver reports them for all processes. On Apple silicon the line has no free value.
+
+    Returns
+    -------
+    float
+        Gigabytes (1e9 bytes) this process returned to the driver; 0.0 without a GPU.
+
+    Examples
+    --------
+    >>> from quantem.gpu import device
+    >>> data.close()
+    >>> del data
+    >>> device.release_cached_memory(verbose=True)
+    GPU 0: released 2.1 GB, 32.0 GB in use, 69.9 GB free
+    2.147483648
     """
-    from quantem.gpu.device.cuda_runtime import cp
+    if torch.cuda.is_available():
+        from quantem.gpu.device.cuda_runtime import cp
 
-    if cp is not None:
-        cp.get_default_memory_pool().free_all_blocks()
-    if torch.cuda.is_initialized():
-        torch.cuda.empty_cache()
+        gc.collect()
+        # torch has no public call that says whether this process holds a context on a GPU
+        devices = [index for index in range(torch.cuda.device_count()) if torch._C._cuda_hasPrimaryContext(index)]
+        reserved_before = {index: torch.cuda.memory_reserved(index) for index in devices}
+        torch.cuda.empty_cache()  # one call covers every GPU; CuPy's caches below need a visit per GPU
+        released = {index: before - torch.cuda.memory_reserved(index) for index, before in reserved_before.items()}
+        if cp is not None:
+            pool = cp.get_default_memory_pool()
+            for index in devices:
+                with cp.cuda.Device(index):
+                    pool_before = pool.total_bytes()
+                    plans = cp.fft.config.get_plan_cache()
+                    if plans.get_curr_size():  # clear() runs a garbage collection of its own, 80 ms even when empty
+                        plans.clear()
+                    pool.free_all_blocks()
+                    released[index] += pool_before - pool.total_bytes()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+        if verbose:
+            for index in devices:
+                free, total = torch.cuda.mem_get_info(index)
+                print(
+                    f"GPU {index}: released {released[index] / 1e9:.1f} GB, "
+                    f"{(total - free) / 1e9:.1f} GB in use, {free / 1e9:.1f} GB free"
+                )
+        return sum(released.values()) / 1e9
     if torch.backends.mps.is_available():
+        before = torch.mps.driver_allocated_memory()
+        gc.collect()  # after the reading: a collected Metal resident hands its buffers straight back to the driver
         torch.mps.empty_cache()
+        # the Metal encode and SSB paths compute with MLX, which keeps its own cache; never imported, it holds nothing
+        mlx_core = sys.modules.get("mlx.core")
+        if mlx_core is not None:
+            mlx_core.clear_cache()
+        in_use = torch.mps.driver_allocated_memory()
+        if verbose:
+            print(f"MPS: released {(before - in_use) / 1e9:.1f} GB, {in_use / 1e9:.1f} GB in use")
+        return (before - in_use) / 1e9
+    if verbose:
+        print("No CUDA or MPS device in Torch: nothing to release.")
+    return 0.0
 
 
 def profile(device: str | None = None) -> dict[str, str | list[str] | None]:

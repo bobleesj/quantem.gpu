@@ -194,7 +194,8 @@ def _staged(spans):
     instead, the two the writer has in use at once, and copy at the pinned
     transfer rate. Both are 64 MiB whatever the arrays, the size the loader
     stages through, so every save and load reuses the same two blocks of
-    CuPy's pinned pool, which keeps one free list per size and never shrinks.
+    CuPy's pinned pool, which keeps one free list per size and shrinks only
+    when ``device.release_cached_memory`` empties it.
     """
     import cupy as cp
 
