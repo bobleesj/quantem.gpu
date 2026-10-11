@@ -12,7 +12,7 @@ cp = pytest.importorskip("cupy")
 torch = pytest.importorskip("torch")
 
 from quantem.gpu.parallax.cuda.correlation import cross_correlation_shift_batch_cp
-from quantem.gpu.parallax.cuda.alignment import _bin_mapping_only
+from quantem.gpu.parallax.cuda.alignment import bin_mapping
 from quantem.gpu.parallax.workflow import fit_aberrations_from_shifts
 
 
@@ -162,19 +162,15 @@ def test_bin_mapping_matches_original_quantem(bin_factor: int) -> None:
         torch.from_numpy(vbf_np),
         bin_factor,
     )
-    ref_mask, ref_inds_row, ref_inds_col, _, ref_mapping = ref
+    ref_mapping = ref[-1]
 
-    out = _bin_mapping_only(
-        cp.asarray(mask_np),
+    out_mapping = bin_mapping(
         cp.asarray(inds_row_np.astype(np.int64)),
         cp.asarray(inds_col_np.astype(np.int64)),
+        mask_np.shape,
         bin_factor,
     )
-    out_mask, out_inds_row, out_inds_col, out_mapping = out
 
-    np.testing.assert_array_equal(cp.asnumpy(out_mask), ref_mask.numpy())
-    np.testing.assert_array_equal(cp.asnumpy(out_inds_row), ref_inds_row.numpy().astype(np.int64))
-    np.testing.assert_array_equal(cp.asnumpy(out_inds_col), ref_inds_col.numpy().astype(np.int64))
     np.testing.assert_array_equal(cp.asnumpy(out_mapping), ref_mapping.numpy().astype(np.int64))
 
 

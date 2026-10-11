@@ -178,6 +178,24 @@ def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
     assert rotation_angle_deg == pytest.approx(rotation_deg, abs=1e-10)
 
 
+def test_detector_bins_around_the_disk_centre_are_whole() -> None:
+    """Every bin inside the disk holds bin_factor x bin_factor pixels on a 256-pixel detector binned by 3.
+
+    The bins follow QuantEM's corner-centred mask: offsets from the disk centre, moved by half the detector. The
+    detector's own indices put the wrap (and with 256 = 85 x 3 + 1, a short bin) through the disk centre.
+    """
+    cp = _cuda()
+    from quantem.gpu.parallax.cuda.alignment import bin_mapping
+
+    rows, cols = np.nonzero(np.hypot(*np.indices((256, 256)) - 128.0) <= 20)
+    mapping = cp.asnumpy(bin_mapping(cp.asarray((rows - 128) % 256), cp.asarray((cols - 128) % 256), (256, 256), 3))
+
+    inner = [np.hypot(rows[mapping == index] - 128.0, cols[mapping == index] - 128.0).max() < 14
+             for index in range(mapping.max() + 1)]
+    sizes = np.bincount(mapping)[inner]
+    assert len(sizes) > 50 and (sizes == 9).all()
+
+
 def test_parallax_rejects_data_it_cannot_reconstruct() -> None:
     from quantem.gpu import parallax
     from quantem.gpu.io.dataset import Dataset4dstemGPU
