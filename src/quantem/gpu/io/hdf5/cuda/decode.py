@@ -42,8 +42,9 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
     """Transfer prepared compressed frames, decode them on the GPU and return the staging buffer.
 
     Frames of 1-, 2- or 4-byte elements decode in batches of about
-    ``batch_bytes_target`` bytes through two reused scratch buffers, writing straight into the final result, so peak
-    memory is ``compressed + 2 * batch + final`` rather than two full
+    ``batch_bytes_target`` bytes: LZ4 expands a batch into one reused scratch
+    buffer and the unshuffle writes it straight into the final result, so peak
+    memory is ``compressed + batch + final`` rather than two full
     uncompressed copies. Returns the stored-dtype CuPy array
     ``(n_frames, det_row, det_col)``; stored values are not altered. The
     page-locked staging buffer returns to its pool after the final
@@ -139,7 +140,6 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         chunk_offsets_device = cp.asarray(chunk_offsets)
     batch_scratch_bytes = max_batch * frame_bytes
     lz4_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
-    shuf_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     result = cp.empty((total_frames,) + frame_shape, dtype=source_dtype)
     errors = cp.zeros(1, dtype=cp.uint32)
     max_blocks = int(block_counts.max())
@@ -188,17 +188,17 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         if streaming_upload:
             main_stream.record(kernel_done[slot])
 
-        # 2. Bitshuffle this batch into shuf_scratch. Pass the full
-        #    scratch buffers - the kernel uses batch_n to bound work,
-        #    and slicing a uint8 buffer then .view()ing into a wider
-        #    dtype can leave CuPy confused about strides.
+        # 2. Unshuffle this batch straight into its frames of the result (the kernels
+        #    index from the pointer they are given and batch_n bounds their work); a
+        #    second scratch buffer and a copy moved every decoded count twice more.
+        decoded = result[start:end]
         if source_itemsize == 1:
             # One kernel unshuffles complete blocks and the final partial block.
             batch_bytes = batch_n * frame_bytes
             kernel("shuf_8_batched")(
                 ((batch_bytes + 255) // 256,),
                 (256,),
-                (lz4_scratch, shuf_scratch, np.uint32(frame_bytes), np.uint64(batch_bytes)),
+                (lz4_scratch, decoded, np.uint32(frame_bytes), np.uint64(batch_bytes)),
             )
         elif source_itemsize == 2:
             if n_full_8kb:
@@ -207,7 +207,7 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                     (256, 1, 1),
                     (
                         lz4_scratch,
-                        shuf_scratch.view(cp.uint16),
+                        decoded,
                         np.uint32(frame_bytes),
                     ),
                 )
@@ -218,7 +218,7 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                     (256, 1, 1),
                     (
                         lz4_scratch,
-                        shuf_scratch.view(cp.uint16),
+                        decoded,
                         np.uint32(frame_bytes),
                     ),
                 )
@@ -230,7 +230,7 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                     (32, 32, 1),
                     (
                         lz4_scratch.view(cp.uint32),
-                        shuf_scratch.view(cp.uint32),
+                        decoded,
                         np.uint32(frame_u32s),
                     ),
                 )
@@ -241,19 +241,10 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                     (256, 1, 1),
                     (
                         lz4_scratch,
-                        shuf_scratch.view(cp.uint32),
+                        decoded,
                         np.uint32(frame_bytes),
                     ),
                 )
-
-        # 3. View the batch prefix of shuf_scratch as source dtype +
-        #    batch shape. View the full uint8 scratch first THEN slice
-        #    (doing it the other way can silently reinterpret strides).
-        values_per_frame = frame_bytes // source_itemsize
-        result[start:end] = (
-            shuf_scratch.view(source_dtype)[: batch_n * values_per_frame]
-            .reshape((batch_n,) + frame_shape)
-        )
 
     cp.cuda.Device().synchronize()
     _release_pinned(read_buffer)
