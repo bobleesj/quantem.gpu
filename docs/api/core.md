@@ -13,9 +13,33 @@ full operation-specific reference page. All coordinates exposed to users are
 | `device.runtime_notice()` | the one-line install hint when a GPU is present but its runtime is missing, else `None` | printed once at first GPU use |
 | `device.detect()` | choose a native CUDA or MPS accelerator | raises when neither GPU runtime is available |
 | `device.resolve(name="auto")` | validate `cuda` or `mps` | raises on an unavailable or unknown runtime |
+| `device.release_cached_memory(verbose=False)` | collect garbage, empty the Torch, CuPy and MLX caches on every GPU the process has opened, and return the gigabytes this process handed back to the driver | live arrays are untouched; returns `0.0` without a GPU |
 
 CPU reported by `profile()` is diagnostic. Scientific GPU calls do not silently
 turn that diagnostic result into a CPU execution path.
+
+`release_cached_memory()` returns cached GPU memory to the driver after `del`
+and `close()`:
+
+```python
+from quantem.gpu import device
+
+data.close()
+del data
+device.release_cached_memory(verbose=True)
+```
+
+It prints one line per GPU the process has opened, for example
+`GPU 0: released 2.1 GB, 32.0 GB in use, 69.9 GB free`, and returns the total
+released (`2.147483648`). "Released" is what this process handed back: the
+drop in the bytes Torch has reserved plus the bytes of CuPy's pool on CUDA, and
+the drop of the Metal driver's total for the process on Apple silicon. "In use"
+and "free" are the GPU's totals from the driver and include other processes.
+Cached FFT plans of the calling thread are dropped. Arrays something still
+refers to stay, including the locals of a failed call that the traceback of the
+last error keeps (`sys.last_exc` in a notebook). A GPU the process has not
+opened is not visited. The measurements are in the
+[2026-10-11 record](../maintainer/2026-10-11-release-cached-memory.md).
 
 ## Electron optics
 
