@@ -1563,7 +1563,7 @@ function makeParams(
   const f = new Float32Array(b);
   const phi12Rad = phi12Deg * Math.PI / 180;
   u[0] = Math.max(1, Math.min(cal.num_bf, Math.round(bfCount || cal.num_bf)));
-  u[1] = n; u[2] = plane; u[3] = Math.max(0, Math.min(u[0] - 1, Math.round(bfOffset)));
+  u[1] = n; u[2] = plane; u[3] = Math.round(bfOffset);
   f[4] = cal.wavelength_A;
   f[5] = cal.semiangle_rad;
   f[6] = cal.angular_sampling_rad[0];
@@ -1576,7 +1576,7 @@ function makeParams(
   f[13] = cal.dc_value[0];
   f[14] = cal.dc_value[1];
   f[15] = 1 / plane;
-  u[16] = Math.max(1, Math.min(u[0], Math.round(chunkBf || u[0])));
+  u[16] = Math.max(1, Math.round(chunkBf || u[0]));
   u[17] = 0;
   u[18] = Math.max(1, Math.ceil(Math.max(1, Math.round(activeBfCount || u[0])) / REDUCE_BF_GROUP));
   u[19] = computeLoss ? 1 : 0;
@@ -2147,6 +2147,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   private initialized = false;
   private loadedBfCount = 0;
   private geometryRotationDeg: number | null = null;
+  private geometryBfCount: number | null = null;
   private onProgress: WebGPUProgressHandler | null = null;
 
   constructor(
@@ -2230,14 +2231,14 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
 
   private async setup(requiredBfCount = this.cal.num_bf, rotationDeg?: number): Promise<void> {
     const capacity = this.clampBfCount(requiredBfCount, false);
-    if (this.initialized && this.loadedBfCount >= capacity) {
-      this.updateGeometryRotation(rotationDeg);
+    if (this.initialized && this.residentCovers(capacity, rotationDeg)) {
+      this.updateGeometry(capacity, rotationDeg);
       return;
     }
     if (this.setupPromise) {
       await this.setupPromise;
-      if (this.initialized && this.loadedBfCount >= capacity) {
-        this.updateGeometryRotation(rotationDeg);
+      if (this.initialized && this.residentCovers(capacity, rotationDeg)) {
+        this.updateGeometry(capacity, rotationDeg);
         return;
       }
     }
@@ -2247,7 +2248,16 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     } finally {
       this.setupPromise = null;
     }
-    this.updateGeometryRotation(rotationDeg);
+    this.updateGeometry(capacity, rotationDeg);
+  }
+
+  // The resident G(q,k) answer `count` BF pixels when they hold every pixel of its strided subset
+  // (collectActiveBfIndices): a full load serves every smaller count without rebuilding.
+  private residentCovers(count: number, rotationDeg?: number): boolean {
+    if (this.loadedBfCount < count) return false;
+    if (this.loadedBfCount === count) return true;
+    const loaded = new Set(this.buffers!.activeSourceIndices);
+    return collectActiveBfIndices(this.cal, count, rotationDeg).every((index) => loaded.has(index));
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -2289,10 +2299,11 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.initialized = false;
     this.loadedBfCount = 0;
     this.geometryRotationDeg = null;
+    this.geometryBfCount = null;
   }
 
   private async setupOnce(capacity: number, rotationDeg?: number): Promise<void> {
-    if (this.initialized && this.loadedBfCount >= capacity) return;
+    if (this.initialized && this.residentCovers(capacity, rotationDeg)) return;
     if (this.initialized || this.buffers) this.resetGpuBuffers();
     const setupT0 = performance.now();
     const n = this.n;
@@ -2575,6 +2586,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.initialized = true;
     this.loadedBfCount = nbf;
     this.geometryRotationDeg = rotationDeg == null || !Number.isFinite(rotationDeg) ? baseRotationDeg(this.cal) : Number(rotationDeg);
+    this.geometryBfCount = null;
     console.log(
       `[ssb] WebGPU SSB setup ready ${nbf}/${this.cal.num_bf} BF `
       + `(${nonzeroBfCount} active) in ${(performance.now() - setupT0).toFixed(1)} ms`,
@@ -2606,16 +2618,25 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     return this.loadedBfCount;
   }
 
-  private updateGeometryRotation(rotationDeg?: number): void {
+  // Write the resident BF geometry for this rotation. A count below the resident one keeps its
+  // strided subset: every other resident BF pixel gets aperture 0, which each kernel skips, and
+  // the mean divides by `count`.
+  private updateGeometry(count: number, rotationDeg?: number): void {
     const device = this.device;
     const buffers = this.buffers;
     if (!device || !buffers) return;
     const requested = rotationDeg == null || !Number.isFinite(rotationDeg) ? baseRotationDeg(this.cal) : Number(rotationDeg);
-    if (this.geometryRotationDeg != null && Math.abs(requested - this.geometryRotationDeg) < 1e-9) return;
+    const subset = count < this.loadedBfCount ? count : null;
+    if (this.geometryRotationDeg != null && Math.abs(requested - this.geometryRotationDeg) < 1e-9 && this.geometryBfCount === subset) return;
     const { geom, trig } = packGeometry(this.cal, buffers.activeSourceIndices, requested);
+    if (subset !== null) {
+      const keep = new Set(collectActiveBfIndices(this.cal, subset, rotationDeg));
+      buffers.activeSourceIndices.forEach((index, i) => { if (!keep.has(index)) geom[i * 4 + 3] = 0; });
+    }
     device.queue.writeBuffer(buffers.bfGeom, 0, geom as unknown as BufferSource);
     device.queue.writeBuffer(buffers.bfTrig, 0, trig as unknown as BufferSource);
     this.geometryRotationDeg = requested;
+    this.geometryBfCount = subset;
   }
 
   async reconstruct(c10: number, c12: number, phi12: number,

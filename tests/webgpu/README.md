@@ -150,6 +150,15 @@ exact against the raw counts:
 - `runDenseVirtualImageParity`: totals above 2^24 on the direct and the
   large-aperture complement path equal the exact integer sum rounded once.
 
+## SSB bright-field subsets
+
+`ssb-bf-subset.ts` builds a synthetic 128 x 128 SSB folder (441 bright-field
+uint16 columns, resident G(q,k) in chunks of 256) and runs in the same headed
+gate. After a full-BF load, reconstructions at 100 and 300 BF pixels (drag
+estimator and committed mean phase with loss) must equal an engine prepared with
+only that subset to 1e-6 rad and 1e-7 relative loss (float32 summation order),
+and returning to the full count must reproduce a fresh full engine exactly.
+
 ## Decoder pipelines per device (CPU-only)
 
 `pipeline-device-cache.ts` is a Node test with fake devices: a device created
