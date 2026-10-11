@@ -25,6 +25,7 @@ _NAMES = (
     "decode_range_u16",
     "total",
     "fields",
+    "field_roots",
     "field_sizes",
     "pack_fields",
     *(f"{op}_u{bits}" for op in ("index", "residual") for bits in (32, 64)),
@@ -240,20 +241,16 @@ class StreamedCounts:
                 # Return the codec scratch to the pool before the index allocates its own.
                 del scratch, sizes, states
                 fields = field_count(self.shape[2:])
+                leaves = math.ceil(self.shape[2] / 8) * math.ceil(self.shape[3] / 8)
                 values = cp.empty((scans, fields), cp.uint32)
+                geometry = (u32(scans), u32(self.shape[2]), u32(self.shape[3]), u32(fields))
                 self.kernels["fields"](
-                    ((scans * fields + 3) // 4,),
+                    ((scans * leaves + 3) // 4,),
                     (128,),
-                    (
-                        raw,
-                        np.int32(raw.dtype.itemsize),
-                        self.valid,
-                        values,
-                        u32(scans),
-                        u32(self.shape[2]),
-                        u32(self.shape[3]),
-                        u32(fields),
-                    ),
+                    (raw, np.int32(raw.dtype.itemsize), self.valid, values, *geometry),
+                )
+                self.kernels["field_roots"](
+                    ((scans * (fields - leaves) + 127) // 128,), (128,), (values, *geometry)
                 )
                 index_streams = math.ceil(scans / self.interval) * fields
                 widths, lengths = (

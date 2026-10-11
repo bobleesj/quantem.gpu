@@ -222,26 +222,39 @@ extern "C" __global__ void sc_total(
     if (sum) atomicAdd(total+stream%pixels,sum);
 }
 
+// The spatial index of one scan: the sum of every 8x8 detector tile (the leaves), then of every
+// 32x32 tile (the roots). One warp sums one leaf from the counts.
 extern "C" __global__ void sc_fields(
     const void* raw, int itemsize, const u8* valid, u32* fields,
     u32 scans, u32 rows, u32 cols, u32 field_count
 ) {
     u64 item=(u64(blockIdx.x)*blockDim.x+threadIdx.x)/32;
     u32 lane=threadIdx.x&31;
-    if (item>=u64(scans)*field_count) return;
-    u32 scan=item/field_count, field=item%field_count;
-    u32 leaves=((rows+7)/8)*((cols+7)/8);
-    u32 side=field<leaves ? 8 : 32;
-    if (field>=leaves) field-=leaves;
-    u32 field_cols=(cols+side-1)/side;
-    u32 row0=(field/field_cols)*side, col0=(field%field_cols)*side, sum=0;
-    for (u32 offset=lane;offset<side*side;offset+=32) {
-        u32 row=row0+offset/side,col=col0+offset%side;
+    u32 leaf_cols=(cols+7)/8, leaves=((rows+7)/8)*leaf_cols;
+    if (item>=u64(scans)*leaves) return;
+    u32 scan=item/leaves, leaf=item%leaves;
+    u32 row0=(leaf/leaf_cols)*8, col0=(leaf%leaf_cols)*8, sum=0;
+    for (u32 offset=lane;offset<64;offset+=32) {
+        u32 row=row0+offset/8,col=col0+offset%8;
         if (row<rows && col<cols && valid[row*cols+col])
             sum+=sc_raw(raw,(u64(scan)*rows+row)*cols+col,itemsize);
     }
     sum=__reduce_add_sync(0xffffffffu,sum);
-    if (!lane) fields[item]=sum;
+    if (!lane) fields[u64(scan)*field_count+leaf]=sum;
+}
+
+// A root is the sum of its sixteen leaves, which sc_fields has written: summing its 1024 counts
+// instead read the whole block of counts a second time.
+extern "C" __global__ void sc_field_roots(u32* fields, u32 scans, u32 rows, u32 cols, u32 field_count) {
+    u64 item=u64(blockIdx.x)*blockDim.x+threadIdx.x;
+    u32 leaf_rows=(rows+7)/8, leaf_cols=(cols+7)/8, leaves=leaf_rows*leaf_cols, roots=field_count-leaves;
+    if (item>=u64(scans)*roots) return;
+    u32 scan=item/roots, root=item%roots, root_cols=(cols+31)/32;
+    u32 leaf_row0=(root/root_cols)*4, leaf_col0=(root%root_cols)*4, sum=0;
+    u32* scan_fields=fields+u64(scan)*field_count;
+    for (u32 row=leaf_row0;row<min(leaf_row0+4,leaf_rows);++row)
+        for (u32 col=leaf_col0;col<min(leaf_col0+4,leaf_cols);++col) sum+=scan_fields[row*leaf_cols+col];
+    scan_fields[leaves+root]=sum;
 }
 
 extern "C" __global__ void sc_field_sizes(
