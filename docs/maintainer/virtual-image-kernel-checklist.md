@@ -14,38 +14,6 @@ pixels per scan position; a dense DF mask can touch most of the 36,864 detector
 pixels. That is why the standard must be one custom kernel per product over
 resident data, plus a dense-mask strategy such as `total - complement`.
 
-## Expected kernel paths
-
-The CUDA `1024x1024x192x192 uint8` target uses:
-
-| Product | Expected path |
-|---|---|
-| BF | `cuda_rawkernel_selected` |
-| ADF | `cuda_rawkernel_selected` |
-| DF | `cuda_rawkernel_total_minus_complement` |
-| CoM/DPC | `cuda_rawkernel_com` |
-
-The MPS `1024x1024x192x192 uint8` target uses the same formulation:
-
-| Product | Expected path |
-|---|---|
-| BF | `mps_metal_selected` |
-| ADF | `mps_metal_selected` |
-| DF | `mps_metal_total_minus_complement` |
-| CoM/DPC | `mps_metal_com` |
-
-The Show4DSTEM WebGPU browser runtime is widget-bundled, but the reusable
-source now belongs beside its scientific domain. The parity/performance standard is
-the same:
-
-| Product | Expected path |
-|---|---|
-| BF | `webgpu_wgsl_masked_sum_buffer` |
-| ADF | `webgpu_wgsl_masked_sum_buffer` |
-| DF | `webgpu_wgsl_masked_sum_buffer` plus dense-mask cache if needed |
-| CoM/DPC | `webgpu_wgsl_masked_dpc_buffer` / `webgpu_wgsl_masked_com_buffer` |
-| iDPC | `webgpu_wgsl_masked_idpc_buffer` with paired DPC buffers and dual-real FFT |
-
 ## Backend Checklist
 
 | Backend path | Current status | Required tests | Performance gate |
@@ -155,19 +123,3 @@ the same:
   with incremental row/column bookkeeping was exact but slower: the seven-panel
   DPC grid regressed from about `27.3 ms` to about `34.5 ms`. Keep the simpler
   division form unless a profiler points elsewhere.
-
-## Next Checklist
-
-- Run Mac MPS `uint8` runtime parity/performance on full no-bin data.
-- Run Mac MPS CoM/DPC runtime parity/performance on full no-bin data and record
-  the first-click vs cached-repeat timing.
-- Add a headed WebGPU test that records the real adapter and verifies BF/ADF/DF
-  parity plus `maskedSumBuffer` drag behavior.
-- Keep WebGPU CoM/DPC/iDPC headed parity/performance tests in the release gate,
-  including the FFT command-batching path that keeps iDPC median redraw under
-  the 30 FPS budget.
-- Remove any remaining widget-local permanent backend copies after each synced
-  domain-owned WebGPU source is covered by build and browser parity tests.
-- Treat real WebGPU `1024x1024x192x192` full-stack no-bin browse/load as
-  explicitly rejected unless a future browser/device path avoids materializing
-  the whole decoded stack. Product-first BF for true 1024 is already signed off.

@@ -25,54 +25,32 @@ Portable CI proves imports, public contracts, CPU references, source packaging,
 and tests that do not require a physical accelerator. Backend skips are
 reported; they are not parity evidence.
 
-Validate the profiling schedule and retained run registry in the same portable
-environment:
+## Performance entry points
 
-```bash
-python scripts/check_profile_registry.py
-python scripts/benchmark_registry.py validate
-```
-
-This checks that every parity capability has exactly one cell for CPU reference,
-CUDA, Python MPS, native Swift/Metal, and WebGPU; unsupported cells stay
-fail-closed; and terminal experiment manifests retain full revisions, input and
-output hashes, timestamps, and a human registry row. It also checks every exact
-benchmark gate, evidence import, runbook command, generated coverage table, and
-measured-row timing/parity requirement.
-
-## Choosing a reproducible performance gate
-
-Do not begin from a command copied out of an old experiment. Ask the registry
-for the open rows on the backend or computer you own:
-
-```bash
-python scripts/benchmark_registry.py next --platform "Python MPS"
-python scripts/benchmark_registry.py next --computer "MacBook Air (M2, 8 GB)"
-python scripts/benchmark_registry.py show io.mps.apple-m5-max-128gb.bin2.cold-original
-python scripts/benchmark_registry.py command io.mps.apple-m5-max-128gb.bin2.cold-original
-```
-
-The command view prints the preflight, required environment, repository-owned
-entry point, required artifacts, and promotion boundary. If it says
-`parity preflight`, the command cannot produce a physical timing claim. If a
-performance harness is missing, the coverage row stays partial or pending until
-one is added.
-
-The standard reusable entry points are:
+Each hot path has a repository-owned timing script. Run the before and after
+checkouts back to back on the same device, data and calibration, and compare
+both the timings and the output hashes the script prints.
 
 | Operation | Entry point | Primary output |
 |---|---|---|
+| CUDA SSB, DPC and parallax | `scripts/benchmark_ssb.py` | First and median warm wall time per stage (session, reconstruct, fit, tilt fit, DPC, parallax) and the SHA-256 of every output array |
 | Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, full-volume hash/dtype/shape parity, logical resident bytes, sampled accelerator/process peak, and release snapshots |
 | CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
-| Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
-| Hardware-WebGPU HDF5 load | `scripts/benchmark_webgpu_h5_browser.py` | Browser-local profile, checksums, run timing, and browser telemetry |
 | Python MPS SSB | `scripts/benchmark_ssb_mps_scaling.py` | Reconstruction, parity-pair, and complete-fit JSONL |
+| Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
 | Native Swift/Metal SSB | `metal-ssb-benchmark` | Reconstruction, phase/loss, calibration, and cache-policy report |
 
-Each physical run still needs a manifest and `RUNS.md` row in the private
-evidence archive before launch; raw logs stay there, never in this repository,
-and the dated summary (question, setup, numbers, conclusion) goes under `docs/`. The harness JSON is evidence, not permission to promote a dashboard
-number without review.
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py scan_master.h5 --voltage-kV 300 --semiangle-mrad 30
+```
+
+CUDA compiles kernels on first use and caches them per process tree. Give each
+checkout its own empty `CUPY_CACHE_DIR`, or one tree's cached binaries time the
+other.
+
+Raw logs and run folders stay in the private evidence archive, never in this
+repository. The dated summary (question, setup, numbers, conclusion) goes under
+`docs/` with the device, date and exact revision of every number.
 
 ## Native Swift and Metal
 
@@ -101,15 +79,48 @@ Record preparation separately from warm reconstruction, exact loss, and the
 complete fit. A finite cache budget is a different resource-policy row, not a
 replacement for the complete-cache timing.
 
+## SSB parity gates
+
+```bash
+bash scripts/check_metal_ssb.sh
+bash scripts/check_ssb_parity.sh --build-metal
+```
+
+`check_ssb_parity.sh` checks the frozen GPU fitting trajectory, repeats it for
+determinism and reports the MPS comparison. It does not run a CPU
+reconstruction oracle or recapture a baseline; add `--full` only when a
+512×512 fit is relevant. Reconstruction and saved-result checks are in
+`check_metal_ssb.sh`. Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
+when exporting a new fixture and `QUANTEM_SSB_PARITY_RUNS` to a disposable
+working directory.
+
+The frozen losses `0.14511984586715698`, `0.13808111846446991` and
+`0.13864889740943909` never change to make a test pass. They are not a
+sufficient gate for accumulation-order changes: `planesPerRange=4` diverges by
+one float32 ULP at fixture index 8 while those three values still pass. Widen
+the gate to the recorded 16-fixture set before accepting an accumulation
+reordering.
+
+Routine optimization compares a known-good GPU revision with its candidate on
+identical inputs, calibration, precision, backend and hardware, and freezes the
+object, phase, loss and fitting trajectory of the changed path. A bit-exact
+claim needs a bit-exact comparison; cross-backend tolerance checks are
+separate. The full-size CPU oracle runs only with `--cpu-oracle` and, under
+pytest, `QUANTEM_SSB_CPU_ORACLE=1`.
+
 ## Documentation
 
 ```bash
 python -m pip install -r docs/requirements.txt
+python scripts/check_docs_links.py
+python -m pytest -q tests/infrastructure/test_docs_site.py
 jupyter-book build docs
+python scripts/check_docs_links.py --html-root docs/_build/html
+python scripts/check_docs_nav_toggle.py docs/_build/html
 ```
 
 The documentation build is hardware-independent and never downloads private
-data. It publishes retained evidence generated by qualified hardware runs.
+data. Measured numbers are written into the pages as dated records.
 
 ## Backend parity
 
@@ -120,6 +131,4 @@ it is deterministic drift or nondeterminism.
 Never edit a frozen golden, expected hash, reference value, or tolerance merely
 to make a new implementation pass.
 
-Hardware timing cadence and promotion rules are defined in
-[Continuous profiling](../performance/continuous-profiling.md). A PR smoke test
-never becomes a physical-device performance claim.
+A pull-request smoke test never becomes a physical-device performance claim.

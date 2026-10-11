@@ -22,7 +22,7 @@ WebGPU paths.
 | `MetalDisplayKernels` | range, histogram, transfer function, colormap | `.../MetalDisplayKernels` |
 | `MetalImageFFT` | FFT operations on resident 2D products | `.../MetalImageFFT` |
 | `MetalImageRuntime` | typed resident surface/statistics state | `.../MetalImageRuntime` |
-| `MetalSSBKernels` | exact native 512×512 SSB reconstruction, phase-variance objective, and deterministic fitting | `.../MetalSSBKernels` |
+| `MetalSSBKernels` | exact native 128×128, 256×256 and 512×512 SSB reconstruction, phase-variance objective, and deterministic fitting | `.../MetalSSBKernels` |
 
 The native package does not provide the Python `screening.prepare` cache
 contract. It does provide detector, CoM, DPC/iDPC, display, FFT, load, and SSB
@@ -103,8 +103,9 @@ MacBook Pro (M5 Max, 128 GB) and MacBook Air (M2, 8 GB) measurements; this
 platform page does not duplicate them.
 
 `MetalSSBEngine` is intentionally narrower than the Python source loader. It
-accepts plane-major lossless `uint8` bright-field columns with shape
-`[logical_brightfield, scan_row, scan_column]` for a 512×512 scan. It never
+accepts plane-major lossless `uint8`, `uint16` or `uint32` bright-field columns
+with shape `[logical_brightfield, scan_row, scan_column]` for a 128×128,
+256×256 or 512×512 scan. It never
 crops or bins scan positions. Every result records the logical, executed,
 cached, streamed, and proven-zero BF counts plus the exact cache bytes. A client
 chooses `cacheBudgetBytes` from its resource policy; a smaller cache streams the

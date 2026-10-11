@@ -58,7 +58,7 @@ contract, but runtime/source-reader qualification remains separate.
 | ARINA/NCEM HDF5 | Reader-qualified counts and companion microscope vocabulary | Archiving every HDF5 object, every acquisition variant, or every private tag |
 | EMPAD | Native float32 codec; explicit Python CPU reference encode/decode, Python CUDA and MPS readers of the float32 codec, and float-export XML/RAW import | Treating encoded EMPAD2 words as corrected float32 |
 | NumPy | Native little-endian C-order 4D uint8/uint16, retained NumPy header | Microscope metadata that was not supplied; signed/float/Fortran-order export through this count codec |
-| Derived/scaled results | Separate result contracts | Arbitrary scaled uint16, uint32, 3D/5D or reconstruction export as QEM is not yet qualified |
+| Derived/scaled results | Regional scaled `uint16` codes with their complete precision report (`scaled-uint16-column-rans-v1`, see [QEM codecs](qem-codecs.md)) | Scaled codes read as detector counts; `uint32`, 3D/5D or reconstruction export as QEM |
 
 SSB result images/calibration remain separate JSON/NumPy result artifacts; they
 are not silently embedded as an acquisition's recorded microscope calibration.

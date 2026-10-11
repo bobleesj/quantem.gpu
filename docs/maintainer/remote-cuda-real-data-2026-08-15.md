@@ -2,6 +2,10 @@
 
 Date: 2026-08-15
 
+This record predates 0.0.1rc14: at the time, the CUDA service held acquisitions
+as dense residents. `io.load` now keeps them ANS encoded, so the memory numbers
+below describe the dense path of that date.
+
 Hardware: two 96 GB RTX PRO 6000 Blackwell GPUs
 
 Environment: clean Python 3.12 Conda environment created from

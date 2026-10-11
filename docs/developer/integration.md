@@ -41,7 +41,7 @@ Native Swift/Metal products for macOS and iOS clients:
   `Metal4DSTEMResidentCacheIO`, and `Metal4DSTEMResidentSummaryIO` for explicit
   native load, resource, resident-cache, and exact prepared-product provenance.
   See [Native 4D-STEM load and cache contract](../api/native_4dstem_io.md).
-- `MetalSSBEngine` for exact native 512×512 SSB reconstruction,
+- `MetalSSBEngine` for exact native 128×128, 256×256 and 512×512 SSB reconstruction,
   phase-variance evaluation, and deterministic 200-trial TPE plus Nelder–Mead
   fitting. See [native SSB](#native-swift-and-metal).
 
@@ -153,3 +153,37 @@ Cache policy is an application decision: the application must choose and show
 the memory policy, while QuantEM.GPU owns the estimator inputs, exact kernels,
 and provenance. The Swift package does not own windows, controls, sessions, or
 plots.
+
+### Saved native runs
+
+`MetalSSBSavedRun` records both complex64 images, calibrated geometry,
+aberrations, rotation, fit history, seed, source identity, backend revision,
+reconstruction timings and provenance for a 128×128, 256×256 or 512×512 scan.
+The binary property-list format is versioned and holds SHA-256 checksums for
+the two image payloads. Writes are atomic; loading validates the requested
+source identity and both payloads.
+
+```swift
+let saved = try MetalSSBSavedRun(
+    result: reconstruction, sourceIdentity: sourceSHA256,
+    backendRevision: revision, geometry: geometry, aberrations: fitted,
+    rotationDegrees: rotation, optimization: fit, seed: 42)
+try saved.save(to: resultURL)
+let previous = try MetalSSBSavedRun.load(
+    from: resultURL, matchingSourceIdentity: sourceSHA256)
+let images = try previous.reconstruction(device: device)
+```
+
+Loading restores the saved calibration; it does not apply current application
+overrides to an old result, and no optimizer or raw-source decode runs during
+image restoration. Recorded reconstruction timings are not reopening timings.
+The application owns filenames, retention, source fingerprints and whether to
+restore a saved run or start a new one.
+
+`bash scripts/check_metal_ssb.sh` runs these checks without XCTest on an Apple
+GPU: identical reconstructions and loss for equal `uint8`, `uint16` and
+`uint32` counts, values beyond the narrower widths, full-cache versus streamed
+reconstruction within the 1e-4 relative L2 limit, a seeded 200-trial synthetic
+fit, exact reload of saved images and fit history, and rejection of another
+acquisition's identity. The fixtures are small synthetic BF sets with full scan
+dimensions, not real full-BF acquisition timing.

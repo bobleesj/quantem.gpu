@@ -18,7 +18,7 @@ original HDF5 family
 ```
 
 This revision implements the bounded CPU reference producer. A request for
-Metal, CUDA, Vulkan, or WebGPU fails before output allocation; it never falls
+Metal, CUDA or WebGPU fails before output allocation; it never falls
 back silently. The execution backend and `gpuAccelerated` flag are recorded in
 the receipt. The CPU implementation establishes the exact producer contract
 that future accelerator implementations must match.

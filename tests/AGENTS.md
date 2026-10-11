@@ -42,6 +42,5 @@ The repository-wide rules for this public repository are in `../AGENTS.md`.
 - Keep small timing/parity reports separately only when needed. Do not retain
   generated arrays for successful or failed tests by default.
 - Standalone benchmarks need an explicit temporary-directory lifecycle; pytest
-  cleanup does not cover a command launched outside pytest. For native UI runs,
-  use Live4DSTEM's `scripts/run_test.py` supervisor and staged inputs.
+  cleanup does not cover a command launched outside pytest.
 - Never clean source datasets, intentional user saves, or Codex conversations.

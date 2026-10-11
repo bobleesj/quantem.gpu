@@ -57,10 +57,12 @@ for that GPU.
 The Mac SSB backend uses MLX and Metal. The NumPy-like indexing interface,
 such as `data[10, 12]`, returns PyTorch tensors, so quantem.gpu installs
 PyTorch 2.3 or newer. To use a particular CUDA build of PyTorch, install it
-before quantem.gpu. For the static plotting examples, also install QuantEM:
+before quantem.gpu. The static plotting examples, `result.show()` and
+`ssb.show_trials()` need the `plot` extra, which installs Matplotlib and
+QuantEM:
 
 ```bash
-python -m pip install quantem
+python -m pip install -e ".[cuda,plot]"   # or ".[mps,plot]"
 ```
 
 Check accelerator availability before running the indexing examples:
@@ -73,10 +75,11 @@ print(torch.cuda.is_available())          # NVIDIA CUDA
 ```
 
 Add `dm` for DM3/DM4 input (`".[cuda,dm]"` or `".[mps,dm]"`) and `movie`
-for GIF and MP4 export (`".[cuda,movie]"` or `".[mps,movie]"`).
-Save `git rev-parse HEAD` with your results.
-The source version field still reads rc8, but its features have advanced
-beyond that published candidate.
+for GIF and MP4 export (`".[cuda,movie]"` or `".[mps,movie]"`). On Linux and
+Windows, `movie` also installs PyNvVideoCodec for the NVENC MP4 writer.
+Save `git rev-parse HEAD` with your results. The `version` field of a source
+checkout is stamped only when a release is tagged; the commit identifies the
+code.
 
 ## Verify the install
 
@@ -93,5 +96,3 @@ The distribution version and `qgpu.__version__` should match.
 
 Record the printed version, device, and `git rev-parse HEAD` with your results.
 Continue with [From acquisition to images](python-workflow.md).
-
-For a historical environment, see the [rc8 installation record](maintainer/install-rc8.md).

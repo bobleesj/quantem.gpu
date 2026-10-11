@@ -342,10 +342,13 @@ O[\mathbf R]
 O_b[\mathbf R;\hat{\boldsymbol\theta}].
 $$
 
-The public result stores this complex64 object wave. Its displayed phase is
-$\phi=\arg O$ and its amplitude is $|O|$. The optimizer's $\bar\phi$ is part of
-the variance objective; it is not substituted for the final complex-object
-phase.
+With `phase_estimator="complex_wave"` the public result stores this complex64
+object wave, with phase $\phi=\arg O$ and amplitude $|O|$. The default
+estimators store a phase-only wave with unit amplitude and record
+`amplitude_estimated=False`: CUDA's `phase_of_mean` keeps $\phi=\arg O$, and
+MPS's `mean_phase` averages the per-contribution phases $\arg O_b$. The
+optimizer's $\bar\phi$ is part of the variance objective; it is not
+substituted for the final phase.
 
 The final reduction is also ordinary array code:
 
@@ -433,7 +436,7 @@ aberrations, precision, and objective. Reports include complex-object or phase
 error maps, full-BF loss, fitted parameters, preparation/evaluation/fit times,
 active BF count, memory peak, and device/kernel revision.
 
-The native Swift/Metal implementation currently supports a 512×512 scan and
-plane-major lossless `uint8` BF columns. Its complete-cache and bounded-memory
-streaming modes retain the same logical BF normalization; other native scan
-sizes remain explicit gaps.
+The native Swift/Metal implementation supports 128×128, 256×256 and 512×512
+scans with plane-major `uint8`, `uint16` or `uint32` BF columns. Its
+complete-cache and bounded-memory streaming modes retain the same logical BF
+normalization; 1024×1024 remains an explicit native gap.

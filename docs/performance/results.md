@@ -9,7 +9,12 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
-## Current platform profile
+Every row below was measured between 2026-08-18 and 2026-08-22, before
+`io.load` on CUDA and MPS kept acquisitions ANS encoded (October 2026). The
+rows time the loaders and resident products of their recorded revisions; they
+are dated records, not timings of the current `io.load`.
+
+## Platform profile, 2026-08-19 to 2026-08-22
 
 - **Date tested:** the cross-platform profile was measured 2026-08-19 local
   time; retained follow-up artifacts extend through 2026-08-22.
@@ -24,15 +29,15 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
   (`ff3c7fd`), provenance-bound resident summaries (`d65911a`), and exact
   fused-accumulator widening (`70bc366`). These unpublished commits do not
   retroactively change baseline timings.
-- **Current native load stack:** clean local branch `metal-cold-300ms` at
+- **Native load stack:** clean local branch `metal-cold-300ms` at
   `c0ea44465e6346a8436a0b74f491a04af0b5dc32`. It adds bounded indexed loading,
   exact private Metal residency, controlled macOS source-page measurement, and
   state-consistent benchmark provenance. It does not relabel the 2026-08-19
   cross-platform rows.
-- **Current exact load matrix:** clean source revisions `5106ca48349231549c440b40609983fd3a8dacda`
+- **Exact load matrix:** clean source revisions `5106ca48349231549c440b40609983fd3a8dacda`
   and `68dbe3aa5f816e2d1c1ae976e1874790cffb4319` provide the current canonical
   logical-pixel hashes, explicit source/working metadata, and physical memory
-  observations for the rows generated below. Older `0bc9378` lifecycle rows
+  observations for the rows in the table below. Older `0bc9378` lifecycle rows
   remain historical evidence for a distinct implementation checkpoint.
 - **Fixture C:** independent real `512x512x192x192` native-`uint16` source,
   27 compressed shards plus one master file, 3,169,920,193 total bytes and
@@ -51,17 +56,24 @@ did not forcibly evict the operating-system storage cache and is therefore
 reuse explicitly and is documented in its own section. CUDA and WebGPU use D;
 MPS/Swift use C. They are not a fixture-controlled backend ranking.
 
-### Current qualified exact loads
+### Qualified exact loads
 
-This is the same registry-generated current matrix used by the dashboard. One
-row is one platform, computer class, scan/detector plan, dtype, cache/process
-state, and timing boundary. It is the only current headline table; detailed
-historical and rejected experiments remain below.
+One row is one platform, computer class, scan/detector plan, dtype,
+cache/process state, and timing boundary. The table was generated from the
+benchmark registry and kept as written when the registry was retired on
+2026-10-10. Historical and rejected experiments remain below.
 
-```{include} ../_generated/benchmark_coverage.md
-:start-after: <!-- benchmark-current-load-start -->
-:end-before: <!-- benchmark-current-load-end -->
-```
+| Platform | Computer | State | Selected scan | Source detector | Detector bin | Output detector | Source dtype | Staging dtype | Resident dtype | Scientific gate | Cache/process state | Wall boundary | Samples | p50 | p95 | Maximum | Logical resident | Accelerator/driver peak | Process/tree peak | Process physical-footprint peak | Swap delta | Parity | Device tested | Date tested | Revision |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Python MPS | MacBook Pro (M5 Max, 128 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 1 | 192 × 192 | uint16 | uint16 | uint16 | exact | one same-process warmup; operating-system source pages uncontrolled; no eviction performed; fresh returned destination released after each trial | public io.load return after MPS synchronization; full-volume hash and release excluded | 7 | 0.406624 s | 0.428164 s | 0.428164 s | 18.000 GiB | 18.442 GiB | 18.692 GiB | n/a | 0 B | Pass | Apple M5 Max 40-core integrated GPU; 128 GB unified memory | 2026-08-22 | `68dbe3aa5f816e2d1c1ae976e1874790cffb4319` |
+| Native Swift/Metal | MacBook Pro (M5 Max, 128 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 1 | 192 × 192 | uint16 | uint8 | uint16 | exact | fresh QH5 index root and destination; macOS F_NOCACHE on source hashing and indexed descriptors; immutable source already audited | catalog, pipeline compilation, plan, complete exact private-resident volume, seven products, metadata, and provenance | 7 | 0.577793 s | 0.900979 s | 0.900979 s | 18.000 GiB | 18.571 GiB | 0.874 GiB | n/a | n/a | Pass | Apple M5 Max 40-core integrated GPU; 128 GB unified memory | 2026-08-22 | `c0ea44465e6346a8436a0b74f491a04af0b5dc32` |
+| Native Swift/Metal | MacBook Pro (M5 Max, 128 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 2 | 96 × 96 | uint16 | n/a | uint16 | n/a | prepared immutable indexes; controlled F_NOCACHE source descriptors; compiled pipeline; exact private-resident destination reused for retained trials | exact indexed load, detector sum, and seven native-resolution products; source discovery, audit creation, pipeline compilation, application presentation, and separately timed boundary hashes excluded | 6 | 0.225984 s | 0.231192 s | 0.231192 s | 4.500 GiB | 5.087 GiB | 0.657 GiB | 5.336 GiB | 0 B | Pass | Apple M5 Max 40-core integrated GPU; 128 GB unified memory | 2026-08-22 | `5106ca48349231549c440b40609983fd3a8dacda` |
+| Native Swift/Metal | MacBook Pro (M5 Max, 128 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 4 | 48 × 48 | uint16 | n/a | uint16 | n/a | prepared immutable indexes; F_NOCACHE source descriptors; compiled pipeline; exact private-resident destination reused for retained trials | exact indexed load, detector sum, and seven products; source discovery, audit creation, first allocation, pipeline compilation, application presentation, and post-boundary hashes excluded | 6 | 0.200036 s | 0.204694 s | 0.204694 s | 1.125 GiB | 1.712 GiB | 1.039 GiB | n/a | 0 B | Pass | Apple M5 Max 40-core integrated GPU; 128 GB unified memory | 2026-08-22 | `5106ca48349231549c440b40609983fd3a8dacda` |
+| Native Swift/Metal | MacBook Pro (M5, 24 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 1 | 192 × 192 | uint16 | n/a | uint16 | exact | original compressed source reread every visit; existing QH5 index and source-bound packing layout; exact DPC sums reused after first load; OS pages uncontrolled | indexed source open through synchronous complete packed-resident return; catalog and independent full-count audit separate | 7 | 1.496660 s | 2.086119 s | 2.086119 s | 18.000 GiB | n/a | n/a | 2.531 GiB | n/a | Pass | Apple M5 10-core integrated GPU; 24 GB unified memory | 2026-09-06 | `e305f9216ed359397e27f69882931ffe16de8d99` |
+| Native Swift/Metal | MacBook Pro (M5, 24 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 2 | 96 × 96 | uint16 | n/a | uint16 | n/a | prepared immutable indexes; controlled F_NOCACHE source descriptors; compiled pipeline; exact private-resident destination reused for retained trials | exact indexed load, detector sum, and seven native-resolution products; source discovery, audit creation, pipeline compilation, application presentation, and separately timed boundary hashes excluded | 6 | 0.678703 s | 0.697179 s | 0.697179 s | 4.500 GiB | 5.087 GiB | 0.662 GiB | 5.271 GiB | 0 B | Pass | Apple M5 10-core integrated GPU; 24 GB unified memory | 2026-08-22 | `5106ca48349231549c440b40609983fd3a8dacda` |
+| Native Swift/Metal | MacBook Pro (M5, 24 GB) | ✓ Measured | 512 × 512 | 192 × 192 | 4 | 48 × 48 | uint16 | n/a | uint16 | n/a | prepared immutable indexes; controlled F_NOCACHE source descriptors; compiled pipeline; exact private-resident destination reused for retained trials | exact indexed load, detector sum, and seven native-resolution products; source discovery, audit creation, pipeline compilation, application presentation, and separately timed boundary hashes excluded | 6 | 0.640942 s | 0.651931 s | 0.651931 s | 1.125 GiB | 1.712 GiB | 1.018 GiB | 2.319 GiB | 0 B | Pass | Apple M5 10-core integrated GPU; 24 GB unified memory | 2026-08-22 | `5106ca48349231549c440b40609983fd3a8dacda` |
+| WebGPU | MacBook Pro (M5 Max, 128 GB) | ◐ Partial | 512 × 512 | 192 × 192 | 1 | 192 × 192 | uint16 | uint16 | uint16 | exact | prepared immutable block indexes; explicitly warm source pages; fresh browser target per retained run; 699 pageouts; zero swap growth; no dropped runs | navigation through scientifically usable exact resident output and diagnostic frame checksums; exhaustive full-volume hash and application E2E excluded | 7 | 1.358000 s | 1.594000 s | 1.594000 s | 18.000 GiB | n/a | 6.500 GiB | n/a | 0 B | Pass | Apple M5 Max 40-core integrated GPU; Chrome 151; Apple Metal-3 hardware adapter; software=false | 2026-08-22 | `d8e6f562a8ab43086a4ddea9eecfe6fd26b7beea` |
+| CPU reference | MacBook Pro (M5 Max, 128 GB) | ◐ Partial | 512 × 512 | 192 × 192 | 1 | 192 × 192 | uint16 | uint16 | uint16 | exact | prepared indexes; source pages unspecified; CPU exact-reference validation only | public CPU reference load; full-volume hash excluded | 1 | 32.788039 s | 32.788039 s | 32.788039 s | 18.000 GiB | n/a | 19.141 GiB | n/a | 0 B | Pass | Apple M5 Max CPU; 128 GB unified memory | 2026-08-22 | `68dbe3aa5f816e2d1c1ae976e1874790cffb4319` |
 
 ### Historical 2026-08-19 warm load/decode/bin
 
@@ -94,7 +106,7 @@ sums stored as `float32`. WebGPU's Chrome RSS is not a complete device-memory
 measurement and does not prove the physical 8 GB laptop gate. CPU timings are
 diagnostic adjudication only, never a silent production fallback.
 
-### Current prepared WebGPU shard-selective rectangles
+### Prepared WebGPU shard-selective rectangles
 
 Evidence revision `54303cb88aab76c29ff884261b5973c8795c2495` measures the
 existing rectangle contract on physical Apple Metal WebGPU. The retained
@@ -247,7 +259,7 @@ process p50 values were 0.903/0.907/0.764/0.751 seconds for bins 1/2/4/8. The
 older 2.273-second bin-1 result is retained only as pressure evidence because
 that harness did not free direct Metal outputs between repetitions.
 
-### Current CUDA exact screening
+### CUDA exact screening
 
 Source `023a6c497b106b216c87205d3fbec63377d77177` and sealed evidence
 `5bcc89ebdb77663ea8c035a255a218079ee1ab31` compare a baseline with two
@@ -266,7 +278,7 @@ exact complete; no preview is counted. GPU allocated and reserved bytes are
 process metrics, while total-card peak includes the coexisting service
 baseline and must not be interpreted as process residency.
 
-### Current controlled native exact resident load
+### Controlled native exact resident load
 
 Revision `c0ea444` measures fixture C with a fresh process, a new empty QH5
 index root, a fresh private Metal destination, and macOS `F_NOCACHE` on the
@@ -340,7 +352,7 @@ state said source pages were unspecified while the command had applied
 `F_NOCACHE`; the v8 run fixes that label without changing IO or scientific
 arithmetic.
 
-### Current native exact resident summary
+### Native exact resident summary
 
 Revision `d65911a` adds a package-owned exact summary beside a validated native
 resident cache. Revision `70bc366` adds an overflow-checked path that widens
@@ -411,7 +423,7 @@ byte-for-byte against the full resident calculation.
 This is prepared-product evidence, not the original compressed-source first
 encounter and not a headed application-paint measurement.
 
-### Current streamed screening
+### Streamed screening
 
 Screening is a separate build/reopen boundary, not source loading. The accepted
 MPS follow-up accumulates the complete detector sum in `uint64`, validates the
@@ -428,7 +440,7 @@ failed full-scan mean-DP/BF/DF parity. Its timing is intentionally absent from
 the current ledger and remains discoverable only as a rejected experiment in
 the [optimization ledger](../maintainer/backend-optimization-matrix.md).
 
-### Current resident products
+### Resident products
 
 All rows exclude source loading. CUDA uses D at detector bin 1; MPS uses C at
 detector bin 4; WebGPU uses D at detector bin 1. CUDA and MPS rotation/iDPC are
@@ -441,7 +453,7 @@ small-field CPU operations after GPU CoM, not GPU-kernel claims.
 | **WebGPU** | **50.9 ms** | **5.5 ms** | **15.0 ms** | **43.4 ms** | **82.9 ms** | **0.9/0.7 ms** | **1.4 ms** | p50 of 5; integer/mean exact; per-pixel float errors not retained |
 | **CPU reference** | — | — | — | — | — | — | **177.6 ms** | Independent product traversal was 31.08 s; reference only |
 
-### Current SSB reconstruction and calibration
+### SSB reconstruction and calibration
 
 CUDA calibration uses calibration SHA-256
 `4a2d9cc36943973dbe0f1d5e40858160f0a6393cd56d9f54e073a358b3eff8e8`,
@@ -482,7 +494,7 @@ because its stored columns do not match its declared detector-bin coordinate
 grid. WebGPU implements reconstruction but not TPE or Nelder–Mead calibration.
 Levenberg–Marquardt is not implemented in any current SSB backend.
 
-### Current native Swift/Metal boundary
+### Native Swift/Metal boundary
 
 At `d65911a`, the release suite executed 76 tests, skipped five opt-in
 real-QH5/performance cases, and had no failures. A separate real-QH5 run
@@ -522,7 +534,7 @@ owns API lineage, cache-policy details, and artifact fingerprints. Neither page
 represents warm library compute as application wall time or physical 8 GB
 device signoff.
 
-### Current evidence fingerprints
+### Evidence fingerprints
 
 | Evidence bundle | SHA-256 |
 |---|---|
@@ -545,7 +557,7 @@ device signoff.
 
 ## Historical and rejected results
 
-Current tables stop above. Older campaigns are retained once in their
+The 2026-08 tables stop above. Older campaigns are retained once in their
 domain-specific maintainer records instead of being copied into this page.
 
 | Record | Status | Canonical owner |

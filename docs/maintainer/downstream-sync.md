@@ -171,7 +171,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.io.uint4` | deleted | 6 of 6 names deleted |
 | `quantem.gpu.movie` | `quantem.gpu.movie.export`, `quantem.gpu.movie.cuda` |  |
 | `quantem.gpu.movie.cuda_mp4` | `quantem.gpu.movie.cuda` |  |
-| `quantem.gpu.movie.mps_mp4` | `quantem.gpu.movie.cuda` |  |
+| `quantem.gpu.movie.mps_mp4` | `quantem.gpu.movie.mps` |  |
 | `quantem.gpu.optics.aberration` | deleted | 5 of 5 names deleted |
 | `quantem.gpu.optics.aberration_fitting` | `quantem.gpu.optics.cuda` | 4 of 5 names deleted |
 | `quantem.gpu.optics.physics` | `quantem.gpu.optics.physics` | 5 of 12 names deleted |
@@ -212,9 +212,9 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.ssb.backends.mps.kernels` | `quantem.gpu.ssb.mps.kernels` |  |
 | `quantem.gpu.ssb.backends.mps.kernels.common` | `quantem.gpu.ssb.mps.kernels.common` |  |
 | `quantem.gpu.ssb.backends.mps.kernels.fft1024` | `quantem.gpu.ssb.mps.kernels.fft1024` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft128` | `quantem.gpu.ssb.mps.kernels.fft1024` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft256` | `quantem.gpu.ssb.mps.kernels.fft1024` |  |
-| `quantem.gpu.ssb.backends.mps.kernels.fft512` | `quantem.gpu.ssb.mps.kernels.fft1024` |  |
+| `quantem.gpu.ssb.backends.mps.kernels.fft128` | `quantem.gpu.ssb.mps.kernels.fft128` |  |
+| `quantem.gpu.ssb.backends.mps.kernels.fft256` | `quantem.gpu.ssb.mps.kernels.fft256` |  |
+| `quantem.gpu.ssb.backends.mps.kernels.fft512` | `quantem.gpu.ssb.mps.kernels.fft512` |  |
 | `quantem.gpu.ssb.backends.mps.optimizer` | `quantem.gpu.ssb.cuda.optimizer`, `quantem.gpu.ssb.mps.optimizer` |  |
 | `quantem.gpu.ssb.backends.mps.thick_sample` | `quantem.gpu.ssb.mps.thick_sample`, `quantem.gpu.ssb.cuda.kernels.engine` |  |
 | `quantem.gpu.ssb.backends.webgpu` | deleted |  |

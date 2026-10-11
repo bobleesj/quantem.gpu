@@ -79,9 +79,7 @@ center `(row, column)` and radius are fitted from the mean diffraction pattern
 unless given. Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
 raises `NotImplementedError`. Persist center, BF and sampling radii,
 accelerating voltage, scan sampling, upsampling factor, aberration-fit choice,
-and package revision with the result. The alignment bins the detector with
-float32 atomic additions, so the last bits of the shifts can differ between
-runs on the same input.
+and package revision with the result.
 
 ## Scan rotation
 

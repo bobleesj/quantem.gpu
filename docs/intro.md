@@ -4,9 +4,9 @@ GPU-accelerated 4D-STEM analysis for scientists using Python. Load measurements,
 select diffraction patterns, make detector images, and reconstruct phase with
 single-sideband ptychography (SSB).
 
-> **Active development.** These examples use the current source checkout,
-> newer than that published as `0.0.1rc8`. APIs may change; follow the
-> [installation guide](install.md) and record `git rev-parse HEAD` with results.
+> **Active development.** These examples use the current source checkout.
+> APIs may change; follow the [installation guide](install.md) and record
+> `git rev-parse HEAD` with results.
 
 ## Start with Python
 
@@ -56,8 +56,9 @@ return small NumPy images while the acquisition remains ANS encoded.
 ## For developers
 
 The [Developer guide](developer/index.md) groups equations, backend kernels,
-native integration, file formats, and verification. For the implementation overview, see the [implementation dashboard](dashboard.md).
-The [verified benchmark results](performance/results.md) retain revision and
+native integration, file formats, and verification. [Backend coverage](backends.md)
+lists what each runtime implements. The
+[verified benchmark results](performance/results.md) retain revision and
 hardware provenance. Historical measurements are not promises for every machine.
 
 ## Citing quantem.gpu

@@ -72,17 +72,25 @@ remote = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]
+# PyNvVideoCodec is the NVENC writer of movie.cuda; macOS writes MP4 with VideoToolbox instead.
 movie = [
     "imageio-ffmpeg",
     "pillow",
+    "PyNvVideoCodec>=2.0; sys_platform != 'darwin'",
 ]
+# SSBResult.show, SSB.show_trials and the rotation histograms draw with Matplotlib and QuantEM's show_2d.
+plot = [
+    "matplotlib",
+    "quantem",
+]
+# opencv-python-headless decodes the written MP4s in the NVENC movie tests.
 dev = [
     "fastapi>=0.115",
     "httpx2",
+    "opencv-python-headless",
     "pytest>=8",
     "scipy",
     "uvicorn>=0.30",
-    "websocket-client>=1.8",
 ]
 docs = [
     "jupyter-book>=1.0,<2",
@@ -121,6 +129,7 @@ artifacts = [
 [tool.hatch.build.targets.sdist]
 include = [
     "docs",
+    "scripts",
     "src/quantem/gpu",
     "tests",
     "README.md",

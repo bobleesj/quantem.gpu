@@ -98,8 +98,8 @@ src/quantem/gpu/                  # layers import downward only:
   display/
     __init__.py                   # shared display-math contract
     colormaps.json                # colormap control points for every backend
+    goldens/parity.json           # shared display goldens
     metal/display.metal           # native Metal display shader
-    webgpu/
   ssb/
     __init__.py                   # one SSB workflow and result contract
     contract.py, cuda/, mps/, webgpu/
@@ -126,10 +126,6 @@ tests/
   hardware/{cuda,mps,metal}/       # device-dependent gates
   e2e/                            # consumer-local override and real-data gates
   infrastructure/                 # docs, packaging, benchmark checks
-
-benchmarks/
-  benchmark_registry.json         # accepted immutable measurements
-  profile_matrix.json             # measured/pending/unsupported run matrix
 ~~~
 
 `mps` remains the Python backend selector for compatibility. Its accelerated
@@ -143,18 +139,18 @@ Implementations have one canonical owner. Backend code lives in a `cuda/`,
 directly under the package that owns the science; there is no `backends/` or
 `compute/` level, and no compatibility shims.
 
-Do not create a second support or benchmark registry for this migration.
-Extend the existing matrices and keep historical result paths and trial IDs
-intact. Moving source code does not make pending hardware cells pass.
+Keep one support matrix, `tests/parity/backend_matrix.json`, and keep
+historical result paths and trial IDs intact. Moving source code does not make
+pending hardware cells pass.
 
 ## Browser build integration
 
 Do not maintain a consumer-side list of individual kernel files. The package
-ships `webgpu/sources.json`, the complete package-owned dependency graph of
-`webgpu/index.ts` as paths relative to `quantem.gpu`. Build scripts read that
-manifest (for example through `importlib.resources.files("quantem.gpu")`),
-copy the listed files into a generated directory, and point the TypeScript
-bundler at `webgpu/index.ts`. Qualify the complete consumer bundle against an
+ships `webgpu/sources.json`, the list of package-owned browser sources as
+paths relative to `quantem.gpu`. Build scripts read that manifest (for example
+through `importlib.resources.files("quantem.gpu")`), copy the listed files into
+a generated directory, and import the modules they need. Qualify the complete
+consumer bundle against an
 exact package revision before adoption. Manifest completeness alone is not
 application compatibility.
 
@@ -184,7 +180,6 @@ npm run typecheck
 # Native Apple: unchanged SwiftPM entry.
 swift test -j 4
 
-python scripts/check_profile_registry.py
 jupyter-book build docs --warningiserror --nitpick
 python scripts/check_docs_links.py --html-root docs/_build/html
 ```

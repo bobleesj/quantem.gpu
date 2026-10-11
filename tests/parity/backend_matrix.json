@@ -40,7 +40,7 @@
       "id": "io.packed-display-precision",
       "contract_version": "precision/v1",
       "public_owner": "quantem.gpu.io.load / quantem.gpu.io.save",
-      "parity": "Explicit scaled uint16 codes (source-wide or per region; saved float16 exports convert on load) held ANS encoded on the device, restored intensity units, selected scan and detector regions, and GPU-measured error reports persisted through HDF5 export.",
+      "parity": "Explicit scaled uint16 codes (source-wide or per region) held ANS encoded on the device, restored intensity units, selected scan and detector regions, and GPU-measured error reports persisted through HDF5 export.",
       "coverage": {
         "cpu-reference": {
           "level": "not-implemented",
@@ -71,7 +71,7 @@
             "docs/api/native_resident.md",
             "tests/hardware/mps/test_precision.py"
           ],
-          "qualification": "Native scaled uint16 conversion, exact packed reads, GPU error accounting and standard HDF5 save/reopen are implemented and checked in the native MAPED consumer on an Apple Silicon workstation. Float16 native export, arbitrary detector geometry, detector-query coverage and minimum-memory release signoff remain incomplete."
+          "qualification": "Native scaled uint16 conversion, exact packed reads, GPU error accounting and standard HDF5 save/reopen are implemented and checked in the native MAPED consumer on an Apple Silicon workstation. Arbitrary detector geometry, detector-query coverage and minimum-memory release signoff remain incomplete."
         },
         "webgpu": {
           "level": "not-implemented",
@@ -90,9 +90,9 @@
       "coverage": {
         "cpu-reference": {"level": "reference-fixture", "gates": ["tests/hardware/metal/test_empad_source.py", "tests/hardware/metal/test_empad_public.py"], "qualification": "Independent original-byte and NumPy float64 aperture oracles; not a Python resident implementation."},
         "swift-metal": {"level": "partial-hardware", "gates": ["tests/hardware/metal/test_empad_source.py", "tests/hardware/metal/test_empad_public.py"], "qualification": "Native original EMPAD source, exact float-word packing, DP and aperture kernels. Consumer integration, DPC, full cancellation and native release gates remain pending."},
-        "cuda": {"level": "partial-hardware", "gates": ["tests/hardware/test_array_ans_workflows.py", "docs/maintainer/empad-contract.md"], "qualification": "io.load reads EMPAD XML/RAW and EMPAD2 XML records through formats.empad.load_array_source into a float32 ANS resident with unchanged IEEE bits. The QEM_TEST_BACKEND=cuda hardware tests use synthetic records: native frames and .qem round trips are bit-exact, EMPAD record footer words are excluded, several XML detector regions are kept as metadata, and encoded EMPAD2 sensor words are rejected. No real EMPAD acquisition, DPC or performance qualification is retained."},
-        "mps": {"level": "partial-hardware", "gates": ["tests/hardware/test_array_ans_workflows.py", "docs/maintainer/empad-contract.md"], "qualification": "io.load reads EMPAD XML/RAW and EMPAD2 XML records through formats.empad.load_array_source into a float32 ANS resident with unchanged IEEE bits. The QEM_TEST_BACKEND=mps hardware tests use synthetic records: native frames and .qem round trips are bit-exact, EMPAD record footer words are excluded, several XML detector regions are kept as metadata, and encoded EMPAD2 sensor words are rejected. No real EMPAD acquisition, DPC or performance qualification is retained."},
-        "webgpu": {"level": "not-implemented", "gates": ["docs/maintainer/empad-contract.md"]}
+        "cuda": {"level": "partial-hardware", "gates": ["tests/hardware/test_array_ans_workflows.py", "docs/api/native-acquisition-formats.md"], "qualification": "io.load reads EMPAD XML/RAW and EMPAD2 XML records through formats.empad.load_array_source into a float32 ANS resident with unchanged IEEE bits. The QEM_TEST_BACKEND=cuda hardware tests use synthetic records: native frames and .qem round trips are bit-exact, EMPAD record footer words are excluded, several XML detector regions are kept as metadata, and encoded EMPAD2 sensor words are rejected. No real EMPAD acquisition, DPC or performance qualification is retained."},
+        "mps": {"level": "partial-hardware", "gates": ["tests/hardware/test_array_ans_workflows.py", "docs/api/native-acquisition-formats.md"], "qualification": "io.load reads EMPAD XML/RAW and EMPAD2 XML records through formats.empad.load_array_source into a float32 ANS resident with unchanged IEEE bits. The QEM_TEST_BACKEND=mps hardware tests use synthetic records: native frames and .qem round trips are bit-exact, EMPAD record footer words are excluded, several XML detector regions are kept as metadata, and encoded EMPAD2 sensor words are rejected. No real EMPAD acquisition, DPC or performance qualification is retained."},
+        "webgpu": {"level": "not-implemented", "gates": ["docs/api/native-acquisition-formats.md"]}
       }
     },
     {
@@ -116,8 +116,9 @@
           "gates": ["native/swift/Tests/Metal4DSTEMKernelsTests/ScanRotationParityTests.swift"]
         },
         "webgpu": {
-          "level": "required-hardware",
-          "gates": ["src/quantem/gpu/geometry/webgpu/quarter-turn.ts", "tests/infrastructure/test_webgpu_sources.py"]
+          "level": "not-implemented",
+          "qualification": "No browser client rotates a scan; the WebGPU quarter-turn source had no importer and was removed.",
+          "gates": ["tests/parity/test_geometry.py"]
         }
       }
     },
@@ -296,7 +297,7 @@
           "gates": ["native/swift/Tests/Metal4DSTEMKernelsTests/Metal4DSTEMKernelsTests.swift", "native/swift/Tests/Native4DSTEMIOTests/ResidentIntegerContractTests.swift"]
         },
         "webgpu": {
-          "level": "required-hardware",
+          "level": "partial-hardware",
           "qualification": "No WebGPU adapter exercises the exact integer products since the compact-v1 adapter was removed. Dense maskedSum and selected-frame sums return float32 and do not satisfy the exact-output or duplicate-selected-frame-sum subcontracts.",
           "gates": ["tests/infrastructure/test_webgpu_sources.py", "docs/maintainer/backend-4dstem-load-checklist.md"]
         }
@@ -368,7 +369,8 @@
           "gates": ["tests/parity/test_display_parity.py", "tests/parity/test_display_shared_goldens.py"]
         },
         "mps": {
-          "level": "required",
+          "level": "not-implemented",
+          "qualification": "Python MPS has no display kernels; native Swift/Metal consumes display/metal/display.metal through MetalDisplayKernels.",
           "gates": ["tests/parity/test_display_shared_goldens.py"]
         },
         "swift-metal": {
