@@ -67,6 +67,15 @@ def _in_notebook() -> bool:
     return shell is not None and "IPKernelApp" in shell.config
 
 
+def _sampling(value) -> float | tuple[float, float]:
+    """A sampling as the Python float or (row, col) floats the backends read.
+
+    A value read from NumPy metadata (``np.float32``) is not a ``float``, so the backends took it for a (row, col)
+    pair and failed indexing it.
+    """
+    return float(value) if np.ndim(value) == 0 else (float(value[0]), float(value[1]))
+
+
 class SSB:
     """Single-sideband ptychography of one 4D-STEM acquisition on CUDA or MPS.
 
@@ -183,8 +192,8 @@ class SSB:
         self._scan_shape = scan_shape
         self.voltage_kV = float(voltage_kV)
         self.semiangle_mrad = float(semiangle_mrad)
-        self.scan_sampling_A = scan_sampling_A
-        self.det_sampling = det_sampling
+        self.scan_sampling_A = _sampling(scan_sampling_A)
+        self.det_sampling = None if det_sampling is None else _sampling(det_sampling)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
         # public form: angle below 180 plus whether the CoM is reversed; the engines get the physical angle
