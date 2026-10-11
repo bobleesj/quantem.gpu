@@ -374,9 +374,17 @@ def _parse_frame_header(
     The chunk starts with a 12-byte big-endian header (8-byte uncompressed
     size, 4-byte block size); each block carries a 4-byte big-endian length.
     The GPU decoder needs every block's start offset to decode in parallel.
+
+    The walk stays inside the chunk and must end at its last byte. A chunk
+    that is cut short or damaged (a file still being written, a bad copy)
+    records zero blocks, which ``FrameReader.prepare`` refuses; an unchecked
+    walk would read past the chunk and write block starts past the frame's.
     """
     offset = chunk_offsets[i]
     chunk = pinned_buffer[offset : offset + chunk_sizes[i]]
+    block_counts_out[i] = 0
+    if chunk.shape[0] < 12:
+        return
     uncompressed_size = (
         int(chunk[0]) << 56
         | int(chunk[1]) << 48
@@ -393,11 +401,13 @@ def _parse_frame_header(
         | int(chunk[10]) << 8
         | int(chunk[11])
     )
-    n_blocks = (uncompressed_size + block_size - 1) // block_size
-    block_counts_out[i] = n_blocks
+    if block_size == 0 or (uncompressed_size + block_size - 1) // block_size != n_blocks_per_frame:
+        return
     position = 12
     first_block = i * n_blocks_per_frame
-    for block in range(n_blocks):
+    for block in range(n_blocks_per_frame):
+        if position + 4 > chunk.shape[0]:
+            return
         block_starts_out[first_block + block] = position
         compressed_size = (
             int(chunk[position]) << 24
@@ -406,6 +416,8 @@ def _parse_frame_header(
             | int(chunk[position + 3])
         )
         position += 4 + compressed_size
+    if position == chunk.shape[0]:
+        block_counts_out[i] = n_blocks_per_frame
 
 
 @njit(cache=True, parallel=True)

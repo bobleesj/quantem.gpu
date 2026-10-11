@@ -9,6 +9,7 @@ than the acquisition. The GPU decoders (``io.hdf5.cuda.decode``,
 
 import bisect
 import ctypes
+import math
 import os
 import time
 from collections.abc import Sequence
@@ -17,7 +18,7 @@ from typing import Self
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import _alloc_pinned_fast, _get_libc
+from quantem.gpu.device.cuda_runtime import _alloc_pinned_fast, _get_libc, _release_pinned
 from quantem.gpu.formats.hdf5.frames import (
     BLOCK_SIZE,
     master_frame_sources,
@@ -271,6 +272,16 @@ class FrameReader:
             n_blocks_per_frame,
             thread_pool=self.thread_pool,
         )
+        # The walk records zero blocks for a chunk it cannot follow to its last byte. Bitshuffle stores a final
+        # remainder of fewer than 8 values unshuffled after the blocks; the decoders refuse those frames by shape.
+        damaged = np.flatnonzero(block_counts != n_blocks_per_frame)
+        if damaged.size and math.prod(frame_shape) % 8 == 0:
+            _release_pinned(read_buffer)  # nothing was copied from it
+            raise ValueError(
+                f"The compressed HDF5 chunk of frame {int(selected[damaged[0]])} is truncated or corrupt: its "
+                "block lengths do not end at the chunk's last byte. Check that the acquisition finished "
+                "writing, or copy it again."
+            )
         block_offsets_arr[1:selected.size + 1] = np.cumsum(block_counts[:selected.size])
         total_blocks = int(block_offsets_arr[selected.size])
         header_seconds = time.perf_counter() - headers_started
