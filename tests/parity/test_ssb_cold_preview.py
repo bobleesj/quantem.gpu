@@ -18,7 +18,7 @@ def test_cold_preview_then_changed_defocus():
     data = load(source, backend='cuda', verbose=False)
     with data, SSB(data, backend='cuda', voltage_kV=300,
                    semiangle_mrad=30, scan_sampling_A=0.373,
-                   rotation_angle_deg=169.9) as ssb:
+                   scan_detector_rotation_deg=169.9) as ssb:
         recipe = dict(C10=12.8, C12=2.0, phi12=0.64)
         phase, loss = ssb.preview(recipe)
         repeated, repeated_loss = ssb.preview(recipe)

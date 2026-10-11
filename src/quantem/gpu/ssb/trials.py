@@ -5,22 +5,19 @@ from copy import deepcopy
 
 import numpy as np
 
-from quantem.gpu.ssb.results import SSBResult, host_array, split_rotation
+from quantem.gpu.ssb.results import SSBResult, host_array
 
 
 def label_trials(result: SSBResult, *, search: int) -> None:
-    """Give every trial record its index, search pass and public rotation.
+    """Give every trial record its index, search pass and physical rotation.
 
     Backends record only the optimized parameters. Without these keys
     ``show_trials`` and ``reconstruct(trials=...)`` cannot replay a trial
     at its own rotation and sample geometry.
     """
     for index, record in enumerate(result.trial_records or ()):
-        angle, reversed_com = split_rotation(
-            record["params"].pop("rotation_angle_deg", result.physical_rotation_deg)
-        )
-        record.update(trial=index, search=search, rotation_angle_deg=angle,
-                      com_reversed=reversed_com)
+        rotation = float(record["params"].pop("scan_detector_rotation_deg", result.scan_detector_rotation_deg)) % 360.0
+        record.update(trial=index, search=search, scan_detector_rotation_deg=rotation)
         record.setdefault("stage", "search")
         record.setdefault("objective", "phase_variance")
         record.setdefault("tilt_row_mrad", 0.0)
@@ -98,11 +95,10 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6))
     values = []
     for record in records:
         params = record["params"]
-        rotation = record["rotation_angle_deg"] + 180 * record["com_reversed"]
         values.append([record["trial"], f"{params['C10_nm']:.2f}", f"{params['C12_nm']:.2f}",
                        f"{params['phi12_deg']:.1f}",
                        f"{record['tilt_row_mrad']:.1f}, {record['tilt_col_mrad']:.1f}",
-                       f"{record['depth_spread_nm']:.2f}", f"{rotation:.1f}", f"{record['loss']:.5g}"])
+                       f"{record['depth_spread_nm']:.2f}", f"{record['scan_detector_rotation_deg']:.1f}", f"{record['loss']:.5g}"])
     table = table_axis.table(cellText=values, colLabels=labels, loc="center", cellLoc="center")
     table.auto_set_font_size(False)
     table.set_fontsize(10 if columns == 2 else 8)

@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             semiangle_mrad=case.semiangle_mrad,
             scan_sampling_A=case.scan_sampling_A,
             det_sampling=float(meta["det_sampling_mrad"]),
-            rotation_angle_deg=case.rotation_angle_deg,
+            scan_detector_rotation_deg=case.rotation_angle_deg,
             verbose=False,
         )
         run = record(session, trials=args.trials, seed=args.seed, batch=batch)

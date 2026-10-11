@@ -76,7 +76,7 @@ def prepare_selection(
     semiangle_mrad: float,
     scan_sampling: tuple[float, float],
     det_sampling: tuple[float, float],
-    rotation_angle_deg: float,
+    scan_detector_rotation_deg: float,
     chunk_bf: int,
     compact_inactive: bool = False,
     dc_value_override: complex | None = None,
@@ -107,8 +107,8 @@ def prepare_selection(
     recip_x = 1.0 / (sampling[1] * det_shape[1])
     kx_np = (bf_row.astype(np.float32) - center[0]) * recip_y
     ky_np = (bf_col.astype(np.float32) - center[1]) * recip_x
-    if rotation_angle_deg:
-        angle = math.radians(-float(rotation_angle_deg))
+    if scan_detector_rotation_deg:
+        angle = math.radians(-float(scan_detector_rotation_deg))
         cos_a = math.cos(angle)
         sin_a = math.sin(angle)
         kx_np, ky_np = kx_np * cos_a + ky_np * sin_a, -kx_np * sin_a + ky_np * cos_a
@@ -308,7 +308,7 @@ def retarget_prepared_rotation(
     prepared: PreparedMpsSSB,
     *,
     selection: BrightfieldDisk,
-    rotation_angle_deg: float,
+    scan_detector_rotation_deg: float,
 ) -> None:
     """Update rotation-dependent geometry without rebuilding source FFT evidence."""
 
@@ -321,8 +321,8 @@ def retarget_prepared_rotation(
     ky_np = (
         selection.cols.astype(np.float32) - selection.center_row_col[1]
     ) * reciprocal_x
-    if rotation_angle_deg:
-        angle = math.radians(-float(rotation_angle_deg))
+    if scan_detector_rotation_deg:
+        angle = math.radians(-float(scan_detector_rotation_deg))
         cos_a = math.cos(angle)
         sin_a = math.sin(angle)
         kx_np, ky_np = (

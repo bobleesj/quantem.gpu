@@ -14,7 +14,11 @@ from pathlib import Path
 
 import numpy as np
 
-_CACHE_VERSION = 3
+# Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
+# with another value is rebuilt.
+# 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed.
+_CACHE_VERSION = 4
+_CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
     "annular_bright_field",
@@ -30,7 +34,10 @@ class ScreeningResult:
     """Small screening products for instant UI and ptychography setup.
 
     ``total_intensity``, ``annular_bright_field`` and ``annular_dark_field``
-    are exact uint64 count maps.
+    are exact uint64 count maps. ``scan_detector_rotation_mod180_deg`` is the
+    curl fit, known modulo 180 degrees; ``scan_detector_rotation_deg`` is the
+    physical rotation a caller gave ``prepare`` and is None otherwise. The
+    phase uses the caller's rotation when there is one.
     """
 
     mean_dp: np.ndarray
@@ -41,8 +48,8 @@ class ScreeningResult:
     com_col: np.ndarray
     probe_center: tuple[float, float]
     probe_radius: float
-    rotation_deg: float
-    transposed: bool
+    scan_detector_rotation_mod180_deg: float
+    detector_transposed: bool
     metadata: dict[str, object]
     total_intensity: np.ndarray
     annular_bright_field: np.ndarray
@@ -50,6 +57,7 @@ class ScreeningResult:
     cache_path: Path | None = None
     from_cache: bool = False
     elapsed_s: float = 0.0
+    scan_detector_rotation_deg: float | None = None
 
 
 def prepare(
@@ -57,7 +65,8 @@ def prepare(
     *,
     backend: str = "auto",
     scan_shape: tuple[int, int] | None = None,
-    rotation_angle_deg: float | None = None,
+    scan_detector_rotation_deg: float | None = None,
+    detector_transposed: bool = False,
     cache: bool = True,
     cache_dir: str | Path | None = None,
     refresh: bool = False,
@@ -84,12 +93,15 @@ def prepare(
         ``"auto"``, ``"cuda"`` or ``"mps"``; only a cache miss needs a GPU.
     scan_shape : tuple of int, optional
         ``(rows, cols)`` scan positions when the file does not record them.
-    rotation_angle_deg : float, optional
-        Scan-detector rotation in degrees. ``None`` fits it from
-        ``rotation_steps`` angles in ``[0, 180)`` degrees, testing transposed
-        detector axes too.
+    scan_detector_rotation_deg : float, optional
+        Physical scan-to-detector rotation in degrees for the DPC phase.
+        ``None`` fits it from ``rotation_steps`` angles from 0 to 180 degrees,
+        testing transposed detector axes too; that fit is known modulo 180.
+    detector_transposed : bool
+        Whether the detector axes are exchanged before the given rotation;
+        used only with ``scan_detector_rotation_deg``.
     cache, cache_dir, refresh : bool, str or Path, bool
-        Reuse and save ``<master stem>.screening-v3.npz``, by default in
+        Reuse and save ``<master stem>.screening-v4.npz``, by default in
         ``.quantem_gpu_cache`` beside the master. ``refresh`` rebuilds it.
         A cache is reused only while every source file is unchanged.
     rotation_steps : int
@@ -116,7 +128,7 @@ def prepare(
     if cache and not refresh:
         products = _prepare_cache(cache_path, master_path)
         if products is not None:
-            return _with_rotation(products, rotation_angle_deg)
+            return _with_rotation(products, scan_detector_rotation_deg, detector_transposed)
 
     # A cache hit stays cheap: device, raw I/O and detector modules are
     # imported only by a cache miss.
@@ -133,7 +145,7 @@ def prepare(
     products.cache_path = cache_path if cache else None
     if cache:
         _save_cache(products, cache_path)
-    return _with_rotation(products, rotation_angle_deg)
+    return _with_rotation(products, scan_detector_rotation_deg, detector_transposed)
 
 
 # --- building the products from one encoded acquisition ---
@@ -205,18 +217,18 @@ def _build_products(
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
     rotation_started = time.perf_counter()
-    _, _, rotation_deg, transposed = find_optimal_rotation(
+    _, _, rotation_mod180_deg, transposed = find_optimal_rotation(
         com_row,
         com_col,
         rotation_steps=rotation_steps,
     )
     phase_started = time.perf_counter()
-    phase = _dpc_phase(com_row, com_col, float(rotation_deg), bool(transposed))
+    phase = _dpc_phase(com_row, com_col, float(rotation_mod180_deg), bool(transposed))
     elapsed_s = time.perf_counter() - started
     if verbose:
         print(
             f"Screening products in {elapsed_s:.2f} s: probe radius {radius:.1f} px, "
-            f"rotation {rotation_deg:.1f} deg{' (transposed)' if transposed else ''}."
+            f"rotation {rotation_mod180_deg:.1f} deg{' (transposed)' if transposed else ''}."
         )
 
     parameters = {
@@ -227,8 +239,8 @@ def _build_products(
         "rotation_steps": int(rotation_steps),
         "center": [float(center[0]), float(center[1])],
         "radius_px": float(radius),
-        "rotation_deg": float(rotation_deg),
-        "transposed": bool(transposed),
+        "scan_detector_rotation_mod180_deg": float(rotation_mod180_deg),
+        "detector_transposed": bool(transposed),
         "backend": backend,
     }
     timing = {
@@ -247,10 +259,10 @@ def _build_products(
         com_col=com_col,
         probe_center=(float(center[0]), float(center[1])),
         probe_radius=float(radius),
-        rotation_deg=float(rotation_deg),
-        transposed=bool(transposed),
+        scan_detector_rotation_mod180_deg=float(rotation_mod180_deg),
+        detector_transposed=bool(transposed),
         metadata={
-            "version": _CACHE_VERSION,
+            "schema": _CACHE_SCHEMA,
             "source": source,
             "parameters": parameters,
             "timing": timing,
@@ -282,23 +294,26 @@ def _build_products(
 
 def _with_rotation(
     result: ScreeningResult,
-    rotation_angle_deg: float | None,
+    scan_detector_rotation_deg: float | None,
+    detector_transposed: bool,
 ) -> ScreeningResult:
     """Apply an explicit DPC rotation without touching the raw evidence.
 
     A user who knows the scan-detector rotation (for example from a
     calibration at this camera length) overrides the fitted one; only the
-    phase depends on it, so the cached centre of mass is reused.
+    phase depends on it, so the cached centre of mass is reused. The fitted
+    estimate stays in ``scan_detector_rotation_mod180_deg``.
     """
-    if rotation_angle_deg is None:
+    if scan_detector_rotation_deg is None:
         return result
-    result.rotation_deg = float(rotation_angle_deg)
-    result.transposed = False
+    rotation = float(scan_detector_rotation_deg)
+    result.scan_detector_rotation_deg = rotation % 360.0
+    result.detector_transposed = bool(detector_transposed)
     result.dpc_phase = _dpc_phase(
         result.com_row,
         result.com_col,
-        result.rotation_deg,
-        False,
+        rotation,
+        result.detector_transposed,
     )
     return result
 
@@ -306,8 +321,8 @@ def _with_rotation(
 def _dpc_phase(
     com_row: np.ndarray,
     com_col: np.ndarray,
-    rotation_deg: float,
-    transposed: bool,
+    scan_detector_rotation_deg: float,
+    detector_transposed: bool,
 ) -> np.ndarray:
     """Rotate the CoM field into scan axes and integrate it to the float32 iDPC phase.
 
@@ -318,15 +333,15 @@ def _dpc_phase(
     """
     from quantem.gpu.dpc import integrate
 
-    source_row = com_col if transposed else com_row
-    source_col = com_row if transposed else com_col
-    angle = np.radians(rotation_deg)
+    source_row = com_col if detector_transposed else com_row
+    source_col = com_row if detector_transposed else com_col
+    angle = np.radians(scan_detector_rotation_deg)
     cosine = float(np.cos(angle))
     sine = float(np.sin(angle))
     aligned_row = (cosine * source_row - sine * source_col).astype(np.float32)
     aligned_col = (sine * source_row + cosine * source_col).astype(np.float32)
     gradient_row, gradient_col = (
-        (aligned_col, aligned_row) if transposed else (aligned_row, aligned_col)
+        (aligned_col, aligned_row) if detector_transposed else (aligned_row, aligned_col)
     )
     return integrate(gradient_row, gradient_col)
 
@@ -381,7 +396,7 @@ def _source_fingerprint(master: Path) -> dict[str, object]:
 
 def _cache_matches(metadata: dict[str, object], master: Path) -> bool:
     """Accept a cache only for the current version and an unchanged source."""
-    if int(metadata.get("version", -1)) != _CACHE_VERSION:
+    if metadata.get("schema") != _CACHE_SCHEMA:
         return False
     cached_source = metadata.get("source")
     stat_match = _strong_cached_source_match(cached_source, master)
@@ -529,8 +544,8 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             com_col=np.asarray(data["com_col"], dtype=np.float32),
             probe_center=tuple(float(value) for value in parameters["center"]),
             probe_radius=float(parameters["radius_px"]),
-            rotation_deg=float(parameters["rotation_deg"]),
-            transposed=bool(parameters["transposed"]),
+            scan_detector_rotation_mod180_deg=float(parameters["scan_detector_rotation_mod180_deg"]),
+            detector_transposed=bool(parameters["detector_transposed"]),
             metadata=metadata,
             cache_path=path,
             from_cache=True,

@@ -77,16 +77,16 @@ def test_rotation_check_keeps_original_trial_geometry(monkeypatch):
     monkeypatch.setattr(workflow, 'column_sign', lambda phase: next(signs))
     try:
         aberrations = ssb.find_aberrations(trials=8, refinement=None, verbose=False)
-        assert aberrations.rotation_flipped
-        assert ssb.com_reversed
-        assert not any(record['com_reversed'] for record in aberrations.trial_records)
-        original = (ssb.rotation_angle_deg, ssb.com_reversed)
+        assert aberrations.initial_scan_detector_rotation_deg != aberrations.scan_detector_rotation_deg
+        assert ssb.scan_detector_rotation_deg >= 180.0
+        assert all(record['scan_detector_rotation_deg'] < 180.0 for record in aberrations.trial_records)
+        original = ssb.scan_detector_rotation_deg
         replay = ssb.reconstruct(aberrations, trials=[0])
-        assert (ssb.rotation_angle_deg, ssb.com_reversed) == original
+        assert ssb.scan_detector_rotation_deg == original
         assert ssb._reconstruction is aberrations
         record = aberrations.trial_records[0]
         values = record['params']
-        ssb.set_rotation(record['rotation_angle_deg'], record['com_reversed'])
+        ssb.set_rotation(record['scan_detector_rotation_deg'])
         expected, _ = ssb.preview({'C10': values['C10_nm'], 'C12': values['C12_nm'],
                                   'phi12': math.radians(values['phi12_deg'])})
         np.testing.assert_allclose(cp.asnumpy(replay.phase[0]), expected, atol=1e-7)
@@ -155,7 +155,7 @@ def test_zero_trial_search_does_not_relabel_previous_search():
         assert second.refine_nfev is None
         assert second.refine_method is None
         assert first.trial_records == history
-        assert all(record['rotation_angle_deg'] == 0. for record in history)
+        assert all(record['scan_detector_rotation_deg'] == 0. for record in history)
         with pytest.raises(ValueError, match='No completed trials'):
             ssb.show_trials(best=5)
     finally:

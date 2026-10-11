@@ -25,8 +25,8 @@ class _Backend:
     def preview(self, aberrations, **kwargs):
         return np.zeros(self.scan_shape, dtype=np.float32), None
 
-    def cache_rotation(self, rotation_rad: float) -> None:
-        self.rotation_rad = float(rotation_rad)
+    def cache_rotation(self, scan_detector_rotation_rad: float) -> None:
+        self.scan_detector_rotation_rad = float(scan_detector_rotation_rad)
 
     def browser_state(self):
         raise NotImplementedError
@@ -75,7 +75,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
         "scan_sampling_A",
         "det_sampling",
         "aberrations",
-        "rotation_angle_deg",
+        "scan_detector_rotation_deg",
         "bf_radius",
     }
     assert shared <= constructor.parameters.keys()
@@ -115,7 +115,7 @@ def test_mps_reconstruct_honors_compute_loss(monkeypatch) -> None:
     backend._voltage_kV = 300.0
     backend._semiangle_mrad = 30.0
     backend._scan_sampling = (1.0, 1.0)
-    backend._rotation_angle_deg = 0.0
+    backend._scan_detector_rotation_deg = 0.0
     backend._selection = SimpleNamespace(
         size=3,
         center_row_col=(1.0, 1.0),
@@ -153,7 +153,7 @@ def test_mps_rotation_retargets_geometry_without_repreparing_source(
     monkeypatch.setattr(mps_backend, "require_mlx", lambda: FakeMlx)
     backend = mps_backend.MpsSSBBackend.__new__(mps_backend.MpsSSBBackend)
     backend._prepared = prepared
-    backend._rotation_angle_deg = 0.0
+    backend._scan_detector_rotation_deg = 0.0
     backend._selection = object()
     backend._fit_preview_phase = np.ones((1,), dtype=np.float32)
     backend._fit_preview_loss = 1.0
@@ -164,7 +164,7 @@ def test_mps_rotation_retargets_geometry_without_repreparing_source(
     assert backend._prepared is prepared
     assert calls[0][0] is prepared
     assert calls[0][1]["selection"] is backend._selection
-    assert np.isclose(calls[0][1]["rotation_angle_deg"], 3.0)
+    assert np.isclose(calls[0][1]["scan_detector_rotation_deg"], 3.0)
     assert calls[1] == "clear"
     assert backend._fit_preview_phase is None
 
@@ -204,7 +204,7 @@ def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
         center_row_col=(1.0, 1.0),
     )
 
-    retarget_prepared_rotation(prepared, selection=selection, rotation_angle_deg=90.0)
+    retarget_prepared_rotation(prepared, selection=selection, scan_detector_rotation_deg=90.0)
 
     assert prepared.g_qk is source_fft
     np.testing.assert_allclose(prepared.kx_np, [0.0], atol=1e-7)
@@ -247,7 +247,7 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
         object_wave=np.ones((2, 2), dtype=np.complex64),
         backend="mps",
         aberrations={"C10": 1.0, "C12": 2.0, "phi12": 0.1},
-        rotation_angle_deg=3.0,
+        scan_detector_rotation_deg=3.0,
         loss=0.25,
         num_bf=selection.size,
         bf_center=selection.center_row_col,

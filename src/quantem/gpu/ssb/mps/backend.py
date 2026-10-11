@@ -59,7 +59,7 @@ class MpsSSBBackend:
         bf_intensity_threshold: float,
         bf_center: tuple[float, float] | None,
         bf_radius: int | None,
-        rotation_angle_deg: float,
+        scan_detector_rotation_deg: float,
     ) -> None:
         self._frames = as_chunked_frames(data)
         self._scan_shape = frames_scan_shape(self._frames)
@@ -113,7 +113,7 @@ class MpsSSBBackend:
             detector_pixel_mrad = self._semiangle_mrad / self._selection.detected_radius_px
             calibration = (detector_pixel_mrad, detector_pixel_mrad)
         self._det_sampling = calibration
-        self._rotation_angle_deg = float(rotation_angle_deg)
+        self._scan_detector_rotation_deg = float(scan_detector_rotation_deg)
         self._prepared = None
         self._fit_preview_phase = None
         self._fit_preview_loss = None
@@ -140,7 +140,7 @@ class MpsSSBBackend:
         """Run the shared exact optimization contract on MPS/Metal, on this session's prepared evidence."""
 
         if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         result, phase = optimize_mps(
             self._prepared,
             self._selection,
@@ -152,7 +152,7 @@ class MpsSSBBackend:
             n_trials=int(trials),
             refine=refinement,
             refine_lock=refine_lock,
-            rotation_angle_deg=self._rotation_angle_deg,
+            scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             seed=int(seed),
             verbose=verbose,
         )
@@ -176,7 +176,7 @@ class MpsSSBBackend:
 
         started = time.perf_counter()
         if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         object_wave = object_fourier_sum_dynamic(
             self._prepared,
             C10=float(aberrations["C10"]),
@@ -199,7 +199,7 @@ class MpsSSBBackend:
             object_wave=np.asarray(object_wave).astype(np.complex64, copy=False),
             backend="mps",
             aberrations=dict(aberrations),
-            rotation_angle_deg=self._rotation_angle_deg,
+            scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             loss=None if loss is None else float(loss),
             elapsed=time.perf_counter() - started,
             num_bf=self._selection.size,
@@ -283,7 +283,7 @@ class MpsSSBBackend:
         Same contract as ``CudaSSBBackend.preview_sample``.
         """
         if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         phase, loss = reconstruct_thick(
             self._prepared,
             C10=float(aberrations["C10"]),
@@ -299,7 +299,7 @@ class MpsSSBBackend:
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
         if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         result = fit_sample(self._prepared, **options)
         require_mlx().clear_cache()
         return result
@@ -332,16 +332,16 @@ class MpsSSBBackend:
 
         return self._selection.size
 
-    def cache_rotation(self, rotation_rad: float) -> None:
+    def cache_rotation(self, scan_detector_rotation_rad: float) -> None:
         """Prepare the exact selected evidence for one scan rotation."""
 
-        rotation_angle_deg = math.degrees(float(rotation_rad))
+        scan_detector_rotation_deg = math.degrees(float(scan_detector_rotation_rad))
         if (
             self._prepared is not None
-            and abs(rotation_angle_deg - self._rotation_angle_deg) < 1e-9
+            and abs(scan_detector_rotation_deg - self._scan_detector_rotation_deg) < 1e-9
         ):
             return
-        self._rotation_angle_deg = rotation_angle_deg
+        self._scan_detector_rotation_deg = scan_detector_rotation_deg
         self._fit_preview_phase = None
         self._fit_preview_loss = None
         self._fit_preview_aberrations = None
@@ -354,7 +354,7 @@ class MpsSSBBackend:
                 semiangle_mrad=self._semiangle_mrad,
                 scan_sampling=self._scan_sampling,
                 det_sampling=self._det_sampling,
-                rotation_angle_deg=self._rotation_angle_deg,
+                scan_detector_rotation_deg=self._scan_detector_rotation_deg,
                 chunk_bf=self._setup_chunk_bf,
                 compact_inactive=True,
                 dc_value_override=self._dc_value_override,
@@ -363,7 +363,7 @@ class MpsSSBBackend:
             retarget_prepared_rotation(
                 self._prepared,
                 selection=self._selection,
-                rotation_angle_deg=self._rotation_angle_deg,
+                scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             )
         # Preparation leaves its FFT and gather temporaries in MLX's buffer cache; the prepared G_qk stays resident.
         require_mlx().clear_cache()
@@ -377,7 +377,7 @@ class MpsSSBBackend:
         """Return the phase and exact full-BF variance loss from Metal."""
 
         if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
 
         _object_wave, loss, phase = reconstruct_prepared(
             self._prepared,
@@ -396,7 +396,7 @@ class MpsSSBBackend:
         """Return the exact full-BF phase reconstructed on Metal."""
 
         if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
 
         _object_wave, _loss, phase = reconstruct_prepared(
             self._prepared,
@@ -591,8 +591,8 @@ class MpsSSBBackend:
             self._selection.cols.astype(np.float32)
             - self._selection.center_row_col[1]
         ) * reciprocal_x
-        if self._rotation_angle_deg:
-            angle = math.radians(-self._rotation_angle_deg)
+        if self._scan_detector_rotation_deg:
+            angle = math.radians(-self._scan_detector_rotation_deg)
             cos_a = math.cos(angle)
             sin_a = math.sin(angle)
             kx_bf, ky_bf = (
@@ -673,7 +673,7 @@ class _MpsBfSubset:
         """
         backend = self._backend
         if backend._prepared is None:
-            backend.cache_rotation(math.radians(backend._rotation_angle_deg))
+            backend.cache_rotation(math.radians(backend._scan_detector_rotation_deg))
         prepared = backend._prepared
         source = (prepared, prepared.g_qk, prepared.kx, prepared.bf_storage_indices_np)
         if self._num_bf >= int(prepared.num_bf):

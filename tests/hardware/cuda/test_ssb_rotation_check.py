@@ -2,8 +2,8 @@
 
 The centre-of-mass rotation search cannot tell omega from omega + 180 degrees, and SSB fits both equally well: the second
 is the negated phase with the opposite defocus. Atom columns carry positive phase, so ``fit()`` keeps the rotation whose
-phase has a positive column sign and otherwise reverses the CoM for the session (the angle stays below 180 degrees,
-``com_reversed`` flips) and refits with every aberration flipped in sign (C10 -> -C10, C12 -> -C12). Parity: starting from the wrong rotation must land on the same reconstruction as a direct fit at the right one.
+phase has a positive column sign and otherwise moves the session's rotation by 180 degrees (``scan_detector_rotation_deg``;
+``initial_scan_detector_rotation_deg`` keeps the angle before the check) and refits with every aberration flipped in sign (C10 -> -C10, C12 -> -C12). Parity: starting from the wrong rotation must land on the same reconstruction as a direct fit at the right one.
 """
 
 import os
@@ -46,26 +46,26 @@ def _astigmatism(aberrations) -> complex:
     return aberrations["C12"] * np.exp(2j * aberrations["phi12"])
 
 
-def _simulated(rotation_angle_deg: float):
+def _simulated(scan_detector_rotation_deg: float):
     from quantem.gpu import SSB
 
     data, det_sampling = _simulated_crystal((3.0, -4.0))
     return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
-                          det_sampling=det_sampling, rotation_angle_deg=rotation_angle_deg)
+                          det_sampling=det_sampling, scan_detector_rotation_deg=scan_detector_rotation_deg)
 
 
 # ---
 
 
 def test_simulated_crystal_wrong_rotation_is_turned_and_refit(tmp_path):
-    """Known answer (atoms positive, right rotation 0 deg): starting at 180 deg (0 deg, CoM reversed), fit() restores the CoM."""
+    """Known answer (atoms positive, right rotation 0 deg): starting at 180 deg, fit() moves the rotation back to 0 deg."""
     _require_cuda()
     direct = _simulated(0.0).find_aberrations(check_rotation=False, verbose=False)
     session = _simulated(180.0)
     checked = session.find_aberrations(verbose=False)
-    assert checked.rotation_flipped
-    assert checked.rotation_angle_deg == pytest.approx(0.0, abs=1e-9) and not checked.com_reversed
-    assert session.rotation_angle_deg == pytest.approx(0.0, abs=1e-9) and not session.com_reversed   # session keeps it
+    assert checked.initial_scan_detector_rotation_deg != checked.scan_detector_rotation_deg
+    assert checked.scan_detector_rotation_deg == pytest.approx(0.0, abs=1e-9)
+    assert session.scan_detector_rotation_deg == pytest.approx(0.0, abs=1e-9)   # session keeps it
     # validated 2026-09-26: column sign +0.88; phase correlation 0.993 with the direct fit, whose loss is 0.8% higher
     # (the refit from the flipped aberrations lands in a slightly deeper minimum of the same branch)
     assert checked.column_sign > 0.8
@@ -75,7 +75,7 @@ def test_simulated_crystal_wrong_rotation_is_turned_and_refit(tmp_path):
     from quantem.gpu.ssb.persistence import load_result, result_paths, save_result
     from quantem.gpu.ssb.results import column_sign
 
-    assert checked.initial_rotation_deg == 180.0
+    assert checked.initial_scan_detector_rotation_deg == 180.0
     assert checked.initial_column_sign == pytest.approx(column_sign(checked.rotation_check_phases[0]))
     assert checked.column_sign == pytest.approx(column_sign(checked.rotation_check_phases[1]))
     comparison = checked.show("rotation")
@@ -93,7 +93,7 @@ def test_simulated_crystal_wrong_rotation_is_turned_and_refit(tmp_path):
     save_result(checked, paths=paths, signature={"test": "rotation"}, input_metadata={})
     restored = load_result(paths=paths, signature={"test": "rotation"}, backend="cuda")
     np.testing.assert_array_equal(restored.rotation_check_phases, checked.rotation_check_phases)
-    assert restored.initial_rotation_deg == checked.initial_rotation_deg
+    assert restored.initial_scan_detector_rotation_deg == checked.initial_scan_detector_rotation_deg
 
 
 def test_simulated_crystal_right_rotation_is_left_exactly_as_fitted(monkeypatch):
@@ -106,7 +106,7 @@ def test_simulated_crystal_right_rotation_is_left_exactly_as_fitted(monkeypatch)
     monkeypatch.setattr(workflow, "draw_column_histogram", lambda *args, **kwargs: drawn.append(args))
     kept = _simulated(0.0).find_aberrations(verbose=True)
     direct = _simulated(0.0).find_aberrations(check_rotation=False, verbose=False)
-    assert not kept.rotation_flipped
+    assert kept.initial_scan_detector_rotation_deg == kept.scan_detector_rotation_deg
     assert kept.column_sign > 0.8
     np.testing.assert_array_equal(_host(kept.phase), _host(direct.phase))
     assert kept.aberrations == direct.aberrations
@@ -121,8 +121,8 @@ def test_check_rotation_false_keeps_the_given_rotation():
     from quantem.gpu.ssb.results import column_sign
 
     result = _simulated(180.0).find_aberrations(check_rotation=False, verbose=False)
-    assert result.rotation_angle_deg == pytest.approx(0.0, abs=1e-9) and result.com_reversed
-    assert not result.rotation_flipped and result.column_sign is None
+    assert result.scan_detector_rotation_deg == pytest.approx(180.0, abs=1e-9)
+    assert result.initial_scan_detector_rotation_deg is None and result.column_sign is None
     assert column_sign(result.phase) < -0.8
 
 
@@ -133,13 +133,13 @@ def test_real_acquisition_from_the_wrong_rotation_matches_a_direct_fit():
     _require_cuda()
     from quantem.gpu import SSB
 
-    direct = SSB.open(str(SOURCE), rotation_angle_deg=REAL_ROTATION_DEG, **REAL).find_aberrations(check_rotation=False, verbose=False)
+    direct = SSB.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG, **REAL).find_aberrations(check_rotation=False, verbose=False)
     direct_phase, direct_loss, direct_aberrations = _host(direct.phase), direct.loss, dict(direct.aberrations)
     del direct
     cp.get_default_memory_pool().free_all_blocks()
-    checked = SSB.open(str(SOURCE), rotation_angle_deg=REAL_ROTATION_DEG + 180.0, **REAL).find_aberrations(verbose=False)
-    assert checked.rotation_flipped
-    assert checked.rotation_angle_deg == pytest.approx(REAL_ROTATION_DEG, abs=1e-9) and not checked.com_reversed
+    checked = SSB.open(str(SOURCE), scan_detector_rotation_deg=REAL_ROTATION_DEG + 180.0, **REAL).find_aberrations(verbose=False)
+    assert checked.initial_scan_detector_rotation_deg != checked.scan_detector_rotation_deg
+    assert checked.scan_detector_rotation_deg == pytest.approx(REAL_ROTATION_DEG, abs=1e-9)
     # validated 2026-09-26: column sign +0.665, phase correlation 0.99995, loss 1.4e-6 relative, C10 0.018 nm apart
     # (two Nelder-Mead polishes from different starts on the same minimum)
     assert checked.column_sign > 0.5
@@ -151,20 +151,20 @@ def test_real_acquisition_from_the_wrong_rotation_matches_a_direct_fit():
     assert abs(_astigmatism(checked.aberrations) - _astigmatism(direct_aberrations)) < 0.05
 
 
-def test_reversed_com_is_the_conjugate_object_with_every_aberration_flipped():
-    """(angle, com_reversed=True) reconstructs the negated phase of (angle, False) with C10 and C12 flipped: the engine
-    receives the physical angle + 180 degrees, and nothing else changes."""
+def test_rotation_plus_180_is_the_conjugate_object_with_every_aberration_flipped():
+    """The rotation plus 180 degrees reconstructs the negated phase with C10 and C12 flipped, whether the session is
+    turned there with set_rotation or built at that rotation."""
     _require_cuda()
     aberrations = {"C10": 1.5, "C12": 0.8, "phi12": 0.4}
     flipped = {"C10": -1.5, "C12": -0.8, "phi12": 0.4}
     measured = _simulated(0.0).reconstruct(aberrations=aberrations)
     reversed_ = _simulated(0.0)
-    reversed_.set_rotation(0.0, com_reversed=True)
+    reversed_.set_rotation(180.0)
     conjugate = reversed_.reconstruct(aberrations=flipped)
-    assert reversed_.rotation_angle_deg == 0.0 and reversed_.com_reversed and reversed_.physical_rotation_deg == 180.0
-    assert conjugate.rotation_angle_deg == 0.0 and conjugate.com_reversed
+    assert reversed_.scan_detector_rotation_deg == 180.0
+    assert conjugate.scan_detector_rotation_deg == 180.0
     assert _correlation(conjugate.phase, -_host(measured.phase)) > 0.9999
-    same = _simulated(180.0).reconstruct(aberrations=flipped)     # the old spelling of the same physical rotation
+    same = _simulated(180.0).reconstruct(aberrations=flipped)     # a session built at the same physical rotation
     np.testing.assert_array_equal(_host(same.phase), _host(conjugate.phase))
 
 
@@ -181,7 +181,7 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
     session = SSB(
         data, source_path=source, backend="cuda", voltage_kV=300.0,
         semiangle_mrad=30.0, scan_sampling_A=0.25,
-        det_sampling=det_sampling, rotation_angle_deg=rotation,
+        det_sampling=det_sampling, scan_detector_rotation_deg=rotation,
     )
     fit_calls, reconstruction_calls = [], []
     fit = session._fit_tilt
@@ -204,12 +204,12 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
         )
         assert len(fit_calls) == 1
         assert len(reconstruction_calls) == (2 if rotation == 180 else 1)
-        assert result.rotation_flipped == (rotation == 180)
-        assert not result.com_reversed
+        assert (result.initial_scan_detector_rotation_deg != result.scan_detector_rotation_deg) == (rotation == 180)
+        assert result.scan_detector_rotation_deg == 0.0
         assert result.column_sign > 0.2
         assert result.tilt_mrad == pytest.approx((3.0, -4.0), abs=1.0)
         assert len(result.trial_records) == result.n_trials == 200
-        assert all(record["com_reversed"] == (rotation == 180)
+        assert all(record["scan_detector_rotation_deg"] == rotation
                    for record in result.trial_records)
         if rotation == 180:
             initial_aberrations, initial_tilt = fit_calls[0]
@@ -221,7 +221,7 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
             paths=result_paths(tmp_path / "joint", "find_aberrations"),
             signature=result.metadata["signature"], backend="cuda",
         )
-        assert restored.com_reversed == result.com_reversed
+        assert restored.scan_detector_rotation_deg == result.scan_detector_rotation_deg
         assert restored.tilt_mrad == result.tilt_mrad
         np.testing.assert_array_equal(_host(restored.phase), _host(result.phase))
         # The diagnostic belongs to the selected geometry, and sampling reuses it.
@@ -234,7 +234,7 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
         assert finer.phase.shape == tuple(2 * size for size in native.phase.shape)
         assert finer.loss == pytest.approx(native.loss, rel=1e-6)
         assert finer.tilt_mrad == restored.tilt_mrad
-        assert finer.com_reversed == restored.com_reversed
+        assert finer.scan_detector_rotation_deg == restored.scan_detector_rotation_deg
         assert len(fit_calls) == 1
     finally:
         session.close()
@@ -248,7 +248,7 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
     counts = np.full((128, 128, 16, 16), 20, dtype=np.uint16)
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20,
              scan_sampling_A=0.5, det_sampling=5, bf_center=(8, 8),
-             bf_radius=4, rotation_angle_deg=180) as session:
+             bf_radius=4, scan_detector_rotation_deg=180) as session:
         original = session.reconstruct
         calls = []
 
@@ -261,8 +261,7 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
             tilt=True, trials=8, refinement=None, verbose=False,
         )
         assert result.column_sign == 0
-        assert not result.rotation_flipped
-        assert result.com_reversed
+        assert result.initial_scan_detector_rotation_deg == result.scan_detector_rotation_deg == 180.0
         assert len(calls) == 1  # Only the normal final display reconstruction.
 
 

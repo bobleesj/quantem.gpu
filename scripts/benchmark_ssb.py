@@ -143,7 +143,7 @@ def run(arguments, stages) -> None:
                 times.append(seconds)
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
                 hashes.append(f"phase {digest(result.phase)} loss {result.loss!r} aberrations "
-                              f"{digest(aberrations, result.tilt_mrad, result.depth_spread_nm, result.physical_rotation_deg)}"
+                              f"{digest(aberrations, result.tilt_mrad, result.depth_spread_nm, result.scan_detector_rotation_deg)}"
                               f" C10 {aberrations['C10']:.6f} nm")
                 release_cached_memory()
             report(stage, times, hashes)
@@ -153,7 +153,7 @@ def run(arguments, stages) -> None:
                 result, seconds = timed(lambda: dpc.run(data))
                 times.append(seconds)
                 hashes.append(f"phase {digest(result.phase)} com {digest(result.com_row, result.com_col)} "
-                              f"rotation {result.rotation_deg!r}")
+                              f"rotation {result.scan_detector_rotation_mod180_deg!r}")
             report("dpc", times, hashes)
         if "parallax" in stages:
             times, hashes = [], []

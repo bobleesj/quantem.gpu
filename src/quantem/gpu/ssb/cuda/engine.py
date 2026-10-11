@@ -187,7 +187,7 @@ class SSBEngine:
         self.semiangle_cutoff = semiangle_cutoff
         self.angular_sampling = angular_sampling
         # Pre-computed cache
-        self._cached_rotation_rad = None
+        self._cached_scan_detector_rotation_rad = None
         self._cache = {}
         # Pre-compute factor for aberration phase
         self._factor = float(math.pi / wavelength)  # = (2*pi/wl) * 0.5
@@ -334,11 +334,11 @@ class SSBEngine:
 
     def cache_rotation(
         self,
-        rotation_angle_rad: float,
+        scan_detector_rotation_rad: float,
         force: bool = False,
     ) -> None:
         """Pre-compute all rotation-dependent quantities."""
-        if self._cached_rotation_rad == rotation_angle_rad and not force:
+        if self._cached_scan_detector_rotation_rad == scan_detector_rotation_rad and not force:
             return
         # Compute detector k-space coordinates centered on the BF disk.
         recip_row = 1.0 / (self.sampling[0] * self.gpts[0])
@@ -348,9 +348,9 @@ class SSBEngine:
         kxa = row_offsets[:, None] * recip_row
         kya = col_offsets[None, :] * recip_col
         # Passive rotation
-        if rotation_angle_rad is not None:
-            cos_a = math.cos(-rotation_angle_rad)
-            sin_a = math.sin(-rotation_angle_rad)
+        if scan_detector_rotation_rad is not None:
+            cos_a = math.cos(-scan_detector_rotation_rad)
+            sin_a = math.sin(-scan_detector_rotation_rad)
             kxa_rot = kxa * cos_a + kya * sin_a
             kya_rot = -kxa * sin_a + kya * cos_a
             kxa, kya = kxa_rot, kya_rot
@@ -398,7 +398,7 @@ class SSBEngine:
             "ang_x_rad": float(ang_x * 1e-3),
         }
         self._cache = cache
-        self._cached_rotation_rad = rotation_angle_rad
+        self._cached_scan_detector_rotation_rad = scan_detector_rotation_rad
         if self._custom_fft is None:
             if ny != nx:
                 raise ValueError(

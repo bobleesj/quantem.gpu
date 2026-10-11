@@ -107,7 +107,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             "voltage_kV": 80.0,
             "semiangle_mrad": 30.0,
             "scan_sampling_A": 0.2,
-            "rotation_angle_deg": 173.0,
+            "scan_detector_rotation_deg": 173.0,
             "bf_radius": 55.0,
             "schema": FIT_SCHEMA,
             "aberration_unit": "nm",
@@ -137,7 +137,7 @@ def test_reconstruct_series_reuses_only_exact_results(
                 ).astype(np.complex64),
                 backend="cuda",
                 aberrations=aberrations,
-                rotation_angle_deg=173.0,
+                scan_detector_rotation_deg=173.0,
                 loss=0.01 * self.index,
                 reused=True,
             )
@@ -284,7 +284,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
                             "voltage_kV": 300.0,
                             "semiangle_mrad": 30.0,
                             "scan_sampling_A": 0.5,
-                            "rotation_angle_deg": 0.0,
+                            "scan_detector_rotation_deg": 0.0,
                             "aberrations": {
                                 "C10": 1.0,
                                 "C12": 2.0,
@@ -319,7 +319,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
                 ).astype(np.complex64),
                 backend="cuda",
                 aberrations={"C10": 1.0, "C12": 2.0, "phi12": 0.3},
-                rotation_angle_deg=0.0,
+                scan_detector_rotation_deg=0.0,
                 loss=0.1,
             )
 
@@ -383,7 +383,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
 
         def _result(self, aberrations):
             return SSBResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
-                             rotation_angle_deg=12.0, loss=0.25)
+                             scan_detector_rotation_deg=12.0, loss=0.25)
 
         def find_aberrations(self, **kwargs):
             fits.append(self.name)
@@ -405,12 +405,13 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
     # every session opens with the settings of dataset.yaml: nothing comes from the earlier block
     assert opened == [{"backend": "auto", "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5,
-                       "rotation_angle_deg": 12.0, "bf_radius": None}] * 3
+                       "scan_detector_rotation_deg": 12.0, "detector_transposed": False, "bf_radius": None}] * 3
     assert [record["C10 (nm)"] for record in result.records] == [-10.5, -10.5]
     stored = json.loads((reference / "config.json").read_text())["computed"]["ssb"]
     assert stored["schema"] == FIT_SCHEMA
     assert stored["aberrations"] == fitted
-    assert (stored["rotation_angle_deg"], stored["com_reversed"], stored["loss"]) == (12.0, False, 0.25)
+    assert (stored["scan_detector_rotation_deg"], stored["detector_transposed"], stored["loss"]) == (12.0, False, 0.25)
+    assert "com_reversed" not in stored and "rotation_angle_deg" not in stored
 
 
 def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
@@ -424,10 +425,10 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
     folder.mkdir(parents=True)
     (raw / "scan_1_master.h5").write_bytes(b"raw")
     (folder / "config.json").write_text(json.dumps({"computed": {"ssb": {
-        "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "rotation_angle_deg": 0.0,
+        "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "scan_detector_rotation_deg": 0.0,
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5}}}))
     before = (folder / "config.json").read_bytes()
-    with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A, rotation_angle_deg"):
+    with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A, scan_detector_rotation_deg"):
         SSB.reconstruct_series(raw, first_frame=1, last_frame=1, progress=False)
     assert (folder / "config.json").read_bytes() == before
 
@@ -473,7 +474,7 @@ files:
                 object_wave=np.full((3, 4), 1 + 1j, dtype=np.complex64),
                 backend="cuda",
                 aberrations={"C10": 1.0, "C12": 2.0, "phi12": 0.3},
-                rotation_angle_deg=12.0,
+                scan_detector_rotation_deg=12.0,
                 loss=0.25,
                 bf_radius=8.0,
             )

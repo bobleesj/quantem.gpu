@@ -26,7 +26,7 @@ from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
 from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames, find_bf_columns
 from quantem.gpu.ssb.persistence import (
-    SCHEMA,
+    RESULT_SCHEMA,
     json_value,
     load_result,
     result_paths,
@@ -40,8 +40,6 @@ from quantem.gpu.ssb.results import (
     column_sign,
     draw_column_histogram,
     host_array,
-    physical_rotation_deg,
-    split_rotation,
 )
 from quantem.gpu.ssb.trials import (
     choose_trials,
@@ -125,10 +123,11 @@ class SSB:
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
     aberrations : dict, optional
         Starting C10, C12 (nm) and phi12 (radians).
-    rotation_angle_deg : float
-        Scan-detector rotation in degrees (any angle; stored below 180 with ``com_reversed``).
-    com_reversed : bool
-        Whether the centre-of-mass vectors point the other way (rotation + 180 degrees).
+    scan_detector_rotation_deg : float
+        Physical scan-to-detector rotation in degrees; kept in [0, 360). An estimate known only modulo 180 degrees
+        (``dpc.run``, ``screening.prepare``) may be given: ``find_aberrations(check_rotation=True)`` settles the branch.
+    detector_transposed : bool
+        Whether the detector axes are exchanged before the rotation. The engines do not apply it yet, so True raises.
     bf_intensity_threshold : float
         Fraction of the mean-pattern maximum a bright-field pixel must exceed.
     bf_radius : float, optional
@@ -157,13 +156,19 @@ class SSB:
         scan_shape: tuple[int, int] | None = None,
         det_sampling: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
-        rotation_angle_deg: float = 0.0,
-        com_reversed: bool = False,
+        scan_detector_rotation_deg: float = 0.0,
+        detector_transposed: bool = False,
         bf_intensity_threshold: float = 0.0,
         bf_radius: float | None = None,
         source_path: str | None = None,
         bf_center: tuple[float, float] | None = None,
     ) -> None:
+        if detector_transposed:
+            # a transposed detector reconstructed as if it were not gives a mirrored object with no error
+            raise NotImplementedError(
+                "SSB does not reconstruct with detector_transposed=True yet: the engines do not exchange the "
+                "detector axes. Exchange the two detector axes of the data and pass detector_transposed=False."
+            )
         self.backend = resolve(backend)
         if isinstance(data, Dataset4dstemGPU):
             if data.ndim != 4:
@@ -216,8 +221,8 @@ class SSB:
         self.det_sampling = None if det_sampling is None else _sampling(det_sampling)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
-        # public form: angle below 180 plus whether the CoM is reversed; the engines get the physical angle
-        self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
+        self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
+        self.detector_transposed = False
         self.bf_intensity_threshold = float(bf_intensity_threshold)
         self.bf_radius = bf_radius
         # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
@@ -259,8 +264,8 @@ class SSB:
         scan_shape: tuple[int, int] | None = None,
         det_sampling: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
-        rotation_angle_deg: float = 0.0,
-        com_reversed: bool = False,
+        scan_detector_rotation_deg: float = 0.0,
+        detector_transposed: bool = False,
         bf_intensity_threshold: float = 0.0,
         bf_radius: int | None = None,
         calibration: str | None = None,
@@ -277,6 +282,12 @@ class SSB:
         GPU acquisitions use ANS-encoded storage.
         """
 
+        if detector_transposed:
+            # refused before the acquisition is loaded; the session gives the same reason
+            raise NotImplementedError(
+                "SSB does not reconstruct with detector_transposed=True yet: the engines do not exchange the "
+                "detector axes."
+            )
         selected = resolve(backend)
         bf_center = None
         source_detector_bin = 1
@@ -322,8 +333,7 @@ class SSB:
             scan_shape=scan_shape,
             det_sampling=det_sampling,
             aberrations=aberrations,
-            rotation_angle_deg=rotation_angle_deg,
-            com_reversed=com_reversed,
+            scan_detector_rotation_deg=scan_detector_rotation_deg,
             bf_intensity_threshold=bf_intensity_threshold,
             bf_radius=bf_radius,
             source_path=str(source),
@@ -351,7 +361,7 @@ class SSB:
 
         return json_value(
             {
-                "schema": SCHEMA,
+                "schema": RESULT_SCHEMA,
                 "software": software_signature(),
                 "operation": operation,
                 "source": source_signature(
@@ -375,8 +385,8 @@ class SSB:
                 },
                 "ssb": {
                     "backend": self.backend,
-                    # the physical angle (0-360) is the one unambiguous key for the rotation
-                    "rotation_angle_deg": self.physical_rotation_deg,
+                    "scan_detector_rotation_deg": self.scan_detector_rotation_deg,
+                    "detector_transposed": self.detector_transposed,
                     "bf_intensity_threshold": self.bf_intensity_threshold,
                     "bf_radius": self.bf_radius,
                     "bf_center": self.bf_center,
@@ -417,13 +427,13 @@ class SSB:
 
         result.source_path = self.source_path
         # Only a backend that already holds prepared data is re-rotated; otherwise the change would trigger a load.
-        if result.physical_rotation_deg != self.physical_rotation_deg and self._compute is not None:
-            # a reversed or reused result can sit on the other 180-degree branch; previews must use its rotation
-            self.set_rotation(result.rotation_angle_deg, com_reversed=result.com_reversed)
+        if result.scan_detector_rotation_deg != self.scan_detector_rotation_deg and self._compute is not None:
+            # a reused result, or one whose branch the polarity check changed, can sit on the other 180-degree branch; previews must use its rotation
+            self.set_rotation(result.scan_detector_rotation_deg)
         self.aberrations = dict(result.aberrations)
         self.tilt_mrad, self.depth_spread_nm = result.tilt_mrad, result.depth_spread_nm
         self._aberrations_explicit = True
-        self.rotation_angle_deg, self.com_reversed = result.rotation_angle_deg, result.com_reversed
+        self.scan_detector_rotation_deg = result.scan_detector_rotation_deg
         self.best_loss = (
             float(result.loss) if result.loss is not None else float("inf")
         )
@@ -434,9 +444,9 @@ class SSB:
                                  tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
         """Keep the CoM direction whose phase has bright atom columns (see ``find_aberrations(check_rotation=...)``).
 
-        The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the same angle with
-        every CoM vector reversed. When fitted atom columns are dark, the CoM is
-        reversed (the angle stays), with C10, C12 and tilt flipped in sign at
+        The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the angle plus 180
+        degrees, every CoM vector reversed. When fitted atom columns are dark, the
+        rotation moves to that branch, with C10, C12 and tilt flipped in sign at
         the same astigmatism angle. The other branch is the conjugate object.
         The joint model's objective is invariant under this transformation.
         CUDA reuses the fitted parameters and reconstructs the other branch;
@@ -444,30 +454,30 @@ class SSB:
         """
         sign = column_sign(result.phase)
         result.column_sign = sign
-        result.initial_rotation_deg = result.physical_rotation_deg
+        result.initial_scan_detector_rotation_deg = result.scan_detector_rotation_deg
         result.initial_column_sign = sign
         initial_phase = host_array(result.phase).copy()
         result.rotation_check_phases = np.stack((initial_phase, initial_phase))
         show = verbose and _in_notebook()
-        angle = float(result.rotation_angle_deg)
-        input_rotation = result.initial_rotation_deg
+        input_rotation = result.initial_scan_detector_rotation_deg
         if not math.isfinite(sign) or sign >= -COLUMN_SIGN_MIN:
             if verbose and (not math.isfinite(sign) or sign < COLUMN_SIGN_MIN):
                 print(f"SSB: polarity score {sign:+.2f} is inconclusive; keeping the suggested rotation {input_rotation:.2f}°.")
             return result
         limit = draw_column_histogram(result.phase, f"Suggested rotation {input_rotation:.2f}° · polarity score {sign:+.2f}") if show else None
-        reversed_now = not result.com_reversed
+        # the other branch; the subtraction is exact where adding 180 and wrapping at 360 would round
+        opposite_rotation = input_rotation - 180.0 if input_rotation >= 180.0 else input_rotation + 180.0
         start = {"C10": -result.aberrations["C10"], "C12": -result.aberrations["C12"], "phi12": result.aberrations["phi12"]}
         reuse_joint_fit = tilt and self.backend == "cuda"
         if verbose:
             print(f"SSB: negative phase polarity at the suggested rotation {input_rotation:.2f}° (score {sign:+.2f}).\n"
-                  f"     Testing {(input_rotation + 180) % 360:.2f}° under the bright-column assumption."
+                  f"     Testing {opposite_rotation:.2f}° under the bright-column assumption."
                   + (" Reusing the joint fit; no second search." if reuse_joint_fit else " Refining the opposite branch."))
-        self.set_rotation(angle, com_reversed=reversed_now)
+        self.set_rotation(opposite_rotation)
         backend = self._backend()
         if reuse_joint_fit:
             opposite = replace(
-                result, aberrations=start, com_reversed=reversed_now,
+                result, aberrations=start, scan_detector_rotation_deg=opposite_rotation,
                 tilt_mrad=tuple(-value for value in result.tilt_mrad),
             )
             # Recompute the native phase and diagnostic at the selected branch.
@@ -495,16 +505,15 @@ class SSB:
         for index, trial in enumerate(refit.trial_records):
             trial["trial"] = index
         refit.column_sign = column_sign(refit.phase)
-        refit.rotation_flipped = True
-        refit.initial_rotation_deg = result.initial_rotation_deg
+        refit.initial_scan_detector_rotation_deg = input_rotation
         refit.initial_column_sign = sign
         refit.rotation_check_phases = np.stack((initial_phase, host_array(refit.phase)))
         if refit.elapsed is not None and result.elapsed is not None:
             refit.elapsed += result.elapsed   # First pass plus branch selection.
         if show:
-            draw_column_histogram(refit.phase, f"SSB-selected rotation {refit.physical_rotation_deg:.2f}° · polarity score {refit.column_sign:+.2f}", limit=limit)
+            draw_column_histogram(refit.phase, f"SSB-selected rotation {refit.scan_detector_rotation_deg:.2f}° · polarity score {refit.column_sign:+.2f}", limit=limit)
         if verbose:
-            print(f"SSB: selected rotation {refit.physical_rotation_deg:.2f}°; C10 {refit.aberrations['C10']:+.2f} nm, "
+            print(f"SSB: selected rotation {refit.scan_detector_rotation_deg:.2f}°; C10 {refit.aberrations['C10']:+.2f} nm, "
                   f"polarity score {refit.column_sign:+.2f}. find_aberrations(check_rotation=False) keeps the input rotation.")
         return refit
 
@@ -523,7 +532,7 @@ class SSB:
                     data=self._data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
                     det_sampling=self.det_sampling, voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
                     bf_intensity_threshold=self.bf_intensity_threshold, bf_radius=self.bf_radius,
-                    bf_center=self.bf_center, rotation_angle_deg=self.physical_rotation_deg,
+                    bf_center=self.bf_center, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                     aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
                 )
             else:
@@ -531,7 +540,7 @@ class SSB:
                     self._data, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                     scan_sampling=self.scan_sampling_A, det_sampling=self.det_sampling,
                     bf_intensity_threshold=self.bf_intensity_threshold, bf_center=self.bf_center,
-                    bf_radius=self.bf_radius, rotation_angle_deg=self.physical_rotation_deg,
+                    bf_radius=self.bf_radius, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 )
         return self._compute
 
@@ -542,10 +551,10 @@ class SSB:
             raise ValueError("Run ssb.find_aberrations() before reconstructing trials.")
         records = select_records(parameters.trial_records, trials)
         estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
-        saved_rotation = self.rotation_angle_deg, self.com_reversed
+        saved_rotation = self.scan_detector_rotation_deg
         waves = []
         for record in records:
-            self.set_rotation(record["rotation_angle_deg"], record["com_reversed"])
+            self.set_rotation(record["scan_detector_rotation_deg"])
             values = record["params"]
             phase, _ = self._phase(
                 {"C10": values["C10_nm"], "C12": values["C12_nm"],
@@ -557,7 +566,7 @@ class SSB:
             # Native mean-phase kernels reuse a scratch buffer. Own each
             # wave before reconstructing the next trial on the same stream.
             waves.append(self._unit_wave(phase))
-        self.set_rotation(*saved_rotation)
+        self.set_rotation(saved_rotation)
         return SSBResult(
             object_wave=(cp if self.backend == "cuda" else np).stack(waves), backend=self.backend, trial_records=records,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
@@ -635,8 +644,8 @@ class SSB:
         ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
         the opposite aberration phase). Atom columns carry positive phase, so when the fitted phase has a negative column
-        sign (``result.column_sign`` < -0.2) the CoM is reversed for the session (``com_reversed``; the angle stays below
-        180 degrees), with C10, C12, and tilt reversed in sign. A CUDA joint fit
+        sign (``result.column_sign`` < -0.2) the session's rotation moves by 180 degrees (``scan_detector_rotation_deg``;
+        ``initial_scan_detector_rotation_deg`` keeps the angle before the check), with C10, C12, and tilt reversed in sign. A CUDA joint fit
         reuses those fitted parameters and reconstructs the opposite branch
         without a second search. Other fitting paths retain their refinement.
         The inexpensive sign check always runs; extra reconstruction/refinement
@@ -740,7 +749,7 @@ class SSB:
                 semiangle_mrad=self.semiangle_mrad, scan_sampling_A=self.scan_sampling_A,
                 det_sampling=det_sampling,
                 aberrations=self.aberrations if self._aberrations_explicit else None,
-                rotation_angle_deg=self.physical_rotation_deg,
+                scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 bf_center=center, bf_radius=radius,
                 bf_intensity_threshold=self.bf_intensity_threshold,
             ) as regional:
@@ -887,8 +896,8 @@ class SSB:
             coefs = dict(correction.aberrations)
             tilt = correction.tilt_mrad
             depth = correction.depth_spread_nm
-            if correction.physical_rotation_deg != self.physical_rotation_deg:
-                self.set_rotation(correction.rotation_angle_deg, correction.com_reversed)
+            if correction.scan_detector_rotation_deg != self.scan_detector_rotation_deg:
+                self.set_rotation(correction.scan_detector_rotation_deg)
         else:
             coefs = dict(self.aberrations)
             tilt = self.tilt_mrad
@@ -922,7 +931,7 @@ class SSB:
         if (not force and save_to is None and parameters is None and aberrations is None
                 and cached is not None and cached.upsample == upsample
                 and cached.phase_estimator == estimator
-                and cached.physical_rotation_deg == self.physical_rotation_deg
+                and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg
                 and cached.aberrations == coefs
                 and cached.tilt_mrad == tilt
                 and cached.depth_spread_nm == depth
@@ -949,7 +958,7 @@ class SSB:
         result = SSBResult(
             object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
             tilt_mrad=tilt, depth_spread_nm=depth,
-            rotation_angle_deg=self.rotation_angle_deg, com_reversed=self.com_reversed,
+            scan_detector_rotation_deg=self.scan_detector_rotation_deg,
             loss=loss, elapsed=time.perf_counter() - started, num_bf=self.num_bf,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             scan_sampling_A=self._output_sampling(upsample), upsample=upsample,
@@ -1160,7 +1169,7 @@ class SSB:
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, tilt_mrad=tilt_mrad,
                          depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]), amplitude_estimated=False, phase_estimator="mean_phase",
-                         rotation_angle_deg=self.rotation_angle_deg, com_reversed=self.com_reversed,
+                         scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
                          elapsed=time.perf_counter() - started, n_trials=trials, num_bf=self.num_bf,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
@@ -1214,17 +1223,12 @@ class SSB:
 
         return self._backend().num_bf
 
-    @property
-    def physical_rotation_deg(self) -> float:
-        """Rotation the engines use: ``rotation_angle_deg + 180`` when the CoM is reversed."""
-        return physical_rotation_deg(self.rotation_angle_deg, self.com_reversed)
-
     @_on_scan_gpu
-    def set_rotation(self, rotation_angle_deg: float, com_reversed: bool = False) -> None:
-        """Set scan-to-detector rotation (any angle; stored as below 180 plus ``com_reversed``) and refresh geometry."""
+    def set_rotation(self, scan_detector_rotation_deg: float) -> None:
+        """Set the physical scan-to-detector rotation (degrees, kept in [0, 360)) and refresh geometry."""
 
-        self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
-        self._backend().cache_rotation(math.radians(self.physical_rotation_deg))
+        self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
+        self._backend().cache_rotation(math.radians(self.scan_detector_rotation_deg))
 
     @_on_scan_gpu
     def close(self) -> None:

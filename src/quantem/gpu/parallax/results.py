@@ -17,7 +17,7 @@ class ParallaxResult:
     ``aberrations`` (``C10`` and ``C12`` in nm, ``phi12`` in radians, scan
     frame) and ``rotation_angle_deg`` hold the fit of
     ``parallax.run(fit_aberrations=True)``, in the units and convention
-    ``SSB(aberrations=..., rotation_angle_deg=...)`` takes; both are None
+    ``SSB(aberrations=..., scan_detector_rotation_deg=...)`` takes; both are None
     without a fit.
     """
 

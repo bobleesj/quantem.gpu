@@ -477,7 +477,7 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
     ) as ssb:
         backend = ssb._backend()
         engine = backend._get_accelerator()
-        engine.cache_rotation(backend._rotation_angle_rad)
+        engine.cache_rotation(backend._scan_detector_rotation_rad)
         assert engine.num_bf == 80  # 64-BF chunk, then a 16-BF tail.
         args = (-120.0, 55.0, math.radians(17.0))
         expected_phase, expected_loss = _reference_phase_loss_chunked(
@@ -647,7 +647,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     full_engine.semiangle_cutoff = herm.semiangle_mrad
     full_engine.angular_sampling = herm.angular_sampling
     full_engine._factor = accel._factor
-    full_engine.cache_rotation(herm._rotation_angle_rad, force=True)
+    full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
     args = (
         herm.aberrations["C10"],
         herm.aberrations["C12"],
@@ -699,7 +699,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
     full_engine.semiangle_cutoff = herm.semiangle_mrad
     full_engine.angular_sampling = herm.angular_sampling
     full_engine._factor = accel._factor
-    full_engine.cache_rotation(herm._rotation_angle_rad, force=True)
+    full_engine.cache_rotation(herm._scan_detector_rotation_rad, force=True)
     full_phase = full_engine.reconstruct(-120.0, 55.0, math.radians(17.0))
 
     assert herm.G_qk.shape[2] == 65
@@ -765,7 +765,7 @@ def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:
         voltage_kV=300,
         semiangle=21.9,
         scan_sampling=0.5,
-        rotation_angle_deg=0.0,
+        scan_detector_rotation_deg=0.0,
     )
     accel = ssb._get_accelerator()
     accel.cache_rotation(0.0)
