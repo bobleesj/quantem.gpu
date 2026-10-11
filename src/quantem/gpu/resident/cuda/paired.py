@@ -196,8 +196,8 @@ class PairedCounts(StreamedCounts):
         """Decode an arbitrary scan interval with the paired stream decoder."""
         import cupy as cp
 
-        if not 0 <= first < stop <= self.ready_scans:
-            raise ValueError(f"Scan interval {(first, stop)} is outside the resident source.")
+        first, stop = int(first), int(stop)
+        self.check_readable(first, stop)
         with cp.cuda.Device(self.device):
             output = cp.empty((stop - first, *self.shape[2:]), self.dtype)
             for chunk in self.chunks:
