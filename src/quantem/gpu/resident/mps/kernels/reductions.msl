@@ -3,95 +3,47 @@ using namespace metal;
 // Every count sum accumulates in 64 bits. One saturated uint16 frame passes
 // 2^31 above 32,768 selected pixels, and one detector pixel summed over 65,538
 // saturated frames passes 2^32; a 32-bit accumulator would wrap silently.
-kernel void masked_sum_u16(
-    device const ushort* data    [[buffer(0)]],  // (nframes, ndet) uint16, flat
-    device const uchar*  mask    [[buffer(1)]],  // (ndet,) 0/1
-    device ulong*        out     [[buffer(2)]],  // (nframes,) uint64
-    constant uint&       ndet    [[buffer(3)]],
-    constant uint&       nframes [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const ushort* frame = data + (ulong)gid * ndet;
-    ulong s = 0ul;
-    for (uint i = 0; i < ndet; i++) s += mask[i] ? (ulong)frame[i] : 0ul;
-    out[gid] = s;
+#define MASKED_SUM(NAME, TYPE) \
+kernel void NAME( \
+    device const TYPE*   data    [[buffer(0)]],  /* (nframes, ndet) counts, flat */ \
+    device const uchar*  mask    [[buffer(1)]],  /* (ndet,) 0/1 */ \
+    device ulong*        out     [[buffer(2)]],  /* (nframes,) uint64 */ \
+    constant uint&       ndet    [[buffer(3)]], \
+    constant uint&       nframes [[buffer(4)]], \
+    uint gid [[thread_position_in_grid]] \
+) { \
+    if (gid >= nframes) return; \
+    device const TYPE* frame = data + (ulong)gid * ndet; \
+    ulong s = 0ul; \
+    for (uint i = 0; i < ndet; i++) s += mask[i] ? (ulong)frame[i] : 0ul; \
+    out[gid] = s; \
 }
 
-kernel void masked_sum_u8(
-    device const uchar*  data    [[buffer(0)]],  // (nframes, ndet) uint8, flat
-    device const uchar*  mask    [[buffer(1)]],  // (ndet,) 0/1
-    device ulong*        out     [[buffer(2)]],  // (nframes,) uint64
-    constant uint&       ndet    [[buffer(3)]],
-    constant uint&       nframes [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const uchar* frame = data + (ulong)gid * ndet;
-    ulong s = 0ul;
-    for (uint i = 0; i < ndet; i++) s += mask[i] ? (ulong)frame[i] : 0ul;
-    out[gid] = s;
+#define DETECTOR_SUM_EXACT(NAME, TYPE) \
+kernel void NAME( \
+    device const TYPE*   data    [[buffer(0)]],  /* (nframes, ndet) counts */ \
+    device ulong*        out     [[buffer(1)]],  /* (ndet,) uint64, one chunk */ \
+    constant uint&       ndet    [[buffer(2)]], \
+    constant uint&       nframes [[buffer(3)]], \
+    uint pix [[thread_position_in_grid]] \
+) { \
+    if (pix >= ndet) return; \
+    ulong s = 0ul; \
+    for (uint fr = 0; fr < nframes; ++fr) { \
+        s += (ulong)data[(ulong)fr * ndet + pix]; \
+    } \
+    out[pix] = s; \
 }
 
-kernel void masked_sum_u32(
-    device const uint*   data    [[buffer(0)]],  // (nframes, ndet) uint32, flat
-    device ulong*        out     [[buffer(2)]],  // (nframes,) uint64
-    device const uchar*  mask    [[buffer(1)]],  // (ndet,) 0/1
-    constant uint&       ndet    [[buffer(3)]],
-    constant uint&       nframes [[buffer(4)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const uint* frame = data + (ulong)gid * ndet;
-    ulong s = 0ul;
-    for (uint i = 0; i < ndet; i++) s += mask[i] ? (ulong)frame[i] : 0ul;
-    out[gid] = s;
-}
+MASKED_SUM(masked_sum_u8, uchar)
+MASKED_SUM(masked_sum_u16, ushort)
+MASKED_SUM(masked_sum_u32, uint)
+DETECTOR_SUM_EXACT(detector_sum_exact_u8, uchar)
+DETECTOR_SUM_EXACT(detector_sum_exact_u16, ushort)
+DETECTOR_SUM_EXACT(detector_sum_exact_u32, uint)
 
-kernel void detector_sum_exact_u16(
-    device const ushort* data    [[buffer(0)]],  // (nframes, ndet) uint16
-    device ulong*        out     [[buffer(1)]],  // (ndet,) uint64, one chunk
-    constant uint&       ndet    [[buffer(2)]],
-    constant uint&       nframes [[buffer(3)]],
-    uint pix [[thread_position_in_grid]]
-) {
-    if (pix >= ndet) return;
-    ulong s = 0ul;
-    for (uint fr = 0; fr < nframes; ++fr) {
-        s += (ulong)data[(ulong)fr * ndet + pix];
-    }
-    out[pix] = s;
-}
-
-kernel void detector_sum_exact_u8(
-    device const uchar*  data    [[buffer(0)]],  // (nframes, ndet) uint8
-    device ulong*        out     [[buffer(1)]],  // (ndet,) uint64, one chunk
-    constant uint&       ndet    [[buffer(2)]],
-    constant uint&       nframes [[buffer(3)]],
-    uint pix [[thread_position_in_grid]]
-) {
-    if (pix >= ndet) return;
-    ulong s = 0ul;
-    for (uint fr = 0; fr < nframes; ++fr) {
-        s += (ulong)data[(ulong)fr * ndet + pix];
-    }
-    out[pix] = s;
-}
-
-kernel void detector_sum_exact_u32(
-    device const uint* data      [[buffer(0)]],  // (nframes, ndet) uint32
-    device ulong*      out       [[buffer(1)]],  // (ndet,) uint64, one chunk
-    constant uint&     ndet      [[buffer(2)]],
-    constant uint&     nframes   [[buffer(3)]],
-    uint pix [[thread_position_in_grid]]
-) {
-    if (pix >= ndet) return;
-    ulong s = 0ul;
-    for (uint fr = 0; fr < nframes; ++fr) {
-        s += (ulong)data[(ulong)fr * ndet + pix];
-    }
-    out[pix] = s;
-}
+#undef MASKED_SUM
+#undef DETECTOR_SUM_EXACT
 
 // uint8 frames sum four pixels per thread over 1024-frame blocks (at most
 // 1024 * 255 per block, exact in int32), then each pixel adds its blocks in 64 bits.
@@ -174,121 +126,45 @@ GATHER_COLUMNS_F32_TILED(gather_columns_f32_tiled_u32, uint)
 
 #undef GATHER_COLUMNS_F32_TILED
 
-kernel void mean_dp_sum_u16(
-    device const ushort* data          [[buffer(0)]],  // raw (nframes, ndet)
-    device const uint*   frame_indices [[buffer(1)]],  // local frame indices
-    device ulong*        out           [[buffer(2)]],  // (ndet,) uint64 sum
-    constant uint&       ndet          [[buffer(3)]],
-    constant uint&       nindices      [[buffer(4)]],
-    uint pix [[thread_position_in_grid]]
-) {
-    if (pix >= ndet) return;
-    ulong s = 0ul;
-    for (uint i = 0; i < nindices; i++) {
-        s += (ulong)data[(ulong)frame_indices[i] * ndet + pix];
-    }
-    out[pix] = s;
+#define MEAN_DP_SUM(NAME, TYPE) \
+kernel void NAME( \
+    device const TYPE*   data          [[buffer(0)]],  /* raw (nframes, ndet) */ \
+    device const uint*   frame_indices [[buffer(1)]],  /* local frame indices */ \
+    device ulong*        out           [[buffer(2)]],  /* (ndet,) uint64 sum */ \
+    constant uint&       ndet          [[buffer(3)]], \
+    constant uint&       nindices      [[buffer(4)]], \
+    uint pix [[thread_position_in_grid]] \
+) { \
+    if (pix >= ndet) return; \
+    ulong s = 0ul; \
+    for (uint i = 0; i < nindices; i++) { \
+        s += (ulong)data[(ulong)frame_indices[i] * ndet + pix]; \
+    } \
+    out[pix] = s; \
 }
 
-kernel void mean_dp_sum_u8(
-    device const uchar*  data          [[buffer(0)]],  // raw (nframes, ndet)
-    device const uint*   frame_indices [[buffer(1)]],  // local frame indices
-    device ulong*        out           [[buffer(2)]],  // (ndet,) uint64 sum
-    constant uint&       ndet          [[buffer(3)]],
-    constant uint&       nindices      [[buffer(4)]],
-    uint pix [[thread_position_in_grid]]
-) {
-    if (pix >= ndet) return;
-    ulong s = 0ul;
-    for (uint i = 0; i < nindices; i++) {
-        s += (ulong)data[(ulong)frame_indices[i] * ndet + pix];
-    }
-    out[pix] = s;
-}
-
-kernel void mean_dp_sum_u32(
-    device const uint*   data          [[buffer(0)]],  // raw (nframes, ndet)
-    device const uint*   frame_indices [[buffer(1)]],  // local frame indices
-    device ulong*        out           [[buffer(2)]],  // (ndet,) uint64 sum
-    constant uint&       ndet          [[buffer(3)]],
-    constant uint&       nindices      [[buffer(4)]],
-    uint pix [[thread_position_in_grid]]
-) {
-    if (pix >= ndet) return;
-    ulong s = 0ul;
-    for (uint i = 0; i < nindices; i++) {
-        s += (ulong)data[(ulong)frame_indices[i] * ndet + pix];
-    }
-    out[pix] = s;
-}
-
-kernel void rowspan_sum_u16(
-    device const ushort* data    [[buffer(0)]],  // raw (nframes, ndet)
-    device const uint*   starts  [[buffer(1)]],  // inclusive flat span starts
-    device const uint*   ends    [[buffer(2)]],  // inclusive flat span ends
-    device ulong*        out     [[buffer(3)]],  // (nframes,) uint64
-    constant uint&       nspans  [[buffer(4)]],
-    constant uint&       ndet    [[buffer(5)]],
-    constant uint&       nframes [[buffer(6)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const ushort* frame = data + (ulong)gid * ndet;
-    ulong s = 0ul;
-    for (uint sp = 0; sp < nspans; sp++) {
-        uint start = starts[sp];
-        uint end = ends[sp];
-        for (uint pix = start; pix <= end; pix++) {
-            s += (ulong)frame[pix];
-        }
-    }
-    out[gid] = s;
-}
-
-kernel void rowspan_sum_u8(
-    device const uchar*  data    [[buffer(0)]],  // raw (nframes, ndet)
-    device const uint*   starts  [[buffer(1)]],  // inclusive flat span starts
-    device const uint*   ends    [[buffer(2)]],  // inclusive flat span ends
-    device ulong*        out     [[buffer(3)]],  // (nframes,) uint64
-    constant uint&       nspans  [[buffer(4)]],
-    constant uint&       ndet    [[buffer(5)]],
-    constant uint&       nframes [[buffer(6)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const uchar* frame = data + (ulong)gid * ndet;
-    ulong s = 0ul;
-    for (uint sp = 0; sp < nspans; sp++) {
-        uint start = starts[sp];
-        uint end = ends[sp];
-        for (uint pix = start; pix <= end; pix++) {
-            s += (ulong)frame[pix];
-        }
-    }
-    out[gid] = s;
-}
-
-kernel void rowspan_sum_u32(
-    device const uint*   data    [[buffer(0)]],  // raw (nframes, ndet)
-    device const uint*   starts  [[buffer(1)]],  // inclusive flat span starts
-    device const uint*   ends    [[buffer(2)]],  // inclusive flat span ends
-    device ulong*        out     [[buffer(3)]],  // (nframes,) uint64
-    constant uint&       nspans  [[buffer(4)]],
-    constant uint&       ndet    [[buffer(5)]],
-    constant uint&       nframes [[buffer(6)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const uint* frame = data + (ulong)gid * ndet;
-    ulong s = 0ul;
-    for (uint sp = 0; sp < nspans; sp++) {
-        uint start = starts[sp];
-        uint end = ends[sp];
-        for (uint pix = start; pix <= end; pix++) {
-            s += (ulong)frame[pix];
-        }
-    }
-    out[gid] = s;
+#define ROWSPAN_SUM(NAME, TYPE) \
+kernel void NAME( \
+    device const TYPE*   data    [[buffer(0)]],  /* raw (nframes, ndet) */ \
+    device const uint*   starts  [[buffer(1)]],  /* inclusive flat span starts */ \
+    device const uint*   ends    [[buffer(2)]],  /* inclusive flat span ends */ \
+    device ulong*        out     [[buffer(3)]],  /* (nframes,) uint64 */ \
+    constant uint&       nspans  [[buffer(4)]], \
+    constant uint&       ndet    [[buffer(5)]], \
+    constant uint&       nframes [[buffer(6)]], \
+    uint gid [[thread_position_in_grid]] \
+) { \
+    if (gid >= nframes) return; \
+    device const TYPE* frame = data + (ulong)gid * ndet; \
+    ulong s = 0ul; \
+    for (uint sp = 0; sp < nspans; sp++) { \
+        uint start = starts[sp]; \
+        uint end = ends[sp]; \
+        for (uint pix = start; pix <= end; pix++) { \
+            s += (ulong)frame[pix]; \
+        } \
+    } \
+    out[gid] = s; \
 }
 
 // Centre-of-mass moments per scan position over the masked detector: the total
@@ -296,77 +172,42 @@ kernel void rowspan_sum_u32(
 // frame. Metal has no double, so the host divides in float64 and rounds once to
 // float32, exactly as the CUDA kernel does; a float32 quotient on the GPU differed.
 // col/row come from the linear detector index (col = i % detcols, row = i / detcols).
-kernel void com_u16(
-    device const ushort* data    [[buffer(0)]],   // (nframes, ndet) uint16, flat
-    device const uchar*  mask    [[buffer(1)]],   // (ndet,) 0/1
-    device ulong*        out     [[buffer(2)]],   // (nframes, 3) total, row moment, col moment
-    constant uint&       ndet    [[buffer(3)]],
-    constant uint&       detcols [[buffer(4)]],   // detector width
-    constant uint&       nframes [[buffer(5)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const ushort* frame = data + (ulong)gid * ndet;
-    ulong total = 0ul, row_sum = 0ul, col_sum = 0ul;
-    for (uint i = 0; i < ndet; i++) {
-        if (mask[i]) {
-            ulong v = (ulong)frame[i];
-            total += v;
-            row_sum += v * (ulong)(i / detcols);
-            col_sum += v * (ulong)(i % detcols);
-        }
-    }
-    out[3 * (ulong)gid] = total;
-    out[3 * (ulong)gid + 1] = row_sum;
-    out[3 * (ulong)gid + 2] = col_sum;
+#define CENTER_OF_MASS(NAME, TYPE) \
+kernel void NAME( \
+    device const TYPE*   data    [[buffer(0)]],   /* (nframes, ndet) counts, flat */ \
+    device const uchar*  mask    [[buffer(1)]],   /* (ndet,) 0/1 */ \
+    device ulong*        out     [[buffer(2)]],   /* (nframes, 3) total, row moment, col moment */ \
+    constant uint&       ndet    [[buffer(3)]], \
+    constant uint&       detcols [[buffer(4)]],   /* detector width */ \
+    constant uint&       nframes [[buffer(5)]], \
+    uint gid [[thread_position_in_grid]] \
+) { \
+    if (gid >= nframes) return; \
+    device const TYPE* frame = data + (ulong)gid * ndet; \
+    ulong total = 0ul, row_sum = 0ul, col_sum = 0ul; \
+    for (uint i = 0; i < ndet; i++) { \
+        if (mask[i]) { \
+            ulong v = (ulong)frame[i]; \
+            total += v; \
+            row_sum += v * (ulong)(i / detcols); \
+            col_sum += v * (ulong)(i % detcols); \
+        } \
+    } \
+    out[3 * (ulong)gid] = total; \
+    out[3 * (ulong)gid + 1] = row_sum; \
+    out[3 * (ulong)gid + 2] = col_sum; \
 }
 
-kernel void com_u8(
-    device const uchar*  data    [[buffer(0)]],   // (nframes, ndet) uint8, flat
-    device const uchar*  mask    [[buffer(1)]],   // (ndet,) 0/1
-    device ulong*        out     [[buffer(2)]],   // (nframes, 3) total, row moment, col moment
-    constant uint&       ndet    [[buffer(3)]],
-    constant uint&       detcols [[buffer(4)]],
-    constant uint&       nframes [[buffer(5)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const uchar* frame = data + (ulong)gid * ndet;
-    ulong total = 0ul, row_sum = 0ul, col_sum = 0ul;
-    for (uint i = 0; i < ndet; i++) {
-        if (mask[i]) {
-            ulong v = (ulong)frame[i];
-            total += v;
-            row_sum += v * (ulong)(i / detcols);
-            col_sum += v * (ulong)(i % detcols);
-        }
-    }
-    out[3 * (ulong)gid] = total;
-    out[3 * (ulong)gid + 1] = row_sum;
-    out[3 * (ulong)gid + 2] = col_sum;
-}
+MEAN_DP_SUM(mean_dp_sum_u8, uchar)
+MEAN_DP_SUM(mean_dp_sum_u16, ushort)
+MEAN_DP_SUM(mean_dp_sum_u32, uint)
+ROWSPAN_SUM(rowspan_sum_u8, uchar)
+ROWSPAN_SUM(rowspan_sum_u16, ushort)
+ROWSPAN_SUM(rowspan_sum_u32, uint)
+CENTER_OF_MASS(com_u8, uchar)
+CENTER_OF_MASS(com_u16, ushort)
+CENTER_OF_MASS(com_u32, uint)
 
-kernel void com_u32(
-    device const uint*   data    [[buffer(0)]],   // (nframes, ndet) uint32, flat
-    device const uchar*  mask    [[buffer(1)]],   // (ndet,) 0/1
-    device ulong*        out     [[buffer(2)]],   // (nframes, 3) total, row moment, col moment
-    constant uint&       ndet    [[buffer(3)]],
-    constant uint&       detcols [[buffer(4)]],
-    constant uint&       nframes [[buffer(5)]],
-    uint gid [[thread_position_in_grid]]
-) {
-    if (gid >= nframes) return;
-    device const uint* frame = data + (ulong)gid * ndet;
-    ulong total = 0ul, row_sum = 0ul, col_sum = 0ul;
-    for (uint i = 0; i < ndet; i++) {
-        if (mask[i]) {
-            ulong v = (ulong)frame[i];
-            total += v;
-            row_sum += v * (ulong)(i / detcols);
-            col_sum += v * (ulong)(i % detcols);
-        }
-    }
-    out[3 * (ulong)gid] = total;
-    out[3 * (ulong)gid + 1] = row_sum;
-    out[3 * (ulong)gid + 2] = col_sum;
-}
+#undef MEAN_DP_SUM
+#undef ROWSPAN_SUM
+#undef CENTER_OF_MASS

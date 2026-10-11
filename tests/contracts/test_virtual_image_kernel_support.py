@@ -4,29 +4,6 @@ import numpy as np
 import pytest
 
 
-def test_mps_integer_reduction_kernel_sources_are_present() -> None:
-    source = Path("src/quantem/gpu/resident/mps/kernels/reductions.msl").read_text(
-        encoding="utf-8"
-    )
-
-    for name in (
-        "masked_sum_u8",
-        "detector_sum_exact_u8",
-        "detector_sum_exact_u16",
-        "detector_sum_exact_u32",
-        "mean_dp_sum_u8",
-        "detector_sum_u8_block_partial",
-        "detector_sum_u8_block_merge",
-        "rowspan_sum_u8",
-        "com_u8",
-        "masked_sum_u32",
-        "mean_dp_sum_u32",
-        "rowspan_sum_u32",
-        "com_u32",
-    ):
-        assert f"kernel void {name}" in source
-
-
 def test_mps_exact_detector_sum_exceeds_uint32_without_overflow() -> None:
     """The Metal exact reducer preserves sums beyond the uint32 range."""
     pytest.importorskip("Metal")

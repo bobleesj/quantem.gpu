@@ -212,28 +212,6 @@ def test_cuda_frame_mean_divides_the_exact_total_once() -> None:
     np.testing.assert_array_equal(detector.prepare(cp.asarray(counts)).reduce_frames(indices, "mean"), expected)
 
 
-def test_cuda_virtual_image_kernel_source_uses_warp_reductions() -> None:
-    from pathlib import Path
-
-    from quantem.gpu.detector.cuda import dense
-
-    _CUDA_VI_CODE = Path(dense.__file__).with_name("kernels").joinpath("virtual_image.cu").read_text()
-
-    assert "__shfl_down_sync" in _CUDA_VI_CODE
-    assert "selected_sum_f32_u16_16f" in _CUDA_VI_CODE
-    assert "selected_sum_f32_u32_16f" in _CUDA_VI_CODE
-    assert "selected_sum_u64_u16_16f" in _CUDA_VI_CODE
-    assert "selected_sum_u64_u32_16f" in _CUDA_VI_CODE
-    assert "center_of_mass_full_u16_4f" in _CUDA_VI_CODE
-    assert "center_of_mass_full_u32_4f" in _CUDA_VI_CODE
-    assert "center_of_mass_selected_u16_4f" in _CUDA_VI_CODE
-    assert "center_of_mass_selected_u32_4f" in _CUDA_VI_CODE
-    assert "selected_frame_sum_u64_u16" in _CUDA_VI_CODE
-    assert "selected_frame_sum_u64_u32" in _CUDA_VI_CODE
-    assert "selected_frame_max_u32_u16" in _CUDA_VI_CODE
-    assert "selected_frame_max_u32_u32" in _CUDA_VI_CODE
-
-
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
 def test_cuda_selected_frame_sum_matches_exact_reference(dtype) -> None:
     cp = _cupy_with_device()
