@@ -118,6 +118,8 @@ damage = {
     "overlong": lambda length, block: block.__setitem__(slice(0, 45), [0x1F, 0, 1, 0] + [255] * 40 + [0]),
     # the block stops halfway, as in a file still being written
     "short": lambda length, block: length.__setitem__(slice(None), list((block.size // 2).to_bytes(4, "big"))),
+    # the length field claims more than two blocks of bytes, which no valid block needs: refused without reading it
+    "long": lambda length, block: length.__setitem__(slice(None), list((2 * 8192 + 17).to_bytes(4, "big"))),
 }
 for master in sys.argv[2:]:
     with h5py.File(master) as file:
@@ -164,7 +166,7 @@ def test_damaged_lz4_bytes_raise_and_the_gpu_stays_usable(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == 2 * [
         "zeroed ValueError", "random ValueError", "half ValueError", "overlong ValueError", "short ValueError",
-        "valid batch exact after the damaged ones",
+        "long ValueError", "valid batch exact after the damaged ones",
     ]
 
 
