@@ -453,7 +453,7 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
         before = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave").loss
         session.find_aberrations(trials=4, refinement=None, check_rotation=False, verbose=False)
         after = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave", force=True).loss
-        engine = session._prepare_cuda()._get_accelerator()
+        engine = session._backend()._get_accelerator()
         engine_aberrations = aberrations_to_engine(aberrations)
         _, exact = engine.reconstruct_with_loss(
             engine_aberrations["C10"], engine_aberrations["C12"], engine_aberrations["phi12"],
@@ -475,7 +475,7 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
         scan_sampling_A=0.5, det_sampling=1,
         bf_center=(7.5, 7.5), bf_radius=5,
     ) as ssb:
-        backend = ssb._prepare_cuda()
+        backend = ssb._backend()
         engine = backend._get_accelerator()
         engine.cache_rotation(backend._rotation_angle_rad)
         assert engine.num_bf == 80  # 64-BF chunk, then a 16-BF tail.

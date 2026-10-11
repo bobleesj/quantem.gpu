@@ -68,13 +68,18 @@ def _in_notebook() -> bool:
 
 
 class SSB:
-    """Single-sideband ptychography of one 4D-STEM acquisition, with the same science on CUDA and MPS.
+    """Single-sideband ptychography of one 4D-STEM acquisition on CUDA or MPS.
 
     SSB recovers the object phase from the bright-field disk: each bright-field detector pixel sees the sample through
     a slightly different probe tilt, and once the probe aberrations are corrected for every pixel their phase images
     agree. ``find_aberrations`` fits C10, C12 and phi12 by minimising that disagreement (the phase variance over
     bright-field pixels); ``reconstruct`` and ``preview`` apply known aberrations. The full automatically detected
     bright-field disk, the exact phase-variance objective, float32 real and complex64 object storage are fixed.
+
+    The backends differ in what they return for the same call: CUDA averages corrected complex waves before taking
+    the phase (``phase_of_mean``) where MPS averages per-pixel phases (``mean_phase``), finer output sampling
+    (``upsample``) is CUDA only, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
+    backend's own, so fitted values and images agree closely but not to the bit.
 
     Parameters
     ----------
@@ -202,8 +207,8 @@ class SSB:
         self.source_detector_bin = 1
         self.source_provenance: dict[str, object] | None = None
         self.source_load_seconds: float | None = None
-        self._cuda_session = None
-        self._mps_backend = None
+        # the CUDA or MPS implementation, built by _backend() on first use
+        self._compute: SSBProtocol | None = None
         self._reconstruction: SSBResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
@@ -308,29 +313,6 @@ class SSB:
         session.source_load_seconds = source_load_seconds
         return session
 
-    def _prepare_cuda(self):
-        """Construct the private CUDA implementation once."""
-
-        if self._cuda_session is None:
-            from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
-
-            self._cuda_session = CudaSSBBackend(
-                data=self._data,
-                semiangle=self.semiangle_mrad,
-                scan_sampling=self.scan_sampling_A,
-                det_sampling=self.det_sampling,
-                voltage_kV=self.voltage_kV,
-                scan_shape=self._scan_shape,
-                bf_intensity_threshold=self.bf_intensity_threshold,
-                bf_radius=self.bf_radius,
-                bf_center=self.bf_center,
-                aberrations=(
-                    aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
-                ),
-                rotation_angle_deg=self.physical_rotation_deg,
-            )
-        return self._cuda_session
-
     def _result_signature(
         self,
         operation: Literal["find_aberrations", "reconstruct"],
@@ -364,7 +346,7 @@ class SSB:
                 },
                 "ssb": {
                     "backend": self.backend,
-                    # physical angle: saves made before the (angle, com_reversed) split still match exactly
+                    # the physical angle (0-360) is the one unambiguous key for the rotation
                     "rotation_angle_deg": self.physical_rotation_deg,
                     "bf_intensity_threshold": self.bf_intensity_threshold,
                     "bf_radius": self.bf_radius,
@@ -406,8 +388,7 @@ class SSB:
 
         result.source_path = self.source_path
         # Only a backend that already holds prepared data is re-rotated; otherwise the change would trigger a load.
-        backend_ready = self._cuda_session is not None or self._mps_backend is not None
-        if result.physical_rotation_deg != self.physical_rotation_deg and backend_ready:
+        if result.physical_rotation_deg != self.physical_rotation_deg and self._compute is not None:
             # a reversed or reused result can sit on the other 180-degree branch; previews must use its rotation
             self.set_rotation(result.rotation_angle_deg, com_reversed=result.com_reversed)
         self.aberrations = dict(result.aberrations)
@@ -454,7 +435,7 @@ class SSB:
                   f"     Testing {(input_rotation + 180) % 360:.2f}° under the bright-column assumption."
                   + (" Reusing the joint fit; no second search." if reuse_joint_fit else " Refining the opposite branch."))
         self.set_rotation(angle, com_reversed=reversed_now)
-        backend = self._backend_protocol
+        backend = self._backend()
         if reuse_joint_fit:
             opposite = replace(
                 result, aberrations=start, com_reversed=reversed_now,
@@ -498,28 +479,32 @@ class SSB:
                   f"polarity score {refit.column_sign:+.2f}. find_aberrations(check_rotation=False) keeps the input rotation.")
         return refit
 
-    @property
-    def _backend_protocol(self) -> SSBProtocol:
-        """Return the sole strict backend implementation for this session."""
+    def _backend(self) -> SSBProtocol:
+        """The session's CUDA or MPS implementation, built on first use.
 
-        if self.backend == "cuda":
-            return self._prepare_cuda()
-        if self._mps_backend is None:
-            self._mps_backend = MpsSSBBackend(
-                self._data,
-                voltage_kV=self.voltage_kV,
-                semiangle_mrad=self.semiangle_mrad,
-                scan_sampling=self.scan_sampling_A,
-                det_sampling=self.det_sampling,
-                bf_intensity_threshold=self.bf_intensity_threshold,
-                bf_center=self.bf_center,
-                bf_radius=self.bf_radius,
-                rotation_angle_deg=self.physical_rotation_deg,
-                aberrations=(
-                    aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
-                ),
-            )
-        return self._mps_backend
+        Building it reads the bright-field evidence and transforms it (seconds and gigabytes on a full scan), so a
+        session that is only configured, saved or closed never pays for it.
+        """
+        if self._compute is None:
+            aberrations = aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
+            if self.backend == "cuda":
+                # CuPy loads with the CUDA implementation only, so MPS sessions run without it
+                from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
+
+                self._compute = CudaSSBBackend(
+                    data=self._data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
+                    det_sampling=self.det_sampling, voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
+                    bf_intensity_threshold=self.bf_intensity_threshold, bf_radius=self.bf_radius,
+                    bf_center=self.bf_center, aberrations=aberrations, rotation_angle_deg=self.physical_rotation_deg,
+                )
+            else:
+                self._compute = MpsSSBBackend(
+                    self._data, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                    scan_sampling=self.scan_sampling_A, det_sampling=self.det_sampling,
+                    bf_intensity_threshold=self.bf_intensity_threshold, bf_center=self.bf_center,
+                    bf_radius=self.bf_radius, rotation_angle_deg=self.physical_rotation_deg, aberrations=aberrations,
+                )
+        return self._compute
 
     def _reconstruct_trials(self, parameters, trials, *, upsample, phase_estimator):
         """Replay selected records without replacing the current search or correction."""
@@ -529,32 +514,25 @@ class SSB:
         records = select_records(parameters.trial_records, trials)
         estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
         saved_rotation = self.rotation_angle_deg, self.com_reversed
-        xp = cp if self.backend == "cuda" else np
         waves = []
-        # a failed replay must not leave the session on a trial's rotation
-        try:
-            for record in records:
-                self.set_rotation(record["rotation_angle_deg"], record["com_reversed"])
-                values = record["params"]
-                phase, _ = self._phase(
-                    {"C10": values["C10_nm"], "C12": values["C12_nm"],
-                     "phi12": math.radians(values["phi12_deg"])},
-                    tilt_mrad=(record["tilt_row_mrad"], record["tilt_col_mrad"]),
-                    depth_spread_nm=record["depth_spread_nm"],
-                    upsampling_factor=upsample, phase_estimator=estimator, compute_loss=False,
-                )
-                # Native mean-phase kernels reuse a scratch buffer. Own each
-                # wave before reconstructing the next trial on the same stream.
-                waves.append(xp.exp(1j * phase))
-        finally:
-            self.set_rotation(*saved_rotation)
-        wave = xp.stack(waves)
-        sampling = np.asarray(self.scan_sampling_A) / upsample
-        sampling = float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
+        for record in records:
+            self.set_rotation(record["rotation_angle_deg"], record["com_reversed"])
+            values = record["params"]
+            phase, _ = self._phase(
+                {"C10": values["C10_nm"], "C12": values["C12_nm"],
+                 "phi12": math.radians(values["phi12_deg"])},
+                tilt_mrad=(record["tilt_row_mrad"], record["tilt_col_mrad"]),
+                depth_spread_nm=record["depth_spread_nm"],
+                upsampling_factor=upsample, phase_estimator=estimator, compute_loss=False,
+            )
+            # Native mean-phase kernels reuse a scratch buffer. Own each
+            # wave before reconstructing the next trial on the same stream.
+            waves.append(self._unit_wave(phase))
+        self.set_rotation(*saved_rotation)
         return SSBResult(
-            object_wave=wave, backend=self.backend, trial_records=records,
+            object_wave=(cp if self.backend == "cuda" else np).stack(waves), backend=self.backend, trial_records=records,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=sampling, upsample=upsample, phase_estimator=estimator,
+            scan_sampling_A=self._output_sampling(upsample), upsample=upsample, phase_estimator=estimator,
             amplitude_estimated=False, source_path=self.source_path,
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
@@ -753,7 +731,7 @@ class SSB:
         if tilt:
             result = self._accept_result(self._fit_tilt(int(trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
         else:
-            result = self._backend_protocol.fit(
+            result = self._backend().fit(
                 aberrations=(
                     aberrations_to_engine(self.aberrations)
                     if self._aberrations_explicit else None
@@ -920,7 +898,7 @@ class SSB:
                 and (not compute_loss or cached.loss is not None)):
             return cached
         if estimator == "complex_wave":
-            result = result_from_engine(self._backend_protocol.reconstruct_result(
+            result = result_from_engine(self._backend().reconstruct_result(
                 aberrations_to_engine(coefs), compute_loss=compute_loss,
             ))
             result.phase_estimator = estimator
@@ -937,16 +915,13 @@ class SSB:
             tilt_mrad=tilt or (0.0, 0.0), depth_spread_nm=depth or 0.0,
             compute_loss=compute_loss,
         )
-        wave = cp.exp(1j * phase) if self.backend == "cuda" else np.exp(1j * phase)
-        sampling = np.asarray(self.scan_sampling_A) / upsample
-        sampling = float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
         result = SSBResult(
-            object_wave=wave, backend=self.backend, aberrations=dict(coefs),
+            object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
             tilt_mrad=tilt, depth_spread_nm=depth,
             rotation_angle_deg=self.rotation_angle_deg, com_reversed=self.com_reversed,
             loss=loss, elapsed=time.perf_counter() - started, num_bf=self.num_bf,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=sampling, upsample=upsample,
+            scan_sampling_A=self._output_sampling(upsample), upsample=upsample,
             phase_estimator=estimator, amplitude_estimated=False,
             phase_clim=correction.phase_limits if correction is not None else None,
             fit_scan_region=correction.fit_scan_region if correction is not None else None,
@@ -1083,7 +1058,7 @@ class SSB:
                     "Upsampling and wave averaging support C10/C12 with "
                     "tilt/depth; turn off higher-order magnitudes."
                 )
-            backend = self._backend_protocol
+            backend = self._backend()
             with scope:
                 return backend.preview_upsampled(
                     coefs, upsampling_factor=upsampling_factor, compute_loss=compute_loss,
@@ -1096,7 +1071,7 @@ class SSB:
                       "thickness": float(depth_spread_nm) * ENGINE_PER_NM}
             if higher_order_magnitudes is not None:
                 raise ValueError("The thick-sample preview does not combine with higher-order aberrations yet.")
-            backend = self._backend_protocol
+            backend = self._backend()
             with scope:
                 return backend.preview_sample(coefs, sample, compute_loss=compute_loss)
         magnitudes = (
@@ -1110,7 +1085,7 @@ class SSB:
             if higher_order_angles is None
             else np.asarray(higher_order_angles, dtype=np.float32)
         )
-        backend = self._backend_protocol
+        backend = self._backend()
         with scope:
             return backend.preview(
                 coefs,
@@ -1129,7 +1104,7 @@ class SSB:
 
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
-        backend = self._backend_protocol
+        backend = self._backend()
         started = time.perf_counter()
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3)
@@ -1139,7 +1114,7 @@ class SSB:
         phase, loss = self._phase(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
                                    phase_estimator="mean_phase")
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
-        object_wave = cp.exp(1j * phase) if self.backend == "cuda" else np.exp(1j * np.asarray(phase))
+        object_wave = self._unit_wave(phase)
         records = []
         for trial in fit["trial_records"]:
             values = trial["params"]
@@ -1159,15 +1134,24 @@ class SSB:
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          scan_sampling_A=self.scan_sampling_A)
 
+    def _unit_wave(self, phase):
+        """The unit-amplitude wave exp(i phase) of a phase-only reconstruction, on the session's device."""
+        return cp.exp(1j * phase) if self.backend == "cuda" else np.exp(1j * np.asarray(phase))
+
+    def _output_sampling(self, upsample: int) -> float | tuple[float, float]:
+        """Output pixel size in Angstrom at ``upsample`` times the scan grid: one value or (row, col) like the input."""
+        sampling = np.asarray(self.scan_sampling_A) / upsample
+        return float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
+
     def preview_context(self, num_bf: int):
         """Prepare a backend-owned reduced-BF interaction context."""
 
-        return self._backend_protocol.preview_context(int(num_bf))
+        return self._backend().preview_context(int(num_bf))
 
     def browser_state(self):
         """Return compact backend-neutral state for browser WebGPU."""
 
-        return self._backend_protocol.browser_state()
+        return self._backend().browser_state()
 
     def export_brightfield(
         self,
@@ -1175,7 +1159,7 @@ class SSB:
     ) -> tuple[str, float] | None:
         """Persist exact raw-count bright-field columns when supported."""
 
-        written = self._backend_protocol.export_brightfield(self._data, path_stem)
+        written = self._backend().export_brightfield(self._data, path_stem)
         if written is None:
             return None
         path, elapsed = written
@@ -1185,13 +1169,13 @@ class SSB:
     def scan_shape(self) -> tuple[int, int]:
         """Prepared scan shape in public ``(row, col)`` order."""
 
-        return self._backend_protocol.scan_shape
+        return self._backend().scan_shape
 
     @property
     def num_bf(self) -> int:
         """Number of pixels in the complete detected bright-field disk."""
 
-        return self._backend_protocol.num_bf
+        return self._backend().num_bf
 
     @property
     def physical_rotation_deg(self) -> float:
@@ -1202,7 +1186,7 @@ class SSB:
         """Set scan-to-detector rotation (any angle; stored as below 180 plus ``com_reversed``) and refresh geometry."""
 
         self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
-        self._backend_protocol.cache_rotation(math.radians(self.physical_rotation_deg))
+        self._backend().cache_rotation(math.radians(self.physical_rotation_deg))
 
     def close(self) -> None:
         """Release the session's GPU state; data passed to ``SSB(data)`` stays the caller's.
@@ -1214,14 +1198,9 @@ class SSB:
         """
 
         self._data = None
-        if self._cuda_session is not None:
-            self._cuda_session.close()
-            self._cuda_session = None
-        if self._mps_backend is not None:
-            backend = self._mps_backend
-            self._mps_backend = None
-            # The MPS backend's final allocator flush must run after the
-            # workflow releases its own reference to the shared source.
+        # the MPS backend's final allocator flush must run after the workflow has dropped the source and the backend
+        backend, self._compute = self._compute, None
+        if backend is not None:
             backend.close()
 
     def __enter__(self) -> Self:

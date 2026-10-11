@@ -42,7 +42,6 @@ def test_workflow_drops_shared_source_before_mps_allocator_flush() -> None:
     from quantem.gpu.ssb.workflow import SSB
 
     workflow = SSB.__new__(SSB)
-    workflow._cuda_session = None
     workflow._data = np.ones((2, 2, 3, 3), dtype=np.uint16)
     observations: list[object | None] = []
 
@@ -50,10 +49,10 @@ def test_workflow_drops_shared_source_before_mps_allocator_flush() -> None:
         def close(self) -> None:
             observations.append(workflow._data)
 
-    workflow._mps_backend = _Backend()
+    workflow._compute = _Backend()
 
     workflow.close()
 
     assert observations == [None]
-    assert workflow._mps_backend is None
+    assert workflow._compute is None
     assert workflow._data is None

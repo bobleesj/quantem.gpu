@@ -129,7 +129,7 @@ def test_explicit_complex_estimator_preserves_wave_amplitude():
     ssb, _ = _synthetic_session()
     coefs = {'C10': -8., 'C12': 4., 'phi12': -.7}
     try:
-        expected = ssb._backend_protocol.reconstruct_result(aberrations_to_engine(coefs))
+        expected = ssb._backend().reconstruct_result(aberrations_to_engine(coefs))
         result = ssb.reconstruct(aberrations=coefs, phase_estimator='complex_wave')
         np.testing.assert_array_equal(cp.asnumpy(result.object_wave), cp.asnumpy(expected.object_wave))
         assert result.amplitude_estimated
