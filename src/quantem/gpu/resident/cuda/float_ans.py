@@ -27,6 +27,8 @@ def _kernels(device, lanes):
 class CUDAFloatLanes(counts.StreamedCounts):
     """Reuse count tables/storage without exposing count-valued float products."""
 
+    spatial_index = False
+
     def decode_scan_range_device(self, first, stop, *, errors=None):
         """Decode scans ``[first, stop)`` as uint16 bit lanes.
 
