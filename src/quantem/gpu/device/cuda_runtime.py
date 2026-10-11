@@ -103,6 +103,19 @@ def cuda_module(source: str, names: tuple[str, ...], options: tuple[str, ...] = 
     return functions
 
 
+def start_after_queued_work(stream) -> None:
+    """Hold a private ``stream`` until everything already queued on the caller's stream has run.
+
+    The memory pool hands a freed block to the next allocation at once, while kernels the caller
+    queued earlier may still read it. Later work on the same stream is ordered behind them; work on
+    a second stream is not, so an upload stream writing into newly allocated arrays overwrote counts
+    that a queued kernel had yet to read (decoding one batch right after joining and freeing earlier
+    ones returned wrong frames in the joined array). One event recorded on the caller's stream and
+    waited on before the private stream's first copy restores the order.
+    """
+    stream.wait_event(cp.cuda.get_current_stream().record())
+
+
 def current_context() -> tuple[int, int]:
     """Identify the current device and CUDA context, without changing devices."""
     if cp is None:

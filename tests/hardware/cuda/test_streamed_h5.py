@@ -1,5 +1,6 @@
 """Complete H5/ANS workflows, count integrity and translated detector products."""
 
+import os
 import subprocess
 import sys
 
@@ -355,3 +356,37 @@ def test_damaged_lz4_bytes_raise_and_the_gpu_stays_usable(tmp_path):
     assert result.stdout.splitlines() == [
         "zeroed ValueError", "random ValueError", "half ValueError", "valid batch exact after the damaged ones",
     ]
+
+
+@pytest.mark.slow
+def test_decode_right_after_freeing_batches_with_queued_reads_keeps_their_counts():
+    """A decode's upload stream waits for the caller's queued work before it writes into pool memory.
+
+    The memory pool hands freed blocks to the next decode at once. Its upload ran on a second stream that did not
+    wait for kernels the caller had queued, so joining decoded batches, freeing them and decoding the next batch
+    returned wrong frames in the joined array (hundreds of frames, in 10 of 12 attempts on a busy GPU).
+    """
+    master = os.environ.get("QUANTEM_SSB_ARINA_MASTER", "")
+    if not master:
+        pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
+    import cupy as cp
+
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
+
+    with FrameReader(master) as reader:
+
+        def batches():
+            return [decompress_prepared(reader.prepare(np.arange(first, first + 2048))) for first in range(0, 16384, 2048)]
+
+        reference = cp.concatenate(batches())
+        cp.cuda.Device().synchronize()
+        for _ in range(8):
+            # an empty pool, so the freed parts are the blocks the next decode is handed
+            cp.get_default_memory_pool().free_all_blocks()
+            parts = batches()
+            following = reader.prepare(np.arange(16384, 20480))
+            joined = cp.concatenate(parts)   # queued on the caller's stream; reads every part
+            del parts                        # the parts return to the pool while those reads are queued
+            decompress_prepared(following)   # more than one upload batch, so the upload stream runs
+            assert int(cp.count_nonzero((joined != reference).any(axis=(1, 2)))) == 0

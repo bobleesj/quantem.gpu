@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cuda_device_index
+from quantem.gpu.device.cuda_runtime import cuda_device_index, start_after_queued_work
 from quantem.gpu.device.metal_runtime import (
     allocate_shared,
     buffer_view,
@@ -199,6 +199,8 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
     with cp.cuda.Device(selected):
         source = StreamedCounts(shape, np.dtype(header["dtype"]), valid)
         stream = cp.cuda.Stream(non_blocking=True)
+        # The arena may be pool blocks the caller has just freed with reads of them still queued.
+        start_after_queued_work(stream)
         arena = cp.empty(header["bytes"], cp.uint8)
         capacity = min(BLOCK_BYTES, header["bytes"])
         owners = [cp.cuda.alloc_pinned_memory(capacity) for _ in range(2)]
