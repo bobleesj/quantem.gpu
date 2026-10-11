@@ -53,6 +53,22 @@ def generate(directory: Path) -> None:
         directory / "saturated.qem",
         np.full((1, 1, 256, 256), 65535, dtype=np.uint16),
     )
+    # rans-products.ts: two acquisitions of a 32 x 32 scan on a 3 x 4 detector whose last
+    # pixel is masked and saturated, a 131072-position saturated scan (ROI sums above 2^32)
+    # and a saturated 512-column detector (weighted moments above 2^32).
+    scan = np.arange(1024)[:, None]
+    pixel = np.arange(12)[None, :]
+    valid = np.ones((3, 4), bool)
+    valid[2, 3] = False
+    for tilt in (0, 1):
+        values = np.where(scan % 17 == 0, 0, (scan * (pixel + 1) + tilt * 7 + pixel) % 31)
+        values[:, 0] = ((scan[:, 0] + tilt) % 2) * 7
+        values[:, 11] = 65535
+        products = values.astype(np.uint16).reshape(32, 32, 3, 4)
+        save_array(directory / f"products-{tilt}.qem", products, metadata={"valid_pixels": valid}, chunk_scans=512)
+        products.tofile(directory / f"products-{tilt}.bin")
+    save_array(directory / "saturated-roi.qem", np.full((256, 512, 2, 2), 65535, dtype=np.uint16))
+    save_array(directory / "saturated-columns.qem", np.full((16, 16, 1, 512), 65535, dtype=np.uint16))
     (directory / "cases.json").write_text(json.dumps(records))
 
 

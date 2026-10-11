@@ -1,29 +1,15 @@
 # Resident rANS product parity
 
 `rans-products.ts` exercises the browser decoder and scientific products on a
-caller-supplied WebGPU device. Bundle it with the repository's esbuild (installed
-by `npm ci` at the repository root):
-
-```bash
-npx --no-install esbuild \
-  tests/webgpu/rans-products.ts --bundle --format=iife \
-  --global-name=RansProductParity --outfile=/tmp/rans-products-parity.js
-```
-
-Load that script into a browser test page, confirm the adapter is the intended
-hardware (NVIDIA/Blackwell on the development host), then call:
-
-```javascript
-await RansProductParity.runRansProductParity(device)
-```
-
-The test creates small deterministic rANS exports in memory. Two acquisitions
-mix entropy-coded and literal columns, cross checkpoint and block boundaries,
-and contain a masked saturated detector pixel. Point patterns, virtual images,
-and scan-ROI sums and means are compared exactly against raw counts and the
-stock dense backend. CoM, centered DPC and iDPC must equal the same backend
-exactly (both divide the exact integer moments once); iDPC includes explicit
-rotation and transpose. Single-pixel and empty masks exercise the corresponding views.
+caller-supplied WebGPU device. It runs in the headed `.qem` gate below on
+fixtures that `make_qem_browser_fixture.generate` writes with the public encoder:
+two acquisitions of a 32 x 32 scan on a 3 x 4 detector whose last pixel is
+saturated and masked, cutting chunk and checkpoint boundaries. Point patterns,
+virtual images, and scan-ROI sums and means are compared exactly against raw
+counts and the stock dense backend. CoM, centered DPC and iDPC must equal the
+same backend exactly (both divide the exact integer moments once); iDPC includes
+explicit rotation and transpose. Single-pixel and empty masks exercise the
+corresponding views.
 
 A 131072-position saturated ROI tests dispatch splitting and sums above 32 bits.
 A 512-column saturated detector tests weighted moments above 32 bits, with an

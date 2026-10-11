@@ -91,7 +91,7 @@ def main() -> None:
                           },
                           qem: await QemBrowserParity.runQemBrowserParity(
                             device, location.origin + '/fixtures/'),
-                          retained_rans: await RansProductParity.runRansProductParity(device),
+                          retained_rans: await RansProductParity.runRansProductParity(device, location.origin + '/fixtures/'),
                           ordered_qem_series: await QemSeriesParity.runQemSeriesParity(
                             device, location.origin + '/fixtures/'),
                           integer_readback: await RansIntegerReadbackParity.runRansIntegerReadbackParity(
