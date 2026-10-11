@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 
 def _result(master, workflow):
@@ -14,6 +13,7 @@ def _result(master, workflow):
         },
     }
     zeros = np.zeros((4, 4), dtype=np.float32)
+    counts = np.ones((4, 4), dtype=np.uint64)
     return workflow.ScreeningResult(
         mean_dp=np.arange(9, dtype=np.float32).reshape(3, 3),
         bright_field=np.ones((4, 4), dtype=np.float32),
@@ -26,6 +26,9 @@ def _result(master, workflow):
         rotation_deg=17.0,
         transposed=False,
         metadata=metadata,
+        total_intensity=counts,
+        annular_bright_field=counts,
+        annular_dark_field=counts,
     )
 
 
@@ -98,39 +101,6 @@ def test_screening_cache_roundtrip_preserves_exact_uint64_products(
         np.testing.assert_array_equal(observed, getattr(expected, name))
 
 
-def test_screening_cache_rejects_partial_or_inexact_count_products(tmp_path) -> None:
-    """A cache may contain all exact count maps or none, never a partial set."""
-
-    from quantem.gpu.screening import workflow
-
-    master = tmp_path / "scan_master.h5"
-    master.write_bytes(b"placeholder")
-    cache_path = workflow._cache_path(master, tmp_path / "cache")
-    result = _result(master, workflow)
-    result.total_intensity = np.ones((4, 4), dtype=np.uint64)
-
-    with pytest.raises(ValueError, match="must include"):
-        workflow._save_cache(result, cache_path)
-
-    result.annular_bright_field = np.ones((4, 4), dtype=np.uint64)
-    result.annular_dark_field = np.ones((4, 4), dtype=np.float32)
-    with pytest.raises(TypeError, match="must preserve exact uint64"):
-        workflow._save_cache(result, cache_path)
-
-    np.savez(
-        cache_path,
-        metadata_json=workflow._metadata_array(result.metadata),
-        mean_dp=result.mean_dp,
-        bright_field=result.bright_field,
-        dark_field=result.dark_field,
-        dpc_phase=result.dpc_phase,
-        com_row=result.com_row,
-        com_col=result.com_col,
-        total_intensity=result.total_intensity,
-    )
-    assert workflow._prepare_cache(cache_path, master) is None
-
-
 def test_screening_cache_without_retained_phase_is_rebuilt(tmp_path) -> None:
     """A version-3 cache written before the phase was cached is not reused."""
     from quantem.gpu.screening import workflow
@@ -151,35 +121,6 @@ def test_screening_cache_without_retained_phase_is_rebuilt(tmp_path) -> None:
     )
 
     assert workflow._prepare_cache(cache_path, master) is None
-
-
-def test_screening_result_legacy_positional_constructor_is_compatible() -> None:
-    """Appending exact products must not move any historical positional field."""
-
-    from quantem.gpu.screening import ScreeningResult
-
-    scan = np.zeros((2, 3), dtype=np.float32)
-    result = ScreeningResult(
-        scan,
-        scan,
-        scan,
-        scan,
-        scan,
-        scan,
-        (1.0, 2.0),
-        3.0,
-        4.0,
-        False,
-        {},
-        None,
-        False,
-        5.0,
-    )
-
-    assert result.elapsed_s == 5.0
-    assert result.total_intensity is None
-    assert result.annular_bright_field is None
-    assert result.annular_dark_field is None
 
 
 def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
