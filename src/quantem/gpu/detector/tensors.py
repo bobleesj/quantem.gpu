@@ -156,11 +156,12 @@ class TorchBackend(DetectorQueries):
         if reduce not in ("mean", "sum", "max"):
             raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
         if not torch.is_floating_point(self._flat):
-            if reduce == "sum":
-                return self.reduce_frames_exact(scan_indices)
+            # Signed data (dark-subtracted int16) keeps its sign: an unsigned total of negative values wraps.
+            exact = np.int64 if self._flat.dtype.is_signed else np.uint64
             if reduce == "max":
-                return self.reduce_frames_max(scan_indices).astype(np.uint64)
-            return (self.reduce_frames_exact(scan_indices) / len(scan_indices)).astype(np.float32)
+                return self._integer_reduce(scan_indices, "max").astype(exact)
+            total = self._integer_reduce(scan_indices, "sum")
+            return total.astype(exact) if reduce == "sum" else (total / len(scan_indices)).astype(np.float32)
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
         if reduce == "max":
             step = max(1, _CHUNK_BYTE_BUDGET // (self.det_shape[0] * self.det_shape[1] * 4))
@@ -203,31 +204,33 @@ class TorchBackend(DetectorQueries):
         """Return an exact uint64 scan-frame sum with bounded int64 scratch."""
         if torch.is_floating_point(self._flat):
             raise TypeError("Exact scan ROI sums require integer detector data.")
-        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
-        if indices.size == 0:
-            return np.zeros(self.det_shape, dtype=np.uint64)
-        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
-        total = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
-        for start in range(0, indices.size, step):
-            selected = torch.as_tensor(indices[start : start + step], dtype=torch.int64, device=self.device)
-            # Cast first: MPS has no mixed uint16/int64 sum ("sum_reduction_outer_ushort_long").
-            total += self._flat.index_select(0, selected).to(torch.int64).sum(dim=0)
-        return total.cpu().numpy().astype(np.uint64, copy=False)
+        return self._integer_reduce(scan_indices, "sum").astype(np.uint64, copy=False)
 
     def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
         """Return an exact scan-frame maximum with bounded scratch."""
         if torch.is_floating_point(self._flat):
             raise TypeError("Exact scan ROI maxima require integer detector data.")
+        return self._integer_reduce(scan_indices, "max").astype(np.uint32, copy=False)
+
+    def _integer_reduce(self, scan_indices, reduce: str) -> np.ndarray:
+        """int64 ``sum`` or ``max`` of the selected integer frames; zeros for an empty selection.
+
+        Frames are gathered in chunks that budget the 8-byte cast, and the
+        maximum starts from the first chunk, so negative values survive.
+        """
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
-        if indices.size == 0:
-            return np.zeros(self.det_shape, dtype=np.uint32)
         step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
-        maximum = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        result = None
         for start in range(0, indices.size, step):
             selected = torch.as_tensor(indices[start : start + step], dtype=torch.int64, device=self.device)
+            # Cast first: MPS has no mixed uint16/int64 sum ("sum_reduction_outer_ushort_long").
             chunk = self._flat.index_select(0, selected).to(torch.int64)
-            maximum = torch.maximum(maximum, chunk.max(dim=0).values)
-        return maximum.cpu().numpy().astype(np.uint32, copy=False)
+            if reduce == "max":
+                reduced = chunk.max(dim=0).values
+                result = reduced if result is None else torch.maximum(result, reduced)
+            else:
+                result = chunk.sum(dim=0) if result is None else result + chunk.sum(dim=0)
+        return np.zeros(self.det_shape, np.int64) if result is None else result.cpu().numpy()
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         """Per-scan-position centre of mass over the (masked) detector: the DPC vector field.
@@ -314,16 +317,27 @@ class ArrayBackend(DetectorQueries):
         return image.reshape(self.scan_shape)
 
     def reduce_frames(self, scan_indices, reduce: str = "mean") -> np.ndarray:
-        """Exact uint64 ``sum`` and ``max`` of integer counts (float32 for float data), float32 ``mean``."""
-        selected = self._flat[np.asarray(scan_indices, dtype=np.intp)]
-        exact = np.dtype(np.uint64) if np.issubdtype(selected.dtype, np.integer) else np.dtype(np.float32)
-        if reduce == "mean":
-            return np.asarray(selected.mean(axis=0), dtype=np.float32)
-        if reduce == "sum":
-            return np.asarray(selected.sum(axis=0, dtype=_host_accumulator(selected.dtype)), dtype=exact)
+        """Exact ``sum`` and ``max`` of integer data (uint64, int64 when signed), float32 for float data; float32 ``mean``.
+
+        The total accumulates in uint64, int64 or float64 and the mean divides
+        it once. Frames are gathered in chunks, so a scan region of a
+        memory-mapped file is never loaded at once.
+        """
+        if reduce not in ("mean", "sum", "max"):
+            raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
+        indices = np.asarray(scan_indices, dtype=np.intp).reshape(-1)
+        accumulator = _host_accumulator(self._flat.dtype)
+        exact = accumulator if accumulator.kind in "ui" else np.dtype(np.float32)
+        step = self._frames_per_chunk()
         if reduce == "max":
-            return np.asarray(selected.max(axis=0), dtype=exact)
-        raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
+            maximum = self._flat[indices[:step]].max(axis=0)
+            for start in range(step, indices.size, step):
+                maximum = np.maximum(maximum, self._flat[indices[start : start + step]].max(axis=0))
+            return maximum.astype(exact)
+        total = np.zeros(self.det_shape, accumulator)
+        for start in range(0, indices.size, step):
+            total += self._flat[indices[start : start + step]].sum(axis=0, dtype=accumulator)
+        return total.astype(exact) if reduce == "sum" else (total / indices.size).astype(np.float32)
 
     def reduce_frames_exact(self, scan_indices) -> np.ndarray:
         selected = self._flat[np.asarray(scan_indices, dtype=np.intp).reshape(-1)]
@@ -368,8 +382,12 @@ class ArrayBackend(DetectorQueries):
 
 
 def _host_accumulator(dtype) -> np.dtype:
-    """uint64 for integer counts (exact); float64 for float data, which a uint64 sum would truncate to 0."""
-    return np.dtype(np.uint64) if np.dtype(dtype).kind in "ui" else np.dtype(np.float64)
+    """uint64 for counts and int64 for signed integers (both exact); float64 for float data.
+
+    An integer sum truncates sub-unity float intensities to 0, and a uint64 sum
+    of negative values (dark-subtracted int16) wraps.
+    """
+    return np.dtype({"u": np.uint64, "i": np.int64}.get(np.dtype(dtype).kind, np.float64))
 
 
 def scan_shape_of(frames: int) -> tuple[int, ...]:

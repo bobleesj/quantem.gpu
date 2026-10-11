@@ -150,20 +150,33 @@ def test_scaled_precision_intensities(tmp_path, region):
         np.testing.assert_allclose(reduced["max"], restored[indices].max(axis=0), rtol=1e-6)
 
 
-@pytest.mark.parametrize("dtype", [np.uint16, np.float32])
+def dense_values(dtype) -> np.ndarray:
+    """Bright uint16 counts, the same as fractional float32, or dark-subtracted int16 whose totals are negative."""
+    counts = np.random.default_rng(43).integers(52_000, 65_536, (*SCAN_SHAPE, *DETECTOR_SHAPE)).astype(np.uint16)
+    if dtype == np.float32:
+        return (counts / 7.0).astype(np.float32)
+    return counts if dtype == np.uint16 else (counts.astype(np.int32) - 60_000).astype(np.int16)
+
+
+@pytest.mark.parametrize("dtype", [np.uint16, np.int16, np.float32])
 @pytest.mark.parametrize("region", [(0, 32, 0, 32), (4, 20, 9, 30)], ids=["whole", "region"])
-@pytest.mark.parametrize("wrapped", [True, False], ids=["acquisition", "tensor"])
-def test_dense_tensors(dtype, region, wrapped):
-    """A tensor already on the GPU (a strided preview, a processed scan) reduces in Torch on its device."""
+@pytest.mark.parametrize("held", ["torch acquisition", "tensor", "cupy acquisition"])
+def test_dense_tensors(dtype, region, held):
+    """An array already on the GPU (a strided preview, a processed scan) reduces on its device, signed data included."""
     backend = _backend()
-    values = np.random.default_rng(43).integers(52_000, 65_536, (*SCAN_SHAPE, *DETECTOR_SHAPE)).astype(np.uint16)
-    values = values if dtype == np.uint16 else (values / 7.0).astype(np.float32)
+    if held == "cupy acquisition" and backend != "cuda":
+        pytest.skip("CuPy arrays live on CUDA.")
+    values = dense_values(dtype)
     values_t = torch.as_tensor(values, device=backend)
-    source = Dataset4dstemGPU(values_t, {"name": "preview"}) if wrapped else values_t
+    if held == "tensor":
+        source = values_t
+    else:
+        # an acquisition holds a Torch tensor or, for algorithm results on CUDA, a CuPy array
+        source = Dataset4dstemGPU(values_t if held == "torch acquisition" else __import__("cupy").asarray(values), {"name": "preview"})
     valid = np.ones(DETECTOR_SHAPE, bool)
     valid[FLAGGED] = False
-    # A float virtual image is a float32 sum over the mask pixels; counts stay exact.
-    _assert_session_reductions(View(source, region, valid), values, exact_images=dtype == np.uint16)
+    # A float virtual image is a float32 sum over the mask pixels; integers stay exact.
+    _assert_session_reductions(View(source, region, valid), values, exact_images=dtype != np.float32)
 
 
 @pytest.mark.parametrize("region", [(0, 32, 0, 32), (4, 20, 9, 30)], ids=["whole", "region"])
