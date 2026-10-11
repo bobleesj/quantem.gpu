@@ -36,6 +36,34 @@ def test_streamed_ans_decodes_selected_scan_ranges(dtype):
         source.release()
 
 
+def test_saved_copy_holds_each_encoded_array_at_its_offset(tmp_path, monkeypatch):
+    """Arrays leave the GPU in pinned pieces; pieces far smaller than an array still land in place."""
+    from quantem.gpu import io
+    from quantem.gpu.formats.qem.snapshot import read_header
+    from quantem.gpu.io import qem
+
+    shape = (6, 300, 3, 4)
+    values = (cp.arange(np.prod(shape), dtype=cp.uint64) % 4093).astype(cp.uint16).reshape(-1, *shape[2:])
+    source = StreamedCounts(shape, np.uint16)
+    path = tmp_path / "copy.qem"
+    try:
+        for first, stop in ((0, 700), (700, 1800)):
+            source.append(cp.ascontiguousarray(values[first:stop]))
+        with monkeypatch.context() as patch:
+            patch.setattr(qem, "BLOCK_BYTES", 1000)
+            qem.save_streamed(path, source, {})
+        header, start = read_header(path)
+        expected = bytearray(header["bytes"])
+        for chunk, entry in zip(source.chunks, header["chunks"]):
+            for array, span in zip(chunk.arrays, entry["arrays"]):
+                expected[span["offset"] : span["offset"] + array.nbytes] = cp.asnumpy(array).tobytes()
+        assert path.read_bytes()[start:] == bytes(expected)
+    finally:
+        source.release()
+    with io.load(path, backend="cuda", verbose=False) as reopened:
+        assert bool(cp.all(reopened.data.decode_scan_range_device(0, 1800) == values))
+
+
 def test_resident_read_matches_numpy_region():
     """The public read contract restores requested CUDA rows and columns."""
     import torch

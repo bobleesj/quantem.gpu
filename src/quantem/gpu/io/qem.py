@@ -91,7 +91,7 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
         codec=INTEGER_CODEC,
         scientific_metadata=qem_metadata.acquisition_metadata(source.shape, metadata),
     )
-    write_envelope(path, header, cursor, spans if metal else ((offset, array.get()) for offset, array in spans))
+    write_envelope(path, header, cursor, spans if metal else _staged(spans))
 
 
 def save_float(path: str | Path, source: FloatANSResident, metadata: dict | None = None) -> None:
@@ -120,7 +120,7 @@ def save_float(path: str | Path, source: FloatANSResident, metadata: dict | None
             spans.append((cursor, array))
             cursor += array.nbytes
         header["chunks"].append(entry)
-    write_envelope(path, header, cursor, spans if metal else ((offset, array.get()) for offset, array in spans))
+    write_envelope(path, header, cursor, spans if metal else _staged(spans))
 
 
 def load_streamed(path, *, backend, representation, scan_shape, device, verbose):
@@ -183,6 +183,30 @@ def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: flo
             f"Loaded exact native camera ANS on Metal in {time.perf_counter() - started:.3f} s."
         )
     return Dataset4dstemGPU(resident, record)
+
+
+def _staged(spans):
+    """Yield ``(offset, bytes)`` of CUDA arrays for ``write_envelope``, at most 64 MiB a piece.
+
+    ``array.get()`` allocates new pageable host memory for every array: the
+    whole body in fresh pages on each save, which stalls for seconds on a host
+    short of free memory. The pieces alternate between two pinned buffers
+    instead, the two the writer has in use at once, and copy at the pinned
+    transfer rate. Both are 64 MiB whatever the arrays, the size the loader
+    stages through, so every save and load reuses the same two blocks of
+    CuPy's pinned pool, which keeps one free list per size and never shrinks.
+    """
+    import cupy as cp
+
+    buffers = [np.frombuffer(cp.cuda.alloc_pinned_memory(BLOCK_BYTES), np.uint8, count=BLOCK_BYTES) for _ in range(2)]
+    number = 0
+    for offset, array in spans:
+        encoded = array.ravel().view(cp.uint8)
+        for first in range(0, encoded.size, BLOCK_BYTES):
+            piece = buffers[number % 2][: min(BLOCK_BYTES, encoded.size - first)]
+            encoded[first : first + piece.size].get(out=piece)
+            yield offset + first, piece
+            number += 1
 
 
 def _load_counts_cuda(path, header, start, device, verbose, started):
