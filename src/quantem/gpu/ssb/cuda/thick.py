@@ -254,18 +254,19 @@ class ThickSample:
             batch = len(rows)
             trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
                               rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
-            # one partial sum per 256-pixel slice, added in slice order
-            numerator = cp.empty((k_blocks, batch, n_band), dtype=cp.complex64)
-            denominator = cp.empty((k_blocks, batch, n_band), dtype=cp.float32)
+            # one partial sum per 256-pixel slice, added in slice order by the kernel
+            partial_numerator = cp.empty((k_blocks, batch, n_band), dtype=cp.complex64)
+            partial_denominator = cp.empty((k_blocks, batch, n_band), dtype=cp.float32)
+            numerator = cp.empty((batch, n_band), dtype=cp.complex64)
+            denominator = cp.empty((batch, n_band), dtype=cp.float32)
             thick_fit_batch_kernel(
                 (blocks, k_blocks), (threads,),
                 (engine.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], cp.asarray(trial.ravel()),
-                 numerator, denominator,
+                 partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32), numerator, denominator,
                  np.int32(num_bf), np.int64(engine.G_qk.shape[1] * engine.G_qk.shape[2]), np.int32(n_band), np.int32(batch),
                  np.float32(engine.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
                  np.float32(cache["ang_x_rad"]), np.float32(engine._factor), np.int32(k_chunk)),
             )
-            numerator, denominator = numerator.sum(axis=0), denominator.sum(axis=0)
             covered = denominator > 0
             values = (weight[None] * cp.where(covered, cp.abs(numerator) ** 2 / cp.where(covered, denominator, 1.0), 0.0)).sum(axis=1)
             out[start:start + batch] = cp.asnumpy(values)
