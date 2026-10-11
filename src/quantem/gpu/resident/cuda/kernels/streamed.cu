@@ -454,6 +454,7 @@ extern "C" __global__ void sc_selected(
     if (stream>=((u32(d[8])+interval-1)/interval)*pixels) return;
     u32 block=stream/pixels, stop=stops[bases[blockIdx.y]+block];
     if (!stop) return;
+    u32 length=min(interval,u32(d[8])-block*interval);
     const u32* times=multiplicity+d[7]+u64(block)*interval;
     StreamReader reader=chunk_reader(d,stream);
     u64 value=0;
@@ -462,7 +463,8 @@ extern "C" __global__ void sc_selected(
         if (maximum) value=times[i] ? max(value,count) : value;
         else value+=count*times[i];
     }
-    if (!reader.valid) atomicOr(errors,1u);
+    // a stream decoded to its end must end exactly, as a block decode checks; a shorter walk can only fail
+    if (stop==length ? !reader.finished() : !reader.valid) atomicOr(errors,1u);
     u64* target=output+d[9]*pixels+stream%pixels;
     if (maximum) atomicMax(target,value);
     else if (value) atomicAdd(target,value);
