@@ -143,7 +143,7 @@ def test_saved_user_calibration_restores_without_replacing_recorded_values():
         )
     }
     restored = effective_metadata(original, scientific)
-    assert restored["scan_sampling_A"] == pytest.approx([0.4, 0.6])
+    assert restored["scan_sampling_A"] == [0.4, 0.6]
     assert restored["voltage_kV"] == 200
     assert original == dict(scan_sampling_A=[1, 2], voltage_kV=300)
     restored["scientific_metadata"] = scientific
@@ -154,6 +154,27 @@ def test_saved_user_calibration_restores_without_replacing_recorded_values():
     invalid["calibration_overrides"]["electron_source/accelerating_voltage"]["unit"] = "V"
     with pytest.raises(ValueError, match="calibration override"):
         effective_metadata(original, invalid)
+
+
+def test_saved_user_calibration_restores_bit_identical():
+    """Schema-2 overrides reopen exactly as written: 0.35 angstrom is not read back as 0.35000000000000003."""
+    scientific = acquisition_metadata([2, 3, 8, 8], {})
+    scientific["calibration_overrides"] = {
+        path: dict(value=value, unit=unit, provenance="user_override", evidence="measured standard")
+        for path, value, unit in (
+            ("scan_controller/regular_scan/pixel_size_row", 0.35, "angstrom"),
+            ("scan_controller/regular_scan/pixel_size_column", 0.7, "angstrom"),
+            ("scan_controller/regular_scan/dwell_time", 2.3, "us"),
+            ("imaging_system/camera_length", 0.9, "mm"),
+            ("imaging_system/reciprocal_pixel_size_row", 0.0123, "1/angstrom"),
+            ("imaging_system/reciprocal_pixel_size_column", 0.0123, "1/angstrom"),
+        )
+    }
+    restored = effective_metadata({}, scientific)
+    assert restored["scan_sampling_A"] == [0.35, 0.7]
+    assert restored["dwell_time_us"] == 2.3
+    assert restored["camera_length_mm"] == 0.9
+    assert restored["detector_sampling"] == [0.0123, 0.0123]
 
 
 def test_existing_reference_migrates_units_without_changing_source_metadata():
