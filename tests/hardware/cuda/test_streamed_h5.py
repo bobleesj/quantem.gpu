@@ -138,27 +138,6 @@ def test_h5_ans_hot_pixel_correction_overrides(tmp_path, method):
         loaded.close()
 
 
-def test_mixed_dense_and_streamed_counts_keep_native_shapes(tmp_path):
-    cp = pytest.importorskip("cupy")
-    raw = (np.arange(513 * 6, dtype=np.uint16) % 17).reshape(1, 513, 2, 3)
-    path = tmp_path / "counts.h5"
-    with h5py.File(path, "w") as handle:
-        handle["entry/data/data"] = raw
-    encoded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
-    dense = cp.asarray(raw)
-    session = detector.prepare([encoded, dense])
-    for index in (0, 511, 512):
-        np.testing.assert_array_equal(
-            session.frame(index, output="native").get(),
-            np.broadcast_to(raw[0, index], (2, 2, 3)),
-        )
-    mask = np.array([[1, 0, 1], [0, 1, 0]], bool)
-    np.testing.assert_array_equal(
-        session.masked_sum(mask, output="native").get(),
-        np.broadcast_to((raw * mask).sum((-2, -1), dtype=np.uint64), (2, 1, 513)),
-    )
-
-
 def test_two_streamed_h5_sources_share_a_joint_query(tmp_path):
     raw = (np.arange(32 * 6, dtype=np.uint16) % 12).reshape(4, 8, 2, 3)
     other = raw + 100

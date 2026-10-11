@@ -15,7 +15,6 @@ import numpy as np
 from quantem.gpu.detector.counts import CountDetectorCompute, CountSeriesCompute
 from quantem.gpu.detector.cuda.dense import CudaKernelCompute
 from quantem.gpu.detector.cuda.paired_series import PairedSeriesCompute
-from quantem.gpu.detector.cuda.series import CudaSeriesCompute
 from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
 from quantem.gpu.detector.float_ans import FloatANSDetectorCompute
 from quantem.gpu.detector.mps.dense import MetalRawBackend
@@ -374,9 +373,8 @@ def resolve_backend(data):
             return CountSeriesCompute(sources)
         if sources and all(isinstance(source, PairedCounts) for source in sources):
             return PairedSeriesCompute(data)
-        if sources and all(isinstance(source, StreamedCounts) for source in sources):
-            return StreamedSeriesCompute(data)
-        return CudaSeriesCompute(data)
+        # Anything else is refused there: a series joins acquisitions that io.load encoded.
+        return StreamedSeriesCompute(data)
     data = _unwrap_core_4dstem(data)
     # Scaled-precision residents answer detector queries on their own encoded data.
     if isinstance(data, (MPSPrecisionSource, CUDAPrecisionSource)):
