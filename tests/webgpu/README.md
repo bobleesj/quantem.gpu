@@ -21,7 +21,7 @@ The test creates small deterministic rANS exports in memory. Two acquisitions
 mix entropy-coded and literal columns, cross checkpoint and block boundaries,
 and contain a masked saturated detector pixel. Point patterns, virtual images,
 and scan-ROI sums and means are compared exactly against raw counts and the
-stock dense backend. CoM, centered DPC, magnitude, and iDPC compare against the
+stock dense backend. CoM, centered DPC and iDPC compare against the
 same backend at an absolute tolerance of `1e-6`; iDPC includes explicit rotation
 and transpose. Single-pixel and empty masks exercise the corresponding views.
 

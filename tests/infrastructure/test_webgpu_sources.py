@@ -86,13 +86,8 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "zMirrorConj" not in source
     assert "runFFT2DInPlace" in source
     assert "getDevice(): GPUDevice" in source
-    assert "readFloatBuffer(buf: GPUBuffer" in source
-    assert "checksumFrames(scanIndices: number[])" in source
-    assert "enc.copyBufferToBuffer(ch.buffer, byteOffset, rb, 0, byteLength)" in source
     assert "const bad = this.badPx.length ? new Set(this.badPx) : null;" in source
-    assert "bad?.has(i) ? 0" in source
     assert "if (mode == 3u) { return data[gp]; }" in source
-    assert "const values = new Uint32Array(mapped, 0, this.detSize);" in source
     assert "subgroupAdd" in source
 
 

@@ -917,8 +917,6 @@ export class RansDetectorCompute {
   maskedCoMBuffer(...args: Parameters<DetectorCompute["maskedCoMBuffer"]>): ReturnType<DetectorCompute["maskedCoMBuffer"]> { return this.numericalProducts().maskedCoMBuffer(...args); }
   maskedDpc(...args: Parameters<DetectorCompute["maskedDpc"]>): ReturnType<DetectorCompute["maskedDpc"]> { return this.numericalProducts().maskedDpc(...args); }
   maskedDpcBuffer(...args: Parameters<DetectorCompute["maskedDpcBuffer"]>): ReturnType<DetectorCompute["maskedDpcBuffer"]> { return this.numericalProducts().maskedDpcBuffer(...args); }
-  maskedDpcMagnitude(...args: Parameters<DetectorCompute["maskedDpcMagnitude"]>): ReturnType<DetectorCompute["maskedDpcMagnitude"]> { return this.numericalProducts().maskedDpcMagnitude(...args); }
-  maskedDpcMagnitudeBuffer(...args: Parameters<DetectorCompute["maskedDpcMagnitudeBuffer"]>): ReturnType<DetectorCompute["maskedDpcMagnitudeBuffer"]> { return this.numericalProducts().maskedDpcMagnitudeBuffer(...args); }
   maskedIDpc(...args: Parameters<DetectorCompute["maskedIDpc"]>): ReturnType<DetectorCompute["maskedIDpc"]> { return this.numericalProducts().maskedIDpc(...args); }
   maskedIDpcBuffer(...args: Parameters<DetectorCompute["maskedIDpcBuffer"]>): ReturnType<DetectorCompute["maskedIDpcBuffer"]> { return this.numericalProducts().maskedIDpcBuffer(...args); }
   dispose(): void { this.products?.dispose(); this.products = undefined; }
