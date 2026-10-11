@@ -206,6 +206,7 @@ class MPSDecompressor:
         do not decode to exactly their block (a truncated or corrupt chunk
         whose framing is intact) raise ``ValueError`` naming the frames; the
         kernels bound every read and write, so the next batch decodes as usual.
+        A Metal command that ends with an error raises ``RuntimeError``.
         """
         read_buffer = prepared["read_buffer"]
         total_frames = int(prepared["total_frames"])
@@ -250,9 +251,11 @@ class MPSDecompressor:
 
         out_mtl = allocate_shared(total_frames * frame_bytes, "decoded frames")
         try:
-            self._submit_gpu(
-                total_frames, frame_bytes, elem_size, out_mtl, max_blocks
-            ).waitUntilCompleted()
+            command = self._submit_gpu(total_frames, frame_bytes, elem_size, out_mtl, max_blocks)
+            command.waitUntilCompleted()
+            # A command the GPU gave up on leaves the error buffer untouched and the output unwritten.
+            if command.error() is not None:
+                raise RuntimeError(f"Metal HDF5 frame decode failed: {command.error()}")
             first, stop = (int(position) for position in self._errors_np)
             if stop:
                 damaged = prepared["frame_indices"][first:stop]
