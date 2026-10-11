@@ -14,11 +14,25 @@ new `rcN` heading when that rc is published to TestPyPI.
   raises instead of returning uninitialized memory (CUDA streamed and paired
   counts, Metal counts).
 - A detector session over a CuPy array that changes in place returns current
-  dark-field and centre-of-mass values. A dense mask that selects more than
-  half of the detector sums its selected pixels on each call, and the dense
-  centre of mass is recomputed on each call; rc15 reused per-frame totals and
-  the field cached at the first call. On 65536 frames of 192 x 192 uint16 a DF
-  image takes 7.3 ms (3.1 ms in rc15) and a repeated centre of mass 7.9 ms.
+  dark-field and centre-of-mass values: every query reads the counts. rc15
+  reused per-pattern totals and the field cached at the first call. For an
+  array that will not change, `detector.prepare(data, immutable=True)` keeps
+  those totals. On 65536 frames of 192 x 192 uint16 on an idle GPU a DF image
+  takes 3.4 ms (1.8 ms with `immutable=True`) and a centre of mass 3.1 ms
+  (0.01 ms repeated with `immutable=True`).
+- Decoding a batch right after freeing earlier decoded batches could return
+  wrong frames in arrays still being computed from them: the CUDA upload stream
+  now waits for the caller's queued work. `io.load` was not affected.
+- The mean pattern and scan-ROI sums and means of float32 acquisitions are the
+  float64 total rounded once on CUDA and Metal. They were a float32 running
+  total, up to 8 units in the last place off on real data.
+- The mean pattern and detector total raise after `release_rows_before` or on a
+  partly loaded source instead of dividing the held rows by the full scan
+  count. A scan-ROI reduction of a float acquisition raises when a selected
+  scan was released.
+- Dense detector reductions of signed integer data keep their sign.
+- Metal LZ4 decoders bound their reads and writes; damaged blocks raise
+  `ValueError`.
 - A Metal acquisition dropped without `close()` returns its GPU memory. Metal
   detector sessions on integer frames no longer build a binned, clipped copy in
   the background.
@@ -96,6 +110,23 @@ new `rcN` heading when that rc is published to TestPyPI.
 - Documentation: install pages no longer pin rc8; the SSB API states that CUDA
   refuses scans larger than 1024 x 1024; native Swift/Metal SSB is documented
   for 128, 256 and 512 scans; dated records are listed in the navigation.
+- Encoded sources keep their exact detector total while loading, so the mean
+  pattern no longer decodes the acquisition (about 110 ms to 0.08 ms for
+  262144 patterns). The encoded centre of mass decodes each stream once (about
+  115 ms to 50 ms). Encoded scan-ROI sums, means and maxima decode only the
+  selected scans.
+- `io.load` reads the next block while the GPU decodes and encodes (530 ms to
+  about 380 ms for 262144 patterns). A `.qem` save writes its body once (a
+  2.46 GB save took 5.3 to 6.5 s at best and now takes 1.7 to 2.3 s).
+- SSB session build transforms spectra in place and decodes the bright-field
+  crop directly. `parallax.run` takes 214 ms instead of 330 ms on a 512 x 512
+  scan.
+- Detector sessions over bounded views of dense and paired acquisitions reduce
+  on the acquisition's own backend; reductions by bounded reads are removed
+  (viewer start on a paired 512 x 512 scan: 65 s to 0.14 s).
+- Metal scan-ROI sums, means and maxima of encoded counts are computed on the
+  device. HDF5 stacks stored as one gzip chunk per frame are inflated on up to
+  8 threads.
 
 ### Removed
 
@@ -127,6 +158,13 @@ new `rcN` heading when that rc is published to TestPyPI.
   `docs/maintainer/2026-10-11-lz4-read-bounds-and-chunk-walk.md`.
 - Headed browser gates for dense HDF5 decode, product-first and resident sums
   against raw counts, SSB bright-field subsets, and the SSB build peak.
+- `io.save` returns a result that records the save time, file size and
+  uncompressed size of a `.qem` save and displays as a table in a notebook.
+- `detector.prepare(data, immutable=True)` for dense CuPy arrays that will not
+  change.
+- `tests/benchmarks/viewer_stages.py` times load, mean, viewer start-up and one
+  interaction on CUDA or MPS. The speed round is recorded in
+  `docs/maintainer/2026-10-11-speed-round.md`.
 
 ## rc15 - 2026-10-09
 
