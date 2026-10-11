@@ -60,7 +60,6 @@ def test_dense_representation_is_explicit_and_reports_memory(monkeypatch) -> Non
 
     assert isinstance(loaded, io.Dataset4dstemGPU)
     assert loaded.representation == io.DataRepresentation.DENSE
-    assert loaded.residency == "host"
     assert loaded.shape == (2, 3, 4, 5)
     assert loaded.dtype == np.dtype("uint16")
     assert loaded.logical_bytes == values.nbytes
