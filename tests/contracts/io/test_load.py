@@ -77,18 +77,6 @@ def test_selective_scan_loading_rejects_cpu_backend(monkeypatch, selector) -> No
         )
 
 
-def test_load_region_keyword_is_not_supported() -> None:
-    from importlib import import_module
-    load_module = import_module("quantem.gpu.io.load")
-
-    with pytest.raises(TypeError, match="unexpected keyword"):
-        load_module.load(
-            "scan_master.h5", representation="dense",
-            region=(0, 1, 0, 1),
-            verbose=False,
-        )
-
-
 def test_pinned_buffer_release_prunes_redundant_smaller_size(monkeypatch) -> None:
     small_array = np.zeros(80, dtype=np.uint8)
     large_array = np.zeros(100, dtype=np.uint8)

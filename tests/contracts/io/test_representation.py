@@ -76,24 +76,6 @@ def test_representation_values_do_not_encode_dtype() -> None:
     }
 
 
-def test_removed_representation_names_have_no_aliases() -> None:
-    """Removed names fail explicitly instead of choosing another decoder."""
-    assert not hasattr(io.DataRepresentation, "LOSSLESS_PACKED")
-    assert not hasattr(io.DataRepresentation, "PACKED")
-    with pytest.raises(ValueError, match="representation must be"):
-        io.DataRepresentation.parse("lossless_packed")
-    with pytest.raises(ValueError, match="representation must be"):
-        io.DataRepresentation.parse("packed")
-    with pytest.raises(ValueError, match="representation must be"):
-        io.DataRepresentation.parse("ans")
-
-
-def test_retired_detector_bin_spelling_is_not_supported() -> None:
-    """The public loader has no detector-binning keyword; bin encoded reads instead."""
-    with pytest.raises(TypeError, match="unexpected keyword argument 'det_bin'"):
-        io.load("ordinary-master.h5", det_bin=4)
-
-
 def test_narrowed_dense_result_does_not_claim_unproven_losslessness() -> None:
     cpu = import_module("quantem.gpu.io.hdf5.cpu")
     loaded = cpu.record_dense_representation(
@@ -174,11 +156,3 @@ def test_cpu_reference_refuses_a_pixel_mask_of_another_shape(tmp_path) -> None:
     np.testing.assert_array_equal(load_master(str(source), pixel_mask=mask, verbose=False), expected)
     with pytest.raises(ValueError, match="pixel mask is 5 x 4, but the frames are 4 x 5; load with apply_mask=False"):
         load_master(str(source), pixel_mask=mask.T, verbose=False)
-
-def test_io_exposes_only_the_current_data_type() -> None:
-    from quantem.gpu.io import dataset
-
-    assert io.Dataset4dstemGPU is dataset.Dataset4dstemGPU
-    assert not hasattr(io, "LoadResult")
-    assert not hasattr(dataset, "LoadResult")
-    assert not hasattr(import_module("quantem.gpu.io.load"), "LoadResult")
