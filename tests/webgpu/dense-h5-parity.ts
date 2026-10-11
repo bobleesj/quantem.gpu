@@ -1,0 +1,228 @@
+/// <reference types="@webgpu/types" />
+import { decodeBslz4Batch } from "../../src/quantem/gpu/io/hdf5/webgpu/bslz4";
+import { readH5Volume } from "../../src/quantem/gpu/io/hdf5/webgpu/h5reader";
+import {
+  loadShow4DSTEMLocalH5MaskedSum,
+  loadShow4DSTEMLocalH5Master,
+  setShow4DSTEMLocalFiles,
+} from "../../src/quantem/gpu/io/hdf5/webgpu/local-h5";
+import { DetectorCompute } from "../../src/quantem/gpu/detector/webgpu/backend";
+import { annulusMask, diskMask } from "../../src/quantem/gpu/detector/webgpu/geometry";
+
+type Case = { name: string; dtype: "uint8" | "uint16"; frames: number; detector: [number, number]; bad_pixels: number[] };
+
+function fail(message: string): never { throw new Error(message); }
+
+async function readBack(device: GPUDevice, buffer: GPUBuffer, bytes: number): Promise<ArrayBuffer> {
+  const readback = device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+  const encoder = device.createCommandEncoder();
+  encoder.copyBufferToBuffer(buffer, 0, readback, 0, bytes);
+  device.queue.submit([encoder.finish()]);
+  await readback.mapAsync(GPUMapMode.READ);
+  const out = readback.getMappedRange().slice(0);
+  readback.destroy();
+  return out;
+}
+
+/** Exact masked sum of the raw counts, bad pixels excluded, rounded once to float32. */
+function expectedSums(counts: Uint8Array | Uint16Array, frames: number, mask: Uint32Array, bad: Set<number>): Float32Array {
+  const detSize = mask.length;
+  const out = new Float32Array(frames);
+  for (let frame = 0; frame < frames; frame++) {
+    let sum = 0;
+    for (let pixel = 0; pixel < detSize; pixel++) if (mask[pixel] && !bad.has(pixel)) sum += counts[frame * detSize + pixel];
+    out[frame] = sum;
+  }
+  return out;
+}
+
+function exact(label: string, actual: Float32Array, expected: Float32Array): void {
+  if (actual.length !== expected.length) fail(`${label}: ${actual.length} values, expected ${expected.length}`);
+  for (let i = 0; i < actual.length; i++) {
+    if (actual[i] !== expected[i]) fail(`${label}[${i}]: ${actual[i]} != ${expected[i]}`);
+  }
+}
+
+type LoadedCase = {
+  item: Case; counts: Uint8Array | Uint16Array; bad: Set<number>; files: File[];
+  rows: number; cols: number; detSize: number; scanRows: number; scanCols: number; masks: Record<string, Uint32Array>;
+};
+
+async function loadCases(baseURL: string): Promise<LoadedCase[]> {
+  const base = baseURL.endsWith("/") ? baseURL : baseURL + "/";
+  const cases = await (await fetch(base + "h5-cases.json")).json() as Case[];
+  return Promise.all(cases.map(async (item) => {
+    const [rows, cols] = item.detector;
+    const detSize = rows * cols;
+    const raw = await (await fetch(base + item.name + ".bin")).arrayBuffer();
+    const names = [`${item.name}_master.h5`, `${item.name}_data_000001.h5`, `${item.name}_data_000002.h5`];
+    const files = await Promise.all(names.map(async (name) => new File([await (await fetch(base + name)).arrayBuffer()], name)));
+    const scanCols = item.frames % 20 === 0 ? 20 : 10;
+    return {
+      item, counts: item.dtype === "uint8" ? new Uint8Array(raw) : new Uint16Array(raw), bad: new Set(item.bad_pixels), files,
+      rows, cols, detSize, scanRows: item.frames / scanCols, scanCols,
+      masks: {
+        full: new Uint32Array(detSize).fill(1),
+        disk: diskMask(rows, cols, rows / 2, cols / 2, rows / 5),
+        annulus: annulusMask(rows, cols, rows / 2, cols / 2, rows / 8, rows / 2),
+        center: Uint32Array.from({ length: detSize }, (_, k) => (k === (rows / 2) * cols + cols / 2 ? 1 : 0)),
+        pair: Uint32Array.from({ length: detSize }, (_, k) => (k === 3 * cols + 4 || k === (rows - 2) * cols + cols - 3 ? 1 : 0)),
+      },
+    };
+  }));
+}
+
+/** Full-stack bitshuffle-LZ4 decode: native uint8/uint16 is lossless and uint8 output saturates at 255. */
+export async function runDenseDecodeParity(baseURL: string): Promise<Record<string, number>> {
+  const checked: Record<string, number> = {};
+  for (const { item, counts, files, detSize } of await loadCases(baseURL)) {
+    const specs = [];
+    let start = 0;
+    for (const file of files.slice(1)) {
+      const volume = readH5Volume(await file.arrayBuffer(), file.name);
+      for (const chunk of volume.chunks) { specs.push({ ...chunk, startScan: start }); start += chunk.nFrames; }
+    }
+    let count = 0;
+    for (const dtype of item.dtype === "uint16" ? ["uint16", "uint8"] as const : ["uint8"] as const) {
+      const decoded = await decodeBslz4Batch(specs, dtype, item.dtype, 4);
+      if (!decoded) fail("WebGPU unavailable");
+      for (let i = 0; i < decoded.buffers.length; i++) {
+        const frames = specs[i].nFrames, offset = specs[i].startScan * detSize;
+        const bytes = await readBack(decoded.device, decoded.buffers[i], Math.ceil(frames * detSize * (dtype === "uint16" ? 2 : 1) / 4) * 4);
+        const values = dtype === "uint16" ? new Uint16Array(bytes, 0, frames * detSize) : new Uint8Array(bytes, 0, frames * detSize);
+        for (let k = 0; k < frames * detSize; k++) {
+          const want = dtype === "uint16" ? counts[offset + k] : Math.min(255, counts[offset + k]);
+          if (values[k] !== want) fail(`${item.name} ${dtype} decode frame ${Math.floor(k / detSize)} pixel ${k % detSize}: ${values[k]} != ${want}`);
+        }
+        count += frames * detSize;
+        decoded.buffers[i].destroy();
+      }
+    }
+    checked[item.name] = count;
+  }
+  return checked;
+}
+
+/** Product-first virtual images, the widget's first image before the stack is resident.
+
+Through the widget's entry point, with the pixel and the group-mask kernel and a scan region.
+The fixtures hold counts above 255, so a decoder that keeps only the low 8 bit planes fails.
+*/
+export async function runProductFirstParity(baseURL: string): Promise<Record<string, number>> {
+  const checked: Record<string, number> = {};
+  const globals = globalThis as Record<string, unknown>;
+  for (const { item, counts, bad, files, masks, scanRows, scanCols } of await loadCases(baseURL)) {
+    setShow4DSTEMLocalFiles(files);
+    let count = 0;
+    for (const groupMask of [false, true]) {
+      globals.__QT_BSLZ4_MASKED_SUM_GROUPMASK = groupMask;
+      try {
+        for (const [maskName, mask] of Object.entries(masks)) {
+          const product = await loadShow4DSTEMLocalH5MaskedSum(`${item.name}_master.h5`, { scanRows, scanCols, mask });
+          if (!product) fail(`${item.name}: no product-first result`);
+          const actual = new Float32Array(await readBack(product.device, product.buffer, item.frames * 4));
+          product.buffer.destroy();
+          exact(`${item.name} ${groupMask ? "groupmask" : "pixel"} ${maskName} product-first`, actual, expectedSums(counts, item.frames, mask, bad));
+          count += item.frames;
+        }
+        const region = [1, scanRows - 1, 2, scanCols - 3] as const;
+        const product = await loadShow4DSTEMLocalH5MaskedSum(`${item.name}_master.h5`, { scanRows, scanCols, mask: masks.disk, scanRegion: region });
+        if (!product) fail(`${item.name}: no scan-region product`);
+        const cropCols = region[3] - region[2];
+        const n = (region[1] - region[0]) * cropCols;
+        const actual = new Float32Array(await readBack(product.device, product.buffer, n * 4));
+        product.buffer.destroy();
+        const full = expectedSums(counts, item.frames, masks.disk, bad);
+        exact(`${item.name} ${groupMask ? "groupmask" : "pixel"} scan-region product-first`, actual,
+          Float32Array.from({ length: n }, (_, i) => full[(region[0] + Math.floor(i / cropCols)) * scanCols + region[2] + (i % cropCols)]));
+        count += n;
+      } finally {
+        delete globals.__QT_BSLZ4_MASKED_SUM_GROUPMASK;
+      }
+    }
+    checked[item.name] = count;
+  }
+  return checked;
+}
+
+/** Virtual images and centers of mass of the resident stack the widget builds from the same files.
+
+Every mask, down to one and two pixels, must sum exactly the selected counts, and the center of
+mass must equal the exact integer moments divided once.
+*/
+export async function runResidentParity(baseURL: string): Promise<Record<string, number>> {
+  const checked: Record<string, number> = {};
+  for (const { item, counts, bad, files, masks, scanRows, scanCols, cols, detSize } of await loadCases(baseURL)) {
+    setShow4DSTEMLocalFiles(files);
+    const resident = await loadShow4DSTEMLocalH5Master(`${item.name}_master.h5`, { scanRows, scanCols, decodeDtype: "native" });
+    if (!resident) fail(`${item.name}: no resident load`);
+    const compute = DetectorCompute.fromGpuChunks(resident.device, resident.chunks, resident.scanCount, resident.detSize, resident.mode);
+    compute.badPx = resident.badPixels;
+    let count = 0;
+    for (const [maskName, mask] of Object.entries(masks)) {
+      exact(`${item.name} resident ${maskName}`, await compute.maskedSum(mask), expectedSums(counts, item.frames, mask, bad));
+      const com = await compute.maskedCoM(mask, cols);
+      const expectedRow = new Float32Array(item.frames), expectedCol = new Float32Array(item.frames);
+      for (let frame = 0; frame < item.frames; frame++) {
+        let weight = 0, rowMoment = 0, colMoment = 0;
+        for (let pixel = 0; pixel < detSize; pixel++) {
+          if (!mask[pixel] || bad.has(pixel)) continue;
+          const value = counts[frame * detSize + pixel];
+          weight += value; rowMoment += Math.floor(pixel / cols) * value; colMoment += (pixel % cols) * value;
+        }
+        expectedRow[frame] = weight > 0 ? rowMoment / weight : 0;
+        expectedCol[frame] = weight > 0 ? colMoment / weight : 0;
+      }
+      exact(`${item.name} resident ${maskName} CoM row`, com.comY, expectedRow);
+      exact(`${item.name} resident ${maskName} CoM col`, com.comX, expectedCol);
+      count += 3 * item.frames;
+    }
+    compute.dispose();
+    checked[item.name] = count;
+  }
+  return checked;
+}
+
+/** Dense virtual images keep integer counts exact, including sums above 2^24.
+
+A uint16 stack near the 65535 maximum gives full-detector totals near 2^28, where float32
+accumulation drops counts. The direct sum and the complement path a large aperture takes
+(total minus the excluded pixels) must equal the exact integer sum rounded once to float32.
+*/
+export async function runDenseVirtualImageParity(): Promise<Record<string, number>> {
+  const rows = 64, cols = 64, detSize = rows * cols, scanCount = 96;
+  const values = new Uint16Array(scanCount * detSize);
+  for (let i = 0; i < values.length; i++) values[i] = (i % 7 === 0) ? 65535 : 65535 - ((i * 7919) % 4093);
+  const bad = new Set([5, 4000]);
+  const compute = await DetectorCompute.createChunked([
+    { bytes: new Uint8Array(values.buffer, 0, 40 * detSize * 2), startScan: 0, nScan: 40 },
+    { bytes: new Uint8Array(values.buffer, 40 * detSize * 2), startScan: 40, nScan: scanCount - 40 },
+  ], scanCount, detSize, 0);
+  if (!compute) fail("WebGPU unavailable");
+  compute.badPx = Uint32Array.from(bad);
+  const sums = (mask: Uint32Array) => expectedSums(values, scanCount, mask, bad);
+  let count = 0;
+  const masks: Record<string, Uint32Array> = {
+    full: new Uint32Array(detSize).fill(1),
+    annulus: annulusMask(rows, cols, 32, 32, 6, 60),
+    disk: diskMask(rows, cols, 32, 32, 9),
+  };
+  for (const [name, mask] of Object.entries(masks)) {
+    const expected = sums(mask);
+    exact(`virtual image ${name} readback`, await compute.maskedSum(mask), expected);
+    const buffer = compute.maskedSumBuffer(mask).buffer;
+    exact(`virtual image ${name} resident`, new Float32Array(await readBack(compute.getDevice(), buffer, scanCount * 4)), expected);
+    buffer.destroy();
+    count += 2 * scanCount;
+  }
+  // A drag adds the exact delta of the changed pixels to the previous image; below 2^24 that is exact.
+  const from = diskMask(rows, cols, 32, 32, 3), to = diskMask(rows, cols, 33, 31, 3);
+  const previous = DetectorCompute.maskedSumBuffersBatch([compute], from).buffers;
+  const added = Uint32Array.from(to, (v, k) => (v && !from[k] ? 1 : 0));
+  const removed = Uint32Array.from(to, (v, k) => (!v && from[k] ? 1 : 0));
+  const delta = DetectorCompute.maskedSumDeltaBuffersBatch([compute], previous, added, removed);
+  exact("virtual image drag delta", new Float32Array(await readBack(compute.getDevice(), delta.buffers[0], scanCount * 4)), sums(to));
+  count += scanCount;
+  compute.dispose();
+  return { checked: count };
+}

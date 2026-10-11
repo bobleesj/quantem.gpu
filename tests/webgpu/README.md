@@ -132,6 +132,24 @@ whose integer per-pixel sums exceed 2^32 and compares every sum and mean
 exactly against float64 sums rounded once to float32. A 32-bit accumulator
 wraps these sums, and reading float32 data as packed uint16 counts fails them.
 
+## Dense HDF5 loading and virtual images
+
+`dense-h5-parity.ts` runs in the same headed gate on Arina-layout bitshuffle-LZ4
+files that `make_qem_browser_fixture.generate_h5` writes with h5py and hdf5plugin
+(uint16 64 x 64 and 128 x 128 detectors, uint8 64 x 64, one masked hot pixel).
+The counts include 255 < count <= 65535 and full uint16 frames. Every check is
+exact against the raw counts:
+
+- `runDenseDecodeParity`: the full-stack decode at native width, and the uint8
+  output saturating at 255.
+- `runProductFirstParity`: the widget's first virtual image, summed straight from
+  the compressed chunks (pixel and group-mask kernels, full, disk, annulus, one-
+  and two-pixel masks, a scan region). Counts above 255 need all 16 bit planes.
+- `runResidentParity`: virtual images and centers of mass of the resident stack
+  the widget builds from the same files, down to one-pixel masks.
+- `runDenseVirtualImageParity`: totals above 2^24 on the direct and the
+  large-aperture complement path equal the exact integer sum rounded once.
+
 ## Decoder pipelines per device (CPU-only)
 
 `pipeline-device-cache.ts` is a Node test with fake devices: a device created
