@@ -23,7 +23,7 @@ from quantem.gpu.ssb.results import (
     SSBSeriesResult,
     host_array,
 )
-from quantem.gpu.ssb.units import ABERRATION_UNIT, validate_aberrations
+from quantem.gpu.ssb.units import validate_aberrations
 
 
 def reconstruct_series(
@@ -191,9 +191,9 @@ def reconstruct_series(
             {
                 "frame": frame,
                 "dataset": screen_path.name,
-                "C10 (nm)": float(aberrations["C10"]),
-                "C12 (nm)": float(aberrations["C12"]),
-                "phi12 (rad)": float(aberrations["phi12"]),
+                "C10 (nm)": float(aberrations["C10_nm"]),
+                "C12 (nm)": float(aberrations["C12_nm"]),
+                "phi12 (deg)": float(aberrations["phi12_deg"]),
                 "loss": None if result.loss is None else float(result.loss),
                 "result": "saved" if result.reused else "computed",
             }
@@ -389,7 +389,6 @@ def write_fit_metadata(
         **settings,
         "schema": FIT_SCHEMA,
         "aberrations": dict(result.aberrations),
-        "aberration_unit": ABERRATION_UNIT,
         "scan_detector_rotation_deg": float(result.scan_detector_rotation_deg),
         "detector_transposed": bool(result.detector_transposed),
         "loss": None if result.loss is None else float(result.loss),
@@ -405,7 +404,7 @@ def stored_fit(config: dict[str, object], block: str = "ssb") -> dict[str, objec
     The block is ``computed.ssb`` (or a sibling Live keeps beside it, named by ``block``), and it counts only when its
     ``"schema"`` equals ``FIT_SCHEMA``. A block with another schema or none is the same as no block: nothing in it is
     read, converted or kept. Without this one test, values fitted under an earlier convention (another automatic
-    detector sampling, Angstrom stored as nm) reconstruct a different image with no error. QuantEM Live reads its
+    detector sampling, Angstrom stored as nm, an azimuth in radians) reconstruct a different image with no error. QuantEM Live reads its
     stored fits through this function too, so both packages apply the same rule.
     """
     stored = (config.get("computed") or {}).get(block) or {}
@@ -421,7 +420,7 @@ def saved_fit(screen_path: Path) -> dict[str, object] | None:
     if config_path.is_file():
         settings = stored_fit(json.loads(config_path.read_text()))
         if "aberrations" in settings and "scan_detector_rotation_deg" in settings:
-            return {**settings, "aberrations": validate_aberrations(settings["aberrations"]), "aberration_unit": ABERRATION_UNIT}
+            return {**settings, "aberrations": validate_aberrations(settings["aberrations"])}
     metadata_path = screen_path / "ssb-fit" / "ssb-find_aberrations.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
@@ -431,7 +430,6 @@ def saved_fit(screen_path: Path) -> dict[str, object] | None:
         if metadata.get("schema") == RESULT_SCHEMA and aberrations is not None and rotation is not None:
             return {
                 "aberrations": validate_aberrations(aberrations),
-                "aberration_unit": ABERRATION_UNIT,
                 "scan_detector_rotation_deg": float(rotation),
             }
     return None

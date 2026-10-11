@@ -26,8 +26,8 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
         aberrations = ssb.find_aberrations(**settings)
         assert not hasattr(ssb, 'fit')
         assert len(aberrations.trials) == 8
-        assert aberrations["C12"] == pytest.approx(4.)
-        assert aberrations["phi12"] == pytest.approx(math.radians(30.))
+        assert aberrations["C12_nm"] == pytest.approx(4.)
+        assert math.radians(aberrations["phi12_deg"]) == pytest.approx(math.radians(30.))
         native = ssb.reconstruct(aberrations)
         expected, _ = ssb.preview(dict(aberrations))
         np.testing.assert_allclose(cp.asnumpy(native.phase), expected, atol=1e-7)
@@ -39,8 +39,8 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
             values = record['params']
             assert values['C12_nm'] == pytest.approx(4.)
             assert values['phi12_deg'] == pytest.approx(30.)
-            phase, loss = ssb.preview({'C10': values['C10_nm'], 'C12': values['C12_nm'],
-                                       'phi12': math.radians(values['phi12_deg'])})
+            phase, loss = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
+                                       'phi12_deg': values['phi12_deg']})
             np.testing.assert_allclose(cp.asnumpy(replay.phase[frame]), phase, atol=1e-7)
             assert loss == pytest.approx(record['loss'], rel=2e-5, abs=1e-7)
         assert ssb._reconstruction is native
@@ -58,11 +58,11 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
                              signature=aberrations.metadata['signature'], backend='cuda')
         assert loaded.reused
         assert loaded.trial_records == records
-        override = ssb.reconstruct(loaded, aberrations={'C10': 0.}, upsample=2)
+        override = ssb.reconstruct(loaded, aberrations={'C10_nm': 0.}, upsample=2)
         assert override.phase.shape == (256, 256)
         assert override.scan_sampling_A == .15
-        assert override['C10'] == 0.
-        assert override['C12'] == loaded['C12']
+        assert override['C10_nm'] == 0.
+        assert override['C12_nm'] == loaded['C12_nm']
         assert dict(loaded) == dict(aberrations)
     finally:
         ssb.close()
@@ -87,8 +87,8 @@ def test_rotation_check_keeps_original_trial_geometry(monkeypatch):
         record = aberrations.trial_records[0]
         values = record['params']
         ssb.set_rotation(record['scan_detector_rotation_deg'])
-        expected, _ = ssb.preview({'C10': values['C10_nm'], 'C12': values['C12_nm'],
-                                  'phi12': math.radians(values['phi12_deg'])})
+        expected, _ = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
+                                  'phi12_deg': values['phi12_deg']})
         np.testing.assert_allclose(cp.asnumpy(replay.phase[0]), expected, atol=1e-7)
     finally:
         ssb.close()
@@ -107,8 +107,8 @@ def test_joint_history_carries_tilt_depth_and_objective():
         assert {'tilt_row_mrad', 'tilt_col_mrad', 'depth_spread_nm', 'band_inv_A'} <= set(table)
         record = aberrations.trial_records[3]
         values = record['params']
-        expected, _ = ssb.preview({'C10': values['C10_nm'], 'C12': values['C12_nm'],
-                                  'phi12': math.radians(values['phi12_deg'])},
+        expected, _ = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
+                                  'phi12_deg': values['phi12_deg']},
                                  tilt_mrad=(record['tilt_row_mrad'], record['tilt_col_mrad']),
                                  depth_spread_nm=record['depth_spread_nm'])
         replay = ssb.reconstruct(aberrations, trials=[3])
@@ -127,7 +127,7 @@ def test_explicit_complex_estimator_preserves_wave_amplitude():
     from quantem.gpu.ssb.units import aberrations_to_engine
 
     ssb, _ = _synthetic_session()
-    coefs = {'C10': -8., 'C12': 4., 'phi12': -.7}
+    coefs = {'C10_nm': -8., 'C12_nm': 4., 'phi12_deg': math.degrees(-.7)}
     try:
         expected = ssb._backend().reconstruct_result(aberrations_to_engine(coefs))
         result = ssb.reconstruct(aberrations=coefs, phase_estimator='complex_wave')
@@ -167,7 +167,7 @@ def test_search_starts_from_the_current_public_coefficients(estimator):
     """Changing coefficients before a refinement-only search must take effect."""
     ssb, _ = _synthetic_session()
     try:
-        wanted = {'C10': 9.0, 'C12': 3.0, 'phi12': 0.25}
+        wanted = {'C10_nm': 9.0, 'C12_nm': 3.0, 'phi12_deg': math.degrees(0.25)}
         ssb.reconstruct(aberrations=wanted, phase_estimator=estimator, compute_loss=False)
         result = ssb.find_aberrations(trials=0, refinement=None,
                                       check_rotation=False, verbose=False)

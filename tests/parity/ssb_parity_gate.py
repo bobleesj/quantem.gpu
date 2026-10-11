@@ -23,6 +23,7 @@ Run ``python tests/parity/ssb_parity_gate.py --help`` for the case list.
 
 import argparse
 import json
+import math
 import subprocess
 import sys
 import time
@@ -107,7 +108,7 @@ GATE_FLOOR_METRIC = {
 
 def _aberration_dict(case: SSBParityCase, index: int) -> dict[str, float]:
     c10, c12, phi12 = case.aberrations[index]
-    return {"C10": float(c10), "C12": float(c12), "phi12": float(phi12)}
+    return {"C10_nm": float(c10), "C12_nm": float(c12), "phi12_deg": math.degrees(float(phi12))}
 
 
 def _case_meta(case: SSBParityCase) -> dict[str, object]:

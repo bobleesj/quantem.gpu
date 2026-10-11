@@ -30,7 +30,7 @@ def test_mps_tensor_matches_existing_array_input_without_download(dtype, monkeyp
     tensor = torch.from_numpy(counts).to("mps")
     settings = dict(backend="mps", voltage_kV=300, semiangle_mrad=30,
                     scan_sampling_A=.99, det_sampling=6., bf_radius=4., bf_center=(5.5, 5.5))
-    coefficients = {"C10": -11.52, "C12": 4.88, "phi12": math.radians(-32.8)}
+    coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
     original_cpu = torch.Tensor.cpu
 
     def no_volume_download(value, *args, **kwargs):
@@ -74,6 +74,6 @@ def test_open_encoded_source_retains_mps_crop(tmp_path, monkeypatch):
                   scan_sampling_A=.99, det_sampling=6., scan_shape=(128, 128)) as session:
         assert torch.is_tensor(session._data)
         assert session._data.device.type == "mps"
-        phase, loss = session.preview({"C10": -11.52, "C12": 4.88, "phi12": -.5})
+        phase, loss = session.preview({"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": math.degrees(-.5)})
         assert phase.shape == (128, 128)
         assert np.isfinite(phase).all() and np.isfinite(loss)

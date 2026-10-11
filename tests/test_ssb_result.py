@@ -1,6 +1,7 @@
 """Portable phase validation is independent of renderer and file paths."""
 import copy
 import json
+import math
 
 import numpy as np
 import pytest
@@ -26,7 +27,7 @@ def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
     np.save(run / "ssb_phase.npy", phase)
     config = {"computed": {"bf_radius": 1, "bf_center": [1, 1], "ssb": {
         "semiangle_mrad": 20, "scan_sampling_A": 0.5, "voltage_kV": 200,
-        "aberrations": {"C10": 0, "C12": 0, "phi12": 0},
+        "aberrations": {"C10_nm": 0, "C12_nm": 0, "phi12_deg": 0},
         "scan_detector_rotation_deg": 0,
     }}}
     (run / "config.json").write_text(json.dumps(config))
@@ -97,8 +98,8 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     config = {"source_master": str(master), "computed": {
         "bf_center": [3, 4], "bf_radius": 5,
         "ssb": {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": .25,
-                "scan_detector_rotation_deg": 12, "aberration_unit": "nm",
-                "aberrations": {"C10": 7, "C12": 2, "phi12": .1}}}}
+                "scan_detector_rotation_deg": 12,
+                "aberrations": {"C10_nm": 7, "C12_nm": 2, "phi12_deg": math.degrees(.1)}}}}
     (run / "config.json").write_text(json.dumps(config))
     first = export_result(run, master, output_folder=output_folder)
     assert first == output_folder / "gold_master/ssb.json"

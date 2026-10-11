@@ -83,7 +83,7 @@ def run(
         on the finer grid, so where the shifts differ (defocus) the images
         interleave and resolve detail finer than the scan step.
     fit_aberrations
-        Fit ``C10``, ``C12``, ``phi12`` and the scan-detector rotation from
+        Fit ``C10_nm``, ``C12_nm``, ``phi12_deg`` and the scan-detector rotation from
         the shifts. Needs ``scan_sampling_A`` and the detector calibration,
         ``semiangle_mrad`` or ``det_sampling``.
     scan_sampling_A
@@ -226,7 +226,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     Returns
     -------
     tuple
-        ``{"C10", "C12", "phi12"}`` in nm, nm and radians (scan frame), and the
+        ``{"C10_nm", "C12_nm", "phi12_deg"}`` in nm, nm and degrees (scan frame), and the
         rotation in degrees: what ``SSB(aberrations=..., scan_detector_rotation_deg=...)``
         takes.
     """
@@ -241,9 +241,9 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     a, b, c = aberration[0, 0], (aberration[1, 0] + aberration[0, 1]) / 2, aberration[1, 1]
     # A is in Angstrom like the shifts; SSB takes C10 and C12 in nm
     aberrations = {
-        "C10": float(a + c) / 20,
-        "C12": math.hypot((a - c) / 2, b) / 10,
-        "phi12": math.atan2(b, (a - c) / 2) / 2,
+        "C10_nm": float(a + c) / 20,
+        "C12_nm": math.hypot((a - c) / 2, b) / 10,
+        "phi12_deg": math.degrees(math.atan2(b, (a - c) / 2) / 2),
     }
     return aberrations, math.degrees(rotation_rad)
 

@@ -1,5 +1,6 @@
 """Fit a scan region, then apply those optics to the full acquisition."""
 
+import math
 import numpy as np
 import pytest
 
@@ -20,7 +21,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         backend="cuda", voltage_kV=300, semiangle_mrad=30,
         scan_sampling_A=0.3, det_sampling=3,
         bf_center=(15.5, 15.5), bf_radius=10,
-        aberrations={"C10": 3, "C12": 0.5, "phi12": 0.3},
+        aberrations={"C10_nm": 3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)},
         source_path=source_path,
     )
     search = dict(trials=0, refinement=None, check_rotation=False, verbose=False)

@@ -6,6 +6,7 @@ phase has a positive column sign and otherwise moves the session's rotation by 1
 ``initial_scan_detector_rotation_deg`` keeps the angle before the check) and refits with every aberration flipped in sign (C10 -> -C10, C12 -> -C12). Parity: starting from the wrong rotation must land on the same reconstruction as a direct fit at the right one.
 """
 
+import math
 import os
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def _correlation(first, second) -> float:
 
 
 def _astigmatism(aberrations) -> complex:
-    return aberrations["C12"] * np.exp(2j * aberrations["phi12"])
+    return aberrations["C12_nm"] * np.exp(2j * math.radians(aberrations["phi12_deg"]))
 
 
 def _simulated(scan_detector_rotation_deg: float):
@@ -145,7 +146,7 @@ def test_real_acquisition_from_the_wrong_rotation_matches_a_direct_fit():
     assert checked.column_sign > 0.5
     assert _correlation(checked.phase, direct_phase) > 0.9999
     assert checked.loss == pytest.approx(direct_loss, rel=1e-5)
-    assert checked.aberrations["C10"] == pytest.approx(direct_aberrations["C10"], abs=0.05)
+    assert checked.aberrations["C10_nm"] == pytest.approx(direct_aberrations["C10_nm"], abs=0.05)
     # astigmatism as one physical quantity, C12 * exp(2 i phi12): (-C12, phi12) and (C12, phi12 + 90 deg) are the same
     # aberration, and the refit starts from every aberration flipped, so compare the vector, not the signed C12
     assert abs(_astigmatism(checked.aberrations) - _astigmatism(direct_aberrations)) < 0.05
@@ -155,8 +156,8 @@ def test_rotation_plus_180_is_the_conjugate_object_with_every_aberration_flipped
     """The rotation plus 180 degrees reconstructs the negated phase with C10 and C12 flipped, whether the session is
     turned there with set_rotation or built at that rotation."""
     _require_cuda()
-    aberrations = {"C10": 1.5, "C12": 0.8, "phi12": 0.4}
-    flipped = {"C10": -1.5, "C12": -0.8, "phi12": 0.4}
+    aberrations = {"C10_nm": 1.5, "C12_nm": 0.8, "phi12_deg": math.degrees(0.4)}
+    flipped = {"C10_nm": -1.5, "C12_nm": -0.8, "phi12_deg": math.degrees(0.4)}
     measured = _simulated(0.0).reconstruct(aberrations=aberrations)
     reversed_ = _simulated(0.0)
     reversed_.set_rotation(180.0)
@@ -213,8 +214,8 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
                    for record in result.trial_records)
         if rotation == 180:
             initial_aberrations, initial_tilt = fit_calls[0]
-            assert result.aberrations["C10"] == -initial_aberrations["C10"]
-            assert result.aberrations["C12"] == -initial_aberrations["C12"]
+            assert result.aberrations["C10_nm"] == -initial_aberrations["C10_nm"]
+            assert result.aberrations["C12_nm"] == -initial_aberrations["C12_nm"]
             assert result.tilt_mrad == tuple(-value for value in initial_tilt)
 
         restored = load_result(
@@ -274,7 +275,7 @@ def test_preview_context_follows_a_rotation_set_after_it_was_made():
     _require_cuda()
     from tests.hardware.cuda.test_ssb_thick_sample import _synthetic_session
 
-    aberrations = {"C10": 3.0, "C12": 0.5, "phi12": 0.3}
+    aberrations = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
     ssb, _ = _synthetic_session()
     context = ssb.preview_context(ssb.num_bf // 4)
     ssb.set_rotation(40.0)

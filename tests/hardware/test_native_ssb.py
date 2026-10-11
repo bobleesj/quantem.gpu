@@ -16,7 +16,7 @@ import pytest
 
 from quantem.gpu import SSB, io
 
-ABERRATIONS = {"C10": -11.52, "C12": 4.88, "phi12": -0.57}
+ABERRATIONS = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": math.degrees(-0.57)}
 
 
 @pytest.fixture

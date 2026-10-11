@@ -1,5 +1,6 @@
 """Parallax reconstruction on the encoded acquisition io.load returns."""
 
+import math
 import os
 from pathlib import Path
 
@@ -142,9 +143,9 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
             scan_sampling_A=scan_sampling_A, det_sampling=1.0,
         )
 
-    assert result.aberrations["C10"] == pytest.approx(20.0, rel=0.01)
-    assert result.aberrations["C12"] == pytest.approx(3.0, rel=0.02)
-    assert result.aberrations["phi12"] == pytest.approx(0.4 - np.radians(20.0), abs=0.01)
+    assert result.aberrations["C10_nm"] == pytest.approx(20.0, rel=0.01)
+    assert result.aberrations["C12_nm"] == pytest.approx(3.0, rel=0.02)
+    assert math.radians(result.aberrations["phi12_deg"]) == pytest.approx(0.4 - np.radians(20.0), abs=0.01)
     assert result.rotation_angle_deg == pytest.approx(-20.0, abs=0.05)
 
 
@@ -172,9 +173,9 @@ def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
         angles_rad @ aberration_A @ rotation, angles_rad
     )
 
-    assert aberrations["C10"] == pytest.approx(c10_nm, rel=1e-12)
-    assert aberrations["C12"] == pytest.approx(c12_nm, rel=1e-12)
-    assert aberrations["phi12"] == pytest.approx(phi12 + np.radians(rotation_deg), abs=1e-12)
+    assert aberrations["C10_nm"] == pytest.approx(c10_nm, rel=1e-12)
+    assert aberrations["C12_nm"] == pytest.approx(c12_nm, rel=1e-12)
+    assert math.radians(aberrations["phi12_deg"]) == pytest.approx(phi12 + np.radians(rotation_deg), abs=1e-12)
     assert rotation_angle_deg == pytest.approx(rotation_deg, abs=1e-10)
 
 

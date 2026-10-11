@@ -1,6 +1,5 @@
 """Backend-neutral SSB fit, source, evaluation, and reconstruction results."""
 
-import math
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,8 +22,8 @@ class SSBResult(Mapping[str, float]):
     The primary output is ``object_wave``, the complex transmission function.
     Convenience properties ``phase`` and ``amplitude`` are derived from it.
 
-    Read coefficients directly with ``aberrations["C10"]``,
-    ``aberrations["C12"]`` (nm), and ``aberrations["phi12"]`` (radians).
+    Read coefficients directly with ``aberrations["C10_nm"]``,
+    ``aberrations["C12_nm"]`` (nm), and ``aberrations["phi12_deg"]`` (degrees).
     ``dict(aberrations)`` copies the coefficients. Tilt, rotation, phase, and
     trial history remain properties. After ``find_aberrations(tilt=True)``,
     C10 is the defocus at the model's mid-depth. Use reconstruction overrides
@@ -115,12 +114,12 @@ class SSBResult(Mapping[str, float]):
         self.scan_detector_rotation_deg = float(self.scan_detector_rotation_deg) % 360.0
 
     def __getitem__(self, coefficient: str) -> float:
-        """Return a coefficient in nm (C10/C12) or radians (phi12).
+        """Return a coefficient: ``C10_nm`` or ``C12_nm`` in nm, ``phi12_deg`` in degrees.
 
         Examples
         --------
         >>> aberrations = ssb.find_aberrations()
-        >>> defocus_nm = aberrations["C10"]
+        >>> defocus_nm = aberrations["C10_nm"]
         """
         return self.aberrations[coefficient]
 
@@ -198,9 +197,9 @@ class SSBResult(Mapping[str, float]):
             return self.trials
         aberrations = self.aberrations
         row = {
-            "C10 (nm)": aberrations.get("C10"),
-            "C12 (nm)": aberrations.get("C12"),
-            "phi12 (deg)": math.degrees(aberrations.get("phi12", 0.0)),
+            "C10 (nm)": aberrations.get("C10_nm"),
+            "C12 (nm)": aberrations.get("C12_nm"),
+            "phi12 (deg)": aberrations.get("phi12_deg", 0.0),
         }
         if self.initial_scan_detector_rotation_deg is not None:
             row["Suggested rotation (deg)"] = self.initial_scan_detector_rotation_deg
@@ -519,12 +518,12 @@ def _is_cupy_array(value: object) -> bool:
 def _format_aberrations(aberrations: dict) -> str:
     """Format SSB aberration dict as aligned key-value lines."""
     lines = []
-    if "C10" in aberrations:
-        lines.append(f"  Defocus (C10)  {aberrations['C10']:.1f} nm")
-    if "C12" in aberrations:
-        lines.append(f"  Astigmatism    {aberrations['C12']:.1f} nm")
-    if "phi12" in aberrations:
-        lines.append(f"  Astig. angle   {math.degrees(aberrations['phi12']):.1f}°")
+    if "C10_nm" in aberrations:
+        lines.append(f"  Defocus (C10)  {aberrations['C10_nm']:.1f} nm")
+    if "C12_nm" in aberrations:
+        lines.append(f"  Astigmatism    {aberrations['C12_nm']:.1f} nm")
+    if "phi12_deg" in aberrations:
+        lines.append(f"  Astig. angle   {aberrations['phi12_deg']:.1f}°")
     return "\n".join(lines)
 
 
