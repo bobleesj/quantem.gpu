@@ -537,7 +537,7 @@ The resident payload is not peak memory. Record the requested, source,
 working, accumulation, and output dtypes; original/output shapes; bin/crop;
 payload bytes; predicted peak; measured process/accelerator peak; pressure or
 swap; and the resource-policy reason. See the
-{ref}`dtype and peak-memory dashboard <dtype-support-and-peak-memory>`.
+{ref}`memory rules of the benchmark methodology <benchmark-memory>`.
 
 For a series, retain separate encoded acquisitions:
 

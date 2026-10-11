@@ -56,8 +56,9 @@ return small NumPy images while the acquisition remains ANS encoded.
 ## For developers
 
 The [Developer guide](developer/index.md) groups equations, backend kernels,
-native integration, file formats, and verification. For the implementation overview, see the [implementation dashboard](dashboard.md).
-The [verified benchmark results](performance/results.md) retain revision and
+native integration, file formats, and verification. [Backend coverage](backends.md)
+lists what each runtime implements. The
+[verified benchmark results](performance/results.md) retain revision and
 hardware provenance. Historical measurements are not promises for every machine.
 
 ## Citing quantem.gpu

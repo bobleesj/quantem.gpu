@@ -470,7 +470,7 @@ See the [SSB guide](docs/api/ssb.md) for trial replay and saved results.
 
 Arrays use `I[R_r,R_c,k_r,k_c]`: scan row, scan column, detector row,
 detector column. Coordinates are `(row, column)`. Supported operations differ
-between runtimes; see the [Implementation overview](docs/dashboard.md) and
+between runtimes; see [backend coverage](docs/backends.md) and
 [verified performance](docs/performance/results.md) for measured coverage.
 
 Backend implementation details, including native and browser integrations,
