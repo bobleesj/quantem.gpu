@@ -128,6 +128,11 @@ function validateBslz4ChunkHeader(
       + "export the BF-column sidecar fallback.",
     );
   }
+  // Bitshuffle stores a frame's last (pixels mod 8) values uncompressed after its blocks; the
+  // decoders rebuild whole 8-pixel groups only.
+  if (detSize % 8 !== 0) {
+    throw new Error(`${name}: ${detSize}-pixel detector frames are not a whole number of 8-pixel bitshuffle groups; the browser decoder reads frames whose pixel count is a multiple of 8.`);
+  }
   // Bitshuffle keeps its declared block size in the chunk header even when a
   // whole detector frame is one smaller final block. The effective block then
   // contains exactly the frame bytes, as in detector-binned 48x48 uint16 data.

@@ -123,9 +123,11 @@ wraps these sums, and reading float32 data as packed uint16 counts fails them.
 
 `dense-h5-parity.ts` runs in the same headed gate on Arina-layout bitshuffle-LZ4
 files that `make_qem_browser_fixture.generate_h5` writes with h5py and hdf5plugin
-(uint16 64 x 64 and 128 x 128 detectors, uint8 64 x 64, one masked hot pixel).
-The counts include 255 < count <= 65535 and full uint16 frames. Every check is
-exact against the raw counts:
+(uint8, uint16, uint32 and float32 at 64 x 64 and 96 x 96, uint16 at 128 x 128,
+one masked hot pixel). A 96 x 96 frame is not a whole number of bitshuffle
+blocks, so it ends in a shorter block with its own plane stride. The counts
+include 255 < count <= 65535 and full uint16 frames. Every check is exact
+against the raw counts:
 
 - `runDenseDecodeParity`: the full-stack decode at native width, and the uint8
   output saturating at 255.

@@ -86,10 +86,11 @@ const PASS2_U32_WGSL = `
 fn byteAt(o:u32)->u32{return (inter[o>>2u]>>((o&3u)*8u))&0xffu;}
 @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>){
   let grp=gid.y*cfg.y + gid.x; if(grp>=cfg.x){return;}
-  let blockElems=cfg.z; let planeBytes=cfg.w; let blockBytes=blockElems*4u;
+  let blockElems=cfg.z; let blockBytes=blockElems*4u;
   let nBlk=__NBLK__; let framePix=__FRAMEPIX__;
   let e0=grp*8u; let frm=e0/framePix; let inFrame=e0%framePix;
   let blk=inFrame/blockElems; let groupByte=(inFrame%blockElems)>>3u;
+  let planeBytes=select(cfg.w, __NPB_LAST__, blk+1u==nBlk);
   let pb=(frm*nBlk+blk)*blockBytes + groupByte;
   var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
   for(var b:u32=0u;b<32u;b=b+1u){
@@ -159,17 +160,18 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   workgroupBarrier();
   if(g>=cfg.x){return;}
   let frm = g/cfg.z; let blk = g%cfg.z;
+  let npb = select(__NPB__, __NPB_LAST__, blk+1u==cfg.z);   // the final block may be shorter
   let pixBase = frm*cfg.w + blk*__BE__;   // first detector pixel of this block
   let oBase = (pixBase>>3u)*2u;            // 2 u32 per 8-pixel group
   // uint8 output == clip8(value): 255 iff ANY bit >=8 is set, else the low byte. So only the
   // 8 LOW planes need a bit-transpose; planes 8..nbits-1 collapse to one OR ("any high bit set"
   // per pixel). Bit-exact for any input, and 2x (uint16) / 4x (uint32) less bitshuffle work.
-  for(var lg=lx; lg<__NPB__; lg=lg+64u){
+  for(var lg=lx; lg<npb; lg=lg+64u){
     var hi:u32=0u;
-    for(var b:u32=8u;b<__NBITS__;b=b+1u){ hi = hi | rsh(lg + b*__NPB__); }
+    for(var b:u32=8u;b<__NBITS__;b=b+1u){ hi = hi | rsh(lg + b*npb); }
     var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
     for(var b:u32=0u;b<8u;b=b+1u){
-      let byte=rsh(lg + b*__NPB__); let bit=1u<<b;
+      let byte=rsh(lg + b*npb); let bit=1u<<b;
       if((byte&1u)!=0u){v0=v0|bit;} if((byte&2u)!=0u){v1=v1|bit;}
       if((byte&4u)!=0u){v2=v2|bit;} if((byte&8u)!=0u){v3=v3|bit;}
       if((byte&16u)!=0u){v4=v4|bit;} if((byte&32u)!=0u){v5=v5|bit;}
@@ -226,13 +228,12 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     }
     workgroupBarrier();
     let pixBase = frm*cfg.w + blk*__BE__;
-    let blockPix = min(__BE__, cfg.w - min(cfg.w, blk*__BE__));
-    let groupsThis = (blockPix + 7u) >> 3u;
+    let npb = select(__NPB__, __NPB_LAST__, blk+1u==cfg.z);   // the final block may be shorter
     let oBase = pixBase >> 2u;
-    for(var lg=lx; lg<groupsThis; lg=lg+__WG__){
+    for(var lg=lx; lg<npb; lg=lg+__WG__){
       var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
       for(var b:u32=0u;b<8u;b=b+1u){
-        let byte=rsh(lg + b*__NPB__); let bit=1u<<b;
+        let byte=rsh(lg + b*npb); let bit=1u<<b;
         if((byte&1u)!=0u){v0=v0|bit;} if((byte&2u)!=0u){v1=v1|bit;}
         if((byte&4u)!=0u){v2=v2|bit;} if((byte&8u)!=0u){v3=v3|bit;}
         if((byte&16u)!=0u){v4=v4|bit;} if((byte&32u)!=0u){v5=v5|bit;}
@@ -294,13 +295,12 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     }
     workgroupBarrier();
     let pixBase = frm*cfg.w + blk*__BE__;
-    let blockPix = min(__BE__, cfg.w - min(cfg.w, blk*__BE__));
-    let groupsThis = (blockPix + 7u) >> 3u;
+    let npb = select(__NPB__, __NPB_LAST__, blk+1u==cfg.z);   // the final block may be shorter
     let oBase = pixBase >> 1u;
-    for(var lg=lx; lg<groupsThis; lg=lg+__WG__){
+    for(var lg=lx; lg<npb; lg=lg+__WG__){
       var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
       for(var b:u32=0u;b<16u;b=b+1u){
-        let byte=rsh(lg + b*__NPB__); let bit=1u<<b;
+        let byte=rsh(lg + b*npb); let bit=1u<<b;
         if((byte&1u)!=0u){v0=v0|bit;} if((byte&2u)!=0u){v1=v1|bit;}
         if((byte&4u)!=0u){v2=v2|bit;} if((byte&8u)!=0u){v3=v3|bit;}
         if((byte&16u)!=0u){v4=v4|bit;} if((byte&32u)!=0u){v5=v5|bit;}
@@ -364,13 +364,12 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     }
     workgroupBarrier();
     let pixBase = frm*cfg.w + blk*__BE__;
-    let blockPix = min(__BE__, cfg.w - min(cfg.w, blk*__BE__));
-    let groupsThis = (blockPix + 7u) >> 3u;
+    let npb = select(__NPB__, __NPB_LAST__, blk+1u==cfg.z);   // the final block may be shorter
     let oBase = pixBase >> 2u;
-    for(var lg=lx; lg<groupsThis; lg=lg+__WG__){
+    for(var lg=lx; lg<npb; lg=lg+__WG__){
       var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
       for(var b:u32=0u;b<16u;b=b+1u){
-        let byte=rsh(lg + b*__NPB__); let bit=1u<<b;
+        let byte=rsh(lg + b*npb); let bit=1u<<b;
         if((byte&1u)!=0u){v0=v0|bit;} if((byte&2u)!=0u){v1=v1|bit;}
         if((byte&4u)!=0u){v2=v2|bit;} if((byte&8u)!=0u){v3=v3|bit;}
         if((byte&16u)!=0u){v4=v4|bit;} if((byte&32u)!=0u){v5=v5|bit;}
@@ -418,12 +417,13 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   workgroupBarrier();
   if(g>=cfg.x){return;}
   let frm = g/cfg.z; let blk = g%cfg.z;
+  let npb = select(__NPB__, __NPB_LAST__, blk+1u==cfg.z);   // the final block may be shorter
   let pixBase = frm*cfg.w + blk*__BE__;
   let oBase = pixBase;   // 1 u32 per pixel
-  for(var lg=lx; lg<__NPB__; lg=lg+64u){
+  for(var lg=lx; lg<npb; lg=lg+64u){
     var v0:u32=0u; var v1:u32=0u; var v2:u32=0u; var v3:u32=0u; var v4:u32=0u; var v5:u32=0u; var v6:u32=0u; var v7:u32=0u;
     for(var b:u32=0u;b<32u;b=b+1u){
-      let byte=rsh(lg + b*__NPB__); let bit=1u<<b;
+      let byte=rsh(lg + b*npb); let bit=1u<<b;
       if((byte&1u)!=0u){v0=v0|bit;} if((byte&2u)!=0u){v1=v1|bit;}
       if((byte&4u)!=0u){v2=v2|bit;} if((byte&8u)!=0u){v3=v3|bit;}
       if((byte&16u)!=0u){v4=v4|bit;} if((byte&32u)!=0u){v5=v5|bit;}
@@ -455,8 +455,17 @@ export function cachedPipeline(device: GPUDevice, code: string): GPUComputePipel
   return pipeline;
 }
 
-function getFusedF32Pipe(device: GPUDevice, blockElems: number): GPUComputePipeline {
-  const code = FUSED_F32_WGSL.replace(/__NPB__/g, `${blockElems / 8}u`).replace(/__BE__/g, `${blockElems}u`);
+// Plane stride (bytes) of a frame's final bitshuffle block. A frame that is not a whole number
+// of blocks ends in a shorter block whose bit planes lie (its pixels / 8) bytes apart; reading it
+// with the full-block stride mixes planes and corrupts those pixels.
+function lastPlaneBytes(spec: Bslz4Spec): number {
+  const { blockElems, detSize } = spec;
+  return (detSize - (Math.ceil(detSize / blockElems) - 1) * blockElems) / 8;
+}
+
+function getFusedF32Pipe(device: GPUDevice, spec: Bslz4Spec): GPUComputePipeline {
+  const { blockElems } = spec;
+  const code = FUSED_F32_WGSL.replace(/__NPB_LAST__/g, `${lastPlaneBytes(spec)}u`).replace(/__NPB__/g, `${blockElems / 8}u`).replace(/__BE__/g, `${blockElems}u`);
   return cachedPipeline(device, code);
 }
 
@@ -495,29 +504,31 @@ function fusedJob(
 
 // Fused float32 decode job: one workgroup/block, float32 stack out (1 u32/pixel, mode 2).
 function buildFusedJobF32(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const { nFrames, nBlocksPerFrame, detSize } = spec;
   const totalBlocks = nFrames * nBlocksPerFrame;
   const stackWords = nFrames * detSize;   // 1 u32/pixel
   const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
   const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const gx = Math.min(totalBlocks, MAX_WG), gy = Math.ceil(totalBlocks / MAX_WG);
   const cfg = uniform(device, [totalBlocks, gx, nBlocksPerFrame, detSize]);
-  const pipe = getFusedF32Pipe(device, blockElems);
+  const pipe = getFusedF32Pipe(device, spec);
   return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, 2);
 }
 
-function getFusedPipe(device: GPUDevice, blockElems: number, nbits: number): GPUComputePipeline {
-  const npb = blockElems / 8;
-  const code = FUSED_U16U8_WGSL.replace(/__NPB__/g, `${npb}u`).replace(/__BE__/g, `${blockElems}u`).replace(/__NBITS__/g, `${nbits}u`);
+function getFusedPipe(device: GPUDevice, spec: Bslz4Spec, nbits: number): GPUComputePipeline {
+  const { blockElems } = spec;
+  const code = FUSED_U16U8_WGSL.replace(/__NPB_LAST__/g, `${lastPlaneBytes(spec)}u`).replace(/__NPB__/g, `${blockElems / 8}u`).replace(/__BE__/g, `${blockElems}u`).replace(/__NBITS__/g, `${nbits}u`);
   return cachedPipeline(device, code);
 }
 
 // Frame-cooperative kernels: "u16" and "clip8" decode the full uint16 block (__BB__ bytes),
 // "low8" only its low 8 bit-planes (the first __BE__ bytes).
-function getFusedFramePipe(device: GPUDevice, blockElems: number, out: "u16" | "clip8" | "low8"): GPUComputePipeline {
+function getFusedFramePipe(device: GPUDevice, spec: Bslz4Spec, out: "u16" | "clip8" | "low8"): GPUComputePipeline {
+  const { blockElems } = spec;
   const blockBytes = out === "low8" ? blockElems : blockElems * 2;
   const template = out === "u16" ? FUSED_FRAME_U16_WGSL : out === "clip8" ? FUSED_FRAME_CLIP8_WGSL : FUSED_FRAME_COOP_LOW8_WGSL;
   const code = template
+    .replace(/__NPB_LAST__/g, `${lastPlaneBytes(spec)}u`)
     .replace(/__NPB__/g, `${blockElems / 8}u`)
     .replace(/__SH_WORDS__/g, `${Math.ceil(blockBytes / 4)}u`)
     .replace(/__WG__/g, `${bslz4FrameWorkgroupSize()}u`)
@@ -528,26 +539,26 @@ function getFusedFramePipe(device: GPUDevice, blockElems: number, out: "u16" | "
 
 // Per-block fused job for uint8 and uint32 sources -> uint8 output (mode 1).
 function buildFusedJob(device: GPUDevice, spec: Bslz4Spec, srcDtype: "uint8" | "uint32", preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const { nFrames, nBlocksPerFrame, detSize } = spec;
   const totalBlocks = nFrames * nBlocksPerFrame;
   const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
   const stack = device.createBuffer({ size: Math.ceil(nFrames * detSize / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const gx = Math.min(totalBlocks, MAX_WG), gy = Math.ceil(totalBlocks / MAX_WG);
   const cfg = uniform(device, [totalBlocks, gx, nBlocksPerFrame, detSize]);
-  const pipe = getFusedPipe(device, blockElems, srcDtype === "uint32" ? 32 : 8);
+  const pipe = getFusedPipe(device, spec, srcDtype === "uint32" ? 32 : 8);
   return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, 1);
 }
 
 // Frame-cooperative job, one workgroup per frame: "u16" packs 2 px/u32 (mode 0, lossless);
 // "clip8" saturates to 255 and "low8" keeps the low byte, both 4 px/u32 (mode 1).
 function buildFusedJobFrame(device: GPUDevice, spec: Bslz4Spec, out: "u16" | "clip8" | "low8", preRaw?: GPUBuffer | RawInput): DecodeJob {
-  const { nFrames, nBlocksPerFrame, blockElems, detSize } = spec;
+  const { nFrames, nBlocksPerFrame, detSize } = spec;
   const stackWords = Math.ceil(nFrames * detSize / (out === "u16" ? 2 : 4));
   const { rawBuf, metaBuf } = uploadFusedInputs(device, spec, preRaw);
   const stack = device.createBuffer({ size: stackWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const gx = Math.min(nFrames, MAX_WG), gy = Math.ceil(nFrames / MAX_WG);
   const cfg = uniform(device, [nFrames, gx, nBlocksPerFrame, detSize]);
-  const pipe = getFusedFramePipe(device, blockElems, out);
+  const pipe = getFusedFramePipe(device, spec, out);
   return fusedJob(device, pipe, rawBuf, metaBuf, stack, cfg, gx, gy, out === "u16" ? 0 : 1);
 }
 
@@ -566,7 +577,7 @@ function buildTwoPassJobU32(device: GPUDevice, spec: Bslz4Spec, preRaw?: GPUBuff
   const p2wg = Math.ceil(nGroups / 64), gx = Math.min(p2wg, MAX_WG), gy = Math.ceil(p2wg / MAX_WG);
   const cfg2 = uniform(device, [nGroups, gx * 64, blockElems, blockElems / 8]);
   const p1 = cachedPipeline(device, PASS1_WGSL);
-  const p2 = cachedPipeline(device, PASS2_U32_WGSL.replace("__NBLK__", `${nBlocksPerFrame}u`).replace("__FRAMEPIX__", `${detSize}u`));
+  const p2 = cachedPipeline(device, PASS2_U32_WGSL.replace("__NBLK__", `${nBlocksPerFrame}u`).replace("__FRAMEPIX__", `${detSize}u`).replace("__NPB_LAST__", `${lastPlaneBytes(spec)}u`));
   const bg1 = device.createBindGroup({ layout: p1.getBindGroupLayout(0), entries: [
     { binding: 0, resource: rawBinding(rawBuf) }, { binding: 1, resource: { buffer: interBuf } },
     { binding: 2, resource: { buffer: metaBuf } }, { binding: 3, resource: { buffer: cfg1 } } ] });
@@ -745,6 +756,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   }
   workgroupBarrier();
   let row = bi*3u;
+  let npb = select(__NPB__, __NPB_LAST__, blkTable[row]+1u==__NBLK__);   // the final block may be shorter
   let idxOff = blkTable[row + 1u];
   let idxN = blkTable[row + 2u];
   var sum = 0u;
@@ -754,7 +766,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let pixBit = 1u << (p & 7u);
     var v = 0u;
     for(var b=0u; b<__NBITS__; b=b+1u){
-      if((rsh(groupByte + b*__NPB__) & pixBit) != 0u){ v = v | (1u << b); }
+      if((rsh(groupByte + b*npb) & pixBit) != 0u){ v = v | (1u << b); }
     }
     sum = sum + v;
   }
@@ -819,6 +831,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   }
   workgroupBarrier();
   let row = bi*3u;
+  let npb = select(__NPB__, __NPB_LAST__, blkTable[row]+1u==__NBLK__);   // the final block may be shorter
   let idxOff = blkTable[row + 1u];
   let idxN = blkTable[row + 2u];
   var sum = 0u;
@@ -826,7 +839,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let groupByte = grpByte[idxOff + j];
     let bits = grpMask[idxOff + j];
     for(var b=0u; b<__NBITS__; b=b+1u){
-      sum = sum + (countOneBits(rsh(groupByte + b*__NPB__) & bits) << b);
+      sum = sum + (countOneBits(rsh(groupByte + b*npb) & bits) << b);
     }
   }
   part[lx] = sum;
@@ -857,9 +870,12 @@ function maskedSumWorkgroupSize(): 64 | 128 | 256 {
   return 64;
 }
 
-function getMaskedSumPipe(device: GPUDevice, blockElems: number, nbits: 8 | 16, wgSize: 64 | 128 | 256, groupMask: boolean): GPUComputePipeline {
+function getMaskedSumPipe(device: GPUDevice, spec: Bslz4Spec, nbits: 8 | 16, wgSize: 64 | 128 | 256, groupMask: boolean): GPUComputePipeline {
+  const { blockElems } = spec;
   const blockBytes = blockElems * nbits / 8;
   const code = (groupMask ? MASKED_SUM_GROUPMASK_WGSL : MASKED_SUM_PIXEL_WGSL)
+    .replace(/__NPB_LAST__/g, `${lastPlaneBytes(spec)}u`)
+    .replace(/__NBLK__/g, `${Math.ceil(spec.detSize / blockElems)}u`)
     .replace(/__NPB__/g, `${blockElems / 8}u`)
     .replace(/__BB__/g, `${blockBytes}u`)
     .replace(/__NBITS__/g, `${nbits}u`)
@@ -1187,7 +1203,7 @@ export async function decodeBslz4MaskedSumBatch(
   }
   const groupMask = useMaskedSumGroupMask(scanCount);
   const wgSize = maskedSumWorkgroupSize();
-  const pipe = getMaskedSumPipe(device, blockElems, nbits, wgSize, groupMask);
+  const pipe = getMaskedSumPipe(device, specs[0], nbits, wgSize, groupMask);
   const profile: Bslz4MaskedSumProfile = {
     variant: `product-first-frame-masked-sum-${srcDtype}/${groupMask ? `groupmask-wg${wgSize}` : `pixel-wg${wgSize}`}/${specs.some((spec) => Boolean(spec.selectedBlockIds)) ? "selected-block-sidecar/" : ""}direct-f32/${useMaskedSumPipeline() ? "stagingPipeline" : "staging"}`,
     groups: 0,
