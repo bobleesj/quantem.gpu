@@ -4,10 +4,11 @@ Dragging a virtual detector over a resident uint8/uint16/uint32 array must not
 allocate CuPy gather temporaries the size of the data. The warp-shuffle kernels
 in ``kernels/virtual_image.cu`` read the resident counts in place: selected
 detector pixels per frame, per-frame totals, centre-of-mass moments, and sums or
-maxima over selected frames. Nothing derived from the counts is cached: a
-session over a buffer that is still filling (a live acquisition) reads the
-counts as they are at each call. Other dtypes and non-contiguous arrays reduce
-through ``TorchBackend`` on the same memory.
+maxima over selected frames. Nothing derived from the counts is kept unless
+the caller declares the array immutable: a session over a buffer that is still
+filling (a live acquisition) reads the counts as they are at each call. Other
+dtypes and non-contiguous arrays reduce through ``TorchBackend`` on the same
+memory.
 """
 
 import math
@@ -44,9 +45,15 @@ class CudaKernelCompute(DetectorQueries):
 
     ``data`` is ``(scan_row, scan_col, det_row, det_col)`` or a flat frame stack
     ``(frames, det_row, det_col)``. Products are copied to the host.
+
+    Every reduction is bound by reading the selected counts, so a mask covering
+    most of the detector costs most of a full read. Only with ``immutable`` (the
+    caller's promise that the array will not change) does the session keep each
+    pattern's exact total, sum the smaller complement of such a mask and
+    subtract, and keep the full centre of mass.
     """
 
-    def __init__(self, data):
+    def __init__(self, data, *, immutable: bool = False):
         if data.ndim == 4:
             self.scan_shape = (int(data.shape[0]), int(data.shape[1]))
         elif data.ndim == 3:
@@ -62,6 +69,9 @@ class CudaKernelCompute(DetectorQueries):
         self._suffix = _KERNEL_SUFFIX.get(np.dtype(data.dtype)) if data.flags.c_contiguous else None
         self._mask_indices = OrderedDict()
         self._torch = None
+        self._immutable = immutable
+        self._pattern_totals = None
+        self._full_center_of_mass = None
 
     def frame(self, index: int) -> np.ndarray:
         return self._frames[int(index)].get()
@@ -73,9 +83,7 @@ class CudaKernelCompute(DetectorQueries):
             return np.zeros(self.scan_shape, dtype=np.float32)
         if self._suffix is None:
             return self._torch_backend().masked_sum(mask.reshape(self.det_shape))
-        image = cp.empty(self.n_frames, dtype=cp.float32)
-        self._sum_selected("selected_sum_f32", self._indices(mask), image)
-        return image.reshape(self.scan_shape).get()
+        return self._selected_sums(mask, cp.float32).reshape(self.scan_shape).get()
 
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
         """Exact uint64 virtual image of the selected pixels."""
@@ -86,8 +94,7 @@ class CudaKernelCompute(DetectorQueries):
         if self._suffix is None:
             image = self._frames.reshape(self.n_frames, -1)[:, self._indices(mask)].sum(axis=1, dtype=cp.uint64)
         else:
-            image = cp.empty(self.n_frames, dtype=cp.uint64)
-            self._sum_selected("selected_sum_u64", self._indices(mask), image)
+            image = self._selected_sums(mask, cp.uint64)
         return image.reshape(self.scan_shape).get()
 
     def mean_dp(self) -> np.ndarray:
@@ -147,6 +154,8 @@ class CudaKernelCompute(DetectorQueries):
         """
         if self._suffix is None:
             return self._torch_backend().center_of_mass(det_mask)
+        if det_mask is None and self._full_center_of_mass is not None:
+            return tuple(values.copy() for values in self._full_center_of_mass)
         com_row = cp.empty(self.n_frames, dtype=cp.float32)
         com_col = cp.empty(self.n_frames, dtype=cp.float32)
         mask = None if det_mask is None else self._mask(det_mask)
@@ -175,7 +184,10 @@ class CudaKernelCompute(DetectorQueries):
                     np.int32(self.n_frames),
                 ),
             )
-        return com_col.get(), com_row.get()
+        centers = com_col.get(), com_row.get()
+        if det_mask is None and self._immutable:
+            self._full_center_of_mass = tuple(values.copy() for values in centers)
+        return centers
 
     # ---
 
@@ -198,6 +210,25 @@ class CudaKernelCompute(DetectorQueries):
         if len(self._mask_indices) > _MASK_INDEX_CACHE_SIZE:
             self._mask_indices.popitem(last=False)
         return indices
+
+    def _selected_sums(self, mask: np.ndarray, dtype):
+        """Per-frame sum of a flat mask's pixels on the device: exact uint64, or float32 rounded once from it.
+
+        The kernels are bound by reading the selected counts. For an immutable
+        array the first mask covering more than half of the detector adds every
+        pattern once; such masks then read only the pixels they leave out and
+        subtract those from the kept totals.
+        """
+        if self._immutable and 2 * int(mask.sum()) > mask.size:
+            if self._pattern_totals is None:
+                self._pattern_totals = cp.empty(self.n_frames, dtype=cp.uint64)
+                self._sum_selected("selected_sum_u64", self._indices(np.ones_like(mask)), self._pattern_totals)
+            left_out = cp.empty(self.n_frames, dtype=cp.uint64)
+            self._sum_selected("selected_sum_u64", self._indices(~mask), left_out)
+            return (self._pattern_totals - left_out).astype(dtype, copy=False)
+        image = cp.empty(self.n_frames, dtype=dtype)
+        self._sum_selected("selected_sum_f32" if dtype is cp.float32 else "selected_sum_u64", self._indices(mask), image)
+        return image
 
     def _sum_selected(self, kernel: str, indices, image):
         """Sum the selected pixels of every frame, one 32-lane warp per frame, into ``image``."""

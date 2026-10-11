@@ -339,3 +339,21 @@ def test_cuda_session_over_a_filling_buffer_reads_current_counts() -> None:
     expected_row = ((buffer * rows).sum(axis=(2, 3), dtype=cp.float64) / total).astype(cp.float32).get()
     com_row, _ = session.center_of_mass()
     np.testing.assert_allclose(com_row, expected_row, rtol=0, atol=1e-6)
+
+
+def test_cuda_session_over_an_immutable_array_keeps_totals_and_gives_the_same_values() -> None:
+    """Declaring the array immutable changes how masks covering most of the detector are summed, never a value."""
+    cp = _cupy_with_device()
+    from quantem.gpu import detector
+
+    counts = cp.asarray(np.random.default_rng(43).integers(0, 65_536, size=(6, 7, 13, 11), dtype=np.uint16))
+    reading, keeping = detector.prepare(counts), detector.prepare(counts, immutable=True)
+    for mask in (_mask((13, 11), 2.0), _mask((13, 11), 2.0, invert=True), np.ones((13, 11), bool)):
+        np.testing.assert_array_equal(keeping.masked_sum_exact(mask), reading.masked_sum_exact(mask))
+        np.testing.assert_array_equal(keeping.masked_sum(mask), reading.masked_sum(mask))
+    assert keeping._backend._pattern_totals is not None and reading._backend._pattern_totals is None
+    for mask in (None, _mask((13, 11), 2.0)):
+        for kept, read in zip(keeping.center_of_mass(mask), reading.center_of_mass(mask), strict=True):
+            np.testing.assert_array_equal(kept, read)
+    for kept, read in zip(keeping.center_of_mass(), reading.center_of_mass(), strict=True):
+        np.testing.assert_array_equal(kept, read)
