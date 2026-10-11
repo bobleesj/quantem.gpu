@@ -80,7 +80,7 @@ def test_h5_ans_defaults_to_gpu_median_hot_pixel_correction(tmp_path):
         correction = loaded.metadata["hot_pixel_correction"]
         assert correction["method"] == "median"
         assert correction["pixel_count"] == 2
-        assert correction["coordinates_row_column"] == [[0, 0], [2, 3]]
+        assert correction["coordinates_row_col"] == [[0, 0], [2, 3]]
         assert correction["applied"] is True
     finally:
         loaded.close()
