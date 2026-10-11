@@ -45,7 +45,6 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     assert "fn u64Add(a: U64Words, b: U64Words)" in source
     assert "fn u64MultiplyU32(a: u32, b: u32)" in source
     assert "fn u64DoubleStep(remainder: U64Words" in source
-    assert "fn ratioU32Exact(numerator: u32, denominator: u32)" in source
     assert "fn ratioU64(numerator: U64Words, denominator: U64Words)" in source
     assert "var significand = 1u << 23u" in source
     assert "let roundComparison = u64CompareTwice" in source
@@ -57,7 +56,7 @@ def test_webgpu_compute_source_tracks_vi_and_dpc_kernels() -> None:
     # Modes 0/1/3 are uint16/uint8/uint32. Only mode 2 may use float
     # accumulation and division; the native uint16 path must not bypass the
     # exact integer ratio used by the parity fixture.
-    assert detector_source.count("if (u.w != 2u)") == 3
+    assert detector_source.count("if (u.w != 2u)") == 1
     assert "if (u.w == 1u)" not in detector_source
     assert "if ((u2.w & 1u) != 0u)" in detector_source
     assert "if ((u2.w & 2u) != 0u)" in detector_source

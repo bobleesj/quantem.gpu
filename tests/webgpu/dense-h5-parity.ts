@@ -183,46 +183,108 @@ export async function runResidentParity(baseURL: string): Promise<Record<string,
   return checked;
 }
 
-/** Dense virtual images keep integer counts exact, including sums above 2^24.
+/** Dense virtual images and centers of mass keep integer counts exact, including sums above 2^24,
+and float32 data sums its values.
 
 A uint16 stack near the 65535 maximum gives full-detector totals near 2^28, where float32
 accumulation drops counts. The direct sum and the complement path a large aperture takes
-(total minus the excluded pixels) must equal the exact integer sum rounded once to float32.
+(total minus the excluded pixels) must equal the exact integer sum rounded once to float32, and
+the center of mass the exact moments divided once. The shared device has subgroups; `device`
+(requested without features) runs the shared-memory reductions that adapters without subgroups,
+such as Windows D3D feature level 11, compile.
 */
-export async function runDenseVirtualImageParity(): Promise<Record<string, number>> {
+export async function runDenseVirtualImageParity(device: GPUDevice): Promise<Record<string, number>> {
   const rows = 64, cols = 64, detSize = rows * cols, scanCount = 96;
   const values = new Uint16Array(scanCount * detSize);
   for (let i = 0; i < values.length; i++) values[i] = (i % 7 === 0) ? 65535 : 65535 - ((i * 7919) % 4093);
   const bad = new Set([5, 4000]);
-  const compute = await DetectorCompute.createChunked([
-    { bytes: new Uint8Array(values.buffer, 0, 40 * detSize * 2), startScan: 0, nScan: 40 },
-    { bytes: new Uint8Array(values.buffer, 40 * detSize * 2), startScan: 40, nScan: scanCount - 40 },
-  ], scanCount, detSize, 0);
-  if (!compute) fail("WebGPU unavailable");
-  compute.badPx = Uint32Array.from(bad);
   const sums = (mask: Uint32Array) => expectedSums(values, scanCount, mask, bad);
-  let count = 0;
   const masks: Record<string, Uint32Array> = {
     full: new Uint32Array(detSize).fill(1),
     annulus: annulusMask(rows, cols, 32, 32, 6, 60),
     disk: diskMask(rows, cols, 32, 32, 9),
+    pixel: Uint32Array.from({ length: detSize }, (_, k) => (k === 33 * cols + 31 ? 1 : 0)),
   };
-  for (const [name, mask] of Object.entries(masks)) {
-    const expected = sums(mask);
-    exact(`virtual image ${name} readback`, await compute.maskedSum(mask), expected);
-    const buffer = compute.maskedSumBuffer(mask).buffer;
-    exact(`virtual image ${name} resident`, new Float32Array(await readBack(compute.getDevice(), buffer, scanCount * 4)), expected);
-    buffer.destroy();
-    count += 2 * scanCount;
+  const shared = await DetectorCompute.createChunked([{ bytes: new Uint8Array(values.buffer), startScan: 0, nScan: scanCount }], scanCount, detSize, 0);
+  if (!shared) fail("WebGPU unavailable");
+  const chunk = (first: number, stop: number) => {
+    const buffer = device.createBuffer({ size: (stop - first) * detSize * 2, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(buffer, 0, values, first * detSize, (stop - first) * detSize);
+    return { buffer, startScan: first, nScan: stop - first };
+  };
+  const plain = DetectorCompute.fromGpuChunks(device, [chunk(0, 40), chunk(40, scanCount)], scanCount, detSize, 0);
+  const checked: Record<string, number> = {};
+  if (device.features.has("subgroups")) fail("the shared-memory reductions need a device requested without subgroups");
+  const sharedLabel = shared.getDevice().features.has("subgroups") ? "subgroups" : "shared device without subgroups";
+  for (const [label, compute] of [[sharedLabel, shared], ["shared-memory", plain]] as const) {
+    compute.badPx = Uint32Array.from(bad);
+    let count = 0;
+    for (const [name, mask] of Object.entries(masks)) {
+      const expected = sums(mask);
+      exact(`${label} virtual image ${name} readback`, await compute.maskedSum(mask), expected);
+      const buffer = compute.maskedSumBuffer(mask).buffer;
+      exact(`${label} virtual image ${name} resident`, new Float32Array(await readBack(compute.getDevice(), buffer, scanCount * 4)), expected);
+      buffer.destroy();
+      const com = await compute.maskedCoM(mask, cols);
+      const expectedRow = new Float32Array(scanCount), expectedCol = new Float32Array(scanCount);
+      for (let scan = 0; scan < scanCount; scan++) {
+        let weight = 0, rowMoment = 0, colMoment = 0;
+        for (let pixel = 0; pixel < detSize; pixel++) {
+          if (!mask[pixel] || bad.has(pixel)) continue;
+          const value = values[scan * detSize + pixel];
+          weight += value; rowMoment += Math.floor(pixel / cols) * value; colMoment += (pixel % cols) * value;
+        }
+        expectedRow[scan] = rowMoment / weight; expectedCol[scan] = colMoment / weight;
+      }
+      exact(`${label} ${name} CoM row`, com.comY, expectedRow);
+      exact(`${label} ${name} CoM col`, com.comX, expectedCol);
+      count += 4 * scanCount;
+    }
+    // A drag adds the exact delta of the changed pixels to the previous image; below 2^24 that is exact.
+    const from = diskMask(rows, cols, 32, 32, 3), to = diskMask(rows, cols, 33, 31, 3);
+    const previous = DetectorCompute.maskedSumBuffersBatch([compute], from).buffers;
+    const added = Uint32Array.from(to, (v, k) => (v && !from[k] ? 1 : 0));
+    const removed = Uint32Array.from(to, (v, k) => (!v && from[k] ? 1 : 0));
+    const delta = DetectorCompute.maskedSumDeltaBuffersBatch([compute], previous, added, removed);
+    exact(`${label} virtual image drag delta`, new Float32Array(await readBack(compute.getDevice(), delta.buffers[0], scanCount * 4)), sums(to));
+    count += scanCount;
+    compute.dispose();
+    checked[label] = count;
   }
-  // A drag adds the exact delta of the changed pixels to the previous image; below 2^24 that is exact.
-  const from = diskMask(rows, cols, 32, 32, 3), to = diskMask(rows, cols, 33, 31, 3);
-  const previous = DetectorCompute.maskedSumBuffersBatch([compute], from).buffers;
-  const added = Uint32Array.from(to, (v, k) => (v && !from[k] ? 1 : 0));
-  const removed = Uint32Array.from(to, (v, k) => (!v && from[k] ? 1 : 0));
-  const delta = DetectorCompute.maskedSumDeltaBuffersBatch([compute], previous, added, removed);
-  exact("virtual image drag delta", new Float32Array(await readBack(compute.getDevice(), delta.buffers[0], scanCount * 4)), sums(to));
-  count += scanCount;
-  compute.dispose();
-  return { checked: count };
+
+  // float32 data: quarter-integer values keep every virtual-image sum exact in float32; the
+  // center of mass accumulates float32 moments, so it matches float64 to rounding.
+  const floats = Float32Array.from({ length: scanCount * detSize }, (_, i) => ((i * 37) % 200) * 0.25);
+  const floatShared = await DetectorCompute.createChunked([{ bytes: new Uint8Array(floats.buffer), startScan: 0, nScan: scanCount }], scanCount, detSize, 2);
+  if (!floatShared) fail("WebGPU unavailable");
+  const floatChunk = device.createBuffer({ size: floats.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(floatChunk, 0, floats);
+  const floatPlain = DetectorCompute.fromGpuChunks(device, [{ buffer: floatChunk, startScan: 0, nScan: scanCount }], scanCount, detSize, 2);
+  for (const [label, compute] of [[sharedLabel, floatShared], ["shared-memory", floatPlain]] as const) {
+    let count = 0;
+    for (const [name, mask] of Object.entries(masks)) {
+      const expected = expectedSums(floats, scanCount, mask, new Set());
+      exact(`${label} float32 virtual image ${name}`, await compute.maskedSum(mask), expected);
+      const buffer = compute.maskedSumBuffer(mask).buffer;
+      exact(`${label} float32 virtual image ${name} resident`, new Float32Array(await readBack(compute.getDevice(), buffer, scanCount * 4)), expected);
+      buffer.destroy();
+      const com = await compute.maskedCoM(mask, cols);
+      for (let scan = 0; scan < scanCount; scan++) {
+        let weight = 0, rowMoment = 0, colMoment = 0;
+        for (let pixel = 0; pixel < detSize; pixel++) {
+          if (!mask[pixel]) continue;
+          const value = floats[scan * detSize + pixel];
+          weight += value; rowMoment += Math.floor(pixel / cols) * value; colMoment += (pixel % cols) * value;
+        }
+        const row = weight > 0 ? rowMoment / weight : 0, col = weight > 0 ? colMoment / weight : 0;
+        if (!(Math.abs(com.comY[scan] - row) <= 1e-5 * Math.max(1, Math.abs(row)) && Math.abs(com.comX[scan] - col) <= 1e-5 * Math.max(1, Math.abs(col)))) {
+          fail(`${label} float32 ${name} CoM[${scan}]: (${com.comY[scan]}, ${com.comX[scan]}) != (${row}, ${col})`);
+        }
+      }
+      count += 4 * scanCount;
+    }
+    compute.dispose();
+    checked[`${label} float32`] = count;
+  }
+  return checked;
 }
