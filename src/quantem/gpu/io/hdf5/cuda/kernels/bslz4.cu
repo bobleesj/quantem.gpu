@@ -143,7 +143,7 @@ inline __device__ token_type decodePair(const uint8_t num) {
 // bytes this block already wrote (0 < offset <= decomp_idx). Without the read
 // bounds a damaged stream with intact framing (a zeroed block: token 0, match
 // offset 0) copies from outside the block and the process loses its CUDA
-// context; they cost 4 to 6% of this kernel's time. All lanes of the warp see
+// context; they cost about 6% of this kernel's time. All lanes of the warp see
 // the same token values and return together.
 inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
                                         const uint8_t* compData, const position_type comp_end,
