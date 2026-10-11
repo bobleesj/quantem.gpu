@@ -258,6 +258,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // One WORKGROUP per scan position (same coalescing fix as MASKED_SUM): WGSZ threads cooperatively
 // accumulate the intensity-weighted centroid over the aperture, three shared-memory reductions
 // (weight, y*weight, x*weight). gridX in u2.z for the 2D dispatch.
+// Integer modes reduce to exact totals, then threads 0 and 1 divide the row and the column moment
+// by the weight with the one correctly rounded ratioU64 call: Windows FXC (D3D feature level
+// below 12) fails to compile this shader when the exact divisions are inlined four times.
 const maskedComSrc = (sg: boolean) => `
 ${sg ? "enable subgroups;" : ""}
 @group(0) @binding(0) var<storage,read> data: array<u32>;
@@ -311,93 +314,67 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
         }
       } }
     }
+    var weight = U64Words(0u, 0u); var rowMoment = U64Words(0u, 0u); var colMoment = U64Words(0u, 0u);
+    if ((u2.w & 1u) != 0u) {
+${sg
+  ? `      let wLo = subgroupAdd(wsumN); let yLo = subgroupAdd(ysumN); let xLo = subgroupAdd(xsumN);
+      if (subgroupElect()) { let w = tid / ${SGSZ}u; pwuLo[w] = wLo; pyuLo[w] = yLo; pxuLo[w] = xLo; }
+      workgroupBarrier();
+      var w = 0u; var y = 0u; var x = 0u;
+      for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwuLo[k]; y = y + pyuLo[k]; x = x + pxuLo[k]; }
+      weight = U64Words(w, 0u); rowMoment = U64Words(y, 0u); colMoment = U64Words(x, 0u);`
+  : `      pwuLo[tid] = wsumN; pyuLo[tid] = ysumN; pxuLo[tid] = xsumN; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) { pwuLo[tid] = pwuLo[tid] + pwuLo[tid + s]; pyuLo[tid] = pyuLo[tid] + pyuLo[tid + s]; pxuLo[tid] = pxuLo[tid] + pxuLo[tid + s]; }
+        workgroupBarrier();
+      }
+      weight = U64Words(pwuLo[0], 0u); rowMoment = U64Words(pyuLo[0], 0u); colMoment = U64Words(pxuLo[0], 0u);`}
+    } else {
+      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
+      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
+      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
+      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+        if (tid < s) {
+          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
+          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
+          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
+          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
+        }
+        workgroupBarrier();
+      }
+      weight = U64Words(pwuLo[0], pwuHi[0]); rowMoment = U64Words(pyuLo[0], pyuHi[0]); colMoment = U64Words(pxuLo[0], pxuHi[0]);
+    }
+    // Thread 0 writes comY and thread 1 comX; ratioU64 returns 0 for a zero weight.
+    if (tid < 2u && sl < u.y) {
+      var moment = rowMoment;
+      if (tid == 1u) { moment = colMoment; }
+      com[u.x + sl + tid * u2.y] = ratioU64(moment, weight);
+    }
   } else {
     if (sl < u.y) { for (var j: u32 = tid; j < n; j = j + ${WGSZ}u) {
       let p = idx[j]; let v = sampleF(base + p, u.w);
       wsum = wsum + v; ysum = ysum + f32(p / detCols) * v; xsum = xsum + f32(p % detCols) * v;
     } }
-  }
 ${sg
-  ? `  if (u.w != 2u) {
-    if ((u2.w & 1u) != 0u) {
-      let wLo = subgroupAdd(wsumN); let yLo = subgroupAdd(ysumN); let xLo = subgroupAdd(xsumN);
-      if (subgroupElect()) { let w = tid / ${SGSZ}u; pwuLo[w] = wLo; pyuLo[w] = yLo; pxuLo[w] = xLo; }
-      workgroupBarrier();
-      if (tid == 0u && sl < u.y) {
-        var w = 0u; var y = 0u; var x = 0u;
-        for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pwuLo[k]; y = y + pyuLo[k]; x = x + pxuLo[k]; }
-        let gi = u.x + sl;
-        if (w > 0u) { com[gi] = ratioU32Exact(y, w); com[u2.y + gi] = ratioU32Exact(x, w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    } else {
-      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
-      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
-      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
-      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-        if (tid < s) {
-          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
-          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
-          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
-          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
-        }
-        workgroupBarrier();
-      }
-      if (tid == 0u && sl < u.y) {
-        let w = U64Words(pwuLo[0], pwuHi[0]); let gi = u.x + sl;
-        if (!u64IsZero(w)) { com[gi] = ratioU64(U64Words(pyuLo[0], pyuHi[0]), w); com[u2.y + gi] = ratioU64(U64Words(pxuLo[0], pxuHi[0]), w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    }
-  } else {
-    wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
-  if (subgroupElect()) { let w = tid / ${SGSZ}u; pw[w] = wsum; py[w] = ysum; px[w] = xsum; }
-  workgroupBarrier();
-  if (tid == 0u && sl < u.y) {
-    var w = 0.0; var y = 0.0; var x = 0.0;
-    for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pw[k]; y = y + py[k]; x = x + px[k]; }
-    let gi = u.x + sl;
-    if (w > 0.0) { com[gi] = y / w; com[u2.y + gi] = x / w; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-  }
-  }`
-  : `  if (u.w != 2u) {
-    if ((u2.w & 1u) != 0u) {
-      pwuLo[tid] = wsumN; pyuLo[tid] = ysumN; pxuLo[tid] = xsumN; workgroupBarrier();
-      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-        if (tid < s) { pwuLo[tid] = pwuLo[tid] + pwuLo[tid + s]; pyuLo[tid] = pyuLo[tid] + pyuLo[tid + s]; pxuLo[tid] = pxuLo[tid] + pxuLo[tid + s]; }
-        workgroupBarrier();
-      }
-      if (tid == 0u && sl < u.y) {
-        let w = pwuLo[0]; let gi = u.x + sl;
-        if (w > 0u) { com[gi] = ratioU32Exact(pyuLo[0], w); com[u2.y + gi] = ratioU32Exact(pxuLo[0], w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    } else {
-      pwuLo[tid] = wsumU.lo; pwuHi[tid] = wsumU.hi;
-      pyuLo[tid] = ysumU.lo; pyuHi[tid] = ysumU.hi;
-      pxuLo[tid] = xsumU.lo; pxuHi[tid] = xsumU.hi; workgroupBarrier();
-      for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-        if (tid < s) {
-          let w = u64Add(U64Words(pwuLo[tid], pwuHi[tid]), U64Words(pwuLo[tid + s], pwuHi[tid + s]));
-          let y = u64Add(U64Words(pyuLo[tid], pyuHi[tid]), U64Words(pyuLo[tid + s], pyuHi[tid + s]));
-          let x = u64Add(U64Words(pxuLo[tid], pxuHi[tid]), U64Words(pxuLo[tid + s], pxuHi[tid + s]));
-          pwuLo[tid] = w.lo; pwuHi[tid] = w.hi; pyuLo[tid] = y.lo; pyuHi[tid] = y.hi; pxuLo[tid] = x.lo; pxuHi[tid] = x.hi;
-        }
-        workgroupBarrier();
-      }
-      if (tid == 0u && sl < u.y) {
-        let w = U64Words(pwuLo[0], pwuHi[0]); let gi = u.x + sl;
-        if (!u64IsZero(w)) { com[gi] = ratioU64(U64Words(pyuLo[0], pyuHi[0]), w); com[u2.y + gi] = ratioU64(U64Words(pxuLo[0], pxuHi[0]), w); } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-      }
-    }
-  } else {
-    pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
-  for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
-    if (tid < s) { pw[tid] = pw[tid] + pw[tid + s]; py[tid] = py[tid] + py[tid + s]; px[tid] = px[tid] + px[tid + s]; }
+  ? `    wsum = subgroupAdd(wsum); ysum = subgroupAdd(ysum); xsum = subgroupAdd(xsum);
+    if (subgroupElect()) { let w = tid / ${SGSZ}u; pw[w] = wsum; py[w] = ysum; px[w] = xsum; }
     workgroupBarrier();
+    if (tid == 0u && sl < u.y) {
+      var w = 0.0; var y = 0.0; var x = 0.0;
+      for (var k = 0u; k < ${WGSZ / SGSZ}u; k = k + 1u) { w = w + pw[k]; y = y + py[k]; x = x + px[k]; }
+      let gi = u.x + sl;
+      if (w > 0.0) { com[gi] = y / w; com[u2.y + gi] = x / w; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+    }`
+  : `    pw[tid] = wsum; py[tid] = ysum; px[tid] = xsum; workgroupBarrier();
+    for (var s: u32 = ${WGSZ / 2}u; s > 0u; s = s >> 1u) {
+      if (tid < s) { pw[tid] = pw[tid] + pw[tid + s]; py[tid] = py[tid] + py[tid + s]; px[tid] = px[tid] + px[tid + s]; }
+      workgroupBarrier();
+    }
+    if (tid == 0u && sl < u.y) {
+      let gi = u.x + sl;
+      if (pw[0] > 0.0) { com[gi] = py[0] / pw[0]; com[u2.y + gi] = px[0] / pw[0]; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
+    }`}
   }
-  if (tid == 0u && sl < u.y) {
-    let gi = u.x + sl;
-    if (pw[0] > 0.0) { com[gi] = py[0] / pw[0]; com[u2.y + gi] = px[0] / pw[0]; } else { com[gi] = 0.0; com[u2.y + gi] = 0.0; }
-  }
-  }`}
 }`;
 
 // Dense DF/ADF helper: out = full-detector total - complement sum. This mirrors

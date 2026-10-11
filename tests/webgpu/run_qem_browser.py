@@ -98,7 +98,7 @@ def main() -> None:
                           dense_decode: await DenseH5Parity.runDenseDecodeParity(location.origin + '/fixtures/'),
                           product_first: await DenseH5Parity.runProductFirstParity(location.origin + '/fixtures/'),
                           resident: await DenseH5Parity.runResidentParity(location.origin + '/fixtures/'),
-                          virtual_image: await DenseH5Parity.runDenseVirtualImageParity(),
+                          virtual_image: await DenseH5Parity.runDenseVirtualImageParity(device),
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)
