@@ -166,6 +166,10 @@ class MPSDecompressor:
         self._block_counts_np = numpy_view(self._block_counts_mtl, np.uint32, max_frames)
         self._block_offsets_mtl = allocate_shared((max_frames + 1) * 4, "LZ4 block offsets")
         self._block_offsets_np = numpy_view(self._block_offsets_mtl, np.uint32, max_frames + 1)
+        # The LZ4 kernels record here the lowest batch position whose block did not decode to its own bytes, and
+        # one past the highest.
+        self._errors_mtl = allocate_shared(8, "LZ4 decode errors")
+        self._errors_np = numpy_view(self._errors_mtl, np.uint32, 2)
 
     def free(self) -> None:
         """Release every Metal buffer this decompressor still owns.
@@ -176,12 +180,12 @@ class MPSDecompressor:
         """
         for name in (
             "_compressed_mtl", "_lz4_mtl", "_chunk_offsets_mtl",
-            "_block_starts_mtl", "_block_counts_mtl", "_block_offsets_mtl",
+            "_block_starts_mtl", "_block_counts_mtl", "_block_offsets_mtl", "_errors_mtl",
         ):
             release_buffer(getattr(self, name))
             setattr(self, name, None)
         # The NumPy views point at freed memory now, so drop them together.
-        self._compressed_np = self._chunk_offsets_np = None
+        self._compressed_np = self._chunk_offsets_np = self._errors_np = None
         self._block_starts_np = self._block_counts_np = self._block_offsets_np = None
 
     def __del__(self):
@@ -198,7 +202,10 @@ class MPSDecompressor:
 
         The compressed bytes and block metadata of ``prepared`` are copied into
         this decoder's unified-memory buffers, then decoded in the stored
-        dtype into a new ``SharedArray`` that owns its buffer.
+        dtype into a new ``SharedArray`` that owns its buffer. LZ4 bytes that
+        do not decode to exactly their block (a truncated or corrupt chunk
+        whose framing is intact) raise ``ValueError`` naming the frames; the
+        kernels bound every read and write, so the next batch decodes as usual.
         """
         read_buffer = prepared["read_buffer"]
         total_frames = int(prepared["total_frames"])
@@ -239,12 +246,21 @@ class MPSDecompressor:
         self._block_counts_np[:total_frames] = block_counts[:total_frames]
         self._block_offsets_np[: total_frames + 1] = block_offsets[: total_frames + 1]
         max_blocks = int(block_counts[:total_frames].max(initial=1))
+        self._errors_np[:] = (np.iinfo(np.uint32).max, 0)
 
         out_mtl = allocate_shared(total_frames * frame_bytes, "decoded frames")
         try:
             self._submit_gpu(
                 total_frames, frame_bytes, elem_size, out_mtl, max_blocks
             ).waitUntilCompleted()
+            first, stop = (int(position) for position in self._errors_np)
+            if stop:
+                damaged = prepared["frame_indices"][first:stop]
+                raise ValueError(
+                    f"Frames {int(damaged.min())} to {int(damaged.max())}: a compressed HDF5 chunk is truncated "
+                    "or corrupt and did not decode to its frame size. Check that the acquisition finished "
+                    "writing, or copy it again."
+                )
         except BaseException:
             release_buffer(out_mtl)
             raise
@@ -272,6 +288,7 @@ class MPSDecompressor:
             encoder.setBuffer_offset_atIndex_(self._block_offsets_mtl, 0, 4)
             _set_u32(encoder, 5, frame_bytes // 2)
             encoder.setBuffer_offset_atIndex_(out_mtl, 0, 6)
+            encoder.setBuffer_offset_atIndex_(self._errors_mtl, 0, 7)
             # The shader's unshuffle loop advances by four SIMD groups.  It
             # therefore requires exactly 4 x 32 = 128 threads: 64 leaves half
             # the bit-plane groups unwritten, while 256 overlaps group writes.
@@ -298,6 +315,7 @@ class MPSDecompressor:
         _set_u32(encoder, 5, 8192)
         _set_u32(encoder, 6, frame_bytes)
         encoder.setBuffer_offset_atIndex_(lz4_mtl, 0, 7)
+        encoder.setBuffer_offset_atIndex_(self._errors_mtl, 0, 8)
         encoder.dispatchThreadgroups_threadsPerThreadgroup_(
             Metal.MTLSizeMake(
                 n_frames, 1,

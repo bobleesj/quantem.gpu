@@ -294,6 +294,7 @@ class FrameReader:
             "block_counts": block_counts,
             "block_offsets": block_offsets_arr,
             "total_frames": int(selected.size),
+            "frame_indices": selected,
             "frame_shape": frame_shape,
             "frame_bytes": frame_bytes,
             "dtype": dtype,
