@@ -11,7 +11,7 @@
  * verified to terminate each column stream exactly at build time.
  */
 
-import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, payloadGroupLimit, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
+import { copyRansPayload, payloadGroupLimit, type RansByteSource, type RansPayloadProfile } from "./rans-source";
 import { qemFilesSource, type QemByteFile } from "./qem-source";
 import { DetectorCompute } from "./backend";
 import { EXACT_INTEGER_COM_WGSL } from "./exact-com";
@@ -322,10 +322,6 @@ export class RansResidentSet {
     for (let t = 0; t < this.T; t++) this.computes.push(new RansDetectorCompute(this, t));
   }
 
-  static async load(device: GPUDevice, baseUrl: string, onStatus: (text: string) => void = () => {}): Promise<RansResidentSet> {
-    return this.loadSource(device, ransHttpSource(baseUrl), onStatus);
-  }
-
   /** Load one .qem count acquisition through the same GPU decoder; `signal` cancels it, downloads included. */
   static async loadQemFile(device: GPUDevice, file: QemByteFile, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], signal?: AbortSignal): Promise<RansResidentSet> {
     return this.loadQemFiles(device, [file], onStatus, badPixels, signal);
@@ -344,18 +340,6 @@ export class RansResidentSet {
       return set;
     }
     catch (error) { source.dispose?.(); throw error; }
-  }
-
-  /** Load an exact exported series from a user-selected local folder. */
-  static async loadLocal(device: GPUDevice, directory: RansDirectoryHandle, onStatus: (text: string) => void = () => {}): Promise<RansResidentSet> {
-    const started = performance.now();
-    return this.loadSource(device, await ransLocalSource(directory), onStatus, started);
-  }
-
-  /** Load files supplied by an input with the webkitdirectory attribute. */
-  static async loadFiles(device: GPUDevice, files: ArrayLike<File>, onStatus: (text: string) => void = () => {}): Promise<RansResidentSet> {
-    const started = performance.now();
-    return this.loadSource(device, await ransLocalFilesSource(files), onStatus, started);
   }
 
   private static async loadSource(device: GPUDevice, source: RansByteSource, onStatus: (text: string) => void, started = performance.now()): Promise<RansResidentSet> {
