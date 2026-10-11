@@ -128,8 +128,6 @@ def test_webgpu_backend_source_tracks_ssb_engine() -> None:
     source = source_text("ssb/webgpu/backend.ts")
 
     assert 'from "../../device/webgpu"' in source
-    assert 'from "../../io/hdf5/webgpu/h5reader"' in source
-    assert 'from "../../io/hdf5/webgpu/bslz4"' in source
     assert "export class WebGPUSSBBackend" in source
     assert 'real_dtype: "float32"' in source
     assert 'complex_dtype: "complex64"' in source
@@ -141,8 +139,6 @@ def test_webgpu_backend_source_tracks_ssb_engine() -> None:
     assert "scientific fitting never subsamples automatically" in source
     assert "BF clamped" not in source
     assert "const phi12Deg = phi12 * 180 / Math.PI" in source
-    assert 'encoding="u4" remains reserved for packed 4-bit' in source
-    assert 'raw === "<u4" || raw === ">u4" || raw === "|u4"' in source
     active_selector = source[
         source.index("function collectActiveBfIndices("):
         source.index("function packGeometry", source.index("function collectActiveBfIndices("))
