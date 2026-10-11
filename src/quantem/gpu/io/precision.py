@@ -335,8 +335,6 @@ class _Source:
         self.array = None
         self.generated = False
         self.reader = None
-        # Set by restore_saved_regions.
-        self.restore_regions = False
         if not isinstance(source, (str, Path)):
             self.array = source
             self.shape = tuple(source.shape)
@@ -404,15 +402,6 @@ class _Source:
                 f"Precision conversion supports float16/float32 and native uint8/uint16; got {self.dtype}. Preserve this source without conversion."
             )
 
-    def restore_saved_regions(self):
-        """Make :meth:`blocks` yield float32 intensities, each region restored with its own saved calibration.
-
-        Converting a saved regional export again must start from intensities,
-        not codes whose scale changes from region to region.
-        """
-        self.restore_regions = True
-        self.dtype = np.dtype("float32")
-
     def _seal(self, path):
         """Record a source file's identity so a rewrite during conversion is caught."""
         self.signatures[str(path)] = file_signature(path)
@@ -425,15 +414,7 @@ class _Source:
             )
 
     def blocks(self, region=None, detector_region=None):
-        """Yield the selected frames as ``(frames, row, col)`` GPU blocks of about 256 MiB."""
-        if self.restore_regions:
-            for block, report in _calibrated_blocks(self, region, detector_region):
-                yield conversion.restore(block, report, self.backend)
-            return
-        yield from self.stored_blocks(region, detector_region)
-
-    def stored_blocks(self, region=None, detector_region=None):
-        """Yield the selected frames as stored, before any regional restore."""
+        """Yield the selected frames as stored ``(frames, row, col)`` GPU blocks of about 256 MiB."""
         if self.generated:
             if region is not None or detector_region is not None:
                 raise ValueError(
@@ -608,7 +589,7 @@ def _finish_report(report):
 def _calibrated_blocks(source, scan_region, detector_region):
     """Split selected stored frames at saved calibration boundaries, each with its region's report."""
     if not source.saved or source.saved.get("version") != 2:
-        for block in source.stored_blocks(scan_region, detector_region):
+        for block in source.blocks(scan_region, detector_region):
             yield block, source.saved
             del block
         return
@@ -618,7 +599,7 @@ def _calibrated_blocks(source, scan_region, detector_region):
     regions = source.saved["regions"]
     ends = [item["stop_frame"] for item in regions]
     cursor = 0
-    for block in source.stored_blocks(scan_region, detector_region):
+    for block in source.blocks(scan_region, detector_region):
         first = 0
         while first < block.shape[0]:
             index = bisect.bisect_right(ends, selected[cursor + first])
