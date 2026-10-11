@@ -44,6 +44,48 @@ used here:
 Each row gives the minimum and the median. "Same" means equal SHA-256 digests
 of the output arrays, or exact array equality where stated.
 
+## Fixed first: the decoder's upload stream could overwrite counts still being read
+
+`decompress_prepared` uploads compressed chunks on a second CUDA stream as soon
+as a decode has more than one batch (3641 or more 192 x 192 frames at the
+default batch, every block of `io.load`). That stream did not wait for work
+queued on the caller's stream, and the memory pool hands a freed block to the
+next allocation at once. A caller that joined decoded batches, freed them and
+decoded the next batch could therefore have the upload write into a block that
+its queued join had yet to read.
+
+Reproduced with real compressed frames: decode eight batches of 2048 frames,
+join them, free them, decode 4096 more frames. Frames of the joined array that
+differ from a reference decoded with waits, per attempt, starting each attempt
+from an empty pool on a busy GPU:
+
+| Tree | wrong frames in 12 attempts |
+|---|---|
+| base | 686, 686, 686, 686, 686, 0, 686, 0, 248, 686, 686, 686 |
+| fixed | 0 in every attempt |
+
+`tests/hardware/cuda/test_streamed_h5.py::test_decode_right_after_freeing_batches_with_queued_reads_keeps_their_counts`
+(real master through `QUANTEM_SSB_ARINA_MASTER`) fails on the base tree in 3 of
+3 runs and passes on the fixed tree in 3 of 3. `io.load` was not affected
+before this round because it waited between blocks, but the running detector
+total added here queues one more kernel after that wait, so the same hazard
+would have reached `io.load` too.
+
+Fix: one event recorded on the caller's stream, which the upload stream waits
+on before its first copy (`device.cuda_runtime.start_after_queued_work`). The
+same call now precedes the two other private upload streams that write into
+pool memory, the `.qem` loader's arena and the paired-file reader. The paired
+HDF5 loader already waits for the caller's stream before its streams start,
+the DigitalMicrograph loader uploads on the caller's stream, `retain` waits
+for the stream, and the encoders and the save path run on the caller's stream.
+
+Cost on an idle GPU, with and without the wait alternating in one process:
+
+| | without | with |
+|---|---|---|
+| decode of 16384 frames, 20 rounds, ms | 8.41 / 8.56 | 8.34 / 8.56 |
+| `io.load` of the 512 x 512 scan, 6 rounds, ms | 409 / 441 | 403 / 422 |
+
 ## Where the time went, and what changed
 
 ### Aberration fit (`find_aberrations`, 200 trials and Nelder-Mead)
@@ -201,6 +243,26 @@ The staging batch follows free GPU memory, so the number of chunks (and with it
 the digest of the retained bytes) changed between runs on the shared GPU on
 both trees; the counts are the same in every layout.
 
+### Saving
+
+`.qem` save wrote its body to a temporary file, read it back to hash it and
+wrote it again. It now writes the body once, hashes each array in passing on a
+second thread while the next array leaves the GPU, and copies through two
+reused page-locked buffers; the Arina HDF5 writer stages its chunk bytes in
+reused page-locked buffers. Measured here on an idle GPU, base and candidate
+processes alternating, minimum / median of 3 saves each, page cache as found:
+
+| | base | candidate | bytes |
+|---|---|---|---|
+| `.qem` save of the 512 x 512 scan (2.46 GB), s | 6.50 / 10.02, 5.29 / 12.72 | 2.32 / 4.04, 1.72 / 2.08 | body identical (SHA-256 of every byte after the header, per-block hashes, chunk table) |
+| Arina HDF5 save of 65536 patterns (0.92 GB, 3 files), s | 0.54 / 0.54, 2.57 / 2.99 | 0.49 / 0.54, 0.58 / 0.59 | all files identical (SHA-256) |
+
+Two saves of the same acquisition never have the same header on either tree:
+it records the load's timings. Between the trees one more header value
+differs, `physical_resident_bytes`, which is larger by 8 bytes per detector
+pixel: the detector total the resident now keeps. The second base round of the
+HDF5 save shows the disk, not the code.
+
 ### Scan-ROI reductions of an encoded acquisition
 
 Every 512-scan block holding a selected position was decoded to dense counts,
@@ -262,34 +324,71 @@ Kernel modules compile on first use and CuPy keeps them in its on-disk cache:
 Nothing was changed here. Importing Numba where the header walk is first used
 would take 0.12 s off sessions that never read an HDF5 master.
 
-## The repository benchmarks, processes alternating
+## The repository benchmarks, rc16 against the final tree
 
 `tests/benchmarks/data_paths.py` (median of 7 after a warm-up) and
-`scripts/benchmark_ssb.py`, base then candidate, two rounds on the 512 x 512
-scan and one on the 256 x 256 scan. Every digest is equal between the trees
-on both acquisitions. These rows show the size of each effect under load, not
-a ranking: the same tree moved by 20 to 40% between rounds.
+`scripts/benchmark_ssb.py` (median of the warm repeats), rc16 (`b771520`) then
+the final tree, two rounds, on the 512 x 512 scan, started while the GPU was
+idle. Every digest is equal between the trees in both rounds, on this scan and
+on the 256 x 256 one, including the digest of the retained encoded bytes.
 
-| 512 x 512 scan, ms | base, rounds 1 and 2 | candidate, rounds 1 and 2 |
+| ms | rc16, rounds 1 and 2 | final, rounds 1 and 2 |
 |---|---|---|
-| `io.load` to the encoded resident | 2777, 2348 | 1822, 2093 |
-| prepared decode, 65536 frames | 302, 256 | 247, 221 |
-| encoded mean pattern | 892, 754 | 11.3, 9.0 |
-| encoded centre of mass | 819, 605 | 373, 335 |
-| encoded BF / ADF / DF image | 58 / 57 / 56, 44 / 46 / 44 | 45 / 45 / 47, 40 / 39 / 40 |
-| encoded scan-ROI mean (32 x 32) | 477, 385 | 33, 31 |
-| dense mean / BF / DF / centre of mass | 46 / 47 / 46 / 29, 42 / 39 / 40 / 28 | 39 / 30 / 32 / 22, 38 / 35 / 37 / 27 |
-| paired mean / BF / centre of mass / scan-ROI mean | 14 / 55 / 179 / 465, 14 / 57 / 162 / 391 | 10 / 40 / 141 / 366, 10 / 42 / 137 / 402 |
-| SSB session build | 2166, 1843 | 676, 703 |
-| SSB reconstruct, without / with loss | 129 / 323, 122 / 290 | 94 / 240, 101 / 246 |
-| `dpc.run` | 633 | 369, 421 |
-| `parallax.run` with the aberration fit | 1932 | 1719, 1910 |
-| `find_aberrations`, s | 33.7 | 21.5, 39.5 |
+| `io.load` to the encoded resident | 536, 531 | 371, 396 |
+| prepared decode, 65536 frames | 131, 97 | 88, 89 |
+| `append` of 4096 / 512 scans | 3.17 / 0.66, 2.53 / 0.60 | 2.10 / 0.62, 2.12 / 0.62 |
+| encoded mean pattern | 254, 112 | 0.08, 0.08 |
+| encoded centre of mass | 115, 195 | 50.0, 50.2 |
+| encoded BF / ADF / DF image | 11.2 / 3.7 / 2.7, 3.7 / 3.6 / 2.7 | 3.5 / 3.5 / 2.6, 3.6 / 3.5 / 2.7 |
+| encoded exact BF image | 0.76, 2.37 | 0.60, 0.67 |
+| encoded scan-ROI mean (32 x 32) | 11.6, 85.2 | 1.34, 1.38 |
+| dense mean / BF / ADF / DF / centre of mass | 4.7 / 10.1 / 10.0 / 10.4 / 7.9, 4.4 / 3.1 / 3.1 / 3.4 / 3.1 | 4.4 / 3.1 / 3.1 / 3.4 / 3.1 in both |
+| dense, `immutable=True`: BF / ADF / DF / centre of mass | - | 2.4 / 2.4 / 1.8 / 0.01 in both |
+| paired mean / BF / DF / centre of mass / scan-ROI mean | 0.08 / 2.2 / 6.2 / 29.2 / 18.1, 0.10 / 2.3 / 2.3 / 16.7 / 7.6 | 0.07 / 1.7 / 1.6 / 15.5 / 5.7, 0.07 / 1.9 / 1.6 / 15.9 / 5.8 |
+| SSB reconstruct, without / with loss | 16 / 42, 16 / 44 | 16 / 44, 17 / 45 |
+| `find_aberrations`, s | 8.03, 5.95 | 5.95, 6.00 |
+| `find_aberrations(tilt=True)`, s | 4.52, 3.86 | 3.90, 3.92 |
+| `parallax.run` with the aberration fit | 330, 333 | 214, 214 |
+| SSB session build | 449, 283 | 306, 308 (first build 168, 241) |
+| `dpc.run` | 113, 112 | 203, 130 |
 
-The second base round stopped in the fit stage with a `MemoryError` from the
-read's free-memory check: other jobs had filled the GPU. The dense, paired,
-reconstruct, parallax and fit rows are paths this round did not change; their
-differences are the load at that moment.
+Two rows need a caution. The GPU did not stay idle: another job came and went
+during the runs, and with two processes each gets half of the GPU.
+
+- Session build. Ten builds in a row, timed one by one after the table was
+  taken (GPU shared at the time): rc16 640 ms for most builds with single
+  builds between 363 and 551; final 389, 154 to 167, then 300. With stage
+  timers the final tree's unshared build is 137 ms (crop read 37, selection 7,
+  spectra 91) and its shared builds 292 ms (62, 23, 200): every stage doubles
+  together, which is the other process, not a stage. The 283 ms of rc16 and the
+  137 to 167 ms of the final tree are the builds that ran alone; they were not
+  taken in the same minute.
+- `dpc.run`. The table has the final tree slower although its centre of mass,
+  nearly all of the call on the GPU, takes half as long in the same runs (50
+  against 115 to 195 ms). Three later rounds, trees alternating on the shared
+  GPU, median of 7: `dpc.run` 369, 372, 400 ms for rc16 against 141, 211,
+  270 ms; `center_of_mass` alone 229, 191, 229 against 118, 59, 118 ms. No
+  cause for the table's two values was found; this row should be taken again on
+  an idle GPU.
+
+The dense rows of rc16's first round were disturbed the same way; its second
+round is the one to read. On an idle GPU a dense dark-field image takes 3.4 ms
+on rc16 too: the 7 ms of the rc16 record was a kernel outlasting its time
+slice, not the kernel.
+
+Under load (the state of most of this round; every digest equal there too):
+session build 2166, 1843 ms against 676, 703 ms; `io.load` 2777, 2348 against
+1822, 2093 ms; encoded mean 892, 754 against 11, 9 ms; encoded centre of mass
+819, 605 against 373, 335 ms; scan-ROI mean 477, 385 against 33, 31 ms.
+
+## Metal
+
+The Metal LZ4 decoders now bound their reads and writes as the CUDA decoder
+does; the behaviour of damaged blocks before and after, and the cost on an
+Apple silicon laptop, are in
+[the Metal record](2026-10-11-metal-lz4-bounds.md). The released-row fix below
+was run there too (33 passed, 3 skipped across the counts, float and resident
+suites with the Metal backend).
 
 ## Two fixes found on the way
 
@@ -307,10 +406,12 @@ differences are the load at that moment.
 
 - No output bit changed on any merged path: every digest of
   `scripts/benchmark_ssb.py` and `tests/benchmarks/data_paths.py` is equal
-  between base and candidate on both acquisitions, as are the in-process
+  between rc16 and the final tree on both acquisitions, as are the in-process
   checks above. The digest of the retained encoded bytes follows the staging
-  batch, which follows free GPU memory: one base run of five loaded a
-  different layout with the same counts.
+  batch, which follows free GPU memory: under load one base run of five loaded
+  a different layout with the same counts.
+- A decode right after freed batches could return wrong frames in them; that
+  is fixed and tested.
 - Neither fit is faster. The standard fit's time is the loss kernel's, which
   is at the floor of its design. The tilt fit's polish can share launches (27%
   to 45% of the fit), but the batch kernel rounds differently by batch
@@ -318,12 +419,10 @@ differences are the load at that moment.
 - A session build no longer decodes the acquisition for its mean pattern,
   reads the bright-field crop in half the time and builds the spectra 28%
   faster.
-- Mean pattern after a load: the decode pass is gone (468 ms here; 186 to
-  230 ms in the rc16 record); what remains is one multiplication of the kept
-  total by the valid-pixel mask, 6.6 ms here, which is the wait for a time
-  slice. Centre of mass: one decode pass instead of two. Scan-ROI reductions:
-  10 to 18 times faster. Load: 10% shorter under load, with the host read
-  hidden behind GPU work. None of these was measured on an idle GPU.
+- On an idle GPU: mean pattern after a load 112 to 254 ms to 0.08 ms; centre
+  of mass 115 to 195 ms to 50 ms (one decode pass instead of two); a 32 x 32
+  scan-ROI mean 12 to 85 ms to 1.3 ms; `io.load` 0.53 s to 0.37 to 0.40 s;
+  `.qem` save of 2.46 GB from 5.3 to 6.5 s at best to 1.7 to 2.3 s.
 - Dense sessions cannot be faster than reading the selected counts; the
   complement shortcut is available to callers that declare the array immutable.
 
