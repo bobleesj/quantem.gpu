@@ -363,6 +363,71 @@ extern "C" __global__ void sc_residual_u##BITS(const u64* d,const u32* selected,
 SC_SUM(32,u32)
 SC_SUM(64,u64)
 
+// Two weightings of the same pixels from one decode of their streams: the row and the column
+// moment of a centre of mass. Decoding is nearly all of a residual pass, so the second sum costs
+// one multiply and one warp reduction per count instead of a second pass. Sums as sc_residual.
+extern "C" __global__ void sc_moment_pair(
+    const u64* descriptors, const u32* selected, const int* first_weights, const int* second_weights,
+    u32 count, u64* first_output, u64* second_output, u32* errors, u64 scans, u32 pixels, u32 interval
+) {
+    const u64* d=descriptors+u64(blockIdx.y)*SC_DESCRIPTOR;
+    interval=d[11];
+    u32 lane=threadIdx.x&31, group=blockIdx.x, warp=threadIdx.x/32;
+    u32 groups=(count+31)/32, stream_block=(group/groups)*(blockDim.x/32)+warp;
+    u32 selected_at=(group%groups)*32+lane;
+    u32 first=stream_block*interval;
+    if (first>=d[8]) return;
+    u32 pixel=selected_at<count ? selected[selected_at] : 0;
+    bool counted=selected_at<count && ((const u8*)d[10])[pixel];
+    int first_weight=counted ? first_weights[selected_at] : 0;
+    int second_weight=counted ? second_weights[selected_at] : 0;
+    u32 length=min(interval,u32(d[8])-first);
+    u32 stream=stream_block*pixels+pixel;
+    u32 model=((const u8*)d[2])[stream];
+    const u8* payload=(const u8*)d[0];
+    const u32* offsets=(const u32*)d[1];
+    u64 at_scan=d[9]*scans+d[7]+first;
+    bool decodes=counted && model!=253;
+    int first_constant=0, second_constant=0;
+    if (decodes && model==252) {
+        for (u32 at=offsets[stream];at<offsets[stream+1];at+=2) {
+            u32 event=payload[at]|(u32(payload[at+1])<<8),position=event>>7;
+            if (position>=length) { atomicOr(errors,1u); break; }
+            long long value=(event&127u)+1;
+            atomicAdd(first_output+at_scan+position,u64(first_weight*value));
+            atomicAdd(second_output+at_scan+position,u64(second_weight*value));
+        }
+        decodes=false;
+    }
+    if (decodes && model==255) {
+        int constant=int(payload[offsets[stream]]|(u32(payload[offsets[stream]+1])<<8));
+        first_constant=first_weight*constant; second_constant=second_weight*constant;
+        decodes=false;
+    }
+    first_constant=__reduce_add_sync(0xffffffffu,first_constant);
+    second_constant=__reduce_add_sync(0xffffffffu,second_constant);
+    if (first_constant || second_constant) for (u32 i=lane;i<length;i+=32) {
+        atomicAdd(first_output+at_scan+i,u64((long long)first_constant));
+        atomicAdd(second_output+at_scan+i,u64((long long)second_constant));
+    }
+    if (__all_sync(0xffffffffu,!decodes)) return;
+    StreamReader reader=chunk_reader(d,stream);
+    for (u32 batch=0;batch<length;batch+=32) {
+        int first_result=0, second_result=0;
+        for (u32 j=0;j<min(32u,length-batch);++j) {
+            int value=decodes ? int(reader.next()) : 0;
+            int first_sum=__reduce_add_sync(0xffffffffu,value*first_weight);
+            int second_sum=__reduce_add_sync(0xffffffffu,value*second_weight);
+            if (lane==j) { first_result=first_sum; second_result=second_sum; }
+        }
+        if (batch+lane<length) {
+            if (first_result) atomicAdd(first_output+at_scan+batch+lane,u64((long long)first_result));
+            if (second_result) atomicAdd(second_output+at_scan+batch+lane,u64((long long)second_result));
+        }
+    }
+    if (decodes && !reader.finished()) atomicOr(errors,1u);
+}
+
 template<typename Output>
 __device__ void sc_frame(const u64* descriptors, Output* output, u32* errors,
                         u32 index, u32 pixels, u32 interval) {
