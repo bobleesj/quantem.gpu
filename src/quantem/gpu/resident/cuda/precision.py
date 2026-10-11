@@ -189,14 +189,10 @@ class _ANSIntensityCodes(StreamedCounts):
 
 def encode_ans(codes, shape):
     """Retain scaled uint16 codes exactly in the native ANS codec."""
+    # append keeps a chunk only once it is complete, so a failed encode holds nothing.
     result = _ANSIntensityCodes(shape, cp.uint16)
-    try:
-        result.append(codes.view(cp.uint16))
-        return result
-    except BaseException:
-        # A failed encode must return its partial chunks to the GPU at once.
-        result.release()
-        raise
+    result.append(codes.view(cp.uint16))
+    return result
 
 
 class PrecisionSource(DetectorQueries):
