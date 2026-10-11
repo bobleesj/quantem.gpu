@@ -359,9 +359,10 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
         "files: {1: {mag: mag}, 2: {mag: mag}}\n"
     )
     earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
+    # every value differs from dataset.yaml, so anything read from this block would show below
     (reference / "config.json").write_text(json.dumps({"computed": {"ssb": {
         "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
-        "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5}}}))
+        "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": 0.2, "bf_radius": 55.0}}}))
     for frame in (1, 2):
         (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
         (raw / "live" / "screen" / f"scan_{frame}").mkdir(exist_ok=True)
@@ -393,7 +394,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
             return self._result(kwargs["aberrations"])
 
     def open_session(cls, source, **kwargs):
-        opened.append(kwargs["rotation_angle_deg"])
+        opened.append(kwargs)
         return FakeSession(source)
 
     monkeypatch.setattr(SSB, "open", classmethod(open_session))
@@ -402,13 +403,33 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
 
     assert fits == ["scan_1_master.h5"]
     assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
-    # the rotation is the session's, not the reversed one of the earlier block
-    assert opened == [12.0, 12.0, 12.0]
+    # every session opens with the settings of dataset.yaml: nothing comes from the earlier block
+    assert opened == [{"backend": "auto", "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5,
+                       "rotation_angle_deg": 12.0, "bf_radius": None}] * 3
     assert [record["C10 (nm)"] for record in result.records] == [-10.5, -10.5]
     stored = json.loads((reference / "config.json").read_text())["computed"]["ssb"]
     assert stored["schema"] == FIT_SCHEMA
     assert stored["aberrations"] == fitted
     assert (stored["rotation_angle_deg"], stored["com_reversed"], stored["loss"]) == (12.0, False, 0.25)
+
+
+def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
+    """Without dataset.yaml or keyword settings an unmarked block supplies nothing, and the error names what is missing."""
+    import pytest
+
+    from quantem.gpu import SSB
+
+    raw = tmp_path / "raw"
+    folder = raw / "live" / "screen" / "scan_1"
+    folder.mkdir(parents=True)
+    (raw / "scan_1_master.h5").write_bytes(b"raw")
+    (folder / "config.json").write_text(json.dumps({"computed": {"ssb": {
+        "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "rotation_angle_deg": 0.0,
+        "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5}}}))
+    before = (folder / "config.json").read_bytes()
+    with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A, rotation_angle_deg"):
+        SSB.reconstruct_series(raw, first_frame=1, last_frame=1, progress=False)
+    assert (folder / "config.json").read_bytes() == before
 
 
 def test_reconstruct_series_initializes_missing_live_results(
