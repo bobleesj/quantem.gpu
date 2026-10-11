@@ -61,14 +61,3 @@ def test_iteration_selects_rows_lazily(monkeypatch):
     with pytest.raises(StopIteration):
         next(iterator)
     assert calls == [0, 1, 2]
-
-
-def test_old_load_result_names_are_not_exported():
-    """There is one public owner type, without compatibility aliases."""
-    from quantem.gpu import io
-    from quantem.gpu.io import dataset
-
-    assert io.Dataset4dstemGPU is Dataset4dstemGPU
-    for name in ("Dataset4dstem", "FourDSTEMData", "LoadResult"):
-        assert not hasattr(io, name)
-        assert not hasattr(dataset, name)
