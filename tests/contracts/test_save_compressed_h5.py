@@ -197,3 +197,34 @@ def test_cuda_save_uint8_display_export(tmp_path):
             dset[:],
             np.array([[[0, 13, 255, 255], [2, 4, 0, 4]]], dtype=np.uint8),
         )
+
+
+@pytest.mark.parametrize("backend", ["cpu", "cuda", "mps"])
+def test_narrower_integer_save_is_exact_or_refused(tmp_path, backend):
+    """uint16 counts saved as uint8 are written unchanged when they fit and refused when one does not.
+
+    A plain cast wrote 300 as 44 (300 mod 256) without a message.
+    """
+    from quantem.gpu import io
+
+    counts = np.arange(16, dtype=np.uint16).reshape(1, 1, 4, 4) * 20
+    if backend == "cuda":
+        cp = pytest.importorskip("cupy")
+        if not cp.cuda.runtime.getDeviceCount():
+            pytest.skip("CUDA device is not available.")
+        convert = cp.asarray
+    elif backend == "mps":
+        torch = pytest.importorskip("torch")
+        if not torch.backends.mps.is_available():
+            pytest.skip("MPS device is not available.")
+
+        def convert(values):
+            return torch.from_numpy(values).to("mps")
+    else:
+        convert = np.asarray
+    with pytest.raises(ValueError, match="outside the uint8 range"):
+        io.save(str(tmp_path / "wrapped_master.h5"), convert(counts), dtype="u8", backend=backend, verbose=False)
+    fitting = np.minimum(counts, 255)
+    io.save(str(tmp_path / "exact_master.h5"), convert(fitting), dtype="u8", backend=backend, verbose=False)
+    with h5py.File(tmp_path / "exact_data_000001.h5", "r") as handle:
+        np.testing.assert_array_equal(handle["entry/data/data"][:], fitting.reshape(1, 4, 4).astype(np.uint8))

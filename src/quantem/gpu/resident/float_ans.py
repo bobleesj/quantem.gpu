@@ -148,7 +148,7 @@ class FloatANSResident:
         if self.backend == "cuda":
             output = self.decode_scan_range_device(first, stop)
         else:
-            output = self._lanes._decode_scan_range_torch(first, stop)
+            output = self._lanes.decode_scan_range_torch(first, stop)
             output = output.view(torch.float32).reshape(
                 stop - first, *self.detector_shape
             )
@@ -324,6 +324,11 @@ class FloatANSResident:
                 total = reduced if total is None else total + reduced
             del selected, values
         return total / len(indices) if mode == "mean" else total
+
+    def release_scans_before(self, stop: int) -> None:
+        """Free the encoded chunks that end by scan ``stop``; reading a freed scan raises."""
+        self._check()
+        self._lanes.release_scans_before(stop)
 
     def release(self) -> None:
         """Free the encoded lanes and cached products after pending GPU work finishes."""

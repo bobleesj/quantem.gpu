@@ -28,7 +28,6 @@ _NAMES = (
     "bitshuffle_fwd_8192_16",
     "bitshuffle_fwd_tail_16",
     "bitshuffle_fwd_tail_32",
-    "lz4_compress_kernel",
     "lz4_compress_var_kernel",
     "pack_h5_chunks_kernel",
 )
@@ -40,40 +39,16 @@ def kernel(name: str):
 
 
 def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
-    """Decode prepared frames, then return the page-locked staging buffer.
-
-    The buffer is released only after its device accesses have completed: a
-    failed decode first drains queued copies, and if that drain fails the
-    buffer is retained rather than reused while a copy may still read it.
-    Returns the ``cupy.ndarray`` from :func:`_decode_prepared`.
-    """
-    read_buffer = prepared["read_buffer"]
-    release_buffer = True
-    try:
-        return _decode_prepared(prepared, batch_bytes_target)
-    except BaseException as error:
-        # A failed kernel or allocation may follow an asynchronous H2D from the
-        # page-locked buffer. Finish any queued access before making it reusable.
-        if cp is not None:
-            try:
-                cp.cuda.Device().synchronize()
-            except BaseException as drain_error:
-                release_buffer = False
-                _FAILED_DECOMPRESSIONS.append((prepared, error, drain_error))
-        raise
-    finally:
-        if release_buffer:
-            _release_pinned(read_buffer)
-
-
-def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
-    """Transfer prepared compressed frames and decode them on the GPU.
+    """Transfer prepared compressed frames, decode them on the GPU and return the staging buffer.
 
     Frames of 1-, 2- or 4-byte elements decode in batches of about
     ``batch_bytes_target`` bytes through two reused scratch buffers, writing straight into the final result, so peak
     memory is ``compressed + 2 * batch + final`` rather than two full
     uncompressed copies. Returns the stored-dtype CuPy array
-    ``(n_frames, det_row, det_col)``; stored values are not altered.
+    ``(n_frames, det_row, det_col)``; stored values are not altered. The
+    page-locked staging buffer returns to its pool after the final
+    synchronize; a decode that fails before then keeps it, because a queued
+    copy may still read it.
     """
     read_buffer = prepared["read_buffer"]
     chunk_offsets = prepared["chunk_offsets"]
@@ -85,6 +60,17 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
     frame_bytes = prepared["frame_bytes"]
     source_dtype = prepared["dtype"]
     source_itemsize = int(np.dtype(source_dtype).itemsize)
+    n_full_8kb = frame_bytes // BLOCK_SIZE
+    tail_bytes = frame_bytes % BLOCK_SIZE
+    # Bitshuffle leaves a final remainder of fewer than 8 elements
+    # unshuffled, which these decoders do not read.
+    if tail_bytes % source_itemsize or (tail_bytes // source_itemsize) % 8:
+        _release_pinned(read_buffer)  # nothing was copied from it yet
+        raise ValueError(
+            "GPU bitshuffle/LZ4 load supports partial final blocks "
+            "only when the partial detector frame contains a "
+            f"multiple of 8 elements; got frame_shape={frame_shape}."
+        )
 
     # Cap at max_batch=10000 to match the kernel's old launch characteristics
     # and stay well under any plausible single-batch scratch allocation.
@@ -155,18 +141,9 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
     lz4_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     shuf_scratch = cp.empty(batch_scratch_bytes, dtype=cp.uint8)
     result = cp.empty((total_frames,) + frame_shape, dtype=source_dtype)
-
+    errors = cp.zeros(1, dtype=cp.uint32)
     max_blocks = int(block_counts.max())
-    n_full_8kb = frame_bytes // BLOCK_SIZE
-    tail_bytes = frame_bytes % BLOCK_SIZE
-    # Bitshuffle leaves a final remainder of fewer than 8 elements
-    # unshuffled, which these decoders do not read.
-    if tail_bytes % source_itemsize or (tail_bytes // source_itemsize) % 8:
-        raise ValueError(
-            "GPU bitshuffle/LZ4 load supports partial final blocks "
-            "only when the partial detector frame contains a "
-            f"multiple of 8 elements; got frame_shape={frame_shape}."
-        )
+
 
     for batch_index, start in enumerate(range(0, total_frames, max_batch)):
         end = min(start + max_batch, total_frames)
@@ -203,6 +180,7 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
                 np.uint32(BLOCK_SIZE),
                 np.uint32(frame_bytes),
                 lz4_scratch,
+                errors,
             ),
         )
         # LZ4 is the only consumer of the compressed buffer; once it has run
@@ -278,9 +256,10 @@ def _decode_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         )
 
     cp.cuda.Device().synchronize()
+    _release_pinned(read_buffer)
+    if int(errors.get()[0]):
+        raise ValueError(
+            "A compressed HDF5 chunk is truncated or corrupt and did not decode to its "
+            "frame size; check that the acquisition finished writing, or copy it again."
+        )
     return result
-
-
-# A failed fence cannot return buffers to an allocator while work may use them.
-# Exception tracebacks retain the failing decoder's local device arrays too.
-_FAILED_DECOMPRESSIONS: list[tuple[object, BaseException, BaseException]] = []

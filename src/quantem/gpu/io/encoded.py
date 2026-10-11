@@ -39,9 +39,9 @@ def load_h5_ans(
     dataset_path,
     device,
     verbose,
-    backend="cuda",
-    hot_pixel_correction="median",
-    auto_narrow=True,
+    backend,
+    hot_pixel_correction,
+    auto_narrow,
 ):
     """Load bounded native chunks into a backend-owned runtime encoded resident."""
     started = time.perf_counter()
@@ -49,7 +49,6 @@ def load_h5_ans(
     # workflows over several acquisitions (MAPED tilts, focal series) label each
     # one by the file it came from; every branch below copies info.metadata
     info.metadata["source_path"] = str(path)
-    inspected = time.perf_counter()
     generic = arrays.load_hdf5_array_resident(
         path, dataset_path=dataset_path, backend=backend,
         device=device, verbose=verbose, hot_pixel_correction=hot_pixel_correction,
@@ -80,7 +79,6 @@ def load_h5_ans(
         # the reader and corrector are closed. The encoded chunks are not pooled.
         stack.callback(cp.get_default_memory_pool().free_all_blocks)
         corrector = CUDAHotPixelCorrector(info.pixel_mask, hot_pixel_correction)
-        stack.callback(corrector.close)
         valid = np.ones(info.detector_shape, bool)
         if info.pixel_mask is not None and not corrector.record["applied"]:
             valid &= np.asarray(info.pixel_mask) == 0
@@ -88,6 +86,9 @@ def load_h5_ans(
         zeroed_markers = 0
         cp.get_default_memory_pool().free_all_blocks()
         source = StreamedCounts(shape, dtype, valid)
+        # A failed load frees the chunks it encoded: they live outside the memory
+        # pool, and a traceback keeps this frame (and the source) alive.
+        stack.push(lambda error_type, *_: error_type is not None and source.release())
         free, _ = cp.cuda.runtime.memGetInfo()
         # Amortize HDF5/read/decode dispatch across larger batches, while
         # reserving at least three quarters of free memory for resident output
@@ -117,27 +118,16 @@ def load_h5_ans(
         else:
             reader = FrameReader(str(path))
             stack.callback(reader.close)
-        setup_finished = time.perf_counter()
-        read_seconds = 0.0
-        transfer_decode_seconds = 0.0
-        preparation_timings = {}
         for first in range(0, math.prod(info.scan_shape), chunk_scans):
             stop = min(first + chunk_scans, math.prod(info.scan_shape))
-            before = time.perf_counter()
             if dataset is not None:
-                # A chunk can cut a rectangular scan row. Only storage copying
-                # runs on CPU; counts and all scientific reductions stay native.
+                # A chunk can cut a rectangular scan row. h5py reads and decodes
+                # the stored chunks on the host for this generic layout.
                 raw = cp.asarray(arrays.read_frame_block(dataset, shape, first, stop))
             else:
                 prepared = reader.prepare(np.arange(first, stop))
-                for key, value in prepared["prepare_timing_s"].items():
-                    preparation_timings[key] = preparation_timings.get(key, 0.0) + value
-                decode_started = time.perf_counter()
                 raw = decompress_prepared(prepared, batch_bytes_target=128 * 1024**2)
-                transfer_decode_seconds += time.perf_counter() - decode_started
                 raw = raw.reshape(stop - first, *info.detector_shape)
-            cp.cuda.get_current_stream().synchronize()
-            read_seconds += time.perf_counter() - before
             if stored_dtype != dtype:
                 if corrector.record["applied"]:
                     # Flagged uint32 pixels can contain 0xffffffff sentinels.
@@ -173,16 +163,10 @@ def load_h5_ans(
             index_bytes=source.index_nbytes,
             pixel_mask=info.pixel_mask,
             resident_profile=INTEGER_CODEC,
-            **_correction_metadata(corrector.record, zeroed_markers),
+            **arrays.correction_metadata(corrector.record, zeroed_markers),
             load_timings=dict(
                 source.load_metrics,
-                read_upload_seconds=read_seconds,
                 resident_ready_seconds=time.perf_counter() - started,
-                max_chunk_scans=chunk_scans,
-                inspect_seconds=inspected - started,
-                setup_seconds=setup_finished - inspected,
-                preparation_seconds=preparation_timings,
-                transfer_decode_seconds=transfer_decode_seconds,
             ),
         )
         if verbose:
@@ -222,7 +206,6 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     chunk_scans = min(8192 if stored_dtype.itemsize <= 2 else 4096, scans)
     if chunk_scans >= 512:
         chunk_scans = chunk_scans // 512 * 512
-    read_decode_seconds = 0.0
     try:
         ranges = [
             (first, min(first + chunk_scans, scans))
@@ -234,12 +217,10 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(reader.prepare, np.arange(*ranges[0]))
             for index in range(len(ranges)):
-                before = time.perf_counter()
                 prepared = pending.result()
                 if index + 1 < len(ranges):
                     pending = pool.submit(reader.prepare, np.arange(*ranges[index + 1]))
                 raw = load_prepared_frames(prepared)
-                read_decode_seconds += time.perf_counter() - before
                 try:
                     # The median reads only valid neighbors, so flagged uint32
                     # sentinels are replaced before the range check, as on CUDA.
@@ -286,45 +267,15 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         ),
         pixel_mask=info.pixel_mask,
         resident_profile=INTEGER_CODEC,
-        **_correction_metadata(corrector.record, zeroed_markers),
+        **arrays.correction_metadata(corrector.record, zeroed_markers),
         load_timings=dict(
             source.load_metrics,
-            read_upload_seconds=read_decode_seconds,
             resident_ready_seconds=time.perf_counter() - started,
-            max_chunk_scans=chunk_scans,
         ),
     )
     if verbose:
         print(_loaded_report(source.shape, "Apple GPU", metadata))
     return Dataset4dstemGPU(source, metadata)
-
-
-def _correction_metadata(record: dict, zeroed_markers: int = 0) -> dict:
-    """Record how stored detector-mask pixels were handled and what that means for exactness.
-
-    A corrected pixel no longer holds the file's count, so the working data is
-    exact (its own codes decode bit for bit) but no longer the file's counts.
-    ``zeroed_markers`` counts flagged-pixel values above 65535 (the uint32
-    detector marker) stored as 0 when uncorrected uint32 counts become uint16:
-    every valid count and every other flagged value is still the file's, and
-    ``pixel_mask`` keeps the flagged positions.
-    """
-    applied = record["applied"]
-    if applied:
-        policy = f"gpu-{record['method']}-corrected"
-    elif zeroed_markers:
-        policy = "flagged-markers-stored-as-zero"
-    else:
-        policy = "preserve-stored-counts"
-    exact = not applied and not zeroed_markers
-    return dict(
-        lossless_exact=exact,
-        file_counts_exact=exact,
-        detector_mask_policy=policy,
-        hot_pixel_correction=record,
-        working_counts_exact=True,
-        flagged_markers_stored_as_zero=int(zeroed_markers),
-    )
 
 
 def _loaded_report(shape, device_name: str, metadata: dict) -> str:

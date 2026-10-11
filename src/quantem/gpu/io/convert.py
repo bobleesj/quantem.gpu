@@ -31,9 +31,8 @@ from quantem.gpu.formats.hdf5.master import read_pixel_mask
 from quantem.gpu.formats.qem.metadata import validate_sample
 from quantem.gpu.formats.qem.snapshot import read_header
 from quantem.gpu.io import load, save
-from quantem.gpu.io.read import _torch_value
+from quantem.gpu.io.read import torch_value
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
-from quantem.gpu.resident.mps.precision import PrecisionSource
 
 _MASTER_SUFFIX = "_master.h5"
 _STORED_DTYPES = ("uint8", "uint16", "uint32")
@@ -564,14 +563,14 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
             # Public read() masks flagged pixels for analysis. Verification must
             # inspect the stored values, using the resident's bounded raw decode;
             # Metal residents decode straight into Torch storage.
-            if isinstance(saved.data, (MPSStreamedCounts, PrecisionSource)):
-                decode = saved.data._decode_scan_range_torch
+            if isinstance(saved.data, MPSStreamedCounts):
+                decode = saved.data.decode_scan_range_torch
             else:
                 decode = saved.data.decode_scan_range_device
             flagged_t = None
             for first in range(0, rows * columns, step):
                 stop = min(rows * columns, first + step)
-                copy = _torch_value(decode(first, stop))
+                copy = torch_value(decode(first, stop))
                 raw = frames(first, stop)
                 source = torch.from_numpy(raw).to(copy.device).reshape(copy.shape)
                 # int32 holds uint16 exactly and maps uint32 one-to-one, so a wide

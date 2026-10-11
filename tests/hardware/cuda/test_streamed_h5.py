@@ -138,27 +138,6 @@ def test_h5_ans_hot_pixel_correction_overrides(tmp_path, method):
         loaded.close()
 
 
-def test_mixed_dense_and_streamed_counts_keep_native_shapes(tmp_path):
-    cp = pytest.importorskip("cupy")
-    raw = (np.arange(513 * 6, dtype=np.uint16) % 17).reshape(1, 513, 2, 3)
-    path = tmp_path / "counts.h5"
-    with h5py.File(path, "w") as handle:
-        handle["entry/data/data"] = raw
-    encoded = io.load(path, backend="cuda", representation="encoded", apply_mask=False)
-    dense = cp.asarray(raw)
-    session = detector.prepare([encoded, dense])
-    for index in (0, 511, 512):
-        np.testing.assert_array_equal(
-            session.frame(index, output="native").get(),
-            np.broadcast_to(raw[0, index], (2, 2, 3)),
-        )
-    mask = np.array([[1, 0, 1], [0, 1, 0]], bool)
-    np.testing.assert_array_equal(
-        session.masked_sum(mask, output="native").get(),
-        np.broadcast_to((raw * mask).sum((-2, -1), dtype=np.uint64), (2, 1, 513)),
-    )
-
-
 def test_two_streamed_h5_sources_share_a_joint_query(tmp_path):
     raw = (np.arange(32 * 6, dtype=np.uint16) % 12).reshape(4, 8, 2, 3)
     other = raw + 100
@@ -269,3 +248,49 @@ def test_uint32_master_sentinels_are_corrected_before_encoding(tmp_path, method)
     with pytest.raises(ValueError, match="counts above 65535"):
         io.load(path, backend="cuda", representation="encoded", scan_shape=(2, 5),
                 apply_mask=False, hot_pixel_correction=method, verbose=False)
+
+
+@pytest.mark.slow
+def test_one_decode_batch_beyond_4_gib_keeps_every_frame_in_place(tmp_path):
+    """Frames past byte 2^32 of one decode launch land at their own position, not wrapped to the start."""
+    import cupy as cp
+
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
+
+    frames = 8200  # 8200 * 512 * 512 * 2 bytes = 4.3 GB, past 2^32
+    values = cp.broadcast_to((cp.arange(frames, dtype=cp.uint16) % 997)[:, None, None], (frames, 512, 512))
+    master = tmp_path / "wide_master.h5"
+    io.save(str(master), cp.ascontiguousarray(values).reshape(8200, 1, 512, 512), verbose=False)
+    reader = FrameReader(str(master))
+    try:
+        decoded = decompress_prepared(reader.prepare(np.arange(frames)), batch_bytes_target=frames * 512 * 512 * 2)
+    finally:
+        reader.close()
+    first_values = decoded[:, 0, 0]
+    assert bool(cp.array_equal(first_values, values[:, 0, 0]))
+    assert bool(cp.array_equal(decoded[-1], values[-1]))
+
+
+def test_truncated_lz4_block_raises_instead_of_returning_garbage(tmp_path):
+    """A chunk whose LZ4 block stops early (a file still being written) refuses to decode."""
+    import cupy as cp
+
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
+
+    values = cp.asarray(np.random.default_rng(5).poisson(3.0, (4, 1, 64, 64)).astype(np.uint16))
+    master = tmp_path / "partial_master.h5"
+    io.save(str(master), values, verbose=False)
+    reader = FrameReader(str(master))
+    try:
+        intact = decompress_prepared(reader.prepare(np.arange(4)))
+        assert bool(cp.array_equal(intact, values.reshape(4, 64, 64)))
+        prepared = reader.prepare(np.arange(4))
+        header = int(prepared["chunk_offsets"][2]) + int(prepared["block_starts"][prepared["block_offsets"][2]])
+        size = int.from_bytes(bytes(prepared["read_buffer"][header:header + 4]), "big")
+        prepared["read_buffer"][header:header + 4] = np.frombuffer((size // 2).to_bytes(4, "big"), np.uint8)
+        with pytest.raises(ValueError, match="truncated or corrupt"):
+            decompress_prepared(prepared)
+    finally:
+        reader.close()

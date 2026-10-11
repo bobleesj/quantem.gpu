@@ -7,11 +7,10 @@ import time
 import numpy as np
 
 from quantem.gpu.detector.cuda.mask_plan import CudaMaskPlanner
-from quantem.gpu.detector.cuda.series import CudaSeriesCompute
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.resident.cuda.counts import StreamedCounts, field_count, kernels
-from quantem.gpu.resident.queries import weight_digits
+from quantem.gpu.resident.queries import DetectorQueries, weight_digits
 
 
 def plan(mask: np.ndarray):
@@ -42,7 +41,7 @@ def plan(mask: np.ndarray):
     )
 
 
-class StreamedSeriesCompute(CudaSeriesCompute):
+class StreamedSeriesCompute(DetectorQueries):
     """Borrow encoded chunks and launch each query jointly across acquisitions.
 
     Spatial indexes and signed pixel corrections are integer exact. A private
@@ -179,6 +178,41 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             "index_bytes": sum(source.index_nbytes for source in sources),
         }
         self.lock, self.last = threading.Lock(), {}
+
+    def frame(self, index):
+        """Host copy of the scan position's native counts for every acquisition."""
+        return self.frame_native(index).get()
+
+    def masked_sum(self, mask):
+        """Exact counts of a binary mask; the session converts them to float32 for display."""
+        return self.masked_sum_native(mask)
+
+    def masked_sum_exact(self, mask):
+        """Exact counts of a binary mask, every acquisition in one launch."""
+        return self.masked_sum_native(mask)
+
+    def masked_sum_exact_native(self, mask, *, out=None):
+        """Exact counts in the series' sum dtype (uint32 or uint64), left on the device."""
+        return self.masked_sum_native(mask, out=out)
+
+    def _output(self, out, shape, dtype):
+        """Validate a caller buffer: a mismatched one would be overrun, and an overlapping one would corrupt the sources."""
+        if out is None:
+            return cp.empty(shape, dtype)
+        if (
+            not isinstance(out, cp.ndarray)
+            or out.shape != shape
+            or out.dtype != dtype
+            or out.device.id != self.device
+            or not out.flags.c_contiguous
+        ):
+            raise ValueError(
+                f"out must be a contiguous {dtype}{shape} array on cuda:{self.device}."
+            )
+        first, stop = out.data.ptr, out.data.ptr + out.nbytes
+        if np.any((first < self.regions[:, 1]) & (stop > self.regions[:, 0])):
+            raise ValueError("out must not overlap any resident source or query index.")
+        return out
 
     def _plan(self, values):
         """Decompose a signed mask into index fields plus residual pixels."""
@@ -319,10 +353,10 @@ class StreamedSeriesCompute(CudaSeriesCompute):
             for source in self.index_owners:
                 total = cp.zeros(self.det_shape, cp.uint64)
                 # Group by codec block so sparse selections decode each block once.
-                boundaries = np.flatnonzero(np.diff(indices // 512)) + 1
+                boundaries = np.flatnonzero(np.diff(indices // self.interval)) + 1
                 for selected in np.split(indices, boundaries):
-                    first = int(selected[0] // 512 * 512)
-                    stop = min(first + 512, self.n_frames)
+                    first = int(selected[0] // self.interval * self.interval)
+                    stop = min(first + self.interval, self.n_frames)
                     raw = source.decode_scan_range_device(first, stop)
                     values = raw[cp.asarray(selected - first)]
                     if reduce == "max":

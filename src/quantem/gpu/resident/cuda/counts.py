@@ -6,7 +6,6 @@ available. Neither coding probabilities nor indexes change scientific values.
 """
 
 import math
-import time
 from dataclasses import dataclass
 from functools import cache
 from itertools import accumulate
@@ -120,6 +119,8 @@ class StreamedCounts:
     interval = 512
     # Exact detector totals kept while encoding; only the paired layout keeps them.
     _detector_total = None
+    # Exact spatial sums for detector queries; float bit lanes have no use for them.
+    spatial_index = True
 
     def __init__(self, shape: tuple[int, int, int, int], dtype, valid=None):
         import cupy as cp
@@ -193,7 +194,9 @@ class StreamedCounts:
             raise ValueError("Use smaller chunks so encoded offsets fit uint32.")
         u32 = np.uint32
         with cp.cuda.Device(self.device):
-            started = time.perf_counter()
+            # Events time each phase on the stream; host waits would only stall it.
+            begin, encoded, indexed = cp.cuda.Event(), cp.cuda.Event(), cp.cuda.Event()
+            begin.record()
             scratch = cp.empty((2 * min(scans, self.interval) + 4, streams), cp.uint8)
             sizes, states = cp.empty(streams, cp.uint32), cp.empty(streams, cp.uint32)
             models = cp.empty(streams, cp.uint8)
@@ -219,61 +222,49 @@ class StreamedCounts:
                 (128,),
                 (*args, scratch, offsets, states, models, payload, u32(streams)),
             )
-            cp.cuda.get_current_stream().synchronize()
-            self.load_metrics["encode_seconds"] += time.perf_counter() - started
-            del scratch, sizes, states
-            words, starts, widths = self._index(raw)
-            self.chunks.append(
-                Chunk(
-                    self.ready_scans,
-                    scans,
-                    retain((payload, offsets, models, words, starts, widths)),
+            encoded.record()
+            kept = (payload, offsets, models)
+            if self.spatial_index:
+                # Return the codec scratch to the pool before the index allocates its own.
+                del scratch, sizes, states
+                fields = field_count(self.shape[2:])
+                values = cp.empty((scans, fields), cp.uint32)
+                self.kernels["fields"](
+                    ((scans * fields + 3) // 4,),
+                    (128,),
+                    (
+                        raw,
+                        np.int32(raw.dtype.itemsize),
+                        self.valid,
+                        values,
+                        u32(scans),
+                        u32(self.shape[2]),
+                        u32(self.shape[3]),
+                        u32(fields),
+                    ),
                 )
-            )
+                index_streams = math.ceil(scans / self.interval) * fields
+                widths, lengths = (
+                    cp.empty(index_streams, cp.uint8),
+                    cp.empty(index_streams, cp.uint64),
+                )
+                index_args = (u32(scans), u32(fields), u32(self.interval))
+                index_grid = ((index_streams + 127) // 128,)
+                self.kernels["field_sizes"](index_grid, (128,), (values, widths, lengths, *index_args))
+                starts = cp.empty(index_streams + 1, cp.uint64)
+                starts[0] = 0
+                cp.cumsum(lengths, dtype=cp.uint64, out=starts[1:])
+                words = cp.empty(int(starts[-1].get()), cp.uint32)
+                self.kernels["pack_fields"](
+                    index_grid, (128,), (values, widths, starts, words, *index_args)
+                )
+                kept += (words, starts, widths)
+            indexed.record()
+            # retain() waits for the stream, so the events are complete when read.
+            self.chunks.append(Chunk(self.ready_scans, scans, retain(kept)))
             self.ready_scans += scans
-
-    def _index(self, raw):
-        """Build bounded exact spatial fields from a native CUDA chunk."""
-        import cupy as cp
-
-        scans = raw.shape[0]
-        u32 = np.uint32
-        with cp.cuda.Device(self.device):
-            started = time.perf_counter()
-            fields = field_count(self.shape[2:])
-            values = cp.empty((scans, fields), cp.uint32)
-            self.kernels["fields"](
-                ((scans * fields + 3) // 4,),
-                (128,),
-                (
-                    raw,
-                    np.int32(raw.dtype.itemsize),
-                    self.valid,
-                    values,
-                    u32(scans),
-                    u32(self.shape[2]),
-                    u32(self.shape[3]),
-                    u32(fields),
-                ),
-            )
-            index_streams = math.ceil(scans / self.interval) * fields
-            widths, lengths = (
-                cp.empty(index_streams, cp.uint8),
-                cp.empty(index_streams, cp.uint64),
-            )
-            args = (u32(scans), u32(fields), u32(self.interval))
-            grid = ((index_streams + 127) // 128,)
-            self.kernels["field_sizes"](grid, (128,), (values, widths, lengths, *args))
-            starts = cp.empty(index_streams + 1, cp.uint64)
-            starts[0] = 0
-            cp.cumsum(lengths, dtype=cp.uint64, out=starts[1:])
-            words = cp.empty(int(starts[-1].get()), cp.uint32)
-            self.kernels["pack_fields"](
-                grid, (128,), (values, widths, starts, words, *args)
-            )
-            cp.cuda.get_current_stream().synchronize()
-            self.load_metrics["index_seconds"] += time.perf_counter() - started
-            return words, starts, widths
+            self.load_metrics["encode_seconds"] += cp.cuda.get_elapsed_time(begin, encoded) / 1e3
+            self.load_metrics["index_seconds"] += cp.cuda.get_elapsed_time(encoded, indexed) / 1e3
 
     def decode_scan_range_device(
         self, first: int, stop: int, *, errors=None, detector_region=None
@@ -281,19 +272,8 @@ class StreamedCounts:
         """Decode a contiguous scan range without expanding the acquisition."""
         import cupy as cp
 
-        if self.is_released:
-            raise ValueError("The resident source has been released.")
-        scan_count = math.prod(self.shape[:2])
         first, stop = int(first), int(stop)
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count}); "
-                f"got ({first}, {stop})."
-            )
-        if first < self.released_scans:
-            raise ValueError(
-                f"Scans before {self.released_scans} were released; load the source again to read them."
-            )
+        self.check_readable(first, stop)
         owns_errors = errors is None
         with cp.cuda.Device(self.device):
             errors = error_flags(errors, self.device)
@@ -342,6 +322,26 @@ class StreamedCounts:
             if owns_errors and int(errors.get()[0]):
                 raise ValueError("An encoded count stream failed reconstruction.")
             return output
+
+    def check_readable(self, first: int, stop: int) -> None:
+        """Refuse a scan range this source does not hold.
+
+        A decode writes only the scans its chunks hold, so a scan not yet
+        appended (an acquisition still arriving), freed by
+        ``release_scans_before`` or dropped by ``release`` would come back as
+        whatever the output memory held before.
+        """
+        if self.is_released:
+            raise ValueError("The resident source has been released.")
+        if not 0 <= first < stop <= self.ready_scans:
+            raise ValueError(
+                f"Scan range ({first}, {stop}) is not resident; scans 0 to "
+                f"{self.ready_scans} of {math.prod(self.shape[:2])} are loaded."
+            )
+        if first < self.released_scans:
+            raise ValueError(
+                f"Scans before {self.released_scans} were released; load the source again to read them."
+            )
 
     def detector_total_device(self):
         """Return the exact valid-pixel detector sum without dense expansion."""

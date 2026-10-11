@@ -11,6 +11,7 @@ import os
 from functools import cache
 
 import numpy as np
+import torch
 
 
 def metal_module():
@@ -171,8 +172,6 @@ def copy_to_torch(buffer, shape: tuple[int, ...], dtype, label: str):
     A tensor that viewed the buffer would outlive it once the owner released
     it, so callers that hand results to Torch get an independent copy.
     """
-    import torch
-
     output = torch.empty(shape, dtype=getattr(torch, np.dtype(dtype).name), device="mps")
     if not output.numel():
         return output

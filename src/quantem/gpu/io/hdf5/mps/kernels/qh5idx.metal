@@ -2020,7 +2020,7 @@ inline void bslz4DecompressPrefixSerialToDevice(
 template <bool alignedRepeatFill = false, bool alignedHistoryCopy = false,
           bool skipZeroTail = false, bool shortRepeatFill = false,
           bool shortTokenFastPath = false, bool distance3Vector = false,
-          bool distance8Vector = false, bool distance512Vector = false>
+          bool distance8Vector = false>
 inline bool bslz4DecompressFullSerialCheckedToDevice(
     device uchar *destination, const device uchar *compressed, uint compressedLength,
     thread uint *zeroTail = nullptr
@@ -2212,28 +2212,6 @@ inline bool bslz4DecompressFullSerialCheckedToDevice(
             for (; copied < matchLength; ++copied) {
                 uint tailPhase = copied % 3u;
                 destination[outputIndex + copied] = tailPhase == 0u ? first : (tailPhase == 1u ? second : third);
-            }
-        } else if (distance512Vector && distance == 512u && matchLength >= 512u
-                   && (outputIndex & 15u) == 0u) {
-            uint copied = 0u;
-            for (; copied < matchLength && ((outputIndex + copied) & 15u); ++copied) {
-                destination[outputIndex + copied] = destination[outputIndex + copied - distance];
-            }
-            uint vectors = (matchLength - copied) / 16u;
-            device uint4 *wideDestination = (device uint4 *)(destination + outputIndex + copied);
-            const device uint4 *wideSource =
-                (const device uint4 *)(destination + outputIndex + copied - distance);
-            uint vector = 0u;
-            for (; vector + 3u < vectors; vector += 4u) {
-                wideDestination[vector] = wideSource[vector];
-                wideDestination[vector + 1u] = wideSource[vector + 1u];
-                wideDestination[vector + 2u] = wideSource[vector + 2u];
-                wideDestination[vector + 3u] = wideSource[vector + 3u];
-            }
-            for (; vector < vectors; ++vector) wideDestination[vector] = wideSource[vector];
-            copied += vectors * 16u;
-            for (; copied < matchLength; ++copied) {
-                destination[outputIndex + copied] = destination[outputIndex + copied - distance];
             }
         } else if (alignedHistoryCopy && distance >= 16u && (distance & 15u) == 0u && matchLength >= 64u) {
             uint copied = 0u;
@@ -2897,69 +2875,6 @@ kernel void h5lz4dc_full_u16_aligned_fill_distance8_qh5idx(
     )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
 }
 
-// Diagnostic-only distance-512 history copy. The retained real fixtures have a
-// large distance-512 match population; this removes the generic distance tests and
-// unrolls aligned uint4 history loads/stores four ways. It is never selected
-// by the release host defaults.
-kernel void h5lz4dc_full_u16_aligned_fill_distance512_qh5idx(
-    const device uchar *h5File [[buffer(0)]],
-    const device uint2 *blockMetadata [[buffer(1)]],
-    constant ulong &rangeStart [[buffer(2)]],
-    constant uint &blocksPerFrame [[buffer(3)]],
-    constant uint &frameElements [[buffer(4)]],
-    device uchar *scratch [[buffer(5)]],
-    constant uint &metadataFrameOffset [[buffer(6)]],
-    device atomic_uint *errors [[buffer(10)]],
-    constant uint &frameCount [[buffer(11)]],
-    uint linearBlock [[thread_position_in_grid]]
-) {
-    if (blocksPerFrame == 0u || ulong(blocksPerFrame) * 4096ul != frameElements) {
-        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
-        return;
-    }
-    if (ulong(linearBlock) >= ulong(frameCount) * blocksPerFrame) return;
-    uint frame = linearBlock / blocksPerFrame;
-    uint block = linearBlock % blocksPerFrame;
-    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * blocksPerFrame + block];
-    if (!bslz4DecompressFullSerialCheckedToDevice<true, false, false, false, false, false, false, true>(
-        scratch + ulong(frame) * frameElements * 2ul + ulong(block) * 8192ul,
-        h5File + rangeStart + ulong(metadata.x), metadata.y
-    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
-}
-
-// Diagnostic-only dispatch wrapper for the exact BTO window geometry. Each
-// 128-thread group owns 128 independent blocks, so ownership comes directly
-// from group/lane builtins rather than a global linear-index bounds wrapper.
-// The decoder and scratch layout are otherwise identical to aligned-fill.
-kernel void h5lz4dc_full_u16_aligned_fill_grouped128_qh5idx(
-    const device uchar *h5File [[buffer(0)]],
-    const device uint2 *blockMetadata [[buffer(1)]],
-    constant ulong &rangeStart [[buffer(2)]],
-    constant uint &blocksPerFrame [[buffer(3)]],
-    constant uint &frameElements [[buffer(4)]],
-    device uchar *scratch [[buffer(5)]],
-    constant uint &metadataFrameOffset [[buffer(6)]],
-    device atomic_uint *errors [[buffer(10)]],
-    constant uint &frameCount [[buffer(11)]],
-    uint group [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_threadgroup]]
-) {
-    if (blocksPerFrame != 9u || frameElements != 36864u) {
-        atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
-        return;
-    }
-    uint linearBlock = group * 128u + lane;
-    if (ulong(linearBlock) >= ulong(frameCount) * 9ul) return;
-    uint frame = linearBlock / 9u;
-    uint block = linearBlock - frame * 9u;
-    uint2 metadata = blockMetadata[(ulong(metadataFrameOffset) + frame) * 9ul + block];
-    if (!bslz4DecompressFullSerialCheckedToDevice<true>(
-        scratch + ulong(frame) * 73728ul + ulong(block) * 8192ul,
-        h5File + rangeStart + ulong(metadata.x), metadata.y
-    )) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
-}
-
-
 // uint32 uses the same checked 8192-byte LZ4 expansion, with 2048 values
 // and 32 bit planes per block. Keep this separate from the tuned uint16 path.
 kernel void h5lz4dc_full_u32_qh5idx(
@@ -3511,81 +3426,6 @@ kernel void h5lz4dc_unshuffle_u16_audited_low8_bin4_u16_word_major_qh5idx(
             atomic_load_explicit(&blockMax, memory_order_relaxed),
             memory_order_relaxed
         );
-    }
-}
-
-// Diagnostic four-block decode topology. Four SIMD groups independently
-// expand four compressed blocks in one 128-thread group, then each group
-// performs the exact uint16 bitshuffle inverse for its own block. This keeps
-// the LZ4 streams independent while removing the idle SIMD groups present in
-// the single-block fused probe during token expansion. It is intentionally
-// diagnostic-only until matched real-data A/B/A screens prove both exact
-// parity and a consistent wall-time win.
-kernel void h5lz4dc_unshuffle_u16_quad_block_qh5idx(
-    const device uchar *h5File [[buffer(0)]],
-    const device uint2 *blockMetadata [[buffer(1)]],
-    constant ulong &rangeStart [[buffer(2)]],
-    constant uint &blocksPerFrame [[buffer(3)]],
-    constant uint &frameElements [[buffer(4)]],
-    device ushort *output [[buffer(5)]],
-    constant uint &metadataFrameOffset [[buffer(6)]],
-    const device uchar *badPixelMask [[buffer(7)]],
-    device atomic_uint *countAudit [[buffer(8)]],
-    constant uint &globalFrameOffset [[buffer(9)]],
-    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_simdgroup]],
-    uint simdgroup [[simdgroup_index_in_threadgroup]]
-) {
-    uint frame = threadgroupPosition.x;
-    uint block = threadgroupPosition.z * 4u + simdgroup;
-    threadgroup uchar shuffledBlocks[4][kBslz4BlockBytes];
-
-    if (simdgroup < 4u && block < blocksPerFrame) {
-        uint2 metadata = blockMetadata[
-            ulong(metadataFrameOffset + frame) * blocksPerFrame + block
-        ];
-        bslz4DecompressStreamDirectToThreadgroup(
-            shuffledBlocks[simdgroup],
-            h5File + rangeStart + ulong(metadata.x),
-            metadata.y,
-            lane
-        );
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-
-    uint localMaximum = 0u;
-    uint localAbove255 = 0u;
-    if (simdgroup < 4u && block < blocksPerFrame) {
-        const threadgroup uint *planes =
-            (const threadgroup uint *)shuffledBlocks[simdgroup];
-        // One SIMD group owns one block. Every lane participates in each word
-        // column so its lane bit selects the corresponding detector pixel.
-        for (uint group = 0u; group < 128u; ++group) {
-            ushort value = 0u;
-            for (uint bit = 0u; bit < 16u; ++bit) {
-                if (planes[bit * 128u + group] & (1u << lane)) {
-                    value |= ushort(1u << bit);
-                }
-            }
-            uint detectorIndex = block * 4096u + group * 32u + lane;
-            if (detectorIndex < frameElements) {
-                ushort stored = badPixelMask[detectorIndex] ? ushort(0) : value;
-                output[ulong(frame) * frameElements + detectorIndex] = stored;
-                localMaximum = max(localMaximum, uint(stored));
-                localAbove255 += stored > ushort(255) ? 1u : 0u;
-            }
-        }
-        localMaximum = simd_max(localMaximum);
-        localAbove255 = simd_sum(localAbove255);
-        if (lane == 0u) {
-            uint frameAudit = 2u * (globalFrameOffset + frame);
-            atomic_fetch_max_explicit(
-                &countAudit[frameAudit], localMaximum, memory_order_relaxed
-            );
-            atomic_fetch_add_explicit(
-                &countAudit[frameAudit + 1u], localAbove255, memory_order_relaxed
-            );
-        }
     }
 }
 

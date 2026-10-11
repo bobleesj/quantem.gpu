@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from quantem.gpu.io.read import _torch_value
+from quantem.gpu.io.read import torch_value
 from quantem.gpu.resident.queries import DetectorQueries
 
 
@@ -30,7 +30,7 @@ class CountDetectorCompute(DetectorQueries):
         """Decode one pattern into independently owned device storage."""
         row, column = divmod(index, self.scan_shape[1])
         # The Metal result moves into an independently owned MPS tensor and its buffer is released.
-        result = _torch_value(self.source.extract_diffraction_device(row, column))
+        result = torch_value(self.source.extract_diffraction_device(row, column))
         if out is not None:
             if (
                 out.shape != result.shape
@@ -64,7 +64,7 @@ class CountDetectorCompute(DetectorQueries):
 
     def mean_dp_native(self):
         """Return the reduced pattern without a host copy."""
-        return _torch_value(self.source.mean_dp_device())
+        return torch_value(self.source.mean_dp_device())
 
     def center_of_mass(self, mask=None):
         """Return count-weighted detector centres, defined exactly as on CUDA.

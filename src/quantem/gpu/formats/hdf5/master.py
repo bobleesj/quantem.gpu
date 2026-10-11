@@ -70,9 +70,9 @@ def get_metadata(filepath: str) -> dict:
 
     .. note::
 
-        Scope-side parameters (``voltage_kV``, ``semiangle``,
-        ``scan_sampling``, ``camera_length``, ``rotation``) are NOT in the
-        h5 master - they must be passed to ``ssb()`` explicitly or loaded
+        Scope-side parameters (``voltage_kV``, ``semiangle_mrad``,
+        ``scan_sampling_A``, ``camera_length_mm``, rotation) are NOT in the
+        h5 master: they must be passed to ``SSB`` explicitly or loaded
         from a site config. If a field is in this dict, it came from the
         file.
 

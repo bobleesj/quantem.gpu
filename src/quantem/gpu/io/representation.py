@@ -5,9 +5,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Self
 
-__all__ = ["DataRepresentation"]
-
-_PAIRED_RESIDENT_MAGIC = b"QGPUPAIR"
+from quantem.gpu.formats.qem.metadata import MAGIC as QEM_MAGIC
+from quantem.gpu.resident.cuda.paired import FILE_MAGIC as PAIRED_MAGIC
 
 
 class DataRepresentation(str, Enum):
@@ -102,8 +101,8 @@ class DataRepresentation(str, Enum):
                 magic = stream.read(8)
         except OSError:
             return cls.DENSE
-        if magic == b"QEMDATA1":
+        if magic == QEM_MAGIC:
             return cls.ENCODED
-        if magic == _PAIRED_RESIDENT_MAGIC:
+        if magic == PAIRED_MAGIC:
             return cls.PAIRED
         return cls.DENSE

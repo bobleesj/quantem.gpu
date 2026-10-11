@@ -11,11 +11,12 @@ as NumPy unless the caller asks for native device output.
 import sys
 
 import numpy as np
+import torch
 
+from quantem.gpu.detector.bounded import BoundedDetectorCompute
 from quantem.gpu.detector.counts import CountDetectorCompute, CountSeriesCompute
 from quantem.gpu.detector.cuda.dense import CudaKernelCompute
 from quantem.gpu.detector.cuda.paired_series import PairedSeriesCompute
-from quantem.gpu.detector.cuda.series import CudaSeriesCompute
 from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
 from quantem.gpu.detector.float_ans import FloatANSDetectorCompute
 from quantem.gpu.detector.mps.dense import MetalRawBackend
@@ -194,7 +195,7 @@ class DetectorSession:
         >>> images = session.masked_sum(mask, output="native")
         """
         _check_output(output, out)
-        if block_stride != 1 and (output != "native" or not isinstance(self._backend, StreamedSeriesCompute)):
+        if block_stride != 1 and (output != "native" or not isinstance(self._backend, PairedSeriesCompute)):
             raise ValueError("block_stride needs a paired native series with output='native'.")
         if output == "numpy":
             return _reduced_to_numpy(self._backend.masked_sum(mask)).reshape((*self.series_shape, *self.scan_shape))
@@ -362,9 +363,6 @@ def resolve_backend(data):
     """
     # quantem.widget's bounded readers mark themselves; quantem.gpu cannot import the widget.
     if getattr(data, "_bounded_detector_source", False):
-        # The bounded reader needs Torch, which only the widget's readers bring.
-        from quantem.gpu.detector.bounded import BoundedDetectorCompute
-
         owner = data._detector_source
         encoded = isinstance(owner, Dataset4dstemGPU) and owner.representation == "encoded"
         return BoundedDetectorCompute(data, DetectorSession(owner) if encoded else None)
@@ -374,9 +372,8 @@ def resolve_backend(data):
             return CountSeriesCompute(sources)
         if sources and all(isinstance(source, PairedCounts) for source in sources):
             return PairedSeriesCompute(data)
-        if sources and all(isinstance(source, StreamedCounts) for source in sources):
-            return StreamedSeriesCompute(data)
-        return CudaSeriesCompute(data)
+        # Anything else is refused there: a series joins acquisitions that io.load encoded.
+        return StreamedSeriesCompute(data)
     data = _unwrap_core_4dstem(data)
     # Scaled-precision residents answer detector queries on their own encoded data.
     if isinstance(data, (MPSPrecisionSource, CUDAPrecisionSource)):
@@ -398,7 +395,7 @@ def resolve_backend(data):
     # detector, so that type cannot be named here.
     if isinstance(data, ChunkedFrames) or hasattr(data, "chunks"):
         return MetalRawBackend(data)
-    if _is_loaded_instance(data, "torch", "Tensor"):
+    if isinstance(data, torch.Tensor):
         # A CPU tensor is host data: view it as NumPy for the float64 host reference.
         return ArrayBackend(data.detach().numpy()) if data.device.type == "cpu" else TorchBackend(data)
     return ArrayBackend(data)
@@ -412,9 +409,7 @@ def _unwrap_core_4dstem(data):
     """
     if isinstance(data, Dataset4dstemGPU):
         return data.data
-    if isinstance(data, np.ndarray) or _is_loaded_instance(data, "cupy", "ndarray") or _is_loaded_instance(
-        data, "torch", "Tensor"
-    ):
+    if isinstance(data, (np.ndarray, torch.Tensor)) or _is_loaded_instance(data, "cupy", "ndarray"):
         return data
     for name in ("_tensor", "_array"):
         array = getattr(data, name, None)
@@ -427,7 +422,7 @@ def _unwrap_core_4dstem(data):
 
 
 def _is_loaded_instance(value, module: str, name: str) -> bool:
-    """Type check against a class of an optional library without importing it.
+    """Type check against a CuPy class without importing CuPy, which Macs do not have.
 
     An instance of the class can exist only once its module was imported, so
     an unloaded module means ``value`` is not one.
@@ -464,6 +459,6 @@ def _to_host(data) -> np.ndarray:
     """Download a CuPy or Torch result; NumPy and Metal results convert in place."""
     if _is_loaded_instance(data, "cupy", "ndarray"):
         return data.get()
-    if _is_loaded_instance(data, "torch", "Tensor"):
+    if isinstance(data, torch.Tensor):
         return data.detach().cpu().numpy()
     return np.asarray(data)

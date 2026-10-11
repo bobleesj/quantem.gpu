@@ -107,16 +107,14 @@ def resident_device(payload):
     """Normalize the device a resident reports, without decoding it.
 
     Residents report their GPU as a ``torch.device``, a CUDA ordinal, a CuPy
-    device, a ``_device_id`` attribute or a string such as ``"mps"``, and
-    callers may wrap owners of their own, so every spelling is accepted here.
-    ``None`` means the payload reports no device.
+    device or a string such as ``"mps"``, and callers may wrap owners of their
+    own, so every spelling is accepted here. ``None`` means the payload
+    reports no device.
     """
     # Read by attribute: CuPy is never imported here, and callers' own owners reach this.
     device = getattr(payload, "device", None)
     if not isinstance(device, torch.device):
-        device_id = getattr(payload, "_device_id", None)
-        if device_id is None:
-            device_id = getattr(device, "id", None)
+        device_id = getattr(device, "id", None)
         if device_id is not None:
             device = torch.device("cuda", int(device_id))
         elif isinstance(device, (int, np.integer)):
@@ -146,11 +144,11 @@ def _decode_rows(
         if detector_region is not None:
             decode = partial(decode, detector_region=detector_region)
     elif isinstance(payload, decoded_to_tensor):
-        decode = payload._decode_scan_range_torch
+        decode = payload.decode_scan_range_torch
     else:
         # A plain device array, such as a dense CuPy acquisition.
         try:
-            return _torch_value(payload[row0:row1, column0:column1]).reshape(
+            return torch_value(payload[row0:row1, column0:column1]).reshape(
                 -1, *shape[2:]
             )
         except (TypeError, IndexError, KeyError, RuntimeError) as error:
@@ -160,15 +158,15 @@ def _decode_rows(
     # Range decoders take flat row-major scan indices, so a block narrower than
     # the scan decodes one range per scan row.
     if column0 == 0 and column1 == shape[1]:
-        return _torch_value(decode(row0 * shape[1], row1 * shape[1]))
+        return torch_value(decode(row0 * shape[1], row1 * shape[1]))
     parts = [
-        _torch_value(decode(row * shape[1] + column0, row * shape[1] + column1))
+        torch_value(decode(row * shape[1] + column0, row * shape[1] + column1))
         for row in range(row0, row1)
     ]
     return parts[0] if len(parts) == 1 else torch.cat(parts, dim=0)
 
 
-def _torch_value(value):
+def torch_value(value):
     """Wrap one decoded block as a Torch tensor on its GPU without a host copy.
 
     CUDA decoders return CuPy arrays, shared through DLPack. Metal decoders

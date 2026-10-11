@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     from quantem.gpu import io
     from quantem.gpu.detector import prepare
@@ -29,24 +29,16 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     )
     source = tmp_path / "source.npy"
     np.save(source, values)
-    if dtype == "float16":
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(source, dtype=dtype, backend="mps", verbose=False)
-        return
     loaded = io.load(source, dtype=dtype, backend="mps", verbose=False)
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
-    if dtype == "float16":
-        expected = values.astype(np.float16).astype(np.float32)
-        tolerance = np.finfo(np.float16).eps * np.maximum(1, np.abs(values))
-    else:
-        expected = (
-            np.rint((values - calibration["offset"]) / calibration["scale"])
-            .clip(0, 65535)
-            * calibration["scale"]
-            + calibration["offset"]
-        ).astype(np.float32)
-        tolerance = np.full(values.shape, calibration["scale"] * 1.1, np.float32)
+    expected = (
+        np.rint((values - calibration["offset"]) / calibration["scale"])
+        .clip(0, 65535)
+        * calibration["scale"]
+        + calibration["offset"]
+    ).astype(np.float32)
+    tolerance = np.full(values.shape, calibration["scale"] * 1.1, np.float32)
     observed = prepare(loaded).reduce_frames([0], "mean")
     np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=float(np.max(tolerance[0, 0])))
     assert report["values"] == values.size
@@ -64,7 +56,7 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     reopened.close()
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     """Frames and reductions obey the same public contract as CUDA."""
 
@@ -74,10 +66,6 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     original = make_precision_fixture()
     source = tmp_path / "shared_oracle.npy"
     np.save(source, original)
-    if dtype == "float16":
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(source, dtype=dtype, backend="mps", verbose=False)
-        return
     with io.load(source, dtype=dtype, backend="mps", verbose=False) as loaded:
         report = loaded.metadata["precision"]
         calibration = report["regions"][0] if report.get("version") == 2 else report
@@ -250,31 +238,30 @@ def test_tensor_range_rejects_subnormal_bit_patterns():
             tensor_range(values.view(torch.float32))
 
 
-def test_direct_ans_mean_matches_prior_decoded_reduction_exactly():
-    """Direct encoded means retain the old compensated order across ANS intervals."""
+def test_direct_ans_mean_keeps_its_frozen_compensated_order():
+    """Direct encoded means across ANS intervals keep the bits of the earlier decoded reduction.
+
+    The frozen float32 bits were produced by the retired decoded-mean kernel on
+    the same input, which the direct reduction matched exactly; any change of
+    accumulation order shows up here as a changed last bit.
+    """
     import torch
 
     from quantem.gpu import io
-    from quantem.gpu.resident.mps.arrays import MetalArray
-    from quantem.gpu.resident.mps.precision import _dispatch, _part_buffers
 
+    frozen = np.array([
+        [1102697072, 1102698464, 1102696217, 1102697609, 1102702640, 1102700393, 1102698145, 1102699537],
+        [1102700929, 1102698681, 1102700074, 1102697826, 1102699218, 1102696970, 1102698362, 1102696115],
+        [1102697507, 1102695260, 1102700291, 1102698043, 1102699435, 1102697188, 1102698580, 1102699972],
+        [1102697724, 1102699116, 1102696869, 1102698261, 1102696013, 1102697405, 1102695158, 1102696550],
+    ], dtype=np.uint32).view(np.float32)
     values = torch.arange(17 * 513 * 4 * 8, device="mps").reshape(17, 513, 4, 8)
     values = ((values * 17) % 787).float() / 13 - 7
     with io.load(values, backend="mps", dtype="scaled_uint16", verbose=False) as loaded:
-        source = loaded.data
-        reference = MetalArray(source.det_shape, np.float32)
-        actual = source.mean_dp()
+        actual = loaded.data.mean_dp()
         try:
-            for index, part in enumerate(source.parts):
-                parameters, calibration = source._params(part)
-                parameters[0] = parameters[1]
-                parameters[8] = int(index > 0)
-                parameters[9] = source.n_frames
-                with _part_buffers(part) as buffers:
-                    _dispatch("mean", [*buffers, reference], parameters, calibration)
-            np.testing.assert_array_equal(actual.get(), reference.get())
+            np.testing.assert_array_equal(actual.get(), frozen)
         finally:
-            reference.release()
             actual.release()
 
 
@@ -321,13 +308,10 @@ def test_mps_precision_releases_its_metal_temporaries(tmp_path, monkeypatch):
     loaded = io.load(source, dtype="scaled_uint16", backend="mps", verbose=False)
     session = prepare(loaded)
     block = metal.upload(values[0, 0])
-    mask = np.ones((16, 16), bool)
-    mask[3, 4] = False
     monkeypatch.setattr(arrays.MetalArray, "__init__", recorded)
     session.frame(5)
     session.reduce_frames([0, 3, 9], "mean")
     session.reduce_frames([0, 3, 9], "max")
-    assert metal.has_invalid_pixels(mask)
     assert metal.source_range([block], None) == (float(values[0, 0].min()), float(values[0, 0].max()))
     assert created and all(array.is_released for array in created)
     assert not block.is_released

@@ -30,8 +30,7 @@ class ScreeningResult:
     """Small screening products for instant UI and ptychography setup.
 
     ``total_intensity``, ``annular_bright_field`` and ``annular_dark_field``
-    are exact uint64 count maps. They are ``None`` only when reopening a cache
-    that was written without them.
+    are exact uint64 count maps.
     """
 
     mean_dp: np.ndarray
@@ -45,12 +44,12 @@ class ScreeningResult:
     rotation_deg: float
     transposed: bool
     metadata: dict[str, object]
+    total_intensity: np.ndarray
+    annular_bright_field: np.ndarray
+    annular_dark_field: np.ndarray
     cache_path: Path | None = None
     from_cache: bool = False
     elapsed_s: float = 0.0
-    total_intensity: np.ndarray | None = None
-    annular_bright_field: np.ndarray | None = None
-    annular_dark_field: np.ndarray | None = None
 
 
 def prepare(
@@ -124,12 +123,6 @@ def prepare(
     from quantem.gpu import device
 
     resolved_backend = device.resolve(backend)
-    if resolved_backend not in {"cuda", "mps"}:
-        raise RuntimeError(
-            "prepare cache generation requires backend='cuda' "
-            f"or backend='mps'; backend={resolved_backend!r} was selected. "
-            "Existing caches can still be read by CPU-facing callers."
-        )
     products = _build_products(
         master_path,
         backend=resolved_backend,
@@ -509,34 +502,10 @@ def _save_cache(products: ScreeningResult, path: Path) -> None:
         "dpc_phase": np.asarray(products.dpc_phase, dtype=np.float32),
         "com_row": np.asarray(products.com_row, dtype=np.float32),
         "com_col": np.asarray(products.com_col, dtype=np.float32),
+        "total_intensity": products.total_intensity,
+        "annular_bright_field": products.annular_bright_field,
+        "annular_dark_field": products.annular_dark_field,
     }
-    exact_values = [
-        getattr(products, name) for name in _EXACT_COUNT_PRODUCT_FIELDS
-    ]
-    if any(value is not None for value in exact_values):
-        if any(value is None for value in exact_values):
-            raise ValueError(
-                "Exact screening cache products must include total_intensity, "
-                "annular_bright_field, and annular_dark_field together."
-            )
-        expected_shape = np.asarray(products.bright_field).shape
-        for name, value in zip(
-            _EXACT_COUNT_PRODUCT_FIELDS,
-            exact_values,
-            strict=True,
-        ):
-            array = np.asarray(value)
-            if array.dtype != np.dtype(np.uint64):
-                raise TypeError(
-                    f"{name} must preserve exact uint64 detector counts; "
-                    f"got {array.dtype}."
-                )
-            if array.shape != expected_shape:
-                raise ValueError(
-                    f"{name} has shape {array.shape}, expected scan shape "
-                    f"{expected_shape}."
-                )
-            payload[name] = array
     np.savez(path, **payload)
 
 
@@ -547,29 +516,16 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
     started = time.perf_counter()
     with np.load(path, allow_pickle=False) as data:
         metadata = json.loads(str(data["metadata_json"].reshape(())))
-        # A cache without the phase predates phase caching; rebuild it.
-        if not _cache_matches(metadata, master) or "dpc_phase" not in data.files:
+        # Caches written before the phase and the exact maps were kept are rebuilt.
+        if not _cache_matches(metadata, master) or not {"dpc_phase", *_EXACT_COUNT_PRODUCT_FIELDS} <= set(data.files):
             return None
         parameters = metadata["parameters"]
-        com_row = np.asarray(data["com_row"], dtype=np.float32)
-        exact_present = [
-            name in data.files for name in _EXACT_COUNT_PRODUCT_FIELDS
-        ]
-        if any(exact_present) and not all(exact_present):
-            return None
-        exact_products: dict[str, np.ndarray | None] = dict.fromkeys(_EXACT_COUNT_PRODUCT_FIELDS)
-        if all(exact_present):
-            for name in _EXACT_COUNT_PRODUCT_FIELDS:
-                array = np.asarray(data[name])
-                if array.dtype != np.dtype(np.uint64) or array.shape != com_row.shape:
-                    return None
-                exact_products[name] = array
         return ScreeningResult(
             mean_dp=np.asarray(data["mean_dp"], dtype=np.float32),
             bright_field=np.asarray(data["bright_field"], dtype=np.float32),
             dark_field=np.asarray(data["dark_field"], dtype=np.float32),
             dpc_phase=np.asarray(data["dpc_phase"], dtype=np.float32),
-            com_row=com_row,
+            com_row=np.asarray(data["com_row"], dtype=np.float32),
             com_col=np.asarray(data["com_col"], dtype=np.float32),
             probe_center=tuple(float(value) for value in parameters["center"]),
             probe_radius=float(parameters["radius_px"]),
@@ -579,5 +535,5 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             cache_path=path,
             from_cache=True,
             elapsed_s=time.perf_counter() - started,
-            **exact_products,
+            **{name: np.asarray(data[name]) for name in _EXACT_COUNT_PRODUCT_FIELDS},
         )

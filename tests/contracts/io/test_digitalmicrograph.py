@@ -165,7 +165,6 @@ def test_saved_camera_ans_reopens_without_original_or_encoder(tmp_path, dtype, m
         raise AssertionError("Reopening must never encode or rebuild an index")
 
     monkeypatch.setattr(StreamedCounts, "append", forbidden)
-    monkeypatch.setattr(StreamedCounts, "_index", forbidden)
     assert io.inspect(saved).scan_shape == (23, 25)
     with io.load(saved, backend="cuda") as reopened:
         assert reopened.metadata["scan_sampling_A"] == [2.5, 2.5]

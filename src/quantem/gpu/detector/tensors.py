@@ -1,8 +1,7 @@
 """Detector reductions for Torch tensors on an accelerator and for host arrays.
 
 ``TorchBackend`` serves Torch tensors on CUDA or MPS; integer counts stay
-integer until the small reduced output. Torch is optional for quantem.gpu, so it
-is imported where a tensor is first touched.
+integer until the small reduced output.
 
 ``ArrayBackend`` serves NumPy arrays, array-likes and CPU Torch tensors (viewed
 without a copy). It is the host reference: integer counts sum in uint64, float
@@ -34,6 +33,7 @@ budget 4 bytes per pixel, int64 sums 8 bytes.
 import math
 
 import numpy as np
+import torch
 
 from quantem.gpu.resident.queries import DetectorQueries
 
@@ -71,8 +71,6 @@ class TorchBackend(DetectorQueries):
 
     def masked_sum(self, det_mask: np.ndarray) -> np.ndarray:
         """Virtual image: sum masked detector pixels per scan position (chunked)."""
-        import torch
-
         mask = torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device, dtype=torch.bool).reshape(-1)
         if not torch.is_floating_point(self._flat):
             selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
@@ -113,8 +111,6 @@ class TorchBackend(DetectorQueries):
 
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
         """Virtual image with integer counts preserved through host transfer."""
-        import torch
-
         if torch.is_floating_point(self._flat):
             raise TypeError("Exact detector sums require integer detector data.")
         mask = torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device, dtype=torch.bool).reshape(-1)
@@ -137,8 +133,6 @@ class TorchBackend(DetectorQueries):
         integer or float64 total is divided in float64 on the host (MPS has no
         float64) and rounded once to float32, the rule of every mean pattern.
         """
-        import torch
-
         if not torch.is_floating_point(self._flat):
             accumulator_dtype = torch.int64
         elif self._flat.dtype == torch.float64:
@@ -159,8 +153,6 @@ class TorchBackend(DetectorQueries):
         exact total divided in float64 and rounded once to float32; float data
         reduces in float32.
         """
-        import torch
-
         if not torch.is_floating_point(self._flat):
             if reduce == "sum":
                 return self.reduce_frames_exact(scan_indices)
@@ -181,8 +173,6 @@ class TorchBackend(DetectorQueries):
 
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
         """Return an exact uint64 scan-frame sum with bounded int64 scratch."""
-        import torch
-
         if torch.is_floating_point(self._flat):
             raise TypeError("Exact scan ROI sums require integer detector data.")
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
@@ -192,13 +182,12 @@ class TorchBackend(DetectorQueries):
         total = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
         for start in range(0, indices.size, step):
             selected = torch.as_tensor(indices[start : start + step], dtype=torch.int64, device=self.device)
-            total += self._flat.index_select(0, selected).sum(dim=0, dtype=torch.int64)
+            # Cast first: MPS has no mixed uint16/int64 sum ("sum_reduction_outer_ushort_long").
+            total += self._flat.index_select(0, selected).to(torch.int64).sum(dim=0)
         return total.cpu().numpy().astype(np.uint64, copy=False)
 
     def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
         """Return an exact scan-frame maximum with bounded scratch."""
-        import torch
-
         if torch.is_floating_point(self._flat):
             raise TypeError("Exact scan ROI maxima require integer detector data.")
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
@@ -221,8 +210,6 @@ class TorchBackend(DetectorQueries):
         ``det_mask`` None means the full detector. Chunked by the same byte
         budget as ``masked_sum``; an empty pattern gives 0.
         """
-        import torch
-
         mask = None if det_mask is None else torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device).float()
         rows = torch.arange(self.det_shape[0], device=self.device, dtype=torch.float32)[:, None]
         cols = torch.arange(self.det_shape[1], device=self.device, dtype=torch.float32)[None, :]

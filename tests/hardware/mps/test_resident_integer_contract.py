@@ -51,7 +51,6 @@ def test_mps_native_uint16_frozen_detector_contract(large_sum) -> None:
         assert session._backend.device == "mps"
         assert session._backend.frames is frames
         assert frames.dtype == np.dtype("uint16")
-        assert not session._backend._auto_fast
         if large_sum:
             _assert_large_sum(session, large)
         else:

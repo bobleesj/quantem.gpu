@@ -29,7 +29,7 @@ _SOURCE = "#define QUANTEM_PRECISION_ANS_MEAN 1\n" + "\n".join(
 )
 _NAMES = (
     "copy", "restore", "encode", "encode_measure", "range", "range_reduce", "measure",
-    "frame", "unpacked", "detector", "mean", "reduce", "range_read", "divide",
+    "frame", "unpacked", "detector", "reduce", "range_read", "divide",
     "ans_mean", "measure_reduce",
 )
 
@@ -136,7 +136,6 @@ def _parameters(values=None, report=None):
         params[0] = values.numel() if is_mps_tensor(values) else values.size
         params[3] = {"float32": 0, "float16": 1, "uint16": 2, "uint8": 3, "bool": 3, "uint32": 4}[str(values.dtype).removeprefix("torch.")]
     if report:
-        params[4] = int(report["storage"] == "scaled_uint16")
         maximum = max(abs(report["intensity_min"]), abs(report["intensity_max"]))
         exponent = -math.frexp(maximum)[1] if maximum else 0
         params[5] = exponent & 0xffffffffffffffff
@@ -241,21 +240,6 @@ def source_range(blocks, saved):
                 raise ValueError("Metal precision conversion cannot preserve float32 subnormal intensities; keep the original float32 file or use CUDA.")
             low, high = min(low, minimum), max(high, maximum)
     return low, high
-
-
-def has_invalid_pixels(mask):
-    """Whether the detector mask marks any pixel invalid."""
-    uploaded = upload(mask)
-    values = restore(uploaded, None)
-    params, scalars = _parameters(values)
-    params[14] = params[15] = min(params[0], 8192)
-    stats = MetalArray((params[14], 4), np.float32)
-    _dispatch("range", [values, stats], params, scalars)
-    rows = stats.get().tolist()
-    # PyObjC frees a Metal buffer only on release; release is idempotent when values is uploaded.
-    for temporary in (stats, values, uploaded):
-        temporary.release()
-    return any(row[1] != 0 for row in rows)
 
 
 def encode(values, report):
@@ -446,7 +430,7 @@ class PrecisionSource(DetectorQueries):
             _dispatch("frame", [*buffers, result], params, scalars)
         return result
 
-    def _decode_scan_range_torch(self, first, stop):
+    def decode_scan_range_torch(self, first, stop):
         """Restore a range directly into independently owned Torch MPS storage."""
         self._check()
         if not 0 <= first < stop <= self.n_frames:
@@ -578,6 +562,13 @@ class PrecisionSource(DetectorQueries):
         for value in (row, col):
             _dispatch("divide", [value, denominator], params, scalars)
         return col, row
+
+    def release_scans_before(self, stop: int) -> None:
+        """Scaled-precision parts are calibrated per scan region and are freed only together."""
+        raise TypeError(
+            "A scaled-precision source frees its rows only all at once; call close() "
+            "when the last consumer finishes."
+        )
 
     def release(self):
         for part in self.parts:
