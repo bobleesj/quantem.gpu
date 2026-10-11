@@ -61,11 +61,6 @@ class FloatANSDetectorCompute(DetectorQueries):
             column = self.source._where(empty, 0, column / denominator)
             return _host(column, self.source.backend).reshape(-1), _host(row, self.source.backend).reshape(-1)
 
-    def masked_sum_exact(self, mask):
-        raise TypeError(
-            "Exact integer sums do not apply to float32 measurements; use masked_sum."
-        )
-
     def masked_sum_exact_native(self, mask, *, out=None):
         """Float measurements have no exact integer sum on the device either."""
         return self.masked_sum_exact(mask)
