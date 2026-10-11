@@ -16,6 +16,7 @@ import numpy as np
 
 from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.snapshot import (
+    BLOCK_BYTES,
     FLOAT_CODEC,
     INTEGER_CODEC,
     SCALED_CODEC,
@@ -321,7 +322,12 @@ def save_array(
             )
         else:
             header.update(interval=512, valid=encode_valid(valid))
-        write_envelope(path, header, body)
+        size = body.tell()
+        body.seek(0)
+        write_envelope(
+            path, header, size,
+            ((first, body.read(BLOCK_BYTES)) for first in range(0, size, BLOCK_BYTES)),
+        )
 
 
 def _read_array(handle, start: int, span: dict, dtype: str) -> np.ndarray:
