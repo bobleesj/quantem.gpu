@@ -51,7 +51,7 @@ quantem.gpu installs PyTorch 2.3 or newer (2.11 or newer with `[cuda]`, the firs
 PyPI release built on CUDA 13), and a particular CUDA build of PyTorch can be
 installed first.
 For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`. For
-the `show_2d` figures below and `result.show()`, add `plot` (Matplotlib and
+the `show_2d` figures below and `result.show()`, add `plot` (Matplotlib, IPython and
 QuantEM): `".[cuda,plot]"`. For GIF and MP4 export, add `movie`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
 
