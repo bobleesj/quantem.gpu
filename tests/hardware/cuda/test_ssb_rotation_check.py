@@ -264,3 +264,29 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
         assert not result.rotation_flipped
         assert result.com_reversed
         assert len(calls) == 1  # Only the normal final display reconstruction.
+
+
+def test_preview_context_follows_a_rotation_set_after_it_was_made():
+    """A reduced-BF drag context made before set_rotation previews, and leaves the session, at the new rotation.
+
+    Leaving the context used to restore the geometry of the rotation it was made at while the engine recorded the new
+    rotation as prepared, so this and every later reconstruction used the old rotation.
+    """
+    _require_cuda()
+    from tests.hardware.cuda.test_ssb_thick_sample import _synthetic_session
+
+    aberrations = {"C10": 3.0, "C12": 0.5, "phi12": 0.3}
+    ssb, _ = _synthetic_session()
+    context = ssb.preview_context(ssb.num_bf // 4)
+    ssb.set_rotation(40.0)
+    subset_phase, _ = ssb.preview(aberrations, context=context)
+    phase, loss = ssb.preview(aberrations)
+    reference, _ = _synthetic_session()
+    reference.set_rotation(40.0)
+    expected_subset, _ = reference.preview(aberrations, context=reference.preview_context(reference.num_bf // 4))
+    expected, expected_loss = reference.preview(aberrations)
+
+    np.testing.assert_array_equal(subset_phase, expected_subset)
+    np.testing.assert_array_equal(phase, expected)
+    assert loss == expected_loss
+

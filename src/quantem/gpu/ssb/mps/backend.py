@@ -1,4 +1,4 @@
-"""Backend-neutral MPS implementation of interactive SSB reconstruction."""
+"""The MLX/Metal implementation of the SSB backend protocol behind :class:`quantem.gpu.SSB` on Apple GPUs."""
 
 import dataclasses
 import math
@@ -39,7 +39,7 @@ from quantem.gpu.ssb.results import SSBResult
 
 
 class MpsSSBBackend:
-    """MLX/Metal implementation of :class:`~quantem.gpu.SSBProtocol`.
+    """MLX/Metal implementation of ``quantem.gpu.ssb.contract.SSBProtocol``.
 
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
@@ -60,10 +60,6 @@ class MpsSSBBackend:
         bf_center: tuple[float, float] | None,
         bf_radius: int | None,
         rotation_angle_deg: float,
-        aberrations: dict[str, float] | None = None,
-        chunk_bf: int | None = None,
-        setup_chunk_bf: int | None = None,
-        redraw_chunk_bf: int | None = None,
     ) -> None:
         self._frames = as_chunked_frames(data)
         self._scan_shape = frames_scan_shape(self._frames)
@@ -71,23 +67,12 @@ class MpsSSBBackend:
         self._voltage_kV = float(voltage_kV)
         self._semiangle_mrad = float(semiangle_mrad)
         self._scan_sampling = as_sampling(scan_sampling)
-        requested_chunk_bf = 1 if chunk_bf is None else max(1, int(chunk_bf))
-        self._setup_chunk_bf = (
-            max(1, int(setup_chunk_bf))
-            if setup_chunk_bf is not None
-            else max(requested_chunk_bf, int(default_object_setup_chunk_bf()))
-        )
-        self._chunk_bf = (
-            max(1, int(redraw_chunk_bf))
-            if redraw_chunk_bf is not None
-            else max(requested_chunk_bf, int(default_object_redraw_chunk_bf()))
-        )
+        self._setup_chunk_bf = default_object_setup_chunk_bf()
+        self._chunk_bf = default_object_redraw_chunk_bf()
         # phase/loss chunk: the optimizer's rule (``optimize(chunk_bf=16)`` -> the per-scan default), so previews and
-        # ``reconstruct_result`` sum BF pixels in the fit's chunks. Deriving it from the default ``requested_chunk_bf = 1``
-        # gave one BF pixel per dispatch (a 128x128 x 8889-BF preview took 3.3 s instead of ~9 ms).
-        self._phase_chunk_bf = effective_phase_loss_chunk_bf(
-            16 if chunk_bf is None else requested_chunk_bf, self._scan_shape
-        )
+        # ``reconstruct_result`` sum BF pixels in the fit's chunks. One BF pixel per dispatch made a 128x128 x 8889-BF
+        # preview take 3.3 s instead of ~9 ms.
+        self._phase_chunk_bf = effective_phase_loss_chunk_bf(16, self._scan_shape)
         stored_dc = (
             self._frames.dc_value
             if isinstance(self._frames, MpsBfColumnFrames)
@@ -424,20 +409,6 @@ class MpsSSBBackend:
         )
         return phase
 
-    def reconstruct_object(self, c10: float, c12: float, phi12: float):
-        """Return the exact complex BF-averaged object wave from Metal."""
-
-        if self._prepared is None:
-            self.cache_rotation(math.radians(self._rotation_angle_deg))
-
-        return object_fourier_sum_dynamic(
-            self._prepared,
-            C10=float(c10),
-            C12=float(c12),
-            phi12=float(phi12),
-            chunk_bf=self._chunk_bf,
-        )
-
     @staticmethod
     def phase_to_numpy(phase) -> np.ndarray:
         """Expose one MPS reconstruction as a host float32 image."""
@@ -445,8 +416,8 @@ class MpsSSBBackend:
         return np.asarray(phase, dtype=np.float32)
 
     @staticmethod
-    def _three_param_from_full(mags_m, angles_rad) -> tuple[float, float, float]:
-        mags = np.asarray(mags_m, dtype=np.float32)
+    def _three_param_from_full(magnitudes_A, angles_rad) -> tuple[float, float, float]:
+        mags = np.asarray(magnitudes_A, dtype=np.float32)
         angles = np.asarray(angles_rad, dtype=np.float32)
         if np.any(mags[2:] != 0):
             raise NotImplementedError(
@@ -456,16 +427,16 @@ class MpsSSBBackend:
             )
         return float(mags[0]), float(mags[1]), float(angles[1])
 
-    def reconstruct_full_with_loss(self, mags_m, angles_rad):
+    def reconstruct_full_with_loss(self, magnitudes_A, angles_rad):
         """Reconstruct with the supported subset of full aberration inputs."""
 
-        c10, c12, phi12 = self._three_param_from_full(mags_m, angles_rad)
+        c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
         return self.reconstruct_with_loss(c10, c12, phi12)
 
-    def reconstruct_full(self, mags_m, angles_rad):
+    def reconstruct_full(self, magnitudes_A, angles_rad):
         """Reconstruct with the supported subset of full aberration inputs."""
 
-        c10, c12, phi12 = self._three_param_from_full(mags_m, angles_rad)
+        c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
         return self.reconstruct(c10, c12, phi12)
 
     def preview_context(self, num_bf: int):

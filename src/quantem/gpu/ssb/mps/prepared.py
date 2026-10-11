@@ -137,7 +137,13 @@ def prepare_selection(
     bf_storage_indices_np = None
     active_mask_np = None
     if compact_inactive:
-        active_mask_np = np.asarray(aperture_k_1d) > 0.0
+        if ang_y_rad == ang_x_rad:
+            active_mask_np = np.asarray(aperture_k_1d) > 0.0
+        else:
+            # A rotation keeps each pixel's angle alpha but turns the aperture's soft edge, one detector pixel wide
+            # along k, and that width changes with direction when rows and columns are sampled differently. Store
+            # every pixel the edge reaches at some rotation, so retarget_prepared_rotation never misses one.
+            active_mask_np = np.sqrt(np.asarray(alpha_k2_1d)) < semiangle_rad + max(ang_y_rad, ang_x_rad)
         bf_storage_indices_np = np.flatnonzero(active_mask_np).astype(np.int32)
         if bf_storage_indices_np.size == 0:
             raise ValueError(

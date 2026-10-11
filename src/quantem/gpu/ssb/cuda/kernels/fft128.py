@@ -3,7 +3,6 @@
 128 = 4^3 x 2: three radix-4 stages plus a final radix-2 stage.
 """
 
-from functools import lru_cache
 
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
@@ -273,20 +272,14 @@ class CustomFFT128(CustomFFTBase):
     def __init__(self) -> None:
         super().__init__(
             size=128,
-            cuda_code=build_cuda_code(128, _TWIDDLE_DECL, _FFT128_KERNELS),
-            kernel_names=(
-                "ifft128_rows_fused_pk_t32_mr8_packed",
-                "ifft128_cols_t32_mr8",
-                "ifft128_cols_accumulate_t32_mr8",
-            ),
+            cuda_code=build_cuda_code(_TWIDDLE_DECL, _FFT128_KERNELS),
+            rows="ifft128_rows_fused_pk_t32_mr8_packed",
+            cols="ifft128_cols_t32_mr8",
+            cols_accumulate="ifft128_cols_accumulate_t32_mr8",
+            rows_full=None,
             twiddle_name="TWIDDLE_128",
             rows_block=(32, 8, 1),
             rows_grid_y=16,
             cols_block=(32, 8, 1),
             cols_grid_y=16,
         )
-
-
-@lru_cache(maxsize=1)
-def get_custom_fft_128() -> CustomFFT128:
-    return CustomFFT128()

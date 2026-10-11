@@ -260,17 +260,22 @@ def save_mp4(
     percentile: tuple[float, float] = (1.0, 99.0),
     crf: int = 18,
     backend: str = "auto",
-    **backend_options,
+    gpu_id: int = 0,
 ) -> Path:
     """Save one or more grayscale movie stacks as an H.264 MP4.
 
     Parameters
     ----------
     backend : {"auto", "cuda", "mps", "cpu"}
-        ``"auto"`` uses the NVIDIA CUDA/NVENC backend when available for array
-        inputs, then the Apple Metal/MPS backend on macOS, otherwise it falls
-        back to the portable CPU writer. ``"cuda"`` requires an NVIDIA CUDA
-        environment. ``"mps"`` requires an Apple Metal environment.
+        ``"auto"`` uses the NVIDIA CUDA/NVENC writer when it is available and
+        the frame is at least 256 pixels on each side, then the Apple Metal
+        writer. When neither writes the movie it prints one line saying why
+        and uses the CPU writer, whose frames differ from the GPU writers'
+        (Lanczos instead of nearest-neighbour resizing, unoutlined labels).
+        ``"cuda"`` and ``"mps"`` raise instead. Pre-rendered PIL frames always
+        use the CPU writer.
+    gpu_id : int
+        CUDA device of the NVENC writer.
     """
     backend = str(backend).lower()
     if backend not in {"auto", "cuda", "mps", "cpu"}:
@@ -282,6 +287,8 @@ def save_mp4(
             f"backend={backend!r} requires array movie data; rendered PIL frames "
             "must use backend='cpu'"
         )
+    # why "auto" did not reach a GPU writer, announced before the CPU writer runs
+    fallback = "no CUDA/NVENC or Apple Metal movie writer is available"
     if backend in {"auto", "cuda"} and not _is_pil_frame_sequence(data):
         try_cuda = backend == "cuda"
         if backend == "auto":
@@ -299,12 +306,14 @@ def save_mp4(
             # PyNvVideoCodec may import successfully while NVENC rejects
             # small H.264 surfaces at encoder initialization time.
             large_enough = min(layout.width, layout.height) >= _CUDA_NVENC_MIN_EDGE_PX
-            try_cuda = bool(large_enough and cuda.is_available())
+            try_cuda = cuda.is_available()
+            if try_cuda and not large_enough:
+                try_cuda = False
+                fallback = f"NVENC needs frames of at least {_CUDA_NVENC_MIN_EDGE_PX} pixels per side"
         if try_cuda:
             stacks, limits = _stacks_with_limits(
                 data, percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks
             )
-            cuda_options = dict(backend_options)
             try:
                 return cuda.save_mp4(
                     stacks,
@@ -316,24 +325,20 @@ def save_mp4(
                     max_width=max_width,
                     cols=cols,
                     limits=limits,
-                    qp=int(cuda_options.pop("qp", crf)),
-                    preset=str(cuda_options.pop("preset", "P3")),
-                    tuning_info=str(cuda_options.pop("tuning_info", "high_quality")),
-                    gpu_id=int(cuda_options.pop("gpu_id", 0)),
-                    faststart=bool(cuda_options.pop("faststart", True)),
+                    qp=int(crf),
+                    gpu_id=int(gpu_id),
                 )
-            except (RuntimeError, MemoryError):
-                # "auto" falls back to the CPU writer when NVENC, CUDA or ffmpeg
-                # fails (the writer reports encoder errors as RuntimeError).
+            except (RuntimeError, MemoryError) as error:
+                # the writer reports NVENC, CUDA and ffmpeg failures as RuntimeError
                 if backend == "cuda":
                     raise
+                fallback = f"the CUDA/NVENC writer failed ({error})"
     if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
         try_mps = backend == "mps" or (backend == "auto" and mps.is_available())
         if try_mps:
             stacks, limits = _stacks_with_limits(
                 data, percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks
             )
-            mps_options = dict(backend_options)
             try:
                 return mps.save_mp4(
                     stacks,
@@ -346,14 +351,14 @@ def save_mp4(
                     cols=cols,
                     limits=limits,
                     crf=int(crf),
-                    quality=int(mps_options.pop("quality", 65)),
-                    codec=str(mps_options.pop("codec", "auto")),
-                    faststart=bool(mps_options.pop("faststart", True)),
                 )
-            except (RuntimeError, MemoryError):
-                # "auto" falls back to the CPU writer when Metal or ffmpeg fails.
+            except (RuntimeError, MemoryError) as error:
                 if backend == "mps":
                     raise
+                fallback = f"the Apple Metal writer failed ({error})"
+    if backend == "auto" and not _is_pil_frame_sequence(data):
+        print(f"save_mp4: {fallback}; writing with the CPU writer, which resizes with Lanczos and draws "
+              "unoutlined labels. Pass backend='cuda' or 'mps' to get an error instead.")
     frames = _movie_frames(
         data,
         labels=labels,

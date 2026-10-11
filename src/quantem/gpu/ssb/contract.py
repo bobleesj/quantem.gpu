@@ -3,7 +3,7 @@
 import pathlib
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -26,7 +26,7 @@ class SSBPrecision:
 class SSBExportState:
     """Exact compact state consumed by widget and browser integrations."""
 
-    backend: Literal["cuda", "mps", "webgpu"]
+    backend: Literal["cuda", "mps"]
     scan_shape: tuple[int, int]
     brightfield: BrightfieldDisk
     kx_bf: np.ndarray
@@ -54,7 +54,6 @@ class SSBExportState:
         return self.brightfield.size
 
 
-@runtime_checkable
 class SSBProtocol(Protocol):
     """Backend contract implemented by CUDA and MPS: every call ``SSB`` makes.
 
@@ -66,7 +65,7 @@ class SSBProtocol(Protocol):
     sampling and wave averaging are CUDA only.
     """
 
-    backend: Literal["cuda", "mps", "webgpu"]
+    backend: Literal["cuda", "mps"]
     precision: SSBPrecision
 
     @property

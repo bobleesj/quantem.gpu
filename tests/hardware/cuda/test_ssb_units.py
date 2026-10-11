@@ -63,6 +63,38 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
     with SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
              rotation_angle_deg=0.0) as ssb:
         result = ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
-        automatic_sampling = ssb._prepare_cuda().angular_sampling[0]
+        automatic_sampling = ssb._backend().angular_sampling[0]
     assert automatic_sampling == pytest.approx(det_sampling, rel=0.004)
     assert result.aberrations["C10"] == pytest.approx(-10.0, rel=0.04)
+
+
+def test_search_ranges_accept_lists_for_every_parameter():
+    """``search_ranges`` takes a [low, high] list as well as a tuple; the CUDA search read a phi12 list as a fixed value."""
+    from tests.hardware.cuda.test_ssb_thick_sample import _synthetic_session
+
+    ssb, _ = _synthetic_session()
+    as_lists = ssb.find_aberrations(search_ranges={"C10_nm": [-5.0, 5.0], "phi12_deg": [-10.0, 10.0]}, trials=4,
+                                    refinement=None, check_rotation=False, verbose=False)
+    as_tuples = ssb.find_aberrations(search_ranges={"C10_nm": (-5.0, 5.0), "phi12_deg": (-10.0, 10.0)}, trials=4,
+                                     refinement=None, check_rotation=False, verbose=False)
+
+    assert dict(as_lists.aberrations) == dict(as_tuples.aberrations)
+    assert -10.0 <= np.degrees(as_lists.aberrations["phi12"]) <= 10.0
+
+
+def test_numpy_scalar_sampling_is_read_as_a_number():
+    """A scan step or detector sampling read from NumPy metadata (np.float32) works like the Python number."""
+    from tests.hardware.cuda.test_ssb_thick_sample import _session
+
+    rng = np.random.default_rng(7)
+    counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
+    rows, cols = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
+    counts[:, :, np.hypot(rows, cols) < 10] += 200
+    aberrations = {"C10": 3.0, "C12": 0.5, "phi12": 0.3}
+    with _session(counts, det_mrad=np.float32(3.0), scan_A=np.float32(0.3)) as ssb:
+        phase, loss = ssb.preview(aberrations)
+    with _session(counts, det_mrad=3.0, scan_A=float(np.float32(0.3))) as reference:
+        expected, expected_loss = reference.preview(aberrations)
+
+    np.testing.assert_array_equal(phase, expected)
+    assert loss == expected_loss

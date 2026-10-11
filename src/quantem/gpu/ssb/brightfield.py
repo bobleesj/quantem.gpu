@@ -9,6 +9,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+import torch
 
 from quantem.gpu import detector
 from quantem.gpu.device.cuda_runtime import cp
@@ -133,7 +134,10 @@ def crop_bright_field(
     row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)
     counts = loaded.read(detector_region=(row0, row1, col0, col1))
     if backend == "cuda":
-        counts = cp.from_dlpack(counts)
+        # torch exports a tensor through DLPack from its current device and CuPy imports it onto its own: both must be
+        # the acquisition's GPU, which need not be the current one
+        with torch.cuda.device(counts.device), cp.cuda.Device(counts.device.index):
+            counts = cp.from_dlpack(counts)
     return counts, (center[0] - row0, center[1] - col0), radius, calibration_radius
 
 

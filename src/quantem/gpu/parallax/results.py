@@ -1,8 +1,5 @@
-"""Result containers for parallax reconstruction."""
-import math
+"""Result container for parallax reconstruction."""
 from dataclasses import dataclass
-
-_PARALLAX_ABERRATION_KEYS = {"C10", "C12", "phi12"}
 
 
 @dataclass
@@ -17,61 +14,19 @@ class ParallaxResult:
     shift in scan pixels per bright-field pixel, in row-major detector order;
     ``elapsed`` is in seconds.
 
-    Notes
-    -----
-    ``aberrations`` follows the original QuantEM parallax convention:
-    ``C10`` and ``C12`` are in Angstroms, while ``phi12`` and
-    ``rotation_angle`` are in radians. Use :meth:`to_ssb_aberrations` and
-    :meth:`rotation_angle_deg` before passing fitted parallax aberrations to SSB,
-    which expects nanometers and degrees.
+    ``aberrations`` (``C10`` and ``C12`` in nm, ``phi12`` in radians, scan
+    frame) and ``rotation_angle_deg`` hold the fit of
+    ``parallax.run(fit_aberrations=True)``, in the units and convention
+    ``SSB(aberrations=..., rotation_angle_deg=...)`` takes; both are None
+    without a fit.
     """
 
     image: object
     density: object
     shifts: list[tuple[float, float]]
-    aberrations: dict | None = None
+    aberrations: dict[str, float] | None = None
+    rotation_angle_deg: float | None = None
     elapsed: float | None = None
-
-    def to_ssb_aberrations(self) -> dict[str, float]:
-        """Return fitted aberrations in the format expected by SSB.
-
-        Returns
-        -------
-        dict[str, float]
-            ``{"C10", "C12", "phi12"}`` with ``C10``/``C12`` in nm and
-            ``phi12`` in radians.
-
-        Raises
-        ------
-        ValueError
-            If this result does not contain a complete parallax aberration fit.
-        """
-        if self.aberrations is None:
-            raise ValueError(
-                "ParallaxResult has no fitted aberrations. Run parallax.run(..., "
-                "fit_aberrations=True, scan_sampling=...) first."
-            )
-        missing = _PARALLAX_ABERRATION_KEYS - self.aberrations.keys()
-        if missing:
-            raise ValueError(
-                "Parallax aberrations must contain C10, C12, and phi12 before "
-                f"conversion to SSB format. Missing: {sorted(missing)}."
-            )
-        return {
-            "C10": float(self.aberrations["C10"]) / 10.0,
-            "C12": float(self.aberrations["C12"]) / 10.0,
-            "phi12": float(self.aberrations["phi12"]),
-        }
-
-    def rotation_angle_deg(self) -> float:
-        """Return fitted scan-detector rotation angle in degrees.
-
-        Missing ``rotation_angle`` is treated as zero because some parallax
-        workflows fit only aberration coefficients.
-        """
-        if self.aberrations is None:
-            return 0.0
-        return math.degrees(float(self.aberrations.get("rotation_angle", 0.0)))
 
     def __repr__(self) -> str:
         lines = ["ParallaxResult:"]
@@ -81,7 +36,8 @@ class ParallaxResult:
         if self.elapsed is not None:
             lines.append(f"  Elapsed:      {self.elapsed:.2f}s")
         if self.aberrations:
-            lines.append("  Aberrations:")
-            for key, value in self.aberrations.items():
-                lines.append(f"    {key:<8} {float(value):>12.6g}")
+            lines.append(f"  C10:          {self.aberrations['C10']:.3f} nm")
+            lines.append(f"  C12:          {self.aberrations['C12']:.3f} nm")
+            lines.append(f"  phi12:        {self.aberrations['phi12']:.4f} rad")
+            lines.append(f"  Rotation:     {self.rotation_angle_deg:.2f} deg")
         return "\n".join(lines)

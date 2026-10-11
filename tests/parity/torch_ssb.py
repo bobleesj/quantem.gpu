@@ -52,7 +52,7 @@ class TorchSSB:
     @classmethod
     def from_ssb(cls, ssb, device: str | torch.device | None = None) -> Self:
         """The exact G and geometry of a prepared CUDA ``SSB`` session (same rotation), as torch tensors on ``device``."""
-        backend = ssb._backend_protocol
+        backend = ssb._backend()
         engine = backend._get_accelerator()
         engine.cache_rotation(backend._rotation_angle_rad)
         c = engine._cache
@@ -173,10 +173,3 @@ class TorchSSB:
             denominator += (gamma.real ** 2 + gamma.imag ** 2).sum(0)
         keep = denominator > 0
         return float((weight[keep] * numerator[keep].abs() ** 2 / denominator[keep]).sum())
-
-    def fit_sample(self, *, band_inv_A: tuple[float, float] = (0.2, 0.9), **options) -> dict[str, object]:
-        """Fit C10, C12, phi12, tilt and thickness (search shared with the CUDA / MPS backends: ``ssb.thick_sample_fit``)."""
-        from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
-
-        return fit_sample_search(lambda c10, c12, phi12, tilt, t: self.fit_power(c10, c12, phi12, tilt, t, band_inv_A),
-                                 band_inv_A=band_inv_A, **options)

@@ -69,7 +69,7 @@ class SSBResult(Mapping[str, float]):
         Complete saved scientific signature, provenance, and result metadata.
     """
     object_wave: object
-    backend: Literal["cuda", "mps", "webgpu"]
+    backend: Literal["cuda", "mps"]
     aberrations: dict[str, float] = field(default_factory=dict)
     tilt_mrad: tuple[float, float] | None = None
     depth_spread_nm: float | None = None
@@ -94,9 +94,8 @@ class SSBResult(Mapping[str, float]):
     bf_center: tuple[float, float] | None = None
     bf_radius: float | None = None
     detected_bf_radius: float | None = None
-    # Full Optuna trial history, one entry per evaluated trial, in order.
-    # Each entry: ``{"params": {"C10_nm", "C12_nm", "phi12_deg"}, "loss"}``.
-    # Used by the Screening dashboard (#26) to plot the loss landscape.
+    # Every evaluated search trial in order, ``{"trial", "number", "search", "stage", "params": {"C10_nm", "C12_nm",
+    # "phi12_deg"}, "loss"}`` (a tilt fit adds the objective, band, tilt and depth spread); ``trials`` tabulates them.
     trial_records: list[dict] | None = None
     # Phase skewness (+ = bright atom columns) and the selected 180-degree branch.
     column_sign: float | None = None
@@ -111,10 +110,7 @@ class SSBResult(Mapping[str, float]):
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.phase_estimator == "complex_wave" and (self.depth_spread_nm or 0) > 0:
-            self.phase_estimator = "mean_phase"
-            self.amplitude_estimated = False
-        # engines and older saves give the physical angle (up to 360); the public form is below 180 plus the flag
+        # the engines give the physical angle (up to 360); the public form is below 180 plus the flag
         self.rotation_angle_deg, self.com_reversed = split_rotation(self.rotation_angle_deg, self.com_reversed)
 
     def __getitem__(self, coefficient: str) -> float:
@@ -421,39 +417,8 @@ class SSBSeriesResult:
     trials: int
     refinement: str | None
 
-    def show(self, **kwargs: object):
-        """Return the native-resolution SSB series in Show3D."""
-        from quantem.widget import Show3D
-
-        labels = [
-            f"F{frame} | {dataset}"
-            for frame, dataset in zip(self.frames, self.datasets, strict=True)
-        ]
-        panel_title = "Independent SSB fit"
-        if self.probe_reference_frame is not None:
-            panel_title = (
-                f"Fixed probe from F{self.probe_reference_frame} | "
-                f"{self.probe_reference_dataset}"
-            )
-        show_kwargs = {
-            "labels": labels,
-            "panel_titles": (panel_title, "Bright field", "Dark field"),
-            "hidden_panels": ("Bright field", "Dark field"),
-            "title": "SSB reconstruction series",
-            "display_bin": 1,
-            "cmap": ("magma", "gray", "gray"),
-            "offline": False,
-        }
-        show_kwargs.update(kwargs)
-        return Show3D(
-            self.phase,
-            self.bright_field,
-            self.dark_field,
-            **show_kwargs,
-        )
-
     def metadata(self):
-        """Return compact source and reconstruction metadata as a readable table."""
+        """Return compact source and reconstruction metadata as a table indexed by setting."""
         import pandas as pd
 
         reused = sum(record["result"] != "computed" for record in self.records)
@@ -487,9 +452,7 @@ class SSBSeriesResult:
                 ("Results reused", reused),
             ]
         )
-        return pd.DataFrame(rows, columns=("Setting", "Value")).style.hide(
-            axis="index"
-        )
+        return pd.DataFrame(rows, columns=("Setting", "Value")).set_index("Setting")
 
 
 def split_rotation(rotation_angle_deg: float, com_reversed: bool = False) -> tuple[float, bool]:
