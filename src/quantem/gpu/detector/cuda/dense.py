@@ -12,14 +12,13 @@ through ``TorchBackend`` on the same memory.
 
 import math
 from collections import OrderedDict
-from functools import cache
 from pathlib import Path
 
 import numpy as np
 
 from quantem.gpu.detector.cuda.probe import mean_dp
 from quantem.gpu.detector.tensors import TorchBackend, scan_shape_of
-from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.device.cuda_runtime import cp, cuda_module
 from quantem.gpu.resident.queries import DetectorQueries
 
 _KERNEL_SUFFIX = {np.dtype(np.uint8): "u8", np.dtype(np.uint16): "u16", np.dtype(np.uint32): "u32"}
@@ -27,14 +26,16 @@ _KERNEL_SUFFIX = {np.dtype(np.uint8): "u8", np.dtype(np.uint16): "u16", np.dtype
 _MASK_INDEX_CACHE_SIZE = 32
 
 
-@cache
-def kernels(device: int):
-    """Compile the virtual-image kernels once per device."""
-    with cp.cuda.Device(device):
-        return cp.RawModule(
-            code=Path(__file__).with_name("kernels").joinpath("virtual_image.cu").read_text(),
-            options=("--std=c++11",),
-        )
+_SOURCE = Path(__file__).with_name("kernels").joinpath("virtual_image.cu").read_text()
+_NAMES = tuple(
+    f"{family}_{suffix}{launch}"
+    for family, launch in (
+        ("selected_sum_u64", "_16f"), ("selected_sum_f32", "_16f"),
+        ("center_of_mass_full", "_4f"), ("center_of_mass_selected", "_4f"),
+        ("selected_frame_sum_u64", ""), ("selected_frame_max_u32", ""),
+    )
+    for suffix in ("u8", "u16", "u32")
+)
 
 
 class CudaKernelCompute(DetectorQueries):
@@ -205,7 +206,7 @@ class CudaKernelCompute(DetectorQueries):
         if indices.size == 0:
             return cp.zeros(pixels, dtype=dtype)
         pattern = cp.empty(pixels, dtype=dtype)
-        kernels(cp.cuda.Device().id).get_function(f"{kernel}_{self._suffix}")(
+        cuda_module(_SOURCE, _NAMES, ("--std=c++11",))[f"{kernel}_{self._suffix}"](
             ((pixels + 255) // 256, 1, 1),
             (256, 1, 1),
             (self._data, cp.asarray(indices, dtype=cp.int32), pattern, np.int32(indices.size), np.int32(pixels)),
@@ -215,7 +216,7 @@ class CudaKernelCompute(DetectorQueries):
     def _launch(self, name: str, block: tuple[int, int, int], arguments: tuple):
         """Launch a per-frame kernel: ``block[1]`` frames per block, ``block[0]`` threads per frame."""
         grid = ((self.n_frames + block[1] - 1) // block[1], 1, 1)
-        kernels(cp.cuda.Device().id).get_function(name)(grid, block, arguments)
+        cuda_module(_SOURCE, _NAMES, ("--std=c++11",))[name](grid, block, arguments)
 
     def _torch_backend(self) -> TorchBackend:
         """Torch view of the same memory for arrays the kernels do not read."""
