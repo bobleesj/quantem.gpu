@@ -51,8 +51,8 @@ timing/parity reports separately if needed, not copies of the input arrays.
 An uncatchable kill or power failure cannot run teardown; pytest's subsequent
 temporary-directory housekeeping handles abandoned pytest roots. This does not
 sweep arbitrary benchmark folders, user caches or Codex history. Standalone
-benchmarks and UI scripts must use their own managed lifecycle; Live4DSTEM's
-`scripts/run_test.py` provides a supervisor for those commands.
+benchmarks and UI scripts must create and remove their own temporary
+directories.
 
 Every backend uses `(row, col)` coordinates and the same source geometry,
 mask, bin, dtype, precision, and result meaning. A contribution must not

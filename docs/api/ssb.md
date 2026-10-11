@@ -56,19 +56,19 @@ For a dense CUDA input, native supported scan shapes are 128×128, 256×256,
 diffraction pattern to a supported square. For example, a 32×32 input currently
 produces a 128×128 working grid before any requested upsampling. Check
 `ssb.scan_shape` and `result.phase.shape`; padded pixels are not additional
-measured scan positions. Dense inputs larger than 1024 along either scan axis
-are center-cropped by this CUDA path; choose the intended scan region explicitly
-before construction if that default crop is unsuitable. Computational padding is separate from
-`reconstruct(..., upsample=2)`.
+measured scan positions; the session prints one line naming the padded size.
+A scan larger than 1024 along either axis raises `ValueError` on CUDA: SSB
+never crops a scan, so select the intended square region before construction.
+Computational padding is separate from `reconstruct(..., upsample=2)`.
 
 The default fit evaluates 200 seeded TPE candidates with the exact full active
 bright-field phase-variance objective, chooses the minimum loss, and performs
 Nelder–Mead refinement. It does not average optimizer candidates.
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
-available refinement mode. In WebGPU, requesting `find_aberrations()` fails explicitly and
-directs the caller to run the exact 200-trial plus Nelder–Mead workflow on CUDA
-or MPS. The browser never substitutes fewer trials or a reduced objective.
+available refinement mode. The browser SSB engine has no aberration search:
+run `find_aberrations()` on CUDA or MPS. The browser never substitutes fewer
+trials or a reduced objective.
 
 (ssb-find-and-reconstruct)=
 ## Find aberrations, then reconstruct
@@ -398,6 +398,20 @@ each corrected bright-field detector contribution. At higher output sampling,
 detector-dependent structure in the added frequency bands can compress contrast
 through this nonlinear phase extraction. This is not an FFT brightness factor.
 
+Taking a phase is nonlinear: `angle(mean(waves))` is not
+`mean(angle(waves))`. Taking each angle first discards amplitude information
+and can compress reconstructed contrast. Combining the corrected spectra
+before one inverse FFT gives the same wave sum as summing separate inverse
+FFTs, because both operations are linear. The calibration objective remains
+the native-grid per-detector phase variance. Stronger contrast alone does not
+establish quantitative phase accuracy.
+
+QuantEM's `DirectPtychography` SSB implementation uses a related but distinct
+weak-phase convention: multiply by `-1j * conj(gamma) / abs(gamma)`, inverse
+transform, take the real part, normalize by BF weight, and sum contributions.
+It does not average per-contribution phase angles. Do not describe our
+DC-referenced `angle(mean(waves))` as numerically identical to that output.
+
 CUDA C10/C12 now defaults to phase after complex-wave averaging:
 
 ```python
@@ -476,8 +490,7 @@ within 0.02 mrad; 300 and 400 trials gave the same answer.
 
 `preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)` renders the
 thick-sample model for interactive viewers; with no depth spread the tilt has
-no effect. `supports_tilt` says whether the session's backend implements it
-(CUDA and MPS).
+no effect. CUDA and MPS both implement it.
 
 Limits:
 
@@ -519,25 +532,3 @@ mathematics and [SSB performance evidence](../maintainer/ssb-performance.md)
 for dated, revision- and device-qualified measurements. Performance numbers do
 not live in this API contract because a new benchmark must not silently change
 API semantics.
-
-## Phase reconstruction order
-
-CUDA C10/C12 output now combines corrected complex waves before taking their
-phase, including tilt/depth correction and 1x, 2x, 3x, and 4x output.
-`preview(..., phase_estimator="mean_phase")` remains an explicit historical
-comparison. Native MPS and higher-order paths retain their existing estimator;
-explicit wave averaging is currently restricted to CUDA C10/C12.
-
-Taking a phase is nonlinear: `angle(mean(waves))` is not
-`mean(angle(waves))`. Taking each angle first discards amplitude information
-and can compress reconstructed contrast. Combining the corrected spectra
-before one inverse FFT gives the same wave sum as summing separate inverse
-FFTs, because both operations are linear. The calibration objective remains
-the native-grid per-detector phase variance. Stronger contrast alone does not
-establish quantitative phase accuracy.
-
-QuantEM's `DirectPtychography` SSB implementation uses a related but distinct
-weak-phase convention: multiply by `-1j * conj(gamma) / abs(gamma)`, inverse
-transform, take the real part, normalize by BF weight, and sum contributions.
-It does not average per-contribution phase angles. Do not describe our
-DC-referenced `angle(mean(waves))` as numerically identical to that output.

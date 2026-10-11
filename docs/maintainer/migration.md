@@ -42,7 +42,7 @@ not a new qualification registry. Exact gates remain in
 | Python CUDA | ANS acquisition loading; detector reductions and encoded products within their recorded contracts | Physical CUDA acceptance remains separate from Apple tests. |
 | Python MPS | ANS acquisition loading; detector reductions and encoded products | Native Swift format qualification is separate from Python support. |
 | Native Swift/Metal | Indexed dense and both packed profiles; source inspection, admission, authenticated loads, detector and prepared products | App adoption and physical end-to-end qualification must use an exact package revision. |
-| WebGPU | Dense HDF5 reader, encoded `.qem` and rANS sources, batched detector updates, resident display and lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
+| WebGPU | Dense HDF5 reader, encoded `.qem` and rANS sources, batched detector updates and resident lifetime handling | Experimental consumer integration. The held uint16 DPC/iDPC numerical candidate is not promoted; device-specific parity and presentation gates remain open. |
 | CPU reference | Explicit dense reference workflows and test decoders | Not an automatic fallback or a public accelerated packed loader. |
 
 These source changes do **not** establish full-file cold loading in 1–2 seconds
@@ -98,22 +98,6 @@ tilts = io.load(files, stack=False)
 ```
 
 Each result is caller-owned and must be closed after its final consumer.
-
-## Next migration steps
-
-1. Pin each consumer to a reviewed package revision. Read the complete
-   WebGPU source graph from the `webgpu/sources.json` manifest; build native
-   clients from SwiftPM, without copying kernels.
-2. Adapt receipt parsers to v3 and Apple capability controls to v4. Keep unsupported
-   operations unavailable rather than expanding or downcasting implicitly.
-3. Verify original compressed HDF5 and prepared packed inputs separately,
-   including 512 and 1024 scans where admitted, file A–B–A switching,
-   cancellation, replacement release, and relaunch.
-4. Run real detector translation and resizing, DF/ADF rings, DPC, colormaps,
-   contrast, and FFT-off behavior in the actual app. Record scientific update
-   cadence and presentation independently, with no hidden binning.
-5. Close the held WebGPU numerical gates and missing backend operations before
-   enabling them.
 
 Native macOS Live4DSTEM calls the Swift package products instead of a local
 Python backend:

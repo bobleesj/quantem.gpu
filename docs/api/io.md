@@ -149,7 +149,7 @@ print(loaded.residency)
 print(loaded.logical_bytes, loaded.resident_bytes)
 ```
 
-For ordinary acquisition use, omit `representation`, `compression`, and
+For ordinary acquisition use, omit `representation` and
 `backend`. Supported originals become ANS-resident on the selected CUDA or MPS
 device; saved `.qem` files retain their declared encoded layout.
 Unknown formats are rejected, not silently expanded or relabeled as ANS.

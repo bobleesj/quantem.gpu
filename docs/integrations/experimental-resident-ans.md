@@ -19,8 +19,8 @@ qualified. The performance and validation limits below remain part of the featur
 ## One implementation owner
 
 `quantem.gpu` owns the count encoder, validated container reader, CUDA decoders,
-WebGPU decoders, detector reductions, pattern gathering, and shared GPU display
-math. Show4DSTEM owns browser permission prompts, progressive panel display,
+WebGPU decoders, detector reductions, and pattern gathering. Show4DSTEM owns
+display, browser permission prompts, progressive panel display,
 selection, gestures, and scheduling. Its build copies the package's TypeScript
 sources into the ignored `js/.generated/engine` directory and bundles them;
 those generated files are not an independently maintained codec.
@@ -80,24 +80,10 @@ automatically.
 
 ## Show4DSTEM WebGPU
 
-The widget package supplies the browser export, using the same package reader:
-
-```python
-from quantem.widget.show4dstem_webgpu_export import export_show4dstem_rans_viewer
-
-html = export_show4dstem_rans_viewer(
-    ["acquisition.qem", "next-acquisition.qem"],
-    "ans-viewer",
-    frame_labels=["First", "Second"],
-)
-```
-
-Open the generated launcher/viewer and use **Open QEM files** to grant access
-to the linked `.qem` files in `ans-viewer/rans`. Export preserves native shape
-and dtype, links the `.qem` files, and does not decode or duplicate the full
-acquisition. Keep the source files available.
-
-The canonical-file workflow above is the browser export integration.
+The widget package owns the browser export and its API. Its viewer reads
+`.qem` files with this package's WebGPU reader
+(`RansResidentSet.loadQemFile`, `detector/webgpu/qem-source.ts`), preserves
+native shape and dtype, and does not decode or duplicate the full acquisition.
 
 Raw hardware sentinel counts are preserved. The established detector validity
 mask is applied only to displayed scientific products. Integer native patterns

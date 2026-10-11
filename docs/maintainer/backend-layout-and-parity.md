@@ -98,8 +98,8 @@ src/quantem/gpu/                  # layers import downward only:
   display/
     __init__.py                   # shared display-math contract
     colormaps.json                # colormap control points for every backend
+    goldens/parity.json           # shared display goldens
     metal/display.metal           # native Metal display shader
-    webgpu/
   ssb/
     __init__.py                   # one SSB workflow and result contract
     contract.py, cuda/, mps/, webgpu/
@@ -146,11 +146,11 @@ pending hardware cells pass.
 ## Browser build integration
 
 Do not maintain a consumer-side list of individual kernel files. The package
-ships `webgpu/sources.json`, the complete package-owned dependency graph of
-`webgpu/index.ts` as paths relative to `quantem.gpu`. Build scripts read that
-manifest (for example through `importlib.resources.files("quantem.gpu")`),
-copy the listed files into a generated directory, and point the TypeScript
-bundler at `webgpu/index.ts`. Qualify the complete consumer bundle against an
+ships `webgpu/sources.json`, the list of package-owned browser sources as
+paths relative to `quantem.gpu`. Build scripts read that manifest (for example
+through `importlib.resources.files("quantem.gpu")`), copy the listed files into
+a generated directory, and import the modules they need. Qualify the complete
+consumer bundle against an
 exact package revision before adoption. Manifest completeness alone is not
 application compatibility.
 
