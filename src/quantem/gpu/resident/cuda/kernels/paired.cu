@@ -17,9 +17,9 @@
 // Grouped offsets: 32 streams share one 32-bit base followed by 32 relative 16-bit
 // offsets (17 words per group); a final group holds the payload end.
 //
-// Descriptor rows (23 x u64 per chunk): 0 payload, 1 offset records, 2 models,
+// Descriptor rows (12 x u64 per chunk): 0 payload, 1 offset records, 2 models,
 // 3 pair decoding table, 4 index words, 5 index starts, 6 index widths, 7 first scan,
-// 8 scans, 9 acquisition, 10 validity mask, 12 interval.
+// 8 scans, 9 acquisition, 10 validity mask, 11 interval.
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -57,11 +57,6 @@ extern "C" __global__ void pm_pack_offsets(const u32* offsets, u32* records, u32
         ((u16*)(records + group * 17 + 1))[lane] = u16(delta);
     }
     if (!s) records[groups * 17] = offsets[streams];
-}
-extern "C" __global__ void pm_unpack_offsets(const u32* records, u32* offsets, u32 streams) {
-    u32 s = blockIdx.x * blockDim.x + threadIdx.x;
-    if (s < streams) offsets[s] = pm_begin(records, s);
-    else if (s == streams) offsets[s] = streams ? pm_end(records, streams - 1) : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -524,22 +519,6 @@ extern "C" __global__ void pm_pack_fields(const u32* values, const u8* widths, c
         if (available >= 32) { payload[at++] = u32(reservoir); reservoir >>= 32; available -= 32; }
     }
     if (available) payload[at] = u32(reservoir);
-}
-
-__device__ u32 pm_field(const u32* payload, const u64* offsets, const u8* widths, u32 scan, u32 field, u32 fields, u32 interval) {
-    u32 s = (scan / interval) * fields + field, tag = widths[s], w = tag & 63u, base = 0;
-    u64 at = offsets[s];
-    if (tag & 128u) base = payload[at++];
-    if (!w) return base;
-    u64 bit = u64(scan % interval) * w;
-    at += bit / 32;
-    u64 value = payload[at];
-    if ((bit % 32) + w > 32) value |= u64(payload[at + 1]) << 32;
-    return base + (u32(value >> (bit % 32)) & (w == 32 ? 0xffffffffu : (1u << w) - 1));
-}
-extern "C" __global__ void pm_unpack_fields(const u32* p, const u64* o, const u8* w, u32* out, u32 scans, u32 fields, u32 interval) {
-    u64 i = u64(blockIdx.x) * blockDim.x + threadIdx.x;
-    if (i < u64(scans) * fields) out[i] = pm_field(p, o, w, i / fields, i % fields, fields, interval);
 }
 
 // Index sums: one block of 128 consecutive scans lies inside one interval, so the
