@@ -596,9 +596,9 @@ def test_cuda_phase_loss_accepts_hermitian_gqk(size: int, num_bf: int) -> None:
     c10_batch = np.asarray([-120.0, -80.0, 20.0, 100.0], dtype=np.float32)
     c12_batch = np.asarray([55.0, 30.0, 40.0, 10.0], dtype=np.float32)
     phi_batch = np.radians(np.asarray([17.0, -5.0, 11.0, 43.0], dtype=np.float32))
-    cp.testing.assert_allclose(
-        herm_engine.objective.loss_batch(c10_batch, c12_batch, phi_batch),
-        full_engine.objective.loss_batch(c10_batch, c12_batch, phi_batch),
+    np.testing.assert_allclose(
+        [herm_engine.reconstruct_with_loss(*point)[1] for point in zip(c10_batch, c12_batch, phi_batch)],
+        [full_engine.reconstruct_with_loss(*point)[1] for point in zip(c10_batch, c12_batch, phi_batch)],
         rtol=LOSS_RTOL,
         atol=LOSS_ATOL,
     )
@@ -733,25 +733,17 @@ def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
     assert ssb.G_qk.nbytes == before_nbytes
 
 
-def test_cuda_128_variance_loss_batch_matches_reference() -> None:
-    cp = _cupy()
+def test_cuda_128_variance_loss_matches_reference() -> None:
+    _cupy()
     engine = _make_engine()
     c10 = np.asarray([-120.0, -80.0, 20.0, 100.0], dtype=np.float32)
     c12 = np.asarray([55.0, 30.0, 40.0, 10.0], dtype=np.float32)
     phi = np.radians(np.asarray([17.0, -5.0, 11.0, 43.0], dtype=np.float32))
 
-    got = engine.objective.loss_batch(c10, c12, phi)
-    expected = []
-    for a, b, c in zip(c10, c12, phi):
-        _phase, loss = _reference_phase_loss(engine, float(a), float(b), float(c))
-        expected.append(loss)
+    got = [engine.reconstruct_with_loss(float(a), float(b), float(c))[1] for a, b, c in zip(c10, c12, phi)]
+    expected = [_reference_phase_loss(engine, float(a), float(b), float(c))[1] for a, b, c in zip(c10, c12, phi)]
 
-    cp.testing.assert_allclose(
-        got,
-        cp.asarray(expected, dtype=cp.float32),
-        rtol=LOSS_RTOL,
-        atol=LOSS_ATOL,
-    )
+    np.testing.assert_allclose(got, expected, rtol=LOSS_RTOL, atol=LOSS_ATOL)
 
 
 def test_cuda_128_realdata_crop_matches_explicit_cupy_reference() -> None:

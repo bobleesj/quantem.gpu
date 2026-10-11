@@ -28,7 +28,6 @@ from quantem.gpu.ssb.cuda.kernels.engine import (
     pk_kernel_full,
     sum_sumsq_phase_kernel,
 )
-from quantem.gpu.ssb.cuda.objective import PhaseVarianceObjective
 from quantem.gpu.ssb.cuda.thick import ThickSample
 
 # Above this many bytes of corrected planes (num_bf x scan_row x scan_col complex64) the full-BF staging buffer is never
@@ -208,7 +207,6 @@ class SSBEngine:
         self._bf_source_dtype: np.dtype | None = None
         self._bf_source_write_seconds: float | None = None
         self._colvar_group = 32
-        self.objective = PhaseVarianceObjective(self)
         self.thick = ThickSample(self)
 
     def gqk_is_half_plane(self) -> bool:

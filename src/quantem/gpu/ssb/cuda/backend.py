@@ -523,7 +523,7 @@ class CudaSSBBackend:
         if search_ranges is None:
             search_ranges = dict(self._DEFAULT_OPTIMIZE_RANGES)
         accel = self._get_accelerator()
-        accel.objective.loss(0, 50, 0)
+        accel.reconstruct_with_loss(0, 50, 0)
         cp.cuda.Device().synchronize()
         if verbose:
             vram_free, vram_total = cp.cuda.runtime.memGetInfo()
@@ -532,7 +532,7 @@ class CudaSSBBackend:
             print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB")
         try:
             best_params, best_value, trial_history = batch_optimize(
-                accel.objective,
+                accel,
                 aberrations=search_ranges,
                 aberration_defaults=self.aberrations,
                 n_trials=n_trials,
@@ -609,7 +609,7 @@ class CudaSSBBackend:
                 "locked SSB reference mode, or add a GPU-batched locked refiner."
             )
         best_x, best_loss, n_evals = batch_nelder_mead(
-            accel.objective,
+            accel,
             x0.astype(np.float64),  # the simplex is float64 even for integer starting coefficients
             xatol=xatol,
             fatol=fatol,
