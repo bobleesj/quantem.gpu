@@ -70,19 +70,23 @@ struct StreamReader {
     }
 };
 
+// `total` (one u64 per detector pixel, or null) receives the exact counts of every stream: the
+// statistics pass reads each count anyway, so the detector sum costs one addition per count.
 extern "C" __global__ void sc_encode(
     const void* raw, int itemsize, u32 scans, u32 pixels, u32 interval,
     const u32* encoding, u8* scratch, u32* sizes, u32* states, u8* models,
-    u32 streams
+    u32 streams, u64* total
 ) {
     u32 stream = blockIdx.x * blockDim.x + threadIdx.x;
     if (stream >= streams) return;
     u32 pixel=stream%pixels, first=(stream/pixels)*interval;
     u32 count=min(interval,scans-first), maximum=0, minimum=65535, sum=0, nonzero=0;
+    u64 counts=0;
     for (u32 i=0;i<count;++i) {
         u32 v=sc_raw(raw,u64(first+i)*pixels+pixel,itemsize);
-        maximum=max(maximum,v); minimum=min(minimum,v); sum+=min(v,32u); nonzero+=v!=0;
+        maximum=max(maximum,v); minimum=min(minimum,v); sum+=min(v,32u); nonzero+=v!=0; counts+=v;
     }
+    if (total && counts) atomicAdd(total+pixel,counts);
     if (minimum == maximum) {
         models[stream]=maximum ? 255 : 253;
         sizes[stream]=maximum ? 2 : 0; states[stream]=maximum; return;
@@ -199,6 +203,23 @@ extern "C" __global__ void sc_decode_range_u16(
     sc_decode_range(payload,offsets,models,decoding,raw,errors,scans,pixels,
                     interval,first,count,first_stream,stop_stream,
                     detector_cols,row0,col0,crop_rows,crop_cols);
+}
+
+// Exact detector sum of one chunk without expanding it. A stream holds one detector pixel over
+// `interval` scans, so each thread adds its own stream in a register and contributes one total:
+// the dense route wrote every count to memory, masked it and read it back to add it.
+extern "C" __global__ void sc_total(
+    const u8* payload, const u32* offsets, const u8* models, const u32* decoding,
+    u64* total, u32* errors, u32 scans, u32 pixels, u32 interval
+) {
+    u32 stream=blockIdx.x*blockDim.x+threadIdx.x;
+    if (stream>=((scans+interval-1)/interval)*pixels) return;
+    u32 count=min(interval,scans-(stream/pixels)*interval);
+    StreamReader reader(payload,offsets,models,decoding,stream);
+    u64 sum=0;
+    for (u32 i=0;i<count;++i) sum+=reader.next();
+    if (!reader.finished()) atomicOr(errors,1u);
+    if (sum) atomicAdd(total+stream%pixels,sum);
 }
 
 extern "C" __global__ void sc_fields(
