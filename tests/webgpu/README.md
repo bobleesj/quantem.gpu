@@ -21,17 +21,18 @@ The test creates small deterministic rANS exports in memory. Two acquisitions
 mix entropy-coded and literal columns, cross checkpoint and block boundaries,
 and contain a masked saturated detector pixel. Point patterns, virtual images,
 and scan-ROI sums and means are compared exactly against raw counts and the
-stock dense backend. CoM, centered DPC and iDPC compare against the
-same backend at an absolute tolerance of `1e-6`; iDPC includes explicit rotation
-and transpose. Single-pixel and empty masks exercise the corresponding views.
+stock dense backend. CoM, centered DPC and iDPC must equal the same backend
+exactly (both divide the exact integer moments once); iDPC includes explicit
+rotation and transpose. Single-pixel and empty masks exercise the corresponding views.
 
 A 131072-position saturated ROI tests dispatch splitting and sums above 32 bits.
 A 512-column saturated detector tests weighted moments above 32 bits, with an
 exact expected centroid of 255.5 pixels. No performance assertion is made.
 
-On 2026-09-07 the real NVIDIA/Blackwell run passed all checks. CoM/DPC maximum
-absolute differences were at most `1.20e-7`; iDPC at most `3.13e-7`. Exact pattern,
-ROI, and wide-moment checks passed with zero tolerance.
+On 2026-10-10 the real NVIDIA/Blackwell run passed every check with zero
+tolerance. Before the .qem CoM divided its exact moments once (as the dense path
+does), CoM and DPC differed from the dense backend by up to `1.20e-7` (one float32
+ulp) and iDPC by up to `3.13e-7`.
 
 ## Integer .qem browser admission
 
