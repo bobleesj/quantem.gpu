@@ -67,22 +67,6 @@ def _in_notebook() -> bool:
     return shell is not None and "IPKernelApp" in shell.config
 
 
-def _resolve_backend(
-    backend: Literal["auto", "cuda", "mps", "webgpu"],
-) -> Literal["cuda", "mps", "webgpu"]:
-    """Resolve one accelerated SSB backend without a CPU fallback."""
-
-    requested = str(backend).lower()
-    if requested == "webgpu":
-        return "webgpu"
-    if requested not in {"auto", "cuda", "mps"}:
-        raise ValueError(
-            f"Unknown SSB backend {backend!r}. Use 'auto', 'cuda', 'mps', or "
-            "'webgpu'."
-        )
-    return resolve(requested)
-
-
 class SSB:
     """Single-sideband ptychography of one 4D-STEM acquisition, with the same science on CUDA and MPS.
 
@@ -97,9 +81,8 @@ class SSB:
     data
         The dataset ``io.load`` returns (only its bright-field crop is decoded), or a NumPy, CuPy or Torch array of
         counts, 4D ``(scan_row, scan_col, det_row, det_col)`` or 3D ``(scan, det_row, det_col)`` with ``scan_shape``.
-    backend : {"auto", "cuda", "mps", "webgpu"}
-        Accelerator; there is no CPU fallback. WebGPU runs in the browser through the exported workflow, so it raises
-        here and names the CLI that exports it.
+    backend : {"auto", "cuda", "mps"}
+        Accelerator; there is no CPU fallback.
     voltage_kV : float
         Accelerating voltage in kV.
     semiangle_mrad : float
@@ -138,7 +121,7 @@ class SSB:
         self,
         data: object,
         *,
-        backend: Literal["auto", "cuda", "mps", "webgpu"] = "auto",
+        backend: Literal["auto", "cuda", "mps"] = "auto",
         voltage_kV: float,
         semiangle_mrad: float,
         scan_sampling_A: float | tuple[float, float],
@@ -152,13 +135,7 @@ class SSB:
         source_path: str | None = None,
         bf_center: tuple[float, float] | None = None,
     ) -> None:
-        self.backend = _resolve_backend(backend)
-        if self.backend == "webgpu":
-            raise RuntimeError(
-                "WebGPU SSB executes in the browser. Use `quantem showptycho "
-                "--backend webgpu` so the CLI can export the same SSB plan and "
-                "collect the shared result schema."
-            )
+        self.backend = resolve(backend)
         if isinstance(data, Dataset4dstemGPU):
             if data.ndim != 4:
                 raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
@@ -240,7 +217,7 @@ class SSB:
         cls,
         source: str,
         *,
-        backend: Literal["auto", "cuda", "mps", "webgpu"] = "auto",
+        backend: Literal["auto", "cuda", "mps"] = "auto",
         dtype: str | None = None,
         voltage_kV: float,
         semiangle_mrad: float,
@@ -266,11 +243,7 @@ class SSB:
         GPU acquisitions use ANS-encoded storage.
         """
 
-        selected = _resolve_backend(backend)
-        if selected == "webgpu":
-            raise RuntimeError(
-                "Browser WebGPU sources are opened by the exported SSB runtime."
-            )
+        selected = resolve(backend)
         bf_center = None
         source_detector_bin = 1
         # on MPS an exact BF-column export beside the source replaces decoding the detector

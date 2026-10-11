@@ -26,7 +26,7 @@ class SSBPrecision:
 class SSBExportState:
     """Exact compact state consumed by widget and browser integrations."""
 
-    backend: Literal["cuda", "mps", "webgpu"]
+    backend: Literal["cuda", "mps"]
     scan_shape: tuple[int, int]
     brightfield: BrightfieldDisk
     kx_bf: np.ndarray
@@ -66,7 +66,7 @@ class SSBProtocol(Protocol):
     sampling and wave averaging are CUDA only.
     """
 
-    backend: Literal["cuda", "mps", "webgpu"]
+    backend: Literal["cuda", "mps"]
     precision: SSBPrecision
 
     @property

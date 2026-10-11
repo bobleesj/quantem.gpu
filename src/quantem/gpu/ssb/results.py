@@ -69,7 +69,7 @@ class SSBResult(Mapping[str, float]):
         Complete saved scientific signature, provenance, and result metadata.
     """
     object_wave: object
-    backend: Literal["cuda", "mps", "webgpu"]
+    backend: Literal["cuda", "mps"]
     aberrations: dict[str, float] = field(default_factory=dict)
     tilt_mrad: tuple[float, float] | None = None
     depth_spread_nm: float | None = None

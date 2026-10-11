@@ -332,7 +332,7 @@ def test_ssb_open_does_not_swallow_declared_companion_error(
     from quantem.gpu.ssb import workflow
     from quantem.gpu.ssb.mps import frames
 
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     monkeypatch.setattr(
         frames,
         "bf_column_locations",
