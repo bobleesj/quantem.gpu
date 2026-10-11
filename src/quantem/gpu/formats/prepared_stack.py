@@ -70,8 +70,7 @@ def prepared_stack_metadata(data: h5py.Dataset) -> dict:
         if len(params[name]) == 1 and params[name][0] > 0:
             result[target] = params[name][0]
     if len(params["dk"]) == 1 and params["dk"][0] > 0:
-        result["detector_sampling"] = params["dk"] * 2
-        result["detector_sampling_unit"] = "1/angstrom"
+        result["detector_sampling_inv_A"] = params["dk"] * 2
     positions_path = path.parent / "data_position.hdf5"
     if positions_path.is_file():
         with h5py.File(positions_path, "r") as source:

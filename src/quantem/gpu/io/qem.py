@@ -85,7 +85,7 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
     header = dict(
         version=1, profile=INTEGER_CODEC, interval=512,
         shape=list(source.shape), dtype=source.dtype.name,
-        valid=encode_valid(source.valid_pixels), chunks=table, metadata=metadata,
+        valid=encode_valid(source.valid_pixels), chunks=table, metadata=qem_metadata.retained_metadata(metadata),
         container=qem_metadata.CONTAINER,
         container_version=qem_metadata.CONTAINER_VERSION,
         codec=INTEGER_CODEC,
@@ -103,7 +103,7 @@ def save_float(path: str | Path, source: FloatANSResident, metadata: dict | None
     source.synchronize()
     header = copy.deepcopy(source.header)
     if metadata is not None:
-        header["metadata"] = dict(metadata)
+        header["metadata"] = qem_metadata.retained_metadata(metadata)
         header["scientific_metadata"] = qem_metadata.acquisition_metadata(
             source.shape, metadata
         )

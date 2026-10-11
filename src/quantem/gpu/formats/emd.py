@@ -9,6 +9,8 @@ import math
 import h5py
 import numpy as np
 
+from quantem.gpu.formats.qem.metadata import DETECTOR_SAMPLING_KEYS
+
 
 def _value(value):
     """Convert an HDF5 attribute to plain Python values so metadata stays JSON-serializable."""
@@ -119,6 +121,5 @@ def dataset_metadata(data: h5py.Dataset, metadata: dict) -> dict:
     if len(scan) == 2 and all(math.isfinite(value) for value in scan):
         result["scan_sampling_A"] = scan
     if len(detector) == 2 and units[0] == units[1]:
-        result["detector_sampling"] = detector
-        result["detector_sampling_unit"] = units[0]
+        result[DETECTOR_SAMPLING_KEYS[units[0]]] = detector
     return result

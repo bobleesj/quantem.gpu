@@ -68,9 +68,9 @@ def test_emd_calibration_and_multiple_acquisitions(tmp_path, metadata_location):
         assert source["/experiment/acquisition/dim1"] == [0, 0.2]
         if metadata_location == "unknown-units":
             assert "scan_sampling_A" not in metadata
-            assert "detector_sampling" not in metadata
+            assert "detector_sampling_inv_A" not in metadata and "detector_sampling_mrad" not in metadata
             assert source["/experiment/acquisition/dim1@units"] == "unknown"
         else:
             np.testing.assert_allclose(metadata["scan_sampling_A"], [2, 3])
-            np.testing.assert_allclose(metadata["detector_sampling"], [0.04, 0.05])
+            np.testing.assert_allclose(metadata["detector_sampling_inv_A"], [0.04, 0.05])
         np.testing.assert_array_equal(detector.prepare(loaded).frame(0), values[0, 0])

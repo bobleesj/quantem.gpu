@@ -229,7 +229,7 @@ def load_array_resident(
                     codec=FLOAT_CODEC,
                     shape=list(shape),
                     dtype=dtype.name,
-                    metadata=dict(metadata),
+                    metadata=qem_metadata.retained_metadata(metadata),
                     scientific_metadata=scientific,
                     empad=description,
                 )

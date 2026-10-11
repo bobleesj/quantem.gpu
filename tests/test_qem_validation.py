@@ -10,17 +10,14 @@ import pytest
 
 from quantem.gpu.formats.qem.validation import validate_qem
 
-REFERENCES = Path(__file__).parent / "data" / "qem-v1"
+REFERENCES = Path(__file__).parent / "data" / "qem-v2"
 
 
-@pytest.mark.parametrize("name", ["uint8", "uint16"])
+@pytest.mark.parametrize("name", ["u8-interval-boundary", "u16-multiple-chunks"])
 def test_shareable_reference_after_moving(name, tmp_path):
     manifest = json.loads((REFERENCES / "manifest.json").read_text())
     entry = next(item for item in manifest["entries"] if item["name"] == name)
-    for filename, expected in entry["files"].items():
-        assert (
-            hashlib.sha256((REFERENCES / filename).read_bytes()).hexdigest() == expected
-        )
+    assert hashlib.sha256((REFERENCES / f"{name}.qem").read_bytes()).hexdigest() == entry["sha256"]
     original = np.load(REFERENCES / f"{name}.npy")
     assert hashlib.sha256(original.tobytes()).hexdigest() == entry["counts_sha256"]
     relocated = tmp_path / "shared.data"
@@ -29,12 +26,18 @@ def test_shareable_reference_after_moving(name, tmp_path):
     assert report["integrity"] == report["codec_layout"] == "verified"
     assert report["decoded_parity"] == "not_checked"
     assert report["shape"] == entry["shape"]
-    assert report["dtype"] == name
+    assert report["dtype"] == entry["dtype"]
     assert report["metadata_coverage"] == "reader-retained"
 
 
+def test_schema_1_reference_is_refused_with_the_reason():
+    """A copy with scientific metadata schema 1 is not validated under schema-2 units: the report is the reason."""
+    with pytest.raises(ValueError, match="scientific-metadata/1' is not read"):
+        validate_qem(REFERENCES.parent / "qem-v1" / "uint16.qem")
+
+
 def test_damaged_downloads_are_not_accepted(tmp_path):
-    complete = (REFERENCES / "uint8.qem").read_bytes()
+    complete = (REFERENCES / "u8-interval-boundary.qem").read_bytes()
     for name, content in (
         ("truncated", complete[:-1]),
         ("header", complete[:56] + bytes([complete[56] ^ 1]) + complete[57:]),
@@ -101,7 +104,7 @@ def test_validate_command_reports_shared_reference(capsys):
     """Validate a downloaded reference through the documented public command."""
     from quantem.gpu.cli import main
 
-    assert main(["validate", str(REFERENCES / "uint16.qem")]) == 0
+    assert main(["validate", str(REFERENCES / "u16-multiple-chunks.qem")]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["integrity"] == "verified"
     assert report["measurements_changed_by"] == []

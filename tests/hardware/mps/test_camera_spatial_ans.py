@@ -139,8 +139,7 @@ def test_dm4_mps_preserves_counts_and_saved_calibration(tmp_path, dtype):
         io.save(saved, loaded, format="quantem", backend="mps")
     with io.load(saved, backend="mps", verbose=False) as loaded:
         assert loaded.metadata["scan_sampling_A"] == [2.5, 2.5]
-        assert loaded.metadata["detector_sampling"] == [0.025, 0.025]
-        assert loaded.metadata["detector_sampling_unit"] == "1/angstrom"
+        assert loaded.metadata["detector_sampling_inv_A"] == [0.025, 0.025]
         output = loaded.data.decode_scan_range_device(0, 575)
         try:
             np.testing.assert_array_equal(output.get().reshape(shape), counts)

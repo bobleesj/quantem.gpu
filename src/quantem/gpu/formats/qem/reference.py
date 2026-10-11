@@ -277,7 +277,7 @@ def save_array(
         shape=list(data.shape),
         dtype=data.dtype.name,
         scientific_metadata=scientific,
-        metadata=metadata,
+        metadata=qem_metadata.retained_metadata(metadata),
         chunks=[],
     )
     qem_metadata.validate_header(header)

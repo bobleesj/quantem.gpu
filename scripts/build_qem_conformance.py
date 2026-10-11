@@ -56,8 +56,7 @@ def main() -> None:
         metadata = dict(
             source_metadata={"fixture": name, "data_origin": "deterministic synthetic"},
             scan_sampling_A=[0.4, 0.6],
-            detector_sampling=[0.02, 0.03],
-            detector_sampling_unit="1/angstrom",
+            detector_sampling_inv_A=[0.02, 0.03],
             voltage_kV=300,
         )
         io.save(path, data, metadata=metadata, backend="cpu", batch_size=batch)

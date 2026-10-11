@@ -11,9 +11,44 @@ import numpy as np
 MAGIC = b"QEMDATA1"
 CONTAINER = "quantem.qem"
 CONTAINER_VERSION = 1
-LEGACY_SCHEMA = "quantem.scientific-metadata/1"
 SCHEMA = "quantem.scientific-metadata/2"
+# The stored axis names and quantity paths spell the second axis "column"; every other name says "col".
+# These literals are the only place the stored spelling appears.
 AXIS_NAMES = ("scan_row", "scan_column", "detector_row", "detector_column")
+SCAN_PIXEL_SIZE = (
+    "scan_controller/regular_scan/pixel_size_row",
+    "scan_controller/regular_scan/pixel_size_column",
+)
+DETECTOR_PIXEL_SIZE = (
+    "imaging_system/reciprocal_pixel_size_row",
+    "imaging_system/reciprocal_pixel_size_column",
+)
+# Flat calibration keys: the reading and writing interface of the format. Each maps to one
+# place in scientific_metadata, which stays the stored authority; pairs are [row, col] per
+# stored pixel, and exactly one detector key is present (neither when uncalibrated).
+DETECTOR_SAMPLING_KEYS = {"mrad": "detector_sampling_mrad", "1/angstrom": "detector_sampling_inv_A"}
+FLAT_QUANTITIES = (
+    ("electron_source/accelerating_voltage", "voltage_kV", "kV"),
+    ("illumination_system/semi_convergence_angle", "semiangle_mrad", "mrad"),
+    ("scan_controller/regular_scan/dwell_time", "dwell_time_us", "us"),
+    ("imaging_system/camera_length", "camera_length_mm", "mm"),
+)
+FLAT_KEYS = ("scan_sampling_A", *DETECTOR_SAMPLING_KEYS.values(), *(field for _, field, _ in FLAT_QUANTITIES))
+# Never stored in the header's retained ``metadata`` block. Flat keys and the groups below are
+# copies of scientific_metadata; the rest is what a loader knows about the host and the
+# resident it built, which a reopened copy measures again. The last two names are the
+# unit-less detector pair written before the suffixed keys: a copy that is never read.
+NOT_RETAINED = frozenset((
+    *FLAT_KEYS, "detector_sampling", "detector_sampling_unit",
+    "scientific_metadata", "container", "container_version",
+    "source_metadata", "source_documents", "source_metadata_coverage", "sample", "calibration_overrides",
+    "source_shape", "working_shape", "scan_shape", "detector_shape", "shape", "n_frames",
+    "working_dtype", "storage_dtype", "backend", "device", "representation", "residency",
+    "resident_profile", "resident_codec", "physical_resident_bytes", "working_logical_tensor_bytes",
+    "source_logical_tensor_bytes", "index_bytes", "scan_bin", "detector_bin", "crop", "lossless_exact",
+    "load_timings", "axis_order", "pixel_origin", "source_read_passes", "background_applied_by_reader",
+    "dm_image_index", "dm_data_offset", "dm_data_order_swapped",
+))
 # The retained hot_pixel_correction record carries this under "schema"; a record with another
 # value, or none, is the same as no record.
 # 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
@@ -32,8 +67,7 @@ _QUANTITIES = {
     "illumination_system/semi_convergence_angle": ("mrad", {"rad": 1000, "mrad": 1}),
     "scan_controller/regular_scan/dwell_time": ("us", {"s": 1e6, "ms": 1000, "us": 1}),
     "imaging_system/camera_length": ("mm", {"m": 1000, "cm": 10, "mm": 1}),
-    "scan_controller/regular_scan/pixel_size_row": _LENGTH,
-    "scan_controller/regular_scan/pixel_size_column": _LENGTH,
+    **dict.fromkeys(SCAN_PIXEL_SIZE, _LENGTH),
 }
 
 
@@ -43,7 +77,7 @@ def _microscopy_quantity(quantity: dict, path: str) -> dict:
         raise ValueError(f"Invalid QEM quantity at {path}; supply a value and unit.")
     result = dict(quantity)
     unit = quantity.get("unit")
-    if path == "detector" or path.startswith("imaging_system/reciprocal_pixel_size_"):
+    if path == "detector" or path in DETECTOR_PIXEL_SIZE:
         conversion = _DETECTOR.get(unit)
     else:
         if path != "scan" and path not in _QUANTITIES:
@@ -61,12 +95,12 @@ def _microscopy_quantity(quantity: dict, path: str) -> dict:
 
 
 def microscopy_metadata(scientific: dict) -> dict:
-    """Convert saved metadata to schema 2 without modifying source fields.
+    """Express saved metadata in schema-2 units without modifying source fields.
 
     Parameters
     ----------
     scientific : dict
-        Schema-1 or schema-2 scientific metadata from a validated header.
+        Schema-2 scientific metadata from a validated header.
 
     Returns
     -------
@@ -76,16 +110,20 @@ def microscopy_metadata(scientific: dict) -> dict:
     Raises
     ------
     ValueError
-        A known quantity has an unsupported unit or invalid physical value.
+        A known quantity has an unsupported unit or invalid physical value, or
+        the schema is not the one this reader accepts.
 
     Examples
     --------
-    >>> microscopy_metadata({"schema": LEGACY_SCHEMA})["schema"] == SCHEMA
+    >>> microscopy_metadata({"schema": SCHEMA})["schema"] == SCHEMA
     True
     """
     result = copy.deepcopy(scientific)
-    if result.get("schema") not in (LEGACY_SCHEMA, SCHEMA):
-        raise ValueError("Unsupported QEM metadata schema; update the reader.")
+    if result.get("schema") != SCHEMA:
+        raise ValueError(
+            f"QEM scientific metadata schema {result.get('schema')!r} is not read; this reader "
+            f"accepts {SCHEMA!r} only. Re-export the original acquisition."
+        )
     for axis in result.get("axes", []):
         if "sampling" in axis:
             kind = "scan" if axis["name"].startswith("scan_") else "detector"
@@ -94,31 +132,29 @@ def microscopy_metadata(scientific: dict) -> dict:
         if not isinstance(result.get(section, {}), dict):
             raise ValueError(f"QEM {section} must contain named quantities.")
         for path, quantity in result.get(section, {}).items():
-            if path in _QUANTITIES or path.startswith("imaging_system/reciprocal_pixel_size_"):
+            if path in _QUANTITIES or path in DETECTOR_PIXEL_SIZE:
                 result[section][path] = _microscopy_quantity(quantity, path)
-    result["schema"] = SCHEMA
     return result
 
 
 def _validated_overrides(scientific: dict) -> dict:
     """Validate user calibration overrides and return them in SI calculation units.
 
-    Schema-2 files store overrides in public units (angstrom, kV, us, mm);
-    schema-1 files and new copies use SI units. Validation runs in SI units.
+    Files store overrides in public units (angstrom, kV, us, mm); new copies
+    supply them in SI units. Validation runs in SI units.
     """
     overrides = copy.deepcopy(scientific.get("calibration_overrides", {}))
-    if scientific.get("schema") == SCHEMA:
-        for path, quantity in overrides.items():
-            unit = quantity.get("unit")
-            target, factor = {
-                "angstrom": ("m", 1e-10), "kV": ("V", 1000),
-                "us": ("s", 1e-6), "mm": ("m", 0.001),
-                "1/angstrom": ("1/Å", 1), "mrad": ("mrad", 1),
-            }.get(unit, (unit, 1))
-            canonical = _microscopy_quantity(quantity, path)
-            if canonical["unit"] != unit:
-                raise ValueError(f"Invalid schema-2 calibration override unit at {path}: {unit!r}.")
-            quantity.update(value=quantity["value"] * factor, unit=target)
+    for path, quantity in overrides.items():
+        unit = quantity.get("unit")
+        target, factor = {
+            "angstrom": ("m", 1e-10), "kV": ("V", 1000),
+            "us": ("s", 1e-6), "mm": ("m", 0.001),
+            "1/angstrom": ("1/Å", 1), "mrad": ("mrad", 1),
+        }.get(unit, (unit, 1))
+        canonical = _microscopy_quantity(quantity, path)
+        if canonical["unit"] != unit:
+            raise ValueError(f"Invalid schema-2 calibration override unit at {path}: {unit!r}.")
+        quantity.update(value=quantity["value"] * factor, unit=target)
     _validate_overrides(overrides)
     return overrides
 
@@ -208,7 +244,8 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
     Source quantities are read into calculation units (V, mrad, s, m) and each
     is converted once to its schema-2 unit as it is recorded, so a new copy is
     written in schema 2 directly. Metadata saved with a loaded copy is
-    re-expressed in schema 2, including older schema-1 files.
+    written again as it was read. Every flat key (``FLAT_KEYS``) is accepted
+    for a quantity the source did not record.
     """
     if "scientific_metadata" in metadata:
         saved = copy.deepcopy(metadata["scientific_metadata"])
@@ -274,9 +311,9 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                     provenance="source_metadata", evidence=key,
                 ), path)
     # Source files name these by x and y; the saved copy names them by array axis.
-    for axis, source_axis in (("row", "y"), ("column", "x")):
+    for path, source_axis in zip(DETECTOR_PIXEL_SIZE, ("y", "x")):
         record_quantity(
-            f"imaging_system/reciprocal_pixel_size_{axis}",
+            path,
             {"rad": 1000, "mrad": 1},
             "mrad",
             f"electron_microscope/imaging_system/reciprocal_pixel_size_{source_axis}",
@@ -297,32 +334,45 @@ def acquisition_metadata(shape, metadata: dict) -> dict:
                 dict(value=value, unit="mrad", provenance="source_metadata"),
                 "illumination_system/semi_convergence_angle",
             )
+    for path, field, unit in FLAT_QUANTITIES[2:]:
+        # dwell time and camera length are stated in the stored unit, so they are recorded as given
+        if path not in quantities and metadata.get(field) is not None:
+            value = float(metadata[field])
+            if math.isfinite(value) and value > 0:
+                quantities[path] = _microscopy_quantity(
+                    dict(value=value, unit=unit, provenance="source_metadata"), path
+                )
     axes = [dict(name=name, size=int(size)) for name, size in zip(AXIS_NAMES, shape)]
     scan = metadata.get("scan_sampling_A")
     if scan is not None and len(scan) == 2:
-        for axis, suffix, sampling_angstrom in zip(axes, ("row", "column"), scan):
+        for axis, path, sampling_angstrom in zip(axes, SCAN_PIXEL_SIZE, scan):
             value = float(sampling_angstrom) * 1e-10
             if math.isfinite(value) and value > 0:
                 sampling = dict(value=value, unit="m", provenance="source_metadata")
                 axis["sampling"] = _microscopy_quantity(sampling, "scan")
-                path = f"scan_controller/regular_scan/pixel_size_{suffix}"
                 quantities[path] = _microscopy_quantity(sampling, path)
-    detector = metadata.get(
-        "detector_sampling", metadata.get("detector_sampling_inv_A")
-    )
-    unit = metadata.get("detector_sampling_unit")
-    if "detector_sampling" not in metadata and "detector_sampling_inv_A" in metadata:
-        unit = "1/angstrom"
-    if detector is not None and unit is not None and len(detector) == 2:
-        for axis, detector_step in zip(axes[2:], detector):
-            value = float(detector_step)
-            if math.isfinite(value) and value > 0:
-                axis["sampling"] = _microscopy_quantity(
-                    dict(value=value, unit=unit, provenance="source_metadata"), "detector"
-                )
+    if "detector_sampling" in metadata or "detector_sampling_unit" in metadata:
+        raise ValueError(
+            "detector_sampling with detector_sampling_unit is no longer a metadata key; supply "
+            "detector_sampling_mrad or detector_sampling_inv_A as [row, col]."
+        )
+    supplied = [(unit, metadata[key]) for unit, key in DETECTOR_SAMPLING_KEYS.items() if metadata.get(key) is not None]
+    if len(supplied) == 2:
+        raise ValueError(
+            "Supply detector_sampling_mrad or detector_sampling_inv_A, not both: the detector "
+            "step has one unit, and converting between them needs the voltage."
+        )
+    for unit, detector in supplied:
+        if len(detector) == 2:
+            for axis, detector_step in zip(axes[2:], detector):
+                value = float(detector_step)
+                if math.isfinite(value) and value > 0:
+                    axis["sampling"] = _microscopy_quantity(
+                        dict(value=value, unit=unit, provenance="source_metadata"), "detector"
+                    )
     overrides = {
         path: _microscopy_quantity(quantity, path)
-        if path in _QUANTITIES or path.startswith("imaging_system/reciprocal_pixel_size_")
+        if path in _QUANTITIES or path in DETECTOR_PIXEL_SIZE
         else quantity
         for path, quantity in _recorded_overrides(metadata).items()
     }
@@ -376,17 +426,14 @@ def validate_header(header: dict) -> None:
         header.get("container") != CONTAINER
         or header.get("container_version") != CONTAINER_VERSION
         or header.get("codec") != header.get("profile")
-        or scientific.get("schema") not in (LEGACY_SCHEMA, SCHEMA)
         or [axis.get("size") for axis in axes] != header.get("shape")
         or [axis.get("name") for axis in axes] != list(AXIS_NAMES)
     ):
         raise ValueError(
             "Unsupported or inconsistent QEM metadata; update the reader or re-export the original."
         )
-    if scientific["schema"] == SCHEMA:
-        canonical = microscopy_metadata(scientific)
-        if canonical != scientific:
-            raise ValueError("Schema-2 QEM quantities require canonical microscopy units.")
+    if microscopy_metadata(scientific) != scientific:
+        raise ValueError("Schema-2 QEM quantities require canonical microscopy units.")
     _validate_scientific(scientific)
     _validated_overrides(scientific)
 
@@ -451,18 +498,12 @@ def _validate_scientific(scientific: dict) -> None:
         raise ValueError(
             "QEM processing must list every operation with its name and whether it changes measurements."
         )
-    paths = [
-        "scan_controller/regular_scan/pixel_size_row",
-        "scan_controller/regular_scan/pixel_size_column",
-        "imaging_system/reciprocal_pixel_size_row",
-        "imaging_system/reciprocal_pixel_size_column",
-    ]
-    for axis, path in zip(normalized["axes"], paths):
+    for axis, path in zip(normalized["axes"], (*SCAN_PIXEL_SIZE, *DETECTOR_PIXEL_SIZE)):
         sampling = axis.get("sampling")
         if sampling is not None:
             _require_provenance(sampling)
         duplicate = quantities.get(path)
-        if scientific["schema"] == SCHEMA and duplicate is not None and (
+        if duplicate is not None and (
                 sampling is None or sampling["unit"] != duplicate["unit"]
                 or not math.isclose(sampling["value"], duplicate["value"], rel_tol=1e-14)):
             raise ValueError(f"Conflicting QEM axis and microscope calibration at {path}.")
@@ -612,24 +653,39 @@ def recorded_metadata(scientific: dict) -> dict:
     normalized = microscopy_metadata(scientific)
     result = {"source_metadata": copy.deepcopy(normalized.get("source_metadata", {}))}
     axes = normalized.get("axes", [])
-    for first, field in ((0, "scan_sampling_A"), (2, "detector_sampling")):
+    for first in (0, 2):
         pair = [axis.get("sampling") for axis in axes[first:first + 2]]
         if len(pair) == 2 and all(pair):
             if pair[0]["unit"] != pair[1]["unit"]:
                 raise ValueError("QEM row and column sampling require the same unit.")
+            field = "scan_sampling_A" if first == 0 else DETECTOR_SAMPLING_KEYS[pair[0]["unit"]]
             result[field] = [quantity["value"] for quantity in pair]
-            if first == 2:
-                result["detector_sampling_unit"] = pair[0]["unit"]
-    for path, field in (
-        ("electron_source/accelerating_voltage", "voltage_kV"),
-        ("illumination_system/semi_convergence_angle", "semiangle_mrad"),
-        ("scan_controller/regular_scan/dwell_time", "dwell_time_us"),
-        ("imaging_system/camera_length", "camera_length_mm"),
-    ):
+    for path, field, _ in FLAT_QUANTITIES:
         quantity = normalized.get("electron_microscope", {}).get(path)
         if quantity is not None:
             result[field] = quantity["value"]
     return result
+
+
+def retained_metadata(metadata: dict) -> dict:
+    """Return what the header's ``metadata`` block keeps of a reader's record.
+
+    Calibration, source fields, attachments and the declared sample are stored
+    once, in ``scientific_metadata``; what a loader knows about its host and
+    its resident is measured again when the copy is reopened. Writers and
+    readers both pass the record through here: otherwise one file holds a value
+    twice (overrides in volts beside kV) and a reader can take the stale copy.
+
+    Examples
+    --------
+    >>> retained_metadata({"voltage_kV": 300, "backend": "cuda", "source_path": "scan.npy"})
+    {'source_path': 'scan.npy'}
+    """
+    return {
+        key: value for key, value in metadata.items()
+        if key not in NOT_RETAINED and not (isinstance(key, str) and key.startswith("entry/"))
+        and not (key == "hot_pixel_correction" and isinstance(value, dict) and value.get("schema") != HOT_PIXEL_SCHEMA)
+    }
 
 
 def _validate_overrides(overrides: dict) -> None:
@@ -644,12 +700,9 @@ def _validate_overrides(overrides: dict) -> None:
         "scan_controller/regular_scan/dwell_time": {"s"},
         "imaging_system/camera_length": {"m"},
     }
-    pairs = [
-        ("scan_controller/regular_scan/pixel_size_", {"m"}),
-        ("imaging_system/reciprocal_pixel_size_", {"mrad", "1/nm", "1/Å"}),
-    ]
-    for prefix, allowed in pairs:
-        units.update({prefix + axis: allowed for axis in ("row", "column")})
+    pairs = [(SCAN_PIXEL_SIZE, {"m"}), (DETECTOR_PIXEL_SIZE, {"mrad", "1/nm", "1/Å"})]
+    for paths, allowed in pairs:
+        units.update(dict.fromkeys(paths, allowed))
     if not isinstance(overrides, dict):
         raise ValueError("QEM calibration overrides must be named quantities.")
     for path, quantity in overrides.items():
@@ -663,40 +716,38 @@ def _validate_overrides(overrides: dict) -> None:
                 or not isinstance(quantity.get("evidence"), str)
                 or not quantity["evidence"]):
             raise ValueError(f"Invalid QEM calibration override at {path}; check value, units and evidence.")
-        if path.startswith("scan_controller/regular_scan/pixel_size_") and not 1e-14 <= value <= 1e-6:
+        if path in SCAN_PIXEL_SIZE and not 1e-14 <= value <= 1e-6:
             raise ValueError("Scan sampling must be between 0.0001 and 10000 angstrom per pixel.")
-    for prefix, _ in pairs:
-        row, column = overrides.get(prefix + "row"), overrides.get(prefix + "column")
-        if ((row is None) != (column is None)
-                or (row is not None and row["unit"] != column["unit"])):
+    for paths, _ in pairs:
+        row, col = overrides.get(paths[0]), overrides.get(paths[1])
+        if ((row is None) != (col is None)
+                or (row is not None and row["unit"] != col["unit"])):
             raise ValueError("QEM calibration requires both row and column in the same units.")
 
 
 def effective_metadata(metadata: dict, scientific: dict) -> dict:
     """Restore explicit user calibration without overwriting its recorded source.
 
+    Every flat calibration key of the result comes from ``scientific``: a
+    recorded quantity, replaced by its calibration override when one is saved.
+    Nothing is read from a calibration copy in the retained ``metadata``.
+
     Examples
     --------
-    >>> effective_metadata({}, {"calibration_overrides": {}})
-    {}
+    >>> effective_metadata({"voltage_kV": 80}, acquisition_metadata((1, 1, 2, 2), {"voltage_kV": 300}))["voltage_kV"]
+    300.0
     """
-    overrides = _validated_overrides(scientific)
-    # Schema-2 overrides are stored in public units and are read as stored:
-    # converting them to SI units and back changed the last bit of values such
-    # as 0.35 angstrom. Schema-1 overrides are SI and are converted here.
-    stored = scientific.get("calibration_overrides", {}) if scientific.get("schema") == SCHEMA else None
-
-    def public(path: str, factor: float) -> float:
-        return stored[path]["value"] if stored is not None else overrides[path]["value"] * factor
-
-    result = dict(metadata)
+    recorded = recorded_metadata(scientific)
+    _validated_overrides(scientific)
+    # Overrides are stored in public units and are read as stored: converting
+    # them to SI units and back changed the last bit of values such as 0.35 angstrom.
+    stored = scientific.get("calibration_overrides", {})
+    result = retained_metadata(metadata)
     if result.get("origin") is not None:
         # Preserve the origin's recorded units before resolving calibration.
         # Dataset4dstemGPU converts these coordinates to the effective units.
-        source_units = (
-            ["angstrom" if result.get("scan_sampling_A") is not None else None] * 2
-            + [result.get("detector_sampling_unit")] * 2
-        )
+        detector_unit = next((unit for unit, key in DETECTOR_SAMPLING_KEYS.items() if key in recorded), None)
+        source_units = ["angstrom" if "scan_sampling_A" in recorded else None] * 2 + [detector_unit] * 2
         units = result.get("units")
         if units is None or np.isscalar(units):
             units = [units] * 4
@@ -704,29 +755,15 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
             source if unit is None else unit
             for unit, source in zip(units, source_units, strict=True)
         ]
-    if scientific.get("schema") == SCHEMA:
-        for field in ("scan_sampling_A", "detector_sampling", "detector_sampling_unit",
-                      "detector_sampling_inv_A", "voltage_kV", "semiangle_mrad",
-                      "dwell_time_us", "camera_length_mm"):
-            result.pop(field, None)
-        result.update(recorded_metadata(scientific))
-    for prefix, field, factor in (
-        ("scan_controller/regular_scan/pixel_size_", "scan_sampling_A", 1e10),
-        ("imaging_system/reciprocal_pixel_size_", "detector_sampling", 1),
-    ):
-        if prefix + "row" in overrides:
-            result[field] = [public(prefix + axis, factor) for axis in ("row", "column")]
-            if field == "detector_sampling":
-                result["detector_sampling_unit"] = overrides[prefix + "row"]["unit"]
-                result.pop("detector_sampling_inv_A", None)
-    voltage = "electron_source/accelerating_voltage"
-    if voltage in overrides:
-        result["voltage_kV"] = stored[voltage]["value"] if stored is not None else overrides[voltage]["value"] / 1000
-    for path, field, factor in (
-        ("illumination_system/semi_convergence_angle", "semiangle_mrad", 1),
-        ("scan_controller/regular_scan/dwell_time", "dwell_time_us", 1e6),
-        ("imaging_system/camera_length", "camera_length_mm", 1000),
-    ):
-        if path in overrides:
-            result[field] = public(path, factor)
+    result.update(recorded)
+    if SCAN_PIXEL_SIZE[0] in stored:
+        result["scan_sampling_A"] = [stored[path]["value"] for path in SCAN_PIXEL_SIZE]
+    if DETECTOR_PIXEL_SIZE[0] in stored:
+        # one detector key at a time: the override's unit replaces the recorded one
+        for key in DETECTOR_SAMPLING_KEYS.values():
+            result.pop(key, None)
+        result[DETECTOR_SAMPLING_KEYS[stored[DETECTOR_PIXEL_SIZE[0]]["unit"]]] = [stored[path]["value"] for path in DETECTOR_PIXEL_SIZE]
+    for path, field, _ in FLAT_QUANTITIES:
+        if path in stored:
+            result[field] = stored[path]["value"]
     return result

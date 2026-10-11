@@ -251,8 +251,7 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
         positive("iom_measurements/calibrated_pixelsize") if not modern else None
     )
     if angle is not None:
-        metadata["detector_sampling"] = [angle * 1000] * 2
-        metadata["detector_sampling_unit"] = "mrad"
+        metadata["detector_sampling_mrad"] = [angle * 1000] * 2
         for axis in ("y", "x"):
             original[
                 "electron_microscope/imaging_system/reciprocal_pixel_size_" + axis
@@ -260,8 +259,7 @@ def _empad(path: Path, scan_shape: tuple[int, int] | None) -> tuple[np.memmap, d
     elif reciprocal is not None:
         # EMPAD's legacy field uses the native contract: value * 1e9 in 1/nm,
         # then *0.1 to reach the QEM microscopy unit 1/angstrom.
-        metadata["detector_sampling"] = [reciprocal * 1e8] * 2
-        metadata["detector_sampling_unit"] = "1/angstrom"
+        metadata["detector_sampling_inv_A"] = [reciprocal * 1e8] * 2
     metadata["qem_empad"] = dict(
         format_identifier="empad-float-export/v1",
         format_name="EMPAD float32",
