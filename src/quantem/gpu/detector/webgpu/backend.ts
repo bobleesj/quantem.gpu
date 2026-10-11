@@ -1572,7 +1572,7 @@ export class DetectorCompute {
   }
 
   private upload(words: Uint32Array, usage: number): GPUBuffer {
-    const buffer = this.device.createBuffer({ size: Math.max(16, words.byteLength), usage: usage | GPUBufferUsage.COPY_DST });
+    const buffer = this.device.createBuffer({ size: words.byteLength, usage: usage | GPUBufferUsage.COPY_DST });
     this.device.queue.writeBuffer(buffer, 0, words.buffer as ArrayBuffer, words.byteOffset, words.byteLength); return buffer;
   }
   private maskedCoMSelection(mask: Uint32Array, detCols: number): { idx: Uint32Array; n: number; integerFlags: number } {
