@@ -13,7 +13,6 @@
   "formats/qem/qem-rans-tables-v1.json",
   "geometry/webgpu/quarter-turn.ts",
   "io/hdf5/webgpu/bslz4.ts",
-  "io/hdf5/webgpu/dense.ts",
   "io/hdf5/webgpu/h5reader.ts",
   "io/hdf5/webgpu/jsfive.d.ts",
   "io/hdf5/webgpu/local-h5.ts",
@@ -27,6 +26,5 @@
   "ssb/webgpu/kernels/fft512.ts",
   "ssb/webgpu/kernels/index.ts",
   "ssb/webgpu/optimizer.ts",
-  "ssb/webgpu/protocol.ts",
-  "webgpu/index.ts"
+  "ssb/webgpu/protocol.ts"
 ]

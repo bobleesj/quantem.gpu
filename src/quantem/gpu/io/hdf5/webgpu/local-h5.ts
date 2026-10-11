@@ -287,11 +287,6 @@ export function show4DSTEMHasLocalFiles(): boolean {
   return localFilesByPath.size > 0 || localFilesByName.size > 0;
 }
 
-export function clearShow4DSTEMLocalFiles(): void {
-  localFilesByPath.clear();
-  localFilesByName.clear();
-}
-
 export async function collectShow4DSTEMLocalH5Files(
   directory: Show4DSTEMFileSystemDirectoryHandle,
   maxFiles = 10000,
@@ -1393,9 +1388,6 @@ export async function loadShow4DSTEMLocalH5Master(
     profile,
   };
 }
-
-/** Canonical UI-neutral name; the original export remains compatible. */
-export const loadLocalH5Master = loadShow4DSTEMLocalH5Master;
 
 export async function loadShow4DSTEMLocalH5MaskedSum(
   masterUrl: string,

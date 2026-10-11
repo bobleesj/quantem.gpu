@@ -9,8 +9,6 @@ def source_text(name: str) -> str:
 
 def test_webgpu_sources_are_shipped_and_readable() -> None:
     names = [
-        "webgpu/index.ts",
-        "io/hdf5/webgpu/dense.ts",
         "device/webgpu.ts",
         "detector/webgpu/geometry.ts",
         "detector/webgpu/backend.ts",
@@ -213,7 +211,6 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "export function show4DSTEMHasLocalFiles" in source
     assert "export async function collectShow4DSTEMLocalH5Files" in source
     assert "export async function loadShow4DSTEMLocalH5Master" in source
-    assert "export const loadLocalH5Master = loadShow4DSTEMLocalH5Master" in source
     assert "export async function loadShow4DSTEMLocalH5MaskedSum" in source
     assert 'export type DataRepresentation = "dense" | "encoded";' in source
     assert 'representation: "dense"' in source
