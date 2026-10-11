@@ -10,7 +10,7 @@
 import {
   cachedPipeline,
   decodeBslz4Batch,
-  decodeBslz4MaskedSumLow8Batch,
+  decodeBslz4MaskedSumBatch,
   maskedSumBlockIds,
   selectedBlockIdsCover,
   sliceMaskedSumSpecsByScanRegion,
@@ -1480,7 +1480,7 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       }
       if (vol.srcDtype === "uint32") {
         throw new Error(
-          "Product-first WebGPU masked sums currently use the low-8 decode path; "
+          "Product-first WebGPU masked sums read uint8 and uint16 sources; "
           + "load the native uint32 stack with decodeDtype='native' for exact "
           + "uint32 BF/ADF/DPC interaction."
         );
@@ -1505,8 +1505,8 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       }
       if (vol.srcDtype === "uint32") {
         throw new Error(
-          "Product-first WebGPU HDF5 masked sums currently use the low-8 decode "
-          + "path; load the native uint32 stack with decodeDtype='native' for "
+          "Product-first WebGPU HDF5 masked sums read uint8 and uint16 sources; "
+          + "load the native uint32 stack with decodeDtype='native' for "
           + "exact uint32 BF/ADF/DPC interaction."
         );
       }
@@ -1538,7 +1538,8 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
     framesComputed,
     productBatch,
   });
-  const product = await decodeBslz4MaskedSumLow8Batch(productSpecs, options.mask, outputScanCount, badPixels, productBatch);
+  if (sourceDtype !== "uint8" && sourceDtype !== "uint16") throw new Error("Local HDF5 product-first masked sum found no detector frames.");
+  const product = await decodeBslz4MaskedSumBatch(productSpecs, options.mask, outputScanCount, sourceDtype, badPixels, productBatch);
   const productMs = performance.now() - productBegin;
   if (!product) throw new Error("WebGPU unavailable for local HDF5 product-first masked sum.");
   setLocalH5Debug("product:done", { productMs: Math.round(productMs) });

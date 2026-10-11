@@ -254,21 +254,18 @@ def test_webgpu_bslz4_uses_fused_integer_to_uint8_decoder() -> None:
     assert "export function sliceMaskedSumSpecsByScanRegion" in source
     assert "selectedGroups: number;" in source
     assert "groupBlockTable: Uint32Array;" in source
-    assert "MASKED_SUM_LOW8_PIXEL_WGSL" in source
-    assert "MASKED_SUM_LOW8_GROUPMASK_WGSL" in source
+    assert "MASKED_SUM_PIXEL_WGSL" in source
+    assert "MASKED_SUM_GROUPMASK_WGSL" in source
     assert "__QT_BSLZ4_MASKED_SUM_WG" in source
     assert "__QT_BSLZ4_MASKED_SUM_GROUPMASK" in source
-    assert "__QT_BSLZ4_MASKED_SUM_COMPACT_SHARED" in source
     assert "return scanCount > 256 * 256;" in source
-    assert "return scanCount > 512 * 512;" in source
     assert "pixel-wg${wgSize}" in source
     assert "groupmask-wg${wgSize}" in source
-    assert "compactSh" in source
     assert "function sameBlockIds" in source
     assert "function sliceCompactedBslz4Frames" in source
     assert "function compactSelectedBslz4Blocks" in source
     assert "function compactBslz4Blocks" in source
-    assert "decodeBslz4MaskedSumLow8Batch" in source
+    assert "decodeBslz4MaskedSumBatch" in source
     assert "let STAGING_READY: Promise<void> = Promise.resolve();" in source
     assert "await STAGING_READY.catch(() => undefined);" in source
     assert "STAGING_READY = copyDone;" in source
@@ -313,7 +310,7 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert 'parseMode: blockIndexFiles === dataItems.length' in source
     assert '"block-index"' in source
     assert "decodeBslz4Batch" in source
-    assert "decodeBslz4MaskedSumLow8Batch" in source
+    assert "decodeBslz4MaskedSumBatch" in source
     assert "sliceMaskedSumSpecsByScanRegion" in source
     assert 'acquisitionMode: "local-file"' in source
     assert 'acquisitionMode: "local-file-product-first"' in source
@@ -340,7 +337,7 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "WebGPU decodeDtype='u4' means packed 4-bit counts" in source
     assert "WebGPU decodeDtype='uint32' requires a uint32 HDF5 source." in source
     assert "if (mode == 3u)" in source
-    assert "Product-first WebGPU masked sums currently use the low-8 decode" in source
+    assert "Product-first WebGPU masked sums read uint8 and uint16 sources" in source
     assert "load the native uint32 stack with decodeDtype='native'" in source
     assert "detBinMs" in source
     assert "badPixels: detBin > 1 ? new Uint32Array(0) : badPixels" in source
