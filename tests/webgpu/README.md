@@ -145,6 +145,9 @@ gate. After a full-BF load, reconstructions at 100 and 300 BF pixels (drag
 estimator and committed mean phase with loss) must equal an engine prepared with
 only that subset to 1e-6 rad and 1e-7 relative loss (float32 summation order),
 and returning to the full count must reproduce a fresh full engine exactly.
+`runSsbBuildPeak` prepares 1793 bright-field columns (8 chunks) while counting
+live GPU buffer bytes: the build peak must not exceed the bytes the ready engine
+keeps, so the full-plane G(q,k) of every chunk is never resident at once.
 
 ## Decoder pipelines per device (CPU-only)
 

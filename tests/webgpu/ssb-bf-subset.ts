@@ -27,6 +27,30 @@ function syntheticFolder(n: number, radius: number) {
   return { cal: JSON.stringify(cal), source: JSON.stringify(source), file: new File([counts], "bf_columns.u16"), numBf };
 }
 
+/** Live GPU buffer bytes while `run` executes (created minus destroyed) and their peak. */
+async function trackBufferBytes(run: () => Promise<unknown>): Promise<{ peak: number; live: number }> {
+  const create = GPUDevice.prototype.createBuffer;
+  const destroy = GPUBuffer.prototype.destroy;
+  const alive = new Set<GPUBuffer>();
+  let live = 0, peak = 0;
+  GPUDevice.prototype.createBuffer = function (this: GPUDevice, descriptor: GPUBufferDescriptor) {
+    const buffer = create.call(this, descriptor);
+    alive.add(buffer); live += buffer.size; peak = Math.max(peak, live);
+    return buffer;
+  };
+  GPUBuffer.prototype.destroy = function (this: GPUBuffer) {
+    if (alive.delete(this)) live -= this.size;
+    destroy.call(this);
+  };
+  try {
+    await run();
+    return { peak, live };
+  } finally {
+    GPUDevice.prototype.createBuffer = create;
+    GPUBuffer.prototype.destroy = destroy;
+  }
+}
+
 /** Largest wrapped phase difference (radians) between two images. */
 function maxPhaseDifference(a: Float32Array, b: Float32Array): number {
   let worst = 0;
@@ -78,4 +102,23 @@ export async function runSsbBfSubsetParity(): Promise<Record<string, number>> {
     } finally { reference.close(); }
   } finally { full.close(); }
   return out;
+}
+
+/** Building the resident G(q,k) must not hold the full-plane G of every BF pixel at once.
+
+Each chunk's n x n G is compacted to the resident half plane before the next chunk is built, so
+the build needs no more buffer memory than the ready engine keeps (resident G, a chunk-sized stage
+and the work buffers). Building every chunk's full plane first needs about twice the resident size
+and exceeded the budget the chunk count was chosen for.
+*/
+export async function runSsbBuildPeak(): Promise<Record<string, number>> {
+  const folder = syntheticFolder(128, 24);
+  setSSBLocalFiles([folder.file]);
+  const engine = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
+  try {
+    const { peak, live } = await trackBufferBytes(() => engine.prepareBfCount(folder.numBf));
+    const out = { numBf: folder.numBf, peakMB: peak / 1e6, readyMB: live / 1e6, fullPlaneMB: folder.numBf * 128 * 128 * 8 / 1e6 };
+    if (!(peak <= live)) throw new Error(`SSB build peak ${out.peakMB.toFixed(1)} MB exceeds the ${out.readyMB.toFixed(1)} MB the ready engine keeps`);
+    return out;
+  } finally { engine.close(); }
 }
