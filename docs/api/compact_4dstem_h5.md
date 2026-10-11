@@ -369,3 +369,65 @@ and recorded.
 The Python, CUDA and WebGPU readers of this container were removed in October
 2026; `io.load` does not open it. Reopen the original acquisition and save a
 `.qem` copy for Python workflows.
+
+## Experimental exact-`uint16` direct encoding
+
+Status: experimental, native Swift/Metal only, with no release or performance
+qualification. Other backends do not read it.
+
+The scientific operation is unchanged: load all scan positions and native
+detector pixels, preserve every unmasked integer, and evaluate exact detector
+sums and selected diffraction patterns without expanding the full resident.
+Only the authenticated, explicitly declared detector exclusions may be zeroed;
+their constant raw values remain recoverable from source-bound metadata.
+
+QGIX v3 header encoding 1 is unchanged (`uint8`, widths 0 through 8).
+Experimental header encoding 2 uses the same checkpoint/nibble layout for
+`uint16` working counts: nibble values 0 through 14 are literal bit widths;
+nibble 15 means width 16. Blocks requiring 15 bits are stored with 16 bits.
+Checkpoints and payload offsets count stored words, not nibble codes. Readers
+that predate encoding 2 must reject it, not interpret it as encoding 1.
+
+Encoding 2 requires `working_dtype` `uint16` and a `working_logical_sha256` of
+masked little-endian `uint16` counts in scan-major order. Prepared DPC uses the
+`uint16` moments/v2 contract; encoding 1 keeps its `uint8` digest and
+moments/v1 contract. Dtype and encoding must agree, and integer parity is
+exact. Synthetic coverage includes 255, 256, 32767, 32768 and 65535, mixed
+block widths, checkpoint boundaries, masks and repeated resident updates.
+Real-data conversion verifies the original raw and working hashes before
+publication.
+
+## Trusted local loading in Swift
+
+`MetalCompactH5Loader` verifies payload checksums by default. A native
+application whose operator explicitly trusts local source files can skip the
+payload SHA-256 scans without changing the lossless representation or source
+coverage:
+
+```swift
+let source = try MetalCompactH5Loader.load(
+  sourceURL: url,
+  device: device,
+  authenticationPolicy: .boundedConcurrent,
+  maximumAdditionalBytes: availableBytes,
+  verifyChecksums: false
+)
+```
+
+This is an explicit exception to checksum-authenticated admission, not a claim
+that checksums passed. It applies to decoded v1 payloads, direct v3 payloads,
+native-cache payloads and descriptors, and prepared detector/DPC products. It
+does not skip file-range, metadata, dtype, width, descriptor-coverage,
+decoder-status or allocation-budget checks. Small metadata identity hashes
+remain. Undetected payload changes can produce incorrect scientific values.
+
+When verification is skipped, `loadMetrics.checksumsVerified` is false and the
+SHA check counters and timings are zero. Keep this status with any load
+receipt, and label trusted and verified opens separately in performance
+comparisons. Use the default verified load for qualification, audits and
+corruption-detection tests.
+
+Bounded concurrent scheduling overlaps at most three shards. Its phase timings
+sum overlapping work; use `shardPipelineMilliseconds` for elapsed pipeline
+time. Native-cache saving still verifies resident payloads against the source
+digests before publication.

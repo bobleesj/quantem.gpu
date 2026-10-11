@@ -79,6 +79,35 @@ Record preparation separately from warm reconstruction, exact loss, and the
 complete fit. A finite cache budget is a different resource-policy row, not a
 replacement for the complete-cache timing.
 
+## SSB parity gates
+
+```bash
+bash scripts/check_metal_ssb.sh
+bash scripts/check_ssb_parity.sh --build-metal
+```
+
+`check_ssb_parity.sh` checks the frozen GPU fitting trajectory, repeats it for
+determinism and reports the MPS comparison. It does not run a CPU
+reconstruction oracle or recapture a baseline; add `--full` only when a
+512×512 fit is relevant. Reconstruction and saved-result checks are in
+`check_metal_ssb.sh`. Set `QUANTEM_SSB_PARITY_SOURCE` to a local acquisition
+when exporting a new fixture and `QUANTEM_SSB_PARITY_RUNS` to a disposable
+working directory.
+
+The frozen losses `0.14511984586715698`, `0.13808111846446991` and
+`0.13864889740943909` never change to make a test pass. They are not a
+sufficient gate for accumulation-order changes: `planesPerRange=4` diverges by
+one float32 ULP at fixture index 8 while those three values still pass. Widen
+the gate to the recorded 16-fixture set before accepting an accumulation
+reordering.
+
+Routine optimization compares a known-good GPU revision with its candidate on
+identical inputs, calibration, precision, backend and hardware, and freezes the
+object, phase, loss and fitting trajectory of the changed path. A bit-exact
+claim needs a bit-exact comparison; cross-backend tolerance checks are
+separate. The full-size CPU oracle runs only with `--cpu-oracle` and, under
+pytest, `QUANTEM_SSB_CPU_ORACLE=1`.
+
 ## Documentation
 
 ```bash

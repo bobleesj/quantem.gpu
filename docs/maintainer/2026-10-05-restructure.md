@@ -139,18 +139,3 @@ by the import line and the rename (syntax trees otherwise identical), and
 host nicknames compares sha256 digests, so the test no longer spells out the names it refuses.
 Every image in the tree (10 documentation figures, 8 notebook outputs) shows the public gold
 dataset; the HDF5, EMD, NumPy and `.qem` fixtures are synthetic.
-
-## Open for the owner
-
-Decisions:
-
-1. MAPED merges made with quantem.gpu between 3a8abad6 and the `retain` fix while the GPU was shared
-   may have used corrupted tilt counts: re-run them.
-2. quantem.widget folder viewer now loads every master encoded on one GPU (0.1-2 GiB per 512²
-   master, no paging or multi-GPU spreading).
-3. quantem.live `cpu_stream` ptychography keeps sparse amplitude targets: upstream quantem.live
-   reads them through encoded scan-row reads, bit-identical to the dense targets. denova Series
-   peak 19.8 -> 32.9 GiB at full field (11.2 s vs 16.2 s); denova's uint32 HDF5 with sentinels
-   above 65535 now needs `hot_pixel_correction="zero"`.
-4. One schema-1 `.qem` file in a denoising reproduction run still needs the schema-1 reader;
-   delete the reader once that file is re-exported.
