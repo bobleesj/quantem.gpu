@@ -104,3 +104,20 @@ def test_scan_region_over_released_rows_raises(tmp_path):
         for mode in ("mean", "sum", "max"):
             with pytest.raises(ValueError, match="released"):
                 session.reduce_frames(np.arange(500, 1100), mode)
+
+
+def test_mean_pattern_of_released_rows_raises(tmp_path):
+    """The float mean pattern covers every scan position: with rows freed it raises, also when it was computed before."""
+    backend = _backend()
+    intensities = (np.random.default_rng(37).gamma(3.0, 50.0, (4, 512, 8, 8))).astype(np.float32)
+    np.save(tmp_path / "intensities.npy", intensities)
+    mean = (intensities.reshape(-1, 8, 8).astype(np.float64).sum(axis=0) / (4 * 512)).astype(np.float32)
+    for asked_before in (False, True):
+        with io.load(tmp_path / "intensities.npy", backend=backend, verbose=False) as loaded:
+            session = detector.prepare(loaded)
+            if asked_before:
+                np.testing.assert_array_equal(session.mean_dp(), mean)
+            loaded.release_rows_before(2)
+            assert loaded.data._lanes.released_scans > 0
+            with pytest.raises(ValueError, match="released"):
+                session.mean_dp()

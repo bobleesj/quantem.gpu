@@ -119,11 +119,11 @@ class StreamedCounts:
     """Keep complete native counts in independent, bounded encoded chunks."""
 
     interval = 512
-    # Exact uint64 sum over every held scan, per detector pixel (before the valid-pixel mask), or None
-    # until it is known: ``append`` adds each chunk's counts while it encodes them, and a source whose
-    # chunks came from a file adds its streams at the first request.
+    # Exact uint64 sum over the scans appended so far, per detector pixel (before the valid-pixel
+    # mask), or None until it is known: ``append`` adds each chunk's counts while it encodes them,
+    # and a source whose chunks came from a file adds its streams at the first request.
     _detector_total = None
-    # Exact spatial sums for detector queries; float bit lanes have no use for them.
+    # Exact spatial sums and the detector total, for detector queries; float bit lanes have no use for them.
     spatial_index = True
 
     def __init__(self, shape: tuple[int, int, int, int], dtype, valid=None):
@@ -202,7 +202,7 @@ class StreamedCounts:
             # Events time each phase on the stream; host waits would only stall it.
             begin, encoded, indexed = cp.cuda.Event(), cp.cuda.Event(), cp.cuda.Event()
             begin.record()
-            if self._detector_total is None and not self.chunks:
+            if self.spatial_index and self._detector_total is None and not self.chunks:
                 with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
                     self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
             scratch = cp.empty((2 * min(scans, self.interval) + 4, streams), cp.uint8)
@@ -356,16 +356,16 @@ class StreamedCounts:
             )
 
     def detector_total_device(self):
-        """Return the exact valid-pixel detector sum without dense expansion.
+        """Return the exact valid-pixel detector sum of the whole scan without dense expansion.
 
         ``append`` already added the counts it encoded. A source whose chunks were read from a file
         adds its streams here once (each thread sums one stream, nothing is written out) and keeps
-        the total: the chunks never change.
+        the total: the chunks never change. The sum, and the mean pattern divided from it, cover
+        every scan position, so a source with scans still arriving or freed raises, as a read does.
         """
         import cupy as cp
 
-        if self.is_released:
-            raise ValueError("The resident source has been released.")
+        self.check_readable(0, math.prod(self.shape[:2]))
         with cp.cuda.Device(self.device):
             if self._detector_total is None:
                 with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
@@ -400,7 +400,7 @@ class StreamedCounts:
         """
         kept = [chunk for chunk in self.chunks if chunk.first + chunk.scans > stop]
         if len(kept) != len(self.chunks):
-            self._detector_total = None   # it counted the freed scans; the next request adds the held ones
+            self._detector_total = None   # no request can be answered once scans are freed
         self.chunks = kept
         self.released_scans = self.chunks[0].first if self.chunks else self.ready_scans
 

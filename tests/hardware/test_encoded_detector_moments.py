@@ -235,3 +235,21 @@ def test_scan_roi_reductions_count_repeats_and_refuse_released_rows(tmp_path):
         np.testing.assert_array_equal(session.reduce_frames(kept, "sum"), frames[kept].sum(axis=0))
         with pytest.raises(ValueError, match="released"):
             session.reduce_frames(indices, "sum")
+
+
+def test_mean_pattern_of_released_rows_raises(tmp_path):
+    """The mean pattern covers every scan position: with rows freed it raises instead of dividing the rows left by the full scan count."""
+    backend = _backend()
+    counts = np.random.default_rng(31).integers(0, 65_536, (96, 80, 6, 5)).astype(np.uint16)
+    np.save(tmp_path / "counts.npy", counts)
+    total = counts.reshape(-1, 6, 5).astype(np.uint64).sum(axis=0)
+    with io.load(tmp_path / "counts.npy", backend=backend, verbose=False) as loaded:
+        session = detector.prepare(loaded)
+        np.testing.assert_array_equal(session.mean_dp(), (total / (96 * 80)).astype(np.float32))
+        np.testing.assert_array_equal(session.detector_total(), total)
+        loaded.release_rows_before(40)
+        assert 0 < loaded.data.released_scans <= 40 * 80
+        with pytest.raises(ValueError, match="released"):
+            session.mean_dp()
+        with pytest.raises(ValueError, match="released"):
+            session.detector_total()

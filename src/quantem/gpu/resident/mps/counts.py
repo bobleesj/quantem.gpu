@@ -437,8 +437,10 @@ class MPSStreamedCounts:
         Each pixel's streams are decoded once, without a frame buffer. Flagged
         pixels are 0, as in CUDA's ``StreamedCounts.detector_total_device``, so
         the mean pattern counts the same pixels as every exact detector sum.
+        The sum, and the mean pattern divided from it, cover every scan
+        position, so a source with scans still arriving or freed raises.
         """
-        self._check_resident()
+        self.check_readable(0, math.prod(self.shape[:2]))
         pixels = math.prod(self.shape[2:])
         total = MetalArray(self.shape[2:], np.uint64)
         buffer_view(total._mtl)[:] = b"\0" * total.nbytes
