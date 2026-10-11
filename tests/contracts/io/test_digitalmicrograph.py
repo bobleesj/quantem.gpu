@@ -83,6 +83,22 @@ def test_dm_matches_independent_reader(tmp_path, dtype, version):
         assert loaded.metadata["source_metadata"][f"dm{version}.ImageData.Calibrations.Dimension.1.Units"] == "1/nm"
 
 
+def test_dm_detector_step_reads_the_same_before_and_after_saving(tmp_path):
+    """A DM4 detector step is 1/angstrom when loaded and when its saved copy is reopened.
+
+    The loaded file used to report the file's own 1/nm, ten times the number its saved copy reported.
+    """
+    from quantem.gpu import io
+
+    path = write_dm4(tmp_path / "camera.dm4", np.zeros((5, 7, 12, 16), np.uint16))
+    with io.load(path, backend="cpu", representation="dense") as loaded:
+        before = loaded.sampling, loaded.units
+        io.save(tmp_path / "camera.qem", loaded, backend="cpu")
+    with io.load(tmp_path / "camera.qem", backend="cpu") as reopened:
+        assert (reopened.sampling, reopened.units) == before
+    assert before == ((2.5, 2.5, 0.025, 0.025), ("angstrom", "angstrom", "1/angstrom", "1/angstrom"))
+
+
 @pytest.mark.skipif(not os.environ.get("QUANTEM_TEST_CUDA"), reason="CUDA opt-in")
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
 def test_dm4_ans_reconstructs_tail_and_detector_products(tmp_path, dtype):
