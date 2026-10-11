@@ -262,7 +262,6 @@ def save_precision(
                 metadata=metadata,
                 dtype=np.uint16,
                 frames_per_file=frames_per_file,
-                compression="lz4",
             )
             for encoded in encoded_blocks:
                 writer.write(encoded)
