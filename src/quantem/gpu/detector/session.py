@@ -38,8 +38,8 @@ class DetectorSession:
     an operation the data cannot support raises ``NotImplementedError``.
     """
 
-    def __init__(self, data) -> None:
-        self._backend = resolve_backend(data)
+    def __init__(self, data, *, immutable: bool = False) -> None:
+        self._backend = resolve_backend(data, immutable=immutable)
 
     @property
     def scan_shape(self) -> tuple[int, int]:
@@ -331,7 +331,7 @@ class DetectorSession:
         self._backend = None
 
 
-def prepare(data) -> DetectorSession:
+def prepare(data, *, immutable: bool = False) -> DetectorSession:
     """Prepare detector queries over one source or a list of acquisitions.
 
     Parameters
@@ -341,6 +341,15 @@ def prepare(data) -> DetectorSession:
         acquisitions on one CUDA device or on MPS. A list retains its complete
         acquisition axis; CUDA uses one joint kernel launch per native
         detector or point-pattern query, MPS queries each acquisition in turn.
+    immutable : bool, default False
+        Promise that a dense CuPy array will not change while the session
+        lives. The session then keeps each pattern's total, so a mask covering
+        more than half of the detector reads only the pixels it leaves out,
+        and keeps the full centre of mass. By default every query reads the
+        counts as they are, which a buffer that is still filling needs; with
+        the promise broken, kept values are stale. Encoded sources cannot
+        change, and NumPy and Torch arrays keep nothing, so it has no effect
+        on them.
 
     Returns
     -------
@@ -352,10 +361,10 @@ def prepare(data) -> DetectorSession:
     >>> session = prepare([first_loaded, second_loaded])  # doctest: +SKIP
     >>> images = session.masked_sum(mask, output="native")  # doctest: +SKIP
     """
-    return DetectorSession(data)
+    return DetectorSession(data, immutable=immutable)
 
 
-def resolve_backend(data):
+def resolve_backend(data, *, immutable: bool = False):
     """Choose the one backend that computes on ``data`` where it already resides.
 
     CuPy, Torch and Metal are imported only by the backends that use them, so a
@@ -388,7 +397,7 @@ def resolve_backend(data):
     if isinstance(data, MPSStreamedCounts):
         return CountDetectorCompute(data)
     if _is_loaded_instance(data, "cupy", "ndarray"):
-        return CudaKernelCompute(data)
+        return CudaKernelCompute(data, immutable=immutable)
     # MPS SSB's exact BF-column frames expose ``chunks`` too; ssb sits above
     # detector, so that type cannot be named here.
     if isinstance(data, ChunkedFrames) or hasattr(data, "chunks"):

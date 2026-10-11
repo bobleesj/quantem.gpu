@@ -13,9 +13,9 @@ Each timing is the median of ``--reps`` runs after one warm-up. The paths:
   encode and index phase times it reports;
 - ``decode``: GPU bitshuffle/LZ4 decode of up to four 16384-frame blocks;
 - ``append``: ``StreamedCounts.append`` of a 4096-scan and of a 512-scan block;
-- ``encoded``, ``dense``, ``paired``: detector sessions on the encoded
-  resident, on a dense CuPy copy of its first 65536 frames, and on the paired
-  layout: mean pattern, BF/ADF/DF masked sums (each alternating with another
+- ``encoded``, ``dense``, ``dense immutable``, ``paired``: detector sessions
+  on the encoded resident, on a dense CuPy copy of its first 65536 frames (as
+  an array that may change, and declared immutable), and on the paired layout: mean pattern, BF/ADF/DF masked sums (each alternating with another
   mask so incremental planners plan in full), centre of mass, exact BF, a
   32 x 32 scan-ROI mean and one frame.
 
@@ -118,8 +118,8 @@ def bench_append(data, reps):
     return result
 
 
-def bench_session(data, reps, exact=True):
-    session = detector.prepare(data)
+def bench_session(data, reps, exact=True, immutable=False):
+    session = detector.prepare(data, immutable=immutable)
     mean_dp = session.mean_dp()
     center, radius = detector.fit_probe(mean_dp)
     rows, cols = np.indices(session.detector_shape)
@@ -162,6 +162,7 @@ def run(arguments):
     frames = min(65536, math.prod(data.shape[:2]))
     dense = data.data.decode_scan_range_device(0, frames).reshape(frames // 256, 256, *data.shape[2:])
     report["dense"] = bench_session(dense, arguments.reps, exact=False)
+    report["dense immutable"] = bench_session(dense, arguments.reps, exact=False, immutable=True)
     del dense
     data.close()
     cp.get_default_memory_pool().free_all_blocks()
