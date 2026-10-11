@@ -199,7 +199,7 @@ def test_cuda_save_uint8_display_export(tmp_path):
         )
 
 
-@pytest.mark.parametrize("backend", ["cpu", "cuda"])
+@pytest.mark.parametrize("backend", ["cpu", "cuda", "mps"])
 def test_narrower_integer_save_is_exact_or_refused(tmp_path, backend):
     """uint16 counts saved as uint8 are written unchanged when they fit and refused when one does not.
 
@@ -213,6 +213,13 @@ def test_narrower_integer_save_is_exact_or_refused(tmp_path, backend):
         if not cp.cuda.runtime.getDeviceCount():
             pytest.skip("CUDA device is not available.")
         convert = cp.asarray
+    elif backend == "mps":
+        torch = pytest.importorskip("torch")
+        if not torch.backends.mps.is_available():
+            pytest.skip("MPS device is not available.")
+
+        def convert(values):
+            return torch.from_numpy(values).to("mps")
     else:
         convert = np.asarray
     with pytest.raises(ValueError, match="outside the uint8 range"):

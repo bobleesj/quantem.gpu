@@ -330,7 +330,6 @@ def save_compressed_arina_h5(
     else:
         raise ValueError("save_compressed_arina_h5 expects 3D frames or 4D-STEM data")
 
-    require_exact_narrowing(flat, dtype)
     det_row, det_col = (int(det_shape[0]), int(det_shape[1]))
     frames_per_file = int(frames_per_file)
     batch_size = int(batch_size)
@@ -379,6 +378,7 @@ def save_compressed_arina_h5(
                 n_8kb = (frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
                 for batch_start in range(start, end, batch_size):
                     batch_end = min(batch_start + batch_size, end)
+                    require_exact_narrowing(flat[batch_start:batch_end], dtype)
                     packed, chunk_starts, chunk_sizes = compress_tensor_batch(
                         flat[batch_start:batch_end], n_8kb, frame_bytes, dtype,
                     )
@@ -722,6 +722,9 @@ def require_exact_narrowing(frames, dtype) -> None:
     dtype = np.dtype(dtype)
     if source.kind not in "ui" or dtype.kind not in "ui" or np.can_cast(source, dtype):
         return
+    if torch.is_tensor(frames) and frames.device.type == "mps":
+        # Metal has no uint16 reductions; callers check one batch at a time.
+        frames = frames.to(torch.int32)
     minimum, maximum = int(frames.min()), int(frames.max())
     limits = np.iinfo(dtype)
     if minimum < limits.min or maximum > limits.max:
@@ -750,6 +753,7 @@ def _cast_host_for_save(block, dtype):
         lo, hi = int(np.iinfo(dtype).min), int(np.iinfo(dtype).max)
         host = np.clip(np.rint(host), lo, hi).astype(dtype)
     else:
+        require_exact_narrowing(host, dtype)
         host = host.astype(dtype)
     return np.ascontiguousarray(host)
 
