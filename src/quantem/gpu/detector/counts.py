@@ -91,48 +91,16 @@ class CountDetectorCompute(DetectorQueries):
         com_col = (col_moment.astype(np.float64) / denominator).astype(np.float32)
         return com_col, com_row
 
-    def _selected_blocks(self, indices):
-        """Yield exact decoded counts for each contiguous run of selected frames.
-
-        Runs are decoded from the resident streams at most 4,096 frames at a
-        time; each block arrives as ``(frames, pixels)`` with its multiplicity.
-        Shared by the exact sum and maximum so both decode each run once.
-        """
-        selected = np.asarray(list(indices), dtype=np.int64)
-        if not selected.size:
-            raise ValueError("Select at least one scan position.")
-        if selected.min() < 0 or selected.max() >= self.n_frames:
-            raise IndexError("A selected scan index lies outside the resident counts.")
-        frames, counts = np.unique(selected, return_counts=True)
-        breaks = np.flatnonzero(np.diff(frames) != 1) + 1
-        for run, weights in zip(np.split(frames, breaks), np.split(counts, breaks)):
-            for low in range(0, run.size, 4096):
-                first = int(run[low])
-                stop = int(run[min(run.size, low + 4096) - 1]) + 1
-                block = _copy_output(
-                    self.source.decode_scan_range_device(first, stop)
-                ).reshape(stop - first, -1)
-                yield block, weights[low:low + 4096]
-
     def reduce_frames_exact(self, indices):
         """Exact uint64 sum of the selected patterns, repeated indices included.
 
         Flagged detector pixels are 0, as in every other exact product and on CUDA.
         """
-        total = np.zeros(np.prod(self.det_shape), np.uint64)
-        for block, weights in self._selected_blocks(indices):
-            total += block.sum(axis=0, dtype=np.uint64)
-            for row in np.flatnonzero(weights > 1):
-                total += block[row].astype(np.uint64) * np.uint64(weights[row] - 1)
-        return total.reshape(self.det_shape) * self.valid_pixels
+        return _copy_output(self.source.reduce_scans_device(self._multiplicity(indices), "sum"))
 
     def reduce_frames_max(self, indices):
         """Exact integer maximum of the selected patterns; flagged detector pixels are 0."""
-        result = None
-        for block, _ in self._selected_blocks(indices):
-            value = block.max(axis=0)
-            result = value if result is None else np.maximum(result, value)
-        return result.reshape(self.det_shape) * self.valid_pixels
+        return _copy_output(self.source.reduce_scans_device(self._multiplicity(indices), "max"))
 
     def reduce_frames(self, indices, reduce="mean"):
         """Exact uint64 ``sum`` and ``max`` of the selected patterns, or their float32 ``mean``."""
@@ -143,6 +111,19 @@ class CountDetectorCompute(DetectorQueries):
             return self.reduce_frames_max(selected).astype(np.uint64)
         total = self.reduce_frames_exact(selected)
         return (total / len(selected)).astype(np.float32) if reduce == "mean" else total
+
+    def _multiplicity(self, indices) -> np.ndarray:
+        """How many times each scan position is selected, uint32 in row-major order.
+
+        The Metal reduction reads one weight per scan instead of a list of
+        indices, so a repeated index counts as often as it is listed.
+        """
+        selected = np.asarray(list(indices), dtype=np.int64)
+        if not selected.size:
+            raise ValueError("Select at least one scan position.")
+        if selected.min() < 0 or selected.max() >= self.n_frames:
+            raise IndexError("A selected scan index lies outside the resident counts.")
+        return np.bincount(selected, minlength=self.n_frames).astype(np.uint32)
 
 
 class CountSeriesCompute(DetectorQueries):

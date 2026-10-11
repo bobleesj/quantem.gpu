@@ -275,6 +275,45 @@ kernel void streamed_counts_detector_total(
     output[pixel] = total;
 }
 
+// Per detector pixel, the weighted sum (or the maximum) of the selected scans' counts. ``weights`` holds
+// each scan's multiplicity and ``before[k]`` the selected scans before scan k, so a stream block without a
+// selected scan is skipped and a scan ROI never costs more than the detector total.
+kernel void streamed_counts_selected_reduce(
+    device const uchar *payload [[buffer(0)]],
+    device const uint *offsets [[buffer(1)]],
+    device const uchar *models [[buffer(2)]],
+    device const uint *decoding [[buffer(3)]],
+    device atomic_uint *errors [[buffer(4)]],
+    device ulong *output [[buffer(5)]],
+    constant ulong *p [[buffer(6)]],
+    device const uchar *valid [[buffer(7)]],
+    device const uint *weights [[buffer(8)]],
+    device const uint *before [[buffer(9)]],
+    uint pixel [[thread_position_in_grid]]) {
+    uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]), origin = uint(p[3]);
+    bool maximum = p[4] != 0;
+    if (pixel >= pixels) return;
+    if (!valid[pixel]) {
+        output[pixel] = 0;
+        return;
+    }
+    ulong total = output[pixel];
+    uint streams_per_pixel = (scans + interval - 1) / interval;
+    for (uint block = 0; block < streams_per_pixel; ++block) {
+        uint first = origin + block * interval, count = min(interval, scans - block * interval);
+        if (before[first + count] == before[first]) continue;
+        StreamReader reader(payload, offsets, models, decoding, block * pixels + pixel);
+        for (uint i = 0; i < count; ++i) {
+            ulong value = ulong(reader.next()), weight = ulong(weights[first + i]);
+            if (maximum) total = weight ? max(total, value) : total;
+            else total += weight * value;
+        }
+        if (!reader.finished())
+            atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    }
+    output[pixel] = total;
+}
+
 kernel void streamed_counts_reduce(
     device const uchar *counts [[buffer(0)]],
     device const uchar *mask [[buffer(1)]],
