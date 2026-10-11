@@ -35,7 +35,6 @@ classifiers = [
 dependencies = [
     "h5py",
     "hdf5plugin",
-    "jinja2",
     "numba>=0.60",
     "numpy>=2.0.0",
     "pandas",
@@ -78,8 +77,10 @@ movie = [
     "pillow",
     "PyNvVideoCodec>=2.0; sys_platform != 'darwin'",
 ]
-# SSBResult.show, SSB.show_trials and the rotation histograms draw with Matplotlib and QuantEM's show_2d.
+# SSBResult.show, SSB.show_trials and the rotation histograms draw with Matplotlib and QuantEM's show_2d;
+# the histograms display through IPython.
 plot = [
+    "ipython",
     "matplotlib",
     "quantem",
 ]
@@ -104,7 +105,6 @@ quantem-gpu = "quantem.gpu.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/quantem"]
 artifacts = [
-    "src/quantem/gpu/webgpu/*.ts",
     "src/quantem/gpu/webgpu/*.json",
     "src/quantem/gpu/display/*.json",
     "src/quantem/gpu/display/metal/*.metal",
@@ -120,7 +120,6 @@ artifacts = [
     "src/quantem/gpu/io/hdf5/webgpu/*.ts",
     "src/quantem/gpu/detector/cuda/kernels/*.cu",
     "src/quantem/gpu/detector/webgpu/*.ts",
-    "src/quantem/gpu/geometry/webgpu/*.ts",
     "src/quantem/gpu/dpc/webgpu/*.ts",
     "src/quantem/gpu/ssb/webgpu/*.ts",
     "src/quantem/gpu/ssb/webgpu/kernels/*.ts",
