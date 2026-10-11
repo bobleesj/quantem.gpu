@@ -155,3 +155,5 @@ five layout digests on rc15 and on the final tree.
 The Metal LZ4 decoder (`io/hdf5/mps/kernels/bslz4.msl`) bounds neither reads
 nor writes. The bounded chunk walk protects both backends from a truncated
 chunk; damaged LZ4 bytes inside intact framing have not been tested on Metal.
+
+Done since: [Metal LZ4 bounds](2026-10-11-metal-lz4-bounds.md).
