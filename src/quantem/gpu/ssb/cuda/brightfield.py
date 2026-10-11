@@ -8,6 +8,7 @@ mean diffraction pattern, and ``bright_field_spectra`` turns each selected pixel
 import math
 
 import cupy as cp
+import cupyx.scipy.fft
 import numpy as np
 
 
@@ -119,34 +120,47 @@ def bright_field_spectra(
     The scan images are real, so only the Hermitian half-plane (scan columns 0..N/2) is stored; the kernels mirror and
     conjugate the missing columns when a full Fourier coordinate is requested. The work runs in chunks of bright-field
     pixels sized so the complex64 staging buffer stays near 2 GB: unchunked, a 512 x 512 acquisition peaked at ~57 GB
-    (raw counts, the complex stack and G_qk, 19 GB each). Each chunk is gathered and transposed in its native dtype
-    and cast to complex64 only then.
+    (raw counts, the complex stack and G_qk, 19 GB each). Each chunk's scan images are written straight into the
+    staging buffer as complex64, transformed there, and their kept columns copied into G once; gathering, transposing,
+    casting, transforming and cropping as separate arrays moved every chunk through memory seven times.
     """
     num_bf = len(bf_inds_row)
     scan_row, scan_col = int(scan_gpts[0]), int(scan_gpts[1])
     det_row, det_col = int(det_gpts[0]), int(det_gpts[1])
     stored_col = scan_col // 2 + 1
+    scans = scan_row * scan_col
     # (N_scan, det_row, det_col) view of the raw counts
     flat_data = data.reshape(-1, det_row, det_col)
+    pixels = bf_inds_row.astype(cp.int32) * det_col + bf_inds_col.astype(cp.int32)
     G_qk = cp.empty((num_bf, scan_row, stored_col), dtype=cp.complex64)
     bytes_per_bf = scan_row * scan_col * 8  # complex64
     target_chunk_bytes = 2 * 1024 ** 3
     chunk_bf = max(1, min(num_bf, target_chunk_bytes // bytes_per_bf))
+    staging = cp.empty((chunk_bf, scan_row, scan_col), dtype=cp.complex64)
     for bf_start in range(0, num_bf, chunk_bf):
         bf_end = min(bf_start + chunk_bf, num_bf)
-        row_chunk = bf_inds_row[bf_start:bf_end]
-        col_chunk = bf_inds_col[bf_start:bf_end]
-        vbf_flat = flat_data[:, row_chunk, col_chunk]
-        vbf_int = cp.ascontiguousarray(vbf_flat.T.reshape(bf_end - bf_start, scan_row, scan_col))
-        del vbf_flat
-        vbf_stack = vbf_int.astype(cp.complex64)
-        del vbf_int
-        fft_chunk = cp.fft.fft2(vbf_stack)
-        half_chunk = cp.ascontiguousarray(fft_chunk[:, :, :stored_col])
-        G_qk[bf_start:bf_end] = half_chunk
-        del half_chunk
-        del fft_chunk
-        del vbf_stack
+        scan_images = staging[:bf_end - bf_start]
+        _scan_images(flat_data, pixels[bf_start:bf_end], bf_end - bf_start, scans, det_row * det_col, scan_images,
+                     size=scans)
+        # in place: cuFFT gives the same bits as the out-of-place transform, without a second chunk-sized array
+        spectra = cupyx.scipy.fft.fft2(scan_images, axes=(1, 2), overwrite_x=True)
+        G_qk[bf_start:bf_end] = spectra[:, :, :stored_col]
     dc_value = complex(G_qk[:, 0, 0].mean().get())
+    del staging, scan_images, spectra
     cp.get_default_memory_pool().free_all_blocks()
     return G_qk, dc_value
+
+
+# One thread per scan position walks the chunk's bright-field pixels: the reads stay inside that position's pattern
+# (consecutive selected pixels share a cache sector) and neighbouring threads write neighbouring scan positions of the
+# same image, so neither side of this transpose is scattered.
+_scan_images = cp.ElementwiseKernel(
+    "raw T counts, raw int32 pixels, int32 count, int64 scans, int64 detector_pixels",
+    "raw complex64 images",
+    """
+    for (int k = 0; k < count; ++k) {
+        images[k * scans + i] = thrust::complex<float>((float)counts[i * detector_pixels + pixels[k]], 0.0f);
+    }
+    """,
+    "ssb_bright_field_scan_images",
+)
