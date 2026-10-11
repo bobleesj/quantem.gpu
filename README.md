@@ -50,18 +50,21 @@ The Mac SSB backend uses MLX and Metal. Array indexing returns PyTorch tensors;
 quantem.gpu installs PyTorch 2.3 or newer (2.11 or newer with `[cuda]`, the first
 PyPI release built on CUDA 13), and a particular CUDA build of PyTorch can be
 installed first.
-For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`.
+For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`. For
+the `show_2d` figures below and `result.show()`, add `plot` (Matplotlib and
+QuantEM): `".[cuda,plot]"`. For GIF and MP4 export, add `movie`.
 Record `git rev-parse HEAD` with your results to reproduce the exact version.
 
-This is pre-release software. The older TestPyPI candidate
-`quantem.gpu==0.0.1rc8` does not include all current source features.
-See [installation and runtime checks](docs/install.md) for details.
+This is pre-release software. Release candidates are published on TestPyPI;
+the `version` field of a source checkout is stamped only when a release is
+tagged, so the commit identifies the code. See
+[installation and runtime checks](docs/install.md) for details.
 
 ## Load diffraction patterns
 
 These examples use a gold acquisition: a 512 × 512 scan with a 192 × 192
 detector. Replace `gold_master.h5` with your file and keep its companion HDF5
-files beside it. Install QuantEM for the `show_2d` examples; PyTorch supplies
+files beside it. The `show_2d` examples need the `plot` extra; PyTorch supplies
 GPU tensors for selected regions. The data are not bundled here.
 
 ### Load and inspect
