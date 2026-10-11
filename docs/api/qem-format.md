@@ -10,6 +10,90 @@ bytes; [metadata mapping](qem-metadata-mapping.md) defines vendor-field handling
 Specification revisions below describe additional requirements; they are not
 user-selectable compression settings.
 
+## QEM specification 0.0.4
+
+Specifies the flat calibration keys and the retained `metadata` block. The stored
+`scientific_metadata` is unchanged: its schema string stays
+`quantem.scientific-metadata/2` and every existing schema-2 file reads with the
+same calibration.
+
+### Flat calibration keys
+
+The flat keys are the reading and writing interface of the format. A reader
+returns them beside the data (`data.metadata` in Python); a writer accepts them
+for a new copy. Each key has one unit, stated in its name, and one fixed place
+in `scientific_metadata`, which remains the stored authority.
+
+| Flat key | Unit | Type | Stored at |
+| --- | --- | --- | --- |
+| `voltage_kV` | kV | number | `electron_microscope["electron_source/accelerating_voltage"]` |
+| `semiangle_mrad` | mrad | number | `electron_microscope["illumination_system/semi_convergence_angle"]` |
+| `scan_sampling_A` | angstrom per scan position | `[row, col]` | `axes[0].sampling`, `axes[1].sampling` (and the two `scan_controller/regular_scan/pixel_size_*` quantities) |
+| `detector_sampling_mrad` | mrad per detector pixel | `[row, col]` | `axes[2].sampling`, `axes[3].sampling` with unit `mrad` |
+| `detector_sampling_inv_A` | 1/angstrom per detector pixel, cycles | `[row, col]` | `axes[2].sampling`, `axes[3].sampling` with unit `1/angstrom` |
+| `dwell_time_us` | us | number | `electron_microscope["scan_controller/regular_scan/dwell_time"]` |
+| `camera_length_mm` | mm | number | `electron_microscope["imaging_system/camera_length"]` |
+
+- A pair is always `[row, col]`, never one number for both axes. "Per pixel"
+  means per stored pixel of the dataset the key describes.
+- Exactly one of the two detector keys is present, and neither when the
+  detector is uncalibrated. The flat layer does not convert between them:
+  that needs the voltage. A writer given both refuses the copy.
+- An absent key means the quantity is unknown.
+- Reading: every flat key is derived from `scientific_metadata`, the recorded
+  quantity replaced by its `calibration_overrides` entry when one is saved.
+  A reader never takes calibration from the retained `metadata` block. Files
+  written before this revision hold copies there (`scan_sampling_A`,
+  `voltage_kV`, `detector_sampling` with `detector_sampling_unit`); they stay
+  readable and the copies are not read.
+- Writing: every flat key is accepted for a quantity the source did not
+  record. The unit-less pair `detector_sampling` with `detector_sampling_unit`
+  is refused with a message that names the two detector keys.
+- For an ARINA master the dwell time is `count_time`, else `frame_time`. A
+  loader reports the same value the saved copy records.
+
+The scan-to-detector rotation and the detector transposition are not stored in
+a `.qem` file. They are flat keys of result and configuration records
+(`scan_detector_rotation_deg`, `detector_transposed`).
+
+### Retained `metadata` block
+
+The header's `metadata` block keeps the provenance a reader needs and nothing
+that `scientific_metadata` already states.
+
+| Key | Meaning |
+| --- | --- |
+| `source_path`, `original_source_path` | path the data was loaded from; the path before conversion |
+| `source_files[]` (`name`, `bytes`, `sha256`), `source_master_file` (`name`, `encoding`, `data`) | every source file of a converted acquisition; the master file itself, zlib then base64 |
+| `source_dtype`, `dtype`, `exact_float_narrowing`, `file_counts_exact`, `working_counts_exact` | evidence for a declared dtype change |
+| `hot_pixel_correction` | what was done to flagged detector pixels, see below |
+| `flagged_markers_stored_as_zero` | count of uint32 flag markers stored as 0 |
+
+Writers do not store:
+
+- the flat calibration keys (they are derived on reading);
+- second copies of `source_metadata`, `source_documents`,
+  `source_metadata_coverage`, `sample` and `calibration_overrides`, which a new
+  copy supplies as inputs and which are stored once, in `scientific_metadata`;
+- what a loader knows about its host and the resident it built (shapes, byte
+  counts, backend, device, binning, timings, the raw `entry/...` source paths).
+
+Other keys a caller adds are kept unchanged. Readers apply the same rule to
+older files, so a reopened copy never returns a stale stored value for one of
+these keys.
+
+`hot_pixel_correction` is a record with `schema`
+(`"quantem.hot-pixel-correction/2"`), `method` (`median`, `zero`, `none`),
+`kernel_size`, `source`, `pixel_count`, `coordinates_row_col`, `source_flags`,
+`applied`, `stage` and `backend`. A record with another `schema`, or none, is
+read as absent; `processing` still declares a replacement.
+
+### Schema 1 is refused
+
+Readers accept `quantem.scientific-metadata/2` only. A file with schema 1 is
+refused with a message that names the schema; export it again from its source.
+No reader converts schema-1 units.
+
 ## QEM specification 0.0.3
 
 Adds an optional `sample` group to `scientific_metadata`: the specimen as a person declared it (for example a session's
@@ -89,11 +173,9 @@ every conforming reader must refuse; the Python and Swift readers share them.
 
 ## Microscopy-friendly metadata (since 0.0.1)
 
-New writers use `quantem.scientific-metadata/2`. The binary container and
-measurement codecs remain unchanged. Readers accept metadata schemas 1 and 2 subject to the 0.0.2 rules above;
-older schema-1-only readers must reject schema 2 rather than reinterpret units.
-Existing files are not rewritten. Previously distributed schema-1 consumers
-need an updated backend before opening schema-2 files.
+Writers use `quantem.scientific-metadata/2`. The binary container and
+measurement codecs remain unchanged. Since 0.0.4 readers accept schema 2 only
+and refuse schema 1 rather than reinterpret units.
 
 Schema 2 stores normalized quantities and calibration overrides in these units:
 
@@ -139,7 +221,7 @@ must agree within `1e-14` relative tolerance. Explicit `calibration_overrides`
 take precedence for calculations, never for rewriting the recorded values.
 Private restoration fields are derived conveniences, not a second authority.
 Missing public calibration means unknown; a reader must not revive a stale
-private value. Schema 1 retains its historical restoration contract.
+private value.
 Reciprocal lengths use cycles per distance, not radians per distance: there is
 no implicit factor of `2π`. Angular sampling in mrad is a distinct quantity.
 Known calibrated quantities require nonempty provenance. Source coverage is
@@ -295,15 +377,15 @@ required. Invalid or incomplete calibration is rejected, not guessed.
 
 The native `calibrationOverrides` API retains its existing calculation units
 (m, V, s, m, mrad, and detector mrad/1/nm/1/Å). Conversion happens only at the
-scientific-metadata boundary. Schema-1 files retain their original unit meanings.
+scientific-metadata boundary.
 Native exporters accept `calibrationOverrides`. Omitting it preserves existing
 saved edits; supplying a complete dictionary replaces them in the new copy;
 supplying `[:]` clears them. `NativeQEMCalibration` validates and reads these
 quantities. Native readers expose the serialized dictionary under
 `qem_calibration_overrides`; applications apply it ahead of recorded calibration.
 Only `.qem` carries calibration overrides; no other destination is accepted.
-Python integer readers expose effective scan sampling, detector sampling and
-beam voltage in acquisition metadata while retaining the complete scientific
+Python readers expose the effective calibration as the flat keys of 0.0.4 in
+acquisition metadata while retaining the complete scientific
 metadata, including original values and every override. CUDA execution still
 requires independent hardware qualification.
 

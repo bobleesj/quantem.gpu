@@ -8,6 +8,29 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- `.qem` flat calibration keys are specified (QEM specification 0.0.4) and
+  carry their unit: `detector_sampling` with `detector_sampling_unit` becomes
+  `detector_sampling_mrad` or `detector_sampling_inv_A`, each `[row, col]`,
+  exactly one present. `io.save` refuses the old pair and refuses both new
+  keys together. Stored `scientific_metadata` is unchanged; every schema-2
+  file loads with the same calibration.
+- `scan_sampling_A` in dataset metadata is a `[row, col]` pair; a single number
+  raises in `Dataset4dstemGPU.sampling`.
+- `.qem` scientific metadata schema 1 is refused with a message that names the
+  schema, in Python and in the WebGPU reader. It was read with unit
+  conversion. Export such a file again from its source.
+- A saved `.qem` stores calibration, source fields, attachments, the sample
+  and calibration overrides once, in `scientific_metadata`. The retained
+  `metadata` block no longer holds copies of them or loader state (shapes,
+  byte counts, backend, device, timings, raw `entry/...` paths). Readers drop
+  the same keys from older files.
+- The hot-pixel record carries `"schema": "quantem.hot-pixel-correction/2"`
+  in place of `"version": 1`, and `coordinates_row_column` becomes
+  `coordinates_row_col`. A record of another version is read as absent in a
+  `.qem`; a saved paired resident with one is refused.
+- The DigitalMicrograph reader no longer adds `sampling`, `units`,
+  `pixel_origin` and `axis_order` to dataset metadata; its calibration is
+  `scan_sampling_A` and `detector_sampling_inv_A`.
 - A stored SSB fit is read only when it carries the current fit schema:
   `"schema": "quantem.ssb-fit/6"` in the `computed.ssb` block of
   `live/screen/<dataset>/config.json`, written by `SSB.reconstruct_series`,
@@ -17,6 +40,23 @@ new `rcN` heading when that rc is published to TestPyPI.
   whenever it declared nm, so `reconstruct_series(probe_reference_frame=...)`
   reconstructed with aberrations fitted under the earlier automatic detector
   sampling, which give a different image.
+
+### Fixed
+
+- A DM4 detector step read 1/nm when loaded and 1/angstrom after a `.qem`
+  round trip, a factor of 10 with a different unit string. Both now read
+  1/angstrom (`detector_sampling_inv_A`); 1/Å and 1/µm axes are read too.
+- A caller's `dwell_time_us` and `camera_length_mm` are written to a new
+  `.qem`. They were dropped.
+- `dwell_time_us` of an ARINA master is the exposure `count_time`, as the saved
+  copy records it. The loader reported the frame period, so the value changed
+  after a round trip (49.6 to 49.5 us).
+- After a reciprocal-length calibration override the detector unit read
+  `1/Å`; it is `1/angstrom` like every other route (now the key
+  `detector_sampling_inv_A`).
+- Calibration overrides were stored twice in one file, in volts and metres in
+  `metadata` and in kV and angstrom in `scientific_metadata`. They are stored
+  once.
 
 ## rc16 - 2026-10-11
 

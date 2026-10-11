@@ -1,7 +1,7 @@
 # QEM metadata mapping and completeness
 
 This is the implemented container-v1, scientific-metadata-schema-2 contract,
-documented as QEM specification 0.0.3, not a claim that every vendor
+documented as QEM specification 0.0.4, not a claim that every vendor
 field is understood. The [format specification](qem-format.md) owns the binary
 envelope. The format is independent of the compression algorithm and app version.
 
@@ -25,10 +25,10 @@ to its `electron_microscope` object. Source `y` means row and `x` means column.
 | Scan/detector shape | `axes[].name`, `axes[].size` | Validated source dimensions; DM4 axes reversed into scan row/column, detector row/column | Preserved, four named axes |
 | Count representation | header `dtype`, `shape` | Native uint8/uint16; native EMPAD float32 codec | Preserved; no implicit narrowing |
 | Scan row/column step | `axes[0:2].sampling`, `scan_controller/regular_scan/pixel_size_row` and `pixel_size_column` | ARINA/NCEM scan calibration; DM4 `ImageData.Calibrations.Dimension.*.Scale/Units`; EMPAD reader calibration | Normalized to `angstrom`; unknown omitted |
-| Detector row/column step | `axes[2:4].sampling` | Reader detector calibration; DM4 reciprocal-nm axes | Normalized to `mrad` or `1/angstrom`; angular and reciprocal-length units remain distinct |
+| Detector row/column step | `axes[2:4].sampling` | Reader detector calibration; DM4 reciprocal axes (1/nm, 1/Å, 1/µm), read as `detector_sampling_inv_A` | Normalized to `mrad` or `1/angstrom`; angular and reciprocal-length units remain distinct |
 | Beam voltage | `electron_source/accelerating_voltage` | NCEM same path (V/kV); ARINA `entry/instrument/detector/incident_energy` (eV/keV); DM4 `ImageTags.Microscope Info.Voltage` (V) | Normalized to `kV`; existing electron-energy conversion policy unchanged |
 | Convergence semi-angle | `illumination_system/semi_convergence_angle` | NCEM same path with rad/mrad | Normalized to mrad; not inferred from detector pitch |
-| Dwell time | `scan_controller/regular_scan/dwell_time` | NCEM same path with s/ms/us/µs/μs | Normalized to `us` |
+| Dwell time | `scan_controller/regular_scan/dwell_time` | NCEM same path with s/ms/us/µs/μs; ARINA `count_time`, else `frame_time` | Normalized to `us` |
 | Camera length | `imaging_system/camera_length` | NCEM same path with m/cm/mm | Normalized to `mm` |
 | Angular detector sampling | `imaging_system/reciprocal_pixel_size_row` and `reciprocal_pixel_size_column` | NCEM `reciprocal_pixel_size_y` (row) and `reciprocal_pixel_size_x` (column) with rad/mrad | Normalized to mrad; named by array axis, not a conversion to reciprocal length |
 | Detector identity | `source_metadata.camera_model`, `camera_id` | DM4 `ImageTags.Acquisition.Device.Source Model/Source ID`; equivalent retained camera fields | Preserved; never replace K3 identity with ARINA |
@@ -44,6 +44,26 @@ to its `electron_microscope` object. Source `y` means row and `x` means column.
 | Specimen components | `sample/components/<label>` (role, chemical_formula, zone_axis, cif) | `specimen.components.<label>`; the CIF file as a JSON document in `source_documents[]` | Declared; lattice and space group read from the CIF, not stored |
 | Thickness estimates | `sample/components/<label>/thickness_estimates[]` | `files.<n>.thickness.<label>[]` (`value_nm` becomes `value` in `angstrom`) | Declared estimates with method and region; automatic readings stay in result files until a person records them |
 | Components in view | `sample/components_in_view` | `files.<n>.components_in_view` | Written only when declared |
+
+## Flat calibration keys
+
+A reader returns the calibration as flat keys and a writer accepts them for a
+new copy. The mapping is fixed; the [format specification](qem-format.md)
+gives the rules.
+
+| Flat key | Unit, type | Common destination |
+| --- | --- | --- |
+| `voltage_kV` | kV, number | `electron_source/accelerating_voltage` |
+| `semiangle_mrad` | mrad, number | `illumination_system/semi_convergence_angle` |
+| `scan_sampling_A` | angstrom, `[row, col]` | `axes[0:2].sampling`, `scan_controller/regular_scan/pixel_size_row` and `pixel_size_column` |
+| `detector_sampling_mrad` | mrad, `[row, col]` | `axes[2:4].sampling` when its unit is `mrad` |
+| `detector_sampling_inv_A` | 1/angstrom, `[row, col]` | `axes[2:4].sampling` when its unit is `1/angstrom` |
+| `dwell_time_us` | us, number | `scan_controller/regular_scan/dwell_time` |
+| `camera_length_mm` | mm, number | `imaging_system/camera_length` |
+
+Exactly one detector key is present, neither when the detector is
+uncalibrated. A saved calibration override replaces the recorded value in the
+flat key and leaves the recorded quantity in place.
 
 Only finite positive calibration quantities with recognized units are promoted.
 Missing metadata is not fabricated. A supported field may still be missing in a
