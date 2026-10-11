@@ -147,11 +147,16 @@ inline bool decompressStream(
     uint decomp_end,
     uint tid
 ) {
+    // A valid stream is at most its block, one length byte per 255 literals
+    // and 3 bytes long, so a stream of more than two blocks is refused unread:
+    // the time to decode a block stays bounded by the block, whatever its
+    // length field claims, and no summed length can wrap 32 bits.
+    bool valid = comp_end <= 2 * decomp_end + 16;
+    comp_end = valid ? comp_end : 0;
     long buf_offset = 0;
     bufferLoadAt(buffer, compData, comp_end, buf_offset, tid);
     uint decomp_idx = 0;
     uint comp_idx = 0;
-    bool valid = true;
     while (comp_idx < comp_end) {
         uint buf_end = uint(buf_offset) + DECOMP_INPUT_BUFFER_SIZE;
         if (comp_idx + DECOMP_BUFFER_PREFETCH_DIST > buf_end) {

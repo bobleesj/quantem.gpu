@@ -562,19 +562,23 @@ inline bool bslz4DecompressStreamDirectBoundedToThreadgroup(
 ) {
     uint outputIndex = 0;
     uint inputIndex = 0;
-    bool valid = true;
+    // A valid stream is at most its block, one length byte per 255 literals
+    // and 3 bytes long, so a stream of more than two blocks is refused unread:
+    // the time to decode a block stays bounded by the block, whatever its
+    // length field claims, and no summed length can wrap 32 bits.
+    bool valid = compressedLength <= 2u * kBslz4BlockBytes;
+    compressedLength = valid ? compressedLength : 0u;
     while (inputIndex < compressedLength) {
         BSLZ4Token token = bslz4DecodeToken(compressed[inputIndex++]);
         uint literalCount = token.literals;
         if (token.literals == 15) {
+            // A length that runs off the stream leaves no byte to copy, so its
+            // 15 or more literals are refused below.
             uchar next = 0xff;
             while (next == 0xff && inputIndex < compressedLength) {
                 next = compressed[inputIndex++];
                 literalCount += next;
             }
-            // A length that runs off the stream counts as longer than any
-            // block. Its sum alone does not say so: 32 bits can wrap to 0.
-            literalCount = next == 0xff ? 0xffffu : literalCount;
         }
         uint literalRoom = min(compressedLength - inputIndex, kBslz4BlockBytes - outputIndex);
         valid = valid && literalCount <= literalRoom;
