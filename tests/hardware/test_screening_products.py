@@ -85,7 +85,8 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     reopened = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
     assert (result.from_cache, reopened.from_cache) == (False, True)
     assert result.probe_center == center and result.probe_radius == radius
-    assert (result.rotation_deg, result.transposed) == (rotation_deg, transposed)
+    assert (result.scan_detector_rotation_mod180_deg, result.detector_transposed) == (rotation_deg, transposed)
+    assert result.scan_detector_rotation_deg is None
     for name, values in expected.items():
         for products in (result, reopened):
             assert getattr(products, name).dtype == values.dtype

@@ -27,7 +27,7 @@ def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
     config = {"computed": {"bf_radius": 1, "bf_center": [1, 1], "ssb": {
         "semiangle_mrad": 20, "scan_sampling_A": 0.5, "voltage_kV": 200,
         "aberrations": {"C10": 0, "C12": 0, "phi12": 0},
-        "rotation_angle_deg": 0,
+        "scan_detector_rotation_deg": 0,
     }}}
     (run / "config.json").write_text(json.dumps(config))
     catalogue = tmp_path / "processed"
@@ -97,7 +97,7 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     config = {"source_master": str(master), "computed": {
         "bf_center": [3, 4], "bf_radius": 5,
         "ssb": {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": .25,
-                "rotation_angle_deg": 12, "aberration_unit": "nm",
+                "scan_detector_rotation_deg": 12, "aberration_unit": "nm",
                 "aberrations": {"C10": 7, "C12": 2, "phi12": .1}}}}
     (run / "config.json").write_text(json.dumps(config))
     first = export_result(run, master, output_folder=output_folder)

@@ -16,7 +16,7 @@ cp = pytest.importorskip("cupy")
 # an Arina master of a real 512 x 512 x 192 x 192 acquisition, 300 kV, 30 mrad, 0.264 A scan step, rotation 158.9 deg
 SOURCE = Path(os.environ.get("QUANTEM_SSB_ARINA_MASTER", ""))
 SETTINGS = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, det_sampling=0.5554,
-                rotation_angle_deg=158.9)
+                scan_detector_rotation_deg=158.9)
 
 
 @pytest.mark.parametrize("det_sampling", [None, SETTINGS["det_sampling"]])

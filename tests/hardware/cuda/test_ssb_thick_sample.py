@@ -59,7 +59,7 @@ def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
     return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
-                          rotation_angle_deg=0.0)
+                          scan_detector_rotation_deg=0.0)
 
 
 @pytest.mark.parametrize("tilt_mrad", [(3.0, -4.0), (0.0, 0.0)])

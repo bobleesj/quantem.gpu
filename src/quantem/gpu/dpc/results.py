@@ -6,15 +6,24 @@ import numpy as np
 
 @dataclass
 class DPCResult:
-    """Float32 DPC products in public ``(row, col)`` order."""
+    """Float32 DPC products in public ``(row, col)`` order.
+
+    Exactly one rotation is set. ``scan_detector_rotation_mod180_deg`` is the
+    curl fit, which fixes the scan-to-detector rotation only modulo 180
+    degrees (the fit grid runs from 0 to 180 and includes its end point).
+    ``scan_detector_rotation_deg`` is the physical rotation the caller gave
+    ``dpc.run``, in [0, 360). ``detector_transposed`` says whether the detector
+    axes are exchanged before the rotation.
+    """
 
     phase: np.ndarray
     com_row: np.ndarray
     com_col: np.ndarray
     com_row_aligned: np.ndarray
     com_col_aligned: np.ndarray
-    rotation_deg: float
-    use_transpose: bool
+    scan_detector_rotation_mod180_deg: float | None
+    scan_detector_rotation_deg: float | None
+    detector_transposed: bool
     elapsed: float
 
     def report(self):
@@ -36,8 +45,10 @@ class DPCResult:
         """
         import pandas as pd
 
+        fitted = self.scan_detector_rotation_deg is None
         return pd.DataFrame({
-            "Scan-detector rotation (deg)": [self.rotation_deg],
-            "Detector-axis swap": [self.use_transpose],
+            "Scan-detector rotation (deg)": [self.scan_detector_rotation_mod180_deg if fitted else self.scan_detector_rotation_deg],
+            "Known modulo 180": [fitted],
+            "Detector transposed": [self.detector_transposed],
             "Time (s)": [self.elapsed],
         }, index=pd.Index(["DPC"], name="method")).round(3)

@@ -54,7 +54,7 @@ class TorchSSB:
         """The exact G and geometry of a prepared CUDA ``SSB`` session (same rotation), as torch tensors on ``device``."""
         backend = ssb._backend()
         engine = backend._get_accelerator()
-        engine.cache_rotation(backend._rotation_angle_rad)
+        engine.cache_rotation(backend._scan_detector_rotation_rad)
         c = engine._cache
         import cupy as cp
 

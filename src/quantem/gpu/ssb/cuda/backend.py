@@ -46,7 +46,7 @@ class CudaSSBBackend:
         Bright-field selection (``cuda.brightfield.select_bright_field``).
     aberrations : dict, optional
         Starting C10, C12 (Angstrom) and phi12 (radians); zero when omitted.
-    rotation_angle_deg : float
+    scan_detector_rotation_deg : float
         Physical scan-detector rotation in degrees.
 
     Out of memory: the resident Hermitian ``G_qk`` costs about ``scan_row x (scan_col / 2 + 1) x 8`` bytes per
@@ -75,9 +75,9 @@ class CudaSSBBackend:
         bf_radius: int | None = None,
         bf_center: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
-        rotation_angle_deg: float = 0.0,
+        scan_detector_rotation_deg: float = 0.0,
     ):
-        rotation_angle_rad = math.radians(rotation_angle_deg)
+        scan_detector_rotation_rad = math.radians(scan_detector_rotation_deg)
 
         # quantem.gpu SSB is GPU-only. Ensure the input is a CuPy array but
         # keep the native dtype. Casting the raw 4D block to float32 would
@@ -158,7 +158,7 @@ class CudaSSBBackend:
         self.angular_sampling = det_sampling
         self.bf_intensity_threshold = float(bf_intensity_threshold)
         self.aberrations = aberrations.copy()
-        self._rotation_angle_rad = rotation_angle_rad
+        self._scan_detector_rotation_rad = scan_detector_rotation_rad
         scan_gpts = data.shape[:2]
         det_gpts = data.shape[2:]
         wavelength = wavelength_A_from_kV(voltage_kV)
@@ -248,7 +248,7 @@ class CudaSSBBackend:
             )
             # Interactive preview/export may be the first operation, before
             # optimize or result has prepared rotation-dependent geometry.
-            self._accelerator.cache_rotation(self._rotation_angle_rad)
+            self._accelerator.cache_rotation(self._scan_detector_rotation_rad)
         return self._accelerator
 
     @property
@@ -269,11 +269,11 @@ class CudaSSBBackend:
 
         return int(self.bf_inds_row.size)
 
-    def cache_rotation(self, rotation_rad: float) -> None:
+    def cache_rotation(self, scan_detector_rotation_rad: float) -> None:
         """Prepare CUDA geometry for one scan-to-detector rotation."""
 
-        self._rotation_angle_rad = float(rotation_rad)
-        self._get_accelerator().cache_rotation(self._rotation_angle_rad)
+        self._scan_detector_rotation_rad = float(scan_detector_rotation_rad)
+        self._get_accelerator().cache_rotation(self._scan_detector_rotation_rad)
 
     def preview_context(self, num_bf: int):
         """Prepare a reusable reduced-BF CUDA preview context."""
@@ -323,7 +323,7 @@ class CudaSSBBackend:
             object_wave=object_wave,
             backend="cuda",
             aberrations=self.aberrations.copy(),
-            rotation_angle_deg=math.degrees(self._rotation_angle_rad),
+            scan_detector_rotation_deg=math.degrees(self._scan_detector_rotation_rad),
             loss=loss,
             elapsed=elapsed if elapsed > 0 else None,
             n_trials=self._n_trials,

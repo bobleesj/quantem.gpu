@@ -41,12 +41,14 @@ class SSBResult(Mapping[str, float]):
         thickness); None for standard SSB.
     tilt_fit_gain : float | None
         Least-squares agreement with the data of the tilt fit relative to standard SSB (> 1: the tilt explains more).
-    rotation_angle_deg : float
-        Scan-detector rotation in degrees, in [0, 180).
-    com_reversed : bool
-        True when the centre-of-mass vectors point the other way, i.e. the physical rotation is
-        ``rotation_angle_deg + 180``. The CoM curl cannot tell the two apart; ``find_aberrations(check_rotation=True)`` decides from
-        the atom columns (see ``column_sign``).
+    scan_detector_rotation_deg : float
+        Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
+        ``find_aberrations(check_rotation=True)`` settles the branch from the atom columns (see ``column_sign``).
+    detector_transposed : bool
+        Whether the detector axes are exchanged before the rotation. SSB reconstructs only False.
+    initial_scan_detector_rotation_deg : float | None
+        The rotation before the polarity check, in [0, 360); the check changed the branch when it differs from
+        ``scan_detector_rotation_deg``. None when no check ran.
     upsample : int
         Output factor relative to the native scan grid. ``scan_sampling_A``
         records output pixel spacing, preserving the physical field of view.
@@ -74,8 +76,8 @@ class SSBResult(Mapping[str, float]):
     tilt_mrad: tuple[float, float] | None = None
     depth_spread_nm: float | None = None
     tilt_fit_gain: float | None = None
-    rotation_angle_deg: float = 0.0
-    com_reversed: bool = False
+    scan_detector_rotation_deg: float = 0.0
+    detector_transposed: bool = False
     loss: float | None = None
     elapsed: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
@@ -99,8 +101,7 @@ class SSBResult(Mapping[str, float]):
     trial_records: list[dict] | None = None
     # Phase skewness (+ = bright atom columns) and the selected 180-degree branch.
     column_sign: float | None = None
-    rotation_flipped: bool = False
-    initial_rotation_deg: float | None = None
+    initial_scan_detector_rotation_deg: float | None = None
     initial_column_sign: float | None = None
     rotation_check_phases: object | None = None
     phase_clim: tuple[float, float] | None = None
@@ -110,8 +111,8 @@ class SSBResult(Mapping[str, float]):
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # the engines give the physical angle (up to 360); the public form is below 180 plus the flag
-        self.rotation_angle_deg, self.com_reversed = split_rotation(self.rotation_angle_deg, self.com_reversed)
+        # one representation of the physical angle, whatever turn count a caller or an engine gives
+        self.scan_detector_rotation_deg = float(self.scan_detector_rotation_deg) % 360.0
 
     def __getitem__(self, coefficient: str) -> float:
         """Return a coefficient in nm (C10/C12) or radians (phi12).
@@ -131,11 +132,6 @@ class SSBResult(Mapping[str, float]):
         """Return the number of coefficients."""
         return len(self.aberrations)
 
-    @property
-    def physical_rotation_deg(self) -> float:
-        """Rotation the engines use: ``rotation_angle_deg + 180`` when the CoM is reversed."""
-        return physical_rotation_deg(self.rotation_angle_deg, self.com_reversed)
-
     def __repr__(self) -> str:
         lines = ["SSB Result"]
         lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
@@ -148,13 +144,14 @@ class SSBResult(Mapping[str, float]):
             lines.append(f"  BF pixels      {self.num_bf}")
         if self.n_trials is not None:
             lines.append(f"  Trials         {self.n_trials}")
-        if self.initial_rotation_deg is not None:
-            lines.append(f"  Input rotation {self.initial_rotation_deg:.2f}°")
-        lines.append(f"  SSB rotation   {self.physical_rotation_deg:.2f}°")
+        if self.initial_scan_detector_rotation_deg is not None:
+            lines.append(f"  Input rotation {self.initial_scan_detector_rotation_deg:.2f}°")
+        lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
         if self.column_sign is not None:
+            changed = self.initial_scan_detector_rotation_deg not in (None, self.scan_detector_rotation_deg)
             lines.append(
                 f"  Column sign    {self.column_sign:+.2f}"
-                + ("  (SSB selected the other 180° branch)" if self.rotation_flipped else "")
+                + ("  (SSB selected the other 180° branch)" if changed else "")
             )
         if self.aberrations:
             lines.append(_format_aberrations(self.aberrations))
@@ -205,9 +202,9 @@ class SSBResult(Mapping[str, float]):
             "C12 (nm)": aberrations.get("C12"),
             "phi12 (deg)": math.degrees(aberrations.get("phi12", 0.0)),
         }
-        if self.initial_rotation_deg is not None:
-            row["Suggested rotation (deg)"] = self.initial_rotation_deg
-        row["SSB-selected rotation (deg)"] = self.physical_rotation_deg
+        if self.initial_scan_detector_rotation_deg is not None:
+            row["Suggested rotation (deg)"] = self.initial_scan_detector_rotation_deg
+        row["SSB-selected rotation (deg)"] = self.scan_detector_rotation_deg
         if self.tilt_mrad is not None:
             row.update({"tilt row (mrad)": self.tilt_mrad[0],
                         "tilt col (mrad)": self.tilt_mrad[1],
@@ -455,23 +452,6 @@ class SSBSeriesResult:
         return pd.DataFrame(rows, columns=("Setting", "Value")).set_index("Setting")
 
 
-def split_rotation(rotation_angle_deg: float, com_reversed: bool = False) -> tuple[float, bool]:
-    """Return a scan-detector rotation as ``(angle in [0, 180) degrees, com_reversed)``.
-
-    The centre-of-mass curl fixes the rotation only up to 180 degrees, and turning the scan by 180 degrees is the same as
-    reversing every CoM vector. So the physical rotation ``angle + 180 * com_reversed`` is kept as the angle an operator
-    reads (always below 180) plus one flag that says the CoM points the other way. Any input angle, e.g. a 345.5 from an
-    older save, maps to the same physical rotation: ``split_rotation(345.5) == (165.5, True)``.
-    """
-    total = (float(rotation_angle_deg) + (180.0 if com_reversed else 0.0)) % 360.0
-    return total % 180.0, total >= 180.0
-
-
-def physical_rotation_deg(rotation_angle_deg: float, com_reversed: bool) -> float:
-    """Physical scan-detector rotation in [0, 360) degrees that the reconstruction engines use."""
-    return (float(rotation_angle_deg) + (180.0 if com_reversed else 0.0)) % 360.0
-
-
 def column_sign(phase: object) -> float:
     """Skewness of the phase about its median: positive when atom columns are bright.
 
@@ -552,7 +532,7 @@ def _rotation_comparison(result, *, axsize: tuple[float, float], histogram: bool
     """Explain a changed rotation using the recorded phases and their histograms."""
     if result.rotation_check_phases is None:
         raise ValueError("No rotation-check images are saved. Run ssb.find_aberrations(check_rotation=True, force=True).")
-    difference = (result.physical_rotation_deg - result.initial_rotation_deg + 180) % 360 - 180
+    difference = (result.scan_detector_rotation_deg - result.initial_scan_detector_rotation_deg + 180) % 360 - 180
     if np.isclose(difference, 0, rtol=0, atol=1e-8):
         return None
 
@@ -560,15 +540,15 @@ def _rotation_comparison(result, *, axsize: tuple[float, float], histogram: bool
     from quantem.core.visualization import show_2d
 
     phases = result.rotation_check_phases
-    titles = [f"Suggested rotation · {result.initial_rotation_deg:.2f}°",
-              f"SSB-selected rotation · {result.physical_rotation_deg:.2f}°"]
+    titles = [f"Suggested rotation · {result.initial_scan_detector_rotation_deg:.2f}°",
+              f"SSB-selected rotation · {result.scan_detector_rotation_deg:.2f}°"]
     width, height = axsize
     figure_height = height + (3.2 if histogram else 0) + 1.0
     figure = plt.figure(figsize=(2 * width, figure_height))
     figure.text(
         .04, 1 - .15 / figure_height,
-        f"Suggested rotation: {result.initial_rotation_deg:.2f}°. "
-        f"SSB selected {result.physical_rotation_deg:.2f}° after testing the opposite branch and refitting.\n"
+        f"Suggested rotation: {result.initial_scan_detector_rotation_deg:.2f}°. "
+        f"SSB selected {result.scan_detector_rotation_deg:.2f}° after testing the opposite branch and refitting.\n"
         "Negative phase asymmetry prompted the check. "
         + ("Positive asymmetry after refitting supports the bright-column assumption."
            if result.column_sign >= COLUMN_SIGN_MIN else

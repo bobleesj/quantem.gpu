@@ -178,7 +178,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         phaseSHA256=hashlib.sha256(phase_bytes).hexdigest(),
         calibration=calibration, c10Nanometers=float(aberrations["C10"]),
         c12Nanometers=float(aberrations["C12"]), phi12Radians=float(aberrations["phi12"]),
-        rotationDegrees=float(ssb["rotation_angle_deg"]),
+        rotationDegrees=float(ssb["scan_detector_rotation_deg"]),
         provenance={
             "producer": "quantem.live original screen result",
             "run": str(ssb.get("ran_at", config.get("timestamp", "unrecorded"))),

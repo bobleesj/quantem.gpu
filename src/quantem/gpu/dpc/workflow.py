@@ -63,26 +63,32 @@ def center_of_mass(data, scan_shape=None, mask=None):
     return com_row.reshape(scan_rows, scan_cols), com_col.reshape(scan_rows, scan_cols)
 
 
-def run(data, scan_shape=None, *, rotation_angle_deg=None, rotation_steps=180,
-        mask=None, verbose=False) -> DPCResult:
+def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, detector_transposed=False,
+        rotation_steps=180, mask=None, verbose=False) -> DPCResult:
     """Center-of-mass -> optimal scan/detector rotation -> iDPC phase.
 
     ``data`` is ``io.load`` output or a 4D array. The centre of mass is the one
     pass over the 4D block; rotation and integration are small-field. View the
     result with ``Show2D`` (``result.phase`` for iDPC, ``result.com_col`` for the
     raw DPC field).
+
+    Without ``scan_detector_rotation_deg`` the rotation and the detector
+    transposition are fitted from the curl; the result then holds
+    ``scan_detector_rotation_mod180_deg``. With it, the given physical rotation
+    and ``detector_transposed`` are applied and nothing is fitted.
     """
     started = time.perf_counter()
     com_row, com_col = center_of_mass(data, scan_shape=scan_shape, mask=mask)
-    if rotation_angle_deg is None:
+    if scan_detector_rotation_deg is None:
         aligned_row, aligned_col, angle, transposed = find_optimal_rotation(
             com_row, com_col, rotation_steps
         )
     else:
-        radians = np.radians(rotation_angle_deg)
-        aligned_row = np.cos(radians) * com_row - np.sin(radians) * com_col
-        aligned_col = np.sin(radians) * com_row + np.cos(radians) * com_col
-        angle, transposed = float(rotation_angle_deg), False
+        source_row, source_col = (com_col, com_row) if detector_transposed else (com_row, com_col)
+        radians = np.radians(scan_detector_rotation_deg)
+        aligned_row = np.cos(radians) * source_row - np.sin(radians) * source_col
+        aligned_col = np.sin(radians) * source_row + np.cos(radians) * source_col
+        angle, transposed = float(scan_detector_rotation_deg), bool(detector_transposed)
     # A transposed fit swapped the detector axes before aligning them; swap
     # them back so the gradients integrate along scan rows and columns.
     gradient_row, gradient_col = (
@@ -97,7 +103,9 @@ def run(data, scan_shape=None, *, rotation_angle_deg=None, rotation_steps=180,
     return DPCResult(phase=phase, com_row=com_row, com_col=com_col,
                      com_row_aligned=aligned_row.astype(np.float32),
                      com_col_aligned=aligned_col.astype(np.float32),
-                     rotation_deg=angle, use_transpose=transposed, elapsed=elapsed)
+                     scan_detector_rotation_mod180_deg=angle if scan_detector_rotation_deg is None else None,
+                     scan_detector_rotation_deg=None if scan_detector_rotation_deg is None else angle % 360.0,
+                     detector_transposed=transposed, elapsed=elapsed)
 
 
 def integrate(com_row, com_col) -> np.ndarray:
@@ -133,8 +141,10 @@ def find_optimal_rotation(com_row, com_col, rotation_steps=180):
     Returns
     -------
     tuple
-        The rotated ``(row, col)`` field as float32, the angle in degrees and
-        whether the detector axes were transposed.
+        The rotated ``(row, col)`` field as float32, the rotation in degrees
+        known modulo 180 (``scan_detector_rotation_mod180_deg``; the grid
+        includes its end point 180) and whether the detector axes were
+        transposed (``detector_transposed``).
     """
     angles = np.linspace(0, np.pi, rotation_steps, dtype=np.float32)
     if min(com_row.shape) < 3:

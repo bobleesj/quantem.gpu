@@ -20,15 +20,20 @@ from quantem.gpu.ssb.results import SSBResult, host_array
 
 # One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
 # Bump it whenever the same stored values would reconstruct a different image or read differently: the automatic
-# detector sampling rule, the unit, sign or angle reference of an aberration, the rotation or com_reversed convention,
+# detector sampling rule, the unit, sign or angle reference of an aberration, the rotation convention,
 # the bright-field selection rule, the loss definition, or the record layout. Every older fit is then fitted again.
+# 7: the record follows the shared vocabulary. The rotation is one physical angle, scan_detector_rotation_deg in
+#    [0, 360), with detector_transposed; it was an angle below 180 with com_reversed. The saved result's own "schema"
+#    is a string like the fit block's.
 # 6: schema 5 covered two automatic detector samplings, 2 x semiangle / half-maximum radius and then
 #    semiangle / disk-edge radius; C10 and C12 fitted under the first reconstruct a different image under the second.
 # 5: replayable, optimizer-neutral trial records and explicit correction overrides.
-SCHEMA = 6
+SCHEMA = 7
 # What a stored fit must carry under "schema" to be read at all (Live's computed.ssb in config.json). Named like the
 # .qem scientific-metadata schema string, so a reader refuses another version instead of reinterpreting its values.
 FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
+# The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature.
+RESULT_SCHEMA = f"quantem.ssb-result/{SCHEMA}"
 
 
 _ARTIFACT_FIELDS = {"object_wave", "rotation_check_phases", "reused", "saved_path", "metadata"}
@@ -50,7 +55,7 @@ def save_result(
         if descriptor.name not in _ARTIFACT_FIELDS
     }
     metadata = {
-        "schema": SCHEMA,
+        "schema": RESULT_SCHEMA,
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "git": _git_provenance(),
         "input": json_value(input_metadata),
@@ -81,12 +86,12 @@ def load_result(
         return None
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if metadata.get("schema") != SCHEMA or metadata.get("signature") != signature:
+        if metadata.get("schema") != RESULT_SCHEMA or metadata.get("signature") != signature:
             return None
         saved = dict(metadata["result"])
         with np.load(array_path, allow_pickle=False) as arrays:
             object_wave = arrays["object_wave"]
-            rotation_check_phases = arrays["rotation_check_phases"] if saved.get("initial_rotation_deg") is not None else None
+            rotation_check_phases = arrays["rotation_check_phases"] if saved.get("initial_scan_detector_rotation_deg") is not None else None
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return None
 

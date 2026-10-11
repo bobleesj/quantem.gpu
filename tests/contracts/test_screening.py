@@ -3,13 +3,13 @@ import numpy as np
 
 def _result(master, workflow):
     metadata = {
-        "version": workflow._CACHE_VERSION,
+        "schema": workflow._CACHE_SCHEMA,
         "source": workflow._source_fingerprint(master),
         "parameters": {
             "center": [3.5, 4.5],
             "radius_px": 2.0,
-            "rotation_deg": 17.0,
-            "transposed": False,
+            "scan_detector_rotation_mod180_deg": 17.0,
+            "detector_transposed": False,
         },
     }
     zeros = np.zeros((4, 4), dtype=np.float32)
@@ -23,8 +23,8 @@ def _result(master, workflow):
         com_col=zeros.copy(),
         probe_center=(3.5, 4.5),
         probe_radius=2.0,
-        rotation_deg=17.0,
-        transposed=False,
+        scan_detector_rotation_mod180_deg=17.0,
+        detector_transposed=False,
         metadata=metadata,
         total_intensity=counts,
         annular_bright_field=counts,
@@ -102,7 +102,7 @@ def test_screening_cache_roundtrip_preserves_exact_uint64_products(
 
 
 def test_screening_cache_without_retained_phase_is_rebuilt(tmp_path) -> None:
-    """A version-3 cache written before the phase was cached is not reused."""
+    """A cache written before the phase was cached is not reused."""
     from quantem.gpu.screening import workflow
 
     master = tmp_path / "scan_master.h5"
@@ -131,8 +131,8 @@ def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
 
     path = workflow._cache_path(master, tmp_path / "cache")
 
-    assert workflow._CACHE_VERSION == 3
-    assert path.name == "scan_master.screening-v3.npz"
+    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/4"
+    assert path.name == "scan_master.screening-v4.npz"
 
 
 def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:
@@ -142,10 +142,10 @@ def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:
     master.write_bytes(b"placeholder")
     cache_path = workflow._cache_path(master, tmp_path / "cache")
     result = _result(master, workflow)
-    result.metadata["version"] = 2
-    workflow._save_cache(result, cache_path)
-
-    assert workflow._prepare_cache(cache_path, master) is None
+    for earlier in ({"version": 3}, {"schema": "quantem.screening-cache/3"}):
+        result.metadata = {key: value for key, value in result.metadata.items() if key != "schema"} | earlier
+        workflow._save_cache(result, cache_path)
+        assert workflow._prepare_cache(cache_path, master) is None
 
 
 def test_screening_cache_rejects_changed_source(tmp_path) -> None:
@@ -218,7 +218,7 @@ def test_strong_cache_identity_avoids_hdf5_reinspection(monkeypatch, tmp_path) -
     )
 
     assert workflow._cache_matches(
-        {"version": workflow._CACHE_VERSION, "source": source},
+        {"schema": workflow._CACHE_SCHEMA, "source": source},
         master,
     )
 
@@ -345,7 +345,7 @@ def test_strong_cache_identity_reinspects_master_alias_shard_mapping(tmp_path) -
     assert workflow._strong_cached_source_match(first_source, aliases[0]) is True
     assert workflow._strong_cached_source_match(first_source, aliases[1]) is None
     assert not workflow._cache_matches(
-        {"version": workflow._CACHE_VERSION, "source": first_source},
+        {"schema": workflow._CACHE_SCHEMA, "source": first_source},
         aliases[1],
     )
 
@@ -374,7 +374,7 @@ def test_reduced_cache_identity_uses_full_inspection_fallback(
 
     assert workflow._strong_cached_source_match(source, master) is None
     assert workflow._cache_matches(
-        {"version": workflow._CACHE_VERSION, "source": source},
+        {"schema": workflow._CACHE_SCHEMA, "source": source},
         master,
     )
 
@@ -430,10 +430,12 @@ def test_screening_forced_rotation_recomputes_phase(tmp_path) -> None:
     result.com_row = rows
     result.com_col = cols
 
-    rotated = workflow._with_rotation(result, 35.0)
+    rotated = workflow._with_rotation(result, 35.0, False)
 
-    assert rotated.rotation_deg == 35.0
-    assert rotated.transposed is False
+    # the caller's physical rotation sits beside the fitted estimate, which is kept
+    assert rotated.scan_detector_rotation_deg == 35.0
+    assert rotated.scan_detector_rotation_mod180_deg == 17.0
+    assert rotated.detector_transposed is False
     assert rotated.dpc_phase.dtype == np.float32
     assert rotated.dpc_phase.shape == (4, 4)
 

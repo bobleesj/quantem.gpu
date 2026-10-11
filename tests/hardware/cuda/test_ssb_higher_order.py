@@ -63,7 +63,7 @@ def _session_256():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200
     ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.3, det_sampling=3.0,
-              rotation_angle_deg=0.0)
+              scan_detector_rotation_deg=0.0)
     ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
     return ssb
 

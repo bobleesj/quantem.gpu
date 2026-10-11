@@ -30,11 +30,11 @@ def test_rotation_change_keeps_every_aperture_pixel_with_anisotropic_sampling():
                     bf_radius=30.0, bf_center=(31.5, 31.5))
     aberrations = {"C10": 4.0, "C12": 1.0, "phi12": 0.4}
 
-    with SSB(counts, rotation_angle_deg=0.0, **settings) as turned:
+    with SSB(counts, scan_detector_rotation_deg=0.0, **settings) as turned:
         turned.reconstruct(aberrations=aberrations)
         turned.set_rotation(45.0)
         phase, loss = turned.preview(aberrations)
-    with SSB(counts, rotation_angle_deg=45.0, **settings) as prepared:
+    with SSB(counts, scan_detector_rotation_deg=45.0, **settings) as prepared:
         expected, expected_loss = prepared.preview(aberrations)
 
     np.testing.assert_array_equal(phase, expected)

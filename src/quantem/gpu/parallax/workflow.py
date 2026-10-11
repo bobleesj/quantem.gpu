@@ -124,7 +124,7 @@ def run(
     >>> data = io.load("scan_master.h5", backend="cuda")
     >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=0.5, semiangle_mrad=30)
     >>> ssb = SSB(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.5,
-    ...           aberrations=result.aberrations, rotation_angle_deg=result.rotation_angle_deg)
+    ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.rotation_angle_deg)
     """
     if not isinstance(data, Dataset4dstemGPU):
         raise TypeError(
@@ -227,7 +227,7 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     -------
     tuple
         ``{"C10", "C12", "phi12"}`` in nm, nm and radians (scan frame), and the
-        rotation in degrees: what ``SSB(aberrations=..., rotation_angle_deg=...)``
+        rotation in degrees: what ``SSB(aberrations=..., scan_detector_rotation_deg=...)``
         takes.
     """
     matrix = np.linalg.lstsq(angles_rad, shifts_A, rcond=None)[0]

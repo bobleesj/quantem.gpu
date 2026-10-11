@@ -186,7 +186,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     frames = load_bf_columns_mps(tmp_path)
     session = MpsSSBBackend(
         frames, voltage_kV=300, semiangle_mrad=20, scan_sampling=1.0, det_sampling=None,
-        bf_intensity_threshold=0.0, bf_center=None, bf_radius=None, rotation_angle_deg=0.0,
+        bf_intensity_threshold=0.0, bf_center=None, bf_radius=None, scan_detector_rotation_deg=0.0,
     )
     assert session._det_sampling == ((0.7, 0.8) if stored else (16.0, 16.0))
     session.close()
@@ -378,7 +378,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         bf_intensity_threshold=0.5,
         bf_center=None,
         bf_radius=None,
-        rotation_angle_deg=4.0,
+        scan_detector_rotation_deg=4.0,
     )
 
     assert engine.precision == PRECISION
@@ -1792,7 +1792,7 @@ def test_mps_fit_reads_the_prepared_session_evidence() -> None:
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
     session = MpsSSBBackend(
         data, voltage_kV=300, semiangle_mrad=21.4, scan_sampling=1.0, det_sampling=None,
-        bf_intensity_threshold=0.0, bf_center=None, bf_radius=3, rotation_angle_deg=0.0,
+        bf_intensity_threshold=0.0, bf_center=None, bf_radius=3, scan_detector_rotation_deg=0.0,
     )
     start = {"C10": 0.0, "C12": 10.0, "phi12": 0.0}
     phase, loss = session.preview(start, compute_loss=True, higher_order_magnitudes=None, higher_order_angles=None)

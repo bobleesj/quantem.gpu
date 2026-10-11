@@ -17,12 +17,11 @@ import yaml
 
 from quantem.gpu import screening
 from quantem.gpu.ssb.contract import RefineMethod
-from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCHEMA
+from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA
 from quantem.gpu.ssb.results import (
     SSBResult,
     SSBSeriesResult,
     host_array,
-    physical_rotation_deg,
 )
 from quantem.gpu.ssb.units import ABERRATION_UNIT, validate_aberrations
 
@@ -37,7 +36,7 @@ def reconstruct_series(
     voltage_kV: float | None = None,
     semiangle_mrad: float | None = None,
     scan_sampling_A: float | tuple[float, float] | None = None,
-    rotation_angle_deg: float | None = None,
+    scan_detector_rotation_deg: float | None = None,
     trials: int = 200,
     refinement: RefineMethod = "nelder-mead",
     backend: Literal["auto", "cuda", "mps"] = "auto",
@@ -67,7 +66,7 @@ def reconstruct_series(
     probe_reference_frame : int, optional
         Acquisition identifier whose fitted aberrations and rotation define
         the fixed probe. When omitted, fit each acquisition independently.
-    voltage_kV, semiangle_mrad, scan_sampling_A, rotation_angle_deg : float, optional
+    voltage_kV, semiangle_mrad, scan_sampling_A, scan_detector_rotation_deg : float, optional
         Physical microscope settings used only when prior Live metadata or
         ``dataset.yaml`` does not already provide them.
     trials : int, default 200
@@ -95,7 +94,7 @@ def reconstruct_series(
     frame_numbers = tuple(frame_number(path) for path in selected_paths)
     document = read_dataset_yaml(source_root)
     physical = {"voltage_kV": voltage_kV, "semiangle_mrad": semiangle_mrad,
-                "scan_sampling_A": scan_sampling_A, "rotation_angle_deg": rotation_angle_deg}
+                "scan_sampling_A": scan_sampling_A, "scan_detector_rotation_deg": scan_detector_rotation_deg}
 
     reference_dataset = None
     if fixed_probe:
@@ -122,7 +121,7 @@ def reconstruct_series(
                     f"Raw probe-reference acquisition not found: {source}"
                 )
             with cls.open(str(source), backend=backend,
-                          **open_settings(settings, float(settings["rotation_angle_deg"]))) as ssb:
+                          **open_settings(settings, float(settings["scan_detector_rotation_deg"]))) as ssb:
                 reference_result = ssb.find_aberrations(
                     trials=trials,
                     refinement=refinement,
@@ -132,10 +131,10 @@ def reconstruct_series(
             write_fit_metadata(reference_path, settings, reference_result)
             reference_fit = {
                 "aberrations": reference_result.aberrations,
-                "rotation_angle_deg": reference_result.physical_rotation_deg,
+                "scan_detector_rotation_deg": reference_result.scan_detector_rotation_deg,
             }
         reference_aberrations = dict(reference_fit["aberrations"])
-        reference_rotation = float(reference_fit["rotation_angle_deg"])
+        reference_rotation = float(reference_fit["scan_detector_rotation_deg"])
 
     iterator = selected_paths
     if progress:
@@ -156,7 +155,7 @@ def reconstruct_series(
         source = source_root / f"{screen_path.name}_master.h5"
         if not source.is_file():
             raise FileNotFoundError(f"Raw SSB acquisition not found: {source}")
-        rotation = reference_rotation if fixed_probe else float(settings["rotation_angle_deg"])
+        rotation = reference_rotation if fixed_probe else float(settings["scan_detector_rotation_deg"])
         with cls.open(str(source), backend=backend, **open_settings(settings, rotation)) as ssb:
             if fixed_probe:
                 result = ssb.reconstruct(
@@ -179,7 +178,7 @@ def reconstruct_series(
             screen_path,
             source,
             backend=backend,
-            rotation_angle_deg=float(settings["rotation_angle_deg"]),
+            scan_detector_rotation_deg=float(settings["scan_detector_rotation_deg"]),
         )
         bright_fields.append(bright_field)
         dark_fields.append(dark_field)
@@ -326,7 +325,7 @@ def acquisition_settings(
     voltage_kV: float | None,
     semiangle_mrad: float | None,
     scan_sampling_A: float | tuple[float, float] | None,
-    rotation_angle_deg: float | None,
+    scan_detector_rotation_deg: float | None,
 ) -> dict[str, object]:
     """Return complete physical settings for one acquisition.
 
@@ -340,7 +339,7 @@ def acquisition_settings(
         "voltage_kV": voltage_kV,
         "semiangle_mrad": semiangle_mrad,
         "scan_sampling_A": scan_sampling_A,
-        "rotation_angle_deg": rotation_angle_deg,
+        "scan_detector_rotation_deg": scan_detector_rotation_deg,
     }
     for name, value in values.items():
         if value is None:
@@ -354,19 +353,19 @@ def acquisition_settings(
             "pass the missing physical parameters to reconstruct_series()."
         )
     values["bf_radius"] = saved.get("bf_radius")
-    if rotation_angle_deg is None and saved.get("rotation_angle_deg") is not None:
-        # a saved fit stores the angle below 180 plus com_reversed; the series passes the physical angle to open()
-        values["rotation_angle_deg"] = physical_rotation_deg(float(values["rotation_angle_deg"]), bool(saved.get("com_reversed", False)))
+    # a stored fit says whether its detector axes were exchanged; SSB.open refuses a True instead of ignoring it
+    values["detector_transposed"] = bool(saved.get("detector_transposed", False))
     return values
 
 
-def open_settings(settings: dict[str, object], rotation_angle_deg: float) -> dict[str, object]:
+def open_settings(settings: dict[str, object], scan_detector_rotation_deg: float) -> dict[str, object]:
     """``SSB.open`` keywords for one acquisition's resolved settings (a saved BF radius is rounded to whole pixels)."""
     return {
         "voltage_kV": float(settings["voltage_kV"]),
         "semiangle_mrad": float(settings["semiangle_mrad"]),
         "scan_sampling_A": settings["scan_sampling_A"],
-        "rotation_angle_deg": rotation_angle_deg,
+        "scan_detector_rotation_deg": scan_detector_rotation_deg,
+        "detector_transposed": settings["detector_transposed"],
         "bf_radius": None if settings["bf_radius"] is None else round(float(settings["bf_radius"])),
     }
 
@@ -391,8 +390,8 @@ def write_fit_metadata(
         "schema": FIT_SCHEMA,
         "aberrations": dict(result.aberrations),
         "aberration_unit": ABERRATION_UNIT,
-        "rotation_angle_deg": float(result.rotation_angle_deg),
-        "com_reversed": bool(result.com_reversed),
+        "scan_detector_rotation_deg": float(result.scan_detector_rotation_deg),
+        "detector_transposed": bool(result.detector_transposed),
         "loss": None if result.loss is None else float(result.loss),
         "bf_radius": result.bf_radius,
     }
@@ -414,28 +413,26 @@ def stored_fit(config: dict[str, object], block: str = "ssb") -> dict[str, objec
 
 
 def saved_fit(screen_path: Path) -> dict[str, object] | None:
-    """Return the fitted aberrations and physical rotation (CoM reversal folded in) from Live or a GPU save; else None.
+    """Return the fitted aberrations and physical rotation from Live or a GPU save; else None.
 
     A fit of another schema is not an error and is not returned: the caller fits again, as for a folder with no fit.
     """
     config_path = screen_path / "config.json"
     if config_path.is_file():
         settings = stored_fit(json.loads(config_path.read_text()))
-        if "aberrations" in settings and "rotation_angle_deg" in settings:
-            rotation = physical_rotation_deg(float(settings["rotation_angle_deg"]), bool(settings.get("com_reversed", False)))
-            return {**settings, "aberrations": validate_aberrations(settings["aberrations"]), "aberration_unit": ABERRATION_UNIT,
-                    "rotation_angle_deg": rotation}
+        if "aberrations" in settings and "scan_detector_rotation_deg" in settings:
+            return {**settings, "aberrations": validate_aberrations(settings["aberrations"]), "aberration_unit": ABERRATION_UNIT}
     metadata_path = screen_path / "ssb-fit" / "ssb-find_aberrations.json"
     if metadata_path.is_file():
         metadata = json.loads(metadata_path.read_text())
         result = metadata.get("result") or {}
         aberrations = result.get("aberrations")
-        rotation = result.get("rotation_angle_deg")
-        if metadata.get("schema") == SCHEMA and aberrations is not None and rotation is not None:
+        rotation = result.get("scan_detector_rotation_deg")
+        if metadata.get("schema") == RESULT_SCHEMA and aberrations is not None and rotation is not None:
             return {
                 "aberrations": validate_aberrations(aberrations),
                 "aberration_unit": ABERRATION_UNIT,
-                "rotation_angle_deg": physical_rotation_deg(float(rotation), bool(result.get("com_reversed", False))),
+                "scan_detector_rotation_deg": float(rotation),
             }
     return None
 
@@ -445,7 +442,7 @@ def virtual_images(
     source: Path,
     *,
     backend: str,
-    rotation_angle_deg: float,
+    scan_detector_rotation_deg: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return the acquisition's bright- and dark-field images, from Live's screening or a fresh screening run.
 
@@ -461,7 +458,7 @@ def virtual_images(
     products = screening.prepare(
         source,
         backend=backend,
-        rotation_angle_deg=rotation_angle_deg,
+        scan_detector_rotation_deg=scan_detector_rotation_deg,
         cache=False,
     )
     screen_path.mkdir(parents=True, exist_ok=True)
@@ -502,7 +499,8 @@ def _dataset_yaml_settings(
         "voltage_kV": microscope.get("voltage_kV"),
         "semiangle_mrad": microscope.get("semiangle_mrad"),
         "scan_sampling_A": calibration.get("scan_sampling_A"),
-        "rotation_angle_deg": file_settings.get(
+        # dataset.yaml keeps its own key names until its schema changes with quantem.live
+        "scan_detector_rotation_deg": file_settings.get(
             "rotation_deg",
             microscope.get("screen_rotation_deg"),
         ),

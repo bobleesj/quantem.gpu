@@ -31,6 +31,31 @@ new `rcN` heading when that rc is published to TestPyPI.
 - The DigitalMicrograph reader no longer adds `sampling`, `units`,
   `pixel_origin` and `axis_order` to dataset metadata; its calibration is
   `scan_sampling_A` and `detector_sampling_inv_A`.
+- Scan-to-detector geometry is one physical angle and one flag.
+  `rotation_angle_deg` with `com_reversed` becomes `scan_detector_rotation_deg`
+  in [0, 360) on `SSB`, `SSB.open`, `SSB.set_rotation`,
+  `SSB.reconstruct_series`, `SSBResult`, trial records, the result signature
+  and the stored fit block; `SSBResult.physical_rotation_deg` is that same
+  attribute. `SSBResult.initial_rotation_deg` becomes
+  `initial_scan_detector_rotation_deg`, and `rotation_flipped` is removed (the
+  two angles differ when the polarity check changed the branch). `SSB` and
+  `SSBResult` gain `detector_transposed`; `SSB` raises `NotImplementedError`
+  for True.
+- A rotation fitted from the centre-of-mass curl is
+  `scan_detector_rotation_mod180_deg`: `DPCResult.rotation_deg` and
+  `ScreeningResult.rotation_deg` take that name, `DPCResult.use_transpose` and
+  `ScreeningResult.transposed` become `detector_transposed`. The argument
+  `rotation_angle_deg` of `dpc.run` and `screening.prepare` becomes
+  `scan_detector_rotation_deg`, with a new `detector_transposed`; a result
+  then holds the given angle in `scan_detector_rotation_deg` and, for
+  `dpc.run`, no `scan_detector_rotation_mod180_deg`.
+- The stored SSB fit schema is 7: `"schema": "quantem.ssb-fit/7"` in the
+  `computed.ssb` block and `"schema": "quantem.ssb-result/7"` (a string, it was
+  the number 6) in a saved result record and its signature. Stored fits and
+  results of schema 6 are treated as absent and computed again.
+- The screening cache is `<master stem>.screening-v4.npz` and carries
+  `"schema": "quantem.screening-cache/4"` in place of `"version": 3`; a
+  version-3 cache is rebuilt.
 - A stored SSB fit is read only when it carries the current fit schema:
   `"schema": "quantem.ssb-fit/6"` in the `computed.ssb` block of
   `live/screen/<dataset>/config.json`, written by `SSB.reconstruct_series`,
@@ -43,6 +68,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- A DPC or screening fit made with exchanged detector axes could only be
+  handed to SSB as a bare angle, so the exchange was dropped without a
+  message. The flag travels with the angle (`detector_transposed`) and SSB
+  refuses True.
+- The portable SSB phase record wrote the angle below 180 without the
+  reversal flag as its rotation, 180 degrees off for a reversed scan. It
+  writes the physical angle.
 - A DM4 detector step read 1/nm when loaded and 1/angstrom after a `.qem`
   round trip, a factor of 10 with a different unit string. Both now read
   1/angstrom (`detector_sampling_inv_A`); 1/Å and 1/µm axes are read too.
