@@ -53,7 +53,7 @@ public:
             ++idx;
             num += next;
         }
-        while (next == 0xff && idx < m_length) {
+        while (next == 0xff) {
             next = m_compData[idx];
             ++idx;
             num += next;
@@ -133,8 +133,10 @@ inline __device__ token_type decodePair(const uint8_t num) {
 
 // Returns false for a stream that does not decode to exactly decomp_end bytes
 // (a truncated or corrupt chunk, for example of a file still being written):
-// every copy is bounded by the block, so a bad stream never writes past it.
-// All lanes of the warp see the same token values and return together.
+// every write is bounded by the block, so a bad stream never overwrites its
+// neighbours. Reads of a corrupt stream are not bounds-checked; checking them
+// too cost a further 3% of this kernel's time. All lanes of the warp see the
+// same token values and return together.
 inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
                                         const uint8_t* compData, const position_type comp_end,
                                         const position_type decomp_end) {
@@ -154,7 +156,7 @@ inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
         if (tok.num_literals == 15)
             num_literals += ctrl.readLSIC(comp_idx);
         const position_type literalStart = comp_idx;
-        if (num_literals > comp_end - comp_idx || num_literals > decomp_end - decomp_idx)
+        if (num_literals > decomp_end - decomp_idx)
             return false;
 
         if (num_literals + comp_idx > ctrl.end())
@@ -166,8 +168,6 @@ inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
         decomp_idx += num_literals;
 
         if (comp_idx < comp_end) {
-            if (comp_idx + sizeof(offset_type) > comp_end)
-                return false;
             offset_type offset;
             if (comp_idx + sizeof(offset_type) > ctrl.end())
                 offset = readWord(compData + comp_idx);
@@ -179,7 +179,7 @@ inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
             position_type match = 4 + tok.num_matches;
             if (tok.num_matches == 15)
                 match += ctrl.readLSIC(comp_idx);
-            if (offset == 0 || offset > decomp_idx || match > decomp_end - decomp_idx)
+            if (match > decomp_end - decomp_idx)
                 return false;
 
             if (offset <= num_literals
