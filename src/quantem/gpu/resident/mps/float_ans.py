@@ -20,7 +20,7 @@ _KERNELS = Path(__file__).parent / "kernels"
 # The count codec's stream reader, without its encoder and count-product kernels.
 _READER_SOURCE = (_KERNELS / "streamed_counts.msl").read_text().split("kernel void streamed_counts_encode")[0]
 _FLOAT_SOURCE = (_KERNELS / "float_ans.msl").read_text()
-_NAMES = ("float_ans_direct", "float_ans_entropy", "float_ans_selected_entropy", "float_ans_detector")
+_NAMES = ("float_ans_direct", "float_ans_entropy", "float_ans_selected_entropy", "float_ans_detector", "float_ans_pattern_total")
 
 
 def _kernels(lanes):
@@ -61,7 +61,7 @@ class MPSFloatLanes(MPSStreamedCounts):
     def float_detector(self, mask, background=None):
         """Submit ordered selected decode/reduction pairs with one completion wait."""
         lanes = int(np.prod(self.shape[2:]))
-        entropy, reduce = _kernels(lanes)[2:]
+        entropy, reduce = _kernels(lanes)[2:4]
         output = torch.empty(self.shape[:2], dtype=torch.float32, device="mps")
         torch.mps.synchronize()
         target = tensor_buffer(output)
@@ -104,3 +104,31 @@ class MPSFloatLanes(MPSStreamedCounts):
         finally:
             release_buffer(scratch)
             release_buffer(selected)
+
+    def pattern_total(self, windows) -> np.ndarray:
+        """Sum ``(patterns, row, col)`` float32 Torch windows over their patterns; float64 on the host.
+
+        Metal has no float64, and a float32 running total is several units in
+        the last place off after 16384 patterns. The kernel keeps each detector
+        pixel's float32 sum with two orders of rounding residual
+        (Kahan-Babuska-Klein); added in float64 on the host they give the
+        float64 sum of the measurements, one value per detector pixel.
+        """
+        lanes = int(np.prod(self.shape[2:]))
+        pixels = lanes // 2
+        total = torch.zeros((pixels, 3), dtype=torch.float32, device="mps")
+        for values in windows:
+            # Pending Torch work (the decode's dark subtraction) must finish before the native queue reads.
+            torch.mps.synchronize()
+            command = metal_queue().commandBuffer()
+            encoder = command.computeCommandEncoder()
+            encoder.setComputePipelineState_(_kernels(lanes)[4])
+            encoder.setBuffer_offset_atIndex_(tensor_buffer(values), 0, 0)
+            encoder.setBuffer_offset_atIndex_(tensor_buffer(total), 0, 1)
+            parameters = np.asarray([len(values), pixels], np.uint32).tobytes()
+            encoder.setBytes_length_atIndex_(parameters, len(parameters), 2)
+            self._dispatch_threads(encoder, pixels)
+            encoder.endEncoding()
+            complete_command(command, "Float ANS pattern total")
+            del values
+        return total.cpu().numpy().astype(np.float64).sum(axis=1)
