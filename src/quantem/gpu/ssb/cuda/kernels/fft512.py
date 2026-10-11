@@ -228,7 +228,7 @@ __global__ void ifft512_rows_fused_pk_t128_mr4_packed(
 // Full-aberration variant of ifft512_rows_fused_pk_t128_mr4_packed.
 // Structurally identical but calls gamma_mul_pk_onthefly_full with the
 // host-precomputed Chebyshev-ready coefficient arrays (see chi_full docs
-// in fft_common.py) instead of raw (mags, angles).  Three-parameter kernel is
+// in kernels/common.py) instead of raw (mags, angles).  Three-parameter kernel is
 // preserved for the Optuna 3-param hot path.
 __global__ void ifft512_rows_fused_pk_full_t128_mr4_packed(
     const float* __restrict__ kx_bf,

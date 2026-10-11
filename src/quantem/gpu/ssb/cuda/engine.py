@@ -409,12 +409,11 @@ class SSBEngine:
             self._colvar_group = self._custom_fft._colvar_group
         # Work buffers. _result_buffer is (num_bf, ny, nx) complex64 and
         # holds the corrected planes of every exact loss and reconstruction. On small scans
-        # (e.g. a 256x256 scan, ~600 MB) we pre-allocate it at engine init
-        # for a faster reconstruct call path. On large scans (e.g. held-out data
-        # 512x512, ~19 GB) we defer the allocation - pre-allocating blows
-        # the L40S 48 GB budget during optimize for no reason, since the
-        # chunked reconstruct path will allocate a small chunk buffer
-        # instead.
+        # (e.g. a 256x256 scan, ~600 MB) it is allocated here for a faster
+        # reconstruct call path. On large scans (512x512, ~19 GB) the
+        # allocation is deferred: the chunked paths allocate a small chunk
+        # buffer instead, and the full one would hold that memory through a
+        # whole fit for nothing.
         shape = (num_bf, ny, nx)
         full_bytes = num_bf * ny * nx * 8
         if full_bytes < _STAGING_LIMIT_BYTES:
@@ -449,14 +448,14 @@ class SSBEngine:
         )
         return cos2phi12, sin2phi12
 
-    def _fill_probe_full(self, mags_m: cp.ndarray, angles_rad: cp.ndarray) -> None:
+    def _fill_probe_full(self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray) -> None:
         """``_fill_probe`` for all 14 Krivanek aberrations (the higher-order preview path).
 
         The Chebyshev-ready coefficient arrays are packed on the host once per call.
         """
         cache = self._cache
         probe = self._probe_buffer(int(cache["num_bf"]))
-        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(mags_m, angles_rad)
+        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(magnitudes_A, angles_rad)
         kfactor = cp.float32(2.0 * math.pi / cache["wavelength"])
         pk_kernel_full(
             cache["kx_bf"], cache["ky_bf"], cache["aperture_k_1d"], cp.float32(cache["wavelength"]), kfactor,
@@ -585,10 +584,10 @@ class SSBEngine:
         if not (ny == 128 and nx == 128 and num_bf > 1024):
             return self._reconstruct_object_fourier_sum(C10, C12, phi12)
         if full_bytes > _STAGING_LIMIT_BYTES:
-            # Target ~2 GB chunk transient. Speed is flat from 64..9070 BF
-            # per chunk on Blackwell (kernel-launch overhead negligible) so
-            # we pick the smaller chunk for maximum L40S headroom. Reference agreement
-            # is at the float32 summation-order floor (~1e-5 max|Δ|).
+            # Target ~2 GB chunk transient. Speed is flat from 64 to 9070 BF
+            # per chunk (launch overhead negligible), so the smaller chunk keeps
+            # the most memory free. Reference agreement is at the float32
+            # summation-order floor (~1e-5 max|Δ|).
             chunk_bf = max(1, _CHUNK_TARGET_BYTES // (ny * nx * 8))
             return self._run_correction_pipeline_chunked(C10, C12, phi12, chunk_bf)
         self._run_correction_pipeline(C10, C12, phi12)
@@ -599,7 +598,7 @@ class SSBEngine:
 
         Computes ``mean_bf(angle(corrected[b]))`` - the average of the
         per-BF-pixel phase images. For large scans (>6 GB full staging
-        buffer) we chunk on the BF axis to stay under the L40S budget;
+        buffer) the BF axis is chunked to bound the transient memory;
         mathematically equivalent via sum-then-divide.
 
         Returns
@@ -619,7 +618,7 @@ class SSBEngine:
     # =====================================================================
 
     def _run_correction_pipeline_full(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
     ) -> None:
         """Full-aberration correction pipeline.  Mirrors
         :meth:`_run_correction_pipeline` but evaluates ``chi_full`` with all
@@ -627,26 +626,26 @@ class SSBEngine:
         Result lands in ``self._corrected_buffer``.
         """
         self._size_result_buffer(*self._bf_grid())
-        self._fill_probe_full(mags_m, angles_rad)
+        self._fill_probe_full(magnitudes_A, angles_rad)
         self._custom_fft.ifft2_inplace_fused_pk_full(
             self._result_buffer,
             self.G_qk,
             self._cache,
             self._pk_buffer,
-            mags_m, angles_rad,
+            magnitudes_A, angles_rad,
             self._dc_value_host,
         )
         self._corrected_buffer = self._result_buffer
 
     def reconstruct_full(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
     ) -> cp.ndarray:
         """Reconstruct mean phase with all 14 Krivanek aberrations.
 
         Parameters
         ----------
-        mags_m : cp.ndarray
-            Aberration magnitudes (meters), shape (14,), float32.
+        magnitudes_A : cp.ndarray
+            Aberration magnitudes in Angstrom, shape (14,), float32.
             Order: C10, C12, C21, C23, C30, C32, C34, C41, C43, C45,
             C50, C52, C54, C56.
         angles_rad : cp.ndarray
@@ -664,7 +663,7 @@ class SSBEngine:
         in the two-term chunked path is 2-term-only, so this path always
         materializes each chunk before phase reduction.
         """
-        mags_m = cp.asarray(mags_m, dtype=cp.float32)
+        magnitudes_A = cp.asarray(magnitudes_A, dtype=cp.float32)
         angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
         num_bf, ny, nx = self._bf_grid()
         if self._custom_fft._size == 128:
@@ -673,12 +672,12 @@ class SSBEngine:
                 "higher-order reconstruction needs a size-specific full-aberration path."
             )
         if num_bf * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._reconstruct_full_chunked(mags_m, angles_rad, compute_loss=False)
-        self._run_correction_pipeline_full(mags_m, angles_rad)
+            return self._reconstruct_full_chunked(magnitudes_A, angles_rad, compute_loss=False)
+        self._run_correction_pipeline_full(magnitudes_A, angles_rad)
         return self._mean_phase_of_corrected(num_bf, ny, nx)
 
     def reconstruct_full_with_loss(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
     ) -> tuple[cp.ndarray, float]:
         """Full-aberration reconstruct + variance loss in a single pass.
 
@@ -694,7 +693,7 @@ class SSBEngine:
         Falls back to a chunked path for scans whose full staging buffer is
         larger than 6 GB.
         """
-        mags_m = cp.asarray(mags_m, dtype=cp.float32)
+        magnitudes_A = cp.asarray(magnitudes_A, dtype=cp.float32)
         angles_rad = cp.asarray(angles_rad, dtype=cp.float32)
         num_bf, ny, nx = self._bf_grid()
         if self._custom_fft._size == 128:
@@ -703,12 +702,12 @@ class SSBEngine:
                 "higher-order loss needs a size-specific full-aberration path."
             )
         if num_bf * ny * nx * 8 > _STAGING_LIMIT_BYTES:
-            return self._reconstruct_full_chunked(mags_m, angles_rad, compute_loss=True)
-        self._run_correction_pipeline_full(mags_m, angles_rad)
+            return self._reconstruct_full_chunked(magnitudes_A, angles_rad, compute_loss=True)
+        self._run_correction_pipeline_full(magnitudes_A, angles_rad)
         return self._mean_phase_and_loss_of_corrected(num_bf, ny, nx)
 
     def _reconstruct_full_chunked(
-        self, mags_m: cp.ndarray, angles_rad: cp.ndarray, *, compute_loss: bool,
+        self, magnitudes_A: cp.ndarray, angles_rad: cp.ndarray, *, compute_loss: bool,
     ):
         """Chunked full-aberration mean phase (and loss) for scans whose corrected planes exceed 6 GB.
 
@@ -718,7 +717,7 @@ class SSBEngine:
         Returns the mean phase, or (mean phase, loss) when ``compute_loss``.
         """
         num_bf, ny, nx = self._bf_grid()
-        self._fill_probe_full(mags_m, angles_rad)
+        self._fill_probe_full(magnitudes_A, angles_rad)
         chunk_bf = max(1, _CHUNK_TARGET_BYTES // (ny * nx * 8))
         self._size_result_buffer(chunk_bf, ny, nx)
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
@@ -731,7 +730,7 @@ class SSBEngine:
                 self.G_qk[bf_start:bf_end],
                 self._chunk_cache(bf_start, bf_end),
                 self._pk_buffer[bf_start:bf_end],
-                mags_m, angles_rad,
+                magnitudes_A, angles_rad,
                 self._dc_value_host,
             )
             angles_chunk = cp.angle(chunk_planes)

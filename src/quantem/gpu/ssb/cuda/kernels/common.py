@@ -275,7 +275,7 @@ __device__ __forceinline__ float2 gamma_mul_pk_cartesian_onthefly(
 //
 // ---- Input array layout (all length 14) ----
 //
-//     abr_mag_scaled[i] = mags_m[i] / (n_i + 1)       - scale baked in
+//     abr_mag_scaled[i] = magnitudes_A[i] / (n_i + 1)       - scale baked in
 //     abr_cm[i]         = cos(m_i · angles_rad[i])    - host-precomputed
 //     abr_sm[i]         = sin(m_i · angles_rad[i])    - host-precomputed
 //
@@ -544,24 +544,24 @@ _ABR_M_VALUES = np.asarray(
 
 
 def pack_aberration_coefs(
-    mags_m: cp.ndarray, angles_rad: cp.ndarray,
+    magnitudes_A: cp.ndarray, angles_rad: cp.ndarray,
 ) -> tuple[cp.ndarray, cp.ndarray, cp.ndarray]:
     """Precompute Chebyshev-ready aberration coefficient arrays.
 
-    Given raw ``mags_m[14]`` and ``angles_rad[14]`` produces three (14,)
+    Given raw ``magnitudes_A[14]`` and ``angles_rad[14]`` produces three (14,)
     float32 CuPy arrays that the CUDA ``chi_full`` device function
     consumes directly:
 
-    - ``abr_mag_scaled[i] = mags_m[i] / (n_i + 1)``
+    - ``abr_mag_scaled[i] = magnitudes_A[i] / (n_i + 1)``
     - ``abr_cm[i]         = cos(m_i · angles_rad[i])``   (=1.0 for m=0)
     - ``abr_sm[i]         = sin(m_i · angles_rad[i])``   (=0.0 for m=0)
 
     Cost: 14 cos + 14 sin on the host plus a 168-byte DtoH copy - negligible
     compared to the per-pixel per-BF work inside the fused FFT kernel.
     """
-    if mags_m.shape != (14,) or angles_rad.shape != (14,):
-        raise ValueError("mags_m and angles_rad must have shape (14,)")
-    host_magnitudes = cp.asnumpy(mags_m).astype(np.float32, copy=False)
+    if magnitudes_A.shape != (14,) or angles_rad.shape != (14,):
+        raise ValueError("magnitudes_A and angles_rad must have shape (14,)")
+    host_magnitudes = cp.asnumpy(magnitudes_A).astype(np.float32, copy=False)
     host_angles = cp.asnumpy(angles_rad).astype(np.float32, copy=False)
     mag_scaled = host_magnitudes * _ABR_N_PLUS_ONE_INV
     theta = _ABR_M_VALUES * host_angles
@@ -725,13 +725,13 @@ class CustomFFTBase:
         G_qk: cp.ndarray,
         cache: dict,
         pk: cp.ndarray,
-        mags_m: cp.ndarray,
+        magnitudes_A: cp.ndarray,
         angles_rad: cp.ndarray,
         dc_value: complex,
     ) -> None:
         """Full-aberration version of ``ifft2_inplace_fused_pk``.
 
-        Takes the raw ``mags_m``, ``angles_rad`` arrays (shape (14,)) from
+        Takes the raw ``magnitudes_A``, ``angles_rad`` arrays (shape (14,)) from
         the caller - same public API as before.  Internally precomputes the
         Chebyshev-ready packed arrays and hands them to the `_full` row
         kernel, which replaces 14 ``cosf`` calls per chi evaluation with
@@ -744,11 +744,11 @@ class CustomFFTBase:
             )
         N = self._size
         num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        if mags_m.dtype != cp.float32 or angles_rad.dtype != cp.float32:
-            raise ValueError("mags_m and angles_rad must be float32 CuPy arrays")
-        if mags_m.shape != (14,) or angles_rad.shape != (14,):
-            raise ValueError("mags_m and angles_rad must have shape (14,)")
-        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(mags_m, angles_rad)
+        if magnitudes_A.dtype != cp.float32 or angles_rad.dtype != cp.float32:
+            raise ValueError("magnitudes_A and angles_rad must be float32 CuPy arrays")
+        if magnitudes_A.shape != (14,) or angles_rad.shape != (14,):
+            raise ValueError("magnitudes_A and angles_rad must have shape (14,)")
+        abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(magnitudes_A, angles_rad)
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
         grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
