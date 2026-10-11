@@ -12,7 +12,7 @@ import quantem
 before = set(sys.modules)
 from quantem.gpu import io
 from quantem.gpu.io.hdf5 import mps
-assert io.__all__ == ['Dataset4dstemGPU', 'discover', 'inspect', 'load', 'save']
+assert io.__all__ == ['DataRepresentation', 'Dataset4dstemGPU', 'PairedLoader', 'discover', 'inspect', 'load', 'save']
 added = set(sys.modules) - before
 assert not any(name == 'Metal' or name.startswith('Metal.') for name in added)
 assert not any(name == 'cupy' or name.startswith('cupy.') for name in added)
