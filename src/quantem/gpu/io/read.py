@@ -1,7 +1,8 @@
 """Bounded reads of a loaded acquisition as Torch tensors on its own GPU.
 
-A complete scan rarely fits as a dense array, so a region is decoded in scan
-blocks of at most 256 MiB and only the requested detector pixels are kept.
+A complete scan rarely fits as a dense array, so only the requested detector
+pixels are kept: whole scan rows of exact CUDA counts decode straight into the
+result, and every other region in scan blocks of at most 256 MiB.
 """
 
 import math
@@ -64,6 +65,15 @@ def read(data, *, scan_region=None, detector_region=None):
         selected_region = (
             detector_row0, detector_row1, detector_column0, detector_column1
         )
+        if column0 == 0 and column1 == shape[1]:
+            # Whole scan rows are one consecutive scan range, which the decoder writes
+            # cropped into its output: that output is the result. Block by block, every
+            # count was decoded into scratch and copied again (an SSB bright-field crop
+            # of a 512 x 512 scan spent 45% of its read on the copies).
+            counts = payload.decode_scan_range_device(
+                row0 * shape[1], row1 * shape[1], detector_region=selected_region
+            )
+            return torch_value(counts).reshape(output_shape)
     frame_shape = output_shape[2:] if selected_region else shape[2:]
     frame_bytes = math.prod(frame_shape) * np.dtype(data.dtype).itemsize
     decode_bytes = (
