@@ -105,3 +105,29 @@ def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
             assert max(decoded) <= read._BLOCK_BYTES
     finally:
         loaded.close()
+
+
+@pytest.mark.parametrize("layout", ["streamed", "paired"])
+def test_reads_of_scans_not_held_raise(layout):
+    """Scans not yet appended, freed, or released raise instead of returning stale device memory."""
+    from quantem.gpu.resident.cuda.paired import PairedCounts
+
+    shape = (4, 512, 8, 8)
+    values = (cp.arange(np.prod(shape), dtype=cp.uint64) % 4093).astype(cp.uint16)
+    flat = values.reshape(-1, *shape[2:])
+    source = (PairedCounts if layout == "paired" else StreamedCounts)(shape, "uint16")
+    for first in (0, 512, 1024):
+        source.append(cp.ascontiguousarray(flat[first:first + 512]))
+    # Fill the memory pool with a pattern a stale read would return.
+    cp.full(flat.shape, 0xABCD, cp.uint16)
+    assert bool(cp.all(source.decode_scan_range_device(1000, 1536) == flat[1000:1536]))
+    for first, stop in ((1500, 1600), (1536, 2048)):
+        with pytest.raises(ValueError):
+            source.decode_scan_range_device(first, stop)
+    source.release_scans_before(512)
+    with pytest.raises(ValueError):
+        source.decode_scan_range_device(100, 600)
+    assert bool(cp.all(source.decode_scan_range_device(512, 600) == flat[512:600]))
+    source.release()
+    with pytest.raises(ValueError):
+        source.decode_scan_range_device(600, 700)

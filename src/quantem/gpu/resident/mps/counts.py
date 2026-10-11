@@ -303,15 +303,29 @@ class MPSStreamedCounts:
         self._dispatch_threads(encoder, stop_stream - first_stream)
         encoder.endEncoding()
 
+    def check_readable(self, first: int, stop: int) -> None:
+        """Refuse a scan range this source does not hold.
+
+        A decode writes only the scans its chunks hold, so a scan not yet
+        appended (an acquisition still arriving), freed by
+        ``release_scans_before`` or dropped by ``release`` would come back as
+        whatever the output memory held before.
+        """
+        self._check_resident()
+        if not 0 <= first < stop <= self.ready_scans:
+            raise ValueError(
+                f"Scan range ({first}, {stop}) is not resident; scans 0 to "
+                f"{self.ready_scans} of {math.prod(self.shape[:2])} are loaded."
+            )
+        if first < self.released_scans:
+            raise ValueError(
+                f"Scans before {self.released_scans} were released; load the source again to read them."
+            )
+
     def decode_scan_range_device(self, first: int, stop: int):
         """Decode a contiguous scan range into one caller-owned Metal buffer."""
-        self._check_resident()
         first, stop = int(first), int(stop)
-        scan_count = math.prod(self.shape[:2])
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count})."
-            )
+        self.check_readable(first, stop)
         output = MetalArray((stop - first, *self.shape[2:]), self.dtype)
         try:
             command = metal_queue().commandBuffer()
@@ -337,13 +351,8 @@ class MPSStreamedCounts:
 
     def _decode_scan_range_torch(self, first: int, stop: int):
         """Decode directly into independently owned Torch accelerator storage."""
-        self._check_resident()
         first, stop = int(first), int(stop)
-        scan_count = math.prod(self.shape[:2])
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count})."
-            )
+        self.check_readable(first, stop)
         output = torch.empty(
             (stop - first, *self.shape[2:]),
             dtype=getattr(torch, self.dtype.name),
@@ -367,17 +376,6 @@ class MPSStreamedCounts:
 
     def _encode_scan_range_into(self, command, first: int, stop: int, output):
         """Append an exact range decode to an existing Metal command buffer."""
-        self._check_resident()
-        first, stop = int(first), int(stop)
-        scan_count = math.prod(self.shape[:2])
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count})."
-            )
-        if first < self.released_scans:
-            raise ValueError(
-                f"Scans before {self.released_scans} were released; load the source again to read them."
-            )
         self._clear_errors()
         for chunk in self.chunks:
             overlap_first = max(first, chunk.first)

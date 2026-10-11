@@ -36,6 +36,8 @@ class CUDAFloatLanes(counts.StreamedCounts):
         """
         import cupy as cp
 
+        first, stop = int(first), int(stop)
+        self.check_readable(first, stop)
         owns_errors = errors is None
         with cp.cuda.Device(self.device):
             lanes = int(np.prod(self.shape[2:]))

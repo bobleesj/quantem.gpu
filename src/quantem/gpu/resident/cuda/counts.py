@@ -281,19 +281,8 @@ class StreamedCounts:
         """Decode a contiguous scan range without expanding the acquisition."""
         import cupy as cp
 
-        if self.is_released:
-            raise ValueError("The resident source has been released.")
-        scan_count = math.prod(self.shape[:2])
         first, stop = int(first), int(stop)
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count}); "
-                f"got ({first}, {stop})."
-            )
-        if first < self.released_scans:
-            raise ValueError(
-                f"Scans before {self.released_scans} were released; load the source again to read them."
-            )
+        self.check_readable(first, stop)
         owns_errors = errors is None
         with cp.cuda.Device(self.device):
             errors = error_flags(errors, self.device)
@@ -342,6 +331,26 @@ class StreamedCounts:
             if owns_errors and int(errors.get()[0]):
                 raise ValueError("An encoded count stream failed reconstruction.")
             return output
+
+    def check_readable(self, first: int, stop: int) -> None:
+        """Refuse a scan range this source does not hold.
+
+        A decode writes only the scans its chunks hold, so a scan not yet
+        appended (an acquisition still arriving), freed by
+        ``release_scans_before`` or dropped by ``release`` would come back as
+        whatever the output memory held before.
+        """
+        if self.is_released:
+            raise ValueError("The resident source has been released.")
+        if not 0 <= first < stop <= self.ready_scans:
+            raise ValueError(
+                f"Scan range ({first}, {stop}) is not resident; scans 0 to "
+                f"{self.ready_scans} of {math.prod(self.shape[:2])} are loaded."
+            )
+        if first < self.released_scans:
+            raise ValueError(
+                f"Scans before {self.released_scans} were released; load the source again to read them."
+            )
 
     def detector_total_device(self):
         """Return the exact valid-pixel detector sum without dense expansion."""
