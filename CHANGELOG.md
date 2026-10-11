@@ -6,6 +6,128 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc16 - 2026-10-11
+
+### Fixed
+
+- Reading scans that a resident has not yet received, or has already released,
+  raises instead of returning uninitialized memory (CUDA streamed and paired
+  counts, Metal counts).
+- A detector session over a CuPy array that changes in place returns current
+  dark-field and centre-of-mass values. A dense mask that selects more than
+  half of the detector sums its selected pixels on each call, and the dense
+  centre of mass is recomputed on each call; rc15 reused per-frame totals and
+  the field cached at the first call. On 65536 frames of 192 x 192 uint16 a DF
+  image takes 7.3 ms (3.1 ms in rc15) and a repeated centre of mass 7.9 ms.
+- A Metal acquisition dropped without `close()` returns its GPU memory. Metal
+  detector sessions on integer frames no longer build a binned, clipped copy in
+  the background.
+- `io.save` to a narrower integer dtype refuses counts that do not fit. It used
+  to wrap on CUDA and CPU and clamp on Metal.
+- Schema-2 calibration overrides reopen with their exact recorded values
+  (0.35 came back as 0.35000000000000003).
+- CUDA decode batches above 4 GiB keep every frame in place. A truncated or
+  corrupt LZ4 chunk raises `ValueError` on CUDA instead of decoding to garbage,
+  and the CUDA LZ4 decoder bounds its reads as well as its writes: damaged
+  bytes inside intact framing used to end the process's CUDA context. The
+  frame reader refuses a chunk whose block lengths do not end at the chunk's
+  last byte (a file still being written, a bad copy); the unchecked walk read
+  past the chunk. The paired loader stops at a block length that points past
+  its chunk.
+- A failed CUDA HDF5 load frees the chunks it already encoded. Prepared `/dp`
+  HDF5 stacks load on CUDA and Metal. uint32 HDF5 datasets with flagged-pixel
+  markers load on Metal. `release_rows_before` frees rows of float
+  acquisitions. Frame sums of uint16 Torch MPS tensors are exact.
+- `parallax.run(fit_aberrations=True)` measures beam angles from the
+  bright-field centroid with SSB's detector calibration. Earlier values were
+  wrong for any disk not at the detector corner.
+- CUDA SSB compiles its FFT kernels per GPU and computes on the acquisition's
+  GPU. A fit on a second GPU previously returned wrong aberrations with loss 0.
+- A CUDA reduced-BF preview context follows a `set_rotation` made after the
+  context was created. On MPS, `set_rotation` with anisotropic `det_sampling`
+  keeps every aperture pixel.
+- `search_ranges` accepts `[low, high]` lists for `phi12_deg` on CUDA. `SSB`
+  accepts NumPy scalar `scan_sampling_A` and `det_sampling`. The tilt fit no
+  longer changes the process-wide warning filters.
+- Browser: the product-first virtual image of uint16 HDF5 data summed only the
+  low 8 bits of each count. Virtual images and centres of mass over masks of
+  one to three pixels also counted detector pixel 0. Dense virtual images
+  accumulate integer counts exactly and round once. SSB at a bright-field
+  count below the loaded one paired resident G(q,k) chunks with the wrong
+  geometry. Bitshuffle-LZ4 decoding of frames that are not a whole number of
+  blocks (for example 96 x 96 uint16) read the final block with the wrong
+  plane stride; frames whose pixel count is not a multiple of 8 are refused
+  with a message. The `.qem` centre of mass rounds the exact moment quotient
+  once.
+
+### Changed
+
+- `parallax.run` takes `scan_sampling_A` plus `semiangle_mrad` or
+  `det_sampling`. With `fit_aberrations=True` it returns C10 and C12 in nm,
+  phi12 in radians (scan frame) and `ParallaxResult.rotation_angle_deg`, in
+  the convention `SSB` takes. Parallax coarse alignment bins the detector
+  around the disk centre.
+- CUDA `find_aberrations(tilt=True)` repeats bit for bit for a fixed seed, and
+  its objective is about 5% faster.
+- `movie.save_mp4(backend="auto")` prints one line when it uses the CPU
+  writer. `gpu_id` is an explicit keyword, and other keyword options raise.
+- `detector.fit_probe` accepts an acquisition and raises `ValueError` when the
+  pattern has no disk. `block_stride` is refused for byte-rANS series.
+  `device.release_cached_memory()` also empties the Torch caches.
+  `io.__all__` lists `DataRepresentation` and `PairedLoader`. Array loads
+  record `detector_mask_policy` and `flagged_markers_stored_as_zero`.
+  `load_timings` keeps the encode, index and ready times only.
+- `SSBSeriesResult.metadata()` returns a DataFrame. MPS BF-column exports
+  declare their columns in the calibration.
+- The CUDA LZ4 decode kernel takes about 11% longer than in rc15 with its
+  write and read bounds (0.407 ms to 0.451 ms for 4096 frames of 192 x 192
+  uint16 on an RTX PRO 6000); a whole decode, which the host copy dominates,
+  is unchanged within run-to-run noise.
+- Browser: the centre-of-mass shader divides at one call site, a restructuring
+  intended for Direct3D FXC; values are unchanged on NVIDIA and the FXC
+  compile has not been checked. SSB builds resident G(q,k) one chunk at a time
+  (build peak 252 MB to 177 MB on the 1793-column gate; setup 742 ms to 471 ms
+  on a 256 x 256 scan). The product-first virtual image indexes masked blocks
+  in place (ADF on 80000 frames about 500 ms to about 200 ms).
+- Packaging: `jinja2` is no longer a dependency. `movie` installs
+  PyNvVideoCodec on Linux and Windows. `[dev]` installs
+  `opencv-python-headless` and no longer installs `websocket-client`. The
+  source distribution includes `scripts/`.
+- Documentation: install pages no longer pin rc8; the SSB API states that CUDA
+  refuses scans larger than 1024 x 1024; native Swift/Metal SSB is documented
+  for 128, 256 and 512 scans; dated records are listed in the navigation.
+
+### Removed
+
+- `detector.virtual`; `io.load(scan_order=...)` and list-valued precision
+  `scan_region`; `io.save(compression_level=...)` and the non-LZ4 Arina
+  codecs; joint series of dense CuPy arrays; `device.resolve("webgpu")` and
+  `Dataset4dstemGPU.residency`; reading version-1 precision exports; the
+  `QUANTEM_GPU_HDF5_TRUST_FRAME_SOURCE_CACHE` switch.
+- `parallax.run(voltage_kV=...)`, `ParallaxResult.to_ssb_aberrations()` and
+  the `rotation_angle_deg()` method. `SSB(backend="webgpu")`.
+  `SSBSeriesResult.show()`: quantem.gpu no longer imports quantem.widget.
+- Browser: the SSB compressed-HDF5 source path, the rANS export-folder
+  loaders, the scan quarter-turn kernel, `webgpu/index.ts`, `dense.ts`, the
+  `loadLocalH5Master` alias, the frame-index manifest, DPC magnitude,
+  experimental bslz4 decoders and upload routes, and SSB debug globals.
+- The benchmark registry (`benchmarks/`), the profile matrix, the
+  backend-status generator, the documentation fingerprint manifest and the
+  pages generated from them. Measured numbers remain in the documentation as
+  dated tables. `scripts/benchmark_webgpu_h5_browser.py`,
+  `benchmark_webgpu_h5_product_browser.py`, `webgpu_cdp.py`,
+  `benchmark_detector_products.py` and `audit_android_vulkan_fixture.py`.
+
+### Added
+
+- `plot` extra (Matplotlib, IPython, QuantEM) for `SSBResult.show`,
+  `SSB.show_trials` and the rotation histograms.
+- `scripts/benchmark_ssb.py` and `tests/benchmarks/data_paths.py` time the hot
+  paths and print output digests. The rc15 to rc16 comparison is recorded in
+  `docs/maintainer/2026-10-11-lz4-read-bounds-and-chunk-walk.md`.
+- Headed browser gates for dense HDF5 decode, product-first and resident sums
+  against raw counts, SSB bright-field subsets, and the SSB build peak.
+
 ## rc15 - 2026-10-09
 
 - WebGPU loads a served `.qem` through uncached HTTP ranges (`qemHttpFiles`)
