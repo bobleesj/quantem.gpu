@@ -1029,9 +1029,6 @@ function sliceCompactedBslz4Frames(spec: Bslz4MaskedSumSpec, frameStart = 0, fra
 }
 
 function compactSelectedBslz4Blocks(spec: Bslz4MaskedSumSpec, blockIds: number[], frameStart = 0, frameCount = spec.nFrames): Bslz4MaskedSumSpec {
-  if (!spec.selectedBlockIds) {
-    return { ...compactBslz4Blocks(spec, blockIds, frameStart, frameCount), startScan: spec.startScan };
-  }
   if (sameBlockIds(spec.selectedBlockIds, blockIds)) {
     return sliceCompactedBslz4Frames(spec, frameStart, frameCount);
   }
@@ -1058,12 +1055,26 @@ function compactSelectedBslz4Blocks(spec: Bslz4MaskedSumSpec, blockIds: number[]
   };
 }
 
-function compactBslz4Blocks(spec: Bslz4Spec, blockIds: number[], frameStart = 0, frameCount = spec.nFrames): Bslz4Spec {
-  if (blockIds.length === 0) return { ...spec, compressed: new Uint8Array(0), blockMeta: new Uint32Array(2), nBlocksPerFrame: 0 };
-  const firstFrame = Math.max(0, Math.min(spec.nFrames, Math.round(frameStart)));
-  const nFrames = Math.max(0, Math.min(spec.nFrames - firstFrame, Math.round(frameCount)));
-  const { compressed, blockMeta } = gatherCompressedBlocks(spec, blockIds, firstFrame, nFrames);
-  return { ...spec, compressed, blockMeta, nFrames, nBlocksPerFrame: blockIds.length };
+/** Index the detector blocks `blockIds` of frames [frameStart, frameStart + frameCount) in place:
+ * the block table points into one zero-copy range of the source bytes. Uploading that range
+ * costs less than gathering every selected block into a new array on the CPU. The range starts
+ * 8-byte aligned in its buffer so the staging copy takes the wide path. */
+function indexBslz4Blocks(spec: Bslz4Spec, blockIds: number[], frameStart: number, frameCount: number): Bslz4Spec {
+  const blockMeta = new Uint32Array(frameCount * blockIds.length * 2);
+  let rangeStart = Number.POSITIVE_INFINITY, rangeEnd = 0;
+  for (let f = 0; f < frameCount; f++) {
+    for (let bi = 0; bi < blockIds.length; bi++) {
+      const src = ((frameStart + f) * spec.nBlocksPerFrame + blockIds[bi]) * 2;
+      const dst = (f * blockIds.length + bi) * 2;
+      blockMeta[dst] = spec.blockMeta[src];
+      blockMeta[dst + 1] = spec.blockMeta[src + 1];
+      rangeStart = Math.min(rangeStart, blockMeta[dst]);
+      rangeEnd = Math.max(rangeEnd, blockMeta[dst] + blockMeta[dst + 1]);
+    }
+  }
+  rangeStart -= Math.min(rangeStart, (spec.compressed.byteOffset + rangeStart) & 7);
+  for (let i = 0; i < blockMeta.length; i += 2) blockMeta[i] -= rangeStart;
+  return { ...spec, compressed: spec.compressed.subarray(rangeStart, rangeEnd), blockMeta, nFrames: frameCount, nBlocksPerFrame: blockIds.length };
 }
 
 /** Copy blocks `sourceBlocks` (positions within each source frame) of `nFrames` frames
@@ -1230,7 +1241,7 @@ export async function decodeBslz4MaskedSumBatch(
       if (spec.selectedBlockIds) {
         return { ...compactSelectedBslz4Blocks(spec, selected.blockIds, frameStart, frameCount), startScan: spec.startScan };
       }
-      return { ...compactBslz4Blocks(spec, selected.blockIds, frameStart, frameCount), startScan: spec.startScan };
+      return { ...indexBslz4Blocks(spec, selected.blockIds, frameStart, frameCount), startScan: spec.startScan };
     });
     const packMs = performance.now() - tPack;
     const compressedMB = compacted.reduce((n, s) => n + s.compressed.byteLength, 0) / 1e6;
