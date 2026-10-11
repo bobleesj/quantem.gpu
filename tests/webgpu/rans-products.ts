@@ -107,13 +107,13 @@ async function runProducts(device: GPUDevice): Promise<Record<string, number | b
         const mask = new Uint32Array(12).fill(1); mask[2] = 0;
         compare(`sum ${tilt}`, await compute.maskedSum(mask), await dense.maskedSum(mask));
         const com = await compute.maskedCoM(mask, 4); const baseline = await dense.maskedCoM(mask, 4);
-        results[`com_row_${tilt}`] = compare("CoM row", com.comY, baseline.comY, 1e-6);
-        results[`com_col_${tilt}`] = compare("CoM col", com.comX, baseline.comX, 1e-6);
+        results[`com_row_${tilt}`] = compare("CoM row", com.comY, baseline.comY);
+        results[`com_col_${tilt}`] = compare("CoM col", com.comX, baseline.comX);
         for (const component of ["row", "col"] as const) {
-          results[`dpc_${component}_${tilt}`] = compare(`DPC ${component}`, await compute.maskedDpc(mask, 4, component), await dense.maskedDpc(mask, 4, component), 1e-6);
+          results[`dpc_${component}_${tilt}`] = compare(`DPC ${component}`, await compute.maskedDpc(mask, 4, component), await dense.maskedDpc(mask, 4, component));
         }
         for (const [rotation, transpose] of [[0, false], [37, true]] as const) {
-          results[`idpc_${tilt}_${rotation}`] = compare("iDPC", await compute.maskedIDpc(mask, 4, 32, 32, rotation, transpose), await dense.maskedIDpc(mask, 4, 32, 32, rotation, transpose), 1e-6);
+          results[`idpc_${tilt}_${rotation}`] = compare("iDPC", await compute.maskedIDpc(mask, 4, 32, 32, rotation, transpose), await dense.maskedIDpc(mask, 4, 32, 32, rotation, transpose));
         }
         const singlePixel = new Uint32Array(12); singlePixel[5] = 1;
         const point = await compute.maskedCoM(singlePixel, 4);
