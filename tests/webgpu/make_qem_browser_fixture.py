@@ -79,7 +79,8 @@ def generate_h5(directory: Path) -> None:
     the raw values as ``<name>.bin`` for exact host sums. Counts above 255, the dtype maximum
     on every pixel of one frame, and a masked hot pixel make a decoder that drops high bit
     planes, clips, or keeps the masked pixel fail. uint32 and float32 cover the 32-plane
-    decoders.
+    decoders. 96 x 96 frames are not a whole number of bitshuffle blocks, so each ends in a
+    shorter block with its own plane stride.
     """
     directory.mkdir(parents=True, exist_ok=True)
     records = []
@@ -89,6 +90,10 @@ def generate_h5(directory: Path) -> None:
         ("h5-u8-64", np.uint8, (64, 64), 90),
         ("h5-u32-64", np.uint32, (64, 64), 60),
         ("h5-f32-64", np.float32, (64, 64), 60),
+        ("h5-u16-96", np.uint16, (96, 96), 60),
+        ("h5-u8-96", np.uint8, (96, 96), 60),
+        ("h5-u32-96", np.uint32, (96, 96), 60),
+        ("h5-f32-96", np.float32, (96, 96), 60),
     ):
         rng = np.random.default_rng(7)
         high = np.finfo(dtype).max if dtype == np.float32 else np.iinfo(dtype).max
