@@ -69,9 +69,8 @@ def load(
 
     Fractional intensity exports support explicit ``dtype="scaled_uint16"``
     on CUDA and Metal/MPS. They remain ANS encoded and print a measured
-    conversion report. The older bit-packed float16 acquisition profile is
-    rejected; omit dtype to preserve original float32 bits. Scaled codes restore their saved
-    intensity units for detector queries. ``scan_region`` and
+    conversion report. Omit dtype to preserve the original float32 bits.
+    Scaled codes restore their saved intensity units for detector queries. ``scan_region`` and
     ``detector_region`` select values before resident allocation. New scaled
     storage automatically calibrates bounded regions in one pass; saved files
     retain their recorded calibration, including legacy global scales.
@@ -86,7 +85,7 @@ def load(
     and reconstructs float32 intensities on the GPU; it does not recover discarded
     precision. Plain ``"uint16"`` is not calibrated scaled storage.
     Omit ``dtype`` when reopening a precision file to retain its recorded
-    values and calibration. ``"uint16_scaled"`` is not a supported alias.
+    values and calibration.
 
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
@@ -115,7 +114,7 @@ def load(
     Compact HDF5 loads use ``hot_pixel_correction``; saved compact sources
     retain the correction already recorded in their metadata.
     File format and compression are detected from contents, independently of
-    resident representation. No ``decompression=`` argument is needed.
+    resident representation.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
 
     ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
@@ -300,9 +299,8 @@ def load(
         storage_types = {precision} if precision else {item["storage"] for item in saved if item}
         if storage_types != {"scaled_uint16"}:
             raise NotImplementedError(
-                "This precision profile requires a full packed GPU allocation. "
-                "Reopen the original float32 acquisition without dtype conversion "
-                "to use lossless ANS residency."
+                "Only dtype='scaled_uint16' is a stored precision. Omit dtype to keep "
+                "the original float32 values lossless, or request dtype='scaled_uint16'."
             )
         if representation is not None and DataRepresentation.parse(representation) is not DataRepresentation.ENCODED:
             raise ValueError(

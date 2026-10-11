@@ -33,10 +33,7 @@ def saved_precision(path):
         raise ValueError(
             "This precision export did not complete; repeat the export from its source."
         )
-    if report.get("version") not in {1, 2} or report.get("storage") not in {
-        "float16",
-        "scaled_uint16",
-    }:
+    if report.get("version") not in {1, 2} or report.get("storage") != "scaled_uint16":
         raise ValueError(
             "Unsupported saved precision metadata; use a compatible QuantEM version."
         )

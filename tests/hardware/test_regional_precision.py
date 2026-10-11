@@ -98,7 +98,7 @@ def test_generated_scan_roundtrip_and_calibrated_products(tmp_path):
             np.testing.assert_array_equal(
                 selected.read().cpu(), expected[1:5, 2:5, 1:6, 2:8]
             )
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
+        with pytest.raises(NotImplementedError, match="Only dtype=.scaled_uint16. is a stored precision"):
             io.load(path, dtype="float16", backend=BACKEND, verbose=False)
         # The returned Torch allocation remains valid after subsequent reads/close.
         retained = loaded.read(scan_region=(1, 2, 0, 1))

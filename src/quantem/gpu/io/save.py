@@ -142,8 +142,8 @@ def save(
         host copy. Algorithm packages may also provide a re-readable 4D block
         source with ``shape``, ``dtype``, and ``blocks()``. Each call to
         ``blocks()`` must yield the complete data as ordered accelerator frame
-        blocks; scaled integer export calls it twice to measure one global
-        range and then encode. Optional ``save_metadata`` attributes are copied
+        blocks; scaled integer export reads them once, calibrating each scan
+        region as it goes. Optional ``save_metadata`` attributes are copied
         into the output. This is the public bridge for bounded algorithm output;
         the I/O package does not own the algorithm that produces the blocks.
     scan_shape : tuple[int, int] | None
