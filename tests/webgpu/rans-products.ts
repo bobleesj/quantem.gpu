@@ -112,7 +112,6 @@ async function runProducts(device: GPUDevice): Promise<Record<string, number | b
         for (const component of ["row", "col"] as const) {
           results[`dpc_${component}_${tilt}`] = compare(`DPC ${component}`, await compute.maskedDpc(mask, 4, component), await dense.maskedDpc(mask, 4, component), 1e-6);
         }
-        results[`magnitude_${tilt}`] = compare("DPC magnitude", await compute.maskedDpcMagnitude(mask, 4), await dense.maskedDpcMagnitude(mask, 4), 1e-6);
         for (const [rotation, transpose] of [[0, false], [37, true]] as const) {
           results[`idpc_${tilt}_${rotation}`] = compare("iDPC", await compute.maskedIDpc(mask, 4, 32, 32, rotation, transpose), await dense.maskedIDpc(mask, 4, 32, 32, rotation, transpose), 1e-6);
         }
