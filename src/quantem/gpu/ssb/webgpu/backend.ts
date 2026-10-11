@@ -245,7 +245,6 @@ type SsbBuffers = {
   gqkResidentBytes: number;
   chunkBfCounts: number[];
   chunkCapacity: number;
-  dispatchChunkCapacity: number;
   stage: GPUBuffer;
   phaseStack: GPUBuffer;
   partialSum: GPUBuffer;
@@ -1507,7 +1506,6 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   private cal: SsbCal;
   private n: SupportedSsbSize;
   private plane: number;
-  private previewBfCount: number;
   private source: BfColumnSsbSource;
   private device: GPUDevice | null = null;
   private buffers: SsbBuffers | null = null;
@@ -1550,10 +1548,6 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     }
     this.n = n;
     this.plane = n * n;
-    this.previewBfCount = Math.max(
-      1,
-      Math.min(this.cal.num_bf, Math.round(Number(this.cal.num_bf || 1))),
-    );
     this.source = JSON.parse(detectorSource.json) as BfColumnSsbSource;
     if (this.source.kind !== "bf_columns") {
       throw new Error(`SSB WebGPU reads exported bright-field columns; this folder declares a "${this.source.kind}" source; export the folder again to write them.`);
@@ -1592,7 +1586,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   private async setup(requiredBfCount = this.cal.num_bf, rotationDeg?: number): Promise<void> {
-    const capacity = this.clampBfCount(requiredBfCount, false);
+    const capacity = this.clampBfCount(requiredBfCount);
     if (this.initialized && this.residentCovers(capacity, rotationDeg)) {
       this.updateGeometry(capacity, rotationDeg);
       return;
@@ -1717,8 +1711,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     const expectedBytes = nbf * bytesPerBf;
     const activeBytes = activeBfCount * bytesPerBf;
     const storageChunkCapacity = chooseChunkCapacity(activeBfCount, plane, device);
-    const dispatchChunkCapacity = storageChunkCapacity;
-    const dispatchCount = Math.ceil(activeBfCount / dispatchChunkCapacity);
+    const dispatchCount = Math.ceil(activeBfCount / storageChunkCapacity);
     const partialGroups = Math.ceil(activeBfCount / REDUCE_BF_GROUP);
     console.log(
       `[ssb] WebGPU SSB setup start ${nbf}/${this.cal.num_bf} BF `
@@ -1822,7 +1815,6 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       gqkResidentBytes: transformed.residentBytes,
       chunkBfCounts,
       chunkCapacity: storageChunkCapacity,
-      dispatchChunkCapacity,
       stage: device.createBuffer({ size: storageChunkCapacity * plane * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, label: "ssb ssb stage" }),
       phaseStack: device.createBuffer({ size: storageChunkCapacity * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase stack" }),
       partialSum: device.createBuffer({ size: partialGroups * plane * 4, usage: GPUBufferUsage.STORAGE, label: "ssb phase partial sum" }),
@@ -1838,15 +1830,11 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       qx: makeBufferFromArray(device, new Float32Array(this.cal.qx_1d), GPUBufferUsage.STORAGE, "ssb qx"),
       qy: makeBufferFromArray(device, new Float32Array(this.cal.qy_1d), GPUBufferUsage.STORAGE, "ssb qy"),
     };
-    const chunkBufferIndex = (index: number) => {
-      const bfOffset = index * buffers.dispatchChunkCapacity;
-      return Math.floor(bfOffset / buffers.chunkCapacity);
-    };
     device.pushErrorScope("validation");
     // ssbRows and ssbObjSum (thin and thick variants) read the same resources
     const correctionEntries = (params: GPUBuffer, index: number): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer: params } },
-      { binding: 1, resource: { buffer: buffers.gqkChunks[chunkBufferIndex(index)] } },
+      { binding: 1, resource: { buffer: buffers.gqkChunks[index] } },
       { binding: 2, resource: { buffer: buffers.stage } },
       { binding: 3, resource: { buffer: buffers.bfGeom } },
       { binding: 4, resource: { buffer: buffers.bfTrig } },
@@ -1944,15 +1932,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     });
   }
 
-  private clampBfCount(requested: number | undefined, preview = false): number {
-    if (requested == null || !Number.isFinite(requested)) {
-      return preview ? this.previewBfCount : this.cal.num_bf;
-    }
+  private clampBfCount(requested: number | undefined): number {
+    if (requested == null || !Number.isFinite(requested)) return this.cal.num_bf;
     return Math.max(1, Math.min(this.cal.num_bf, Math.round(requested)));
   }
 
   async prepareBfCount(count: number): Promise<number> {
-    const requested = this.clampBfCount(count, false);
+    const requested = this.clampBfCount(count);
     await this.runExclusive(async () => {
       await this.setup(requested);
     });
@@ -2007,7 +1993,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
 
   private async reconstructOutput(c10: number, c12: number, phi12: number,
     factor: number, options: WebGPUReconstructionOptions): Promise<WebGPUSSBResult> {
-    const bfCount = this.clampBfCount(options.bfCount, options.preview);
+    const bfCount = this.clampBfCount(options.bfCount);
     await this.setup(bfCount, options.rotationDeg);
     const device = this.device!, buffers = this.buffers!, n = this.n * factor;
     const thick = sampleThickness(options.sample) > 0;
@@ -2075,7 +2061,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   ): Promise<WebGPUSSBResult> {
     // Engine units: Angstrom and radians. The scientist-facing widget converts nm at its boundary.
     const phi12Deg = phi12 * 180 / Math.PI;
-    const bfCount = this.clampBfCount(options.bfCount, options.preview);
+    const bfCount = this.clampBfCount(options.bfCount);
     const computeLoss = options.computeLoss ?? bfCount === this.cal.num_bf;
     const rotationDeg = options.rotationDeg == null || !Number.isFinite(options.rotationDeg)
       ? baseRotationDeg(this.cal)
@@ -2103,9 +2089,9 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       // state). Loss commits always use the exact per-BF path below.
       if (!computeLoss && options.phaseEstimator !== "mean_phase") {
         enc.clearBuffer(buffers.stage, 0, this.plane * 8);
-        for (let bfOffset = 0; bfOffset < buffers.activeBfCount; bfOffset += buffers.dispatchChunkCapacity) {
-          const chunkBf = Math.min(buffers.dispatchChunkCapacity, buffers.activeBfCount - bfOffset);
-          const chunkIndex = Math.floor(bfOffset / buffers.dispatchChunkCapacity);
+        for (let bfOffset = 0; bfOffset < buffers.activeBfCount; bfOffset += buffers.chunkCapacity) {
+          const chunkBf = Math.min(buffers.chunkCapacity, buffers.activeBfCount - bfOffset);
+          const chunkIndex = Math.floor(bfOffset / buffers.chunkCapacity);
           device.queue.writeBuffer(
             buffers.paramsChunks[chunkIndex],
             0,
@@ -2149,9 +2135,9 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         };
         return resultFast;
       }
-      for (let bfOffset = 0; bfOffset < buffers.activeBfCount; bfOffset += buffers.dispatchChunkCapacity) {
-        const chunkBf = Math.min(buffers.dispatchChunkCapacity, buffers.activeBfCount - bfOffset);
-        const chunkIndex = Math.floor(bfOffset / buffers.dispatchChunkCapacity);
+      for (let bfOffset = 0; bfOffset < buffers.activeBfCount; bfOffset += buffers.chunkCapacity) {
+        const chunkBf = Math.min(buffers.chunkCapacity, buffers.activeBfCount - bfOffset);
+        const chunkIndex = Math.floor(bfOffset / buffers.chunkCapacity);
         device.queue.writeBuffer(
           buffers.paramsChunks[chunkIndex],
           0,
