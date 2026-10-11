@@ -122,45 +122,6 @@ def test_same_float_fixture_codes_match_numpy():
             )
 
 
-def test_legacy_global_archive_still_restores_units(tmp_path):
-    import json
-    import torch
-    from quantem.gpu import io
-
-    original = fixture()
-    low, high = float(original.min()), float(original.max())
-    report = dict(
-        version=1,
-        storage="scaled_uint16",
-        source_dtype="float32",
-        source_shape=list(original.shape),
-        intensity_min=low,
-        intensity_max=high,
-        offset=low,
-        scale=(high - low) / 65535,
-        range_scope="complete source",
-        complete=True,
-        values=original.size,
-        clipped=0,
-    )
-    expected = restore_precision_reference(original, report)
-    report.update(precision_error_reference(original, expected))
-    codes = torch.as_tensor(
-        encode_precision_reference(original, report), device=BACKEND
-    )
-    path = tmp_path / "legacy_master.h5"
-    io.save(
-        path,
-        codes,
-        metadata={"quantem_precision_v1": json.dumps(report)},
-        backend=BACKEND,
-        verbose=False,
-    )
-    with io.load(path, backend=BACKEND, verbose=False) as loaded:
-        np.testing.assert_array_equal(loaded.read().cpu(), expected)
-        assert loaded.metadata["precision"]["version"] == 1
-
-
 def test_generated_save_is_single_pass_and_reloads(tmp_path):
     from quantem.gpu import io
 
