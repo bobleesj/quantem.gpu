@@ -117,7 +117,7 @@ def rotate_scan(
     array = data.data if loaded else data
     metadata = deepcopy(data.metadata) if loaded else None
     if loaded and _quarter_turn(angle) is None:
-        spacing = metadata.get("scan_sampling_A", metadata.get("scan_sampling"))
+        spacing = metadata.get("scan_sampling_A")
         if spacing is not None and not np.isscalar(spacing) and not math.isclose(
             float(spacing[0]), float(spacing[1]), rel_tol=1e-12
         ):
@@ -178,7 +178,7 @@ def rotate_scan(
             metadata.pop(key, None)
         quarter_turns = _quarter_turn(angle)
         if quarter_turns is not None and quarter_turns % 2:
-            for key in ("scan_sampling", "scan_sampling_A", "sampling", "units"):
+            for key in ("scan_sampling_A", "sampling", "units"):
                 pair = metadata.get(key)
                 if pair is not None and not np.isscalar(pair) and len(pair) >= 2:
                     metadata[key] = (pair[1], pair[0], *pair[2:])
