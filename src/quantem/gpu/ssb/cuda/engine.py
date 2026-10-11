@@ -41,13 +41,52 @@ class _PreparedCudaBfSubset:
     """Reusable CUDA-owned state for an explicitly approximate drag preview.
 
     ``engine`` is the :class:`SSBEngine` whose full-BF state this subset
-    swaps out while it is entered and restores on exit.
+    swaps out while it is entered and restores on exit. What does not depend
+    on the rotation (the subset's rows of G, detector indices and work
+    buffers) is made once; the per-pixel geometry is taken from the engine's
+    current rotation on entry, so a ``set_rotation`` between two uses is
+    followed rather than undone on exit.
     """
 
     def __init__(self, engine, num_bf: int) -> None:
         self._engine = engine
         full_num_bf = engine.num_bf
-        count = max(1, min(int(num_bf), full_num_bf))
+        self.num_bf = max(1, min(int(num_bf), full_num_bf))
+        self._active = False
+        self._full = {}
+        self._subset = {}
+        # the engine geometry the subset's cache was taken from
+        self._geometry_source = None
+        if self.num_bf == full_num_bf:
+            # All BF pixels: the "subset" is the session itself and nothing is swapped. Copying G and a full result
+            # buffer would duplicate ~2 x (BF x scan) complex64 (37 GB at 512 x 512) for an identical preview.
+            return
+        step = max(1, full_num_bf // self.num_bf)
+        self._indices = cp.arange(0, full_num_bf, step, dtype=cp.int64)[:self.num_bf]
+        ny, nx = engine.scan_shape
+        self._subset = {
+            "G_qk": engine.G_qk[self._indices],
+            "bf_inds_row": engine.bf_inds_row[self._indices],
+            "bf_inds_col": engine.bf_inds_col[self._indices],
+            "pk_buffer": cp.empty((self.num_bf,), dtype=cp.complex64),
+            "result_buffer": cp.empty((self.num_bf, ny, nx), dtype=cp.complex64),
+            "mean_phase_buffer": cp.empty((ny, nx), dtype=cp.float32),
+        }
+
+    def __enter__(self) -> Self:
+        if self._active:
+            raise RuntimeError("The prepared SSB BF subset is already active.")
+        self._active = True
+        if not self._subset:
+            return self
+        engine = self._engine
+        if self._geometry_source is not engine._cache:
+            cache = dict(engine._cache)
+            for key in ("kx_bf", "ky_bf", "alpha_k2_1d", "cos2phi_k_1d", "sin2phi_k_1d", "aperture_k_1d"):
+                cache[key] = cp.ascontiguousarray(engine._cache[key][self._indices])
+            cache["num_bf"] = self.num_bf
+            self._subset["cache"] = cache
+            self._geometry_source = engine._cache
         self._full = {
             "G_qk": engine.G_qk,
             "bf_inds_row": engine.bf_inds_row,
@@ -57,49 +96,6 @@ class _PreparedCudaBfSubset:
             "result_buffer": engine._result_buffer,
             "mean_phase_buffer": engine._mean_phase_buffer,
         }
-        self._active = False
-        if count == full_num_bf:
-            # All BF pixels: the "subset" is the session itself. Copying G and a full result buffer would duplicate
-            # ~2 x (BF x scan) complex64 (37 GB at 512 x 512) for an identical preview.
-            self._subset = {**self._full, "cache": {**engine._cache, "num_bf": full_num_bf}}
-            return
-        step = max(1, full_num_bf // count)
-        indices = cp.arange(0, full_num_bf, step, dtype=cp.int64)[:count]
-        cache = dict(engine._cache)
-        for key in (
-            "kx_bf",
-            "ky_bf",
-            "alpha_k2_1d",
-            "cos2phi_k_1d",
-            "sin2phi_k_1d",
-            "aperture_k_1d",
-        ):
-            if key in cache:
-                cache[key] = cp.ascontiguousarray(engine._cache[key][indices])
-        cache["num_bf"] = int(indices.size)
-        ny, nx = engine.scan_shape
-        self._subset = {
-            "G_qk": engine.G_qk[indices],
-            "bf_inds_row": engine.bf_inds_row[indices],
-            "bf_inds_col": engine.bf_inds_col[indices],
-            "cache": cache,
-            "pk_buffer": cp.empty((int(indices.size),), dtype=cp.complex64),
-            "result_buffer": cp.empty(
-                (int(indices.size), ny, nx), dtype=cp.complex64
-            ),
-            "mean_phase_buffer": cp.empty((ny, nx), dtype=cp.float32),
-        }
-
-    @property
-    def num_bf(self) -> int:
-        """Number of BF pixels retained by this prepared subset."""
-
-        return int(self._subset["cache"]["num_bf"])
-
-    def __enter__(self) -> Self:
-        if self._active:
-            raise RuntimeError("The prepared SSB BF subset is already active.")
-        engine = self._engine
         subset = self._subset
         engine.G_qk = subset["G_qk"]
         engine.bf_inds_row = subset["bf_inds_row"]
@@ -109,7 +105,6 @@ class _PreparedCudaBfSubset:
         engine._result_buffer = subset["result_buffer"]
         engine._corrected_buffer = None
         engine._mean_phase_buffer = subset["mean_phase_buffer"]
-        self._active = True
         return self
 
     def __exit__(
@@ -120,6 +115,9 @@ class _PreparedCudaBfSubset:
     ) -> None:
         engine = self._engine
         if not self._active:
+            return
+        self._active = False
+        if not self._subset:
             return
         self._subset["result_buffer"] = engine._result_buffer
         self._subset["mean_phase_buffer"] = engine._mean_phase_buffer
@@ -132,7 +130,6 @@ class _PreparedCudaBfSubset:
         engine._result_buffer = full["result_buffer"]
         engine._corrected_buffer = None
         engine._mean_phase_buffer = full["mean_phase_buffer"]
-        self._active = False
 
     def close(self) -> None:
         """Release the subset buffers after restoring full-BF state."""
