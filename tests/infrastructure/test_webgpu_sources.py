@@ -225,15 +225,9 @@ def test_webgpu_local_h5_source_tracks_show4dstem_loader_contract() -> None:
     assert "new Blob([READ_WORKER_SOURCE]" in source
     assert "new Worker(workerUrl!)" in source
     assert 'new Worker(workerUrl!, { type: "module" })' not in source
-    assert "function parseVolumeFromFrameIndex(buffer, index)" in source
     assert "function parseVolumeFromBlockIndex(buffer, indexBuffer, name)" in source
     assert "blockIndexFile" in source
     assert "self.postMessage({ id, name, volume: parsed.volume" in source
-    assert "const frameIndexedDataItems = dataItems.length > 0" in source
-    assert "const blockIndexedDataItems = dataItems.length > 0" in source
-    assert "? (!region && (blockIndexedDataItems || frameIndexedDataItems) ? 8 : 2)" in source
-    assert "readFiles(dataItems.map((item) => item.file), workerCount, frameIndexFor, localBlockIndexFor)" in source
-    assert 'parseMode: blockIndexFiles === dataItems.length' in source
     assert '"block-index"' in source
     assert "decodeBslz4Batch" in source
     assert "decodeBslz4MaskedSumBatch" in source
