@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA
+
 
 def normalize_hot_pixel_correction(value: str) -> str:
     """Validate the public hot-pixel correction name."""
@@ -23,12 +25,12 @@ def hot_pixel_record(pixel_mask, method: str, *, backend: str) -> dict:
     coordinates = np.argwhere(mask != 0)
     applied = method != "none" and len(coordinates) > 0
     return {
-        "version": 1,
+        "schema": HOT_PIXEL_SCHEMA,
         "method": method,
         "kernel_size": 3 if method == "median" else None,
         "source": "stored_pixel_mask",
         "pixel_count": len(coordinates),
-        "coordinates_row_column": coordinates.tolist(),
+        "coordinates_row_col": coordinates.tolist(),
         "source_flags": [int(mask[tuple(point)]) for point in coordinates],
         "applied": applied,
         "stage": "gpu_load_before_resident_encoding" if applied else "none",

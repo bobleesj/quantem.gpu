@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cuda_module, start_after_queued_work
+from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts, field_count
 
 QUERY_ABI = "paired-polar-counts-v1"
@@ -405,11 +406,15 @@ class PairedCounts(StreamedCounts):
         header, data_start = _read_header(path)
         if header.get("magic") != RESIDENT_MAGIC or header.get("query_abi") != QUERY_ABI or header.get("models") != MODELS or header.get("states") != STATES:
             raise ValueError(f"{path} is not a {RESIDENT_MAGIC} file for query ABI {QUERY_ABI}.")
+        correction = header.get("hot_pixel_correction")
+        if correction is not None and correction.get("schema") != HOT_PIXEL_SCHEMA:
+            # the record says whether the stored counts were corrected; one written under another layout is not guessed at
+            raise ValueError(f"{path} carries a hot-pixel record that is not {HOT_PIXEL_SCHEMA}; load the acquisition and save its resident form again.")
         shape = tuple(header["shape"])
         valid = np.unpackbits(np.frombuffer(bytes.fromhex(header["valid"]), np.uint8))[: shape[2] * shape[3]].astype(bool).reshape(shape[2:])
         with cp.cuda.Device(cp.cuda.Device().id if device is None else device):
             source = cls(shape, np.dtype(header["dtype"]), valid)
-            source.hot_pixel_correction = header.get("hot_pixel_correction")
+            source.hot_pixel_correction = correction
             if allocate is None:
                 # Carve the file's arrays, in chunk order, from one 512-byte aligned device
                 # buffer: separate allocations would each round up to the driver granularity.

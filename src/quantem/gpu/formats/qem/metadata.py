@@ -14,6 +14,10 @@ CONTAINER_VERSION = 1
 LEGACY_SCHEMA = "quantem.scientific-metadata/1"
 SCHEMA = "quantem.scientific-metadata/2"
 AXIS_NAMES = ("scan_row", "scan_column", "detector_row", "detector_column")
+# The retained hot_pixel_correction record carries this under "schema"; a record with another
+# value, or none, is the same as no record.
+# 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
+HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/2"
 
 # Conversion factors are source unit -> public scientific-metadata unit.
 _LENGTH = ("angstrom", {"m": 1e10, "nm": 10, "angstrom": 1, "Å": 1})
