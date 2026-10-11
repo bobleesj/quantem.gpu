@@ -271,7 +271,7 @@ class _Source:
             # Arrays are read by frame index; anything else is an algorithm's
             # generated source that yields its own blocks.
             self.generated = not (
-                isinstance(source, (np.ndarray, h5py.Dataset)) or _is_tensor(source)
+                isinstance(source, (np.ndarray, h5py.Dataset, torch.Tensor))
                 or (cp is not None and isinstance(source, cp.ndarray))
             )
         elif Path(source).suffix.lower() == ".npy":
@@ -388,7 +388,7 @@ class _Source:
                 values = self.array.reshape(-1, det_rows, det_cols)[
                     cp.asarray(selected)
                 ]
-            elif _is_tensor(self.array) and self.array.device.type in ("cuda", "mps"):
+            elif isinstance(self.array, torch.Tensor) and self.array.device.type in ("cuda", "mps"):
                 flat = self.array.reshape(-1, det_rows, det_cols)
                 indices = torch.as_tensor(selected, device=self.array.device)
                 values = flat[indices].contiguous()
@@ -406,7 +406,7 @@ class _Source:
                         piece = self.array[
                             row * cols + col : row * cols + col + length
                         ]
-                    if _is_tensor(piece):
+                    if isinstance(piece, torch.Tensor):
                         piece = piece.detach().cpu().numpy()
                     host[cursor : cursor + length] = piece
                     cursor += length
@@ -701,11 +701,6 @@ def _cuda_device(source) -> int:
         return source._device_id
     if isinstance(source, cp.ndarray):
         return source.device.id
-    if _is_tensor(source) and source.device.type == "cuda" and source.device.index is not None:
+    if isinstance(source, torch.Tensor) and source.device.type == "cuda" and source.device.index is not None:
         return source.device.index
     return cp.cuda.Device().id
-
-
-def _is_tensor(value) -> bool:
-    """Recognize a Torch tensor."""
-    return isinstance(value, torch.Tensor)

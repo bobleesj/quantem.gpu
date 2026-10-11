@@ -107,16 +107,14 @@ def resident_device(payload):
     """Normalize the device a resident reports, without decoding it.
 
     Residents report their GPU as a ``torch.device``, a CUDA ordinal, a CuPy
-    device, a ``_device_id`` attribute or a string such as ``"mps"``, and
-    callers may wrap owners of their own, so every spelling is accepted here.
-    ``None`` means the payload reports no device.
+    device or a string such as ``"mps"``, and callers may wrap owners of their
+    own, so every spelling is accepted here. ``None`` means the payload
+    reports no device.
     """
     # Read by attribute: CuPy is never imported here, and callers' own owners reach this.
     device = getattr(payload, "device", None)
     if not isinstance(device, torch.device):
-        device_id = getattr(payload, "_device_id", None)
-        if device_id is None:
-            device_id = getattr(device, "id", None)
+        device_id = getattr(device, "id", None)
         if device_id is not None:
             device = torch.device("cuda", int(device_id))
         elif isinstance(device, (int, np.integer)):
