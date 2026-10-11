@@ -27,7 +27,6 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.hdf5 import cpu
 from quantem.gpu.io.precision import load_precision, precision_name, saved_precision
 from quantem.gpu.io.representation import DataRepresentation
-from quantem.gpu.io.selection import ScanOrder
 from quantem.gpu.resident.hot_pixels import (
     hot_pixel_record,
     normalize_hot_pixel_correction,
@@ -41,7 +40,6 @@ def load(
     representation: DataRepresentation | str | None = None,
     dataset_path: str | None = None,
     scan_shape: tuple[int, int] | None = None,
-    scan_order: ScanOrder = "row-major",
     scan_region: tuple[int, int, int, int] | None = None,
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
@@ -190,7 +188,7 @@ def load(
                 "CPU dense access is explicit reference-only."
             )
         if (any(value is not None for value in (dataset_path, scan_region, detector_region))
-                or dtype not in (None, "native") or apply_mask or scan_order != "row-major"):
+                or dtype not in (None, "native") or apply_mask):
             raise ValueError(
                 "Original-array loading preserves complete measurements; remove "
                 "selection and dtype options, then use read() for a region."
@@ -252,11 +250,10 @@ def load(
     if any(dm_sources) or any(snapshots):
         if not all(dm_sources) and not all(snapshots):
             raise ValueError("Load DigitalMicrograph acquisitions separately from other source formats.")
-        if (any(value is not None for value in (dataset_path, scan_region, detector_region))
-                or scan_order != "row-major" or apply_mask):
+        if any(value is not None for value in (dataset_path, scan_region, detector_region)) or apply_mask:
             raise NotImplementedError(
-                "DM loading preserves the complete acquisition; remove selection, "
-                "scan-order and masking options."
+                "DM loading preserves the complete acquisition; remove selection "
+                "and masking options."
             )
         if dtype not in (None, "native"):
             raise ValueError("DM loading preserves stored counts; omit dtype for lossless loading.")
@@ -300,8 +297,8 @@ def load(
                 "This precision uses representation='encoded'; "
                 "omit representation to select its default storage."
             )
-        if scan_order != "row-major" or apply_mask:
-            raise NotImplementedError("Precision loading supports scan_region and detector_region; remove scan-order and masking controls.")
+        if apply_mask:
+            raise NotImplementedError("Precision loading supports scan_region and detector_region; remove the masking control.")
         loaded = []
         try:
             for path in sources:
@@ -330,10 +327,8 @@ def load(
     if selected_representation is DataRepresentation.PAIRED:
         if select.resolve_backend(backend) != "cuda":
             raise NotImplementedError("The paired resident layout requires backend='cuda'.")
-        if any(value is not None for value in (
-            dataset_path, scan_region, detector_region,
-        )) or scan_order != "row-major":
-            raise ValueError("The paired layout preserves complete native acquisitions; remove selection and scan-order options.")
+        if any(value is not None for value in (dataset_path, scan_region, detector_region)):
+            raise ValueError("The paired layout preserves complete native acquisitions; remove selection options.")
         if dtype not in {None, "native"} or apply_mask:
             raise ValueError("The paired layout preserves raw native counts; use dtype='native' and apply_mask=False.")
         saved = [DataRepresentation.detect_source(path) is DataRepresentation.PAIRED for path in sources]
@@ -349,8 +344,8 @@ def load(
         ans_backend = select.resolve_backend(backend)
         if ans_backend not in {"cuda", "mps"}:
             raise NotImplementedError("H5-to-ANS loading requires CUDA or MPS.")
-        if scan_region is not None or detector_region is not None or scan_order != "row-major":
-            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection and scan-order options, then use read() for a region.")
+        if scan_region is not None or detector_region is not None:
+            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection options, then use read() for a region.")
         if len(sources) > 1 and stack:
             raise ValueError(
                 "Several ANS acquisitions cannot be stacked into one array; omit stack "
@@ -400,7 +395,6 @@ def load(
         sources,
         single=single,
         scan_shape=scan_shape,
-        scan_order=scan_order,
         apply_mask=True if apply_mask is None else apply_mask,
         auto_narrow=auto_narrow,
         # Unlike compressed acquisitions, CPU reference arrays stack by default.
