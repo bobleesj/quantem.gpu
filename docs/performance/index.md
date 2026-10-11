@@ -67,5 +67,5 @@ once in the owning historical ledger with exact revision and protocol context.
 Measurements that failed parity or repeatability remain named as rejected
 experiments, never as current timing rows.
 
-See [later SSB performance checkpoints](../maintainer/ssb-performance-checkpoints.md)
+See [later SSB performance checkpoints](../maintainer/2026-09-11-ssb-performance-checkpoints.md)
 for subsequent full-aperture measurements. The original evidence remains frozen.

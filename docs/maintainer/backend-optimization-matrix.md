@@ -238,78 +238,11 @@ speed:
 | SSB object | Corrected-object reference at same BF, aberrations, scan size, and precision. | object complex error or phase/amplitude image error, warm redraw FPS. |
 | SSB phase/loss | Existing exact phase/loss path; never object-wave identity as reference. | phase mean/p99/max, scalar loss delta, fit/reconstruction agreement. |
 
-## Next Optimization Queue
-
-1. WebGPU product-first HDF5 evidence layout: exact BF r30 products now pass
-   CUDA parity for true `256`, full `512`, `1024` repeat-stress, and true
-   real-acquisition `1024` product-first evidence. The selected-block sidecar
-   path proves the `0.5 s` full-`512` target is reachable
-   when the browser reads only exact detector-block evidence. The production
-   local-H5 masked-sum API now discovers sidecars, checks selected-block
-   coverage, filters crop spans before full reads, and falls back honestly when
-   a dragged ROI needs detector blocks not present in the sidecar. Next
-   production work is maintaining the sidecar cache writer/invalidation policy
-   and wiring the fast product path into the Show4DSTEM UI product loop.
-2. WebGPU compressed-byte upload and decoder floor: the count-audited low8
-   frame-cooperative kernel plus staging pipeline cut the full local-file path
-   to a `0.725 s` page profile in the latest full-`512` block-index run. The
-   selected-block full-`512` BF product path reaches `0.370 s` page total /
-   `0.209 s` product stage with exact parity in the latest fresh Chrome run.
-   The remaining full-stack gap is materializing the whole `9.7 GB` browse cube;
-   the product path shows why selected evidence is the right interactive route.
-3. WebGPU pipelined selected-block acquisition: extend the staging-pipeline
-   idea to browser range/local cache management, with a bounded staging/raw
-   buffer ring and explicit peak-memory reporting.
-4. WebGPU Show4DSTEM full-`512` report: load/decode/upload/compute/display split
-   for BF, ADF, dense DF, CoMx, CoMy, CoM magnitude, and browser iDPC. DPC
-   row/col has a full no-bin headed signoff; iDPC has a float32 FFT tolerance
-   signoff and a median 30 FPS pass after FFT command batching. Continue
-   tightening p95/outliers.
-5. WebGPU bitshuffle/LZ4 kernel redesign: the frame-cooperative low8 path is now
-   the default for count-audited lossless `uint8` browse loads. The next jump
-   needs lower atomic/shared-memory pressure or a different browser payload
-   contract, not more fetch batching.
-6. WebGPU full-`512` agreement harness: compare browser outputs against
-   `quantem.gpu` CUDA/MPS references with public-safe fixture labels and image
-   difference maps.
-7. WebGPU generated-HDF5 browser gate: cover `h5_url` fetch, HDF5 parse,
-   bitshuffle/LZ4 decode, bad-pixel masks, BF/DF/ADF, and DPC without relying
-   on local fixture paths.
-8. WebGPU dense-DF cache signoff: verify `total - complement` behavior on a
-   headed real adapter so large annular/dense masks do not scan most detector
-   pixels on every drag.
-9. WebGPU timing telemetry follow-up: source now reports adapter info,
-   resident bytes, fetch/parse/upload/build/GPU-wait splits, and timestamp-query
-   availability; next step is optional GPU timestamp pass timing.
-10. WebGPU iDPC display path: fixed-rotation Poisson integration is implemented
-   with paired DPC buffers and a dual-real FFT. Continue optimizing toward
-   full no-bin 30 FPS and keep the float32 FFT parity gate in the browser
-   benchmark.
-11. MPS full-`512` VI/DPC report: BF/ADF/DF/CoM/DPC first-click and warm-repeat
-   timings with the same masks as CUDA references.
-12. MPS IO signoff: encoded no-bin load, uint32 narrowing, fast sidecar
-   decode, bounded `read` rectangles, and expected memory-guard failures.
-13. WebGPU detector-bin breadth: full-512 and true crop-256 `detBin=2/4/8`
-   are signed off with exact corrected-frame checksums and repeated/p95 crop
-   evidence. Keep detector-bin presets explicit and refresh p95 after any
-   decoder/upload changes.
-14. WebGPU true `1024x1024x192x192` acquisition: CUDA and MPS real full-stack
-   loads are signed off, and WebGPU product-first BF selected-block signoff is
-   exact on true real-acquisition evidence. Browser full-stack no-bin browse/load
-   still needs either enough free WebGPU VRAM for a true full-stack run or an
-   explicit documented memory-policy rejection.
-15. SSB MPS `512/1024` exact phase/loss topology: optimize row/column FFT work;
-   chunk-size-only changes are not enough. Fresh Apple Silicon `origin/main` probes show
-   radius-30 `512` exact phase/loss around `76 ms`, full-active-BF `512` around
-   `529 ms`, and full-BF-sized synthetic `1024` around `669 ms`; the usable
-   object-wave steering path is a separate quantity.
-16. SSB WebGPU matrix: run `128/256/512/1024` object, phase, and phase+loss
-   against CUDA references on a real WebGPU adapter.
-
 ## Failed / Bounded Hypotheses
 
 | Hypothesis | Result | Decision |
 | --- | --- | --- |
+| Reuse-first ANS resident: block-relative source offsets and uniform-cost joint query planning (Apple M5, seven full `uint16` `512x512x192x192` residents, 2026-09-13, experiment 20260913-apple-m5-ans-reuse-first). | Compact offsets saved 247.7 MB (2.09%) of resident storage but did not improve speed: `68.73 ms` versus `67.86 ms` and `67.00 ms` bracket controls. Joint planning removed one field query and no residual pixels. A full decoded cache for the 1,067 residual pixels would cost about 3.916 GB across seven sources; shortening streams from 512 to 128 scans adds about 1.982 GB of offset/mode entries. | Neither prototype is promoted. Do not repeat without a measured cost model for table queries and residual decodes. |
 | Increase WebGPU HDF5 decode batch from `4` to `8`. | Kernel/decode stage can improve (`3.46 s` on `uint16`, `3.18 s` on `uint8` sidecar), but total wall time worsened to about `6.2 s` because fetch wait increased. | Keep default batch `4`; leave `window.__QT_H5_DECODE_BATCH` for profiling. |
 | Increase data-file fetch window from `8` to `16/24`. | Higher windows reduced some fetch waits in isolated runs but caused master/data contention or decode variance; total stayed worse than default. | Keep default fetch window `8`; leave `window.__QT_H5_FETCH_WINDOW` for profiling. |
 | Fetch/parse HDF5 master before data files. | Master timing dropped to about `50 ms`, but total wall time worsened because data fetch no longer overlapped the metadata read. | Do not reorder as default. |

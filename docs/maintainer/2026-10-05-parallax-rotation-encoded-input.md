@@ -83,6 +83,11 @@ masked sums and `io.save`/`io.load` round trips match the rotated counts.
   returns a stack already shifted by its phase ramps, and the upsampling step
   shifts it again by the same global shifts.
 
+Checked 2026-10-10 against 0.0.1rc15: each image is now shifted once;
+`align_vbf_stack_multiscale_cp` returns only the measured shifts. The spectrum
+tiling is unchanged and `ParallaxResult.density` reports how many samples reach
+each output pixel.
+
 ## Rejected
 
 - One exact detector query per bright-field pixel (`masked_sum_exact` with a

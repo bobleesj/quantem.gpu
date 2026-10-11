@@ -80,6 +80,8 @@ parts:
           title: Original HDF5 packed loading
         - file: api/native_resident
       - file: api/metal_image
+      - file: developer/metal-compressed-region-mean
+        title: Regional mean diffraction from compressed residents
     - file: developer/file-formats
       title: File formats and codecs
       sections:
@@ -134,8 +136,9 @@ parts:
       - file: maintainer/backend-4dstem-load-checklist
         title: Load acceptance evidence
       - file: maintainer/ssb-performance
-      - file: maintainer/ssb-performance-checkpoints
-        title: SSB performance evidence
+      - file: maintainer/2026-09-11-ssb-performance-checkpoints
+        title: SSB performance checkpoints (2026-09-11)
+      - file: maintainer/virtual-image-kernel-checklist
     - file: developer/kernel-lifecycle
       title: Contributing changes
       sections:
@@ -148,6 +151,7 @@ parts:
         title: Count and Fourier representation integration
       - file: developer/reproducing-resident-analysis
         title: Reproducing resident count analysis
+      - file: maintainer/ssb-architecture
       - file: developer/writing
         title: Writing, notation, and units
     - file: maintainer/index
@@ -161,13 +165,20 @@ parts:
         title: M2 Air Metal evidence
       - file: maintainer/remote-cuda-real-data-2026-08-15
         title: Remote CUDA evidence
-      - file: maintainer/ssb-architecture
+      - file: maintainer/2026-09-20-virtual-metal-numerics
+        title: Frozen MPS fixtures on a virtual GPU (2026-09-20)
       - file: maintainer/2026-09-24-ssb-units-and-thick-sample
         title: SSB units and thick-sample model (2026-09-24)
+      - file: maintainer/2026-10-04-cuda-pool-retention
+        title: CUDA pool retention (2026-10-04)
+      - file: maintainer/2026-10-05-restructure
+        title: Package restructure (2026-10-05)
       - file: maintainer/downstream-sync
         title: Downstream sync after the restructure (2026-10-05)
       - file: maintainer/2026-10-05-ssb-detector-sampling
         title: SSB detector sampling and fit state (2026-10-05)
+      - file: maintainer/2026-10-05-parallax-rotation-encoded-input
+        title: Parallax and scan rotation on encoded input (2026-10-05)
       - file: maintainer/2026-10-07-mps-uint32-masters-and-cuda13-extra
         title: MPS uint32 masters and the CUDA 13 extra (2026-10-07)
       - file: maintainer/2026-10-08-uint32-flagged-markers-and-gold-convert-size
@@ -176,7 +187,6 @@ parts:
         title: WebGPU .qem streamed loading (2026-10-08)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
-      - file: maintainer/virtual-image-kernel-checklist
       - file: maintainer/history/index
         title: Historical experiments
         sections:

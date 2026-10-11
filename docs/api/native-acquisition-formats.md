@@ -456,6 +456,61 @@ boundaries. Applications own folder selection, auxiliary-file policy, scheduling
 cache admission, notes, user overrides and UI. Keep assumed values separate
 from recorded metadata; a client default such as 30 mrad is not a source fact.
 
+### EMPAD float32 resident
+
+`MetalEMPADResidentSource` keeps conventional float32 EMPAD exports exactly. It
+encodes each 128-word detector row as an XOR base, common leading and trailing
+bits and a bit-packed residual, so every IEEE-754 bit survives, including
+negatives, fractions, signed zero, NaN payloads, infinities and subnormals.
+Storage can exceed the logical float32 size for incompressible rows; there is
+no integer-style compression ratio. Loading reads bounded 64-frame windows into
+private packed payloads and descriptors, with no dense volume. Source
+device/inode, size, modification time and change time are checked before and
+after the bounded reads and before publication, so a changed RAW or XML file,
+including a same-size edit with a restored modification time, invalidates the
+load. These checks detect filesystem changes; they are not a file lock.
+
+The logical SHA-256 covers little-endian detector words in scan order. Source
+tensor identity hashes the UTF-8 domain
+`quantem.gpu.empad-tensor/v1\0float32-le\0`, four little-endian UInt64 shape
+dimensions and the lowercase logical hash as ASCII; footer bytes, file names
+and XML formatting are not part of it. The optional `sourceHashCacheURL`
+stores a source-snapshot-bound checksum record, never detector arrays; a match
+skips the checksum, not the reads, packing or mutation checks.
+
+Aperture sums use compensated float32 summation with strict arithmetic and keep
+a compensated high/low pair per scan position, so mask changes integrate only
+the entering and leaving pixels (eight bytes per scan position). Selected
+non-finite values propagate; unselected values do not participate. Mean DP is
+the arithmetic mean over scan positions. CoM is
+`sum(value * coordinate) / sum(value)` for zero-based detector row and column
+coordinates; signed weights are not clipped, and a zero total or any non-finite
+measurement yields NaN. Floating reductions are qualified against a float64
+reference with `rtol=1e-6` and `atol=1e-6`; they are not exact integer sums.
+
+Evidence on an Apple M5 (24 GB), 2026-09-08:
+
+- the public AutoDisk Pd@Pt original RAW (64 × 64 scan, source SHA-256
+  `c431b6ae2a506b189ae86fbaf254d97de7c9258383c6dde96c7a871d1a9f7805`): all
+  67,108,864 detector words matched the original bytes after GPU packing and
+  extraction; packed payload and descriptors occupied 236,838,288 bytes against
+  268,435,456 logical float32 bytes;
+- uncompensated summation failed the 1e-6 limit (BF maximum relative error
+  `1.61481776e-6`, 93 of 4,096 values); compensated summation reduced the
+  maximum relative errors to `5.92664287e-8` (BF), `5.92822801e-8` (ABF),
+  `5.89445828e-8` (ADF) and `5.88597142e-8` (total), with no tolerance change;
+- the public [256 × 256 scan, 128 × 128 EMPAD record](https://zenodo.org/records/17246822)
+  (`scan_x256_y256.raw`, MD5 `c50f643c2cc87360bfdc746afd026cce`): all
+  1,073,741,824 detector samples passed bitwise resident parity, and BF, ABF,
+  ADF, total, mean DP and CoM passed independent float64 references.
+
+These checks establish numerical parity, not loading time, frame rate or peak
+memory. Python `io.load` on CUDA and MPS stores EMPAD float exports as float ANS
+residents, a separate representation; WebGPU does not load EMPAD. The
+[EMPAD-G2 reader](https://github.com/sezelt/empad2) describes the encoded
+acquisition generation, which needs a matching background and sensor
+calibration and is not read here.
+
 ## Source map and verification
 
 Sources live in `native/swift/Sources/`:
