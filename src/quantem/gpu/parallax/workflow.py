@@ -164,7 +164,7 @@ def run(
     pixel_rows, pixel_cols = cp.nonzero(bf_mask)
     if verbose:
         print(f"[parallax] {len(pixel_rows):,} BF pixels within {radius} px of {center}")
-    image, density, global_shifts = _shifted_sum(data, bf_mask, pixel_rows, pixel_cols, upsampling_factor, verbose)
+    image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose)
     # The bright-field stack and its spectra were many times the image; return
     # their blocks to the GPU for the next consumer instead of keeping them cached.
     release_cached_memory()
@@ -242,14 +242,14 @@ def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float],
     return aberrations, math.degrees(rotation_rad)
 
 
-def _shifted_sum(data, bf_mask, pixel_rows, pixel_cols, upsampling_factor, verbose):
+def _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose):
     """Read, align and sum the bright-field images: ``(image, density, shifts)``.
 
     A function of its own so that the image stack (one float32 scan image per
     bright-field pixel, gigabytes for a full disk) and its spectra are freed
     when it returns, before ``run`` hands their memory back to the GPU.
     """
-    scan_rows, scan_cols = data.shape[:2]
+    scan_rows, scan_cols, det_rows, det_cols = data.shape
     # Read the scan image of every BF pixel, in row-major detector order. The
     # acquisition stays encoded: bands of scan rows cropped to the disk's
     # bounding box keep the decoded values under BATCH_BYTES, and uint8/uint16
@@ -275,12 +275,13 @@ def _shifted_sum(data, bf_mask, pixel_rows, pixel_cols, upsampling_factor, verbo
 
     # Measure each image's (row, col) shift against the mean image. Coarse-to-fine
     # detector binning, (3, 2, 1) as in QuantEM's align_vbf_stack_multiscale,
-    # keeps large shifts from locking onto a wrong correlation peak.
+    # keeps large shifts from locking onto a wrong correlation peak; the bins
+    # are centred on the disk, as QuantEM's corner-centred mask places them.
     global_shifts = align_vbf_stack_multiscale_cp(
         vbf_stack=stack,
-        bf_mask=bf_mask,
-        inds_row=pixel_rows,
-        inds_col=pixel_cols,
+        inds_row=(pixel_rows - round(center[0])) % det_rows,
+        inds_col=(pixel_cols - round(center[1])) % det_cols,
+        detector_shape=(det_rows, det_cols),
         bin_factors=(3, 2, 1),
         reference=stack.mean(axis=0),
         upsample_factor=4,
