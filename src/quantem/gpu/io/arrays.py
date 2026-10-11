@@ -117,6 +117,29 @@ def load_array_resident(
                 "verified_values": math.prod(shape),
             },
         )
+    correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
+    flagged = np.empty(0, np.intp) if pixel_mask is None else np.flatnonzero(np.asarray(pixel_mask).reshape(-1))
+
+    def clear_flagged(block) -> int:
+        """Store flagged-pixel values that no uint16 holds as 0, as the Arina loaders do.
+
+        uint32 detectors write 0xffffffff at every pixel their mask flags. A
+        requested correction replaces flagged pixels anyway, so all of them are
+        cleared before the range check; otherwise only values above 65535 are
+        stored as 0 and counted, and ``pixel_mask`` keeps their positions.
+        """
+        if not flagged.size:
+            return 0
+        pixels = block.reshape(len(block), -1)
+        if correction["applied"]:
+            pixels[:, flagged] = 0
+            return 0
+        kept = pixels[:, flagged]
+        markers = kept > 0xFFFF
+        pixels[:, flagged] = np.where(markers, 0, kept)
+        return int(np.count_nonzero(markers))
+
+    zeroed_markers = 0
     if dtype.kind in "iu" and dtype.itemsize > 2:
         if not auto_narrow:
             raise NotImplementedError(
@@ -130,6 +153,7 @@ def load_array_resident(
         minimum, maximum = np.iinfo(dtype).max, np.iinfo(dtype).min
         for first in range(0, math.prod(shape[:2]), audit_scans):
             block = read_frames(first, min(first + audit_scans, math.prod(shape[:2])))
+            clear_flagged(block)
             minimum = min(minimum, int(block.min()))
             maximum = max(maximum, int(block.max()))
             peak_bytes = max(peak_bytes, block.nbytes)
@@ -164,7 +188,6 @@ def load_array_resident(
             "One detector frame and its exact conversion exceed the 32 MiB ingestion limit."
         )
     block_scans = min(512, MAX_INGEST_BYTES // staging_bytes)
-    correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
     valid = np.ones(shape[2:], bool)
     if pixel_mask is not None and not correction["applied"]:
         valid &= np.asarray(pixel_mask) == 0
@@ -229,6 +252,8 @@ def load_array_resident(
                 block = np.ascontiguousarray(block)
                 peak_bytes = max(peak_bytes, block.nbytes)
                 if source_dtype != dtype:
+                    if source_dtype.kind in "iu":
+                        zeroed_markers += clear_flagged(block)
                     # Recheck each window in case the input changes after the audit.
                     narrowed = block.astype(dtype)
                     if exact_float_narrowing:
@@ -282,10 +307,7 @@ def load_array_resident(
                 source_dtype=source_dtype.name,
                 source_logical_tensor_bytes=math.prod(shape) * source_dtype.itemsize,
                 resident_profile=FLOAT_CODEC if floating else INTEGER_CODEC,
-                file_counts_exact=not correction["applied"],
-                lossless_exact=not correction["applied"],
-                working_counts_exact=True,
-                hot_pixel_correction=correction,
+                **correction_metadata(correction, zeroed_markers),
                 load_timings=dict(
                     resident.load_metrics,
                     peak_ingest_bytes=peak_bytes,
@@ -466,3 +488,31 @@ def load_hdf5_array_resident(
             raise
         loaded.metadata["load_timings"]["storage_reader"] = "bounded-hdf5"
         return loaded
+
+
+def correction_metadata(record: dict, zeroed_markers: int) -> dict:
+    """Record how stored detector-mask pixels were handled and what that means for exactness.
+
+    A corrected pixel no longer holds the file's count, so the working data is
+    exact (its own codes decode bit for bit) but no longer the file's counts.
+    ``zeroed_markers`` counts flagged-pixel values above 65535 (the uint32
+    detector marker) stored as 0 when uncorrected uint32 counts become uint16:
+    every valid count and every other flagged value is still the file's, and
+    ``pixel_mask`` keeps the flagged positions.
+    """
+    applied = record["applied"]
+    if applied:
+        policy = f"gpu-{record['method']}-corrected"
+    elif zeroed_markers:
+        policy = "flagged-markers-stored-as-zero"
+    else:
+        policy = "preserve-stored-counts"
+    exact = not applied and not zeroed_markers
+    return dict(
+        lossless_exact=exact,
+        file_counts_exact=exact,
+        detector_mask_policy=policy,
+        hot_pixel_correction=record,
+        working_counts_exact=True,
+        flagged_markers_stored_as_zero=int(zeroed_markers),
+    )
