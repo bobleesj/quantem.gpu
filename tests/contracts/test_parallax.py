@@ -9,15 +9,6 @@ import numpy as np
 import pytest
 
 
-def test_parallax_public_names_are_lazy() -> None:
-    import quantem.gpu as qg
-
-    assert "parallax" in qg.__all__
-    assert qg.parallax.__all__ == ["ParallaxResult", "run"]
-    assert "Parallax" not in qg.__all__
-    assert "ParallaxResult" not in qg.__all__
-
-
 @pytest.mark.slow
 def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
     tmp_path, monkeypatch
@@ -25,11 +16,11 @@ def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
     """Disk detection and alignment receive exactly what the stored counts give."""
     cp = _cuda()
     from quantem.gpu import io, parallax
-    from quantem.gpu.parallax.cuda import reconstruction
+    from quantem.gpu.parallax import workflow
 
     counts, _, _ = _synthetic_parallax_counts()
     received = {}
-    detect, align = reconstruction.detect_bf_radius, reconstruction.align_vbf_stack_multiscale_cp
+    detect, align = workflow.detect_bf_radius, workflow.align_vbf_stack_multiscale_cp
 
     def record_detection(mean_dp):
         received["mean_dp"] = cp.asnumpy(mean_dp)
@@ -40,8 +31,8 @@ def test_parallax_reconstructs_encoded_acquisition_from_its_exact_counts(
         received["stack"] = cp.asnumpy(kwargs["vbf_stack"])
         return align(**kwargs)
 
-    monkeypatch.setattr(reconstruction, "detect_bf_radius", record_detection)
-    monkeypatch.setattr(reconstruction, "align_vbf_stack_multiscale_cp", record_alignment)
+    monkeypatch.setattr(workflow, "detect_bf_radius", record_detection)
+    monkeypatch.setattr(workflow, "align_vbf_stack_multiscale_cp", record_alignment)
     with io.load(
         _write_master(tmp_path, counts), backend="cuda",
         scan_shape=counts.shape[:2], verbose=False,
@@ -126,28 +117,65 @@ def test_parallax_repeats_bit_identically(tmp_path) -> None:
     np.testing.assert_array_equal(cp.asnumpy(first.image), cp.asnumpy(second.image))
 
 
-def test_parallax_aberration_fit_end_to_end(tmp_path) -> None:
+@pytest.mark.slow
+def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
+    """A wave-optical acquisition with a known probe gives back its C10, C12, phi12 and rotation, in SSB's convention.
+
+    The probe is SSB's model (``aperture * exp(-i chi)``) and the scan axes are turned 20 degrees from the
+    detector axes, which SSB describes as ``rotation_angle_deg=-20`` with phi12 in the scan frame (0.4 - 20
+    degrees). The fit used to read the detector frequencies off an unshifted FFT grid around a centred disk and
+    to scale them with the scan step. Parallax is a geometric-optics estimate of the shifts, so the
+    coefficients are held to 1-2 %, not to rounding; the exact algebra is the next test.
+    """
     _cuda()
     from quantem.gpu import io, parallax
 
-    counts, center, radius = _synthetic_parallax_counts(scan_shape=(10, 10))
+    counts, scan_sampling_A = _wave_optical_counts(
+        c10_nm=20.0, c12_nm=3.0, phi12=0.4, rotation_deg=20.0, det_sampling_mrad=1.0
+    )
     with io.load(
         _write_master(tmp_path, counts), backend="cuda",
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         result = parallax.run(
-            loaded,
-            center=center,
-            bf_radius=radius,
-            upsampling_factor=1,
-            voltage_kV=300,
-            scan_sampling=0.5,
-            fit_aberrations=True,
+            loaded, upsampling_factor=1, fit_aberrations=True,
+            scan_sampling_A=scan_sampling_A, det_sampling=1.0,
         )
 
-    assert result.aberrations is not None
-    for key in ("C10", "C12", "phi12", "rotation_angle"):
-        assert np.isfinite(result.aberrations[key])
+    assert result.aberrations["C10"] == pytest.approx(20.0, rel=0.01)
+    assert result.aberrations["C12"] == pytest.approx(3.0, rel=0.02)
+    assert result.aberrations["phi12"] == pytest.approx(0.4 - np.radians(20.0), abs=0.01)
+    assert result.rotation_angle_deg == pytest.approx(-20.0, abs=0.05)
+
+
+def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
+    """Shifts made from known coefficients come back to rounding, for an off-centre disk on a full detector.
+
+    The model is the one ``fit_aberrations_from_shifts`` documents: scan-frame shifts ``alpha @ A R`` for beam
+    angles ``alpha`` measured from the disk centre (92.6, 99.3) of a 192 x 192 detector. SSB's rotation r turns the
+    detector frame back by r, so phi12 comes back in the scan frame as ``phi12 + r``.
+    """
+    from quantem.gpu.parallax.workflow import fit_aberrations_from_shifts
+
+    c10_nm, c12_nm, phi12, rotation_deg = -21.0, 4.0, 0.3, 37.0
+    rows, cols = np.indices((192, 192))
+    disk = (rows - 92.6) ** 2 + (cols - 99.3) ** 2 <= 30.0**2
+    angles_rad = np.stack([rows[disk] - 92.6, cols[disk] - 99.3], axis=1) * 0.55e-3
+    aberration_A = 10 * np.array([
+        [c10_nm + c12_nm * np.cos(2 * phi12), c12_nm * np.sin(2 * phi12)],
+        [c12_nm * np.sin(2 * phi12), c10_nm - c12_nm * np.cos(2 * phi12)],
+    ])
+    turn = np.radians(-rotation_deg)
+    rotation = np.array([[np.cos(turn), -np.sin(turn)], [np.sin(turn), np.cos(turn)]])
+
+    aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
+        angles_rad @ aberration_A @ rotation, angles_rad
+    )
+
+    assert aberrations["C10"] == pytest.approx(c10_nm, rel=1e-12)
+    assert aberrations["C12"] == pytest.approx(c12_nm, rel=1e-12)
+    assert aberrations["phi12"] == pytest.approx(phi12 + np.radians(rotation_deg), abs=1e-12)
+    assert rotation_angle_deg == pytest.approx(rotation_deg, abs=1e-10)
 
 
 def test_parallax_rejects_data_it_cannot_reconstruct() -> None:
@@ -196,8 +224,8 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
             loaded,
             sampling_radius=5,
             upsampling_factor=1,
-            voltage_kV=300,
-            scan_sampling=0.5,
+            scan_sampling_A=0.5,
+            semiangle_mrad=30,
             fit_aberrations=True,
         )
 
@@ -208,89 +236,7 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
     assert shifts.shape[1] == 2
     assert np.isfinite(shifts).all()
     assert float(np.sqrt(np.max(np.sum(shifts**2, axis=1)))) < 100.0
-    for key in ("C10", "C12", "phi12", "rotation_angle"):
-        assert np.isfinite(got.aberrations[key])
-
-
-# ---------------------------------------------------------------------------
-# Aberration fitting and result conversion
-# ---------------------------------------------------------------------------
-
-
-def test_parallax_aberration_fit_recovers_known_coefficients() -> None:
-    pytest.importorskip("cupy")
-    from quantem.gpu.optics.cuda import fit_aberrations_svd_polar
-    from quantem.gpu.optics.physics import wavelength_A_from_kV
-
-    gpts = (16, 16)
-    center = (8, 8)
-    radius = 3
-    rows = np.arange(gpts[0])[:, None]
-    cols = np.arange(gpts[1])[None, :]
-    bf_mask = (rows - center[0]) ** 2 + (cols - center[1]) ** 2 <= radius**2
-    sampling = (0.25, 0.25)
-    wavelength = wavelength_A_from_kV(300)
-
-    c10 = 125.0
-    c12 = 35.0
-    phi12 = 0.37
-    c12a = c12 * np.cos(2 * phi12)
-    c12b = c12 * np.sin(2 * phi12)
-    aberration_matrix = np.array(
-        [[c10 + c12a, c12b], [c12b, c10 - c12a]],
-        dtype=np.float64,
-    )
-
-    kxa = np.fft.fftfreq(gpts[0], sampling[0]).astype(np.float64)
-    kya = np.fft.fftfreq(gpts[1], sampling[1]).astype(np.float64)
-    kx = np.broadcast_to(kxa[:, None], gpts)[bf_mask]
-    ky = np.broadcast_to(kya[None, :], gpts)[bf_mask]
-    basis = np.stack([kx, ky], axis=1) * wavelength
-    shifts_ang = basis @ aberration_matrix
-
-    got = fit_aberrations_svd_polar(shifts_ang, bf_mask, wavelength, gpts, sampling)
-
-    assert got["C10"] == pytest.approx(c10, abs=1e-8)
-    assert got["C12"] == pytest.approx(c12, abs=1e-8)
-    assert got["phi12"] == pytest.approx(phi12, abs=1e-8)
-    assert got["rotation_angle"] == pytest.approx(0.0, abs=1e-8)
-
-
-def test_parallax_result_converts_aberrations_for_ssb() -> None:
-    from quantem.gpu.parallax import ParallaxResult
-
-    result = ParallaxResult(
-        image=np.zeros((2, 2), dtype=np.float32),
-        density=np.ones((2, 2), dtype=np.float32),
-        shifts=[],
-        aberrations={
-            "C10": 125.0,
-            "C12": 35.0,
-            "phi12": 0.37,
-            "rotation_angle": np.deg2rad(-12.0),
-        },
-    )
-
-    assert result.to_ssb_aberrations() == {
-        "C10": 12.5,
-        "C12": 3.5,
-        "phi12": 0.37,
-    }
-    assert result.rotation_angle_deg() == pytest.approx(-12.0)
-
-
-def test_parallax_result_rejects_missing_ssb_conversion_inputs() -> None:
-    from quantem.gpu.parallax import ParallaxResult
-
-    result = ParallaxResult(
-        image=np.zeros((2, 2), dtype=np.float32),
-        density=np.ones((2, 2), dtype=np.float32),
-        shifts=[],
-        aberrations={"C10": 10.0, "phi12": 0.0},
-    )
-
-    with pytest.raises(ValueError, match="Missing"):
-        result.to_ssb_aberrations()
+    assert np.isfinite([*got.aberrations.values(), got.rotation_angle_deg]).all()
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +287,45 @@ def _synthetic_parallax_counts(scan_shape=(12, 12), detector_shape=(16, 16), rad
         phase = np.exp(-2j * np.pi * (row_frequency * shift_row + col_frequency * shift_col))
         expected[:, :, row, col] = 200.0 + 40.0 * np.fft.ifft2(np.fft.fft2(scene) * phase).real
     return rng.poisson(expected).astype(np.uint16), center, radius
+
+
+def _wave_optical_counts(*, c10_nm, c12_nm, phi12, rotation_deg, det_sampling_mrad, scan=128, det=64, step=2):
+    """Counts of a weak phase object scanned by SSB's model probe: ``aperture * exp(-i chi)`` at 300 kV, 25 mrad.
+
+    The specimen is a smooth random phase (0.4 rad rms) on a grid of the detector's real-space pixels, four times
+    the scanned field so a turned scan never wraps; the scan steps ``step`` pixels along axes turned by
+    ``rotation_deg`` from the detector axes. Returns ``(counts, scan_sampling_A)``.
+    """
+    wavelength = 0.019687489006849
+    pixel_A = wavelength / (det * det_sampling_mrad * 1e-3)
+    rng = np.random.default_rng(3)
+    size = 4 * scan * step
+    frequency = np.fft.fftfreq(size, pixel_A)
+    blur = np.exp(-(frequency[:, None] ** 2 + frequency[None, :] ** 2) / (2 * 0.35**2))
+    phase = np.fft.ifft2(np.fft.fft2(rng.standard_normal((size, size))) * blur).real
+    specimen = np.exp(1j * 0.4 * phase / phase.std())
+    angle_row, angle_col = np.meshgrid(*2 * [np.fft.fftfreq(det, pixel_A) * wavelength], indexing="ij")
+    azimuth = np.arctan2(angle_col, angle_row)
+    chi = np.pi / wavelength * (angle_row**2 + angle_col**2) * 10 * (c10_nm + c12_nm * np.cos(2 * (azimuth - phi12)))
+    probe = (np.hypot(angle_row, angle_col) < 25e-3) * np.exp(-1j * chi)
+    cycles_row, cycles_col = np.meshgrid(np.fft.fftfreq(det), np.fft.fftfreq(det), indexing="ij")
+    window = np.arange(det)
+    turn = np.radians(rotation_deg)
+    counts = np.empty((scan, scan, det, det), np.uint16)
+    for scan_row in range(scan):
+        for scan_col in range(scan):
+            row = step * (np.cos(turn) * scan_row - np.sin(turn) * scan_col)
+            col = step * (np.sin(turn) * scan_row + np.cos(turn) * scan_col)
+            row0, col0 = int(np.floor(row)), int(np.floor(col))
+            # the sub-pixel part of the probe position as a Fourier phase ramp
+            wave = np.fft.fftshift(np.fft.ifft2(
+                probe * np.exp(-2j * np.pi * (cycles_row * (row - row0) + cycles_col * (col - col0)))
+            ))
+            exit_wave = wave * specimen[np.ix_((row0 + window) % size, (col0 + window) % size)]
+            # 2e5 electrons per probe position
+            intensity = np.abs(np.fft.fftshift(np.fft.fft2(exit_wave))) ** 2 / (det * det * np.sum(np.abs(wave) ** 2))
+            counts[scan_row, scan_col] = rng.poisson(2e5 * intensity)
+    return counts, pixel_A * step
 
 
 def _write_master(folder: Path, counts: np.ndarray) -> Path:
