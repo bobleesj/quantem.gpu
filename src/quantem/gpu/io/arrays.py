@@ -22,7 +22,7 @@ from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.snapshot import FLOAT_CODEC, INTEGER_CODEC
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.resident import float_ans
-from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts, retain
+from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
 from quantem.gpu.resident.hot_pixels import hot_pixel_record
 from quantem.gpu.resident.mps import precision as metal_precision
@@ -259,13 +259,6 @@ def load_array_resident(
                     if corrector is not None:
                         corrector.apply(raw)
                     resident.append(raw)
-                    if floating:
-                        # The count index means nothing for float bits; retain
-                        # copies the codes alone so its bytes are not kept.
-                        chunk = resident.chunks[-1]
-                        resident.chunks[-1] = Chunk(
-                            chunk.first, chunk.scans, retain(chunk.arrays[:3])
-                        )
                     del raw
                 else:
                     raw = metal_precision.upload(block)
