@@ -6,6 +6,18 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Changed
+
+- `device.release_cached_memory(verbose=False)` returns the gigabytes this
+  process handed back to the driver. It collects garbage first, then empties
+  Torch's cache, CuPy's cached FFT plans and memory pool on every GPU the
+  process has opened, CuPy's pinned pool, and on Apple silicon the Torch MPS
+  and MLX caches. `verbose=True` prints one line per GPU. rc16 returned
+  `None`, emptied CuPy's pool on the current GPU only, and left arrays held by
+  a reference cycle, FFT plan work areas and MLX's cache in place: with a
+  1 GiB tensor in a cycle and a 1 GiB CuPy or MLX array dropped, it returned
+  1 of 2 GiB to the driver on CUDA and 0 of 2 GiB on Metal.
+
 ## rc16 - 2026-10-11
 
 ### Fixed
