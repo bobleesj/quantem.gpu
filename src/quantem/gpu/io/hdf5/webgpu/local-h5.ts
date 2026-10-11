@@ -57,11 +57,9 @@ export interface LocalH5LoadProfile extends LogicalPixelHashProfile {
   packMs: number;
   decompressMs: number;
   uploadMs: number;
-  uploadCopyWaitMs?: number;
   detBinMs?: number;
   decodeBuildMs: number;
   gpuWaitMs: number;
-  decodeComputeWaitMs?: number;
   decodeProfileMs: number;
   fileGB: number;
   blockIndexGB?: number;
@@ -88,7 +86,6 @@ export interface LocalH5LoadProfile extends LogicalPixelHashProfile {
   groupSize: number;
   decodeBatch: number;
   decodeVariant: string;
-  decodeProfileSplit?: boolean;
   frameIndexFiles: number;
   blockIndexFiles: number;
   parseMode: "h5-btree" | "frame-index" | "block-index" | "mixed" | "selected-block-sidecar";
@@ -879,12 +876,9 @@ function accumulateProfile(dst: Bslz4BatchProfile, src: Bslz4BatchProfile): void
   dst.specs += src.specs;
   dst.compressedMB += src.compressedMB;
   dst.uploadMs += src.uploadMs;
-  dst.uploadCopyWaitMs = (dst.uploadCopyWaitMs ?? 0) + (src.uploadCopyWaitMs ?? 0);
   dst.buildMs += src.buildMs;
   dst.gpuWaitMs += src.gpuWaitMs;
-  dst.decodeComputeWaitMs = (dst.decodeComputeWaitMs ?? 0) + (src.decodeComputeWaitMs ?? 0);
   dst.totalMs += src.totalMs;
-  dst.profileSplit = Boolean(dst.profileSplit || src.profileSplit);
 }
 
 const ZERO_BAD_PIXELS_WGSL = `
@@ -1176,12 +1170,9 @@ export async function loadShow4DSTEMLocalH5Master(
     specs: 0,
     compressedMB: 0,
     uploadMs: 0,
-    uploadCopyWaitMs: 0,
     buildMs: 0,
     gpuWaitMs: 0,
-    decodeComputeWaitMs: 0,
     totalMs: 0,
-    profileSplit: false,
   };
   const drain = async (): Promise<void> => {
     if (!pendingDecode) return;
@@ -1329,11 +1320,9 @@ export async function loadShow4DSTEMLocalH5Master(
     packMs: Math.round(packMs),
     decompressMs: Math.round(decompressMs),
     uploadMs: Math.round(decodeProfile.uploadMs),
-    uploadCopyWaitMs: Math.round(decodeProfile.uploadCopyWaitMs ?? 0),
     detBinMs: Math.round(detBinMs),
     decodeBuildMs: Math.round(decodeProfile.buildMs),
     gpuWaitMs: Math.round(decodeProfile.gpuWaitMs),
-    decodeComputeWaitMs: Math.round(decodeProfile.decodeComputeWaitMs ?? 0),
     decodeProfileMs: Math.round(decodeProfile.totalMs),
     fileGB: +(fileBytes / 1e9).toFixed(2),
     blockIndexGB: +(blockIndexBytes / 1e9).toFixed(3),
@@ -1360,7 +1349,6 @@ export async function loadShow4DSTEMLocalH5Master(
     groupSize,
     decodeBatch,
     decodeVariant: decodeProfile.variant,
-    decodeProfileSplit: Boolean(decodeProfile.profileSplit),
     frameIndexFiles,
     blockIndexFiles,
     parseMode: blockIndexFiles === dataItems.length
