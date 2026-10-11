@@ -15,6 +15,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from quantem.gpu.detector.cuda.probe import mean_dp
 from quantem.gpu.detector.tensors import TorchBackend, scan_shape_of
@@ -221,8 +222,6 @@ class CudaKernelCompute(DetectorQueries):
     def _torch_backend(self) -> TorchBackend:
         """Torch view of the same memory for arrays the kernels do not read."""
         if self._torch is None:
-            import torch
-
             self._torch = TorchBackend(torch.from_dlpack(self._data))
         return self._torch
 
