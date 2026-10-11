@@ -28,7 +28,6 @@ _NAMES = (
     "bitshuffle_fwd_8192_16",
     "bitshuffle_fwd_tail_16",
     "bitshuffle_fwd_tail_32",
-    "lz4_compress_kernel",
     "lz4_compress_var_kernel",
     "pack_h5_chunks_kernel",
 )

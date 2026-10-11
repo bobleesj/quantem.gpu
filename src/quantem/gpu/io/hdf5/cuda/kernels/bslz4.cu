@@ -12,10 +12,8 @@ typedef long long int64_t;
 typedef unsigned long size_t;
 
 using offset_type = uint16_t;
-using word_type = uint32_t;
 using position_type = uint32_t;
 using double_word_type = uint64_t;
-using item_type = uint32_t;
 
 constexpr const int DECOMP_THREADS_PER_CHUNK = 32;
 constexpr const int DECOMP_CHUNKS_PER_BLOCK = 2;
@@ -29,10 +27,6 @@ inline __device__ void syncCTA() {
     else __syncwarp();
 }
 
-inline __device__ int warpBallot(int vote) {
-    return __ballot_sync(0xffffffff, vote);
-}
-
 inline __device__ offset_type readWord(const uint8_t* const address) {
     offset_type word = 0;
     for (size_t i = 0; i < sizeof(offset_type); ++i)
@@ -43,36 +37,6 @@ inline __device__ offset_type readWord(const uint8_t* const address) {
 struct token_type {
     position_type num_literals;
     position_type num_matches;
-
-    __device__ bool hasNumLiteralsOverflow() const { return num_literals >= 15; }
-    __device__ bool hasNumMatchesOverflow() const { return num_matches >= 19; }
-
-    __device__ position_type numLiteralsOverflow() const {
-        return hasNumLiteralsOverflow() ? num_literals - 15 : 0;
-    }
-    __device__ uint8_t numLiteralsForHeader() const {
-        return hasNumLiteralsOverflow() ? 15 : num_literals;
-    }
-    __device__ position_type numMatchesOverflow() const {
-        return hasNumMatchesOverflow() ? num_matches - 19 : 0;
-    }
-    __device__ uint8_t numMatchesForHeader() const {
-        return hasNumMatchesOverflow() ? 15 : num_matches - 4;
-    }
-    __device__ position_type lengthOfLiteralEncoding() const {
-        if (hasNumLiteralsOverflow()) {
-            const position_type num = numLiteralsOverflow();
-            return (num / 0xff) + 1;
-        }
-        return 0;
-    }
-    __device__ position_type lengthOfMatchEncoding() const {
-        if (hasNumMatchesOverflow()) {
-            const position_type num = numMatchesOverflow();
-            return (num / 0xff) + 1;
-        }
-        return 0;
-    }
 };
 
 class BufferControl {
@@ -683,123 +647,6 @@ __device__ __forceinline__ uint32_t lz4_match_length(
     }
 
     return len;
-}
-
-// Output buffer stride per chunk - must handle LZ4 worst case expansion
-// LZ4 worst case: every token has 1-byte literal + token + offset = ~1.06x
-// Use 2x input size to be safe (never exceeds this)
-#define LZ4_OUTPUT_STRIDE(chunk_size) ((chunk_size) * 2)
-
-extern "C" __global__ void lz4_compress_kernel(
-    const uint8_t* __restrict__ input,
-    uint8_t* __restrict__ output,
-    uint32_t* __restrict__ output_sizes,
-    const uint32_t chunk_size,
-    const uint32_t n_chunks
-) {
-    const int chunk_id = blockIdx.x;
-    if (chunk_id >= n_chunks) return;
-
-    const int tid = threadIdx.x;
-    // Use 64-bit arithmetic to avoid overflow with large datasets (>4GB)
-    const uint8_t* in = input + (uint64_t)chunk_id * chunk_size;
-    const uint32_t output_stride = LZ4_OUTPUT_STRIDE(chunk_size);
-    uint8_t* out = output + (uint64_t)chunk_id * output_stride;
-
-    // Shared memory hash table (8KB) - much faster than global memory
-    // Sentinel 0xFFFF means "no entry" (valid positions are 0..chunk_size-1)
-    __shared__ uint16_t hash_table[LZ4_HASH_SIZE];
-
-    // Parallel hash table initialization (all 32 threads)
-    for (int i = tid; i < LZ4_HASH_SIZE; i += LZ4_WARP_SIZE) {
-        hash_table[i] = 0xFFFF;
-    }
-    __syncwarp();
-
-    // Only thread 0 does encoding (LZ4 is inherently sequential)
-    if (tid != 0) return;
-
-    uint32_t in_pos = 0;
-    uint32_t out_pos = 0;
-    uint32_t anchor = 0;
-
-    while (in_pos < chunk_size - 12) {
-        uint32_t hash = lz4_hash4(in + in_pos);
-        uint32_t match_pos = hash_table[hash];
-        hash_table[hash] = (uint16_t)in_pos;
-
-        uint32_t mlen = 0;
-        if (match_pos != 0xFFFF && in_pos > match_pos && in_pos - match_pos < 65535) {
-            if (lz4_load_u32(in + in_pos) == lz4_load_u32(in + match_pos)) {
-                mlen = lz4_match_length(in, in_pos, match_pos, chunk_size);
-            }
-        }
-
-        if (mlen >= 4) {
-            uint32_t literal_len = in_pos - anchor;
-            uint32_t ml = mlen - 4;
-
-            uint8_t token = ((literal_len >= 15 ? 15 : literal_len) << 4) |
-                           (ml >= 15 ? 15 : ml);
-            out[out_pos++] = token;
-
-            if (literal_len >= 15) {
-                uint32_t rem = literal_len - 15;
-                while (rem >= 255) {
-                    out[out_pos++] = 255;
-                    rem -= 255;
-                }
-                out[out_pos++] = (uint8_t)rem;
-            }
-
-            // Copy literals
-            for (uint32_t i = 0; i < literal_len; i++) {
-                out[out_pos++] = in[anchor + i];
-            }
-
-            // Match offset (little endian, 2 bytes)
-            uint16_t moff = in_pos - match_pos;
-            out[out_pos++] = moff & 0xFF;
-            out[out_pos++] = (moff >> 8) & 0xFF;
-
-            // Extended match length (if >= 15)
-            if (ml >= 15) {
-                uint32_t rem = ml - 15;
-                while (rem >= 255) {
-                    out[out_pos++] = 255;
-                    rem -= 255;
-                }
-                out[out_pos++] = (uint8_t)rem;
-            }
-
-            in_pos += mlen;
-            anchor = in_pos;
-        } else {
-            in_pos++;
-        }
-    }
-
-    // Emit remaining literals (LZ4 requires last 5 bytes to be literals)
-    uint32_t literal_len = chunk_size - anchor;
-    if (literal_len > 0) {
-        uint8_t token = (literal_len >= 15 ? 15 : literal_len) << 4;
-        out[out_pos++] = token;
-
-        if (literal_len >= 15) {
-            uint32_t rem = literal_len - 15;
-            while (rem >= 255) {
-                out[out_pos++] = 255;
-                rem -= 255;
-            }
-            out[out_pos++] = (uint8_t)rem;
-        }
-
-        for (uint32_t i = 0; i < literal_len; i++) {
-            out[out_pos++] = in[anchor + i];
-        }
-    }
-
-    output_sizes[chunk_id] = out_pos;
 }
 
 extern "C" __global__ void lz4_compress_var_kernel(
