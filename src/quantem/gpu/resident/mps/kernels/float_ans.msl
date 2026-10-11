@@ -93,23 +93,3 @@ kernel void float_ans_detector(
         output[parameters.x+scan]=total+compensation;
     }
 }
-
-// Per detector pixel, add one decoded window's patterns to a running float32 sum and its first- and
-// second-order rounding residuals (Kahan-Babuska-Klein). Metal has no double: the host adds the three
-// in float64, which equals the float64 sum of the measurements. A non-finite total has no residual.
-kernel void float_ans_pattern_total(
-    device const float* values [[buffer(0)]], device float* total [[buffer(1)]],
-    constant uint2& shape [[buffer(2)]], uint pixel [[thread_position_in_grid]]) {
-    if (pixel >= shape.y) return;
-    float sum=total[3*pixel], first=total[3*pixel+1], second=total[3*pixel+2];
-    for (uint pattern=0; pattern<shape.x; ++pattern) {
-        float value=values[pattern*shape.y+pixel], next=sum+value;
-        float error=abs(sum) >= abs(value) ? (sum-next)+value : (value-next)+sum;
-        sum=next;
-        next=first+error;
-        second+=abs(first) >= abs(error) ? (first-next)+error : (error-next)+first;
-        first=next;
-    }
-    bool finite=isfinite(sum) && isfinite(first) && isfinite(second);
-    total[3*pixel]=sum; total[3*pixel+1]=finite ? first : 0; total[3*pixel+2]=finite ? second : 0;
-}

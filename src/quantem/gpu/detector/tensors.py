@@ -1,7 +1,8 @@
 """Detector reductions for Torch tensors on an accelerator and for host arrays.
 
 ``TorchBackend`` serves Torch tensors on CUDA or MPS; integer counts stay
-integer until the small reduced output.
+integer until the small reduced output, and float patterns sum to float64
+accuracy (in float64 on CUDA, in compensated float32 on MPS, which has none).
 
 ``ArrayBackend`` serves NumPy arrays, array-likes and CPU Torch tensors (viewed
 without a copy). It is the host reference: integer counts sum in uint64, float
@@ -35,6 +36,7 @@ import math
 import numpy as np
 import torch
 
+from quantem.gpu.resident.mps.float_ans import pattern_total
 from quantem.gpu.resident.queries import DetectorQueries
 
 # Cap transient float32 memory per reduction chunk (matches the widget budget).
@@ -128,22 +130,19 @@ class TorchBackend(DetectorQueries):
     def mean_dp(self) -> np.ndarray:
         """Mean pattern with exact integer sums or preserved fractional intensities.
 
-        Integers accumulate in int64, float64 data in float64 and other floats
-        in float32. The chunk size budgets the int64 cast before the sum. An
-        integer or float64 total is divided in float64 on the host (MPS has no
-        float64) and rounded once to float32, the rule of every mean pattern.
+        Integers accumulate in int64 and floats to float64 accuracy; the chunk
+        size budgets the 8-byte cast before the sum. The total is divided in
+        float64 on the host (MPS has no float64) and rounded once to float32,
+        the rule of every mean pattern.
         """
-        if not torch.is_floating_point(self._flat):
-            accumulator_dtype = torch.int64
-        elif self._flat.dtype == torch.float64:
-            accumulator_dtype = torch.float64
-        else:
-            accumulator_dtype = torch.float32
-        total = torch.zeros(self.det_shape, dtype=accumulator_dtype, device=self.device)
         step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
+        if torch.is_floating_point(self._flat):
+            total = self._float_total(self._flat[start : start + step] for start in range(0, self.n_frames, step))
+            return (total / self.n_frames).astype(np.float32)
+        total = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
         for start in range(0, self.n_frames, step):
             # Cast first: some devices do not implement mixed uint16/int64 sums.
-            total += self._flat[start : start + step].to(accumulator_dtype).sum(dim=0)
+            total += self._flat[start : start + step].to(torch.int64).sum(dim=0)
         return (total.cpu().numpy() / self.n_frames).astype(np.float32)
 
     def reduce_frames(self, scan_indices: np.ndarray, reduce: str = "mean") -> np.ndarray:
@@ -151,25 +150,47 @@ class TorchBackend(DetectorQueries):
 
         Integer counts give exact uint64 ``sum`` and ``max`` and a ``mean`` of the
         exact total divided in float64 and rounded once to float32; float data
-        reduces in float32.
+        gives float32, its ``sum`` and ``mean`` the float64 total rounded once.
+        Selected patterns are gathered in chunks, so a large scan ROI never
+        copies all of its patterns at once.
         """
+        if reduce not in ("mean", "sum", "max"):
+            raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
         if not torch.is_floating_point(self._flat):
             if reduce == "sum":
                 return self.reduce_frames_exact(scan_indices)
             if reduce == "max":
                 return self.reduce_frames_max(scan_indices).astype(np.uint64)
-            if reduce == "mean":
-                return (self.reduce_frames_exact(scan_indices) / len(scan_indices)).astype(np.float32)
-            raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
-        indices = torch.as_tensor(np.asarray(scan_indices, dtype=np.int64), device=self.device)
-        frames = self._flat.index_select(0, indices).float()
-        if reduce == "sum":
-            pattern = frames.sum(dim=0)
-        elif reduce == "max":
-            pattern = frames.amax(dim=0)
-        else:
-            pattern = frames.mean(dim=0)
-        return pattern.cpu().numpy()
+            return (self.reduce_frames_exact(scan_indices) / len(scan_indices)).astype(np.float32)
+        indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
+        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
+        selected = (
+            self._flat.index_select(0, torch.as_tensor(indices[start : start + step], device=self.device))
+            for start in range(0, indices.size, step)
+        )
+        if reduce == "max":
+            maximum = None
+            for frames in selected:
+                maximum = frames.amax(dim=0) if maximum is None else torch.maximum(maximum, frames.amax(dim=0))
+            return maximum.float().cpu().numpy()
+        total = self._float_total(selected)
+        return (total / indices.size if reduce == "mean" else total).astype(np.float32)
+
+    def _float_total(self, windows) -> np.ndarray:
+        """Sum float ``(patterns, row, col)`` windows over their patterns; float64 on the host.
+
+        CUDA accumulates in float64. MPS has none, so its Metal kernel keeps
+        compensated float32 sums that add up to the same total; a float32
+        running total is several units in the last place off after thousands
+        of patterns.
+        """
+        if self.device.type == "mps":
+            # The kernel reads float32; half floats widen first.
+            return pattern_total((values.float() for values in windows), math.prod(self.det_shape)).reshape(self.det_shape)
+        total = torch.zeros(self.det_shape, dtype=torch.float64, device=self.device)
+        for values in windows:
+            total += values.to(torch.float64).sum(dim=0)
+        return total.cpu().numpy()
 
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
         """Return an exact uint64 scan-frame sum with bounded int64 scratch."""
