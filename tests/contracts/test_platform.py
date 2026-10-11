@@ -146,6 +146,6 @@ def test_cpu_device_loads_an_arina_master_as_the_numpy_counts(tmp_path) -> None:
 
 
 def test_cpu_device_reopens_a_qem_file() -> None:
-    fixture = ROOT / "tests/data/qem-v1"
-    with io.load(fixture / "uint16.qem", device="cpu", verbose=False) as loaded:
-        np.testing.assert_array_equal(loaded[...].numpy(), np.load(fixture / "uint16.npy"))
+    fixture = ROOT / "tests/data/qem-v2"
+    with io.load(fixture / "u16-multiple-chunks.qem", device="cpu", verbose=False) as loaded:
+        np.testing.assert_array_equal(loaded[...].numpy(), np.load(fixture / "u16-multiple-chunks.npy"))

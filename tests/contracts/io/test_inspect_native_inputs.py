@@ -88,7 +88,7 @@ def test_prepared_stack_companions_define_rectangular_scan(tmp_path, geometry):
     assert info.ready and info.scan_shape == (3, 5)
     assert info.detector_shape == (8, 12)
     assert info.metadata["voltage_kV"] == 300
-    assert info.metadata["detector_sampling"] == [0.04, 0.04]
+    assert info.metadata["detector_sampling_inv_A"] == [0.04, 0.04]
     assert info.metadata.get("scan_sampling_A") is None
     assert info.metadata["source_metadata"]["prepared_stack/params_backup"]["dx"] == [0.2, 0.3]
 

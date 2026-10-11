@@ -13,14 +13,12 @@ from quantem.gpu import io
 from quantem.gpu.formats.qem.validation import validate_qem
 
 
-def test_read_shared_native_files_without_a_gpu():
+def test_schema_1_references_are_refused_without_a_gpu():
+    """The older references carry metadata schema 1; the reader names it and stops instead of converting units."""
     root = Path(__file__).parent / "data/qem-v1"
     for name in ("uint8", "uint16"):
-        with io.load(root / f"{name}.qem", backend="cpu") as acquisition:
-            np.testing.assert_array_equal(
-                acquisition.data, np.load(root / f"{name}.npy")
-            )
-            assert acquisition.metadata["backend"] == "cpu"
+        with pytest.raises(ValueError, match="scientific-metadata/1' is not read"):
+            io.load(root / f"{name}.qem", backend="cpu")
 
 
 def test_frozen_portable_conformance_bundle():
@@ -69,6 +67,10 @@ def test_save_numpy_and_reopen_across_chunks(tmp_path, dtype):
         source_metadata={"example": "synthetic, no acquisition data"},
     )
     io.save(path, counts, backend="cpu", metadata=source)
+    # calibration and source fields are stored once, in scientific_metadata, not again in the retained block
+    from quantem.gpu.formats.qem.snapshot import read_envelope
+
+    assert read_envelope(path)[0]["metadata"] == {}
     inspection = io.inspect(path)
     assert inspection.metadata["scientific_metadata"]["schema"].endswith("/2")
     assert inspection.metadata["scan_sampling_A"] == pytest.approx([0.4, 0.6])
@@ -142,10 +144,9 @@ def test_empad_rectangular_modern_calibration_survives_conversion(tmp_path):
         io.save(tmp_path / "calibrated.qem", original, backend="cpu")
     with io.load(tmp_path / "calibrated.qem", backend="cpu") as restored:
         assert restored.metadata["scan_sampling_A"] == pytest.approx([10, 10])
-        assert restored.metadata["detector_sampling"] == pytest.approx(
+        assert restored.metadata["detector_sampling_inv_A"] == pytest.approx(
             [0.01826537060227288] * 2
         )
-        assert restored.metadata["detector_sampling_unit"] == "1/angstrom"
         assert restored.metadata["source_metadata"]["empad_xml"] == xml.read_text()
 
 

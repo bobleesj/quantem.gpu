@@ -59,12 +59,12 @@ def test_encoded_indexing(tmp_path, dtype):
         saved = tmp_path / "saved.qem"
         data.metadata.update(
             scan_sampling_A=[0.4, 0.6],
-            detector_sampling=[0.00002, 0.00003],
-            detector_sampling_unit="rad",
+            detector_sampling_mrad=[0.02, 0.03],
             origin=[1.5, -2.0, -0.01, -0.02],
             units=["nm", "nm", "rad", "rad"],
         )
-        assert data.origin == (15.0, -20.0, -0.01, -0.02)
+        # the detector step is stated in mrad, so the origin recorded in rad reads in mrad before and after saving
+        assert data.origin == (15.0, -20.0, -10.0, -20.0)
         io.save(saved, data)
     series = io.load([saved, saved], backend=backend, stack=False, verbose=False)
     try:

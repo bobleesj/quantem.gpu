@@ -38,8 +38,7 @@ def test_ncem_quantities_and_axis_conventions():
         dict(
             source_metadata=source,
             scan_sampling_A=[2, 3],
-            detector_sampling=[0.2, 0.3],
-            detector_sampling_unit="mrad",
+            detector_sampling_mrad=[0.2, 0.3],
         ),
     )
     quantities = metadata["electron_microscope"]
@@ -174,45 +173,69 @@ def test_saved_user_calibration_restores_bit_identical():
     assert restored["scan_sampling_A"] == [0.35, 0.7]
     assert restored["dwell_time_us"] == 2.3
     assert restored["camera_length_mm"] == 0.9
-    assert restored["detector_sampling"] == [0.0123, 0.0123]
+    # the override's unit picks the key: no unit string, such as the earlier "1/Å", travels beside the numbers
+    assert restored["detector_sampling_inv_A"] == [0.0123, 0.0123]
+    assert "detector_sampling_mrad" not in restored and "detector_sampling_unit" not in restored
 
 
-def test_existing_reference_migrates_units_without_changing_source_metadata():
-    """An existing file keeps its physical calibration when saved with readable units."""
+def test_schema_1_metadata_is_refused_not_converted():
+    """Metadata of schema 1 (volts, metres) is never read under schema-2 units: the reader names the schema and stops."""
     import json
     from pathlib import Path
 
     manifest = json.loads((Path(__file__).parent / "data/qem-v1/manifest.json").read_text())
     original = manifest["entries"][1]["scientific_metadata"]
     before = copy.deepcopy(original)
-    normalized = microscopy_metadata(original)
-    assert normalized["schema"] == SCHEMA
-    assert normalized["source_metadata"] == original["source_metadata"]
-    override = normalized["calibration_overrides"]
-    scan = override["scan_controller/regular_scan/pixel_size_row"]
-    assert scan["unit"] == "angstrom"
-    assert scan["value"] == pytest.approx(0.4)
-    assert override["imaging_system/reciprocal_pixel_size_row"]["unit"] == "1/angstrom"
-    upgraded = effective_metadata({}, normalized)
-    for key, value in effective_metadata({}, original).items():
-        assert upgraded[key] == value
-    assert microscopy_metadata(normalized) == normalized
+    for read in (microscopy_metadata, lambda scientific: effective_metadata({}, scientific)):
+        with pytest.raises(ValueError, match="scientific-metadata/1' is not read"):
+            read(original)
     assert original == before
 
 
 def test_diffraction_units_keep_angular_and_reciprocal_sampling_distinct():
-    """Equivalent reciprocal units normalize, while angular sampling stays angular."""
-    for source_unit, expected_unit, expected in (
-        ("1/nm", "1/angstrom", 0.02),
-        ("1/Å", "1/angstrom", 0.2),
-        ("rad", "mrad", 200),
+    """Each detector key records its own unit: reciprocal length stays reciprocal, angular sampling stays angular."""
+    for key, values, expected_unit, expected in (
+        ("detector_sampling_inv_A", [0.02, 0.03], "1/angstrom", 0.02),
+        ("detector_sampling_inv_A", [0.2, 0.3], "1/angstrom", 0.2),
+        ("detector_sampling_mrad", [200, 300], "mrad", 200),
     ):
-        metadata = acquisition_metadata((2, 3, 16, 16), {
-            "detector_sampling": [0.2, 0.3], "detector_sampling_unit": source_unit,
-        })
+        metadata = acquisition_metadata((2, 3, 16, 16), {key: values})
         sampling = metadata["axes"][2]["sampling"]
         assert sampling["unit"] == expected_unit
         assert sampling["value"] == pytest.approx(expected, rel=1e-14)
+
+
+def test_every_flat_key_is_written_and_read_back():
+    """A caller's dwell time and camera length reach the saved record like the other flat keys; they used to be dropped."""
+    flat = dict(voltage_kV=300, semiangle_mrad=25, scan_sampling_A=[0.4, 0.6], detector_sampling_mrad=[0.2, 0.3],
+                dwell_time_us=49.5, camera_length_mm=230)
+    scientific = acquisition_metadata((2, 3, 16, 16), flat)
+    quantities = scientific["electron_microscope"]
+    assert quantities["scan_controller/regular_scan/dwell_time"] == dict(value=49.5, unit="us", provenance="source_metadata")
+    assert quantities["imaging_system/camera_length"] == dict(value=230.0, unit="mm", provenance="source_metadata")
+    restored = effective_metadata({}, scientific)
+    assert {key: restored[key] for key in flat} == flat
+
+
+def test_retained_record_holds_no_second_copy_and_no_loader_state():
+    """The header's metadata block keeps provenance; calibration, source fields and loader state are not stored twice."""
+    from quantem.gpu.formats.qem.metadata import HOT_PIXEL_SCHEMA, retained_metadata
+
+    record = dict(
+        voltage_kV=300, scan_sampling_A=[0.4, 0.6], detector_sampling_inv_A=[0.02, 0.03],
+        calibration_overrides={"electron_source/accelerating_voltage": dict(value=200000, unit="V")},
+        source_metadata={"vendor": "field"}, source_documents=[], sample={"provenance": "dataset.yaml"},
+        working_shape=(2, 3, 16, 16), backend="cuda", device="cuda:0", load_timings={"read_seconds": 1.0},
+        **{"entry/instrument/detector/count_time": 4.95e-05},
+        source_path="scan_master.h5", source_dtype="uint32", dtype="uint16", working_counts_exact=True,
+        hot_pixel_correction=dict(schema=HOT_PIXEL_SCHEMA, applied=False), maped_merge={"version": 1},
+    )
+    assert retained_metadata(record) == dict(
+        source_path="scan_master.h5", source_dtype="uint32", dtype="uint16", working_counts_exact=True,
+        hot_pixel_correction=dict(schema=HOT_PIXEL_SCHEMA, applied=False), maped_merge={"version": 1},
+    )
+    # a hot-pixel record of another version is the same as none
+    assert retained_metadata({"hot_pixel_correction": {"version": 1, "applied": True}}) == {}
 
 
 def test_public_calibration_is_authoritative_for_independent_writers():

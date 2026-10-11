@@ -12,8 +12,7 @@ def test_calibration_properties_follow_effective_qem_overrides():
     recorded = {
         "working_shape": shape,
         "scan_sampling_A": [0.4, 0.6],
-        "detector_sampling": [0.02, 0.03],
-        "detector_sampling_unit": "1/angstrom",
+        "detector_sampling_inv_A": [0.02, 0.03],
         "origin": [1.5, -2.0, None, None],
     }
     scientific = acquisition_metadata(shape, recorded)
@@ -27,7 +26,8 @@ def test_calibration_properties_follow_effective_qem_overrides():
             "evidence": "standard specimen",
         },
     }
-    data = Dataset4dstemGPU(None, effective_metadata(recorded, scientific))
+    # a loader states the shape it holds; the saved record does not carry it
+    data = Dataset4dstemGPU(None, {**effective_metadata(recorded, scientific), "working_shape": shape})
     assert data.sampling == pytest.approx((0.5, 0.75, 0.02, 0.03))
     assert data.units == ("angstrom", "angstrom", "1/angstrom", "1/angstrom")
     assert data.origin == (1.5, -2.0, None, None)
@@ -40,16 +40,18 @@ def test_calibration_properties_follow_effective_qem_overrides():
 def test_partial_calibration_does_not_invent_detector_units_or_origin():
     """A calibrated scan can still have an uncalibrated detector."""
     data = Dataset4dstemGPU(None, {
-        "working_shape": (16, 24, 128, 128), "scan_sampling_A": 0.4,
+        "working_shape": (16, 24, 128, 128), "scan_sampling_A": [0.4, 0.4],
     })
     assert data.sampling == (0.4, 0.4, None, None)
     assert data.units == ("angstrom", "angstrom", None, None)
     assert data.origin == (None, None, None, None)
-    data.metadata["detector_sampling"] = [0.2, 0.3]
-    assert data.units[2:] == (None, None)
-    data.metadata["detector_sampling_unit"] = "mrad"
+    data.metadata["detector_sampling_mrad"] = [0.2, 0.3]
     assert data.sampling == (0.4, 0.4, 0.2, 0.3)
     assert data.units[2:] == ("mrad", "mrad")
+    # the scan step is a [row, col] pair, never one number for both axes
+    data.metadata["scan_sampling_A"] = 0.4
+    with pytest.raises(ValueError, match=r"\[row, col\] pair"):
+        data.sampling
 
 
 def test_explicit_series_axes_keep_their_units_and_coordinates():
@@ -65,24 +67,24 @@ def test_explicit_series_axes_keep_their_units_and_coordinates():
     assert data.origin == (10.0, 0.0, 0.0, None, None)
 
 
-@pytest.mark.parametrize("unit,spacing,origin,expected_unit,expected_spacing,expected_origin", [
-    ("rad", 0.002, -0.128, "mrad", 2.0, -128.0),
-    ("1/nm", 0.2, -3.0, "1/angstrom", 0.02, -0.3),
+@pytest.mark.parametrize("unit,key,origin,expected_unit,expected_spacing,expected_origin", [
+    ("rad", "detector_sampling_mrad", -0.128, "mrad", 2.0, -128.0),
+    ("1/nm", "detector_sampling_inv_A", -3.0, "1/angstrom", 0.02, -0.3),
 ])
-@pytest.mark.parametrize("explicit_units", [None, ["nm", "nm", None, None]])
+@pytest.mark.parametrize("scan_units", [None, "nm"])
 def test_origin_coordinates_follow_normalized_units(
-    unit, spacing, origin, expected_unit, expected_spacing, expected_origin, explicit_units,
+    unit, key, origin, expected_unit, expected_spacing, expected_origin, scan_units,
 ):
-    """QEM unit normalization preserves signed physical coordinates."""
+    """An origin recorded in another unit of the same kind keeps its signed physical coordinate."""
     shape = (16, 24, 128, 128)
     metadata = {
         "working_shape": shape, "scan_sampling_A": [0.4, 0.6],
-        "detector_sampling": [spacing, spacing], "detector_sampling_unit": unit,
+        key: [expected_spacing, expected_spacing],
         "origin": [None, None, origin, origin],
-        "units": explicit_units,
+        "units": [scan_units, scan_units, unit, unit],
     }
     scientific = acquisition_metadata(shape, metadata)
-    data = Dataset4dstemGPU(None, effective_metadata(metadata, scientific))
+    data = Dataset4dstemGPU(None, {**effective_metadata(metadata, scientific), "working_shape": shape})
     assert data.sampling[2:] == pytest.approx((expected_spacing,) * 2)
     assert data.units[2:] == (expected_unit,) * 2
     assert data.origin[2:] == pytest.approx((expected_origin,) * 2)
@@ -90,12 +92,11 @@ def test_origin_coordinates_follow_normalized_units(
     data.metadata["units"][:2] = ["nm", "nm"]
     assert data.origin[:2] == (10.0, -20.0)
 
-    # A saved number without a detector unit is not a physical calibration.
-    unknown = {"working_shape": shape, "detector_sampling": [spacing, spacing]}
-    scientific = acquisition_metadata(shape, unknown)
-    reopened = Dataset4dstemGPU(None, effective_metadata(unknown, scientific))
-    assert reopened.sampling == (None,) * 4
-    assert reopened.units == (None,) * 4
+    # A number under the retired unit-less key is refused, not written as a calibration.
+    with pytest.raises(ValueError, match="detector_sampling_mrad or detector_sampling_inv_A"):
+        acquisition_metadata(shape, {"working_shape": shape, "detector_sampling": [0.2, 0.2]})
+    with pytest.raises(ValueError, match="not both"):
+        acquisition_metadata(shape, {"detector_sampling_mrad": [2.0, 2.0], "detector_sampling_inv_A": [0.02, 0.02]})
 
 
 def test_name_is_the_recorded_name_else_the_source_file():

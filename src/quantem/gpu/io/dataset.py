@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.formats.qem.metadata import _microscopy_quantity
+from quantem.gpu.formats.qem.metadata import DETECTOR_SAMPLING_KEYS, _microscopy_quantity
 from quantem.gpu.io.read import read, resident_device
 from quantem.gpu.io.representation import DataRepresentation
 
@@ -119,17 +119,13 @@ class Dataset4dstemGPU:
         if self.ndim == 4:
             for start, key, unit in (
                 (0, "scan_sampling_A", "angstrom"),
-                (2, "detector_sampling", self.metadata.get("detector_sampling_unit")),
+                *((2, key, unit) for unit, key in DETECTOR_SAMPLING_KEYS.items()),
             ):
                 value = self.metadata.get(key)
                 if value is not None:
-                    pair = [value] * 2 if np.isscalar(value) else list(value)
-                    if len(pair) != 2:
-                        raise ValueError(
-                            f"metadata[{key!r}] must be a scalar or (row, col) "
-                            f"pair; got {value!r}."
-                        )
-                    sampling[start:start + 2] = pair
+                    if np.isscalar(value) or len(value) != 2:
+                        raise ValueError(f"metadata[{key!r}] must be a [row, col] pair; got {value!r}.")
+                    sampling[start:start + 2] = list(value)
                     units[start:start + 2] = [unit] * 2
         return (
             tuple(None if value is None else float(value) for value in sampling),

@@ -288,12 +288,8 @@ async function readQemHeader(file: QemByteFile, signal?: AbortSignal): Promise<Q
   );
   const scientific = header.scientific_metadata;
   requireQem(
-    scientific &&
-      [
-        "quantem.scientific-metadata/1",
-        "quantem.scientific-metadata/2",
-      ].includes(String(scientific.schema)),
-    "unsupported scientific metadata schema",
+    scientific && String(scientific.schema) === "quantem.scientific-metadata/2",
+    "scientific metadata schema is not quantem.scientific-metadata/2; export the acquisition again",
   );
   const axes = scientific.axes as { name: string; size: number }[];
   const names = ["scan_row", "scan_column", "detector_row", "detector_column"];
