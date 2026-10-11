@@ -9,6 +9,7 @@ of the next batch overlaps the file writes of this one.
 
 import queue
 import threading
+from collections import deque
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -17,7 +18,7 @@ import hdf5plugin
 import numpy as np
 import torch
 
-from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.device.cuda_runtime import _release_pinned, cp
 from quantem.gpu.formats.hdf5.frames import BLOCK_SIZE
 from quantem.gpu.io.hdf5.cuda.encode import compress_batch
 from quantem.gpu.io.hdf5.mps.encode import NativeU16Compressor, compress_tensor_batch
@@ -92,6 +93,7 @@ class H5Writer:
         self._frame_ranges = []
         self._closed = False
         self._metal_compressor = None
+        self._staged = deque()
         self._prefix = _master_prefix(self._filepath)
         self._filepath.parent.mkdir(parents=True, exist_ok=True)
 
@@ -204,10 +206,15 @@ class H5Writer:
                     part, self._n_8kb, self._frame_bytes, self._dtype
                 )
             else:
+                # The queue is first in, first out, so every staging buffer but those of the
+                # batches still in it has been written and can hold the next batch.
+                while len(self._staged) > _write_queue.unfinished_tasks:
+                    _release_pinned(self._staged.popleft(), prune=False)
                 part = data_gpu[batch_start:batch_start + n_part]
                 packed, starts, sizes = compress_batch(
                     part, self._n_8kb, self._frame_bytes
                 )
+                self._staged.append(packed)
             _write_queue.put((
                 _write_batch_to_h5,
                 (self._current_ds, packed, starts, sizes,
@@ -226,6 +233,11 @@ class H5Writer:
                 wait_for_saves()
             return
         self._closed = True
+        # Once the queue drains no batch is being written, failed or not, so the staging
+        # buffers go back; the spare ones are unregistered here, on the thread that owns the device.
+        _write_queue.join()
+        while self._staged:
+            _release_pinned(self._staged.popleft())
         self._close_data_file()
         if self._metal_compressor is not None:
             self._metal_compressor.close()
