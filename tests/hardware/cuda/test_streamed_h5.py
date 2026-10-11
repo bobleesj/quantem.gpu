@@ -293,6 +293,8 @@ def test_batches_waiting_for_the_writer_keep_their_own_staging_buffers(tmp_path)
         while not write._write_queue.full() and time.monotonic() < deadline:
             time.sleep(0.001)
 
+    # staging buffers other tests of this process still hold (a failed decode keeps its own)
+    held_before = {id(entry) for entry in cuda_runtime._PINNED_BUFS if not entry["free"]}
     values = np.random.default_rng(11).poisson(4.0, (30, 64, 64)).astype(np.uint16)
     master = tmp_path / "batches_master.h5"
     writer = write.H5Writer(master, n_frames=30, det_shape=(64, 64), scan_shape=(30, 1), dtype=np.uint16)
@@ -303,7 +305,7 @@ def test_batches_waiting_for_the_writer_keep_their_own_staging_buffers(tmp_path)
     with h5py.File(master, "r") as handle:
         restored = handle["entry/data/data_000001"][:]
     assert np.array_equal(restored, values)
-    assert all(entry["free"] for entry in cuda_runtime._PINNED_BUFS)
+    assert {id(entry) for entry in cuda_runtime._PINNED_BUFS if not entry["free"]} <= held_before
 
 
 def test_truncated_lz4_block_raises_instead_of_returning_garbage(tmp_path):
