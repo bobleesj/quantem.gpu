@@ -2,6 +2,7 @@
 
 import math
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,26 @@ def _pipelines() -> dict:
     return {name.removeprefix("streamed_counts_"): pipeline for name, pipeline in pipelines.items()}
 
 
+def _release_buffers(shared: tuple, chunks: list, spatial_chunks: list) -> None:
+    """Return every Metal buffer a resident holds to the system.
+
+    PyObjC never frees a Metal buffer when its Python wrapper is collected, so a
+    resident dropped without ``release()`` kept its memory until the process
+    ended (each reload of a 4D acquisition added its full size). Runs once:
+    from ``release()`` or when the resident is collected.
+    """
+    for chunk in chunks:
+        for buffer in chunk.buffers:
+            release_buffer(buffer)
+    for buffers in spatial_chunks:
+        for buffer in buffers:
+            release_buffer(buffer)
+    for buffer in shared:
+        release_buffer(buffer)
+    chunks.clear()
+    spatial_chunks.clear()
+
+
 @dataclass
 class _Chunk:
     """Encoded streams for the consecutive scans ``first`` to ``first + scans``."""
@@ -107,6 +128,16 @@ class MPSStreamedCounts:
         self._errors = allocate_shared(4, "ANS errors")
         self.chunks: list[_Chunk] = []
         self.spatial_chunks: list[tuple] = []
+        # The lists are only ever changed in place, so the finalizer sees every buffer still held.
+        self._finalizer = weakref.finalize(
+            self,
+            _release_buffers,
+            (self._encoding, self._decoding, self._valid, self._errors),
+            self.chunks,
+            self.spatial_chunks,
+        )
+        # At exit the system frees the memory itself; no Objective-C calls during shutdown.
+        self._finalizer.atexit = False
         self.ready_scans = 0
         self.released_scans = 0
         self.is_released = False
@@ -561,20 +592,11 @@ class MPSStreamedCounts:
         for buffers in self.spatial_chunks[:count]:
             for buffer in buffers:
                 release_buffer(buffer)
-        self.chunks, self.spatial_chunks = self.chunks[count:], self.spatial_chunks[count:]
+        del self.chunks[:count], self.spatial_chunks[:count]
         self.released_scans = self.chunks[0].first if self.chunks else self.ready_scans
 
     def release(self) -> None:
-        """Release every retained ANS buffer immediately."""
-        for chunk in self.spatial_chunks:
-            for buffer in chunk:
-                release_buffer(buffer)
-        self.spatial_chunks = []
-        chunks, self.chunks = self.chunks, []
-        for chunk in chunks:
-            for buffer in chunk.buffers:
-                release_buffer(buffer)
-        for buffer in (self._encoding, self._decoding, self._valid, self._errors):
-            release_buffer(buffer)
+        """Release every retained ANS buffer immediately; a second call does nothing."""
+        self._finalizer()
         self._encoding = self._decoding = self._valid = self._errors = None
         self.is_released = True

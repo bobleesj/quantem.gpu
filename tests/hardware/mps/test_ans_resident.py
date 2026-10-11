@@ -225,3 +225,22 @@ def test_h5_ans_resident_carries_spatial_index_and_reopens(tmp_path):
             session.close()
     finally:
         reopened.close()
+
+
+def test_reads_of_scans_not_held_raise():
+    """Scans not yet appended or already freed raise instead of returning recycled Torch memory."""
+    values = (np.arange(4 * 512 * 8 * 8, dtype=np.uint64) % 4093).astype(np.uint16).reshape(2048, 8, 8)
+    source = MPSStreamedCounts((4, 512, 8, 8), np.uint16)
+    for first in (0, 512, 1024):
+        staged = upload(values[first:first + 512])
+        source.append(shared_array(staged._mtl, staged.dtype, staged.shape))
+        staged.release()
+    np.testing.assert_array_equal(source._decode_scan_range_torch(1000, 1536).cpu().numpy(), values[1000:1536])
+    for first, stop in ((1500, 1600), (1536, 2048)):
+        with pytest.raises(ValueError):
+            source._decode_scan_range_torch(first, stop)
+    source.release_scans_before(512)
+    with pytest.raises(ValueError):
+        source._decode_scan_range_torch(100, 600)
+    np.testing.assert_array_equal(source._decode_scan_range_torch(512, 600).cpu().numpy(), values[512:600])
+    source.release()

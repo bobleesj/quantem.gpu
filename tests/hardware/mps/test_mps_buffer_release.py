@@ -323,3 +323,34 @@ def test_repeated_load_does_not_accumulate():
         f"memory grew from {one_tilt / 1e9:.1f} GB to "
         f"{_allocated_bytes() / 1e9:.1f} GB across {len(masters)} sequential loads"
     )
+
+
+def test_dropped_resident_returns_its_metal_memory():
+    """A resident dropped without close() frees its Metal buffers, as close() does.
+
+    Reloading an acquisition in a notebook dropped the previous one; its encoded
+    streams stayed allocated until the kernel restarted (three reloads held
+    three acquisitions).
+    """
+    from quantem.gpu.device.metal_runtime import metal_device, release_buffer, upload_shared, shared_array
+    from quantem.gpu.resident.mps.counts import MPSStreamedCounts
+
+    def allocated() -> int:
+        gc.collect()
+        return int(metal_device().currentAllocatedSize())
+
+    counts = np.random.default_rng(6).poisson(4.0, (2048, 32, 32)).astype(np.uint16)
+    staged = upload_shared(counts, "test counts")
+
+    def resident():
+        source = MPSStreamedCounts((4, 512, 32, 32), np.uint16)
+        source.append(shared_array(staged, np.uint16, counts.shape))
+        return source
+
+    resident().release()  # compiles the pipelines once
+    baseline = allocated()
+    source = resident()
+    assert allocated() > baseline
+    del source
+    assert allocated() <= baseline
+    release_buffer(staged)
