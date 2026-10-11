@@ -138,31 +138,28 @@ def test_reads_of_scans_not_held_raise(layout):
 
 
 @pytest.mark.parametrize("layout", ["streamed", "paired"])
-def test_detector_total_is_the_exact_sum_of_the_held_scans(layout):
-    """The total kept while encoding, the total of chunks that arrive encoded, and the total after scans are freed."""
+def test_detector_total_covers_the_whole_scan_or_raises(layout):
+    """The total kept while encoding and the total of chunks that arrive encoded are exact; scans arriving or freed raise."""
     from quantem.gpu.resident.cuda.paired import PairedCounts
 
     shape = (4, 512, 8, 8)
     flat = (cp.arange(np.prod(shape), dtype=cp.uint64) * 7919 % 65536).astype(cp.uint16).reshape(-1, *shape[2:])
     valid = np.ones(shape[2:], bool)
     valid[2, 3] = False
+    expected = (flat.sum(axis=0, dtype=cp.uint64) * cp.asarray(valid)).get()
     owner = PairedCounts if layout == "paired" else StreamedCounts
-
-    def expected(first, stop):
-        return (flat[first:stop].sum(axis=0, dtype=cp.uint64) * cp.asarray(valid)).get()
-
     source = owner(shape, "uint16", valid)
-    for first in (0, 512):
+    for first in range(0, 2048, 512):
+        with pytest.raises(ValueError, match="not resident"):
+            source.detector_total_device()
         source.append(cp.ascontiguousarray(flat[first:first + 512]))
-        np.testing.assert_array_equal(source.detector_total_device().get(), expected(0, first + 512))
+    np.testing.assert_array_equal(source.detector_total_device().get(), expected)
     # chunks that arrive encoded, as from a file, carry no total: the first request adds their streams
     reopened = owner(shape, "uint16", valid)
     reopened.chunks.extend(source.chunks)
     reopened.ready_scans = source.ready_scans
-    reopened.append(cp.ascontiguousarray(flat[1024:1536]))
-    np.testing.assert_array_equal(reopened.detector_total_device().get(), expected(0, 1536))
-    reopened.append(cp.ascontiguousarray(flat[1536:2048]))
-    np.testing.assert_array_equal(reopened.detector_total_device().get(), expected(0, 2048))
-    reopened.release_scans_before(1024)
-    np.testing.assert_array_equal(reopened.detector_total_device().get(), expected(1024, 2048))
-    np.testing.assert_array_equal(source.detector_total_device().get(), expected(0, 1024))
+    np.testing.assert_array_equal(reopened.detector_total_device().get(), expected)
+    np.testing.assert_array_equal(reopened.detector_total_device().get(), expected)
+    source.release_scans_before(1024)
+    with pytest.raises(ValueError, match="released"):
+        source.detector_total_device()

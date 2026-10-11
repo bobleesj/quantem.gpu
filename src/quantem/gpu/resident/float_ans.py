@@ -291,9 +291,12 @@ class FloatANSResident:
         """Compute and cache the full-scan mean on the accelerator.
 
         The float64 total divided by the scan count and rounded once to
-        float32, the rule of every mean pattern.
+        float32, the rule of every mean pattern. It covers every scan
+        position, so it raises once rows were freed: the rows left, divided by
+        the full scan count, are not a mean.
         """
         self._check()
+        self._lanes.check_readable(0, math.prod(self.shape[:2]))
         if self._mean is None:
             self._mean = self._array((self._pattern_total() / math.prod(self.shape[:2])).astype(np.float32))
         return self._mean.copy() if self.backend == "cuda" else self._mean.clone()
