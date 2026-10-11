@@ -94,9 +94,8 @@ class SSBResult(Mapping[str, float]):
     bf_center: tuple[float, float] | None = None
     bf_radius: float | None = None
     detected_bf_radius: float | None = None
-    # Full Optuna trial history, one entry per evaluated trial, in order.
-    # Each entry: ``{"params": {"C10_nm", "C12_nm", "phi12_deg"}, "loss"}``.
-    # Used by the Screening dashboard (#26) to plot the loss landscape.
+    # Every evaluated search trial in order, ``{"trial", "number", "search", "stage", "params": {"C10_nm", "C12_nm",
+    # "phi12_deg"}, "loss"}`` (a tilt fit adds the objective, band, tilt and depth spread); ``trials`` tabulates them.
     trial_records: list[dict] | None = None
     # Phase skewness (+ = bright atom columns) and the selected 180-degree branch.
     column_sign: float | None = None
@@ -111,10 +110,7 @@ class SSBResult(Mapping[str, float]):
     metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.phase_estimator == "complex_wave" and (self.depth_spread_nm or 0) > 0:
-            self.phase_estimator = "mean_phase"
-            self.amplitude_estimated = False
-        # engines and older saves give the physical angle (up to 360); the public form is below 180 plus the flag
+        # the engines give the physical angle (up to 360); the public form is below 180 plus the flag
         self.rotation_angle_deg, self.com_reversed = split_rotation(self.rotation_angle_deg, self.com_reversed)
 
     def __getitem__(self, coefficient: str) -> float:
