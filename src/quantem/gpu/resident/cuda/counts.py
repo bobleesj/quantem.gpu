@@ -204,9 +204,11 @@ class StreamedCounts:
             # Events time each phase on the stream; host waits would only stall it.
             begin, encoded, indexed = cp.cuda.Event(), cp.cuda.Event(), cp.cuda.Event()
             begin.record()
-            if self.spatial_index and self._detector_total is None and not self.chunks:
-                with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
-                    self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
+            # This chunk's counts join the kept total only once the chunk is held, so an append that
+            # fails part way leaves the total as it was. A source that holds chunks without a total
+            # (read from a file, or after scans were freed) has none to add to.
+            keeps_total = self.spatial_index and (self._detector_total is not None or not self.chunks)
+            counted = cp.zeros(self.shape[2:], cp.uint64) if keeps_total else np.intp(0)
             scratch = cp.empty((2 * min(scans, self.interval) + 4, streams), cp.uint8)
             sizes, states = cp.empty(streams, cp.uint32), cp.empty(streams, cp.uint32)
             models = cp.empty(streams, cp.uint8)
@@ -221,11 +223,7 @@ class StreamedCounts:
             self.kernels["encode"](
                 grid,
                 (128,),
-                (
-                    *args, self.encoding, scratch, sizes, states, models, u32(streams),
-                    # a source with file-loaded chunks and no total yet has nothing to add to (null)
-                    np.intp(0) if self._detector_total is None else self._detector_total,
-                ),
+                (*args, self.encoding, scratch, sizes, states, models, u32(streams), counted),
             )
             offsets = cp.empty(streams + 1, cp.uint32)
             offsets[0] = 0
@@ -273,6 +271,11 @@ class StreamedCounts:
             # retain() waits for the stream, so the events are complete when read.
             self.chunks.append(Chunk(self.ready_scans, scans, retain(kept)))
             self.ready_scans += scans
+            if keeps_total:
+                if self._detector_total is None:
+                    with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
+                        self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
+                self._detector_total += counted
             self.load_metrics["encode_seconds"] += cp.cuda.get_elapsed_time(begin, encoded) / 1e3
             self.load_metrics["index_seconds"] += cp.cuda.get_elapsed_time(encoded, indexed) / 1e3
 
