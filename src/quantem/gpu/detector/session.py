@@ -363,9 +363,7 @@ def resolve_backend(data):
     """
     # quantem.widget's bounded readers mark themselves; quantem.gpu cannot import the widget.
     if getattr(data, "_bounded_detector_source", False):
-        owner = data._detector_source
-        encoded = isinstance(owner, Dataset4dstemGPU) and owner.representation == "encoded"
-        return BoundedDetectorCompute(data, DetectorSession(owner) if encoded else None)
+        return BoundedDetectorCompute(data, DetectorSession(data._detector_source))
     if isinstance(data, list):
         sources = [item.data if isinstance(item, Dataset4dstemGPU) else item for item in data]
         if sources and all(isinstance(source, MPSStreamedCounts) for source in sources):

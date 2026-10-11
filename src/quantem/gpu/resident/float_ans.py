@@ -10,7 +10,7 @@ import torch
 
 from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.resident.cuda.float_ans import CUDAFloatLanes
-from quantem.gpu.resident.mps.float_ans import MPSFloatLanes
+from quantem.gpu.resident.mps.float_ans import MPSFloatLanes, pattern_total
 
 MAX_DECODE_BYTES = 32 << 20
 
@@ -271,7 +271,7 @@ class FloatANSResident:
         last place off the float64 mean.
         """
         if self.backend == "mps":
-            return self._lanes.pattern_total(windows).reshape(self.detector_shape)
+            return pattern_total(windows, math.prod(self.detector_shape)).reshape(self.detector_shape)
         import cupy as cp
 
         total = cp.zeros(self.detector_shape, cp.float64)
