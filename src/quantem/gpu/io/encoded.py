@@ -3,7 +3,8 @@
 A bitshuffle+LZ4 master is read in bounded blocks of scan positions: the
 selected compressed chunks are read on the host, decoded on the GPU, stored
 detector-mask pixels are corrected, and the counts are ANS encoded, so the
-dense acquisition never exists. Other HDF5 layouts go through
+dense acquisition never exists. The host reads the next block while the GPU
+decodes and encodes the current one. Other HDF5 layouts go through
 ``io.arrays.load_hdf5_array_resident``.
 """
 
@@ -15,7 +16,7 @@ from contextlib import ExitStack
 import h5py
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cp, cuda_device_index
+from quantem.gpu.device.cuda_runtime import _release_pinned, cp, cuda_device_index
 from quantem.gpu.device.metal_runtime import release_buffer
 from quantem.gpu.formats.hdf5.reads import FrameReader
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
@@ -118,14 +119,34 @@ def load_h5_ans(
         else:
             reader = FrameReader(str(path))
             stack.callback(reader.close)
-        for first in range(0, math.prod(info.scan_shape), chunk_scans):
-            stop = min(first + chunk_scans, math.prod(info.scan_shape))
+        scans = math.prod(info.scan_shape)
+        blocks = [(first, min(first + chunk_scans, scans)) for first in range(0, scans, chunk_scans)]
+        # One block of compressed chunks is read ahead on a worker while the GPU decodes,
+        # corrects and encodes the current block: read after read, the GPU sat idle for
+        # every read and the host for every encode.
+        read_ahead = stack.enter_context(ThreadPoolExecutor(max_workers=1))
+
+        def prepare(block):
+            # The staging buffer is page-locked in this GPU's context, which a worker thread enters itself.
+            with cp.cuda.Device(selected):
+                return reader.prepare(np.arange(*block))
+
+        def release_unread_block():
+            # A block read ahead of a failed decode was never copied to the GPU.
+            if pending is not None and pending.exception() is None:
+                _release_pinned(pending.result()["read_buffer"])
+
+        pending = None if reader is None else read_ahead.submit(prepare, blocks[0])
+        stack.callback(release_unread_block)
+        for number, (first, stop) in enumerate(blocks):
             if dataset is not None:
                 # A chunk can cut a rectangular scan row. h5py reads and decodes
                 # the stored chunks on the host for this generic layout.
                 raw = cp.asarray(arrays.read_frame_block(dataset, shape, first, stop))
             else:
-                prepared = reader.prepare(np.arange(first, stop))
+                prepared, pending = pending.result(), None
+                if number + 1 < len(blocks):
+                    pending = read_ahead.submit(prepare, blocks[number + 1])
                 raw = decompress_prepared(prepared, batch_bytes_target=128 * 1024**2)
                 raw = raw.reshape(stop - first, *info.detector_shape)
             if stored_dtype != dtype:
