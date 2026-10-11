@@ -67,8 +67,8 @@ def test_resident_read_matches_numpy_region():
         loaded.close()
 
 
-def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
-    """A detector crop never decodes more than one bounded scratch block.
+def test_detector_region_read_decodes_only_the_cropped_counts(monkeypatch):
+    """A detector crop decodes the cropped pixels only: whole scan rows straight into the result, others in bounded blocks.
 
     Decoding the whole region before cropping held a full-detector copy of every
     requested scan position (19 GB for a 512 x 512 x 192 x 192 uint16 scan just to
@@ -101,8 +101,12 @@ def test_detector_region_read_decodes_bounded_scan_blocks(monkeypatch):
             row0, row1, column0, column1 = scan_region
             expected = values.get()[row0:row1, column0:column1, 1:5, 2:7]
             np.testing.assert_array_equal(observed.cpu().numpy(), expected)
-            assert len(decoded) > 1
-            assert max(decoded) <= read._BLOCK_BYTES
+            assert sum(decoded) == expected.nbytes
+            if (column0, column1) == (0, shape[1]):
+                assert len(decoded) == 1
+            else:
+                assert len(decoded) > 1
+                assert max(decoded) <= read._BLOCK_BYTES
     finally:
         loaded.close()
 
