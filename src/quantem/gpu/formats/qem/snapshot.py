@@ -13,6 +13,7 @@ import math
 import os
 import struct
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -147,12 +148,14 @@ def write_envelope(path: Path, header: dict, size: int, spans) -> None:
 
     ``spans`` yields ``(offset, bytes)`` in body order; the bytes between two
     spans are the zeros that align an array. Each 64 MiB block is hashed as it
-    is written, so nothing is read back. The header holds those checksums yet
-    precedes the body: every checksum is 64 hex characters, so placeholders
-    give the header its final length, the body is written behind that gap and
-    the header fills it last. The file is written beside ``path`` and linked
-    into place only when complete, so a reader never sees a partial copy and an
-    existing file is never replaced.
+    is written, so nothing is read back: one thread hashes a span and another
+    writes it while the caller produces the next, and both are done before the
+    span after that is asked for, so a producer may alternate two buffers.
+    The header holds those checksums yet precedes the body: every checksum is
+    64 hex characters, so placeholders give the header its final length, the
+    body is written behind that gap and the header fills it last. The file is
+    written beside ``path`` and linked into place only when complete, so a
+    reader never sees a partial copy and an existing file is never replaced.
     """
     blocks = [hashlib.sha256() for _ in range(math.ceil(size / BLOCK_BYTES))]
     header["bytes"] = size
@@ -180,17 +183,20 @@ def write_envelope(path: Path, header: dict, size: int, spans) -> None:
         raise ValueError("QEM metadata exceeds the 16 MiB header limit.")
     descriptor, temporary = tempfile.mkstemp(prefix=".qem-", dir=path.parent)
     try:
-        with os.fdopen(descriptor, "wb") as output:
+        with os.fdopen(descriptor, "wb") as output, ThreadPoolExecutor(max_workers=2) as workers:
             output.seek(start)
-            position = 0
+            pending, position = (), 0
             for offset, piece in spans:
                 view = memoryview(piece).cast("B")
+                for task in pending:
+                    task.result()
                 gap = bytes(offset - position)
                 checksum(gap, position)
                 output.write(gap)
-                checksum(view, offset)
-                output.write(view)
+                pending = (workers.submit(checksum, view, offset), workers.submit(output.write, view))
                 position = offset + len(view)
+            for task in pending:
+                task.result()
             header["sha256"] = [block.hexdigest() for block in blocks]
             blob = encoded()
             output.seek(0)
