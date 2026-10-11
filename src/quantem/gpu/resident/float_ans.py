@@ -10,7 +10,7 @@ import torch
 
 from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.resident.cuda.float_ans import CUDAFloatLanes
-from quantem.gpu.resident.mps.float_ans import MPSFloatLanes, pattern_total
+from quantem.gpu.resident.mps.float_ans import MPSFloatLanes
 
 MAX_DECODE_BYTES = 32 << 20
 
@@ -262,22 +262,28 @@ class FloatANSResident:
         self.peak_decode_bytes = max(self.peak_decode_bytes, size)
         return self._lanes.float_detector(values, self._background)
 
-    def _pattern_total(self, windows) -> np.ndarray:
-        """Sum decoded ``(patterns, row, col)`` windows over their patterns; float64 on the host.
+    def _pattern_total(self, selected=None) -> np.ndarray:
+        """Sum the stored patterns per detector pixel, every scan or those flagged in ``selected``; float64 on the host.
 
         CUDA accumulates in float64; Metal, which has none, in compensated
         float32 that adds up to the same total. A float32 running total drifts:
         over the 16384 patterns of a 128 x 128 scan it was up to 8 units in the
-        last place off the float64 mean.
+        last place off the float64 mean. ``selected`` is a uint8 flag per scan.
         """
+        self.peak_decode_bytes = max(self.peak_decode_bytes, max(chunk.scans for chunk in self._lanes.chunks) * self.frame_bytes)
         if self.backend == "mps":
-            return pattern_total(windows, math.prod(self.detector_shape)).reshape(self.detector_shape)
+            return self._lanes.pattern_total(selected, self._background).reshape(self.detector_shape)
         import cupy as cp
 
         total = cp.zeros(self.detector_shape, cp.float64)
-        for values in windows:
-            total += values.sum(axis=0, dtype=cp.float64)
-            del values
+        for chunk in self._lanes.chunks:
+            if selected is None:
+                total += self._tensor(chunk.first, chunk.first + chunk.scans).sum(axis=0, dtype=cp.float64)
+                continue
+            local = np.flatnonzero(selected[chunk.first : chunk.first + chunk.scans])
+            if local.size:
+                window = self._tensor(chunk.first + int(local[0]), chunk.first + int(local[-1]) + 1)
+                total += window[cp.asarray(local - local[0])].sum(axis=0, dtype=cp.float64)
         return total.get()
 
     @_device_scoped
@@ -289,8 +295,7 @@ class FloatANSResident:
         """
         self._check()
         if self._mean is None:
-            total = self._pattern_total(self._tensor(chunk.first, chunk.first + chunk.scans) for chunk in self._lanes.chunks)
-            self._mean = self._array((total / math.prod(self.shape[:2])).astype(np.float32))
+            self._mean = self._array((self._pattern_total() / math.prod(self.shape[:2])).astype(np.float32))
         return self._mean.copy() if self.backend == "cuda" else self._mean.clone()
 
     @_device_scoped
@@ -298,7 +303,9 @@ class FloatANSResident:
         """Reduce selected scan positions with bounded GPU working storage.
 
         ``sum`` and ``mean`` take the float64 total and round once to float32,
-        so the mean over every scan position equals ``mean_dp_device``.
+        so the mean over every scan position equals ``mean_dp_device``. A
+        selected scan that was released raises: its chunk is gone, and
+        skipping it gave a mean over fewer patterns than it was divided by.
         """
         self._check()
         indices = np.asarray(list(indices))
@@ -314,21 +321,20 @@ class FloatANSResident:
             raise ValueError("Select each scan position once for a region reduction.")
         if mode not in ("sum", "mean", "max"):
             raise ValueError("Use mean, sum or max for the selected DPs.")
-
-        def selected_patterns():
-            """Yield each stored chunk's selected patterns, decoding only the window that spans them."""
-            for chunk in self._lanes.chunks:
-                local = indices[(indices >= chunk.first) & (indices < chunk.first + chunk.scans)] - chunk.first
-                if len(local):
-                    first, stop = int(local.min()), int(local.max()) + 1
-                    values = self._tensor(chunk.first + first, chunk.first + stop)
-                    yield values[self._array((local - first).astype(np.int64))]
-
+        self._lanes.check_readable(int(indices.min()), int(indices.max()) + 1)
         if mode != "max":
-            total = self._pattern_total(selected_patterns())
+            selected = np.zeros(math.prod(self.shape[:2]), np.uint8)
+            selected[indices] = 1
+            total = self._pattern_total(selected)
             return self._array((total / len(indices) if mode == "mean" else total).astype(np.float32))
         maximum = None
-        for selected in selected_patterns():
+        for chunk in self._lanes.chunks:
+            local = indices[(indices >= chunk.first) & (indices < chunk.first + chunk.scans)] - chunk.first
+            if not len(local):
+                continue
+            first, stop = int(local.min()), int(local.max()) + 1
+            values = self._tensor(chunk.first + first, chunk.first + stop)
+            selected = values[self._array((local - first).astype(np.int64))]
             reduced = selected.max(axis=0) if self.backend == "cuda" else selected.amax(dim=0)
             if maximum is None:
                 maximum = reduced

@@ -88,3 +88,19 @@ def test_real_float_acquisitions_equal_the_float64_reference():
             np.testing.assert_array_equal(
                 session.reduce_frames(indices, "mean"), (region_total / len(indices)).astype(np.float32), err_msg=source.name
             )
+
+
+def test_scan_region_over_released_rows_raises(tmp_path):
+    """A released row is gone: skipping its patterns gave a mean over fewer patterns than it was divided by."""
+    backend = _backend()
+    intensities = (np.random.default_rng(29).gamma(3.0, 50.0, (4, 512, 8, 8))).astype(np.float32)
+    frames = intensities.reshape(-1, 8, 8).astype(np.float64)
+    np.save(tmp_path / "intensities.npy", intensities)
+    with io.load(tmp_path / "intensities.npy", backend=backend, verbose=False) as loaded:
+        session = detector.prepare(loaded)
+        loaded.release_rows_before(2)
+        kept = np.arange(2 * 512 + 5, 3 * 512 + 300)
+        np.testing.assert_array_equal(session.reduce_frames(kept, "mean"), (frames[kept].sum(axis=0) / len(kept)).astype(np.float32))
+        for mode in ("mean", "sum", "max"):
+            with pytest.raises(ValueError, match="released"):
+                session.reduce_frames(np.arange(500, 1100), mode)

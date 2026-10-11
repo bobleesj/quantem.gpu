@@ -135,10 +135,9 @@ class TorchBackend(DetectorQueries):
         float64 on the host (MPS has no float64) and rounded once to float32,
         the rule of every mean pattern.
         """
-        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
         if torch.is_floating_point(self._flat):
-            total = self._float_total(self._flat[start : start + step] for start in range(0, self.n_frames, step))
-            return (total / self.n_frames).astype(np.float32)
+            return (self._float_total() / self.n_frames).astype(np.float32)
+        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
         total = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
         for start in range(0, self.n_frames, step):
             # Cast first: some devices do not implement mixed uint16/int64 sums.
@@ -163,30 +162,38 @@ class TorchBackend(DetectorQueries):
                 return self.reduce_frames_max(scan_indices).astype(np.uint64)
             return (self.reduce_frames_exact(scan_indices) / len(scan_indices)).astype(np.float32)
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
-        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
-        selected = (
-            self._flat.index_select(0, torch.as_tensor(indices[start : start + step], device=self.device))
-            for start in range(0, indices.size, step)
-        )
         if reduce == "max":
+            step = max(1, _CHUNK_BYTE_BUDGET // (self.det_shape[0] * self.det_shape[1] * 4))
             maximum = None
-            for frames in selected:
+            for start in range(0, indices.size, step):
+                frames = self._flat.index_select(0, torch.as_tensor(indices[start : start + step], device=self.device))
                 maximum = frames.amax(dim=0) if maximum is None else torch.maximum(maximum, frames.amax(dim=0))
             return maximum.float().cpu().numpy()
-        total = self._float_total(selected)
+        total = self._float_total(indices)
         return (total / indices.size if reduce == "mean" else total).astype(np.float32)
 
-    def _float_total(self, windows) -> np.ndarray:
-        """Sum float ``(patterns, row, col)`` windows over their patterns; float64 on the host.
+    def _float_total(self, indices=None) -> np.ndarray:
+        """Sum every float pattern, or those at ``indices``, per detector pixel; float64 on the host.
 
-        CUDA accumulates in float64. MPS has none, so its Metal kernel keeps
-        compensated float32 sums that add up to the same total; a float32
+        CUDA accumulates in float64, in chunks that budget the 8-byte cast.
+        MPS has no float64: its Metal kernel keeps compensated float32 sums
+        that add up to the same total and reads float32 where it lies, so the
+        whole stack is one window and only a gather is chunked. A float32
         running total is several units in the last place off after thousands
         of patterns.
         """
+        pixels = self.det_shape[0] * self.det_shape[1]
+        count = self.n_frames if indices is None else indices.size
+        in_place = self.device.type == "mps" and indices is None and self._flat.dtype == torch.float32
+        step = count if in_place else max(1, (_CHUNK_BYTE_BUDGET // 4 if self.device.type == "mps" else _INT64_CHUNK_BYTES // 8) // pixels)
+        windows = (
+            self._flat[start : start + step] if indices is None
+            else self._flat.index_select(0, torch.as_tensor(indices[start : start + step], device=self.device))
+            for start in range(0, count, step)
+        )
         if self.device.type == "mps":
             # The kernel reads float32; half floats widen first.
-            return pattern_total((values.float() for values in windows), math.prod(self.det_shape)).reshape(self.det_shape)
+            return pattern_total((values.float() for values in windows), pixels).reshape(self.det_shape)
         total = torch.zeros(self.det_shape, dtype=torch.float64, device=self.device)
         for values in windows:
             total += values.to(torch.float64).sum(dim=0)
