@@ -8,6 +8,7 @@ if not cp.cuda.runtime.getDeviceCount():
     pytest.skip("paired loading needs a CUDA device", allow_module_level=True)
 
 from quantem.gpu import detector, io
+from quantem.gpu.io.paired import _walk_block_starts
 from quantem.gpu.io.save import save_compressed_arina_h5
 from quantem.gpu.resident.cuda.paired import PairedCounts
 
@@ -120,3 +121,19 @@ def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, metho
     session.close()
     for item in loaded:
         item.close()
+
+
+def test_block_walk_stops_at_a_block_length_that_points_past_the_chunk():
+    """A damaged block length is refused where it is read; no block start past the chunk is recorded or read."""
+    blocks = [bytes(range(40)), bytes(range(24))]  # the walk reads lengths only, so any bytes stand in for LZ4
+    chunk = (2 * 8192).to_bytes(8, "big") + (8192).to_bytes(4, "big")
+    chunk += b"".join(len(block).to_bytes(4, "big") + block for block in blocks)
+    offsets, sizes = np.array([0], np.uint64), np.array([len(chunk)], np.uint64)
+    starts = np.zeros(2, np.uint32)
+    assert _walk_block_starts(np.frombuffer(chunk, np.uint8), offsets, sizes, 2, 2 * 8192, 8192, starts) == 0
+    np.testing.assert_array_equal(starts, [12, 12 + 4 + 40])
+    damaged = bytearray(chunk) + bytes(64)  # staging holds the bytes after the chunk too
+    damaged[12:16] = (len(chunk) - 16 + 8).to_bytes(4, "big")  # the first block now ends 8 bytes past the chunk
+    starts[:] = 0
+    assert _walk_block_starts(np.frombuffer(bytes(damaged), np.uint8), offsets, sizes, 2, 2 * 8192, 8192, starts) == 3
+    np.testing.assert_array_equal(starts, [12, 0])

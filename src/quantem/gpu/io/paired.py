@@ -516,6 +516,8 @@ def _walk_block_starts(staging, offsets, sizes, blocks, frame_bytes, block_size,
 
     Each chunk begins with the uncompressed byte count (8 bytes) and the block
     size (4 bytes), then per block a 4-byte compressed length and the block.
+    A block length that points past the chunk (a damaged or unfinished file)
+    ends the walk with code 3 before anything beyond the chunk is read.
     Runs without the interpreter lock so reader threads parse concurrently.
     """
     for i in range(offsets.shape[0]):
@@ -532,6 +534,8 @@ def _walk_block_starts(staging, offsets, sizes, blocks, frame_bytes, block_size,
             return 2
         position = 12
         for b in range(blocks):
+            if position + 4 > sizes[i]:
+                return 3
             starts[i * blocks + b] = position
             length = 0
             for k in range(4):
