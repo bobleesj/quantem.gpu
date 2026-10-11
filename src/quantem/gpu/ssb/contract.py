@@ -3,7 +3,7 @@
 import pathlib
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -54,7 +54,6 @@ class SSBExportState:
         return self.brightfield.size
 
 
-@runtime_checkable
 class SSBProtocol(Protocol):
     """Backend contract implemented by CUDA and MPS: every call ``SSB`` makes.
 

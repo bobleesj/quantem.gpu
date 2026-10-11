@@ -635,9 +635,6 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
     assert herm.G_qk.nbytes == len(herm.bf_inds_row) * 128 * 65 * 8
 
     herm_result = herm.result()
-    from quantem.gpu.ssb.contract import SSBProtocol
-
-    assert isinstance(herm, SSBProtocol)
     assert herm_result.backend == "cuda"
     assert herm_result.num_bf == len(herm.bf_inds_row)
     assert herm_result.aberrations == herm.aberrations
