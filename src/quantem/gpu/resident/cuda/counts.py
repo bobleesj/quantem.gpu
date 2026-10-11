@@ -23,6 +23,7 @@ _NAMES = (
     "compact",
     "decode_range_u8",
     "decode_range_u16",
+    "total",
     "fields",
     "field_sizes",
     "pack_fields",
@@ -117,7 +118,9 @@ class StreamedCounts:
     """Keep complete native counts in independent, bounded encoded chunks."""
 
     interval = 512
-    # Exact detector totals kept while encoding; only the paired layout keeps them.
+    # Exact uint64 sum over every held scan, per detector pixel (before the valid-pixel mask), or None
+    # until it is known: ``append`` adds each chunk's counts while it encodes them, and a source whose
+    # chunks came from a file adds its streams at the first request.
     _detector_total = None
     # Exact spatial sums for detector queries; float bit lanes have no use for them.
     spatial_index = True
@@ -155,7 +158,8 @@ class StreamedCounts:
 
     @property
     def nbytes(self) -> int:
-        return sum(chunk.nbytes for chunk in self.chunks) + self.valid.nbytes
+        total = 0 if self._detector_total is None else self._detector_total.nbytes
+        return sum(chunk.nbytes for chunk in self.chunks) + self.valid.nbytes + total
 
     @property
     def index_nbytes(self) -> int:
@@ -197,6 +201,9 @@ class StreamedCounts:
             # Events time each phase on the stream; host waits would only stall it.
             begin, encoded, indexed = cp.cuda.Event(), cp.cuda.Event(), cp.cuda.Event()
             begin.record()
+            if self._detector_total is None and not self.chunks:
+                with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
+                    self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
             scratch = cp.empty((2 * min(scans, self.interval) + 4, streams), cp.uint8)
             sizes, states = cp.empty(streams, cp.uint32), cp.empty(streams, cp.uint32)
             models = cp.empty(streams, cp.uint8)
@@ -211,7 +218,11 @@ class StreamedCounts:
             self.kernels["encode"](
                 grid,
                 (128,),
-                (*args, self.encoding, scratch, sizes, states, models, u32(streams)),
+                (
+                    *args, self.encoding, scratch, sizes, states, models, u32(streams),
+                    # a source with file-loaded chunks and no total yet has nothing to add to (null)
+                    np.intp(0) if self._detector_total is None else self._detector_total,
+                ),
             )
             offsets = cp.empty(streams + 1, cp.uint32)
             offsets[0] = 0
@@ -344,27 +355,41 @@ class StreamedCounts:
             )
 
     def detector_total_device(self):
-        """Return the exact valid-pixel detector sum without dense expansion."""
+        """Return the exact valid-pixel detector sum without dense expansion.
+
+        ``append`` already added the counts it encoded. A source whose chunks were read from a file
+        adds its streams here once (each thread sums one stream, nothing is written out) and keeps
+        the total: the chunks never change.
+        """
         import cupy as cp
 
         if self.is_released:
             raise ValueError("The resident source has been released.")
         with cp.cuda.Device(self.device):
-            total = cp.zeros(self.shape[2:], cp.uint64)
-            errors = cp.zeros(1, cp.uint32)
-            valid = self.valid.astype(self.dtype, copy=False)
-            for chunk in self.chunks:
-                decoded = self.decode_scan_range_device(
-                    chunk.first, chunk.first + chunk.scans, errors=errors
-                )
-                decoded *= valid[None]
-                total += cp.sum(decoded, axis=0, dtype=cp.uint64)
-                # Free this chunk's counts before the next one is decoded.
-                del decoded
-            cp.cuda.get_current_stream().synchronize()
-            if int(errors.get()[0]):
-                raise ValueError("An encoded count stream failed reconstruction.")
-            return total
+            if self._detector_total is None:
+                with cp.cuda.using_allocator():  # retained, so outside the memory pool (see retain)
+                    total = cp.zeros(self.shape[2:], cp.uint64)
+                errors = cp.zeros(1, cp.uint32)
+                pixels = math.prod(self.shape[2:])
+                for chunk in self.chunks:
+                    streams = math.ceil(chunk.scans / self.interval) * pixels
+                    self.kernels["total"](
+                        ((streams + 127) // 128,),
+                        (128,),
+                        (
+                            *chunk.arrays[:3],
+                            self.decoding,
+                            total,
+                            errors,
+                            np.uint32(chunk.scans),
+                            np.uint32(pixels),
+                            np.uint32(self.interval),
+                        ),
+                    )
+                if int(errors.get()[0]):
+                    raise ValueError("An encoded count stream failed reconstruction.")
+                self._detector_total = total
+            return self._detector_total * self.valid
 
     def release_scans_before(self, stop: int) -> None:
         """Free the chunks that end by scan ``stop``, so a source read once in scan order shrinks as it is read.
@@ -372,10 +397,14 @@ class StreamedCounts:
         Only whole chunks are freed; each owns its own allocation (see retain),
         so its memory returns to the GPU at once. Decoding a freed scan raises.
         """
-        self.chunks = [chunk for chunk in self.chunks if chunk.first + chunk.scans > stop]
+        kept = [chunk for chunk in self.chunks if chunk.first + chunk.scans > stop]
+        if len(kept) != len(self.chunks):
+            self._detector_total = None   # it counted the freed scans; the next request adds the held ones
+        self.chunks = kept
         self.released_scans = self.chunks[0].first if self.chunks else self.ready_scans
 
     def release(self) -> None:
         """Drop this owner's references without invalidating active borrowed sessions."""
         self.chunks.clear()
+        self._detector_total = None
         self.is_released = True

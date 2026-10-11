@@ -170,10 +170,6 @@ class PairedCounts(StreamedCounts):
         self._detector_total = None
         self.hot_pixel_correction = None
 
-    @property
-    def nbytes(self) -> int:
-        return super().nbytes + (0 if self._detector_total is None else self._detector_total.nbytes)
-
     def detector_total_device(self):
         """Reuse exact scan totals, or reconstruct them once after saved-form load."""
         import cupy as cp
@@ -187,10 +183,6 @@ class PairedCounts(StreamedCounts):
                     raw = self.decode_blocks(chunk.first, chunk.scans)
                     self._detector_total += cp.sum(raw, axis=0, dtype=cp.uint64)
             return self._detector_total * self.valid
-
-    def release(self) -> None:
-        super().release()
-        self._detector_total = None
 
     def decode_scan_range_device(self, first: int, stop: int, *, errors=None):
         """Decode an arbitrary scan interval with the paired stream decoder."""
@@ -269,13 +261,16 @@ class PairedCounts(StreamedCounts):
             self.kernels["pack_fields"](index_grid, (128,), (values, widths, starts, words, *index_args))
             cp.cuda.get_current_stream().synchronize()
             self.load_metrics["index_seconds"] += time.perf_counter() - started
+            # Keep only one detector-sized sum while the decoded batch is already here. A source that
+            # holds chunks without a total (read from a file, or after scans were freed) has nothing
+            # to add to: its next request sums every held chunk.
+            if self._detector_total is None and not self.chunks:
+                self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
             self.chunks.append(Chunk(self.ready_scans, scans, (payload, records, models, words, starts, widths)))
             self.ready_scans += scans
-            # Keep only one detector-sized sum while the decoded batch is already here.
             started = time.perf_counter()
-            if self._detector_total is None:
-                self._detector_total = cp.zeros(self.shape[2:], cp.uint64)
-            self._detector_total += cp.sum(raw, axis=0, dtype=cp.uint64)
+            if self._detector_total is not None:
+                self._detector_total += cp.sum(raw, axis=0, dtype=cp.uint64)
             cp.cuda.get_current_stream().synchronize()
             self.load_metrics["detector_total_seconds"] = (
                 self.load_metrics.get("detector_total_seconds", 0.0)
