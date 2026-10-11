@@ -32,7 +32,7 @@ def cross_correlation_shift_batch_cp(
     Returns
     -------
     cp.ndarray, shape (N, 2), float64
-        Shifts [dx, dy] for each image.
+        The (row, col) shift of each image in pixels (``x0``/``dx`` below follow the paper's symbols but are rows).
     """
     N, M_h, N_w = stack.shape
 
