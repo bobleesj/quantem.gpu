@@ -6,7 +6,6 @@ scalars (wavelength, semiangle_rad, ang_y_rad, ang_x_rad). This eliminates
 the ~14 GB packed_m/packed_p cache that previously stored precomputed values.
 """
 
-from functools import lru_cache
 
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
@@ -451,8 +450,3 @@ class CustomFFT256(CustomFFTBase):
             cols_block=(64, 8, 1),
             cols_grid_y=32,
         )
-
-
-@lru_cache(maxsize=1)
-def get_custom_fft_256() -> CustomFFT256:
-    return CustomFFT256()

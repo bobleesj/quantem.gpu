@@ -3,7 +3,6 @@
 128 = 4^3 x 2: three radix-4 stages plus a final radix-2 stage.
 """
 
-from functools import lru_cache
 
 from quantem.gpu.ssb.cuda.kernels.common import (
     CustomFFTBase,
@@ -284,8 +283,3 @@ class CustomFFT128(CustomFFTBase):
             cols_block=(32, 8, 1),
             cols_grid_y=16,
         )
-
-
-@lru_cache(maxsize=1)
-def get_custom_fft_128() -> CustomFFT128:
-    return CustomFFT128()
