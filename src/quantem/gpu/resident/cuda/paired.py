@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cuda_module
+from quantem.gpu.device.cuda_runtime import cuda_module, start_after_queued_work
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts, field_count
 
 QUERY_ABI = "paired-polar-counts-v1"
@@ -533,6 +533,8 @@ class ResidentFileReader:
             ahead = max(1, len(self.slots) - 2)
             for group in range(min(ahead, len(groups))):
                 submit(group)
+            # The arrays may be pool blocks the caller has just freed with reads of them still queued.
+            start_after_queued_work(self.stream)
             with self.stream:
                 for group in range(len(groups)):
                     slot, lead, got = pending.pop(group).result()

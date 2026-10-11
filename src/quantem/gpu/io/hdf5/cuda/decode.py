@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import _release_pinned, cp, cuda_module
+from quantem.gpu.device.cuda_runtime import _release_pinned, cp, cuda_module, start_after_queued_work
 from quantem.gpu.formats.hdf5.frames import BLOCK_SIZE
 
 _SOURCE = (Path(__file__).parent / "kernels" / "bslz4.cu").read_text()
@@ -120,6 +120,8 @@ def decompress_prepared(prepared: dict, batch_bytes_target: int = 1 << 28):
         # kernel has not finished reading it.
         compressed_slots = [cp.empty(max_batch_compressed, dtype=cp.uint8) for _ in range(2)]
         copy_stream = cp.cuda.Stream(non_blocking=True)
+        # The slots may be pool blocks the caller has just freed with reads of them still queued.
+        start_after_queued_work(copy_stream)
         copy_done = [cp.cuda.Event() for _ in range(2)]
         kernel_done = [cp.cuda.Event() for _ in range(2)]
         main_stream = cp.cuda.get_current_stream()
