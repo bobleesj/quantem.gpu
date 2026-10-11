@@ -291,3 +291,18 @@ def test_cuda_float_decode_reports_failures_into_the_callers_flags(tmp_path):
             lanes.decode_scan_range_device(0, chunk.scans)
         with pytest.raises(ValueError, match="one uint32 value"):
             lanes.decode_scan_range_device(0, chunk.scans, errors=cp.zeros(1, cp.int64))
+
+
+def test_float_resident_frees_rows_already_read(tmp_path):
+    """release_rows_before frees the float rows above a row, as for counts; a freed row raises when read."""
+    backend = _backend()
+    values = (np.arange(4 * 512 * 8 * 8, dtype=np.float32).reshape(4, 512, 8, 8) % 97) / 4
+    source = tmp_path / "float.npy"
+    np.save(source, values)
+    with io.load(source, backend=backend, verbose=False) as loaded:
+        before = loaded.data.nbytes
+        loaded.release_rows_before(2)
+        assert loaded.data.nbytes < before
+        np.testing.assert_array_equal(loaded[2:4].cpu().numpy(), values[2:4])
+        with pytest.raises(ValueError, match="released"):
+            loaded[1, 0]

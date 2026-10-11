@@ -131,3 +131,53 @@ def test_flagged_uint32_master_refuses_valid_counts_uint16_cannot_hold(tmp_path,
     valid = pixel_mask == 0
     np.testing.assert_array_equal(stored[:, valid], counts[:, valid])
     assert not stored[:, ~valid].any()
+
+
+def test_failed_uint32_load_releases_the_partial_resident(tmp_path):
+    """A count above 65535 found in a later load block frees the blocks already encoded.
+
+    The traceback keeps the loader's locals alive (an IPython session keeps
+    the last one), so an unreleased partial resident would hold its device
+    memory until the session ends.
+    """
+    import traceback
+
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    if _backend() != "cuda":
+        pytest.skip("The CUDA loader encodes 16384-scan blocks; this checks its failure path.")
+    counts = np.random.default_rng(3).integers(0, 50, (17000, 8, 8), dtype=np.uint32)
+    counts[16900, 3, 3] = 70000
+    master = _write_master(tmp_path, counts, np.zeros((8, 8), np.uint32))
+    with pytest.raises(ValueError, match="above 65535") as failure:
+        io.load(str(master), scan_shape=(17000, 1), backend="cuda", verbose=False)
+    partial = [
+        frame.f_locals["source"]
+        for frame, _ in traceback.walk_tb(failure.tb)
+        if isinstance(frame.f_locals.get("source"), StreamedCounts)
+    ]
+    assert partial and all(source.is_released and not source.chunks for source in partial)
+
+
+@pytest.mark.parametrize("method", ["median", "none"])
+def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(tmp_path, method):
+    """A plain 4D uint32 dataset with flagged-pixel markers loads like an Arina master.
+
+    Metal refused it: its range check counted the 0xFFFFFFFF markers that the
+    CUDA loader stores as 0 (or corrects).
+    """
+    backend = _backend()
+    counts, pixel_mask = _flagged_counts(6 * 8, (48, 48))
+    path = tmp_path / "plain.h5"
+    with h5py.File(path, "w") as handle:
+        handle["data"] = counts.reshape(6, 8, 48, 48)
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = pixel_mask
+    expected = _corrected(counts, pixel_mask, "median") if method == "median" else counts.copy()
+    if method == "none":
+        expected[:, pixel_mask != 0] = 0
+        expected = expected.astype(np.uint16)
+    with io.load(path, backend=backend, hot_pixel_correction=method, apply_mask=False, verbose=False) as loaded:
+        assert loaded.dtype == np.uint16
+        np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected.reshape(6, 8, 48, 48))
+        if method == "none":
+            assert loaded.metadata["flagged_markers_stored_as_zero"] == 6 * 8 * 4

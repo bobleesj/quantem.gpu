@@ -2,6 +2,7 @@
 
 import math
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,26 @@ def _pipelines() -> dict:
     return {name.removeprefix("streamed_counts_"): pipeline for name, pipeline in pipelines.items()}
 
 
+def _release_buffers(shared: tuple, chunks: list, spatial_chunks: list) -> None:
+    """Return every Metal buffer a resident holds to the system.
+
+    PyObjC never frees a Metal buffer when its Python wrapper is collected, so a
+    resident dropped without ``release()`` kept its memory until the process
+    ended (each reload of a 4D acquisition added its full size). Runs once:
+    from ``release()`` or when the resident is collected.
+    """
+    for chunk in chunks:
+        for buffer in chunk.buffers:
+            release_buffer(buffer)
+    for buffers in spatial_chunks:
+        for buffer in buffers:
+            release_buffer(buffer)
+    for buffer in shared:
+        release_buffer(buffer)
+    chunks.clear()
+    spatial_chunks.clear()
+
+
 @dataclass
 class _Chunk:
     """Encoded streams for the consecutive scans ``first`` to ``first + scans``."""
@@ -107,6 +128,16 @@ class MPSStreamedCounts:
         self._errors = allocate_shared(4, "ANS errors")
         self.chunks: list[_Chunk] = []
         self.spatial_chunks: list[tuple] = []
+        # The lists are only ever changed in place, so the finalizer sees every buffer still held.
+        self._finalizer = weakref.finalize(
+            self,
+            _release_buffers,
+            (self._encoding, self._decoding, self._valid, self._errors),
+            self.chunks,
+            self.spatial_chunks,
+        )
+        # At exit the system frees the memory itself; no Objective-C calls during shutdown.
+        self._finalizer.atexit = False
         self.ready_scans = 0
         self.released_scans = 0
         self.is_released = False
@@ -147,7 +178,7 @@ class MPSStreamedCounts:
             )
         if not 0 <= index < self.n_frames:
             raise IndexError(f"Scan index must be in [0, {self.n_frames}); got {index}.")
-        return self._decode_scan_range_torch(index, index + 1)[0]
+        return self.decode_scan_range_torch(index, index + 1)[0]
 
     @property
     def resident_bytes(self) -> int:
@@ -303,15 +334,29 @@ class MPSStreamedCounts:
         self._dispatch_threads(encoder, stop_stream - first_stream)
         encoder.endEncoding()
 
+    def check_readable(self, first: int, stop: int) -> None:
+        """Refuse a scan range this source does not hold.
+
+        A decode writes only the scans its chunks hold, so a scan not yet
+        appended (an acquisition still arriving), freed by
+        ``release_scans_before`` or dropped by ``release`` would come back as
+        whatever the output memory held before.
+        """
+        self._check_resident()
+        if not 0 <= first < stop <= self.ready_scans:
+            raise ValueError(
+                f"Scan range ({first}, {stop}) is not resident; scans 0 to "
+                f"{self.ready_scans} of {math.prod(self.shape[:2])} are loaded."
+            )
+        if first < self.released_scans:
+            raise ValueError(
+                f"Scans before {self.released_scans} were released; load the source again to read them."
+            )
+
     def decode_scan_range_device(self, first: int, stop: int):
         """Decode a contiguous scan range into one caller-owned Metal buffer."""
-        self._check_resident()
         first, stop = int(first), int(stop)
-        scan_count = math.prod(self.shape[:2])
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count})."
-            )
+        self.check_readable(first, stop)
         output = MetalArray((stop - first, *self.shape[2:]), self.dtype)
         try:
             command = metal_queue().commandBuffer()
@@ -335,15 +380,10 @@ class MPSStreamedCounts:
         output.shape = self.shape[2:]
         return output
 
-    def _decode_scan_range_torch(self, first: int, stop: int):
+    def decode_scan_range_torch(self, first: int, stop: int):
         """Decode directly into independently owned Torch accelerator storage."""
-        self._check_resident()
         first, stop = int(first), int(stop)
-        scan_count = math.prod(self.shape[:2])
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count})."
-            )
+        self.check_readable(first, stop)
         output = torch.empty(
             (stop - first, *self.shape[2:]),
             dtype=getattr(torch, self.dtype.name),
@@ -367,17 +407,6 @@ class MPSStreamedCounts:
 
     def _encode_scan_range_into(self, command, first: int, stop: int, output):
         """Append an exact range decode to an existing Metal command buffer."""
-        self._check_resident()
-        first, stop = int(first), int(stop)
-        scan_count = math.prod(self.shape[:2])
-        if not 0 <= first < stop <= scan_count:
-            raise ValueError(
-                f"Scan range must be nonempty and inside [0, {scan_count})."
-            )
-        if first < self.released_scans:
-            raise ValueError(
-                f"Scans before {self.released_scans} were released; load the source again to read them."
-            )
         self._clear_errors()
         for chunk in self.chunks:
             overlap_first = max(first, chunk.first)
@@ -563,20 +592,11 @@ class MPSStreamedCounts:
         for buffers in self.spatial_chunks[:count]:
             for buffer in buffers:
                 release_buffer(buffer)
-        self.chunks, self.spatial_chunks = self.chunks[count:], self.spatial_chunks[count:]
+        del self.chunks[:count], self.spatial_chunks[:count]
         self.released_scans = self.chunks[0].first if self.chunks else self.ready_scans
 
     def release(self) -> None:
-        """Release every retained ANS buffer immediately."""
-        for chunk in self.spatial_chunks:
-            for buffer in chunk:
-                release_buffer(buffer)
-        self.spatial_chunks = []
-        chunks, self.chunks = self.chunks, []
-        for chunk in chunks:
-            for buffer in chunk.buffers:
-                release_buffer(buffer)
-        for buffer in (self._encoding, self._decoding, self._valid, self._errors):
-            release_buffer(buffer)
+        """Release every retained ANS buffer immediately; a second call does nothing."""
+        self._finalizer()
         self._encoding = self._decoding = self._valid = self._errors = None
         self.is_released = True

@@ -102,25 +102,19 @@ def compress_batch(data_gpu, n_8kb, frame_bytes):
 
     compressed = cp.empty(n_blocks * max_out, dtype=cp.uint8)
     block_sizes = cp.empty(n_blocks, dtype=cp.uint32)
-    if tail_bytes:
-        kernel("lz4_compress_var_kernel")(
-            (n_blocks,), (32,),
-            (
-                shuffled,
-                compressed,
-                block_sizes,
-                np.uint32(frame_bytes),
-                np.uint32(BLOCK_SIZE),
-                np.uint32(max_out),
-                np.uint32(n_8kb),
-                np.uint32(n_blocks),
-            ),
-        )
-    else:
-        kernel("lz4_compress_kernel")(
-            (n_blocks,), (32,),
-            (shuffled, compressed, block_sizes, np.uint32(BLOCK_SIZE), np.uint32(n_blocks)),
-        )
+    kernel("lz4_compress_var_kernel")(
+        (n_blocks,), (32,),
+        (
+            shuffled,
+            compressed,
+            block_sizes,
+            np.uint32(frame_bytes),
+            np.uint32(BLOCK_SIZE),
+            np.uint32(max_out),
+            np.uint32(n_8kb),
+            np.uint32(n_blocks),
+        ),
+    )
     del shuffled
 
     return _pack_chunks(compressed, block_sizes, frame_count, n_8kb, frame_bytes, max_out)

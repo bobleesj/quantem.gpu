@@ -20,6 +20,7 @@ from quantem.gpu.io.hdf5.write import (
     _is_mps_array,
     _normalize_save_dtype,
     _output_file_size,
+    require_exact_narrowing,
     save_compressed_arina_h5,
     wait_for_saves,
 )
@@ -58,7 +59,6 @@ def save(
     format: str = "arina",
     backend: str = "auto",
     compression: str = "auto",
-    compression_level: int = 0,
 ) -> SaveResult:
     """Save encoded acquisitions as QEM or array results as HDF5.
 
@@ -142,8 +142,8 @@ def save(
         host copy. Algorithm packages may also provide a re-readable 4D block
         source with ``shape``, ``dtype``, and ``blocks()``. Each call to
         ``blocks()`` must yield the complete data as ordered accelerator frame
-        blocks; scaled integer export calls it twice to measure one global
-        range and then encode. Optional ``save_metadata`` attributes are copied
+        blocks; scaled integer export reads them once, calibrating each scan
+        region as it goes. Optional ``save_metadata`` attributes are copied
         into the output. This is the public bridge for bounded algorithm output;
         the I/O package does not own the algorithm that produces the blocks.
     scan_shape : tuple[int, int] | None
@@ -165,9 +165,6 @@ def save(
         File compression, independent of the loaded resident representation.
         ``"auto"`` uses ANS for QuantEM or bitshuffle/LZ4 for Arina, preserving
         previous default file encodings. ANS is not an Arina/HDF5 filter.
-        Other codecs are retained only for internal archival helpers.
-    compression_level : int
-        Codec level. 0 = codec default. Ignored for LZ4.
     metadata : dict | None
         Saved as root attributes on the master file. Use for drift knots,
         probe positions, calibration.
@@ -214,11 +211,6 @@ def save(
                 f"format='quantem' does not support compression={compression!r}; "
                 "use compression='ans', or format='arina' for bitshuffle/LZ4."
             )
-        if compression_level not in (None, 0):
-            raise ValueError(
-                f"ANS has no compression_level control; got {compression_level!r}. "
-                "Remove compression_level to preserve the exact codec contract."
-            )
         if isinstance(data, Dataset4dstemGPU):
             metadata = dict(data.metadata) if metadata is None else metadata
             data = data.data
@@ -252,8 +244,11 @@ def save(
             "compression='ans' is not supported for format='arina'; "
             "use format='quantem', or compression='bitshuffle_lz4' for Arina."
         )
-    if compression in {"bslz4", "bitshuffle_lz4"}:
-        compression = "lz4"
+    if compression not in {"lz4", "bslz4", "bitshuffle_lz4"}:
+        raise ValueError(
+            f"format='arina' writes bitshuffle/LZ4; got compression={compression!r}. "
+            "Use compression='lz4' (or 'auto')."
+        )
     normalized_backend = str(backend).lower()
     if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")
@@ -280,14 +275,12 @@ def save(
             dtype=_infer_save_dtype(data) if dtype is None else dtype,
             batch_size=_DEFAULT_BATCH_SIZE if batch_size is None else int(batch_size),
             frames_per_file=frames_per_file,
-            compression=compression,
-            compression_level=None if compression_level == 0 else compression_level,
             source_master=source_master,
             compression_backend=compression_backend,
         )
         if verbose:
             elapsed = time.perf_counter() - started
-            print(f"Saved {filepath} [{normalized_backend}/{compression}] in {elapsed:.2f}s")
+            print(f"Saved {filepath} [{normalized_backend}/lz4] in {elapsed:.2f}s")
         result = SaveResult(str(filepath), normalized_backend, complete=True)
         return result.wait() if wait else result
 
@@ -310,8 +303,6 @@ def save(
         dtype=dtype,
         source_master=source_master,
         frames_per_file=frames_per_file,
-        compression=compression,
-        compression_level=compression_level,
     )
     try:
         for start in range(0, n_frames, cuda_batch_size):
@@ -323,11 +314,8 @@ def save(
         elapsed = time.perf_counter() - started
         file_size = _output_file_size(filepath)
         raw_bytes = n_frames * det_row * det_col * dtype.itemsize
-        codec = writer._compression
-        if codec != "lz4":
-            codec = f"{codec}@{writer._compression_level}"
         print(
-            f"Saved {filepath} [{codec}]: {raw_bytes / 1e9:.2f} GB -> "
+            f"Saved {filepath} [lz4]: {raw_bytes / 1e9:.2f} GB -> "
             f"{file_size / 1e9:.2f} GB ({raw_bytes / file_size:.1f}x) in {elapsed:.2f}s"
         )
     result = SaveResult(str(filepath), "cuda", complete=bool(wait))
@@ -349,6 +337,7 @@ def _prepare_save_data(data, dtype, scan_shape):
             lo, hi = int(np.iinfo(dtype).min), int(np.iinfo(dtype).max)
             frames = cp.clip(cp.rint(frames), lo, hi).astype(dtype)
         else:
+            require_exact_narrowing(frames, dtype)
             frames = frames.astype(dtype)
     if frames.ndim == 4:
         inferred_scan = tuple(int(size) for size in frames.shape[:2])

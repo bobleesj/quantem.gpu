@@ -7,8 +7,9 @@ import shutil
 import sys
 from typing import Literal, TypeAlias
 
-DeviceName = Literal["cuda", "mps", "webgpu"]
-NativeDeviceName = Literal["cuda", "mps"]
+import torch
+
+DeviceName = Literal["cuda", "mps"]
 
 INSTALL_CUDA = 'pip install "quantem.gpu[cuda]"'
 INSTALL_WIDGET_CUDA = 'pip install "quantem.widget[cuda]"'
@@ -90,11 +91,20 @@ def _print_once(line: str | None) -> None:
 
 
 def release_cached_memory() -> None:
-    """Return unused backend allocator blocks without releasing live arrays."""
+    """Return the unused cached blocks of CuPy and Torch to the GPU without releasing live arrays.
+
+    Encoded residents use CuPy while SSB, the widget and Torch inputs use
+    Torch's caching allocator; each keeps freed blocks for reuse, so both are
+    emptied for the memory to show as free.
+    """
     from quantem.gpu.device.cuda_runtime import cp
 
     if cp is not None:
         cp.get_default_memory_pool().free_all_blocks()
+    if torch.cuda.is_initialized():
+        torch.cuda.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
 
 def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
@@ -121,14 +131,12 @@ def profile(device: str | None = None) -> dict[str, str | list[str] | None]:
     cuda_count = 0
     mps_available = False
     try:
-        import torch
-
         cuda_available = bool(torch.cuda.is_available())
         cuda_count = int(torch.cuda.device_count()) if cuda_available else 0
         mps_available = bool(torch.backends.mps.is_available())
         torch_version = str(torch.__version__)
-    except (ImportError, OSError, RuntimeError):
-        # a missing or broken Torch install is reported as torch=None, never raised
+    except (OSError, RuntimeError):
+        # a broken Torch install is reported as torch=None, never raised
         torch_version = None
 
     requested = "auto" if device is None else str(device).strip().lower()
@@ -221,16 +229,14 @@ def _mps_probe() -> tuple[bool, str | None]:
     if importlib.util.find_spec("Metal") is not None:
         return True, None
     try:
-        import torch
-
         if bool(torch.backends.mps.is_available()):
             return True, None
         return False, "Torch is installed, but its MPS backend is unavailable"
-    except (ImportError, OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError) as exc:
         return False, str(exc)
 
 
-def detect() -> NativeDeviceName:
+def detect() -> DeviceName:
     """Return the available native GPU backend.
 
     CUDA takes precedence when both runtimes are visible. CPU is intentionally
@@ -251,20 +257,18 @@ def detect() -> NativeDeviceName:
 
 
 def resolve(name: str | None = "auto") -> DeviceName:
-    """Validate and resolve a CUDA, MPS, or browser WebGPU backend name."""
+    """Validate and resolve a CUDA or MPS backend name."""
     requested = "auto" if name is None else str(name).lower()
     if requested == "auto":
         return detect()
     _print_once(runtime_notice())
-    if requested == "webgpu":
-        return "webgpu"
     if requested == "cuda":
         available, error = _cuda_probe()
     elif requested == "mps":
         available, error = _mps_probe()
     else:
         raise ValueError(
-            f"Unknown GPU backend {name!r}. Use 'auto', 'cuda', 'mps', or 'webgpu'."
+            f"Unknown GPU backend {name!r}. Use 'auto', 'cuda' or 'mps'."
         )
     if not available:
         raise RuntimeError(f"{requested.upper()} backend is unavailable: {error}")

@@ -31,222 +31,6 @@ void selected_sum_warp32_16f_impl(
     }
 }
 
-extern "C" __global__
-void selected_sum_u64_u8_16f(
-    const unsigned char* __restrict__ data,
-    const int* __restrict__ indices,
-    unsigned long long* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
-}
-
-extern "C" __global__
-void selected_sum_u64_u16_16f(
-    const unsigned short* __restrict__ data,
-    const int* __restrict__ indices,
-    unsigned long long* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
-}
-
-extern "C" __global__
-void selected_sum_u64_u32_16f(
-    const unsigned int* __restrict__ data,
-    const int* __restrict__ indices,
-    unsigned long long* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
-}
-
-extern "C" __global__
-void selected_sum_f32_u8_16f(
-    const unsigned char* __restrict__ data,
-    const int* __restrict__ indices,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
-}
-
-extern "C" __global__
-void selected_sum_f32_u16_16f(
-    const unsigned short* __restrict__ data,
-    const int* __restrict__ indices,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
-}
-
-extern "C" __global__
-void selected_sum_f32_u32_16f(
-    const unsigned int* __restrict__ data,
-    const int* __restrict__ indices,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);
-}
-
-template <typename T>
-__device__ __forceinline__
-void selected_sum_from_total_f32_warp32_16f_impl(
-    const T* __restrict__ data,
-    const int* __restrict__ indices,
-    const unsigned long long* __restrict__ total,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
-    int frame = blockIdx.x * blockDim.y + ty;
-    unsigned long long s = 0;
-    if (frame < nframes) {
-        const T* frame_ptr =
-            data + (unsigned long long)frame * (unsigned int)ndet;
-        for (int j = tx; j < nidx; j += 32) {
-            s += (unsigned long long)frame_ptr[indices[j]];
-        }
-    }
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        s += __shfl_down_sync(0xffffffff, s, offset);
-    }
-    if (tx == 0 && frame < nframes) {
-        unsigned long long value = total[frame] - s;
-        out[frame] = (float)value;
-    }
-}
-
-extern "C" __global__
-void selected_sum_from_total_f32_u8_16f(
-    const unsigned char* __restrict__ data,
-    const int* __restrict__ indices,
-    const unsigned long long* __restrict__ total,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_from_total_f32_warp32_16f_impl(
-        data, indices, total, out, nidx, ndet, nframes
-    );
-}
-
-extern "C" __global__
-void selected_sum_from_total_f32_u16_16f(
-    const unsigned short* __restrict__ data,
-    const int* __restrict__ indices,
-    const unsigned long long* __restrict__ total,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_from_total_f32_warp32_16f_impl(
-        data, indices, total, out, nidx, ndet, nframes
-    );
-}
-
-extern "C" __global__
-void selected_sum_from_total_f32_u32_16f(
-    const unsigned int* __restrict__ data,
-    const int* __restrict__ indices,
-    const unsigned long long* __restrict__ total,
-    float* __restrict__ out,
-    int nidx,
-    int ndet,
-    int nframes
-) {
-    selected_sum_from_total_f32_warp32_16f_impl(
-        data, indices, total, out, nidx, ndet, nframes
-    );
-}
-
-template <typename T>
-__device__ __forceinline__
-void total_sum_warp128_4f_impl(
-    const T* __restrict__ data,
-    unsigned long long* __restrict__ out,
-    int ndet,
-    int nframes
-) {
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
-    int frame = blockIdx.x * blockDim.y + ty;
-    int lane = tx & 31;
-    int warp = tx >> 5;
-    __shared__ unsigned long long partial[16];
-    unsigned long long s = 0;
-    if (frame < nframes) {
-        const T* frame_ptr =
-            data + (unsigned long long)frame * (unsigned int)ndet;
-        for (int j = tx; j < ndet; j += 128) {
-            s += (unsigned long long)frame_ptr[j];
-        }
-    }
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        s += __shfl_down_sync(0xffffffff, s, offset);
-    }
-    if (lane == 0) {
-        partial[ty * 4 + warp] = s;
-    }
-    __syncthreads();
-    unsigned long long v = (tx < 4) ? partial[ty * 4 + tx] : 0;
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        v += __shfl_down_sync(0xffffffff, v, offset);
-    }
-    if (tx == 0 && frame < nframes) {
-        out[frame] = v;
-    }
-}
-
-extern "C" __global__
-void total_sum_u8_4f(
-    const unsigned char* __restrict__ data,
-    unsigned long long* __restrict__ out,
-    int ndet,
-    int nframes
-) {
-    total_sum_warp128_4f_impl(data, out, ndet, nframes);
-}
-
-extern "C" __global__
-void total_sum_u16_4f(
-    const unsigned short* __restrict__ data,
-    unsigned long long* __restrict__ out,
-    int ndet,
-    int nframes
-) {
-    total_sum_warp128_4f_impl(data, out, ndet, nframes);
-}
-
-extern "C" __global__
-void total_sum_u32_4f(
-    const unsigned int* __restrict__ data,
-    unsigned long long* __restrict__ out,
-    int ndet,
-    int nframes
-) {
-    total_sum_warp128_4f_impl(data, out, ndet, nframes);
-}
-
 template <typename T>
 __device__ __forceinline__
 void center_of_mass_full_warp128_4f_impl(
@@ -309,48 +93,6 @@ void center_of_mass_full_warp128_4f_impl(
             out_col[frame] = (float)((double)c / (double)t);
         }
     }
-}
-
-extern "C" __global__
-void center_of_mass_full_u8_4f(
-    const unsigned char* __restrict__ data,
-    float* __restrict__ out_row,
-    float* __restrict__ out_col,
-    int ndet,
-    int det_cols,
-    int nframes
-) {
-    center_of_mass_full_warp128_4f_impl(
-        data, out_row, out_col, ndet, det_cols, nframes
-    );
-}
-
-extern "C" __global__
-void center_of_mass_full_u16_4f(
-    const unsigned short* __restrict__ data,
-    float* __restrict__ out_row,
-    float* __restrict__ out_col,
-    int ndet,
-    int det_cols,
-    int nframes
-) {
-    center_of_mass_full_warp128_4f_impl(
-        data, out_row, out_col, ndet, det_cols, nframes
-    );
-}
-
-extern "C" __global__
-void center_of_mass_full_u32_4f(
-    const unsigned int* __restrict__ data,
-    float* __restrict__ out_row,
-    float* __restrict__ out_col,
-    int ndet,
-    int det_cols,
-    int nframes
-) {
-    center_of_mass_full_warp128_4f_impl(
-        data, out_row, out_col, ndet, det_cols, nframes
-    );
 }
 
 template <typename T>
@@ -420,54 +162,6 @@ void center_of_mass_selected_warp128_4f_impl(
     }
 }
 
-extern "C" __global__
-void center_of_mass_selected_u8_4f(
-    const unsigned char* __restrict__ data,
-    const int* __restrict__ indices,
-    float* __restrict__ out_row,
-    float* __restrict__ out_col,
-    int nidx,
-    int ndet,
-    int det_cols,
-    int nframes
-) {
-    center_of_mass_selected_warp128_4f_impl(
-        data, indices, out_row, out_col, nidx, ndet, det_cols, nframes
-    );
-}
-
-extern "C" __global__
-void center_of_mass_selected_u16_4f(
-    const unsigned short* __restrict__ data,
-    const int* __restrict__ indices,
-    float* __restrict__ out_row,
-    float* __restrict__ out_col,
-    int nidx,
-    int ndet,
-    int det_cols,
-    int nframes
-) {
-    center_of_mass_selected_warp128_4f_impl(
-        data, indices, out_row, out_col, nidx, ndet, det_cols, nframes
-    );
-}
-
-extern "C" __global__
-void center_of_mass_selected_u32_4f(
-    const unsigned int* __restrict__ data,
-    const int* __restrict__ indices,
-    float* __restrict__ out_row,
-    float* __restrict__ out_col,
-    int nidx,
-    int ndet,
-    int det_cols,
-    int nframes
-) {
-    center_of_mass_selected_warp128_4f_impl(
-        data, indices, out_row, out_col, nidx, ndet, det_cols, nframes
-    );
-}
-
 template <typename T>
 __device__ __forceinline__
 void selected_frame_sum_u64_impl(
@@ -490,22 +184,6 @@ void selected_frame_sum_u64_impl(
     }
     out[detector] = sum;
 }
-
-#define DEFINE_SELECTED_FRAME_SUM(NAME, TYPE)                                       \
-extern "C" __global__                                                               \
-void NAME(                                                                           \
-    const TYPE* __restrict__ data,                                                    \
-    const int* __restrict__ indices,                                                  \
-    unsigned long long* __restrict__ out,                                             \
-    int nidx,                                                                         \
-    int ndet                                                                          \
-) {                                                                                  \
-    selected_frame_sum_u64_impl(data, indices, out, nidx, ndet);                     \
-}
-
-DEFINE_SELECTED_FRAME_SUM(selected_frame_sum_u64_u8, unsigned char)
-DEFINE_SELECTED_FRAME_SUM(selected_frame_sum_u64_u16, unsigned short)
-DEFINE_SELECTED_FRAME_SUM(selected_frame_sum_u64_u32, unsigned int)
 
 template <typename T>
 __device__ __forceinline__
@@ -530,18 +208,41 @@ void selected_frame_max_u32_impl(
     out[detector] = maximum;
 }
 
-#define DEFINE_SELECTED_FRAME_MAX(NAME, TYPE)                                       \
-extern "C" __global__                                                               \
-void NAME(                                                                           \
-    const TYPE* __restrict__ data,                                                    \
-    const int* __restrict__ indices,                                                  \
-    unsigned int* __restrict__ out,                                                   \
-    int nidx,                                                                         \
-    int ndet                                                                          \
-) {                                                                                  \
-    selected_frame_max_u32_impl(data, indices, out, nidx, ndet);                     \
+// Every family is exported once per native count type; the templates above hold the code.
+#define DEFINE_COUNT_KERNELS(SUFFIX, TYPE)                                                          \
+extern "C" __global__ void selected_sum_u64_##SUFFIX##_16f(                                         \
+    const TYPE* __restrict__ data, const int* __restrict__ indices,                                 \
+    unsigned long long* __restrict__ out, int nidx, int ndet, int nframes) {                        \
+    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);                          \
+}                                                                                                   \
+extern "C" __global__ void selected_sum_f32_##SUFFIX##_16f(                                         \
+    const TYPE* __restrict__ data, const int* __restrict__ indices,                                 \
+    float* __restrict__ out, int nidx, int ndet, int nframes) {                                     \
+    selected_sum_warp32_16f_impl(data, indices, out, nidx, ndet, nframes);                          \
+}                                                                                                   \
+extern "C" __global__ void center_of_mass_full_##SUFFIX##_4f(                                       \
+    const TYPE* __restrict__ data, float* __restrict__ out_row, float* __restrict__ out_col,        \
+    int ndet, int det_cols, int nframes) {                                                          \
+    center_of_mass_full_warp128_4f_impl(data, out_row, out_col, ndet, det_cols, nframes);           \
+}                                                                                                   \
+extern "C" __global__ void center_of_mass_selected_##SUFFIX##_4f(                                   \
+    const TYPE* __restrict__ data, const int* __restrict__ indices,                                 \
+    float* __restrict__ out_row, float* __restrict__ out_col,                                       \
+    int nidx, int ndet, int det_cols, int nframes) {                                                \
+    center_of_mass_selected_warp128_4f_impl(                                                        \
+        data, indices, out_row, out_col, nidx, ndet, det_cols, nframes);                            \
+}                                                                                                   \
+extern "C" __global__ void selected_frame_sum_u64_##SUFFIX(                                         \
+    const TYPE* __restrict__ data, const int* __restrict__ indices,                                 \
+    unsigned long long* __restrict__ out, int nidx, int ndet) {                                     \
+    selected_frame_sum_u64_impl(data, indices, out, nidx, ndet);                                    \
+}                                                                                                   \
+extern "C" __global__ void selected_frame_max_u32_##SUFFIX(                                         \
+    const TYPE* __restrict__ data, const int* __restrict__ indices,                                 \
+    unsigned int* __restrict__ out, int nidx, int ndet) {                                           \
+    selected_frame_max_u32_impl(data, indices, out, nidx, ndet);                                    \
 }
 
-DEFINE_SELECTED_FRAME_MAX(selected_frame_max_u32_u8, unsigned char)
-DEFINE_SELECTED_FRAME_MAX(selected_frame_max_u32_u16, unsigned short)
-DEFINE_SELECTED_FRAME_MAX(selected_frame_max_u32_u32, unsigned int)
+DEFINE_COUNT_KERNELS(u8, unsigned char)
+DEFINE_COUNT_KERNELS(u16, unsigned short)
+DEFINE_COUNT_KERNELS(u32, unsigned int)

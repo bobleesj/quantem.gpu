@@ -9,13 +9,26 @@ def test_uint64_series_sum_never_truncates_high_counts():
     cp = pytest.importorskip("cupy")
     if cp.cuda.runtime.getDeviceCount() == 0:
         pytest.skip("CUDA device required")
-    data = cp.full((1, 1, 257, 257), 65535, cp.uint16)
-    session = detector.prepare([data, data])
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    source = StreamedCounts((1, 1, 257, 257), "uint16")
+    source.append(cp.full((1, 257, 257), 65535, cp.uint16))
+    session = detector.prepare([source, source])
     value = session.masked_sum(np.ones((257, 257), bool), output="native")
     assert value.dtype == cp.uint64
     np.testing.assert_array_equal(
         value.get(), np.full((2, 1, 1), 257 * 257 * 65535, np.uint64)
     )
+
+
+def test_series_of_dense_arrays_is_refused():
+    """A series joins acquisitions that io.load encoded; dense arrays are queried one at a time."""
+    cp = pytest.importorskip("cupy")
+    if cp.cuda.runtime.getDeviceCount() == 0:
+        pytest.skip("CUDA device required")
+    data = cp.zeros((2, 2, 4, 4), cp.uint16)
+    with pytest.raises(TypeError, match="streamed count sources"):
+        detector.prepare([data, data])
 
 
 def test_original_h5_joint_queries_preserve_raw_counts(tmp_path):
@@ -40,18 +53,3 @@ def test_original_h5_joint_queries_preserve_raw_counts(tmp_path):
         session.masked_sum(np.ones((2, 3), bool), output="native").get(),
         np.broadcast_to(raw.sum(-1).reshape(4, 8), (2, 4, 8)),
     )
-
-
-def test_dense_series_accepts_wait_false_and_completes_before_returning():
-    """wait=False queues only on streamed series; a dense series used to raise TypeError for the keyword."""
-    cp = pytest.importorskip("cupy")
-    if cp.cuda.runtime.getDeviceCount() == 0:
-        pytest.skip("CUDA device required")
-    values = (np.arange(4 * 5 * 6 * 7) % 251).astype(np.uint16).reshape(4, 5, 6, 7)
-    data = cp.asarray(values)
-    session = detector.prepare([data, data])
-    pattern = session.frame(7, output="native", wait=False)
-    image = session.masked_sum(np.ones((6, 7), bool), output="native", wait=False)
-    session.finish()
-    np.testing.assert_array_equal(pattern.get(), np.stack([values.reshape(20, 6, 7)[7]] * 2))
-    np.testing.assert_array_equal(image.get(), np.stack([values.sum(axis=(2, 3), dtype=np.uint64)] * 2))

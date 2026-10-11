@@ -67,8 +67,7 @@ def load_precision(
     """Load scaled uint16 precision ANS-encoded on the GPU, with bounded conversion and error scratch.
 
     ``io.load`` admits only scaled uint16 here: new conversions and saved
-    regional (version 2) exports go region by region; a saved single-scale
-    (version 1) export keeps its codes, and a legacy float16 export is converted.
+    regional exports go region by region.
     """
     context = ExitStack()
     if backend == "mps":
@@ -93,66 +92,7 @@ def load_precision(
             raise ValueError(
                 "Choose dtype='scaled_uint16' for precision loading."
             )
-        if source.saved is None or source.saved.get("version") == 2:
-            return _load_regional(source, scan_region, detector_region, verbose, pack, resident_type)
-        chunks = []
-        try:
-            reuse = storage == source.saved["storage"]
-            report = dict(source.saved) if reuse else _new_report(source, storage)
-            if not reuse:
-                report["prior_conversion"] = source.saved
-            row0, row1, col0, col1 = scan_region or (0, source.shape[0], 0, source.shape[1])
-            detector_row0, detector_row1, detector_col0, detector_col1 = detector_region or (0, source.shape[2], 0, source.shape[3])
-            shape = (row1 - row0, col1 - col0, detector_row1 - detector_row0, detector_col1 - detector_col0)
-            for block in source.blocks(scan_region, detector_region):
-                if reuse:
-                    encoded = block
-                else:
-                    original = conversion.restore(block, source.saved, backend)
-                    encoded = conversion.encode(original, report, backend)
-                    restored = (
-                        None
-                        if backend == "cuda"
-                        else conversion.restore(encoded, report, backend)
-                    )
-                    conversion.measure(original, restored, report, backend, encoded=encoded)
-                chunks.append(pack(encoded, (1, encoded.shape[0], *shape[2:])))
-            if not reuse:
-                report["selection"] = {
-                    "scan_region": scan_region,
-                    "detector_region": detector_region,
-                }
-                _finish_report(report)
-            resident = resident_type(chunks, shape, report)
-            metadata = dict(source.metadata)
-            metadata.update(
-                source_shape=source.shape,
-                scan_shape=shape[:2],
-                detector_shape=shape[2:],
-                n_frames=math.prod(shape[:2]),
-                selection={
-                    "scan_region": scan_region,
-                    "detector_region": detector_region,
-                },
-                precision=report,
-                conversion_report_origin="saved" if reuse else "measured",
-                working_shape=shape,
-                working_dtype="float32",
-                representation="encoded",
-                resident_codec="ans",
-                residency="device",
-                physical_resident_bytes=resident.nbytes,
-                lossless_exact=report["changed"] == 0,
-                source_dtype=report["source_dtype"],
-                storage_dtype="uint16",
-            )
-            if verbose:
-                print_report(report, shape, resident.nbytes, saved=reuse)
-            return Dataset4dstemGPU(resident, metadata)
-        except BaseException:
-            for chunk in chunks:
-                chunk.release()
-            raise
+        return _load_regional(source, scan_region, detector_region, verbose, pack, resident_type)
 
 
 def save_precision(
@@ -262,7 +202,6 @@ def save_precision(
                 metadata=metadata,
                 dtype=np.uint16,
                 frames_per_file=frames_per_file,
-                compression="lz4",
             )
             for encoded in encoded_blocks:
                 writer.write(encoded)
@@ -300,22 +239,9 @@ def save_precision(
 def print_report(report, shape, resident_bytes, *, saved=False):
     """Print measured precision and residency without leaking source paths."""
     origin = "Saved conversion report (not remeasured)" if saved else "GPU measured across all loaded values"
-    if report.get("version") == 2:
-        print(f"{report['source_dtype']} → scaled_uint16 | {resident_bytes / 2**30:.3f} GiB ANS | "
-              f"RMSE {report['rmse']:.7g}, max {report['max_abs_error']:.7g}, "
-              f"overflow {report['overflow']} | {origin}")
-        return
-    print(
-        f"Loaded {shape[0]}×{shape[1]} scan, {shape[2]}×{shape[3]} detector | "
-        f"{report['source_dtype']} → {report['storage']} | "
-        f"{resident_bytes / 2**30:.3f} GiB ANS on GPU"
-    )
-    print(f"  scale {report['scale']:.7g}, offset {report['offset']:.7g}")
-    print(
-        f"  {origin} | RMSE {report['rmse']:.7g}, "
-        f"max {report['max_abs_error']:.7g}, positive→zero {report['positive_to_zero']:,}, "
-        f"overflow {report['overflow']}, values {report['values']:,}"
-    )
+    print(f"{report['source_dtype']} → scaled_uint16 | {resident_bytes / 2**30:.3f} GiB ANS | "
+          f"RMSE {report['rmse']:.7g}, max {report['max_abs_error']:.7g}, "
+          f"overflow {report['overflow']} | {origin}")
 
 
 class _Source:
@@ -336,8 +262,6 @@ class _Source:
         self.array = None
         self.generated = False
         self.reader = None
-        # Set by restore_saved_regions.
-        self.restore_regions = False
         if not isinstance(source, (str, Path)):
             self.array = source
             self.shape = tuple(source.shape)
@@ -347,7 +271,7 @@ class _Source:
             # Arrays are read by frame index; anything else is an algorithm's
             # generated source that yields its own blocks.
             self.generated = not (
-                isinstance(source, (np.ndarray, h5py.Dataset)) or _is_tensor(source)
+                isinstance(source, (np.ndarray, h5py.Dataset, torch.Tensor))
                 or (cp is not None and isinstance(source, cp.ndarray))
             )
         elif Path(source).suffix.lower() == ".npy":
@@ -358,17 +282,13 @@ class _Source:
             info = inspect(source, scan_shape=scan_shape)
             if not info.ready:
                 raise ValueError(f"{info.reason}: {info.action}")
-            if info.pixel_mask is not None:
-                if backend == "mps":
-                    invalid = metal.has_invalid_pixels(info.pixel_mask)
-                else:
-                    invalid = bool(cp.any(cp.asarray(info.pixel_mask) != 0).get())
-                if invalid:
-                    raise NotImplementedError(
-                        "This source has invalid detector pixels. Precision loading "
-                        "does not yet preserve detector validity; use a processed "
-                        "float32 result or native packed loading."
-                    )
+            # The mask is small header metadata, read on the host with the rest of the header.
+            if info.pixel_mask is not None and np.any(info.pixel_mask):
+                raise NotImplementedError(
+                    "This source has invalid detector pixels. Precision loading "
+                    "does not yet preserve detector validity; use a processed "
+                    "float32 result or native packed loading."
+                )
             self.shape = (*info.scan_shape, *info.detector_shape)
             self.dtype = np.dtype(info.dtype)
             self.metadata = dict(info.metadata)
@@ -405,15 +325,6 @@ class _Source:
                 f"Precision conversion supports float16/float32 and native uint8/uint16; got {self.dtype}. Preserve this source without conversion."
             )
 
-    def restore_saved_regions(self):
-        """Make :meth:`blocks` yield float32 intensities, each region restored with its own saved calibration.
-
-        Converting a saved regional export again must start from intensities,
-        not codes whose scale changes from region to region.
-        """
-        self.restore_regions = True
-        self.dtype = np.dtype("float32")
-
     def _seal(self, path):
         """Record a source file's identity so a rewrite during conversion is caught."""
         self.signatures[str(path)] = file_signature(path)
@@ -426,15 +337,7 @@ class _Source:
             )
 
     def blocks(self, region=None, detector_region=None):
-        """Yield the selected frames as ``(frames, row, col)`` GPU blocks of about 256 MiB."""
-        if self.restore_regions:
-            for block, report in _calibrated_blocks(self, region, detector_region):
-                yield conversion.restore(block, report, self.backend)
-            return
-        yield from self.stored_blocks(region, detector_region)
-
-    def stored_blocks(self, region=None, detector_region=None):
-        """Yield the selected frames as stored, before any regional restore."""
+        """Yield the selected frames as stored ``(frames, row, col)`` GPU blocks of about 256 MiB."""
         if self.generated:
             if region is not None or detector_region is not None:
                 raise ValueError(
@@ -481,7 +384,7 @@ class _Source:
                 values = self.array.reshape(-1, det_rows, det_cols)[
                     cp.asarray(selected)
                 ]
-            elif _is_tensor(self.array) and self.array.device.type in ("cuda", "mps"):
+            elif isinstance(self.array, torch.Tensor) and self.array.device.type in ("cuda", "mps"):
                 flat = self.array.reshape(-1, det_rows, det_cols)
                 indices = torch.as_tensor(selected, device=self.array.device)
                 values = flat[indices].contiguous()
@@ -499,7 +402,7 @@ class _Source:
                         piece = self.array[
                             row * cols + col : row * cols + col + length
                         ]
-                    if _is_tensor(piece):
+                    if isinstance(piece, torch.Tensor):
                         piece = piece.detach().cpu().numpy()
                     host[cursor : cursor + length] = piece
                     cursor += length
@@ -608,8 +511,8 @@ def _finish_report(report):
 
 def _calibrated_blocks(source, scan_region, detector_region):
     """Split selected stored frames at saved calibration boundaries, each with its region's report."""
-    if not source.saved or source.saved.get("version") != 2:
-        for block in source.stored_blocks(scan_region, detector_region):
+    if not source.saved:
+        for block in source.blocks(scan_region, detector_region):
             yield block, source.saved
             del block
         return
@@ -619,7 +522,7 @@ def _calibrated_blocks(source, scan_region, detector_region):
     regions = source.saved["regions"]
     ends = [item["stop_frame"] for item in regions]
     cursor = 0
-    for block in source.stored_blocks(scan_region, detector_region):
+    for block in source.blocks(scan_region, detector_region):
         first = 0
         while first < block.shape[0]:
             index = bisect.bisect_right(ends, selected[cursor + first])
@@ -794,11 +697,6 @@ def _cuda_device(source) -> int:
         return source._device_id
     if isinstance(source, cp.ndarray):
         return source.device.id
-    if _is_tensor(source) and source.device.type == "cuda" and source.device.index is not None:
+    if isinstance(source, torch.Tensor) and source.device.type == "cuda" and source.device.index is not None:
         return source.device.index
     return cp.cuda.Device().id
-
-
-def _is_tensor(value) -> bool:
-    """Recognize a Torch tensor."""
-    return isinstance(value, torch.Tensor)

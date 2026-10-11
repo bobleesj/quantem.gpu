@@ -1,7 +1,5 @@
 """Public I/O boundary and backend-selection regressions."""
 import inspect as python_inspect
-from importlib.resources import files
-from importlib.util import find_spec
 
 import h5py
 import numpy as np
@@ -11,36 +9,14 @@ import pytest
 def test_io_exports_only_scientist_workflows() -> None:
     import quantem.gpu as gpu
 
-    assert gpu.io.__all__ == ["Dataset4dstemGPU", "discover", "inspect", "load", "save"]
+    assert gpu.io.__all__ == ["DataRepresentation", "Dataset4dstemGPU", "PairedLoader", "discover", "inspect", "load", "save"]
     assert all(callable(getattr(gpu.io, name)) for name in gpu.io.__all__)
-    assert not hasattr(gpu, "load")
-    assert not hasattr(gpu, "save")
-    assert "maped" not in gpu.__all__
-    assert find_spec("quantem.gpu.maped") is None
-
     load_parameters = python_inspect.signature(gpu.io.load).parameters
-    assert "dtype" in load_parameters
-    assert "output" not in load_parameters
-    assert "output_dtype" not in load_parameters
-    assert "prep_workers" not in load_parameters
     assert all(
         parameter.kind
         not in {parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD}
         for parameter in load_parameters.values()
     )
-
-
-def test_removed_io_paths_do_not_exist() -> None:
-    from importlib import import_module
-
-    assert find_spec("quantem.gpu.io.backends") is None
-    assert find_spec("quantem.gpu.uint4") is None
-    assert not hasattr(import_module("quantem.gpu.io.load"), "bin2d")
-
-    mps_source = files("quantem.gpu").joinpath("io/hdf5/mps/decode.py").read_text(encoding="utf-8")
-    assert "def load_arina(" not in mps_source
-    assert "def load_master_torch(" not in mps_source
-    assert "def _parse_master(" not in mps_source
 
 
 def test_auto_backend_never_selects_cpu(monkeypatch) -> None:

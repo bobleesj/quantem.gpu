@@ -96,8 +96,12 @@ def microscopy_metadata(scientific: dict) -> dict:
     return result
 
 
-def _legacy_overrides(scientific: dict) -> dict:
-    """Adapt public schema-2 units to the existing calculation boundary."""
+def _validated_overrides(scientific: dict) -> dict:
+    """Validate user calibration overrides and return them in SI calculation units.
+
+    Schema-2 files store overrides in public units (angstrom, kV, us, mm);
+    schema-1 files and new copies use SI units. Validation runs in SI units.
+    """
     overrides = copy.deepcopy(scientific.get("calibration_overrides", {}))
     if scientific.get("schema") == SCHEMA:
         for path, quantity in overrides.items():
@@ -380,7 +384,7 @@ def validate_header(header: dict) -> None:
         if canonical != scientific:
             raise ValueError("Schema-2 QEM quantities require canonical microscopy units.")
     _validate_scientific(scientific)
-    _legacy_overrides(scientific)
+    _validated_overrides(scientific)
 
 
 def _validate_source_documents(documents: list[dict]) -> None:
@@ -672,7 +676,15 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     >>> effective_metadata({}, {"calibration_overrides": {}})
     {}
     """
-    overrides = _legacy_overrides(scientific)
+    overrides = _validated_overrides(scientific)
+    # Schema-2 overrides are stored in public units and are read as stored:
+    # converting them to SI units and back changed the last bit of values such
+    # as 0.35 angstrom. Schema-1 overrides are SI and are converted here.
+    stored = scientific.get("calibration_overrides", {}) if scientific.get("schema") == SCHEMA else None
+
+    def public(path: str, factor: float) -> float:
+        return stored[path]["value"] if stored is not None else overrides[path]["value"] * factor
+
     result = dict(metadata)
     if result.get("origin") is not None:
         # Preserve the origin's recorded units before resolving calibration.
@@ -699,18 +711,18 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
         ("imaging_system/reciprocal_pixel_size_", "detector_sampling", 1),
     ):
         if prefix + "row" in overrides:
-            result[field] = [overrides[prefix + axis]["value"] * factor for axis in ("row", "column")]
+            result[field] = [public(prefix + axis, factor) for axis in ("row", "column")]
             if field == "detector_sampling":
                 result["detector_sampling_unit"] = overrides[prefix + "row"]["unit"]
                 result.pop("detector_sampling_inv_A", None)
-    voltage = overrides.get("electron_source/accelerating_voltage")
-    if voltage is not None:
-        result["voltage_kV"] = voltage["value"] / 1000
+    voltage = "electron_source/accelerating_voltage"
+    if voltage in overrides:
+        result["voltage_kV"] = stored[voltage]["value"] if stored is not None else overrides[voltage]["value"] / 1000
     for path, field, factor in (
         ("illumination_system/semi_convergence_angle", "semiangle_mrad", 1),
         ("scan_controller/regular_scan/dwell_time", "dwell_time_us", 1e6),
         ("imaging_system/camera_length", "camera_length_mm", 1000),
     ):
         if path in overrides:
-            result[field] = overrides[path]["value"] * factor
+            result[field] = public(path, factor)
     return result

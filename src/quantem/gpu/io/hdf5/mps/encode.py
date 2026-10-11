@@ -145,12 +145,12 @@ def compress_tensor_batch(data_mps, n_8kb, frame_bytes, output_dtype):
     if not (torch.is_tensor(data_mps) and data_mps.device.type == "mps"):
         raise TypeError("compress_tensor_batch expects a torch tensor on MPS")
     output_dtype = np.dtype(output_dtype)
-    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float16, torch.float32):
+    if data_mps.dtype not in (torch.uint8, torch.uint16, torch.float32):
         raise TypeError(
             "MPS compressed save supports uint8/uint16/float32 input, "
             f"got {data_mps.dtype}"
         )
-    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float16), np.dtype(np.float32)):
+    if output_dtype not in (np.dtype(np.uint8), np.dtype(np.uint16), np.dtype(np.float32)):
         raise TypeError(
             "MPS compressed save supports uint8/uint16/float32 output, "
             f"got {output_dtype}"
@@ -159,8 +159,6 @@ def compress_tensor_batch(data_mps, n_8kb, frame_bytes, output_dtype):
         raise TypeError("MPS float32 compressed save requires float32 input data")
     if data_mps.dtype == torch.uint8 and output_dtype != np.dtype(np.uint8):
         raise TypeError("MPS uint8 input can only be saved as uint8")
-    if data_mps.dtype == torch.float16:
-        data_mps = data_mps.view(torch.uint16)
     itemsize = int(output_dtype.itemsize)
     tail_bytes = frame_bytes % BLOCK_SIZE
     if tail_bytes:

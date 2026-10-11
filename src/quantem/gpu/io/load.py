@@ -27,14 +27,10 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.hdf5 import cpu
 from quantem.gpu.io.precision import load_precision, precision_name, saved_precision
 from quantem.gpu.io.representation import DataRepresentation
-from quantem.gpu.io.selection import ScanOrder
 from quantem.gpu.resident.hot_pixels import (
     hot_pixel_record,
     normalize_hot_pixel_correction,
 )
-
-__all__ = ["Dataset4dstemGPU", "load"]
-
 
 def load(
     source: str | os.PathLike[str] | Sequence[str | os.PathLike[str]],
@@ -44,12 +40,7 @@ def load(
     representation: DataRepresentation | str | None = None,
     dataset_path: str | None = None,
     scan_shape: tuple[int, int] | None = None,
-    scan_order: ScanOrder = "row-major",
-    scan_region: (
-        tuple[int, int, int, int]
-        | Sequence[tuple[int, int, int, int]]
-        | None
-    ) = None,
+    scan_region: tuple[int, int, int, int] | None = None,
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
     hot_pixel_correction: str = "median",
@@ -69,12 +60,11 @@ def load(
 
     Fractional intensity exports support explicit ``dtype="scaled_uint16"``
     on CUDA and Metal/MPS. They remain ANS encoded and print a measured
-    conversion report. The older bit-packed float16 acquisition profile is
-    rejected; omit dtype to preserve original float32 bits. Scaled codes restore their saved
-    intensity units for detector queries. ``scan_region`` and
+    conversion report. Omit dtype to preserve the original float32 bits.
+    Scaled codes restore their saved intensity units for detector queries. ``scan_region`` and
     ``detector_region`` select values before resident allocation. New scaled
     storage automatically calibrates bounded regions in one pass; saved files
-    retain their recorded calibration, including legacy global scales.
+    retain their recorded calibration.
     With explicit precision, ``source`` can also be a GPU array or an object
     providing ``shape``, ``dtype``, and ``blocks()`` of ordered GPU frames.
     Each generated frame must appear once in row-major order.
@@ -86,7 +76,7 @@ def load(
     and reconstructs float32 intensities on the GPU; it does not recover discarded
     precision. Plain ``"uint16"`` is not calibrated scaled storage.
     Omit ``dtype`` when reopening a precision file to retain its recorded
-    values and calibration. ``"uint16_scaled"`` is not a supported alias.
+    values and calibration.
 
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
@@ -115,7 +105,7 @@ def load(
     Compact HDF5 loads use ``hot_pixel_correction``; saved compact sources
     retain the correction already recorded in their metadata.
     File format and compression are detected from contents, independently of
-    resident representation. No ``decompression=`` argument is needed.
+    resident representation.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
 
     ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
@@ -198,7 +188,7 @@ def load(
                 "CPU dense access is explicit reference-only."
             )
         if (any(value is not None for value in (dataset_path, scan_region, detector_region))
-                or dtype not in (None, "native") or apply_mask or scan_order != "row-major"):
+                or dtype not in (None, "native") or apply_mask):
             raise ValueError(
                 "Original-array loading preserves complete measurements; remove "
                 "selection and dtype options, then use read() for a region."
@@ -260,11 +250,10 @@ def load(
     if any(dm_sources) or any(snapshots):
         if not all(dm_sources) and not all(snapshots):
             raise ValueError("Load DigitalMicrograph acquisitions separately from other source formats.")
-        if (any(value is not None for value in (dataset_path, scan_region, detector_region))
-                or scan_order != "row-major" or apply_mask):
+        if any(value is not None for value in (dataset_path, scan_region, detector_region)) or apply_mask:
             raise NotImplementedError(
-                "DM loading preserves the complete acquisition; remove selection, "
-                "scan-order and masking options."
+                "DM loading preserves the complete acquisition; remove selection "
+                "and masking options."
             )
         if dtype not in (None, "native"):
             raise ValueError("DM loading preserves stored counts; omit dtype for lossless loading.")
@@ -300,32 +289,28 @@ def load(
         storage_types = {precision} if precision else {item["storage"] for item in saved if item}
         if storage_types != {"scaled_uint16"}:
             raise NotImplementedError(
-                "This precision profile requires a full packed GPU allocation. "
-                "Reopen the original float32 acquisition without dtype conversion "
-                "to use lossless ANS residency."
+                "Only dtype='scaled_uint16' is a stored precision. Omit dtype to keep "
+                "the original float32 values lossless, or request dtype='scaled_uint16'."
             )
         if representation is not None and DataRepresentation.parse(representation) is not DataRepresentation.ENCODED:
             raise ValueError(
                 "This precision uses representation='encoded'; "
                 "omit representation to select its default storage."
             )
-        if scan_order != "row-major" or apply_mask:
-            raise NotImplementedError("Precision loading supports scan_region and detector_region; remove scan-order and masking controls.")
-        multiple_regions = scan_region is not None and len(scan_region) > 0 and isinstance(scan_region[0], (tuple, list))
-        regions = list(scan_region) if multiple_regions else [scan_region]
+        if apply_mask:
+            raise NotImplementedError("Precision loading supports scan_region and detector_region; remove the masking control.")
         loaded = []
         try:
             for path in sources:
-                for region in regions:
-                    loaded.append(load_precision(path, dtype=dtype, device=device,
-                        scan_shape=scan_shape, dataset_path=dataset_path,
-                        scan_region=region, detector_region=detector_region, verbose=verbose,
-                        backend=precision_backend))
+                loaded.append(load_precision(path, dtype=dtype, device=device,
+                    scan_shape=scan_shape, dataset_path=dataset_path,
+                    scan_region=scan_region, detector_region=detector_region, verbose=verbose,
+                    backend=precision_backend))
         except BaseException:
             for item in loaded:
                 item.close()
             raise
-        return loaded[0] if single and not multiple_regions else loaded
+        return loaded[0] if single else loaded
 
     # Ordinary HDF5: encoded on CUDA and MPS by default, paired on request.
     if representation is None and sources and all(
@@ -342,10 +327,8 @@ def load(
     if selected_representation is DataRepresentation.PAIRED:
         if select.resolve_backend(backend) != "cuda":
             raise NotImplementedError("The paired resident layout requires backend='cuda'.")
-        if any(value is not None for value in (
-            dataset_path, scan_region, detector_region,
-        )) or scan_order != "row-major":
-            raise ValueError("The paired layout preserves complete native acquisitions; remove selection and scan-order options.")
+        if any(value is not None for value in (dataset_path, scan_region, detector_region)):
+            raise ValueError("The paired layout preserves complete native acquisitions; remove selection options.")
         if dtype not in {None, "native"} or apply_mask:
             raise ValueError("The paired layout preserves raw native counts; use dtype='native' and apply_mask=False.")
         saved = [DataRepresentation.detect_source(path) is DataRepresentation.PAIRED for path in sources]
@@ -361,8 +344,8 @@ def load(
         ans_backend = select.resolve_backend(backend)
         if ans_backend not in {"cuda", "mps"}:
             raise NotImplementedError("H5-to-ANS loading requires CUDA or MPS.")
-        if scan_region is not None or detector_region is not None or scan_order != "row-major":
-            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection and scan-order options, then use read() for a region.")
+        if scan_region is not None or detector_region is not None:
+            raise ValueError("H5-to-ANS preserves complete native acquisitions; remove selection options, then use read() for a region.")
         if len(sources) > 1 and stack:
             raise ValueError(
                 "Several ANS acquisitions cannot be stacked into one array; omit stack "
@@ -412,7 +395,6 @@ def load(
         sources,
         single=single,
         scan_shape=scan_shape,
-        scan_order=scan_order,
         apply_mask=True if apply_mask is None else apply_mask,
         auto_narrow=auto_narrow,
         # Unlike compressed acquisitions, CPU reference arrays stack by default.

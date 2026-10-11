@@ -7,6 +7,7 @@ explicit ``backend="cpu"``; accelerated ``backend="auto"`` never selects it.
 It is slower than CUDA or MPS but returns bit-identical stored frames.
 """
 
+import math
 import os
 import time
 
@@ -19,7 +20,6 @@ from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import get_metadata, read_pixel_mask
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
-from quantem.gpu.io.selection import _apply_scan_shape, _normalize_scan_order
 
 
 def load_reference(
@@ -27,7 +27,6 @@ def load_reference(
     *,
     single: bool,
     scan_shape: tuple[int, int] | None,
-    scan_order: str,
     apply_mask: bool,
     auto_narrow: bool,
     stack: bool,
@@ -41,7 +40,6 @@ def load_reference(
     file axis unless ``stack`` is False; ``single`` returns one result for one
     path given on its own.
     """
-    scan_order = _normalize_scan_order(scan_order)
 
     def load_one(path):
         meta = get_metadata(str(path))
@@ -53,7 +51,12 @@ def load_reference(
         if auto_narrow and data.dtype == np.uint32 and int(data.max()) < 65536:
             # Every count fits, so uint16 halves the array without changing a value.
             data = data.astype(np.uint16)
-        data = _apply_scan_shape(data, scan_shape, meta, scan_order)
+        # Frames are stored in row-major scan order; the explicit scan_shape wins over the master's.
+        shape = scan_shape if scan_shape is not None else meta.get("scan_shape")
+        if shape is not None and data.ndim == 3:
+            if math.prod(shape) != data.shape[0]:
+                raise ValueError(f"scan_shape {shape} incompatible with frame count {data.shape[0]}")
+            data = data.reshape(*shape, *data.shape[-2:])
         # Report the same detector geometry and dtype keys as an encoded load,
         # so consumers never branch on the backend.
         detector_shape = tuple(int(value) for value in data.shape[-2:])
@@ -69,7 +72,7 @@ def load_reference(
         meta["det_bin"] = 1
         meta["source_dtype"] = str(np.dtype(meta.get("source_dtype", source_dtype)))
         meta["dtype"] = str(np.dtype(data.dtype))
-        meta["scan_order"] = scan_order
+        meta["scan_order"] = "row-major"
         return data, meta
 
     started = time.perf_counter()

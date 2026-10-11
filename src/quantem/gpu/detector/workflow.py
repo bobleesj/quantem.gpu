@@ -18,9 +18,6 @@ pixel-identical. The probe (disk center and size) is fitted from the mean
 diffraction pattern; encoded acquisitions keep their first fit, mutable arrays
 are refitted on every call, and explicit ``center``/``radius`` affect only that
 call. No detector binning is applied on any backend.
-
-:func:`virtual` is mode-based (DP/BF/ABF/ADF/HAADF/DF, bands measured in the
-fitted disk radius) and is mainly the reference path the parity tests pin.
 """
 
 from weakref import WeakKeyDictionary
@@ -69,13 +66,14 @@ def masked_sum(data, det_mask) -> np.ndarray:
     return prepare(data).masked_sum(det_mask)
 
 
-def fit_probe(mean_dp: np.ndarray) -> tuple[tuple[float, float], float]:
+def fit_probe(data) -> tuple[tuple[float, float], float]:
     """Estimate the bright-field disk center and radius.
 
     Parameters
     ----------
-    mean_dp : numpy.ndarray
-        A 2D mean diffraction pattern, typically from :func:`mean`.
+    data
+        A 2D mean diffraction pattern, typically from :func:`mean`, or an
+        acquisition that :func:`prepare` accepts, whose mean pattern is used.
 
     Returns
     -------
@@ -84,25 +82,31 @@ def fit_probe(mean_dp: np.ndarray) -> tuple[tuple[float, float], float]:
     radius : float
         Equivalent-area disk radius in detector pixels.
 
+    Raises
+    ------
+    ValueError
+        No pixel lies above the threshold (a flat or empty pattern): there is
+        no disk to fit, so pass ``center`` and ``radius`` explicitly.
+
     Notes
     -----
     Uses a threshold of ``mean + std`` (population standard deviation), the
     unweighted centroid of the selected pixels, and ``sqrt(area / pi)``.
     This estimates disk geometry, not complex probe phase or aberrations.
-    If no pixels exceed the threshold, returns the detector midpoint and
-    one quarter of its smaller dimension as the radius.
 
     Examples
     --------
-    >>> center, radius = detector.fit_probe(detector.mean(data))
+    >>> center, radius = detector.fit_probe(data)
     >>> bright = detector.bf(data, center=center, radius=radius)
     """
-    pattern = np.asarray(mean_dp, dtype=np.float32)
+    pattern = np.asarray(mean(data) if np.ndim(data) > 2 else data, dtype=np.float32)
     disk = pattern > float(pattern.mean()) + float(pattern.std())
     area = int(disk.sum())
     if area == 0:
-        detector_rows, detector_cols = pattern.shape
-        return (detector_rows / 2.0, detector_cols / 2.0), min(detector_rows, detector_cols) * 0.25
+        raise ValueError(
+            "No bright-field disk found: no detector pixel exceeds the pattern's mean plus "
+            "one standard deviation (a flat or empty pattern). Pass center and radius explicitly."
+        )
     rows = np.arange(pattern.shape[0], dtype=np.float32)[:, None]
     cols = np.arange(pattern.shape[1], dtype=np.float32)[None, :]
     center_row = float((rows * disk).sum() / area)
@@ -115,7 +119,7 @@ def detector_mask(center, lo_px, hi_px, det_shape, *, dtype=np.float32) -> np.nd
 
     A pixel is selected when its distance from ``center`` (row, col) lies in
     ``[lo_px, hi_px]`` detector pixels. Every virtual detector (``bf``,
-    ``adf``, ``df``, ``virtual`` and the Show4DSTEM circle/annulus ROIs) builds
+    ``adf``, ``df`` and the Show4DSTEM circle/annulus ROIs) builds
     its mask here, so a viewer ROI and ``adf`` are pixel-identical.
 
     ``dtype=np.float64`` uses inclusive float64 Euclidean distances for native
@@ -195,39 +199,6 @@ def df(data, inner: float | None = None, unit: str = "mrad",
     return _detector_image(data, center, inner_px, np.inf)
 
 
-def virtual(data, mode="BF", *, center=None, bf_radius=None, inner=None, outer=None):
-    """Virtual image for ``mode`` with automatic probe fitting.
-
-    ``mode`` is case-insensitive (DP/BF/ABF/ADF/HAADF/DF/annular). ``center`` and
-    ``bf_radius`` override the fitted probe; ``inner``/``outer`` (BF-radius
-    units) define a custom band when ``mode="annular"``. Returns a 2D float array
-    (detector-space for DP, scan-space otherwise) for ``Show2D``.
-    """
-    mean_dp = mean(data)
-    mode = str(mode).strip().upper()
-    if mode == "DP":
-        return mean_dp
-    if center is None or bf_radius is None:
-        fitted_center, fitted_radius = fit_probe(mean_dp)
-        center = center if center is not None else fitted_center
-        bf_radius = bf_radius if bf_radius is not None else fitted_radius
-    # Bands are measured in bright-disk radii, then built by the one geometry primitive.
-    radius = float(max(1.0, bf_radius))
-    bands = {
-        "BF": (0.0, radius),
-        "ABF": (0.5 * radius, radius),
-        "ADF": (radius, 2.0 * radius),
-        "HAADF": (2.0 * radius, 4.0 * radius),
-        "DF": (radius, np.inf),
-    }
-    if mode == "ANNULAR":
-        inner_px = (inner if inner is not None else 0.0) * radius
-        outer_px = (outer if outer is not None else np.inf) * radius
-    else:
-        inner_px, outer_px = bands[mode]
-    return masked_sum(data, detector_mask(center, inner_px, outer_px, mean_dp.shape))
-
-
 # ---
 
 
@@ -248,7 +219,7 @@ def _probe(data, center=None, radius=None):
     )
     cached = None if source is None else _PROBE_FITS.get(source)
     if cached is None or cached[0] != data.shape:
-        fitted_center, fitted_radius = fit_probe(mean(data))
+        fitted_center, fitted_radius = fit_probe(data)
         if source is not None:
             _PROBE_FITS[source] = (data.shape, fitted_center, fitted_radius)
     else:

@@ -1,22 +1,12 @@
 """CUDA decomposition of full-resolution camera masks into exact spatial sums."""
 
-from functools import cache
 from pathlib import Path
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.device.cuda_runtime import cp, cuda_module
 
-
-@cache
-def _kernels(device):
-    """Compile the mask-decomposition kernels once per device."""
-    with cp.cuda.Device(device):
-        module = cp.RawModule(
-            code=Path(__file__).with_name("kernels").joinpath("mask_plan.cu").read_text(),
-            options=("--std=c++17",),
-        )
-        return module.get_function("mask_leaves"), module.get_function("mask_roots")
+_SOURCE = Path(__file__).with_name("kernels").joinpath("mask_plan.cu").read_text()
 
 
 class CudaMaskPlanner:
@@ -42,7 +32,9 @@ class CudaMaskPlanner:
             np.frombuffer(owner, array.dtype, count=array.size)
             for owner, array in zip(self._host_owners, outputs)
         ]
-        self.leaf_kernel, self.root_kernel = _kernels(self.device)
+        with cp.cuda.Device(self.device):
+            kernels = cuda_module(_SOURCE, ("mask_leaves", "mask_roots"), ("--std=c++17",))
+        self.leaf_kernel, self.root_kernel = kernels["mask_leaves"], kernels["mask_roots"]
 
     def __call__(self, values):
         """Return ``(fields, field_weights, pixels, pixel_weights)`` for one signed mask."""

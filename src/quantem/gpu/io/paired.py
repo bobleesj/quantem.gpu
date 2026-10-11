@@ -370,7 +370,7 @@ class PairedLoader:
                         while cursor < frame_count:
                             take = min(rolling_scans - filled, frame_count - cursor, piece)
                             # LZ4 output is staged per piece so a lean loader needs only rolling_scans frames of it.
-                            decode_lz4(((blocks + 1) // 2, 1, take), (32, 2, 1), (buffers.compressed[pair], buffers.offsets[pair][cursor:], buffers.starts[pair][cursor * blocks :], buffers.counts, buffers.block_offsets, np.uint32(BLOCK_SIZE), np.uint32(frame_bytes), buffers.lz4[pair]), stream=stream)
+                            decode_lz4(((blocks + 1) // 2, 1, take), (32, 2, 1), (buffers.compressed[pair], buffers.offsets[pair][cursor:], buffers.starts[pair][cursor * blocks :], buffers.counts, buffers.block_offsets, np.uint32(BLOCK_SIZE), np.uint32(frame_bytes), buffers.lz4[pair], buffers.errors), stream=stream)
                             if filled == 0 and ring_event is not None:
                                 stream.wait_event(ring_event)
                             decoded = buffers.lz4[pair]
@@ -383,6 +383,8 @@ class PairedLoader:
                             filled += take
                             ready += take
                             last = ready == total
+                            if last and int(buffers.errors.get(stream=stream)[0]):
+                                raise ValueError(f"{description['path']}: a compressed HDF5 chunk is truncated or corrupt; check that the acquisition finished writing.")
                             if filled == rolling_scans or last:
                                 if filled % PairedCounts.interval:
                                     raise ValueError(f"A shard ends inside a {PairedCounts.interval}-scan block; the paired layout codes complete blocks.")
@@ -425,6 +427,7 @@ class _DeviceBuffers:
         self.compressed = [cp.empty(capacity, cp.uint8) for _ in range(2)]
         self.lz4_frames = scans
         self.lz4 = [cp.empty(scans * self.frame_bytes, cp.uint8) for _ in range(2)]
+        self.errors = cp.zeros(1, cp.uint32)  # set by the LZ4 decoder for a truncated or corrupt chunk
         self.frames = 0
 
     def reserve(self, frames: int, stream) -> None:
