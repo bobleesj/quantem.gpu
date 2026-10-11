@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 
+import h5py
+import hdf5plugin
 import numpy as np
 
 from quantem.gpu.formats.qem.reference import save_array
@@ -54,5 +56,48 @@ def generate(directory: Path) -> None:
     (directory / "cases.json").write_text(json.dumps(records))
 
 
+def generate_h5(directory: Path) -> None:
+    """Write Arina-layout bitshuffle-LZ4 acquisitions whose counts span all 16 bit planes.
+
+    Each case is a master file with a pixel mask and two data files of one-frame chunks, plus
+    the raw counts as ``<name>.bin`` for exact host sums. Counts above 255, the uint16 maximum
+    on every pixel of one frame, and a masked hot pixel make a decoder that drops high bit
+    planes, clips, or keeps the masked pixel fail.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    records = []
+    for name, dtype, detector, frames in (
+        ("h5-u16-64", np.uint16, (64, 64), 300),
+        ("h5-u16-128", np.uint16, (128, 128), 120),
+        ("h5-u8-64", np.uint8, (64, 64), 90),
+    ):
+        rng = np.random.default_rng(7)
+        high = np.iinfo(dtype).max
+        counts = rng.poisson(3, (frames, *detector)).astype(dtype)
+        counts[0] = high
+        counts[1:, detector[0] // 2, detector[1] // 2] = rng.integers(0, int(high) + 1, frames - 1)
+        counts[1::7, 3, 4] = min(300, int(high))
+        counts[2::11, -2, -3] = high
+        bad = np.zeros(detector, np.uint32)
+        bad[1, 2] = 1
+        counts[:, 1, 2] = high
+        with h5py.File(directory / f"{name}_master.h5", "w") as master:
+            specific = master.create_group("entry/instrument/detector/detectorSpecific")
+            specific["pixel_mask"] = bad
+            specific["ntrigger"] = np.array([frames], np.uint32)
+        split = frames // 2 + 1
+        for index, part in enumerate((counts[:split], counts[split:]), start=1):
+            with h5py.File(directory / f"{name}_data_{index:06d}.h5", "w") as data:
+                data.create_dataset(
+                    "entry/data/data", data=part, chunks=(1, *detector),
+                    **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"),
+                )
+        counts.tofile(directory / f"{name}.bin")
+        records.append(dict(name=name, dtype=np.dtype(dtype).name, frames=frames,
+                            detector=list(detector), bad_pixels=[int(np.flatnonzero(bad)[0])]))
+    (directory / "h5-cases.json").write_text(json.dumps(records))
+
+
 if __name__ == "__main__":
     generate(Path(sys.argv[1]))
+    generate_h5(Path(sys.argv[1]))
