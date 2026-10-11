@@ -15,10 +15,6 @@ def test_detect_prefers_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
     assert device.detect() == "cuda"
 
 
-def test_resolve_keeps_explicit_webgpu() -> None:
-    assert device.resolve("webgpu") == "webgpu"
-
-
 def test_profile_is_non_printing_and_reports_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

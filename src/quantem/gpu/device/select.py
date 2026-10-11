@@ -7,8 +7,7 @@ import shutil
 import sys
 from typing import Literal, TypeAlias
 
-DeviceName = Literal["cuda", "mps", "webgpu"]
-NativeDeviceName = Literal["cuda", "mps"]
+DeviceName = Literal["cuda", "mps"]
 
 INSTALL_CUDA = 'pip install "quantem.gpu[cuda]"'
 INSTALL_WIDGET_CUDA = 'pip install "quantem.widget[cuda]"'
@@ -230,7 +229,7 @@ def _mps_probe() -> tuple[bool, str | None]:
         return False, str(exc)
 
 
-def detect() -> NativeDeviceName:
+def detect() -> DeviceName:
     """Return the available native GPU backend.
 
     CUDA takes precedence when both runtimes are visible. CPU is intentionally
@@ -251,20 +250,18 @@ def detect() -> NativeDeviceName:
 
 
 def resolve(name: str | None = "auto") -> DeviceName:
-    """Validate and resolve a CUDA, MPS, or browser WebGPU backend name."""
+    """Validate and resolve a CUDA or MPS backend name."""
     requested = "auto" if name is None else str(name).lower()
     if requested == "auto":
         return detect()
     _print_once(runtime_notice())
-    if requested == "webgpu":
-        return "webgpu"
     if requested == "cuda":
         available, error = _cuda_probe()
     elif requested == "mps":
         available, error = _mps_probe()
     else:
         raise ValueError(
-            f"Unknown GPU backend {name!r}. Use 'auto', 'cuda', 'mps', or 'webgpu'."
+            f"Unknown GPU backend {name!r}. Use 'auto', 'cuda' or 'mps'."
         )
     if not available:
         raise RuntimeError(f"{requested.upper()} backend is unavailable: {error}")

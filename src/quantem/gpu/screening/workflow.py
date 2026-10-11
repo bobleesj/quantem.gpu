@@ -124,12 +124,6 @@ def prepare(
     from quantem.gpu import device
 
     resolved_backend = device.resolve(backend)
-    if resolved_backend not in {"cuda", "mps"}:
-        raise RuntimeError(
-            "prepare cache generation requires backend='cuda' "
-            f"or backend='mps'; backend={resolved_backend!r} was selected. "
-            "Existing caches can still be read by CPU-facing callers."
-        )
     products = _build_products(
         master_path,
         backend=resolved_backend,
