@@ -9,7 +9,8 @@ import {
 import { DetectorCompute } from "../../src/quantem/gpu/detector/webgpu/backend";
 import { annulusMask, diskMask } from "../../src/quantem/gpu/detector/webgpu/geometry";
 
-type Case = { name: string; dtype: "uint8" | "uint16"; frames: number; detector: [number, number]; bad_pixels: number[] };
+type Case = { name: string; dtype: "uint8" | "uint16" | "uint32" | "float32"; frames: number; detector: [number, number]; bad_pixels: number[] };
+type Values = Uint8Array | Uint16Array | Uint32Array | Float32Array;
 
 function fail(message: string): never { throw new Error(message); }
 
@@ -25,7 +26,7 @@ async function readBack(device: GPUDevice, buffer: GPUBuffer, bytes: number): Pr
 }
 
 /** Exact masked sum of the raw counts, bad pixels excluded, rounded once to float32. */
-function expectedSums(counts: Uint8Array | Uint16Array, frames: number, mask: Uint32Array, bad: Set<number>): Float32Array {
+function expectedSums(counts: Values, frames: number, mask: Uint32Array, bad: Set<number>): Float32Array {
   const detSize = mask.length;
   const out = new Float32Array(frames);
   for (let frame = 0; frame < frames; frame++) {
@@ -44,7 +45,7 @@ function exact(label: string, actual: Float32Array, expected: Float32Array): voi
 }
 
 type LoadedCase = {
-  item: Case; counts: Uint8Array | Uint16Array; bad: Set<number>; files: File[];
+  item: Case; counts: Values; bad: Set<number>; files: File[];
   rows: number; cols: number; detSize: number; scanRows: number; scanCols: number; masks: Record<string, Uint32Array>;
 };
 
@@ -59,7 +60,7 @@ async function loadCases(baseURL: string): Promise<LoadedCase[]> {
     const files = await Promise.all(names.map(async (name) => new File([await (await fetch(base + name)).arrayBuffer()], name)));
     const scanCols = item.frames % 20 === 0 ? 20 : 10;
     return {
-      item, counts: item.dtype === "uint8" ? new Uint8Array(raw) : new Uint16Array(raw), bad: new Set(item.bad_pixels), files,
+      item, counts: { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, float32: Float32Array }[item.dtype].from(new { uint8: Uint8Array, uint16: Uint16Array, uint32: Uint32Array, float32: Float32Array }[item.dtype](raw)), bad: new Set(item.bad_pixels), files,
       rows, cols, detSize, scanRows: item.frames / scanCols, scanCols,
       masks: {
         full: new Uint32Array(detSize).fill(1),
@@ -72,9 +73,18 @@ async function loadCases(baseURL: string): Promise<LoadedCase[]> {
   }));
 }
 
-/** Full-stack bitshuffle-LZ4 decode: native uint8/uint16 is lossless and uint8 output saturates at 255. */
+/** Full-stack bitshuffle-LZ4 decode on every kernel: native width is lossless, uint8 output
+saturates at 255 and the low-8 decode (count-audited browse data) keeps the low byte. float32
+values compare as bit patterns. */
 export async function runDenseDecodeParity(baseURL: string): Promise<Record<string, number>> {
   const checked: Record<string, number> = {};
+  const globals = globalThis as Record<string, unknown>;
+  const plans = {
+    uint16: [["uint16", "native"], ["uint8", "clip"], ["uint8", "low8"]],
+    uint8: [["uint8", "native"], ["uint8", "low8"]],
+    uint32: [["uint32", "native"], ["uint8", "clip"], ["uint8", "low8"]],
+    float32: [["float32", "native"]],
+  } as const;
   for (const { item, counts, files, detSize } of await loadCases(baseURL)) {
     const specs = [];
     let start = 0;
@@ -82,17 +92,23 @@ export async function runDenseDecodeParity(baseURL: string): Promise<Record<stri
       const volume = readH5Volume(await file.arrayBuffer(), file.name);
       for (const chunk of volume.chunks) { specs.push({ ...chunk, startScan: start }); start += chunk.nFrames; }
     }
+    const want = new Uint32Array(item.dtype === "float32" ? new Float32Array(counts).buffer : Uint32Array.from(counts).buffer);
     let count = 0;
-    for (const dtype of item.dtype === "uint16" ? ["uint16", "uint8"] as const : ["uint8"] as const) {
+    for (const [dtype, kind] of plans[item.dtype]) {
+      globals.__BSLZ4_LOW8_ONLY = kind === "low8";
       const decoded = await decodeBslz4Batch(specs, dtype, item.dtype, 4);
+      delete globals.__BSLZ4_LOW8_ONLY;
       if (!decoded) fail("WebGPU unavailable");
+      const bytesPerPixel = { uint8: 1, uint16: 2, uint32: 4, float32: 4 }[dtype];
       for (let i = 0; i < decoded.buffers.length; i++) {
         const frames = specs[i].nFrames, offset = specs[i].startScan * detSize;
-        const bytes = await readBack(decoded.device, decoded.buffers[i], Math.ceil(frames * detSize * (dtype === "uint16" ? 2 : 1) / 4) * 4);
-        const values = dtype === "uint16" ? new Uint16Array(bytes, 0, frames * detSize) : new Uint8Array(bytes, 0, frames * detSize);
+        const bytes = await readBack(decoded.device, decoded.buffers[i], Math.ceil(frames * detSize * bytesPerPixel / 4) * 4);
+        const values = { 1: Uint8Array, 2: Uint16Array, 4: Uint32Array }[bytesPerPixel];
+        const actual = new values(bytes, 0, frames * detSize);
         for (let k = 0; k < frames * detSize; k++) {
-          const want = dtype === "uint16" ? counts[offset + k] : Math.min(255, counts[offset + k]);
-          if (values[k] !== want) fail(`${item.name} ${dtype} decode frame ${Math.floor(k / detSize)} pixel ${k % detSize}: ${values[k]} != ${want}`);
+          const value = want[offset + k];
+          const expected = kind === "native" ? value : kind === "clip" ? Math.min(255, value) : value & 255;
+          if (actual[k] !== expected) fail(`${item.name} ${dtype} ${kind} decode frame ${Math.floor(k / detSize)} pixel ${k % detSize}: ${actual[k]} != ${expected}`);
         }
         count += frames * detSize;
         decoded.buffers[i].destroy();
@@ -113,6 +129,13 @@ export async function runProductFirstParity(baseURL: string): Promise<Record<str
   const globals = globalThis as Record<string, unknown>;
   for (const { item, counts, bad, files, masks, scanRows, scanCols } of await loadCases(baseURL)) {
     setShow4DSTEMLocalFiles(files);
+    if (item.dtype === "uint32" || item.dtype === "float32") {
+      // The product-first sum reads uint8 and uint16 counts; wider sources load the resident stack.
+      const refused = await loadShow4DSTEMLocalH5MaskedSum(`${item.name}_master.h5`, { scanRows, scanCols, mask: masks.disk }).then(() => false, () => true);
+      if (!refused) fail(`${item.name}: product-first accepted a ${item.dtype} source`);
+      checked[item.name] = 0;
+      continue;
+    }
     let count = 0;
     for (const groupMask of [false, true]) {
       globals.__QT_BSLZ4_MASKED_SUM_GROUPMASK = groupMask;
@@ -153,6 +176,7 @@ mass must equal the exact integer moments divided once.
 export async function runResidentParity(baseURL: string): Promise<Record<string, number>> {
   const checked: Record<string, number> = {};
   for (const { item, counts, bad, files, masks, scanRows, scanCols, cols, detSize } of await loadCases(baseURL)) {
+    if (item.dtype === "float32") continue;   // float32 sums in float32; the integer cases are exact
     setShow4DSTEMLocalFiles(files);
     const resident = await loadShow4DSTEMLocalH5Master(`${item.name}_master.h5`, { scanRows, scanCols, decodeDtype: "native" });
     if (!resident) fail(`${item.name}: no resident load`);
