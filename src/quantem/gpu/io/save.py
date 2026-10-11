@@ -1,5 +1,6 @@
 """Save encoded acquisitions as ``.qem`` copies and arrays as Arina HDF5."""
 
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,11 +33,49 @@ from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 
 @dataclass
 class SaveResult:
-    """Deterministic completion handle returned by :func:`quantem.gpu.io.save`."""
+    """Completion handle returned by :func:`quantem.gpu.io.save`; a notebook shows it as a small table.
+
+    A finished ``.qem`` save also records what it wrote: ``elapsed_seconds`` is
+    the wall time of the save alone (writing and closing the file, not loading
+    or flushing the disk), ``logical_bytes`` the size of the saved values as an
+    uncompressed array (shape times dtype, not the source file) and
+    ``file_bytes`` the size of the ``.qem`` file with its metadata. They stay
+    None for HDF5 saves.
+
+    Examples
+    --------
+    Leave the call last in a notebook cell to see the summary:
+
+    >>> io.save("acquisition.qem", data)  # doctest: +SKIP
+    """
 
     path: str
     backend: str
     complete: bool = False
+    elapsed_seconds: float | None = None
+    logical_bytes: int | None = None
+    file_bytes: int | None = None
+
+    def _summary(self):
+        """Table of the finished write, from the file size and array geometry: no detector value is read."""
+        # pandas only formats this summary; importing it on first display keeps it out of every save.
+        import pandas as pd
+
+        rows = {"File": self.path, "Status": "Saved" if self.complete else "Writing", "Backend": self.backend}
+        if self.file_bytes is not None:
+            rows["Save time"] = f"{self.elapsed_seconds:.3f} s"
+            rows["Uncompressed array"] = f"{self.logical_bytes / 2**20:.2f} MiB"
+            rows["Lossless QEM"] = f"{self.file_bytes / 2**20:.2f} MiB"
+            # A small or already compact array can grow: the file also carries its metadata.
+            change = 100 * (1 - self.file_bytes / self.logical_bytes)
+            rows["Size change"] = f"{abs(change):.1f}% {'smaller' if change >= 0 else 'larger'} than uncompressed"
+        return pd.DataFrame({"Value": rows}).rename_axis("Property")
+
+    def __repr__(self) -> str:
+        return self._summary().to_string()
+
+    def _repr_html_(self) -> str:
+        return self._summary().to_html(escape=True)
 
     def wait(self) -> Self:
         """Wait for queued writes, surface errors, and return this result."""
@@ -169,11 +208,19 @@ def save(
         Saved as root attributes on the master file. Use for drift knots,
         probe positions, calibration.
 
+    Returns
+    -------
+    SaveResult
+        Completion handle. A ``.qem`` save records its wall time, the file
+        size and the size of the same values as an uncompressed array, and
+        shows them as a table when the call ends a notebook cell.
+
     See also
     --------
     quantem.gpu.io.load : Round-trip read of these files; bit-exact for
         lossless storage. Precision conversions require their own error checks.
     """
+    started = time.perf_counter()
     if isinstance(data, torch.Tensor) and data.is_cuda:
         data = cp.from_dlpack(data.detach())
 
@@ -220,25 +267,30 @@ def save(
             raise ValueError("Saving a native 4D acquisition preserves its own geometry; remove dtype, scan_shape, and source_master controls.")
         if backend == "cpu" and isinstance(data, np.ndarray):
             save_array(filepath, data, metadata, chunk_scans=512 if batch_size is None else batch_size)
-            return SaveResult(str(filepath), "cpu", complete=True)
-        if isinstance(data, FloatANSResident):
+            saved_backend = "cpu"
+        elif isinstance(data, FloatANSResident):
             if backend not in ("auto", data.backend) or batch_size is not None:
                 raise ValueError("Save the float resident on its own backend without batch_size.")
             qem.save_float(filepath, data, metadata)
-            return SaveResult(str(filepath), data.backend, complete=True)
-
-        if isinstance(data, (StreamedCounts, MPSStreamedCounts)):
-            resident_backend = "mps" if isinstance(data, MPSStreamedCounts) else "cuda"
-            if backend not in ("auto", resident_backend) or batch_size is not None:
-                raise ValueError(f"Save resident ANS with backend='{resident_backend}' and no batch_size; its exact chunk layout is retained.")
+            saved_backend = data.backend
+        elif isinstance(data, (StreamedCounts, MPSStreamedCounts)):
+            saved_backend = "mps" if isinstance(data, MPSStreamedCounts) else "cuda"
+            if backend not in ("auto", saved_backend) or batch_size is not None:
+                raise ValueError(f"Save resident ANS with backend='{saved_backend}' and no batch_size; its exact chunk layout is retained.")
             qem.save_streamed(filepath, data, metadata)
-            return SaveResult(str(filepath), resident_backend, complete=True)
-        raise NotImplementedError(
-            "Writing a .qem copy requires a complete encoded CUDA or Metal resident. "
-            "Load the acquisition with representation='encoded' first; nothing was written."
+        else:
+            raise NotImplementedError(
+                "Writing a .qem copy requires a complete encoded CUDA or Metal resident. "
+                "Load the acquisition with representation='encoded' first; nothing was written."
+            )
+        result = SaveResult(
+            str(filepath), saved_backend, complete=True, elapsed_seconds=time.perf_counter() - started,
+            logical_bytes=math.prod(data.shape) * np.dtype(data.dtype).itemsize, file_bytes=Path(filepath).stat().st_size,
         )
+        if verbose:
+            print(result)
+        return result
 
-    started = time.perf_counter()
     if compression == "ans":
         raise ValueError(
             "compression='ans' is not supported for format='arina'; "

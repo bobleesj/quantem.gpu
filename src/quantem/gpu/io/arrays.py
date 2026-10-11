@@ -7,8 +7,11 @@ reach the residents through ``load_array_resident``.
 import bisect
 import hashlib
 import math
+import os
 import time
+import zlib
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -329,6 +332,23 @@ def load_array_resident(
                 corrector.close()
 
 
+def _inflate_frames(data, result, first) -> None:
+    """Fill ``result`` with consecutive one-frame gzip chunks of ``data``, inflated on several cores.
+
+    HDF5 inflates one chunk at a time on one core: 3.9 s of the 5.8 s load of
+    10000 patterns of 256 x 256. The stored chunk bytes are read as they are
+    and zlib, which releases the interpreter lock, inflates them in parallel.
+    A chunk whose filter the writer skipped is copied as stored.
+    """
+
+    def inflate(offset):
+        filter_mask, stored = data.id.read_direct_chunk((first + offset, 0, 0))
+        result[offset] = np.frombuffer(stored if filter_mask else zlib.decompress(stored), result.dtype).reshape(result.shape[1:])
+
+    with ThreadPoolExecutor(min(8, os.cpu_count())) as pool:
+        list(pool.map(inflate, range(len(result))))
+
+
 def _read_four_dimensional_frames(data, result, first, stop):
     """Read one flattened interval as one union of at most three scan slabs."""
     columns = data.shape[1]
@@ -426,6 +446,16 @@ def load_hdf5_array_resident(
         status = Path(path).stat()
         signatures[Path(path)] = (status.st_size, status.st_mtime_ns)
 
+        # One gzip chunk per frame in the host's byte order, every chunk written: inflated in parallel.
+        frame_gzip = [
+            data.chunks == (1, *shape[2:])
+            and [data.id.get_create_plist().get_filter(index)[0] for index in range(data.id.get_create_plist().get_nfilters())]
+            == [h5py.h5z.FILTER_DEFLATE]
+            and data.dtype.isnative
+            and data.id.get_num_chunks() == data.shape[0]
+            for data in datasets
+        ]
+
         def read_frames(first, stop):
             result = np.empty((stop - first, *shape[2:]), np.dtype(info.dtype))
             cursor = first
@@ -434,7 +464,9 @@ def load_hdf5_array_resident(
                 end = min(stop, starts[index + 1])
                 data = datasets[index]
                 local = cursor - starts[index]
-                if data.ndim == 3:
+                if frame_gzip[index]:
+                    _inflate_frames(data, result[cursor - first : end - first], local)
+                elif data.ndim == 3:
                     data.read_direct(
                         result,
                         source_sel=np.s_[local : local + end - cursor],
