@@ -8,13 +8,17 @@ behind the chunk header, so the HDF5 writer only appends finished chunks with
 
 import numpy as np
 
-from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.device.cuda_runtime import _alloc_pinned_fast, cp
 from quantem.gpu.formats.hdf5.frames import BLOCK_SIZE
 from quantem.gpu.io.hdf5.cuda.decode import kernel
 
 
 def compress_batch(data_gpu, n_8kb, frame_bytes):
-    """Compress a contiguous 16-bit or 32-bit frame batch on GPU."""
+    """Compress a contiguous frame batch on GPU into HDF5 chunk bytes, with each frame's start and size.
+
+    The bytes come back in a page-locked staging buffer; the caller returns it
+    with ``_release_pinned`` once they are written.
+    """
     max_out = BLOCK_SIZE * 2
     cuda_max_z = 65535
     frame_count = int(data_gpu.shape[0])
@@ -146,7 +150,12 @@ def _pack_chunks(compressed, block_sizes, n_frames, n_8kb, frame_bytes, max_out)
         ),
     )
     cp.cuda.Stream.null.synchronize()
-    packed = packed_device.get()
+    # A new host array per batch is the compressed size in fresh pages on every save, which
+    # stalls on a host short of free memory, so staging buffers are reused. The batches of one
+    # save differ by a few percent: sizes go up to a coarse grid so they share buffers.
+    step = 1 << max(0, packed_bytes.bit_length() - 3)
+    packed = _alloc_pinned_fast(-(-packed_bytes // step) * step)[:packed_bytes]
+    packed_device.get(out=packed)
     # int64, the same chunk table the Metal compressor hands the writer.
     chunk_starts = chunk_starts_device[:-1].get().astype(np.int64, copy=False)
     chunk_sizes = chunk_sizes_device.get().astype(np.int64, copy=False)

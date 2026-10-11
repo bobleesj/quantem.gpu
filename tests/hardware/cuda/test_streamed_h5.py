@@ -277,6 +277,35 @@ def test_one_decode_batch_beyond_4_gib_keeps_every_frame_in_place(tmp_path):
     assert bool(cp.array_equal(decoded[-1], values[-1]))
 
 
+def test_batches_waiting_for_the_writer_keep_their_own_staging_buffers(tmp_path):
+    """Chunk bytes pass through reused page-locked buffers; a batch not yet written must not be overwritten."""
+    import time
+
+    import cupy as cp
+    import hdf5plugin  # noqa: F401  registers the bitshuffle filter h5py decodes with
+
+    from quantem.gpu.device import cuda_runtime
+    from quantem.gpu.io.hdf5 import write
+
+    def hold():
+        # Keep the writer thread idle until two staged batches wait behind it.
+        deadline = time.monotonic() + 5
+        while not write._write_queue.full() and time.monotonic() < deadline:
+            time.sleep(0.001)
+
+    values = np.random.default_rng(11).poisson(4.0, (30, 64, 64)).astype(np.uint16)
+    master = tmp_path / "batches_master.h5"
+    writer = write.H5Writer(master, n_frames=30, det_shape=(64, 64), scan_shape=(30, 1), dtype=np.uint16)
+    write._write_queue.put((hold, ()))
+    for first in range(0, 30, 3):
+        writer.write(cp.asarray(values[first : first + 3]))
+    writer.close(wait=True)
+    with h5py.File(master, "r") as handle:
+        restored = handle["entry/data/data_000001"][:]
+    assert np.array_equal(restored, values)
+    assert all(entry["free"] for entry in cuda_runtime._PINNED_BUFS)
+
+
 def test_truncated_lz4_block_raises_instead_of_returning_garbage(tmp_path):
     """A chunk whose LZ4 block stops early (a file still being written) refuses to decode."""
     import cupy as cp
