@@ -1491,14 +1491,19 @@ export interface Bslz4MaskedSumProfile extends Bslz4BatchProfile {
   selectedBlockIds: number[];
 }
 
-const MASKED_SUM_LOW8_PIXEL_WGSL = `
+// Product-first virtual image: one workgroup per frame LZ4-decodes only the detector blocks the
+// mask touches into shared memory, rebuilds each selected count from all __NBITS__ bit planes
+// (8 for uint8, 16 for uint16 sources) and sums it. The full block (__BB__ bytes) is decoded:
+// a count above 255 has bits in the high planes, which the first __BE__ bytes do not hold.
+// Per-frame sums stay in u32 (the host proves they fit) and round once to f32 at the store.
+const MASKED_SUM_PIXEL_WGSL = `
 @group(0) @binding(0) var<storage,read> raw: array<u32>;
 @group(0) @binding(1) var<storage,read> blkMeta: array<u32>;     // compact selected-block coff,clen
 @group(0) @binding(2) var<storage,read> idx: array<u32>;         // block-local detector pixels
 @group(0) @binding(3) var<storage,read> blkTable: array<u32>;    // originalBlock, idxOffset, idxCount
 @group(0) @binding(4) var<storage,read_write> sums: array<f32>;
 @group(0) @binding(5) var<uniform> cfg: vec4<u32>;               // nFrames, gridX, selectedBlocks, startScan
-var<workgroup> sh: array<atomic<u32>, 2048>;
+var<workgroup> sh: array<atomic<u32>, __SH_WORDS__>;
 var<workgroup> part: array<u32, __WG__>;
 fn rraw(i:u32)->u32{return (raw[i>>2u]>>((i&3u)*8u))&0xffu;}
 fn rsh(i:u32)->u32{return (atomicLoad(&sh[i>>2u])>>((i&3u)*8u))&0xffu;}
@@ -1518,20 +1523,20 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if(!working){break;}
     let tok=rraw(ci); ci=ci+1u; var nlit=tok>>4u;
     if(nlit==15u){loop{let bb=rraw(ci);ci=ci+1u;nlit=nlit+bb;if(bb!=255u){break;}}}
-    let litCopy=min(nlit,__BE__-di);
+    let litCopy=min(nlit,__BB__-di);
     for(var k=lx; k<litCopy; k=k+__WG__){ wsh(di+k,rraw(ci+k)); }
     ci=ci+nlit; di=di+nlit;
     workgroupBarrier();
-    if(ci>=cend || di>=__BE__){
+    if(ci>=cend || di>=__BB__){
       working=false;
     } else {
       let off=rraw(ci)|(rraw(ci+1u)<<8u); ci=ci+2u; var ml=4u+(tok&0xfu);
       if((tok&0xfu)==15u){loop{let bb=rraw(ci);ci=ci+1u;ml=ml+bb;if(bb!=255u){break;}}}
-      let matchCopy=min(ml,__BE__-di);
+      let matchCopy=min(ml,__BB__-di);
       for(var j=lx; j<matchCopy; j=j+__WG__){ wsh(di+j,rsh(di-off+(j%off))); }
       di=di+ml;
       workgroupBarrier();
-      if(ci>=cend || di>=__BE__){ working=false; }
+      if(ci>=cend || di>=__BB__){ working=false; }
     }
   }
   workgroupBarrier();
@@ -1544,7 +1549,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     let groupByte = p >> 3u;
     let pixBit = 1u << (p & 7u);
     var v = 0u;
-    for(var b=0u; b<8u; b=b+1u){
+    for(var b=0u; b<__NBITS__; b=b+1u){
       if((rsh(groupByte + b*__NPB__) & pixBit) != 0u){ v = v | (1u << b); }
     }
     sum = sum + v;
@@ -1561,7 +1566,10 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   if(lx == 0u){ sums[cfg.w + frm] = f32(frameSum); }
 }`;
 
-const MASKED_SUM_LOW8_GROUPMASK_WGSL = `
+// Same decode as MASKED_SUM_PIXEL_WGSL, but each thread sums one 8-pixel group: per bit plane
+// countOneBits(plane byte & selected bits) << plane adds that plane's contribution of every
+// selected pixel in the group at once. Fewer, wider reads for large scans.
+const MASKED_SUM_GROUPMASK_WGSL = `
 @group(0) @binding(0) var<storage,read> raw: array<u32>;
 @group(0) @binding(1) var<storage,read> blkMeta: array<u32>;     // compact selected-block coff,clen
 @group(0) @binding(2) var<storage,read> grpByte: array<u32>;     // block-local pixel byte groups
@@ -1569,7 +1577,7 @@ const MASKED_SUM_LOW8_GROUPMASK_WGSL = `
 @group(0) @binding(4) var<storage,read> blkTable: array<u32>;    // originalBlock, groupOffset, groupCount
 @group(0) @binding(5) var<storage,read_write> sums: array<f32>;
 @group(0) @binding(6) var<uniform> cfg: vec4<u32>;               // nFrames, gridX, selectedBlocks, startScan
-  var<workgroup> sh: array<atomic<u32>, __SH_WORDS__>;
+var<workgroup> sh: array<atomic<u32>, __SH_WORDS__>;
 var<workgroup> part: array<u32, __WG__>;
 fn rraw(i:u32)->u32{return (raw[i>>2u]>>((i&3u)*8u))&0xffu;}
 fn rsh(i:u32)->u32{return (atomicLoad(&sh[i>>2u])>>((i&3u)*8u))&0xffu;}
@@ -1589,20 +1597,20 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     if(!working){break;}
     let tok=rraw(ci); ci=ci+1u; var nlit=tok>>4u;
     if(nlit==15u){loop{let bb=rraw(ci);ci=ci+1u;nlit=nlit+bb;if(bb!=255u){break;}}}
-    let litCopy=min(nlit,__BE__-di);
+    let litCopy=min(nlit,__BB__-di);
     for(var k=lx; k<litCopy; k=k+__WG__){ wsh(di+k,rraw(ci+k)); }
     ci=ci+nlit; di=di+nlit;
     workgroupBarrier();
-    if(ci>=cend || di>=__BE__){
+    if(ci>=cend || di>=__BB__){
       working=false;
     } else {
       let off=rraw(ci)|(rraw(ci+1u)<<8u); ci=ci+2u; var ml=4u+(tok&0xfu);
       if((tok&0xfu)==15u){loop{let bb=rraw(ci);ci=ci+1u;ml=ml+bb;if(bb!=255u){break;}}}
-      let matchCopy=min(ml,__BE__-di);
+      let matchCopy=min(ml,__BB__-di);
       for(var j=lx; j<matchCopy; j=j+__WG__){ wsh(di+j,rsh(di-off+(j%off))); }
       di=di+ml;
       workgroupBarrier();
-      if(ci>=cend || di>=__BE__){ working=false; }
+      if(ci>=cend || di>=__BB__){ working=false; }
     }
   }
   workgroupBarrier();
@@ -1613,7 +1621,7 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   for(var j=lx; j<idxN; j=j+__WG__){
     let groupByte = grpByte[idxOff + j];
     let bits = grpMask[idxOff + j];
-    for(var b=0u; b<8u; b=b+1u){
+    for(var b=0u; b<__NBITS__; b=b+1u){
       sum = sum + (countOneBits(rsh(groupByte + b*__NPB__) & bits) << b);
     }
   }
@@ -1626,8 +1634,8 @@ fn main(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   if(lx == 0u){ frameSum = frameSum + part[0]; }
   workgroupBarrier();
   }
-	  if(lx == 0u){ sums[cfg.w + frm] = f32(frameSum); }
-	}`;
+  if(lx == 0u){ sums[cfg.w + frm] = f32(frameSum); }
+}`;
 
 function useMaskedSumGroupMask(scanCount: number): boolean {
   const forced = (globalThis as { __QT_BSLZ4_MASKED_SUM_GROUPMASK?: unknown }).__QT_BSLZ4_MASKED_SUM_GROUPMASK;
@@ -1635,41 +1643,23 @@ function useMaskedSumGroupMask(scanCount: number): boolean {
   return scanCount > 256 * 256;
 }
 
-function useMaskedSumCompactShared(scanCount: number): boolean {
-  const forced = (globalThis as { __QT_BSLZ4_MASKED_SUM_COMPACT_SHARED?: unknown }).__QT_BSLZ4_MASKED_SUM_COMPACT_SHARED;
-  if (forced !== undefined) return forced !== false;
-  return scanCount > 512 * 512;
-}
-
 function useMaskedSumPipeline(): boolean {
   return (globalThis as { __QT_BSLZ4_MASKED_SUM_PIPELINE?: unknown }).__QT_BSLZ4_MASKED_SUM_PIPELINE !== false;
 }
 
-function maskedSumWorkgroupSize(_scanCount: number): 64 | 128 | 256 {
+function maskedSumWorkgroupSize(): 64 | 128 | 256 {
   const forced = Number((globalThis as { __QT_BSLZ4_MASKED_SUM_WG?: unknown }).__QT_BSLZ4_MASKED_SUM_WG);
   if (forced === 64 || forced === 128 || forced === 256) return forced;
   return 64;
 }
 
-function getMaskedSumLow8PixelPipe(device: GPUDevice, blockElems: number, wgSize: 64 | 128 | 256): GPUComputePipeline {
-  const npb = blockElems / 8;
-  const shWords = Math.ceil(blockElems / 2);
-  const code = MASKED_SUM_LOW8_PIXEL_WGSL
-    .replace(/__NPB__/g, `${npb}u`)
-    .replace(/__BE__/g, `${blockElems}u`)
-    .replace(/__SH_WORDS__/g, `${shWords}`)
-    .replace(/__WG_HALF__/g, `${Math.floor(wgSize / 2)}u`)
-    .replace(/__WG__/g, `${wgSize}u`);
-  return cachedPipeline(device, code);
-}
-
-function getMaskedSumLow8GroupMaskPipe(device: GPUDevice, blockElems: number, wgSize: 64 | 128 | 256, compactShared: boolean): GPUComputePipeline {
-  const npb = blockElems / 8;
-  const shWords = compactShared ? Math.ceil(blockElems / 4) : Math.ceil(blockElems / 2);
-  const code = MASKED_SUM_LOW8_GROUPMASK_WGSL
-    .replace(/__NPB__/g, `${npb}u`)
-    .replace(/__BE__/g, `${blockElems}u`)
-    .replace(/__SH_WORDS__/g, `${shWords}`)
+function getMaskedSumPipe(device: GPUDevice, blockElems: number, nbits: 8 | 16, wgSize: 64 | 128 | 256, groupMask: boolean): GPUComputePipeline {
+  const blockBytes = blockElems * nbits / 8;
+  const code = (groupMask ? MASKED_SUM_GROUPMASK_WGSL : MASKED_SUM_PIXEL_WGSL)
+    .replace(/__NPB__/g, `${blockElems / 8}u`)
+    .replace(/__BB__/g, `${blockBytes}u`)
+    .replace(/__NBITS__/g, `${nbits}u`)
+    .replace(/__SH_WORDS__/g, `${Math.ceil(blockBytes / 4)}`)
     .replace(/__WG_HALF__/g, `${Math.floor(wgSize / 2)}u`)
     .replace(/__WG__/g, `${wgSize}u`);
   return cachedPipeline(device, code);
@@ -1913,7 +1903,7 @@ interface MaskedSumJob {
   releaseTemps(): void;
 }
 
-function buildMaskedSumLow8Job(
+function buildMaskedSumJob(
   device: GPUDevice,
   spec: Bslz4MaskedSumSpec,
   rawBuf: GPUBuffer,
@@ -1922,16 +1912,14 @@ function buildMaskedSumLow8Job(
   blockTableBuf: GPUBuffer,
   sums: GPUBuffer,
   selectedBlocks: number,
-  wgSize: 64 | 128 | 256,
+  pipe: GPUComputePipeline,
   useGroupMask: boolean,
-  compactShared: boolean,
 ): MaskedSumJob {
   const metaBuf = device.createBuffer({ size: Math.max(8, spec.blockMeta.byteLength), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(metaBuf, 0, spec.blockMeta.buffer as ArrayBuffer, spec.blockMeta.byteOffset, spec.blockMeta.byteLength);
   const dispatchUnits = spec.nFrames;
   const gx = Math.min(dispatchUnits, MAX_WG), gy = Math.ceil(dispatchUnits / MAX_WG);
   const cfg = uniform(device, [spec.nFrames, gx, selectedBlocks, spec.startScan]);
-  const pipe = useGroupMask ? getMaskedSumLow8GroupMaskPipe(device, spec.blockElems, wgSize, compactShared) : getMaskedSumLow8PixelPipe(device, spec.blockElems, wgSize);
   const bg = useGroupMask
     ? device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: rawBuf } },
@@ -1962,10 +1950,14 @@ function buildMaskedSumLow8Job(
   };
 }
 
-export async function decodeBslz4MaskedSumLow8Batch(
+/** Virtual image straight from bslz4 chunks: decode only the masked detector blocks of each
+ * frame and sum the selected counts, without a resident stack. ``srcDtype`` is the stored
+ * dtype; every count is exact, and each frame's integer sum is rounded once to float32. */
+export async function decodeBslz4MaskedSumBatch(
   specs: Bslz4MaskedSumSpec[],
   mask: Uint32Array,
   scanCount: number,
+  srcDtype: "uint8" | "uint16",
   badPixels?: Uint32Array,
   groupSize = 8,
 ): Promise<{ device: GPUDevice; buffer: GPUBuffer; profile: Bslz4MaskedSumProfile } | null> {
@@ -1973,13 +1965,16 @@ export async function decodeBslz4MaskedSumLow8Batch(
   if (!device) return null;
   const blockElems = specs[0]?.blockElems || 4096;
   const selected = maskedSumBlocks(mask, badPixels, blockElems);
+  const nbits = srcDtype === "uint8" ? 8 : 16;
+  // Each frame's sum is accumulated in u32: refuse a mask whose largest possible sum could wrap.
+  if (selected.selectedPixels * (2 ** nbits - 1) > 0xffff_ffff) {
+    throw new Error(`Product-first WebGPU masked sum over ${selected.selectedPixels} ${srcDtype} pixels can exceed 2^32 counts per frame; load the resident stack instead.`);
+  }
   const groupMask = useMaskedSumGroupMask(scanCount);
-  const compactShared = groupMask && useMaskedSumCompactShared(scanCount);
-  const wgSize = maskedSumWorkgroupSize(scanCount);
+  const wgSize = maskedSumWorkgroupSize();
+  const pipe = getMaskedSumPipe(device, blockElems, nbits, wgSize, groupMask);
   const profile: Bslz4MaskedSumProfile = {
-    variant: specs.some((spec) => Boolean(spec.selectedBlockIds))
-      ? `product-first-frame-masked-sum-low8/${groupMask ? `groupmask-wg${wgSize}${compactShared ? "-compactSh" : ""}` : `pixel-wg${wgSize}`}/selected-block-sidecar/direct-f32/${useMaskedSumPipeline() ? "stagingPipeline" : "staging"}`
-      : `product-first-frame-masked-sum-low8/${groupMask ? `groupmask-wg${wgSize}${compactShared ? "-compactSh" : ""}` : `pixel-wg${wgSize}`}/direct-f32/${useMaskedSumPipeline() ? "stagingPipeline" : "staging"}`,
+    variant: `product-first-frame-masked-sum-${srcDtype}/${groupMask ? `groupmask-wg${wgSize}` : `pixel-wg${wgSize}`}/${specs.some((spec) => Boolean(spec.selectedBlockIds)) ? "selected-block-sidecar/" : ""}direct-f32/${useMaskedSumPipeline() ? "stagingPipeline" : "staging"}`,
     groups: 0,
     specs: specs.length,
     compressedMB: 0,
@@ -2039,7 +2034,7 @@ export async function decodeBslz4MaskedSumLow8Batch(
     const raws = await uploadViaStaging(device, compacted);
     const uploadMs = performance.now() - tUpload;
     const tBuild = performance.now();
-    const jobs = compacted.map((spec, i) => buildMaskedSumLow8Job(device, spec, raws[i], groupIdxBuf, groupMaskBuf, blockTableBuf, outF32, selected.blockIds.length, wgSize, groupMask, compactShared));
+    const jobs = compacted.map((spec, i) => buildMaskedSumJob(device, spec, raws[i], groupIdxBuf, groupMaskBuf, blockTableBuf, outF32, selected.blockIds.length, pipe, groupMask));
     const buildMs = performance.now() - tBuild;
     return { jobs, compressedMB, packMs, uploadMs, buildMs };
   };
