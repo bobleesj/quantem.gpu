@@ -20,6 +20,7 @@ from quantem.gpu.io.hdf5.write import (
     _is_mps_array,
     _normalize_save_dtype,
     _output_file_size,
+    require_exact_narrowing,
     save_compressed_arina_h5,
     wait_for_saves,
 )
@@ -349,6 +350,7 @@ def _prepare_save_data(data, dtype, scan_shape):
             lo, hi = int(np.iinfo(dtype).min), int(np.iinfo(dtype).max)
             frames = cp.clip(cp.rint(frames), lo, hi).astype(dtype)
         else:
+            require_exact_narrowing(frames, dtype)
             frames = frames.astype(dtype)
     if frames.ndim == 4:
         inferred_scan = tuple(int(size) for size in frames.shape[:2])

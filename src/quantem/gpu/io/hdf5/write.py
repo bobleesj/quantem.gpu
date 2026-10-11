@@ -185,6 +185,7 @@ class H5Writer:
                           int(np.iinfo(self._dtype).max))
                 data_gpu = cp.clip(cp.rint(data_gpu), lo, hi).astype(self._dtype)
             else:
+                require_exact_narrowing(data_gpu, self._dtype)
                 data_gpu = data_gpu.astype(self._dtype)
         if data_gpu.ndim != 3 or data_gpu.shape[1:] != (self._det_row, self._det_col):
             raise ValueError(
@@ -329,6 +330,7 @@ def save_compressed_arina_h5(
     else:
         raise ValueError("save_compressed_arina_h5 expects 3D frames or 4D-STEM data")
 
+    require_exact_narrowing(flat, dtype)
     det_row, det_col = (int(det_shape[0]), int(det_shape[1]))
     frames_per_file = int(frames_per_file)
     batch_size = int(batch_size)
@@ -706,6 +708,28 @@ def _infer_save_dtype(data):
                 "'u8', 'u32', or 'f32' explicitly."
             ) from error
     return _default_save_dtype(np.asarray(data).dtype)
+
+
+def require_exact_narrowing(frames, dtype) -> None:
+    """Refuse to save integer counts as a narrower integer dtype unless every count fits.
+
+    A cast keeps each count modulo 2^bits on CUDA and the CPU and clamps it on
+    Metal, so a count out of range would be written as a different number
+    without a message. One reduction, only when the dtype narrows. Floats are
+    rounded and clipped by the callers on purpose and are not checked here.
+    """
+    source = np.dtype(str(frames.dtype).removeprefix("torch."))
+    dtype = np.dtype(dtype)
+    if source.kind not in "ui" or dtype.kind not in "ui" or np.can_cast(source, dtype):
+        return
+    minimum, maximum = int(frames.min()), int(frames.max())
+    limits = np.iinfo(dtype)
+    if minimum < limits.min or maximum > limits.max:
+        raise ValueError(
+            f"Counts span [{minimum}, {maximum}], outside the {dtype} range "
+            f"[{limits.min}, {limits.max}]; saving them as {dtype} would change them. "
+            f"Save as {source} or another dtype that holds every count."
+        )
 
 
 def _cast_host_for_save(block, dtype):
