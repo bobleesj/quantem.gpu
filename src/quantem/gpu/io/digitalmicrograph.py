@@ -87,7 +87,6 @@ def read_dm_source(
         start = sum(source.dataShape[:index])
         units = list(source.scaleUnit[start:start + 4])[::-1]
         sampling = [float(value) for value in source.scale[start:start + 4]][::-1]
-        origins = [float(value) for value in source.origin[start:start + 4]][::-1]
         reciprocal = {"1/nm", "1/Å", "1/A", "1/Angstrom", "1/um", "1/µm"}
         if len(units) != 4 or not all(unit in reciprocal for unit in units[2:]):
             raise ValueError(
@@ -130,17 +129,17 @@ def read_dm_source(
             source_shape=shape, working_shape=shape, scan_shape=shape[:2],
             detector_shape=shape[2:], source_dtype=dtype.name, dtype=dtype.name,
             n_frames=math.prod(shape[:2]), dm_image_index=index,
-            dm_data_offset=offset, sampling=sampling, units=units,
-            pixel_origin=origins, representation="dense",
+            dm_data_offset=offset, representation="dense",
             voltage_kV=float(voltage) / 1000 if voltage is not None else None,
             dm_data_order_swapped=bool(tags.get("ImageTags.Meta Data.Data Order Swapped", False)),
-            axis_order=["scan_row", "scan_col", "detector_row", "detector_col"],
         )
         if all(unit in {"nm", "µm", "um", "Å", "A"} for unit in units[:2]):
             factors = {"nm": 10, "µm": 10000, "um": 10000, "Å": 1, "A": 1}
             metadata["scan_sampling_A"] = [sampling[axis] * factors[units[axis]] for axis in range(2)]
-        if units[2:] == ["1/nm", "1/nm"]:
-            metadata["detector_sampling_inv_A"] = [value / 10 for value in sampling[2:]]
+        # The detector step is stated once, in 1/angstrom: a second copy in the file's own unit
+        # (1/nm) differed by a factor of 10 from what a saved copy reports.
+        per_angstrom = {"1/nm": 10, "1/Å": 1, "1/A": 1, "1/Angstrom": 1, "1/um": 10000, "1/µm": 10000}
+        metadata["detector_sampling_inv_A"] = [sampling[axis] / per_angstrom[units[axis]] for axis in (2, 3)]
     return DMSource(path, offset, shape, dtype, metadata, (stat.st_size, stat.st_mtime_ns))
 
 
