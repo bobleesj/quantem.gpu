@@ -30,6 +30,7 @@ _NAMES = (
     "pack_fields",
     *(f"{op}_u{bits}" for op in ("index", "residual") for bits in (32, 64)),
     "moment_pair",
+    "selected",
     "frame_u8",
     "frame_u16",
 )

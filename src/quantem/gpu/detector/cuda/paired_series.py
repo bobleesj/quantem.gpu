@@ -129,3 +129,19 @@ class PairedSeriesCompute(StreamedSeriesCompute):
     def _moments(self, row_weights, col_weights):
         """Row and column moments, one query each: the paired residual decoder adds one weighting per pass."""
         return self.weighted_sum_exact(row_weights), self.weighted_sum_exact(col_weights)
+
+    def _selected_totals(self, indices, maximum: bool):
+        """Exact uint64 sum, or maximum, of the sorted scan ``indices``: the paired decoder expands each 512-scan block."""
+        totals = cp.zeros((len(self.index_owners), *self.det_shape), cp.uint64)
+        # Group by codec block so sparse selections decode each block once.
+        boundaries = np.flatnonzero(np.diff(indices // self.interval)) + 1
+        for total, source in zip(totals, self.index_owners, strict=True):
+            for selected in np.split(indices, boundaries):
+                first = int(selected[0] // self.interval * self.interval)
+                raw = source.decode_scan_range_device(first, min(first + self.interval, self.n_frames))
+                values = raw[cp.asarray(selected - first)]
+                if maximum:
+                    cp.maximum(total, values.max(axis=0), out=total)
+                else:
+                    total += values.sum(axis=0, dtype=cp.uint64)
+        return totals
