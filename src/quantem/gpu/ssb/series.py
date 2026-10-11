@@ -17,7 +17,7 @@ import yaml
 
 from quantem.gpu import screening
 from quantem.gpu.ssb.contract import RefineMethod
-from quantem.gpu.ssb.persistence import SCHEMA
+from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCHEMA
 from quantem.gpu.ssb.results import (
     SSBResult,
     SSBSeriesResult,
@@ -49,7 +49,9 @@ def reconstruct_series(
     discovered and reused automatically. Missing products run through
     :class:`SSB` and are saved to the same standard location. When no Live
     screening exists, physical settings are read from ``dataset.yaml`` or
-    from explicit keyword arguments.
+    from explicit keyword arguments. A stored fit counts only when it carries
+    the current fit schema (``stored_fit``); any other is treated as absent, so
+    a probe reference stored by an earlier version is fitted again.
 
     Parameters
     ----------
@@ -332,11 +334,7 @@ def acquisition_settings(
     is an error that names the three places to fix it.
     """
     config_path = screen_path / "config.json"
-    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
-    computed = config.get("computed") if isinstance(config, dict) else {}
-    computed = computed if isinstance(computed, dict) else {}
-    saved = computed.get("ssb")
-    saved = saved if isinstance(saved, dict) else {}
+    saved = stored_fit(json.loads(config_path.read_text())) if config_path.is_file() else {}
     session = _dataset_yaml_settings(document, screen_path.name)
     values = {
         "voltage_kV": voltage_kV,
@@ -378,14 +376,19 @@ def write_fit_metadata(
     settings: dict[str, object],
     result: SSBResult,
 ) -> None:
-    """Record a fresh GPU fit in ``config.json`` so Live screening and later series runs find it."""
+    """Record a fresh GPU fit in ``config.json`` so Live screening and later series runs find it.
+
+    The block carries ``"schema": FIT_SCHEMA``, without which no reader accepts it. Fields Live added to a block of the
+    current schema are kept; a block of any other schema is replaced whole, so none of its values pass as current.
+    """
     config_path = screen_path / "config.json"
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
     config = config if isinstance(config, dict) else {}
     computed = config.setdefault("computed", {})
     computed["ssb"] = {
-        **dict(computed.get("ssb") or {}),
+        **stored_fit(config),
         **settings,
+        "schema": FIT_SCHEMA,
         "aberrations": dict(result.aberrations),
         "aberration_unit": ABERRATION_UNIT,
         "rotation_angle_deg": float(result.rotation_angle_deg),
@@ -397,15 +400,28 @@ def write_fit_metadata(
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
+def stored_fit(config: dict[str, object], block: str = "ssb") -> dict[str, object]:
+    """Return one fit block of a screening ``config.json`` when the current engine wrote it; else an empty dict.
+
+    The block is ``computed.ssb`` (or a sibling Live keeps beside it, named by ``block``), and it counts only when its
+    ``"schema"`` equals ``FIT_SCHEMA``. A block with another schema or none is the same as no block: nothing in it is
+    read, converted or kept. Without this one test, values fitted under an earlier convention (another automatic
+    detector sampling, Angstrom stored as nm) reconstruct a different image with no error. QuantEM Live reads its
+    stored fits through this function too, so both packages apply the same rule.
+    """
+    stored = (config.get("computed") or {}).get(block) or {}
+    return stored if stored.get("schema") == FIT_SCHEMA else {}
+
+
 def saved_fit(screen_path: Path) -> dict[str, object] | None:
-    """Return the fitted aberrations and physical rotation (CoM reversal folded in) from Live or a GPU save; else None."""
+    """Return the fitted aberrations and physical rotation (CoM reversal folded in) from Live or a GPU save; else None.
+
+    A fit of another schema is not an error and is not returned: the caller fits again, as for a folder with no fit.
+    """
     config_path = screen_path / "config.json"
     if config_path.is_file():
-        config = json.loads(config_path.read_text())
-        settings = (config.get("computed") or {}).get("ssb") or {}
+        settings = stored_fit(json.loads(config_path.read_text()))
         if "aberrations" in settings and "rotation_angle_deg" in settings:
-            if settings.get("aberration_unit") != ABERRATION_UNIT:
-                raise ValueError("Saved SSB fit must declare aberration_unit='nm'. Rerun the probe fit to save a current record.")
             rotation = physical_rotation_deg(float(settings["rotation_angle_deg"]), bool(settings.get("com_reversed", False)))
             return {**settings, "aberrations": validate_aberrations(settings["aberrations"]), "aberration_unit": ABERRATION_UNIT,
                     "rotation_angle_deg": rotation}
@@ -415,15 +431,11 @@ def saved_fit(screen_path: Path) -> dict[str, object] | None:
         result = metadata.get("result") or {}
         aberrations = result.get("aberrations")
         rotation = result.get("rotation_angle_deg")
-        if rotation is not None:
-            rotation = physical_rotation_deg(float(rotation), bool(result.get("com_reversed", False)))
-        if aberrations is not None and rotation is not None:
-            if metadata.get("schema") != SCHEMA:
-                raise ValueError(f"Saved SSB fit must use schema {SCHEMA}. Rerun the probe fit to save a current record.")
+        if metadata.get("schema") == SCHEMA and aberrations is not None and rotation is not None:
             return {
                 "aberrations": validate_aberrations(aberrations),
                 "aberration_unit": ABERRATION_UNIT,
-                "rotation_angle_deg": rotation,
+                "rotation_angle_deg": physical_rotation_deg(float(rotation), bool(result.get("com_reversed", False))),
             }
     return None
 

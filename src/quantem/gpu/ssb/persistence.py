@@ -18,7 +18,17 @@ from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.ssb.results import SSBResult, host_array
 
-SCHEMA = 5  # Replayable, optimizer-neutral trial records and explicit correction overrides.
+# One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
+# Bump it whenever the same stored values would reconstruct a different image or read differently: the automatic
+# detector sampling rule, the unit, sign or angle reference of an aberration, the rotation or com_reversed convention,
+# the bright-field selection rule, the loss definition, or the record layout. Every older fit is then fitted again.
+# 6: schema 5 covered two automatic detector samplings, 2 x semiangle / half-maximum radius and then
+#    semiangle / disk-edge radius; C10 and C12 fitted under the first reconstruct a different image under the second.
+# 5: replayable, optimizer-neutral trial records and explicit correction overrides.
+SCHEMA = 6
+# What a stored fit must carry under "schema" to be read at all (Live's computed.ssb in config.json). Named like the
+# .qem scientific-metadata schema string, so a reader refuses another version instead of reinterpreting its values.
+FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 
 
 _ARTIFACT_FIELDS = {"object_wave", "rotation_check_phases", "reused", "saved_path", "metadata"}
