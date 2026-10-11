@@ -34,6 +34,10 @@ and expected scientific metadata. No private acquisition is included. Each
 array is `(3, 5, 16, 16)` in `(scan_row, scan_column, detector_row, detector_column)`
 order and includes zero and maximum count values. The uint8 reference has
 unknown calibration; the uint16 reference carries explicit synthetic overrides.
+These files carry scientific metadata schema 1. Since specification 0.0.4 the
+Python readers refuse them and name the schema; the tests keep them to check
+that refusal. The schema-2 bundle below is the reference for counts and
+calibration.
 
 Download the reference files and keep them together:
 
@@ -63,12 +67,12 @@ QEM_TEST_BACKEND=cuda pytest -q tests/test_qem_interoperability.py
 bash scripts/check_qem_reference.sh tests/data/qem-v1/uint16.npy tests/data/qem-v1/uint16.qem
 ```
 
-The explicit backend test compares every decoded count with the original NumPy
-array, re-exports through the production Python writer, moves the saved copy,
-then compares counts and the complete scientific metadata again, with schema-1
-units converted to the specified schema-2 units on new export. The frozen
-schema-1 files are never regenerated to make a test pass. No CPU fallback
-is permitted. Without `QEM_TEST_BACKEND`, hardware tests skip; an explicitly
+The explicit backend test opens the frozen schema-2 references, compares every
+decoded count with the original NumPy array and the flat calibration keys with
+the recorded values, re-exports through the production Python writer, moves the
+saved copy, then compares counts, calibration and the complete scientific
+metadata again. Frozen files are never regenerated to make a test pass. No CPU
+fallback is permitted. Without `QEM_TEST_BACKEND`, hardware tests skip; an explicitly
 requested but unavailable backend fails. Supply its Python-written file to the
 native command to test the reverse direction as well.
 

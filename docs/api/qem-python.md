@@ -25,7 +25,7 @@ acquisition retains that storage without expanding the full array.
 | Content | Why it matters |
 |---|---|
 | Detector measurements, shape, and dtype | Reopen the stored values and their array geometry |
-| Sampling, units, and origins | Interpret scan and detector coordinates physically |
+| Sampling and units | Interpret scan and detector coordinates physically |
 | Microscope fields retained by the reader | Keep voltage, angles, and other available acquisition context |
 | Source metadata and processing history | Know where values came from and which corrections were applied |
 | Integrity checks | Detect damaged or incomplete stored data |

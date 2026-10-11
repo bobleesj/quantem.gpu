@@ -641,7 +641,7 @@ saved = io.save(
     data,
     backend="auto",
     dtype="u16",
-    metadata={"scan_sampling_A": 0.264},
+    metadata={"scan_sampling_A": [0.264, 0.264]},
 )
 saved.wait()
 ```
