@@ -192,7 +192,8 @@ class TorchBackend(DetectorQueries):
         total = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
         for start in range(0, indices.size, step):
             selected = torch.as_tensor(indices[start : start + step], dtype=torch.int64, device=self.device)
-            total += self._flat.index_select(0, selected).sum(dim=0, dtype=torch.int64)
+            # Cast first: MPS has no mixed uint16/int64 sum ("sum_reduction_outer_ushort_long").
+            total += self._flat.index_select(0, selected).to(torch.int64).sum(dim=0)
         return total.cpu().numpy().astype(np.uint64, copy=False)
 
     def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
