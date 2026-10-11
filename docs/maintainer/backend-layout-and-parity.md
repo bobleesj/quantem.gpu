@@ -126,10 +126,6 @@ tests/
   hardware/{cuda,mps,metal}/       # device-dependent gates
   e2e/                            # consumer-local override and real-data gates
   infrastructure/                 # docs, packaging, benchmark checks
-
-benchmarks/
-  benchmark_registry.json         # accepted immutable measurements
-  profile_matrix.json             # measured/pending/unsupported run matrix
 ~~~
 
 `mps` remains the Python backend selector for compatibility. Its accelerated
@@ -143,9 +139,9 @@ Implementations have one canonical owner. Backend code lives in a `cuda/`,
 directly under the package that owns the science; there is no `backends/` or
 `compute/` level, and no compatibility shims.
 
-Do not create a second support or benchmark registry for this migration.
-Extend the existing matrices and keep historical result paths and trial IDs
-intact. Moving source code does not make pending hardware cells pass.
+Keep one support matrix, `tests/parity/backend_matrix.json`, and keep
+historical result paths and trial IDs intact. Moving source code does not make
+pending hardware cells pass.
 
 ## Browser build integration
 
@@ -184,7 +180,6 @@ npm run typecheck
 # Native Apple: unchanged SwiftPM entry.
 swift test -j 4
 
-python scripts/check_profile_registry.py
 jupyter-book build docs --warningiserror --nitpick
 python scripts/check_docs_links.py --html-root docs/_build/html
 ```

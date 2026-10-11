@@ -4,8 +4,8 @@ This is the integration boundary for ongoing lossless-memory work, not a claim
 that every research encoding is available through every backend. Keep existing
 workflows usable while qualifying one new implementation at a time. The
 [representation API](../api/representations.md) describes current calls;
-[backend readiness](../performance/backend-readiness.md) retains the
-scientific and physical-device gates.
+the [parity matrix](../performance/parity.md) retains the scientific and
+physical-device gates.
 
 ## Four responsibilities, not four public loaders
 
@@ -112,12 +112,10 @@ fails explicitly if the exact plan cannot fit.
 
 ## Reproduce the readiness checks
 
-Use the existing registries instead of maintaining another support matrix:
+`tests/parity/backend_matrix.json` names the gate for every capability and
+backend; run the portable ones first:
 
 ```bash
-python scripts/backend_status.py check
-python scripts/backend_status.py summary
-python scripts/backend_status.py json --backend cuda
 python scripts/run_tests.py tests/contracts/io tests/parity/test_resident_integer_contract.py -q
 ```
 
@@ -139,7 +137,6 @@ python scripts/run_tests.py tests/hardware/cuda/test_resident_integer_contract.p
 ```
 
 These are bounded regressions, not cold-load or full-acquisition performance
-measurements. Use the [profiling runbooks](../performance/coverage.md) for those
-gates. Add qualified numbers to the existing benchmark registry only when
-source, fixture, hardware, sample count, timing boundary, and memory definitions
-are complete.
+measurements. Use the timing scripts in the [test guide](testing.md) for those,
+and record a number in the documentation only when source, fixture, hardware,
+sample count, timing boundary, and memory definitions are complete.

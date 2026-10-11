@@ -4,6 +4,17 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
+## 2026-10-10: registry retired
+
+The benchmark registry (`benchmarks/benchmark_registry.json`), the profile
+matrix, the backend-status generator, the evidence fingerprint manifest and the
+pages generated from them were removed. No measurement changed. The generated
+current-load table is kept as a static dated table in
+[Verified benchmark results](results.md); the implementation dashboard's
+timings already lived there, and its minimum-device memory table moved to the
+{ref}`benchmark methodology <minimum-device-memory-gates>`. Hot-path timing
+now uses the scripts listed in the [test guide](../developer/testing.md).
+
 ## 2026-09-08: unpublished native packed-resident candidate
 
 The [dated investigation](../maintainer/2026-09-08-packed-resident-optimization.md)
@@ -30,7 +41,7 @@ word-major detector binning (`ff3c7fd`), and exact resident summaries
 source-page measurement through `c0ea444`. It does not relabel an older CUDA,
 Python MPS, WebGPU, source-load, or application measurement.
 
-## Latest documentation changes
+## Documentation changes through 2026-09-08
 
 | Commit | Change | Performance-number effect |
 |---|---|---|
@@ -62,7 +73,7 @@ Local documentation commits are recorded as branch-relative identifiers until
 they are published. Do not construct public GitHub commit links for an
 unpublished revision.
 
-## Latest benchmark-evidence changes
+## Benchmark-evidence changes through 2026-08-22
 
 This table records promotion decisions, not another copy of the measurements.
 The current values and distributions live only in
@@ -101,7 +112,5 @@ layout experiments remain in the
    device/runtime, source shape/dtype, cache state, crop/bin/load plan, timing
    boundary, memory, calibration, and parity artifact.
 2. Explain whether it replaces a truly comparable row or remains separate.
-3. Update the dashboard only after the detailed row is complete.
-4. Update the evidence manifest when a fingerprinted evidence page changes.
-5. Keep rejected or incomparable experiments discoverable rather than deleting
+3. Keep rejected or incomparable experiments discoverable rather than deleting
    them.

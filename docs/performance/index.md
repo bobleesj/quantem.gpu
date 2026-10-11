@@ -9,8 +9,6 @@ which optimizations were accepted, rejected, or remain provisional.
 | Evidence | Use it for |
 |---|---|
 | [Documentation landing page](../intro.md) | Package contract and routes for API, kernel, and application developers; intentionally contains no benchmark tables |
-| [Implementation dashboard](../dashboard.md) | The single friendly current overview of platform, bin, dtype, cache state, memory, parity, device, and test date |
-| [Coverage and runbooks](coverage.md) | Filterable measured, partial, pending, refuted, and unsupported configurations plus stable commands for closing each open gate |
 | {ref}`Minimum-device gates <minimum-device-memory-gates>` | CUDA 6 GiB VRAM and WebGPU 8 GB laptop acceptance status; runtime details on [CUDA](../platforms/cuda.md) and [WebGPU](../platforms/webgpu.md) |
 | [Verified benchmark results](results.md) | Metrics with date, revision, device, shape/dtype, cache state, load plan, benchmark definition, calibration, and parity provenance |
 | [Revision and change ledger](changes.md) | Latest documentation changes, implementation baselines, and why a retained number changed or remained historical |
@@ -19,7 +17,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Python MPS](../platforms/mps.md) | Direct-Metal output lifetime, resident-versus-driver memory accounting, profiling fields, and focused checks |
 | [Benchmark methodology](methodology.md) | Required timing stages, cold/warm definitions, memory reporting, and acceptance rules |
 | [CUDA codec speed and peak memory](cuda-count-codecs.md) | Experimental count ANS versus bitpacking: GPU timings, calculated resident layouts, measured shared scratch, and unresolved per-codec/full-load peaks |
-| [Continuous profiling](continuous-profiling.md) | PR smoke, weekly physical profiles, manual signoff, comparison keys, run registry, and regression decisions |
+| [Testing and evidence](../developer/testing.md) | The timing script for each hot path, the SSB parity gates, and the documentation checks |
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |
 | [Optimization ledger](../maintainer/backend-optimization-matrix.md) | Accepted and rejected IO, kernel, display, and browser experiments |
 | [Load acceptance evidence](../maintainer/backend-4dstem-load-checklist.md) | Real-data load/decode/product gates and backend signoff |
@@ -29,21 +27,11 @@ which optimizations were accepted, rejected, or remain provisional.
 | [M2 Air Metal evidence](../maintainer/m2-air-lz4-match-unroll-2026-08-18.md) | Physical low-memory Apple load/decode profiling and retained kernel evidence |
 | [WebGPU memory history](../maintainer/history/webgpu-gqk-memory-2026-07.md) | Archived browser G(q,k) layout and memory experiments |
 
-The machine-readable fingerprints for retained numerical pages are available as
-{download}`evidence_manifest.json <evidence_manifest.json>`. The manifest makes
-an evidence edit explicit: changing a number requires updating its fingerprint
-and rerunning the documentation guard.
-
-The machine-readable execution schedule lives in
-[`benchmarks/profile_matrix.json`](https://github.com/bobleesj/quantem.gpu/blob/main/benchmarks/profile_matrix.json),
-and completed, failed, refuted, or superseded runs remain indexed in the
-`RUNS.md` registry of the private evidence archive.
-
-Exact configuration coverage and agent runbooks live in
-[`benchmarks/benchmark_registry.json`](https://github.com/bobleesj/quantem.gpu/blob/main/benchmarks/benchmark_registry.json).
-Regenerate the filterable page with
-`python scripts/benchmark_registry.py render`; CI fails if the generated table
-drifts from the registry.
+Every number on these pages is a dated record: it keeps the device, date,
+revision, input, cache state and parity check it was measured with. A new
+measurement adds a row or a dated page; it does not overwrite an older record
+measured under different conditions. Raw run folders stay in the private
+evidence archive, indexed by experiment id.
 
 ## Reading a result
 
@@ -65,8 +53,8 @@ but is not a release or migration signoff.
 
 ## Current versus historical evidence
 
-The dashboard summarizes the current retained result; the results page owns its
-complete provenance. Maintainer ledgers keep chronological experiments—including
+The results page owns the provenance of each retained measurement. Maintainer
+ledgers keep chronological experiments—including
 regressions—so future work does not repeat failed kernel layouts or confuse an
 older record with the production path.
 

@@ -34,8 +34,8 @@ volume.
 
 The following summarizes the [representation contract](../api/representations.md),
 not a new qualification registry. Exact gates remain in
-`tests/parity/backend_matrix.json`; measured and pending performance remain in
-`benchmarks/profile_matrix.json`.
+`tests/parity/backend_matrix.json`; measured performance remains in the
+[verified benchmark results](../performance/results.md).
 
 | Runtime | Implemented entry points | Remaining or experimental scope |
 |---|---|---|

@@ -79,8 +79,6 @@ The rule for new heavy work is: implement the compute or IO path in
 This page owns capability and source-boundary status only. Numerical results are
 not copied here:
 
-- [Implementation overview](dashboard.md) is the current human-facing speed,
-  memory, feature, and parity dashboard.
 - [Verified benchmark results](performance/results.md) is the authoritative
   provenance ledger.
 - [Optimization ledger](maintainer/backend-optimization-matrix.md) preserves
