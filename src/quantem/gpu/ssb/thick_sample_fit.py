@@ -45,9 +45,14 @@ def fit_sample_search(
     from scipy.optimize import minimize
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    # multivariate TPE is flagged experimental; it is what finds the joint (C10, tilt) optimum here
-    warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
     half_pi = math.pi / 2.0
+
+    def sampler(**options):
+        # multivariate TPE is flagged experimental; it is what finds the joint (C10, tilt) optimum here. The warning is
+        # silenced for this construction only, not for the caller's process.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
+            return optuna.samplers.TPESampler(seed=seed, multivariate=True, **options)
 
     def suggest(trial, with_sample: bool) -> list[float]:
         row = [trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max), trial.suggest_float("phi12", -half_pi, half_pi)]
@@ -86,9 +91,9 @@ def fit_sample_search(
         row = np.array([[point[0], abs(point[1]), wrap_phi(point[2]), point[3], point[4], abs(point[5])]], dtype=np.float64)
         return float(objective_batch(row)[0]) if objective_batch is not None else objective(row[0, 0], row[0, 1], row[0, 2], (row[0, 3], row[0, 4]), row[0, 5])
 
-    thin = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=seed, multivariate=True))
+    thin = optuna.create_study(sampler=sampler())
     run(thin, 200, with_sample=False)
-    study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=seed, multivariate=True, n_startup_trials=max(30, trials // 6)))
+    study = optuna.create_study(sampler=sampler(n_startup_trials=max(30, trials // 6)))
     progress = None
     if verbose:
         from tqdm.auto import tqdm
