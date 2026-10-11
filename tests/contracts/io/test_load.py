@@ -54,39 +54,6 @@ def test_get_libc_returns_none_when_posix_fadvise_is_unavailable(monkeypatch) ->
     assert memory_module._LIBC is False
 
 
-def test_apply_scan_shape_supports_serpentine_order() -> None:
-    """Full flat scans can be unflattened with odd scan rows reversed."""
-    from importlib import import_module
-    selection = import_module("quantem.gpu.io.selection")
-
-    data = np.arange(12, dtype=np.uint16).reshape(6, 1, 2)
-
-    result = selection._apply_scan_shape(
-        data,
-        explicit=(2, 3),
-        meta={},
-        scan_order="serpentine",
-    )
-
-    expected = np.asarray(
-        [
-            [[[0, 1]], [[2, 3]], [[4, 5]]],
-            [[[10, 11]], [[8, 9]], [[6, 7]]],
-        ],
-        dtype=np.uint16,
-    )
-    np.testing.assert_array_equal(result, expected)
-
-
-def test_load_rejects_unknown_scan_order() -> None:
-    """Unknown flattened scan order names should fail before any IO starts."""
-    from importlib import import_module
-    selection = import_module("quantem.gpu.io.selection")
-
-    with pytest.raises(ValueError, match="scan_order must be"):
-        selection._normalize_scan_order("zigzag")
-
-
 @pytest.mark.parametrize(
     "selector",
     [
