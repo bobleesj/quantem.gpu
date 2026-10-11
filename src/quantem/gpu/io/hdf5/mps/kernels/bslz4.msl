@@ -96,38 +96,62 @@ inline void bufferLoadAt(
     syncCTA();
 }
 
+// A length that runs off the stream is reported as this, longer than any
+// block, so the caller refuses it without a second flag.
+constant uint DECOMP_LENGTH_PAST_STREAM = 0x7fffffff;
+
 inline uint readLSIC(
     threadgroup const uchar* buffer,
     const device uchar* compData,
-    long buf_offset, uint buf_end,
+    long buf_offset, uint buf_end, uint comp_end,
     thread uint& idx
 ) {
     uint num = 0;
     uchar next = 0xff;
-    while (next == 0xff && idx < buf_end) {
+    // The cache can reach past the stream, where it holds stale bytes.
+    uint cached_end = min(buf_end, comp_end);
+    while (next == 0xff && idx < cached_end) {
         next = buffer[idx - uint(buf_offset)];
         idx++;
         num += next;
     }
-    while (next == 0xff) {
+    while (next == 0xff && idx < comp_end) {
         next = compData[idx];
         idx++;
         num += next;
     }
-    return num;
+    return next == 0xff ? DECOMP_LENGTH_PAST_STREAM : num;
 }
 
-inline void decompressStream(
+// Returns false for a stream that does not decode to exactly decomp_end bytes
+// (a truncated or corrupt chunk, for example of a file still being written).
+// Every write is bounded by the block, so a bad stream never overwrites its
+// neighbours, and every read is bounded too: literals, match offsets and
+// length extensions lie inside the compressed stream, and a match copies from
+// bytes this block already wrote (0 < offset <= decomp_idx). Without the
+// bounds a damaged stream with intact framing decodes to wrong counts without
+// an error and copies from and to addresses outside the block. The same
+// streams are refused as by CUDA's decompressStream.
+//
+// A refused sequence is clamped to the room it has, so it copies only bytes
+// that are safe to copy, and decoding runs on to the end of the stream: the
+// loop has no early exit. An exit from this loop costs time on valid streams:
+// on an Apple M5 Max, returning at the first refused sequence took 11 to 22%
+// of this kernel's time and the clamped form takes 3 to 5%. All lanes of the
+// SIMD group see the same token values, so they clamp together.
+inline bool decompressStream(
     threadgroup uchar* buffer,
     device uchar* decompData,
     const device uchar* compData,
     uint comp_end,
+    uint decomp_end,
     uint tid
 ) {
     long buf_offset = 0;
     bufferLoadAt(buffer, compData, comp_end, buf_offset, tid);
     uint decomp_idx = 0;
     uint comp_idx = 0;
+    bool valid = true;
     while (comp_idx < comp_end) {
         uint buf_end = uint(buf_offset) + DECOMP_INPUT_BUFFER_SIZE;
         if (comp_idx + DECOMP_BUFFER_PREFETCH_DIST > buf_end) {
@@ -139,7 +163,10 @@ inline void decompressStream(
         comp_idx++;
         uint num_literals = tok.num_literals;
         if (tok.num_literals == 15)
-            num_literals += readLSIC(buffer, compData, buf_offset, buf_end, comp_idx);
+            num_literals += readLSIC(buffer, compData, buf_offset, buf_end, comp_end, comp_idx);
+        uint literal_room = min(comp_end - comp_idx, decomp_end - decomp_idx);
+        valid = valid && num_literals <= literal_room;
+        num_literals = min(num_literals, literal_room);
         uint literalStart = comp_idx;
         if (num_literals + comp_idx > buf_end)
             coopCopyNoOverlap(decompData + decomp_idx, compData + comp_idx,
@@ -150,7 +177,11 @@ inline void decompressStream(
                                     num_literals, tid, DECOMP_THREADS_PER_CHUNK);
         comp_idx += num_literals;
         decomp_idx += num_literals;
-        if (comp_idx < comp_end) {
+        // One byte cannot hold a match offset. The next turn reads it as a
+        // token and ends the stream.
+        uint remaining = comp_end - comp_idx;
+        valid = valid && remaining != 1;
+        if (remaining >= 2) {
             ushort match_offset;
             if (comp_idx + 2 > buf_end)
                 match_offset = readWordDevice(compData + comp_idx);
@@ -159,7 +190,11 @@ inline void decompressStream(
             comp_idx += 2;
             uint match_len = 4 + tok.num_matches;
             if (tok.num_matches == 15)
-                match_len += readLSIC(buffer, compData, buf_offset, buf_end, comp_idx);
+                match_len += readLSIC(buffer, compData, buf_offset, buf_end, comp_end, comp_idx);
+            // One unsigned comparison admits offsets 1 to decomp_idx; any other offset has no room.
+            uint match_room = uint(match_offset) - 1u < decomp_idx ? decomp_end - decomp_idx : 0u;
+            valid = valid && match_len <= match_room;
+            match_len = min(match_len, match_room);
             if (match_offset <= num_literals
                 && (long(literalStart) >= buf_offset
                     && literalStart + num_literals <= buf_end)) {
@@ -178,6 +213,7 @@ inline void decompressStream(
             decomp_idx += match_len;
         }
     }
+    return valid && decomp_idx == decomp_end;
 }
 
 inline uint read32be(const device uchar* p) {
@@ -186,8 +222,11 @@ inline uint read32be(const device uchar* p) {
 
 // =====================================================================
 // Kernel 1: Batched LZ4 decompression
-// Grid:  (n_frames, 1, (max_blocks+1)/2)
-// Block: (32, 2, 1)
+// Grid:  (n_frames, 1, ceil(max_blocks / LZ4_BLOCKS_PER_TG))
+// Block: (32, LZ4_BLOCKS_PER_TG, 1)
+// A block that does not decode to exactly its own bytes is reported in
+// errors: errors[0] takes the lowest such frame of the batch and errors[1]
+// one past the highest, so the host can name the frames.
 // =====================================================================
 kernel void h5lz4dc_batched(
     const device uchar* compressed          [[buffer(0)]],
@@ -198,6 +237,7 @@ kernel void h5lz4dc_batched(
     constant uint&      blocksize            [[buffer(5)]],
     constant uint&      frame_bytes          [[buffer(6)]],
     device uchar*       decompressed         [[buffer(7)]],
+    device atomic_uint* errors               [[buffer(8)]],
     uint3 tpig  [[threadgroup_position_in_grid]],
     uint3 tpit  [[thread_position_in_threadgroup]],
     uint3 tptg  [[threads_per_threadgroup]]
@@ -214,7 +254,12 @@ kernel void h5lz4dc_batched(
         uint comp_size = read32be(compressed + chunk_offset + blk_start);
         device uchar* output = decompressed + ulong(frame_id) * ulong(frame_bytes)
                                + block_in_frame * blocksize;
-        decompressStream(tg_buffer + tpit.y * 256, output, input, comp_size, tpit.x);
+        uint block_bytes = min(blocksize, frame_bytes - block_in_frame * blocksize);
+        if (!decompressStream(tg_buffer + tpit.y * 256, output, input, comp_size, block_bytes, tpit.x)
+            && tpit.x == 0) {
+            atomic_fetch_min_explicit(&errors[0], frame_id, memory_order_relaxed);
+            atomic_fetch_max_explicit(&errors[1], frame_id + 1, memory_order_relaxed);
+        }
     }
 }
 

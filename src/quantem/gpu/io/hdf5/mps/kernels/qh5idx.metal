@@ -538,6 +538,103 @@ inline void bslz4DecompressStreamDirectToThreadgroup(
     bslz4Barrier();
 }
 
+// The direct-input decoder for bytes that come straight from a file. It
+// returns false for a stream that does not decode to exactly one 8192-byte
+// block (a truncated or corrupt chunk, for example of a file still being
+// written), and no read or write leaves its buffer: literals, match offsets
+// and length extensions lie inside the compressed stream, a match copies from
+// bytes this block already wrote (0 < offset <= decoded), and every write
+// stays inside the block. Without the bounds a damaged stream with intact
+// framing decodes to wrong counts without an error and copies from and to
+// addresses outside the block.
+//
+// A refused sequence is clamped to the room it has, so it copies only bytes
+// that are safe to copy, and decoding runs on to the end of the stream: the
+// loop has no early exit. An exit from this loop costs time on valid streams:
+// on an Apple M5 Max, returning at the first refused sequence took 22% of the
+// fused kernel's time and the clamped form takes 3%. All lanes of the SIMD
+// group see the same token values, so they clamp together.
+inline bool bslz4DecompressStreamDirectBoundedToThreadgroup(
+    threadgroup uchar *decompressed,
+    const device uchar *compressed,
+    uint compressedLength,
+    uint threadIndex
+) {
+    uint outputIndex = 0;
+    uint inputIndex = 0;
+    bool valid = true;
+    while (inputIndex < compressedLength) {
+        BSLZ4Token token = bslz4DecodeToken(compressed[inputIndex++]);
+        uint literalCount = token.literals;
+        if (token.literals == 15) {
+            uchar next = 0xff;
+            while (next == 0xff && inputIndex < compressedLength) {
+                next = compressed[inputIndex++];
+                literalCount += next;
+            }
+            // A length that runs off the stream counts as longer than any
+            // block. Its sum alone does not say so: 32 bits can wrap to 0.
+            literalCount = next == 0xff ? 0xffffu : literalCount;
+        }
+        uint literalRoom = min(compressedLength - inputIndex, kBslz4BlockBytes - outputIndex);
+        valid = valid && literalCount <= literalRoom;
+        literalCount = min(literalCount, literalRoom);
+        uint literalStart = inputIndex;
+        bslz4CopyDeviceToThreadgroup(
+            decompressed + outputIndex,
+            compressed + inputIndex,
+            literalCount,
+            threadIndex
+        );
+        inputIndex += literalCount;
+        outputIndex += literalCount;
+        // One byte cannot hold a match offset. The next turn reads it as a
+        // token and ends the stream.
+        uint remaining = compressedLength - inputIndex;
+        valid = valid && remaining != 1u;
+        if (remaining >= 2u) {
+            ushort matchOffset = bslz4ReadWordDevice(compressed + inputIndex);
+            inputIndex += 2;
+            uint matchLength = 4 + token.matches;
+            if (token.matches == 15) {
+                uchar next = 0xff;
+                while (next == 0xff && inputIndex < compressedLength) {
+                    next = compressed[inputIndex++];
+                    matchLength += next;
+                }
+                // A length that runs off the stream counts as longer than any block.
+                matchLength = next == 0xff ? 0xffffu : matchLength;
+            }
+            // One unsigned comparison admits offsets 1 to outputIndex; any other offset has no room.
+            uint matchRoom = uint(matchOffset) - 1u < outputIndex ? kBslz4BlockBytes - outputIndex : 0u;
+            valid = valid && matchLength <= matchRoom;
+            matchLength = min(matchLength, matchRoom);
+            if (matchOffset <= literalCount) {
+                bslz4CopyRepeatDeviceToThreadgroup(
+                    decompressed + outputIndex,
+                    compressed + literalStart + literalCount - matchOffset,
+                    matchOffset,
+                    matchLength,
+                    threadIndex
+                );
+                bslz4Barrier();
+            } else {
+                bslz4Barrier();
+                bslz4CopyOverlapThreadgroupToThreadgroup(
+                    decompressed + outputIndex,
+                    decompressed + outputIndex - matchOffset,
+                    matchOffset,
+                    matchLength,
+                    threadIndex
+                );
+            }
+            outputIndex += matchLength;
+        }
+    }
+    bslz4Barrier();
+    return valid && outputIndex == kBslz4BlockBytes;
+}
+
 // Decode only a proven prefix of the LZ4 output. This is used after an exact
 // source-identity-bound audit has established that omitted uint16 high planes
 // contain no valid detector values. Boundary-crossing tokens are clipped
@@ -1251,6 +1348,12 @@ kernel void h5lz4dc_unshuffle_u16_identity_audited_single_block_qh5idx(
 // this entry point in the package-owned QH5 resource lets native Swift and
 // Python MPS share the dependency-safe LZ4 and uint16 bit-unshuffle code while
 // preserving their distinct IO metadata representations.
+//
+// The compressed bytes come straight from a file, so this entry point uses the
+// bounded stream decoder. A block that does not decode to exactly 8192 bytes
+// is reported in errors: errors[0] takes the lowest such frame of the batch
+// and errors[1] one past the highest, so the host can name the frames and
+// refuse the batch.
 kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5(
     const device uchar *compressed [[buffer(0)]],
     const device uint *chunkOffsets [[buffer(1)]],
@@ -1259,6 +1362,7 @@ kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5(
     const device uint *blockOffsets [[buffer(4)]],
     constant uint &frameElements [[buffer(5)]],
     device ushort *output [[buffer(6)]],
+    device atomic_uint *errors [[buffer(7)]],
     uint3 threadgroupPosition [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_simdgroup]],
     uint simdgroup [[simdgroup_index_in_threadgroup]]
@@ -1274,12 +1378,15 @@ kernel void h5lz4dc_unshuffle_u16_single_block_packed_h5(
             | (uint(compressed[header + 1u]) << 16u)
             | (uint(compressed[header + 2u]) << 8u)
             | uint(compressed[header + 3u]);
-        bslz4DecompressStreamDirectToThreadgroup(
-            shuffledBlock,
-            compressed + header + 4u,
-            compressedLength,
-            lane
-        );
+        if (!bslz4DecompressStreamDirectBoundedToThreadgroup(
+                shuffledBlock,
+                compressed + header + 4u,
+                compressedLength,
+                lane
+            ) && lane == 0u) {
+            atomic_fetch_min_explicit(&errors[0], frame, memory_order_relaxed);
+            atomic_fetch_max_explicit(&errors[1], frame + 1u, memory_order_relaxed);
+        }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
