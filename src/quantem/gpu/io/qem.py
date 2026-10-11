@@ -13,7 +13,6 @@ import copy
 import hashlib
 import math
 import os
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -68,31 +67,31 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
     if path.exists():
         raise FileExistsError(f"{path} already exists; choose a new destination.")
     metadata = {} if metadata is None else metadata
-    table = []
-    with tempfile.TemporaryFile(dir=path.parent) as body:
-        for number, chunk in enumerate(source.chunks):
-            if metal:
-                arrays = [np.frombuffer(buffer_view(buffer), np.dtype(dtype))
-                          for buffer, dtype in zip((*chunk.buffers, *source.spatial_chunks[number]), ARRAY_DTYPES)]
-            else:
-                arrays = [array.get() for array in chunk.arrays]
-            entries = []
-            for array in arrays:
-                # Arrays start on 8-byte boundaries so readers can view them in place.
-                body.write(b"\0" * ((-body.tell()) % 8))
-                entries.append(dict(offset=body.tell(), count=int(array.size)))
-                body.write(memoryview(array).cast("B"))
-            table.append(dict(first=chunk.first, scans=chunk.scans, arrays=entries))
-        header = dict(
-            version=1, profile=INTEGER_CODEC, interval=512,
-            shape=list(source.shape), dtype=source.dtype.name,
-            valid=encode_valid(source.valid_pixels), chunks=table, metadata=metadata,
-            container=qem_metadata.CONTAINER,
-            container_version=qem_metadata.CONTAINER_VERSION,
-            codec=INTEGER_CODEC,
-            scientific_metadata=qem_metadata.acquisition_metadata(source.shape, metadata),
-        )
-        write_envelope(path, header, body)
+    table, spans, cursor = [], [], 0
+    for number, chunk in enumerate(source.chunks):
+        if metal:
+            arrays = [np.frombuffer(buffer_view(buffer), np.dtype(dtype))
+                      for buffer, dtype in zip((*chunk.buffers, *source.spatial_chunks[number]), ARRAY_DTYPES)]
+        else:
+            arrays = chunk.arrays
+        entries = []
+        for array in arrays:
+            # Arrays start on 8-byte boundaries so readers can view them in place.
+            cursor += -cursor % 8
+            entries.append(dict(offset=cursor, count=int(array.size)))
+            spans.append((cursor, array))
+            cursor += array.nbytes
+        table.append(dict(first=chunk.first, scans=chunk.scans, arrays=entries))
+    header = dict(
+        version=1, profile=INTEGER_CODEC, interval=512,
+        shape=list(source.shape), dtype=source.dtype.name,
+        valid=encode_valid(source.valid_pixels), chunks=table, metadata=metadata,
+        container=qem_metadata.CONTAINER,
+        container_version=qem_metadata.CONTAINER_VERSION,
+        codec=INTEGER_CODEC,
+        scientific_metadata=qem_metadata.acquisition_metadata(source.shape, metadata),
+    )
+    write_envelope(path, header, cursor, spans if metal else ((offset, array.get()) for offset, array in spans))
 
 
 def save_float(path: str | Path, source: FloatANSResident, metadata: dict | None = None) -> None:
@@ -110,21 +109,18 @@ def save_float(path: str | Path, source: FloatANSResident, metadata: dict | None
         )
     # Build the authenticated directory from resident bytes, including newly
     # ingested sources. Only encoded blocks visit host storage for file writing.
-    with tempfile.TemporaryFile(dir=path.parent) as body:
-        header["chunks"] = []
-        for chunk in source._lanes.chunks:
-            if source.backend == "cuda":
-                arrays = (array.get() for array in chunk.arrays)
-            else:
-                arrays = (buffer_view(buffer) for buffer in chunk.buffers)
-            entry = {"first": chunk.first, "scans": chunk.scans}
-            for name, array in zip(("payload", "offset", "model"), arrays):
-                view = memoryview(array).cast("B")
-                entry[name + "_offset"] = body.tell()
-                entry[name + "_bytes"] = len(view)
-                body.write(view)
-            header["chunks"].append(entry)
-        write_envelope(path, header, body)
+    header["chunks"], spans, cursor = [], [], 0
+    metal = source.backend == "mps"
+    for chunk in source._lanes.chunks:
+        arrays = [buffer_view(buffer) for buffer in chunk.buffers] if metal else chunk.arrays
+        entry = {"first": chunk.first, "scans": chunk.scans}
+        for name, array in zip(("payload", "offset", "model"), arrays):
+            entry[name + "_offset"] = cursor
+            entry[name + "_bytes"] = array.nbytes
+            spans.append((cursor, array))
+            cursor += array.nbytes
+        header["chunks"].append(entry)
+    write_envelope(path, header, cursor, spans if metal else ((offset, array.get()) for offset, array in spans))
 
 
 def load_streamed(path, *, backend, representation, scan_shape, device, verbose):

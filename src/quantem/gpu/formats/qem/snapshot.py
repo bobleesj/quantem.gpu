@@ -142,36 +142,60 @@ def read_header(path: str | Path) -> tuple[dict, int]:
     return header, start
 
 
-def write_envelope(path: Path, header: dict, body) -> None:
-    """Publish ``header`` and the encoded arrays in ``body`` as a new ``.qem`` file.
+def write_envelope(path: Path, header: dict, size: int, spans) -> None:
+    """Publish ``header`` and a ``size``-byte body as a new ``.qem`` file, writing the body once.
 
-    ``body`` is an open file positioned at the end of the arrays. Its length
-    and per-block checksums go into the header; the file is written beside
-    ``path`` and renamed into place only when complete, so a reader never
-    sees a partial copy and an existing file is never replaced.
+    ``spans`` yields ``(offset, bytes)`` in body order; the bytes between two
+    spans are the zeros that align an array. Each 64 MiB block is hashed as it
+    is written, so nothing is read back. The header holds those checksums yet
+    precedes the body: every checksum is 64 hex characters, so placeholders
+    give the header its final length, the body is written behind that gap and
+    the header fills it last. The file is written beside ``path`` and linked
+    into place only when complete, so a reader never sees a partial copy and an
+    existing file is never replaced.
     """
-    header["bytes"] = body.tell()
-    body.seek(0)
-    header["sha256"] = []
-    while block := body.read(BLOCK_BYTES):
-        header["sha256"].append(hashlib.sha256(block).hexdigest())
-    blob = json.dumps(
-        header,
-        default=metadata.json_metadata,
-        sort_keys=True,
-        allow_nan=False,
-        separators=(",", ":"),
-    ).encode()
-    if len(blob) > 16 << 20:
+    blocks = [hashlib.sha256() for _ in range(math.ceil(size / BLOCK_BYTES))]
+    header["bytes"] = size
+    header["sha256"] = ["0" * 64] * len(blocks)
+
+    def encoded() -> bytes:
+        return json.dumps(
+            header,
+            default=metadata.json_metadata,
+            sort_keys=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+
+    def checksum(view, position: int) -> None:
+        """Add bytes that start at body offset ``position`` to the checksum of every block they cover."""
+        while len(view):
+            part = min(len(view), BLOCK_BYTES - position % BLOCK_BYTES)
+            blocks[position // BLOCK_BYTES].update(view[:part])
+            position += part
+            view = view[part:]
+
+    start = 56 + len(encoded())
+    if start - 56 > 16 << 20:
         raise ValueError("QEM metadata exceeds the 16 MiB header limit.")
     descriptor, temporary = tempfile.mkstemp(prefix=".qem-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as output:
-            output.write(metadata.MAGIC + struct.pack("<QQ", len(blob), 56 + len(blob)))
+            output.seek(start)
+            position = 0
+            for offset, piece in spans:
+                view = memoryview(piece).cast("B")
+                gap = bytes(offset - position)
+                checksum(gap, position)
+                output.write(gap)
+                checksum(view, offset)
+                output.write(view)
+                position = offset + len(view)
+            header["sha256"] = [block.hexdigest() for block in blocks]
+            blob = encoded()
+            output.seek(0)
+            output.write(metadata.MAGIC + struct.pack("<QQ", len(blob), start))
             output.write(hashlib.sha256(blob).digest() + blob)
-            body.seek(0)
-            while block := body.read(BLOCK_BYTES):
-                output.write(block)
             output.flush()
             os.fsync(output.fileno())
         publish_file(temporary, path)
