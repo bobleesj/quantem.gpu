@@ -440,13 +440,11 @@ class CustomFFT256(CustomFFTBase):
     def __init__(self) -> None:
         super().__init__(
             size=256,
-            cuda_code=build_cuda_code(256, _TWIDDLE_DECL, _FFT256_KERNELS),
-            kernel_names=(
-                "ifft256_rows_fused_pk_t64_mr8_packed",
-                "ifft256_cols_t64_mr8",
-                "ifft256_cols_accumulate_t64_mr8",
-                "ifft256_rows_fused_pk_full_t64_mr8_packed",
-            ),
+            cuda_code=build_cuda_code(_TWIDDLE_DECL, _FFT256_KERNELS),
+            rows="ifft256_rows_fused_pk_t64_mr8_packed",
+            cols="ifft256_cols_t64_mr8",
+            cols_accumulate="ifft256_cols_accumulate_t64_mr8",
+            rows_full="ifft256_rows_fused_pk_full_t64_mr8_packed",
             twiddle_name="TWIDDLE_256",
             rows_block=(64, 8, 1),
             rows_grid_y=32,

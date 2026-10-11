@@ -273,12 +273,11 @@ class CustomFFT128(CustomFFTBase):
     def __init__(self) -> None:
         super().__init__(
             size=128,
-            cuda_code=build_cuda_code(128, _TWIDDLE_DECL, _FFT128_KERNELS),
-            kernel_names=(
-                "ifft128_rows_fused_pk_t32_mr8_packed",
-                "ifft128_cols_t32_mr8",
-                "ifft128_cols_accumulate_t32_mr8",
-            ),
+            cuda_code=build_cuda_code(_TWIDDLE_DECL, _FFT128_KERNELS),
+            rows="ifft128_rows_fused_pk_t32_mr8_packed",
+            cols="ifft128_cols_t32_mr8",
+            cols_accumulate="ifft128_cols_accumulate_t32_mr8",
+            rows_full=None,
             twiddle_name="TWIDDLE_128",
             rows_block=(32, 8, 1),
             rows_grid_y=16,

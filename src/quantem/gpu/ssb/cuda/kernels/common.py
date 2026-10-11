@@ -34,11 +34,7 @@ __device__ __forceinline__ float2 cmul_i(float2 a) {
 }
 
 __device__ __forceinline__ float2 ld_float2(const float2* ptr, size_t idx) {
-#if __CUDA_ARCH__ >= 350
     return __ldg(ptr + idx);
-#else
-    return ptr[idx];
-#endif
 }
 
 __device__ __forceinline__ float2 ld_gqk_maybe_herm(
@@ -521,7 +517,7 @@ def corrected_fourier_sum_source(size: int) -> str:
     return _CORRECTED_FOURIER_SUM.replace("SIZE", str(size))
 
 
-def build_cuda_code(size: int, twiddle_decl: str, kernel_code: str) -> str:
+def build_cuda_code(twiddle_decl: str, kernel_code: str) -> str:
     """Assemble full CUDA module: twiddle constant + device functions + kernels."""
     return f'extern "C" {{\n{twiddle_decl}\n{_DEVICE_FUNCTIONS_CUDA}\n{kernel_code}\n}}'
 
@@ -594,32 +590,31 @@ class CustomFFTBase:
         *,
         size: int,
         cuda_code: str,
-        kernel_names: tuple[str, ...],
+        rows: str,
+        cols: str,
+        cols_accumulate: str | None,
+        rows_full: str | None,
         twiddle_name: str,
         rows_block: tuple[int, int, int],
         rows_grid_y: int,
         cols_block: tuple[int, int, int],
         cols_grid_y: int,
     ) -> None:
-        """``kernel_names``: the fused row IFFT, the column IFFT, then optionally the column-accumulate and the
-        full-aberration row kernels; a subclass fetches any further kernel it names."""
+        """Compile one size's module and fetch its kernels: the fused row IFFT, the column IFFT, the column-accumulate
+        kernel of ``ifft2_fused_pk_col_accumulate`` (None where a subclass replaces that method) and the
+        full-aberration row kernel (None where the size has none); a subclass fetches any further kernel it uses."""
         self._size = size
         options = ("--std=c++11", "--use_fast_math", "--maxrregcount=96", "-Xptxas=-dlcm=ca")
         self._module = cp.RawModule(
             code=cuda_code,
             options=options,
-            name_expressions=kernel_names,
+            name_expressions=tuple(name for name in (rows, cols, cols_accumulate, rows_full) if name is not None),
         )
         self._fourier_sum = self._module.get_function(f"ssb{size}_corrected_fourier_sum_t256")
-        self._rows_fused_pk = self._module.get_function(kernel_names[0])
-        self._cols = self._module.get_function(kernel_names[1])
-        self._cols_accumulate = (
-            self._module.get_function(kernel_names[2]) if len(kernel_names) > 2 else None
-        )
-        # Used by ifft2_inplace_fused_pk_full when a subclass names it.
-        self._rows_fused_pk_full = (
-            self._module.get_function(kernel_names[3]) if len(kernel_names) > 3 else None
-        )
+        self._rows_fused_pk = self._module.get_function(rows)
+        self._cols = self._module.get_function(cols)
+        self._cols_accumulate = None if cols_accumulate is None else self._module.get_function(cols_accumulate)
+        self._rows_fused_pk_full = None if rows_full is None else self._module.get_function(rows_full)
         self._colvar_group = 32
         self._rows_fused_pk_block = rows_block
         self._rows_fused_pk_grid_y = rows_grid_y
@@ -795,8 +790,6 @@ class CustomFFTBase:
         Writes partial sum/sumsq planes instead of the complex result.
         """
         N = self._size
-        if self._cols_accumulate is None:
-            raise RuntimeError("col_accumulate kernel not available")
         num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
         n_groups = (num_bf + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):
