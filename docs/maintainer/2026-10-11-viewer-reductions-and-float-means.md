@@ -70,6 +70,23 @@ On MPS the dense uint16 viewer went from 0.46 s to 0.11 s and the float32 one
 from 0.39 s to 0.02 s. `TorchBackend` float sums moved to float64 accuracy with
 the loops (float64 on CUDA, the Metal kernel on MPS), so no precision was lost.
 
+### Signed data and scan regions of dense owners
+
+Routing dense owners to their backends exposed what those backends did with
+data that is not counts. A review of the branch found, and tests now cover:
+
+- int16 data with negative totals (dark-subtracted frames): `ArrayBackend`,
+  `TorchBackend.reduce_frames` and the CuPy `reduce_frames` and mean summed in
+  uint64 or cast the total to it, so a negative total came back near 1.8e19,
+  and the Torch maximum started from 0. Signed integers now accumulate in
+  int64 and a maximum starts from the first chunk. Unsigned results are
+  unchanged.
+- A scan region's mean gathers its patterns: `ArrayBackend` and the CuPy
+  backend took the whole selection at once (10.5 GB for a 400 x 400 region of
+  128 x 128 float32 patterns). Both now gather in chunks.
+- `ArrayBackend.reduce_frames(..., "mean")` of float32 data used a float32
+  mean; it now divides the float64 total once.
+
 ## Metal scan-ROI reductions summed on the host
 
 MPS `CountDetectorCompute.reduce_frames` decoded each run of selected scans,
@@ -130,6 +147,8 @@ cost (one window, one flag upload) exceeds what it saves on 13 patterns.
 - A `.qem` save writes its body twice (a temporary file, then the published
   file) and hashes it on one thread: for 4.3 GB on MPS 1.28 s final write,
   1.24 s SHA-256, 1.02 s temporary write and 0.36 s read back of a 3.9 s save.
+- The exact uint64 products (`reduce_frames_exact`, `masked_sum_exact`) are defined
+  for counts; signed data with a negative total has no uint64 value there.
 - `TorchBackend.masked_sum` of float data sums in float32 (1 unit in the last
   place on the dense float32 stack above); the residents' virtual images are
   exact.
