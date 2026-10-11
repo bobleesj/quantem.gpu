@@ -232,7 +232,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
     """Backends may apply their canonical fit start only when none was given."""
     from quantem.gpu.ssb import workflow
 
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     data = np.zeros((2, 2, 2, 2), dtype=np.uint8)
     common = {
         "backend": "mps",

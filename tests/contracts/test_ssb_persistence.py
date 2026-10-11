@@ -74,7 +74,7 @@ class _Backend:
 def _session(monkeypatch, source, backend, device="mps"):
     from quantem.gpu.ssb import workflow
 
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: device)
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: device)
     monkeypatch.setattr(
         workflow.SSB,
         "_backend_protocol",
@@ -248,7 +248,7 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
     from quantem.gpu.ssb import workflow
 
     backend = _Backend()
-    monkeypatch.setattr(workflow, "_resolve_backend", lambda _backend: "mps")
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
     monkeypatch.setattr(
         workflow.SSB,
         "_backend_protocol",

@@ -77,7 +77,7 @@ def test_ssb_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:
     monkeypatch.setattr(device, "_mps_probe", lambda: (False, "no Apple GPU"))
 
     with pytest.raises(RuntimeError, match="No QuantEM GPU backend is available"):
-        workflow._resolve_backend("auto")
+        workflow.resolve("auto")
 
 
 def test_reconstruct_series_reuses_only_exact_results(
