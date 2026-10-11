@@ -33,9 +33,6 @@ from quantem.gpu.resident.hot_pixels import (
     normalize_hot_pixel_correction,
 )
 
-__all__ = ["Dataset4dstemGPU", "load"]
-
-
 def load(
     source: str | os.PathLike[str] | Sequence[str | os.PathLike[str]],
     *,
@@ -45,11 +42,7 @@ def load(
     dataset_path: str | None = None,
     scan_shape: tuple[int, int] | None = None,
     scan_order: ScanOrder = "row-major",
-    scan_region: (
-        tuple[int, int, int, int]
-        | Sequence[tuple[int, int, int, int]]
-        | None
-    ) = None,
+    scan_region: tuple[int, int, int, int] | None = None,
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
     hot_pixel_correction: str = "median",
@@ -309,21 +302,18 @@ def load(
             )
         if scan_order != "row-major" or apply_mask:
             raise NotImplementedError("Precision loading supports scan_region and detector_region; remove scan-order and masking controls.")
-        multiple_regions = scan_region is not None and len(scan_region) > 0 and isinstance(scan_region[0], (tuple, list))
-        regions = list(scan_region) if multiple_regions else [scan_region]
         loaded = []
         try:
             for path in sources:
-                for region in regions:
-                    loaded.append(load_precision(path, dtype=dtype, device=device,
-                        scan_shape=scan_shape, dataset_path=dataset_path,
-                        scan_region=region, detector_region=detector_region, verbose=verbose,
-                        backend=precision_backend))
+                loaded.append(load_precision(path, dtype=dtype, device=device,
+                    scan_shape=scan_shape, dataset_path=dataset_path,
+                    scan_region=scan_region, detector_region=detector_region, verbose=verbose,
+                    backend=precision_backend))
         except BaseException:
             for item in loaded:
                 item.close()
             raise
-        return loaded[0] if single and not multiple_regions else loaded
+        return loaded[0] if single else loaded
 
     # Ordinary HDF5: encoded on CUDA and MPS by default, paired on request.
     if representation is None and sources and all(

@@ -242,12 +242,10 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                     arrays.append(arena[spec["offset"]:end].view(dtype))
                 source.chunks.append(Chunk(chunk["first"], chunk["scans"], tuple(arrays)))
             source.ready_scans = math.prod(shape[:2])
-            metadata = dict(header["metadata"])
-            if "scientific_metadata" in header:
-                metadata = qem_metadata.effective_metadata(metadata, header["scientific_metadata"])
-                metadata["scientific_metadata"] = header["scientific_metadata"]
-                metadata["container"] = header["container"]
-                metadata["container_version"] = header["container_version"]
+            metadata = qem_metadata.effective_metadata(dict(header["metadata"]), header["scientific_metadata"])
+            metadata["scientific_metadata"] = header["scientific_metadata"]
+            metadata["container"] = header["container"]
+            metadata["container_version"] = header["container_version"]
             metadata.setdefault("original_source_path", metadata.get("source_path"))
             metadata.update(
                 resident_metadata(shape, source.dtype, source.nbytes, backend="cuda"),
@@ -296,11 +294,10 @@ def _load_counts_mps(path, header, start, verbose):
             original_source_path=header["metadata"].get("source_path"),
             source_path=str(path),
         )
-        if "scientific_metadata" in header:
-            metadata = qem_metadata.effective_metadata(metadata, header["scientific_metadata"])
-            metadata["scientific_metadata"] = header["scientific_metadata"]
-            metadata["container"] = header["container"]
-            metadata["container_version"] = header["container_version"]
+        metadata = qem_metadata.effective_metadata(metadata, header["scientific_metadata"])
+        metadata["scientific_metadata"] = header["scientific_metadata"]
+        metadata["container"] = header["container"]
+        metadata["container_version"] = header["container_version"]
         return mps_counts_dataset(resident, metadata, started, verbose)
     except BaseException:
         resident.release()
