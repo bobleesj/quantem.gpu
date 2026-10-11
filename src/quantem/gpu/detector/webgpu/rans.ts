@@ -11,9 +11,10 @@
  * verified to terminate each column stream exactly at build time.
  */
 
-import { ransHttpSource, ransLocalSource, ransLocalFilesSource, copyRansPayload, payloadGroupLimit, type RansByteSource, type RansDirectoryHandle, type RansPayloadProfile } from "./rans-source";
+import { copyRansPayload, payloadGroupLimit, type RansByteSource, type RansPayloadProfile } from "./rans-source";
 import { qemFilesSource, type QemByteFile } from "./qem-source";
 import { DetectorCompute } from "./backend";
+import { EXACT_INTEGER_COM_WGSL } from "./exact-com";
 import type { Uint32ImageView } from "./borrowed-image";
 
 const WINDOW = 256;
@@ -209,47 +210,21 @@ fn add_wide(index: u32, value: u32) {
     add_wide(p.N * 2u + scan, value * (k % p.n_units));
   }
 }`;
+// Center of mass from the exact paired-word moments: each moment divided by the weight and
+// rounded once (ratioU64), the same quotient the dense backend and CUDA/MPS produce. One call
+// site in a two-component loop keeps the division inlined once (Windows FXC).
 const MOMENT_RATIO_WGSL = /* wgsl */ `
+${EXACT_INTEGER_COM_WGSL}
 @group(0) @binding(0) var<storage, read> moments: array<u32>;
 @group(0) @binding(1) var<storage, read_write> com: array<f32>;
 @group(0) @binding(2) var<uniform> p: vec4u;
-fn wide(index: u32) -> f32 { return f32(moments[index * 2u + 1u]) * 4294967296.0 + f32(moments[index * 2u]); }
-// Exact product of a paired-word count with a detector coordinate (<=65535).
-fn multiply_coordinate(low: u32, high: u32, coordinate: u32) -> vec2u {
-  let lower = (low & 65535u) * coordinate;
-  let upper = (low >> 16u) * coordinate + (lower >> 16u);
-  return vec2u((upper << 16u) | (lower & 65535u), high * coordinate + (upper >> 16u));
-}
-fn ratio(index: u32, scan: u32) -> f32 {
-  let denominator = wide(scan);
-  if (denominator == 0.0) { return 0.0; }
-  // Retain the accurate integer quotient/remainder convention of the stock
-  // byte-count CoM kernel when both moments fit in one word.
-  if (moments[index * 2u + 1u] == 0u && moments[scan * 2u + 1u] == 0u) {
-    let num = moments[index * 2u]; let den = moments[scan * 2u];
-    let quotient = num / den;
-    return f32(quotient) + f32(num - quotient * den) / f32(den);
-  }
-  // Divide wide integers before conversion. Converting both large moments to
-  // f32 first loses a bit even for a perfectly uniform detector (255.5 px).
-  let num = vec2u(moments[index * 2u], moments[index * 2u + 1u]);
-  let den = vec2u(moments[scan * 2u], moments[scan * 2u + 1u]);
-  var quotient = 0u;
-  for (var bit = 32768u; bit > 0u; bit >>= 1u) {
-    let candidate = quotient | bit;
-    let product = multiply_coordinate(den.x, den.y, candidate);
-    if (product.y < num.y || (product.y == num.y && product.x <= num.x)) { quotient = candidate; }
-  }
-  let product = multiply_coordinate(den.x, den.y, quotient);
-  let remainderLow = num.x - product.x;
-  let remainderHigh = num.y - product.y - select(0u, 1u, num.x < product.x);
-  let remainder = f32(remainderHigh) * 4294967296.0 + f32(remainderLow);
-  return f32(quotient) + remainder / denominator;
-}
 @compute @workgroup_size(256) fn main(@builtin(global_invocation_id) g: vec3u) {
   let scan = g.x; if (scan >= p.x) { return; }
-  com[scan] = ratio(p.x + scan, scan);
-  com[p.x + scan] = ratio(p.x * 2u + scan, scan);
+  let weight = U64Words(moments[scan * 2u], moments[scan * 2u + 1u]);
+  for (var component = 1u; component <= 2u; component++) {
+    let index = p.x * component + scan;
+    com[p.x * (component - 1u) + scan] = ratioU64(U64Words(moments[index * 2u], moments[index * 2u + 1u]), weight);
+  }
 }`;
 // images += add - sub exactly (mod 2^32; every true sum fits), then clear the accumulators.
 const APPLY_WGSL = /* wgsl */ `
@@ -347,10 +322,6 @@ export class RansResidentSet {
     for (let t = 0; t < this.T; t++) this.computes.push(new RansDetectorCompute(this, t));
   }
 
-  static async load(device: GPUDevice, baseUrl: string, onStatus: (text: string) => void = () => {}): Promise<RansResidentSet> {
-    return this.loadSource(device, ransHttpSource(baseUrl), onStatus);
-  }
-
   /** Load one .qem count acquisition through the same GPU decoder; `signal` cancels it, downloads included. */
   static async loadQemFile(device: GPUDevice, file: QemByteFile, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], signal?: AbortSignal): Promise<RansResidentSet> {
     return this.loadQemFiles(device, [file], onStatus, badPixels, signal);
@@ -369,18 +340,6 @@ export class RansResidentSet {
       return set;
     }
     catch (error) { source.dispose?.(); throw error; }
-  }
-
-  /** Load an exact exported series from a user-selected local folder. */
-  static async loadLocal(device: GPUDevice, directory: RansDirectoryHandle, onStatus: (text: string) => void = () => {}): Promise<RansResidentSet> {
-    const started = performance.now();
-    return this.loadSource(device, await ransLocalSource(directory), onStatus, started);
-  }
-
-  /** Load files supplied by an input with the webkitdirectory attribute. */
-  static async loadFiles(device: GPUDevice, files: ArrayLike<File>, onStatus: (text: string) => void = () => {}): Promise<RansResidentSet> {
-    const started = performance.now();
-    return this.loadSource(device, await ransLocalFilesSource(files), onStatus, started);
   }
 
   private static async loadSource(device: GPUDevice, source: RansByteSource, onStatus: (text: string) => void, started = performance.now()): Promise<RansResidentSet> {
@@ -917,8 +876,6 @@ export class RansDetectorCompute {
   maskedCoMBuffer(...args: Parameters<DetectorCompute["maskedCoMBuffer"]>): ReturnType<DetectorCompute["maskedCoMBuffer"]> { return this.numericalProducts().maskedCoMBuffer(...args); }
   maskedDpc(...args: Parameters<DetectorCompute["maskedDpc"]>): ReturnType<DetectorCompute["maskedDpc"]> { return this.numericalProducts().maskedDpc(...args); }
   maskedDpcBuffer(...args: Parameters<DetectorCompute["maskedDpcBuffer"]>): ReturnType<DetectorCompute["maskedDpcBuffer"]> { return this.numericalProducts().maskedDpcBuffer(...args); }
-  maskedDpcMagnitude(...args: Parameters<DetectorCompute["maskedDpcMagnitude"]>): ReturnType<DetectorCompute["maskedDpcMagnitude"]> { return this.numericalProducts().maskedDpcMagnitude(...args); }
-  maskedDpcMagnitudeBuffer(...args: Parameters<DetectorCompute["maskedDpcMagnitudeBuffer"]>): ReturnType<DetectorCompute["maskedDpcMagnitudeBuffer"]> { return this.numericalProducts().maskedDpcMagnitudeBuffer(...args); }
   maskedIDpc(...args: Parameters<DetectorCompute["maskedIDpc"]>): ReturnType<DetectorCompute["maskedIDpc"]> { return this.numericalProducts().maskedIDpc(...args); }
   maskedIDpcBuffer(...args: Parameters<DetectorCompute["maskedIDpcBuffer"]>): ReturnType<DetectorCompute["maskedIDpcBuffer"]> { return this.numericalProducts().maskedIDpcBuffer(...args); }
   dispose(): void { this.products?.dispose(); this.products = undefined; }

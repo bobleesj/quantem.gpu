@@ -10,7 +10,7 @@
 import {
   cachedPipeline,
   decodeBslz4Batch,
-  decodeBslz4MaskedSumLow8Batch,
+  decodeBslz4MaskedSumBatch,
   maskedSumBlockIds,
   selectedBlockIdsCover,
   sliceMaskedSumSpecsByScanRegion,
@@ -32,8 +32,6 @@ import {
   readH5VolumeFromBlockIndex,
   readH5MasterInfo,
   readH5Volume,
-  readH5VolumeFromFrameIndex,
-  type H5VolumeFrameIndex,
 } from "./h5reader";
 
 type SourceDtype = "uint8" | "uint16" | "uint32" | "float32";
@@ -57,11 +55,9 @@ export interface LocalH5LoadProfile extends LogicalPixelHashProfile {
   packMs: number;
   decompressMs: number;
   uploadMs: number;
-  uploadCopyWaitMs?: number;
   detBinMs?: number;
   decodeBuildMs: number;
   gpuWaitMs: number;
-  decodeComputeWaitMs?: number;
   decodeProfileMs: number;
   fileGB: number;
   blockIndexGB?: number;
@@ -88,10 +84,8 @@ export interface LocalH5LoadProfile extends LogicalPixelHashProfile {
   groupSize: number;
   decodeBatch: number;
   decodeVariant: string;
-  decodeProfileSplit?: boolean;
-  frameIndexFiles: number;
   blockIndexFiles: number;
-  parseMode: "h5-btree" | "frame-index" | "block-index" | "mixed" | "selected-block-sidecar";
+  parseMode: "h5-btree" | "block-index" | "mixed" | "selected-block-sidecar";
   adapterInfo: string;
   softwareAdapter: boolean;
   timestampQuery: boolean;
@@ -163,9 +157,8 @@ export interface LocalH5MaskedSumProfile {
   productBatch: number;
   sidecarFiles: number;
   sidecarCoverage: "used" | "unavailable" | "missing_blocks";
-  frameIndexFiles: number;
   blockIndexFiles: number;
-  parseMode: "h5-btree" | "frame-index" | "block-index" | "mixed" | "selected-block-sidecar";
+  parseMode: "h5-btree" | "block-index" | "mixed" | "selected-block-sidecar";
   productProfile: Bslz4MaskedSumProfile;
   adapterInfo: string;
   softwareAdapter: boolean;
@@ -187,7 +180,6 @@ interface ReadJob {
   id: number;
   name: string;
   file: File;
-  frameIndex?: H5VolumeFrameIndex;
   blockIndexFile?: File;
 }
 
@@ -218,12 +210,6 @@ interface ParsedWorkerVolume {
   nFrames: number;
   chunks: Bslz4Spec[];
   chunkScanCounts: number[];
-}
-
-interface LocalDataFileItem {
-  file: File;
-  startScan?: number;
-  nFrames?: number;
 }
 
 type Show4DSTEMFileSystemFileHandle = {
@@ -290,11 +276,6 @@ export function show4DSTEMHasLocalFiles(): boolean {
   return localFilesByPath.size > 0 || localFilesByName.size > 0;
 }
 
-export function clearShow4DSTEMLocalFiles(): void {
-  localFilesByPath.clear();
-  localFilesByName.clear();
-}
-
 export async function collectShow4DSTEMLocalH5Files(
   directory: Show4DSTEMFileSystemDirectoryHandle,
   maxFiles = 10000,
@@ -332,15 +313,6 @@ export async function collectShow4DSTEMLocalH5Files(
 function localFileFor(path: string): File | null {
   const clean = normalisePath(path);
   return localFilesByPath.get(clean) || localFilesByName.get(basename(clean)) || null;
-}
-
-function frameIndexFor(path: string): H5VolumeFrameIndex | undefined {
-  const manifest = typeof globalThis !== "undefined"
-    ? (globalThis as { __QT_H5_LOCAL_FRAME_INDEX?: Record<string, H5VolumeFrameIndex> }).__QT_H5_LOCAL_FRAME_INDEX
-    : undefined;
-  if (!manifest) return undefined;
-  const clean = normalisePath(path);
-  return manifest[clean] || manifest[basename(clean)];
 }
 
 function localBlockIndexFor(path: string): File | undefined {
@@ -484,64 +456,6 @@ function readBE32(b, off) {
   return ((b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]) >>> 0;
 }
 
-function parseVolumeFromFrameIndex(buffer, index) {
-  const detRows = Math.round(Number(index.detRows));
-  const detCols = Math.round(Number(index.detCols));
-  const nFrames = Math.round(Number(index.nFrames));
-  const srcDtype = index.srcDtype || "uint16";
-  const detSize = detRows * detCols;
-  const offsets = index.frameOffsets || [];
-  if (offsets.length < nFrames) {
-    throw new Error("HDF5 frame index has " + offsets.length + " offsets, expected " + nFrames + ".");
-  }
-  const srcBytes = srcDtype === "uint8" ? 1 : (srcDtype === "uint32" || srcDtype === "float32") ? 4 : 2;
-  const fileBytes = new Uint8Array(buffer);
-  const blockBytes = readBE32(fileBytes, offsets[0] + 8);
-  const blockElems = blockBytes / srcBytes;
-  const nBlocksPerFrame = Math.ceil(detSize / blockElems);
-  const frameStep = Math.max(1, Math.floor((1024 * 1024 * 1024) / detSize));
-  const chunks = [];
-  const chunkScanCounts = [];
-  const transfers = [buffer];
-  for (let start = 0; start < nFrames; start += frameStep) {
-    const stop = Math.min(nFrames, start + frameStep);
-    const framesThisChunk = stop - start;
-    let rangeStart = Number.POSITIVE_INFINITY;
-    let rangeEnd = 0;
-    const meta = new Uint32Array(framesThisChunk * nBlocksPerFrame * 2);
-    let m = 0;
-    for (let f = start; f < stop; f++) {
-      const addr = offsets[f];
-      rangeStart = Math.min(rangeStart, addr);
-      let pos = 12;
-      for (let b = 0; b < nBlocksPerFrame; b++) {
-        const clen = readBE32(fileBytes, addr + pos);
-        meta[m++] = addr + pos + 4;
-        meta[m++] = clen;
-        pos += 4 + clen;
-      }
-      rangeEnd = Math.max(rangeEnd, addr + pos);
-    }
-    for (let i = 0; i < meta.length; i += 2) {
-      meta[i] -= rangeStart;
-    }
-    transfers.push(meta.buffer);
-    chunks.push({
-      compressed: fileBytes.subarray(rangeStart, rangeEnd),
-      blockMeta: meta,
-      nFrames: framesThisChunk,
-      nBlocksPerFrame,
-      blockElems,
-      detSize,
-    });
-    chunkScanCounts.push(framesThisChunk);
-  }
-  return {
-    volume: { detRows, detCols, detSize, blockElems, nBlocksPerFrame, srcDtype, nFrames, chunks, chunkScanCounts },
-    transfers,
-  };
-}
-
 function parseVolumeFromBlockIndex(buffer, indexBuffer, name) {
   const bytes = new Uint8Array(indexBuffer);
   const magic = new TextDecoder().decode(bytes.subarray(0, 8));
@@ -594,7 +508,7 @@ function parseVolumeFromBlockIndex(buffer, indexBuffer, name) {
 }
 
 self.onmessage = async (event) => {
-  const { id, name, file, frameIndex, blockIndexFile } = event.data;
+  const { id, name, file, blockIndexFile } = event.data;
   const t0 = performance.now();
   try {
     if (blockIndexFile) {
@@ -607,12 +521,6 @@ self.onmessage = async (event) => {
     }
     const buffer = await file.arrayBuffer();
     const readMs = performance.now() - t0;
-    if (frameIndex) {
-      const pt = performance.now();
-      const parsed = parseVolumeFromFrameIndex(buffer, frameIndex);
-      self.postMessage({ id, name, volume: parsed.volume, fileBytes: file.size, readMs, parseMs: performance.now() - pt }, parsed.transfers);
-      return;
-    }
     self.postMessage({ id, name, buffer, fileBytes: file.size, readMs }, [buffer]);
   } catch (err) {
     self.postMessage({ id, name, fileBytes: file ? file.size || 0 : 0, readMs: performance.now() - t0, error: err instanceof Error ? err.message : String(err) });
@@ -634,7 +542,6 @@ function workerPool(count: number): Worker[] {
 function readFiles(
   files: File[],
   workerCount: number,
-  frameIndexLookup?: (name: string) => H5VolumeFrameIndex | undefined,
   blockIndexLookup?: (name: string) => File | undefined,
 ): Promise<ReadResult>[] {
   if (workerCount <= 0) {
@@ -673,13 +580,7 @@ function readFiles(
     if (next >= files.length) return;
     const id = next++;
     const blockIndexFile = blockIndexLookup?.(files[id].name);
-    const job: ReadJob = {
-      id,
-      name: files[id].name,
-      file: files[id],
-      blockIndexFile,
-      frameIndex: blockIndexFile ? undefined : frameIndexLookup?.(files[id].name),
-    };
+    const job: ReadJob = { id, name: files[id].name, file: files[id], blockIndexFile };
     worker.onmessage = (event: MessageEvent<ReadResult>) => {
       const data = event.data;
       if (data.error) rejects[data.id](new Error(data.error));
@@ -695,37 +596,6 @@ function readFiles(
   };
   workerPool(workerCount).forEach(pump);
   return results;
-}
-
-function dataFileItemsForScanRegion(
-  files: File[],
-  scanRows: number,
-  scanCols: number,
-  scanRegion: readonly [number, number, number, number] | null,
-): LocalDataFileItem[] {
-  if (!scanRegion) return files.map((file) => ({ file }));
-  const { region } = normaliseScanRegion(scanRows, scanCols, scanRegion);
-  if (!region) return files.map((file) => ({ file }));
-  const [r0, r1, c0, c1] = region;
-  if (r0 === 0 && r1 === scanRows && c0 === 0 && c1 === scanCols) {
-    return files.map((file) => ({ file }));
-  }
-  const items: LocalDataFileItem[] = [];
-  let cursor = 0;
-  for (const file of files) {
-    const index = frameIndexFor(file.name);
-    if (!index) return files.map((fallback) => ({ file: fallback }));
-    const nFrames = Math.max(0, Math.round(index.nFrames));
-    items.push({ file, startScan: cursor, nFrames });
-    cursor += nFrames;
-  }
-  const firstSource = r0 * scanCols + c0;
-  const lastSourceExclusive = (r1 - 1) * scanCols + c1;
-  return items.filter((item) => {
-    const start = item.startScan ?? 0;
-    const stop = start + (item.nFrames ?? 0);
-    return start < lastSourceExclusive && stop > firstSource;
-  });
 }
 
 function parseEmbeddedBadPixels(raw: string | undefined): Uint32Array | null {
@@ -879,12 +749,9 @@ function accumulateProfile(dst: Bslz4BatchProfile, src: Bslz4BatchProfile): void
   dst.specs += src.specs;
   dst.compressedMB += src.compressedMB;
   dst.uploadMs += src.uploadMs;
-  dst.uploadCopyWaitMs = (dst.uploadCopyWaitMs ?? 0) + (src.uploadCopyWaitMs ?? 0);
   dst.buildMs += src.buildMs;
   dst.gpuWaitMs += src.gpuWaitMs;
-  dst.decodeComputeWaitMs = (dst.decodeComputeWaitMs ?? 0) + (src.decodeComputeWaitMs ?? 0);
   dst.totalMs += src.totalMs;
-  dst.profileSplit = Boolean(dst.profileSplit || src.profileSplit);
 }
 
 const ZERO_BAD_PIXELS_WGSL = `
@@ -1126,11 +993,9 @@ export async function loadShow4DSTEMLocalH5Master(
   const scanCount = outputRows * outputCols;
   const detBin = safeInt(options.detBin, 1, 1, 16);
   const low8Only = typeof globalThis !== "undefined" && (globalThis as { __BSLZ4_LOW8_ONLY?: boolean }).__BSLZ4_LOW8_ONLY === true;
-  const dataItems = dataFileItemsForScanRegion(dataFiles, scanRows, scanCols, region);
-  const blockIndexedDataItems = dataItems.length > 0 && dataItems.every((item) => Boolean(localBlockIndexFor(item.file.name)));
-  const frameIndexedDataItems = dataItems.length > 0 && dataItems.every((item) => Boolean(frameIndexFor(item.file.name)));
+  const blockIndexedDataFiles = dataFiles.every((file) => Boolean(localBlockIndexFor(file.name)));
   const defaultWorkerCount = low8Only
-    ? (!region && (blockIndexedDataItems || frameIndexedDataItems) ? 8 : 2)
+    ? (!region && blockIndexedDataFiles ? 8 : 2)
     : Math.min(4, navigator.hardwareConcurrency || 4);
   const workerCount = safeInt(options.workerCount, defaultWorkerCount, 0, 8);
   const defaultGroupSize = low8Only ? (region && scanCount <= 256 * 256 ? 4 : 8) : 4;
@@ -1144,7 +1009,7 @@ export async function loadShow4DSTEMLocalH5Master(
   const { badPixels, totalFrames } = await readMasterBadPixelsAndFrames(master, embeddedBadPixels);
   const masterReadMs = performance.now() - masterBegin;
 
-  const reads = readFiles(dataItems.map((item) => item.file), workerCount, frameIndexFor, localBlockIndexFor);
+  const reads = readFiles(dataFiles, workerCount, localBlockIndexFor);
   const gpuChunks: LocalH5GpuChunk[] = [];
   let pendingDecode: Promise<{ device: GPUDevice; buffers: GPUBuffer[]; mode: number; profile: Bslz4BatchProfile } | null> | null = null;
   let pendingSpecs: ParsedSpec[] = [];
@@ -1164,7 +1029,6 @@ export async function loadShow4DSTEMLocalH5Master(
   let readWorkerMs = 0;
   let parseMs = 0;
   let packMs = 0;
-  let frameIndexFiles = 0;
   let blockIndexFiles = 0;
   let sourceDtype: SourceDtype | "unknown" = "unknown";
   let decodeDtype: DecodeDtype = "uint8";
@@ -1176,12 +1040,9 @@ export async function loadShow4DSTEMLocalH5Master(
     specs: 0,
     compressedMB: 0,
     uploadMs: 0,
-    uploadCopyWaitMs: 0,
     buildMs: 0,
     gpuWaitMs: 0,
-    decodeComputeWaitMs: 0,
     totalMs: 0,
-    profileSplit: false,
   };
   const drain = async (): Promise<void> => {
     if (!pendingDecode) return;
@@ -1220,10 +1081,9 @@ export async function loadShow4DSTEMLocalH5Master(
     pendingSpecs = [];
   };
 
-  for (let groupStart = 0; groupStart < dataItems.length; groupStart += groupSize) {
+  for (let groupStart = 0; groupStart < dataFiles.length; groupStart += groupSize) {
     const specs: ParsedSpec[] = [];
-    for (let i = groupStart; i < Math.min(groupStart + groupSize, dataItems.length); i++) {
-      const item = dataItems[i];
+    for (let i = groupStart; i < Math.min(groupStart + groupSize, dataFiles.length); i++) {
       const waitBegin = performance.now();
       const read = await reads[i];
       readWaitMs += performance.now() - waitBegin;
@@ -1232,14 +1092,8 @@ export async function loadShow4DSTEMLocalH5Master(
       blockIndexBytes += read.blockIndexBytes || 0;
 
       const parseBegin = performance.now();
-      const frameIndex = frameIndexFor(read.name);
-      const vol = read.volume
-        ? read.volume
-        : frameIndex
-          ? readH5VolumeFromFrameIndex(read.buffer!, read.name, frameIndex)
-          : readH5Volume(read.buffer!, read.name);
+      const vol = read.volume ?? readH5Volume(read.buffer!, read.name);
       if (read.blockIndexBytes) blockIndexFiles += 1;
-      else if (read.volume || frameIndex) frameIndexFiles += 1;
       parseMs += read.volume ? (read.parseMs ?? 0) : performance.now() - parseBegin;
       if (sourceDtype !== "unknown" && sourceDtype !== vol.srcDtype) {
         throw new Error(`Mixed HDF5 source dtypes are not supported in one local load: ${sourceDtype} and ${vol.srcDtype}.`);
@@ -1296,14 +1150,13 @@ export async function loadShow4DSTEMLocalH5Master(
       outputDetRows = detBin > 1 ? vol.detRows / detBin : vol.detRows;
       outputDetCols = detBin > 1 ? vol.detCols / detBin : vol.detCols;
       detSize = outputDetRows * outputDetCols;
-      const fileSourceStart = item.startScan ?? sourceFrames;
-      let chunkStart = fileSourceStart;
+      let chunkStart = sourceFrames;
       vol.chunks.forEach((chunk, chunkIndex) => {
         const nScan = vol.chunkScanCounts[chunkIndex] ?? chunk.nFrames;
         specs.push({ ...chunk, startScan: chunkStart, nScan });
         chunkStart += nScan;
       });
-      sourceFrames = item.startScan === undefined ? sourceFrames + vol.nFrames : Math.max(sourceFrames, fileSourceStart + vol.nFrames);
+      sourceFrames += vol.nFrames;
     }
     const packBegin = performance.now();
     const decodeSpecs = sliceFullStackSpecsByScanRegion(specs, scanRows, scanCols, region);
@@ -1329,11 +1182,9 @@ export async function loadShow4DSTEMLocalH5Master(
     packMs: Math.round(packMs),
     decompressMs: Math.round(decompressMs),
     uploadMs: Math.round(decodeProfile.uploadMs),
-    uploadCopyWaitMs: Math.round(decodeProfile.uploadCopyWaitMs ?? 0),
     detBinMs: Math.round(detBinMs),
     decodeBuildMs: Math.round(decodeProfile.buildMs),
     gpuWaitMs: Math.round(decodeProfile.gpuWaitMs),
-    decodeComputeWaitMs: Math.round(decodeProfile.decodeComputeWaitMs ?? 0),
     decodeProfileMs: Math.round(decodeProfile.totalMs),
     fileGB: +(fileBytes / 1e9).toFixed(2),
     blockIndexGB: +(blockIndexBytes / 1e9).toFixed(3),
@@ -1360,16 +1211,8 @@ export async function loadShow4DSTEMLocalH5Master(
     groupSize,
     decodeBatch,
     decodeVariant: decodeProfile.variant,
-    decodeProfileSplit: Boolean(decodeProfile.profileSplit),
-    frameIndexFiles,
     blockIndexFiles,
-    parseMode: blockIndexFiles === dataItems.length
-      ? "block-index"
-      : frameIndexFiles === 0 && blockIndexFiles === 0
-        ? "h5-btree"
-        : frameIndexFiles === dataItems.length
-          ? "frame-index"
-          : "mixed",
+    parseMode: blockIndexFiles === dataFiles.length ? "block-index" : blockIndexFiles === 0 ? "h5-btree" : "mixed",
     ...adapterProfile(profileDevice),
   };
   if (fullOutputHashRequested(options)) {
@@ -1405,9 +1248,6 @@ export async function loadShow4DSTEMLocalH5Master(
     profile,
   };
 }
-
-/** Canonical UI-neutral name; the original export remains compatible. */
-export const loadLocalH5Master = loadShow4DSTEMLocalH5Master;
 
 export async function loadShow4DSTEMLocalH5MaskedSum(
   masterUrl: string,
@@ -1456,7 +1296,6 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
   let readWaitMs = 0;
   let readWorkerMs = 0;
   let parseMs = 0;
-  let frameIndexFiles = 0;
   let sourceDtype: SourceDtype | "unknown" = "unknown";
   let frames = 0;
   const readWallStart = performance.now();
@@ -1480,7 +1319,7 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       }
       if (vol.srcDtype === "uint32") {
         throw new Error(
-          "Product-first WebGPU masked sums currently use the low-8 decode path; "
+          "Product-first WebGPU masked sums read uint8 and uint16 sources; "
           + "load the native uint32 stack with decodeDtype='native' for exact "
           + "uint32 BF/ADF/DPC interaction."
         );
@@ -1491,11 +1330,7 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       specs.push({ ...vol.chunk, startScan: sourceStartScan, sourceStartScan });
       frames += vol.nFrames;
     } else {
-      const frameIndex = frameIndexFor(read.name);
-      const vol = frameIndex
-        ? readH5VolumeFromFrameIndex(read.buffer!, read.name, frameIndex)
-        : readH5Volume(read.buffer!, read.name);
-      if (frameIndex) frameIndexFiles += 1;
+      const vol = readH5Volume(read.buffer!, read.name);
       parseMs += performance.now() - parseBegin;
       if (sourceDtype !== "unknown" && sourceDtype !== vol.srcDtype) {
         throw new Error(`Mixed HDF5 source dtypes are not supported in one local product load: ${sourceDtype} and ${vol.srcDtype}.`);
@@ -1505,8 +1340,8 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
       }
       if (vol.srcDtype === "uint32") {
         throw new Error(
-          "Product-first WebGPU HDF5 masked sums currently use the low-8 decode "
-          + "path; load the native uint32 stack with decodeDtype='native' for "
+          "Product-first WebGPU HDF5 masked sums read uint8 and uint16 sources; "
+          + "load the native uint32 stack with decodeDtype='native' for "
           + "exact uint32 BF/ADF/DPC interaction."
         );
       }
@@ -1538,7 +1373,8 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
     framesComputed,
     productBatch,
   });
-  const product = await decodeBslz4MaskedSumLow8Batch(productSpecs, options.mask, outputScanCount, badPixels, productBatch);
+  if (sourceDtype !== "uint8" && sourceDtype !== "uint16") throw new Error("Local HDF5 product-first masked sum found no detector frames.");
+  const product = await decodeBslz4MaskedSumBatch(productSpecs, options.mask, outputScanCount, sourceDtype, badPixels, productBatch);
   const productMs = performance.now() - productBegin;
   if (!product) throw new Error("WebGPU unavailable for local HDF5 product-first masked sum.");
   setLocalH5Debug("product:done", { productMs: Math.round(productMs) });
@@ -1568,9 +1404,8 @@ export async function loadShow4DSTEMLocalH5MaskedSum(
     productBatch,
     sidecarFiles: sourceMode === "selected-block-sidecar" ? sourceFiles.length : 0,
     sidecarCoverage: sourceMode === "selected-block-sidecar" ? "used" : sidecarSelection.coverage,
-    frameIndexFiles,
     blockIndexFiles: 0,
-    parseMode: sourceMode === "selected-block-sidecar" ? "selected-block-sidecar" : frameIndexFiles === 0 ? "h5-btree" : frameIndexFiles === sourceFiles.length ? "frame-index" : "mixed",
+    parseMode: sourceMode === "selected-block-sidecar" ? "selected-block-sidecar" : "h5-btree",
     productProfile: product.profile,
     ...adapterProfile(profileDevice),
   };
