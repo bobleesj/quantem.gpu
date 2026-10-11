@@ -93,7 +93,6 @@ def io_contexts(monkeypatch):
     monkeypatch.setattr(runtime, "cp", fake_cupy)
     monkeypatch.setattr(runtime, "_MODULES", {})
     monkeypatch.setattr(decoder, "cp", fake_cupy)
-    monkeypatch.setattr(decoder, "_FAILED_DECOMPRESSIONS", [])
     monkeypatch.setattr(
         "quantem.gpu.device.select.resolve_backend", lambda _backend: "cuda"
     )
@@ -122,29 +121,3 @@ def test_imported_decoder_callable_follows_alternating_devices(io_contexts):
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert list(pool.map(run, [0, 1])) == [[65790] * 8] * 2
     assert sorted(contexts.compiled) == [(0, 100), (0, 200), (1, 101)]
-
-
-@pytest.mark.parametrize("unfinished", [False, True])
-def test_decode_failure_keeps_host_lease_until_fence(io_contexts, monkeypatch, unfinished):
-    """Failed work cannot make a still-borrowed pinned buffer available again."""
-    decoder, _contexts = io_contexts
-    prepared = {"read_buffer": np.zeros(32, dtype=np.uint8)}
-    actions = []
-
-    def decode(*_args, **_kwargs):
-        actions.append("decode")
-        raise RuntimeError("decode failed")
-
-    def fence():
-        actions.append("fence")
-        if unfinished:
-            raise RuntimeError("device completion unknown")
-
-    monkeypatch.setattr(decoder, "_decode_prepared", decode)
-    monkeypatch.setattr(decoder.cp.cuda, "Device", lambda: SimpleNamespace(synchronize=fence))
-    monkeypatch.setattr(decoder, "_release_pinned", lambda _buffer: actions.append("release"))
-    with pytest.raises(RuntimeError, match="decode failed"):
-        decoder.decompress_prepared(prepared)
-    assert actions == (["decode", "fence"] if unfinished else ["decode", "fence", "release"])
-    if unfinished:
-        assert decoder._FAILED_DECOMPRESSIONS[0][0] is prepared

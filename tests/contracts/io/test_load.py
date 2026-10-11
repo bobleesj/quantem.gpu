@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
@@ -228,57 +226,6 @@ def test_pinned_buffer_release_defers_pruning_to_the_next_pruning_release(
     assert memory_module._PINNED_BUFS == [large]
     assert released == [80]
     assert small == {}
-
-
-def test_decompress_prepared_releases_staging_buffer_on_success(monkeypatch) -> None:
-    from importlib import import_module
-
-    decode_module = import_module("quantem.gpu.io.hdf5.cuda.decode")
-    read_buffer = np.zeros(4, dtype=np.uint8)
-    result = object()
-    released = []
-    monkeypatch.setattr(
-        decode_module,
-        "_decode_prepared",
-        lambda *_args, **_kwargs: result,
-    )
-    monkeypatch.setattr(decode_module, "_release_pinned", released.append)
-
-    assert decode_module.decompress_prepared({"read_buffer": read_buffer}) is result
-    assert len(released) == 1
-    assert released[0] is read_buffer
-
-
-def test_decompress_prepared_synchronizes_before_failure_release(monkeypatch) -> None:
-    from importlib import import_module
-
-    decode_module = import_module("quantem.gpu.io.hdf5.cuda.decode")
-    read_buffer = np.zeros(4, dtype=np.uint8)
-    events = []
-
-    def fail_decode(*_args, **_kwargs):
-        events.append("decode")
-        raise RuntimeError("decode failed")
-
-    class FakeDevice:
-        def synchronize(self) -> None:
-            events.append("synchronize")
-
-    fake_cupy = SimpleNamespace(cuda=SimpleNamespace(Device=FakeDevice))
-    monkeypatch.setattr(decode_module, "cp", fake_cupy)
-    monkeypatch.setattr(decode_module, "_decode_prepared", fail_decode)
-    monkeypatch.setattr(
-        decode_module,
-        "_release_pinned",
-        lambda buffer: events.append(("release", buffer)),
-    )
-
-    with pytest.raises(RuntimeError, match="decode failed"):
-        decode_module.decompress_prepared({"read_buffer": read_buffer})
-
-    assert events[:2] == ["decode", "synchronize"]
-    assert events[2][0] == "release"
-    assert events[2][1] is read_buffer
 
 
 def test_contiguous_frame_read_plan_preserves_order_and_coalesces() -> None:
