@@ -126,6 +126,21 @@ def test_arina_units_and_exposure_precede_frame_period():
     assert not qem_metadata.acquisition_metadata((1, 1, 8, 8), source)["electron_microscope"]
 
 
+def test_loader_dwell_time_is_the_value_a_saved_copy_records(tmp_path):
+    """A master's dwell time is its exposure, as the saved copy records it; the loader used to report the frame period."""
+    from quantem.gpu.formats.hdf5.master import get_metadata
+
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(master, "w") as handle:
+        detector = handle.create_group("entry/instrument/detector")
+        detector["description"] = b"Dectris ARINA Si"
+        detector["count_time"] = 4.95e-05
+        detector["frame_time"] = 4.96e-05
+    loaded = get_metadata(master)
+    saved = qem_metadata.recorded_metadata(qem_metadata.acquisition_metadata((1, 1, 8, 8), loaded))
+    assert loaded["dwell_time_us"] == saved["dwell_time_us"] == pytest.approx(49.5)
+
+
 def test_session_file_calibrates_its_own_acquisition(tmp_path):
     """The session's dataset.yaml gives the semi-angle, voltage and, through the
     file's own entry, the scan step; another series with the same number gets no
