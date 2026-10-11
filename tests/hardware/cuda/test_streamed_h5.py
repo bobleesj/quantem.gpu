@@ -269,3 +269,25 @@ def test_uint32_master_sentinels_are_corrected_before_encoding(tmp_path, method)
     with pytest.raises(ValueError, match="counts above 65535"):
         io.load(path, backend="cuda", representation="encoded", scan_shape=(2, 5),
                 apply_mask=False, hot_pixel_correction=method, verbose=False)
+
+
+@pytest.mark.slow
+def test_one_decode_batch_beyond_4_gib_keeps_every_frame_in_place(tmp_path):
+    """Frames past byte 2^32 of one decode launch land at their own position, not wrapped to the start."""
+    import cupy as cp
+
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
+
+    frames = 8200  # 8200 * 512 * 512 * 2 bytes = 4.3 GB, past 2^32
+    values = cp.broadcast_to((cp.arange(frames, dtype=cp.uint16) % 997)[:, None, None], (frames, 512, 512))
+    master = tmp_path / "wide_master.h5"
+    io.save(str(master), cp.ascontiguousarray(values).reshape(8200, 1, 512, 512), verbose=False)
+    reader = FrameReader(str(master))
+    try:
+        decoded = decompress_prepared(reader.prepare(np.arange(frames)), batch_bytes_target=frames * 512 * 512 * 2)
+    finally:
+        reader.close()
+    first_values = decoded[:, 0, 0]
+    assert bool(cp.array_equal(first_values, values[:, 0, 0]))
+    assert bool(cp.array_equal(decoded[-1], values[-1]))
