@@ -29,7 +29,7 @@ _SOURCE = "#define QUANTEM_PRECISION_ANS_MEAN 1\n" + "\n".join(
 )
 _NAMES = (
     "copy", "restore", "encode", "encode_measure", "range", "range_reduce", "measure",
-    "frame", "unpacked", "detector", "mean", "reduce", "range_read", "divide",
+    "frame", "unpacked", "detector", "reduce", "range_read", "divide",
     "ans_mean", "measure_reduce",
 )
 
@@ -136,7 +136,6 @@ def _parameters(values=None, report=None):
         params[0] = values.numel() if is_mps_tensor(values) else values.size
         params[3] = {"float32": 0, "float16": 1, "uint16": 2, "uint8": 3, "bool": 3, "uint32": 4}[str(values.dtype).removeprefix("torch.")]
     if report:
-        params[4] = int(report["storage"] == "scaled_uint16")
         maximum = max(abs(report["intensity_min"]), abs(report["intensity_max"]))
         exponent = -math.frexp(maximum)[1] if maximum else 0
         params[5] = exponent & 0xffffffffffffffff
