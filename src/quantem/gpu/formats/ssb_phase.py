@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -176,8 +177,8 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         schemaVersion=1, sourceIdentity=identity, rows=phase.shape[0], columns=phase.shape[1],
         phaseEncoding="float32-le-row-major", phaseUnits="rad",
         phaseSHA256=hashlib.sha256(phase_bytes).hexdigest(),
-        calibration=calibration, c10Nanometers=float(aberrations["C10"]),
-        c12Nanometers=float(aberrations["C12"]), phi12Radians=float(aberrations["phi12"]),
+        calibration=calibration, c10Nanometers=float(aberrations["C10_nm"]),
+        c12Nanometers=float(aberrations["C12_nm"]), phi12Radians=math.radians(aberrations["phi12_deg"]),
         rotationDegrees=float(ssb["scan_detector_rotation_deg"]),
         provenance={
             "producer": "quantem.live original screen result",

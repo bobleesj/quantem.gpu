@@ -13,7 +13,7 @@ def probe_grid(result):
     semiangle = result.semiangle_mrad * 1e-3
     sampling = wavelength / (4 * semiangle)
     # Four times the largest geometric radius plus a margin for diffraction tails.
-    radius = semiangle * 10 * (abs(result.aberrations.get("C10", 0)) + abs(result.aberrations.get("C12", 0)))
+    radius = semiangle * 10 * (abs(result.aberrations.get("C10_nm", 0)) + abs(result.aberrations.get("C12_nm", 0)))
     field = 4 * radius + 16 * wavelength / semiangle
     size = 2 ** math.ceil(math.log2(max(256, field / sampling)))
     angular_step = wavelength / (size * sampling) * 1000
@@ -49,9 +49,9 @@ def model_probe(result, *, space: str):
         edge_width = xp.sqrt((xp.cos(phi) * step_row) ** 2 + (xp.sin(phi) * step_column) ** 2)
         aperture = xp.clip((result.semiangle_mrad * 1e-3 - xp.sqrt(alpha_squared)) / edge_width + 0.5, 0, 1)
         # Public C10/C12 are nm; the wavelength and engine coefficient lengths are Å.
-        defocus = 10 * result.aberrations.get("C10", 0.0)
-        astigmatism = 10 * result.aberrations.get("C12", 0.0)
-        azimuth = result.aberrations.get("phi12", 0.0)
+        defocus = 10 * result.aberrations.get("C10_nm", 0.0)
+        astigmatism = 10 * result.aberrations.get("C12_nm", 0.0)
+        azimuth = math.radians(result.aberrations.get("phi12_deg", 0.0))
         chi = (math.pi / wavelength) * alpha_squared * (defocus + astigmatism * xp.cos(2 * (phi - azimuth)))
         wave = aperture * xp.exp(-1j * chi)
         wave = wave / xp.sqrt(xp.sum(xp.abs(wave) ** 2))

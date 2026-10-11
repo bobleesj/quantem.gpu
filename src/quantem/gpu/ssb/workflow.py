@@ -51,6 +51,7 @@ from quantem.gpu.ssb.units import (
     ENGINE_PER_NM,
     aberrations_from_engine,
     aberrations_to_engine,
+    higher_order_arrays,
     result_from_engine,
     search_ranges_to_engine,
     validate_aberrations,
@@ -94,7 +95,7 @@ class SSB:
 
     SSB recovers the object phase from the bright-field disk: each bright-field detector pixel sees the sample through
     a slightly different probe tilt, and once the probe aberrations are corrected for every pixel their phase images
-    agree. ``find_aberrations`` fits C10, C12 and phi12 by minimising that disagreement (the phase variance over
+    agree. ``find_aberrations`` fits C10_nm, C12_nm and phi12_deg by minimising that disagreement (the phase variance over
     bright-field pixels); ``reconstruct`` and ``preview`` apply known aberrations. The full automatically detected
     bright-field disk, the exact phase-variance objective, float32 real and complex64 object storage are fixed.
 
@@ -122,7 +123,7 @@ class SSB:
         Detector sampling in mrad per pixel. When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
     aberrations : dict, optional
-        Starting C10, C12 (nm) and phi12 (radians).
+        Starting ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees; kept in [0, 360). An estimate known only modulo 180 degrees
         (``dpc.run``, ``screening.prepare``) may be given: ``find_aberrations(check_rotation=True)`` settles the branch.
@@ -467,7 +468,7 @@ class SSB:
         limit = draw_column_histogram(result.phase, f"Suggested rotation {input_rotation:.2f}° · polarity score {sign:+.2f}") if show else None
         # the other branch; the subtraction is exact where adding 180 and wrapping at 360 would round
         opposite_rotation = input_rotation - 180.0 if input_rotation >= 180.0 else input_rotation + 180.0
-        start = {"C10": -result.aberrations["C10"], "C12": -result.aberrations["C12"], "phi12": result.aberrations["phi12"]}
+        start = {"C10_nm": -result.aberrations["C10_nm"], "C12_nm": -result.aberrations["C12_nm"], "phi12_deg": result.aberrations["phi12_deg"]}
         reuse_joint_fit = tilt and self.backend == "cuda"
         if verbose:
             print(f"SSB: negative phase polarity at the suggested rotation {input_rotation:.2f}° (score {sign:+.2f}).\n"
@@ -513,7 +514,7 @@ class SSB:
         if show:
             draw_column_histogram(refit.phase, f"SSB-selected rotation {refit.scan_detector_rotation_deg:.2f}° · polarity score {refit.column_sign:+.2f}", limit=limit)
         if verbose:
-            print(f"SSB: selected rotation {refit.scan_detector_rotation_deg:.2f}°; C10 {refit.aberrations['C10']:+.2f} nm, "
+            print(f"SSB: selected rotation {refit.scan_detector_rotation_deg:.2f}°; C10 {refit.aberrations['C10_nm']:+.2f} nm, "
                   f"polarity score {refit.column_sign:+.2f}. find_aberrations(check_rotation=False) keeps the input rotation.")
         return refit
 
@@ -555,10 +556,8 @@ class SSB:
         waves = []
         for record in records:
             self.set_rotation(record["scan_detector_rotation_deg"])
-            values = record["params"]
             phase, _ = self._phase(
-                {"C10": values["C10_nm"], "C12": values["C12_nm"],
-                 "phi12": math.radians(values["phi12_deg"])},
+                record["params"],
                 tilt_mrad=(record["tilt_row_mrad"], record["tilt_col_mrad"]),
                 depth_spread_nm=record["depth_spread_nm"],
                 upsampling_factor=upsample, phase_estimator=estimator, compute_loss=False,
@@ -631,7 +630,7 @@ class SSB:
         force: bool = False,
         verbose: bool = True,
     ) -> SSBResult:
-        """Optimize C10/C12/phi12 and return the final reconstruction.
+        """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
 
         ``tilt=True`` also fits the sample tilt and a depth spread for a thick, tilted crystal, jointly with the
         aberrations in one search of ``trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
@@ -825,7 +824,7 @@ class SSB:
             Result of ``find_aberrations``. Carries aberrations, specimen tilt,
             depth spread, and scan-detector rotation. None uses session values.
         aberrations
-            Partial coefficient overrides: C10/C12 in nm, phi12 in radians.
+            Partial coefficient overrides: ``C10_nm``/``C12_nm`` in nm, ``phi12_deg`` in degrees.
             Unspecified coefficients and sample geometry are preserved.
         trials
             Trial IDs from ``parameters.trials.index``. Reconstruct these
@@ -980,8 +979,6 @@ class SSB:
         *,
         compute_loss: bool = True,
         upsampling_factor: int = 1,
-        higher_order_magnitudes: np.ndarray | None = None,
-        higher_order_angles: np.ndarray | None = None,
         context: AbstractContextManager | None = None,
         tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
@@ -993,7 +990,11 @@ class SSB:
         means it is not saved and does not replace the fitted calibration or
         stored result; it does not imply a lower-quality reconstruction.
 
-        ``aberrations`` C10 / C12 in nm, phi12 in rad. A positive ``depth_spread_nm`` switches to the thick-sample model:
+        ``aberrations`` holds ``C10_nm`` / ``C12_nm`` in nm and ``phi12_deg`` in degrees. It may also name higher
+        orders, each with its unit in the key: ``C21_nm`` with ``phi21_deg``, ``C23_nm`` with ``phi23_deg``, ``C30_nm``,
+        ``C32_nm``, ``C34_nm``, ``C41_nm``, ``C43_nm``, ``C45_nm``, ``C50_nm``, ``C52_nm``, ``C54_nm``, ``C56_nm`` and
+        their ``phi.._deg`` (the round ``C30`` and ``C50`` have none). Naming any of them selects the 14-term
+        aberration kernel. A positive ``depth_spread_nm`` switches to the thick-sample model:
         each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``tilt_mrad``
         (row, col; scan frame), as fitted by ``find_aberrations(tilt=True)``. With no depth spread the tilt has no effect and this is
         standard SSB. CUDA and MPS backends.
@@ -1034,9 +1035,7 @@ class SSB:
 
         phase, loss = self._phase(
             aberrations, compute_loss=compute_loss,
-            upsampling_factor=upsampling_factor,
-            higher_order_magnitudes=higher_order_magnitudes,
-            higher_order_angles=higher_order_angles, context=context,
+            upsampling_factor=upsampling_factor, context=context,
             tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
             phase_estimator=phase_estimator,
         )
@@ -1050,20 +1049,20 @@ class SSB:
         *,
         compute_loss: bool = True,
         upsampling_factor: int = 1,
-        higher_order_magnitudes: np.ndarray | None = None,
-        higher_order_angles: np.ndarray | None = None,
         context: AbstractContextManager | None = None,
         tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
         phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
     ) -> tuple[object, float | None]:
         """Compute the shared phase without exporting CUDA arrays to the host."""
-        coefs = aberrations_to_engine(validate_aberrations(aberrations))
+        aberrations = validate_aberrations(aberrations, higher_order=True)
+        coefs = aberrations_to_engine(aberrations)
+        # 14-slot magnitudes (nm) and azimuths (rad) when the mapping names a higher order; else both None
+        higher_order_magnitudes, higher_order_angles = higher_order_arrays(aberrations) or (None, None)
         if phase_estimator is None:
             # Keep unsupported native backends/higher-order paths available.
             # C10/C12 uses one estimator at every output factor on CUDA.
-            higher_order_active = (higher_order_magnitudes is not None
-                                   and np.any(np.asarray(higher_order_magnitudes)[2:]))
+            higher_order_active = higher_order_magnitudes is not None and np.any(higher_order_magnitudes[2:])
             phase_estimator = ("phase_of_mean" if self.backend == "cuda"
                                and not higher_order_active else "mean_phase")
         if phase_estimator not in ("mean_phase", "phase_of_mean"):
@@ -1073,31 +1072,25 @@ class SSB:
             )
         if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
             raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
-        if (higher_order_magnitudes is None) != (higher_order_angles is None):
-            raise ValueError("Higher-order magnitudes and angles must be provided together.")
         if higher_order_magnitudes is not None:
-            magnitudes = np.asarray(higher_order_magnitudes, dtype=np.float32)
-            angles = np.asarray(higher_order_angles, dtype=np.float32)
-            if magnitudes.shape != (14,) or angles.shape != (14,):
-                raise ValueError("Higher-order SSB arrays must each have shape (14,).")
             # An angle has no physical effect when its coefficient is zero.
             uses_depth_kernel = (
                 upsampling_factor > 1
                 or depth_spread_nm > 0
                 or phase_estimator == "phase_of_mean"
             )
-            if uses_depth_kernel and not np.any(magnitudes[2:]):
-                # Preserve the explicit primary coefficients in the packed API.
-                coefs = {**coefs, "C10": float(magnitudes[0]) * ENGINE_PER_NM,
-                         "C12": float(magnitudes[1]) * ENGINE_PER_NM,
-                         "phi12": float(angles[1])}
+            if uses_depth_kernel and not np.any(higher_order_magnitudes[2:]):
+                # the two-term kernels then read the same float32 coefficients the 14-term kernel would
+                coefs = {**coefs, "C10": float(higher_order_magnitudes[0]) * ENGINE_PER_NM,
+                         "C12": float(higher_order_magnitudes[1]) * ENGINE_PER_NM,
+                         "phi12": float(higher_order_angles[1])}
                 higher_order_magnitudes = higher_order_angles = None
         scope = nullcontext() if context is None else context
         if upsampling_factor != 1 or phase_estimator == "phase_of_mean":
             if higher_order_magnitudes is not None:
                 raise ValueError(
-                    "Upsampling and wave averaging support C10/C12 with "
-                    "tilt/depth; turn off higher-order magnitudes."
+                    "Upsampling and wave averaging support C10_nm/C12_nm with "
+                    "tilt/depth; leave out the higher-order aberrations."
                 )
             backend = self._backend()
             with scope:
@@ -1115,24 +1108,14 @@ class SSB:
             backend = self._backend()
             with scope:
                 return backend.preview_sample(coefs, sample, compute_loss=compute_loss)
-        magnitudes = (
-            None
-            if higher_order_magnitudes is None
-            # all 14 magnitudes (C10, C12 in slots 0-1, then C21..C56) are nm; the engines take Angstrom
-            else np.asarray(higher_order_magnitudes, dtype=np.float32) * np.float32(ENGINE_PER_NM)
-        )
-        angles = (
-            None
-            if higher_order_angles is None
-            else np.asarray(higher_order_angles, dtype=np.float32)
-        )
         backend = self._backend()
         with scope:
             return backend.preview(
                 coefs,
                 compute_loss=compute_loss,
-                higher_order_magnitudes=magnitudes,
-                higher_order_angles=angles,
+                # all 14 magnitudes (C10, C12 in slots 0-1, then C21..C56) are nm; the engines take Angstrom
+                higher_order_magnitudes=None if higher_order_magnitudes is None else higher_order_magnitudes * np.float32(ENGINE_PER_NM),
+                higher_order_angles=higher_order_angles,
             )
 
     @property
@@ -1149,7 +1132,7 @@ class SSB:
         started = time.perf_counter()
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3)
-        aberrations = aberrations_from_engine({key: float(fit[key]) for key in ("C10", "C12", "phi12")})
+        aberrations = aberrations_from_engine(fit)
         tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
         phase, loss = self._phase(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,

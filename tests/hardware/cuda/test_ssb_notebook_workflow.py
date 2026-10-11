@@ -1,4 +1,5 @@
 """Scientist workflow: carry correction into sampling changes and saved reloads."""
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -91,7 +92,7 @@ def test_default_correction_and_changed_sample_do_not_reuse_stale_phase():
 
     ssb, _ = _synthetic_session()
     try:
-        correction = ssb.reconstruct(aberrations={'C10': -8., 'C12': 4., 'phi12': -.7})
+        correction = ssb.reconstruct(aberrations={'C10_nm': -8., 'C12_nm': 4., 'phi12_deg': math.degrees(-.7)})
         assert correction.phase_estimator == 'phase_of_mean'
         expected, _ = ssb.preview(correction.aberrations)
         native = ssb.reconstruct(correction)

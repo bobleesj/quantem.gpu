@@ -1,6 +1,7 @@
 """Saved-result reuse for the public SSB workflow."""
 
 import json
+import math
 
 import numpy as np
 
@@ -120,12 +121,12 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     assert second.reused
     np.testing.assert_array_equal(second.object_wave, first.object_wave)
     assert dict(second) == dict(first)
-    assert second["C10"] == -10.1
-    assert second["C12"] == 0.4
-    assert second["phi12"] == 0.25
+    assert second["C10_nm"] == -10.1
+    assert second["C12_nm"] == 0.4
+    assert second["phi12_deg"] == math.degrees(0.25)
     copied = dict(second)
-    copied["C10"] = 0.0
-    assert second["C10"] == first["C10"] == -10.1
+    copied["C10_nm"] = 0.0
+    assert second["C10_nm"] == first["C10_nm"] == -10.1
     assert second.timings == first.timings
     assert second.trial_records == first.trial_records
     assert second.saved_path == saved / "ssb-find_aberrations.npz"
@@ -217,8 +218,8 @@ def test_fixed_reconstruction_reuses_only_matching_aberrations(
     source.write_bytes(b"detector counts")
     saved = tmp_path / "result"
     backend = _Backend()
-    first_coefs = {"C10": -100.0, "C12": 5.0, "phi12": 0.2}
-    changed_coefs = {"C10": -99.0, "C12": 5.0, "phi12": 0.2}
+    first_coefs = {"C10_nm": -100.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.2)}
+    changed_coefs = {"C10_nm": -99.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.2)}
 
     first = _session(monkeypatch, source, backend).reconstruct(
         aberrations=first_coefs, save_to=saved
@@ -288,12 +289,12 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     settings = dict(trials=0, refinement=None, check_rotation=False,
                     save_to=tmp_path / "search", verbose=False)
     first = session.find_aberrations(**settings)
-    session.reconstruct(aberrations={"C10": 12.0})
+    session.reconstruct(aberrations={"C10_nm": 12.0})
     second = session.find_aberrations(**settings)
     assert not second.reused
     assert backend.fit_calls == 2
-    assert first.metadata["signature"]["settings"]["starting_aberrations"]["C10"] == 0.0
-    assert second.metadata["signature"]["settings"]["starting_aberrations"]["C10"] == 12.0
+    assert first.metadata["signature"]["settings"]["starting_aberrations"]["C10_nm"] == 0.0
+    assert second.metadata["signature"]["settings"]["starting_aberrations"]["C10_nm"] == 12.0
 
 
 def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
@@ -323,8 +324,8 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCHEMA
     from quantem.gpu.ssb.series import saved_fit, stored_fit
 
-    aberrations = {"C10": 10.0, "C12": 2.0, "phi12": 0.3}
-    block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "detector_transposed": False, "aberration_unit": "nm"}
+    aberrations = {"C10_nm": 10.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
+    block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "detector_transposed": False}
     config = tmp_path / "config.json"
     for marker in ({}, {"schema": f"quantem.ssb-fit/{SCHEMA - 1}"}, {"schema": SCHEMA}):
         config.write_text(json.dumps({"computed": {"ssb": {**block, **marker}}}))
@@ -340,7 +341,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
         record.write_text(json.dumps({"schema": marker, "result": block}))
         assert saved_fit(tmp_path) is None
     record.write_text(json.dumps({"schema": RESULT_SCHEMA, "result": block}))
-    assert saved_fit(tmp_path) == {"aberrations": aberrations, "aberration_unit": "nm", "scan_detector_rotation_deg": 210.0}
+    assert saved_fit(tmp_path) == {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0}
 
 
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
@@ -353,14 +354,14 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     earlier = {"aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "rotation_angle_deg": 0.0, "com_reversed": True,
                "aberration_unit": "nm", "picked_c10_nm": 4.0, "optuna_trials": [{"loss": 0.02}]}
     config.write_text(json.dumps({"human": {"notes": "kept"}, "computed": {"bf_radius": 55.0, "ssb": earlier}}))
-    aberrations = {"C10": -10.5, "C12": 0.25, "phi12": -0.5}
+    aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
     result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bf_radius=48.0)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "scan_detector_rotation_deg": 200.0, "bf_radius": None}
     write_fit_metadata(tmp_path, settings, result)
     written = json.loads(config.read_text())
     block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "schema": FIT_SCHEMA, "aberrations": aberrations,
-             "aberration_unit": "nm", "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bf_radius": 48.0}
+             "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bf_radius": 48.0}
     assert written == {"human": {"notes": "kept"}, "computed": {"bf_radius": 55.0, "ssb": block}}
     assert saved_fit(tmp_path) == block
     # a field the dashboard adds to a current block stays through the next fit

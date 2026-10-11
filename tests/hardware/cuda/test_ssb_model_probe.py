@@ -1,5 +1,6 @@
 """Use fitted SSB optics without rebuilding probe calibration in a notebook."""
 
+import math
 import numpy as np
 import pytest
 import torch
@@ -15,7 +16,7 @@ def test_probe_matches_quantem_optics_and_centered_fourier_pair():
 
     result = SSBResult(
         object_wave=cp.ones((128, 128), dtype=cp.complex64), backend="cuda",
-        voltage_kV=300, semiangle_mrad=30, aberrations={"C10": -3.2, "C12": 1.4, "phi12": -0.6},
+        voltage_kV=300, semiangle_mrad=30, aberrations={"C10_nm": -3.2, "C12_nm": 1.4, "phi12_deg": math.degrees(-0.6)},
     )
     actual = result.probe(space="fourier")
     # Use the SSB wavelength in both models; core's rounded constants differ.
@@ -43,7 +44,7 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
 
     ssb, _ = _synthetic_session()
     try:
-        native = ssb.reconstruct(aberrations={"C10": -3, "C12": 0.5, "phi12": 0.4})
+        native = ssb.reconstruct(aberrations={"C10_nm": -3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.4)})
         fine = ssb.reconstruct(native, upsample=4)
         automatic = ssb.reconstruct(native, upsample="auto")
         explicit = ssb.reconstruct(native, upsample=2)
@@ -52,7 +53,7 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
         assert automatic.phase_limits == native.phase_limits
         cp.testing.assert_array_equal(fine.probe(), native.probe())
         assert fine.probe_sampling_A == native.probe_sampling_A
-        changed = ssb.reconstruct(native, aberrations={"C10": 5})
+        changed = ssb.reconstruct(native, aberrations={"C10_nm": 5})
         assert not cp.allclose(changed.probe(), native.probe())
         paths = result_paths(tmp_path / "saved", "reconstruct")
         save_result(changed, paths=paths, signature={"test": "probe"}, input_metadata={})
@@ -67,7 +68,7 @@ def test_reconstruction_keeps_model_probe_and_saves_calibration(tmp_path):
 def test_defocused_model_fits_inside_the_automatic_field():
     result = SSBResult(
         object_wave=cp.ones((128, 128), dtype=cp.complex64), backend="cuda",
-        voltage_kV=300, semiangle_mrad=30, aberrations={"C10": 100, "C12": 5, "phi12": 0.3},
+        voltage_kV=300, semiangle_mrad=30, aberrations={"C10_nm": 100, "C12_nm": 5, "phi12_deg": math.degrees(0.3)},
     )
     intensity = abs(result.probe()) ** 2
     border = intensity.sum() - intensity[8:-8, 8:-8].sum()
@@ -81,7 +82,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     result = SSBResult(
         object_wave=cp.exp(1j * cp.arange(64 * 64, dtype=cp.float32).reshape(64, 64) / 4096),
         backend="cuda", voltage_kV=300, semiangle_mrad=30,
-        scan_sampling_A=(0.4, 0.5), aberrations={"C10": 10, "C12": 2, "phi12": 0.2},
+        scan_sampling_A=(0.4, 0.5), aberrations={"C10_nm": 10, "C12_nm": 2, "phi12_deg": math.degrees(0.2)},
     )
     phase = result.phase.copy()
     intensity = abs(result.probe()) ** 2

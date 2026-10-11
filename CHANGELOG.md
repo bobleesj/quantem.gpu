@@ -41,6 +41,18 @@ new `rcN` heading when that rc is published to TestPyPI.
   two angles differ when the polarity check changed the branch). `SSB` and
   `SSBResult` gain `detector_transposed`; `SSB` raises `NotImplementedError`
   for True.
+- Aberration mappings carry their unit in each key, with the azimuth in
+  degrees: `C10`, `C12` (nm) and `phi12` (radians) become `C10_nm`, `C12_nm`
+  and `phi12_deg` in the `aberrations` argument of `SSB`, `SSB.open`,
+  `SSB.reconstruct` and `SSB.preview`, in `SSBResult.aberrations` and
+  `SSBResult[...]`, in `ParallaxResult.aberrations`, in the saved result and
+  in the stored fit block, which no longer has `aberration_unit`. The earlier
+  keys raise `ValueError`.
+- `SSB.preview` takes higher orders as named keys of `aberrations`
+  (`C21_nm` with `phi21_deg`, `C23_nm`, `C30_nm`, ... `C56_nm` with
+  `phi56_deg`); the arrays `higher_order_magnitudes` and
+  `higher_order_angles` (nm and radians by slot) are removed.
+- `SSBSeriesResult.records` reports `phi12 (deg)`; it was `phi12 (rad)`.
 - A rotation fitted from the centre-of-mass curl is
   `scan_detector_rotation_mod180_deg`: `DPCResult.rotation_deg` and
   `ScreeningResult.rotation_deg` take that name, `DPCResult.use_transpose` and

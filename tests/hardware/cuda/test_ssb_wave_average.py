@@ -1,5 +1,6 @@
 """Explicit wave averaging preserves calibration and native diagnostic loss."""
 
+import math
 import numpy as np
 import pytest
 
@@ -46,7 +47,7 @@ def _direct_wave_average(ssb, factor, tilt, depth):
 def test_explicit_estimator_matches_direct_waves_and_preserves_native_loss(factor, depth):
     """Change output sampling with a fixed estimator and native calibration."""
     ssb, _ = _synthetic_session()
-    aberrations = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
+    aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     tilt = (-9.0, 5.0)
     try:
         native, native_loss = ssb.preview(aberrations, tilt_mrad=tilt, depth_spread_nm=depth)
@@ -80,7 +81,7 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
     import cupy as cp
 
     ssb, engine = _synthetic_session()
-    aberrations = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
+    aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     tilt = (-9.0, 5.0)
     try:
         candidate, loss = ssb.preview(
@@ -94,14 +95,10 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
             chunk_bytes=2 * 512 * 512 * 24,
         )
         np.testing.assert_allclose(cp.asnumpy(batched), candidate, atol=1e-6, rtol=0)
-        magnitudes = np.zeros(14, np.float32)
-        magnitudes[:2] = [-8, 4]
-        angles = np.zeros(14, np.float32)
-        angles[1:3] = [-0.7, 1.2]
+        # an azimuth left on a higher order whose magnitude is zero selects the packed coefficients
         packed, _ = ssb.preview(
-            aberrations, tilt_mrad=tilt, depth_spread_nm=depth,
+            aberrations | {"phi21_deg": math.degrees(1.2)}, tilt_mrad=tilt, depth_spread_nm=depth,
             upsampling_factor=4, phase_estimator="phase_of_mean", compute_loss=False,
-            higher_order_magnitudes=magnitudes, higher_order_angles=angles,
         )
         np.testing.assert_allclose(packed, candidate, atol=1e-6, rtol=0)
     finally:

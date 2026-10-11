@@ -19,6 +19,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_ssb.py a_master.h5 b_master.h5 -
 
 import argparse
 import hashlib
+import math
 import os
 from pathlib import Path
 import statistics
@@ -123,7 +124,7 @@ def run(arguments, stages) -> None:
                 ssb.close()
             report("session", times, hashes)
         if "reconstruct" in stages:
-            fixed = {"C10": 1.47, "C12": 0.5, "phi12": 0.3}
+            fixed = {"C10_nm": 1.47, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
             with prepared(data) as ssb:
                 for compute_loss in (False, True):
                     times, hashes = [], []
@@ -144,7 +145,7 @@ def run(arguments, stages) -> None:
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
                 hashes.append(f"phase {digest(result.phase)} loss {result.loss!r} aberrations "
                               f"{digest(aberrations, result.tilt_mrad, result.depth_spread_nm, result.scan_detector_rotation_deg)}"
-                              f" C10 {aberrations['C10']:.6f} nm")
+                              f" C10 {aberrations['C10_nm']:.6f} nm")
                 release_cached_memory()
             report(stage, times, hashes)
         if "dpc" in stages:

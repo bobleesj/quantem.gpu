@@ -1,4 +1,5 @@
 """Interactive SSB must work before any fit or saved reconstruction."""
+import math
 import os
 from pathlib import Path
 
@@ -19,12 +20,12 @@ def test_cold_preview_then_changed_defocus():
     with data, SSB(data, backend='cuda', voltage_kV=300,
                    semiangle_mrad=30, scan_sampling_A=0.373,
                    scan_detector_rotation_deg=169.9) as ssb:
-        recipe = dict(C10=12.8, C12=2.0, phi12=0.64)
+        recipe = {'C10_nm': 12.8, 'C12_nm': 2.0, 'phi12_deg': math.degrees(0.64)}
         phase, loss = ssb.preview(recipe)
         repeated, repeated_loss = ssb.preview(recipe)
         np.testing.assert_array_equal(phase, repeated)
         assert loss == repeated_loss and np.isfinite(loss)
-        changed, changed_loss = ssb.preview(recipe | {'C10': 30.0})
+        changed, changed_loss = ssb.preview(recipe | {'C10_nm': 30.0})
         assert np.isfinite(changed).all() and np.isfinite(changed_loss)
         assert np.max(np.abs(changed - phase)) > 0
         context = ssb.preview_context(max(1, ssb.num_bf // 4))

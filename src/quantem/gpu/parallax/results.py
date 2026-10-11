@@ -14,8 +14,8 @@ class ParallaxResult:
     shift in scan pixels per bright-field pixel, in row-major detector order;
     ``elapsed`` is in seconds.
 
-    ``aberrations`` (``C10`` and ``C12`` in nm, ``phi12`` in radians, scan
-    frame) and ``rotation_angle_deg`` hold the fit of
+    ``aberrations`` (``C10_nm`` and ``C12_nm`` in nm, ``phi12_deg`` in degrees,
+    scan frame) and ``rotation_angle_deg`` hold the fit of
     ``parallax.run(fit_aberrations=True)``, in the units and convention
     ``SSB(aberrations=..., scan_detector_rotation_deg=...)`` takes; both are None
     without a fit.
@@ -36,8 +36,8 @@ class ParallaxResult:
         if self.elapsed is not None:
             lines.append(f"  Elapsed:      {self.elapsed:.2f}s")
         if self.aberrations:
-            lines.append(f"  C10:          {self.aberrations['C10']:.3f} nm")
-            lines.append(f"  C12:          {self.aberrations['C12']:.3f} nm")
-            lines.append(f"  phi12:        {self.aberrations['phi12']:.4f} rad")
+            lines.append(f"  C10:          {self.aberrations['C10_nm']:.3f} nm")
+            lines.append(f"  C12:          {self.aberrations['C12_nm']:.3f} nm")
+            lines.append(f"  phi12:        {self.aberrations['phi12_deg']:.2f} deg")
             lines.append(f"  Rotation:     {self.rotation_angle_deg:.2f} deg")
         return "\n".join(lines)

@@ -12,6 +12,7 @@ and ``meta.json`` carrying ``det_mrad``); it skips when that is not set.
 
 import gc
 import json
+import math
 import os
 import platform
 import weakref
@@ -91,8 +92,8 @@ def test_zero_depth_weighting_is_standard_ssb():
     """Thickness below the sinc cutoff gives every weight exactly 1: the thick path must reproduce standard MPS SSB."""
     _require_mps()
     ssb = _poisson_disk_session()
-    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
-    for aberrations in ({"C10": 30.0, "C12": 5.0, "phi12": 0.3}, {"C10": -40.0, "C12": 12.0, "phi12": -1.0}):
+    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
         thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
         np.testing.assert_allclose(thick, standard, atol=5e-6)
@@ -130,7 +131,7 @@ def test_drag_subset_context_standard_and_thick():
     preview exactly, and on a reduced subset the thick path at zero depth weighting still equals the standard path."""
     _require_mps()
     ssb = _poisson_disk_session()
-    aberrations = {"C10": 30.0, "C12": 5.0, "phi12": 0.3}
+    aberrations = {"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}
     full, _ = ssb.preview(aberrations, compute_loss=False)
     everything = ssb.preview_context(ssb.num_bf)
     same, _ = ssb.preview(aberrations, compute_loss=False, context=everything)
@@ -151,7 +152,7 @@ def test_drag_subset_close_restores_full_evidence_and_releases_the_subset():
     """Viewers release a drag preview context with ``close()``, even while it is entered, as on CUDA."""
     _require_mps()
     ssb = _poisson_disk_session()
-    aberrations = {"C10": 30.0, "C12": 5.0, "phi12": 0.3}
+    aberrations = {"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}
     full, _ = ssb.preview(aberrations, compute_loss=False)
     context = ssb.preview_context(ssb.num_bf // 4)
     subset = weakref.ref(context.__enter__()._subset)

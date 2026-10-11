@@ -447,7 +447,7 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     from quantem.gpu.ssb.units import aberrations_to_engine
 
     counts = np.random.RandomState(3).poisson(5, (256, 256, 16, 16)).astype(np.uint16)
-    aberrations = {"C10": -8.0, "C12": 3.0, "phi12": 0.4}
+    aberrations = {"C10_nm": -8.0, "C12_nm": 3.0, "phi12_deg": math.degrees(0.4)}
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=0.5,
              det_sampling=2.0, bf_center=(7.5, 7.5), bf_radius=5) as session:
         before = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave").loss

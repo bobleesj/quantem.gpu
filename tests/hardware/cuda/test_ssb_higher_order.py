@@ -1,4 +1,4 @@
-"""Higher-order SSB preview on CUDA: the 14-term Krivanek path an interactive viewer calls with ``higher_order_magnitudes``.
+"""Higher-order SSB preview on CUDA: the 14-term Krivanek path an interactive viewer calls with ``C21_nm`` ... ``phi56_deg``.
 
 Top: the preview matches an independent float64-chi Torch reconstruction with every aberration order active. Bottom: with
 only C10/C12 non-zero, the 14-term kernel reproduces the two-term preview, because chi is the same polynomial.
@@ -64,8 +64,11 @@ def _session_256():
     counts[:, :, np.hypot(rr, cc) < 10] += 200
     ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.3, det_sampling=3.0,
               scan_detector_rotation_deg=0.0)
-    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     return ssb
+
+
+_NAMES = ("C10", "C12", "C21", "C23", "C30", "C32", "C34", "C41", "C43", "C45", "C50", "C52", "C54", "C56")
 
 
 def _packed(magnitudes_nm: dict[int, float], angles_rad: dict[int, float]) -> tuple[np.ndarray, np.ndarray]:
@@ -78,19 +81,25 @@ def _packed(magnitudes_nm: dict[int, float], angles_rad: dict[int, float]) -> tu
     return magnitudes, angles
 
 
+def _aberrations(magnitudes_nm: dict[int, float], angles_rad: dict[int, float]) -> dict[str, float]:
+    """The same coefficients as the public mapping: ``C.._nm`` magnitudes and ``phi.._deg`` azimuths by name."""
+    return ({f"{_NAMES[slot]}_nm": value for slot, value in magnitudes_nm.items()}
+            | {f"phi{_NAMES[slot][1:]}_deg": math.degrees(value) for slot, value in angles_rad.items()})
+
+
 def test_higher_order_preview_matches_float64_chi_reference():
     """Every aberration order changes chi by about a radian at the 30 mrad aperture edge."""
     ssb = _session_256()
     try:
-        magnitudes, angles = _packed(
+        coefficients = (
             {0: -8.0, 1: 4.0, 2: 40.0, 3: 30.0, 4: 1500.0, 5: 900.0, 6: 700.0, 7: 3.0e4, 8: 2.0e4, 9: 2.5e4,
              10: 9.0e5, 11: 6.0e5, 12: 5.0e5, 13: 4.0e5},
             {1: -0.7, 2: 0.4, 3: 1.1, 5: -0.3, 6: 0.9, 7: -1.2, 8: 0.2, 9: 0.6, 11: -0.5, 12: 1.4, 13: -0.1},
         )
-        aberrations = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
-        phase, loss = ssb.preview(aberrations, higher_order_magnitudes=magnitudes, higher_order_angles=angles)
-        dragged, no_loss = ssb.preview(aberrations, compute_loss=False, higher_order_magnitudes=magnitudes,
-                                       higher_order_angles=angles)
+        magnitudes, angles = _packed(*coefficients)
+        aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
+        phase, loss = ssb.preview(_aberrations(*coefficients))
+        dragged, no_loss = ssb.preview(_aberrations(*coefficients), compute_loss=False)
         reference = KrivanekSSB.from_ssb(ssb)
         reference.magnitudes_A = magnitudes.astype(np.float64) * 10.0    # the engine takes Angstrom
         reference.angles_rad = angles.astype(np.float64)
@@ -111,11 +120,9 @@ def test_two_term_coefficients_through_the_full_kernel_equal_the_standard_previe
     """With C21..C56 zero, the 14-term chi is the C10/C12 polynomial; an angle left on a zero magnitude has no effect."""
     ssb = _session_256()
     try:
-        aberrations = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
-        magnitudes, angles = _packed({0: -8.0, 1: 4.0}, {1: -0.7, 2: 1.2})
+        aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
         standard, standard_loss = ssb.preview(aberrations, phase_estimator="mean_phase")
-        full, full_loss = ssb.preview(aberrations, phase_estimator="mean_phase", higher_order_magnitudes=magnitudes,
-                                      higher_order_angles=angles)
+        full, full_loss = ssb.preview(_aberrations({0: -8.0, 1: 4.0}, {1: -0.7, 2: 1.2}), phase_estimator="mean_phase")
         # measured 2026-10-07: 1.7e-8 rad max, identical loss
         np.testing.assert_allclose(full, standard, atol=1e-7)
         assert full_loss == pytest.approx(standard_loss, rel=1e-7)

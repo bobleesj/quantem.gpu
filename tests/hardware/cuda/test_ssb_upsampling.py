@@ -1,4 +1,5 @@
 """GPU upsampling preserves the model, native search loss, and source state."""
+import math
 import numpy as np
 import pytest
 
@@ -15,7 +16,7 @@ def test_upsampling_matches_zero_inserted_scan(factor):
 
     ssb, _ = _synthetic_session()
     try:
-        coefs = {'C10': 30.0, 'C12': 5.0, 'phi12': 0.3}
+        coefs = {'C10_nm': 30.0, 'C12_nm': 5.0, 'phi12_deg': math.degrees(0.3)}
         native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase")
         phase, loss = ssb.preview(coefs, phase_estimator="mean_phase", upsampling_factor=factor)
         assert phase.shape == (128 * factor, 128 * factor)
@@ -47,7 +48,7 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
     import cupy as cp
 
     ssb, engine = _synthetic_session()
-    coefs = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     tilt, depth = (-9.0, 5.0), 18.0
     try:
         native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth)
@@ -64,14 +65,9 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         np.testing.assert_array_equal(restored, native)
         assert restored_loss == native_loss
         # UI can retain an angle after its higher-order magnitude is cleared.
-        magnitudes = np.zeros(14, np.float32)
-        magnitudes[:2] = [-8, 4]
-        angles = np.zeros(14, np.float32)
-        angles[1] = -0.7
-        angles[2] = 1.2
         inactive, _ = ssb.preview(
-            coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
-            higher_order_magnitudes=magnitudes, higher_order_angles=angles,
+            coefs | {"phi21_deg": math.degrees(1.2)}, phase_estimator="mean_phase", tilt_mrad=tilt,
+            depth_spread_nm=depth, upsampling_factor=factor,
         )
         np.testing.assert_allclose(inactive, actual, atol=2e-6)
     finally:

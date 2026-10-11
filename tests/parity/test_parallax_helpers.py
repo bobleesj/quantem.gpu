@@ -199,7 +199,7 @@ def test_aberration_fit_matches_original_quantem() -> None:
     )
     aberrations, rotation_angle_deg = fit_aberrations_from_shifts(shifts_ang, angles_rad)
 
-    np.testing.assert_allclose(aberrations["C10"] * 10, ref["C10"], rtol=1e-6)
-    np.testing.assert_allclose(aberrations["C12"] * 10, ref["C12"], rtol=1e-6)
-    np.testing.assert_allclose(aberrations["phi12"], ref["phi12"], atol=1e-6)
+    np.testing.assert_allclose(aberrations["C10_nm"] * 10, ref["C10"], rtol=1e-6)
+    np.testing.assert_allclose(aberrations["C12_nm"] * 10, ref["C12"], rtol=1e-6)
+    np.testing.assert_allclose(math.radians(aberrations["phi12_deg"]), ref["phi12"], atol=1e-6)
     np.testing.assert_allclose(rotation_angle_deg, ref["rotation_angle"], atol=1e-5)

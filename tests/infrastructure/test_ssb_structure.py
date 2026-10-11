@@ -2,6 +2,7 @@
 
 import inspect
 import json
+import math
 from pathlib import Path
 
 
@@ -98,7 +99,7 @@ def test_reconstruct_series_reuses_only_exact_results(
     raw.mkdir()
     screen.mkdir(parents=True)
     reference = "91mm_30mrad_151"
-    aberrations = {"C10": -88.0, "C12": 53.0, "phi12": -0.78}
+    aberrations = {"C10_nm": -88.0, "C12_nm": 53.0, "phi12_deg": math.degrees(-0.78)}
     for index in range(1, 4):
         (raw / f"91mm_30mrad_{150 + index}_master.h5").write_bytes(b"raw")
         dataset = screen / f"91mm_30mrad_{150 + index}"
@@ -110,7 +111,6 @@ def test_reconstruct_series_reuses_only_exact_results(
             "scan_detector_rotation_deg": 173.0,
             "bf_radius": 55.0,
             "schema": FIT_SCHEMA,
-            "aberration_unit": "nm",
             "aberrations": aberrations,
             "loss": 0.01 * index,
         }
@@ -286,9 +286,9 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
                             "scan_sampling_A": 0.5,
                             "scan_detector_rotation_deg": 0.0,
                             "aberrations": {
-                                "C10": 1.0,
-                                "C12": 2.0,
-                                "phi12": 0.3,
+                                "C10_nm": 1.0,
+                                "C12_nm": 2.0,
+                                "phi12_deg": math.degrees(0.3),
                             },
                             "loss": 0.1,
                         }
@@ -318,7 +318,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
                     1j * np.full((2, 3), 0.1 * self.index, dtype=np.float32)
                 ).astype(np.complex64),
                 backend="cuda",
-                aberrations={"C10": 1.0, "C12": 2.0, "phi12": 0.3},
+                aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)},
                 scan_detector_rotation_deg=0.0,
                 loss=0.1,
             )
@@ -368,7 +368,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
         (raw / "live" / "screen" / f"scan_{frame}").mkdir(exist_ok=True)
         np.save(raw / "live" / "screen" / f"scan_{frame}" / "bf.npy", np.zeros((2, 3), dtype=np.float32))
         np.save(raw / "live" / "screen" / f"scan_{frame}" / "df.npy", np.zeros((2, 3), dtype=np.float32))
-    fitted = {"C10": -10.5, "C12": 0.25, "phi12": -0.5}
+    fitted = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
     opened, fits, reconstructions = [], [], []
 
     class FakeSession:
@@ -425,7 +425,7 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
     folder.mkdir(parents=True)
     (raw / "scan_1_master.h5").write_bytes(b"raw")
     (folder / "config.json").write_text(json.dumps({"computed": {"ssb": {
-        "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "scan_detector_rotation_deg": 0.0,
+        "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "rotation_angle_deg": 0.0,
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5}}}))
     before = (folder / "config.json").read_bytes()
     with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A, scan_detector_rotation_deg"):
@@ -473,7 +473,7 @@ files:
             return SSBResult(
                 object_wave=np.full((3, 4), 1 + 1j, dtype=np.complex64),
                 backend="cuda",
-                aberrations={"C10": 1.0, "C12": 2.0, "phi12": 0.3},
+                aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)},
                 scan_detector_rotation_deg=12.0,
                 loss=0.25,
                 bf_radius=8.0,

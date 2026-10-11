@@ -1,5 +1,6 @@
 """SSB computation stays on CUDA until an explicit viewer export."""
 
+import math
 import numpy as np
 import pytest
 
@@ -13,7 +14,7 @@ def test_reconstruction_does_not_export_phase(monkeypatch, estimator):
     import cupy as cp
 
     ssb, _ = _synthetic_session()
-    values = {"C10": -8.0, "C12": 4.0, "phi12": -0.7}
+    values = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     try:
         expected = ssb.reconstruct(aberrations=values, phase_estimator=estimator)
         # Preparation may export tiny geometry metadata; repeated scientific
@@ -71,8 +72,8 @@ def test_mean_phase_trial_replay_owns_each_trial_wave():
         for record in fitted.trial_records[:3]:
             values = record["params"]
             result = ssb.reconstruct(aberrations={
-                "C10": values["C10_nm"], "C12": values["C12_nm"],
-                "phi12": np.deg2rad(values["phi12_deg"]),
+                "C10_nm": values["C10_nm"], "C12_nm": values["C12_nm"],
+                "phi12_deg": values["phi12_deg"],
             }, phase_estimator="mean_phase", compute_loss=False)
             expected.append(result.object_wave.copy())
         assert any(not cp.array_equal(expected[0], frame) for frame in expected[1:])

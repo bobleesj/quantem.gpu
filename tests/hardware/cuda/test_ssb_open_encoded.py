@@ -5,6 +5,7 @@ so the reconstruction is the same to float32 rounding. Real Arina acquisition (5
 when ``QUANTEM_SSB_ARINA_MASTER`` is unset or no CUDA device is present.
 """
 
+import math
 import os
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def test_open_bright_field_crop_matches_full_detector(det_sampling):
     from quantem.gpu import SSB
     from quantem.gpu.io import load
 
-    aberrations = {"C10": 16.2, "C12": 4.15, "phi12": 0.33}
+    aberrations = {"C10_nm": 16.2, "C12_nm": 4.15, "phi12_deg": math.degrees(0.33)}
     settings = {**SETTINGS, "det_sampling": det_sampling}
     cropped = SSB.open(str(SOURCE), **settings)
     assert cropped._data.shape[-2:] != (192, 192)          # only the bright-field region was decoded
@@ -103,7 +104,7 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
         pytest.skip("No CUDA runtime")
     from quantem.gpu import SSB
 
-    aberrations = {"C10": 16.2, "C12": 4.15, "phi12": 0.33}
+    aberrations = {"C10_nm": 16.2, "C12_nm": 4.15, "phi12_deg": math.degrees(0.33)}
     session = SSB.open(str(SOURCE), **SETTINGS)
     result = cp.asnumpy(session.reconstruct(aberrations=aberrations).phase).astype(np.float64)
     previews = {

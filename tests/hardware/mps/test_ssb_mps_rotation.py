@@ -1,5 +1,6 @@
 """MPS SSB after a rotation change: the same answer as a session prepared at that rotation."""
 
+import math
 import platform
 
 import numpy as np
@@ -28,7 +29,7 @@ def test_rotation_change_keeps_every_aperture_pixel_with_anisotropic_sampling():
     # the selection (30 px) reaches past the aperture (25 mrad: 25 px along rows, 17 px along columns)
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=25.0, scan_sampling_A=0.3, det_sampling=(1.0, 1.5),
                     bf_radius=30.0, bf_center=(31.5, 31.5))
-    aberrations = {"C10": 4.0, "C12": 1.0, "phi12": 0.4}
+    aberrations = {"C10_nm": 4.0, "C12_nm": 1.0, "phi12_deg": math.degrees(0.4)}
 
     with SSB(counts, scan_detector_rotation_deg=0.0, **settings) as turned:
         turned.reconstruct(aberrations=aberrations)

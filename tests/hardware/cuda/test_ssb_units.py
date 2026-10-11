@@ -5,6 +5,7 @@ scanned with a probe of known defocus; the fitted C10 must equal abTEM's C10 (= 
 fit returned the Angstrom number under the nm label (-100.26 for a -10 nm C10).
 """
 
+import math
 import numpy as np
 import pytest
 
@@ -47,7 +48,7 @@ def test_fitted_c10_is_nm(defocus_A):
     ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
     expected_nm = -defocus_A / 10.0          # abTEM C10 = -defocus, Angstrom -> nm
     # validated 2026-09-24: -10.03 and +15.03 for -10 and +15 nm
-    assert abs(ssb.aberrations["C10"] - expected_nm) < 0.02 * abs(expected_nm)
+    assert abs(ssb.aberrations["C10_nm"] - expected_nm) < 0.02 * abs(expected_nm)
 
 
 def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_defocus():
@@ -65,7 +66,7 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
         result = ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
         automatic_sampling = ssb._backend().angular_sampling[0]
     assert automatic_sampling == pytest.approx(det_sampling, rel=0.004)
-    assert result.aberrations["C10"] == pytest.approx(-10.0, rel=0.04)
+    assert result.aberrations["C10_nm"] == pytest.approx(-10.0, rel=0.04)
 
 
 def test_search_ranges_accept_lists_for_every_parameter():
@@ -79,7 +80,7 @@ def test_search_ranges_accept_lists_for_every_parameter():
                                      refinement=None, check_rotation=False, verbose=False)
 
     assert dict(as_lists.aberrations) == dict(as_tuples.aberrations)
-    assert -10.0 <= np.degrees(as_lists.aberrations["phi12"]) <= 10.0
+    assert -10.0 <= as_lists.aberrations["phi12_deg"] <= 10.0
 
 
 def test_numpy_scalar_sampling_is_read_as_a_number():
@@ -90,7 +91,7 @@ def test_numpy_scalar_sampling_is_read_as_a_number():
     counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
     rows, cols = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rows, cols) < 10] += 200
-    aberrations = {"C10": 3.0, "C12": 0.5, "phi12": 0.3}
+    aberrations = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
     with _session(counts, det_mrad=np.float32(3.0), scan_A=np.float32(0.3)) as ssb:
         phase, loss = ssb.preview(aberrations)
     with _session(counts, det_mrad=3.0, scan_A=float(np.float32(0.3))) as reference:

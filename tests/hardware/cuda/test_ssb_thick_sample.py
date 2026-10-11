@@ -86,8 +86,8 @@ def test_zero_depth_weighting_is_standard_ssb():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200      # bright-field disk
     ssb = _session(counts, det_mrad=3.0, scan_A=0.3)
-    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
-    for aberrations in ({"C10": 30.0, "C12": 5.0, "phi12": 0.3}, {"C10": -40.0, "C12": 12.0, "phi12": -1.0}):
+    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
+    for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
         thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
         np.testing.assert_allclose(thick, standard, atol=5e-6)
@@ -100,7 +100,7 @@ def _synthetic_session():
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200
     ssb = _session(counts, det_mrad=3.0, scan_A=0.3)
-    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     return ssb, ssb._backend()._accelerator
 
 
@@ -206,7 +206,7 @@ def test_batched_fit_repeats_bit_identically():
     rows, cols = np.meshgrid(np.arange(64) - 31.5, np.arange(64) - 31.5, indexing="ij")
     counts[:, :, np.hypot(rows, cols) < 22] += 200
     ssb = _session(counts, det_mrad=30 / 22, scan_A=0.3)
-    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     engine = ssb._backend()._accelerator
     params = np.column_stack([rng.uniform(-300, 300, 16), rng.uniform(0, 200, 16), rng.uniform(-1.5, 1.5, 16),
                               rng.uniform(-20, 20, 16), rng.uniform(-20, 20, 16), rng.choice([0.0, 150.0, 400.0], 16)])

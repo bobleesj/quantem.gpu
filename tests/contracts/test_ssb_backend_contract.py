@@ -1,4 +1,5 @@
 import inspect
+import math
 from types import SimpleNamespace
 
 import numpy as np
@@ -229,7 +230,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
     default = workflow.SSB(data, **common)
     explicit = workflow.SSB(
         data,
-        aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0},
+        aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
         **common,
     )
 
@@ -246,7 +247,7 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
     result = SSBResult(
         object_wave=np.ones((2, 2), dtype=np.complex64),
         backend="mps",
-        aberrations={"C10": 1.0, "C12": 2.0, "phi12": 0.1},
+        aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.1)},
         scan_detector_rotation_deg=3.0,
         loss=0.25,
         num_bf=selection.size,
@@ -373,7 +374,7 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
     session._test_backend = _Backend()
     session.backend = session._test_backend.backend
     phase, loss = session.preview(
-        {"C10": 0.0, "C12": 0.0, "phi12": 0.0},
+        {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
         context=Context(),
     )
 
