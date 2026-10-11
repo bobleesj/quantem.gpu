@@ -129,6 +129,7 @@ artifacts = [
 [tool.hatch.build.targets.sdist]
 include = [
     "docs",
+    "scripts",
     "src/quantem/gpu",
     "tests",
     "README.md",
