@@ -185,6 +185,8 @@ parts:
         title: uint32 flagged markers and convert size (2026-10-08)
       - file: maintainer/2026-10-08-webgpu-qem-streaming-load
         title: WebGPU .qem streamed loading (2026-10-08)
+      - file: maintainer/2026-10-11-lz4-read-bounds-and-chunk-walk
+        title: LZ4 read bounds and rc16 timing (2026-10-11)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
       - file: maintainer/history/index
