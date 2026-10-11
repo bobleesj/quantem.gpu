@@ -49,7 +49,6 @@ def load_h5_ans(
     # workflows over several acquisitions (MAPED tilts, focal series) label each
     # one by the file it came from; every branch below copies info.metadata
     info.metadata["source_path"] = str(path)
-    inspected = time.perf_counter()
     generic = arrays.load_hdf5_array_resident(
         path, dataset_path=dataset_path, backend=backend,
         device=device, verbose=verbose, hot_pixel_correction=hot_pixel_correction,
@@ -119,27 +118,16 @@ def load_h5_ans(
         else:
             reader = FrameReader(str(path))
             stack.callback(reader.close)
-        setup_finished = time.perf_counter()
-        read_seconds = 0.0
-        transfer_decode_seconds = 0.0
-        preparation_timings = {}
         for first in range(0, math.prod(info.scan_shape), chunk_scans):
             stop = min(first + chunk_scans, math.prod(info.scan_shape))
-            before = time.perf_counter()
             if dataset is not None:
                 # A chunk can cut a rectangular scan row. h5py reads and decodes
                 # the stored chunks on the host for this generic layout.
                 raw = cp.asarray(arrays.read_frame_block(dataset, shape, first, stop))
             else:
                 prepared = reader.prepare(np.arange(first, stop))
-                for key, value in prepared["prepare_timing_s"].items():
-                    preparation_timings[key] = preparation_timings.get(key, 0.0) + value
-                decode_started = time.perf_counter()
                 raw = decompress_prepared(prepared, batch_bytes_target=128 * 1024**2)
-                transfer_decode_seconds += time.perf_counter() - decode_started
                 raw = raw.reshape(stop - first, *info.detector_shape)
-            cp.cuda.get_current_stream().synchronize()
-            read_seconds += time.perf_counter() - before
             if stored_dtype != dtype:
                 if corrector.record["applied"]:
                     # Flagged uint32 pixels can contain 0xffffffff sentinels.
@@ -178,13 +166,7 @@ def load_h5_ans(
             **_correction_metadata(corrector.record, zeroed_markers),
             load_timings=dict(
                 source.load_metrics,
-                read_upload_seconds=read_seconds,
                 resident_ready_seconds=time.perf_counter() - started,
-                max_chunk_scans=chunk_scans,
-                inspect_seconds=inspected - started,
-                setup_seconds=setup_finished - inspected,
-                preparation_seconds=preparation_timings,
-                transfer_decode_seconds=transfer_decode_seconds,
             ),
         )
         if verbose:
@@ -224,7 +206,6 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     chunk_scans = min(8192 if stored_dtype.itemsize <= 2 else 4096, scans)
     if chunk_scans >= 512:
         chunk_scans = chunk_scans // 512 * 512
-    read_decode_seconds = 0.0
     try:
         ranges = [
             (first, min(first + chunk_scans, scans))
@@ -236,12 +217,10 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(reader.prepare, np.arange(*ranges[0]))
             for index in range(len(ranges)):
-                before = time.perf_counter()
                 prepared = pending.result()
                 if index + 1 < len(ranges):
                     pending = pool.submit(reader.prepare, np.arange(*ranges[index + 1]))
                 raw = load_prepared_frames(prepared)
-                read_decode_seconds += time.perf_counter() - before
                 try:
                     # The median reads only valid neighbors, so flagged uint32
                     # sentinels are replaced before the range check, as on CUDA.
@@ -291,9 +270,7 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         **_correction_metadata(corrector.record, zeroed_markers),
         load_timings=dict(
             source.load_metrics,
-            read_upload_seconds=read_decode_seconds,
             resident_ready_seconds=time.perf_counter() - started,
-            max_chunk_scans=chunk_scans,
         ),
     )
     if verbose:
