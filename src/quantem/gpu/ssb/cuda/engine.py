@@ -18,7 +18,7 @@ import numpy as np
 from quantem.gpu.io.qem import save_streamed
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
-from quantem.gpu.ssb.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.contract import SSBExportState
 from quantem.gpu.ssb.cuda.kernels import get_fft_kernel
 from quantem.gpu.ssb.cuda.kernels.common import pack_aberration_coefs
 from quantem.gpu.ssb.cuda.kernels.engine import (
@@ -149,9 +149,6 @@ class SSBEngine:
     fast aberration-dependent gamma factor computation.
     """
 
-    backend = "cuda"
-    precision = SSBPrecision()
-
     def __init__(
         self,
         G_qk: cp.ndarray,
@@ -209,7 +206,6 @@ class SSBEngine:
         self._custom_fft = None
         self._bf_source_path: pathlib.Path | None = None
         self._bf_source_dtype: np.dtype | None = None
-        self._bf_source_max_value: int | None = None
         self._bf_source_write_seconds: float | None = None
         self._colvar_group = 32
         self.objective = PhaseVarianceObjective(self)
@@ -293,7 +289,6 @@ class SSBEngine:
             dc_value=complex(self._dc_value_host),
             bf_source_path=self._bf_source_path,
             bf_source_dtype=self._bf_source_dtype,
-            bf_source_max_value=self._bf_source_max_value,
         )
 
     def write_exact_bf_source(
@@ -331,7 +326,6 @@ class SSBEngine:
                 source.release()
         self._bf_source_path = path
         self._bf_source_dtype = np.dtype(data.dtype)
-        self._bf_source_max_value = None
         self._bf_source_write_seconds = time.perf_counter() - started
         return path
 
@@ -504,11 +498,6 @@ class SSBEngine:
         Returns the mean complex object directly, shape (ny, nx).
         """
         num_bf, ny, nx = self._bf_grid()
-        if chunk_bf >= num_bf:
-            # Not worth chunking - use the full path.
-            self._run_correction_pipeline(C10, C12, phi12)
-            return self._corrected_buffer.mean(axis=0)
-
         # Compute the full pk buffer once (small: num_bf × 8 bytes).
         cos2phi12, sin2phi12 = self._fill_probe(C10, C12, phi12)
 
@@ -548,9 +537,6 @@ class SSBEngine:
         inverse FFT per BF pixel.
         """
         num_bf, ny, nx = self._bf_grid()
-        if ny != nx:
-            raise ValueError("Fourier-sum object path expects square scan grids")
-
         cos2phi12, sin2phi12 = self._fill_probe(C10, C12, phi12)
 
         k_bf = self._colvar_group
@@ -599,12 +585,7 @@ class SSBEngine:
         # small enough at 128x128, so keep large-BF user workflows stable
         # while the 128 Fourier-sum kernel is investigated separately.
         if not (ny == 128 and nx == 128 and num_bf > 1024):
-            try:
-                return self._reconstruct_object_fourier_sum(C10, C12, phi12)
-            except RuntimeError:
-                # a large scan can still finish on the chunked path below
-                if full_bytes <= _STAGING_LIMIT_BYTES:
-                    raise
+            return self._reconstruct_object_fourier_sum(C10, C12, phi12)
         if full_bytes > _STAGING_LIMIT_BYTES:
             # Target ~2 GB chunk transient. Speed is flat from 64..9070 BF
             # per chunk on Blackwell (kernel-launch overhead negligible) so

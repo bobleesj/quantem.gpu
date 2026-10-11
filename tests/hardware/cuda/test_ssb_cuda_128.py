@@ -11,7 +11,6 @@ from tests.parity.ssb_precision import (
     LOSS_RTOL,
     PHASE_ATOL,
     PHASE_RTOL,
-    PRECISION,
 )
 
 REALDATA_MASTER_ENV = "QUANTEM_GPU_SSB_MASTER"
@@ -321,13 +320,6 @@ def test_cuda_128_rejects_mismatched_bf_count() -> None:
             semiangle_cutoff=21.4,
             angular_sampling=(1.0, 1.0),
         )
-
-
-def test_cuda_engine_uses_shared_float32_precision_contract() -> None:
-    """CUDA advertises the shared numeric storage contract."""
-    engine = _make_engine()
-
-    assert engine.precision == PRECISION
 
 
 def test_cuda_128_engine_matches_explicit_cupy_reference() -> None:
