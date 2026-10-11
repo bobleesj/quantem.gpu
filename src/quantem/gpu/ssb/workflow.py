@@ -486,7 +486,6 @@ class SSB:
         session that is only configured, saved or closed never pays for it.
         """
         if self._compute is None:
-            aberrations = aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None
             if self.backend == "cuda":
                 # CuPy loads with the CUDA implementation only, so MPS sessions run without it
                 from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
@@ -495,14 +494,15 @@ class SSB:
                     data=self._data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
                     det_sampling=self.det_sampling, voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
                     bf_intensity_threshold=self.bf_intensity_threshold, bf_radius=self.bf_radius,
-                    bf_center=self.bf_center, aberrations=aberrations, rotation_angle_deg=self.physical_rotation_deg,
+                    bf_center=self.bf_center, rotation_angle_deg=self.physical_rotation_deg,
+                    aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
                 )
             else:
                 self._compute = MpsSSBBackend(
                     self._data, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                     scan_sampling=self.scan_sampling_A, det_sampling=self.det_sampling,
                     bf_intensity_threshold=self.bf_intensity_threshold, bf_center=self.bf_center,
-                    bf_radius=self.bf_radius, rotation_angle_deg=self.physical_rotation_deg, aberrations=aberrations,
+                    bf_radius=self.bf_radius, rotation_angle_deg=self.physical_rotation_deg,
                 )
         return self._compute
 
