@@ -93,6 +93,12 @@ processing history with the data. Review retained source tags before publishing;
 they may identify an acquisition or contain local paths. These functions save
 locally and do not upload files.
 
+For existing tutorial inputs, follow the {ref}`pinned download workflow <shared-tutorial-data>`:
+retrieve the dataset at a fixed revision, then open its local acquisition with
+`quantem.gpu.io`. Reuse that input across tutorials. The shared data repository
+contains data and descriptive metadata; tutorial code, notebooks, models and
+result reports remain in their source repositories or local runs.
+
 For format developers, the
 [file-format guide](../developer/file-formats.md) links the byte layout,
 metadata schema, and independent conformance checks.

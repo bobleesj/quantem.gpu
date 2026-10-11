@@ -29,6 +29,87 @@ returns a dense host acquisition whose indexing gives CPU tensors and which
 `"auto"` (CUDA, then MPS, then CPU, printing which), `"cuda"`, `"cuda:N"`,
 `"mps"` and `"cpu"`.
 
+(shared-tutorial-data)=
+## Shared tutorial data
+
+`quantem.data.download` retrieves a public input from the
+[bobleesj/quantem-data](https://huggingface.co/datasets/bobleesj/quantem-data)
+dataset repository; `quantem.gpu.io` then opens the local acquisition file.
+`quantem.data` is a separate package and is not needed for your own local
+files. `io.discover` searches local folders, not Hugging Face.
+
+```{admonition} The quantem.data form below is not in a release yet
+:class: warning
+Qualified names such as `denoise/simulated_au_nanobeam_pg_dose1` and the
+`revision` argument are newer than quantem.data 0.0.1rc4 on TestPyPI, whose
+`download` raises `TypeError` when given `revision`. Until a quantem.data
+release includes them, use the `huggingface_hub` form that follows it.
+```
+
+This example uses a synthetic Au input at a fixed data revision. A qualified
+name selects one input even when another folder has the same short name:
+
+```python
+from quantem.data import download
+from quantem.gpu import io
+
+folder = download(
+    "denoise/simulated_au_nanobeam_pg_dose1",
+    revision="475260be22b5a00704f58382517a44aff94e252e",
+)
+master = folder / "truth-events-dose-1.0_master.h5"
+data = io.load(master, hot_pixel_correction="none")
+```
+
+With released packages, `huggingface_hub` fetches the same folder; `master`
+and `io.load` then follow as above:
+
+```python
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+root = snapshot_download(
+    "bobleesj/quantem-data", repo_type="dataset",
+    revision="475260be22b5a00704f58382517a44aff94e252e",
+    allow_patterns="denoise/simulated_au_nanobeam_pg_dose1/*", token=False,
+)
+folder = Path(root) / "denoise/simulated_au_nanobeam_pg_dose1"
+```
+
+Keep `data` open while analyzing it or using a viewer, then call `data.close()`.
+`hot_pixel_correction="none"` requests no replacement of pixels flagged in the
+stored detector mask; the default replaces them with a local 3 × 3 median.
+This master flags no pixels, so both settings return the same values here.
+Neither setting fits a detector noise model. Use `io.inspect(master)` for an
+optional header-only check before loading.
+
+Either download returns the dataset folder with its HDF5 shard, metadata and
+checksums. Keep the master and shard together. `io.load` does not read the
+adjacent `geometry.json` or `noise-recipe.json`.
+
+| Input | What `quantem.gpu.io` does with it |
+| --- | --- |
+| `4dstem/gold_128_npy_bin8` | `io.load(folder / "data.npy")` returns uint16 data shaped `(128, 128, 24, 24)`. The sampling is recorded in the adjacent `meta.json`, which `io.load` does not read. |
+| `denoise/simulated_au_nanobeam_pg_dose1` | Synthetic master and shard shown above. |
+| `widget/gold_session` | Not a 4D-STEM acquisition: 26 survey images for an image viewer. |
+| `widget/ducky` | Not a 4D-STEM acquisition: a synthetic reconstruction monitor and snapshots for a viewer. |
+
+The `widget/` paths exist in data revision
+`b30a28c295494b51139415d540819c4cbfde49b6` and are absent from the earlier
+revision used above. A revision fixes every path; do not combine files from
+two revisions in one input.
+
+The Au input is a noiseless simulated expectation, float32, shaped
+`(32, 32, 192, 192)`, stored with an assumed noise recipe. It contains no
+experimental ARINA measurements and is not a validated ARINA noise calibration.
+Experimental inspiration:
+[Au liquid-cell data](https://doi.org/10.5281/zenodo.18167694).
+The dataset repository holds input data, data cards, metadata and checksums;
+scientific code, notebooks, weights and reports stay in their owning
+repositories or local run directories. Downloading does not upload, move or
+delete data.
+
 ## `discover`
 
 Find candidate HDF5 masters before inspecting or loading them:
