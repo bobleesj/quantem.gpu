@@ -4,7 +4,6 @@
 multiplication, row IFFT, column IFFT, and fused column phase accumulation.
 """
 
-from functools import lru_cache
 
 import cupy as cp
 import numpy as np
@@ -931,8 +930,3 @@ class CustomFFT1024(CustomFFTBase):
             self._cols_split512_block,
             (data, partial_sum, np.int32(num_bf), np.int32(-k_bf)),
         )
-
-
-@lru_cache(maxsize=1)
-def get_custom_fft_1024() -> CustomFFT1024:
-    return CustomFFT1024()

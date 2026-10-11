@@ -4,7 +4,6 @@
 radix-2 stage. 128 threads per row, each handling 4 elements.
 """
 
-from functools import lru_cache
 
 import cupy as cp
 import numpy as np
@@ -1167,8 +1166,3 @@ class CustomFFT512(CustomFFTBase):
                 np.int32(1),
             ),
         )
-
-
-@lru_cache(maxsize=1)
-def get_custom_fft_512() -> CustomFFT512:
-    return CustomFFT512()
