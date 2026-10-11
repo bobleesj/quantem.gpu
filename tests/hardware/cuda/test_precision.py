@@ -21,48 +21,36 @@ from tests.parity.precision_fixture import (
 )
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_cuda_precision_matches_numpy_oracle(tmp_path, dtype):
     values = cp.linspace(-37, 91, 4 * 4 * 12 * 12, dtype=cp.float32).reshape(
         4, 4, 12, 12
     )
     source = tmp_path / "oracle_master.h5"
     io.save(source, values, dtype="float32", verbose=False)
-    if dtype == "float16":
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(source, dtype=dtype, backend="cuda", verbose=False)
-        return
     loaded = io.load(source, dtype=dtype, verbose=False)
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
     original = cp.asnumpy(values)
-    if dtype == "float16":
-        expected = original.astype(np.float16).astype(np.float32)
-        tolerance = 0.0
-    else:
-        expected = (
-            np.rint((original - calibration["offset"]) / calibration["scale"])
-            .clip(0, 65535)
-            * calibration["scale"]
-            + calibration["offset"]
-        ).astype(np.float32)
-        tolerance = calibration["scale"] * 1.1
+    expected = (
+        np.rint((original - calibration["offset"]) / calibration["scale"])
+        .clip(0, 65535)
+        * calibration["scale"]
+        + calibration["offset"]
+    ).astype(np.float32)
+    tolerance = calibration["scale"] * 1.1
     observed = cp.asnumpy(prepare(loaded).frame(0, output="native"))
     np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=tolerance)
     loaded.close()
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     """Frames and reductions obey the same public contract as Metal/MPS."""
 
     original = make_precision_fixture()
     source = tmp_path / "shared_oracle.npy"
     np.save(source, original)
-    if dtype == "float16":
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(source, dtype=dtype, backend="cuda", verbose=False)
-        return
     with io.load(source, dtype=dtype, backend="cuda", verbose=False) as loaded:
         report = loaded.metadata["precision"]
         calibration = report["regions"][0] if report.get("version") == 2 else report
@@ -123,7 +111,7 @@ def test_cuda_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
             assert report[field] == errors[field]
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16", "f16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys):
     values = cp.linspace(0, 1716, 12 * 16 * 16 * 16, dtype=cp.float32).reshape(
         12, 16, 16, 16
@@ -131,25 +119,18 @@ def test_float_archive_loads_selected_packed_intensities(tmp_path, dtype, capsys
     values[:2] *= cp.float32(0.000001)
     path = tmp_path / "result_master.h5"
     io.save(path, values, dtype="float32")
-    if dtype in {"float16", "f16"}:
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(path, dtype=dtype, backend="cuda", verbose=False)
-        return
     loaded = io.load(
         path, dtype=dtype, scan_region=(1, 7, 2, 11), detector_region=(1, 15, 0, 16)
     )
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
     selected = values[1:7, 2:11, 1:15]
-    if dtype in {"float16", "f16"}:
-        expected = selected.astype(cp.float16).astype(cp.float32)
-    else:
-        expected = (
-            cp.rint((selected.astype(cp.float64) - calibration["offset"]) / calibration["scale"])
-            .astype(cp.uint16)
-            .astype(cp.float64)
-            * calibration["scale"] + calibration["offset"]
-        )
+    expected = (
+        cp.rint((selected.astype(cp.float64) - calibration["offset"]) / calibration["scale"])
+        .astype(cp.uint16)
+        .astype(cp.float64)
+        * calibration["scale"] + calibration["offset"]
+    )
     expected = expected.astype(cp.float32)
     session = prepare(loaded)
     assert bool(cp.all(session.frame(0, output="native") == expected[0, 0]))
@@ -327,5 +308,5 @@ def test_changing_saved_precision_reports_restored_source_units(tmp_path):
     )
     path = tmp_path / "display_master.h5"
     io.save(path, values, dtype="scaled_uint16")
-    with pytest.raises(NotImplementedError, match="packed GPU allocation"):
+    with pytest.raises(NotImplementedError, match="Only dtype=.scaled_uint16. is a stored precision"):
         io.load(path, dtype="float16", backend="cuda", verbose=False)

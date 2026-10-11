@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     from quantem.gpu import io
     from quantem.gpu.detector import prepare
@@ -29,24 +29,16 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     )
     source = tmp_path / "source.npy"
     np.save(source, values)
-    if dtype == "float16":
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(source, dtype=dtype, backend="mps", verbose=False)
-        return
     loaded = io.load(source, dtype=dtype, backend="mps", verbose=False)
     report = loaded.metadata["precision"]
     calibration = report["regions"][0] if report.get("version") == 2 else report
-    if dtype == "float16":
-        expected = values.astype(np.float16).astype(np.float32)
-        tolerance = np.finfo(np.float16).eps * np.maximum(1, np.abs(values))
-    else:
-        expected = (
-            np.rint((values - calibration["offset"]) / calibration["scale"])
-            .clip(0, 65535)
-            * calibration["scale"]
-            + calibration["offset"]
-        ).astype(np.float32)
-        tolerance = np.full(values.shape, calibration["scale"] * 1.1, np.float32)
+    expected = (
+        np.rint((values - calibration["offset"]) / calibration["scale"])
+        .clip(0, 65535)
+        * calibration["scale"]
+        + calibration["offset"]
+    ).astype(np.float32)
+    tolerance = np.full(values.shape, calibration["scale"] * 1.1, np.float32)
     observed = prepare(loaded).reduce_frames([0], "mean")
     np.testing.assert_allclose(observed, expected[0, 0], rtol=0, atol=float(np.max(tolerance[0, 0])))
     assert report["values"] == values.size
@@ -64,7 +56,7 @@ def test_mps_precision_matches_numpy_oracle(tmp_path, dtype):
     reopened.close()
 
 
-@pytest.mark.parametrize("dtype", ["float16", "scaled_uint16"])
+@pytest.mark.parametrize("dtype", ["scaled_uint16"])
 def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     """Frames and reductions obey the same public contract as CUDA."""
 
@@ -74,10 +66,6 @@ def test_mps_precision_products_match_shared_numpy_oracle(tmp_path, dtype):
     original = make_precision_fixture()
     source = tmp_path / "shared_oracle.npy"
     np.save(source, original)
-    if dtype == "float16":
-        with pytest.raises(NotImplementedError, match="packed GPU allocation"):
-            io.load(source, dtype=dtype, backend="mps", verbose=False)
-        return
     with io.load(source, dtype=dtype, backend="mps", verbose=False) as loaded:
         report = loaded.metadata["precision"]
         calibration = report["regions"][0] if report.get("version") == 2 else report

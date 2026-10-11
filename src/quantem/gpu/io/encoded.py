@@ -127,8 +127,8 @@ def load_h5_ans(
             stop = min(first + chunk_scans, math.prod(info.scan_shape))
             before = time.perf_counter()
             if dataset is not None:
-                # A chunk can cut a rectangular scan row. Only storage copying
-                # runs on CPU; counts and all scientific reductions stay native.
+                # A chunk can cut a rectangular scan row. h5py reads and decodes
+                # the stored chunks on the host for this generic layout.
                 raw = cp.asarray(arrays.read_frame_block(dataset, shape, first, stop))
             else:
                 prepared = reader.prepare(np.arange(first, stop))
