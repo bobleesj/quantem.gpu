@@ -258,7 +258,8 @@ class Dataset4dstemGPU:
         A merge that walks down the scan frees each part of its inputs once it
         is past it, so the inputs shrink while the result grows. Only whole
         stored chunks are freed, so a few rows above ``row`` may remain.
-        Reading a freed row raises. ANS-encoded sources only.
+        Reading a freed row raises. Integer and float ANS sources only; a
+        scaled-precision source raises ``TypeError``.
         """
         self.data.release_scans_before(row * self.shape[1])
 

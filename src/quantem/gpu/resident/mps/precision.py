@@ -579,6 +579,13 @@ class PrecisionSource(DetectorQueries):
             _dispatch("divide", [value, denominator], params, scalars)
         return col, row
 
+    def release_scans_before(self, stop: int) -> None:
+        """Scaled-precision parts are calibrated per scan region and are freed only together."""
+        raise TypeError(
+            "A scaled-precision source frees its rows only all at once; call close() "
+            "when the last consumer finishes."
+        )
+
     def release(self):
         for part in self.parts:
             part.release()
