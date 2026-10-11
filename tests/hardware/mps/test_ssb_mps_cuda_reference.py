@@ -324,7 +324,7 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
     with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=0.5) as session:
         before, before_loss = session.preview(aberrations)
         path, _seconds = session.export_brightfield(tmp_path / "bf")
-        backend = session._backend_protocol
+        backend = session._backend()
         selection = backend._selection
         flat = counts.reshape(-1, 12, 12)[:, selection.rows, selection.cols]
         np.testing.assert_array_equal(
@@ -1840,7 +1840,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     assert type(result) is SSBResult
     assert optimized is result
     assert optimized.backend == result.backend == "mps"
-    assert workflow._mps_backend._prepared is not None
+    assert workflow._compute._prepared is not None
     assert result.object_wave.dtype == np.complex64
     assert result.phase.dtype == np.float32
 
@@ -1860,7 +1860,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     )
     np.testing.assert_array_equal(
         phase,
-        workflow._mps_backend._fit_preview_phase,
+        workflow._compute._fit_preview_phase,
     )
     assert loss == optimized.loss
 

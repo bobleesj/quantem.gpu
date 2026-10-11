@@ -320,7 +320,8 @@ def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> 
     for node in ast.walk(ast.parse(inspect.getsource(workflow))):
         if isinstance(node, ast.Attribute) and (
             (isinstance(node.value, ast.Name) and node.value.id == "backend")
-            or (isinstance(node.value, ast.Attribute) and node.value.attr == "_backend_protocol")
+            or (isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "_backend")
         ):
             called.add(node.attr)
     members = set(vars(SSBProtocol)) | set(SSBProtocol.__annotations__)
@@ -364,8 +365,7 @@ def test_preview_context_is_consumed_by_public_workflow() -> None:
             events.append("exit")
 
     class Session(SSB):
-        @property
-        def _backend_protocol(self):
+        def _backend(self):
             return self._test_backend
 
     session = Session.__new__(Session)

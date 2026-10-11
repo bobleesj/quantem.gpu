@@ -76,7 +76,7 @@ def test_batch_fit_matches_reference_fit():
     from quantem.gpu.ssb.mps.thick_sample import thick_fit, thick_fit_batch
 
     ssb = _poisson_disk_session()
-    backend = ssb._backend_protocol
+    backend = ssb._backend()
     backend.cache_rotation(0.0)
     prepared = backend._prepared
     rng = np.random.default_rng(3)
@@ -114,7 +114,7 @@ def test_fused_thick_preview_matches_reference_model():
     )
 
     ssb = _poisson_disk_session()
-    backend = ssb._backend_protocol
+    backend = ssb._backend()
     backend.cache_rotation(0.0)
     prepared = backend._prepared
     for kw, atol in ((dict(C10=30.0, C12=5.0, phi12=0.3, tilt_mrad=(5.0, -3.0), thickness=150.0), 5e-8),

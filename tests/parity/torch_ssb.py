@@ -52,7 +52,7 @@ class TorchSSB:
     @classmethod
     def from_ssb(cls, ssb, device: str | torch.device | None = None) -> Self:
         """The exact G and geometry of a prepared CUDA ``SSB`` session (same rotation), as torch tensors on ``device``."""
-        backend = ssb._backend_protocol
+        backend = ssb._backend()
         engine = backend._get_accelerator()
         engine.cache_rotation(backend._rotation_angle_rad)
         c = engine._cache
