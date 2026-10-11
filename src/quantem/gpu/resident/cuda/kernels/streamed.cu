@@ -441,6 +441,33 @@ extern "C" __global__ void sc_moment_pair(
     if (decodes && !reader.finished()) atomicOr(errors,1u);
 }
 
+// Sum, or maximum, of selected scan positions per detector pixel without expanding a block. Each
+// thread decodes one stream as far as its block's last selected scan (`stops`, per block of every
+// descriptor row from `bases`; 0 skips the block) and adds the selected counts, times how often
+// each scan was selected. Decoding whole blocks to gather a few frames wrote 512 patterns per block.
+extern "C" __global__ void sc_selected(
+    const u64* descriptors, const u32* multiplicity, const u32* stops, const u32* bases,
+    u64* output, u32* errors, u32 pixels, int maximum
+) {
+    const u64* d=descriptors+u64(blockIdx.y)*SC_DESCRIPTOR;
+    u32 interval=d[11], stream=blockIdx.x*blockDim.x+threadIdx.x;
+    if (stream>=((u32(d[8])+interval-1)/interval)*pixels) return;
+    u32 block=stream/pixels, stop=stops[bases[blockIdx.y]+block];
+    if (!stop) return;
+    const u32* times=multiplicity+d[7]+u64(block)*interval;
+    StreamReader reader=chunk_reader(d,stream);
+    u64 value=0;
+    for (u32 i=0;i<stop;++i) {
+        u64 count=reader.next();
+        if (maximum) value=times[i] ? max(value,count) : value;
+        else value+=count*times[i];
+    }
+    if (!reader.valid) atomicOr(errors,1u);
+    u64* target=output+d[9]*pixels+stream%pixels;
+    if (maximum) atomicMax(target,value);
+    else if (value) atomicAdd(target,value);
+}
+
 template<typename Output>
 __device__ void sc_frame(const u64* descriptors, Output* output, u32* errors,
                         u32 index, u32 pixels, u32 interval) {

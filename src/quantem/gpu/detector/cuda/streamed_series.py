@@ -79,6 +79,8 @@ class StreamedSeriesCompute(DetectorQueries):
             "uint32" if maximum <= np.iinfo(np.uint32).max else "uint64"
         )
         self.keepalive, rows = [], []
+        # (first scan, scans) of every descriptor row, for queries planned per stream block
+        self.chunk_spans = []
         self.max_scans = 0
         for acquisition, source in enumerate(sources):
             if source.device != self.device or source.shape != first.shape:
@@ -110,6 +112,7 @@ class StreamedSeriesCompute(DetectorQueries):
                     source.interval,
                 ]
                 rows.append(row)
+                self.chunk_spans.append((chunk.first, chunk.scans))
                 self.max_scans = max(self.max_scans, chunk.scans)
         if len(rows) > 65535:
             raise ValueError(
@@ -349,26 +352,49 @@ class StreamedSeriesCompute(DetectorQueries):
         if reduce not in {"sum", "mean", "max"}:
             raise ValueError(f"Unknown frame reduction {reduce!r}; use mean, sum, or max.")
         with self.lock, cp.cuda.Device(self.device):
-            results = []
             for source in self.index_owners:
-                total = cp.zeros(self.det_shape, cp.uint64)
-                # Group by codec block so sparse selections decode each block once.
-                boundaries = np.flatnonzero(np.diff(indices // self.interval)) + 1
-                for selected in np.split(indices, boundaries):
-                    first = int(selected[0] // self.interval * self.interval)
-                    stop = min(first + self.interval, self.n_frames)
-                    raw = source.decode_scan_range_device(first, stop)
-                    values = raw[cp.asarray(selected - first)]
-                    if reduce == "max":
-                        cp.maximum(total, values.max(axis=0), out=total)
-                    else:
-                        total += values.sum(axis=0, dtype=cp.uint64)
-                total *= source.valid.reshape(self.det_shape)
-                # The mean divides the exact total in float64 and rounds once, as MPS does;
-                # rounding the total to float32 first loses counts above 2^24.
-                results.append((total / len(indices)).astype(cp.float32) if reduce == "mean" else total)
-            result = cp.stack(results).get()
+                source.check_readable(int(indices[0]), int(indices[-1]) + 1)
+            totals = self._selected_totals(indices, reduce == "max")
+            totals *= cp.asarray(self.valid_pixels.reshape(totals.shape))
+            # The mean divides the exact total in float64 and rounds once, as MPS does;
+            # rounding the total to float32 first loses counts above 2^24.
+            result = ((totals / len(indices)).astype(cp.float32) if reduce == "mean" else totals).get()
             return result[0] if not self.series_shape else result
+
+    def _selected_totals(self, indices, maximum: bool):
+        """Exact uint64 sum, or maximum, of the sorted scan ``indices`` per acquisition and detector pixel.
+
+        Every stream of a block that holds a selected scan is decoded once, as
+        far as the block's last selected scan, and adds its selected counts in
+        a register; a scan listed several times counts that often.
+        """
+        multiplicity = cp.asarray(np.bincount(indices, minlength=self.n_frames).astype(np.uint32))
+        stops, bases = [], []
+        for first, scans in self.chunk_spans:
+            local = indices[(indices >= first) & (indices < first + scans)] - first
+            last = np.zeros(math.ceil(scans / self.interval), np.uint32)
+            np.maximum.at(last, local // self.interval, (local % self.interval + 1).astype(np.uint32))
+            bases.append(sum(len(block) for block in stops))
+            stops.append(last)
+        totals = cp.zeros((len(self.index_owners), *self.det_shape), cp.uint64)
+        errors = cp.zeros(1, cp.uint32)
+        self.kernels["selected"](
+            ((math.ceil(self.max_scans / self.interval) * self.pixels + 127) // 128, self.chunk_count),
+            (128,),
+            (
+                self.descriptors,
+                multiplicity,
+                cp.asarray(np.concatenate(stops)),
+                cp.asarray(np.asarray(bases, np.uint32)),
+                totals,
+                errors,
+                np.uint32(self.pixels),
+                np.int32(maximum),
+            ),
+        )
+        if int(errors.get()[0]):
+            raise ValueError("An encoded count stream failed reconstruction.")
+        return totals
 
     def reduce_frames_exact(self, indices):
         """Return the integer scan-ROI sum used by the public detector API."""
