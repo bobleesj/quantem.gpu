@@ -53,11 +53,15 @@ public:
             ++idx;
             num += next;
         }
-        while (next == 0xff) {
+        while (next == 0xff && idx < m_length) {
             next = m_compData[idx];
             ++idx;
             num += next;
         }
+        // A length that runs off the stream leaves idx past m_length, which
+        // the caller refuses.
+        if (next == 0xff)
+            idx = m_length + 1;
         return num;
     }
 
@@ -134,9 +138,13 @@ inline __device__ token_type decodePair(const uint8_t num) {
 // Returns false for a stream that does not decode to exactly decomp_end bytes
 // (a truncated or corrupt chunk, for example of a file still being written):
 // every write is bounded by the block, so a bad stream never overwrites its
-// neighbours. Reads of a corrupt stream are not bounds-checked; checking them
-// too cost a further 3% of this kernel's time. All lanes of the warp see the
-// same token values and return together.
+// neighbours, and every read is bounded too: literals, match offsets and
+// length extensions lie inside the compressed stream, and a match copies from
+// bytes this block already wrote (0 < offset <= decomp_idx). Without the read
+// bounds a damaged stream with intact framing (a zeroed block: token 0, match
+// offset 0) copies from outside the block and the process loses its CUDA
+// context; they cost 4 to 6% of this kernel's time. All lanes of the warp see
+// the same token values and return together.
 inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
                                         const uint8_t* compData, const position_type comp_end,
                                         const position_type decomp_end) {
@@ -158,6 +166,8 @@ inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
         const position_type literalStart = comp_idx;
         if (num_literals > decomp_end - decomp_idx)
             return false;
+        if (comp_idx > comp_end || num_literals > comp_end - comp_idx)
+            return false;
 
         if (num_literals + comp_idx > ctrl.end())
             coopCopyNoOverlap(decompData + decomp_idx, compData + comp_idx, num_literals);
@@ -168,6 +178,8 @@ inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
         decomp_idx += num_literals;
 
         if (comp_idx < comp_end) {
+            if (sizeof(offset_type) > comp_end - comp_idx)
+                return false;
             offset_type offset;
             if (comp_idx + sizeof(offset_type) > ctrl.end())
                 offset = readWord(compData + comp_idx);
@@ -180,6 +192,8 @@ inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
             if (tok.num_matches == 15)
                 match += ctrl.readLSIC(comp_idx);
             if (match > decomp_end - decomp_idx)
+                return false;
+            if (comp_idx > comp_end || offset == 0 || offset > decomp_idx)
                 return false;
 
             if (offset <= num_literals
