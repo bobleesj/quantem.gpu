@@ -421,37 +421,6 @@ class SSBSeriesResult:
     trials: int
     refinement: str | None
 
-    def show(self, **kwargs: object):
-        """Return the native-resolution SSB series in Show3D."""
-        from quantem.widget import Show3D
-
-        labels = [
-            f"F{frame} | {dataset}"
-            for frame, dataset in zip(self.frames, self.datasets, strict=True)
-        ]
-        panel_title = "Independent SSB fit"
-        if self.probe_reference_frame is not None:
-            panel_title = (
-                f"Fixed probe from F{self.probe_reference_frame} | "
-                f"{self.probe_reference_dataset}"
-            )
-        show_kwargs = {
-            "labels": labels,
-            "panel_titles": (panel_title, "Bright field", "Dark field"),
-            "hidden_panels": ("Bright field", "Dark field"),
-            "title": "SSB reconstruction series",
-            "display_bin": 1,
-            "cmap": ("magma", "gray", "gray"),
-            "offline": False,
-        }
-        show_kwargs.update(kwargs)
-        return Show3D(
-            self.phase,
-            self.bright_field,
-            self.dark_field,
-            **show_kwargs,
-        )
-
     def metadata(self):
         """Return compact source and reconstruction metadata as a readable table."""
         import pandas as pd
