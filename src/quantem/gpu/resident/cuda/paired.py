@@ -43,9 +43,9 @@ def _round_up(value: int, alignment: int) -> int:
 
 _SOURCE = (Path(__file__).with_name("kernels") / "paired.cu").read_text()
 _NAMES = (
-    "pack_offsets", "unpack_offsets", "tables", "encode", "compact", "decode_range",
+    "pack_offsets", "tables", "encode", "compact", "decode_range",
     "frame_u8", "frame_u16", "plan_u32", "plan_u64", "residual_u32", "residual_u64",
-    "fields", "field_sizes", "pack_fields", "unpack_fields", "index_u32", "index_u64", "weights",
+    "fields", "field_sizes", "pack_fields", "index_u32", "index_u64", "weights",
 )
 
 
