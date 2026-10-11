@@ -39,9 +39,9 @@ def load_h5_ans(
     dataset_path,
     device,
     verbose,
-    backend="cuda",
-    hot_pixel_correction="median",
-    auto_narrow=True,
+    backend,
+    hot_pixel_correction,
+    auto_narrow,
 ):
     """Load bounded native chunks into a backend-owned runtime encoded resident."""
     started = time.perf_counter()
@@ -301,7 +301,7 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     return Dataset4dstemGPU(source, metadata)
 
 
-def _correction_metadata(record: dict, zeroed_markers: int = 0) -> dict:
+def _correction_metadata(record: dict, zeroed_markers: int) -> dict:
     """Record how stored detector-mask pixels were handled and what that means for exactness.
 
     A corrected pixel no longer holds the file's count, so the working data is

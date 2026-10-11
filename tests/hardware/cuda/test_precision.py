@@ -201,7 +201,7 @@ def test_separate_regions_keep_calibrated_intensities(tmp_path):
     path = tmp_path / "signed_master.h5"
     io.save(path, values, dtype="float32")
     bounds = [(0, 2, 0, 2), (6, 8, 6, 8)]
-    regions = io.load(path, dtype="scaled_uint16", scan_region=bounds, verbose=False)
+    regions = [io.load(path, dtype="scaled_uint16", scan_region=bound, verbose=False) for bound in bounds]
     try:
         for loaded, (r0, r1, c0, c1) in zip(regions, bounds):
             report = loaded.metadata["precision"]["regions"][0]

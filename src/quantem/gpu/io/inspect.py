@@ -109,8 +109,8 @@ def inspect(
         metadata = dict(effective_metadata(header.get("metadata", {}), header["scientific_metadata"]), resident_bytes=header["bytes"],
                         source_kind="resident", representation="encoded")
         metadata["scientific_metadata"] = header["scientific_metadata"]
-        metadata['container'] = header.get('container', 'QEM')
-        metadata['resident_profile'] = header.get('codec', header.get('profile', 'Unknown'))
+        metadata["container"] = header["container"]
+        metadata["resident_profile"] = header["codec"]
         mask = None
         if "valid" in header:
             # Same convention as an Arina pixel_mask: uint32, nonzero marks an invalid pixel.

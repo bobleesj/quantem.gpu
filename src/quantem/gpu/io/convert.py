@@ -33,7 +33,6 @@ from quantem.gpu.formats.qem.snapshot import read_header
 from quantem.gpu.io import load, save
 from quantem.gpu.io.read import _torch_value
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
-from quantem.gpu.resident.mps.precision import PrecisionSource
 
 _MASTER_SUFFIX = "_master.h5"
 _STORED_DTYPES = ("uint8", "uint16", "uint32")
@@ -564,7 +563,7 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
             # Public read() masks flagged pixels for analysis. Verification must
             # inspect the stored values, using the resident's bounded raw decode;
             # Metal residents decode straight into Torch storage.
-            if isinstance(saved.data, (MPSStreamedCounts, PrecisionSource)):
+            if isinstance(saved.data, MPSStreamedCounts):
                 decode = saved.data._decode_scan_range_torch
             else:
                 decode = saved.data.decode_scan_range_device
