@@ -6,6 +6,18 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Changed
+
+- A stored SSB fit is read only when it carries the current fit schema:
+  `"schema": "quantem.ssb-fit/6"` in the `computed.ssb` block of
+  `live/screen/<dataset>/config.json`, written by `SSB.reconstruct_series`,
+  and schema 6 in a saved fit record. Any other stored fit is treated as
+  absent and fitted again on first use, including every fit stored by earlier
+  versions; none of its values is converted. Until now a block was accepted
+  whenever it declared nm, so `reconstruct_series(probe_reference_frame=...)`
+  reconstructed with aberrations fitted under the earlier automatic detector
+  sampling, which give a different image.
+
 ## rc16 - 2026-10-11
 
 ### Fixed

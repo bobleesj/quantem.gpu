@@ -519,6 +519,15 @@ acquisition independently. The result retains the phase, bright-field and
 dark-field stacks, frame/dataset identifiers, source/results directories,
 backend request, optimizer settings, and per-acquisition records.
 
+A fit stored in `live/screen/<dataset>/config.json` is read only when its
+`computed.ssb` block carries `"schema": "quantem.ssb-fit/6"`
+(`quantem.gpu.ssb.persistence.FIT_SCHEMA`), which `reconstruct_series` writes
+with every fit. A block with another schema or none is treated as absent: its
+aberrations, rotation and recorded settings are not read or converted, the
+probe reference is fitted again, and the physical settings come from
+`dataset.yaml` or the keyword arguments. Evidence:
+[stored fit schema](../maintainer/2026-10-11-stored-fit-schema.md).
+
 ## Integration boundary
 
 QuantEM.GPU owns SSB preparation, the exact objective, optimization,
