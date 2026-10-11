@@ -212,3 +212,26 @@ def test_series_answers_equal_each_acquisition_alone(tmp_path):
     finally:
         for item in loaded:
             item.close()
+
+
+def test_scan_roi_reductions_count_repeats_and_refuse_released_rows(tmp_path):
+    """A scan circle over many stream blocks, with repeated positions: exact sums, maxima and means; a freed row raises."""
+    backend = _backend()
+    counts = np.random.default_rng(83).integers(0, 65_536, (96, 80, 6, 5)).astype(np.uint16)
+    np.save(tmp_path / "counts.npy", counts)
+    frames = counts.reshape(-1, 6, 5).astype(np.uint64)
+    scan_rows, scan_cols = np.indices((96, 80))
+    circle = np.flatnonzero(np.hypot(scan_rows - 50.0, scan_cols - 41.0) <= 23.5)
+    indices = np.concatenate([circle, circle[:40], [7, 7, 7679]])
+    with io.load(tmp_path / "counts.npy", backend=backend, verbose=False) as loaded:
+        session = detector.prepare(loaded)
+        total = frames[indices].sum(axis=0)
+        np.testing.assert_array_equal(session.reduce_frames(indices, "sum"), total)
+        np.testing.assert_array_equal(session.reduce_frames(indices, "max"), frames[indices].max(axis=0))
+        np.testing.assert_array_equal(session.reduce_frames(indices, "mean"), (total / len(indices)).astype(np.float32))
+        loaded.release_rows_before(40)
+        assert 0 < loaded.data.released_scans <= 40 * 80
+        kept = circle[circle >= 40 * 80]
+        np.testing.assert_array_equal(session.reduce_frames(kept, "sum"), frames[kept].sum(axis=0))
+        with pytest.raises(ValueError, match="released"):
+            session.reduce_frames(indices, "sum")

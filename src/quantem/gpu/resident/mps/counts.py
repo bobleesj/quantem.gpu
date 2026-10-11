@@ -33,7 +33,7 @@ _SOURCE = (
     + "\n"
     + (_KERNELS / "runtime_spatial.msl").read_text()
 )
-_CODEC = ("encode", "compact", "decode_range", "detector_total", "masked_sums")
+_CODEC = ("encode", "compact", "decode_range", "detector_total", "selected_reduce", "masked_sums")
 _SPATIAL = (
     "camera_mask_leaves",
     "camera_mask_roots",
@@ -465,6 +465,57 @@ class MPSStreamedCounts:
         except BaseException:
             total.release()
             raise
+
+    def reduce_scans_device(self, weights, reduce: str = "sum"):
+        """Exact uint64 sum (``reduce="sum"``) or maximum (``"max"``) of selected scans per detector pixel, on Metal.
+
+        ``weights`` holds how many times each scan position is selected, 0 for
+        the rest, in row-major scan order. Only the stream blocks that hold a
+        selected scan are decoded, each detector pixel once and without a
+        frame buffer, so a scan ROI costs at most ``detector_total_device``.
+        Decoding each run of selected scans to the host and summing there took
+        200 ms for the 8245 patterns of a 51-scan-radius circle. Flagged
+        pixels are 0.
+        """
+        weights = np.ascontiguousarray(weights, dtype=np.uint32)
+        selected = np.flatnonzero(weights)
+        self.check_readable(int(selected[0]), int(selected[-1]) + 1)
+        pixels = math.prod(self.shape[2:])
+        before = np.concatenate(([0], np.cumsum(weights != 0))).astype(np.uint32)
+        total = MetalArray(self.shape[2:], np.uint64)
+        buffer_view(total._mtl)[:] = b"\0" * total.nbytes
+        multiplicity = upload_shared(weights, "Scan multiplicity")
+        selected_before = upload_shared(before, "Selected scans before each scan")
+        self._clear_errors()
+        try:
+            command = metal_queue().commandBuffer()
+            for chunk in self.chunks:
+                if before[chunk.first + chunk.scans] == before[chunk.first]:
+                    continue
+                parameters = np.asarray(
+                    [chunk.scans, pixels, self.interval, chunk.first, reduce == "max"], dtype=np.uint64
+                ).tobytes()
+                encoder = command.computeCommandEncoder()
+                encoder.setComputePipelineState_(self._pipelines["selected_reduce"])
+                for index, buffer in enumerate(
+                    (*chunk.buffers, self._decoding, self._errors, total._mtl)
+                ):
+                    encoder.setBuffer_offset_atIndex_(buffer, 0, index)
+                encoder.setBytes_length_atIndex_(parameters, len(parameters), 6)
+                encoder.setBuffer_offset_atIndex_(self._valid, 0, 7)
+                encoder.setBuffer_offset_atIndex_(multiplicity, 0, 8)
+                encoder.setBuffer_offset_atIndex_(selected_before, 0, 9)
+                self._dispatch_threads(encoder, pixels)
+                encoder.endEncoding()
+            complete_command(command, "ANS selected scans")
+            self._check_errors()
+            return total
+        except BaseException:
+            total.release()
+            raise
+        finally:
+            release_buffer(multiplicity)
+            release_buffer(selected_before)
 
     def mean_dp_device(self):
         """Return the float32 mean diffraction pattern in Metal storage.
