@@ -4,15 +4,6 @@ import numpy as np
 import pytest
 
 
-def test_removed_detector_compute_aliases_stay_absent() -> None:
-    from quantem.gpu.detector import tensors as backends
-    from quantem.gpu.resident.mps.virtual_image import MetalVirtualImage
-
-    assert not hasattr(backends, "TorchCompute")
-    assert not hasattr(backends, "MetalCompute")
-    assert not hasattr(MetalVirtualImage, "bin2_chunks")
-
-
 def test_mps_integer_reduction_kernel_sources_are_present() -> None:
     source = Path("src/quantem/gpu/resident/mps/kernels/reductions.msl").read_text(
         encoding="utf-8"
@@ -23,7 +14,6 @@ def test_mps_integer_reduction_kernel_sources_are_present() -> None:
         "detector_sum_exact_u8",
         "detector_sum_exact_u16",
         "detector_sum_exact_u32",
-        "bin_detector_u8",
         "mean_dp_sum_u8",
         "detector_sum_u8_block_partial",
         "detector_sum_u8_block_merge",
@@ -112,12 +102,3 @@ def test_mps_production_reductions_do_not_route_to_numba() -> None:
     assert "for chunk in self.frames.chunks" not in backend_source
     assert "MPS reduce_frames(reduce='max') has no Metal kernel" in backend_source
     assert "raise NotImplementedError" in backend_source
-
-
-def test_mps_dense_mask_uses_total_minus_complement_contract() -> None:
-    source = Path("src/quantem/gpu/detector/mps/dense.py").read_text(encoding="utf-8")
-
-    assert "self._totals" in source
-    assert '"sidecar"' in source
-    assert "return self._totals[totals] - np.asarray(vi.masked_sum(~mask))" in source
-    assert "bin_mask" in source

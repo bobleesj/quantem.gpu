@@ -2,15 +2,13 @@
 
 Dragging a virtual detector over a 4D-STEM acquisition sums a detector mask at
 every scan position. On an Apple GPU ``MetalVirtualImage`` runs those sums, the
-detector total, the mean pattern of selected positions, the centre of mass and
-detector binning directly on the resident uint8/uint16/uint32 Metal buffers, so
+detector total, the mean pattern of selected positions and the centre of mass
+directly on the resident uint8/uint16/uint32 Metal buffers, so
 an interaction never copies or casts the 4D data.
 """
 
-import time
 import weakref
 from pathlib import Path
-from typing import Self
 
 import numpy as np
 
@@ -69,14 +67,11 @@ class MetalVirtualImage:
         self._offsets = [0]
         for count in frame_counts:
             self._offsets.append(self._offsets[-1] + count)
-        # A binned uint32 pixel can exceed the uint16 sidecar, so uint32 frames have none.
-        binnable = self._dtype != np.dtype(np.uint32)
         # uint8 frames sum four pixels per thread in 1024-frame blocks, then merge the blocks.
         blocked_u8 = self._dtype == np.dtype(np.uint8) and self.ndet % 4 == 0
         names = (
             f"masked_sum_{suffix}", f"rowspan_sum_{suffix}", f"detector_sum_exact_{suffix}",
             f"mean_dp_sum_{suffix}", f"gather_columns_f32_tiled_{suffix}", f"com_{suffix}",
-            *((f"bin_detector_{suffix}",) if binnable else ()),
             *(("detector_sum_u8_block_partial", "detector_sum_u8_block_merge") if blocked_u8 else ()),
         )
         pipelines = metal_pipelines(_REDUCTIONS_MSL, names)
@@ -86,7 +81,6 @@ class MetalVirtualImage:
         self._mean_pipeline = pipelines[f"mean_dp_sum_{suffix}"]
         self._gather_pipeline = pipelines[f"gather_columns_f32_tiled_{suffix}"]
         self._com_pipeline = pipelines[f"com_{suffix}"]
-        self._bin_pipeline = pipelines.get(f"bin_detector_{suffix}")
         self._u8_partial_pipeline = pipelines.get("detector_sum_u8_block_partial")
         self._u8_merge_pipeline = pipelines.get("detector_sum_u8_block_merge")
         self._u8_partial_buffer = None
@@ -425,70 +419,6 @@ class MetalVirtualImage:
         if not owns_output:
             release_buffer(output_buffer)
         return output
-
-    def binned(self, factor: int = 2, *, verbose: bool = True) -> Self:
-        """Build a detector-binned uint16 copy of the frames for fast live interaction.
-
-        ``factor * factor`` raw pixels sum into one binned pixel, computed on
-        the GPU from the resident full-resolution chunks (no disk re-decode, no
-        decompress scratch). bin4 keeps the copy at 1.2 GB so the whole no-bin
-        viewer fits a 24 GB Mac (~20.5 GB); bin2 (4.8 GB) is for boxes with
-        memory to spare. The returned image owns the binned chunks and releases
-        them with itself.
-        """
-        factor = int(factor)
-        if self.det[0] % factor or self.det[1] % factor:
-            raise ValueError(f"bin{factor} fast interaction requires detector dims divisible by {factor}")
-        if verbose:
-            print(f"Building detector-bin{factor} virtual-image cache")
-        started = time.perf_counter()
-        if self._dtype == np.dtype(np.uint32):
-            raise ValueError(
-                "fast detector-bin sidecars for native uint32 MPS chunks are "
-                "not enabled because a binned pixel can exceed uint32. Load "
-                "with output_dtype=np.uint16 after a count-range check, or use "
-                "native no-bin uint32 products."
-            )
-        binned_shape = (self.det[0] // factor, self.det[1] // factor)
-        binned_pixels = binned_shape[0] * binned_shape[1]
-        binned_chunks = []
-        for chunk in self.chunks:
-            frames = int(chunk.shape[0])
-            buffer = self._allocate(frames * binned_pixels * 2)
-            binned = numpy_view(buffer, np.uint16, frames * binned_pixels)
-            binned = binned.reshape((frames, *binned_shape)).view(SharedArray)
-            binned._mtl = buffer
-            binned_chunks.append(binned)
-        parameters = [self._uint32_buffer(value) for value in (binned_shape[1], binned_pixels, factor)]
-        binned_cols_buffer, binned_pixels_buffer, factor_buffer = parameters
-
-        def encode(encoder, index):
-            for slot, buffer in enumerate(
-                (
-                    self.chunks[index]._mtl,
-                    binned_chunks[index]._mtl,
-                    self._detector_cols_buffer,
-                    binned_cols_buffer,
-                    binned_pixels_buffer,
-                    self._frame_count_buffers[index],
-                    factor_buffer,
-                )
-            ):
-                encoder.setBuffer_offset_atIndex_(buffer, 0, slot)
-            self._dispatch(encoder, int(self.chunks[index].shape[0]) * binned_pixels)
-
-        self._run(self._bin_pipeline, encode)
-        for buffer in parameters:
-            self._release(buffer)
-        sidecar = MetalVirtualImage(binned_chunks)
-        # The binned chunks now belong to the sidecar, which releases them with itself.
-        for chunk in binned_chunks:
-            self._buffers.remove(chunk._mtl)
-            sidecar._buffers.append(chunk._mtl)
-        if verbose:
-            elapsed = time.perf_counter() - started
-            print(f"Detector-bin{factor} virtual-image cache ready in {elapsed:.2f}s")
-        return sidecar
 
     # ---
 

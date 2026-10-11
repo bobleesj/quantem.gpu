@@ -100,15 +100,13 @@ def test_repeated_queries_keep_metal_memory_flat():
     selections = [np.arange(count) for count in (10, 200, 300)]
 
     def round_of_queries():
-        frames = ChunkedFrames(chunks)
-        frames.ensure_fast_interaction(verbose=False)
-        for vi in (frames.vi, frames.fast_vi):
-            vi.masked_sum(disk[: vi.det[0], : vi.det[1]])
-            vi.masked_sum(noisy[: vi.det[0], : vi.det[1]])
-            vi.detector_sum_exact()
-            vi.center_of_mass()
-            for selection in selections:
-                vi.sum_frames(selection)
+        vi = ChunkedFrames(chunks).vi
+        vi.masked_sum(disk)
+        vi.masked_sum(noisy)
+        vi.detector_sum_exact()
+        vi.center_of_mass()
+        for selection in selections:
+            vi.sum_frames(selection)
 
     try:
         round_of_queries()
@@ -119,5 +117,31 @@ def test_repeated_queries_keep_metal_memory_flat():
         gc.collect()
         # Memory must not grow; an earlier test's buffer freed during the loop may lower it.
         assert int(torch.mps.driver_allocated_memory()) <= before
+    finally:
+        _release(chunks)
+
+
+def test_mean_pattern_of_integer_frames_builds_no_binned_copy():
+    """A mean pattern over integer Metal frames (MPS SSB's input) allocates no second copy of them.
+
+    The session used to start a background thread that built a detector-binned,
+    65535-clipped copy (a quarter of the data at bin2) while SSB ran.
+    """
+    import time
+
+    from quantem.gpu import detector
+    from quantem.gpu.device.metal_runtime import metal_device
+    from quantem.gpu.resident.mps.frames import ChunkedFrames
+
+    values = np.random.default_rng(12).integers(0, 1000, (2048, 192, 192)).astype(np.uint16)
+    chunks = _chunks(values, 1024)
+    try:
+        frames = ChunkedFrames(chunks)
+        gc.collect()
+        before = int(metal_device().currentAllocatedSize())
+        session = detector.prepare(frames)
+        np.testing.assert_array_equal(session.mean_dp(), (values.sum(axis=0, dtype=np.uint64) / 2048).astype(np.float32))
+        time.sleep(2)
+        assert int(metal_device().currentAllocatedSize()) - before < values.nbytes // 16
     finally:
         _release(chunks)
