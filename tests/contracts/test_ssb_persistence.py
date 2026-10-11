@@ -318,28 +318,51 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
     assert isinstance(reused.object_wave, cp.ndarray)
 
 
-def test_reused_screen_fit_requires_explicit_current_units(tmp_path):
-    """A saved probe fit is reused without rescaling; ambiguous older fits need refitting."""
-    import json
-    import pytest
-    from quantem.gpu.ssb.series import saved_fit
-    from quantem.gpu.ssb.persistence import SCHEMA
+def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
+    """A stored fit counts only with the current schema marker; any other block reads as no fit, without an error."""
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCHEMA
+    from quantem.gpu.ssb.series import saved_fit, stored_fit
 
     aberrations = {"C10": 10.0, "C12": 2.0, "phi12": 0.3}
+    block = {"aberrations": aberrations, "rotation_angle_deg": 30.0, "com_reversed": True, "aberration_unit": "nm"}
     config = tmp_path / "config.json"
-    settings = {"aberrations": aberrations, "rotation_angle_deg": 30.0,
-                "aberration_unit": "nm"}
-    config.write_text(json.dumps({"computed": {"ssb": settings}}))
-    assert saved_fit(tmp_path)["aberrations"] == aberrations
-    del settings["aberration_unit"]
-    config.write_text(json.dumps({"computed": {"ssb": settings}}))
-    with pytest.raises(ValueError, match="Rerun the probe fit"):
-        saved_fit(tmp_path)
+    for marker in ({}, {"schema": f"quantem.ssb-fit/{SCHEMA - 1}"}, {"schema": SCHEMA}):
+        config.write_text(json.dumps({"computed": {"ssb": {**block, **marker}}}))
+        assert stored_fit(json.loads(config.read_text())) == {}
+        assert saved_fit(tmp_path) is None
+    config.write_text(json.dumps({"computed": {"ssb": {**block, "schema": FIT_SCHEMA}}}))
+    assert saved_fit(tmp_path) == {**block, "schema": FIT_SCHEMA, "rotation_angle_deg": 210.0}
     config.unlink()
-    saved = tmp_path / "ssb-fit" / "ssb-find_aberrations.json"
-    saved.parent.mkdir()
-    saved.write_text(json.dumps({"schema": SCHEMA, "result": settings}))
-    assert saved_fit(tmp_path)["aberrations"] == aberrations
-    saved.write_text(json.dumps({"schema": SCHEMA - 1, "result": settings}))
-    with pytest.raises(ValueError, match="Rerun the probe fit"):
-        saved_fit(tmp_path)
+    record = tmp_path / "ssb-fit" / "ssb-find_aberrations.json"
+    record.parent.mkdir()
+    record.write_text(json.dumps({"schema": SCHEMA - 1, "result": block}))
+    assert saved_fit(tmp_path) is None
+    record.write_text(json.dumps({"schema": SCHEMA, "result": block}))
+    assert saved_fit(tmp_path) == {"aberrations": aberrations, "aberration_unit": "nm", "rotation_angle_deg": 210.0}
+
+
+def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
+    """write_fit_metadata marks its block and saved_fit returns the exact values; no field of an unmarked block survives."""
+    from quantem.gpu import SSBResult
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.ssb.series import saved_fit, write_fit_metadata
+
+    config = tmp_path / "config.json"
+    earlier = {"aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "rotation_angle_deg": 0.0, "com_reversed": True,
+               "aberration_unit": "nm", "picked_c10_nm": 4.0, "optuna_trials": [{"loss": 0.02}]}
+    config.write_text(json.dumps({"human": {"notes": "kept"}, "computed": {"bf_radius": 55.0, "ssb": earlier}}))
+    aberrations = {"C10": -10.5, "C12": 0.25, "phi12": -0.5}
+    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+                       rotation_angle_deg=200.0, loss=0.125, bf_radius=48.0)
+    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "rotation_angle_deg": 200.0, "bf_radius": None}
+    write_fit_metadata(tmp_path, settings, result)
+    written = json.loads(config.read_text())
+    block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "schema": FIT_SCHEMA, "aberrations": aberrations,
+             "aberration_unit": "nm", "rotation_angle_deg": 20.0, "com_reversed": True, "loss": 0.125, "bf_radius": 48.0}
+    assert written == {"human": {"notes": "kept"}, "computed": {"bf_radius": 55.0, "ssb": block}}
+    assert saved_fit(tmp_path) == {**block, "rotation_angle_deg": 200.0}
+    # a field the dashboard adds to a current block stays through the next fit
+    written["computed"]["ssb"]["ran_at"] = "2026-10-11T12:00:00"
+    config.write_text(json.dumps(written))
+    write_fit_metadata(tmp_path, settings, result)
+    assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}

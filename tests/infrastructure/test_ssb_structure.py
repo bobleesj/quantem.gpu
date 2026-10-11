@@ -91,6 +91,7 @@ def test_reconstruct_series_reuses_only_exact_results(
     import numpy as np
 
     from quantem.gpu import SSB, SSBResult
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
     screen = raw / "live" / "screen"
@@ -108,6 +109,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             "scan_sampling_A": 0.2,
             "rotation_angle_deg": 173.0,
             "bf_radius": 55.0,
+            "schema": FIT_SCHEMA,
             "aberration_unit": "nm",
             "aberrations": aberrations,
             "loss": 0.01 * index,
@@ -264,6 +266,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
     import numpy as np
 
     from quantem.gpu import SSB, SSBResult
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
 
     raw = tmp_path / "raw"
     screen = raw / "live" / "screen"
@@ -277,6 +280,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
                 {
                     "computed": {
                         "ssb": {
+                            "schema": FIT_SCHEMA,
                             "voltage_kV": 300.0,
                             "semiangle_mrad": 30.0,
                             "scan_sampling_A": 0.5,
@@ -334,6 +338,77 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
 
     assert result.frames == (100, 250, 900)
     np.testing.assert_allclose(result.phase[:, 0, 0], (0.1, 0.2, 0.3))
+
+
+def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """A probe reference whose stored fit lacks the current schema is fitted, never trusted (fit mocked at SSB.open)."""
+    import numpy as np
+
+    from quantem.gpu import SSB, SSBResult
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+
+    raw = tmp_path / "raw"
+    reference = raw / "live" / "screen" / "scan_1"
+    reference.mkdir(parents=True)
+    (raw / "dataset.yaml").write_text(
+        "microscope: {voltage_kV: 300, semiangle_mrad: 30, screen_rotation_deg: 12}\n"
+        "calibrations: {mag: {scan_sampling_A: 0.5}}\n"
+        "files: {1: {mag: mag}, 2: {mag: mag}}\n"
+    )
+    earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
+    (reference / "config.json").write_text(json.dumps({"computed": {"ssb": {
+        "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
+        "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5}}}))
+    for frame in (1, 2):
+        (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
+        (raw / "live" / "screen" / f"scan_{frame}").mkdir(exist_ok=True)
+        np.save(raw / "live" / "screen" / f"scan_{frame}" / "bf.npy", np.zeros((2, 3), dtype=np.float32))
+        np.save(raw / "live" / "screen" / f"scan_{frame}" / "df.npy", np.zeros((2, 3), dtype=np.float32))
+    fitted = {"C10": -10.5, "C12": 0.25, "phi12": -0.5}
+    opened, fits, reconstructions = [], [], []
+
+    class FakeSession:
+        def __init__(self, source):
+            self.name = Path(source).name
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def _result(self, aberrations):
+            return SSBResult(object_wave=np.ones((2, 3), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+                             rotation_angle_deg=12.0, loss=0.25)
+
+        def find_aberrations(self, **kwargs):
+            fits.append(self.name)
+            return self._result(fitted)
+
+        def reconstruct(self, **kwargs):
+            reconstructions.append((self.name, kwargs["aberrations"]))
+            return self._result(kwargs["aberrations"])
+
+    def open_session(cls, source, **kwargs):
+        opened.append(kwargs["rotation_angle_deg"])
+        return FakeSession(source)
+
+    monkeypatch.setattr(SSB, "open", classmethod(open_session))
+
+    result = SSB.reconstruct_series(raw, first_frame=1, last_frame=2, probe_reference_frame=1, progress=False)
+
+    assert fits == ["scan_1_master.h5"]
+    assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
+    # the rotation is the session's, not the reversed one of the earlier block
+    assert opened == [12.0, 12.0, 12.0]
+    assert [record["C10 (nm)"] for record in result.records] == [-10.5, -10.5]
+    stored = json.loads((reference / "config.json").read_text())["computed"]["ssb"]
+    assert stored["schema"] == FIT_SCHEMA
+    assert stored["aberrations"] == fitted
+    assert (stored["rotation_angle_deg"], stored["com_reversed"], stored["loss"]) == (12.0, False, 0.25)
 
 
 def test_reconstruct_series_initializes_missing_live_results(
