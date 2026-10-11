@@ -72,8 +72,8 @@ one page. Saving as QEM is optional; those operations also accept the original
 loaded acquisition.
 
 The {ref}`advanced Gold notebook <gold-advanced>` demonstrates saving the
-calibration, reopening the file, and checking the selected diffraction pattern
-and BF image against the original. It then inspects the mean pattern, fitted
+calibration, reopening the file, and showing a selected diffraction pattern
+before saving and after reopening. It then inspects the mean pattern, fitted
 aberrations and model probe, and compares native and 4× phase.
 
 ## Which files can I convert?

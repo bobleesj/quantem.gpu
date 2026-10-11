@@ -93,5 +93,3 @@ The distribution version and `qgpu.__version__` should match.
 
 Record the printed version, device, and `git rev-parse HEAD` with your results.
 Continue with [From acquisition to images](python-workflow.md).
-
-For a historical environment, see the [rc8 installation record](maintainer/install-rc8.md).

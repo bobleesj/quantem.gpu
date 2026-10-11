@@ -103,7 +103,7 @@ units. It returns optional beam energy (keV), convergence semi-angle (mrad),
 dwell time (µs), camera length (mm), and row/column angular sampling (mrad/pixel).
 Unknown units, nonpositive values and nonfinite measurements remain absent.
 The catalog reads only the matching `_em_metadata.h5` and validates its scan
-dimensions before importing these fields. Clients must retain `NativeDataset`
+dimensions before importing these fields. Clients must retain `Native4DSTEMDataset`
 metadata when constructing a packed-resident presentation.
 
 `NativeScientificExport.write(images:metadata:to:)` writes copied scalar planes

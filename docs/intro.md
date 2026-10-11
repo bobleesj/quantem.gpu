@@ -4,9 +4,9 @@ GPU-accelerated 4D-STEM analysis for scientists using Python. Load measurements,
 select diffraction patterns, make detector images, and reconstruct phase with
 single-sideband ptychography (SSB).
 
-> **Active development.** These examples use the current source checkout,
-> newer than that published as `0.0.1rc8`. APIs may change; follow the
-> [installation guide](install.md) and record `git rev-parse HEAD` with results.
+> **Active development.** These examples use the current source checkout.
+> APIs may change; follow the [installation guide](install.md) and record
+> `git rev-parse HEAD` with results.
 
 ## Start with Python
 

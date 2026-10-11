@@ -44,11 +44,10 @@ through `RansResidentSet.loadQemFile` / `loadQemFiles` (`detector/webgpu/qem-sou
 [Count representations](../api/representations.md) for limits and ownership.
 
 WebGPU implements local-file load/decode, detector products, CoM/DPC/iDPC,
-SSB reconstruction, phase, loss, and display operations. It does not currently
-implement the Python `screening.prepare` cache or SSB aberration fitting. The
-optimizer entry point fails explicitly and directs exact calibration to the
-200-trial TPE plus Nelder–Mead CUDA/MPS workflow; it never substitutes a
-smaller browser objective. Levenberg–Marquardt is not an implemented refinement
+and SSB reconstruction, phase and loss; the browser client owns display. It does not currently
+implement the Python `screening.prepare` cache or SSB aberration fitting.
+Exact calibration runs in the 200-trial TPE plus Nelder–Mead CUDA/MPS workflow;
+the browser never substitutes a smaller objective. Levenberg–Marquardt is not an implemented refinement
 mode in any current backend.
 
 ## Execution and memory model
@@ -83,8 +82,8 @@ paths. Only real-adapter runs are hardware evidence. Record browser/version,
 adapter/device, source bytes, read/parse/upload/decode/compute/readback/present
 intervals, output checksum, and load plan.
 
-Integer corrected-frame, bin, mask, histogram, and RGBA outputs are byte-exact
-where formats match. Large-source capability requires a physical browser run;
+Integer corrected-frame, bin and mask outputs are byte-exact where formats
+match. Large-source capability requires a physical browser run;
 TypeScript compilation alone is not signoff.
 
 ### 8 GB laptop release floor

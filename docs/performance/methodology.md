@@ -8,6 +8,10 @@ Pull-request CI runs portable contracts only. Timing runs on the named
 physical hardware with the entry points in the [test guide](../developer/testing.md),
 and a measurement enters the documentation as a dated record.
 
+Revisions cited before 2026-10-06 refer to the history before the repository
+was squashed for publication. They identify the measured code in the private
+evidence archive and cannot be resolved in the public history.
+
 ## Required labels
 
 Every benchmark records:

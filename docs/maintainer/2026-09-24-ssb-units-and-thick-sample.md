@@ -159,5 +159,5 @@ Also: at the full BF count, the drag-preview context no longer copies G and a re
 - Lattice-SNR score (peak / median background): gamed by noise-free data and by weight normalisation; replaced by the
   least-squares fit.
 - BaTiO3/SrTiO3 film: tilt not recovered - candidates scan distortion (2.4 %, 1.3 deg), scale mismatch (~3 %), diffuse background.
-- Pre-existing, unrelated: `detector/workflow.py:560-565` sums float data with uint64 (float inputs lose their BF disk on
+- Pre-existing, unrelated: `detector/workflow.py` at that revision summed float data with uint64 (float inputs lose their BF disk on
   MPS); `test_cuda_packed_ssb` fails on the io `representation` policy.

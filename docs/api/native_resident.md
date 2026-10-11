@@ -3,7 +3,8 @@
 Native Swift clients can compose encoded acquisition storage, float32 image
 operations, and bounded scaled-output writing without Python or Torch.
 Scientific algorithms and their stage order remain in the consuming package.
-For example, the MAPED sequence lives in QuantEM's `QuantEMMAPED` product.
+For example, the MAPED sequence lives in QuantEM's `QuantEMMAPED` product, on a
+QuantEM branch that is not released yet.
 
 | Product | Public type | Responsibility |
 |---|---|---|
@@ -33,7 +34,6 @@ and chunk assembly run on Metal; C HDF5 writes completed bytes and metadata.
 `finish(metadata:)` publishes a complete new file and refuses to overwrite an
 existing destination. An unfinished writer removes its own temporary file.
 The native reader currently requires detector pixel counts divisible by 4096.
-Float16 export is not yet part of this Swift API.
 
 `MetalPackedSource.load` consumes the saved report, reads the file once, and
 packs its codes without a second conversion. `read` restores up to 4096 frames
@@ -51,7 +51,7 @@ histogram or fits a model. Hot-pixel
 correction excludes other masked neighbors from the local 3×3 median and
 preserves native integer values exactly after that explicit correction.
 
-The native MAPED consumer's `native/Tests/QuantEMMAPEDTests` checks integer
+On that unreleased branch, the native MAPED consumer's `native/Tests/QuantEMMAPEDTests` checks integer
 reads, correction, means, image operators, scaled codes, HDF5 reopening and
 lifetime. Its `native/Tests/compare_torch.py` checks real seven-tilt outputs
 against the existing Torch MPS workflow and the Python file loader. QuantEM.GPU's
@@ -75,7 +75,7 @@ and bilinear interpolation retain the qualified Torch MPS order. This does not
 promise bitwise equality across arbitrary GPU architectures or Torch versions.
 
 The consumer keeps the shared parameter manifest and sensitivity evidence in
-QuantEM's `native/Tests/parameter_cases.json` and `native/Tests/compare_parameters.py`.
+QuantEM's unreleased `native/Tests/parameter_cases.json` and `native/Tests/compare_parameters.py`.
 Its frozen Torch fixture covers filtering widths, window transitions, weighted
 centering, and a mixed-radix FFT. Its real-data tests compare selected output
 patterns at scan edges and centers, inactive controls, coupled parameters, and

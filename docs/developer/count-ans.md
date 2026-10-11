@@ -1,8 +1,9 @@
 # Exact count-ANS codec and retained experiment formats
 
-This is an experimental opt-in API. Start with
-[experimental resident ANS](../integrations/experimental-resident-ans.md) for current ownership,
-downstream viewer usage, supported formats, and qualification limits.
+Count ANS is how `io.load` stores acquisitions on CUDA and MPS by default.
+This page specifies the codec and container; the
+[resident ANS integration page](../integrations/experimental-resident-ans.md)
+covers browser and archive consumers and their qualification limits.
 
 The canonical count-ANS v1 representation preserves every native uint8/uint16
 count, including hardware sentinels. It uses independent detector-column byte
