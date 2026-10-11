@@ -42,6 +42,7 @@ def fit_sample_search(
 ) -> dict[str, object]:
     """Maximise ``objective(C10, C12, phi12, (tilt_row, tilt_col), thickness)``; returns the fitted parameters and the gain."""
     import optuna
+    from scipy.optimize import minimize
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     half_pi = math.pi / 2.0
@@ -86,6 +87,10 @@ def fit_sample_search(
         # chi depends on 2 (phi - phi12): phi12 is periodic in pi, so it wraps instead of being bounded
         return (phi + half_pi) % math.pi - half_pi
 
+    def single(point) -> float:
+        row = np.array([[point[0], abs(point[1]), wrap_phi(point[2]), point[3], point[4], abs(point[5])]], dtype=np.float64)
+        return float(objective_batch(row)[0]) if objective_batch is not None else objective(row[0, 0], row[0, 1], row[0, 2], (row[0, 3], row[0, 4]), row[0, 5])
+
     thin = optuna.create_study(sampler=sampler())
     run(thin, 200, with_sample=False)
     study = optuna.create_study(sampler=sampler(n_startup_trials=max(30, trials // 6)))
@@ -100,8 +105,8 @@ def fit_sample_search(
     # raw scale (~1e12) it never passes, so the polish ran to maxiter (641 of 704 evaluations on the full logic field).
     scale = max(abs(float(study.best_value)), 1e-30)
     # The polish keeps the search box (unbounded it walked thickness below the 20 A floor) except phi12, which wraps.
-    bounds = [c10_range, (0.0, c12_max), (-math.inf, math.inf), (-tilt_limit_mrad, tilt_limit_mrad),
-              (-tilt_limit_mrad, tilt_limit_mrad), thickness_range]
+    bounds = [c10_range, (0.0, c12_max), (None, None), (-tilt_limit_mrad, tilt_limit_mrad), (-tilt_limit_mrad, tilt_limit_mrad),
+              thickness_range]
     # Polish from the best few distinct trials and keep the best: one start is fragile - a float-level difference between
     # backends sent the MPS search on the logic crop to a worse local optimum (fit 4.0e12 vs 5.9e12 at the CUDA answer).
     ranked = sorted((trial for trial in study.trials if trial.value is not None), key=lambda trial: trial.value)
@@ -116,25 +121,11 @@ def fit_sample_search(
         best = {name: float(study.best_params[name]) for name in PARAMETERS}
         fit = float(-study.best_value)
     else:
-        # The starts polish side by side: every round evaluates the points all of them wait for in one batch, so the
-        # backend reads G once per round instead of once per point. Each polish sees only its own values.
-        lower, upper = np.array(bounds, dtype=np.float64).T
-        polishes = [_nelder_mead(start, lower, upper, xatol=0.05, fatol=1e-6, maxiter=400) for start in starts]
-        waiting = [next(polish) for polish in polishes]
-        while any(type(points) is np.ndarray for points in waiting):
-            active = [index for index, points in enumerate(waiting) if type(points) is np.ndarray]
-            rows = np.array([[point[0], abs(point[1]), wrap_phi(point[2]), point[3], point[4], abs(point[5])]
-                             for index in active for point in waiting[index]], dtype=np.float64)
-            if objective_batch is not None:
-                values = objective_batch(rows)
-            else:
-                values = [objective(row[0], row[1], row[2], (row[3], row[4]), row[5]) for row in rows]
-            scaled = iter([-float(value) / scale for value in values])
-            for index in active:
-                waiting[index] = polishes[index].send([next(scaled) for _ in waiting[index]])
-        polished_point, polished_value = min(waiting, key=lambda outcome: outcome[1])
-        best = dict(zip(PARAMETERS, (float(value) for value in polished_point), strict=True))
-        fit = float(-polished_value) * scale
+        polished = [minimize(lambda point: -single(point) / scale, start, method="Nelder-Mead", bounds=bounds,
+                             options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for start in starts]
+        polish = min(polished, key=lambda outcome: outcome.fun)
+        best = dict(zip(PARAMETERS, (float(value) for value in polish.x), strict=True))
+        fit = float(-polish.fun) * scale
     best["C12"], best["thickness"], best["phi12"] = abs(best["C12"]), abs(best["thickness"]), wrap_phi(best["phi12"])
     standard_fit = float(-thin.best_value)
     return {**best, "fit": fit, "standard_fit": standard_fit, "gain": fit / standard_fit if standard_fit > 0 else float("nan"),
@@ -142,64 +133,3 @@ def fit_sample_search(
             "trials": int(trials),
             "trial_records": [{"number": trial.number, "params": dict(trial.params), "loss": float(trial.value)}
                               for trial in study.trials if trial.value is not None and math.isfinite(trial.value)]}
-
-
-def _nelder_mead(start: np.ndarray, lower: np.ndarray, upper: np.ndarray, *, xatol: float, fatol: float, maxiter: int):
-    """Bounded Nelder-Mead minimisation as a generator, so several polishes can share one batched evaluation per step.
-
-    It yields the ``(n, parameters)`` points whose values it needs next and is sent those values; its last yield is the
-    result ``(point, value)``. The simplex (5% steps, reflection 1, expansion 2, contraction 0.5, shrink 0.5, every point
-    clipped to the bounds) and the order of every floating-point operation are those of
-    ``scipy.optimize.minimize(method="Nelder-Mead", bounds=...)``, so the points and the result are the same bit for bit
-    (``tests/parity/test_nelder_mead_scipy.py``). scipy calls the objective once per point; three polishes one after
-    another read the bright-field evidence once per point, which made the polish most of the tilt fit.
-    """
-    count = len(start)
-    start = np.clip(start, lower, upper)
-    simplex = np.empty((count + 1, count), dtype=np.float64)
-    simplex[0] = start
-    for axis in range(count):
-        vertex = start.copy()
-        vertex[axis] = (1 + 0.05) * vertex[axis] if vertex[axis] != 0 else 0.00025
-        simplex[axis + 1] = vertex
-    # a first step past an upper bound is reflected inside, so clipping cannot flatten the simplex
-    simplex = np.clip(np.where(simplex > upper, 2 * upper - simplex, simplex), lower, upper)
-    values = np.array((yield simplex), dtype=np.float64)
-    order = np.argsort(values)
-    simplex, values = simplex[order], values[order]
-    for _ in range(1, maxiter):
-        if np.max(np.abs(simplex[1:] - simplex[0])) <= xatol and np.max(np.abs(values[0] - values[1:])) <= fatol:
-            break
-        centroid = np.add.reduce(simplex[:-1], 0) / count
-        reflected = np.clip(2 * centroid - simplex[-1], lower, upper)
-        reflected_value = (yield reflected[None])[0]
-        shrink = False
-        if reflected_value < values[0]:
-            expanded = np.clip(3 * centroid - 2 * simplex[-1], lower, upper)
-            expanded_value = (yield expanded[None])[0]
-            if expanded_value < reflected_value:
-                simplex[-1], values[-1] = expanded, expanded_value
-            else:
-                simplex[-1], values[-1] = reflected, reflected_value
-        elif reflected_value < values[-2]:
-            simplex[-1], values[-1] = reflected, reflected_value
-        elif reflected_value < values[-1]:
-            contracted = np.clip(1.5 * centroid - 0.5 * simplex[-1], lower, upper)
-            contracted_value = (yield contracted[None])[0]
-            if contracted_value <= reflected_value:
-                simplex[-1], values[-1] = contracted, contracted_value
-            else:
-                shrink = True
-        else:
-            contracted = np.clip(0.5 * centroid + 0.5 * simplex[-1], lower, upper)
-            contracted_value = (yield contracted[None])[0]
-            if contracted_value < values[-1]:
-                simplex[-1], values[-1] = contracted, contracted_value
-            else:
-                shrink = True
-        if shrink:
-            simplex[1:] = np.clip(simplex[0] + 0.5 * (simplex[1:] - simplex[0]), lower, upper)
-            values[1:] = yield simplex[1:].copy()
-        order = np.argsort(values)
-        simplex, values = simplex[order], values[order]
-    yield simplex[0], float(np.min(values))
