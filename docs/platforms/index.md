@@ -42,7 +42,7 @@ Loaded data uses one vocabulary across runtimes:
 |---|---|---|
 | `representation` | `encoded`, `paired`, `packed`, `dense` | physical count layout; runtime support varies |
 | `dtype` | scientific value type | the value range and arithmetic contract |
-| `residency` | host or runtime device location | where the physical payload remains |
+| `residency` | host or runtime device location | where the physical payload remains; Python reports it as `metadata["residency"]` |
 | `storage_schema` | versioned internal format | which decoder/profile produced it; Python metadata names it `resident_profile` |
 
 CUDA and Python MPS expose this through `io.Dataset4dstemGPU`, native Swift/Metal

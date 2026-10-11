@@ -40,12 +40,12 @@ under the package that owns the science; there is no `backends/` or `compute/`
 level. Public APIs belong to the scientific domain; ordinary callers should not
 import a backend module directly.
 
-Browser consumers can import `src/quantem/gpu/webgpu/index.ts`: it re-exports
-the existing dense HDF5 IO and detector implementations without copying
-kernels. Browser display (colormaps, statistics, FFT) belongs to the browser
-client; resident sets lend it exact counts as `Uint32ImageView`
-(`detector/webgpu/borrowed-image.ts`). Build tools read `src/quantem/gpu/webgpu/sources.json`,
-which lists the complete dependency graph of `index.ts`.
+Browser consumers import the domain-owned TypeScript sources directly; there
+is no separate browser entry module. Browser display (colormaps, statistics,
+FFT) belongs to the browser client; resident sets lend it exact counts as
+`Uint32ImageView` (`detector/webgpu/borrowed-image.ts`). Build tools read
+`src/quantem/gpu/webgpu/sources.json`, which lists every package-owned browser
+source.
 Swift consumers continue to use the repository-root `Package.swift`.
 
 See the [layout migration map](../maintainer/backend-layout-and-parity.md) for

@@ -15,8 +15,9 @@ public workflow or result type.
   Swift-only Metal sources live in `native/swift`, outside the Python wheel;
   Metal sources and data Python also reads live once in the Python package,
   and `Package.swift` copies them into the resource bundles.
-- Browser consumers enter through `src/quantem/gpu/webgpu/index.ts`; its
-  exports point to the existing domain-owned implementations.
+- Browser consumers import the domain-owned TypeScript sources listed in
+  `src/quantem/gpu/webgpu/sources.json`; there is no separate browser entry
+  module.
 - Browser kernels remain beside their scientific domain. WebGPU is a browser
   runtime, not a Python device name and not a synonym for Metal.
 - CPU/NumPy is an explicit reference backend for tests. Production scientific
@@ -29,26 +30,26 @@ public workflow or result type.
 
 The migration separates representation-specific implementation names
 without changing the public Python verbs, load defaults, metadata, or kernels.
-The Python files below were moved, not copied. Browser exports refer to the
-existing source modules, so their file registry and GPU lifetimes remain shared.
+The Python files below were moved, not copied.
 
 | Backend | HDF5 decode implementation |
 |---|---|
 | Python CUDA | `io/hdf5/cuda/decode.py` kernels, consumed by `io/encoded.py`, `io/paired.py`, and `io/precision.py` |
 | Python MPS | `io/hdf5/mps/decode.py`, consumed by `io/encoded.py` and `io/precision.py` |
 | Explicit CPU reference | `io/hdf5/cpu.py` (dense) |
-| WebGPU | `io/hdf5/webgpu/dense.ts` exports `local-h5.ts` (dense) |
+| WebGPU | `io/hdf5/webgpu/local-h5.ts` (dense) |
 
 Python callers continue to use `io.load(..., representation=...)`.
 The [representation contract](../api/representations.md) remains authoritative
 for supported formats and operations. Representation names do not imply that
 every backend accepts every source or offers every operation.
 
-The WebGPU entry provides `loadLocalH5Master`, `loadLocalH5MaskedSum`,
-`setLocalFiles`, `clearLocalFiles`, and `DetectorCompute`; browser display is
+`io/hdf5/webgpu/local-h5.ts` exports `setShow4DSTEMLocalFiles`,
+`loadShow4DSTEMLocalH5Master`, and `loadShow4DSTEMLocalH5MaskedSum`;
+`detector/webgpu/backend.ts` exports `DetectorCompute`; browser display is
 quantem.widget's. Register the selected HDF5 master/chunk files with
-`setLocalFiles` before using the dense loader. `clearLocalFiles` releases
-registry references, not GPU buffers.
+`setShow4DSTEMLocalFiles` before using the dense loader. Each registration
+replaces the previous file registry; it does not release GPU buffers.
 
 Python backend imports use the canonical modules above. The old
 `cpu.reference` and `mps.decoder` compatibility modules are removed, and the
@@ -58,9 +59,8 @@ that inject allocation, cache, or device state target that canonical module.
 Browser build scripts must export the complete dependency graph.
 
 The loader separates result/ownership types (`io/dataset.py`), bounded
-region reads (`io/read.py`), CPU scan-order unflattening (`io/selection.py`),
-header readers (`formats/hdf5/master.py`) and pinned staging ownership
-(`device/cuda_runtime.py`).
+region reads (`io/read.py`), header readers (`formats/hdf5/master.py`) and
+pinned staging ownership (`device/cuda_runtime.py`).
 
 `load.py` keeps the public route choice. Bounded HDF5-to-ANS streaming lives
 in `io/encoded.py`, the CUDA paired-count layout in `io/paired.py`, scaled
@@ -85,11 +85,10 @@ src/quantem/gpu/                  # layers import downward only:
     __init__.py                   # public API only
     load.py                       # public load and route choice
     dataset.py                    # loaded data and ownership contract
-    selection.py                  # scan-order unflattening for the CPU reference
     representation.py             # representation is independent of dtype
     hdf5/{cpu.py,cuda,mps,webgpu} # bitshuffle+LZ4 codecs and browser sources
   detector/
-    __init__.py                   # public BF/ABF/ADF/DF/mean-DP API
+    __init__.py                   # public BF/ADF/DF/mean-DP API
     cuda/, mps/, webgpu/
   dpc/
     __init__.py                   # public CoM, rotation, and iDPC API
@@ -103,12 +102,12 @@ src/quantem/gpu/                  # layers import downward only:
   ssb/
     __init__.py                   # one SSB workflow and result contract
     contract.py, cuda/, mps/, webgpu/
-  geometry/{cuda.py,webgpu/}
+  geometry/cuda.py
   parallax/cuda/
-  optics/cuda.py
+  optics/physics.py
   movie/{export,cuda,mps}.py
   remote/                         # transport of exact scientific arrays
-  webgpu/                         # TypeScript exports and the sources.json build manifest
+  webgpu/                         # the sources.json build manifest
 
 native/                           # not part of the Python wheel
   swift/
@@ -171,9 +170,9 @@ python scripts/run_tests.py e2e -q
 # Suite names map to test directories; pytest paths and node IDs pass through.
 python scripts/run_tests.py tests/contracts/io/test_load.py -q
 
-# Browser: install the development tools, then bundle and execute import checks.
-npm install --no-save --package-lock=false esbuild jsfive typescript @webgpu/types
-python scripts/run_tests.py tests/contracts/test_webgpu_entrypoint.py -q
+# Browser: install the pinned development tools, then check the source manifest.
+npm ci
+python scripts/run_tests.py tests/contracts/test_webgpu_export.py -q
 # Every source in webgpu/sources.json, with quantem.widget's compiler options.
 npm run typecheck
 
@@ -184,10 +183,10 @@ jupyter-book build docs --warningiserror --nitpick
 python scripts/check_docs_links.py --html-root docs/_build/html
 ```
 
-When tooling lives outside the checkout, set `NODE_PATH` to its `node_modules`
-directory for the bundle test. A missing Node/jsfive dependency is an explicit
-skip, not a passing WebGPU contract. Type-checking still needs the appropriate
-TypeScript module/type search paths for that external directory.
+The browser contract tests read their tools from `node_modules/` in the
+repository root. They are skipped when Node.js is not installed (the
+logical-pixel hash contract also needs Node.js 22 or newer), and a skip is not
+a passing WebGPU contract; a missing tool fails with the `npm ci` instruction.
 
 ## One cross-language scientific contract
 

@@ -110,11 +110,11 @@ software repository, or copy production kernels back into the paper workspace.
 
 ## Verify the boundary
 
-The host tests exercise reported representation, native/NumPy products and
-portable-file reference round trips:
+The host tests exercise the public detector workflow and the reported
+representation:
 
 ```bash
-python -m pytest -q tests/detector tests/contracts/io/test_ans_public_api.py
+python -m pytest -q tests/detector tests/contracts/io/test_representation.py
 ```
 
 With an available CUDA device, run the existing general-source workflows:

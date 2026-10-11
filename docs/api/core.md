@@ -12,7 +12,7 @@ full operation-specific reference page. All coordinates exposed to users are
 | `device.resolve_device(device="auto")` | resolve `"auto"`, `"cuda"`, `"cuda:N"`, `"mps"` or `"cpu"` to a Torch device string for code that also runs on CPU | `"auto"` picks CUDA, then MPS, then CPU and prints its choice once |
 | `device.runtime_notice()` | the one-line install hint when a GPU is present but its runtime is missing, else `None` | printed once at first GPU use |
 | `device.detect()` | choose a native CUDA or MPS accelerator | raises when neither GPU runtime is available |
-| `device.resolve(name="auto")` | validate `cuda`, `mps`, or explicit browser `webgpu` | raises on an unavailable or unknown runtime |
+| `device.resolve(name="auto")` | validate `cuda` or `mps` | raises on an unavailable or unknown runtime |
 
 CPU reported by `profile()` is diagnostic. Scientific GPU calls do not silently
 turn that diagnostic result into a CPU execution path.
@@ -50,10 +50,8 @@ timing.
 
 Every preparation publishes mean DP, BF, DF, CoM, rotation, and iDPC, plus
 `total_intensity`, `annular_bright_field`, and `annular_dark_field` as exact
-`uint64` count maps, on CUDA and MPS alike. Those three fields are `None` only
-when reopening a cache written without them; a caller must check them
-explicitly. Caches contain either all three exact maps or none, and a partial
-or non-`uint64` set is never reused. Screening needs unsigned integer counts: a
+`uint64` count maps, on CUDA and MPS alike. A cache written without those
+three maps is rebuilt, not reused. Screening needs unsigned integer counts: a
 float acquisition raises `ValueError`. No scan crop or detector binning is
 applied.
 
@@ -69,17 +67,22 @@ independently assembled native or browser product set as a
 from quantem.gpu import io, parallax
 
 data = io.load("scan_master.h5", backend="cuda")
-result = parallax.run(data, voltage_kV=200, scan_sampling=0.5, fit_aberrations=True)
+result = parallax.run(data, fit_aberrations=True, scan_sampling_A=0.5, semiangle_mrad=30)
 ```
 
 `parallax.run` takes the acquisition `io.load` returns on CUDA and returns
 `ParallaxResult`. The acquisition stays encoded: only the bright-field pixels
 are read, in bounded bands of scan rows, as exact counts. The bright-field
 center `(row, column)` and radius are fitted from the mean diffraction pattern
-unless given. Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
+unless given. `fit_aberrations=True` needs `scan_sampling_A` (Å per scan
+pixel) and the detector calibration, `semiangle_mrad` or `det_sampling` (mrad
+per detector pixel). The fit is returned as `ParallaxResult.aberrations` (`C10`
+and `C12` in nm, `phi12` in radians, scan frame) and
+`ParallaxResult.rotation_angle_deg`, in the units and convention `SSB` takes.
+Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
 raises `NotImplementedError`. Persist center, BF and sampling radii,
-accelerating voltage, scan sampling, upsampling factor, aberration-fit choice,
-and package revision with the result.
+scan sampling, the semiangle or detector sampling, upsampling factor,
+aberration-fit choice, and package revision with the result.
 
 ## Scan rotation
 

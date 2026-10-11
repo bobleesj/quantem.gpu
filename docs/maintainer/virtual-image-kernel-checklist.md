@@ -18,9 +18,9 @@ resident data, plus a dense-mask strategy such as `total - complement`.
 
 | Backend path | Current status | Required tests | Performance gate |
 |---|---|---|---|
-| Show4DSTEM Python CUDA, resident CuPy | Implemented in `CudaKernelCompute`; widget must preserve the CuPy source for compute while keeping Torch for existing display code. Uses warp-shuffle selected reducers, a custom total-count reducer, fused dense `total - complement`, a fused CoM/DPC reducer, a cached full-detector CoM field, and a small per-viewer detector-index cache. | Exact parity vs old CuPy selected-pixel sum for BF/ADF/DF and old CuPy CoM for DPC; widget smoke must report `CudaKernelCompute`; compare-grid path must use the CUDA backend. | 512x512x192x192 uint16 no-bin BF/ADF/DF/DPC faster than old widget path; 1024x1024x192x192 uint8 shape probe must pass before real-data allocation tests. |
-| Public `quantem.gpu.detector` CUDA helpers | Implemented through `CudaKernelCompute.masked_sum` for CuPy arrays; encoded acquisitions use `StreamedSeriesCompute` in `detector/cuda/streamed_series.py`. | Exact parity for `masked_sum`, `virtual`, BF/ADF/DF helper outputs. | Same or faster than old CuPy gather path, with lower transient memory. |
-| Show4DSTEM MPS chunk-backed data | Implemented for uint8/uint16 through `MetalVirtualImage`; dense DF uses cached `total - complement`; CoM/DPC uses raw Metal `com_u8`/`com_u16`; no Torch-MPS giant tensor for full no-bin browse loads. | Mac runtime parity vs NumPy/reference on BF/ADF/DF and CoM/DPC; widget smoke must report `MetalRawBackend`; no silent CPU fallback. | 512 no-bin interaction should use the Metal path or fast sidecar; 1024 uint8 requires an explicit memory policy before real allocation. |
+| Show4DSTEM Python CUDA, resident CuPy | Implemented in `CudaKernelCompute`; widget must preserve the CuPy source for compute while keeping Torch for existing display code. Uses warp-shuffle selected reducers, a fused CoM/DPC reducer, selected-frame sum and maximum reducers, and a small per-viewer detector-index cache; nothing derived from the counts is cached. | Exact parity vs old CuPy selected-pixel sum for BF/ADF/DF and old CuPy CoM for DPC; widget smoke must report `CudaKernelCompute`; compare-grid path must use the CUDA backend. | 512x512x192x192 uint16 no-bin BF/ADF/DF/DPC faster than old widget path; 1024x1024x192x192 uint8 shape probe must pass before real-data allocation tests. |
+| Public `quantem.gpu.detector` CUDA helpers | Implemented through `CudaKernelCompute.masked_sum` for CuPy arrays; encoded acquisitions use `StreamedSeriesCompute` in `detector/cuda/streamed_series.py`. | Exact parity for `masked_sum` and BF/ADF/DF helper outputs. | Same or faster than old CuPy gather path, with lower transient memory. |
+| Show4DSTEM MPS chunk-backed data | Implemented for uint8/uint16 through `MetalVirtualImage`; dense masks are summed directly, with nothing derived from the counts cached; CoM/DPC uses raw Metal `com_u8`/`com_u16`; no Torch-MPS giant tensor for full no-bin browse loads. | Mac runtime parity vs NumPy/reference on BF/ADF/DF and CoM/DPC; widget smoke must report `MetalRawBackend`; no silent CPU fallback. | 512 no-bin interaction should use the Metal path; 1024 uint8 requires an explicit memory policy before real allocation. |
 | Show4DSTEM WebGPU browser | Implemented in canonical domain-owned WebGPU sources. BF/DF/ADF uses `maskedSumBuffer`; DPC row/col uses WGSL CoM, global mean reduction, one-ULP mean-side correction, and centered component output through `maskedDpcBuffer`; iDPC uses paired DPC buffers plus a dual-real FFT. Readback wrappers remain for widget model compatibility and parity tests. | Source contract test plus headed Chrome test with a real adapter, not SwiftShader; BF/ADF/DF, CoM, DPC, and iDPC parity against NumPy/Python reference. | Drag path should keep VI, DPC, and iDPC GPU-resident where the display pipeline can accept GPU buffers; widget model-byte shims remain for current anywidget compatibility. |
 | Multi-tilt/series compare grid | CUDA path tested for seven 512 panels at detector bin 2; full no-bin panels are one-at-a-time unless sharded. | Compare-grid BF/ADF/DF parity and timing for 7 panels; verify per-panel backend path. | Refresh all visible panels without falling back to per-panel Torch gather. |
 
@@ -29,19 +29,11 @@ resident data, plus a dense-mask strategy such as `total - complement`.
 - CUDA RawKernel selected-pixel reducer for resident CuPy `uint8` and `uint16`.
 - CUDA selected reducers use warp shuffle instead of repeated block-wide shared
   reductions.
-- CUDA dense DF uses cached integer `total - complement` and fuses complement
-  reduction, subtraction, and final float32 output in one kernel.
-- CUDA total-count maps use a custom row reducer instead of CuPy's generic
-  `sum(axis=1)` path.
 - CUDA DPC/CoM uses a fused raw kernel that accumulates total intensity,
   detector-row moment, and detector-column moment in one pass over each
-  diffraction pattern. The full-detector CoM field is cached per backend, so
-  repeated DPC/iDPC requests do not reread the resident 4D block.
-- Shape-only support check covers `1024x1024x192x192 uint8` for CUDA and MPS.
-- MPS Metal `uint8` masked-sum, detector-sum, mean-DP, bin-sidecar,
-  radial-cache, and CoM kernels are present.
-- MPS dense dark-field masks use the cached `total - complement` path, matching
-  the CUDA dense-mask strategy.
+  diffraction pattern.
+- MPS Metal `uint8` masked-sum, detector-sum, mean-DP, and CoM kernels are
+  present.
 - WebGPU source ownership is split across the relevant scientific domains, with the
   Show4DSTEM engine and ShowPtycho SSB engine copied as canonical source
   package data. Widget build/export syncs these sources before bundling.

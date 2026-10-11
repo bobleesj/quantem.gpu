@@ -145,7 +145,7 @@ loaded = io.load("scan-lossless.h5", backend="auto")
 print(loaded.shape)
 print(loaded.dtype)
 print(loaded.representation)
-print(loaded.residency)
+print(loaded.metadata["residency"])
 print(loaded.logical_bytes, loaded.resident_bytes)
 ```
 
@@ -522,9 +522,9 @@ exact = io.load("scan_master.h5")
 | `dtype="scaled_uint16"` | Explicit calibrated approximate intensity storage | Quantization is reported; not a lossless substitute for float32 |
 
 The ordinary ANS count loader rejects dtype narrowing (`u8`, `u16`, `auto`)
-rather than silently changing scientific values. The retired bit-packed
-`float16` acquisition profile is also rejected; reopen its original float32
-source and save a lossless `.qem` copy.
+rather than silently changing scientific values. `dtype="float16"` is also
+refused: `scaled_uint16` is the only stored precision. Omit `dtype` to keep
+float32 values and save a lossless `.qem` copy.
 
 Native `uint8` input and a `uint16` input converted to `uint8` are different
 provenance. A lossless conversion requires a retained source identity, bad-pixel

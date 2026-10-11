@@ -103,7 +103,7 @@ still needs paired real-fixture, peak-memory, load, and interaction evidence.
 | CUDA / Python | Explicit arrays and bounded reads, not acquisition loading | Public acquisition loading |
 | MPS / Python | Explicit arrays and bounded reads, not acquisition loading | Public acquisition loading |
 | Swift / Metal | Native indexed and resident loaders | Native encoded sources; native packed loader and producer |
-| WebGPU | `loadLocalH5Master` | Browser `.qem` count acquisitions (`RansResidentSet.loadQemFiles`) |
+| WebGPU | Local-file HDF5 loader in `io/hdf5/webgpu/local-h5.ts` | Browser `.qem` count acquisitions (`RansResidentSet.loadQemFiles`) |
 | CPU reference | `io.load(..., backend="cpu", representation="dense")` | Explicit `.qem` reference decoder |
 
 Python detector calls reuse the resident kernels of the loaded source:

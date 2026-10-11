@@ -57,7 +57,7 @@ Explicit ADF/DF limits default to milliradians, so include `unit="px"` for pixel
 | Call | Input | Output |
 |---|---|---|
 | `detector.mean(data)` | one supported 4D source | detector-shaped mean diffraction pattern |
-| `detector.fit_probe(mean_dp)` | 2D mean diffraction pattern | `(row, column)` center and equivalent-area radius, in detector pixels |
+| `detector.fit_probe(data)` | 2D mean diffraction pattern, or a 4D source whose mean pattern is used | `(row, column)` center and equivalent-area radius, in detector pixels; `ValueError` when the pattern has no disk |
 | `detector.bf(data, ...)` | 4D source; optional geometry overrides | scan-shaped bright-field sum |
 | `detector.adf(data, ...)` | 4D source; optional annular limits | scan-shaped annular dark-field sum |
 | `detector.df(data, ...)` | 4D source; optional inner limit | scan-shaped dark-field sum |

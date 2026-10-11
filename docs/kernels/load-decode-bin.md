@@ -10,7 +10,7 @@ from quantem.gpu import io
 result = io.load("scan_master.h5")
 
 print(result.shape, result.dtype)
-print(result.representation, result.residency)
+print(result.representation, result.metadata["residency"])
 print(result.logical_bytes, result.resident_bytes)
 ```
 

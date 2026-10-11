@@ -32,9 +32,12 @@ not a replacement for the source array. Frame rate is in frames per second.
   counts raise with the conflicting shape.
 - An unsupported suffix passed to `save_movie()` raises instead of guessing a
   container.
-- An explicitly requested accelerator backend must be available. Automatic
-  dispatch may choose another documented encoder, but the reported backend
-  must match the path actually used.
+- An explicitly requested accelerator backend must be available:
+  `backend="cuda"` and `backend="mps"` raise instead of using another writer.
+  `backend="auto"` prints one line naming the reason when it uses the CPU
+  writer.
+- `save_mp4` accepts `gpu_id` (the CUDA device of the NVENC writer) as an
+  explicit keyword. Keyword options outside its signature raise `TypeError`.
 
 ## Provenance
 
@@ -47,10 +50,20 @@ container bytes.
 
 ## Backend dispatch
 
-`save_mp4(..., backend="auto")` tries CUDA/NVENC when available, then Apple
-Metal/MPS on macOS, then CPU frame rendering plus ffmpeg. Use
-`backend="cuda"` or `backend="mps"` only when that exact path is part of the
-required contract or benchmark.
+`save_mp4(..., backend="auto")` tries CUDA/NVENC when it is available and the
+frame is at least 256 pixels on each side, then Apple Metal/MPS, then CPU
+frame rendering plus ffmpeg. When `"auto"` sends array data to the CPU writer
+it prints one line, because CPU frames differ from the GPU writers' (Lanczos
+instead of nearest-neighbour resizing, unoutlined labels):
+
+```text
+save_mp4: <reason>; writing with the CPU writer, which resizes with Lanczos and draws unoutlined labels. Pass backend='cuda' or 'mps' to get an error instead.
+```
+
+The reason is that no CUDA/NVENC or Apple Metal movie writer is available,
+that NVENC needs frames of at least 256 pixels per side, or that the named GPU
+writer failed, with its error. Use `backend="cuda"` or `backend="mps"` only
+when that exact path is part of the required contract or benchmark.
 
 ## Integration boundary
 

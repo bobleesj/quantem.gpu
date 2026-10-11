@@ -58,7 +58,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.detector.backends.cuda` | deleted |  |
 | `quantem.gpu.detector.backends.cuda.kernels` | deleted | 19 of 19 names deleted |
 | `quantem.gpu.detector.backends.cuda.probe` | `quantem.gpu.detector.cuda.probe` |  |
-| `quantem.gpu.detector.backends.cuda.series` | `quantem.gpu.detector.cuda.series` |  |
+| `quantem.gpu.detector.backends.cuda.series` | deleted |  |
 | `quantem.gpu.detector.backends.dispatch` | `quantem.gpu.detector.cuda.dense`, `quantem.gpu.detector.mps.dense`, `quantem.gpu.detector.tensors` | 2 of 5 names deleted |
 | `quantem.gpu.detector.backends.float_ans` | `quantem.gpu.detector.float_ans` |  |
 | `quantem.gpu.detector.backends.mps` | deleted |  |
@@ -127,7 +127,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.io._qem_reference` | `quantem.gpu.formats.qem.reference`, `quantem.gpu.formats.qem.snapshot` |  |
 | `quantem.gpu.io._read` | `quantem.gpu.io.read` |  |
 | `quantem.gpu.io._resident` | deleted | 2 of 2 names deleted |
-| `quantem.gpu.io._selection` | `quantem.gpu.io.selection` | 1 of 2 names deleted |
+| `quantem.gpu.io._selection` | deleted | 2 of 2 names deleted |
 | `quantem.gpu.io._source112_archive` | deleted |  |
 | `quantem.gpu.io._source112_archive_browser` | deleted |  |
 | `quantem.gpu.io._streamed` | `quantem.gpu.io.encoded` |  |
@@ -159,7 +159,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.io.backends.webgpu` | deleted |  |
 | `quantem.gpu.io.constants` | deleted |  |
 | `quantem.gpu.io.integrity` | deleted | 1 of 1 names deleted |
-| `quantem.gpu.io.load` | `quantem.gpu.io.selection`, `quantem.gpu.io.load` | 6 of 8 names deleted |
+| `quantem.gpu.io.load` | `quantem.gpu.io.load` | 7 of 8 names deleted |
 | `quantem.gpu.io.models` | `quantem.gpu.io.dataset`, `quantem.gpu.formats.hdf5.readiness` |  |
 | `quantem.gpu.io.qem_conversion` | `quantem.gpu.io.convert` |  |
 | `quantem.gpu.io.qem_validation` | `quantem.gpu.cli`, `quantem.gpu.formats.qem.validation` |  |
@@ -173,12 +173,12 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.movie.cuda_mp4` | `quantem.gpu.movie.cuda` |  |
 | `quantem.gpu.movie.mps_mp4` | `quantem.gpu.movie.mps` |  |
 | `quantem.gpu.optics.aberration` | deleted | 5 of 5 names deleted |
-| `quantem.gpu.optics.aberration_fitting` | `quantem.gpu.optics.cuda` | 4 of 5 names deleted |
+| `quantem.gpu.optics.aberration_fitting` | deleted | 5 of 5 names deleted; `quantem.gpu.parallax.workflow.fit_aberrations_from_shifts` fits parallax shifts |
 | `quantem.gpu.optics.physics` | `quantem.gpu.optics.physics` | 5 of 12 names deleted |
 | `quantem.gpu.parallax.backends` | deleted |  |
 | `quantem.gpu.parallax.backends.cuda` | deleted |  |
 | `quantem.gpu.parallax.backends.cuda.alignment` | `quantem.gpu.parallax.cuda.alignment` | 4 of 5 names deleted |
-| `quantem.gpu.parallax.backends.cuda.backend` | `quantem.gpu.parallax.cuda.reconstruction` | 2 of 3 names deleted |
+| `quantem.gpu.parallax.backends.cuda.backend` | `quantem.gpu.parallax.workflow` | 2 of 3 names deleted; `run_cuda` is `run` |
 | `quantem.gpu.parallax.backends.cuda.correlation` | `quantem.gpu.parallax.cuda.correlation` | 2 of 3 names deleted |
 | `quantem.gpu.parallax.compute` | deleted |  |
 | `quantem.gpu.parallax.compute.cuda` | deleted |  |
@@ -223,4 +223,4 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.ssb.torch_ssb` | deleted | 1 of 1 names deleted |
 | `quantem.gpu.ssb.workflow` | `quantem.gpu.ssb.units`, `quantem.gpu.ssb.contract`, `quantem.gpu.ssb.workflow` |  |
 | `quantem.gpu.swift.Benchmarks.MetalImageFFTBenchmark.compare_torch_fft` | `native/swift/Benchmarks/MetalImageFFTBenchmark/compare_torch_fft.py` | a script beside the Swift benchmark, not a package module |
-| `quantem.gpu.webgpu` | deleted | 3 of 3 names deleted; the package now holds only `sources.json` and `index.ts` for browser builds |
+| `quantem.gpu.webgpu` | deleted | 3 of 3 names deleted; the package now holds only `sources.json` for browser builds |

@@ -95,7 +95,7 @@ The current values and distributions live only in
 | Current WebGPU profile | Promoted for the measured load and resident-compute boundaries | UI paint, physical 8 GB signoff, per-pixel CoM/DPC/iDPC error arrays, and calibration remain explicit gaps. |
 | `THREE-HOST-512-U16-2026-08-19` | Superseded for current headline timing | It remains useful same-fixture history, but newer comparable profile rows own current values. |
 | Detector-bin-4 products | Mixed | Integer products and CoM pass their stated gates; cross-backend iDPC remains blocked and cannot inherit an integer-parity check mark. |
-| Native-detector MPS CoM/iDPC | Blocked as native-resolution evidence | The public interaction sidecar uses detector bin 2; direct full-resolution CoM passes, while iDPC remains blocked. |
+| Native-detector MPS CoM/iDPC | Blocked as native-resolution evidence | At that revision the public interaction sidecar used detector bin 2 (Metal detector sessions have since dropped the sidecar); direct full-resolution CoM passes, while iDPC remains blocked. |
 | `M2-AIR-BIN4-E2E` | Separate application evidence | It proves a physical 8 GB detector-bin-4 application path, not a no-bin library load or native SSB memory gate. |
 | `CUDA-STOCHASTIC-IO` | Historical, labeled first-process | The storage-cache eviction procedure was not retained, so it cannot be called cold. |
 | `WEBGPU-VISIBLE-512` | Historical single visible run | No timing distribution was retained, so it is not a median. |
