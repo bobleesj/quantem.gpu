@@ -9,6 +9,7 @@ import math
 from functools import cache
 
 import numpy as np
+import torch
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
@@ -83,7 +84,8 @@ def gather_scan_positions(
     frame_bytes = math.prod(detector_shape) * source.dtype.itemsize
     band_rows = max(1, ENCODED_BAND_BYTES // (output_cols * frame_bytes))
     read_rows = max(1, ENCODED_BAND_BYTES // (scan_cols * frame_bytes))
-    with cp.cuda.Device(source.device):
+    # torch exports each read through DLPack from its current device, so it is the acquisition's GPU too
+    with torch.cuda.device(dataset.device), cp.cuda.Device(source.device):
         rotated = StreamedCounts(
             (output_rows, output_cols, *detector_shape), source.dtype, source.valid_pixels
         )
