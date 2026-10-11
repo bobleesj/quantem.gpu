@@ -67,6 +67,12 @@ detector. Replace `gold_master.h5` with your file and keep its companion HDF5
 files beside it. The `show_2d` examples need the `plot` extra; PyTorch supplies
 GPU tensors for selected regions. The data are not bundled here.
 
+For shared tutorial inputs, see [Shared tutorial data](docs/api/io.md#shared-tutorial-data):
+download at a fixed revision with `quantem.data` (newer than its 0.0.1rc4
+release) or `huggingface_hub`, then open the local acquisition with
+`quantem.gpu.io`. Several tutorials can reuse the same input without another
+dataset copy.
+
 ### Load and inspect
 
 ```python
