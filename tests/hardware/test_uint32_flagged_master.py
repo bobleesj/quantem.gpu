@@ -157,3 +157,27 @@ def test_failed_uint32_load_releases_the_partial_resident(tmp_path):
         if isinstance(frame.f_locals.get("source"), StreamedCounts)
     ]
     assert partial and all(source.is_released and not source.chunks for source in partial)
+
+
+@pytest.mark.parametrize("method", ["median", "none"])
+def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(tmp_path, method):
+    """A plain 4D uint32 dataset with flagged-pixel markers loads like an Arina master.
+
+    Metal refused it: its range check counted the 0xFFFFFFFF markers that the
+    CUDA loader stores as 0 (or corrects).
+    """
+    backend = _backend()
+    counts, pixel_mask = _flagged_counts(6 * 8, (48, 48))
+    path = tmp_path / "plain.h5"
+    with h5py.File(path, "w") as handle:
+        handle["data"] = counts.reshape(6, 8, 48, 48)
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = pixel_mask
+    expected = _corrected(counts, pixel_mask, "median") if method == "median" else counts.copy()
+    if method == "none":
+        expected[:, pixel_mask != 0] = 0
+        expected = expected.astype(np.uint16)
+    with io.load(path, backend=backend, hot_pixel_correction=method, apply_mask=False, verbose=False) as loaded:
+        assert loaded.dtype == np.uint16
+        np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected.reshape(6, 8, 48, 48))
+        if method == "none":
+            assert loaded.metadata["flagged_markers_stored_as_zero"] == 6 * 8 * 4

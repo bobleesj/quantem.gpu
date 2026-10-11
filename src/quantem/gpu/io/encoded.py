@@ -163,7 +163,7 @@ def load_h5_ans(
             index_bytes=source.index_nbytes,
             pixel_mask=info.pixel_mask,
             resident_profile=INTEGER_CODEC,
-            **_correction_metadata(corrector.record, zeroed_markers),
+            **arrays.correction_metadata(corrector.record, zeroed_markers),
             load_timings=dict(
                 source.load_metrics,
                 resident_ready_seconds=time.perf_counter() - started,
@@ -267,7 +267,7 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         ),
         pixel_mask=info.pixel_mask,
         resident_profile=INTEGER_CODEC,
-        **_correction_metadata(corrector.record, zeroed_markers),
+        **arrays.correction_metadata(corrector.record, zeroed_markers),
         load_timings=dict(
             source.load_metrics,
             resident_ready_seconds=time.perf_counter() - started,
@@ -276,34 +276,6 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     if verbose:
         print(_loaded_report(source.shape, "Apple GPU", metadata))
     return Dataset4dstemGPU(source, metadata)
-
-
-def _correction_metadata(record: dict, zeroed_markers: int) -> dict:
-    """Record how stored detector-mask pixels were handled and what that means for exactness.
-
-    A corrected pixel no longer holds the file's count, so the working data is
-    exact (its own codes decode bit for bit) but no longer the file's counts.
-    ``zeroed_markers`` counts flagged-pixel values above 65535 (the uint32
-    detector marker) stored as 0 when uncorrected uint32 counts become uint16:
-    every valid count and every other flagged value is still the file's, and
-    ``pixel_mask`` keeps the flagged positions.
-    """
-    applied = record["applied"]
-    if applied:
-        policy = f"gpu-{record['method']}-corrected"
-    elif zeroed_markers:
-        policy = "flagged-markers-stored-as-zero"
-    else:
-        policy = "preserve-stored-counts"
-    exact = not applied and not zeroed_markers
-    return dict(
-        lossless_exact=exact,
-        file_counts_exact=exact,
-        detector_mask_policy=policy,
-        hot_pixel_correction=record,
-        working_counts_exact=True,
-        flagged_markers_stored_as_zero=int(zeroed_markers),
-    )
 
 
 def _loaded_report(shape, device_name: str, metadata: dict) -> str:
