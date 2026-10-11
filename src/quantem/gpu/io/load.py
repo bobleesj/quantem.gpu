@@ -73,7 +73,7 @@ def load(
     Scaled codes restore their saved intensity units for detector queries. ``scan_region`` and
     ``detector_region`` select values before resident allocation. New scaled
     storage automatically calibrates bounded regions in one pass; saved files
-    retain their recorded calibration, including legacy global scales.
+    retain their recorded calibration.
     With explicit precision, ``source`` can also be a GPU array or an object
     providing ``shape``, ``dtype``, and ``blocks()`` of ordered GPU frames.
     Each generated frame must appear once in row-major order.
