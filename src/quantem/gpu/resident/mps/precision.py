@@ -242,21 +242,6 @@ def source_range(blocks, saved):
     return low, high
 
 
-def has_invalid_pixels(mask):
-    """Whether the detector mask marks any pixel invalid."""
-    uploaded = upload(mask)
-    values = restore(uploaded, None)
-    params, scalars = _parameters(values)
-    params[14] = params[15] = min(params[0], 8192)
-    stats = MetalArray((params[14], 4), np.float32)
-    _dispatch("range", [values, stats], params, scalars)
-    rows = stats.get().tolist()
-    # PyObjC frees a Metal buffer only on release; release is idempotent when values is uploaded.
-    for temporary in (stats, values, uploaded):
-        temporary.release()
-    return any(row[1] != 0 for row in rows)
-
-
 def encode(values, report):
     """Encode float32 intensities as scaled uint16 codes on Metal."""
     result = MetalArray(values.shape, np.uint16)

@@ -282,17 +282,13 @@ class _Source:
             info = inspect(source, scan_shape=scan_shape)
             if not info.ready:
                 raise ValueError(f"{info.reason}: {info.action}")
-            if info.pixel_mask is not None:
-                if backend == "mps":
-                    invalid = metal.has_invalid_pixels(info.pixel_mask)
-                else:
-                    invalid = bool(cp.any(cp.asarray(info.pixel_mask) != 0).get())
-                if invalid:
-                    raise NotImplementedError(
-                        "This source has invalid detector pixels. Precision loading "
-                        "does not yet preserve detector validity; use a processed "
-                        "float32 result or native packed loading."
-                    )
+            # The mask is small header metadata, read on the host with the rest of the header.
+            if info.pixel_mask is not None and np.any(info.pixel_mask):
+                raise NotImplementedError(
+                    "This source has invalid detector pixels. Precision loading "
+                    "does not yet preserve detector validity; use a processed "
+                    "float32 result or native packed loading."
+                )
             self.shape = (*info.scan_shape, *info.detector_shape)
             self.dtype = np.dtype(info.dtype)
             self.metadata = dict(info.metadata)

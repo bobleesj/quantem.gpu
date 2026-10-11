@@ -309,13 +309,10 @@ def test_mps_precision_releases_its_metal_temporaries(tmp_path, monkeypatch):
     loaded = io.load(source, dtype="scaled_uint16", backend="mps", verbose=False)
     session = prepare(loaded)
     block = metal.upload(values[0, 0])
-    mask = np.ones((16, 16), bool)
-    mask[3, 4] = False
     monkeypatch.setattr(arrays.MetalArray, "__init__", recorded)
     session.frame(5)
     session.reduce_frames([0, 3, 9], "mean")
     session.reduce_frames([0, 3, 9], "max")
-    assert metal.has_invalid_pixels(mask)
     assert metal.source_range([block], None) == (float(values[0, 0].min()), float(values[0, 0].max()))
     assert created and all(array.is_released for array in created)
     assert not block.is_released
