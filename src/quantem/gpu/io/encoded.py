@@ -80,7 +80,6 @@ def load_h5_ans(
         # the reader and corrector are closed. The encoded chunks are not pooled.
         stack.callback(cp.get_default_memory_pool().free_all_blocks)
         corrector = CUDAHotPixelCorrector(info.pixel_mask, hot_pixel_correction)
-        stack.callback(corrector.close)
         valid = np.ones(info.detector_shape, bool)
         if info.pixel_mask is not None and not corrector.record["applied"]:
             valid &= np.asarray(info.pixel_mask) == 0
@@ -88,6 +87,9 @@ def load_h5_ans(
         zeroed_markers = 0
         cp.get_default_memory_pool().free_all_blocks()
         source = StreamedCounts(shape, dtype, valid)
+        # A failed load frees the chunks it encoded: they live outside the memory
+        # pool, and a traceback keeps this frame (and the source) alive.
+        stack.push(lambda error_type, *_: error_type is not None and source.release())
         free, _ = cp.cuda.runtime.memGetInfo()
         # Amortize HDF5/read/decode dispatch across larger batches, while
         # reserving at least three quarters of free memory for resident output

@@ -131,3 +131,29 @@ def test_flagged_uint32_master_refuses_valid_counts_uint16_cannot_hold(tmp_path,
     valid = pixel_mask == 0
     np.testing.assert_array_equal(stored[:, valid], counts[:, valid])
     assert not stored[:, ~valid].any()
+
+
+def test_failed_uint32_load_releases_the_partial_resident(tmp_path):
+    """A count above 65535 found in a later load block frees the blocks already encoded.
+
+    The traceback keeps the loader's locals alive (an IPython session keeps
+    the last one), so an unreleased partial resident would hold its device
+    memory until the session ends.
+    """
+    import traceback
+
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    if _backend() != "cuda":
+        pytest.skip("The CUDA loader encodes 16384-scan blocks; this checks its failure path.")
+    counts = np.random.default_rng(3).integers(0, 50, (17000, 8, 8), dtype=np.uint32)
+    counts[16900, 3, 3] = 70000
+    master = _write_master(tmp_path, counts, np.zeros((8, 8), np.uint32))
+    with pytest.raises(ValueError, match="above 65535") as failure:
+        io.load(str(master), scan_shape=(17000, 1), backend="cuda", verbose=False)
+    partial = [
+        frame.f_locals["source"]
+        for frame, _ in traceback.walk_tb(failure.tb)
+        if isinstance(frame.f_locals.get("source"), StreamedCounts)
+    ]
+    assert partial and all(source.is_released and not source.chunks for source in partial)
