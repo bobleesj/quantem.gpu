@@ -430,7 +430,7 @@ class PrecisionSource(DetectorQueries):
             _dispatch("frame", [*buffers, result], params, scalars)
         return result
 
-    def _decode_scan_range_torch(self, first, stop):
+    def decode_scan_range_torch(self, first, stop):
         """Restore a range directly into independently owned Torch MPS storage."""
         self._check()
         if not 0 <= first < stop <= self.n_frames:

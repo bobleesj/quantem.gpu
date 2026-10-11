@@ -3,7 +3,7 @@
 F1 shipped because ``CountDetectorCompute.mean_dp`` handed callers the raw
 Metal/ANS owner object (``MetalArray``) instead of a copied NumPy array; the
 same class of bug can reappear in any method that forgets ``_copy_output``.
-Native outputs instead use ``_torch_value`` to transfer private ownership
+Native outputs instead use ``torch_value`` to transfer private ownership
 into an independently owned device tensor, without a host download. These
 checks cover both explicit boundaries; hardware tests verify the device result.
 """
@@ -24,7 +24,7 @@ def _copy_output_calls(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id in {"_copy_output", "_torch_value"}
+            and node.func.id in {"_copy_output", "torch_value"}
             and len(node.args) == 1
         ):
             yield node, node.args[0]

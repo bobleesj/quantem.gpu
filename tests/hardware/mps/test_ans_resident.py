@@ -235,12 +235,12 @@ def test_reads_of_scans_not_held_raise():
         staged = upload(values[first:first + 512])
         source.append(shared_array(staged._mtl, staged.dtype, staged.shape))
         staged.release()
-    np.testing.assert_array_equal(source._decode_scan_range_torch(1000, 1536).cpu().numpy(), values[1000:1536])
+    np.testing.assert_array_equal(source.decode_scan_range_torch(1000, 1536).cpu().numpy(), values[1000:1536])
     for first, stop in ((1500, 1600), (1536, 2048)):
         with pytest.raises(ValueError):
-            source._decode_scan_range_torch(first, stop)
+            source.decode_scan_range_torch(first, stop)
     source.release_scans_before(512)
     with pytest.raises(ValueError):
-        source._decode_scan_range_torch(100, 600)
-    np.testing.assert_array_equal(source._decode_scan_range_torch(512, 600).cpu().numpy(), values[512:600])
+        source.decode_scan_range_torch(100, 600)
+    np.testing.assert_array_equal(source.decode_scan_range_torch(512, 600).cpu().numpy(), values[512:600])
     source.release()

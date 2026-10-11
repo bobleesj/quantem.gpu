@@ -148,7 +148,7 @@ class FloatANSResident:
         if self.backend == "cuda":
             output = self.decode_scan_range_device(first, stop)
         else:
-            output = self._lanes._decode_scan_range_torch(first, stop)
+            output = self._lanes.decode_scan_range_torch(first, stop)
             output = output.view(torch.float32).reshape(
                 stop - first, *self.detector_shape
             )

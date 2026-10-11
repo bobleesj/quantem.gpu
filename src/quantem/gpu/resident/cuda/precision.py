@@ -275,7 +275,7 @@ class PrecisionSource(DetectorQueries):
                 return out
             return value
 
-    def _decode_scan_range_torch(self, first, stop):
+    def decode_scan_range_torch(self, first, stop):
         """Read a bounded calibrated range into independently owned Torch storage."""
         if self.is_released or not 0 <= first < stop <= self.n_frames:
             raise ValueError("Read a nonempty scan range from an open source.")
