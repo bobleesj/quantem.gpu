@@ -13,7 +13,7 @@ torch = pytest.importorskip("torch")
 
 from quantem.gpu.parallax.cuda.correlation import cross_correlation_shift_batch_cp
 from quantem.gpu.parallax.cuda.alignment import _bin_mapping_only
-from quantem.gpu.optics.cuda import fit_aberrations_svd_polar
+from quantem.gpu.parallax.workflow import fit_aberrations_from_shifts
 
 
 QUANTEM_SRC_ENV = "QUANTEM_ORIGINAL_SRC"
@@ -178,30 +178,32 @@ def test_bin_mapping_matches_original_quantem(bin_factor: int) -> None:
     np.testing.assert_array_equal(cp.asnumpy(out_mapping), ref_mapping.numpy().astype(np.int64))
 
 
-def test_aberration_svd_polar_matches_original_quantem() -> None:
+def test_aberration_fit_matches_original_quantem() -> None:
+    """Same shifts, same coefficients and rotation as QuantEM's fit_aberrations_from_shifts.
+
+    QuantEM takes a corner-centred mask and its detector frequencies and reports Angstrom and degrees; the beam
+    angles are those frequencies times the wavelength, and quantem.gpu reports nm. The shifts carry a 25-degree
+    rotation, so a radians-versus-degrees or sign difference in the rotation shows. QuantEM fits in float32.
+    """
     _, dpu = _reference_modules()
     gpts = (32, 32)
-    bf_radius = 8
     sampling = (0.05, 0.05)
     wavelength = 0.0197
-
-    mask_np = _make_circular_bf_mask(gpts[0], gpts[1], bf_radius)
-    kxa = np.fft.fftfreq(gpts[0], sampling[0]).astype(np.float64)
-    kya = np.fft.fftfreq(gpts[1], sampling[1]).astype(np.float64)
-    kx_bf = np.broadcast_to(kxa[:, None], gpts)[mask_np]
-    ky_bf = np.broadcast_to(kya[None, :], gpts)[mask_np]
-    basis = np.stack([kx_bf, ky_bf], axis=1) * wavelength
-    known_matrix = np.array([[60.0, 5.0], [5.0, 40.0]], dtype=np.float64)
-    shifts_ang = basis @ known_matrix
+    mask_np = _make_circular_bf_mask(gpts[0], gpts[1], 8)
+    kxa = np.fft.fftfreq(gpts[0], sampling[0])
+    kya = np.fft.fftfreq(gpts[1], sampling[1])
+    angles_rad = np.stack([np.broadcast_to(kxa[:, None], gpts)[mask_np],
+                           np.broadcast_to(kya[None, :], gpts)[mask_np]], axis=1) * wavelength
+    turn = np.radians(25.0)
+    rotation = np.array([[np.cos(turn), -np.sin(turn)], [np.sin(turn), np.cos(turn)]])
+    shifts_ang = angles_rad @ np.array([[60.0, 5.0], [5.0, 40.0]]) @ rotation
 
     ref = dpu.fit_aberrations_from_shifts(
-        torch.from_numpy(shifts_ang.astype(np.float32)),
-        torch.from_numpy(mask_np),
-        wavelength,
-        gpts,
-        sampling,
+        torch.from_numpy(shifts_ang.astype(np.float32)), torch.from_numpy(mask_np), wavelength, gpts, sampling,
     )
-    out = fit_aberrations_svd_polar(shifts_ang, mask_np, wavelength, gpts, sampling)
+    aberrations, rotation_angle_deg = fit_aberrations_from_shifts(shifts_ang, angles_rad)
 
-    for key in ("C10", "C12", "phi12", "rotation_angle"):
-        np.testing.assert_allclose(out[key], ref[key], atol=1e-3)
+    np.testing.assert_allclose(aberrations["C10"] * 10, ref["C10"], rtol=1e-6)
+    np.testing.assert_allclose(aberrations["C12"] * 10, ref["C12"], rtol=1e-6)
+    np.testing.assert_allclose(aberrations["phi12"], ref["phi12"], atol=1e-6)
+    np.testing.assert_allclose(rotation_angle_deg, ref["rotation_angle"], atol=1e-5)

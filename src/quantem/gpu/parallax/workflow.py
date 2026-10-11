@@ -1,8 +1,37 @@
-"""Parallax reconstruction of a loaded 4D-STEM acquisition."""
+"""Parallax reconstruction of a loaded 4D-STEM acquisition.
 
+Each bright-field (BF) detector pixel records the scan image seen through a slightly tilted beam. Defocus and
+astigmatism shift these images relative to each other in proportion to the tilt, so measuring and undoing the shifts
+and summing the images gives a phase-contrast image, and the shift pattern itself measures the aberrations.
+
+1. Read the scan image of every detector pixel inside the BF disk
+2. Measure each image's shift by coarse-to-fine cross-correlation
+3. Shift each image once by its measured shift and sum, on the upsampled grid
+4. Optionally fit defocus, astigmatism and scan rotation from the shift pattern
+
+References
+----------
+- Ophus et al., "Four-Dimensional Scanning Transmission Electron Microscopy (4D-STEM)"
+- Yang et al., "Simultaneous atomic-resolution electron ptychography and Z-contrast imaging"
+"""
+
+import math
+import time
+
+import numpy as np
+
+from quantem.gpu import detector
+from quantem.gpu.detector.cuda.probe import detect_bf_radius
 from quantem.gpu.device import release_cached_memory
+from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
 from quantem.gpu.parallax.results import ParallaxResult
+from quantem.gpu.ssb.brightfield import disk_edge_radius
+
+# GPU bytes one batch holds: decoded detector values while reading the
+# bright-field images, tiled spectra while summing them.
+BATCH_BYTES = 256 * 1024**2
 
 
 def run(
@@ -11,10 +40,11 @@ def run(
     center: tuple[int, int] | None = None,
     bf_radius: int | None = None,
     sampling_radius: int | None = None,
-    voltage_kV: float = 300,
-    scan_sampling: float | None = None,
     upsampling_factor: int = 2,
     fit_aberrations: bool = False,
+    scan_sampling_A: float | None = None,
+    semiangle_mrad: float | None = None,
+    det_sampling: float | tuple[float, float] | None = None,
     verbose: bool = False,
 ) -> ParallaxResult:
     """Reconstruct a parallax image from the bright-field disk of a 4D-STEM acquisition.
@@ -24,7 +54,8 @@ def run(
     proportion to that tilt. The shifts are measured by cross-correlation and
     undone, and the images are summed into one phase-contrast image. With
     ``fit_aberrations=True`` the shift pattern also gives defocus, two-fold
-    astigmatism and the scan-detector rotation.
+    astigmatism and the scan-detector rotation, in the units and convention
+    ``SSB`` takes.
 
     The acquisition stays encoded on the GPU: only the bright-field pixels
     are read, in bounded bands of scan rows, and every count is used exactly.
@@ -46,17 +77,24 @@ def run(
         Use only the pixels within this radius instead of ``bf_radius``, for
         example to bound memory: the image stack holds one float32 scan image
         per pixel.
-    voltage_kV
-        Accelerating voltage in kV, used for the aberration fit.
-    scan_sampling
-        Scan step in Angstrom per pixel. Required with ``fit_aberrations``.
     upsampling_factor
         Each output image axis is this many times the scan axis. Every
         image's scan samples are placed at their measured sub-pixel shifts
         on the finer grid, so where the shifts differ (defocus) the images
         interleave and resolve detail finer than the scan step.
     fit_aberrations
-        Fit ``C10``, ``C12``, ``phi12`` and ``rotation_angle`` from the shifts.
+        Fit ``C10``, ``C12``, ``phi12`` and the scan-detector rotation from
+        the shifts. Needs ``scan_sampling_A`` and the detector calibration,
+        ``semiangle_mrad`` or ``det_sampling``.
+    scan_sampling_A
+        Scan step in Angstrom per pixel; converts the measured shifts to length.
+    semiangle_mrad
+        Probe convergence semiangle in mrad. Calibrates the detector as ``SSB``
+        does: ``semiangle_mrad`` over the radius at which the bright-field disk
+        of the mean pattern falls to half its plateau.
+    det_sampling
+        Detector sampling in mrad per pixel, one value or ``(row, col)``;
+        replaces the calibration from ``semiangle_mrad``.
     verbose
         Print the detected disk and the alignment progress.
 
@@ -67,7 +105,7 @@ def run(
         its measured shift), its density map (the number of samples reaching
         each output pixel; ``image / density`` is the mean), the measured
         ``(row, col)`` shift of every bright-field pixel in scan pixels, and
-        the fitted aberrations when requested.
+        the fitted aberrations and rotation when requested.
 
     Raises
     ------
@@ -78,14 +116,15 @@ def run(
         implementation.
     ValueError
         If the acquisition is not on a CUDA GPU, or ``fit_aberrations`` is
-        requested without ``scan_sampling``.
+        requested without the scan or detector calibration.
 
     Examples
     --------
-    >>> from quantem.gpu import io, parallax
+    >>> from quantem.gpu import SSB, io, parallax
     >>> data = io.load("scan_master.h5", backend="cuda")
-    >>> result = parallax.run(data, scan_sampling=0.5, fit_aberrations=True)
-    >>> result.to_ssb_aberrations()
+    >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=0.5, semiangle_mrad=30)
+    >>> ssb = SSB(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.5,
+    ...           aberrations=result.aberrations, rotation_angle_deg=result.rotation_angle_deg)
     """
     if not isinstance(data, Dataset4dstemGPU):
         raise TypeError(
@@ -103,24 +142,185 @@ def run(
             f"Parallax runs on a CUDA GPU, but this acquisition is on {device}. "
             "Load it with io.load(path, backend='cuda')."
         )
-    if fit_aberrations and scan_sampling is None:
+    if fit_aberrations and (scan_sampling_A is None or (semiangle_mrad is None and det_sampling is None)):
         raise ValueError(
-            "fit_aberrations=True needs scan_sampling, the scan step in Angstrom per pixel."
+            "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
+            "calibration: semiangle_mrad, or det_sampling in mrad per detector pixel."
         )
-    from quantem.gpu.parallax.cuda.reconstruction import run_cuda
-
-    result = run_cuda(
-        data,
-        center=center,
-        bf_radius=bf_radius,
-        sampling_radius=sampling_radius,
-        voltage_kV=voltage_kV,
-        scan_sampling=scan_sampling,
-        upsampling_factor=upsampling_factor,
-        fit_aberrations=fit_aberrations,
-        verbose=verbose,
-    )
-    # The bright-field stack and its spectra are many times the image; return
+    started = time.perf_counter()
+    det_rows, det_cols = data.shape[2:]
+    mean_pattern = None
+    if center is None or bf_radius is None:
+        mean_pattern = detector.mean(data)
+        detected_center, detected_radius = detect_bf_radius(cp.asarray(mean_pattern))
+        center = detected_center if center is None else center
+        bf_radius = detected_radius if bf_radius is None else bf_radius
+        if verbose:
+            print(f"[parallax] Auto-detected center={center}, bf_radius={bf_radius}")
+    radius = int(bf_radius) if sampling_radius is None else sampling_radius
+    rows = cp.arange(det_rows, dtype=cp.float32)[:, None]
+    cols = cp.arange(det_cols, dtype=cp.float32)[None, :]
+    bf_mask = (rows - float(center[0])) ** 2 + (cols - float(center[1])) ** 2 <= float(radius) ** 2
+    pixel_rows, pixel_cols = cp.nonzero(bf_mask)
+    if verbose:
+        print(f"[parallax] {len(pixel_rows):,} BF pixels within {radius} px of {center}")
+    image, density, global_shifts = _shifted_sum(data, bf_mask, pixel_rows, pixel_cols, upsampling_factor, verbose)
+    # The bright-field stack and its spectra were many times the image; return
     # their blocks to the GPU for the next consumer instead of keeping them cached.
     release_cached_memory()
-    return result
+
+    aberrations = rotation_angle_deg = None
+    if fit_aberrations:
+        # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
+        if det_sampling is None:
+            mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
+            det_sampling = semiangle_mrad / disk_edge_radius(mean_pattern)
+        # The shifts are measured against the mean image, which is seen at the mean beam angle of the
+        # selected pixels, so each pixel's beam angle is taken from their centroid.
+        pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
+        angles_rad = (pixels - pixels.mean(axis=0)) * np.broadcast_to(det_sampling, (2,)) * 1e-3
+        aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
+            cp.asnumpy(global_shifts).astype(np.float64) * scan_sampling_A, angles_rad
+        )
+    return ParallaxResult(
+        image=image,
+        density=density,
+        shifts=[(float(row), float(col)) for row, col in cp.asnumpy(global_shifts)],
+        aberrations=aberrations,
+        rotation_angle_deg=rotation_angle_deg,
+        elapsed=time.perf_counter() - started,
+    )
+
+
+def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
+    """Fit defocus, two-fold astigmatism and the scan-detector rotation to parallax shifts.
+
+    With SSB's aberration function ``chi = (pi / lambda) alpha^T A alpha``,
+    ``A = [[C10 + C12 cos 2 phi12, C12 sin 2 phi12], [C12 sin 2 phi12, C10 - C12 cos 2 phi12]]``,
+    the bright-field image at beam angle ``alpha`` (radians, detector frame)
+    sees the specimen ``A alpha`` away from the probe position, so the shift
+    that aligns it, in the scan frame, is ``alpha @ M`` with ``M = A R``: the
+    symmetric aberration matrix, then the scan-detector rotation ``R``. A
+    least-squares fit of ``M`` and its polar decomposition ``M = R P`` (``P =
+    R^T A R``, the aberrations in the scan frame) separate the two, as
+    QuantEM's ``fit_aberrations_from_shifts`` does. The half turn ``(R, P) ->
+    (-R, -P)`` fits equally well; the rotation is kept within 90 degrees of
+    zero and the aberrations take its sign, the 180-degree ambiguity that
+    ``SSB.find_aberrations(check_rotation=True)`` settles.
+
+    Parameters
+    ----------
+    shifts_A
+        ``(n, 2)`` measured ``(row, col)`` shift of each bright-field image in
+        Angstrom.
+    angles_rad
+        ``(n, 2)`` ``(row, col)`` beam angle of each image's detector pixel in
+        radians, relative to the beam angle of the reference image.
+
+    Returns
+    -------
+    tuple
+        ``{"C10", "C12", "phi12"}`` in nm, nm and radians (scan frame), and the
+        rotation in degrees: what ``SSB(aberrations=..., rotation_angle_deg=...)``
+        takes.
+    """
+    matrix = np.linalg.lstsq(angles_rad, shifts_A, rcond=None)[0]
+    left, singular, right = np.linalg.svd(matrix)
+    rotation = left @ right
+    aberration = right.T @ np.diag(singular) @ right
+    rotation_rad = -math.atan2(rotation[1, 0], rotation[0, 0])
+    if 2 * abs((rotation_rad + math.pi) % (2 * math.pi) - math.pi) > math.pi:
+        rotation_rad = rotation_rad % (2 * math.pi) - math.pi
+        aberration = -aberration
+    a, b, c = aberration[0, 0], (aberration[1, 0] + aberration[0, 1]) / 2, aberration[1, 1]
+    # A is in Angstrom like the shifts; SSB takes C10 and C12 in nm
+    aberrations = {
+        "C10": float(a + c) / 20,
+        "C12": math.hypot((a - c) / 2, b) / 10,
+        "phi12": math.atan2(b, (a - c) / 2) / 2,
+    }
+    return aberrations, math.degrees(rotation_rad)
+
+
+def _shifted_sum(data, bf_mask, pixel_rows, pixel_cols, upsampling_factor, verbose):
+    """Read, align and sum the bright-field images: ``(image, density, shifts)``.
+
+    A function of its own so that the image stack (one float32 scan image per
+    bright-field pixel, gigabytes for a full disk) and its spectra are freed
+    when it returns, before ``run`` hands their memory back to the GPU.
+    """
+    scan_rows, scan_cols = data.shape[:2]
+    # Read the scan image of every BF pixel, in row-major detector order. The
+    # acquisition stays encoded: bands of scan rows cropped to the disk's
+    # bounding box keep the decoded values under BATCH_BYTES, and uint8/uint16
+    # counts convert to float32 exactly.
+    row0, row1 = int(pixel_rows.min()), int(pixel_rows.max()) + 1
+    col0, col1 = int(pixel_cols.min()), int(pixel_cols.max()) + 1
+    box_pixels = (pixel_rows - row0) * (col1 - col0) + (pixel_cols - col0)
+    n_pixels = len(box_pixels)
+    stack = cp.empty((n_pixels, scan_rows, scan_cols), cp.float32)
+    band_rows = max(1, BATCH_BYTES // (scan_cols * (row1 - row0) * (col1 - col0) * data.dtype.itemsize))
+    for first in range(0, scan_rows, band_rows):
+        stop = min(first + band_rows, scan_rows)
+        band = cp.from_dlpack(
+            data.read(
+                scan_region=(first, stop, 0, scan_cols),
+                detector_region=(row0, row1, col0, col1),
+            )
+        )
+        stack[:, first:stop] = (
+            band.reshape((stop - first) * scan_cols, -1)[:, box_pixels]
+            .T.reshape(n_pixels, stop - first, scan_cols)
+        )
+
+    # Measure each image's (row, col) shift against the mean image. Coarse-to-fine
+    # detector binning, (3, 2, 1) as in QuantEM's align_vbf_stack_multiscale,
+    # keeps large shifts from locking onto a wrong correlation peak.
+    global_shifts = align_vbf_stack_multiscale_cp(
+        vbf_stack=stack,
+        bf_mask=bf_mask,
+        inds_row=pixel_rows,
+        inds_col=pixel_cols,
+        bin_factors=(3, 2, 1),
+        reference=stack.mean(axis=0),
+        upsample_factor=4,
+    )
+    if verbose:
+        max_shift = float(cp.max(cp.sqrt(global_shifts[:, 0]**2 + global_shifts[:, 1]**2)))
+        print(f"[parallax] Max shift: {max_shift:.2f} pixels")
+
+    # Shift every image once by its measured shift and sum, in frequency space
+    # on the output grid, as QuantEM's DirectPtychography.reconstruct does.
+    # Tiling an image's spectrum upsampling_factor times per axis puts its scan
+    # samples on the finer grid with zeros between them; the phase ramp then
+    # moves the samples to their measured sub-pixel positions, so the images
+    # interleave and the sum resolves detail finer than the scan step. The
+    # ramp factorizes into a row part and a column part, in cycles per scan
+    # pixel on the output grid.
+    out_rows, out_cols = upsampling_factor * scan_rows, upsampling_factor * scan_cols
+    # The ramps are evaluated in float64 and rounded once to complex64.
+    shifts_f64 = global_shifts.astype(cp.float64)
+    ramp_row = cp.exp(
+        -2j * cp.pi * shifts_f64[:, 0:1] * cp.fft.fftfreq(out_rows, d=1.0 / upsampling_factor)[None, :]
+    ).astype(cp.complex64)
+    ramp_col = cp.exp(
+        -2j * cp.pi * shifts_f64[:, 1:2] * cp.fft.fftfreq(out_cols, d=1.0 / upsampling_factor)[None, :]
+    ).astype(cp.complex64)
+    spectrum = cp.zeros((out_rows, out_cols), cp.complex64)
+    batch = max(1, BATCH_BYTES // (out_rows * out_cols * 8))
+    for first in range(0, n_pixels, batch):
+        stop = min(first + batch, n_pixels)
+        tiled = cp.tile(
+            cp.fft.fft2(stack[first:stop], axes=(1, 2)), (1, upsampling_factor, upsampling_factor)
+        )
+        tiled *= ramp_row[first:stop, :, None]
+        tiled *= ramp_col[first:stop, None, :]
+        spectrum += tiled.sum(axis=0)
+    # The density is the same deposition of images of ones, whose spectra are
+    # nonzero only at the multiples of the scan size: the number of samples
+    # that reach each output pixel (n_pixels everywhere when not upsampled).
+    density_spectrum = cp.zeros((out_rows, out_cols), cp.complex128)
+    density_spectrum[::scan_rows, ::scan_cols] = scan_rows * scan_cols * (
+        ramp_row[:, ::scan_rows].astype(cp.complex128).T @ ramp_col[:, ::scan_cols].astype(cp.complex128)
+    )
+    return cp.fft.ifft2(spectrum).real, cp.fft.ifft2(density_spectrum).real.astype(cp.float32), global_shifts

@@ -11,21 +11,21 @@ shifts from locking onto a wrong correlation peak.
 
 import math
 
-import cupy as cp
 import numpy as np
 
+from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.parallax.cuda.correlation import cross_correlation_shift_batch_cp
 
 
 def align_vbf_stack_multiscale_cp(
-    vbf_stack: cp.ndarray,
-    bf_mask: cp.ndarray,
-    inds_row: cp.ndarray,
-    inds_col: cp.ndarray,
+    vbf_stack,
+    bf_mask,
+    inds_row,
+    inds_col,
     bin_factors: tuple,
-    reference: cp.ndarray,
+    reference,
     upsample_factor: int = 4,
-) -> cp.ndarray:
+):
     """Measure the shift that aligns each virtual bright-field image to a reference, coarse to fine.
 
     Parameters
