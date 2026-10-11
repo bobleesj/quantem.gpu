@@ -23,7 +23,6 @@ import torch
 
 from quantem.gpu import detector
 from quantem.gpu.detector.cuda.probe import detect_bf_radius
-from quantem.gpu.device import release_cached_memory
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
@@ -171,7 +170,10 @@ def run(
         image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose)
         # The bright-field stack and its spectra were many times the image; return
         # their blocks to the GPU for the next consumer instead of keeping them cached.
-        release_cached_memory()
+        # CuPy's pool on this GPU and Torch's cache are emptied in place: device.release_cached_memory
+        # also collects garbage, about 80 ms where this whole function takes 60 ms on a 256 x 256 scan.
+        cp.get_default_memory_pool().free_all_blocks()
+        torch.cuda.empty_cache()
 
         aberrations = rotation_angle_deg = None
         if fit_aberrations:
