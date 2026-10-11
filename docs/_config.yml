@@ -1,6 +1,6 @@
 # Jupyter Book config for the quantem.gpu documentation site. Builds are
-# intentionally hardware-independent: qualified CUDA, Metal/MPS, and WebGPU
-# runs publish retained evidence rather than rerunning private data on Pages CI.
+# hardware-independent: measured numbers are written into the pages as dated
+# records rather than produced by rerunning private data on Pages CI.
 title: quantem.gpu
 author: Sangjoon Lee et al.
 logo: ""
@@ -26,14 +26,6 @@ sphinx:
       - sphinx.ext.intersphinx
       - sphinx_design
       - sphinx_book_theme
-      - sphinx.ext.autodoc
-      - sphinx.ext.napoleon
-    napoleon_numpy_docstring: true
-    napoleon_google_docstring: false
-    napoleon_use_param: true
-    napoleon_use_rtype: true
-    autodoc_member_order: "bysource"
-    autoclass_content: "both"
     html_theme_options:
       secondary_sidebar_items: []
       show_navbar_depth: 1

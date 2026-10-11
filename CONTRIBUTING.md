@@ -51,8 +51,8 @@ timing/parity reports separately if needed, not copies of the input arrays.
 An uncatchable kill or power failure cannot run teardown; pytest's subsequent
 temporary-directory housekeeping handles abandoned pytest roots. This does not
 sweep arbitrary benchmark folders, user caches or Codex history. Standalone
-benchmarks and UI scripts must use their own managed lifecycle; Live4DSTEM's
-`scripts/run_test.py` provides a supervisor for those commands.
+benchmarks and UI scripts must create and remove their own temporary
+directories.
 
 Every backend uses `(row, col)` coordinates and the same source geometry,
 mask, bin, dtype, precision, and result meaning. A contribution must not
@@ -93,8 +93,6 @@ Run the focused test first, then the relevant suite:
 
 ```bash
 PYTHONPATH=src python -m pytest -q
-python scripts/check_profile_registry.py
-python scripts/benchmark_registry.py validate
 python scripts/check_docs_links.py
 jupyter-book build docs
 python scripts/check_docs_links.py --html-root docs/_build/html
@@ -116,20 +114,14 @@ Hardware-gated tests may skip on a general CI runner. A skip is not backend
 signoff; attach the corresponding CUDA, MPS/Metal, Swift/Metal, or browser
 evidence to the pull request.
 
-Before a new physical benchmark, choose the exact gate and repository-owned
-entry point from the [coverage registry](docs/performance/coverage.md):
-
-```bash
-python scripts/benchmark_registry.py next --limit 10
-python scripts/benchmark_registry.py command GATE_ID
-```
-
-Record the experiment in the private evidence archive (manifest and `RUNS.md`
-row) before launch, and keep its raw logs there, never in this repository.
-Write the dated summary under `docs/` (question, setup, numbers, conclusion).
-Keep all repetitions and outliers. Update `benchmarks/benchmark_registry.json`, then
-run `python scripts/benchmark_registry.py render`; do not edit
-`docs/_generated/benchmark_coverage.md` by hand.
+Before a performance change, time the touched hot path on the base and the
+candidate back to back with the repository-owned entry point listed in the
+[test guide](docs/developer/testing.md), for example
+`python scripts/benchmark_ssb.py` for CUDA SSB, DPC and parallax. Record the
+experiment in the private evidence archive (manifest and `RUNS.md` row) before
+launch, and keep its raw logs there, never in this repository. Write the dated
+summary under `docs/` (question, setup, numbers, conclusion) and keep all
+repetitions and outliers.
 
 ## Documentation and style
 

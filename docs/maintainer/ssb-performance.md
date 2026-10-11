@@ -184,7 +184,7 @@ faster native 1024/2048 fitting, 4× display, HDF5 loading, or WebGPU rendering.
 In particular, the remaining 8–9 s prepared calibration time is not a 5 s
 end-to-end workflow.
 
-## Current native Swift/Metal checkpoint
+## Native Swift/Metal checkpoint
 
 The current native Swift/Metal SSB values are not repeated in this chronological
 optimization notebook. Use:
@@ -2576,7 +2576,7 @@ logical chunk from `512` to `1024/2048/8937` did not improve the warm call
 consolidation must emit the same twelve partial sums and add them in the same
 order; changing the reduction association is not an exact speedup.
 
-## Current CUDA/MPS checkpoint, 2026-07-17
+## CUDA/MPS checkpoint, 2026-07-17
 
 This checkpoint excludes WebGPU by request. It uses full active BF evidence:
 no scan crop, detector binning, BF subsampling, preview/settle split, or saved
@@ -3574,25 +3574,6 @@ PYTHONPATH=src \
 pytest -q tests/hardware/cuda/test_ssb_cuda_128.py
 ```
 
-## Repeat the native benchmark
-
-Use the local Codex skill benchmark for synthetic kernel timing:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 \
-PYTHONPATH=src \
-python quantem-ssb-kernel-optimization/scripts/ssb_native_bench.py \
-  --repo . \
-  --sizes 128,256,512,1024 \
-  --num-bf 8809 \
-  --iters 4 \
-  --mode object
-```
-
-Repeat with `--mode phase` and `--mode loss` for the full 12-run matrix. Do not
-validate object-mode FPS to phase-mode optimizer FPS without saying which
-scientific quantity is being drawn.
-
 ## Rejected 512 phase/loss probes
 
 Follow-up GPU1 probes after the accepted `~45-47 ms` exact `512x512`, `8809`
@@ -4559,9 +4540,7 @@ it to four columns/16 KiB regressed to `3.795 s`. More contiguous eight-value
 segments did not outweigh the launch/shared/reduction behavior of the retained
 `64 FFT lanes x 8 columns` layout, so both coordinate transposes were removed.
 
-## Next performance work
-
-### Native 128/256 exact MPS candidate scheduling
+## Native 128/256 exact MPS candidate scheduling
 
 The exact 128 and 256 MPS kernels previously serialized every candidate in an
 Optuna batch. A size-specific scheduler now submits the unchanged
@@ -4780,42 +4759,3 @@ The fixed-seed fits remained within noise (`3.266 s` at 128 and `8.249 s` at
 256 versus `3.250` / `8.248 s` accepted), so the cache and an accidental
 cross-size 512 wrapper edit were both removed rather than retained as dead
 complexity.
-
-Problem: the live object redraw target is met for the real Mac MPS `512x512`
-radius-30 object-wave workflow, and the fused column accumulator makes exact
-radius-30 phase/loss reviewable at about `13 FPS`, but full-active-BF exact
-phase/loss is still far below real-time on MPS.
-
-Action: port or prototype the fused correction + row-FFT half of the CUDA
-topology on MPS, then rerun the same before/after table with full BF.
-
-Problem: the `512x512` exact phase/loss path now meets the `33.3 ms` / `30 FPS`
-target on the real central held-out dataset field, but the p95 margin is small on the
-300 W GPU1 power envelope.
-
-Action: keep the 64-BF default chunking for 512, and re-run a 600-step
-real-data signoff whenever row/column kernels, power settings, BF policy, or
-driver/toolkit versions change.
-
-Problem: the phase-variance optimizer path cannot inherit the object Fourier-
-sum result because `mean(angle(object_bf))` is a different scientific quantity
-from `angle(mean(object_bf))`.
-
-Action: keep optimizing `reconstruct()` and `reconstruct_with_loss()` with
-dedicated native variance kernels or an equivalent exact reformulation; do not
-reuse the object-path claim for the optimizer objective.
-
-Problem: `1024x1024` batched optimizer variance is still disabled.
-
-Action: implement and reference-check a dedicated 1024 batch variance kernel before
-enabling batch trials at that size.
-
-Problem: MPS and WebGPU are implemented for native-size SSB review, but they
-are not yet equivalent to CUDA full-BF real-data signoff.
-
-Action: keep extending the 12-cell matrix with real-data MPS and WebGPU runs.
-For MPS, measure the same BF policies used by scientists on a Mac MPS machine and
-validate against CUDA-reference fixtures. For WebGPU, keep reusable WGSL/browser
-kernel sources beside their scientific domains, bundle them through `quantem.widget`,
-reference-check against native `quantem.gpu` outputs, and do not use
-SwiftShader performance numbers.

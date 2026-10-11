@@ -33,14 +33,6 @@ python -m pytest -q tests/infrastructure/test_public_repository.py
 
 If unsure whether something is private, leave it out and ask.
 
-## Experiment evidence
-
-`scripts/check_profile_registry.py`, `scripts/benchmark_registry.py` and the
-tests that read retained experiments check the archive when it is available:
-set `QUANTEM_GPU_EXPERIMENTS` to a checkout of it, or clone it beside this
-repository as `../quantem.gpu-experiments`. Without it they validate everything
-else and say that experiment evidence was not checked.
-
 Test-specific rules are in `tests/AGENTS.md`.
 
 ## Tests

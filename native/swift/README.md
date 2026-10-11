@@ -85,4 +85,4 @@ swift test --filter MetalImageFFTTests
 Record load, first-use compilation, resident kernel time, peak memory, and app
 presentation separately. Host compilation and skipped opt-in tests are not
 physical-device or application acceptance. Latest dated measurements belong in
-the [benchmark dashboard](../../docs/dashboard.md), not this source guide.
+the [verified benchmark results](../../docs/performance/results.md), not this source guide.

@@ -510,21 +510,6 @@ they summarize shape, parity, stage split, and footprint without raw file paths.
 | Arina-style compressed HDF5 save, `uint8` | CPU fallback | `Compressed HDF5 save` | CPU/HDF5 `uint8` output matches an explicit `round+clip[0,255]` display reference. | Full no-bin real-data CPU/HDF5 `uint8` display export measured `~19.3 s`, output about `1.10 GB`; not a scientific agreement format for this dataset. |
 | 1-2 s full no-bin save target | None | `Compressed HDF5 save` | Not met. Do not mark Done until full decoded HDF5 agreement and wall time are both signed off on real data. | Current MPS best is about `4 s` for full `uint16`; next work should reduce direct-chunk call count/overhead or move chunk packing/writes lower than Python loops. |
 
-## Current WebGPU Execution Queue
-
-These are the current follow-up targets after the 946-cycle browser soak. Each
-item must produce a JSON artifact with adapter, parity, stage split, and
-footprint fields before it can update a `Done` cell.
-
-| Priority | Target | Required result |
-| ---: | --- | --- |
-| 1 | Full-stack WebGPU `512x512x192x192` load/decode | Current median is `0.772 s`; next win must close the remaining gap to the strict `0.5 s` full-stack target while preserving checksum parity. |
-| 2 | WebGPU `256x256` crop load/decode | Current median is `0.338 s`; preserve exact crop checksum and keep crop-first IO below CUDA warm crop timing. |
-| 3 | WebGPU selected-block product for `256`, `512`, and true `1024` | Current medians are `0.210 s`, `0.378 s`, and `4.92 s` wall for true real-acquisition `1024`; preserve `max_abs=0` and keep the automatic route as the default. |
-| 4 | WebGPU detector-bin load path | Full-512 plus true crop-256 `detBin=2/4/8` are signed off with repeated/p95 evidence. Keep presets explicit about binning and continue p95 refreshes after decoder or upload changes. |
-| 5 | Browser iDPC optimization | WebGPU iDPC is implemented and signed off against the Python reference at float32 FFT tolerance. Median display/recompute now clears 30 FPS; next target is p95/outlier tightening and stricter max-error analysis if the Python reference moves to a float32 FFT baseline. |
-| 6 | True `1024x1024x192x192` acquisition on WebGPU | Product-first BF selected-block true-acquisition signoff is done with exact parity. Full-stack no-bin browser browse/load still needs either enough free WebGPU VRAM for a true full-stack run or an explicit documented memory-policy rejection. |
-
 ## Acceptance Gate Per Capability
 
 1. **Real data only.** Synthetic tests can guard source shape, but they do not

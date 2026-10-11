@@ -62,11 +62,11 @@ complete; `Gap` means the backend does not implement that capability yet.
 | Exact detector bin | Done | NA | Done | Reference | `io.load` keeps the native detector. CUDA detector and scan bins are exact integer views of one encoded resident in the browse service (`quantem.gpu.remote.plan.BrowsePlan`); Python MPS has no requested detector bin. WebGPU has explicit count-preserving `detBin` source support; full `512x512x192x192` `detBin=2/4/8` headed parity is exact on a real NVIDIA WebGPU adapter, including native non-low8 `uint16` `detBin=2`. |
 | BF/DF/ADF resident kernels | Done | Done | Done | Reference | CUDA RawKernel, MPS Metal, and WebGPU WGSL selected reducers are implemented for `uint8`/`uint16`/`uint32` resident data. |
 | Dense DF/ADF strategy | Done | Done | Done | Reference | Dense masks use cached `total - complement` where cheaper. |
-| CoM/DPC resident kernels | Done | Partial | Done | Reference | Detector-bin-4 CUDA/MPS CoM passes the frozen gate. The public MPS native-detector interaction sidecar is detector-bin-2 and is not full-resolution parity. WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
+| CoM/DPC resident kernels | Done | Partial | Done | Reference | Detector-bin-4 CUDA/MPS CoM passed the frozen gate on 2026-08-19, measured on the dense loader of that date. WebGPU row/col DPC has full no-bin headed signoff on real hardware. |
 | Cached detector/DPC products | Done | Done | Product-first Done / cache-read Done | Cache-read Done | CUDA and MPS build the product cache from one encoded load, including exact `uint64` total/ABF/ADF maps; a cache written without those fields reports them as unavailable. WebGPU owns browser selected-block product caches and can read prepared cache products. |
-| iDPC | Done | Partial | Done | Reference | Current CUDA/MPS detector-bin-4 iDPC exceeds the frozen `1e-5` cross-backend gate; native-detector MPS sidecar iDPC is also blocked. WebGPU fixed-rotation iDPC uses paired DPC buffers and a dual-real FFT with an explicit float32 tolerance. |
+| iDPC | Done | Partial | Done | Reference | On 2026-08-19 the CUDA/MPS detector-bin-4 iDPC exceeded the frozen `1e-5` cross-backend gate. WebGPU fixed-rotation iDPC uses paired DPC buffers and a dual-real FFT with an explicit float32 tolerance. |
 | Ptychographic SSB preview | Done | Done | Partial | Reference | Python MPS and the separate native `MetalSSBKernels` product have parity-qualified implementations; WebGPU source lives under `ssb/webgpu`, but its full browser matrix is not complete. |
-| Ptychographic SSB fit/reconstruction | Done | Done | Partial | Not target | Python MPS supports its current parity shapes. Native Swift/Metal supports exact 512×512 reconstruction, phase-variance loss, and deterministic 200-trial TPE plus Nelder–Mead fitting; other native scan sizes remain gaps. |
+| Ptychographic SSB fit/reconstruction | Done | Done | Partial | Not target | Python MPS supports its current parity shapes. Native Swift/Metal supports exact 128×128, 256×256 and 512×512 reconstruction, phase-variance loss, and deterministic 200-trial TPE plus Nelder–Mead fitting; 1024×1024 remains a native gap. |
 | Native Browser FFT (`MetalImageFFT.logMagnitude`) | NA | Done | NA | Reference | Native Swift/Metal product for already-transferred 2D BF/ADF/custom images. 512×512 must stay inside 120 Hz when warm. Not a Python MPS path. |
 | GIF/MP4 movie rendering | Done | Done | NA | Fallback | CUDA/NVENC and Metal/VideoToolbox paths live here; presentation controls remain client-owned. |
 | Browser source ownership | Done | Done | Done | NA | Reusable TypeScript/WGSL source lives beside each scientific domain. |
@@ -79,8 +79,6 @@ The rule for new heavy work is: implement the compute or IO path in
 This page owns capability and source-boundary status only. Numerical results are
 not copied here:
 
-- [Implementation overview](dashboard.md) is the current human-facing speed,
-  memory, feature, and parity dashboard.
 - [Verified benchmark results](performance/results.md) is the authoritative
   provenance ledger.
 - [Optimization ledger](maintainer/backend-optimization-matrix.md) preserves

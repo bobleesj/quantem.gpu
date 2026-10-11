@@ -20,7 +20,7 @@ justifies combining them.
 | Ordinary complete uint8/uint16 H5 into an indexed resident | `io.load(path, backend="cuda", representation="encoded", apply_mask=False)` | Runtime encoded streams in `resident/cuda/counts.py`; H5 loading in `io/encoded.py` | Save portable `.qem` with `io.save`; native format/backend acceptance remains separately gated |
 | Portable QuantEM/ANS file | `io.load(path, backend="cuda")` | Container reader in `io/qem.py`, CUDA decoder in `resident/cuda/counts.py`, Metal decoder in `resident/mps/counts.py` | Different format/model from historical storage experiments; MPS also supports its documented subset |
 | Older prepared packed source or prepared series folder | Re-export the original acquisition as `.qem` | None; these readers were removed | `io.load` does not open them |
-| Original HDF5 into native Metal integer packing | Native Swift `MetalOriginalHDF5Packing` workflow | Swift/Metal sources in the same package repository | Separate native lifecycle; not an automatic Python H5-to-packed conversion |
+| Original HDF5 into native Metal integer packing | Native Swift `MetalCompactH5Loader.load` (see [original HDF5 packed loading](../api/original-hdf5-metal-packing.md)) | Swift/Metal sources in the same package repository | Separate native lifecycle; not an automatic Python H5-to-packed conversion |
 
 The `encoded` selector names the representation family. The format/profile selects
 the compatible decoder. rANS and tANS streams are not interchangeable.

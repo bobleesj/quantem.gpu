@@ -4,10 +4,13 @@ Performance is reported only after scientific parity. A faster result that
 changes source coverage, detector sampling, precision, mask, objective, or
 output meaning is a different experiment.
 
-The [continuous profiling plan](continuous-profiling.md) defines which checks
-belong on every pull request, which require specified physical hardware, and how a
-qualified measurement is promoted to the dashboard. Its machine-readable
-platform/module schedule is `benchmarks/profile_matrix.json`.
+Pull-request CI runs portable contracts only. Timing runs on the named
+physical hardware with the entry points in the [test guide](../developer/testing.md),
+and a measurement enters the documentation as a dated record.
+
+Revisions cited before 2026-10-06 refer to the history before the repository
+was squashed for publication. They identify the measured code in the private
+evidence archive and cannot be resolved in the public history.
 
 ## Required labels
 
@@ -79,6 +82,7 @@ device/runtime, precision, and source revision. A new key begins in report-only
 mode. Do not introduce a blocking percentage threshold until at least five
 accepted sessions establish the variance of that exact configuration.
 
+(benchmark-memory)=
 ## Memory
 
 Compressed file size is not a fit estimate. Admission includes decoded output,
@@ -174,6 +178,7 @@ that explicitly keeps calculated resident storage separate from measured
 shared scratch and unmeasured full-load peak. Missing peak counters stay null
 in its downloadable evidence; they are not zeros or inferred fit guarantees.
 
+(minimum-device-memory-gates)=
 ## Minimum-device memory gates
 
 Minimum-device support is a complete-pipeline claim, not a payload comparison:
@@ -197,6 +202,26 @@ Gate vocabulary is fail-closed:
 
 Do not convert **Pending** or **Test** to ✓ from a larger device, a calculated
 payload, a kernel-only microbenchmark, or a prepared-source reopen.
+
+No floor has a ✓ today. The retained evidence for a full `512x512` scan with a
+native `192x192` `uint16` detector:
+
+| Platform | Floor | Resident | Resident payload | Gate | Evidence | Device tested | Date tested |
+|---|---|---|---:|---|---|---|---|
+| CUDA | 6 GiB VRAM | `io.load`, ANS encoded, native detector | 2,127,983,353 B | **Pending** | Measured encoded payload of one real acquisition; no physical 6 GiB peak retained | NVIDIA RTX PRO 6000 Blackwell | 2026-10-05 |
+| CUDA | 6 GiB VRAM | `io.load`, ANS encoded, native detector | 2,279,376,159 B | **Pending** | Measured encoded payload of a second real acquisition | NVIDIA RTX PRO 6000 Blackwell | 2026-10-05 |
+| CUDA | 6 GiB VRAM | `io.load`, ANS encoded, native detector | 3,374,307,987 B | **Pending** | Measured encoded payload of a third real acquisition | NVIDIA RTX PRO 6000 Blackwell | 2026-10-05 |
+| Python MPS | 8 GB unified RAM | `io.load`, ANS encoded, native detector | Data-dependent | **Pending** | No physical 8 GB pressure and parity run retained | — | — |
+| Native Swift/Metal | 8 GB unified RAM | dense `uint16`, detector bin 1 | 19,327,352,832 B | **No** | Payload exceeds physical memory | — | — |
+| Native Swift/Metal | 8 GB unified RAM | dense `uint16`, detector bin 4 | 1,207,959,552 B | **Historical** | An earlier physical run passed; no repeat on a current revision | Apple M2 MacBook Air (`Mac14,2`, 8 GB) | 2026-08-18 |
+| WebGPU | 8 GB total RAM | dense `uint16`, detector bin 1 | 19,327,352,832 B | **No** | Payload exceeds total machine RAM | — | — |
+| WebGPU | 8 GB total RAM | dense `uint16`, detector bin 2 | 4,831,838,208 B | **Blocked** | Production detector binning stores `float32`; exact integer accumulation must land before the physical run | — | — |
+| WebGPU | 8 GB total RAM | dense `uint16`, detector bin 4 | 1,207,959,552 B | **Blocked** | Production detector binning stores `float32`; exact integer accumulation must land before the physical run | — | — |
+| WebGPU | 8 GB total RAM | dense `uint16`, detector bin 8 | 301,989,888 B | **Blocked** | Production detector binning stores `float32`; exact integer accumulation must land before the physical run | — | — |
+
+The encoded payloads are 0.11 to 0.18 of the 18.00 GiB of counts. Payload is
+not peak: decoder scratch, staging, allocator reserve and other GPU users come
+on top.
 
 ## Interaction sidecars and scientific resolution
 

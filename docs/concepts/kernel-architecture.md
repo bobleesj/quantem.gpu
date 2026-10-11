@@ -27,7 +27,7 @@ or consumer application to learn another load mode.
 
 | Operation | Python contract | Accelerator implementations | Native implementation |
 |---|---|---|---|
-| Load, decode, crop, and bin | `src/quantem/gpu/io` | `io/hdf5/{cpu.py,cuda,mps,webgpu}`, `resident/{cuda,mps}` | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
+| Load, decode, and select (detector bins: native and WebGPU loaders only) | `src/quantem/gpu/io` | `io/hdf5/{cpu.py,cuda,mps,webgpu}`, `resident/{cuda,mps}` | `Native4DSTEMIO`, `Metal4DSTEMKernels` |
 | BF/DF/ADF and mean diffraction | `src/quantem/gpu/detector` | `detector/{cuda,mps,webgpu}`, `resident/mps` | `Metal4DSTEMKernels` |
 | CoM, DPC, and iDPC | `src/quantem/gpu/dpc` | `dpc/webgpu`; CUDA and MPS through the detector session | `Metal4DSTEMKernels`, `MetalImageFFT` |
 | Display statistics and transforms | `src/quantem/gpu/display` | none; browser clients own display | `MetalDisplayKernels`, `MetalImageRuntime` |

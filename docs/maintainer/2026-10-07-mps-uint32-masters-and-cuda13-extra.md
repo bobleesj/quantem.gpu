@@ -116,4 +116,5 @@ without errors.
 optuna 5.0.0, which a fresh install now resolves, changes the SSB aberration
 search: `tests/hardware/cuda/test_ssb_units.py::test_fitted_c10_is_nm[100.0]`
 fits C10 = -9.715 nm against -10 nm (2 % tolerance) with optuna 5.0.0 on both
-CUDA 12 and CUDA 13 CuPy, and passes with optuna 4.9.0 on both. Not changed here.
+CUDA 12 and CUDA 13 CuPy, and passes with optuna 4.9.0 on both. Not changed here;
+the `[cuda]` and `[mps]` extras later pinned `optuna<5`.

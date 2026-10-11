@@ -74,18 +74,16 @@ MLX and Metal still implement the accelerated loading and SSB paths.
 ### Retained dense-loader measurements
 
 The measurements below describe the earlier dense loader at its stated revision,
-not the current ANS default. `MPSChunked4DSTEM` has explicit lifetime ownership.
-Its NumPy views are backed
-by buffers created directly with Metal/PyObjC; deleting the Python wrapper or
-calling `clear_mps_cache()` does not release caller-owned output buffers. Call
-`free()` on a directly owned low-level buffer only after its final reader has
-finished; ordinary acquisition callers use `loaded.close()`. A benchmark that
-repeats loading without release accumulates roughly one resident payload
-per repetition and measures memory pressure rather than steady-state loader
+not the current ANS default. That loader's `MPSChunked4DSTEM` (since removed)
+backed its NumPy views with buffers created directly with Metal/PyObjC, so
+deleting the Python wrapper did not release them; callers released them
+explicitly. The lesson still applies to `loaded.close()`: a benchmark that
+repeats loading without release accumulates roughly one resident payload per
+repetition and measures memory pressure rather than steady-state loader
 speed.
 
 For the full `512x512x192x192 uint16` plan, the resident payload is exactly
-19,327,352,832 bytes (18.00 GiB). On the current 2026-08-22 MacBook Pro
+19,327,352,832 bytes (18.00 GiB). On the 2026-08-22 MacBook Pro
 (M5 Max, 128 GB) canonical run, the sampled driver peak was 19,801,456,640
 bytes (18.441544 GiB) and the post-release driver allocation was 474,103,808
 bytes. The process RSS high-water was 20,070,498,304 bytes because the same
