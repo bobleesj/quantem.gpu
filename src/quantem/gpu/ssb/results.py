@@ -418,7 +418,7 @@ class SSBSeriesResult:
     refinement: str | None
 
     def metadata(self):
-        """Return compact source and reconstruction metadata as a readable table."""
+        """Return compact source and reconstruction metadata as a table indexed by setting."""
         import pandas as pd
 
         reused = sum(record["result"] != "computed" for record in self.records)
@@ -452,9 +452,7 @@ class SSBSeriesResult:
                 ("Results reused", reused),
             ]
         )
-        return pd.DataFrame(rows, columns=("Setting", "Value")).style.hide(
-            axis="index"
-        )
+        return pd.DataFrame(rows, columns=("Setting", "Value")).set_index("Setting")
 
 
 def split_rotation(rotation_angle_deg: float, com_reversed: bool = False) -> tuple[float, bool]:

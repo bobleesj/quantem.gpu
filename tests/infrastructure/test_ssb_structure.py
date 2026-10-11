@@ -198,11 +198,11 @@ def test_reconstruct_series_reuses_only_exact_results(
         "saved",
         "saved",
     ]
-    independent_metadata = independent.metadata().data.set_index("Setting")["Value"]
+    independent_metadata = independent.metadata()["Value"]
     assert independent_metadata["Probe mode"] == "independent fits"
     assert "Probe reference frame" not in independent_metadata
     assert "Probe reference dataset" not in independent_metadata
-    metadata = fixed_probe_result.metadata().data.set_index("Setting")["Value"]
+    metadata = fixed_probe_result.metadata()["Value"]
     assert metadata["Requested backend"] == "auto"
     assert metadata["First frame"] == 151
     assert metadata["Last frame"] == 153
