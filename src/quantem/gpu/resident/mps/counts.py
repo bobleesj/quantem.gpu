@@ -178,7 +178,7 @@ class MPSStreamedCounts:
             )
         if not 0 <= index < self.n_frames:
             raise IndexError(f"Scan index must be in [0, {self.n_frames}); got {index}.")
-        return self._decode_scan_range_torch(index, index + 1)[0]
+        return self.decode_scan_range_torch(index, index + 1)[0]
 
     @property
     def resident_bytes(self) -> int:
@@ -380,7 +380,7 @@ class MPSStreamedCounts:
         output.shape = self.shape[2:]
         return output
 
-    def _decode_scan_range_torch(self, first: int, stop: int):
+    def decode_scan_range_torch(self, first: int, stop: int):
         """Decode directly into independently owned Torch accelerator storage."""
         first, stop = int(first), int(stop)
         self.check_readable(first, stop)
