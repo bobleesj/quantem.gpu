@@ -369,13 +369,14 @@ class StreamedSeriesCompute(DetectorQueries):
         a register; a scan listed several times counts that often.
         """
         multiplicity = cp.asarray(np.bincount(indices, minlength=self.n_frames).astype(np.uint32))
-        stops, bases = [], []
+        stops, bases, blocks = [], [], 0
         for first, scans in self.chunk_spans:
             local = indices[(indices >= first) & (indices < first + scans)] - first
             last = np.zeros(math.ceil(scans / self.interval), np.uint32)
             np.maximum.at(last, local // self.interval, (local % self.interval + 1).astype(np.uint32))
-            bases.append(sum(len(block) for block in stops))
+            bases.append(blocks)
             stops.append(last)
+            blocks += len(last)
         totals = cp.zeros((len(self.index_owners), *self.det_shape), cp.uint64)
         errors = cp.zeros(1, cp.uint32)
         self.kernels["selected"](

@@ -205,9 +205,9 @@ class StreamedCounts:
             begin, encoded, indexed = cp.cuda.Event(), cp.cuda.Event(), cp.cuda.Event()
             begin.record()
             # This chunk's counts join the kept total only once the chunk is held, so an append that
-            # fails part way leaves the total as it was. A source that holds chunks without a total
-            # (read from a file, or after scans were freed) has none to add to.
-            keeps_total = self.spatial_index and (self._detector_total is not None or not self.chunks)
+            # fails part way leaves the total as it was. A source that holds scans without a total
+            # (chunks read from a file, or scans freed since) has none to add to.
+            keeps_total = self.spatial_index and (self._detector_total is not None or not self.ready_scans)
             counted = cp.zeros(self.shape[2:], cp.uint64) if keeps_total else np.intp(0)
             scratch = cp.empty((2 * min(scans, self.interval) + 4, streams), cp.uint8)
             sizes, states = cp.empty(streams, cp.uint32), cp.empty(streams, cp.uint32)
