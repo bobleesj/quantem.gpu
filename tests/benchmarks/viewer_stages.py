@@ -109,7 +109,12 @@ def run(arguments):
     report = {"backend": BACKEND, "device": device, "torch": torch.__version__, "tree": str(Path(quantem.gpu.__file__).parents[3]),
               "reps": arguments.reps, "sources": {}}
     print(f"{BACKEND} on {device}, torch {torch.__version__}, quantem.gpu from {report['tree']}")
+    # the shortest path tails that tell the sources apart: two acquisitions may share a file name
+    depth = 1
+    while len({Path(source).parts[-depth:] for source in arguments.sources}) < len(set(arguments.sources)):
+        depth += 1
     for source in arguments.sources:
+        label = "/".join(Path(source).parts[-depth:])
         measure(source, options)
         passes = [measure(source, options) for _ in range(arguments.reps)]
         digests = {stage: sorted({digests[stage] for _, digests, _ in passes}) for stage in passes[0][1]}
@@ -122,8 +127,8 @@ def run(arguments):
             }
             for stage in ("load", "mean", "viewer", "click", "detector", "scan_roi")
         }
-        report["sources"][Path(source).name] = {"data": passes[0][2], "stages": stages}
-        print(f"\n{Path(source).name}: {passes[0][2]}\n| stage | median ms | min ms | digest |\n|---|---|---|---|")
+        report["sources"][label] = {"data": passes[0][2], "stages": stages}
+        print(f"\n{label}: {passes[0][2]}\n| stage | median ms | min ms | digest |\n|---|---|---|---|")
         for stage, values in stages.items():
             print(f"| {stage} | {values['median_ms']:.1f} | {values['min_ms']:.1f} | {values['digest']} |")
     if arguments.out:
