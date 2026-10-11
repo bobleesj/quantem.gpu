@@ -378,7 +378,7 @@ def load_hdf5_array_resident(
         # Keep the existing accelerated bitshuffle/LZ4 reader for its native layout.
         # It corrects flagged uint32 pixels before verifying that every count fits uint16.
         if (
-            dataset_path is None
+            selected is None
             and direct
             and np.dtype(info.dtype)
             in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32"))

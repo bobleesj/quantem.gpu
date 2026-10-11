@@ -420,3 +420,26 @@ def test_empad_multiple_detector_regions(tmp_path, backend):
     (tmp_path / "other.xml").write_text(source.read_text())
     with pytest.raises(ValueError, match="Multiple XML acquisitions"):
         io.load(tmp_path / "scan.raw", backend=backend, verbose=False)
+
+
+def test_prepared_bitshuffle_stack_found_by_inspect_loads_through_the_dataset_reader(tmp_path, backend):
+    """A /dp stack that inspect selects is read as that dataset, not as an Arina chunk layout.
+
+    Metal raised "No detector data chunks found" and CUDA routed the stack
+    through the Arina loader when the dataset came from inspect rather than
+    from an explicit dataset_path.
+    """
+    import hdf5plugin
+    from scipy.io import savemat
+
+    counts = np.random.default_rng(9).integers(0, 900, (12, 16, 16), dtype=np.uint16)
+    stack = tmp_path / "data_roi0_dp.hdf5"
+    with h5py.File(stack, "w") as handle:
+        handle.create_dataset("dp", data=counts, chunks=(1, 16, 16), **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"))
+    savemat(tmp_path / "params_backup.mat", dict(
+        Np_p=np.array([16, 16]), voltage=300.0, alpha=21.4, dk=0.02, dx=0.4, crop_idx0=np.array([1, 4, 1, 3]),
+    ))
+    assert io.inspect(stack).metadata["dataset_path"] == "/dp"
+    with io.load(stack, backend=backend, verbose=False) as loaded:
+        assert loaded.metadata["load_timings"]["storage_reader"] == "bounded-hdf5"
+        np.testing.assert_array_equal(_host(loaded[:, :]).reshape(12, 16, 16), counts)
