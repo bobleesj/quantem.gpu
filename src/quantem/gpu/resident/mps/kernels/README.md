@@ -11,6 +11,7 @@ sources themselves.
 | [count_tables.msl](count_tables.msl) | Swift `MetalEncodedSource` | Count-ANS frequency tables built on the GPU; Python CUDA and MPS upload the same tables from `formats/qem/reference.py` |
 | [runtime_spatial.msl](runtime_spatial.msl) | [counts.py](../counts.py) | Camera spatial kernels appended to the count-ANS runtime |
 | [float_ans.msl](float_ans.msl) | [float_ans.py](../float_ans.py) | Float bit-lane decode |
+| [pattern_total.msl](pattern_total.msl) | [float_ans.py](../float_ans.py) | float64-accurate pattern sums of float32 windows (Metal has no double) |
 | [hot_pixels.msl](hot_pixels.msl) | [hot_pixels.py](../hot_pixels.py) | Hot-pixel correction of bounded count batches |
 | [precision.msl](precision.msl) | [precision.py](../precision.py) | Scaled-uint16 conversion and direct queries |
 | [reductions.msl](reductions.msl) | [virtual_image.py](../virtual_image.py) | Dense masked and detector sums, binning, mean diffraction and CoM over chunked frames |
