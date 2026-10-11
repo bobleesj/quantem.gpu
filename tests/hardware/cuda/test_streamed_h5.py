@@ -291,3 +291,27 @@ def test_one_decode_batch_beyond_4_gib_keeps_every_frame_in_place(tmp_path):
     first_values = decoded[:, 0, 0]
     assert bool(cp.array_equal(first_values, values[:, 0, 0]))
     assert bool(cp.array_equal(decoded[-1], values[-1]))
+
+
+def test_truncated_lz4_block_raises_instead_of_returning_garbage(tmp_path):
+    """A chunk whose LZ4 block stops early (a file still being written) refuses to decode."""
+    import cupy as cp
+
+    from quantem.gpu.formats.hdf5.reads import FrameReader
+    from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
+
+    values = cp.asarray(np.random.default_rng(5).poisson(3.0, (4, 1, 64, 64)).astype(np.uint16))
+    master = tmp_path / "partial_master.h5"
+    io.save(str(master), values, verbose=False)
+    reader = FrameReader(str(master))
+    try:
+        intact = decompress_prepared(reader.prepare(np.arange(4)))
+        assert bool(cp.array_equal(intact, values.reshape(4, 64, 64)))
+        prepared = reader.prepare(np.arange(4))
+        header = int(prepared["chunk_offsets"][2]) + int(prepared["block_starts"][prepared["block_offsets"][2]])
+        size = int.from_bytes(bytes(prepared["read_buffer"][header:header + 4]), "big")
+        prepared["read_buffer"][header:header + 4] = np.frombuffer((size // 2).to_bytes(4, "big"), np.uint8)
+        with pytest.raises(ValueError, match="truncated or corrupt"):
+            decompress_prepared(prepared)
+    finally:
+        reader.close()

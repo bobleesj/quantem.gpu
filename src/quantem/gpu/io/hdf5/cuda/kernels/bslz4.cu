@@ -89,7 +89,7 @@ public:
             ++idx;
             num += next;
         }
-        while (next == 0xff) {
+        while (next == 0xff && idx < m_length) {
             next = m_compData[idx];
             ++idx;
             num += next;
@@ -167,8 +167,13 @@ inline __device__ token_type decodePair(const uint8_t num) {
                       static_cast<uint8_t>(num & 0x0f)};
 }
 
-inline __device__ void decompressStream(uint8_t* buffer, uint8_t* decompData,
-                                        const uint8_t* compData, const position_type comp_end) {
+// Returns false for a stream that does not decode to exactly decomp_end bytes
+// (a truncated or corrupt chunk, for example of a file still being written):
+// every copy is bounded by the block, so a bad stream never writes past it.
+// All lanes of the warp see the same token values and return together.
+inline __device__ bool decompressStream(uint8_t* buffer, uint8_t* decompData,
+                                        const uint8_t* compData, const position_type comp_end,
+                                        const position_type decomp_end) {
     BufferControl ctrl(buffer, compData, comp_end);
     ctrl.loadAt(0);
     position_type decomp_idx = 0;
@@ -185,6 +190,8 @@ inline __device__ void decompressStream(uint8_t* buffer, uint8_t* decompData,
         if (tok.num_literals == 15)
             num_literals += ctrl.readLSIC(comp_idx);
         const position_type literalStart = comp_idx;
+        if (num_literals > comp_end - comp_idx || num_literals > decomp_end - decomp_idx)
+            return false;
 
         if (num_literals + comp_idx > ctrl.end())
             coopCopyNoOverlap(decompData + decomp_idx, compData + comp_idx, num_literals);
@@ -195,6 +202,8 @@ inline __device__ void decompressStream(uint8_t* buffer, uint8_t* decompData,
         decomp_idx += num_literals;
 
         if (comp_idx < comp_end) {
+            if (comp_idx + sizeof(offset_type) > comp_end)
+                return false;
             offset_type offset;
             if (comp_idx + sizeof(offset_type) > ctrl.end())
                 offset = readWord(compData + comp_idx);
@@ -206,6 +215,8 @@ inline __device__ void decompressStream(uint8_t* buffer, uint8_t* decompData,
             position_type match = 4 + tok.num_matches;
             if (tok.num_matches == 15)
                 match += ctrl.readLSIC(comp_idx);
+            if (offset == 0 || offset > decomp_idx || match > decomp_end - decomp_idx)
+                return false;
 
             if (offset <= num_literals
                 && (ctrl.begin() <= literalStart && ctrl.end() >= literalStart + num_literals)) {
@@ -220,6 +231,7 @@ inline __device__ void decompressStream(uint8_t* buffer, uint8_t* decompData,
             decomp_idx += match;
         }
     }
+    return decomp_idx == decomp_end;
 }
 
 inline __device__ uint32_t read32be_batch(const uint8_t* address) {
@@ -231,7 +243,7 @@ extern "C" __global__ void h5lz4dc_batched(
     const uint8_t* const compressed, const uint64_t* const chunk_offsets,
     const uint32_t* const block_starts, const uint32_t* const block_counts,
     const uint32_t* const block_offsets, const uint32_t blocksize,
-    const uint32_t frame_bytes, uint8_t* const decompressed
+    const uint32_t frame_bytes, uint8_t* const decompressed, uint32_t* const errors
 ) {
     const int frame_id = blockIdx.z;
     const int block_in_frame = blockIdx.x * blockDim.y + threadIdx.y;
@@ -249,7 +261,10 @@ extern "C" __global__ void h5lz4dc_batched(
         const uint8_t* input = compressed + chunk_offset + block_start + 4;
         const uint32_t comp_size = read32be_batch(compressed + chunk_offset + block_start);
         uint8_t* output = decompressed + (uint64_t)frame_id * frame_bytes + block_in_frame * blocksize;
-        decompressStream(buffer + threadIdx.y * DECOMP_INPUT_BUFFER_SIZE, output, input, comp_size);
+        const uint32_t block_bytes = min(blocksize, frame_bytes - block_in_frame * blocksize);
+        if (!decompressStream(buffer + threadIdx.y * DECOMP_INPUT_BUFFER_SIZE, output, input, comp_size, block_bytes)
+            && threadIdx.x == 0)
+            atomicOr(errors, 1u);
     }
 }
 
