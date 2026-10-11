@@ -8,10 +8,12 @@ import math
 import time
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
+from functools import wraps
 from pathlib import Path
 from typing import Literal, Self
 
 import numpy as np
+import torch
 
 from quantem.gpu import detector, io
 from quantem.gpu.device import resolve
@@ -65,6 +67,19 @@ def _in_notebook() -> bool:
         return False
     shell = get_ipython()
     return shell is not None and "IPKernelApp" in shell.config
+
+
+def _on_scan_gpu(method):
+    """Run a session method with the scan's GPU as the current CuPy device (CUDA sessions).
+
+    CuPy allocates and launches on its current device, and the FFT kernel sets are compiled per device, so a
+    session on a second GPU would otherwise compute with the first GPU's kernels on memory it does not own.
+    """
+    @wraps(method)
+    def on_scan_gpu(self, *args, **kwargs):
+        with nullcontext() if self._device is None else cp.cuda.Device(self._device):
+            return method(self, *args, **kwargs)
+    return on_scan_gpu
 
 
 def _sampling(value) -> float | tuple[float, float]:
@@ -168,16 +183,12 @@ class SSB:
         # resident (``io.load(...).data``) has no bounded read of its own; only its dataset decodes the
         # bright-field crop, so it is refused here rather than at the first reconstruction.
         backend_array = cp.ndarray if self.backend == "cuda" else MpsBfColumnFrames
-        if not isinstance(data, np.ndarray | backend_array):
-            # Torch is imported only here, so NumPy and CuPy sessions run without it.
-            import torch
-
-            if not isinstance(data, torch.Tensor):
-                raise TypeError(
-                    f"SSB reads the dataset io.load returns or a NumPy, CuPy or Torch array; got "
-                    f"{type(data).__name__}. Pass the loaded dataset itself, SSB(data, ...), not its "
-                    "encoded storage data.data, or open the file with SSB.open(path, ...)."
-                )
+        if not isinstance(data, np.ndarray | backend_array | torch.Tensor):
+            raise TypeError(
+                f"SSB reads the dataset io.load returns or a NumPy, CuPy or Torch array; got "
+                f"{type(data).__name__}. Pass the loaded dataset itself, SSB(data, ...), not its "
+                "encoded storage data.data, or open the file with SSB.open(path, ...)."
+            )
         if scan_shape is not None and data.ndim == 3 and not isinstance(data, backend_array):
             # a flat NumPy or Torch frame stack gets its scan axes as a view; CuPy stacks are reshaped by the
             # CUDA backend, and exact BF columns are stored flat
@@ -189,6 +200,15 @@ class SSB:
                 )
             data = data.reshape(rows, cols, data.shape[1], data.shape[2])
         self._data = data
+        # the GPU a CUDA session computes on: its array's own, or the current one for host data it copies over
+        self._device = None
+        if self.backend == "cuda":
+            if isinstance(data, cp.ndarray):
+                self._device = data.device.id
+            elif isinstance(data, torch.Tensor) and data.is_cuda:
+                self._device = data.device.index
+            else:
+                self._device = cp.cuda.runtime.getDevice()
         self._scan_shape = scan_shape
         self.voltage_kV = float(voltage_kV)
         self.semiangle_mrad = float(semiangle_mrad)
@@ -585,6 +605,7 @@ class SSB:
         kind = "Best" if best is not None else "Last" if last is not None else "First"
         return plot_trials(result, kind, axsize=axsize)
 
+    @_on_scan_gpu
     def find_aberrations(
         self,
         *,
@@ -773,6 +794,7 @@ class SSB:
         self.trial_history = list(result.trial_records or ())
         return result
 
+    @_on_scan_gpu
     def reconstruct(
         self,
         parameters: SSBResult | None = None,
@@ -942,6 +964,7 @@ class SSB:
                 print(f"SSB result saved to {paths[0]}")
         return result
 
+    @_on_scan_gpu
     def preview(
         self,
         aberrations: dict[str, float],
@@ -1152,16 +1175,19 @@ class SSB:
         sampling = np.asarray(self.scan_sampling_A) / upsample
         return float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
 
+    @_on_scan_gpu
     def preview_context(self, num_bf: int):
         """Prepare a backend-owned reduced-BF interaction context."""
 
         return self._backend().preview_context(int(num_bf))
 
+    @_on_scan_gpu
     def browser_state(self):
         """Return compact backend-neutral state for browser WebGPU."""
 
         return self._backend().browser_state()
 
+    @_on_scan_gpu
     def export_brightfield(
         self,
         path_stem: str | Path,
@@ -1175,12 +1201,14 @@ class SSB:
         return str(path), float(elapsed)
 
     @property
+    @_on_scan_gpu
     def scan_shape(self) -> tuple[int, int]:
         """Prepared scan shape in public ``(row, col)`` order."""
 
         return self._backend().scan_shape
 
     @property
+    @_on_scan_gpu
     def num_bf(self) -> int:
         """Number of pixels in the complete detected bright-field disk."""
 
@@ -1191,12 +1219,14 @@ class SSB:
         """Rotation the engines use: ``rotation_angle_deg + 180`` when the CoM is reversed."""
         return physical_rotation_deg(self.rotation_angle_deg, self.com_reversed)
 
+    @_on_scan_gpu
     def set_rotation(self, rotation_angle_deg: float, com_reversed: bool = False) -> None:
         """Set scan-to-detector rotation (any angle; stored as below 180 plus ``com_reversed``) and refresh geometry."""
 
         self.rotation_angle_deg, self.com_reversed = split_rotation(rotation_angle_deg, com_reversed)
         self._backend().cache_rotation(math.radians(self.physical_rotation_deg))
 
+    @_on_scan_gpu
     def close(self) -> None:
         """Release the session's GPU state; data passed to ``SSB(data)`` stays the caller's.
 

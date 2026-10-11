@@ -19,6 +19,7 @@ import math
 import time
 
 import numpy as np
+import torch
 
 from quantem.gpu import detector
 from quantem.gpu.detector.cuda.probe import detect_bf_radius
@@ -147,49 +148,52 @@ def run(
             "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
             "calibration: semiangle_mrad, or det_sampling in mrad per detector pixel."
         )
-    started = time.perf_counter()
-    det_rows, det_cols = data.shape[2:]
-    mean_pattern = None
-    if center is None or bf_radius is None:
-        mean_pattern = detector.mean(data)
-        detected_center, detected_radius = detect_bf_radius(cp.asarray(mean_pattern))
-        center = detected_center if center is None else center
-        bf_radius = detected_radius if bf_radius is None else bf_radius
+    # CuPy allocates and launches on its current device and torch exports DLPack from its own: both are the
+    # acquisition's GPU for the whole reconstruction, which need not be the current one
+    with torch.cuda.device(device), cp.cuda.Device(device.index):
+        started = time.perf_counter()
+        det_rows, det_cols = data.shape[2:]
+        mean_pattern = None
+        if center is None or bf_radius is None:
+            mean_pattern = detector.mean(data)
+            detected_center, detected_radius = detect_bf_radius(cp.asarray(mean_pattern))
+            center = detected_center if center is None else center
+            bf_radius = detected_radius if bf_radius is None else bf_radius
+            if verbose:
+                print(f"[parallax] Auto-detected center={center}, bf_radius={bf_radius}")
+        radius = int(bf_radius) if sampling_radius is None else sampling_radius
+        rows = cp.arange(det_rows, dtype=cp.float32)[:, None]
+        cols = cp.arange(det_cols, dtype=cp.float32)[None, :]
+        bf_mask = (rows - float(center[0])) ** 2 + (cols - float(center[1])) ** 2 <= float(radius) ** 2
+        pixel_rows, pixel_cols = cp.nonzero(bf_mask)
         if verbose:
-            print(f"[parallax] Auto-detected center={center}, bf_radius={bf_radius}")
-    radius = int(bf_radius) if sampling_radius is None else sampling_radius
-    rows = cp.arange(det_rows, dtype=cp.float32)[:, None]
-    cols = cp.arange(det_cols, dtype=cp.float32)[None, :]
-    bf_mask = (rows - float(center[0])) ** 2 + (cols - float(center[1])) ** 2 <= float(radius) ** 2
-    pixel_rows, pixel_cols = cp.nonzero(bf_mask)
-    if verbose:
-        print(f"[parallax] {len(pixel_rows):,} BF pixels within {radius} px of {center}")
-    image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose)
-    # The bright-field stack and its spectra were many times the image; return
-    # their blocks to the GPU for the next consumer instead of keeping them cached.
-    release_cached_memory()
+            print(f"[parallax] {len(pixel_rows):,} BF pixels within {radius} px of {center}")
+        image, density, global_shifts = _shifted_sum(data, center, pixel_rows, pixel_cols, upsampling_factor, verbose)
+        # The bright-field stack and its spectra were many times the image; return
+        # their blocks to the GPU for the next consumer instead of keeping them cached.
+        release_cached_memory()
 
-    aberrations = rotation_angle_deg = None
-    if fit_aberrations:
-        # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
-        if det_sampling is None:
-            mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
-            det_sampling = semiangle_mrad / disk_edge_radius(mean_pattern)
-        # The shifts are measured against the mean image, which is seen at the mean beam angle of the
-        # selected pixels, so each pixel's beam angle is taken from their centroid.
-        pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
-        angles_rad = (pixels - pixels.mean(axis=0)) * np.broadcast_to(det_sampling, (2,)) * 1e-3
-        aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
-            cp.asnumpy(global_shifts).astype(np.float64) * scan_sampling_A, angles_rad
+        aberrations = rotation_angle_deg = None
+        if fit_aberrations:
+            # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
+            if det_sampling is None:
+                mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
+                det_sampling = semiangle_mrad / disk_edge_radius(mean_pattern)
+            # The shifts are measured against the mean image, which is seen at the mean beam angle of the
+            # selected pixels, so each pixel's beam angle is taken from their centroid.
+            pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
+            angles_rad = (pixels - pixels.mean(axis=0)) * np.broadcast_to(det_sampling, (2,)) * 1e-3
+            aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
+                cp.asnumpy(global_shifts).astype(np.float64) * scan_sampling_A, angles_rad
+            )
+        return ParallaxResult(
+            image=image,
+            density=density,
+            shifts=[(float(row), float(col)) for row, col in cp.asnumpy(global_shifts)],
+            aberrations=aberrations,
+            rotation_angle_deg=rotation_angle_deg,
+            elapsed=time.perf_counter() - started,
         )
-    return ParallaxResult(
-        image=image,
-        density=density,
-        shifts=[(float(row), float(col)) for row, col in cp.asnumpy(global_shifts)],
-        aberrations=aberrations,
-        rotation_angle_deg=rotation_angle_deg,
-        elapsed=time.perf_counter() - started,
-    )
 
 
 def fit_aberrations_from_shifts(shifts_A, angles_rad) -> tuple[dict[str, float], float]:
