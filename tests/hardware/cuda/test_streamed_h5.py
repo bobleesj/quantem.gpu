@@ -1,9 +1,13 @@
 """Complete H5/ANS workflows, count integrity and translated detector products."""
 
+import subprocess
+import sys
+
 import h5py
 import numpy as np
 import pytest
 
+import quantem.gpu
 from quantem.gpu import detector, io
 
 
@@ -294,3 +298,60 @@ def test_truncated_lz4_block_raises_instead_of_returning_garbage(tmp_path):
             decompress_prepared(prepared)
     finally:
         reader.close()
+
+
+DAMAGED_LZ4_SCRIPT = r"""
+import sys
+
+import cupy as cp
+import numpy as np
+
+import quantem.gpu
+from quantem.gpu import io
+from quantem.gpu.formats.hdf5.reads import FrameReader
+from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
+
+assert quantem.gpu.__file__ == sys.argv[2], quantem.gpu.__file__
+values = cp.asarray(np.random.default_rng(5).poisson(3.0, (8, 1, 192, 192)).astype(np.uint16))
+io.save(sys.argv[1], values, verbose=False)
+reader = FrameReader(sys.argv[1])
+noise = np.random.default_rng(3)
+damage = {
+    "zeroed": lambda block: block.fill(0),  # token 0, match offset 0: a copy from before the block
+    "random": lambda block: block.__setitem__(slice(None), noise.integers(0, 256, block.size, np.uint8)),
+    "half": lambda block: block[block.size // 2:].fill(0),
+}
+for name, change in damage.items():
+    prepared = reader.prepare(np.arange(8))
+    header = int(prepared["chunk_offsets"][2]) + int(prepared["block_starts"][prepared["block_offsets"][2]])
+    size = int.from_bytes(bytes(prepared["read_buffer"][header:header + 4]), "big")
+    change(prepared["read_buffer"][header + 4:header + 4 + size])
+    try:
+        decompress_prepared(prepared)
+    except ValueError as error:
+        assert "truncated or corrupt" in str(error), error
+        print(name, "ValueError")
+    else:
+        raise SystemExit(f"{name}: damaged LZ4 bytes decoded without an error")
+decoded = decompress_prepared(reader.prepare(np.arange(8)))
+reader.close()
+assert bool(cp.array_equal(decoded, values.reshape(8, 192, 192)))
+print("valid batch exact after the damaged ones")
+"""
+
+
+def test_damaged_lz4_bytes_raise_and_the_gpu_stays_usable(tmp_path):
+    """LZ4 bytes damaged inside intact framing raise ValueError, and the same process then decodes a valid batch exactly.
+
+    The decoder bounds its reads as well as its writes: without the read bounds a zeroed block copies from an
+    address outside the block and the process loses its CUDA context. Runs in a subprocess so that a regression
+    cannot take this session's GPU context with it.
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", DAMAGED_LZ4_SCRIPT, str(tmp_path / "damaged_master.h5"), quantem.gpu.__file__],
+        capture_output=True, text=True, timeout=600,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "zeroed ValueError", "random ValueError", "half ValueError", "valid batch exact after the damaged ones",
+    ]
