@@ -1,4 +1,4 @@
-"""Torch detector reductions over borrowed bounded-read sources."""
+"""Detector reductions of a bounded reader, computed by the session of the acquisition it views."""
 
 import math
 
@@ -9,13 +9,16 @@ from quantem.gpu.resident.queries import DetectorQueries
 
 
 class BoundedDetectorCompute(DetectorQueries):
-    """Reduce native regions without materializing a complete measurement.
+    """One scan region of an acquisition, reduced by the acquisition's own detector session.
 
     ``data`` is a bounded reader from quantem.widget (``read(scan_region=...)``,
-    ``valid``, ``_detector_region``), which this package cannot import. When the
-    reader views an encoded acquisition, ``native`` is that acquisition's
-    ``DetectorSession``: masked sums, the mean pattern and frame reductions run
-    on the encoded counts, and only the reduced products cross to the host.
+    ``valid``, ``_detector_region``), which this package cannot import, and
+    ``native`` the ``DetectorSession`` of the acquisition or GPU tensor it
+    views. Encoded counts, float intensities, paired counts and dense tensors
+    each reduce on their own backend; this class maps the view's scan region
+    onto the acquisition's raster and zeroes the detector pixels the reader
+    zeroes. Only a single pattern is read through the reader: a reduction over
+    bounded reads took 6 s for the mean of a 512 x 512 scan.
     """
 
     def __init__(self, data, native):
@@ -32,34 +35,24 @@ class BoundedDetectorCompute(DetectorQueries):
         return self.data.read(scan_region=(row, row + 1, col, col + 1))[0, 0].cpu().numpy()
 
     def mean_dp(self):
-        """Mean pattern: the total divided in float64 and rounded once to float32, like every mean pattern."""
-        if self._native is None:
-            total = np.zeros(self.det_shape, np.float64)
-            for _, _, _, block_t in self._blocks():
-                # A float32 block sum of at most 32 integer patterns is exact; the total is not.
-                total += block_t.sum((0, 1)).cpu().numpy()
-            return (total / self.n_frames).astype(np.float32)
+        """Mean pattern: the total divided in float64 and rounded once to float32, like every mean pattern.
+
+        The session sums integer counts exactly and float intensities to
+        float64 accuracy. A view of the whole scan takes the session's mean
+        pattern; a scan region reduces its own positions.
+        """
         if self.n_frames == self._native.num_frames:
-            # The session sums integer counts exactly and float intensities (MAPED merges,
-            # saved precision) in float64, then divides once, like every mean pattern.
-            return self._valid_counts(self._native.mean_dp()).astype(np.float32)
-        return self._valid_counts(
-            self._native.reduce_frames(self._owner_indices(range(self.n_frames)), "mean")
-        ).astype(np.float32)
+            return self._valid_pattern(self._native.mean_dp())
+        return self.reduce_frames(range(self.n_frames), "mean")
 
     def masked_sum(self, mask):
         mask_t = torch.as_tensor(mask, device=self.device, dtype=torch.bool)
-        if self._native is not None:
-            if self.data.valid is not None:
-                mask_t = mask_t & self.data.valid
-            # No decoded measurement cube is constructed; the native kernels reduce on the device.
-            image = self._native.masked_sum(mask_t.cpu().numpy())
-            row_start, row_stop, col_start, col_stop = self.data._detector_region
-            return torch.as_tensor(image[row_start:row_stop, col_start:col_stop], device=self.device)
-        image_t = torch.empty(self.scan_shape, device=self.device)
-        for row, col, stop, block_t in self._blocks():
-            image_t[row, col:stop] = block_t[..., mask_t].sum(-1)[0]
-        return image_t
+        if self.data.valid is not None:
+            mask_t = mask_t & self.data.valid
+        # No decoded measurement cube is constructed; the native kernels reduce on the device.
+        image = self._native.masked_sum(mask_t.cpu().numpy())
+        row_start, row_stop, col_start, col_stop = self.data._detector_region
+        return torch.as_tensor(image[row_start:row_stop, col_start:col_stop], device=self.device)
 
     def masked_sum_native(self, mask, *, out=None):
         image_t = self.masked_sum(mask)
@@ -73,48 +66,24 @@ class BoundedDetectorCompute(DetectorQueries):
         return self.masked_sum_exact(mask)
 
     def reduce_frames(self, indices, reduce="mean"):
+        """Reduce the patterns at this view's row-major scan ``indices`` by ``mean``, ``sum`` or ``max``, as float32.
+
+        A view may show one scan region of its acquisition, while the session
+        indexes the acquisition's whole raster: ``(row, col)`` of the view is
+        ``(row + row_start, col + col_start)`` of the acquisition.
+        """
         if reduce not in ("mean", "sum", "max"):
             raise ValueError(f"Unknown reduction {reduce!r}; use mean, sum or max.")
-        indices = list(indices)
-        if not indices:
+        indices = np.asarray(list(indices), dtype=np.int64)
+        if not indices.size:
             raise ValueError("Select at least one scan position.")
-        if self._native is not None:
-            # Exact for integer counts and float32 for float intensities, decided by the session.
-            return self._valid_counts(self._native.reduce_frames(self._owner_indices(indices), reduce)).astype(np.float32)
-        if reduce == "max":
-            maximum_t = None
-            for value_t in self._patterns(indices):
-                maximum_t = value_t if maximum_t is None else torch.maximum(maximum_t, value_t)
-            return maximum_t.cpu().numpy()
-        total = np.zeros(self.det_shape, np.float64)
-        for value_t in self._patterns(indices):
-            total += value_t.cpu().numpy()
-        # Divided in float64 and rounded once, like every mean pattern.
-        return (total / len(indices) if reduce == "mean" else total).astype(np.float32)
-
-    def _owner_indices(self, indices):
-        """Map this view's row-major scan indices to the acquisition's.
-
-        A view may show one scan region of its acquisition, while the native
-        session indexes the acquisition's whole raster.
-        """
-        rows, cols = np.divmod(np.asarray(indices, dtype=np.int64), self.scan_shape[1])
+        rows, cols = np.divmod(indices, self.scan_shape[1])
         row_start, _, col_start, _ = self.data._detector_region
-        return (rows + row_start) * self._native.scan_shape[1] + cols + col_start
+        owner_indices = (rows + row_start) * self._native.scan_shape[1] + cols + col_start
+        # Exact for integer counts and float32 for float intensities, decided by the session.
+        return self._valid_pattern(self._native.reduce_frames(owner_indices, reduce))
 
-    def _valid_counts(self, exact):
-        """Zero the detector pixels the reader zeroes, so the exact path equals reducing the reads."""
-        return exact if self.data.valid is None else exact * self.data.valid.cpu().numpy()
-
-    def _patterns(self, indices):
-        """Yield the selected patterns, one bounded read each, as float32 tensors."""
-        for index in indices:
-            row, col = divmod(int(index), self.scan_shape[1])
-            yield self.data.read(scan_region=(row, row + 1, col, col + 1))[0, 0].float()
-
-    def _blocks(self):
-        """Yield 32-scan-position float blocks so no reduction holds more than one row segment."""
-        for row in range(self.scan_shape[0]):
-            for col in range(0, self.scan_shape[1], 32):
-                stop = min(col + 32, self.scan_shape[1])
-                yield row, col, stop, self.data.read(scan_region=(row, row + 1, col, stop)).float()
+    def _valid_pattern(self, pattern):
+        """Zero the detector pixels the reader zeroes, so a reduction equals reducing the reads; float32."""
+        valid = pattern if self.data.valid is None else pattern * self.data.valid.cpu().numpy()
+        return valid.astype(np.float32)
