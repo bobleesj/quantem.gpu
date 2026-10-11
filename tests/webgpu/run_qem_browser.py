@@ -102,6 +102,7 @@ def main() -> None:
                           resident: await DenseH5Parity.runResidentParity(location.origin + '/fixtures/'),
                           virtual_image: await DenseH5Parity.runDenseVirtualImageParity(device),
                           ssb_bf_subset: await SsbBfSubset.runSsbBfSubsetParity(),
+                          ssb_build_peak: await SsbBfSubset.runSsbBuildPeak(),
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)
