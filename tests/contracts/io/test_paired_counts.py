@@ -309,3 +309,15 @@ def test_block_stride_sums_every_kth_block_exactly_and_resets_the_baseline(q, sc
     assert bool(cp.array_equal(again, exact).get())
     with pytest.raises(ValueError):
         session.masked_sum(masks[0], output="numpy", block_stride=2)
+
+
+def test_block_stride_is_refused_for_a_byte_rans_series():
+    """Only the paired kernels skip blocks; a byte-rANS series would silently compute every row."""
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    raw, valid = _synthetic(17, 1024)
+    source = StreamedCounts((1, 1024, 17, 17), np.uint16, valid)
+    source.append(raw)
+    mask = detector.detector_mask((8.0, 8.0), 0, 5, (17, 17))
+    with pytest.raises(ValueError, match="paired native series"):
+        detector.prepare([source]).masked_sum(mask, output="native", block_stride=2)
