@@ -30,7 +30,6 @@ _MASTER_FRAME_SOURCE_CACHE: dict[
     tuple[str, tuple[str, ...]], tuple[list[dict], list[dict]]
 ] = {}
 _FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_FRAME_SOURCE_CACHE_DIR"
-_TRUST_FRAME_SOURCE_CACHE_ENV = "QUANTEM_GPU_HDF5_TRUST_FRAME_SOURCE_CACHE"
 
 
 @dataclass(frozen=True)
@@ -93,22 +92,6 @@ def master_frame_sources(filepath: str) -> list[dict]:
         del _MASTER_FRAME_SOURCE_CACHE[key]
 
     disk_cache_path = _frame_source_cache_path(filepath, chunk_names)
-    if (
-        disk_cache_path is not None
-        and os.environ.get(_TRUST_FRAME_SOURCE_CACHE_ENV, "").lower()
-        in {"1", "true", "yes", "on"}
-    ):
-        cached = _load_frame_source_disk_cache(
-            disk_cache_path,
-            signature=None,
-        )
-        if cached is not None:
-            _MASTER_FRAME_SOURCE_CACHE[key] = (
-                [_file_stat_signature(path) for path in
-                 [filepath, *(info["path"] for info in cached)]], cached
-            )
-            return cached
-
     # The file signature that keys the chunk-index caches.
     signature = {
         "master": _file_stat_signature(filepath),
@@ -206,7 +189,7 @@ def _frame_source_cache_path(filepath: str, chunk_names: list[str]) -> str | Non
 def _load_frame_source_disk_cache(
     cache_path: str,
     *,
-    signature: dict | None,
+    signature: dict,
 ) -> list[dict] | None:
     """Load cached frame-source metadata when every file signature still matches.
 
@@ -216,7 +199,7 @@ def _load_frame_source_disk_cache(
     try:
         with np.load(cache_path, allow_pickle=False) as cached:
             metadata = json.loads(cached["metadata"].tobytes())
-            if signature is not None and metadata.get("signature") != signature:
+            if metadata.get("signature") != signature:
                 return None
             source_infos = []
             for index, info in enumerate(metadata.get("source_infos", [])):
