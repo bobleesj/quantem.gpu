@@ -194,6 +194,32 @@ def test_batched_fit_kernel_matches_reference_objective():
         assert abs(engine.thick.fit(C10, C12, phi12, tilt, thickness) - full) <= 1e-5 * abs(full)
 
 
+def test_batched_fit_repeats_bit_identically():
+    """The same trials give the same tilt-fit objective, bit for bit, so find_aberrations(tilt=True) is reproducible.
+
+    1528 bright-field pixels make six 256-pixel tiles; their sums used to meet in atomic additions, whose order changed
+    from call to call (every repeat differed, by up to 2e-7 relative).
+    """
+    _require_cuda()
+    rng = np.random.default_rng(7)
+    counts = rng.poisson(40.0, size=(128, 128, 64, 64)).astype(np.uint16)
+    rows, cols = np.meshgrid(np.arange(64) - 31.5, np.arange(64) - 31.5, indexing="ij")
+    counts[:, :, np.hypot(rows, cols) < 22] += 200
+    ssb = _session(counts, det_mrad=30 / 22, scan_A=0.3)
+    ssb.reconstruct(aberrations={"C10": 0.0, "C12": 0.0, "phi12": 0.0})
+    engine = ssb._backend_protocol._accelerator
+    params = np.column_stack([rng.uniform(-300, 300, 16), rng.uniform(0, 200, 16), rng.uniform(-1.5, 1.5, 16),
+                              rng.uniform(-20, 20, 16), rng.uniform(-20, 20, 16), rng.choice([0.0, 150.0, 400.0], 16)])
+
+    first = engine.thick.fit_batch(params)
+    repeats = [engine.thick.fit_batch(params) for _ in range(5)]
+
+    assert engine.num_bf > 5 * 256
+    for repeat in repeats:
+        np.testing.assert_array_equal(repeat, first)
+    ssb.close()
+
+
 def test_cupy_fft_loads_after_torch_cufft():
     """torch (conda CUDA 13) loading its cuFFT first must not stop CuPy (pip CUDA 12) from loading its own after quantem.gpu."""
     _require_cuda()

@@ -294,7 +294,8 @@ extern "C" __global__ void thick_fit_batch(
     long long off = flat[q];
     float nr[MAXB], ni[MAXB], dd[MAXB];
     for (int b = 0; b < MAXB; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
-    // grid.y splits the bright-field pixels: each block sums its slice and adds it atomically (outputs zeroed by the host)
+    // grid.y splits the bright-field pixels: each block sums its slice into its own partial, which the host adds in a
+    // fixed order (atomic additions made the sum, and the tilt fit, change from run to run)
     int k0 = blockIdx.y * k_chunk, k1 = min(num_bf, k0 + k_chunk);
     for (int k = k0; k < k1; ++k) {
         float kxv = __ldg(kx + k), kyv = __ldg(ky + k);
@@ -328,9 +329,9 @@ extern "C" __global__ void thick_fit_batch(
         }
     }
     for (int b = 0; b < B; ++b) {
-        float* nq = reinterpret_cast<float*>(numer + (long long)b * n_band + q);
-        atomicAdd(nq, nr[b]); atomicAdd(nq + 1, ni[b]);
-        atomicAdd(denom + (long long)b * n_band + q, dd[b]);
+        long long slot = ((long long)blockIdx.y * B + b) * n_band + q;
+        numer[slot] = make_float2(nr[b], ni[b]);
+        denom[slot] = dd[b];
     }
 }
 """, "thick_fit_batch")
