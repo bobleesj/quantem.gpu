@@ -365,7 +365,7 @@ pk_kernel = cp.ElementwiseKernel(
 #   7: C41/phi41, 8: C43/phi43, 9: C45/phi45,
 #   10: C50, 11: C52/phi52, 12: C54/phi54, 13: C56/phi56
 #
-# Input kx, ky are per-BF-pixel reciprocal-space coordinates (1/m); aperture_k
+# Input kx, ky are per-BF-pixel reciprocal-space coordinates (1/Angstrom); aperture_k
 # is the precomputed soft-edge mask; wavelength and kfactor=2π/wavelength are
 # passed in to avoid recomputation.
 # Fast variant using host-precomputed Chebyshev-ready arrays (see

@@ -146,7 +146,7 @@ __global__ void ifft256_rows_fused_pk_t64_mr8_packed(
 // Full-aberration variant of ifft256_rows_fused_pk_t64_mr8_packed. Same
 // structure; gamma_mul_pk_onthefly → gamma_mul_pk_onthefly_full, with
 // the host-precomputed Chebyshev coefficient arrays instead of raw
-// (mags, angles).  See chi_full docstring in fft_common.py.
+// (mags, angles).  See chi_full in kernels/common.py.
 __global__ void ifft256_rows_fused_pk_full_t64_mr8_packed(
     const float* __restrict__ kx_bf,
     const float* __restrict__ ky_bf,

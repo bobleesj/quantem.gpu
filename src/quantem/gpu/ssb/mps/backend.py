@@ -416,8 +416,8 @@ class MpsSSBBackend:
         return np.asarray(phase, dtype=np.float32)
 
     @staticmethod
-    def _three_param_from_full(mags_m, angles_rad) -> tuple[float, float, float]:
-        mags = np.asarray(mags_m, dtype=np.float32)
+    def _three_param_from_full(magnitudes_A, angles_rad) -> tuple[float, float, float]:
+        mags = np.asarray(magnitudes_A, dtype=np.float32)
         angles = np.asarray(angles_rad, dtype=np.float32)
         if np.any(mags[2:] != 0):
             raise NotImplementedError(
@@ -427,16 +427,16 @@ class MpsSSBBackend:
             )
         return float(mags[0]), float(mags[1]), float(angles[1])
 
-    def reconstruct_full_with_loss(self, mags_m, angles_rad):
+    def reconstruct_full_with_loss(self, magnitudes_A, angles_rad):
         """Reconstruct with the supported subset of full aberration inputs."""
 
-        c10, c12, phi12 = self._three_param_from_full(mags_m, angles_rad)
+        c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
         return self.reconstruct_with_loss(c10, c12, phi12)
 
-    def reconstruct_full(self, mags_m, angles_rad):
+    def reconstruct_full(self, magnitudes_A, angles_rad):
         """Reconstruct with the supported subset of full aberration inputs."""
 
-        c10, c12, phi12 = self._three_param_from_full(mags_m, angles_rad)
+        c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
         return self.reconstruct(c10, c12, phi12)
 
     def preview_context(self, num_bf: int):
