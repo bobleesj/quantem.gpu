@@ -154,7 +154,6 @@ class CudaSSBBackend:
             aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
         self.voltage_kV = voltage_kV
         self.semiangle_mrad = semiangle
-        self.semiangle_cutoff = semiangle
         self.scan_sampling = scan_sampling
         self.angular_sampling = det_sampling
         self.bf_intensity_threshold = float(bf_intensity_threshold)
@@ -244,7 +243,7 @@ class CudaSSBBackend:
                 q_row=self.q_row,
                 q_col=self.q_col,
                 wavelength=self.wavelength,
-                semiangle_cutoff=self.semiangle_cutoff,
+                semiangle_cutoff=self.semiangle_mrad,
                 angular_sampling=self.angular_sampling,
             )
             # Interactive preview/export may be the first operation, before
@@ -276,34 +275,6 @@ class CudaSSBBackend:
         self._rotation_angle_rad = float(rotation_rad)
         self._get_accelerator().cache_rotation(self._rotation_angle_rad)
 
-    def reconstruct(self, c10: float, c12: float, phi12: float):
-        """Return the exact full-BF phase reconstructed on CUDA."""
-
-        return self._get_accelerator().reconstruct(c10, c12, phi12)
-
-    def reconstruct_with_loss(
-        self,
-        c10: float,
-        c12: float,
-        phi12: float,
-    ):
-        """Return the phase and exact full-BF variance loss from CUDA."""
-
-        return self._get_accelerator().reconstruct_with_loss(c10, c12, phi12)
-
-    def reconstruct_full(self, mags_m, angles_rad):
-        """Return a CUDA phase for the full aberration vector."""
-
-        return self._get_accelerator().reconstruct_full(mags_m, angles_rad)
-
-    def reconstruct_full_with_loss(self, mags_m, angles_rad):
-        """Return a CUDA phase and loss for the full aberration vector."""
-
-        return self._get_accelerator().reconstruct_full_with_loss(
-            mags_m,
-            angles_rad,
-        )
-
     def preview_context(self, num_bf: int):
         """Prepare a reusable reduced-BF CUDA preview context."""
 
@@ -331,7 +302,6 @@ class CudaSSBBackend:
         Each call reconstructs from scratch (after ``optimize()`` and ``refine()`` this is the final reconstruction).
         """
         accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
         try:
             object_wave = accel.reconstruct_object(
                 self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"],
@@ -395,7 +365,7 @@ class CudaSSBBackend:
         self._elapsed_refine = 0.0
         if trials:
             self.optimize(
-                aberrations=search_ranges,
+                search_ranges=search_ranges,
                 n_trials=int(trials),
                 seed=int(seed),
                 verbose=verbose,
@@ -427,26 +397,17 @@ class CudaSSBBackend:
         higher_order_angles: np.ndarray | None,
     ) -> tuple[cp.ndarray, float | None]:
         """Return one device-resident float32 phase and optional exact loss."""
-
+        accel = self._get_accelerator()
+        coefficients = aberrations["C10"], aberrations["C12"], aberrations["phi12"]
         if higher_order_magnitudes is not None:
             if compute_loss:
-                phase, loss = self.reconstruct_full_with_loss(
-                    higher_order_magnitudes, higher_order_angles
-                )
+                phase, loss = accel.reconstruct_full_with_loss(higher_order_magnitudes, higher_order_angles)
             else:
-                phase = self.reconstruct_full(
-                    higher_order_magnitudes, higher_order_angles
-                )
-                loss = None
+                phase, loss = accel.reconstruct_full(higher_order_magnitudes, higher_order_angles), None
         elif compute_loss:
-            phase, loss = self.reconstruct_with_loss(
-                aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-            )
+            phase, loss = accel.reconstruct_with_loss(*coefficients)
         else:
-            phase = self.reconstruct(
-                aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-            )
-            loss = None
+            phase, loss = accel.reconstruct(*coefficients), None
         return phase, None if loss is None else float(loss)
 
     def preview_upsampled(
@@ -461,7 +422,6 @@ class CudaSSBBackend:
     ) -> tuple[cp.ndarray, float | None]:
         """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.reconstruct(
             *coefficients, tilt_mrad, thickness, compute_loss=False,
@@ -475,7 +435,7 @@ class CudaSSBBackend:
                     *coefficients, tilt_mrad, thickness, compute_loss=True,
                 )
             else:
-                _, loss = self.reconstruct_with_loss(*coefficients)
+                _, loss = accel.reconstruct_with_loss(*coefficients)
         return phase, loss
 
     def preview_sample(
@@ -488,9 +448,7 @@ class CudaSSBBackend:
         """Phase (and phase-variance loss) for a thick, tilted sample: ``ThickSample.reconstruct``.
 
         ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit; 0 = standard SSB exactly)."""
-        accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
-        phase, loss = accel.thick.reconstruct(
+        phase, loss = self._get_accelerator().thick.reconstruct(
             aberrations["C10"], aberrations["C12"], aberrations["phi12"],
             (float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
             float(sample.get("thickness", 0.0)), compute_loss=compute_loss,
@@ -499,9 +457,7 @@ class CudaSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
-        accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
-        return fit_sample(accel, **options)
+        return fit_sample(self._get_accelerator(), **options)
 
     def close(self) -> None:
         """Release CUDA-owned session state."""
@@ -539,7 +495,7 @@ class CudaSSBBackend:
 
     def optimize(
         self,
-        aberrations: dict[str, tuple[float, float] | float] | None = None,
+        search_ranges: dict[str, tuple[float, float] | float] | None = None,
         n_trials: int = 200,
         seed: int = 42,
         verbose: bool = True,
@@ -551,7 +507,7 @@ class CudaSSBBackend:
 
         Parameters
         ----------
-        aberrations : dict, optional
+        search_ranges : dict, optional
             Search ranges per parameter, keys ``"C10_nm"``, ``"C12_nm"``, ``"phi12_deg"`` (engine Angstrom despite the
             names): a ``(low, high)`` tuple to search, or a fixed float to lock the parameter. None searches C10
             +-400, C12 0-100 and phi12 +-90 degrees.
@@ -564,10 +520,9 @@ class CudaSSBBackend:
             Print the progress bar and the memory header.
         """
         started = time.perf_counter()
-        if aberrations is None:
-            aberrations = dict(self._DEFAULT_OPTIMIZE_RANGES)
+        if search_ranges is None:
+            search_ranges = dict(self._DEFAULT_OPTIMIZE_RANGES)
         accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
         accel.objective.loss(0, 50, 0)
         cp.cuda.Device().synchronize()
         if verbose:
@@ -578,7 +533,7 @@ class CudaSSBBackend:
         try:
             best_params, best_value, trial_history = batch_optimize(
                 accel.objective,
-                aberrations=aberrations,
+                aberrations=search_ranges,
                 aberration_defaults=self.aberrations,
                 n_trials=n_trials,
                 batch_size=4,
@@ -598,8 +553,8 @@ class CudaSSBBackend:
         ]:
             if search_key in best_params:
                 value = best_params[search_key]
-            elif search_key in aberrations and not isinstance(aberrations[search_key], tuple):
-                value = aberrations[search_key]
+            elif search_key in search_ranges and not isinstance(search_ranges[search_key], tuple):
+                value = search_ranges[search_key]
             else:
                 continue
             self.aberrations[aberration_key] = convert(value) if convert else value
@@ -612,8 +567,9 @@ class CudaSSBBackend:
     def refine(
         self,
         verbose: bool = True,
-        xatol: float = 0.1,
-        fatol: float = 1e-8,
+        xatol: float = 0.25,
+        fatol: float = 2e-6,
+        max_iter: int = 160,
         lock: list[str] | None = None,
     ) -> Self:
         """Local Nelder-Mead refinement from the current aberrations on the exact phase-variance objective.
@@ -627,16 +583,19 @@ class CudaSSBBackend:
         ----------
         verbose : bool, default True
             Print the summary at the end.
-        xatol : float, default 0.1
+        xatol : float, default 0.25
             Stop when the simplex spread is below this (C10, C12 in the engine unit; phi12 in radians).
-        fatol : float, default 1e-8
+        fatol : float, default 2e-6
             Stop when the loss spread across the simplex vertices is below this.
+        max_iter : int, default 160
+            Most simplex iterations. The exact objective is smooth enough on a 512 full-BF acquisition that tighter
+            tolerances over-solve the phase by hundreds of evaluations; these keep the phase within 1e-3 rad p99.9 in
+            the real-data signoff.
         lock : list[str], optional
             Aberrations to hold fixed; locked refinement is not implemented on the GPU and raises.
         """
         started = time.perf_counter()
         accel = self._get_accelerator()
-        accel.cache_rotation(self._rotation_angle_rad)
         lock = set(lock or [])
         all_keys = ["C10", "C12", "phi12"]
         free_keys = [key for key in all_keys if key not in lock]
@@ -649,24 +608,12 @@ class CudaSSBBackend:
                 "refinement='nelder-mead', "
                 "locked SSB reference mode, or add a GPU-batched locked refiner."
             )
-        effective_xatol = xatol
-        effective_fatol = fatol
-        effective_max_iter = 300
-        if xatol == 0.1 and fatol == 1e-8:
-            # The exact full-IFFT objective is smooth enough on a 512 full-BF
-            # acquisition that tighter generic tolerances over-solve the phase
-            # by hundreds of evaluations. These defaults keep the phase image
-            # within 1e-3 rad p99.9 in the real-data signoff while avoiding an
-            # invisible 200+ evaluation tail.
-            effective_xatol = 0.25
-            effective_fatol = 2e-6
-            effective_max_iter = 160
         best_x, best_loss, n_evals = batch_nelder_mead(
             accel.objective,
             x0.astype(np.float64),  # the simplex is float64 even for integer starting coefficients
-            xatol=effective_xatol,
-            fatol=effective_fatol,
-            max_iter=effective_max_iter,
+            xatol=xatol,
+            fatol=fatol,
+            max_iter=max_iter,
         )
         for index, key in enumerate(free_keys):
             self.aberrations[key] = float(best_x[index])
