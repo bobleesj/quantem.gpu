@@ -23,25 +23,10 @@ class _Backend:
         raise NotImplementedError
 
     def preview(self, aberrations, **kwargs):
-        del kwargs
-        return self.reconstruct(
-            aberrations["C10"], aberrations["C12"], aberrations["phi12"]
-        ), None
+        return np.zeros(self.scan_shape, dtype=np.float32), None
 
     def cache_rotation(self, rotation_rad: float) -> None:
         self.rotation_rad = float(rotation_rad)
-
-    def reconstruct(self, c10: float, c12: float, phi12: float):
-        return np.zeros(self.scan_shape, dtype=np.float32)
-
-    def reconstruct_with_loss(self, c10: float, c12: float, phi12: float):
-        return self.reconstruct(c10, c12, phi12), 0.0
-
-    def reconstruct_full(self, mags_m, angles_rad):
-        return np.zeros(self.scan_shape, dtype=np.float32)
-
-    def reconstruct_full_with_loss(self, mags_m, angles_rad):
-        return self.reconstruct_full(mags_m, angles_rad), 0.0
 
     def browser_state(self):
         raise NotImplementedError
@@ -322,15 +307,6 @@ def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:
     assert precision.real_dtype == "float32"
     assert precision.complex_dtype == "complex64"
     assert not hasattr(precision, "phase_rtol")
-
-
-def test_compute_backend_contract_is_runtime_checkable() -> None:
-    """C4: UI adapters consume the common compute protocol."""
-    from quantem.gpu.ssb.contract import SSBProtocol
-
-    backend = _Backend()
-
-    assert isinstance(backend, SSBProtocol)
 
 
 def test_compute_backend_contract_lists_every_backend_call_of_the_workflow() -> None:

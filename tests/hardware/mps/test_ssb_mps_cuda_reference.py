@@ -476,7 +476,6 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
     """C1: exact BF columns expose the same neutral contract as CUDA."""
     pytest.importorskip("mlx.core")
     from quantem.gpu.ssb.brightfield import BrightfieldDisk
-    from quantem.gpu.ssb.contract import SSBProtocol
     from quantem.gpu.ssb.mps.backend import MpsSSBBackend
     from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
 
@@ -513,7 +512,6 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         rotation_angle_deg=4.0,
     )
 
-    assert isinstance(engine, SSBProtocol)
     assert engine.precision == PRECISION
     assert engine.scan_shape == (128, 128)
     assert engine.detector_shape == (4, 4)
