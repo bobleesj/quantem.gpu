@@ -88,11 +88,6 @@ class Dataset4dstemGPU:
         return DataRepresentation.parse(value)
 
     @property
-    def residency(self) -> str:
-        """Return where the representation remains available after loading."""
-        return str(self.metadata.get("residency", "device"))
-
-    @property
     def device(self):
         """Return the normalized device without decoding detector values."""
         return resident_device(self.data)
@@ -250,7 +245,11 @@ class Dataset4dstemGPU:
         >>> loaded = load("scan-lossless.h5", backend="mps")
         >>> loaded.close()
         """
-        _release_owned_storage(self.data)
+        # Encoded residents and callers' own owners name it release; plain arrays
+        # have none and are freed by Python.
+        release = getattr(self.data, "release", None)
+        if callable(release):
+            release()
 
     def release_rows_before(self, row: int) -> None:
         """Free the stored scan rows above ``row``, for a consumer that reads the scan once from the top.
@@ -369,7 +368,7 @@ class Dataset4dstemGPU:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        _release_owned_storage(self.data, failure=exc_value)
+        self.close()
 
 
 def resident_metadata(shape, dtype, resident_bytes: int, *, backend: str, representation: str = "encoded") -> dict:
@@ -399,26 +398,3 @@ def resident_metadata(shape, dtype, resident_bytes: int, *, backend: str, repres
         detector_bin=1,
         crop=None,
     )
-
-
-def _release_owned_storage(
-    data: object, *, failure: BaseException | None = None
-) -> None:
-    """Return a resident's GPU memory without hiding the failure that ended its use.
-
-    Without an explicit release the encoded buffers stay allocated until the
-    process exits. Owners come from every backend and from callers' own types,
-    and name the method ``release`` (encoded residents) or ``free`` (Metal
-    dense loads); plain arrays have none and are freed by Python. A release error during another
-    failure is attached to that failure as a note instead of replacing it.
-    """
-    for name in ("release", "free"):
-        release = getattr(data, name, None)
-        if callable(release):
-            try:
-                release()
-            except (RuntimeError, MemoryError, OSError, ValueError) as cleanup_error:
-                if failure is None:
-                    raise
-                failure.add_note(f"Resident cleanup also failed: {cleanup_error}")
-            return

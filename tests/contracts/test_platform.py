@@ -138,7 +138,6 @@ def test_cpu_device_loads_an_arina_master_as_the_numpy_counts(tmp_path) -> None:
             **hdf5plugin.Bitshuffle(cname="lz4"),
         )
     with io.load(master, device="cpu", scan_shape=(4, 5), verbose=False) as loaded:
-        assert loaded.residency == "host"
         np.testing.assert_array_equal(np.asarray(loaded), counts)
         np.testing.assert_array_equal(loaded[1, 2:4, 3].numpy(), counts[1, 2:4, 3])
         assert loaded[0, 0].device == torch.device("cpu")
@@ -149,5 +148,4 @@ def test_cpu_device_loads_an_arina_master_as_the_numpy_counts(tmp_path) -> None:
 def test_cpu_device_reopens_a_qem_file() -> None:
     fixture = ROOT / "tests/data/qem-v1"
     with io.load(fixture / "uint16.qem", device="cpu", verbose=False) as loaded:
-        assert loaded.residency == "host"
         np.testing.assert_array_equal(loaded[...].numpy(), np.load(fixture / "uint16.npy"))
