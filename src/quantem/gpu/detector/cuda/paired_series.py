@@ -125,3 +125,7 @@ class PairedSeriesCompute(StreamedSeriesCompute):
     def _cost(self, selection):
         """Expected decode work: one unit per index field plus each residual pixel's stream cost."""
         return len(selection[0]) + float(self.pixel_weights.ravel()[selection[2]].sum())
+
+    def _moments(self, row_weights, col_weights):
+        """Row and column moments, one query each: the paired residual decoder adds one weighting per pass."""
+        return self.weighted_sum_exact(row_weights), self.weighted_sum_exact(col_weights)

@@ -451,12 +451,56 @@ class StreamedSeriesCompute(DetectorQueries):
             valid *= selected
         rows, cols = np.indices(self.det_shape, dtype=np.uint32)
         total = self.weighted_sum_exact(valid)
-        row_moment = self.weighted_sum_exact(valid * rows)
-        col_moment = self.weighted_sum_exact(valid * cols)
+        row_moment, col_moment = self._moments(valid * rows, valid * cols)
         denominator = cp.maximum(total.astype(cp.float64), 1.0)
         com_row = (row_moment.astype(cp.float64) / denominator).astype(cp.float32)
         com_col = (col_moment.astype(cp.float64) / denominator).astype(cp.float32)
         return com_col, com_row
+
+    def _moments(self, row_weights, col_weights):
+        """Exact uint64 per-scan sums of the row and the column weighting of a centre of mass.
+
+        A ramp of row or column indices has no constant tile for the spatial index, so every
+        weighted pixel's stream is decoded, and one query per weighting decoded all of them
+        twice. Here both sums come from one decode. The kernel adds 32 pixels' weight x count in
+        int32 (see ``weight_digits``); weights beyond that bound take one query per digit instead.
+        """
+        if max(self.det_shape) - 1 > (2**31 - 1) // (32 * int(np.iinfo(self.frame_dtype).max)):
+            return self.weighted_sum_exact(row_weights), self.weighted_sum_exact(col_weights)
+        pixels = np.flatnonzero((row_weights != 0) | (col_weights != 0)).astype(np.uint32)
+        shape = (*self.series_shape, *self.scan_shape)
+        with self.lock, cp.cuda.Device(self.device):
+            started = time.perf_counter()
+            moments = cp.zeros(shape, cp.uint64), cp.zeros(shape, cp.uint64)
+            begin, errors = self._launch()
+            if len(pixels):
+                weights = [cp.asarray(values.ravel()[pixels].astype(np.int32)) for values in (row_weights, col_weights)]
+                groups = math.ceil(len(pixels) / 32) * math.ceil(self.max_scans / self.interval / self.residual_warps)
+                self.kernels["moment_pair"](
+                    (groups, self.chunk_count),
+                    (32 * self.residual_warps,),
+                    (
+                        self.descriptors,
+                        cp.asarray(pixels),
+                        *weights,
+                        np.uint32(len(pixels)),
+                        *moments,
+                        errors,
+                        np.uint64(self.n_frames),
+                        np.uint32(self.pixels),
+                        np.uint32(self.interval),
+                    ),
+                )
+            info = {
+                "query_launches": int(bool(len(pixels))),
+                "residual_pixels": len(pixels),
+                "spatial_fields": 0,
+                "incremental": False,
+                "launch": self._current_launch,
+                "weighted": True,
+            }
+            self._finish(begin, errors, started, info, True)
+            return moments
 
     def masked_sum_native(self, mask, *, out=None, wait=True, block_stride=1):
         """Return exact counts for a binary mask, planned as a delta of the previous mask when cheaper."""
