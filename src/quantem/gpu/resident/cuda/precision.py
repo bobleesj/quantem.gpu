@@ -176,7 +176,7 @@ class _ANSIntensityCodes(StreamedCounts):
             first, min(first + self.block_frames, math.prod(self.shape[:2]))
         )
 
-    def extract_diffraction_device(self, acquisition, index):
+    def frame_device(self, index):
         return self.decode_scan_range_device(index, index + 1)[0]
 
     def detector_sum_device(self, mask):
@@ -267,7 +267,7 @@ class PrecisionSource(DetectorQueries):
             part = bisect.bisect_right(self._ends, index)
             start = self._ends[part - 1] if part else 0
             value = self._restore(
-                self.parts[part].extract_diffraction_device(0, index - start),
+                self.parts[part].frame_device(index - start),
                 self._reports[part],
             )
             if out is not None:

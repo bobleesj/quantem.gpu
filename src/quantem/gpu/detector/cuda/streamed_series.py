@@ -353,10 +353,10 @@ class StreamedSeriesCompute(DetectorQueries):
             for source in self.index_owners:
                 total = cp.zeros(self.det_shape, cp.uint64)
                 # Group by codec block so sparse selections decode each block once.
-                boundaries = np.flatnonzero(np.diff(indices // 512)) + 1
+                boundaries = np.flatnonzero(np.diff(indices // self.interval)) + 1
                 for selected in np.split(indices, boundaries):
-                    first = int(selected[0] // 512 * 512)
-                    stop = min(first + 512, self.n_frames)
+                    first = int(selected[0] // self.interval * self.interval)
+                    stop = min(first + self.interval, self.n_frames)
                     raw = source.decode_scan_range_device(first, stop)
                     values = raw[cp.asarray(selected - first)]
                     if reduce == "max":
