@@ -194,7 +194,7 @@ class DetectorSession:
         >>> images = session.masked_sum(mask, output="native")
         """
         _check_output(output, out)
-        if block_stride != 1 and (output != "native" or not isinstance(self._backend, StreamedSeriesCompute)):
+        if block_stride != 1 and (output != "native" or not isinstance(self._backend, PairedSeriesCompute)):
             raise ValueError("block_stride needs a paired native series with output='native'.")
         if output == "numpy":
             return _reduced_to_numpy(self._backend.masked_sum(mask)).reshape((*self.series_shape, *self.scan_shape))
