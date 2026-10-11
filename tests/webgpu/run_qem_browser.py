@@ -40,6 +40,7 @@ def main() -> None:
             ("rans-integer-readback", "RansIntegerReadbackParity"),
             ("reduce-frames-parity", "ReduceFramesParity"),
             ("dense-h5-parity", "DenseH5Parity"),
+            ("ssb-bf-subset", "SsbBfSubset"),
         ):
             subprocess.run(
                 [str(args.esbuild), str(sources / f"{filename}.ts"), "--bundle",
@@ -68,6 +69,7 @@ def main() -> None:
                     page.add_script_tag(url="/rans-integer-readback.js")
                     page.add_script_tag(url="/reduce-frames-parity.js")
                     page.add_script_tag(url="/dense-h5-parity.js")
+                    page.add_script_tag(url="/ssb-bf-subset.js")
                     result = page.evaluate("""async (expected) => {
                       const adapter = await navigator.gpu.requestAdapter();
                       if (!adapter || adapter.info.isFallbackAdapter) {
@@ -99,6 +101,7 @@ def main() -> None:
                           product_first: await DenseH5Parity.runProductFirstParity(location.origin + '/fixtures/'),
                           resident: await DenseH5Parity.runResidentParity(location.origin + '/fixtures/'),
                           virtual_image: await DenseH5Parity.runDenseVirtualImageParity(device),
+                          ssb_bf_subset: await SsbBfSubset.runSsbBfSubsetParity(),
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)
