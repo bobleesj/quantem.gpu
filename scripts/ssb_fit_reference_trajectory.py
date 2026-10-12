@@ -122,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         params = best.get("params", {})
         print(
             f"optuna_batch_size={batch} trials={run['recorded_trials']} "
-            f"best loss={best.get('loss')} C10={params.get('C10_nm')} "
-            f"C12={params.get('C12_nm')} phi12_deg={params.get('phi12_deg')} "
+            f"best loss={best.get('loss')} C10_A={params.get('C10_A')} "
+            f"C12_A={params.get('C12_A')} phi12_deg={params.get('phi12_deg')} "
             f"result_loss={run['result_loss']}",
             flush=True,
         )

@@ -248,6 +248,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   took them as nm, and the azimuth in radians. The record now states
   `C10_nm`, `C12_nm` and `phi12_deg`, and the rotation as the physical angle
   in [0, 360).
+- The SSB fit-trajectory report never matched a Python reference candidate: it
+  looked for `C10_nm` in the recorded search parameters, which are `C10_A`,
+  `C12_A` and `phi12_deg`. The reference script printed those two values as
+  `None` for the same reason.
 - `SSB.bright_field_center_px` and `SSBResult.bright_field_center_px` are in
   pixels of the full detector for every input. A session built from an
   encoded acquisition or `SSB.open` reported the centre inside its decoded

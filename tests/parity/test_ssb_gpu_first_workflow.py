@@ -77,3 +77,14 @@ def test_gpu_report_rejects_nondeterminism_and_impurity():
     changed = deepcopy(report)
     changed["productionOptimizeAlwaysMatchesSequential"] = False
     assert not production_checks_pass(changed)
+
+
+def test_report_matches_reference_trials_in_engine_units():
+    """A recorded reference trial (the MPS search's C10_A, C12_A, phi12_deg) keys like the native point it equals."""
+    import math
+
+    from scripts.ssb_fit_trajectory_report import _reference_candidates, float32_key
+
+    native = {"c10Angstroms": 73.25, "c12Angstroms": 14.5, "phi12Radians": 30.0 * math.pi / 180.0}
+    entry = {"params": {"C10_A": 73.25, "C12_A": 14.5, "phi12_deg": 30.0}}
+    assert _reference_candidates(entry) == (float32_key(native),)
