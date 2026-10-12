@@ -11,11 +11,11 @@ let metadata = NativeMicroscopeMetadata(metadata: [
   "electron_microscope/imaging_system/reciprocal_pixel_size_x": "0.182 mrad",
   "electron_microscope/imaging_system/reciprocal_pixel_size_y": "0.000182 rad",
 ])
-precondition(metadata.beamEnergyKeV == 300 && metadata.semiConvergenceAngleMrad == nil)
+precondition(metadata.voltageKV == 300 && metadata.semiConvergenceAngleMrad == nil)
 precondition(abs(metadata.dwellTimeMicroseconds! - 50) < 1e-12)
 precondition(abs(metadata.angularRowMrad! - metadata.angularColumnMrad!) < 1e-12)
 let unknown = NativeMicroscopeMetadata(metadata: ["electron_microscope/electron_source/accelerating_voltage": "300000"])
-precondition(unknown.beamEnergyKeV == nil)
+precondition(unknown.voltageKV == nil)
 let histogram = MetalHistogramDisplayContract.reference(values: (0...7).map(Double.init), scale: .logarithmic)
 precondition(histogram.bins.enumerated().filter { $0.element > 0 }.map(\.offset) == [0, 85, 135, 170, 198, 220, 239, 255])
 let device = MTLCreateSystemDefaultDevice()!
