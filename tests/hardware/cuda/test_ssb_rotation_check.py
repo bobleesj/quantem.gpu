@@ -259,7 +259,7 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
 
         monkeypatch.setattr(session, "reconstruct", measured)
         result = session.find_aberrations(
-            tilt=True, trials=8, refinement=None, verbose=False,
+            tilt=True, num_trials=8, refinement=None, verbose=False,
         )
         assert result.column_sign == 0
         assert result.initial_scan_detector_rotation_deg == result.scan_detector_rotation_deg == 180.0

@@ -104,13 +104,13 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     backend = _Backend()
 
     first = _session(monkeypatch, source, backend).find_aberrations(
-        trials=200,
+        num_trials=200,
         refinement="nelder-mead",
         save_to=saved,
         verbose=False,
     )
     second = _session(monkeypatch, source, backend).find_aberrations(
-        trials=200,
+        num_trials=200,
         refinement="nelder-mead",
         save_to=saved,
         verbose=False,
@@ -130,7 +130,7 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     assert second.timings == first.timings
     assert second.trial_records == first.trial_records
     assert second.saved_path == saved / "ssb-find_aberrations.npz"
-    assert second.metadata["signature"]["settings"]["trials"] == 200
+    assert second.metadata["signature"]["settings"]["num_trials"] == 200
     assert second.metadata["signature"]["software"]["ssb_source_sha256"]
     assert second.metadata["input"]["source_path"] == str(source)
     assert second.metadata["result"]["loss"] == 0.125
@@ -150,14 +150,14 @@ def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None
     backend = _Backend()
 
     _session(monkeypatch, source, backend).find_aberrations(
-        trials=200, save_to=saved, verbose=False
+        num_trials=200, save_to=saved, verbose=False
     )
     _session(monkeypatch, source, backend).find_aberrations(
-        trials=201, save_to=saved, verbose=False
+        num_trials=201, save_to=saved, verbose=False
     )
     source.write_bytes(b"different detector counts")
     _session(monkeypatch, source, backend).find_aberrations(
-        trials=201, save_to=saved, verbose=False
+        num_trials=201, save_to=saved, verbose=False
     )
 
     assert backend.fit_calls == 3
@@ -286,7 +286,7 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     source.write_bytes(b"detector counts")
     backend = _Backend()
     session = _session(monkeypatch, source, backend)
-    settings = dict(trials=0, refinement=None, check_rotation=False,
+    settings = dict(num_trials=0, refinement=None, check_rotation=False,
                     save_to=tmp_path / "search", verbose=False)
     first = session.find_aberrations(**settings)
     session.reconstruct(aberrations={"C10_nm": 12.0})

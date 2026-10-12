@@ -35,9 +35,9 @@ def reconstruct_series(
     probe_reference_frame: int | None = None,
     voltage_kV: float | None = None,
     semiangle_mrad: float | None = None,
-    scan_sampling_A: float | tuple[float, float] | None = None,
+    scan_sampling_A: tuple[float, float] | None = None,
     scan_detector_rotation_deg: float | None = None,
-    trials: int = 200,
+    num_trials: int = 200,
     refinement: RefineMethod = "nelder-mead",
     backend: Literal["auto", "cuda", "mps"] = "auto",
     progress: bool = True,
@@ -66,10 +66,12 @@ def reconstruct_series(
     probe_reference_frame : int, optional
         Acquisition identifier whose fitted aberrations and rotation define
         the fixed probe. When omitted, fit each acquisition independently.
-    voltage_kV, semiangle_mrad, scan_sampling_A, scan_detector_rotation_deg : float, optional
+    voltage_kV, semiangle_mrad, scan_detector_rotation_deg : float, optional
         Physical microscope settings used only when prior Live metadata or
         ``dataset.yaml`` does not already provide them.
-    trials : int, default 200
+    scan_sampling_A : tuple[float, float], optional
+        Scan step as one ``[row, col]`` pair, used on the same terms.
+    num_trials : int, default 200
         Independent SSB fit trials per missing acquisition.
     refinement : {"nelder-mead", None}, default "nelder-mead"
         Independent-fit refinement method.
@@ -123,7 +125,7 @@ def reconstruct_series(
             with cls.open(str(source), backend=backend,
                           **open_settings(settings, float(settings["scan_detector_rotation_deg"]))) as ssb:
                 reference_result = ssb.find_aberrations(
-                    trials=trials,
+                    num_trials=num_trials,
                     refinement=refinement,
                     save_to=reference_path / "ssb-fit",
                     verbose=False,
@@ -166,7 +168,7 @@ def reconstruct_series(
                 )
             else:
                 result = ssb.find_aberrations(
-                    trials=trials,
+                    num_trials=num_trials,
                     refinement=refinement,
                     save_to=screen_path / "ssb-fit",
                     verbose=False,
@@ -213,7 +215,7 @@ def reconstruct_series(
         source_directory=source_root,
         results_directory=results_root,
         requested_backend=backend,
-        trials=trials,
+        num_trials=num_trials,
         refinement=refinement,
     )
 
@@ -326,7 +328,7 @@ def acquisition_settings(
     *,
     voltage_kV: float | None,
     semiangle_mrad: float | None,
-    scan_sampling_A: float | tuple[float, float] | None,
+    scan_sampling_A: tuple[float, float] | None,
     scan_detector_rotation_deg: float | None,
 ) -> dict[str, object]:
     """Return complete physical settings for one acquisition.

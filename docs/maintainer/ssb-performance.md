@@ -48,7 +48,7 @@ of the simulated tilt, save/reload, and an unresolved scan without a flip.
 ## Joint CUDA calibration, 2026-10-04
 
 Joint aberration, specimen-tilt, and depth-spread calibration uses
-`SSB.find_aberrations(tilt=True, trials=200)`. It evaluates the depth-aware
+`SSB.find_aberrations(tilt=True, num_trials=200)`. It evaluates the depth-aware
 least-squares objective. The standard phase-variance search in the following
 section is a different operation; its timing must not stand in for joint
 calibration.

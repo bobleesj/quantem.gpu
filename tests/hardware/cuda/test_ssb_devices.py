@@ -47,7 +47,7 @@ def test_a_fit_on_the_second_gpu_equals_the_fit_on_the_first():
         with cp.cuda.Device(device):
             data = cp.asarray(counts)
         with SSB(data, **settings) as ssb:
-            fits.append(ssb.find_aberrations(trials=8, check_rotation=False, verbose=False))
+            fits.append(ssb.find_aberrations(num_trials=8, check_rotation=False, verbose=False))
 
     assert dict(fits[1].aberrations) == dict(fits[0].aberrations)
     assert fits[1].loss == fits[0].loss > 0

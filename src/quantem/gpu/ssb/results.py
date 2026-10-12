@@ -411,7 +411,7 @@ class SSBSeriesResult:
     source_directory: Path
     results_directory: Path
     requested_backend: str
-    trials: int
+    num_trials: int
     refinement: str | None
 
     def metadata(self):
@@ -444,7 +444,7 @@ class SSBSeriesResult:
             [
                 ("Shape", " x ".join(str(value) for value in self.phase.shape)),
                 ("Requested backend", self.requested_backend),
-                ("Trials", self.trials),
+                ("Trials", self.num_trials),
                 ("Refinement", self.refinement or "none"),
                 ("Results reused", reused),
             ]

@@ -140,7 +140,7 @@ def run(arguments, stages) -> None:
             for _ in range(arguments.fit_repeats):
                 with prepared(data) as ssb:
                     result, seconds = timed(lambda: ssb.find_aberrations(
-                        tilt=tilt, trials=arguments.trials, seed=arguments.seed, verbose=False))
+                        tilt=tilt, num_trials=arguments.trials, seed=arguments.seed, verbose=False))
                 times.append(seconds)
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
                 hashes.append(f"phase {digest(result.phase)} loss {result.loss!r} aberrations "

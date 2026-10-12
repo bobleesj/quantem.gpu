@@ -19,7 +19,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
     source = tmp_path / 'counts.npy'
     np.save(source, cp.asnumpy(ssb._data))
     ssb.source_path = str(source)
-    settings = dict(trials=8, refinement=None, check_rotation=False, verbose=False,
+    settings = dict(num_trials=8, refinement=None, check_rotation=False, verbose=False,
                     search_ranges={'C10_nm': (-10., 10.), 'C12_nm': 4., 'phi12_deg': 30.},
                     save_to=tmp_path / 'search')
     try:
@@ -76,7 +76,7 @@ def test_rotation_check_keeps_original_trial_geometry(monkeypatch):
     signs = iter((-1., 1.))
     monkeypatch.setattr(workflow, 'column_sign', lambda phase: next(signs))
     try:
-        aberrations = ssb.find_aberrations(trials=8, refinement=None, verbose=False)
+        aberrations = ssb.find_aberrations(num_trials=8, refinement=None, verbose=False)
         assert aberrations.initial_scan_detector_rotation_deg != aberrations.scan_detector_rotation_deg
         assert ssb.scan_detector_rotation_deg >= 180.0
         assert all(record['scan_detector_rotation_deg'] < 180.0 for record in aberrations.trial_records)
@@ -99,7 +99,7 @@ def test_joint_history_carries_tilt_depth_and_objective():
 
     ssb, _ = _synthetic_session()
     try:
-        aberrations = ssb.find_aberrations(tilt=True, trials=8, refinement=None,
+        aberrations = ssb.find_aberrations(tilt=True, num_trials=8, refinement=None,
                                            check_rotation=False, verbose=False)
         table = aberrations.trials
         assert len(table) == 8
@@ -143,12 +143,12 @@ def test_explicit_complex_estimator_preserves_wave_amplitude():
 def test_zero_trial_search_does_not_relabel_previous_search():
     ssb, _ = _synthetic_session()
     try:
-        first = ssb.find_aberrations(trials=4, refinement='nelder-mead',
+        first = ssb.find_aberrations(num_trials=4, refinement='nelder-mead',
                                       check_rotation=False, verbose=False)
         history = deepcopy(first.trial_records)
         assert first.refine_nfev > 0
         ssb.set_rotation(37.)
-        second = ssb.find_aberrations(trials=0, refinement=None,
+        second = ssb.find_aberrations(num_trials=0, refinement=None,
                                        check_rotation=False, verbose=False)
         assert second.num_trials == 0
         assert second.trials.empty
@@ -169,7 +169,7 @@ def test_search_starts_from_the_current_public_coefficients(estimator):
     try:
         wanted = {'C10_nm': 9.0, 'C12_nm': 3.0, 'phi12_deg': math.degrees(0.25)}
         ssb.reconstruct(aberrations=wanted, phase_estimator=estimator, compute_loss=False)
-        result = ssb.find_aberrations(trials=0, refinement=None,
+        result = ssb.find_aberrations(num_trials=0, refinement=None,
                                       check_rotation=False, verbose=False)
         assert result.aberrations == wanted
         assert ssb.aberrations == wanted
@@ -185,7 +185,7 @@ def test_zero_trial_tilt_search_fails_before_backend_work(monkeypatch):
             raise AssertionError('An invalid tilt search reached the backend')
         monkeypatch.setattr(ssb, '_fit_tilt', forbidden)
         with pytest.raises(ValueError, match='tilt=True requires at least one trial'):
-            ssb.find_aberrations(tilt=True, trials=0, verbose=False)
+            ssb.find_aberrations(tilt=True, num_trials=0, verbose=False)
     finally:
         ssb.close()
 
@@ -199,7 +199,7 @@ def test_search_retains_anisotropic_scan_calibration():
         with SSB(original._data, backend='cuda', voltage_kV=300.0,
                  semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.45),
                  detector_sampling_mrad=(3.0, 3.0)) as ssb:
-            result = ssb.find_aberrations(trials=0, refinement=None,
+            result = ssb.find_aberrations(num_trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
             assert result.object_sampling_A == (0.3, 0.45)
             assert ssb.reconstruct(result, upsampling_factor=2).object_sampling_A == (0.15, 0.225)

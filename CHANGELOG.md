@@ -141,7 +141,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   attribute and the result signature); `upsample` becomes `upsampling_factor`
   (`SSB.reconstruct`, `SSB.show_trials`, `SSBResult`); `tilt_mrad` becomes
   `sample_tilt_mrad` (`SSB.preview`, `SSB`, `SSBResult`); `n_trials` becomes
-  `num_trials` (`SSBResult`); `det_shape` becomes `detector_shape`
+  `num_trials` (`SSBResult`); the trial-count argument `trials` becomes
+  `num_trials` (`SSB.find_aberrations`, `SSB.reconstruct_series`, the result
+  signature and `SSBSeriesResult`); `det_shape` becomes `detector_shape`
   (`H5Writer`, detector sessions). Trial records hold `sample_tilt_mrad` as
   one `[row, col]` pair in place of `tilt_row_mrad` and `tilt_col_mrad`.
 - An HDF5 master written by `io.save` stores the detector shape once, as
@@ -159,19 +161,17 @@ new `rcN` heading when that rc is published to TestPyPI.
   `scan_detector_rotation_deg`, with a new `detector_transposed`; a result
   then holds the given angle in `scan_detector_rotation_deg` and, for
   `dpc.run`, no `scan_detector_rotation_mod180_deg`.
-- The stored SSB fit schema is 7: `"schema": "quantem.ssb-fit/7"` in the
-  `computed.ssb` block and `"schema": "quantem.ssb-result/7"` (a string, it was
-  the number 6) in a saved result record and its signature. Stored fits and
-  results of schema 6 are treated as absent and computed again.
+- A saved SSB result record and its signature carry
+  `"schema": "quantem.ssb-result/7"`, a string; it was the number 6.
 - `ScreeningResult.mean_dp` becomes `mean_diffraction_pattern`, as does its
   array in the screening cache.
 - The screening cache is `<master stem>.screening-v4.npz` and carries
   `"schema": "quantem.screening-cache/4"` in place of `"version": 3`; a
   version-3 cache is rebuilt.
 - A stored SSB fit is read only when it carries the current fit schema:
-  `"schema": "quantem.ssb-fit/6"` in the `computed.ssb` block of
+  `"schema": "quantem.ssb-fit/7"` in the `computed.ssb` block of
   `live/screen/<dataset>/config.json`, written by `SSB.reconstruct_series`,
-  and schema 6 in a saved fit record. Any other stored fit is treated as
+  and `"schema": "quantem.ssb-result/7"` in a saved result record. Any other stored fit is treated as
   absent and fitted again on first use, including every fit stored by earlier
   versions; none of its values is converted. Until now a block was accepted
   whenever it declared nm, so `reconstruct_series(probe_reference_frame=...)`

@@ -451,7 +451,7 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
              detector_sampling_mrad=(2.0, 2.0), bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5) as session:
         before = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave").loss
-        session.find_aberrations(trials=4, refinement=None, check_rotation=False, verbose=False)
+        session.find_aberrations(num_trials=4, refinement=None, check_rotation=False, verbose=False)
         after = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave", force=True).loss
         engine = session._backend()._get_accelerator()
         engine_aberrations = aberrations_to_engine(aberrations)
