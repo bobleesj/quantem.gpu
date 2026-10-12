@@ -9,6 +9,8 @@ from quantem.gpu.ssb.units import (
     aberrations_from_engine,
     aberrations_to_engine,
     higher_order_arrays,
+    refine_lock_to_engine,
+    search_ranges_to_engine,
     validate_aberrations,
 )
 
@@ -45,3 +47,14 @@ def test_higher_orders_are_named_keys_packed_in_krivanek_order():
     expected_angles[[1, 2, 13]] = np.radians([30.0, 90.0, -45.0])
     np.testing.assert_array_equal(magnitudes, expected_magnitudes)
     np.testing.assert_array_equal(angles, expected_angles)
+
+
+def test_search_ranges_reach_the_engines_in_angstrom_under_angstrom_names():
+    """The engines' range keys name their unit: C10_A, C12_A. They were C10_nm and C12_nm while holding Angstrom."""
+    engine = search_ranges_to_engine({"C10_nm": (-20.0, 20.0), "C12_nm": 4.0, "phi12_deg": [-90.0, 90.0]})
+    assert engine == {"C10_A": (-200.0, 200.0), "C12_A": 40.0, "phi12_deg": (-90.0, 90.0)}
+    with pytest.raises(ValueError, match="C10_nm, C12_nm and phi12_deg"):
+        search_ranges_to_engine({"C10": (-20.0, 20.0)})
+    assert refine_lock_to_engine(["C12_nm", "phi12_deg"]) == ["C12", "phi12"]
+    with pytest.raises(ValueError, match="refine_lock"):
+        refine_lock_to_engine(["C12"])

@@ -115,8 +115,8 @@ def optimize(
             trial_records = [study.ask() for _ in range(current)]
             trial_params = []
             for trial in trial_records:
-                C10 = _suggest_or_fixed(trial, ranges, "C10_nm", best["C10"])
-                C12 = _suggest_or_fixed(trial, ranges, "C12_nm", best["C12"])
+                C10 = _suggest_or_fixed(trial, ranges, "C10_A", best["C10"])
+                C12 = _suggest_or_fixed(trial, ranges, "C12_A", best["C12"])
                 phi12 = math.radians(_suggest_or_fixed(
                     trial, ranges, "phi12_deg", math.degrees(best["phi12"])
                 ))
@@ -133,8 +133,8 @@ def optimize(
         if study.best_trial is not None and float(study.best_value) < best_loss:
             params = study.best_trial.params
             best = {
-                "C10": float(params.get("C10_nm", best["C10"])),
-                "C12": float(params.get("C12_nm", best["C12"])),
+                "C10": float(params.get("C10_A", best["C10"])),
+                "C12": float(params.get("C12_A", best["C12"])),
                 "phi12": math.radians(float(params.get("phi12_deg", math.degrees(best["phi12"])))),
             }
             best_loss = float(study.best_value)
@@ -208,8 +208,8 @@ def optimize(
                 "stage": trial["stage"],
                 "number": trial.get("number"),
                 "params": {
-                    "C10_nm": float(params["C10"]),
-                    "C12_nm": float(params["C12"]),
+                    "C10_A": float(params["C10"]),
+                    "C12_A": float(params["C12"]),
                     "phi12_deg": math.degrees(float(params["phi12"])),
                 },
                 "loss": float(trial["loss"]),
@@ -268,8 +268,8 @@ def _ranges_from_start(
     if search_ranges is not None:
         return dict(search_ranges)
     return {
-        "C10_nm": (-400.0, 400.0),
-        "C12_nm": (0.0, 100.0),
+        "C10_A": (-400.0, 400.0),
+        "C12_A": (0.0, 100.0),
         "phi12_deg": (-90.0, 90.0),
     }
 
