@@ -33,7 +33,7 @@ def test_uint32_screening_preserves_measured_counts(tmp_path):
             path, backend="cuda", cache=False, rotation_steps=4,
         ))
     for field in (
-        "mean_dp", "total_intensity", "bright_field", "annular_bright_field",
+        "mean_diffraction_pattern", "total_intensity", "bright_field", "annular_bright_field",
         "annular_dark_field", "dark_field", "com_row", "com_col",
     ):
         np.testing.assert_array_equal(getattr(outputs[0], field), getattr(outputs[1], field))

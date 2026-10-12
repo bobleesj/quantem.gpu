@@ -17,7 +17,8 @@ import numpy as np
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
 # 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed; the
-#    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before).
+#    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
+#    pattern is mean_diffraction_pattern (mean_dp before).
 _CACHE_VERSION = 4
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
@@ -41,7 +42,7 @@ class ScreeningResult:
     phase uses the caller's rotation when there is one.
     """
 
-    mean_dp: np.ndarray
+    mean_diffraction_pattern: np.ndarray
     bright_field: np.ndarray
     dark_field: np.ndarray
     dpc_phase: np.ndarray
@@ -202,8 +203,8 @@ def _build_products(
         detector_shape = session.detector_shape
         frame_count = session.num_frames
         # The exact total divided in float64 and rounded once, like every mean pattern.
-        mean_dp = (session.detector_total() / frame_count).astype(np.float32)
-        center, radius = detector.fit_probe(mean_dp)
+        mean_diffraction_pattern = (session.detector_total() / frame_count).astype(np.float32)
+        center, radius = detector.fit_probe(mean_diffraction_pattern)
         masks = [np.ones(detector_shape, dtype=bool)]
         masks += [
             detector.detector_mask(center, inner * radius, outer * radius, detector_shape)
@@ -252,7 +253,7 @@ def _build_products(
         "elapsed_s": float(elapsed_s),
     }
     return ScreeningResult(
-        mean_dp=mean_dp,
+        mean_diffraction_pattern=mean_diffraction_pattern,
         bright_field=bright_field.astype(np.float32),
         dark_field=dark_field.astype(np.float32),
         dpc_phase=phase,
@@ -275,7 +276,7 @@ def _build_products(
                     [inner, None if np.isinf(outer) else outer]
                     for inner, outer in _BAND_RADII
                 ],
-                "mean_dp_divisor": int(frame_count),
+                "mean_diffraction_pattern_divisor": int(frame_count),
                 "coordinate_order": "row-column",
             },
             "mode": "cached-screening-products",
@@ -512,7 +513,7 @@ def _save_cache(products: ScreeningResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "metadata_json": _metadata_array(products.metadata),
-        "mean_dp": np.asarray(products.mean_dp, dtype=np.float32),
+        "mean_diffraction_pattern": np.asarray(products.mean_diffraction_pattern, dtype=np.float32),
         "bright_field": np.asarray(products.bright_field, dtype=np.float32),
         "dark_field": np.asarray(products.dark_field, dtype=np.float32),
         "dpc_phase": np.asarray(products.dpc_phase, dtype=np.float32),
@@ -537,7 +538,7 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             return None
         parameters = metadata["parameters"]
         return ScreeningResult(
-            mean_dp=np.asarray(data["mean_dp"], dtype=np.float32),
+            mean_diffraction_pattern=np.asarray(data["mean_diffraction_pattern"], dtype=np.float32),
             bright_field=np.asarray(data["bright_field"], dtype=np.float32),
             dark_field=np.asarray(data["dark_field"], dtype=np.float32),
             dpc_phase=np.asarray(data["dpc_phase"], dtype=np.float32),

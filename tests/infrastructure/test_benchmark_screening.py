@@ -24,7 +24,7 @@ def _full_result(*, exact_dtype=np.uint64):
     scan = np.arange(6, dtype=np.float32).reshape(2, 3)
     exact = np.arange(6, dtype=exact_dtype).reshape(2, 3)
     return SimpleNamespace(
-        mean_dp=np.arange(4, dtype=np.float32).reshape(2, 2),
+        mean_diffraction_pattern=np.arange(4, dtype=np.float32).reshape(2, 2),
         total_intensity=exact,
         bright_field=scan,
         annular_bright_field=exact,

@@ -497,7 +497,7 @@ files:
         screening,
         "prepare",
         lambda *args, **kwargs: SimpleNamespace(
-            mean_dp=np.zeros((5, 6), dtype=np.float32),
+            mean_diffraction_pattern=np.zeros((5, 6), dtype=np.float32),
             bright_field=np.ones((3, 4), dtype=np.float32),
             dark_field=np.full((3, 4), 2.0, dtype=np.float32),
             com_row=zeros,
