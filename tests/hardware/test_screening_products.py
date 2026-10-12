@@ -52,8 +52,8 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     working = np.where(pixel_mask != 0, 0, counts).astype(np.uint64)
     # One mean rule everywhere: the exact total divided in float64, rounded once to float32.
     # These totals stay below 2^24, where the earlier float32(total) / n gave the same values.
-    mean_dp = (working.sum(axis=(0, 1)) / (32 * 32)).astype(np.float32)
-    center, radius = detector.fit_probe(mean_dp)
+    mean_diffraction_pattern = (working.sum(axis=(0, 1)) / (32 * 32)).astype(np.float32)
+    center, radius = detector.fit_probe(mean_diffraction_pattern)
     band = {
         name: detector.detector_mask(center, inner * radius, outer * radius, (24, 28))
         for name, (inner, outer) in {
@@ -72,7 +72,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     com_col -= float(com_col.mean())
     _, _, rotation_deg, transposed = find_optimal_rotation(com_row, com_col, rotation_steps=30)
     expected = {
-        "mean_dp": mean_dp,
+        "mean_diffraction_pattern": mean_diffraction_pattern,
         "total_intensity": total,
         "bright_field": working[..., band["bright_field"]].sum(axis=-1).astype(np.float32),
         "annular_bright_field": working[..., band["annular_bright_field"]].sum(axis=-1),
@@ -105,4 +105,4 @@ def test_screening_mean_pattern_divides_the_exact_total_once(tmp_path):
     total = counts.sum(axis=(0, 1), dtype=np.uint64)
     expected = (total / 900).astype(np.float32)
     assert np.any(total.astype(np.float32) / np.float32(900) != expected)
-    np.testing.assert_array_equal(result.mean_dp, expected)
+    np.testing.assert_array_equal(result.mean_diffraction_pattern, expected)

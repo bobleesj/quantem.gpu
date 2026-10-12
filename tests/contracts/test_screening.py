@@ -15,7 +15,7 @@ def _result(master, workflow):
     zeros = np.zeros((4, 4), dtype=np.float32)
     counts = np.ones((4, 4), dtype=np.uint64)
     return workflow.ScreeningResult(
-        mean_dp=np.arange(9, dtype=np.float32).reshape(3, 3),
+        mean_diffraction_pattern=np.arange(9, dtype=np.float32).reshape(3, 3),
         bright_field=np.ones((4, 4), dtype=np.float32),
         dark_field=np.full((4, 4), 2.0, dtype=np.float32),
         dpc_phase=zeros.copy(),
@@ -55,7 +55,7 @@ def test_screening_cache_roundtrip(monkeypatch, tmp_path) -> None:
     assert actual.cache_path == cache_path
     assert actual.bright_field_center_px == (3.5, 4.5)
     assert actual.bright_field_edge_radius_px == 2.0
-    np.testing.assert_array_equal(actual.mean_dp, expected.mean_dp)
+    np.testing.assert_array_equal(actual.mean_diffraction_pattern, expected.mean_diffraction_pattern)
     np.testing.assert_array_equal(actual.bright_field, expected.bright_field)
     np.testing.assert_array_equal(actual.dark_field, expected.dark_field)
     np.testing.assert_array_equal(actual.dpc_phase, expected.dpc_phase)
@@ -113,7 +113,7 @@ def test_screening_cache_without_retained_phase_is_rebuilt(tmp_path) -> None:
     np.savez(
         cache_path,
         metadata_json=workflow._metadata_array(expected.metadata),
-        mean_dp=expected.mean_dp,
+        mean_diffraction_pattern=expected.mean_diffraction_pattern,
         bright_field=expected.bright_field,
         dark_field=expected.dark_field,
         com_row=expected.com_row,

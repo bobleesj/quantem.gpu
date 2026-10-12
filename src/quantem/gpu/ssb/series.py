@@ -468,7 +468,7 @@ def virtual_images(
     )
     screen_path.mkdir(parents=True, exist_ok=True)
     arrays = {
-        "mean_dp.npy": products.mean_dp,
+        "mean_dp.npy": products.mean_diffraction_pattern,
         "bf.npy": products.bright_field,
         "df.npy": products.dark_field,
         "com_row.npy": products.com_row,

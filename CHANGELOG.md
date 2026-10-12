@@ -145,6 +145,8 @@ new `rcN` heading when that rc is published to TestPyPI.
   `computed.ssb` block and `"schema": "quantem.ssb-result/7"` (a string, it was
   the number 6) in a saved result record and its signature. Stored fits and
   results of schema 6 are treated as absent and computed again.
+- `ScreeningResult.mean_dp` becomes `mean_diffraction_pattern`, as does its
+  array in the screening cache.
 - The screening cache is `<master stem>.screening-v4.npz` and carries
   `"schema": "quantem.screening-cache/4"` in place of `"version": 3`; a
   version-3 cache is rebuilt.
