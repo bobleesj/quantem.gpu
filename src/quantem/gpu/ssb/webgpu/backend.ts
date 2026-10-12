@@ -983,7 +983,7 @@ function sampleThickness(sample?: WebGPUSampleOptions): number {
 // six are declared only in the thick shader variant.
 const SSB_PARAMS_BYTES = 112;
 
-function makeParams(
+export function makeParams(
   cal: SsbCal,
   n: number,
   c10: number,
@@ -1024,9 +1024,11 @@ function makeParams(
   u[21] = fullAberration ? 1 : 0;
   // Thick-sample depth average (Angstrom, radians). Absent or non-positive thickness leaves the standard SSB gamma.
   const thickness = sampleThickness(sample);
+  // A depth spread given without a tilt is an untilted crystal: indexing the omitted pair threw a TypeError.
+  const tiltMrad = sample?.sampleTiltMrad ?? [0, 0];
   f[22] = thickness;
-  f[23] = thickness > 0 ? (sample!.sampleTiltMrad[0] || 0) * 1e-3 : 0;
-  f[24] = thickness > 0 ? (sample!.sampleTiltMrad[1] || 0) * 1e-3 : 0;
+  f[23] = thickness > 0 ? (tiltMrad[0] || 0) * 1e-3 : 0;
+  f[24] = thickness > 0 ? (tiltMrad[1] || 0) * 1e-3 : 0;
   return b;
 }
 
@@ -1045,8 +1047,10 @@ const HO_LAYOUT: Array<[string, number, boolean]> = [
   ["C50", 10, false], ["C52", 11, true],
   ["C54", 12, true], ["C56", 13, true],
 ];
+// The keys `higherOrder` takes: a magnitude per term in Angstrom, and an azimuth in degrees where the term has one.
+const HO_KEYS = HO_LAYOUT.flatMap(([name, , hasAngle]) => hasAngle ? [`${name}_A`, `phi${name.slice(1)}_deg`] : [`${name}_A`]);
 
-function packAberrations(
+export function packAberrations(
   c10: number,
   c12: number,
   phi12Deg: number,
@@ -1059,6 +1063,12 @@ function packAberrations(
   angles[1] = phi12Deg * Math.PI / 180;
   let active = false;
   const ho = higherOrder || {};
+  // A key the engine does not know read as 0, so an earlier spelling (C30 for C30_A, C21_mag for C21_A) gave the
+  // image of no aberration without a word. Refused with the accepted keys, as the Python boundary does.
+  const unknown = Object.keys(ho).filter(key => !HO_KEYS.includes(key));
+  if (unknown.length > 0) {
+    throw new Error(`Unknown higherOrder keys ${unknown.join(", ")}; the engine takes ${HO_KEYS.join(", ")}.`);
+  }
   for (const [name, index, hasAngle] of HO_LAYOUT) {
     // magnitudes in Angstrom, azimuths in degrees: C21_A with phi21_deg, C30_A alone
     const mag = Number(ho[`${name}_A`] || 0);
