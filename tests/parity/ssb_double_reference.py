@@ -218,7 +218,8 @@ def ssb_reference(
     det_sampling_rad : tuple of float
         Detector angular sampling ``(row, col)`` in radians per pixel.
     c10, c12, phi12 : float
-        Low-order aberrations in nanometers and radians.
+        Low-order aberrations in Angstrom and radians: ``chi = (pi / wavelength) alpha^2 (c10 + c12 cos 2(phi -
+        phi12))`` with the wavelength in Angstrom, so a value in nm here would be a tenth of the intended defocus.
     rotation_angle_deg : float
         Scan-detector rotation applied to ``kx``/``ky``.
     dc_value : complex, optional

@@ -111,9 +111,9 @@ def main(argv: list[str] | None = None) -> int:
             backend="mps",
             voltage_kV=case.voltage_kV,
             semiangle_mrad=case.semiangle_mrad,
-            scan_sampling_A=(case.scan_sampling_A, case.scan_sampling_A),
-            detector_sampling_mrad=(float(meta["det_sampling_mrad"]),) * 2,
-            scan_detector_rotation_deg=case.rotation_angle_deg,
+            scan_sampling_A=case.scan_sampling_A,
+            detector_sampling_mrad=tuple(float(step) for step in meta["detector_sampling_mrad"]),
+            scan_detector_rotation_deg=case.scan_detector_rotation_deg,
             verbose=False,
         )
         run = record(session, trials=args.trials, seed=args.seed, batch=batch)

@@ -23,7 +23,6 @@ Run ``python tests/parity/ssb_parity_gate.py --help`` for the case list.
 
 import argparse
 import json
-import math
 import subprocess
 import sys
 import time
@@ -107,8 +106,15 @@ GATE_FLOOR_METRIC = {
 
 
 def _aberration_dict(case: SSBParityCase, index: int) -> dict[str, float]:
-    c10, c12, phi12 = case.aberrations[index]
-    return {"C10_nm": float(c10), "C12_nm": float(c12), "phi12_deg": math.degrees(float(phi12))}
+    """One case setting as the public session takes it: ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
+
+    The case holds ``(C10_A, C12_A, phi12_rad)``, the engine units the oracle and the Metal harness evaluate. Passing
+    those numbers under the nm keys would give the session ten times the oracle's defocus and astigmatism.
+    """
+    from quantem.gpu.ssb.units import aberrations_from_engine
+
+    c10_A, c12_A, phi12_rad = (float(value) for value in case.aberrations_A_rad[index])
+    return aberrations_from_engine({"C10": c10_A, "C12": c12_A, "phi12": phi12_rad})
 
 
 def _case_meta(case: SSBParityCase) -> dict[str, object]:
@@ -169,9 +175,9 @@ def open_mps_session(case: SSBParityCase, meta: dict[str, object]):
         backend="mps",
         voltage_kV=case.voltage_kV,
         semiangle_mrad=case.semiangle_mrad,
-        scan_sampling_A=(case.scan_sampling_A, case.scan_sampling_A),
-        detector_sampling_mrad=(float(meta["det_sampling_mrad"]),) * 2,
-        scan_detector_rotation_deg=case.rotation_angle_deg,
+        scan_sampling_A=case.scan_sampling_A,
+        detector_sampling_mrad=tuple(float(step) for step in meta["detector_sampling_mrad"]),
+        scan_detector_rotation_deg=case.scan_detector_rotation_deg,
         verbose=False,
     )
 
@@ -181,7 +187,7 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
 
     session = open_mps_session(case, meta) if session is None else session
     products = []
-    for index in range(len(case.aberrations)):
+    for index in range(len(case.aberrations_A_rad)):
         aberrations = _aberration_dict(case, index)
         started = time.perf_counter()
         result = session.reconstruct(aberrations=aberrations, compute_loss=False)
@@ -235,7 +241,7 @@ def run_metal(case: SSBParityCase, meta: dict[str, object]) -> list[dict]:
     summary = json.loads((out_dir / "metal.json").read_text(encoding="utf-8"))
     side = case.scan_side
     products = []
-    for index in range(len(case.aberrations)):
+    for index in range(len(case.aberrations_A_rad)):
         variants = {}
         for variant in summary["aberrations"][index]["variants"]:
             object_wave = np.fromfile(
@@ -306,11 +312,11 @@ def run_case(
         "bf_count": int(len(meta["brightfield_kx"])),
         "documented_bf_count": int(meta["documented_bf_count"]),
         "active_bf_count": int(meta["active_bf_count"]),
-        "det_sampling_mrad": float(meta["det_sampling_mrad"]),
-        "rotation_angle_deg": float(meta["rotation_angle_deg"]),
+        "detector_sampling_mrad": [float(step) for step in meta["detector_sampling_mrad"]],
+        "scan_detector_rotation_deg": float(meta["scan_detector_rotation_deg"]),
         "aberrations": [],
     }
-    settings = list(case.aberrations)
+    settings = list(case.aberrations_A_rad)
     if reference_only:
         mps_products = None
         metal_products = None
@@ -326,7 +332,7 @@ def run_case(
         floor = run_reference(case, meta, setting, geometry=geometry, dtype=np.float32)
         entry: dict[str, object] = {
             "index": index,
-            "aberrations": {"C10": c10, "C12": c12, "phi12": phi12},
+            "aberrations": {"C10_A": c10, "C12_A": c12, "phi12_rad": phi12},
             "gated": True,
             "reference": {
                 "loss": float(oracle.loss),
@@ -402,7 +408,7 @@ def run_case(
                         object_phase=variants[name]["object_phase"],
                     )
         report["aberrations"].append(entry)
-    for offset, setting in enumerate(case.diagnostic_aberrations):
+    for offset, setting in enumerate(case.diagnostic_aberrations_A_rad):
         c10, c12, phi12 = (float(value) for value in setting)
         index = len(settings) + offset
         oracle = run_reference(case, meta, setting, geometry=geometry)
@@ -410,7 +416,7 @@ def run_case(
         report["aberrations"].append(
             {
                 "index": index,
-                "aberrations": {"C10": c10, "C12": c12, "phi12": phi12},
+                "aberrations": {"C10_A": c10, "C12_A": c12, "phi12_rad": phi12},
                 "gated": False,
                 "reference": {"loss": float(oracle.loss)},
                 "float32_floor": _floor_metrics(oracle, floor),
@@ -524,16 +530,16 @@ def print_report(report: dict[str, object], use_metal: bool) -> bool:
     print(
         f"\n=== {report['case']} (BF {report['bf_count']} / documented "
         f"{report['documented_bf_count']}, aperture-active {report['active_bf_count']}, "
-        f"det sampling {_format_float(report['det_sampling_mrad'])} mrad/px, "
-        f"rotation {_format_float(report['rotation_angle_deg'])} deg) ==="
+        f"det sampling {', '.join(_format_float(step) for step in report['detector_sampling_mrad'])} mrad/px (row, col), "
+        f"rotation {_format_float(report['scan_detector_rotation_deg'])} deg) ==="
     )
     for entry in report["aberrations"]:
         aberr = entry["aberrations"]
         reference = entry["reference"]
         tag = "gated" if entry.get("gated", False) else "DIAGNOSTIC (not gated)"
         print(
-            f"  #{entry['index']} [{tag}] C10={_format_float(aberr['C10'])} nm "
-            f"C12={_format_float(aberr['C12'])} nm phi12={_format_float(aberr['phi12'])} rad"
+            f"  #{entry['index']} [{tag}] C10={_format_float(aberr['C10_A'])} A "
+            f"C12={_format_float(aberr['C12_A'])} A phi12={_format_float(aberr['phi12_rad'])} rad"
         )
         print(f"    reference loss={reference['loss']:.10f}")
         floor = entry["float32_floor"]

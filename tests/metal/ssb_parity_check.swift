@@ -24,13 +24,13 @@ private struct CaseFile: Decodable {
   let bf_count: Int
   let documented_bf_count: Int
   let active_bf_count: Int
-  let brightfield_center: [Double]
-  let brightfield_radius_px: Double
+  let bright_field_center_px: [Double]
+  let bright_field_radius_px: Double
   let voltage_kV: Double
   let semiangle_mrad: Double
   let scan_sampling_A: [Double]
-  let det_sampling_mrad: Double
-  let aberrations: [[Double]]
+  let detector_sampling_mrad: [Double]
+  let aberrations_A_rad: [[Double]]
   let metal_geometry: MetalSSBGeometry
   let metal_geometry_unrotated: UnrotatedGeometry
 }
@@ -131,12 +131,12 @@ private struct CaseReport: Encodable {
       semiangleMrad: payload.semiangle_mrad,
       scanSamplingRowAngstroms: payload.scan_sampling_A[0],
       scanSamplingColumnAngstroms: payload.scan_sampling_A[1],
-      detectorSamplingRowMrad: payload.det_sampling_mrad,
-      detectorSamplingColumnMrad: payload.det_sampling_mrad,
-      brightfieldCenterRowPixels: payload.brightfield_center[0],
-      brightfieldCenterColumnPixels: payload.brightfield_center[1],
-      brightfieldRadiusPixels: payload.brightfield_radius_px,
-      excludedDetectorPixels: cal.bf_excluded_detector_pixels)
+      detectorSamplingRowMrad: payload.detector_sampling_mrad[0],
+      detectorSamplingColumnMrad: payload.detector_sampling_mrad[1],
+      brightfieldCenterRowPixels: payload.bright_field_center_px[0],
+      brightfieldCenterColumnPixels: payload.bright_field_center_px[1],
+      brightfieldRadiusPixels: payload.bright_field_radius_px,
+      excludedDetectorPixels: cal.excluded_detector_pixels)
     let rebuilt = try calibration.geometry(
       detectorRows: payload.detector_shape[0],
       detectorColumns: payload.detector_shape[1],
@@ -178,8 +178,8 @@ private struct CaseReport: Encodable {
       let engine = try MetalSSBEngine(
         device: device, geometry: payload.metal_geometry, cacheBudgetBytes: topology.1)
       try engine.prepare(brightfield: source, countType: .uint16)
-      for (index, values) in payload.aberrations.enumerated() {
-        guard values.count == 3 else { fail("aberrations must be C10, C12, phi12") }
+      for (index, values) in payload.aberrations_A_rad.enumerated() {
+        guard values.count == 3 else { fail("aberrations_A_rad must be C10_A, C12_A, phi12_rad") }
         let aberrations = MetalSSBAberrations(
           c10Angstroms: Float(values[0]), c12Angstroms: Float(values[1]),
           phi12Radians: Float(values[2]))
@@ -227,7 +227,7 @@ private struct CaseReport: Encodable {
         let engineAgain = try MetalSSBEngine(
           device: device, geometry: payload.metal_geometry, cacheBudgetBytes: 0)
         try engineAgain.prepare(brightfield: source, countType: .uint16)
-        let values = payload.aberrations[0]
+        let values = payload.aberrations_A_rad[0]
         let repeatResult = try engineAgain.reconstruct(
           aberrations: MetalSSBAberrations(
             c10Angstroms: Float(values[0]), c12Angstroms: Float(values[1]),
@@ -267,10 +267,10 @@ private struct CaseReport: Encodable {
 }
 
 // The widget's browser calibration (`snapshots/cal.json`), as quantem.widget and the parity
-// exporter write it; `bf_excluded_detector_pixels` is the exporter's own addition.
+// exporter write it; `excluded_detector_pixels` is the exporter's own addition.
 private struct CalibrationFile: Decodable {
   let schema: String?
   let bright_field_rows: [Int]
   let bright_field_cols: [Int]
-  let bf_excluded_detector_pixels: [Int]?
+  let excluded_detector_pixels: [Int]?
 }

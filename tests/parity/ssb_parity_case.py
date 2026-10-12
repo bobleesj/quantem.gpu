@@ -36,7 +36,7 @@ __all__ = [
     "CASES",
     "DOCUMENTED_BF_COUNT",
     "DOCUMENTED_CENTER",
-    "DOCUMENTED_DET_SAMPLING_MRAD",
+    "DOCUMENTED_DETECTOR_SAMPLING_MRAD",
     "DOCUMENTED_RADIUS",
     "SSBParityCase",
     "case_root",
@@ -62,7 +62,7 @@ DOCUMENTED_RADIUS = 53.35992814757164
 DOCUMENTED_BF_COUNT = 8937
 #: Frozen detector sampling of the Reference-512 preset
 #: (``tests/parity/fixtures/ssb_reference_512_mps.json``).
-DOCUMENTED_DET_SAMPLING_MRAD = 1.0909090909090908
+DOCUMENTED_DETECTOR_SAMPLING_MRAD = 1.0909090909090908
 
 DEFAULT_RUNS_ROOT = Path.home() / "perf-lab/ssb-audit/parity-runs"
 
@@ -97,12 +97,16 @@ class SSBParityCase:
     scan_region: tuple[int, int, int, int]
     bright_field_center_px: tuple[float, float] = DOCUMENTED_CENTER
     bright_field_radius_px: float = DOCUMENTED_RADIUS
-    det_sampling_mrad: float = DOCUMENTED_DET_SAMPLING_MRAD
+    #: mrad per detector pixel, (row, col)
+    detector_sampling_mrad: tuple[float, float] = (DOCUMENTED_DETECTOR_SAMPLING_MRAD, DOCUMENTED_DETECTOR_SAMPLING_MRAD)
     voltage_kV: float = 300.0
     semiangle_mrad: float = 30.0
-    scan_sampling_A: float = 0.264
-    rotation_angle_deg: float = 158.88268568029937
-    aberrations: tuple[tuple[float, float, float], ...] = (
+    #: Angstrom per scan step, (row, col)
+    scan_sampling_A: tuple[float, float] = (0.264, 0.264)
+    scan_detector_rotation_deg: float = 158.88268568029937
+    #: ``(C10_A, C12_A, phi12_rad)`` per setting, in the Angstrom and radians the oracle and the engines evaluate.
+    #: The public session takes nm and degrees: ``ssb_parity_gate._aberration_dict`` converts before it calls it.
+    aberrations_A_rad: tuple[tuple[float, float, float], ...] = (
         (73.18188621458395, 14.020962948808993, 0.4700365259977606),
         (-42.5, 27.3, 1.13),
     )
@@ -114,7 +118,7 @@ class SSBParityCase:
     #: single-precision floor 1.5e-2 relative L2). No implementation can
     #: reproduce the double-precision objective at that setting; measuring it
     #: as a precision gate would be meaningless either way.
-    diagnostic_aberrations: tuple[tuple[float, float, float], ...] = (
+    diagnostic_aberrations_A_rad: tuple[tuple[float, float, float], ...] = (
         (0.0, 50.0, 0.0),
     )
     #: Name of the case whose exported artifact this case measures, when the
@@ -209,7 +213,7 @@ CASES: dict[str, SSBParityCase] = {
         ),
         scan_region=(0, 128, 0, 128),
         artifact_name="arina-128-full-disk",
-        aberrations=(
+        aberrations_A_rad=(
             (0.0, 0.0, 0.0),
             (55.0, 0.0, 0.0),
             (155.96977, 0.0, 0.0),
@@ -263,7 +267,7 @@ def _declaration(case: SSBParityCase) -> dict[str, object]:
         "scan_shape": [side, side],
         "bf_column_companion_path": "bf_columns.u16",
         "bf_column_encoding": "u16",
-        "bf_excluded_detector_pixels": [
+        "excluded_detector_pixels": [
             int(row) * 192 + int(col)
             for row, col in detector_dead_pixels(case.source)
         ],
@@ -299,7 +303,7 @@ def ensure_case_directory(case: SSBParityCase) -> Path:
     declaration = json.loads((owner / "case.json").read_text(encoding="utf-8"))
     declaration["name"] = case.name
     declaration["description"] = case.description
-    declaration["aberrations"] = [list(values) for values in case.aberrations]
+    declaration["aberrations_A_rad"] = [list(values) for values in case.aberrations_A_rad]
     (root / "case.json").write_text(
         json.dumps(declaration, indent=2, sort_keys=True), encoding="utf-8"
     )
@@ -414,15 +418,13 @@ def export_case(
         "documented_bf_count": DOCUMENTED_BF_COUNT,
         "voltage_kV": case.voltage_kV,
         "semiangle_mrad": case.semiangle_mrad,
-        "scan_sampling_A": case.scan_sampling_A,
-        "rotation_angle_deg": case.rotation_angle_deg,
-        "aberrations": [list(values) for values in case.aberrations],
+        "scan_sampling_A": list(case.scan_sampling_A),
+        "scan_detector_rotation_deg": case.scan_detector_rotation_deg,
+        "aberrations_A_rad": [list(values) for values in case.aberrations_A_rad],
         "counts_dtype": "uint16",
         "counts_max": int(counts.max()),
         "counts_sum": int(np.asarray(counts, dtype=np.int64).sum()),
         "counts_column_sums_exact": [int(value) for value in column_sums],
-        "brightfield_center": list(case.bright_field_center_px),
-        "brightfield_radius_px": float(case.bright_field_radius_px),
         "brightfield_policy": "documented_full_disk_minus_hardware_dead_pixels",
     }
     scientific.update(shared_geometry(case, source))
@@ -576,11 +578,11 @@ def _reciprocal_geometry(
     rows, cols = case.bf_rows_cols
     center = case.bright_field_center_px
     wavelength = electron_wavelength_angstrom(case.voltage_kV)
-    det_rad = case.det_sampling_mrad * 1e-3
-    kx = (rows.astype(np.float64) - center[0]) * det_rad / wavelength
-    ky = (cols.astype(np.float64) - center[1]) * det_rad / wavelength
-    if rotate and case.rotation_angle_deg:
-        angle = np.radians(-float(case.rotation_angle_deg))
+    det_rad_row, det_rad_col = (step * 1e-3 for step in case.detector_sampling_mrad)
+    kx = (rows.astype(np.float64) - center[0]) * det_rad_row / wavelength
+    ky = (cols.astype(np.float64) - center[1]) * det_rad_col / wavelength
+    if rotate and case.scan_detector_rotation_deg:
+        angle = np.radians(-float(case.scan_detector_rotation_deg))
         cos_a, sin_a = np.cos(angle), np.sin(angle)
         kx, ky = kx * cos_a + ky * sin_a, -kx * sin_a + ky * cos_a
     kx64, ky64 = kx.copy(), ky.copy()
@@ -592,7 +594,7 @@ def _reciprocal_geometry(
     inv_r2 = np.where(r2 > 1e-30, 1.0 / np.where(r2 > 0, r2, 1.0), 0.0)
     cos2 = (kx32**2 - ky32**2) * inv_r2
     sin2 = 2.0 * kx32 * ky32 * inv_r2
-    denom = np.sqrt((kx32 * det_rad) ** 2 + (ky32 * det_rad) ** 2) / np.where(
+    denom = np.sqrt((kx32 * det_rad_row) ** 2 + (ky32 * det_rad_col) ** 2) / np.where(
         r > 1e-15, r, 1.0
     )
     edge = np.where(
@@ -630,7 +632,7 @@ def shared_geometry(case: SSBParityCase, source: Path) -> dict[str, object]:
 
     rows, _cols = case.bf_rows_cols
     side = case.scan_side
-    step = (float(case.scan_sampling_A), float(case.scan_sampling_A))
+    step = tuple(float(value) for value in case.scan_sampling_A)
     rotated = _reciprocal_geometry(case, rotate=True)
     unrotated = _reciprocal_geometry(case, rotate=False)
     qx = np.fft.fftfreq(side, step[0]).astype(np.float32)
@@ -647,11 +649,8 @@ def shared_geometry(case: SSBParityCase, source: Path) -> dict[str, object]:
     del counts
     return {
         "wavelength_angstrom": float(electron_wavelength_angstrom(case.voltage_kV)),
-        "det_sampling_mrad": float(case.det_sampling_mrad),
-        "det_sampling_rad": [
-            float(case.det_sampling_mrad * 1e-3),
-            float(case.det_sampling_mrad * 1e-3),
-        ],
+        "detector_sampling_mrad": [float(step) for step in case.detector_sampling_mrad],
+        "detector_sampling_rad": [float(step * 1e-3) for step in case.detector_sampling_mrad],
         "scan_sampling_A": [step[0], step[1]],
         "dc_value_exact": float(dc_exact),
         "dc_value_float32": float(np.float32(dc_exact)),
@@ -700,10 +699,10 @@ def metal_geometry(case_meta: dict[str, object]) -> dict[str, object]:
             float(case_meta["semiangle_mrad"]) * 1e-3
         ).item(),
         "angularSamplingYRadians": np.float32(
-            case_meta["det_sampling_rad"][0]
+            case_meta["detector_sampling_rad"][0]
         ).item(),
         "angularSamplingXRadians": np.float32(
-            case_meta["det_sampling_rad"][1]
+            case_meta["detector_sampling_rad"][1]
         ).item(),
         "dcValue": [
             float(np.float32(case_meta["dc_value_exact"])),
@@ -759,7 +758,7 @@ def reference_products(
         mode="r",
         shape=(rows.size, side, side),
     )
-    det_rad = tuple(float(v) for v in meta["det_sampling_rad"])
+    det_rad = tuple(float(v) for v in meta["detector_sampling_rad"])
     result = ssb_reference(
         np.asarray(counts),
         rows,
