@@ -31,7 +31,7 @@ def _require_mps():
 def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
-    return SSB(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, detector_sampling_mrad=det_mrad,
+    return SSB(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(scan_A, scan_A), detector_sampling_mrad=(det_mrad, det_mrad),
                           scan_detector_rotation_deg=0.0)
 
 

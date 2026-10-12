@@ -82,7 +82,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     result = SSBResult(
         object_wave=cp.exp(1j * cp.arange(64 * 64, dtype=cp.float32).reshape(64, 64) / 4096),
         backend="cuda", voltage_kV=300, semiangle_mrad=30,
-        scan_sampling_A=(0.4, 0.5), aberrations={"C10_nm": 10, "C12_nm": 2, "phi12_deg": math.degrees(0.2)},
+        object_sampling_A=(0.4, 0.5), aberrations={"C10_nm": 10, "C12_nm": 2, "phi12_deg": math.degrees(0.2)},
     )
     phase = result.phase.copy()
     intensity = abs(result.probe()) ** 2
@@ -109,7 +109,7 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     from dataclasses import replace
 
     fine = replace(result, object_wave=cp.repeat(cp.repeat(result.object_wave, 4, axis=0), 4, axis=1),
-                   upsampling_factor=4, scan_sampling_A=(0.1, 0.125))
+                   upsampling_factor=4, object_sampling_A=(0.1, 0.125))
     figure = result.show(compare=fine, axsize=(7, 7))
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 4

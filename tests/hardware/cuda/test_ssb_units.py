@@ -44,7 +44,7 @@ def test_fitted_c10_is_nm(defocus_A):
 
     counts, detector_sampling_mrad = _simulate(defocus_A)
     ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0,
-              scan_sampling_A=0.25, detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=0.0)
+              scan_sampling_A=(0.25, 0.25), detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=0.0)
     ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
     expected_nm = -defocus_A / 10.0          # abTEM C10 = -defocus, Angstrom -> nm
     # validated 2026-09-24: -10.03 and +15.03 for -10 and +15 nm
@@ -61,7 +61,7 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
     from quantem.gpu import SSB
 
     counts, detector_sampling_mrad = _simulate(100.0)
-    with SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
+    with SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
              scan_detector_rotation_deg=0.0) as ssb:
         result = ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
         automatic_sampling = ssb._backend().angular_sampling[0]

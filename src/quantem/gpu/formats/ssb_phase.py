@@ -163,10 +163,10 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
     phase_bytes = phase.tobytes(order="C")
     radius = float(computed["bright_field_radius_px"])
     semiangle = float(ssb["semiangle_mrad"])
-    step = float(ssb["scan_sampling_A"])
+    step_row, step_col = (float(value) for value in ssb["scan_sampling_A"])
     calibration = dict(
         beamEnergyKeV=float(ssb["voltage_kV"]), semiangleMrad=semiangle,
-        scanStepRowAngstroms=step, scanStepColumnAngstroms=step,
+        scanStepRowAngstroms=step_row, scanStepColumnAngstroms=step_col,
         detectorStepRowMrad=semiangle / radius, detectorStepColumnMrad=semiangle / radius,
         centerRow=float(computed["bright_field_center_px"][0]), centerColumn=float(computed["bright_field_center_px"][1]),
         brightfieldRadiusPixels=radius,

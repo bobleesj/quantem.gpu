@@ -140,7 +140,7 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
     ) as loaded:
         result = parallax.run(
             loaded, upsampling_factor=1, fit_aberrations=True,
-            scan_sampling_A=scan_sampling_A, detector_sampling_mrad=1.0,
+            scan_sampling_A=scan_sampling_A, detector_sampling_mrad=(1.0, 1.0),
         )
 
     assert result.aberrations["C10_nm"] == pytest.approx(20.0, rel=0.01)
@@ -243,7 +243,7 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
             loaded,
             bright_field_radius_px=5,
             upsampling_factor=1,
-            scan_sampling_A=0.5,
+            scan_sampling_A=(0.5, 0.5),
             semiangle_mrad=30,
             fit_aberrations=True,
         )
@@ -313,7 +313,7 @@ def _wave_optical_counts(*, c10_nm, c12_nm, phi12, rotation_deg, det_sampling_mr
 
     The specimen is a smooth random phase (0.4 rad rms) on a grid of the detector's real-space pixels, four times
     the scanned field so a turned scan never wraps; the scan steps ``step`` pixels along axes turned by
-    ``rotation_deg`` from the detector axes. Returns ``(counts, scan_sampling_A)``.
+    ``rotation_deg`` from the detector axes. Returns ``(counts, scan_sampling_A)``, the step as a (row, col) pair.
     """
     wavelength = 0.019687489006849
     pixel_A = wavelength / (det * det_sampling_mrad * 1e-3)
@@ -344,7 +344,7 @@ def _wave_optical_counts(*, c10_nm, c12_nm, phi12, rotation_deg, det_sampling_mr
             # 2e5 electrons per probe position
             intensity = np.abs(np.fft.fftshift(np.fft.fft2(exit_wave))) ** 2 / (det * det * np.sum(np.abs(wave) ** 2))
             counts[scan_row, scan_col] = rng.poisson(2e5 * intensity)
-    return counts, pixel_A * step
+    return counts, (pixel_A * step, pixel_A * step)
 
 
 def _write_master(folder: Path, counts: np.ndarray) -> Path:

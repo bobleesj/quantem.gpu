@@ -205,7 +205,7 @@ class MpsSSBBackend:
             num_bright_field_pixels=self._selection.size,
             voltage_kV=self._voltage_kV,
             semiangle_mrad=self._semiangle_mrad,
-            scan_sampling_A=self._scan_sampling,
+            object_sampling_A=tuple(float(value) for value in self._scan_sampling),
             bright_field_center_px=self._selection.bright_field_center_px,
             bright_field_radius_px=self._selection.bright_field_radius_px,
             bright_field_edge_radius_px=self._selection.bright_field_edge_radius_px,

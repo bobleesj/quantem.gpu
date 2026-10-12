@@ -61,7 +61,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator
             result = ssb.reconstruct(correction, upsampling_factor=factor, phase_estimator=estimator,
                                      save_to=tmp_path / f'x{factor}')
             assert result.phase.shape == (128 * factor, 128 * factor)
-            assert result.scan_sampling_A == .3 / factor
+            assert result.object_sampling_A == (.3 / factor, .3 / factor)
             assert result.loss == loss
             assert result.aberrations == correction.aberrations
             assert result.sample_tilt_mrad == correction.sample_tilt_mrad

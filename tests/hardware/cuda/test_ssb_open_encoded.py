@@ -16,7 +16,7 @@ cp = pytest.importorskip("cupy")
 
 # an Arina master of a real 512 x 512 x 192 x 192 acquisition, 300 kV, 30 mrad, 0.264 A scan step, rotation 158.9 deg
 SOURCE = Path(os.environ.get("QUANTEM_SSB_ARINA_MASTER", ""))
-SETTINGS = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, detector_sampling_mrad=0.5554,
+SETTINGS = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.264, 0.264), detector_sampling_mrad=(0.5554, 0.5554),
                 scan_detector_rotation_deg=158.9)
 
 
@@ -79,8 +79,8 @@ def test_open_flattened_rectangular_scan_uses_explicit_shape(tmp_path):
         )
     with SSB.open(
         str(source), backend="cuda", scan_shape=(3, 4),
-        voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.5,
-        detector_sampling_mrad=1.0,
+        voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
+        detector_sampling_mrad=(1.0, 1.0),
     ) as session:
         assert session._data.shape[:2] == (3, 4)
         np.testing.assert_array_equal(

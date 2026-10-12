@@ -34,7 +34,7 @@ class _Backend:
             refine_elapsed=0.4,
             voltage_kV=300.0,
             semiangle_mrad=30.0,
-            scan_sampling_A=(0.2, 0.3),
+            object_sampling_A=(0.2, 0.3),
             bright_field_center_px=(31.5, 32.5),
             bright_field_radius_px=14.0,
             bright_field_edge_radius_px=14.5,
@@ -252,7 +252,7 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
         backend="mps",
         voltage_kV=300.0,
         semiangle_mrad=30.0,
-        scan_sampling_A=0.2,
+        scan_sampling_A=(0.2, 0.2),
     )
 
     import pytest
@@ -357,10 +357,10 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
     result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
-    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
+    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
     write_fit_metadata(tmp_path, settings, result)
     written = json.loads(config.read_text())
-    block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "schema": FIT_SCHEMA, "aberrations": aberrations,
+    block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.5, 0.5], "schema": FIT_SCHEMA, "aberrations": aberrations,
              "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bright_field_radius_px": 48.0}
     assert written == {"human": {"notes": "kept"}, "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
     assert saved_fit(tmp_path) == block

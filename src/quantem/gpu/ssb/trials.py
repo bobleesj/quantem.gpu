@@ -75,8 +75,7 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6))
     panels = list(phase) + [np.zeros_like(phase[0])] * (rows * columns - count)
     titles = [f"Trial {record['trial']}" for record in records] + [""] * (len(panels) - count)
     lower, upper = np.quantile(phase, [.01, .99])
-    sampling = np.asarray(result.scan_sampling_A)
-    bar = {"sampling": float(sampling if sampling.ndim == 0 else sampling[1]),
+    bar = {"sampling": float(result.object_sampling_A[1]),
            "units": "Å", "fontsize": 13}
     show_2d(
         [panels[start:start + columns] for start in range(0, len(panels), columns)],

@@ -105,7 +105,7 @@ def run(arguments, stages) -> None:
 
     def session(data):
         return SSB(data, voltage_kV=arguments.voltage_kV, semiangle_mrad=arguments.semiangle_mrad,
-                   scan_sampling_A=arguments.scan_sampling_A)
+                   scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A))
 
     def prepared(data):
         ssb = session(data)
@@ -161,7 +161,7 @@ def run(arguments, stages) -> None:
             for _ in range(arguments.repeats):
                 result, seconds = timed(lambda: parallax.run(
                     data, bright_field_radius_px=20, upsampling_factor=2, fit_aberrations=True,
-                    scan_sampling_A=arguments.scan_sampling_A, semiangle_mrad=arguments.semiangle_mrad))
+                    scan_sampling_A=(arguments.scan_sampling_A, arguments.scan_sampling_A), semiangle_mrad=arguments.semiangle_mrad))
                 times.append(seconds)
                 hashes.append(f"image {digest(result.image)} density {digest(result.density)} "
                               f"shifts {digest(np.asarray(result.shifts))} aberrations {result.aberrations} "

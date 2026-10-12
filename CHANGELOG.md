@@ -74,6 +74,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
   `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
   radius selects the pixels used and defaults to the detected disk.
+- `SSBResult.scan_sampling_A` becomes `object_sampling_A`: the pixel size of
+  the reconstructed image, always a `[row, col]` pair (it was the scan step
+  divided by the upsampling factor under the scan step's name, a scalar when
+  the two axes were equal). The scan step is `scan_sampling_A` only.
+- `scan_sampling_A` and `detector_sampling_mrad` of `SSB`, `SSB.open`,
+  `SSB.reconstruct_series` and `parallax.run`, and `scan_sampling_A` of
+  `optics.ssb_upsampling_factor`, are `(row, col)` pairs; one number raises
+  `ValueError`. The stored fit block holds the pair.
 - Counts, factors and samplings name their unit: `det_sampling` becomes
   `detector_sampling_mrad` (`SSB`, `SSB.open`, `parallax.run`, the session
   attribute and the result signature); `upsample` becomes `upsampling_factor`

@@ -315,9 +315,6 @@ class CudaSSBBackend:
                 self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"],
             )
         elapsed = self._elapsed_optimize + self._elapsed_refine
-        scan_sampling = self.scan_sampling
-        if isinstance(scan_sampling, tuple) and scan_sampling[0] == scan_sampling[1]:
-            scan_sampling = scan_sampling[0]
         brightfield = self.browser_state().brightfield
         return SSBResult(
             object_wave=object_wave,
@@ -333,7 +330,7 @@ class CudaSSBBackend:
             refine_elapsed=self._elapsed_refine if self._elapsed_refine > 0 else None,
             voltage_kV=self.voltage_kV,
             semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=scan_sampling,
+            object_sampling_A=tuple(float(value) for value in self.scan_sampling),
             bright_field_center_px=brightfield.bright_field_center_px,
             bright_field_radius_px=brightfield.bright_field_radius_px,
             bright_field_edge_radius_px=brightfield.bright_field_edge_radius_px,

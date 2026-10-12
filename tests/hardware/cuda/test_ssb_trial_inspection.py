@@ -60,7 +60,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
         assert loaded.trial_records == records
         override = ssb.reconstruct(loaded, aberrations={'C10_nm': 0.}, upsampling_factor=2)
         assert override.phase.shape == (256, 256)
-        assert override.scan_sampling_A == .15
+        assert override.object_sampling_A == (.15, .15)
         assert override['C10_nm'] == 0.
         assert override['C12_nm'] == loaded['C12_nm']
         assert dict(loaded) == dict(aberrations)
@@ -198,10 +198,10 @@ def test_search_retains_anisotropic_scan_calibration():
     try:
         with SSB(original._data, backend='cuda', voltage_kV=300.0,
                  semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.45),
-                 detector_sampling_mrad=3.0) as ssb:
+                 detector_sampling_mrad=(3.0, 3.0)) as ssb:
             result = ssb.find_aberrations(trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
-            assert result.scan_sampling_A == (0.3, 0.45)
-            assert ssb.reconstruct(result, upsampling_factor=2).scan_sampling_A == (0.15, 0.225)
+            assert result.object_sampling_A == (0.3, 0.45)
+            assert ssb.reconstruct(result, upsampling_factor=2).object_sampling_A == (0.15, 0.225)
     finally:
         original.close()
