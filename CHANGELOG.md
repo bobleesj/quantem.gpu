@@ -277,9 +277,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   1/angstrom (`detector_sampling_inv_A`); 1/Å and 1/µm axes are read too.
 - A caller's `dwell_time_us` and `camera_length_mm` are written to a new
   `.qem`. They were dropped.
-- `dwell_time_us` of an ARINA master is the exposure `count_time`, as the saved
-  copy records it. The loader reported the frame period, so the value changed
-  after a round trip (49.6 to 49.5 us).
+- `dwell_time_us` of an HDF5 master is the exposure `count_time` when the
+  master holds one, else the frame period `frame_time`, for every detector
+  and for a time stored as float32, as the saved copy records it. The loader
+  reported the frame period of every master, so the value of an ARINA master
+  changed after a round trip (49.6 to 49.5 us).
 - After a reciprocal-length calibration override the detector unit read
   `1/Å`; it is `1/angstrom` like every other route (now the key
   `detector_sampling_inv_A`).

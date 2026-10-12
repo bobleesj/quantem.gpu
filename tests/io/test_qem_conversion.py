@@ -126,19 +126,31 @@ def test_arina_units_and_exposure_precede_frame_period():
     assert not qem_metadata.acquisition_metadata((1, 1, 8, 8), source)["electron_microscope"]
 
 
-def test_loader_dwell_time_is_the_value_a_saved_copy_records(tmp_path):
-    """A master's dwell time is its exposure, as the saved copy records it; the loader used to report the frame period."""
+@pytest.mark.parametrize("description,dtype", [
+    (None, "f8"), (b"Dectris EIGER2 Si 4M", "f8"), (b"Dectris ARINA Si", "f4"), (b"Dectris ARINA Si", "f8"),
+])
+def test_loader_dwell_time_is_the_value_a_saved_copy_records(tmp_path, description, dtype):
+    """A master's dwell time is its exposure, as the saved copy records it; the loader used to report the frame period.
+
+    The rule is the same for every detector and for a time stored as float32:
+    such masters reported no dwell time while the rule went through the ARINA record.
+    """
     from quantem.gpu.formats.hdf5.master import get_metadata
 
     master = tmp_path / "scan_master.h5"
     with h5py.File(master, "w") as handle:
         detector = handle.create_group("entry/instrument/detector")
-        detector["description"] = b"Dectris ARINA Si"
-        detector["count_time"] = 4.95e-05
-        detector["frame_time"] = 4.96e-05
+        if description is not None:
+            detector["description"] = description
+        detector.create_dataset("count_time", data=np.dtype(dtype).type(4.95e-05))
+        detector.create_dataset("frame_time", data=np.dtype(dtype).type(4.96e-05))
     loaded = get_metadata(master)
     saved = qem_metadata.recorded_metadata(qem_metadata.acquisition_metadata((1, 1, 8, 8), loaded))
     assert loaded["dwell_time_us"] == saved["dwell_time_us"] == pytest.approx(49.5)
+    # a master without an exposure reports its frame period
+    with h5py.File(master, "r+") as handle:
+        del handle["entry/instrument/detector/count_time"]
+    assert get_metadata(master)["dwell_time_us"] == pytest.approx(49.6)
 
 
 def test_session_file_calibrates_its_own_acquisition(tmp_path):
