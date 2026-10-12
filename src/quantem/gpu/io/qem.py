@@ -382,7 +382,8 @@ def _load_scaled_mps(path, header, start, verbose):
         scientific_metadata=header["scientific_metadata"],
         container=header["container"],
         container_version=header["container_version"],
-        attributes=dict(header.get("attributes", {})),
+        # a merged result's records parsed, under the keys the CPU and HDF5 readers give them
+        **qem_metadata.maped_records(header.get("attributes", {})),
         precision=report,
         conversion_report_origin="saved",
         source_kind="resident",
