@@ -6,6 +6,8 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+## rc17 - 2026-10-12
+
 ### Changed
 
 - A session's `dataset.yaml` is read only at quantem.live's schema
