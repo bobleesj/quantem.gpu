@@ -43,7 +43,7 @@ def choose_trials(records: list[dict], *, best=None, last=None, first=None) -> l
         raise ValueError("Use one positive count: best=5, last=5, or first=5.")
     completed = [record for record in records or () if record.get("stage", "search") == "search" and math.isfinite(record["loss"])]
     if not completed:
-        raise ValueError("No completed trials were recorded; run find_aberrations(trials=200).")
+        raise ValueError("No completed trials were recorded; run find_aberrations(num_trials=200).")
     if best is not None:
         latest = max(record["search"] for record in completed)
         group = [record for record in completed if record["search"] == latest]

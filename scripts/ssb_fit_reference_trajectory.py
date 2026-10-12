@@ -60,7 +60,7 @@ def record(session, *, trials: int, seed: int, batch: int) -> dict:
     Study.tell = recording_tell
     mps_backend.optimize_mps = optimize_with_batch
     try:
-        result = session.find_aberrations(trials=int(trials), seed=int(seed), verbose=False)
+        result = session.find_aberrations(num_trials=int(trials), seed=int(seed), verbose=False)
     finally:
         Study.tell = original_tell
         mps_backend.optimize_mps = original_optimize

@@ -24,7 +24,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         aberrations={"C10_nm": 3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)},
         source_path=source_path,
     )
-    search = dict(trials=0, refinement=None, check_rotation=False, verbose=False)
+    search = dict(num_trials=0, refinement=None, check_rotation=False, verbose=False)
     with SSB(data, **options) as full, SSB(data[64:192, 64:192], **options) as cropped:
         regional = full.find_aberrations(
             scan_region=(64, 192, 64, 192), save_to=tmp_path / "region", **search,

@@ -648,7 +648,7 @@ class SSB:
         *,
         tilt: bool = False,
         scan_region: tuple[int, int, int, int] | None = None,
-        trials: int = 200,
+        num_trials: int = 200,
         refinement: RefineMethod = "nelder-mead",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
@@ -662,7 +662,7 @@ class SSB:
         """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
 
         ``tilt=True`` also fits the sample tilt and a depth spread for a thick, tilted crystal, jointly with the
-        aberrations in one search of ``trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
+        aberrations in one search of ``num_trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
         C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
         not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
         result's ``sample_tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
@@ -706,11 +706,11 @@ class SSB:
 
         if tilt and (search_ranges is not None or refine_lock is not None):
             raise ValueError("search_ranges and refine_lock apply to the standard fit; tilt=True searches its own ranges.")
-        if trials < 0:
-            raise ValueError(f"trials must be non-negative, got {trials}.")
-        if tilt and int(trials) == 0:
+        if num_trials < 0:
+            raise ValueError(f"num_trials must be non-negative, got {num_trials}.")
+        if tilt and int(num_trials) == 0:
             raise ValueError(
-                "tilt=True requires at least one trial; use trials=200, "
+                "tilt=True requires at least one trial; use num_trials=200, "
                 "or reconstruct() to apply known parameters."
             )
         if refinement not in {"nelder-mead", None}:
@@ -722,7 +722,7 @@ class SSB:
             signature = self._result_signature(
                 "find_aberrations",
                 {
-                    "trials": int(trials),
+                    "num_trials": int(num_trials),
                     "refinement": refinement,
                     "search_ranges": search_ranges,
                     "refine_lock": refine_lock,
@@ -782,7 +782,7 @@ class SSB:
                 bright_field_intensity_threshold=self.bright_field_intensity_threshold,
             ) as regional:
                 result = regional.find_aberrations(
-                    tilt=tilt, trials=trials, refinement=refinement,
+                    tilt=tilt, num_trials=num_trials, refinement=refinement,
                     search_ranges=search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
                     seed=seed, verbose=verbose,
@@ -797,14 +797,14 @@ class SSB:
             self.trial_history = list(result.trial_records or ())
             return result
         if tilt:
-            result = self._accept_result(self._fit_tilt(int(trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
+            result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
         else:
             result = self._backend().fit(
                 aberrations=(
                     aberrations_to_engine(self.aberrations)
                     if self._aberrations_explicit else None
                 ),
-                trials=int(trials),
+                trials=int(num_trials),
                 refinement=refinement,
                 search_ranges=search_ranges_to_engine(search_ranges),
                 refine_lock=refine_lock_to_engine(refine_lock),
