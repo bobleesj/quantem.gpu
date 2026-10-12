@@ -265,6 +265,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 - The remote catalogue listed every master that records its scan step as a
   `[row, col]` pair as uncalibrated: it called `float()` on the pair.
   `k_pixel_size_mrad` read a key no reader writes and was always null.
+- The remote server ignored a query parameter it does not declare, so a
+  client of protocol version 1 (`sx`, `sy`, `cx`, `cy`, `det_bin`, `inner`,
+  `outer`) received HTTP 200 with the pattern of scan position (0, 0) or the
+  default mask. Every route now refuses an undeclared parameter with HTTP
+  400, naming the unknown parameters, the protocol version and the
+  parameters the route takes.
 - One master whose `scan_sampling_A`, `detector_sampling_mrad` or
   `detector_sampling_inv_A` attribute is not a pair of numbers (one number
   for both axes, as earlier versions wrote) made `/api/browse/sessions`

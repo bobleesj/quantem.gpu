@@ -16,11 +16,13 @@ from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 
 from quantem.gpu.remote.browse import (
     CENTER_OF_MASS_MODES,
     DETECTOR_MODES,
+    PROTOCOL_NAME,
+    PROTOCOL_VERSION,
     BrowseService,
 )
 from quantem.gpu.remote.saved_ssb import SavedSSBResults
@@ -75,6 +77,7 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
+        dependencies=[Depends(_refuse_undeclared_parameters)],
     )
     app.state.browse_service = browse
 
@@ -243,6 +246,23 @@ def create_app(
 
 
 # --- Responses and request parsing
+
+
+def _refuse_undeclared_parameters(request: Request) -> None:
+    """Refuse a query parameter the matched route does not declare, naming it and the protocol version.
+
+    FastAPI ignores a parameter it does not know. A client of an earlier protocol version (``sx``, ``cx``,
+    ``det_bin``, ``inner``) then received HTTP 200 with the image of the default scan position or mask, which
+    cannot be told from the image it asked for. One dependency of the application covers every route.
+    """
+    declared = {parameter.alias for parameter in request.scope["route"].dependant.query_params}
+    unknown = sorted(set(request.query_params) - declared)
+    if unknown:
+        raise HTTPException(
+            400,
+            f"unknown query parameters {unknown} for {request.url.path}: {PROTOCOL_NAME} protocol version "
+            f"{PROTOCOL_VERSION} takes {sorted(declared)}",
+        )
 
 
 def _image_response(image: np.ndarray, *, cache_control: str = "max-age=300") -> Response:
