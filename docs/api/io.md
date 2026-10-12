@@ -438,10 +438,15 @@ flatfield survive (`quantem.gpu.io.convert.restore_master` writes it back byte f
 byte), records the name, size and SHA-256 of its source files, and fills the scientific metadata (source format, accelerating
 voltage, dwell time) from the Arina master. An Arina master records neither the
 probe semi-angle nor the scan step; when the acquisition's folder has a session
-`dataset.yaml`, its `microscope` voltage and semi-angle and, through the
-`files` entry whose `master` is this file, the scan step of its magnification
-become calibration overrides whose evidence is the session file's SHA-256
-(`quantem.gpu.io.convert.session_calibration`). Readers then report them as the
+`dataset.yaml` of schema `quantem.dataset/2`, its `microscope` voltage and
+semi-angle and the `[row, col]` scan step become calibration overrides whose
+evidence is the session file's SHA-256
+(`quantem.gpu.io.convert.session_calibration`). The step is the one QuantEM Live
+uses: the `files` entry whose `master` is this file, its own `scan_sampling_A`,
+else the `calibrations` row of its `mag`, else `calibrations.default`. A
+`dataset.yaml` of another schema is not read; QuantEM Live's
+`tools/rewrite_dataset_yaml.py` rewrites it once, and the copy is written
+without it with the reason in the conversion notes. Readers then report them as the
 effective `semiangle_mrad`, `voltage_kV` and `scan_sampling_A`, so the copy
 needs no sidecar. The session's values override what the master records (an Arina's
 `photon_energy` field can hold a stale voltage). Only the fields used are attached (`dataset.json`), not the

@@ -531,6 +531,13 @@ probe reference is fitted again, and the physical settings come from
 `dataset.yaml` or the keyword arguments. Evidence:
 [stored fit schema](../maintainer/2026-10-11-stored-fit-schema.md).
 
+`dataset.yaml` is read only at schema `quantem.dataset/2`: the `microscope`
+voltage and semi-angle, the file entry's `scan_detector_rotation_deg` (a
+per-file `0.0` counts) else `microscope.scan_detector_rotation_deg`, and the
+`[row, col]` step of the file entry, its `calibrations` row or
+`calibrations.default`. Another schema raises and names QuantEM Live's
+`tools/rewrite_dataset_yaml.py`.
+
 ## Integration boundary
 
 QuantEM.GPU owns SSB preparation, the exact objective, optimization,

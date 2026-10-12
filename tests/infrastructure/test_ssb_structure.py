@@ -358,8 +358,9 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     reference = raw / "live" / "screen" / "scan_1"
     reference.mkdir(parents=True)
     (raw / "dataset.yaml").write_text(
-        "microscope: {voltage_kV: 300, semiangle_mrad: 30, screen_rotation_deg: 12}\n"
-        "calibrations: {mag: {scan_sampling_A: 0.5}}\n"
+        "schema: quantem.dataset/2\n"
+        "microscope: {voltage_kV: 300, semiangle_mrad: 30, scan_detector_rotation_deg: 12}\n"
+        "calibrations: {mag: {scan_sampling_A: [0.5, 0.5]}}\n"
         "files: {1: {mag: mag}, 2: {mag: mag}}\n"
     )
     earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
@@ -439,6 +440,55 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
     assert (folder / "config.json").read_bytes() == before
 
 
+def test_series_reads_dataset_yaml_schema_2_only(tmp_path) -> None:
+    """Each acquisition's settings from a hand-written quantem.dataset/2 file, in quantem.live's order.
+
+    A per-file scan_detector_rotation_deg wins over the session's even when it is 0.0; the scan step is the file
+    entry's own [row, col] pair, else its magnification's row, else calibrations.default. A file of another schema is
+    refused with the rewrite named: its screen_rotation_deg and one-number step would give no rotation and no step.
+    """
+    import pytest
+
+    from quantem.gpu.ssb.series import acquisition_settings, read_dataset_yaml
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "dataset.yaml").write_text(
+        """
+schema: quantem.dataset/2
+microscope: {voltage_kV: 300, semiangle_mrad: 30, scan_detector_rotation_deg: 12.0}
+calibrations:
+  default: {scan_sampling_A: [0.5, 0.6]}
+  mag_5p1: {scan_sampling_A: [0.373, 0.41]}
+files:
+  1: {mag: mag_5p1, scan_detector_rotation_deg: 0.0}
+  2: {mag: mag_5p1, scan_sampling_A: [0.2, 0.3]}
+  3: {mag: mag_9p9, scan_detector_rotation_deg: 197.5}
+""".strip()
+    )
+    document = read_dataset_yaml(raw)
+    settings = {
+        frame: acquisition_settings(raw / "live" / "screen" / f"scan_{frame}", document, voltage_kV=None,
+                                    semiangle_mrad=None, scan_sampling_A=None, scan_detector_rotation_deg=None)
+        for frame in (1, 2, 3, 4)
+    }
+    assert {frame: value["scan_detector_rotation_deg"] for frame, value in settings.items()} == {1: 0.0, 2: 12.0, 3: 197.5, 4: 12.0}
+    assert {frame: value["scan_sampling_A"] for frame, value in settings.items()} == {
+        1: (0.373, 0.41), 2: (0.2, 0.3), 3: (0.5, 0.6), 4: (0.5, 0.6)}
+    assert all((value["voltage_kV"], value["semiangle_mrad"]) == (300, 30) for value in settings.values())
+
+    (raw / "dataset.yaml").write_text(
+        "schema_version: 1\nmicroscope: {voltage_kV: 300, semiangle_mrad: 30, screen_rotation_deg: 12}\n"
+        "calibrations: {mag: {scan_sampling_A: 0.5}}\nfiles: {1: {mag: mag, rotation_deg: 0.0}}\n"
+    )
+    with pytest.raises(ValueError, match=r"schema None is not read.*quantem\.dataset/2.*tools/rewrite_dataset_yaml\.py"):
+        read_dataset_yaml(raw)
+    (raw / "dataset.yaml").write_text("schema: quantem.dataset/2\ncalibrations: {mag: {scan_sampling_A: 0.5}}\nfiles: {1: {mag: mag}}\n")
+    with pytest.raises(ValueError, match=r"calibrations\.mag\.scan_sampling_A must be \[row, col\]"):
+        acquisition_settings(raw / "live" / "screen" / "scan_1", read_dataset_yaml(raw), voltage_kV=None,
+                             semiangle_mrad=None, scan_sampling_A=None, scan_detector_rotation_deg=None)
+
+
 def test_reconstruct_series_initializes_missing_live_results(
     tmp_path,
     monkeypatch,
@@ -457,12 +507,13 @@ def test_reconstruct_series_initializes_missing_live_results(
     (raw / "scan_1_master.h5").write_bytes(b"raw")
     (raw / "dataset.yaml").write_text(
         """
+schema: quantem.dataset/2
 microscope:
   voltage_kV: 300
   semiangle_mrad: 30
-  screen_rotation_deg: 12
+  scan_detector_rotation_deg: 12
 calibrations:
-  mag: {scan_sampling_A: 0.5}
+  mag: {scan_sampling_A: [0.5, 0.5]}
 files:
   1: {mag: mag}
 """.strip()
