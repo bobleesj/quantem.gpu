@@ -123,7 +123,7 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
     """A wave-optical acquisition with a known probe gives back its C10, C12, phi12 and rotation, in SSB's convention.
 
     The probe is SSB's model (``aperture * exp(-i chi)``) and the scan axes are turned 20 degrees from the
-    detector axes, which SSB describes as ``rotation_angle_deg=-20`` with phi12 in the scan frame (0.4 - 20
+    detector axes, which SSB describes as ``scan_detector_rotation_deg=340`` (-20 degrees) with phi12 in the scan frame (0.4 - 20
     degrees). The fit used to read the detector frequencies off an unshifted FFT grid around a centred disk and
     to scale them with the scan step. Parallax is a geometric-optics estimate of the shifts, so the
     coefficients are held to 1-2 %, not to rounding; the exact algebra is the next test.
@@ -146,7 +146,9 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
     assert result.aberrations["C10_nm"] == pytest.approx(20.0, rel=0.01)
     assert result.aberrations["C12_nm"] == pytest.approx(3.0, rel=0.02)
     assert math.radians(result.aberrations["phi12_deg"]) == pytest.approx(0.4 - np.radians(20.0), abs=0.01)
-    assert result.rotation_angle_deg == pytest.approx(-20.0, abs=0.05)
+    # the same angle as the -20.0 this asserted before the result held its rotation in [0, 360): only the
+    # representation changed, the fitted number did not
+    assert result.scan_detector_rotation_deg == pytest.approx(340.0, abs=0.05)
 
 
 def test_parallax_fit_recovers_exact_shifts_on_a_centred_disk() -> None:
@@ -285,7 +287,7 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
     assert shifts.shape[1] == 2
     assert np.isfinite(shifts).all()
     assert float(np.sqrt(np.max(np.sum(shifts**2, axis=1)))) < 100.0
-    assert np.isfinite([*got.aberrations.values(), got.rotation_angle_deg]).all()
+    assert np.isfinite([*got.aberrations.values(), got.scan_detector_rotation_deg]).all()
 
 
 # ---------------------------------------------------------------------------

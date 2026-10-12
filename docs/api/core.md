@@ -105,7 +105,8 @@ pixel, `(row, col)`) and the detector calibration, `semiangle_mrad` or
 `detector_sampling_mrad` (mrad per detector pixel, `(row, col)`). The fit is
 returned as `ParallaxResult.aberrations` (`C10_nm`
 and `C12_nm` in nm, `phi12_deg` in degrees, scan frame) and
-`ParallaxResult.rotation_angle_deg`, in the units and convention `SSB` takes.
+`ParallaxResult.scan_detector_rotation_deg` (degrees, in [0, 360)), in the
+units and convention `SSB` takes.
 Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
 raises `NotImplementedError`. Persist center, BF radius,
 scan sampling, the semiangle or detector sampling, upsampling factor,

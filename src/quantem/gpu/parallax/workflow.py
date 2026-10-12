@@ -124,7 +124,7 @@ def run(
     >>> data = io.load("scan_master.h5", backend="cuda")
     >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
     >>> ssb = SSB(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
-    ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.rotation_angle_deg)
+    ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.scan_detector_rotation_deg)
     """
     if not isinstance(data, Dataset4dstemGPU):
         raise TypeError(
@@ -181,7 +181,7 @@ def run(
         cp.get_default_memory_pool().free_all_blocks()
         torch.cuda.empty_cache()
 
-        aberrations = rotation_angle_deg = None
+        aberrations = scan_detector_rotation_deg = None
         if fit_aberrations:
             # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
@@ -192,15 +192,18 @@ def run(
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
             # a step per axis: row shifts in row steps, column shifts in column steps
             angles_rad = (pixels - pixels.mean(axis=0)) * np.asarray(detector_sampling_mrad, dtype=np.float64) * 1e-3
-            aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
+            aberrations, signed_rotation_deg = fit_aberrations_from_shifts(
                 cp.asnumpy(global_shifts).astype(np.float64) * np.asarray(scan_sampling_A, dtype=np.float64), angles_rad
             )
+            # The fit keeps its angle within 90 degrees of zero; a result states the physical rotation in
+            # [0, 360), the one range every result and record uses, so -20 reads 340.
+            scan_detector_rotation_deg = signed_rotation_deg % 360.0
         return ParallaxResult(
             image=image,
             density=density,
             shifts=[(float(row), float(col)) for row, col in cp.asnumpy(global_shifts)],
             aberrations=aberrations,
-            rotation_angle_deg=rotation_angle_deg,
+            scan_detector_rotation_deg=scan_detector_rotation_deg,
             elapsed_s=time.perf_counter() - started,
         )
 
