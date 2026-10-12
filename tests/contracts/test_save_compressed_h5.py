@@ -29,6 +29,8 @@ def test_save_compressed_arina_h5_uses_master_data_layout(tmp_path):
         assert handle.attrs["det_bin"] == 1
         group = handle["entry/data"]
         assert group.attrs["n_frames"] == 6
+        # the detector shape is stored once, on the root
+        assert "detector_shape" not in group.attrs and "det_shape" not in group.attrs
         assert isinstance(group.get("data_000001", getlink=True), h5py.ExternalLink)
         assert isinstance(group.get("data_000002", getlink=True), h5py.ExternalLink)
 

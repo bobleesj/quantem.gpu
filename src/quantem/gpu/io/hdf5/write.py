@@ -502,10 +502,10 @@ def _write_master_file(
         if scan_shape is not None:
             data_group.attrs["scan_shape"] = tuple(int(size) for size in scan_shape)
             master.attrs["scan_shape"] = tuple(int(size) for size in scan_shape)
-        data_group.attrs["detector_shape"] = detector_shape
         data_group.attrs["dtype"] = str(np.dtype(dtype))
         data_group.attrs["n_frames"] = n_frames
         data_group.attrs["data_file_frame_ranges"] = np.asarray(frame_ranges, dtype=np.uint64)
+        # stored once, on the root, which the master reader reads; no reader takes it from entry/data
         master.attrs["detector_shape"] = detector_shape
         master.attrs["dtype"] = str(np.dtype(dtype))
         master.attrs["n_frames"] = n_frames
