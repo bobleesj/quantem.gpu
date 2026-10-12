@@ -46,7 +46,8 @@ opened is not visited. The measurements are in the
 `quantem.gpu.optics` exports `wavelength_A_from_kV(voltage_kV)`, the
 relativistic electron wavelength in Å for an accelerating voltage in kV.
 `quantem.gpu.optics.physics.ssb_upsampling_factor` chooses the SSB output grid
-from voltage (kV), convergence semi-angle (mrad), and scan step (Å).
+from voltage (kV), convergence semi-angle (mrad), and scan step (Å, a
+`(row, col)` pair).
 
 (screening-products)=
 ## Screening products
@@ -65,7 +66,7 @@ print(products.metadata["timing"])
 
 `screening.prepare` builds or reopens derived detector and DPC products and
 returns `ScreeningResult`. Its public controls are `backend`, `scan_shape`, an
-optional fixed `rotation_angle_deg`, the cache policy (`cache`, `cache_dir`,
+optional fixed `scan_detector_rotation_deg` with `detector_transposed`, the cache policy (`cache`, `cache_dir`,
 `refresh`), and the number of rotation search steps. A cache miss loads the
 acquisition once into encoded CUDA or MPS storage; a cache hit needs no GPU. A
 cache reopen is not a raw HDF5 load. The raw source remains the scientific
@@ -91,20 +92,22 @@ independently assembled native or browser product set as a
 from quantem.gpu import io, parallax
 
 data = io.load("scan_master.h5", backend="cuda")
-result = parallax.run(data, fit_aberrations=True, scan_sampling_A=0.5, semiangle_mrad=30)
+result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
 ```
 
 `parallax.run` takes the acquisition `io.load` returns on CUDA and returns
 `ParallaxResult`. The acquisition stays encoded: only the bright-field pixels
 are read, in bounded bands of scan rows, as exact counts. The bright-field
-center `(row, column)` and radius are fitted from the mean diffraction pattern
+center `bright_field_center_px` `(row, column)` and radius
+`bright_field_radius_px` are fitted from the mean diffraction pattern
 unless given. `fit_aberrations=True` needs `scan_sampling_A` (Å per scan
-pixel) and the detector calibration, `semiangle_mrad` or `det_sampling` (mrad
-per detector pixel). The fit is returned as `ParallaxResult.aberrations` (`C10`
-and `C12` in nm, `phi12` in radians, scan frame) and
+pixel, `(row, col)`) and the detector calibration, `semiangle_mrad` or
+`detector_sampling_mrad` (mrad per detector pixel, `(row, col)`). The fit is
+returned as `ParallaxResult.aberrations` (`C10_nm`
+and `C12_nm` in nm, `phi12_deg` in degrees, scan frame) and
 `ParallaxResult.rotation_angle_deg`, in the units and convention `SSB` takes.
 Parallax runs on CUDA only; an acquisition on an Apple GPU (MPS)
-raises `NotImplementedError`. Persist center, BF and sampling radii,
+raises `NotImplementedError`. Persist center, BF radius,
 scan sampling, the semiangle or detector sampling, upsampling factor,
 aberration-fit choice, and package revision with the result.
 

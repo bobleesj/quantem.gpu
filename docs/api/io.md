@@ -365,7 +365,7 @@ from quantem.gpu import detector, io
 
 loaded = io.load("STEM SI.dm4", backend="cuda")
 pattern = loaded[0, 0]
-bright_field = detector.bf(loaded, center=(431.5, 431.5), radius=126)
+bright_field = detector.bf(loaded, bright_field_center_px=(431.5, 431.5), bright_field_radius_px=126)
 # Close after all operations and viewers finish using the acquisition.
 loaded.close()
 ```

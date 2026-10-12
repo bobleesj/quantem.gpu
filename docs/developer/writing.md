@@ -127,7 +127,7 @@ Put a space between a numerical value and its unit: `200 kV`, `5 nm`, `12 ms`,
 and `6 GiB`. Unit symbols are not pluralized and do not end with a period.
 
 Use a unit-bearing public name when an unlabeled scalar would be ambiguous or
-could silently change scientific meaning, for example `rotation_angle_deg`,
+could silently change scientific meaning, for example `scan_detector_rotation_deg`,
 `scan_pixel_size_nm`, or `timeout_s`. Otherwise, state the unit in the
 docstring, result metadata, and provenance. Distinguish:
 

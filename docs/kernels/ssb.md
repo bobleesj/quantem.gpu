@@ -380,7 +380,7 @@ workflow = SSB.open(
     backend="mps",
     voltage_kV=300,
     semiangle_mrad=21.4,
-    scan_sampling_A=0.5,
+    scan_sampling_A=(0.5, 0.5),
 )
 result = workflow.find_aberrations(save_to="results/ssb")
 ```
@@ -389,7 +389,7 @@ For known aberrations, reconstruct without fitting:
 
 ```python
 result = workflow.reconstruct(
-    aberrations={"C10": 12.5, "C12": 3.0, "phi12": 0.25},
+    aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
     save_to="results/fixed-ssb",
 )
 ```

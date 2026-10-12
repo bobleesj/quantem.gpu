@@ -157,7 +157,8 @@ values.
 
 Provenance records source identity and loaded geometry, detector bin/crop,
 source and moment dtypes, detector mask/checksum, detector and scan calibration,
-rotation search configuration, selected `rotation_deg`, `use_transpose`,
+rotation search configuration, selected `scan_detector_rotation_mod180_deg`
+(or the given `scan_detector_rotation_deg`), `detector_transposed`,
 backend/device, and package revision. The phase convention and FFT
 normalization are part of the result contract, not display choices.
 
@@ -184,11 +185,11 @@ def rotate_dpc_reference(
     com_column_R: torch.Tensor,
     angle_deg: float,
     *,
-    use_transpose: bool = False,
+    detector_transposed: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Rotate a scan-shaped CoM field without changing spatial axes."""
-    source_row_R = com_column_R if use_transpose else com_row_R
-    source_column_R = com_row_R if use_transpose else com_column_R
+    source_row_R = com_column_R if detector_transposed else com_row_R
+    source_column_R = com_row_R if detector_transposed else com_column_R
     angle_rad = torch.deg2rad(
         torch.tensor(angle_deg, device=com_row_R.device, dtype=torch.float32)
     )
@@ -199,7 +200,7 @@ def rotate_dpc_reference(
     return aligned_row_R, aligned_column_R
 ```
 
-Here `use_transpose` means testing the exchanged vector components; it does not
+Here `detector_transposed` means testing the exchanged vector components; it does not
 transpose the scan image. The readable automatic search evaluates the same
 central-difference curl objective for both component orderings:
 
@@ -238,16 +239,16 @@ def select_dpc_rotation_reference(
         dtype=torch.float32,
     )
     candidates: list[tuple[torch.Tensor, float, bool]] = []
-    for use_transpose in (False, True):
+    for detector_transposed in (False, True):
         for angle_deg in angles_deg:
             dpc_row_R, dpc_column_R = rotate_dpc_reference(
                 com_row_R,
                 com_column_R,
                 float(angle_deg),
-                use_transpose=use_transpose,
+                detector_transposed=detector_transposed,
             )
             candidates.append(
-                (curl_score(dpc_row_R, dpc_column_R), float(angle_deg), use_transpose)
+                (curl_score(dpc_row_R, dpc_column_R), float(angle_deg), detector_transposed)
             )
 
     _, selected_angle_deg, selected_transpose = min(
@@ -258,7 +259,7 @@ def select_dpc_rotation_reference(
         com_row_R,
         com_column_R,
         selected_angle_deg,
-        use_transpose=selected_transpose,
+        detector_transposed=selected_transpose,
     )
     return selected_row_R, selected_column_R, selected_angle_deg, selected_transpose
 ```
@@ -320,13 +321,13 @@ A complete readable reference is therefore:
 
 ```python
 com_row_R, com_column_R = center_of_mass_reference(counts_R_k, mask_k)
-aligned_row_R, aligned_column_R, angle_deg, use_transpose = (
+aligned_row_R, aligned_column_R, angle_deg, detector_transposed = (
     select_dpc_rotation_reference(com_row_R, com_column_R)
 )
 
 # The production contract swaps the selected components back before integration.
-gradient_row_R = aligned_column_R if use_transpose else aligned_row_R
-gradient_column_R = aligned_row_R if use_transpose else aligned_column_R
+gradient_row_R = aligned_column_R if detector_transposed else aligned_row_R
+gradient_column_R = aligned_row_R if detector_transposed else aligned_column_R
 phase_R = integrate_idpc_reference(gradient_row_R, gradient_column_R)
 ```
 
@@ -342,7 +343,7 @@ loaded = io.load("scan_master.h5", backend="auto")
 result = dpc.run(loaded)
 
 print(result.com_row.shape, result.com_col.shape)
-print(result.rotation_deg, result.use_transpose)
+print(result.scan_detector_rotation_mod180_deg, result.detector_transposed)
 ```
 
 ## Optimization model
@@ -369,5 +370,5 @@ same device until the final result is requested.
 | Native Metal and FFT | `Metal4DSTEMKernels` and `MetalImageFFT` |
 
 Parity reports compare `com_row`, `com_col`, centered/rotated DPC components,
-`rotation_deg`, transpose convention, and iDPC phase. They include asymmetric
+`scan_detector_rotation_mod180_deg`, transpose convention, and iDPC phase. They include asymmetric
 detector patterns and rectangular scans specifically to catch row/column swaps.

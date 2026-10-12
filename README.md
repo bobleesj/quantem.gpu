@@ -187,8 +187,8 @@ from matplotlib.patches import Circle
 
 mean_dp = detector.mean(data)
 center, radius = detector.fit_probe(mean_dp)
-bf = detector.bf(data, center=center, radius=radius)
-adf = detector.adf(data, center=center, radius=radius)
+bf = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
+adf = detector.adf(data, bright_field_center_px=center, bright_field_edge_radius_px=radius)
 
 fig, axes = show_2d(
     [[mean_dp, bf], [mean_dp, adf]],
@@ -219,14 +219,14 @@ or paper; the numerical BF/ADF arrays remain unchanged.
 Override only what you need; the other value is fitted automatically:
 
 ```python
-bf = detector.bf(data, radius=45)  # radius in detector pixels
-bf = detector.bf(data, center=(94, 96))  # (row, column)
-adf = detector.adf(data, inner=60, outer=85, unit="px")  # custom ring
+bf = detector.bf(data, bright_field_radius_px=45)  # radius in detector pixels
+bf = detector.bf(data, bright_field_center_px=(94, 96))  # (row, column)
+adf = detector.adf(data, inner_radius_px=60, outer_radius_px=85)  # custom ring
 ```
 
 Overrides affect only that call. Later calls without overrides keep using
-the automatic fit. Use `unit="mrad"` for collection angles when convergence
-semi-angle calibration is available in `data.metadata`.
+the automatic fit. Use `inner_angle_mrad` and `outer_angle_mrad` for collection
+angles when convergence semi-angle calibration is available in `data.metadata`.
 
 <details>
 <summary>Inspect the mean diffraction pattern and fitted values</summary>
@@ -403,7 +403,7 @@ ssb = SSB.open(
     "acquisition.qem",
     voltage_kV=300,  # kV
     semiangle_mrad=30,  # mrad
-    scan_sampling_A=0.264,  # Å per scan pixel
+    scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, column)
 )
 aberrations = ssb.find_aberrations()
 result = ssb.reconstruct(aberrations)
@@ -447,18 +447,18 @@ from standard SSB. A fitted depth spread is not a thickness measurement.
 ```python
 aberrations.report()  # parameter table with units
 aberrations.trials  # trial parameter/score DataFrame
-aberrations["C10"]  # defocus, nm
-aberrations["C12"]  # twofold astigmatism, nm
-aberrations["phi12"]  # astigmatism angle, radians
-aberrations.tilt_mrad  # sample tilt (row, column), mrad; None if not fitted
+aberrations["C10_nm"]  # defocus, nm
+aberrations["C12_nm"]  # twofold astigmatism, nm
+aberrations["phi12_deg"]  # astigmatism angle, degrees
+aberrations.sample_tilt_mrad  # sample tilt (row, column), mrad; None if not fitted
 aberrations.depth_spread_nm  # model depth spread, nm; None if not fitted
 result.phase  # radians
-result.scan_sampling_A  # Å per output pixel
+result.object_sampling_A  # Å per output pixel, (row, column)
 probe = result.probe()  # centered complex real-space model probe
 probe_fourier = result.probe(space="fourier")  # centered complex reciprocal-space probe
 result.probe_sampling_A  # Å per probe pixel, (row, column)
-result = ssb.reconstruct(aberrations, upsample=4)  # CUDA: same parameters, finer output
-adjusted = ssb.reconstruct(aberrations, aberrations={"C10": 12.5})  # nm
+result = ssb.reconstruct(aberrations, upsampling_factor=4)  # CUDA: same parameters, finer output
+adjusted = ssb.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ssb.close()
 ```
 
