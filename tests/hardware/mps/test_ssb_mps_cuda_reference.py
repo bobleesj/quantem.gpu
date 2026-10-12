@@ -1837,7 +1837,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     )
 
     optimized = workflow.find_aberrations(
-        trials=0,
+        num_trials=0,
         refinement=None,
         verbose=False,
     )
