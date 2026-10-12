@@ -80,6 +80,18 @@ new `rcN` heading when that rc is published to TestPyPI.
 - The axis word in arguments is `col`: `extract_diffraction_device(scan_row,
   scan_column)` of encoded residents becomes `(scan_row, scan_col)`, and
   regions are documented as `(row_start, row_stop, col_start, col_stop)`.
+- The WebGPU SSB engine (`ssb/webgpu`) follows the same vocabulary. Its
+  calibration must carry `"schema": "quantem.ssb-calibration/2"`, `num_bf`
+  becomes `num_bright_field_pixels` and `rotation_angle_deg` becomes
+  `scan_detector_rotation_deg` (the `rotation_angle_rad` fallback is removed).
+  `reconstruct(c10, c12, phi12)` names its engine units `(c10A, c12A,
+  phi12Rad)`; options `upsample`, `bfCount`, `rotationDeg` become
+  `upsamplingFactor`, `numBrightFieldPixels`, `scanDetectorRotationDeg`;
+  `higherOrder` keys `<name>_mag` and `<name>_angle` become `<name>_A` and
+  `phi<nm>_deg`; sample options `tiltRowMrad`, `tiltColMrad`, `thickness`
+  become `sampleTiltMrad` (`[row, col]`) and `depthSpreadA`. The result's
+  `rotationDeg` and `bfCount` become `scanDetectorRotationDeg` and
+  `numBrightFieldPixels`.
 - The remote server's HTTP parameters name their axis and unit (protocol
   version 2): `sx`, `sy` become `scan_row`, `scan_col`; `cx`, `cy` become
   `center_col_px`, `center_row_px`; `column_start`, `column_stop` become

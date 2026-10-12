@@ -16,10 +16,10 @@ function syntheticFolder(n: number, radius: number) {
   const numBf = kx.length, plane = n * n;
   const frequency = Array.from({ length: n }, (_, i) => (i < n / 2 ? i : i - n) / n);
   const cal = {
-    num_bf: numBf, g_shape: [numBf, n, n], wavelength_A: wavelength, semiangle_rad: (radius + 0.25) * angularSampling,
+    schema: "quantem.ssb-calibration/2", num_bright_field_pixels: numBf, g_shape: [numBf, n, n], wavelength_A: wavelength, semiangle_rad: (radius + 0.25) * angularSampling,
     angular_sampling_rad: [angularSampling, angularSampling], dc_value: [plane * 3.0, 0], kx_bf: kx, ky_bf: ky,
     qx_1d: frequency, qy_1d: frequency, aperture_k: kx.map(() => 1), alpha_k2: kx.map(() => 0), cos2phi_k: kx.map(() => 1),
-    sin2phi_k: kx.map(() => 0), rotation_angle_deg: 0, precision: { real_dtype: "float32", complex_dtype: "complex64" },
+    sin2phi_k: kx.map(() => 0), scan_detector_rotation_deg: 0, precision: { real_dtype: "float32", complex_dtype: "complex64" },
   };
   let state = 12345;
   const counts = Uint16Array.from({ length: numBf * plane }, () => { state = (state * 1103515245 + 12345) >>> 0; return state >>> 28; });
@@ -72,14 +72,14 @@ export async function runSsbBfSubsetParity(): Promise<Record<string, number>> {
   const out: Record<string, number> = { numBf: folder.numBf };
   try {
     await full.prepareBfCount(folder.numBf);
-    await full.reconstruct(...aberrations, { bfCount: folder.numBf });
+    await full.reconstruct(...aberrations, { numBrightFieldPixels: folder.numBf });
     for (const count of [100, 300]) {
       const subset = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
       try {
         await subset.prepareBfCount(count);
         for (const computeLoss of [false, true]) {
-          const reused = await full.reconstruct(...aberrations, { bfCount: count, computeLoss });
-          const fresh = await subset.reconstruct(...aberrations, { bfCount: count, computeLoss });
+          const reused = await full.reconstruct(...aberrations, { numBrightFieldPixels: count, computeLoss });
+          const fresh = await subset.reconstruct(...aberrations, { numBrightFieldPixels: count, computeLoss });
           const difference = maxPhaseDifference(reused.phase, fresh.phase);
           const label = `bf${count}${computeLoss ? "-loss" : ""}`;
           out[label] = difference;
@@ -92,11 +92,11 @@ export async function runSsbBfSubsetParity(): Promise<Record<string, number>> {
         }
       } finally { subset.close(); }
     }
-    const back = await full.reconstruct(...aberrations, { bfCount: folder.numBf, computeLoss: true });
+    const back = await full.reconstruct(...aberrations, { numBrightFieldPixels: folder.numBf, computeLoss: true });
     const reference = new WebGPUSSBBackend(folder.cal, { kind: "bf_columns", json: folder.source });
     try {
       await reference.prepareBfCount(folder.numBf);
-      const again = await reference.reconstruct(...aberrations, { bfCount: folder.numBf, computeLoss: true });
+      const again = await reference.reconstruct(...aberrations, { numBrightFieldPixels: folder.numBf, computeLoss: true });
       out.fullAgain = maxPhaseDifference(back.phase, again.phase);
       if (out.fullAgain !== 0 || back.loss !== again.loss) throw new Error("returning to the full BF count changed the image");
     } finally { reference.close(); }

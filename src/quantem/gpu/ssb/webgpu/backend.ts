@@ -202,7 +202,7 @@ export async function readSSBFolderBytes(path: string): Promise<Uint8Array> {
 
 type SsbCal = {
   gpu_memory_gb?: number;
-  num_bf: number;
+  num_bright_field_pixels: number;
   g_shape: [number, number, number];
   wavelength_A: number;
   semiangle_rad: number;
@@ -216,8 +216,8 @@ type SsbCal = {
   alpha_k2: number[];
   cos2phi_k: number[];
   sin2phi_k: number[];
-  rotation_angle_deg?: number;
-  rotation_angle_rad?: number;
+  scan_detector_rotation_deg?: number;
+  schema?: string;
   precision: {
     real_dtype: "float32";
     complex_dtype: "complex64";
@@ -291,8 +291,8 @@ export type WebGPUSSBResult = {
   width: number;
   height: number;
   gpuMs: number;
-  bfCount: number;
-  rotationDeg: number;
+  numBrightFieldPixels: number;
+  scanDetectorRotationDeg: number;
   loss: number | null;
   adapterInfo: string;
   softwareAdapter: boolean;
@@ -965,7 +965,7 @@ function uniformU32(device: GPUDevice, values: number[], label: string): GPUBuff
 }
 
 function sampleThickness(sample?: WebGPUSampleOptions): number {
-  return sample && Number.isFinite(sample.thickness) && sample.thickness > 0 ? sample.thickness : 0;
+  return sample && Number.isFinite(sample.depthSpreadA) && sample.depthSpreadA > 0 ? sample.depthSpreadA : 0;
 }
 
 // Params uniform: 22 original words + thickness, tilt_row_rad, tilt_col_rad + 3 pad words (multiple of 16 bytes); the last
@@ -978,11 +978,11 @@ function makeParams(
   c10: number,
   c12: number,
   phi12Deg: number,
-  bfCount?: number,
+  numBrightFieldPixels?: number,
   bfOffset = 0,
   chunkBf?: number,
   computeLoss = true,
-  activeBfCount = bfCount,
+  activeBfCount = numBrightFieldPixels,
   fullAberration = false,
   sample?: WebGPUSampleOptions,
 ): ArrayBuffer {
@@ -991,7 +991,7 @@ function makeParams(
   const u = new Uint32Array(b);
   const f = new Float32Array(b);
   const phi12Rad = phi12Deg * Math.PI / 180;
-  u[0] = Math.max(1, Math.min(cal.num_bf, Math.round(bfCount || cal.num_bf)));
+  u[0] = Math.max(1, Math.min(cal.num_bright_field_pixels, Math.round(numBrightFieldPixels || cal.num_bright_field_pixels)));
   u[1] = n; u[2] = plane; u[3] = Math.round(bfOffset);
   f[4] = cal.wavelength_A;
   f[5] = cal.semiangle_rad;
@@ -1014,8 +1014,8 @@ function makeParams(
   // Thick-sample depth average (Angstrom, radians). Absent or non-positive thickness leaves the standard SSB gamma.
   const thickness = sampleThickness(sample);
   f[22] = thickness;
-  f[23] = thickness > 0 ? (sample!.tiltRowMrad || 0) * 1e-3 : 0;
-  f[24] = thickness > 0 ? (sample!.tiltColMrad || 0) * 1e-3 : 0;
+  f[23] = thickness > 0 ? (sample!.sampleTiltMrad[0] || 0) * 1e-3 : 0;
+  f[24] = thickness > 0 ? (sample!.sampleTiltMrad[1] || 0) * 1e-3 : 0;
   return b;
 }
 
@@ -1049,8 +1049,9 @@ function packAberrations(
   let active = false;
   const ho = higherOrder || {};
   for (const [name, index, hasAngle] of HO_LAYOUT) {
-    const mag = Number(ho[hasAngle ? `${name}_mag` : name] || 0);
-    const angleDeg = hasAngle ? Number(ho[`${name}_angle`] || 0) : 0;
+    // magnitudes in Angstrom, azimuths in degrees: C21_A with phi21_deg, C30_A alone
+    const mag = Number(ho[`${name}_A`] || 0);
+    const angleDeg = hasAngle ? Number(ho[`phi${name.slice(1)}_deg`] || 0) : 0;
     mags[index] = mag;
     angles[index] = angleDeg * Math.PI / 180;
     if (mag !== 0) active = true;
@@ -1067,14 +1068,12 @@ function packAberrations(
 }
 
 function baseRotationDeg(cal: SsbCal): number {
-  if (Number.isFinite(cal.rotation_angle_deg)) return Number(cal.rotation_angle_deg);
-  if (Number.isFinite(cal.rotation_angle_rad)) return Number(cal.rotation_angle_rad) * 180 / Math.PI;
-  return 0;
+  return Number.isFinite(cal.scan_detector_rotation_deg) ? Number(cal.scan_detector_rotation_deg) : 0;
 }
 
-function rotateBfCoord(cal: SsbCal, kx: number, ky: number, rotationDeg?: number): [number, number] {
-  if (rotationDeg == null || !Number.isFinite(rotationDeg)) return [kx, ky];
-  const delta = (Number(rotationDeg) - baseRotationDeg(cal)) * Math.PI / 180;
+function rotateBfCoord(cal: SsbCal, kx: number, ky: number, scanDetectorRotationDeg?: number): [number, number] {
+  if (scanDetectorRotationDeg == null || !Number.isFinite(scanDetectorRotationDeg)) return [kx, ky];
+  const delta = (Number(scanDetectorRotationDeg) - baseRotationDeg(cal)) * Math.PI / 180;
   if (Math.abs(delta) < 1e-12) return [kx, ky];
   const cosA = Math.cos(-delta);
   const sinA = Math.sin(-delta);
@@ -1100,10 +1099,10 @@ function bfGeometryFromCoord(cal: SsbCal, kx: number, ky: number): [number, numb
   return [alpha2, cos2phi, sin2phi, Math.max(0, Math.min(1, edge))];
 }
 
-function collectActiveBfIndices(cal: SsbCal, numBf: number, rotationDeg?: number): Uint32Array {
+function collectActiveBfIndices(cal: SsbCal, numBf: number, scanDetectorRotationDeg?: number): Uint32Array {
   const active: number[] = [];
-  for (let i = 0; i < cal.num_bf; i++) {
-    const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[i], cal.ky_bf[i], rotationDeg);
+  for (let i = 0; i < cal.num_bright_field_pixels; i++) {
+    const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[i], cal.ky_bf[i], scanDetectorRotationDeg);
     const [, , , aperture] = bfGeometryFromCoord(cal, kx, ky);
     if (aperture !== 0) active.push(i);
   }
@@ -1118,7 +1117,7 @@ function collectActiveBfIndices(cal: SsbCal, numBf: number, rotationDeg?: number
   return selected;
 }
 
-function packGeometry(cal: SsbCal, indices: Uint32Array, rotationDeg?: number): { geom: Float32Array; trig: Float32Array } {
+function packGeometry(cal: SsbCal, indices: Uint32Array, scanDetectorRotationDeg?: number): { geom: Float32Array; trig: Float32Array } {
   const count = Math.max(1, indices.length);
   const geom = new Float32Array(count * 4);
   const trig = new Float32Array(count * 2);
@@ -1127,7 +1126,7 @@ function packGeometry(cal: SsbCal, indices: Uint32Array, rotationDeg?: number): 
   }
   for (let i = 0; i < indices.length; i++) {
     const src = indices[i];
-    const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[src], cal.ky_bf[src], rotationDeg);
+    const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[src], cal.ky_bf[src], scanDetectorRotationDeg);
     const [alpha2, cos2phi, sin2phi, aperture] = bfGeometryFromCoord(cal, kx, ky);
     geom[i * 4 + 0] = kx;
     geom[i * 4 + 1] = ky;
@@ -1210,7 +1209,7 @@ async function buildBfColumnGqkChunks(
   onProgress?: WebGPUProgressHandler,
 ): Promise<{ gqkChunks: GPUBuffer[]; chunkBfCounts: number[]; residentBytes: number }> {
   const t0 = performance.now();
-  const emit = progressEmitter(onProgress, activeSourceIndices.length, cal.num_bf, t0);
+  const emit = progressEmitter(onProgress, activeSourceIndices.length, cal.num_bright_field_pixels, t0);
   if (!source.url) throw new Error("BF-column source is missing a URL.");
   if (Number(source.plane) !== plane) {
     throw new Error(`BF-column source plane ${source.plane} does not match ${n}x${n}=${plane}.`);
@@ -1418,6 +1417,10 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       );
     }
     this.cal = JSON.parse(calJson) as SsbCal;
+    // Earlier calibrations name other quantities (num_bf, rotation_angle_deg below 180); none is reinterpreted.
+    if (this.cal.schema !== "quantem.ssb-calibration/2") {
+      throw new Error(`SSB calibration schema ${JSON.stringify(this.cal.schema)} is not read; export the ShowPtycho folder again.`);
+    }
     if (
       this.cal.precision?.real_dtype !== "float32"
       || this.cal.precision?.complex_dtype !== "complex64"
@@ -1443,11 +1446,11 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   get readyLabel(): string {
-    return `WebGPU SSB ready: ${this.n}x${this.n}, ${this.cal.num_bf} BF pixels, detector BF columns`;
+    return `WebGPU SSB ready: ${this.n}x${this.n}, ${this.cal.num_bright_field_pixels} BF pixels, detector BF columns`;
   }
 
   async prepare(): Promise<void> {
-    await this.prepareBfCount(this.cal.num_bf);
+    await this.prepareBfCount(this.cal.num_bright_field_pixels);
   }
 
   async fit(
@@ -1467,41 +1470,41 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
 
   private emitProgress(progress: Omit<WebGPULoadProgress, "totalBf">): void {
     this.onProgress?.({
-      totalBf: this.cal.num_bf,
+      totalBf: this.cal.num_bright_field_pixels,
       elapsedMs: undefined,
       ...progress,
     });
   }
 
-  private async setup(requiredBfCount = this.cal.num_bf, rotationDeg?: number): Promise<void> {
+  private async setup(requiredBfCount = this.cal.num_bright_field_pixels, scanDetectorRotationDeg?: number): Promise<void> {
     const capacity = this.clampBfCount(requiredBfCount);
-    if (this.initialized && this.residentCovers(capacity, rotationDeg)) {
-      this.updateGeometry(capacity, rotationDeg);
+    if (this.initialized && this.residentCovers(capacity, scanDetectorRotationDeg)) {
+      this.updateGeometry(capacity, scanDetectorRotationDeg);
       return;
     }
     if (this.setupPromise) {
       await this.setupPromise;
-      if (this.initialized && this.residentCovers(capacity, rotationDeg)) {
-        this.updateGeometry(capacity, rotationDeg);
+      if (this.initialized && this.residentCovers(capacity, scanDetectorRotationDeg)) {
+        this.updateGeometry(capacity, scanDetectorRotationDeg);
         return;
       }
     }
-    this.setupPromise = this.setupOnce(capacity, rotationDeg);
+    this.setupPromise = this.setupOnce(capacity, scanDetectorRotationDeg);
     try {
       await this.setupPromise;
     } finally {
       this.setupPromise = null;
     }
-    this.updateGeometry(capacity, rotationDeg);
+    this.updateGeometry(capacity, scanDetectorRotationDeg);
   }
 
   // The resident G(q,k) answer `count` BF pixels when they hold every pixel of its strided subset
   // (collectActiveBfIndices): a full load serves every smaller count without rebuilding.
-  private residentCovers(count: number, rotationDeg?: number): boolean {
+  private residentCovers(count: number, scanDetectorRotationDeg?: number): boolean {
     if (this.loadedBfCount < count) return false;
     if (this.loadedBfCount === count) return true;
     const loaded = new Set(this.buffers!.activeSourceIndices);
-    return collectActiveBfIndices(this.cal, count, rotationDeg).every((index) => loaded.has(index));
+    return collectActiveBfIndices(this.cal, count, scanDetectorRotationDeg).every((index) => loaded.has(index));
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -1546,8 +1549,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.geometryBfCount = null;
   }
 
-  private async setupOnce(capacity: number, rotationDeg?: number): Promise<void> {
-    if (this.initialized && this.residentCovers(capacity, rotationDeg)) return;
+  private async setupOnce(capacity: number, scanDetectorRotationDeg?: number): Promise<void> {
+    if (this.initialized && this.residentCovers(capacity, scanDetectorRotationDeg)) return;
     if (this.initialized || this.buffers) this.resetGpuBuffers();
     const setupT0 = performance.now();
     const n = this.n;
@@ -1555,7 +1558,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.emitProgress({
       stage: "device",
       message: "Starting WebGPU for ptychography review",
-      detail: `Preparing ${capacity}/${this.cal.num_bf} BF pixels at ${n}x${n}`,
+      detail: `Preparing ${capacity}/${this.cal.num_bright_field_pixels} BF pixels at ${n}x${n}`,
       current: 0,
       total: capacity,
       percent: 0,
@@ -1576,8 +1579,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       );
     }
     this.device = device;
-    const nbf = Math.max(1, Math.min(this.cal.num_bf, Math.round(capacity)));
-    let activeSourceIndices = collectActiveBfIndices(this.cal, nbf, rotationDeg);
+    const nbf = Math.max(1, Math.min(this.cal.num_bright_field_pixels, Math.round(capacity)));
+    let activeSourceIndices = collectActiveBfIndices(this.cal, nbf, scanDetectorRotationDeg);
     // Full-BF scientific runs must use the identical detector evidence on
     // every backend. A memory budget may reject a run, but it must never
     // silently replace the exact objective with a uniformly strided subset.
@@ -1602,7 +1605,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     const dispatchCount = Math.ceil(activeBfCount / storageChunkCapacity);
     const partialGroups = Math.ceil(activeBfCount / REDUCE_BF_GROUP);
     console.log(
-      `[ssb] WebGPU SSB setup start ${nbf}/${this.cal.num_bf} BF `
+      `[ssb] WebGPU SSB setup start ${nbf}/${this.cal.num_bright_field_pixels} BF `
       + `${(expectedBytes / 1e6).toFixed(1)} MB source; `
       + `${nonzeroBfCount}/${nbf} active aperture BF `
       + `${(activeBytes / 1e6).toFixed(1)} MB upload `
@@ -1616,13 +1619,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.emitProgress({
       stage: "pipeline",
       message: "Allocating WebGPU BF reducer buffers",
-      detail: `${activeBfCount}/${this.cal.num_bf} active BF pixels, ${(activeBytes / 1e6).toFixed(1)} MB working data`,
+      detail: `${activeBfCount}/${this.cal.num_bright_field_pixels} active BF pixels, ${(activeBytes / 1e6).toFixed(1)} MB working data`,
       current: 1,
       total: 5,
       percent: 8,
       activeBf: activeBfCount,
     });
-    const { geom, trig } = packGeometry(this.cal, activeIndices, rotationDeg);
+    const { geom, trig } = packGeometry(this.cal, activeIndices, scanDetectorRotationDeg);
     const maxStorage = device.limits.maxStorageBufferBindingSize || 0;
     const maxBuffer = device.limits.maxBufferSize || 0;
     const largestStorage = Math.max(storageChunkCapacity * plane * 8, storageChunkCapacity * plane * 4);
@@ -1794,18 +1797,18 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.bindGroups = bindGroups;
     this.initialized = true;
     this.loadedBfCount = nbf;
-    this.geometryRotationDeg = rotationDeg == null || !Number.isFinite(rotationDeg) ? baseRotationDeg(this.cal) : Number(rotationDeg);
+    this.geometryRotationDeg = scanDetectorRotationDeg == null || !Number.isFinite(scanDetectorRotationDeg) ? baseRotationDeg(this.cal) : Number(scanDetectorRotationDeg);
     this.geometryBfCount = null;
     console.log(
-      `[ssb] WebGPU SSB setup ready ${nbf}/${this.cal.num_bf} BF `
+      `[ssb] WebGPU SSB setup ready ${nbf}/${this.cal.num_bright_field_pixels} BF `
       + `(${nonzeroBfCount} active) in ${(performance.now() - setupT0).toFixed(1)} ms`,
     );
     this.emitProgress({
       stage: "ready",
       message: "WebGPU ptychography reducer ready",
-      detail: `${nbf}/${this.cal.num_bf} BF pixels prepared in ${(performance.now() - setupT0).toFixed(0)} ms`,
+      detail: `${nbf}/${this.cal.num_bright_field_pixels} BF pixels prepared in ${(performance.now() - setupT0).toFixed(0)} ms`,
       current: nbf,
-      total: this.cal.num_bf,
+      total: this.cal.num_bright_field_pixels,
       percent: 100,
       activeBf: activeBfCount,
       elapsedMs: performance.now() - setupT0,
@@ -1813,8 +1816,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   private clampBfCount(requested: number | undefined): number {
-    if (requested == null || !Number.isFinite(requested)) return this.cal.num_bf;
-    return Math.max(1, Math.min(this.cal.num_bf, Math.round(requested)));
+    if (requested == null || !Number.isFinite(requested)) return this.cal.num_bright_field_pixels;
+    return Math.max(1, Math.min(this.cal.num_bright_field_pixels, Math.round(requested)));
   }
 
   async prepareBfCount(count: number): Promise<number> {
@@ -1828,16 +1831,16 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   // Write the resident BF geometry for this rotation. A count below the resident one keeps its
   // strided subset: every other resident BF pixel gets aperture 0, which each kernel skips, and
   // the mean divides by `count`.
-  private updateGeometry(count: number, rotationDeg?: number): void {
+  private updateGeometry(count: number, scanDetectorRotationDeg?: number): void {
     const device = this.device;
     const buffers = this.buffers;
     if (!device || !buffers) return;
-    const requested = rotationDeg == null || !Number.isFinite(rotationDeg) ? baseRotationDeg(this.cal) : Number(rotationDeg);
+    const requested = scanDetectorRotationDeg == null || !Number.isFinite(scanDetectorRotationDeg) ? baseRotationDeg(this.cal) : Number(scanDetectorRotationDeg);
     const subset = count < this.loadedBfCount ? count : null;
     if (this.geometryRotationDeg != null && Math.abs(requested - this.geometryRotationDeg) < 1e-9 && this.geometryBfCount === subset) return;
     const { geom, trig } = packGeometry(this.cal, buffers.activeSourceIndices, requested);
     if (subset !== null) {
-      const keep = new Set(collectActiveBfIndices(this.cal, subset, rotationDeg));
+      const keep = new Set(collectActiveBfIndices(this.cal, subset, scanDetectorRotationDeg));
       buffers.activeSourceIndices.forEach((index, i) => { if (!keep.has(index)) geom[i * 4 + 3] = 0; });
     }
     device.queue.writeBuffer(buffers.bfGeom, 0, geom as unknown as BufferSource);
@@ -1846,10 +1849,10 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     this.geometryBfCount = subset;
   }
 
-  async reconstruct(c10: number, c12: number, phi12: number,
+  async reconstruct(c10A: number, c12A: number, phi12Rad: number,
     options: WebGPUReconstructionOptions = {}): Promise<WebGPUSSBResult> {
-    const factor = options.upsample ?? 1;
-    if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsample must be 1, 2, 4, or 8.");
+    const factor = options.upsamplingFactor ?? 1;
+    if (![1, 2, 4, 8].includes(factor)) throw new Error("WebGPU SSB upsamplingFactor must be 1, 2, 4, or 8.");
     if (factor > 1 && options.phaseEstimator === "mean_phase") {
       throw new Error("Upsampling uses phase_of_mean; keep the diagnostic loss on the native grid.");
     }
@@ -1857,14 +1860,14 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       // Loss is a native-grid diagnostic. It must not change the displayed estimator on release.
       const wantsLoss = options.computeLoss !== false;
       const native = wantsLoss || factor === 1
-        ? await this.reconstructNative(c10, c12, phi12, {...options, computeLoss: wantsLoss}) : null;
+        ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: wantsLoss}) : null;
       if (options.phaseEstimator === "mean_phase") return native!;
       let result: WebGPUSSBResult;
       if (factor === 1) {
         result = wantsLoss
-          ? await this.reconstructNative(c10, c12, phi12, {...options, computeLoss: false}) : native!;
+          ? await this.reconstructNative(c10A, c12A, phi12Rad, {...options, computeLoss: false}) : native!;
       } else {
-        result = await this.reconstructOutput(c10, c12, phi12, factor, options);
+        result = await this.reconstructOutput(c10A, c12A, phi12Rad, factor, options);
       }
       return {...result, loss: native?.loss ?? null,
         gpuMs: result.gpuMs + (wantsLoss ? native?.gpuMs ?? 0 : 0)};
@@ -1873,8 +1876,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
 
   private async reconstructOutput(c10: number, c12: number, phi12: number,
     factor: number, options: WebGPUReconstructionOptions): Promise<WebGPUSSBResult> {
-    const bfCount = this.clampBfCount(options.bfCount);
-    await this.setup(bfCount, options.rotationDeg);
+    const numBrightFieldPixels = this.clampBfCount(options.numBrightFieldPixels);
+    await this.setup(numBrightFieldPixels, options.scanDetectorRotationDeg);
     const device = this.device!, buffers = this.buffers!, n = this.n * factor;
     const thick = sampleThickness(options.sample) > 0;
     if (n * 8 > device.limits.maxComputeWorkgroupStorageSize) {
@@ -1917,19 +1920,19 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     for (let i = 0; i < buffers.gqkChunks.length; i++) {
       const count = buffers.chunkBfCounts[i];
       device.queue.writeBuffer(plan.chunks[i], 0, makeParams(this.cal, n, c10, c12, phi12 * 180 / Math.PI,
-        bfCount, offset, count, false, buffers.activeBfCount, aberrations.active, options.sample));
+        numBrightFieldPixels, offset, count, false, buffers.activeBfCount, aberrations.active, options.sample));
       const pass = enc.beginComputePass(); pass.setPipeline(plan.sum); pass.setBindGroup(0, plan.sumGroups[i]);
       pass.dispatchWorkgroups(Math.min(65535, Math.ceil(n * n / 256)), Math.ceil(n * n / (256 * 65535))); pass.end(); offset += count;
     }
     device.queue.writeBuffer(plan.params, 0, makeParams(this.cal, n, c10, c12, phi12 * 180 / Math.PI,
-      bfCount, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample));
+      numBrightFieldPixels, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample));
     for (const [pipeline, bind] of [[plan.rows, plan.rowGroup], [plan.cols, plan.colGroup]] as const) {
       const pass = enc.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, bind);
       pass.dispatchWorkgroups(1, n); pass.end();
     }
     device.queue.submit([enc.finish()]); await device.queue.onSubmittedWorkDone();
     return {phase: await readF32(device, plan.phase, n * n), width: n, height: n,
-      gpuMs: performance.now() - started, bfCount, rotationDeg: options.rotationDeg ?? baseRotationDeg(this.cal),
+      gpuMs: performance.now() - started, numBrightFieldPixels, scanDetectorRotationDeg: options.scanDetectorRotationDeg ?? baseRotationDeg(this.cal),
       loss: null, adapterInfo: getGPUInfo(), softwareAdapter: isSoftwareGPUAdapter()};
   }
 
@@ -1941,13 +1944,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   ): Promise<WebGPUSSBResult> {
     // Engine units: Angstrom and radians. The scientist-facing widget converts nm at its boundary.
     const phi12Deg = phi12 * 180 / Math.PI;
-    const bfCount = this.clampBfCount(options.bfCount);
-    const computeLoss = options.computeLoss ?? bfCount === this.cal.num_bf;
-    const rotationDeg = options.rotationDeg == null || !Number.isFinite(options.rotationDeg)
+    const numBrightFieldPixels = this.clampBfCount(options.numBrightFieldPixels);
+    const computeLoss = options.computeLoss ?? numBrightFieldPixels === this.cal.num_bright_field_pixels;
+    const scanDetectorRotationDeg = options.scanDetectorRotationDeg == null || !Number.isFinite(options.scanDetectorRotationDeg)
       ? baseRotationDeg(this.cal)
-      : Number(options.rotationDeg);
+      : Number(options.scanDetectorRotationDeg);
     {
-      await this.setup(bfCount, rotationDeg);
+      await this.setup(numBrightFieldPixels, scanDetectorRotationDeg);
       const device = this.device;
       const buffers = this.buffers;
       const pipelines = this.pipelines;
@@ -1975,7 +1978,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           device.queue.writeBuffer(
             buffers.paramsChunks[chunkIndex],
             0,
-            makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, bfOffset, chunkBf, false, buffers.activeBfCount, aberrations.active, options.sample),
+            makeParams(this.cal, this.n, c10, c12, phi12Deg, numBrightFieldPixels, bfOffset, chunkBf, false, buffers.activeBfCount, aberrations.active, options.sample),
           );
           const pass = enc.beginComputePass({ label: "ssb ssb obj sum" });
           pass.setPipeline(thick ? pipelines.objSumThick : pipelines.objSum);
@@ -1986,7 +1989,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         device.queue.writeBuffer(
           buffers.params,
           0,
-          makeParams(this.cal, this.n, c10, c12, phi12Deg, bfCount, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample),
+          makeParams(this.cal, this.n, c10, c12, phi12Deg, numBrightFieldPixels, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample),
         );
         let pass = enc.beginComputePass({ label: "ssb ssb obj fft rows" });
         pass.setPipeline(pipelines.objFftRows);
@@ -2007,8 +2010,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           width: this.n,
           height: this.n,
           gpuMs: gpuMsFast,
-          bfCount,
-          rotationDeg,
+          numBrightFieldPixels,
+          scanDetectorRotationDeg,
           loss: null,
           adapterInfo: getGPUInfo(),
           softwareAdapter: isSoftwareGPUAdapter(),
@@ -2027,7 +2030,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
             c10,
             c12,
             phi12Deg,
-            bfCount,
+            numBrightFieldPixels,
             bfOffset,
             chunkBf,
             computeLoss,
@@ -2061,7 +2064,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           c10,
           c12,
           phi12Deg,
-          bfCount,
+          numBrightFieldPixels,
           0,
           1,
           computeLoss,
@@ -2091,8 +2094,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         width: this.n,
         height: this.n,
         gpuMs,
-        bfCount,
-        rotationDeg,
+        numBrightFieldPixels,
+        scanDetectorRotationDeg,
         loss,
         adapterInfo: getGPUInfo(),
         softwareAdapter: isSoftwareGPUAdapter(),
