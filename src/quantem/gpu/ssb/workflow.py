@@ -54,6 +54,7 @@ from quantem.gpu.ssb.units import (
     higher_order_arrays,
     result_from_engine,
     refine_lock_to_engine,
+    sampling_pair,
     search_ranges_to_engine,
     validate_aberrations,
 )
@@ -80,18 +81,6 @@ def _on_scan_gpu(method):
         with nullcontext() if self._device is None else cp.cuda.Device(self._device):
             return method(self, *args, **kwargs)
     return on_scan_gpu
-
-
-def _pair(name: str, value) -> tuple[float, float]:
-    """A sampling as the (row, col) Python floats the backends read.
-
-    One number for both axes is refused: the scan step of an acquisition is a [row, col] pair everywhere it is
-    stored, and a scalar read back from a record cannot be told from a pair that lost an axis. NumPy values
-    (``np.float32``) become Python floats, which the backends index safely.
-    """
-    if np.ndim(value) != 1 or len(value) != 2:
-        raise ValueError(f"{name} is a [row, col] pair; got {value!r}. Pass ({value!r}, {value!r}) for equal axes.")
-    return (float(value[0]), float(value[1]))
 
 
 class SSB:
@@ -224,8 +213,8 @@ class SSB:
         self._scan_shape = scan_shape
         self.voltage_kV = float(voltage_kV)
         self.semiangle_mrad = float(semiangle_mrad)
-        self.scan_sampling_A = _pair("scan_sampling_A", scan_sampling_A)
-        self.detector_sampling_mrad = None if detector_sampling_mrad is None else _pair("detector_sampling_mrad", detector_sampling_mrad)
+        self.scan_sampling_A = sampling_pair("scan_sampling_A", scan_sampling_A)
+        self.detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
         self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0

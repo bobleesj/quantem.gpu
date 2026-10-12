@@ -197,6 +197,36 @@ def test_detector_bins_around_the_disk_centre_are_whole() -> None:
     assert len(sizes) > 50 and (sizes == 9).all()
 
 
+def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs(tmp_path) -> None:
+    """A fractional radius selects the pixels inside it, and a sampling is a (row, col) pair as for SSB.
+
+    The radius went through ``int()``, so 4.9 selected the pixels of radius 4. One number for a sampling was
+    broadcast to both axes, although SSB refuses it and the two workflows are documented with one rule.
+    """
+    _cuda()
+    from quantem.gpu import io, parallax
+
+    counts, center, _ = _synthetic_parallax_counts((24, 24), (32, 32), radius=6)
+    rows, cols = np.indices(counts.shape[2:])
+    distance_squared = (rows - center[0]) ** 2 + (cols - center[1]) ** 2
+    with io.load(
+        _write_master(tmp_path, counts), backend="cuda",
+        scan_shape=counts.shape[:2], verbose=False,
+    ) as loaded:
+        selected = {
+            radius: len(parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsampling_factor=1).shifts)
+            for radius in (4, 4.9)
+        }
+        assert selected == {radius: int((distance_squared <= radius**2).sum()) for radius in (4, 4.9)}
+        assert selected[4.9] > selected[4]
+        for samplings in (
+            {"scan_sampling_A": 0.5, "detector_sampling_mrad": (1.0, 1.0)},
+            {"scan_sampling_A": (0.5, 0.5), "detector_sampling_mrad": 1.0},
+        ):
+            with pytest.raises(ValueError, match=r"is a \[row, col\] pair"):
+                parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=4, fit_aberrations=True, **samplings)
+
+
 def test_parallax_rejects_data_it_cannot_reconstruct() -> None:
     from quantem.gpu import parallax
     from quantem.gpu.io.dataset import Dataset4dstemGPU

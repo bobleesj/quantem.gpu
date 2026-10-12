@@ -24,6 +24,19 @@ HIGHER_ORDER = tuple(f"{name}_nm" for name in HIGHER_ORDER_SLOTS) + tuple(
 )
 
 
+def sampling_pair(name: str, value) -> tuple[float, float]:
+    """A sampling as the (row, col) Python floats the backends read.
+
+    One number for both axes is refused: the scan step of an acquisition is a [row, col] pair everywhere it is
+    stored, and a scalar read back from a record cannot be told from a pair that lost an axis. NumPy values
+    (``np.float32``) become Python floats, which the backends index safely. SSB and parallax both read their
+    samplings through here, so one rule and one message cover both.
+    """
+    if np.ndim(value) != 1 or len(value) != 2:
+        raise ValueError(f"{name} is a [row, col] pair; got {value!r}. Pass ({value!r}, {value!r}) for equal axes.")
+    return (float(value[0]), float(value[1]))
+
+
 def validate_aberrations(aberrations: dict[str, float] | None, *, higher_order: bool = False) -> dict[str, float]:
     """Return a complete, owned C10_nm/C12_nm/phi12_deg mapping (nm, nm, degrees); None means no aberrations.
 
