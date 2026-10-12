@@ -45,7 +45,12 @@ in `scientific_metadata`, which remains the stored authority.
   A reader never takes calibration from the retained `metadata` block. Files
   written before this revision hold copies there (`scan_sampling_A`,
   `voltage_kV`, `detector_sampling` with `detector_sampling_unit`); they stay
-  readable and the copies are not read.
+  readable and the copies are not read. One of those values still says
+  something no other field does: a retained `origin` without `units` is in
+  the unit the detector step was supplied in, and `detector_sampling_unit`
+  names it (`rad`, `1/nm`). A reader that returns `origin` scales it by the
+  factor that unit has to the stored one (1000 for `rad`, 0.1 for `1/nm`), the
+  factor applied to the step when it was recorded.
 - Writing: every flat key is accepted for a quantity the source did not
   record. The unit-less pair `detector_sampling` with `detector_sampling_unit`
   is refused with a message that names the two detector keys.
@@ -81,6 +86,16 @@ Writers do not store:
 Other keys a caller adds are kept unchanged. Readers apply the same rule to
 older files, so a reopened copy never returns a stale stored value for one of
 these keys.
+
+`source_dtype`, `file_counts_exact` and `working_counts_exact` describe the
+original acquisition: the dtype it was recorded in, and whether the stored
+counts are its counts. They are not statements about a later load. A reader
+returns them as the header states them and adds none where the header has
+none, so a copy of a file stores the same values as the file. (A file whose
+uint32 source was stored as uint16 keeps `source_dtype: "uint32"`; a file
+whose flagged pixels were replaced keeps `file_counts_exact: false`.) For the
+scaled codec the stored values are codes, never counts: its readers report
+`file_counts_exact: false` whatever the block holds.
 
 `hot_pixel_correction` is a record with `schema`
 (`"quantem.hot-pixel-correction/2"`), `method` (`median`, `zero`, `none`),

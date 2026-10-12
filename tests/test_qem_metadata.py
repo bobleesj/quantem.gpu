@@ -238,6 +238,46 @@ def test_retained_record_holds_no_second_copy_and_no_loader_state():
     assert retained_metadata({"hot_pixel_correction": {"version": 1, "applied": True}}) == {}
 
 
+@pytest.mark.parametrize("backend", ["cpu", "gpu"])
+def test_copy_of_a_qem_keeps_the_evidence_of_its_original_acquisition(tmp_path, backend):
+    """A loaded ``.qem`` reports the dtype and exactness its header states, and a copy stores the same values.
+
+    The header's ``source_dtype``, ``file_counts_exact`` and ``working_counts_exact`` say how the stored counts
+    relate to the original acquisition. Readers replaced them with what the load knew (the stored dtype, exact),
+    so a copy of this file said its uint32 source was uint16 and its zeroed flag markers were the file's counts.
+    """
+    import os
+
+    import numpy as np
+
+    from quantem.gpu import io
+    from quantem.gpu.formats.qem.validation import read_envelope
+
+    if backend == "gpu":
+        backend = os.environ.get("QEM_TEST_BACKEND")
+        if backend not in ("cuda", "mps"):
+            pytest.skip("Set QEM_TEST_BACKEND=cuda or mps to copy the file on a GPU.")
+    evidence = dict(source_dtype="uint32", dtype="uint16", working_counts_exact=True, file_counts_exact=False,
+                    flagged_markers_stored_as_zero=4)
+    counts = np.random.default_rng(3).poisson(3, (2, 3, 8, 8)).astype(np.uint16)
+    original, copy_path = tmp_path / "original.qem", tmp_path / "copy.qem"
+    io.save(original, counts, backend="cpu", verbose=False, metadata=evidence)
+    stored = read_envelope(original)[0]["metadata"]
+    assert {key: stored[key] for key in evidence} == evidence
+    with io.load(original, backend=backend, verbose=False) as loaded:
+        assert {key: loaded.metadata[key] for key in evidence} == evidence
+        io.save(copy_path, loaded, backend=backend, verbose=False)
+    copied = read_envelope(copy_path)[0]["metadata"]
+    assert {key: copied[key] for key in evidence} == evidence
+    # a header that states none of them gains none on the way through a reader
+    plain, plain_copy = tmp_path / "plain.qem", tmp_path / "plain-copy.qem"
+    io.save(plain, counts, backend="cpu", verbose=False)
+    with io.load(plain, backend=backend, verbose=False) as loaded:
+        io.save(plain_copy, loaded, backend=backend, verbose=False)
+    for key in ("source_dtype", "file_counts_exact", "working_counts_exact"):
+        assert key not in read_envelope(plain)[0]["metadata"] and key not in read_envelope(plain_copy)[0]["metadata"]
+
+
 def test_public_calibration_is_authoritative_for_independent_writers():
     scientific = acquisition_metadata((2, 3, 16, 16), {
         "scan_sampling_A": [1, 2], "voltage_kV": 300,
