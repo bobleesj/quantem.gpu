@@ -66,6 +66,10 @@ def higher_order_arrays(aberrations: dict[str, float]) -> tuple[np.ndarray, np.n
 
     Slots 0 and 1 repeat C10, C12 and phi12, as the full aberration kernel reads all 14 coefficients from these
     arrays. A mapping with only the three primary keys returns None, so it keeps the two-term kernels.
+
+    The magnitudes stay in nm here because the session still decides from them which kernel runs; ``SSB.preview``
+    multiplies all 14 by ``ENGINE_PER_NM`` once, in float32, before it calls ``preview`` on either backend. CUDA
+    and MPS therefore both receive Angstrom (their ``magnitudes_A`` arguments), never these nm values.
     """
     if not any(name in aberrations for name in HIGHER_ORDER):
         return None

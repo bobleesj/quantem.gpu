@@ -49,6 +49,60 @@ def test_higher_orders_are_named_keys_packed_in_krivanek_order():
     np.testing.assert_array_equal(angles, expected_angles)
 
 
+@pytest.mark.parametrize("compute_loss", [False, True])
+def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monkeypatch, compute_loss):
+    """The session converts nm to Angstrom once, before the backend: for one public mapping CUDA and MPS are handed
+    the same 14 magnitudes in Angstrom and azimuths in radians (recorded at ``preview`` of a backend double).
+
+    MPS then reads slots 0 and 1 as its engine C10 and C12 (``_three_param_from_full``, its ``magnitudes_A``) and
+    refuses a nonzero higher order, so no nm value reaches an MPS kernel.
+    """
+    from types import SimpleNamespace
+
+    from quantem.gpu.ssb import workflow
+    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
+
+    received = {}
+
+    class Recorder:
+        def __init__(self, name):
+            self.name = name
+
+        def preview(self, aberrations, *, compute_loss, higher_order_magnitudes, higher_order_angles):
+            received[self.name] = (aberrations, higher_order_magnitudes, higher_order_angles)
+            return np.zeros((2, 2), np.float32), 0.5 if compute_loss else None
+
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
+    # a CUDA session hands back a device array; the double returns a host one
+    monkeypatch.setattr(workflow, "cp", SimpleNamespace(asnumpy=np.asarray))
+
+    def session(name):
+        ssb = workflow.SSB(np.zeros((2, 2, 3, 3), np.uint16), voltage_kV=300.0, semiangle_mrad=30.0,
+                           scan_sampling_A=(0.2, 0.2), detector_sampling_mrad=(1.0, 1.0))
+        ssb.backend = name          # the branch preview takes; the arrays recorded below are the backend boundary
+        monkeypatch.setattr(ssb, "_backend", lambda recorder=Recorder(name): recorder)
+        return ssb
+
+    public = PUBLIC | {"C21_nm": 4.0, "phi21_deg": 30.0, "C30_nm": 1000.0}
+    for name in ("cuda", "mps"):
+        session(name).preview(public, compute_loss=compute_loss)
+    (cuda_coefs, cuda_magnitudes, cuda_angles), (mps_coefs, mps_magnitudes, mps_angles) = received["cuda"], received["mps"]
+    assert cuda_coefs == mps_coefs == {"C10": -80.0, "C12": 40.0, "phi12": math.radians(30.0)}
+    np.testing.assert_array_equal(mps_magnitudes, cuda_magnitudes)
+    np.testing.assert_array_equal(mps_angles, cuda_angles)
+    assert mps_magnitudes.dtype == np.float32 and mps_magnitudes.shape == (14,)
+    # C10 -8 nm, C12 4 nm, C21 4 nm, C30 1000 nm as Angstrom in slots 0, 1, 2 and 4
+    np.testing.assert_array_equal(mps_magnitudes[[0, 1, 2, 4]], np.float32([-80.0, 40.0, 40.0, 10000.0]))
+    np.testing.assert_array_equal(mps_angles[[1, 2]], np.float32([math.radians(30.0)] * 2))
+    with pytest.raises(NotImplementedError, match="C10/C12/phi12 only"):
+        MpsSSBBackend._three_param_from_full(mps_magnitudes, mps_angles)
+
+    # a higher-order key at zero still takes the 14-slot path on MPS: its kernel coefficients are those Angstrom
+    session("mps").preview(PUBLIC | {"C21_nm": 0.0}, compute_loss=compute_loss)
+    _, magnitudes, angles = received["mps"]
+    assert MpsSSBBackend._three_param_from_full(magnitudes, angles) == (-80.0, 40.0, float(np.float32(math.radians(30.0))))
+
+
 def test_search_ranges_reach_the_engines_in_angstrom_under_angstrom_names():
     """The engines' range keys name their unit: C10_A, C12_A. They were C10_nm and C12_nm while holding Angstrom."""
     engine = search_ranges_to_engine({"C10_nm": (-20.0, 20.0), "C12_nm": 4.0, "phi12_deg": [-90.0, 90.0]})
