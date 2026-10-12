@@ -38,8 +38,8 @@ MODES = [
     ("ADF", 1.0, 2.0),
     ("HAADF", 1.5, 3.0),
     ("DF", 1.0, 4.0),
-    ("CoMx", 0.0, 1.0),
-    ("CoMy", 0.0, 1.0),
+    ("CoMcol", 0.0, 1.0),
+    ("CoMrow", 0.0, 1.0),
     ("CoMmag", 0.0, 1.0),
     ("DPC", 0.0, 1.0),
     ("iCoM", 0.0, 1.0),
@@ -91,9 +91,9 @@ def _dense_products(counts, *, det_bin, scan_bin, crop):
     com_row, com_column = session.center_of_mass()
     products = {}
     for mode, inner, outer in MODES:
-        if mode == "CoMy":
+        if mode == "CoMrow":
             products[mode] = com_row
-        elif mode == "CoMx":
+        elif mode == "CoMcol":
             products[mode] = com_column
         elif mode in {"CoMmag", "DPC"}:
             products[mode] = np.hypot(com_row, com_column).astype(np.float32)
@@ -139,14 +139,15 @@ def _image(response):
 def test_binned_and_cropped_products_equal_dense_route(acquisition, det_bin, scan_bin, crop):
     _service, client, master, counts = acquisition
     expected = _dense_products(counts, det_bin=det_bin, scan_bin=scan_bin, crop=crop)
-    plan = {"session": SESSION, "file": master.name, "det_bin": det_bin, "scan_bin": scan_bin}
+    plan = {"session": SESSION, "file": master.name, "detector_bin": det_bin, "scan_bin": scan_bin}
     if crop is not None:
-        plan.update(dict(zip(("row_start", "row_stop", "column_start", "column_stop"), crop)))
+        plan.update(dict(zip(("row_start", "row_stop", "col_start", "col_stop"), crop)))
 
     for mode, inner, outer in MODES:
         response = client.get(
             "/api/browse/realspace",
-            params={**plan, "mode": mode, "inner": inner, "outer": outer, "ensure_resident": True},
+            params={**plan, "mode": mode, "inner_bright_field_fraction": inner, "outer_bright_field_fraction": outer,
+                    "ensure_resident": True},
         )
         image = _image(response)
         if mode.startswith(("Co", "DPC", "iCoM")):
@@ -159,12 +160,13 @@ def test_binned_and_cropped_products_equal_dense_route(acquisition, det_bin, sca
         image = _image(
             client.get(
                 "/api/browse/realspace-shape",
-                params={**plan, "shape": shape, "cx": 4.0, "cy": 3.0, "inner": inner, "outer": outer},
+                params={**plan, "shape": shape, "center_col_px": 4.0, "center_row_px": 3.0,
+                        "inner_radius_px": inner, "outer_radius_px": outer},
             )
         )
         np.testing.assert_array_equal(image, expected[shape].astype(np.uint32), err_msg=shape)
     for (row, column), pattern in expected["cbed"].items():
-        image = _image(client.get("/api/browse/cbed", params={**plan, "sx": row, "sy": column}))
+        image = _image(client.get("/api/browse/cbed", params={**plan, "scan_row": row, "scan_col": column}))
         np.testing.assert_array_equal(image, pattern.astype(np.uint32), err_msg=f"cbed {row} {column}")
 
 
@@ -177,14 +179,14 @@ def test_every_plan_reads_one_resident_and_bad_plans_never_evict_it(acquisition,
         service.residency, "_load", lambda *_args: pytest.fail("a plan change reloaded the acquisition")
     )
 
-    for plan in ({"det_bin": 2}, {"scan_bin": 4}, dict(zip(("row_start", "row_stop", "column_start", "column_stop"), CROP))):
+    for plan in ({"detector_bin": 2}, {"scan_bin": 4}, dict(zip(("row_start", "row_stop", "col_start", "col_stop"), CROP))):
         assert client.get("/api/browse/realspace", params={**common, **plan}).status_code == 200
     rejected = [
-        client.get("/api/browse/realspace", params={**common, "det_bin": 3}),
+        client.get("/api/browse/realspace", params={**common, "detector_bin": 3}),
         client.get("/api/browse/realspace", params={**common, "scan_bin": 3}),
         client.get(
             "/api/browse/realspace",
-            params={**common, "row_start": 0, "row_stop": 8, "column_start": 0, "column_stop": 6},
+            params={**common, "row_start": 0, "row_stop": 8, "col_start": 0, "col_stop": 6},
         ),
         client.get("/api/browse/realspace", params={**common, "mode": "unknown"}),
     ]

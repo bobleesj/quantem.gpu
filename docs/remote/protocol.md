@@ -32,7 +32,7 @@ change.
 | `GET /api/browse/capabilities` | protocol, GPU pool, live admission capacity, features |
 | `GET /api/browse/sessions` | catalog of session folders and their masters |
 | `GET /api/browse/acquisitions` | acquisitions being written and ready, with a change token |
-| `GET /api/browse/realspace` | BF, ABF, ADF, HAADF, DF exact count images; CoMx, CoMy, CoMmag, DPC, iCoM |
+| `GET /api/browse/realspace` | BF, ABF, ADF, HAADF, DF exact count images; CoMrow, CoMcol, CoMmag, DPC, iCoM |
 | `GET /api/browse/realspace-shape` | exact counts inside a circle, square, or annulus detector |
 | `GET /api/browse/cbed` | exact diffraction pattern at one scan position |
 | `GET /api/ssb/saved-results` | saved SSB phases verified against the acquisition identity |
@@ -44,18 +44,21 @@ display-scaled data.
 
 ## Bins and crops
 
-Every product request carries the plan `det_bin`, `scan_bin`, and an optional
-half-open crop `row_start, row_stop, column_start, column_stop`. The plan is
-checked before any residency change: `det_bin` must divide both detector sizes,
+Every product request carries the plan `detector_bin`, `scan_bin`, and an optional
+half-open crop `row_start, row_stop, col_start, col_stop`. The plan is
+checked before any residency change: `detector_bin` must divide both detector sizes,
 `scan_bin` is 1, 2, 4, 8, or 16, and the crop must lie inside the scan. A
 rejected plan returns 400 and leaves the resident acquisition untouched.
 
 All plans of one acquisition read the same encoded resident, so changing bin
 or crop never reloads it. Binning adds exact integer counts. Scan bins keep the
 partial bins at the bottom and right edges of the crop, where the missing
-positions count as zero. Detector geometry (`cx`, `cy`, radii, and the fitted
-bright-field disk) is in binned detector pixels; `sx` and `sy` are in binned,
-cropped scan positions. Centre-of-mass products divide exact
+positions count as zero. Detector geometry (`center_row_px`, `center_col_px`,
+`inner_radius_px`, `outer_radius_px`, and the fitted bright-field disk) is in
+binned detector pixels; `/api/browse/realspace` takes its ring as
+`inner_bright_field_fraction` and `outer_bright_field_fraction` of the fitted
+bright-field radius. `scan_row` and `scan_col` of `/api/browse/cbed` are in
+binned, cropped scan positions. Protocol version 2 introduced these names. Centre-of-mass products divide exact
 integer moments in binned detector coordinates by the exact total count. These
 products equal, value for value, the products of a dense volume binned and
 cropped the same way (`tests/contracts/remote/test_browse_plans.py`).

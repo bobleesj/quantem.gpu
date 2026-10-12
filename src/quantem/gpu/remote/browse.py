@@ -26,9 +26,11 @@ from quantem.gpu.remote.residency import (
 )
 
 PROTOCOL_NAME = "quantem-gpu-browse"
-PROTOCOL_VERSION = 1
+# 2: parameters name their axis and unit (scan_row, scan_col, center_row_px, center_col_px, col_start, col_stop,
+#    detector_bin, inner_bright_field_fraction, inner_radius_px, ...), modes CoMrow and CoMcol.
+PROTOCOL_VERSION = 2
 DETECTOR_MODES = {"BF", "ABF", "ADF", "HAADF", "DF"}
-CENTER_OF_MASS_MODES = {"CoMx", "CoMy", "CoMmag", "DPC", "iCoM"}
+CENTER_OF_MASS_MODES = {"CoMrow", "CoMcol", "CoMmag", "DPC", "iCoM"}
 SCAN_BINS = {1, 2, 4, 8, 16}
 MAX_IMAGE_ENTRIES = 64
 
@@ -48,8 +50,9 @@ class BrowseService:
     Examples
     --------
     >>> service = BrowseService("/data", gpus="auto")
-    >>> path, plan = service.plan("detector/session", "scan_master.h5", det_bin=2, scan_bin=1, scan_region=None)
-    >>> image = service.compute(path, lambda entry: service.virtual_image(entry, plan, mode="BF", inner=0, outer=1))
+    >>> path, plan = service.plan("detector/session", "scan_master.h5", detector_bin=2, scan_bin=1, scan_region=None)
+    >>> image = service.compute(path, lambda entry: service.virtual_image(
+    ...     entry, plan, mode="BF", inner_bright_field_fraction=0, outer_bright_field_fraction=1))
     """
 
     def __init__(
@@ -109,7 +112,7 @@ class BrowseService:
         session: str,
         filename: str,
         *,
-        det_bin: int,
+        detector_bin: int,
         scan_bin: int,
         scan_region: tuple[int, int, int, int] | None,
     ) -> tuple[Path, BrowsePlan]:
@@ -126,11 +129,11 @@ class BrowseService:
             raise HTTPException(422, "The master does not report a usable 4D shape.")
         scan_rows, scan_cols = (int(value) for value in inspection.scan_shape)
         detector_rows, detector_cols = (int(value) for value in inspection.detector_shape)
-        det_bin = max(1, int(det_bin))
-        if detector_rows % det_bin or detector_cols % det_bin:
+        detector_bin = max(1, int(detector_bin))
+        if detector_rows % detector_bin or detector_cols % detector_bin:
             raise HTTPException(
                 400,
-                f"det_bin={det_bin} does not divide the {detector_rows} x "
+                f"detector_bin={detector_bin} does not divide the {detector_rows} x "
                 f"{detector_cols} detector; choose a bin that divides both sizes.",
             )
         if scan_region is not None:
@@ -141,7 +144,7 @@ class BrowseService:
         return path, BrowsePlan(
             (scan_rows, scan_cols),
             (detector_rows, detector_cols),
-            det_bin,
+            detector_bin,
             int(scan_bin),
             scan_region,
         )
@@ -175,36 +178,36 @@ class BrowseService:
         plan: BrowsePlan,
         *,
         mode: str,
-        inner: float,
-        outer: float,
-        center_row: float | None = None,
-        center_column: float | None = None,
+        inner_bright_field_fraction: float,
+        outer_bright_field_fraction: float,
+        center_row_px: float | None = None,
+        center_col_px: float | None = None,
     ) -> np.ndarray:
         """Return one exact virtual image or centre-of-mass product of a plan.
 
-        ``inner`` and ``outer`` are fractions of the bright-field radius fitted
+        The two fractions are of the bright-field radius fitted
         on the plan's binned detector; the detector center defaults to the
         fitted bright-field center. Centre-of-mass products are in binned
         detector pixels.
         """
         with self.residency.pinned(entry):
             if mode in CENTER_OF_MASS_MODES:
-                com_row, com_column = self._center_of_mass(entry, plan)
-                if mode == "CoMy":
+                com_row, com_col = self._center_of_mass(entry, plan)
+                if mode == "CoMrow":
                     return com_row
-                if mode == "CoMx":
-                    return com_column
+                if mode == "CoMcol":
+                    return com_col
                 if mode in {"CoMmag", "DPC"}:
-                    return np.hypot(com_row, com_column).astype(np.float32, copy=False)
-                return np.asarray(dpc.integrate(com_row, com_column), dtype=np.float32)
-            fit_row, fit_column, radius = self._bf_geometry(entry, plan)
-            row = fit_row if center_row is None else float(center_row)
-            column = fit_column if center_column is None else float(center_column)
-            inner_pixels = max(0.0, float(inner) * radius)
-            outer_pixels = max(inner_pixels + 1.0, float(outer) * radius)
-            detector_rows, detector_columns = plan.detector_shape
-            rows, columns = np.ogrid[:detector_rows, :detector_columns]
-            distance_squared = (rows - row) ** 2 + (columns - column) ** 2
+                    return np.hypot(com_row, com_col).astype(np.float32, copy=False)
+                return np.asarray(dpc.integrate(com_row, com_col), dtype=np.float32)
+            fit_row, fit_col, radius = self._bf_geometry(entry, plan)
+            row = fit_row if center_row_px is None else float(center_row_px)
+            col = fit_col if center_col_px is None else float(center_col_px)
+            inner_pixels = max(0.0, float(inner_bright_field_fraction) * radius)
+            outer_pixels = max(inner_pixels + 1.0, float(outer_bright_field_fraction) * radius)
+            detector_rows, detector_cols = plan.detector_shape
+            rows, cols = np.ogrid[:detector_rows, :detector_cols]
+            distance_squared = (rows - row) ** 2 + (cols - col) ** 2
             mask = distance_squared <= outer_pixels**2
             if mode != "BF":
                 mask &= distance_squared >= inner_pixels**2
@@ -215,26 +218,26 @@ class BrowseService:
         entry: ResidentAcquisition,
         plan: BrowsePlan,
         *,
-        center_row: float,
-        center_column: float,
-        inner_radius: float,
-        outer_radius: float,
+        center_row_px: float,
+        center_col_px: float,
+        inner_radius_px: float,
+        outer_radius_px: float,
         shape: str = "annulus",
     ) -> np.ndarray:
-        """Return the exact count sum inside one custom detector, radii in binned pixels."""
+        """Return the exact count sum inside one custom detector, centre and radii in binned pixels."""
         with self.residency.pinned(entry):
-            detector_rows, detector_columns = plan.detector_shape
-            rows, columns = np.ogrid[:detector_rows, :detector_columns]
+            detector_rows, detector_cols = plan.detector_shape
+            rows, cols = np.ogrid[:detector_rows, :detector_cols]
             if shape == "square":
                 mask = (
-                    (np.abs(rows - center_row) <= outer_radius)
-                    & (np.abs(columns - center_column) <= outer_radius)
+                    (np.abs(rows - center_row_px) <= outer_radius_px)
+                    & (np.abs(cols - center_col_px) <= outer_radius_px)
                 )
             else:
-                distance_squared = (rows - center_row) ** 2 + (columns - center_column) ** 2
-                mask = distance_squared <= outer_radius**2
+                distance_squared = (rows - center_row_px) ** 2 + (cols - center_col_px) ** 2
+                mask = distance_squared <= outer_radius_px**2
                 if shape == "annulus":
-                    mask &= distance_squared >= inner_radius**2
+                    mask &= distance_squared >= inner_radius_px**2
             return plan.scan_image(entry.session.masked_sum_exact(plan.source_mask(mask)))
 
     def selected_diffraction(
@@ -243,7 +246,7 @@ class BrowseService:
         plan: BrowsePlan,
         *,
         scan_row: int,
-        scan_column: int,
+        scan_col: int,
     ) -> np.ndarray:
         """Return the exact binned diffraction pattern at one position of the plan, clamped.
 
@@ -251,10 +254,10 @@ class BrowseService:
         selected-frame reduction; a scan bin adds the patterns it covers.
         """
         with self.residency.pinned(entry):
-            scan_rows, scan_columns = plan.scan_shape
+            scan_rows, scan_cols = plan.scan_shape
             row = max(0, min(scan_rows - 1, int(scan_row)))
-            column = max(0, min(scan_columns - 1, int(scan_column)))
-            positions = plan.positions(row, column)
+            col = max(0, min(scan_cols - 1, int(scan_col)))
+            positions = plan.positions(row, col)
             if plan.scan_bin == 1:
                 pattern = entry.session.frame(int(positions[0]))
             else:
@@ -319,17 +322,17 @@ class BrowseService:
         if key in entry.derived:
             return entry.derived[key]
         if plan.detector_bin == 1 and plan.scan_bin == 1:
-            com_row, com_column = entry.session.center_of_mass()
-            entry.derived[key] = (plan.crop(com_row), plan.crop(com_column))
+            com_row, com_col = entry.session.center_of_mass()
+            entry.derived[key] = (plan.crop(com_row), plan.crop(com_col))
             return entry.derived[key]
-        binned_rows, binned_columns = np.indices(plan.source_detector_shape) // plan.detector_bin
-        total, row_moment, column_moment = (
+        binned_rows, binned_cols = np.indices(plan.source_detector_shape) // plan.detector_bin
+        total, row_moment, col_moment = (
             plan.scan_image(entry.session.weighted_sum_exact(weights))
-            for weights in (np.ones_like(binned_rows), binned_rows, binned_columns)
+            for weights in (np.ones_like(binned_rows), binned_rows, binned_cols)
         )
         entry.derived[key] = (
             _coordinate(row_moment, total),
-            _coordinate(column_moment, total),
+            _coordinate(col_moment, total),
         )
         return entry.derived[key]
 

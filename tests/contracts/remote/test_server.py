@@ -327,7 +327,7 @@ def test_full_scan_region_is_the_uncropped_plan(tmp_path):
     path, plan = service.plan(
         "detector/20260101_session",
         master.name,
-        det_bin=1,
+        detector_bin=1,
         scan_bin=1,
         scan_region=(0, 2, 0, 2),
     )
@@ -481,8 +481,8 @@ def test_interactive_compute_pins_entry_until_concurrent_eviction_finishes(
             first_entry,
             _plan(detector_shape=(2, 2)),
             mode="BF",
-            inner=0.0,
-            outer=1.0,
+            inner_bright_field_fraction=0.0,
+            outer_bright_field_fraction=1.0,
         )
         assert geometry_started.wait(2)
         load_future = pool.submit(load_second)
@@ -538,8 +538,8 @@ def test_busy_entry_does_not_block_another_resident_dataset(tmp_path, monkeypatc
             entry,
             _plan(detector_shape=(2, 2)),
             mode="BF",
-            inner=0.0,
-            outer=1.0,
+            inner_bright_field_fraction=0.0,
+            outer_bright_field_fraction=1.0,
         )
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -689,6 +689,21 @@ def test_catalog_and_acquisition_status_use_quantem_gpu_inspection(tmp_path):
     assert status["pending"] == []
     assert status["history"][0]["path"] == str(master)
     assert status["ready_token"]
+
+
+def test_catalog_reports_the_scan_step_pair_of_a_calibrated_master(tmp_path):
+    """A master that records its scan step as a [row, col] pair is listed as calibrated, with the pair.
+
+    The catalogue called float() on the step, which fails for a pair, and listed such a master as uncalibrated.
+    """
+    h5py = pytest.importorskip("h5py")
+    master = _master(tmp_path)
+    with h5py.File(master, "r+") as handle:
+        handle.attrs["scan_sampling_A"] = [0.4, 0.6]
+    entry = TestClient(create_app(tmp_path)).get("/api/browse/sessions").json()["sessions"][0]["files"][0]
+    assert entry["cal"] == "ok"
+    assert entry["scan_sampling_A"] == [0.4, 0.6]
+    assert entry["detector_sampling_mrad"] is None and entry["detector_sampling_inv_A"] is None
 
 
 def test_acquisition_poll_reuses_ready_inspection_until_master_changes(
@@ -880,17 +895,17 @@ def test_exact_virtual_image_and_selected_diffraction_share_resident_plan(tmp_pa
     common = {
         "session": "detector/20260101_session",
         "file": master.name,
-        "det_bin": 1,
+        "detector_bin": 1,
         "scan_bin": 1,
     }
 
     bright_field = client.get(
         "/api/browse/realspace",
-        params={**common, "mode": "BF", "inner": 0, "outer": 1},
+        params={**common, "mode": "BF", "inner_bright_field_fraction": 0, "outer_bright_field_fraction": 1},
     )
     diffraction = client.get(
         "/api/browse/cbed",
-        params={**common, "sx": 1, "sy": 0},
+        params={**common, "scan_row": 1, "scan_col": 0},
     )
 
     assert bright_field.status_code == 200
@@ -940,8 +955,8 @@ def test_selected_diffraction_ensure_resident_retries_one_conflict(
             params={
                 "session": "detector/20260101_session",
                 "file": master.name,
-                "sx": 1,
-                "sy": 0,
+                "scan_row": 1,
+                "scan_col": 0,
                 "ensure_resident": True,
             },
         )
@@ -974,10 +989,10 @@ def test_custom_detector_shapes_return_exact_counts(tmp_path, shape, inner, expe
             "session": "detector/20260101_session",
             "file": master.name,
             "shape": shape,
-            "cx": 1.5,
-            "cy": 1.5,
-            "inner": inner,
-            "outer": 1.6,
+            "center_col_px": 1.5,
+            "center_row_px": 1.5,
+            "inner_radius_px": inner,
+            "outer_radius_px": 1.6,
         },
     )
 
@@ -989,7 +1004,7 @@ def test_custom_detector_shapes_return_exact_counts(tmp_path, shape, inner, expe
 
 @pytest.mark.parametrize(
     ("parameter", "value"),
-    [("cx", "nan"), ("cy", "inf"), ("inner", "nan"), ("outer", "inf")],
+    [("center_col_px", "nan"), ("center_row_px", "inf"), ("inner_radius_px", "nan"), ("outer_radius_px", "inf")],
 )
 def test_custom_detector_rejects_nonfinite_geometry(tmp_path, parameter, value):
     client = TestClient(create_app(tmp_path))
@@ -997,10 +1012,10 @@ def test_custom_detector_rejects_nonfinite_geometry(tmp_path, parameter, value):
         "session": "detector/20260101_session",
         "file": "sample_master.h5",
         "shape": "annulus",
-        "cx": 1,
-        "cy": 1,
-        "inner": 1,
-        "outer": 2,
+        "center_col_px": 1,
+        "center_row_px": 1,
+        "inner_radius_px": 1,
+        "outer_radius_px": 2,
         parameter: value,
     }
 
@@ -1055,9 +1070,9 @@ def test_plan_rejects_bins_and_crops_the_acquisition_cannot_serve(tmp_path):
             service.plan("detector/20260101_session", master.name, **request)
         return raised.value.status_code
 
-    assert status(det_bin=3, scan_bin=1, scan_region=None) == 400
-    assert status(det_bin=1, scan_bin=3, scan_region=None) == 400
-    assert status(det_bin=1, scan_bin=1, scan_region=(0, 3, 0, 2)) == 400
+    assert status(detector_bin=3, scan_bin=1, scan_region=None) == 400
+    assert status(detector_bin=1, scan_bin=3, scan_region=None) == 400
+    assert status(detector_bin=1, scan_bin=1, scan_region=(0, 3, 0, 2)) == 400
 
 
 def test_plan_bins_and_crops_the_view_with_partial_edge_bins():
