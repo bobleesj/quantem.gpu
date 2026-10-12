@@ -165,7 +165,7 @@ def run(arguments, stages) -> None:
                 times.append(seconds)
                 hashes.append(f"image {digest(result.image)} density {digest(result.density)} "
                               f"shifts {digest(np.asarray(result.shifts))} aberrations {result.aberrations} "
-                              f"rotation {result.rotation_angle_deg!r}")
+                              f"rotation {result.scan_detector_rotation_deg!r}")
             report("parallax", times, hashes)
         data.close()
         release_cached_memory()

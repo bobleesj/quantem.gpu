@@ -103,6 +103,12 @@ new `rcN` heading when that rc is published to TestPyPI.
   radius selects the pixels used and defaults to the detected disk. It is
   used as given: a fractional radius selects the pixels inside it, as
   `sampling_radius` did.
+- `ParallaxResult.rotation_angle_deg` becomes `scan_detector_rotation_deg`
+  and holds the physical rotation in [0, 360), as every other result does.
+  Only the representation of a fitted angle changes: a fit that read `-20`
+  reads `340`, the same rotation (the recovery test's expected value moved
+  from -20 to 340 for that reason alone). `fit_aberrations_from_shifts`
+  still returns the angle within 90 degrees of zero.
 - Elapsed times carry their unit: `SSBResult.elapsed` and `refine_elapsed`,
   `DPCResult.elapsed` and `ParallaxResult.elapsed` become `elapsed_s` and
   `refine_elapsed_s`; `SaveResult.elapsed_seconds` becomes `elapsed_s`.
