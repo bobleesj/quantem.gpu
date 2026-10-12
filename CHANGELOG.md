@@ -74,6 +74,17 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
   `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
   radius selects the pixels used and defaults to the detected disk.
+- The remote server's HTTP parameters name their axis and unit (protocol
+  version 2): `sx`, `sy` become `scan_row`, `scan_col`; `cx`, `cy` become
+  `center_col_px`, `center_row_px`; `column_start`, `column_stop` become
+  `col_start`, `col_stop`; `det_bin` becomes `detector_bin`; `inner`, `outer`
+  become `inner_bright_field_fraction`, `outer_bright_field_fraction` on
+  `/api/browse/realspace` and `inner_radius_px`, `outer_radius_px` on
+  `/api/browse/realspace-shape`; the modes `CoMx`, `CoMy` become `CoMcol`,
+  `CoMrow`. `BrowseService.plan(det_bin=)` becomes `detector_bin=`. The
+  sessions payload gives `scan_sampling_A`, `detector_sampling_mrad` and
+  `detector_sampling_inv_A` as `[row, col]` pairs in place of
+  `k_pixel_size_mrad`.
 - The portable SSB phase record (`ssb.json` beside `ssb.npy`) is
   `"schema": "quantem.ssb-phase/2"` with snake_case keys of the shared
   vocabulary: `format`/`schemaVersion` become `schema`, `sourceIdentity`
@@ -147,6 +158,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   pixels of the full detector for every input. A session built from an
   encoded acquisition or `SSB.open` reported the centre inside its decoded
   bright-field crop.
+- The remote catalogue listed every master that records its scan step as a
+  `[row, col]` pair as uncalibrated: it called `float()` on the pair.
+  `k_pixel_size_mrad` read a key no reader writes and was always null.
 - A DPC or screening fit made with exchanged detector axes could only be
   handed to SSB as a bare angle, so the exchange was dropped without a
   message. The flag travels with the angle (`detector_transposed`) and SSB

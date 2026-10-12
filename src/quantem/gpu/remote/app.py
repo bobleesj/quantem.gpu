@@ -104,27 +104,27 @@ def create_app(
     async def cbed(
         session: str,
         file: str,
-        sx: int = 0,
-        sy: int = 0,
-        det_bin: int = 1,
+        scan_row: int = 0,
+        scan_col: int = 0,
+        detector_bin: int = 1,
         scan_bin: int = 1,
         row_start: int | None = None,
         row_stop: int | None = None,
-        column_start: int | None = None,
-        column_stop: int | None = None,
+        col_start: int | None = None,
+        col_stop: int | None = None,
         ensure_resident: bool = False,
     ) -> Response:
         path, plan = await asyncio.to_thread(
             browse.plan,
             session,
             file,
-            det_bin=det_bin,
+            detector_bin=detector_bin,
             scan_bin=scan_bin,
-            scan_region=_scan_region(row_start, row_stop, column_start, column_stop),
+            scan_region=_scan_region(row_start, row_stop, col_start, col_stop),
         )
 
         def pattern(entry):
-            return browse.selected_diffraction(entry, plan, scan_row=sx, scan_column=sy)
+            return browse.selected_diffraction(entry, plan, scan_row=scan_row, scan_col=scan_col)
 
         if ensure_resident:
             image = await asyncio.to_thread(browse.compute, path, pattern)
@@ -137,32 +137,32 @@ def create_app(
         session: str,
         file: str,
         mode: str = "BF",
-        inner: float = 0.0,
-        outer: float = 1.0,
-        cx: float | None = None,
-        cy: float | None = None,
-        det_bin: int = 1,
+        inner_bright_field_fraction: float = 0.0,
+        outer_bright_field_fraction: float = 1.0,
+        center_row_px: float | None = None,
+        center_col_px: float | None = None,
+        detector_bin: int = 1,
         scan_bin: int = 1,
         row_start: int | None = None,
         row_stop: int | None = None,
-        column_start: int | None = None,
-        column_stop: int | None = None,
+        col_start: int | None = None,
+        col_stop: int | None = None,
         ensure_resident: bool = False,
     ) -> Response:
         if mode not in DETECTOR_MODES | CENTER_OF_MASS_MODES:
             raise HTTPException(400, f"unknown virtual-image mode: {mode!r}")
-        region = _scan_region(row_start, row_stop, column_start, column_stop)
+        region = _scan_region(row_start, row_stop, col_start, col_stop)
         image_key = (
             session,
             file,
-            max(1, det_bin),
+            max(1, detector_bin),
             scan_bin,
             region,
             mode,
-            round(inner, 5),
-            round(outer, 5),
-            None if cy is None else round(cy, 3),
-            None if cx is None else round(cx, 3),
+            round(inner_bright_field_fraction, 5),
+            round(outer_bright_field_fraction, 5),
+            None if center_row_px is None else round(center_row_px, 3),
+            None if center_col_px is None else round(center_col_px, 3),
         )
         cached = browse.cached_image(image_key)
         if cached is not None and not ensure_resident:
@@ -171,7 +171,7 @@ def create_app(
             browse.plan,
             session,
             file,
-            det_bin=det_bin,
+            detector_bin=detector_bin,
             scan_bin=scan_bin,
             scan_region=region,
         )
@@ -183,10 +183,10 @@ def create_app(
                 entry,
                 plan,
                 mode=mode,
-                inner=inner,
-                outer=outer,
-                center_row=cy,
-                center_column=cx,
+                inner_bright_field_fraction=inner_bright_field_fraction,
+                outer_bright_field_fraction=outer_bright_field_fraction,
+                center_row_px=center_row_px,
+                center_col_px=center_col_px,
             )
 
         image = await asyncio.to_thread(browse.compute, path, virtual_image)
@@ -199,30 +199,30 @@ def create_app(
         session: str,
         file: str,
         shape: str = "annulus",
-        cx: float = 0.0,
-        cy: float = 0.0,
-        inner: float = 0.0,
-        outer: float = 0.0,
-        det_bin: int = 1,
+        center_row_px: float = 0.0,
+        center_col_px: float = 0.0,
+        inner_radius_px: float = 0.0,
+        outer_radius_px: float = 0.0,
+        detector_bin: int = 1,
         scan_bin: int = 1,
         row_start: int | None = None,
         row_stop: int | None = None,
-        column_start: int | None = None,
-        column_stop: int | None = None,
+        col_start: int | None = None,
+        col_stop: int | None = None,
     ) -> Response:
         if shape not in {"circle", "square", "annulus"}:
             raise HTTPException(400, "detector shape must be circle, square, or annulus")
-        if not all(math.isfinite(value) for value in (cx, cy, inner, outer)):
+        if not all(math.isfinite(value) for value in (center_row_px, center_col_px, inner_radius_px, outer_radius_px)):
             raise HTTPException(400, "detector center and radii must be finite")
-        if outer <= 0 or (shape == "annulus" and (inner < 0 or outer <= inner)):
-            raise HTTPException(400, "detector radii must satisfy 0 <= inner < outer")
+        if outer_radius_px <= 0 or (shape == "annulus" and (inner_radius_px < 0 or outer_radius_px <= inner_radius_px)):
+            raise HTTPException(400, "detector radii must satisfy 0 <= inner_radius_px < outer_radius_px")
         path, plan = await asyncio.to_thread(
             browse.plan,
             session,
             file,
-            det_bin=det_bin,
+            detector_bin=detector_bin,
             scan_bin=scan_bin,
-            scan_region=_scan_region(row_start, row_stop, column_start, column_stop),
+            scan_region=_scan_region(row_start, row_stop, col_start, col_stop),
         )
         image = await asyncio.to_thread(
             browse.compute,
@@ -230,10 +230,10 @@ def create_app(
             lambda entry: browse.custom_detector(
                 entry,
                 plan,
-                center_row=cy,
-                center_column=cx,
-                inner_radius=inner,
-                outer_radius=outer,
+                center_row_px=center_row_px,
+                center_col_px=center_col_px,
+                inner_radius_px=inner_radius_px,
+                outer_radius_px=outer_radius_px,
                 shape=shape,
             ),
         )
@@ -283,22 +283,22 @@ def _wire_image(image: np.ndarray) -> tuple[bytes, str]:
 def _scan_region(
     row_start: int | None,
     row_stop: int | None,
-    column_start: int | None,
-    column_stop: int | None,
+    col_start: int | None,
+    col_stop: int | None,
 ) -> tuple[int, int, int, int] | None:
-    """Return the half-open (row, column) scan crop, or None for the full scan."""
-    values = (row_start, row_stop, column_start, column_stop)
+    """Return the half-open (row, col) scan crop, or None for the full scan."""
+    values = (row_start, row_stop, col_start, col_stop)
     if all(value is None for value in values):
         return None
     if any(value is None for value in values):
         raise HTTPException(
             400,
-            "scan crop requires row_start, row_stop, column_start, and column_stop",
+            "scan crop requires row_start, row_stop, col_start, and col_stop",
         )
     region = tuple(int(value) for value in values)
     if region[0] < 0 or region[2] < 0 or region[1] <= region[0] or region[3] <= region[2]:
         raise HTTPException(
             400,
-            "scan crop must be a nonempty half-open (row, column) region",
+            "scan crop must be a nonempty half-open (row, col) region",
         )
     return region

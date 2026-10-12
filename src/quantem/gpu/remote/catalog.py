@@ -199,7 +199,7 @@ class Catalog:
                 if size <= 0:
                     size = sum(item[1] for item in file_signature(master))
                 metadata = inspection.metadata or {}
-                scan_sampling = _sampling(metadata, "scan_sampling_A")
+                scan_sampling = _pair(metadata, "scan_sampling_A")
                 files.append(
                     {
                         "name": master.name,
@@ -215,7 +215,8 @@ class Catalog:
                             "action": inspection.action,
                         },
                         "scan_sampling_A": scan_sampling,
-                        "k_pixel_size_mrad": _sampling(metadata, "k_pixel_size_mrad"),
+                        "detector_sampling_mrad": _pair(metadata, "detector_sampling_mrad"),
+                        "detector_sampling_inv_A": _pair(metadata, "detector_sampling_inv_A"),
                         "has_ssb": False,
                     }
                 )
@@ -387,10 +388,11 @@ def _members_unchanged(source_files: list[dict[str, object]]) -> bool:
     return True
 
 
-def _sampling(metadata: dict[str, object], name: str) -> float | None:
-    """Return one numeric calibration from inspection metadata, or None when absent."""
+def _pair(metadata: dict[str, object], name: str) -> list[float] | None:
+    """Return one [row, col] calibration flat key of inspection metadata, or None when absent.
+
+    Calling ``float`` on the pair failed for every calibrated ``.qem``, which the catalogue then listed as
+    uncalibrated.
+    """
     value = metadata.get(name)
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
-        return None
+    return None if value is None else [float(value[0]), float(value[1])]
