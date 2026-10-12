@@ -314,6 +314,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `io.inspect` of a merged scaled `.qem` returned neither `maped_merge` nor
+  `maped_summary`, which `io.load` of the same file returns. It returns both.
+
 - A given rotation kept in [0, 360) (`SSB`, `SSB.set_rotation`, `SSBResult`,
   trial records, `ParallaxResult`, a rotation given to `dpc.run` or
   `screening.prepare`) could read `360.0`: a negative angle smaller than the

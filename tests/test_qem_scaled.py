@@ -106,6 +106,9 @@ def test_merge_records_read_the_same_from_a_qem_and_an_hdf5_master(tmp_path):
     assert from_qem["maped_merge"] == from_master["maped_merge"] == merge
     assert from_qem["maped_summary"] == from_master["maped_summary"] == summary
     assert "attributes" not in from_qem
+    # the header-only inspection of the same file names the merge too
+    inspected = io.inspect(tmp_path / "merged.qem").metadata
+    assert (inspected["maped_merge"], inspected["maped_summary"]) == (merge, summary)
     # text that is not a version-1 record is left out by both readers, not returned raw
     _write(tmp_path / "other.qem", codes, {"quantem_maped_merge_v1": json.dumps({"version": 2}),
                                            "quantem_maped_summary_v1": "not json"})
