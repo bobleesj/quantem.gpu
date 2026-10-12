@@ -19,7 +19,7 @@ public IO, detector, and DPC functions rather than duplicating their kernels.
 ## Version negotiation
 
 The capabilities route reports protocol name `quantem-gpu-browse`, protocol
-version `1`, backend/device information, feature capabilities, per-device
+version `2`, backend/device information, feature capabilities, per-device
 admission telemetry, and `implementation_revision`. Clients must validate this
 response before assuming an endpoint or field exists. New optional response
 fields are additive; changed scientific meaning requires a protocol version
