@@ -108,9 +108,7 @@ public struct NativeEMPADSource: Sendable {
       throw EMPADError("Invalid saved scan calibration; restore a valid QEM copy.")
     }
     var diffraction = description["diffraction_sampling_inv_nm"] as? Double
-    if let scientific = file.header["scientific_metadata"] as? [String: Any],
-      scientific["schema"] as? String == NativeQEMMetadataUnits.schema
-    {
+    if let scientific = file.header["scientific_metadata"] as? [String: Any] {
       let recorded = try NativeQEMMetadataUnits.recordedMetadata(scientific)
       let scan = recorded["scan_sampling_A"] as? [Double]
       calibration = scan.map {
@@ -118,10 +116,10 @@ public struct NativeEMPADSource: Sendable {
           rowSamplingAngstrom: $0[0], columnSamplingAngstrom: $0[1],
           origin: .sourceMetadata, evidence: "QEM recorded public calibration")
       }
-      let detector = recorded["detector_sampling"] as? [Double]
+      // EMPAD describes one square reciprocal step in 1/nm; an angular step has no such form.
+      let detector = recorded["detector_sampling_inv_A"] as? [Double]
       diffraction =
-        recorded["detector_sampling_unit"] as? String == "1/angstrom"
-          && detector?.count == 2 && detector?[0] == detector?[1] ? detector![0] * 10 : nil
+        detector?.count == 2 && detector?[0] == detector?[1] ? detector![0] * 10 : nil
       metadata = try NativeQEMMetadataUnits.microscopeMetadata(scientific)
     }
     let evidence = try (description["supplier_background_statement"] as? String).map {

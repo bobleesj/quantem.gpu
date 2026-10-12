@@ -19,12 +19,13 @@ struct CameraCheck {
     let body = Data(repeating: 0, count: 58)
     let arrays = [(0, 0), (0, 5), (24, 4), (32, 0), (32, 3), (56, 2)]
       .map { ["offset": $0.0, "count": $0.1] }
-    let cases: [([String: Any], String?)] = [
-      (["source_kind": "digitalmicrograph", "camera_model": "K3"], "K3 DM4"),
-      (["source_metadata": ["dm4.ImageTags.Acquisition.Device.Source Model": "K3"]], "K3 DM4"),
-      (["source_kind": "digitalmicrograph", "camera_model": "Other camera"], "DigitalMicrograph DM4"),
-      (["source_kind": "digitalmicrograph"], "DigitalMicrograph DM4"),
-      (["source_kind": "hdf5", "camera_model": "K3"], nil)
+    // (retained metadata, source_metadata in scientific_metadata, expected classification)
+    let cases: [([String: Any], [String: String], String?)] = [
+      (["source_kind": "digitalmicrograph", "camera_model": "K3"], [:], "K3 DM4"),
+      ([:], ["dm4.ImageTags.Acquisition.Device.Source Model": "K3"], "K3 DM4"),
+      (["source_kind": "digitalmicrograph", "camera_model": "Other camera"], [:], "DigitalMicrograph DM4"),
+      (["source_kind": "digitalmicrograph"], [:], "DigitalMicrograph DM4"),
+      (["source_kind": "hdf5", "camera_model": "K3"], [:], nil)
     ]
     for (index, item) in cases.enumerated() {
       let header: [String: Any] = ["version": 1, "profile": "runtime-column-rans-spatial-v2",
@@ -34,7 +35,9 @@ struct CameraCheck {
         "container": "quantem.qem", "container_version": 1,
         "codec": "runtime-column-rans-spatial-v2",
         "scientific_metadata": [
-          "schema": "quantem.scientific-metadata/1",
+          "schema": "quantem.scientific-metadata/2",
+          "source_metadata": item.1, "source_metadata_coverage": "reader-retained",
+          "processing": [["operation": "lossless_storage", "changes_measurements": false]],
           "axes": [
             ["name": "scan_row", "size": 1], ["name": "scan_column", "size": 2],
             ["name": "detector_row", "size": 2], ["name": "detector_column", "size": 2]
@@ -51,7 +54,7 @@ struct CameraCheck {
       let url = directory.appendingPathComponent("case-\(index).qem")
       try file.write(to: url)
       let restored = try NativeANSSnapshot(url: url)
-      try require(restored.dataset.metadata?["sourceFormat"] == item.1,
+      try require(restored.dataset.metadata?["sourceFormat"] == item.2,
         "Wrong camera classification for metadata placement \(index)")
     }
     print("PASS camera identity: native/CUDA metadata, generic DM4 and non-DM4 sources")

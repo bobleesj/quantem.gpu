@@ -5,8 +5,38 @@ import Foundation
 /// Example: `try NativeQEMMetadataUnits.normalized(scientific)` before export.
 public enum NativeQEMMetadataUnits {
   public static let schema = "quantem.scientific-metadata/2"
-  public static let legacySchema = "quantem.scientific-metadata/1"
   public static let metadataKey = "qem_scientific_metadata"
+  /// Flat detector key of each stored detector unit (QEM specification 0.0.4): `[row, col]`,
+  /// exactly one present, neither when the detector is uncalibrated.
+  static let detectorSamplingKeys = [
+    "mrad": "detector_sampling_mrad", "1/angstrom": "detector_sampling_inv_A",
+  ]
+  /// Flat keys of the scalar microscope quantities, each in its stored unit.
+  static let flatQuantities = [
+    "electron_source/accelerating_voltage": "voltage_kV",
+    "illumination_system/semi_convergence_angle": "semiangle_mrad",
+    "scan_controller/regular_scan/dwell_time": "dwell_time_us",
+    "imaging_system/camera_length": "camera_length_mm",
+  ]
+  /// Keys a reader drops from the header's retained `metadata` block, as the Python reader
+  /// does: the flat calibration keys and the unit-less detector pair written before them,
+  /// copies of `scientific_metadata` groups, and what a loader knew about its host and
+  /// resident. Keeping them would let a stale copy stand in for the stored value.
+  static let notRetained: Set<String> = [
+    "scan_sampling_A", "detector_sampling_mrad", "detector_sampling_inv_A", "voltage_kV",
+    "semiangle_mrad", "dwell_time_us", "camera_length_mm", "detector_sampling",
+    "detector_sampling_unit", "scientific_metadata", "container", "container_version",
+    "source_metadata", "source_documents", "source_metadata_coverage", "sample",
+    "calibration_overrides", "source_shape", "working_shape", "scan_shape", "detector_shape",
+    "shape", "n_frames", "working_dtype", "storage_dtype", "backend", "device", "representation",
+    "residency", "resident_profile", "resident_codec", "physical_resident_bytes",
+    "working_logical_tensor_bytes", "source_logical_tensor_bytes", "index_bytes", "scan_bin",
+    "detector_bin", "crop", "lossless_exact", "load_timings", "axis_order", "pixel_origin",
+    "source_read_passes", "background_applied_by_reader", "dm_image_index", "dm_data_offset",
+    "dm_data_order_swapped",
+  ]
+  /// Schema of a retained `hot_pixel_correction` record; a record without it is read as absent.
+  static let hotPixelSchema = "quantem.hot-pixel-correction/2"
 
   private static func conversion(path: String, unit: String) -> (String, Double)? {
     let target: String
@@ -65,11 +95,14 @@ public enum NativeQEMMetadataUnits {
   }
 
   /// Preserve original fields and evidence while normalizing known quantities.
+  ///
+  /// Writers pass quantities in calculation units (V, s, m) and receive the stored units.
+  /// Only schema 2 is read: schema 1 is refused, not converted, as in the Python reader.
   public static func normalized(_ scientific: [String: Any]) throws -> [String: Any] {
-    guard let version = scientific["schema"] as? String,
-      [schema, legacySchema].contains(version)
-    else {
-      throw Native4DSTEMIOError.invalidData("Unsupported QEM metadata schema; update the reader.")
+    guard scientific["schema"] as? String == schema else {
+      throw Native4DSTEMIOError.invalidData(
+        "QEM scientific metadata schema \(scientific["schema"].map { "\($0)" } ?? "none") is not "
+          + "read; this reader accepts \(schema) only. Re-export the original acquisition.")
     }
     var result = scientific
     if var axes = scientific["axes"] as? [[String: Any]] {
@@ -94,7 +127,6 @@ public enum NativeQEMMetadataUnits {
         result[section] = quantities
       }
     }
-    result["schema"] = schema
     return result
   }
 
@@ -156,7 +188,7 @@ public enum NativeQEMMetadataUnits {
     for (axis, path) in zip(axes, paths) {
       let sampling = axis["sampling"] as? [String: Any]
       if let sampling { try provenance(sampling) }
-      if scientific["schema"] as? String == schema, let duplicate = quantities[path] {
+      if let duplicate = quantities[path] {
         guard let sampling, sampling["unit"] as? String == duplicate["unit"] as? String,
           let value = sampling["value"] as? Double, let other = duplicate["value"] as? Double,
           abs(value - other) <= max(abs(value), abs(other)) * 1e-14
@@ -177,25 +209,33 @@ public enum NativeQEMMetadataUnits {
     }
   }
 
-  /// Derive recorded calibration without relying on private restoration fields.
+  /// Derive the flat calibration keys of specification 0.0.4 from recorded quantities only.
+  ///
+  /// `scan_sampling_A` and one of `detector_sampling_mrad` / `detector_sampling_inv_A` are
+  /// `[row, col]`; `voltage_kV`, `semiangle_mrad`, `dwell_time_us` and `camera_length_mm`
+  /// are scalars. An absent key is an unknown quantity. The detector key names its unit, so a
+  /// reader never pairs a value with a unit from another field.
   /// Example: `let recorded = try NativeQEMMetadataUnits.recordedMetadata(scientific)`.
   public static func recordedMetadata(_ scientific: [String: Any]) throws -> [String: Any] {
     let normalized = try normalized(scientific)
     let axes = normalized["axes"] as? [[String: Any]] ?? []
     var result: [String: Any] = ["source_metadata": normalized["source_metadata"] ?? [:]]
-    for (first, field) in [(0, "scan_sampling_A"), (2, "detector_sampling")] {
+    for first in [0, 2] {
       guard axes.count >= first + 2,
         let row = axes[first]["sampling"] as? [String: Any],
-        let col = axes[first + 1]["sampling"] as? [String: Any]
+        let col = axes[first + 1]["sampling"] as? [String: Any],
+        let unit = row["unit"] as? String
       else { continue }
-      guard row["unit"] as? String == col["unit"] as? String else {
+      guard col["unit"] as? String == unit else {
         throw Native4DSTEMIOError.invalidData("QEM row and column sampling units disagree.")
       }
+      let field = first == 0 ? "scan_sampling_A" : detectorSamplingKeys[unit]!
       result[field] = [row["value"] as! Double, col["value"] as! Double]
-      if first == 2 { result["detector_sampling_unit"] = row["unit"] }
     }
     let quantities = normalized["electron_microscope"] as? [String: [String: Any]] ?? [:]
-    result["voltage_kV"] = quantities["electron_source/accelerating_voltage"]?["value"]
+    for (path, field) in flatQuantities {
+      result[field] = quantities[path]?["value"]
+    }
     return result
   }
 
@@ -220,24 +260,22 @@ public enum NativeQEMMetadataUnits {
       if scientific["calibration_overrides"] == nil { return [:] }
       throw Native4DSTEMIOError.invalidData("QEM calibration overrides must be named quantities.")
     }
-    if scientific["schema"] as? String == schema {
-      for (path, raw) in overrides {
-        var quantity = try normalizedQuantity(raw, path: path)
-        guard let original = raw as? [String: Any],
-          quantity["unit"] as? String == original["unit"] as? String
-        else {
-          throw Native4DSTEMIOError.invalidData("Schema-2 QEM overrides require microscopy units.")
-        }
-        let unit = quantity["unit"] as! String
-        let (target, factor) =
-          [
-            "angstrom": ("m", 1e-10), "kV": ("V", 1000), "us": ("s", 1e-6),
-            "mm": ("m", 0.001), "1/angstrom": ("1/Å", 1), "mrad": ("mrad", 1),
-          ][unit] ?? (unit, 1)
-        quantity["value"] = (quantity["value"] as! Double) * factor
-        quantity["unit"] = target
-        overrides[path] = quantity
+    for (path, raw) in overrides {
+      var quantity = try normalizedQuantity(raw, path: path)
+      guard let original = raw as? [String: Any],
+        quantity["unit"] as? String == original["unit"] as? String
+      else {
+        throw Native4DSTEMIOError.invalidData("Schema-2 QEM overrides require microscopy units.")
       }
+      let unit = quantity["unit"] as! String
+      let (target, factor) =
+        [
+          "angstrom": ("m", 1e-10), "kV": ("V", 1000), "us": ("s", 1e-6),
+          "mm": ("m", 0.001), "1/angstrom": ("1/Å", 1), "mrad": ("mrad", 1),
+        ][unit] ?? (unit, 1)
+      quantity["value"] = (quantity["value"] as! Double) * factor
+      quantity["unit"] = target
+      overrides[path] = quantity
     }
     return overrides
   }

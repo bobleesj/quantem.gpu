@@ -17,9 +17,8 @@ public struct NativeMetadataImport: Sendable {
       let object =
         try JSONSerialization.jsonObject(with: Data(document.content.utf8)) as! [String: Any]
       let scientific = object["scientific_metadata"] as? [String: Any] ?? object
-      if scientific["schema"] as? String == NativeQEMMetadataUnits.schema
-        || scientific["schema"] as? String == NativeQEMMetadataUnits.legacySchema
-      {
+      if (scientific["schema"] as? String)?.hasPrefix("quantem.scientific-metadata/") == true {
+        // Refuses every schema but 2 with a message that names it, as a `.qem` reader does.
         let normalized = try NativeQEMMetadataUnits.normalized(scientific)
         if let axes = normalized["axes"] as? [[String: Any]], axes.count >= 2 {
           guard axes[0]["size"] as? Int == scanRows, axes[1]["size"] as? Int == scanColumns else {

@@ -140,31 +140,27 @@ public struct NativeANSSnapshot {
       throw Self.invalid("Incomplete ANS snapshot; recopy the complete file.")
     }
     self.chunks = chunks
-    var metadata = header["metadata"] as? [String: Any] ?? [:]
-    if scientificMetadata["schema"] as? String == NativeQEMMetadataUnits.schema {
-      for field in [
-        "scan_sampling_A", "detector_sampling", "detector_sampling_inv_A",
-        "detector_sampling_unit", "voltage_kV",
-      ] { metadata.removeValue(forKey: field) }
-      metadata.merge(
-        try NativeQEMMetadataUnits.recordedMetadata(scientificMetadata),
-        uniquingKeysWith: { _, publicValue in publicValue })
+    // Calibration comes only from scientific_metadata. Copies an older writer kept in the
+    // retained block are dropped, as the Python reader drops them, so none can stand in for it.
+    let metadata = (header["metadata"] as? [String: Any] ?? [:]).filter { key, value in
+      !NativeQEMMetadataUnits.notRetained.contains(key) && !key.hasPrefix("entry/")
+        && (key != "hot_pixel_correction"
+          || (value as? [String: Any])?["schema"] as? String
+            == NativeQEMMetadataUnits.hotPixelSchema)
+    }.merging(try NativeQEMMetadataUnits.recordedMetadata(scientificMetadata)) { _, recorded in
+      recorded
     }
     self.metadata = metadata
     let scan = metadata["scan_sampling_A"] as? [Double]
-    let detector =
-      metadata["detector_sampling"] as? [Double]
-      ?? metadata["detector_sampling_inv_A"] as? [Double]
-    let detectorUnit = metadata["detector_sampling_unit"] as? String ?? "1/angstrom"
+    let detector = NativeQEMMetadataUnits.detectorSamplingKeys.compactMap { unit, key in
+      (metadata[key] as? [Double]).map { (unit: unit, sampling: $0) }
+    }.first
     let calibration =
       scan?.count == 2
       ? Native4DSTEMScanCalibration(
         rowSamplingAngstrom: scan![0], columnSamplingAngstrom: scan![1],
         origin: .sourceMetadata, evidence: "ANS snapshot original acquisition calibration") : nil
-    var nativeMetadata = metadata["source_metadata"] as? [String: String] ?? [:]
-    if scientificMetadata["schema"] as? String == NativeQEMMetadataUnits.schema {
-      nativeMetadata = try NativeQEMMetadataUnits.microscopeMetadata(scientificMetadata)
-    }
+    var nativeMetadata = try NativeQEMMetadataUnits.microscopeMetadata(scientificMetadata)
     if let original = metadata["original_source_identity_sha256"] as? String {
       guard original.count == 64, original.allSatisfy(\.isHexDigit) else {
         throw Self.invalid("Invalid original acquisition identity; re-export the source.")
@@ -190,18 +186,14 @@ public struct NativeANSSnapshot {
     nativeMetadata.merge(
       ["storageSchema": "runtime-column-rans-spatial-v2", "sourceKind": "ans-snapshot"],
       uniquingKeysWith: { _, new in new })
-    if let voltage = metadata["voltage_kV"] as? Double, voltage.isFinite, voltage > 0 {
-      nativeMetadata["electron_microscope/electron_source/accelerating_voltage"] = String(voltage)
-      nativeMetadata["electron_microscope/electron_source/accelerating_voltage@units"] = "kV"
-    }
     dataset = Native4DSTEMDataset(
       id: identity, label: url.lastPathComponent, masterPath: url.path,
       dataFiles: [url.path], indexFiles: [], scanRows: shape[0], scanCols: shape[1],
       detectorRows: shape[2], detectorCols: shape[3], sourceDtype: dtype,
       sourceBytes: Int(fileBytes),
       badPixelIndices: validity.indices.filter { validity[$0] == 0 },
-      kPixelSizeRow: detector?.first, kPixelSizeCol: detector?.last,
-      kPixelUnit: detector == nil ? nil : detectorUnit,
+      kPixelSizeRow: detector?.sampling.first, kPixelSizeCol: detector?.sampling.last,
+      kPixelUnit: detector?.unit,
       acquisitionDate: metadata["acquisition_date"] as? String,
       metadata: nativeMetadata,
       schemaIdentity: "quantem.qem/v1", sourceIdentitySHA256: identity,

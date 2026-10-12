@@ -28,42 +28,71 @@ final class NativeCameraSourceTests: XCTestCase {
     let arrays = [(0, 0), (0, 5), (24, 4), (32, 0), (32, 3), (56, 2)].map {
       ["offset": $0.0, "count": $0.1]
     }
-    let header: [String: Any] = [
+    func sampling(_ value: Double, _ unit: String) -> [String: Any] {
+      ["value": value, "unit": unit, "provenance": "source_metadata"]
+    }
+    var scientific: [String: Any] = [
+      "schema": "quantem.scientific-metadata/2",
+      "source_metadata": [String: Any](),
+      "source_metadata_coverage": "unknown",
+      "processing": [["operation": "lossless_storage", "changes_measurements": false]],
+      "axes": [
+        ["name": "scan_row", "size": 1, "sampling": sampling(2.5, "angstrom")],
+        ["name": "scan_column", "size": 2, "sampling": sampling(2.5, "angstrom")],
+        ["name": "detector_row", "size": 2, "sampling": sampling(0.025, "1/angstrom")],
+        ["name": "detector_column", "size": 2, "sampling": sampling(0.025, "1/angstrom")],
+      ],
+    ]
+    // Copies an older writer kept beside scientific_metadata disagree with it on purpose:
+    // calibration is read from scientific_metadata only (QEM specification 0.0.4).
+    var header: [String: Any] = [
       "version": 1, "profile": "runtime-column-rans-spatial-v2",
       "interval": 512, "shape": [1, 2, 2, 2], "dtype": "uint8", "valid": "f0",
       "chunks": [["first": 0, "scans": 2, "arrays": arrays]], "bytes": body.count,
       "sha256": [checksum],
-      "metadata": ["scan_sampling_A": [2.5, 2.5], "detector_sampling_inv_A": [0.025, 0.025]],
+      "metadata": [
+        "scan_sampling_A": [9.0, 9.0], "detector_sampling": [1.0, 1.0],
+        "detector_sampling_unit": "mrad", "voltage_kV": 80.0,
+      ],
       "container": "quantem.qem", "container_version": 1,
       "codec": "runtime-column-rans-spatial-v2",
-      "scientific_metadata": [
-        "schema": "quantem.scientific-metadata/1",
-        "source_metadata": [String: Any](),
-        "source_metadata_coverage": "unknown",
-        "processing": [["operation": "lossless_storage", "changes_measurements": false]],
-        "axes": [
-          ["name": "scan_row", "size": 1], ["name": "scan_column", "size": 2],
-          ["name": "detector_row", "size": 2], ["name": "detector_column", "size": 2],
-        ],
-      ],
+      "scientific_metadata": scientific,
     ]
-    let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
-    var file = Data(NativeQEMMetadata.magic)
-    for size in [json.count, json.count + 56] {
-      var value = UInt64(size).littleEndian
-      withUnsafeBytes(of: &value) { file.append(contentsOf: $0) }
+    func write(_ header: [String: Any]) throws -> Data {
+      let json = try JSONSerialization.data(withJSONObject: header, options: [.sortedKeys])
+      var file = Data(NativeQEMMetadata.magic)
+      for size in [json.count, json.count + 56] {
+        var value = UInt64(size).littleEndian
+        withUnsafeBytes(of: &value) { file.append(contentsOf: $0) }
+      }
+      file.append(contentsOf: SHA256.hash(data: json))
+      file.append(json)
+      file.append(body)
+      try file.write(to: url)
+      return file
     }
-    file.append(contentsOf: SHA256.hash(data: json))
-    file.append(json)
-    file.append(body)
-    try file.write(to: url)
+    var file = try write(header)
     let snapshot = try NativeANSSnapshot(url: url)
     XCTAssertEqual(snapshot.shape, [1, 2, 2, 2])
     XCTAssertEqual(snapshot.dataset.sourceScanCalibration?.rowSamplingAngstrom, 2.5)
+    XCTAssertEqual(snapshot.dataset.kPixelSizeRow, 0.025)
+    XCTAssertEqual(snapshot.dataset.kPixelUnit, "1/angstrom")
+    XCTAssertEqual(snapshot.metadata["scan_sampling_A"] as? [Double], [2.5, 2.5])
+    XCTAssertEqual(snapshot.metadata["detector_sampling_inv_A"] as? [Double], [0.025, 0.025])
+    XCTAssertNil(snapshot.metadata["detector_sampling"])
+    XCTAssertNil(snapshot.metadata["detector_sampling_unit"])
+    XCTAssertNil(snapshot.metadata["voltage_kV"])
     XCTAssertEqual(try snapshot.verifiedMapping().count, file.count)
     file[file.count - 1] ^= 1
     try file.write(to: url)
     XCTAssertThrowsError(try NativeANSSnapshot(url: url).verifiedMapping())
+    // Schema 1 is refused with its name, not converted.
+    scientific["schema"] = "quantem.scientific-metadata/1"
+    header["scientific_metadata"] = scientific
+    _ = try write(header)
+    XCTAssertThrowsError(try NativeANSSnapshot(url: url)) { error in
+      XCTAssertTrue(error.localizedDescription.contains("quantem.scientific-metadata/1"))
+    }
   }
 
   func testDM4KeepsNativeAxesCountsAndCalibration() throws {
@@ -141,9 +170,15 @@ final class NativeCameraSourceTests: XCTestCase {
     defer { resident.releaseResidentStorage() }
     let saved = directory.appendingPathComponent("camera.compressed.qem")
     try resident.saveSnapshot(to: saved)
+    // The retained block holds provenance only; calibration is stored once, in
+    // scientific_metadata, as the Python writer stores it.
+    let retained = try NativeQEMFile(url: saved).header["metadata"] as! [String: Any]
+    XCTAssertTrue(Set(retained.keys).isDisjoint(with: NativeQEMMetadataUnits.notRetained))
     let snapshot = try NativeANSSnapshot(url: saved)
     XCTAssertEqual(snapshot.dataset.sourceBytes, snapshot.dataStart + snapshot.bodyBytes)
     XCTAssertEqual(snapshot.dataset.sourceScanCalibration?.rowSamplingAngstrom, 2.5)
+    XCTAssertEqual(snapshot.metadata["scan_sampling_A"] as? [Double], [2.5, 2.5])
+    XCTAssertEqual(snapshot.metadata["detector_sampling_inv_A"] as? [Double], [0.025, 0.025])
     XCTAssertEqual(snapshot.dataset.metadata?["dm4.Field of View (µm)"], "0.25")
     let reopened = try MetalRuntimeANSResidentSource.load(snapshot: snapshot, device: device)
     defer { reopened.releaseResidentStorage() }

@@ -62,7 +62,7 @@ public enum NativeQEMMetadata {
     return try NativeMetadataDocument.adding(
       documents,
       to: NativeQEMMetadataUnits.normalized([
-        "schema": "quantem.scientific-metadata/1", "axes": axes,
+        "schema": NativeQEMMetadataUnits.schema, "axes": axes,
         "electron_microscope": quantities, "source_metadata": original,
         "source_metadata_coverage": "reader-retained",
         "calibration_overrides": [:] as [String: String],
@@ -77,8 +77,6 @@ public enum NativeQEMMetadata {
       header["container_version"] as? Int == 1,
       header["codec"] as? String == header["profile"] as? String,
       let scientific = header["scientific_metadata"] as? [String: Any],
-      let schema = scientific["schema"] as? String,
-      [NativeQEMMetadataUnits.legacySchema, NativeQEMMetadataUnits.schema].contains(schema),
       let axes = scientific["axes"] as? [[String: Any]],
       axes.compactMap({ $0["size"] as? Int }) == shape,
       axes.compactMap({ $0["name"] as? String }) == [
@@ -89,11 +87,10 @@ public enum NativeQEMMetadata {
         "Unsupported or inconsistent QEM metadata. Update the reader or re-export the original acquisition."
       )
     }
-    if schema == NativeQEMMetadataUnits.schema {
-      let canonical = try NativeQEMMetadataUnits.normalized(scientific)
-      guard NSDictionary(dictionary: canonical).isEqual(to: scientific) else {
-        throw Native4DSTEMIOError.invalidData("Schema-2 QEM quantities require microscopy units.")
-      }
+    // Refuses every schema but 2 with a message that names it; schema 1 is not converted.
+    let canonical = try NativeQEMMetadataUnits.normalized(scientific)
+    guard NSDictionary(dictionary: canonical).isEqual(to: scientific) else {
+      throw Native4DSTEMIOError.invalidData("Schema-2 QEM quantities require microscopy units.")
     }
     try NativeQEMMetadataUnits.validateScientific(scientific)
     _ = try NativeQEMCalibration.read(scientific: scientific)

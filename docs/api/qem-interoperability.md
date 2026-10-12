@@ -35,9 +35,9 @@ array is `(3, 5, 16, 16)` in `(scan_row, scan_column, detector_row, detector_col
 order and includes zero and maximum count values. The uint8 reference has
 unknown calibration; the uint16 reference carries explicit synthetic overrides.
 These files carry scientific metadata schema 1. Since specification 0.0.4 the
-Python readers refuse them and name the schema; the tests keep them to check
-that refusal. The schema-2 bundle below is the reference for counts and
-calibration.
+Python and native Swift readers refuse them and name the schema; the tests keep
+them to check that refusal. The schema-2 bundle below is the reference for
+counts and calibration.
 
 Download the reference files and keep them together:
 
@@ -64,7 +64,7 @@ not performance or real-detector-format qualification.
 pytest -q tests/test_qem_validation.py
 QEM_TEST_BACKEND=mps pytest -q tests/test_qem_interoperability.py
 QEM_TEST_BACKEND=cuda pytest -q tests/test_qem_interoperability.py
-bash scripts/check_qem_reference.sh tests/data/qem-v1/uint16.npy tests/data/qem-v1/uint16.qem
+bash scripts/check_qem_reference.sh tests/data/qem-v2/u16-multiple-chunks.npy tests/data/qem-v2/u16-multiple-chunks.qem
 ```
 
 The explicit backend test opens the frozen schema-2 references, compares every
