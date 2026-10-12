@@ -18,7 +18,7 @@ import yaml
 from quantem.gpu import screening
 from quantem.gpu.formats import dataset_yaml
 from quantem.gpu.ssb.contract import RefineMethod
-from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA
+from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
 from quantem.gpu.ssb.results import (
     SSBResult,
     SSBSeriesResult,
@@ -391,10 +391,25 @@ def write_fit_metadata(
     current schema are kept; a block of any other schema is replaced whole, so none of its values pass as current.
     ``detector_sampling_mrad`` is the session's after ``SSB.open``, which holds one on every backend; a block
     without it cannot be exported.
+
+    The file is quantem.live's screening record. A record this function creates carries
+    ``"schema": SCREEN_ACQUISITION_SCHEMA`` at its top level: without it Live leaves the acquisition out of its
+    Screen list. In a record that exists nothing outside ``computed.ssb`` changes, and one with another top-level
+    schema, or none, raises ``ValueError`` before anything is written: a fit stored into a record of an earlier
+    layout would sit beside values Live no longer reads under their names.
     """
     config_path = screen_path / "config.json"
-    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
-    config = config if isinstance(config, dict) else {}
+    if config_path.is_file():
+        config = json.loads(config_path.read_text())
+        found = config.get("schema") if isinstance(config, dict) else None
+        if found != SCREEN_ACQUISITION_SCHEMA:
+            raise ValueError(
+                f"{config_path} is a screening record with schema {found!r}; this version stores a fit only in a "
+                f"record with schema {SCREEN_ACQUISITION_SCHEMA!r}. Nothing was written. Rewrite the record once "
+                "with quantem.live's tools/rewrite_screen_config.py."
+            )
+    else:
+        config = {"schema": SCREEN_ACQUISITION_SCHEMA}
     computed = config.setdefault("computed", {})
     computed["ssb"] = {
         **stored_fit(config),

@@ -347,13 +347,15 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     """write_fit_metadata marks its block and saved_fit returns the exact values; no field of an unmarked block survives."""
     from quantem.gpu import SSBResult
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
     from quantem.gpu.ssb.series import saved_fit, write_fit_metadata
 
     config = tmp_path / "config.json"
     earlier = {"aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "rotation_angle_deg": 0.0, "com_reversed": True,
                "aberration_unit": "nm", "picked_c10_nm": 4.0, "optuna_trials": [{"loss": 0.02}]}
-    config.write_text(json.dumps({"human": {"notes": "kept"}, "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
+    # a current screening record that still holds a fit block of an earlier fit schema
+    config.write_text(json.dumps({"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
+                                  "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
     result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
@@ -363,7 +365,8 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.5, 0.5], "schema": FIT_SCHEMA, "aberrations": aberrations,
              "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bright_field_radius_px": 48.0,
              "bright_field_center_px": None, "detector_sampling_mrad": [0.55, 0.56]}
-    assert written == {"human": {"notes": "kept"}, "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
+    assert written == {"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
+                       "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
     assert saved_fit(tmp_path) == block
     # a field the dashboard adds to a current block stays through the next fit
     written["computed"]["ssb"]["ran_at"] = "2026-10-11T12:00:00"
@@ -424,3 +427,53 @@ def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_blo
     write_fit_metadata(tmp_path, {**settings, "scan_detector_rotation_deg": 192.0}, result, session.detector_sampling_mrad)
     record, _ = read_result(export_result(tmp_path, master, tmp_path / "out.json"))
     assert record["calibration"]["detector_sampling_mrad"] == [30.0 / 48.0, 30.0 / 48.0]
+
+
+def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
+    """The fit block goes into quantem.live's screening record: created with its schema, or left as found.
+
+    A record this function created held only ``computed.ssb``. quantem.live reads a screening record only with
+    ``"schema": "quantem.screen-acquisition/2"`` at its top level, so it left such an acquisition out of its Screen
+    list. A record of another schema, or none, is not written into: its other values are in an earlier layout.
+    """
+    import pytest
+
+    from quantem.gpu import SSBResult
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA, SCREEN_ACQUISITION_SCHEMA
+    from quantem.gpu.ssb.series import saved_fit, write_fit_metadata
+
+    assert SCREEN_ACQUISITION_SCHEMA == "quantem.screen-acquisition/2"
+    aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": -0.5}
+    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
+                       scan_detector_rotation_deg=200.0, loss=0.125, bright_field_center_px=(31.5, 32.5))
+    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0}
+    # created: the record carries the schema first, and the fit reads back
+    created = tmp_path / "created"
+    write_fit_metadata(created, settings, result, (0.6, 0.6))
+    record = json.loads((created / "config.json").read_text())
+    assert list(record) == ["schema", "computed"] and record["schema"] == SCREEN_ACQUISITION_SCHEMA
+    assert saved_fit(created)["aberrations"] == aberrations and record["computed"]["ssb"]["schema"] == FIT_SCHEMA
+    # existing and current: every other key stays byte for byte, in its place
+    current = tmp_path / "current"
+    current.mkdir()
+    existing = {"schema": SCREEN_ACQUISITION_SCHEMA, "source_master": "scan_master.h5",
+                "human": {"notes": "kept", "rating": 4, "magnification_MX": 5.1},
+                "computed": {"bright_field_center_px": [95.25, 96.5], "scan_sampling_A": [0.264, 0.264],
+                             "ssb_tilt": {"schema": FIT_SCHEMA, "loss": 0.0625}},
+                "timestamp": "2026-10-11T12:00:00"}
+    (current / "config.json").write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    write_fit_metadata(current, settings, result, (0.6, 0.6))
+    expected = json.loads(json.dumps(existing))
+    expected["computed"]["ssb"] = json.loads((created / "config.json").read_text())["computed"]["ssb"]
+    assert (current / "config.json").read_text(encoding="utf-8") == json.dumps(expected, indent=2)
+    # existing with another schema, or none: refused before anything is written
+    for number, earlier in enumerate(({"computed": {"bf_radius": 55.0}}, {"schema_version": 1, "computed": {}},
+                                      {"schema": "quantem.screen-acquisition/1", "computed": {}})):
+        folder = tmp_path / f"earlier-{number}"
+        folder.mkdir()
+        (folder / "config.json").write_text(json.dumps(earlier), encoding="utf-8")
+        before = (folder / "config.json").read_bytes()
+        with pytest.raises(ValueError, match="quantem.screen-acquisition/2") as refused:
+            write_fit_metadata(folder, settings, result, (0.6, 0.6))
+        assert str(folder / "config.json") in str(refused.value) and repr(earlier.get("schema")) in str(refused.value)
+        assert (folder / "config.json").read_bytes() == before and sorted(path.name for path in folder.iterdir()) == ["config.json"]

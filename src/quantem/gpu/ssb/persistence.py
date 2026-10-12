@@ -32,6 +32,10 @@ SCHEMA = 7
 # What a stored fit must carry under "schema" to be read at all (Live's computed.ssb in config.json). Named like the
 # .qem scientific-metadata schema string, so a reader refuses another version instead of reinterpreting its values.
 FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
+# The top-level "schema" of the screening record that holds the fit block (live/screen/<dataset>/config.json). The
+# record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
+# is written here only when SSB.reconstruct_series creates the record, and required of a record that exists.
+SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature.
 RESULT_SCHEMA = f"quantem.ssb-result/{SCHEMA}"
 

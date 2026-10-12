@@ -321,6 +321,17 @@ new `rcN` heading when that rc is published to TestPyPI.
   `ParallaxResult`, a rotation given to `dpc.run` or `screening.prepare`)
   are wrapped the same way, once, in double precision: a negative angle
   below the rounding of 360 read `360.0` and reads `0.0`.
+- A `live/screen/<dataset>/config.json` that `SSB.reconstruct_series`
+  created held only `computed.ssb`. The file is quantem.live's screening
+  record, read there only with `"schema": "quantem.screen-acquisition/2"` at
+  its top level, so the acquisition was left out of the Screen list. A record
+  this package creates now carries that key
+  (`ssb.persistence.SCREEN_ACQUISITION_SCHEMA`). In a record that exists
+  nothing outside `computed.ssb` changes, and a record with another top-level
+  schema, or none, raises `ValueError` naming the file, the schema found and
+  the one written, before anything is written: a fit is not stored into a
+  record of an earlier layout (quantem.live's `tools/rewrite_screen_config.py`
+  rewrites such a record once).
 - The native SSB phase pair stored the engine's Angstrom under
   `c10Nanometers` and `c12Nanometers`, ten times the value for a reader that
   took them as nm, and the azimuth in radians. The record now states
