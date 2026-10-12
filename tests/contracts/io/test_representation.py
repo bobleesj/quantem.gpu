@@ -21,7 +21,8 @@ def test_original_acquisition_defaults_to_ans(monkeypatch, tmp_path, backend) ->
     source = tmp_path / "acquisition.h5"
     with h5py.File(source, "w") as handle:
         handle.create_dataset("data", data=np.zeros((2, 3, 4, 5), np.uint16))
-    expected = object()
+    # what a loader returns: io.load reads its metadata before handing it on
+    expected = Dataset4dstemGPU(None, {})
     calls = []
 
     def encoded(path, **options):
