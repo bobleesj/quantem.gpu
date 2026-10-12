@@ -16,27 +16,33 @@ metadata, with no base64 arrays. Keep both files together when sharing. No raw
 data, complex object, or large Fourier evidence is duplicated. A 512-square
 phase is 1,048,704 bytes as NumPy v1, plus its small JSON record.
 
-## Version 1 contract
+## Schema 2 contract
 
-- `format`: `live.ssb`; `schemaVersion`: integer `1`.
-- `phaseFile`: companion `.npy` basename in the same directory; no traversal.
-- `rows`, `columns`: integer dimensions, 1 through 4096 inclusive.
+- `schema`: `quantem.ssb-phase/2`. Records of version 1 (`format: live.ssb`,
+  `schemaVersion: 1`, camelCase keys) are refused; export them again.
+- `phase_file`: companion `.npy` basename in the same directory; no traversal.
+- `shape`: `[rows, cols]` integers, 1 through 4096 inclusive.
 - NumPy v1, C-order, little-endian float32 (`<f4`); finite values only.
-- `phaseEncoding`: `float32-le-row-major`; `phaseUnits`: `rad`.
-- `phaseSHA256`: SHA-256 of raw row-major phase bytes, excluding the NumPy
+- `phase_encoding`: `float32-le-row-major`; `phase_unit`: `rad`.
+- `phase_sha256`: SHA-256 of raw row-major phase bytes, excluding the NumPy
   header. No uint16 conversion, clipping, normalization or quantization.
-- `sourceIdentity`: lowercase SHA-256 from the existing
+- `source_identity`: lowercase SHA-256 from the existing
   `live4dstem.dataset/v0.1` master/ordered-member byte identity.
-- `calibration`: `beamEnergyKeV`, `semiangleMrad`, `scanStepRowAngstroms`,
-  `scanStepColumnAngstroms`, `detectorStepRowMrad`, `detectorStepColumnMrad`,
-  `centerRow`, `centerColumn`; optional `brightfieldRadiusPixels` and
-  `excludedDetectorPixels`, using `MetalSSBCalibration` conventions.
-- `c10Nanometers`, `c12Nanometers`, `phi12Radians`, `rotationDegrees`: saved
+- `calibration`: `voltage_kV`, `semiangle_mrad`, `scan_sampling_A` and
+  `detector_sampling_mrad` (`[row, col]`), `bright_field_center_px`
+  (`[row, col]`, full detector); optional `bright_field_radius_px` and
+  `excluded_detector_pixels`. The detector sampling is the one the fit used.
+- `aberrations`: `C10_nm`, `C12_nm`, `phi12_deg` (scan frame);
+  `scan_detector_rotation_deg` in [0, 360) and `detector_transposed`: saved
   physical settings, independent of display contrast and colormap.
 - `provenance`: nonempty string-valued object identifying producer, phase
   variant, recorded revision and calibration/identity limitations.
-- `runMetadata`: readable JSON object preserving the original scientific run,
+- `run_metadata`: readable JSON object preserving the original scientific run,
   including higher-order settings when recorded.
+
+The exporter reads only a stored fit block of the current fit schema
+(`computed.ssb` with `"schema": "quantem.ssb-fit/7"`); another block is
+refused with the reason.
 
 Publish NumPy first and JSON last. Never overwrite a different result. Repeating
 identical exports is safe. Readers validate shape, dtype, finite values, units,

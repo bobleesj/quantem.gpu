@@ -121,6 +121,8 @@ def test_reconstruct_series_reuses_only_exact_results(
         np.save(dataset / "df.npy", np.full((8, 9), 30 + index))
 
     class FakeSession:
+        detector_sampling_mrad = (0.5, 0.5)
+
         def __init__(self, source):
             self.index = int(Path(source).stem.rsplit("_", 2)[-2]) - 150
 
@@ -302,6 +304,8 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         np.save(dataset / "df.npy", np.zeros((2, 3), dtype=np.float32))
 
     class FakeSession:
+        detector_sampling_mrad = (0.5, 0.5)
+
         def __init__(self, source):
             frame = int(Path(source).stem.rsplit("_", 2)[-2])
             self.index = {100: 1, 250: 2, 900: 3}[frame]
@@ -372,6 +376,8 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     opened, fits, reconstructions = [], [], []
 
     class FakeSession:
+        detector_sampling_mrad = (0.5, 0.5)
+
         def __init__(self, source):
             self.name = Path(source).name
 
@@ -463,6 +469,8 @@ files:
     )
 
     class FakeSession:
+        detector_sampling_mrad = (0.5, 0.5)
+
         def __enter__(self):
             return self
 

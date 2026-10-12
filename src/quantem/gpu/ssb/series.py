@@ -128,7 +128,8 @@ def reconstruct_series(
                     save_to=reference_path / "ssb-fit",
                     verbose=False,
                 )
-            write_fit_metadata(reference_path, settings, reference_result)
+                detector_sampling_mrad = ssb.detector_sampling_mrad
+            write_fit_metadata(reference_path, settings, reference_result, detector_sampling_mrad)
             reference_fit = {
                 "aberrations": reference_result.aberrations,
                 "scan_detector_rotation_deg": reference_result.scan_detector_rotation_deg,
@@ -170,8 +171,9 @@ def reconstruct_series(
                     save_to=screen_path / "ssb-fit",
                     verbose=False,
                 )
+            detector_sampling_mrad = ssb.detector_sampling_mrad
         if not fixed_probe:
-            write_fit_metadata(screen_path, settings, result)
+            write_fit_metadata(screen_path, settings, result, detector_sampling_mrad)
         # one float32 stack whatever array type the backend's phase is
         phases.append(np.asarray(host_array(result.phase), dtype=np.float32))
         bright_field, dark_field = virtual_images(
@@ -374,10 +376,13 @@ def write_fit_metadata(
     screen_path: Path,
     settings: dict[str, object],
     result: SSBResult,
+    detector_sampling_mrad: tuple[float, float] | None,
 ) -> None:
     """Record a fresh GPU fit in ``config.json`` so Live screening and later series runs find it.
 
-    The block carries ``"schema": FIT_SCHEMA``, without which no reader accepts it. Fields Live added to a block of the
+    The block holds every calibration the fit used, including the detector sampling, so an exported phase states the
+    numbers that made it rather than ones derived again from another radius. It carries ``"schema": FIT_SCHEMA``,
+    without which no reader accepts it. Fields Live added to a block of the
     current schema are kept; a block of any other schema is replaced whole, so none of its values pass as current.
     """
     config_path = screen_path / "config.json"
@@ -393,6 +398,8 @@ def write_fit_metadata(
         "detector_transposed": bool(result.detector_transposed),
         "loss": None if result.loss is None else float(result.loss),
         "bright_field_radius_px": result.bright_field_radius_px,
+        "bright_field_center_px": None if result.bright_field_center_px is None else list(result.bright_field_center_px),
+        "detector_sampling_mrad": None if detector_sampling_mrad is None else list(detector_sampling_mrad),
     }
     screen_path.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")

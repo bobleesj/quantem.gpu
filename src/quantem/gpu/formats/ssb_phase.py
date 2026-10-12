@@ -9,7 +9,6 @@ import argparse
 import hashlib
 import io
 import json
-import math
 import os
 import tempfile
 from pathlib import Path
@@ -18,6 +17,13 @@ import h5py
 import numpy as np
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
+from quantem.gpu.ssb.series import stored_fit
+
+# Carried by every portable phase record under "schema"; another value is refused.
+# 2: the shared vocabulary (scan_sampling_A, detector_sampling_mrad, bright_field_center_px, aberrations in
+#    C10_nm / C12_nm / phi12_deg, scan_detector_rotation_deg with detector_transposed, snake_case keys). Version 1
+#    was format "live.ssb" with schemaVersion 1 and camelCase keys; its rotationDegrees was the angle below 180.
+SCHEMA = "quantem.ssb-phase/2"
 
 
 def acquisition_identity(master: Path) -> str:
@@ -60,52 +66,57 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
     if manifest.stat().st_size > 32 << 20:
         raise ValueError("SSB JSON exceeds 32 MB.")
     record = json.loads(manifest.read_text())
-    name = record.get("phaseFile", "")
-    if (record.get("format") != "live.ssb" or record.get("schemaVersion") != 1
-            or not name.endswith(".npy") or Path(name).name != name
-            or name.startswith(".") or "\\" in name):
+    name = record.get("phase_file", "")
+    if record.get("schema") != SCHEMA:
+        raise ValueError(f"SSB result schema {record.get('schema')!r} is not read; this reader accepts {SCHEMA!r}. Export the result again.")
+    if not name.endswith(".npy") or Path(name).name != name or name.startswith(".") or "\\" in name:
         raise ValueError("Invalid SSB manifest or companion filename.")
     path = manifest.parent / name
     if path.resolve().parent != manifest.parent.resolve():
         raise ValueError("The companion phase must be inside the result folder.")
-    rows, columns = record["rows"], record["columns"]
-    if (type(rows) is not int or type(columns) is not int
-            or not (0 < rows <= 4096 and 0 < columns <= 4096)
-            or path.stat().st_size > rows * columns * 4 + 65536):
+    rows, cols = record["shape"]
+    if (type(rows) is not int or type(cols) is not int
+            or not (0 < rows <= 4096 and 0 < cols <= 4096)
+            or path.stat().st_size > rows * cols * 4 + 65536):
         raise ValueError("Invalid SSB phase dimensions or file size.")
     with path.open("rb") as stream:
         if stream.read(8) != b"\x93NUMPY\x01\x00":
             raise ValueError("Expected NumPy v1 phase data.")
     array = np.load(path, allow_pickle=False)
-    identity = record["sourceIdentity"]
-    if (array.dtype.str != "<f4" or array.shape != (rows, columns)
+    identity = record["source_identity"]
+    if (array.dtype.str != "<f4" or array.shape != (rows, cols)
             or not array.flags.c_contiguous or not np.isfinite(array).all()
-            or record.get("phaseUnits") != "rad"
-            or record.get("phaseEncoding") != "float32-le-row-major"
+            or record.get("phase_unit") != "rad"
+            or record.get("phase_encoding") != "float32-le-row-major"
             or len(identity) != 64 or any(character not in "0123456789abcdef" for character in identity)
             or (expected_identity is not None and identity != expected_identity)
-            or hashlib.sha256(array.tobytes()).hexdigest() != record["phaseSHA256"]):
+            or hashlib.sha256(array.tobytes()).hexdigest() != record["phase_sha256"]):
         raise ValueError("SSB result has wrong source identity, dtype, shape or checksum.")
     calibration = record["calibration"]
-    for key in ("beamEnergyKeV", "semiangleMrad", "scanStepRowAngstroms",
-                "scanStepColumnAngstroms", "detectorStepRowMrad", "detectorStepColumnMrad"):
+    for key in ("voltage_kV", "semiangle_mrad"):
         if not np.isfinite(calibration[key]) or calibration[key] <= 0:
             raise ValueError(f"Invalid calibration: {key}.")
-    if not all(np.isfinite(record[key]) for key in
-               ("c10Nanometers", "c12Nanometers", "phi12Radians", "rotationDegrees")):
-        raise ValueError("Non-finite SSB aberrations.")
-    if not all(np.isfinite(calibration[key]) for key in ("centerRow", "centerColumn")):
+    for key in ("scan_sampling_A", "detector_sampling_mrad"):
+        if len(calibration[key]) != 2 or not all(np.isfinite(value) and value > 0 for value in calibration[key]):
+            raise ValueError(f"Invalid calibration: {key} is a positive [row, col] pair.")
+    aberrations = record["aberrations"]
+    if set(aberrations) != {"C10_nm", "C12_nm", "phi12_deg"} or not all(np.isfinite(value) for value in aberrations.values()):
+        raise ValueError("SSB aberrations are finite C10_nm, C12_nm and phi12_deg.")
+    if not np.isfinite(record["scan_detector_rotation_deg"]) or type(record["detector_transposed"]) is not bool:
+        raise ValueError("SSB geometry needs a finite scan_detector_rotation_deg and a detector_transposed flag.")
+    center = calibration["bright_field_center_px"]
+    if len(center) != 2 or not all(np.isfinite(value) for value in center):
         raise ValueError("Non-finite detector center.")
-    radius = calibration.get("brightfieldRadiusPixels")
+    radius = calibration.get("bright_field_radius_px")
     if radius is not None and (not np.isfinite(radius) or radius <= 0):
         raise ValueError("Bright-field radius must be positive.")
     if not isinstance(record.get("provenance"), dict) or not record["provenance"]:
         raise ValueError("SSB result needs recorded provenance.")
     if not all(isinstance(value, str) for value in record["provenance"].values()):
         raise ValueError("Provenance values must be strings.")
-    if any(type(pixel) is not int or pixel < 0 for pixel in calibration.get("excludedDetectorPixels", []) or []):
+    if any(type(pixel) is not int or pixel < 0 for pixel in calibration.get("excluded_detector_pixels", []) or []):
         raise ValueError("Excluded detector pixels must be nonnegative integer indices.")
-    if not isinstance(record["runMetadata"], dict):
+    if not isinstance(record["run_metadata"], dict):
         raise ValueError("SSB run metadata must be a readable JSON object.")
     return record, array
 
@@ -151,8 +162,13 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
     # Catalogue links are transport state, not part of original run provenance.
     config.pop("ssb_result", None)
     config.pop("ssb_result_source_identity", None)
-    computed = config["computed"]
-    ssb = computed["ssb"]
+    # Only a fit of the current schema is exported: an older block can hold Angstrom under nm keys or the angle
+    # below 180 without its reversal, and the exported numbers would describe another reconstruction.
+    ssb = stored_fit(config)
+    missing = [key for key in ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad",
+                               "bright_field_center_px", "aberrations", "scan_detector_rotation_deg") if key not in ssb]
+    if missing:
+        raise ValueError(f"{run_folder / 'config.json'} holds no current SSB fit with {missing}; fit it again.")
     phase = np.load(run_folder / "ssb_phase.npy", allow_pickle=False)
     if (phase.dtype != np.dtype("float32") or phase.ndim != 2
             or any(size < 1 or size > 4096 for size in phase.shape)
@@ -161,34 +177,31 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
     # The checksum and the .npy companion describe little-endian row-major float32 bytes.
     phase = np.ascontiguousarray(phase, dtype="<f4")
     phase_bytes = phase.tobytes(order="C")
-    radius = float(computed["bright_field_radius_px"])
-    semiangle = float(ssb["semiangle_mrad"])
-    step_row, step_col = (float(value) for value in ssb["scan_sampling_A"])
     calibration = dict(
-        beamEnergyKeV=float(ssb["voltage_kV"]), semiangleMrad=semiangle,
-        scanStepRowAngstroms=step_row, scanStepColumnAngstroms=step_col,
-        detectorStepRowMrad=semiangle / radius, detectorStepColumnMrad=semiangle / radius,
-        centerRow=float(computed["bright_field_center_px"][0]), centerColumn=float(computed["bright_field_center_px"][1]),
-        brightfieldRadiusPixels=radius,
+        voltage_kV=float(ssb["voltage_kV"]), semiangle_mrad=float(ssb["semiangle_mrad"]),
+        scan_sampling_A=[float(value) for value in ssb["scan_sampling_A"]],
+        detector_sampling_mrad=[float(value) for value in ssb["detector_sampling_mrad"]],
+        bright_field_center_px=[float(value) for value in ssb["bright_field_center_px"]],
     )
-    aberrations = ssb["aberrations"]
+    if ssb.get("bright_field_radius_px") is not None:
+        calibration["bright_field_radius_px"] = float(ssb["bright_field_radius_px"])
     result = dict(
-        format="live.ssb",
-        schemaVersion=1, sourceIdentity=identity, rows=phase.shape[0], columns=phase.shape[1],
-        phaseEncoding="float32-le-row-major", phaseUnits="rad",
-        phaseSHA256=hashlib.sha256(phase_bytes).hexdigest(),
-        calibration=calibration, c10Nanometers=float(aberrations["C10_nm"]),
-        c12Nanometers=float(aberrations["C12_nm"]), phi12Radians=math.radians(aberrations["phi12_deg"]),
-        rotationDegrees=float(ssb["scan_detector_rotation_deg"]),
+        schema=SCHEMA, source_identity=identity, shape=list(phase.shape),
+        phase_encoding="float32-le-row-major", phase_unit="rad",
+        phase_sha256=hashlib.sha256(phase_bytes).hexdigest(),
+        calibration=calibration,
+        aberrations={key: float(ssb["aberrations"][key]) for key in ("C10_nm", "C12_nm", "phi12_deg")},
+        scan_detector_rotation_deg=float(ssb["scan_detector_rotation_deg"]),
+        detector_transposed=bool(ssb.get("detector_transposed", False)),
         provenance={
             "producer": "quantem.live original screen result",
             "run": str(ssb.get("ran_at", config.get("timestamp", "unrecorded"))),
-            "sourceBinding": "Current acquisition bytes hashed at export; this does not establish an unrecorded historical run digest",
-            "detectorSampling": "Derived from recorded semi-angle / BF radius",
-            "phaseVariant": "original ssb_phase.npy; not picked, calibrated or denoised",
-            "backendRevision": str(ssb.get("backend_revision", "not recorded by original run")),
+            "source_binding": "Current acquisition bytes hashed at export; this does not establish an unrecorded historical run digest",
+            "detector_sampling": "The detector sampling the fit used, from the stored fit",
+            "phase_variant": "original ssb_phase.npy; not picked, calibrated or denoised",
+            "backend_revision": str(ssb.get("backend_revision", "not recorded by original run")),
         },
-        runMetadata=config,
+        run_metadata=config,
     )
     if output is None:
         stem = master.stem
@@ -202,7 +215,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
                 break
             existing = json.loads(candidate.read_text())
             comparison = dict(existing)
-            comparison.pop("phaseFile", None)
+            comparison.pop("phase_file", None)
             if comparison == result:
                 read_result(candidate, identity)
                 return candidate
@@ -210,14 +223,14 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
             raise ValueError("Too many saved SSB results. Choose an explicit output name.")
     if output.suffix != ".json":
         raise ValueError("Choose a .json result filename; its .npy companion is written automatically.")
-    result["phaseFile"] = output.with_suffix(".npy").name
+    result["phase_file"] = output.with_suffix(".npy").name
     buffer = io.BytesIO()
     np.save(buffer, phase, allow_pickle=False)
     _publish(output.with_suffix(".npy"), buffer.getvalue())
     _publish(output, (json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n").encode())
     read_result(output, identity)
-    print(json.dumps({"output": str(output), "sourceIdentity": identity,
-                      "phaseSHA256": result["phaseSHA256"], "bytes": output.stat().st_size}))
+    print(json.dumps({"output": str(output), "source_identity": identity,
+                      "phase_sha256": result["phase_sha256"], "bytes": output.stat().st_size}))
     return output
 
 
@@ -226,10 +239,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-folder", type=Path, required=True)
     parser.add_argument("--source-master", type=Path, required=True)
-    parser.add_argument("--expected-source-id", required=True)
+    parser.add_argument("--expected-source-identity", required=True)
     parser.add_argument("--output", type=Path, help="Default: <source folder>/live/screen/<source stem>/ssb.json.")
     args = parser.parse_args()
-    export_result(args.run_folder, args.source_master, args.output, args.expected_source_id)
+    export_result(args.run_folder, args.source_master, args.output, args.expected_source_identity)
 
 
 if __name__ == "__main__":
