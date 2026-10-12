@@ -114,8 +114,9 @@ def test_reconstruct_series_reuses_only_exact_results(
             "aberrations": aberrations,
             "loss": 0.01 * index,
         }
+        # a record as quantem.live screens it: the series stores a fit only in a record of this schema
         (dataset / "config.json").write_text(
-            json.dumps({"computed": {"ssb": settings}})
+            json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": settings}})
         )
         np.save(dataset / "bf.npy", np.full((8, 9), 20 + index))
         np.save(dataset / "df.npy", np.full((8, 9), 30 + index))
@@ -280,6 +281,7 @@ def test_series_bounds_are_acquisition_ids_not_list_positions(
         (dataset / "config.json").write_text(
             json.dumps(
                 {
+                    "schema": "quantem.screen-acquisition/2",
                     "computed": {
                         "ssb": {
                             "schema": FIT_SCHEMA,
@@ -364,8 +366,9 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
         "files: {1: {mag: mag}, 2: {mag: mag}}\n"
     )
     earlier = {"C10": 5.0, "C12": -0.3, "phi12": 0.18}
-    # every value differs from dataset.yaml, so anything read from this block would show below
-    (reference / "config.json").write_text(json.dumps({"computed": {"ssb": {
+    # every value differs from dataset.yaml, so anything read from this block would show below; the record itself
+    # is current (quantem.live's rewrite stamps the record and leaves an earlier fit block as it is)
+    (reference / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {
         "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
         "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": (0.2, 0.2), "bright_field_radius_px": 55.0}}}))
     for frame in (1, 2):

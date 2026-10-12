@@ -531,6 +531,14 @@ probe reference is fitted again, and the physical settings come from
 `dataset.yaml` or the keyword arguments. Evidence:
 [stored fit schema](../maintainer/2026-10-11-stored-fit-schema.md).
 
+That `config.json` is QuantEM Live's screening record, which Live reads only
+with `"schema": "quantem.screen-acquisition/2"` at its top level
+(`quantem.gpu.ssb.persistence.SCREEN_ACQUISITION_SCHEMA`). A record that
+`reconstruct_series` creates carries that key. In a record that exists it
+changes nothing outside `computed.ssb`; a record with another top-level
+schema, or none, raises `ValueError` before anything is written and names
+QuantEM Live's `tools/rewrite_screen_config.py`.
+
 `dataset.yaml` is read only at schema `quantem.dataset/2`: the `microscope`
 voltage and semi-angle, the file entry's `scan_detector_rotation_deg` (a
 per-file `0.0` counts) else `microscope.scan_detector_rotation_deg`, and the
