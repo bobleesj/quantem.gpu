@@ -99,7 +99,7 @@ private func require(
       let mixed = index * 17 + index / 113 + 3
       return UInt8(mixed % 251)
     }
-    let aberrations = MetalSSBAberrations(c10Nanometers: 55, c12Nanometers: 13, phi12Radians: 0.23)
+    let aberrations = MetalSSBAberrations(c10Angstroms: 55, c12Angstroms: 13, phi12Radians: 0.23)
     let engine = try MetalSSBEngine(device: device, geometry: geometry)
     try engine.prepare(brightfield: buffer(values))
     let reference = read(try engine.reconstruct(aberrations: aberrations).object)
@@ -166,7 +166,7 @@ private func require(
     for term in MetalSSBHigherOrder.supported {
       var adjusted = aberrations
       adjusted.higherOrder = [.init(order: term.order, symmetry: term.symmetry,
-        magnitudeNanometers: pow(10, Float(term.order + 1)), angleRadians: 0.21)]
+        magnitudeAngstroms: pow(10, Float(term.order + 1)), angleRadians: 0.21)]
       let cached = try engine.reconstruct(aberrations: adjusted)
       let streamed = try streamedEngine.reconstruct(aberrations: adjusted)
       let difference = error(read(cached.object), read(streamed.object))
@@ -188,13 +188,13 @@ private func require(
     try fittingEngine.prepare(brightfield: buffer(values))
     let fit = try fittingEngine.optimize(start: aberrations, globalTrials: 200, seed: 42)
     let fitted = MetalSSBAberrations(
-      c10Nanometers: Float(fit.best.c10Nanometers),
-      c12Nanometers: Float(fit.best.c12Nanometers), phi12Radians: Float(fit.best.phi12Radians))
+      c10Angstroms: Float(fit.best.c10Angstroms),
+      c12Angstroms: Float(fit.best.c12Angstroms), phi12Radians: Float(fit.best.phi12Radians))
     let fittedResult = try fittingEngine.reconstruct(aberrations: fitted)
     let run = try MetalSSBSavedRun(
       result: fittedResult, sourceIdentity: "synthetic-count-fixture-v1",
       backendRevision: "count-parity-test",
-      geometry: fittingGeometry, aberrations: fitted, rotationDegrees: 0, optimization: fit)
+      geometry: fittingGeometry, aberrations: fitted, scanDetectorRotationDegrees: 0, optimization: fit)
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -207,18 +207,18 @@ private func require(
     require(loaded.optimization?.trials.map(\.loss) == fit.trials.map(\.loss))
     require(loaded.aberrations == fitted && loaded.provenance == fittedResult.provenance)
     var manual = fitted
-    manual.higherOrder = [.init(order: 2, symmetry: 1, magnitudeNanometers: 50, angleRadians: 0.3)]
+    manual.higherOrder = [.init(order: 2, symmetry: 1, magnitudeAngstroms: 50, angleRadians: 0.3)]
     let manualResult = try fittingEngine.reconstruct(aberrations: manual)
     let manualRun = try MetalSSBSavedRun(result: manualResult, sourceIdentity: run.sourceIdentity,
       backendRevision: "manual-calibration-test", geometry: fittingGeometry,
-      aberrations: manual, rotationDegrees: 12, optimization: fit,
-      calibration: calibration, calibrationProvenance: ["semiangle": "Assumed"], optimizedRotationDegrees: 0)
+      aberrations: manual, scanDetectorRotationDegrees: 12, optimization: fit,
+      calibration: calibration, calibrationProvenance: ["semiangle": "Assumed"], optimizedScanDetectorRotationDegrees: 0)
     try manualRun.save(to: url)
     let manualLoaded = try MetalSSBSavedRun.load(from: url, matchingSourceIdentity: run.sourceIdentity)
     require(manualLoaded.calibration == calibration)
     require(manualLoaded.calibrationProvenance == ["semiangle": "Assumed"])
-    require(manualLoaded.aberrations == manual && manualLoaded.rotationDegrees == 12)
-    require(manualLoaded.optimizedRotationDegrees == 0)
+    require(manualLoaded.aberrations == manual && manualLoaded.scanDetectorRotationDegrees == 12)
+    require(manualLoaded.optimizedScanDetectorRotationDegrees == 0)
     let manualRestored = try manualLoaded.reconstruction(device: device)
     require(read(manualRestored.object) == read(manualResult.object))
     var rejected = false

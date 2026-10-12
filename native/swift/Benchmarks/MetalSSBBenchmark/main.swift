@@ -26,6 +26,7 @@ struct ReferenceMetadata: Decodable {
   let backend: String
 }
 
+// Keys of the benchmark export: the engine's Angstrom and radians.
 struct AberrationMetadata: Decodable {
   let c10: Float
   let c12: Float
@@ -289,8 +290,8 @@ let geometry = MetalSSBGeometry(
   referenceRotationDegrees: metadata.rotationAngleDegrees
 )
 let aberrations = MetalSSBAberrations(
-  c10Nanometers: metadata.aberrations.c10,
-  c12Nanometers: metadata.aberrations.c12,
+  c10Angstroms: metadata.aberrations.c10,
+  c12Angstroms: metadata.aberrations.c12,
   phi12Radians: metadata.aberrations.phi12
 )
 print("stage=geometry-created")
@@ -427,8 +428,8 @@ if let firstFit = fitResults.first {
   print(String(format: "fit_elapsed_p95_s=%.6f", percentile(fitSeconds, fraction: 0.95)))
   print(String(format: "fit_elapsed_max_s=%.6f", fitSeconds.last!))
   print(String(format: "fit_loss=%.12g", firstFit.loss))
-  print(String(format: "fit_c10_nm=%.9g", firstFit.best.c10Nanometers))
-  print(String(format: "fit_c12_nm=%.9g", firstFit.best.c12Nanometers))
+  print(String(format: "fit_c10_A=%.9g", firstFit.best.c10Angstroms))
+  print(String(format: "fit_c12_A=%.9g", firstFit.best.c12Angstroms))
   print(String(format: "fit_phi12_rad=%.9g", firstFit.best.phi12Radians))
   print("fit_refinement_evaluations=\(firstFit.refinementEvaluations)")
   print("fit_deterministic=\(deterministic)")

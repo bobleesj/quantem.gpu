@@ -11,20 +11,24 @@ public enum MetalSSBCountType: Int, Codable, Sendable {
 }
 
 /// Aberrations used by the native single-sideband reconstruction.
+///
+/// The kernels evaluate chi = (pi / lambda[A]) alpha^2 (C10 + C12 cos 2(phi - phi12)) with no
+/// conversion, so C10 and C12 are Angstrom and phi12 radians. A stored record states them as
+/// `C10_nm`, `C12_nm` and `phi12_deg`; the conversion happens once, where the record is written.
 public struct MetalSSBAberrations: Codable, Equatable, Sendable {
-  public var c10Nanometers: Float
-  public var c12Nanometers: Float
+  public var c10Angstroms: Float
+  public var c12Angstroms: Float
   public var phi12Radians: Float
   public var higherOrder: [MetalSSBHigherOrder]?
 
   public init(
-    c10Nanometers: Float,
-    c12Nanometers: Float,
+    c10Angstroms: Float,
+    c12Angstroms: Float,
     phi12Radians: Float,
     higherOrder: [MetalSSBHigherOrder]? = nil
   ) {
-    self.c10Nanometers = c10Nanometers
-    self.c12Nanometers = c12Nanometers
+    self.c10Angstroms = c10Angstroms
+    self.c12Angstroms = c12Angstroms
     self.phi12Radians = phi12Radians
     self.higherOrder = higherOrder
   }
@@ -486,7 +490,7 @@ public final class MetalSSBEngine {
       values: placeholderTrig,
       purpose: "active BF angle table"
     )
-    try rebuildGeometry(rotationDegrees: geometry.referenceRotationDegrees)
+    try rebuildGeometry(scanDetectorRotationDegrees: geometry.referenceRotationDegrees)
   }
 
   /// Number of exact nonzero-aperture terms executed by this session.
@@ -668,15 +672,15 @@ public final class MetalSSBEngine {
   /// Reconstruct one exact SSB object from the prepared full-BF session.
   public func reconstruct(
     aberrations: MetalSSBAberrations,
-    rotationDegrees: Float? = nil
+    scanDetectorRotationDegrees: Float? = nil
   ) throws -> MetalSSBResult {
     guard prepared, let encodeBrightfield else {
       throw MetalSSBError.notPrepared
     }
     try configureHigherOrder(aberrations)
     try setCacheColumnMajor(false)
-    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
-    try rebuildGeometry(rotationDegrees: rotation)
+    let rotation = scanDetectorRotationDegrees ?? geometry.referenceRotationDegrees
+    try rebuildGeometry(scanDetectorRotationDegrees: rotation)
     let started = Date()
     var gpuSeconds = 0.0
 
@@ -826,7 +830,7 @@ public final class MetalSSBEngine {
   /// A fraction below one is an approximate optimization objective, not a full-BF loss.
   public func phaseVariance(
     aberrations: MetalSSBAberrations,
-    rotationDegrees: Float? = nil,
+    scanDetectorRotationDegrees: Float? = nil,
     brightfieldFraction: Double = 1
   ) throws -> MetalSSBPhaseVarianceResult {
     guard prepared, let encodeBrightfield else {
@@ -846,14 +850,14 @@ public final class MetalSSBEngine {
         )
       }
     }
-    guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeNanometers != 0 }) else {
+    guard !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeAngstroms != 0 }) else {
       throw MetalSSBError.invalidGeometry(
         "The optimizer currently fits lower-order aberrations only. Reset higher-order terms before fitting; manual reconstruction supports orders 2 through 5."
       )
     }
     try setCacheColumnMajor(size == 512)
-    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
-    try rebuildGeometry(rotationDegrees: rotation)
+    let rotation = scanDetectorRotationDegrees ?? geometry.referenceRotationDegrees
+    try rebuildGeometry(scanDetectorRotationDegrees: rotation)
     let started = Date()
     var gpuSeconds = 0.0
 
@@ -1021,32 +1025,32 @@ public final class MetalSSBEngine {
   /// Run the native deterministic 200-trial search and Nelder-Mead refinement.
   public func optimize(
     start: MetalSSBAberrations,
-    rotationDegrees: Float? = nil,
+    scanDetectorRotationDegrees: Float? = nil,
     globalTrials: Int = 200,
     seed: UInt64 = 42,
     brightfieldFraction: Double = 1,
     progress: (SSBOptimizationProgress) -> Void = { _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> SSBOptimizationResult {
-    let rotation = rotationDegrees ?? geometry.referenceRotationDegrees
+    let rotation = scanDetectorRotationDegrees ?? geometry.referenceRotationDegrees
     let sampling = try SSBBrightfieldSampling(
       totalCount: geometry.logicalBrightfieldCount,
       fraction: brightfieldFraction)
     var result = try SSBOptimizer(globalTrials: globalTrials, seed: seed).run(
       start: SSBOptimizationPoint(
-        c10Nanometers: Double(start.c10Nanometers),
-        c12Nanometers: Double(start.c12Nanometers),
+        c10Angstroms: Double(start.c10Angstroms),
+        c12Angstroms: Double(start.c12Angstroms),
         phi12Radians: Double(start.phi12Radians)
       ),
       evaluate: { point in
         Double(
           try self.phaseVariance(
             aberrations: MetalSSBAberrations(
-              c10Nanometers: Float(point.c10Nanometers),
-              c12Nanometers: Float(point.c12Nanometers),
+              c10Angstroms: Float(point.c10Angstroms),
+              c12Angstroms: Float(point.c12Angstroms),
               phi12Radians: Float(point.phi12Radians)
             ),
-            rotationDegrees: rotation,
+            scanDetectorRotationDegrees: rotation,
             brightfieldFraction: brightfieldFraction
           ).loss)
       },
@@ -1064,20 +1068,20 @@ public final class MetalSSBEngine {
         MetalSSBHigherOrder.supported.contains {
           $0.order == term.order && $0.symmetry == term.symmetry
         }
-          && term.magnitudeNanometers.isFinite && term.angleRadians.isFinite
+          && term.magnitudeAngstroms.isFinite && term.angleRadians.isFinite
       })
     else {
       throw MetalSSBError.invalidGeometry(
         "Use distinct finite polar aberrations from orders 2 through 5.")
     }
-    guard terms.contains(where: { $0.magnitudeNanometers != 0 }) else {
+    guard terms.contains(where: { $0.magnitudeAngstroms != 0 }) else {
       liveHigherOrder = []
       return
     }
     liveHigherOrder = MetalSSBHigherOrder.supported.map { expected in
       let term = terms.first { $0.name == expected.name } ?? expected
       return SIMD4(
-        term.magnitudeNanometers, Float(term.order), Float(term.symmetry), term.angleRadians)
+        term.magnitudeAngstroms, Float(term.order), Float(term.symmetry), term.angleRadians)
     }
     if higherOrderHalfPipeline == nil {
       let library = try Self.makeLibrary(device: device)
@@ -1111,8 +1115,8 @@ public final class MetalSSBEngine {
       semiangle: geometry.semiangleRadians,
       angularY: geometry.angularSamplingYRadians,
       angularX: geometry.angularSamplingXRadians,
-      c10: aberrations.c10Nanometers,
-      c12: aberrations.c12Nanometers,
+      c10: aberrations.c10Angstroms,
+      c12: aberrations.c12Angstroms,
       cos2Phi12: cos(2 * aberrations.phi12Radians),
       sin2Phi12: sin(2 * aberrations.phi12Radians),
       factor: Float.pi / geometry.wavelengthAngstroms,
@@ -1216,8 +1220,8 @@ public final class MetalSSBEngine {
     cacheIsColumnMajor = columnMajor
   }
 
-  private func rebuildGeometry(rotationDegrees: Float) throws {
-    if activeGeometryRotation?.bitPattern == rotationDegrees.bitPattern {
+  private func rebuildGeometry(scanDetectorRotationDegrees: Float) throws {
+    if activeGeometryRotation?.bitPattern == scanDetectorRotationDegrees.bitPattern {
       return
     }
     var geometryValues: [SIMD4<Float>] = []
@@ -1225,7 +1229,7 @@ public final class MetalSSBEngine {
     geometryValues.reserveCapacity(activeBrightfieldIndices.count)
     trigValues.reserveCapacity(activeBrightfieldIndices.count)
     let delta =
-      (rotationDegrees - geometry.referenceRotationDegrees)
+      (scanDetectorRotationDegrees - geometry.referenceRotationDegrees)
       * Float.pi / 180
     let cosine = cos(-delta)
     let sine = sin(-delta)
@@ -1289,7 +1293,7 @@ public final class MetalSSBEngine {
       values: trigValues,
       purpose: "active BF angle table"
     )
-    activeGeometryRotation = rotationDegrees
+    activeGeometryRotation = scanDetectorRotationDegrees
   }
 
   private func encodeForwardFFT(

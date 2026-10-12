@@ -23,11 +23,11 @@ into a SwiftPM library while leaving all UIKit and application ownership behind.
 | Public surface | Contract |
 |---|---|
 | `MetalSSBGeometry` | Complete calibrated BF geometry in logical source order; row and column reciprocal arrays remain explicitly named |
-| `MetalSSBAberrations` | `C10` and `C12` in nm; `phi12` in radians |
+| `MetalSSBAberrations` | `c10Angstroms` and `c12Angstroms` in Angstrom; `phi12Radians` in radians |
 | `MetalSSBEngine.prepare(brightfield:)` | Plane-major lossless `uint8` BF buffer shaped `[logical_brightfield, 512, 512]` |
-| `reconstruct(aberrations:rotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum |
-| `phaseVariance(aberrations:rotationDegrees:)` | Exact full-logical-BF phase-variance objective |
-| `optimize(start:rotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead |
+| `reconstruct(aberrations:scanDetectorRotationDegrees:)` | Row-major 512×512 complex64 object and Fourier sum |
+| `phaseVariance(aberrations:scanDetectorRotationDegrees:)` | Exact full-logical-BF phase-variance objective |
+| `optimize(start:scanDetectorRotationDegrees:globalTrials:seed:...)` | Deterministic seeded TPE search, 200 trials by default, then Nelder–Mead |
 | `MetalSSBProvenance` | Source/compute dtype, no crop, scan bin 1, logical/executed/proven-zero BF counts, cached/streamed BF counts, and exact cache bytes |
 
 The engine retains all logical BF terms in normalization. The execution union

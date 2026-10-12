@@ -215,6 +215,16 @@ new `rcN` heading when that rc is published to TestPyPI.
   from older files.
 - `NativeMicroscopeMetadata.beamEnergyKeV` becomes `voltageKV`: it holds the
   accelerating voltage in kV.
+- The native SSB engine names the units it computes in. `c10Nanometers` and
+  `c12Nanometers` of `MetalSSBAberrations` and `SSBOptimizationPoint` become
+  `c10Angstroms` and `c12Angstroms` (the values were Angstrom),
+  `MetalSSBHigherOrder.magnitudeNanometers` becomes `magnitudeAngstroms`, and the
+  `rotationDegrees:` argument of `MetalSSBEngine.reconstruct`, `phaseVariance`
+  and `optimize` becomes `scanDetectorRotationDegrees:`. `MetalSSBSavedRun`
+  carries `"schema": "quantem.ssb-saved-run/2"` in place of `schemaVersion: 1`;
+  its `rotationDegrees` and `optimizedRotationDegrees` become
+  `scanDetectorRotationDegrees` and `optimizedScanDetectorRotationDegrees`, and
+  an earlier saved run is refused with the reason.
 
 ### Fixed
 

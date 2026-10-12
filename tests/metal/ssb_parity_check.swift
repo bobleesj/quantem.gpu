@@ -61,8 +61,8 @@ private struct VariantReport: Encodable {
 
 private struct AberrationReport: Encodable {
   let index: Int
-  let c10Nanometers: Double
-  let c12Nanometers: Double
+  let c10Angstroms: Double
+  let c12Angstroms: Double
   let phi12Radians: Double
   let variants: [VariantReport]
 }
@@ -176,7 +176,7 @@ private struct CaseReport: Encodable {
       for (index, values) in payload.aberrations.enumerated() {
         guard values.count == 3 else { fail("aberrations must be C10, C12, phi12") }
         let aberrations = MetalSSBAberrations(
-          c10Nanometers: Float(values[0]), c12Nanometers: Float(values[1]),
+          c10Angstroms: Float(values[0]), c12Angstroms: Float(values[1]),
           phi12Radians: Float(values[2]))
         let result = try engine.reconstruct(aberrations: aberrations)
         let phase = try engine.phase(of: result)
@@ -200,14 +200,14 @@ private struct CaseReport: Encodable {
         if let position = aberrationReports.firstIndex(where: { $0.index == index }) {
           aberrationReports[position] = AberrationReport(
             index: index,
-            c10Nanometers: values[0],
-            c12Nanometers: values[1],
+            c10Angstroms: values[0],
+            c12Angstroms: values[1],
             phi12Radians: values[2],
             variants: aberrationReports[position].variants + [variant])
         } else {
           aberrationReports.append(
             AberrationReport(
-              index: index, c10Nanometers: values[0], c12Nanometers: values[1],
+              index: index, c10Angstroms: values[0], c12Angstroms: values[1],
               phi12Radians: values[2], variants: [variant]))
         }
         print(
@@ -225,7 +225,7 @@ private struct CaseReport: Encodable {
         let values = payload.aberrations[0]
         let repeatResult = try engineAgain.reconstruct(
           aberrations: MetalSSBAberrations(
-            c10Nanometers: Float(values[0]), c12Nanometers: Float(values[1]),
+            c10Angstroms: Float(values[0]), c12Angstroms: Float(values[1]),
             phi12Radians: Float(values[2])))
         let first = outDirectory.appendingPathComponent("object-0-streamed.f32")
         let firstData = try Data(contentsOf: first)

@@ -5,8 +5,13 @@ import Metal
 /// Complete native SSB result for local reopening without running the optimizer.
 /// The app chooses storage location and retention. Original measurements are not modified.
 /// Example: `try MetalSSBSavedRun(...).save(to: url)`; reopen with `load(from:matchingSourceIdentity:)`.
+///
+/// Aberrations are the engine's Angstrom and radians; the rotation is the scan-to-detector angle
+/// the engine applied. Runs saved before `quantem.ssb-saved-run/2` stored Angstrom under nm
+/// names and are refused with that reason rather than read under another unit.
 public struct MetalSSBSavedRun: Codable, Sendable {
-  public let schemaVersion: Int
+  public static let recordSchema = "quantem.ssb-saved-run/2"
+  public let schema: String
   public let sourceIdentity: String
   public let backendRevision: String
   public let createdAt: Date
@@ -14,9 +19,9 @@ public struct MetalSSBSavedRun: Codable, Sendable {
   public let calibration: MetalSSBCalibration?
   public let calibrationProvenance: [String: String]?
   public let aberrations: MetalSSBAberrations
-  public let rotationDegrees: Float
+  public let scanDetectorRotationDegrees: Float
   public let optimization: SSBOptimizationResult?
-  public let optimizedRotationDegrees: Float?
+  public let optimizedScanDetectorRotationDegrees: Float?
   public let seed: UInt64
   public let provenance: MetalSSBProvenance
   public let reconstructionWallSeconds: Double
@@ -29,14 +34,15 @@ public struct MetalSSBSavedRun: Codable, Sendable {
   public init(
     result: MetalSSBResult, sourceIdentity: String, backendRevision: String,
     geometry: MetalSSBGeometry, aberrations: MetalSSBAberrations,
-    rotationDegrees: Float, optimization: SSBOptimizationResult? = nil, seed: UInt64 = 42,
+    scanDetectorRotationDegrees: Float, optimization: SSBOptimizationResult? = nil,
+    seed: UInt64 = 42,
     calibration: MetalSSBCalibration? = nil, calibrationProvenance: [String: String]? = nil,
-    optimizedRotationDegrees: Float? = nil
+    optimizedScanDetectorRotationDegrees: Float? = nil
   ) throws {
     guard result.object.storageMode == .shared, result.fourierSum.storageMode == .shared else {
       throw SavedRunError.invalid("Saving requires completed, CPU-readable reconstruction buffers.")
     }
-    schemaVersion = 1
+    schema = Self.recordSchema
     self.sourceIdentity = sourceIdentity
     self.backendRevision = backendRevision
     createdAt = Date()
@@ -44,9 +50,9 @@ public struct MetalSSBSavedRun: Codable, Sendable {
     self.calibration = calibration
     self.calibrationProvenance = calibrationProvenance
     self.aberrations = aberrations
-    self.rotationDegrees = rotationDegrees
+    self.scanDetectorRotationDegrees = scanDetectorRotationDegrees
     self.optimization = optimization
-    self.optimizedRotationDegrees = optimizedRotationDegrees
+    self.optimizedScanDetectorRotationDegrees = optimizedScanDetectorRotationDegrees
     self.seed = seed
     provenance = result.provenance
     reconstructionWallSeconds = result.wallSeconds
@@ -83,7 +89,16 @@ public struct MetalSSBSavedRun: Codable, Sendable {
       throw SavedRunError.invalid(
         "The saved SSB file is empty or exceeds the supported 32 MB format.")
     }
-    let run = try PropertyListDecoder().decode(Self.self, from: Data(contentsOf: url))
+    let data = try Data(contentsOf: url)
+    // The schema is read first, so an earlier format is refused with its reason, not a key error.
+    struct Header: Decodable { let schema: String }
+    let schema = (try? PropertyListDecoder().decode(Header.self, from: data))?.schema
+    guard schema == recordSchema else {
+      throw SavedRunError.invalid(
+        "This saved SSB run is not \(recordSchema). Reconstruct it again from the original acquisition."
+      )
+    }
+    let run = try PropertyListDecoder().decode(Self.self, from: data)
     try run.validate(matchingSourceIdentity: matchingSourceIdentity)
     return run
   }
@@ -108,7 +123,7 @@ public struct MetalSSBSavedRun: Codable, Sendable {
   }
 
   private func validate(matchingSourceIdentity expected: String) throws {
-    guard schemaVersion == 1 else {
+    guard schema == Self.recordSchema else {
       throw SavedRunError.invalid(
         "This saved SSB format is unsupported. Open it with a compatible app version.")
     }
@@ -116,8 +131,9 @@ public struct MetalSSBSavedRun: Codable, Sendable {
       throw SavedRunError.invalid(
         "This saved SSB run belongs to a different source, or lacks its compute revision.")
     }
-    guard rotationDegrees.isFinite, optimizedRotationDegrees?.isFinite ?? true,
-      aberrations.c10Nanometers.isFinite, aberrations.c12Nanometers.isFinite,
+    guard scanDetectorRotationDegrees.isFinite,
+      optimizedScanDetectorRotationDegrees?.isFinite ?? true,
+      aberrations.c10Angstroms.isFinite, aberrations.c12Angstroms.isFinite,
       aberrations.phi12Radians.isFinite
     else {
       throw SavedRunError.invalid(

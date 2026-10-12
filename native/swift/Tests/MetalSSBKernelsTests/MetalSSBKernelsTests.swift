@@ -9,13 +9,13 @@ final class MetalSSBKernelsTests: XCTestCase {
   func testOptimizerIsDeterministicForFixedSeed() throws {
     let optimizer = SSBOptimizer(globalTrials: 24, seed: 42)
     let start = SSBOptimizationPoint(
-      c10Nanometers: 30,
-      c12Nanometers: 8,
+      c10Angstroms: 30,
+      c12Angstroms: 8,
       phi12Radians: 0.1
     )
     func objective(_ point: SSBOptimizationPoint) -> Double {
-      pow(point.c10Nanometers - 12, 2)
-        + pow(point.c12Nanometers - 3, 2)
+      pow(point.c10Angstroms - 12, 2)
+        + pow(point.c12Angstroms - 3, 2)
         + 20 * pow(point.phi12Radians + 0.2, 2)
     }
 
@@ -44,8 +44,8 @@ final class MetalSSBKernelsTests: XCTestCase {
 
     let result = try engine.reconstruct(
       aberrations: MetalSSBAberrations(
-        c10Nanometers: 0,
-        c12Nanometers: 0,
+        c10Angstroms: 0,
+        c12Angstroms: 0,
         phi12Radians: 0
       )
     )
@@ -73,8 +73,8 @@ final class MetalSSBKernelsTests: XCTestCase {
 
     let loss = try engine.phaseVariance(
       aberrations: MetalSSBAberrations(
-        c10Nanometers: 0,
-        c12Nanometers: 0,
+        c10Angstroms: 0,
+        c12Angstroms: 0,
         phi12Radians: 0
       )
     )
@@ -103,8 +103,8 @@ final class MetalSSBKernelsTests: XCTestCase {
     try cached.prepare(brightfield: source)
     try streamed.prepare(brightfield: source)
     let aberrations = MetalSSBAberrations(
-      c10Nanometers: 55,
-      c12Nanometers: 13,
+      c10Angstroms: 55,
+      c12Angstroms: 13,
       phi12Radians: 0.23
     )
 

@@ -18,7 +18,7 @@ func require(_ condition: Bool, _ message: String) {
       let source = counts.withUnsafeBytes {
         device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)!
       }
-      let aberrations = MetalSSBAberrations(c10Nanometers: 18, c12Nanometers: 7, phi12Radians: 0.3)
+      let aberrations = MetalSSBAberrations(c10Angstroms: 18, c12Angstroms: 7, phi12Radians: 0.3)
       for budget: Int? in [nil, 0, 32 * size * (size / 2 + 1) * 8] {
         let engine = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: budget)
         try engine.prepare(brightfield: source)
@@ -45,8 +45,8 @@ func require(_ condition: Bool, _ message: String) {
           }
           let reference = try MetalSSBEngine(device: device, geometry: reducedGeometry, cacheBudgetBytes: 0)
           try reference.prepare(brightfield: reducedSource)
-          let expected = try reference.phaseVariance(aberrations: aberrations, rotationDegrees: 23)
-          let actual = try engine.phaseVariance(aberrations: aberrations, rotationDegrees: 23,
+          let expected = try reference.phaseVariance(aberrations: aberrations, scanDetectorRotationDegrees: 23)
+          let actual = try engine.phaseVariance(aberrations: aberrations, scanDetectorRotationDegrees: 23,
             brightfieldFraction: fraction)
           let error = abs(actual.loss - expected.loss)
           require(error <= 1e-6 + abs(expected.loss) * 1e-5, "Subset loss differs from explicit input: \(error)")
