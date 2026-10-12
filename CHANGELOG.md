@@ -100,7 +100,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   outer_radius_px, detector_shape)`.
 - `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
   `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
-  radius selects the pixels used and defaults to the detected disk.
+  radius selects the pixels used and defaults to the detected disk. It is
+  used as given: a fractional radius selects the pixels inside it, as
+  `sampling_radius` did.
 - Elapsed times carry their unit: `SSBResult.elapsed` and `refine_elapsed`,
   `DPCResult.elapsed` and `ParallaxResult.elapsed` become `elapsed_s` and
   `refine_elapsed_s`; `SaveResult.elapsed_seconds` becomes `elapsed_s`.

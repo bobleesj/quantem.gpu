@@ -28,6 +28,7 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
 from quantem.gpu.parallax.results import ParallaxResult
 from quantem.gpu.ssb.brightfield import disk_edge_radius
+from quantem.gpu.ssb.units import sampling_pair
 
 # GPU bytes one batch holds: decoded detector values while reading the
 # bright-field images, tiled spectra while summing them.
@@ -38,7 +39,7 @@ def run(
     data: Dataset4dstemGPU,
     *,
     bright_field_center_px: tuple[int, int] | None = None,
-    bright_field_radius_px: int | None = None,
+    bright_field_radius_px: float | None = None,
     upsampling_factor: int = 2,
     fit_aberrations: bool = False,
     scan_sampling_A: tuple[float, float] | None = None,
@@ -112,8 +113,10 @@ def run(
         If the acquisition is on an Apple GPU (MPS); parallax has no MPS
         implementation.
     ValueError
-        If the acquisition is not on a CUDA GPU, or ``fit_aberrations`` is
-        requested without the scan or detector calibration.
+        If the acquisition is not on a CUDA GPU, ``fit_aberrations`` is
+        requested without the scan or detector calibration, or
+        ``scan_sampling_A`` or ``detector_sampling_mrad`` is one number
+        instead of a ``(row, col)`` pair.
 
     Examples
     --------
@@ -144,6 +147,10 @@ def run(
             "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
             "calibration: semiangle_mrad, or detector_sampling_mrad in mrad per detector pixel."
         )
+    # A sampling is a (row, col) pair, as SSB reads it: one number was broadcast to both axes here,
+    # while SSB refuses it, so the same call meant two things in the two workflows.
+    scan_sampling_A = None if scan_sampling_A is None else sampling_pair("scan_sampling_A", scan_sampling_A)
+    detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
     # CuPy allocates and launches on its current device and torch exports DLPack from its own: both are the
     # acquisition's GPU for the whole reconstruction, which need not be the current one
     with torch.cuda.device(device), cp.cuda.Device(device.index):
@@ -158,7 +165,8 @@ def run(
             bright_field_radius_px = detected_radius if bright_field_radius_px is None else bright_field_radius_px
             if verbose:
                 print(f"[parallax] Auto-detected bright_field_center_px={center}, bright_field_radius_px={bright_field_radius_px}")
-        radius = int(bright_field_radius_px)
+        # used as given: truncating a fractional radius selected other pixels than the caller asked for
+        radius = bright_field_radius_px
         rows = cp.arange(det_rows, dtype=cp.float32)[:, None]
         cols = cp.arange(det_cols, dtype=cp.float32)[None, :]
         bf_mask = (rows - float(center[0])) ** 2 + (cols - float(center[1])) ** 2 <= float(radius) ** 2
