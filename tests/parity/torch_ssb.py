@@ -40,7 +40,7 @@ class TorchSSB:
                  wavelength: float, semiangle_rad: float, ang_y_rad: float, ang_x_rad: float, dc_value: complex,
                  chunk_bytes: int = 1 << 30):
         self.G, self.kx, self.ky, self.qx, self.qy = G, kx, ky, qx, qy
-        self.num_bf, self.ny = G.shape[0], G.shape[1]
+        self.num_bright_field_pixels, self.ny = G.shape[0], G.shape[1]
         self.nx = int(nx)
         self.half = G.shape[2] == self.nx // 2 + 1
         self.wavelength, self.semiangle, self.ang_y, self.ang_x = float(wavelength), float(semiangle_rad), float(ang_y_rad), float(ang_x_rad)
@@ -126,8 +126,8 @@ class TorchSSB:
         phase_sum = torch.zeros((ny, nx), dtype=torch.float32, device=self.device)
         phase_sumsq = torch.zeros((ny, nx), dtype=torch.float32, device=self.device)
         chunk = self._chunk(ny * nx * 8 * 4)
-        for start in range(0, self.num_bf, chunk):
-            stop = min(self.num_bf, start + chunk)
+        for start in range(0, self.num_bright_field_pixels, chunk):
+            stop = min(self.num_bright_field_pixels, start + chunk)
             full = self._full_plane(self.G[start:stop])
             gamma = self._gamma(qx, qy, self.kx[start:stop].reshape(-1, 1, 1), self.ky[start:stop].reshape(-1, 1, 1),
                                 C10, C12, phi12, tilt_mrad, thickness)
@@ -140,8 +140,8 @@ class TorchSSB:
             phase_sum += angles.sum(0)
             if compute_loss:
                 phase_sumsq += (angles * angles).sum(0)
-        mean = phase_sum / self.num_bf
-        loss = float((phase_sumsq / self.num_bf - mean * mean).mean()) if compute_loss else None
+        mean = phase_sum / self.num_bright_field_pixels
+        loss = float((phase_sumsq / self.num_bright_field_pixels - mean * mean).mean()) if compute_loss else None
         return mean, loss
 
     @torch.inference_mode()
@@ -161,12 +161,12 @@ class TorchSSB:
             weight = torch.ones(rows_idx.shape, device=self.device)
         qx_b = self.qx[rows_idx].reshape(1, -1); qy_b = self.qy[cols_idx].reshape(1, -1)
         flat = rows_idx * cols + cols_idx
-        g_flat = self.G.reshape(self.num_bf, -1)
+        g_flat = self.G.reshape(self.num_bright_field_pixels, -1)
         numerator = torch.zeros(flat.shape, dtype=torch.complex64, device=self.device)
         denominator = torch.zeros(flat.shape, dtype=torch.float32, device=self.device)
         chunk = self._chunk(int(flat.numel()) * 8 * 4)
-        for start in range(0, self.num_bf, chunk):
-            stop = min(self.num_bf, start + chunk)
+        for start in range(0, self.num_bright_field_pixels, chunk):
+            stop = min(self.num_bright_field_pixels, start + chunk)
             gamma = self._gamma(qx_b, qy_b, self.kx[start:stop].reshape(-1, 1), self.ky[start:stop].reshape(-1, 1),
                                 C10, C12, phi12, tilt_mrad, thickness)
             numerator += (g_flat[start:stop][:, flat] * torch.conj(gamma)).sum(0)

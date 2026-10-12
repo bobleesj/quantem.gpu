@@ -48,7 +48,7 @@ class SSBExportState:
     bf_source_max_value: int | None = None
 
     @property
-    def num_bf(self) -> int:
+    def num_bright_field_pixels(self) -> int:
         """Number of complete bright-field detector pixels."""
 
         return self.brightfield.size
@@ -75,7 +75,7 @@ class SSBProtocol(Protocol):
     def detector_shape(self) -> tuple[int, int]: ...
 
     @property
-    def num_bf(self) -> int: ...
+    def num_bright_field_pixels(self) -> int: ...
 
     def fit(
         self,
@@ -128,7 +128,7 @@ class SSBProtocol(Protocol):
 
     def fit_sample(self, **options) -> dict[str, object]: ...
 
-    def preview_context(self, num_bf: int) -> AbstractContextManager | None: ...
+    def preview_context(self, num_bright_field_pixels: int) -> AbstractContextManager | None: ...
 
     def browser_state(self) -> SSBExportState: ...
 

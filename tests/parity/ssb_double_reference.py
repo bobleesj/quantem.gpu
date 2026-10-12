@@ -53,15 +53,15 @@ def electron_wavelength_angstrom(voltage_kv: float) -> float:
 
 def brightfield_disk(
     detector_shape: tuple[int, int],
-    center_row_col: tuple[float, float],
-    radius_px: float,
+    bright_field_center_px: tuple[float, float],
+    bright_field_radius_px: float,
     *,
     mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return the full BF disk as detector row-major ``(rows, cols)``.
 
     Membership is the documented policy: a detector pixel belongs to the disk
-    when its integer center lies within ``radius_px`` of the calibrated
+    when its integer center lies within ``bright_field_radius_px`` of the calibrated
     subpixel center, and the pixel passes the intensity mask when one is
     supplied. No pixel inside the disk is dropped for proximity to an edge.
     """
@@ -80,10 +80,10 @@ def brightfield_disk(
                 f"mask shape {keep.shape} does not match detector {detector_shape}."
             )
     distance = np.hypot(
-        rows_all - float(center_row_col[0]),
-        cols_all - float(center_row_col[1]),
+        rows_all - float(bright_field_center_px[0]),
+        cols_all - float(bright_field_center_px[1]),
     )
-    keep = keep & (distance <= float(radius_px))
+    keep = keep & (distance <= float(bright_field_radius_px))
     rows, cols = np.nonzero(keep)
     return rows.astype(np.int32), cols.astype(np.int32)
 
@@ -153,7 +153,7 @@ class SSBReferenceResult:
     object_wave: np.ndarray
     loss: float
     mean_phase: np.ndarray
-    num_bf: int
+    num_bright_field_pixels: int
     active_bf: int
     inactive_bf: int
     dc_value: complex
@@ -165,7 +165,7 @@ class SSBReferenceResult:
         """Return scalar diagnostics for reports and gates."""
 
         return {
-            "num_bf": int(self.num_bf),
+            "num_bright_field_pixels": int(self.num_bright_field_pixels),
             "active_bf": int(self.active_bf),
             "inactive_bf": int(self.inactive_bf),
             "loss": float(self.loss),
@@ -203,12 +203,12 @@ def ssb_reference(
     Parameters
     ----------
     counts : array-like
-        ``(num_bf, scan_row, scan_col)`` exact integer detector counts for the
+        ``(num_bright_field_pixels, scan_row, scan_col)`` exact integer detector counts for the
         selected bright-field pixels, in selection order.
     rows, cols : array-like
         Detector ``(row, col)`` of each selected BF pixel.
     kx, ky : array-like
-        ``num_bf`` BF reciprocal-space coordinates in inverse angstroms.
+        ``num_bright_field_pixels`` BF reciprocal-space coordinates in inverse angstroms.
     qx, qy : array-like
         Scan-grid reciprocal-space coordinates in inverse angstroms.
     wavelength : float
@@ -251,16 +251,16 @@ def ssb_reference(
         )
     rows = np.asarray(rows, dtype=np.int64)
     cols = np.asarray(cols, dtype=np.int64)
-    num_bf, side, _ = counts.shape
-    if rows.size != num_bf or cols.size != num_bf:
+    num_bright_field_pixels, side, _ = counts.shape
+    if rows.size != num_bright_field_pixels or cols.size != num_bright_field_pixels:
         raise ValueError(
-            f"BF rows/cols must have {num_bf} entries, got {rows.size}/{cols.size}."
+            f"BF rows/cols must have {num_bright_field_pixels} entries, got {rows.size}/{cols.size}."
         )
     kx = np.asarray(kx, dtype=np.float64).reshape(-1)
     ky = np.asarray(ky, dtype=np.float64).reshape(-1)
-    if kx.size != num_bf or ky.size != num_bf:
+    if kx.size != num_bright_field_pixels or ky.size != num_bright_field_pixels:
         raise ValueError(
-            f"kx/ky must have {num_bf} entries, got {kx.size}/{ky.size}."
+            f"kx/ky must have {num_bright_field_pixels} entries, got {kx.size}/{ky.size}."
         )
     qx = np.asarray(qx, dtype=np.float64).reshape(-1)
     qy = np.asarray(qy, dtype=np.float64).reshape(-1)
@@ -284,7 +284,7 @@ def ssb_reference(
     qr = qx[:, None]
     qc = qy[None, :]
 
-    raw_dc = counts.reshape(num_bf, -1).sum(axis=1, dtype=np.float64)
+    raw_dc = counts.reshape(num_bright_field_pixels, -1).sum(axis=1, dtype=np.float64)
     dc = complex(np.mean(raw_dc)) if dc_value is None else complex(dc_value)
 
     # Static probe terms per BF pixel: p(k).
@@ -305,8 +305,8 @@ def ssb_reference(
     object_sum = np.zeros((side, side), dtype=np.complex128)
     phase_sum = np.zeros((side, side), dtype=np.float64)
     phase_sumsq = np.zeros((side, side), dtype=np.float64)
-    for start in range(0, num_bf, chunk):
-        stop = min(start + chunk, num_bf)
+    for start in range(0, num_bright_field_pixels, chunk):
+        stop = min(start + chunk, num_bright_field_pixels)
         block = counts[start:stop].astype(dtype, copy=False)
         g = _forward2(block, dtype)
         kx_b = kx[start:stop][:, None, None]
@@ -356,9 +356,9 @@ def ssb_reference(
         phase_sum += phase.sum(axis=0)
         phase_sumsq += (phase * phase).sum(axis=0)
 
-    object_wave = object_sum / num_bf
-    mean_phase = phase_sum / num_bf
-    loss = float(np.mean(phase_sumsq / num_bf - mean_phase * mean_phase))
+    object_wave = object_sum / num_bright_field_pixels
+    mean_phase = phase_sum / num_bright_field_pixels
+    loss = float(np.mean(phase_sumsq / num_bright_field_pixels - mean_phase * mean_phase))
     object_scale = float(np.max(np.abs(object_wave))) if object_wave.size else float("nan")
     min_abs = float(np.min(np.abs(object_wave))) if object_wave.size else float("nan")
     ill_conditioned = (
@@ -370,9 +370,9 @@ def ssb_reference(
         object_wave=object_wave.astype(np.complex128, copy=False),
         loss=loss,
         mean_phase=mean_phase,
-        num_bf=int(num_bf),
+        num_bright_field_pixels=int(num_bright_field_pixels),
         active_bf=active_bf,
-        inactive_bf=int(num_bf - active_bf),
+        inactive_bf=int(num_bright_field_pixels - active_bf),
         dc_value=dc,
         object_scale=object_scale,
         min_abs_object=min_abs,

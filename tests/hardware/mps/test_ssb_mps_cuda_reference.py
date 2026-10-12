@@ -97,8 +97,8 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     snapshots = folder / "snapshots"
     source.mkdir(parents=True)
     snapshots.mkdir()
-    bf_rows = np.asarray([0, 1, 2], dtype=np.int32)
-    bf_cols = np.asarray([1, 2, 3], dtype=np.int32)
+    bright_field_rows = np.asarray([0, 1, 2], dtype=np.int32)
+    bright_field_cols = np.asarray([1, 2, 3], dtype=np.int32)
     columns = np.asarray(
         [
             [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
@@ -111,10 +111,10 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     (snapshots / "cal.json").write_text(json.dumps({
         "scan_region": {"shape": [4, 4]},
         "detector_shape": [4, 5],
-        "bf_rows": bf_rows.tolist(),
-        "bf_cols": bf_cols.tolist(),
-        "bf_center": [1.0, 2.0],
-        "bf_radius_px": 2.25,
+        "bright_field_rows": bright_field_rows.tolist(),
+        "bright_field_cols": bright_field_cols.tolist(),
+        "bright_field_center_px": [1.0, 2.0],
+        "bright_field_radius_px": 2.25,
         "bf_column_companion_path": "source/bf_columns.u8",
         "bf_column_encoding": "uint8",
         "dc_value": [
@@ -134,22 +134,22 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     )
 
     np.testing.assert_array_equal(
-        frames.columns(bf_rows[[2, 0]], bf_cols[[2, 0]]),
+        frames.columns(bright_field_rows[[2, 0]], bright_field_cols[[2, 0]]),
         columns[[2, 0]],
     )
     expected_dp = np.zeros((4, 5), dtype=np.float32)
-    expected_dp[bf_rows, bf_cols] = columns.sum(axis=1) / 16
+    expected_dp[bright_field_rows, bright_field_cols] = columns.sum(axis=1) / 16
     np.testing.assert_array_equal(detector_mean(frames), expected_dp)
     selection = resolve_bf_selection(
         frames,
         threshold=0.5,
-        bf_radius=None,
+        bright_field_radius_px=None,
     )
-    np.testing.assert_array_equal(selection.rows, bf_rows)
-    np.testing.assert_array_equal(selection.cols, bf_cols)
-    assert selection.center_row_col == (1.0, 2.0)
-    assert selection.radius_px == 2.25
-    assert selection.detected_radius_px == 2.25
+    np.testing.assert_array_equal(selection.rows, bright_field_rows)
+    np.testing.assert_array_equal(selection.cols, bright_field_cols)
+    assert selection.bright_field_center_px == (1.0, 2.0)
+    assert selection.bright_field_radius_px == 2.25
+    assert selection.bright_field_edge_radius_px == 2.25
     assert selection is frames.selection
     assert frames.nbytes == columns.nbytes
 
@@ -172,10 +172,10 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     calibration = {
         "scan_region": {"shape": [4, 4]},
         "detector_shape": [3, 3],
-        "bf_rows": [0, 1, 1],
-        "bf_cols": [1, 1, 2],
-        "bf_center": [1.0, 1.5],
-        "bf_radius_px": 1.25,
+        "bright_field_rows": [0, 1, 1],
+        "bright_field_cols": [1, 1, 2],
+        "bright_field_center_px": [1.0, 1.5],
+        "bright_field_radius_px": 1.25,
         "bf_column_companion_path": "source/bf_columns.u8",
         "bf_column_encoding": "uint8",
         "dc_value": [1.0, 0.0],
@@ -187,7 +187,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     frames = load_bf_columns_mps(tmp_path)
     session = MpsSSBBackend(
         frames, voltage_kV=300, semiangle_mrad=20, scan_sampling=1.0, det_sampling=None,
-        bf_intensity_threshold=0.0, bf_center=None, bf_radius=None, scan_detector_rotation_deg=0.0,
+        bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=None, scan_detector_rotation_deg=0.0,
     )
     assert session._det_sampling == ((0.7, 0.8) if stored else (16.0, 16.0))
     session.close()
@@ -267,9 +267,9 @@ def test_mps_backend_writes_exact_integer_bf_columns(
     selection = BrightfieldDisk(
         rows=rows,
         cols=cols,
-        center_row_col=(1.0, 2.0),
-        radius_px=2.0,
-        detected_radius_px=2.0,
+        bright_field_center_px=(1.0, 2.0),
+        bright_field_radius_px=2.0,
+        bright_field_edge_radius_px=2.0,
         detector_shape=(3, 4),
     )
     source_values = (
@@ -354,9 +354,9 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
     selection = BrightfieldDisk(
         rows=rows,
         cols=cols,
-        center_row_col=(1.5, 1.5),
-        radius_px=1.0,
-        detected_radius_px=1.0,
+        bright_field_center_px=(1.5, 1.5),
+        bright_field_radius_px=1.0,
+        bright_field_edge_radius_px=1.0,
         detector_shape=(4, 4),
     )
     columns = np.arange(4 * 128 * 128, dtype=np.uint16).reshape(4, -1)
@@ -376,16 +376,16 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         semiangle_mrad=30.0,
         scan_sampling=0.5,
         det_sampling=1.0,
-        bf_intensity_threshold=0.5,
-        bf_center=None,
-        bf_radius=None,
+        bright_field_intensity_threshold=0.5,
+        bright_field_center_px=None,
+        bright_field_radius_px=None,
         scan_detector_rotation_deg=4.0,
     )
 
     assert engine.precision == PRECISION
     assert engine.scan_shape == (128, 128)
     assert engine.detector_shape == (4, 4)
-    assert engine.num_bf == 4
+    assert engine.num_bright_field_pixels == 4
     state = engine.browser_state()
     assert engine._prepared is None
     assert state.brightfield is selection
@@ -403,9 +403,9 @@ def test_brightfield_selection_is_validated_and_immutable() -> None:
     selection = BrightfieldDisk(
         rows=rows,
         cols=cols,
-        center_row_col=(1.0, 2.0),
-        radius_px=2.0,
-        detected_radius_px=2.25,
+        bright_field_center_px=(1.0, 2.0),
+        bright_field_radius_px=2.0,
+        bright_field_edge_radius_px=2.25,
         detector_shape=(4, 5),
     )
 
@@ -414,7 +414,7 @@ def test_brightfield_selection_is_validated_and_immutable() -> None:
     assert selection.rows.dtype == np.int32
     assert selection.rows.tolist() == [0, 1, 2]
     assert selection.cols.tolist() == [1, 2, 3]
-    assert selection.center_row_col == (1.0, 2.0)
+    assert selection.bright_field_center_px == (1.0, 2.0)
     with pytest.raises(ValueError, match="read-only"):
         selection.rows[0] = 3
 
@@ -427,9 +427,9 @@ def test_brightfield_selection_rejects_duplicate_coordinates() -> None:
         BrightfieldDisk(
             rows=np.asarray([1, 1]),
             cols=np.asarray([2, 2]),
-            center_row_col=(1.0, 2.0),
-            radius_px=1.0,
-            detected_radius_px=1.0,
+            bright_field_center_px=(1.0, 2.0),
+            bright_field_radius_px=1.0,
+            bright_field_edge_radius_px=1.0,
             detector_shape=(4, 5),
         )
 
@@ -443,19 +443,19 @@ def test_load_bf_columns_mps_requires_authoritative_center(tmp_path) -> None:
     (snapshots / "cal.json").write_text(json.dumps({
         "scan_region": {"shape": [4, 4]},
         "detector_shape": [4, 5],
-        "bf_rows": [0],
-        "bf_cols": [1],
+        "bright_field_rows": [0],
+        "bright_field_cols": [1],
         "bf_column_companion_path": "source/bf_columns.u8",
         "bf_column_encoding": "uint8",
     }))
 
-    with pytest.raises(ValueError, match="bf_center"):
+    with pytest.raises(ValueError, match="bright_field_center_px"):
         load_bf_columns_mps(tmp_path)
 
 
 def _phase_cols512_reduced_batch_kernel(
     batch: int,
-    num_bf: int,
+    num_bright_field_pixels: int,
     k_bf: int,
 ):
     """Radix-4 512-column phase/loss kernel kept as the reference for the radix-8 production kernel."""
@@ -481,7 +481,7 @@ def _phase_cols512_reduced_batch_kernel(
         #define DIGITREV512(x) ((((x) & 1u) << 8) | BITREV4_8((x) >> 1))
 
         constexpr uint BATCH = {int(batch)};
-        constexpr uint NUM_BF = {int(num_bf)};
+        constexpr uint NUM_BF = {int(num_bright_field_pixels)};
         constexpr uint K_BF = {int(k_bf)};
         constexpr uint GROUPS = (NUM_BF + K_BF - 1u) / K_BF;
         uint tid = thread_position_in_threadgroup.x;
@@ -603,7 +603,7 @@ def _phase_cols512_reduced_batch_kernel(
     return mx.fast.metal_kernel(
         name=(
             f"ssb_phase_cols512_batch_scalar_n{int(batch)}_"
-            f"bf{int(num_bf)}_k{int(k_bf)}"
+            f"bf{int(num_bright_field_pixels)}_k{int(k_bf)}"
         ),
         input_names=["row_ifft", "twiddle"],
         output_names=["sum_out", "sumsq_tile"],
@@ -917,13 +917,13 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 
     n = 16
-    num_bf = 5
+    num_bright_field_pixels = 5
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
     q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
-    kx_np = np.linspace(-0.2, 0.2, num_bf, dtype=np.float32)
-    ky_np = np.linspace(0.15, -0.15, num_bf, dtype=np.float32)
+    kx_np = np.linspace(-0.2, 0.2, num_bright_field_pixels, dtype=np.float32)
+    ky_np = np.linspace(0.15, -0.15, num_bright_field_pixels, dtype=np.float32)
     rng = np.random.default_rng(22)
-    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    real_stack = rng.standard_normal((num_bright_field_pixels, n, n)).astype(np.float32)
     g_qk = mx.fft.rfft2(mx.array(real_stack))
     dc_mask = np.zeros((n, n), dtype=bool)
     dc_mask[0, 0] = True
@@ -948,7 +948,7 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
         ang_x_rad=0.0008,
         factor=float(np.pi / 0.0197),
         dc_mask=mx.array(dc_mask),
-        num_bf=num_bf,
+        num_bright_field_pixels=num_bright_field_pixels,
         alpha_k2=None,
         cos2_k=None,
         sin2_k=None,
@@ -968,13 +968,13 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     corrected = corrected_from_dynamic_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=c10,
         c12=c12,
         cos2phi12=mx.array([np.cos(2.0 * phi12)], dtype=mx.float32),
         sin2phi12=mx.array([np.sin(2.0 * phi12)], dtype=mx.float32),
     )[0]
-    reference = mx.fft.ifft2(mx.sum(corrected, axis=0) / num_bf)
+    reference = mx.fft.ifft2(mx.sum(corrected, axis=0) / num_bright_field_pixels)
     obj_chunk_reference = mx.fft.ifft2(corrected)
     obj_chunk_chunked = ifft2_chunked(mx, corrected)
     result = object_fourier_sum_dynamic(
@@ -1005,9 +1005,9 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     )
     phase_sum = mx.sum(phase_reference, axis=0)
     phase_sumsq = mx.sum(phase_reference * phase_reference, axis=0)
-    mean_phase_reference = phase_sum / num_bf
+    mean_phase_reference = phase_sum / num_bright_field_pixels
     loss_reference = mx.mean(
-        phase_sumsq / num_bf - mean_phase_reference * mean_phase_reference
+        phase_sumsq / num_bright_field_pixels - mean_phase_reference * mean_phase_reference
     )
     prepared_object, prepared_loss, prepared_phase = reconstruct_prepared(
         prepared,
@@ -1021,7 +1021,7 @@ def test_mps_object_fourier_sum_matches_looped_reference() -> None:
     mx.eval(mean_phase_reference, loss_reference)
     np.testing.assert_allclose(
         prepared_object,
-        np.asarray(mx.sum(obj_chunk_reference, axis=0) / num_bf),
+        np.asarray(mx.sum(obj_chunk_reference, axis=0) / num_bright_field_pixels),
         rtol=1e-5,
         atol=1e-5,
     )
@@ -1094,14 +1094,14 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
     from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 
     n = 512
-    num_bf = 5
+    num_bright_field_pixels = 5
     rng = np.random.default_rng(38)
-    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    real_stack = rng.standard_normal((num_bright_field_pixels, n, n)).astype(np.float32)
     g_qk = mx.fft.rfft2(mx.array(real_stack))
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
     q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
-    kx_np = np.linspace(-0.17, 0.13, num_bf, dtype=np.float32)
-    ky_np = np.linspace(0.11, -0.15, num_bf, dtype=np.float32)
+    kx_np = np.linspace(-0.17, 0.13, num_bright_field_pixels, dtype=np.float32)
+    ky_np = np.linspace(0.11, -0.15, num_bright_field_pixels, dtype=np.float32)
     q_row_mx = mx.array(q_row, dtype=mx.float32)
     q_col_mx = mx.array(q_col, dtype=mx.float32)
     kx = mx.array(kx_np, dtype=mx.float32)[:, None, None]
@@ -1160,7 +1160,7 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
         ang_x_rad=ang_x_rad,
         factor=float(np.pi / wavelength),
         dc_mask=mx.array(dc_mask),
-        num_bf=num_bf,
+        num_bright_field_pixels=num_bright_field_pixels,
         alpha_k2=alpha_k2,
         cos2_k=cos2_k,
         sin2_k=sin2_k,
@@ -1181,7 +1181,7 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
     corrected = corrected_from_cached_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=c10,
         c12=c12,
         cos2phi12=cos2phi12,
@@ -1189,8 +1189,8 @@ def test_mps_reconstruct_cached_geometry_512_loss_matches_mlx_reference() -> Non
     )[0]
     obj_reference = mx.fft.ifft2(corrected)
     ref_sum, ref_sumsq = phase_sums_from_complex(mx, obj_reference)
-    ref_phase = ref_sum / num_bf
-    ref_loss = mx.mean(ref_sumsq / num_bf - ref_phase * ref_phase)
+    ref_phase = ref_sum / num_bright_field_pixels
+    ref_loss = mx.mean(ref_sumsq / num_bright_field_pixels - ref_phase * ref_phase)
 
     _obj, loss, phase = reconstruct_prepared(
         prepared,
@@ -1262,13 +1262,13 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
 
     n = 512
-    num_bf = 3
+    num_bright_field_pixels = 3
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
     q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
     kx_np = np.array([-0.17, 0.03, 0.21], dtype=np.float32)
     ky_np = np.array([0.11, -0.19, 0.07], dtype=np.float32)
     rng = np.random.default_rng(47)
-    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    real_stack = rng.standard_normal((num_bright_field_pixels, n, n)).astype(np.float32)
     g_qk = mx.fft.rfft2(mx.array(real_stack))
     dc_mask = np.zeros((n, n), dtype=bool)
     dc_mask[0, 0] = True
@@ -1293,7 +1293,7 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
         ang_x_rad=0.0008,
         factor=float(np.pi / 0.0197),
         dc_mask=mx.array(dc_mask),
-        num_bf=num_bf,
+        num_bright_field_pixels=num_bright_field_pixels,
         alpha_k2=None,
         cos2_k=None,
         sin2_k=None,
@@ -1314,7 +1314,7 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     corrected = corrected_from_dynamic_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=c10,
         c12=c12,
         cos2phi12=cos2,
@@ -1324,7 +1324,7 @@ def test_mps_row_ifft512_dynamic_matches_mlx_reference() -> None:
     row_fused = row_ifft512_from_dynamic_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=c10,
         c12=c12,
         cos2phi12=cos2,
@@ -1352,13 +1352,13 @@ def test_mps_batched_exact_loss512_matches_single_candidate_path(
     from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 
     n = 512
-    num_bf = 4
+    num_bright_field_pixels = 4
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
     q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
     kx_np = np.array([-0.17, 0.03, 0.21, -0.09], dtype=np.float32)
     ky_np = np.array([0.11, -0.19, 0.07, 0.18], dtype=np.float32)
     rng = np.random.default_rng(49)
-    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    real_stack = rng.standard_normal((num_bright_field_pixels, n, n)).astype(np.float32)
     g_qk = mx.fft.rfft2(mx.array(real_stack))
     dc_mask = np.zeros((n, n), dtype=bool)
     dc_mask[0, 0] = True
@@ -1383,7 +1383,7 @@ def test_mps_batched_exact_loss512_matches_single_candidate_path(
         ang_x_rad=0.0008,
         factor=float(np.pi / 0.0197),
         dc_mask=mx.array(dc_mask),
-        num_bf=num_bf,
+        num_bright_field_pixels=num_bright_field_pixels,
         alpha_k2=None,
         cos2_k=None,
         sin2_k=None,
@@ -1469,7 +1469,7 @@ def test_mps_batched_exact_loss512_matches_single_candidate_path(
     )
     assert observed_kernel_batches
     assert max(observed_kernel_batches) <= 2
-    assert got_probe_batches == [(0, num_bf)] * ((candidates + 1) // 2)
+    assert got_probe_batches == [(0, num_bright_field_pixels)] * ((candidates + 1) // 2)
 
 
 def test_mps_small_exact_batches_use_parallel_stream_workers(
@@ -1589,13 +1589,13 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     )
     from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB
 
-    num_bf = 3
+    num_bright_field_pixels = 3
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
     q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
     kx_np = np.array([-0.17, 0.03, 0.21], dtype=np.float32)
     ky_np = np.array([0.11, -0.19, 0.07], dtype=np.float32)
     rng = np.random.default_rng(47 + n)
-    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    real_stack = rng.standard_normal((num_bright_field_pixels, n, n)).astype(np.float32)
     g_qk = mx.fft.rfft2(mx.array(real_stack))
     dc_mask = np.zeros((n, n), dtype=bool)
     dc_mask[0, 0] = True
@@ -1620,7 +1620,7 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
         ang_x_rad=0.0008,
         factor=float(np.pi / 0.0197),
         dc_mask=mx.array(dc_mask),
-        num_bf=num_bf,
+        num_bright_field_pixels=num_bright_field_pixels,
         alpha_k2=None,
         cos2_k=None,
         sin2_k=None,
@@ -1641,7 +1641,7 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     corrected = corrected_from_dynamic_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=c10,
         c12=c12,
         cos2phi12=cos2,
@@ -1651,7 +1651,7 @@ def test_mps_row_ifft_small_dynamic_matches_mlx_reference(n: int) -> None:
     row_fused = row_ifft_small_from_dynamic_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=c10,
         c12=c12,
         cos2phi12=cos2,
@@ -1695,13 +1695,13 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 
     n = 128
-    num_bf = 5
+    num_bright_field_pixels = 5
     q_row = np.fft.fftfreq(n, 1.0).astype(np.float32)
     q_col = np.fft.fftfreq(n, 1.0).astype(np.float32)
     kx_np = np.array([-0.17, 0.03, 0.21, -0.09, 0.13], dtype=np.float32)
     ky_np = np.array([0.11, -0.19, 0.07, 0.18, -0.05], dtype=np.float32)
     rng = np.random.default_rng(53)
-    real_stack = rng.standard_normal((num_bf, n, n)).astype(np.float32)
+    real_stack = rng.standard_normal((num_bright_field_pixels, n, n)).astype(np.float32)
     g_qk = mx.fft.rfft2(mx.array(real_stack))
     dc_mask = np.zeros((n, n), dtype=bool)
     dc_mask[0, 0] = True
@@ -1726,7 +1726,7 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
         ang_x_rad=0.0008,
         factor=float(np.pi / 0.0197),
         dc_mask=mx.array(dc_mask),
-        num_bf=num_bf,
+        num_bright_field_pixels=num_bright_field_pixels,
         alpha_k2=None,
         cos2_k=None,
         sin2_k=None,
@@ -1756,7 +1756,7 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     corrected = corrected_from_dynamic_geometry(
         prepared,
         start=0,
-        stop=num_bf,
+        stop=num_bright_field_pixels,
         c10=mx.array([c10], dtype=mx.float32),
         c12=mx.array([c12], dtype=mx.float32),
         cos2phi12=mx.array([1.0], dtype=mx.float32),
@@ -1764,8 +1764,8 @@ def test_mps_reconstruct_prepared_uses_scalar_loss_for_small_fused_path() -> Non
     )[0]
     ref_obj = mx.fft.ifft(mx.fft.ifft(corrected, axis=-1), axis=-2)
     ref_sum, ref_sumsq = phase_sums_from_complex(mx, ref_obj)
-    ref_phase = ref_sum / num_bf
-    ref_loss = mx.mean(ref_sumsq / num_bf - ref_phase * ref_phase)
+    ref_phase = ref_sum / num_bright_field_pixels
+    ref_loss = mx.mean(ref_sumsq / num_bright_field_pixels - ref_phase * ref_phase)
     mx.eval(ref_phase, ref_loss)
 
     np.testing.assert_allclose(
@@ -1793,7 +1793,7 @@ def test_mps_fit_reads_the_prepared_session_evidence() -> None:
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
     session = MpsSSBBackend(
         data, voltage_kV=300, semiangle_mrad=21.4, scan_sampling=1.0, det_sampling=None,
-        bf_intensity_threshold=0.0, bf_center=None, bf_radius=3, scan_detector_rotation_deg=0.0,
+        bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=3, scan_detector_rotation_deg=0.0,
     )
     start = {"C10": 0.0, "C12": 10.0, "phi12": 0.0}
     phase, loss = session.preview(start, compute_loss=True, higher_order_magnitudes=None, higher_order_angles=None)
@@ -1826,8 +1826,8 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
         voltage_kV=300,
         semiangle_mrad=21.4,
         scan_sampling_A=1.0,
-        bf_intensity_threshold=0.0,
-        bf_radius=3,
+        bright_field_intensity_threshold=0.0,
+        bright_field_radius_px=3,
     )
 
     optimized = workflow.find_aberrations(
@@ -1879,7 +1879,7 @@ def test_mps_auto_bf_applies_detected_probe_disk(monkeypatch) -> None:
     selection = mps.resolve_bf_selection(
         object(),
         threshold=0.0,
-        bf_radius=None,
+        bright_field_radius_px=None,
     )
 
     distance_sq = (selection.rows.astype(np.float32) - 4.0) ** 2 + (
@@ -1887,9 +1887,9 @@ def test_mps_auto_bf_applies_detected_probe_disk(monkeypatch) -> None:
     ) ** 2
     assert np.all(distance_sq <= np.float32(2.2**2))
     assert selection.size == 13
-    assert selection.center_row_col == (4.0, 4.0)
-    assert selection.radius_px == pytest.approx(2.2)
-    assert selection.detected_radius_px == pytest.approx(2.2)
+    assert selection.bright_field_center_px == (4.0, 4.0)
+    assert selection.bright_field_radius_px == pytest.approx(2.2)
+    assert selection.bright_field_edge_radius_px == pytest.approx(2.2)
 
 
 def test_mps_auto_bf_can_reuse_the_computed_mean_dp(monkeypatch) -> None:
@@ -1908,7 +1908,7 @@ def test_mps_auto_bf_can_reuse_the_computed_mean_dp(monkeypatch) -> None:
     selection = mps.resolve_bf_selection(
         object(),
         threshold=0.0,
-        bf_radius=None,
+        bright_field_radius_px=None,
         mean_diffraction=dp,
     )
 
@@ -1920,7 +1920,7 @@ def test_mps_sparse_storage_keeps_logical_chunk_boundaries() -> None:
     from quantem.gpu.ssb.mps.prepared import bf_storage_chunks
 
     class Prepared:
-        num_bf = 12
+        num_bright_field_pixels = 12
         bf_storage_indices_np = np.asarray([0, 3, 4, 7, 11], dtype=np.int32)
 
     assert list(bf_storage_chunks(Prepared(), 4)) == [(0, 2), (2, 4), (4, 5)]
@@ -1931,7 +1931,7 @@ def test_mps_sparse_row_packs_preserve_reduction_boundaries() -> None:
     from quantem.gpu.ssb.mps.prepared import bf_storage_chunk_packs
 
     class Prepared:
-        num_bf = 12
+        num_bright_field_pixels = 12
         bf_storage_indices_np = np.asarray([0, 3, 4, 7, 11], dtype=np.int32)
 
     assert bf_storage_chunk_packs(Prepared(), 4, 3) == [

@@ -45,7 +45,7 @@ class PreparedMpsSSB:
     ang_x_rad: float
     factor: float
     dc_mask: object
-    num_bf: int
+    num_bright_field_pixels: int
     alpha_k2: object | None
     cos2_k: object | None
     sin2_k: object | None
@@ -90,7 +90,7 @@ def prepare_selection(
     mx = require_mlx()
     bf_row = selection.rows
     bf_col = selection.cols
-    center = selection.center_row_col
+    center = selection.bright_field_center_px
     det_shape = selection.detector_shape
     wavelength = float(wavelength_A_from_kV(float(voltage_kV)))
     reciprocal_sampling = (
@@ -241,7 +241,7 @@ def prepare_selection(
     alpha_m2 = cos2_m = sin2_m = ap_m = None
     alpha_p2 = cos2_p = sin2_p = ap_p = None
     # Cache static geometry when the selected BF set is small enough.  For the
-    # held-out dataset bf_radius=5 path this is ~650 MB of float32 geometry and removes
+    # held-out dataset bright_field_radius_px=5 path this is ~650 MB of float32 geometry and removes
     # repeated sqrt/aperture work from every optimizer batch.
     geometry_values = int(kx_np.size) * int(scan_shape[0]) * int(scan_shape[1])
     if geometry_values <= 32_000_000:
@@ -283,7 +283,7 @@ def prepare_selection(
         ang_x_rad=ang_x_rad,
         factor=math.pi / wavelength,
         dc_mask=mx.array(dc_mask_np),
-        num_bf=selection.size,
+        num_bright_field_pixels=selection.size,
         alpha_k2=alpha_k2,
         cos2_k=cos2_k,
         sin2_k=sin2_k,
@@ -316,10 +316,10 @@ def retarget_prepared_rotation(
     reciprocal_y = prepared.ang_y_rad / prepared.wavelength
     reciprocal_x = prepared.ang_x_rad / prepared.wavelength
     kx_np = (
-        selection.rows.astype(np.float32) - selection.center_row_col[0]
+        selection.rows.astype(np.float32) - selection.bright_field_center_px[0]
     ) * reciprocal_y
     ky_np = (
-        selection.cols.astype(np.float32) - selection.center_row_col[1]
+        selection.cols.astype(np.float32) - selection.bright_field_center_px[1]
     ) * reciprocal_x
     if scan_detector_rotation_deg:
         angle = math.radians(-float(scan_detector_rotation_deg))
@@ -425,33 +425,33 @@ def retarget_prepared_rotation(
 def resolve_bf_selection(
     data,
     threshold: float,
-    bf_radius: float | None,
+    bright_field_radius_px: float | None,
     center_override: tuple[float, float] | None = None,
     *,
     mean_diffraction: np.ndarray | None = None,
-    detected_radius_px: float | None = None,
+    bright_field_edge_radius_px: float | None = None,
 ) -> BrightfieldDisk:
     """Return one validated BF selection for exact or raw detector input.
 
-    Without ``bf_radius`` the disk is ``detector.fit_probe``'s equal-area disk (pixels above mean + std); with it the
-    centre is the intensity-weighted centroid. ``detected_radius_px`` is the disk edge radius the detector calibration
+    Without ``bright_field_radius_px`` the disk is ``detector.fit_probe``'s equal-area disk (pixels above mean + std); with it the
+    centre is the intensity-weighted centroid. ``bright_field_edge_radius_px`` is the disk edge radius the detector calibration
     uses: the caller's (``semiangle / det_sampling`` when the sampling is given, which a bright-field crop must pass
     because its pattern has no edge to measure) or ``disk_edge_radius`` of the mean pattern, the rule CUDA uses too.
     Exact BF columns carry the selection and radius they were exported with.
     """
 
     if isinstance(data, MpsBfColumnFrames):
-        if center_override is not None or bf_radius is not None:
+        if center_override is not None or bright_field_radius_px is not None:
             raise ValueError(
                 "MpsBfColumnFrames owns its exact BF selection; do not pass "
-                "bf_center or bf_radius overrides."
+                "bright_field_center_px or bright_field_radius_px overrides."
             )
         return data.selection
 
     mean_pattern = detector_mean(data) if mean_diffraction is None else mean_diffraction
-    if detected_radius_px is None:
-        detected_radius_px = disk_edge_radius(mean_pattern)
-    if bf_radius is None:
+    if bright_field_edge_radius_px is None:
+        bright_field_edge_radius_px = disk_edge_radius(mean_pattern)
+    if bright_field_radius_px is None:
         probe_center, probe_radius = fit_probe(mean_pattern)
     mask = mean_pattern > float(mean_pattern.max()) * float(threshold)
     rows, cols = np.nonzero(mask)
@@ -464,7 +464,7 @@ def resolve_bf_selection(
             float(center_override[0]),
             float(center_override[1]),
         )
-    elif bf_radius is None:
+    elif bright_field_radius_px is None:
         center = (float(probe_center[0]), float(probe_center[1]))
     else:
         weights = mean_pattern[rows, cols].astype(np.float32, copy=False)
@@ -476,7 +476,7 @@ def resolve_bf_selection(
             )
         else:
             center = (float(rows.mean()), float(cols.mean()))
-    selected_radius = float(probe_radius if bf_radius is None else bf_radius)
+    selected_radius = float(probe_radius if bright_field_radius_px is None else bright_field_radius_px)
     distance_sq = (rows.astype(np.float32) - center[0]) ** 2 + (
         cols.astype(np.float32) - center[1]
     ) ** 2
@@ -485,14 +485,14 @@ def resolve_bf_selection(
     cols = cols[keep]
     if rows.size == 0:
         raise ValueError(
-            f"No BF pixels selected with threshold={threshold} and radius={bf_radius}."
+            f"No BF pixels selected with threshold={threshold} and radius={bright_field_radius_px}."
         )
     return BrightfieldDisk(
         rows=rows.astype(np.int32),
         cols=cols.astype(np.int32),
-        center_row_col=center,
-        radius_px=selected_radius,
-        detected_radius_px=float(detected_radius_px),
+        bright_field_center_px=center,
+        bright_field_radius_px=selected_radius,
+        bright_field_edge_radius_px=float(bright_field_edge_radius_px),
         detector_shape=tuple(int(value) for value in mean_pattern.shape),
     )
 
@@ -584,12 +584,12 @@ def bf_storage_chunks(
     logical_chunk_bf = max(1, int(logical_chunk_bf))
     indices = prepared.bf_storage_indices_np
     if indices is None:
-        for start in range(0, prepared.num_bf, logical_chunk_bf):
-            yield start, min(start + logical_chunk_bf, prepared.num_bf)
+        for start in range(0, prepared.num_bright_field_pixels, logical_chunk_bf):
+            yield start, min(start + logical_chunk_bf, prepared.num_bright_field_pixels)
         return
     indices = np.asarray(indices, dtype=np.intp)
-    for logical_start in range(0, prepared.num_bf, logical_chunk_bf):
-        logical_stop = min(logical_start + logical_chunk_bf, prepared.num_bf)
+    for logical_start in range(0, prepared.num_bright_field_pixels, logical_chunk_bf):
+        logical_stop = min(logical_start + logical_chunk_bf, prepared.num_bright_field_pixels)
         storage_start = int(np.searchsorted(indices, logical_start, side="left"))
         storage_stop = int(np.searchsorted(indices, logical_stop, side="left"))
         if storage_start != storage_stop:

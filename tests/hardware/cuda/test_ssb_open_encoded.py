@@ -41,12 +41,12 @@ def test_open_bright_field_crop_matches_full_detector(det_sampling):
         factor: cropped.preview(aberrations, upsampling_factor=factor)
         for factor in factors
     }
-    crop_bf = cropped.num_bf
+    crop_bf = cropped.num_bright_field_pixels
     cropped.close()
     del cropped
     cp.get_default_memory_pool().free_all_blocks()
     full = SSB(cp.from_dlpack(load(str(SOURCE), verbose=False).read()), **settings)
-    assert crop_bf == full.num_bf
+    assert crop_bf == full.num_bright_field_pixels
     for factor in factors:
         full_phase, full_loss = full.preview(aberrations, upsampling_factor=factor)
         crop_phase, crop_loss = crop_results[factor]
@@ -110,7 +110,7 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
     previews = {
         "chunked with loss": session.preview(aberrations)[0],
         "chunked without loss": session.preview(aberrations, compute_loss=False)[0],
-        "full drag subset": session.preview(aberrations, context=session.preview_context(session.num_bf))[0],
+        "full drag subset": session.preview(aberrations, context=session.preview_context(session.num_bright_field_pixels))[0],
         "thick sample": session.preview(aberrations, tilt_mrad=(0.0, 0.0), depth_spread_nm=1e-6)[0],
     }
     for name, phase in previews.items():

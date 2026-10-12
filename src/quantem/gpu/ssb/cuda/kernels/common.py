@@ -642,7 +642,7 @@ class CustomFFTBase:
                 cache["ang_y_rad"], cache["ang_x_rad"])
 
     def _plane_counts(self, data: cp.ndarray, G_qk: cp.ndarray, pk: cp.ndarray) -> tuple[int, int]:
-        """Check the corrected-plane stack, ``G_qk`` and the probe against this kernel size; return (num_bf, gqk_cols).
+        """Check the corrected-plane stack, ``G_qk`` and the probe against this kernel size; return (num_bright_field_pixels, gqk_cols).
 
         The raw kernels index fixed ``size x size`` planes without bounds checks, so a wrong dtype or shape would
         read or write outside the arrays instead of failing. ``gqk_cols`` is ``size`` or the Hermitian ``size / 2 + 1``.
@@ -652,17 +652,17 @@ class CustomFFTBase:
             raise ValueError("Requires complex64 input")
         if data.ndim != 3 or data.shape[1] != N or data.shape[2] != N:
             raise ValueError(f"Expects shape (num_bf, {N}, {N})")
-        num_bf = int(data.shape[0])
-        if G_qk.ndim != 3 or G_qk.shape[0] != num_bf or G_qk.shape[1] != N:
+        num_bright_field_pixels = int(data.shape[0])
+        if G_qk.ndim != 3 or G_qk.shape[0] != num_bright_field_pixels or G_qk.shape[1] != N:
             raise ValueError(f"G_qk must have shape (num_bf, {N}, {N}) or Hermitian")
         if G_qk.shape[2] not in (N, N // 2 + 1):
             raise ValueError(
                 f"G_qk must have {N} columns or Hermitian {N // 2 + 1} columns"
             )
         gqk_cols = int(G_qk.shape[2])
-        if pk.shape != (num_bf,):
+        if pk.shape != (num_bright_field_pixels,):
             raise ValueError("pk must have shape (num_bf,)")
-        return num_bf, gqk_cols
+        return num_bright_field_pixels, gqk_cols
 
     def _rows_two_term(
         self,
@@ -676,13 +676,13 @@ class CustomFFTBase:
         sin2phi12: float,
         factor: float,
         dc_value: complex,
-        num_bf: int,
+        num_bright_field_pixels: int,
         gqk_cols: int,
     ) -> None:
         """Row pass shared by the full IFFT and the column-accumulate path: correct G_qk for C10/C12, IFFT each row."""
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-        grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
+        grid_rows = (1, self._rows_fused_pk_grid_y, num_bright_field_pixels)
         self._rows_fused_pk(
             grid_rows,
             self._rows_fused_pk_block,
@@ -694,7 +694,7 @@ class CustomFFTBase:
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(gqk_cols),
+                np.int32(num_bright_field_pixels), np.int32(gqk_cols),
             ),
         )
 
@@ -713,11 +713,11 @@ class CustomFFTBase:
     ) -> None:
         """Fused gamma multiply + IFFT with pk."""
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        self._rows_two_term(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
+        self._rows_two_term(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
         scale = np.float32(1.0 / (N * N))
-        grid_cols = (1, self._cols_grid_y, num_bf)
-        self._cols(grid_cols, self._cols_block, (data, np.int32(num_bf), scale))
+        grid_cols = (1, self._cols_grid_y, num_bright_field_pixels)
+        self._cols(grid_cols, self._cols_block, (data, np.int32(num_bright_field_pixels), scale))
 
     def ifft2_inplace_fused_pk_full(
         self,
@@ -743,7 +743,7 @@ class CustomFFTBase:
                 "Rebuild CustomFFT subclass with the `_full` variant kernel."
             )
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
         if magnitudes_A.dtype != cp.float32 or angles_rad.dtype != cp.float32:
             raise ValueError("magnitudes_A and angles_rad must be float32 CuPy arrays")
         if magnitudes_A.shape != (14,) or angles_rad.shape != (14,):
@@ -751,7 +751,7 @@ class CustomFFTBase:
         abr_mag_scaled, abr_cm, abr_sm = pack_aberration_coefs(magnitudes_A, angles_rad)
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-        grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
+        grid_rows = (1, self._rows_fused_pk_grid_y, num_bright_field_pixels)
         self._rows_fused_pk_full(
             grid_rows,
             self._rows_fused_pk_block,
@@ -762,12 +762,12 @@ class CustomFFTBase:
                 abr_mag_scaled, abr_cm, abr_sm,
                 pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(gqk_cols),
+                np.int32(num_bright_field_pixels), np.int32(gqk_cols),
             ),
         )
         scale = np.float32(1.0 / (N * N))
-        grid_cols = (1, self._cols_grid_y, num_bf)
-        self._cols(grid_cols, self._cols_block, (data, np.int32(num_bf), scale))
+        grid_cols = (1, self._cols_grid_y, num_bright_field_pixels)
+        self._cols(grid_cols, self._cols_block, (data, np.int32(num_bright_field_pixels), scale))
 
     def ifft2_fused_pk_col_accumulate(
         self,
@@ -790,17 +790,17 @@ class CustomFFTBase:
         Writes partial sum/sumsq planes instead of the complex result.
         """
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bf + k_bf - 1) // k_bf
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
+        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):
             raise ValueError(f"partial buffers must have shape ({n_groups}, {N}, {N})")
-        self._rows_two_term(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
+        self._rows_two_term(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
         # Fused col-FFT + accumulate (reads data, writes partial buffers)
         grid_cols = (1, self._cols_grid_y, n_groups)
         self._cols_accumulate(
             grid_cols, self._cols_block,
             (data, partial_sum, partial_sumsq,
-             np.int32(num_bf), np.int32(k_bf)),
+             np.int32(num_bright_field_pixels), np.int32(k_bf)),
         )
 
     def corrected_fourier_partial_sum(
@@ -830,11 +830,11 @@ class CustomFFTBase:
                 f"Expects G_qk shape (num_bf, {N}, {N}) or Hermitian "
                 f"(num_bf, {N}, {N // 2 + 1})"
             )
-        num_bf = int(G_qk.shape[0])
+        num_bright_field_pixels = int(G_qk.shape[0])
         gqk_cols = int(G_qk.shape[2])
-        if pk.shape != (num_bf,):
+        if pk.shape != (num_bright_field_pixels,):
             raise ValueError("pk must have shape (num_bf,)")
-        n_groups = (num_bf + k_bf - 1) // k_bf
+        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sum.dtype != cp.complex64:
             raise ValueError(f"partial_sum must have complex64 shape ({n_groups}, {N}, {N})")
         (kx_bf, ky_bf, qx_1d, qy_1d,
@@ -853,6 +853,6 @@ class CustomFFTBase:
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), pk, G_qk, partial_sum,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(k_bf), np.int32(gqk_cols),
+                np.int32(num_bright_field_pixels), np.int32(k_bf), np.int32(gqk_cols),
             ),
         )

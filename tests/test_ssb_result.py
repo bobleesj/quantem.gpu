@@ -25,7 +25,7 @@ def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
     run.mkdir()
     phase = np.array([[0, 1], [-1, 2]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase)
-    config = {"computed": {"bf_radius": 1, "bf_center": [1, 1], "ssb": {
+    config = {"computed": {"bright_field_radius_px": 1, "bright_field_center_px": [1, 1], "ssb": {
         "semiangle_mrad": 20, "scan_sampling_A": 0.5, "voltage_kV": 200,
         "aberrations": {"C10_nm": 0, "C12_nm": 0, "phi12_deg": 0},
         "scan_detector_rotation_deg": 0,
@@ -96,7 +96,7 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     phase = np.array([[-0., -1.25], [3.5, 1e-20]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase)
     config = {"source_master": str(master), "computed": {
-        "bf_center": [3, 4], "bf_radius": 5,
+        "bright_field_center_px": [3, 4], "bright_field_radius_px": 5,
         "ssb": {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": .25,
                 "scan_detector_rotation_deg": 12,
                 "aberrations": {"C10_nm": 7, "C12_nm": 2, "phi12_deg": math.degrees(.1)}}}}

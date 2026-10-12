@@ -26,7 +26,7 @@ def test_upsampling_matches_zero_inserted_scan(factor):
         base = TorchSSB.from_ssb(ssb)
         full = base._full_plane(base.G)
         images = torch.fft.ifft2(full).real
-        sparse = torch.zeros((base.num_bf, 128 * factor, 128 * factor), device=images.device)
+        sparse = torch.zeros((base.num_bright_field_pixels, 128 * factor, 128 * factor), device=images.device)
         sparse[:, ::factor, ::factor] = images
         q = torch.fft.fftfreq(128 * factor, d=0.3 / factor, device=images.device)
         check = TorchSSB(torch.fft.fft2(sparse), kx=base.kx, ky=base.ky,
@@ -87,8 +87,8 @@ def test_wave_sum_matches_independent_torch_alias_construction(factor, depth):
         oracle = TorchSSB.from_ssb(ssb)
         q = torch.fft.fftfreq(128 * factor, d=0.3 / factor, device=oracle.device)
         spectrum = torch.zeros((q.numel(), q.numel()), device=q.device, dtype=torch.complex128)
-        for start in range(0, oracle.num_bf, 17):
-            stop = min(start + 17, oracle.num_bf)
+        for start in range(0, oracle.num_bright_field_pixels, 17):
+            stop = min(start + 17, oracle.num_bright_field_pixels)
             images = torch.fft.ifft2(oracle._full_plane(oracle.G[start:stop])).real
             sparse = torch.zeros((stop - start, q.numel(), q.numel()), device=q.device)
             sparse[:, ::factor, ::factor] = images
@@ -101,7 +101,7 @@ def test_wave_sum_matches_independent_torch_alias_construction(factor, depth):
             corrected = aliases * unit.conj()
             corrected[:, 0, 0] = oracle.dc_value
             spectrum += corrected.sum(dim=0, dtype=torch.complex128)
-        expected = torch.angle(torch.fft.ifft2(spectrum / oracle.num_bf)).float()
+        expected = torch.angle(torch.fft.ifft2(spectrum / oracle.num_bright_field_pixels)).float()
         actual, _ = engine.thick.reconstruct(-80, 40, -0.7, (-9, 5), depth,
                     compute_loss=False, phase_estimator="phase_of_mean", upsampling_factor=factor,
                     chunk_bytes=2 * q.numel()**2 * 16)

@@ -53,6 +53,27 @@ new `rcN` heading when that rc is published to TestPyPI.
   `phi56_deg`); the arrays `higher_order_magnitudes` and
   `higher_order_angles` (nm and radians by slot) are removed.
 - `SSBSeriesResult.records` reports `phi12 (deg)`; it was `phi12 (rad)`.
+- Bright-field names are spelled out with their unit: `bf_center` becomes
+  `bright_field_center_px`, `bf_radius` `bright_field_radius_px`,
+  `detected_bf_radius` `bright_field_edge_radius_px`, `bf_intensity_threshold`
+  `bright_field_intensity_threshold` and `num_bf`
+  `num_bright_field_pixels`, as arguments and attributes of `SSB`, `SSB.open`
+  and `SSBResult`, in the result signature and the stored fit block.
+  `ScreeningResult.probe_center` and `probe_radius` become
+  `bright_field_center_px` and `bright_field_edge_radius_px`, as do `center`
+  and `radius_px` in the screening cache.
+- `detector.bf(data, center=, radius=)` becomes
+  `detector.bf(data, bright_field_center_px=, bright_field_radius_px=)`.
+  `detector.adf` and `detector.df` take keyword-only bounds with the unit in
+  the name, `inner_angle_mrad` / `outer_angle_mrad` or `inner_radius_px` /
+  `outer_radius_px`, in place of `inner`, `outer` and `unit`, and
+  `bright_field_center_px` / `bright_field_edge_radius_px` in place of
+  `center` / `radius`. `detector.detector_mask(center, lo_px, hi_px,
+  det_shape)` becomes `detector_mask(center_px, inner_radius_px,
+  outer_radius_px, detector_shape)`.
+- `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
+  `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
+  radius selects the pixels used and defaults to the detected disk.
 - A rotation fitted from the centre-of-mass curl is
   `scan_detector_rotation_mod180_deg`: `DPCResult.rotation_deg` and
   `ScreeningResult.rotation_deg` take that name, `DPCResult.use_transpose` and
@@ -80,6 +101,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `SSB.bright_field_center_px` and `SSBResult.bright_field_center_px` are in
+  pixels of the full detector for every input. A session built from an
+  encoded acquisition or `SSB.open` reported the centre inside its decoded
+  bright-field crop.
 - A DPC or screening fit made with exchanged detector axes could only be
   handed to SSB as a bare angle, so the exchange was dropped without a
   message. The flag travels with the angle (`detector_transposed`) and SSB

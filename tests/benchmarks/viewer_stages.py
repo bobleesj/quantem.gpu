@@ -80,7 +80,7 @@ def measure(source, options):
     loaded, load_second = timed(lambda: io.load(source, verbose=False, **options))
     times["load"] = (load_first + load_second) / 2
     viewer, times["viewer"] = timed(lambda: Show4DSTEM(loaded))
-    digests["viewer"] = digest(viewer.virtual_image(), [viewer.center_row, viewer.center_col, viewer.bf_radius])
+    digests["viewer"] = digest(viewer.virtual_image(), [viewer.center_row, viewer.center_col, viewer.bright_field_radius_px])
     row, col = viewer.shape_rows // 3, (2 * viewer.shape_cols) // 3
 
     def click():

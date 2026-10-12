@@ -42,7 +42,7 @@ class CudaSSBBackend:
         Detector sampling in mrad per pixel; ``semiangle / disk_edge_radius(mean pattern)`` when omitted.
     voltage_kV : float
         Accelerating voltage in kV.
-    bf_intensity_threshold, bf_radius, bf_center
+    bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px
         Bright-field selection (``cuda.brightfield.select_bright_field``).
     aberrations : dict, optional
         Starting C10, C12 (Angstrom) and phi12 (radians); zero when omitted.
@@ -50,7 +50,7 @@ class CudaSSBBackend:
         Physical scan-detector rotation in degrees.
 
     Out of memory: the resident Hermitian ``G_qk`` costs about ``scan_row x (scan_col / 2 + 1) x 8`` bytes per
-    bright-field pixel; a smaller ``bf_radius`` reduces it.
+    bright-field pixel; a smaller ``bright_field_radius_px`` reduces it.
     """
 
     # search ranges of optimize() when none are given (engine units despite the names)
@@ -71,9 +71,9 @@ class CudaSSBBackend:
         *,
         voltage_kV: float,
         scan_shape: tuple[int, int] | None = None,
-        bf_intensity_threshold: float = 0.0,
-        bf_radius: int | None = None,
-        bf_center: tuple[float, float] | None = None,
+        bright_field_intensity_threshold: float = 0.0,
+        bright_field_radius_px: int | None = None,
+        bright_field_center_px: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
     ):
@@ -156,7 +156,7 @@ class CudaSSBBackend:
         self.semiangle_mrad = semiangle
         self.scan_sampling = scan_sampling
         self.angular_sampling = det_sampling
-        self.bf_intensity_threshold = float(bf_intensity_threshold)
+        self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.aberrations = aberrations.copy()
         self._scan_detector_rotation_rad = scan_detector_rotation_rad
         scan_gpts = data.shape[:2]
@@ -178,8 +178,8 @@ class CudaSSBBackend:
 
         # The raw counts stay in their native dtype (usually uint16): the selection reduces them with an integer
         # accumulator and the spectra cast only the selected pixels to complex64, never the full 4D block.
-        self.bf_inds_row, self.bf_inds_col, self.bf_center = select_bright_field(
-            data, bf_intensity_threshold, bf_radius, bf_center,
+        self.bf_inds_row, self.bf_inds_col, self.bright_field_center_px = select_bright_field(
+            data, bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px,
         )
         self.G_qk, self.dc_value = bright_field_spectra(
             data, self.bf_inds_row, self.bf_inds_col, scan_gpts, det_gpts,
@@ -236,7 +236,7 @@ class CudaSSBBackend:
                 G_qk=self.G_qk,
                 bf_inds_row=self.bf_inds_row,
                 bf_inds_col=self.bf_inds_col,
-                bf_center=self.bf_center,
+                bright_field_center_px=self.bright_field_center_px,
                 dc_value=self.dc_value,
                 gpts=self.gpts,
                 sampling=self.sampling,
@@ -264,7 +264,7 @@ class CudaSSBBackend:
         return tuple(int(value) for value in self.gpts)
 
     @property
-    def num_bf(self) -> int:
+    def num_bright_field_pixels(self) -> int:
         """Number of pixels in the complete detected bright-field disk."""
 
         return int(self.bf_inds_row.size)
@@ -275,10 +275,10 @@ class CudaSSBBackend:
         self._scan_detector_rotation_rad = float(scan_detector_rotation_rad)
         self._get_accelerator().cache_rotation(self._scan_detector_rotation_rad)
 
-    def preview_context(self, num_bf: int):
+    def preview_context(self, num_bright_field_pixels: int):
         """Prepare a reusable reduced-BF CUDA preview context."""
 
-        return self._get_accelerator().prepare_bf_subset(int(num_bf))
+        return self._get_accelerator().prepare_bf_subset(int(num_bright_field_pixels))
 
     def browser_state(self) -> SSBExportState:
         """Return compact state for browser WebGPU integration."""
@@ -327,16 +327,16 @@ class CudaSSBBackend:
             loss=loss,
             elapsed=elapsed if elapsed > 0 else None,
             n_trials=self._n_trials,
-            num_bf=len(self.bf_inds_row),
+            num_bright_field_pixels=len(self.bf_inds_row),
             refine_method=self._refine_method,
             refine_nfev=self._refine_nfev,
             refine_elapsed=self._elapsed_refine if self._elapsed_refine > 0 else None,
             voltage_kV=self.voltage_kV,
             semiangle_mrad=self.semiangle_mrad,
             scan_sampling_A=scan_sampling,
-            bf_center=brightfield.center_row_col,
-            bf_radius=brightfield.radius_px,
-            detected_bf_radius=brightfield.detected_radius_px,
+            bright_field_center_px=brightfield.bright_field_center_px,
+            bright_field_radius_px=brightfield.bright_field_radius_px,
+            bright_field_edge_radius_px=brightfield.bright_field_edge_radius_px,
             trial_records=self._trial_records,
         )
 
@@ -478,14 +478,14 @@ class CudaSSBBackend:
         """The error that replaces a device out-of-memory failure during ``stage``.
 
         It names the two numbers that decide whether SSB fits on the device, the bright-field pixel count (a smaller
-        ``bf_radius`` reduces it) and the free device memory (stale arrays in the session hold it).
+        ``bright_field_radius_px`` reduces it) and the free device memory (stale arrays in the session hold it).
         """
-        num_bf = len(self.bf_inds_row)
+        num_bright_field_pixels = len(self.bf_inds_row)
         free_gb = cp.cuda.runtime.memGetInfo()[0] / 1e9
         return MemoryError(
             f"Out of GPU VRAM during SSB {stage} "
-            f"({num_bf} BF pixels, {free_gb:.1f} GB free).\n"
-            f"Try: SSB(..., bf_radius=<smaller>) to reduce BF pixel count, "
+            f"({num_bright_field_pixels} BF pixels, {free_gb:.1f} GB free).\n"
+            f"Try: SSB(..., bright_field_radius_px=<smaller>) to reduce BF pixel count, "
             f"or restart the kernel to free stale GPU memory."
         )
 
@@ -528,7 +528,7 @@ class CudaSSBBackend:
         if verbose:
             vram_free, vram_total = cp.cuda.runtime.memGetInfo()
             free_gb, total_gb = vram_free / 1e9, vram_total / 1e9
-            print(f"Optimizing aberrations ({n_trials} trials, {accel.num_bf} BF pixels)")
+            print(f"Optimizing aberrations ({n_trials} trials, {accel.num_bright_field_pixels} BF pixels)")
             print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB")
         try:
             best_params, best_value, trial_history = batch_optimize(

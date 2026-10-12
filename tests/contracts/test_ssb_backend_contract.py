@@ -12,7 +12,7 @@ class _Backend:
     backend = "mps"
     scan_shape = (4, 4)
     detector_shape = (3, 3)
-    num_bf = 1
+    num_bright_field_pixels = 1
 
     precision = PRECISION
 
@@ -41,7 +41,7 @@ class _Backend:
     def fit_sample(self, **options):
         raise NotImplementedError
 
-    def preview_context(self, num_bf: int):
+    def preview_context(self, num_bright_field_pixels: int):
         return None
 
     def export_brightfield(self, data, path_stem):
@@ -57,9 +57,9 @@ def _selection():
     return BrightfieldDisk(
         rows=np.asarray([1], dtype=np.int32),
         cols=np.asarray([1], dtype=np.int32),
-        center_row_col=(1.0, 1.0),
-        radius_px=1.0,
-        detected_radius_px=1.0,
+        bright_field_center_px=(1.0, 1.0),
+        bright_field_radius_px=1.0,
+        bright_field_edge_radius_px=1.0,
         detector_shape=(3, 3),
     )
 
@@ -77,7 +77,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
         "det_sampling",
         "aberrations",
         "scan_detector_rotation_deg",
-        "bf_radius",
+        "bright_field_radius_px",
     }
     assert shared <= constructor.parameters.keys()
     assert constructor.parameters["backend"].default == "auto"
@@ -119,9 +119,9 @@ def test_mps_reconstruct_honors_compute_loss(monkeypatch) -> None:
     backend._scan_detector_rotation_deg = 0.0
     backend._selection = SimpleNamespace(
         size=3,
-        center_row_col=(1.0, 1.0),
-        radius_px=1.0,
-        detected_radius_px=1.0,
+        bright_field_center_px=(1.0, 1.0),
+        bright_field_radius_px=1.0,
+        bright_field_edge_radius_px=1.0,
     )
 
     aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
@@ -202,7 +202,7 @@ def test_mps_rotation_geometry_keeps_exact_source_fft_identity() -> None:
     selection = SimpleNamespace(
         rows=np.asarray([2], dtype=np.int32),
         cols=np.asarray([1], dtype=np.int32),
-        center_row_col=(1.0, 1.0),
+        bright_field_center_px=(1.0, 1.0),
     )
 
     retarget_prepared_rotation(prepared, selection=selection, scan_detector_rotation_deg=90.0)
@@ -250,16 +250,16 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
         aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.1)},
         scan_detector_rotation_deg=3.0,
         loss=0.25,
-        num_bf=selection.size,
-        bf_center=selection.center_row_col,
-        bf_radius=selection.radius_px,
-        detected_bf_radius=selection.detected_radius_px,
+        num_bright_field_pixels=selection.size,
+        bright_field_center_px=selection.bright_field_center_px,
+        bright_field_radius_px=selection.bright_field_radius_px,
+        bright_field_edge_radius_px=selection.bright_field_edge_radius_px,
         n_trials=200,
     )
 
-    assert result.num_bf == 1
-    assert result.bf_center == (1.0, 1.0)
-    assert result.bf_radius == 1.0
+    assert result.num_bright_field_pixels == 1
+    assert result.bright_field_center_px == (1.0, 1.0)
+    assert result.bright_field_radius_px == 1.0
     assert result.phase.dtype == np.float32
 
 
@@ -271,9 +271,9 @@ def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
     selection = BrightfieldDisk(
         rows=np.asarray([0, 1, 2], dtype=np.int32),
         cols=np.asarray([1, 1, 1], dtype=np.int32),
-        center_row_col=(1.0, 1.0),
-        radius_px=1.1,
-        detected_radius_px=1.1,
+        bright_field_center_px=(1.0, 1.0),
+        bright_field_radius_px=1.1,
+        bright_field_edge_radius_px=1.1,
         detector_shape=(3, 3),
     )
     values = np.ones(3, dtype=np.float32)
@@ -296,7 +296,7 @@ def test_export_state_separates_logical_and_aperture_active_bf_counts() -> None:
         dc_value=0j,
     )
 
-    assert state.num_bf == 3
+    assert state.num_bright_field_pixels == 3
 
 
 def test_float32_precision_contract_is_strict_and_backend_neutral() -> None:

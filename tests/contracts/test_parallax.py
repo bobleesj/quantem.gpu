@@ -77,7 +77,7 @@ def test_parallax_shifts_each_image_once_and_upsamples_on_the_finer_grid(tmp_pat
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         results = {
-            factor: parallax.run(loaded, center=center, bf_radius=radius, upsampling_factor=factor)
+            factor: parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsampling_factor=factor)
             for factor in (1, 2)
         }
 
@@ -110,7 +110,7 @@ def test_parallax_repeats_bit_identically(tmp_path) -> None:
         scan_shape=counts.shape[:2], verbose=False,
     ) as loaded:
         first, second = (
-            parallax.run(loaded, center=center, bf_radius=radius, upsampling_factor=2)
+            parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius, upsampling_factor=2)
             for _ in range(2)
         )
 
@@ -222,7 +222,7 @@ def test_parallax_reports_that_apple_gpus_are_not_implemented(tmp_path) -> None:
         ) as loaded,
         pytest.raises(NotImplementedError, match=r"Apple GPU \(MPS\)"),
     ):
-        parallax.run(loaded, center=center, bf_radius=radius)
+        parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=radius)
 
 
 def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None:
@@ -241,7 +241,7 @@ def test_parallax_real_acquisition_recovers_aberrations_when_available() -> None
         scan_shape = loaded.shape[:2]
         got = parallax.run(
             loaded,
-            sampling_radius=5,
+            bright_field_radius_px=5,
             upsampling_factor=1,
             scan_sampling_A=0.5,
             semiangle_mrad=30,

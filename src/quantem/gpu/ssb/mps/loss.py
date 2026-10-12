@@ -231,9 +231,9 @@ def reconstruct_prepared_batch_exact_loss(
         ):
             mx.eval(phase_sum, phase_sumsq)
 
-    mean_phase = phase_sum / prepared.num_bf
+    mean_phase = phase_sum / prepared.num_bright_field_pixels
     mean_sq = mx.mean(mean_phase * mean_phase, axis=(1, 2))
-    norm = float(prepared.num_bf * prepared.scan_shape[0] * prepared.scan_shape[1])
+    norm = float(prepared.num_bright_field_pixels * prepared.scan_shape[0] * prepared.scan_shape[1])
     losses = phase_sumsq / norm - mean_sq
     mx.eval(losses)
     return np.asarray(losses).astype(np.float32, copy=False)
@@ -309,14 +309,14 @@ def _reconstruct_prepared_small_batch_exact_loss_fused(
         ):
             mx.eval(phase_sum, phase_sumsq)
 
-    mean_phase = phase_sum / prepared.num_bf
+    mean_phase = phase_sum / prepared.num_bright_field_pixels
     mean_sq = mx.stack(
         [
             mx.mean(mean_phase[candidate] * mean_phase[candidate])
             for candidate in range(batch)
         ]
     )
-    norm = float(prepared.num_bf * prepared.scan_shape[0] * prepared.scan_shape[1])
+    norm = float(prepared.num_bright_field_pixels * prepared.scan_shape[0] * prepared.scan_shape[1])
     losses = phase_sumsq / norm - mean_sq
     mx.eval(losses)
     return np.asarray(losses).astype(np.float32, copy=False)

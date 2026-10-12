@@ -7,7 +7,7 @@ from quantem.gpu.ssb.mps.kernels.radix import twiddle_512, twiddle_512_metal_hea
 
 
 @lru_cache(maxsize=32)
-def _phase_cols512_reduced_kernel(num_bf: int, k_bf: int, compute_loss: bool):
+def _phase_cols512_reduced_kernel(num_bright_field_pixels: int, k_bf: int, compute_loss: bool):
     mx = require_mlx()
     loss_decl = (
         "float sq0 = 0.0f; float sq1 = 0.0f; "
@@ -35,7 +35,7 @@ def _phase_cols512_reduced_kernel(num_bf: int, k_bf: int, compute_loss: bool):
         #define BITREV4_8(x) ((((x) & 0x03u) << 6) | (((x) & 0x0Cu) << 2) | (((x) & 0x30u) >> 2) | (((x) & 0xC0u) >> 6))
         #define DIGITREV512(x) ((((x) & 1u) << 8) | BITREV4_8((x) >> 1))
 
-        constexpr uint NUM_BF = {int(num_bf)};
+        constexpr uint NUM_BF = {int(num_bright_field_pixels)};
         constexpr uint K_BF = {int(k_bf)};
         constexpr uint GROUPS = (NUM_BF + K_BF - 1u) / K_BF;
         uint tid = thread_position_in_threadgroup.x;
@@ -146,7 +146,7 @@ def _phase_cols512_reduced_kernel(num_bf: int, k_bf: int, compute_loss: bool):
         #undef DIGITREV512
     """
     return mx.fast.metal_kernel(
-        name=f"ssb_phase_cols512_{name_suffix}_n{int(num_bf)}_k{int(k_bf)}",
+        name=f"ssb_phase_cols512_{name_suffix}_n{int(num_bright_field_pixels)}_k{int(k_bf)}",
         input_names=["row_ifft", "twiddle"],
         output_names=output_names,
         source=source,
@@ -181,10 +181,10 @@ def phase_cols512_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
     shape = tuple(int(size) for size in row_ifft.shape)
     if len(shape) != 3 or shape[-2:] != (512, 512):
         raise ValueError(f"Expected row-IFFT chunk shape (BF, 512, 512), got {shape}.")
-    num_bf = int(shape[0])
+    num_bright_field_pixels = int(shape[0])
     k_bf = max(1, int(k_bf))
-    groups = (num_bf + k_bf - 1) // k_bf
-    kernel = _phase_cols512_reduced_kernel(num_bf, k_bf, True)
+    groups = (num_bright_field_pixels + k_bf - 1) // k_bf
+    kernel = _phase_cols512_reduced_kernel(num_bright_field_pixels, k_bf, True)
     partial_sum, partial_sumsq_tile = kernel(
         inputs=[row_ifft, twiddle_512(mx)],
         template=[],
@@ -200,7 +200,7 @@ def phase_cols512_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
 @lru_cache(maxsize=32)
 def _phase_cols512_radix8_batch_kernel(
     batch: int,
-    num_bf: int,
+    num_bright_field_pixels: int,
     k_bf: int,
     tiled_input: bool,
     storage_num_bf: int | None = None,
@@ -210,7 +210,7 @@ def _phase_cols512_radix8_batch_kernel(
     """Build the 64-thread radix-8 exact phase/loss column kernel."""
     mx = require_mlx()
     simd_radix8 = use_simd_radix8_col_stage_512()
-    storage_num_bf = int(num_bf if storage_num_bf is None else storage_num_bf)
+    storage_num_bf = int(num_bright_field_pixels if storage_num_bf is None else storage_num_bf)
     bf_offset = int(bf_offset)
     range_setup = """
         uint cand = z / GROUPS;
@@ -373,7 +373,7 @@ def _phase_cols512_radix8_batch_kernel(
         {simd_macros}
 
         constexpr uint BATCH = {int(batch)}u;
-        constexpr uint NUM_BF = {int(num_bf)}u;
+        constexpr uint NUM_BF = {int(num_bright_field_pixels)}u;
         constexpr uint STORAGE_NUM_BF = {storage_num_bf}u;
         constexpr uint BF_OFFSET = {bf_offset}u;
         constexpr uint K_BF = {int(k_bf)}u;
@@ -446,7 +446,7 @@ def _phase_cols512_radix8_batch_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_phase_cols512_radix8_batch_n{batch}_bf{num_bf}_"
+            f"ssb_phase_cols512_radix8_batch_n{batch}_bf{num_bright_field_pixels}_"
             f"k{k_bf}_t{int(tiled_input)}_s{storage_num_bf}_o{bf_offset}"
             f"_x{int(simd_radix8)}{range_name}"
         ),
@@ -483,14 +483,14 @@ def phase_cols512_scalar_loss_batch_from_row_ifft(
             f"Invalid BF subrange [{bf_start}, {bf_stop}) for "
             f"storage length {storage_num_bf}."
         )
-    num_bf = bf_stop - bf_start
+    num_bright_field_pixels = bf_stop - bf_start
     k_bf = max(1, int(k_bf))
-    groups = (num_bf + k_bf - 1) // k_bf
+    groups = (num_bright_field_pixels + k_bf - 1) // k_bf
     if active_bf is None:
         active_bf = mx.ones((storage_num_bf,), dtype=mx.uint8)
     kernel = _phase_cols512_radix8_batch_kernel(
         batch,
-        num_bf,
+        num_bright_field_pixels,
         k_bf,
         tiled_input,
         storage_num_bf,

@@ -28,7 +28,7 @@ def test_cold_preview_then_changed_defocus():
         changed, changed_loss = ssb.preview(recipe | {'C10_nm': 30.0})
         assert np.isfinite(changed).all() and np.isfinite(changed_loss)
         assert np.max(np.abs(changed - phase)) > 0
-        context = ssb.preview_context(max(1, ssb.num_bf // 4))
+        context = ssb.preview_context(max(1, ssb.num_bright_field_pixels // 4))
         partial, _ = ssb.preview(recipe, compute_loss=False, context=context)
         assert np.isfinite(partial).all()
         restored, _ = ssb.preview(recipe)

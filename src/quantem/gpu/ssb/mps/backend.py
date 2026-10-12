@@ -56,9 +56,9 @@ class MpsSSBBackend:
         semiangle_mrad: float,
         scan_sampling: float | tuple[float, float],
         det_sampling: float | tuple[float, float] | None,
-        bf_intensity_threshold: float,
-        bf_center: tuple[float, float] | None,
-        bf_radius: int | None,
+        bright_field_intensity_threshold: float,
+        bright_field_center_px: tuple[float, float] | None,
+        bright_field_radius_px: int | None,
         scan_detector_rotation_deg: float,
     ) -> None:
         self._frames = as_chunked_frames(data)
@@ -88,11 +88,11 @@ class MpsSSBBackend:
             calibration = self._frames.det_sampling
         self._selection = resolve_bf_selection(
             self._frames,
-            bf_intensity_threshold,
-            bf_radius,
-            center_override=bf_center,
+            bright_field_intensity_threshold,
+            bright_field_radius_px,
+            center_override=bright_field_center_px,
             mean_diffraction=mean_diffraction,
-            detected_radius_px=None if calibration is None else self._semiangle_mrad / calibration[0],
+            bright_field_edge_radius_px=None if calibration is None else self._semiangle_mrad / calibration[0],
         )
         self._detector_sum = (
             None
@@ -110,7 +110,7 @@ class MpsSSBBackend:
             )
         if calibration is None:
             # the bright-field disk edge sits at the semiangle
-            detector_pixel_mrad = self._semiangle_mrad / self._selection.detected_radius_px
+            detector_pixel_mrad = self._semiangle_mrad / self._selection.bright_field_edge_radius_px
             calibration = (detector_pixel_mrad, detector_pixel_mrad)
         self._det_sampling = calibration
         self._scan_detector_rotation_deg = float(scan_detector_rotation_deg)
@@ -202,13 +202,13 @@ class MpsSSBBackend:
             scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             loss=None if loss is None else float(loss),
             elapsed=time.perf_counter() - started,
-            num_bf=self._selection.size,
+            num_bright_field_pixels=self._selection.size,
             voltage_kV=self._voltage_kV,
             semiangle_mrad=self._semiangle_mrad,
             scan_sampling_A=self._scan_sampling,
-            bf_center=self._selection.center_row_col,
-            bf_radius=self._selection.radius_px,
-            detected_bf_radius=self._selection.detected_radius_px,
+            bright_field_center_px=self._selection.bright_field_center_px,
+            bright_field_radius_px=self._selection.bright_field_radius_px,
+            bright_field_edge_radius_px=self._selection.bright_field_edge_radius_px,
         )
         require_mlx().clear_cache()
         return result
@@ -327,7 +327,7 @@ class MpsSSBBackend:
         return self._detector_shape
 
     @property
-    def num_bf(self) -> int:
+    def num_bright_field_pixels(self) -> int:
         """Number of selected bright-field detector pixels."""
 
         return self._selection.size
@@ -439,14 +439,14 @@ class MpsSSBBackend:
         c10, c12, phi12 = self._three_param_from_full(magnitudes_A, angles_rad)
         return self.reconstruct(c10, c12, phi12)
 
-    def preview_context(self, num_bf: int):
-        """Reusable reduced-BF context for drag previews (standard and thick): every ``num_bf / N``-th BF pixel.
+    def preview_context(self, num_bright_field_pixels: int):
+        """Reusable reduced-BF context for drag previews (standard and thick): every ``num_bright_field_pixels / N``-th BF pixel.
 
         Same deterministic subset rule as the CUDA backend's ``prepare_bf_subset``. Inside ``with context:`` both
         ``preview`` and ``preview_sample`` reconstruct from the subset (mean over the subset's BF pixels).
         """
 
-        return _MpsBfSubset(self, int(num_bf))
+        return _MpsBfSubset(self, int(num_bright_field_pixels))
 
     def export_brightfield(
         self,
@@ -481,7 +481,7 @@ class MpsSSBBackend:
         maximum = 0
         mx = require_mlx()
         # The gather writes into one reused MLX block: a gather without an output allocates a Metal buffer that
-        # nothing releases, which leaked num_bf x frames x 4 bytes of driver memory per export.
+        # nothing releases, which leaked num_bright_field_pixels x frames x 4 bytes of driver memory per export.
         block_mx = None
         for start in range(0, self._selection.size, 256):
             stop = min(start + 256, self._selection.size)
@@ -585,11 +585,11 @@ class MpsSSBBackend:
         reciprocal_x = ang_x_rad / wavelength
         kx_bf = (
             self._selection.rows.astype(np.float32)
-            - self._selection.center_row_col[0]
+            - self._selection.bright_field_center_px[0]
         ) * reciprocal_y
         ky_bf = (
             self._selection.cols.astype(np.float32)
-            - self._selection.center_row_col[1]
+            - self._selection.bright_field_center_px[1]
         ) * reciprocal_x
         if self._scan_detector_rotation_deg:
             angle = math.radians(-self._scan_detector_rotation_deg)
@@ -653,17 +653,17 @@ class _MpsBfSubset:
     context per preview call is free. ``backend`` is the :class:`MpsSSBBackend` whose prepared evidence is swapped.
     """
 
-    def __init__(self, backend, num_bf: int) -> None:
+    def __init__(self, backend, num_bright_field_pixels: int) -> None:
         self._backend = backend
-        self._num_bf = int(num_bf)
+        self._num_bf = int(num_bright_field_pixels)
         self._source = None
         self._subset = None
         self._saved = None
 
     @property
-    def num_bf(self) -> int:
+    def num_bright_field_pixels(self) -> int:
         """Number of BF pixels in the subset (logical, including compacted ones)."""
-        return int(self._current().num_bf)
+        return int(self._current().num_bright_field_pixels)
 
     def _current(self) -> PreparedMpsSSB:
         """The subset for the backend's current prepared evidence.
@@ -676,7 +676,7 @@ class _MpsBfSubset:
             backend.cache_rotation(math.radians(backend._scan_detector_rotation_deg))
         prepared = backend._prepared
         source = (prepared, prepared.g_qk, prepared.kx, prepared.bf_storage_indices_np)
-        if self._num_bf >= int(prepared.num_bf):
+        if self._num_bf >= int(prepared.num_bright_field_pixels):
             # all BF pixels: use the session itself instead of a full copy of G
             return prepared
         if self._source is None or any(current is not cached for current, cached in zip(source, self._source)):
@@ -707,15 +707,15 @@ class _MpsBfSubset:
         self._source = None
 
 
-def _subset_prepared(prepared: PreparedMpsSSB, num_bf: int) -> PreparedMpsSSB:
-    """``prepared`` restricted to every ``num_bf / count``-th logical BF pixel (the CUDA ``prepare_bf_subset`` rule).
+def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> PreparedMpsSSB:
+    """``prepared`` restricted to every ``num_bright_field_pixels / count``-th logical BF pixel (the CUDA ``prepare_bf_subset`` rule).
 
-    Logical BF pixels that were compacted away (aperture 0, not stored) stay unstored and still count in ``num_bf``,
+    Logical BF pixels that were compacted away (aperture 0, not stored) stay unstored and still count in ``num_bright_field_pixels``,
     so the subset mean has the same definition as the full one.
     """
     mx = prepared.mx
-    full = int(prepared.num_bf)
-    count = max(1, min(int(num_bf), full))
+    full = int(prepared.num_bright_field_pixels)
+    count = max(1, min(int(num_bright_field_pixels), full))
     step = max(1, full // count)
     logical = np.arange(0, full, step, dtype=np.int64)[:count]
     stored = prepared.bf_storage_indices_np
@@ -742,7 +742,7 @@ def _subset_prepared(prepared: PreparedMpsSSB, num_bf: int) -> PreparedMpsSSB:
         ky=prepared.ky[slots_mx],
         kx_np=np.asarray(prepared.kx_np)[slots],
         ky_np=np.asarray(prepared.ky_np)[slots],
-        num_bf=int(logical.size),
+        num_bright_field_pixels=int(logical.size),
         bf_storage_indices_np=storage_indices,
         **fields,
     )

@@ -129,14 +129,14 @@ class SSB:
         (``dpc.run``, ``screening.prepare``) may be given: ``find_aberrations(check_rotation=True)`` settles the branch.
     detector_transposed : bool
         Whether the detector axes are exchanged before the rotation. The engines do not apply it yet, so True raises.
-    bf_intensity_threshold : float
+    bright_field_intensity_threshold : float
         Fraction of the mean-pattern maximum a bright-field pixel must exceed.
-    bf_radius : float, optional
+    bright_field_radius_px : float, optional
         Bright-field radius in detector pixels; the detected disk when omitted.
     source_path : str, optional
         The file the array came from, recorded with saved results.
-    bf_center : (float, float), optional
-        Bright-field centre (row, col) in detector pixels; detected when omitted.
+    bright_field_center_px : (float, float), optional
+        Bright-field centre (row, col) in pixels of the full detector; detected when omitted.
 
     Examples
     --------
@@ -159,10 +159,10 @@ class SSB:
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
         detector_transposed: bool = False,
-        bf_intensity_threshold: float = 0.0,
-        bf_radius: float | None = None,
+        bright_field_intensity_threshold: float = 0.0,
+        bright_field_radius_px: float | None = None,
         source_path: str | None = None,
-        bf_center: tuple[float, float] | None = None,
+        bright_field_center_px: tuple[float, float] | None = None,
     ) -> None:
         if detector_transposed:
             # a transposed detector reconstructed as if it were not gives a mirrored object with no error
@@ -171,15 +171,17 @@ class SSB:
                 "detector axes. Exchange the two detector axes of the data and pass detector_transposed=False."
             )
         self.backend = resolve(backend)
+        # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
+        self._crop_origin = (0, 0)
         if isinstance(data, Dataset4dstemGPU):
             if data.ndim != 4:
                 raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
             if data.representation is not DataRepresentation.DENSE:
                 # Decode only the bright-field evidence into session-owned
                 # tensors. The caller retains ownership of the acquisition.
-                data, bf_center, bf_radius, calibration_radius = crop_bright_field(
-                    data, self.backend, bf_intensity_threshold, bf_radius,
-                    calibrate_detector=det_sampling is None, bf_center=bf_center,
+                data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin = crop_bright_field(
+                    data, self.backend, bright_field_intensity_threshold, bright_field_radius_px,
+                    calibrate_detector=det_sampling is None, bright_field_center_px=bright_field_center_px,
                 )
                 if det_sampling is None:
                     det_sampling = semiangle_mrad / calibration_radius
@@ -224,10 +226,10 @@ class SSB:
         self.aberrations = validate_aberrations(aberrations)
         self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
         self.detector_transposed = False
-        self.bf_intensity_threshold = float(bf_intensity_threshold)
-        self.bf_radius = bf_radius
-        # (row, col) detector pixels; set by SSB.open when it decodes only the bright-field crop of an encoded source
-        self.bf_center = None if bf_center is None else (float(bf_center[0]), float(bf_center[1]))
+        self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
+        self.bright_field_radius_px = bright_field_radius_px
+        # (row, col) pixels of the full detector, also when the session holds only the bright-field crop of an encoded source
+        self.bright_field_center_px = None if bright_field_center_px is None else (float(bright_field_center_px[0]), float(bright_field_center_px[1]))
         # latest find_aberrations(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
         self.tilt_mrad: tuple[float, float] | None = None
         self.depth_spread_nm: float | None = None
@@ -267,8 +269,8 @@ class SSB:
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
         detector_transposed: bool = False,
-        bf_intensity_threshold: float = 0.0,
-        bf_radius: int | None = None,
+        bright_field_intensity_threshold: float = 0.0,
+        bright_field_radius_px: int | None = None,
         calibration: str | None = None,
         verbose: bool = False,
     ) -> Self:
@@ -290,7 +292,8 @@ class SSB:
                 "detector axes."
             )
         selected = resolve(backend)
-        bf_center = None
+        bright_field_center_px = None
+        crop_origin = (0, 0)
         source_detector_bin = 1
         # on MPS an exact BF-column export beside the source replaces decoding the detector
         frames = find_bf_columns(source, calibration, verbose=verbose) if selected == "mps" else None
@@ -312,8 +315,8 @@ class SSB:
                 dtype=dtype,
                 verbose=verbose,
             ) as loaded:
-                data, bf_center, bf_radius, calibration_radius = crop_bright_field(
-                    loaded, selected, bf_intensity_threshold, bf_radius,
+                data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin = crop_bright_field(
+                    loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
                     calibrate_detector=det_sampling is None,
                 )
                 source_dtype = str(loaded.dtype)
@@ -335,11 +338,12 @@ class SSB:
             det_sampling=det_sampling,
             aberrations=aberrations,
             scan_detector_rotation_deg=scan_detector_rotation_deg,
-            bf_intensity_threshold=bf_intensity_threshold,
-            bf_radius=bf_radius,
+            bright_field_intensity_threshold=bright_field_intensity_threshold,
+            bright_field_radius_px=bright_field_radius_px,
             source_path=str(source),
-            bf_center=bf_center,
+            bright_field_center_px=bright_field_center_px,
         )
+        session._crop_origin = crop_origin
         session.source_kind = source_kind
         session.source_detector_bin = source_detector_bin
         session.source_provenance = source_provenance
@@ -388,9 +392,9 @@ class SSB:
                     "backend": self.backend,
                     "scan_detector_rotation_deg": self.scan_detector_rotation_deg,
                     "detector_transposed": self.detector_transposed,
-                    "bf_intensity_threshold": self.bf_intensity_threshold,
-                    "bf_radius": self.bf_radius,
-                    "bf_center": self.bf_center,
+                    "bright_field_intensity_threshold": self.bright_field_intensity_threshold,
+                    "bright_field_radius_px": self.bright_field_radius_px,
+                    "bright_field_center_px": self.bright_field_center_px,
                 },
                 "settings": settings,
             }
@@ -493,11 +497,11 @@ class SSB:
         elif tilt:
             refit = self._fit_tilt(result.n_trials or 200, refinement, tilt_limit_mrad, seed, False)
         else:
-            refit = result_from_engine(backend.fit(
+            refit = self._in_detector_frame(result_from_engine(backend.fit(
                 aberrations=aberrations_to_engine(start), trials=0,
                 refinement=refinement or "nelder-mead", search_ranges=None,
                 refine_lock=None, seed=seed, verbose=False,
-            ))
+            )))
             refit.n_trials = result.n_trials
             refit.trial_records = []
         if not reuse_joint_fit:
@@ -518,6 +522,27 @@ class SSB:
                   f"polarity score {refit.column_sign:+.2f}. find_aberrations(check_rotation=False) keeps the input rotation.")
         return refit
 
+    def _center_in_data(self) -> tuple[float, float] | None:
+        """The bright-field centre in pixels of the array the session holds, which the backends index.
+
+        The public centre counts from the first pixel of the full detector; a session that decoded only the
+        bright-field crop holds an array that starts ``_crop_origin`` later.
+        """
+        if self.bright_field_center_px is None:
+            return None
+        return (self.bright_field_center_px[0] - self._crop_origin[0], self.bright_field_center_px[1] - self._crop_origin[1])
+
+    def _in_detector_frame(self, result: SSBResult) -> SSBResult:
+        """Move a result's bright-field centre from the array the session holds to full-detector pixels, in place.
+
+        Backends index the array they were given. Without the shift a session built from an encoded acquisition
+        reports a centre inside its crop, a different point from the one a dense session reports.
+        """
+        if result.bright_field_center_px is not None:
+            result.bright_field_center_px = (result.bright_field_center_px[0] + self._crop_origin[0],
+                                             result.bright_field_center_px[1] + self._crop_origin[1])
+        return result
+
     def _backend(self) -> SSBProtocol:
         """The session's CUDA or MPS implementation, built on first use.
 
@@ -532,16 +557,16 @@ class SSB:
                 self._compute = CudaSSBBackend(
                     data=self._data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
                     det_sampling=self.det_sampling, voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
-                    bf_intensity_threshold=self.bf_intensity_threshold, bf_radius=self.bf_radius,
-                    bf_center=self.bf_center, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
+                    bright_field_intensity_threshold=self.bright_field_intensity_threshold, bright_field_radius_px=self.bright_field_radius_px,
+                    bright_field_center_px=self._center_in_data(), scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                     aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
                 )
             else:
                 self._compute = MpsSSBBackend(
                     self._data, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                     scan_sampling=self.scan_sampling_A, det_sampling=self.det_sampling,
-                    bf_intensity_threshold=self.bf_intensity_threshold, bf_center=self.bf_center,
-                    bf_radius=self.bf_radius, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
+                    bright_field_intensity_threshold=self.bright_field_intensity_threshold, bright_field_center_px=self._center_in_data(),
+                    bright_field_radius_px=self.bright_field_radius_px, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 )
         return self._compute
 
@@ -734,7 +759,7 @@ class SSB:
                     side == column_stop - column_start and side in (128, 256, 512, 1024)):
                 raise ValueError(f"scan_region={scan_region} must be inside {rows} × {columns} and square with 128, 256, 512 or 1024 scan pixels per side.")
             # The region keeps the full scan's bright-field disk and detector calibration.
-            center, radius, det_sampling = self.bf_center, self.bf_radius, self.det_sampling
+            center, radius, det_sampling = self._center_in_data(), self.bright_field_radius_px, self.det_sampling
             if center is None or radius is None or det_sampling is None:
                 mean_pattern = detector.mean(self._data)
                 detected_center, detected_radius = detector.fit_probe(mean_pattern)
@@ -749,8 +774,8 @@ class SSB:
                 det_sampling=det_sampling,
                 aberrations=self.aberrations if self._aberrations_explicit else None,
                 scan_detector_rotation_deg=self.scan_detector_rotation_deg,
-                bf_center=center, bf_radius=radius,
-                bf_intensity_threshold=self.bf_intensity_threshold,
+                bright_field_center_px=center, bright_field_radius_px=radius,
+                bright_field_intensity_threshold=self.bright_field_intensity_threshold,
             ) as regional:
                 result = regional.find_aberrations(
                     tilt=tilt, trials=trials, refinement=refinement,
@@ -759,7 +784,8 @@ class SSB:
                     seed=seed, verbose=verbose,
                 )
             result.fit_scan_region = tuple(scan_region)
-            self._accept_result(result)
+            # the regional session indexed this session's array, which starts at the crop origin
+            self._accept_result(self._in_detector_frame(result))
             self._reconstruction = None
             if paths is not None:
                 result = self._save_result(result, paths=paths, signature=signature)
@@ -781,7 +807,7 @@ class SSB:
                 seed=int(seed),
                 verbose=verbose,
             )
-            result = self._accept_result(result_from_engine(result))
+            result = self._accept_result(self._in_detector_frame(result_from_engine(result)))
         label_trials(result, search=0)
         if check_rotation:
             result = self._accept_result(self._resolve_rotation_branch(
@@ -937,9 +963,9 @@ class SSB:
                 and (not compute_loss or cached.loss is not None)):
             return cached
         if estimator == "complex_wave":
-            result = result_from_engine(self._backend().reconstruct_result(
+            result = self._in_detector_frame(result_from_engine(self._backend().reconstruct_result(
                 aberrations_to_engine(coefs), compute_loss=compute_loss,
-            ))
+            )))
             result.phase_estimator = estimator
             result.amplitude_estimated = True
             result.phase_clim = correction.phase_limits if correction is not None else None
@@ -958,7 +984,7 @@ class SSB:
             object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
             tilt_mrad=tilt, depth_spread_nm=depth,
             scan_detector_rotation_deg=self.scan_detector_rotation_deg,
-            loss=loss, elapsed=time.perf_counter() - started, num_bf=self.num_bf,
+            loss=loss, elapsed=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             scan_sampling_A=self._output_sampling(upsample), upsample=upsample,
             phase_estimator=estimator, amplitude_estimated=False,
@@ -1154,7 +1180,7 @@ class SSB:
                          depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]), amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
-                         elapsed=time.perf_counter() - started, n_trials=trials, num_bf=self.num_bf,
+                         elapsed=time.perf_counter() - started, n_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          scan_sampling_A=self.scan_sampling_A)
 
@@ -1168,10 +1194,10 @@ class SSB:
         return float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
 
     @_on_scan_gpu
-    def preview_context(self, num_bf: int):
+    def preview_context(self, num_bright_field_pixels: int):
         """Prepare a backend-owned reduced-BF interaction context."""
 
-        return self._backend().preview_context(int(num_bf))
+        return self._backend().preview_context(int(num_bright_field_pixels))
 
     @_on_scan_gpu
     def browser_state(self):
@@ -1201,10 +1227,10 @@ class SSB:
 
     @property
     @_on_scan_gpu
-    def num_bf(self) -> int:
+    def num_bright_field_pixels(self) -> int:
         """Number of pixels in the complete detected bright-field disk."""
 
-        return self._backend().num_bf
+        return self._backend().num_bright_field_pixels
 
     @_on_scan_gpu
     def set_rotation(self, scan_detector_rotation_deg: float) -> None:

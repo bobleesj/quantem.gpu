@@ -39,12 +39,12 @@ def test_fit_once_for_encoded_detector_images(tmp_path, dtype, monkeypatch):
             distance = np.hypot(rows - center[0], columns - center[1])
             fit_count = len(fits)
             np.testing.assert_array_equal(
-                detector.bf(data, center=center, radius=3),
+                detector.bf(data, bright_field_center_px=center, bright_field_radius_px=3),
                 values[..., distance <= 3].sum(axis=-1),
             )
             assert len(fits) == fit_count  # Fully specified geometry skips fitting.
             np.testing.assert_array_equal(
-                detector.bf(data, radius=3),
+                detector.bf(data, bright_field_radius_px=3),
                 values[..., distance <= 3].sum(axis=-1),
             )
             for image, selected in (
@@ -52,7 +52,7 @@ def test_fit_once_for_encoded_detector_images(tmp_path, dtype, monkeypatch):
                 (detector.adf(data),
                  (distance >= radius) & (distance <= 2 * radius)),
                 (detector.df(data), distance >= radius),
-                (detector.adf(data, inner=6, outer=9, unit="px"),
+                (detector.adf(data, inner_radius_px=6, outer_radius_px=9),
                  (distance >= 6) & (distance <= 9)),
             ):
                 np.testing.assert_array_equal(image, values[..., selected].sum(axis=-1))
@@ -61,7 +61,7 @@ def test_fit_once_for_encoded_detector_images(tmp_path, dtype, monkeypatch):
                 rows - shifted_center[0], columns - shifted_center[1]
             )
             np.testing.assert_array_equal(
-                detector.bf(data, center=shifted_center),
+                detector.bf(data, bright_field_center_px=shifted_center),
                 values[..., shifted_distance <= radius].sum(axis=-1),
             )
             np.testing.assert_array_equal(

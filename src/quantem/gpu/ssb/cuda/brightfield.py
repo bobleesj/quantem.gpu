@@ -15,16 +15,16 @@ import numpy as np
 def select_bright_field(
     data: cp.ndarray,
     threshold: float,
-    bf_radius: float | None = None,
-    bf_center: tuple[float, float] | None = None,
+    bright_field_radius_px: float | None = None,
+    bright_field_center_px: tuple[float, float] | None = None,
 ) -> tuple[cp.ndarray, cp.ndarray, tuple[float, float]]:
     """Return the (row, col) detector indices of the bright-field pixels and the disk centre.
 
-    Candidates are the pixels of the mean diffraction pattern above ``threshold`` x max. Without ``bf_radius`` the
+    Candidates are the pixels of the mean diffraction pattern above ``threshold`` x max. Without ``bright_field_radius_px`` the
     disk is the equal-area disk of the pixels above mean + std, around their unweighted centroid (the rule of
     ``detector.fit_probe``, which the MPS backend calls; here it runs on the device in float32 so the mean pattern never
     leaves the GPU, and CuPy's reductions can round the threshold differently in the last bit, so the two are kept
-    apart). With ``bf_radius`` the centre is the intensity-weighted centroid of the candidates; ``bf_center`` (row,
+    apart). With ``bright_field_radius_px`` the centre is the intensity-weighted centroid of the candidates; ``bright_field_center_px`` (row,
     col, detector pixels) pins it instead, which ``SSB.open`` uses to reproduce the full-detector disk on a detector
     crop, where the mean + std rule would shift. The mean pattern accumulates the raw counts in uint64 (float64 for
     float data), so no float32 copy of the 4D block is made.
@@ -49,12 +49,12 @@ def select_bright_field(
             f"{threshold:.2f}. Check that the data "
             f"contains a visible BF disk, or lower the threshold."
         )
-    if bf_center is not None:
-        if bf_radius is None:
-            raise ValueError("bf_center needs bf_radius.")
-        center_row, center_col = float(bf_center[0]), float(bf_center[1])
-        selected_radius = float(bf_radius)
-    elif bf_radius is None:
+    if bright_field_center_px is not None:
+        if bright_field_radius_px is None:
+            raise ValueError("bright_field_center_px needs bright_field_radius_px.")
+        center_row, center_col = float(bright_field_center_px[0]), float(bright_field_center_px[1])
+        selected_radius = float(bright_field_radius_px)
+    elif bright_field_radius_px is None:
         probe_mask = mean_dp > mean_dp.mean() + mean_dp.std()
         probe_total = int(probe_mask.sum().get())
         if probe_total > 0:
@@ -93,7 +93,7 @@ def select_bright_field(
         else:
             center_row = float(bf_inds_row.mean().get())
             center_col = float(bf_inds_col.mean().get())
-        selected_radius = float(bf_radius)
+        selected_radius = float(bright_field_radius_px)
     dist_sq = (bf_inds_row.astype(cp.float32) - center_row) ** 2 + (
         bf_inds_col.astype(cp.float32) - center_col
     ) ** 2
@@ -102,8 +102,8 @@ def select_bright_field(
     bf_inds_col = bf_inds_col[within]
     if len(bf_inds_row) == 0:
         raise ValueError(
-            f"No bright-field pixels within bf_radius={selected_radius}. "
-            "Increase bf_radius or check detector geometry."
+            f"No bright-field pixels within bright_field_radius_px={selected_radius}. "
+            "Increase bright_field_radius_px or check detector geometry."
         )
     return bf_inds_row, bf_inds_col, (center_row, center_col)
 
@@ -124,7 +124,7 @@ def bright_field_spectra(
     staging buffer as complex64, transformed there, and their kept columns copied into G once; gathering, transposing,
     casting, transforming and cropping as separate arrays moved every chunk through memory seven times.
     """
-    num_bf = len(bf_inds_row)
+    num_bright_field_pixels = len(bf_inds_row)
     scan_row, scan_col = int(scan_gpts[0]), int(scan_gpts[1])
     det_row, det_col = int(det_gpts[0]), int(det_gpts[1])
     stored_col = scan_col // 2 + 1
@@ -132,13 +132,13 @@ def bright_field_spectra(
     # (N_scan, det_row, det_col) view of the raw counts
     flat_data = data.reshape(-1, det_row, det_col)
     pixels = bf_inds_row.astype(cp.int32) * det_col + bf_inds_col.astype(cp.int32)
-    G_qk = cp.empty((num_bf, scan_row, stored_col), dtype=cp.complex64)
+    G_qk = cp.empty((num_bright_field_pixels, scan_row, stored_col), dtype=cp.complex64)
     bytes_per_bf = scan_row * scan_col * 8  # complex64
     target_chunk_bytes = 2 * 1024 ** 3
-    chunk_bf = max(1, min(num_bf, target_chunk_bytes // bytes_per_bf))
+    chunk_bf = max(1, min(num_bright_field_pixels, target_chunk_bytes // bytes_per_bf))
     staging = cp.empty((chunk_bf, scan_row, scan_col), dtype=cp.complex64)
-    for bf_start in range(0, num_bf, chunk_bf):
-        bf_end = min(bf_start + chunk_bf, num_bf)
+    for bf_start in range(0, num_bright_field_pixels, chunk_bf):
+        bf_end = min(bf_start + chunk_bf, num_bright_field_pixels)
         scan_images = staging[:bf_end - bf_start]
         _scan_images(flat_data, pixels[bf_start:bf_end], bf_end - bf_start, scans, det_row * det_col, scan_images,
                      size=scans)

@@ -133,11 +133,11 @@ def test_drag_subset_context_standard_and_thick():
     ssb = _poisson_disk_session()
     aberrations = {"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}
     full, _ = ssb.preview(aberrations, compute_loss=False)
-    everything = ssb.preview_context(ssb.num_bf)
+    everything = ssb.preview_context(ssb.num_bright_field_pixels)
     same, _ = ssb.preview(aberrations, compute_loss=False, context=everything)
     np.testing.assert_array_equal(same, full)
-    context = ssb.preview_context(ssb.num_bf // 4)
-    assert context.num_bf == ssb.num_bf // 4
+    context = ssb.preview_context(ssb.num_bright_field_pixels // 4)
+    assert context.num_bright_field_pixels == ssb.num_bright_field_pixels // 4
     standard, standard_loss = ssb.preview(aberrations, context=context)
     thick, thick_loss = ssb.preview(aberrations, context=context,
                                     tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
@@ -154,7 +154,7 @@ def test_drag_subset_close_restores_full_evidence_and_releases_the_subset():
     ssb = _poisson_disk_session()
     aberrations = {"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}
     full, _ = ssb.preview(aberrations, compute_loss=False)
-    context = ssb.preview_context(ssb.num_bf // 4)
+    context = ssb.preview_context(ssb.num_bright_field_pixels // 4)
     subset = weakref.ref(context.__enter__()._subset)
     context.close()
     gc.collect()

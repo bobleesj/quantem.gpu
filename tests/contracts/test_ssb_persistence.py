@@ -28,16 +28,16 @@ class _Backend:
             elapsed=2.5,
             timings={"fit": 2.0, "reconstruct": 0.5},
             n_trials=trials,
-            num_bf=17,
+            num_bright_field_pixels=17,
             refine_method=settings["refinement"],
             refine_nfev=23,
             refine_elapsed=0.4,
             voltage_kV=300.0,
             semiangle_mrad=30.0,
             scan_sampling_A=(0.2, 0.3),
-            bf_center=(31.5, 32.5),
-            bf_radius=14.0,
-            detected_bf_radius=14.5,
+            bright_field_center_px=(31.5, 32.5),
+            bright_field_radius_px=14.0,
+            bright_field_edge_radius_px=14.5,
             trial_records=[
                 {
                     "params": {"C10_nm": -101.0, "C12_nm": 4.0},
@@ -46,7 +46,7 @@ class _Backend:
             ],
         )
 
-    num_bf = 17
+    num_bright_field_pixels = 17
 
     def preview(self, aberrations, *, compute_loss=True, **kwargs):
         self.reconstruct_calls += 1
@@ -138,7 +138,7 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     readable = json.loads((saved / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
     assert readable["signature"]["instrument"]["voltage_kV"] == 300.0
     assert readable["signature"]["data"]["dtype"] == "uint16"
-    assert readable["result"]["bf_center"] == [31.5, 32.5]
+    assert readable["result"]["bright_field_center_px"] == [31.5, 32.5]
 
 
 def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None:
@@ -353,16 +353,16 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     config = tmp_path / "config.json"
     earlier = {"aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "rotation_angle_deg": 0.0, "com_reversed": True,
                "aberration_unit": "nm", "picked_c10_nm": 4.0, "optuna_trials": [{"loss": 0.02}]}
-    config.write_text(json.dumps({"human": {"notes": "kept"}, "computed": {"bf_radius": 55.0, "ssb": earlier}}))
+    config.write_text(json.dumps({"human": {"notes": "kept"}, "computed": {"bright_field_radius_px": 55.0, "ssb": earlier}}))
     aberrations = {"C10_nm": -10.5, "C12_nm": 0.25, "phi12_deg": math.degrees(-0.5)}
     result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
-                       scan_detector_rotation_deg=200.0, loss=0.125, bf_radius=48.0)
-    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "scan_detector_rotation_deg": 200.0, "bf_radius": None}
+                       scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
+    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
     write_fit_metadata(tmp_path, settings, result)
     written = json.loads(config.read_text())
     block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5, "schema": FIT_SCHEMA, "aberrations": aberrations,
-             "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bf_radius": 48.0}
-    assert written == {"human": {"notes": "kept"}, "computed": {"bf_radius": 55.0, "ssb": block}}
+             "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bright_field_radius_px": 48.0}
+    assert written == {"human": {"notes": "kept"}, "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
     assert saved_fit(tmp_path) == block
     # a field the dashboard adds to a current block stays through the next fit
     written["computed"]["ssb"]["ran_at"] = "2026-10-11T12:00:00"

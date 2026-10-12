@@ -142,7 +142,7 @@ def _thick_fit_full_plane(
     from quantem.gpu.ssb.cuda.kernels.engine import thick_fit_kernel
 
     c = engine._cache
-    num_bf, ny, nx = int(c["num_bf"]), int(c["ny"]), int(c["nx"])
+    num_bright_field_pixels, ny, nx = int(c["num_bright_field_pixels"]), int(c["ny"]), int(c["nx"])
     qx = c["qx_1d"].reshape(1, ny, 1); qy = c["qy_1d"].reshape(1, 1, nx)
     half = engine.gqk_is_half_plane()
     neg_rows = cp.asarray((-np.arange(ny)) % ny)
@@ -154,8 +154,8 @@ def _thick_fit_full_plane(
         cp.float32(C10), cp.float32(C12), cp.float32(math.cos(2.0 * phi12)), cp.float32(math.sin(2.0 * phi12)),
         cp.float32(engine._factor), cp.float32(thickness), cp.float32(tilt_mrad[0] * 1e-3), cp.float32(tilt_mrad[1] * 1e-3),
     )
-    for start in range(0, num_bf, chunk):
-        stop = min(num_bf, start + chunk)
+    for start in range(0, num_bright_field_pixels, chunk):
+        stop = min(num_bright_field_pixels, start + chunk)
         if half:
             source = engine.G_qk[start:stop]
             full = cp.empty((stop - start, ny, nx), dtype=cp.complex64)
@@ -181,7 +181,7 @@ def test_batched_fit_kernel_matches_reference_objective():
     reference = np.array([engine.thick.fit(p[0], p[1], p[2], (p[3], p[4]), p[5]) for p in params])
     # Cover scalar Nelder-Mead evaluations, full search batches, and the
     # partial final batch. The BF disk also leaves a partial 256-pixel tile.
-    assert engine.num_bf % 256 != 0
+    assert engine.num_bright_field_pixels % 256 != 0
     for batch_size in (1, 8, 12):
         np.testing.assert_allclose(
             engine.thick.fit_batch(params[:batch_size]),
@@ -214,7 +214,7 @@ def test_batched_fit_repeats_bit_identically():
     first = engine.thick.fit_batch(params)
     repeats = [engine.thick.fit_batch(params) for _ in range(5)]
 
-    assert engine.num_bf > 5 * 256
+    assert engine.num_bright_field_pixels > 5 * 256
     for repeat in repeats:
         np.testing.assert_array_equal(repeat, first)
     ssb.close()

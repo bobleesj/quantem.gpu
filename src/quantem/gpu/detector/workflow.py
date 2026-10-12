@@ -8,7 +8,7 @@ angles in **mrad**::
     data = io.load("master.h5")
     Show2D(detector.bf(data))                        # bright field (the bright disk)
     Show2D(detector.adf(data))                       # annular dark field (auto band)
-    Show2D(detector.adf(data, inner=50, outer=180))  # collection angles in mrad
+    Show2D(detector.adf(data, inner_angle_mrad=50, outer_angle_mrad=180))
     Show2D(detector.df(data))                        # outside the bright disk
 
 ``bf`` / ``adf`` / ``df`` build a boolean detector mask with
@@ -16,8 +16,8 @@ angles in **mrad**::
 same reduction Show4DSTEM and live Browse use, so a viewer ROI and ``adf`` are
 pixel-identical. The probe (disk center and size) is fitted from the mean
 diffraction pattern; encoded acquisitions keep their first fit, mutable arrays
-are refitted on every call, and explicit ``center``/``radius`` affect only that
-call. No detector binning is applied on any backend.
+are refitted on every call, and an explicit ``bright_field_center_px`` or
+radius affects only that call. No detector binning is applied on any backend.
 """
 
 from weakref import WeakKeyDictionary
@@ -52,7 +52,7 @@ def mean(data) -> np.ndarray:
     Examples
     --------
     >>> mean_dp = detector.mean(data)
-    >>> center, radius = detector.fit_probe(mean_dp)
+    >>> bright_field_center_px, bright_field_edge_radius_px = detector.fit_probe(mean_dp)
     """
     return prepare(data).mean_dp()
 
@@ -77,16 +77,16 @@ def fit_probe(data) -> tuple[tuple[float, float], float]:
 
     Returns
     -------
-    center : tuple[float, float]
-        Disk center in ``(row, column)`` detector pixels.
-    radius : float
+    bright_field_center_px : tuple[float, float]
+        Disk center in ``(row, col)`` detector pixels.
+    bright_field_edge_radius_px : float
         Equivalent-area disk radius in detector pixels.
 
     Raises
     ------
     ValueError
         No pixel lies above the threshold (a flat or empty pattern): there is
-        no disk to fit, so pass ``center`` and ``radius`` explicitly.
+        no disk to fit, so pass the center and the radius explicitly.
 
     Notes
     -----
@@ -97,7 +97,7 @@ def fit_probe(data) -> tuple[tuple[float, float], float]:
     Examples
     --------
     >>> center, radius = detector.fit_probe(data)
-    >>> bright = detector.bf(data, center=center, radius=radius)
+    >>> bright = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
     """
     pattern = np.asarray(mean(data) if np.ndim(data) > 2 else data, dtype=np.float32)
     disk = pattern > float(pattern.mean()) + float(pattern.std())
@@ -105,7 +105,7 @@ def fit_probe(data) -> tuple[tuple[float, float], float]:
     if area == 0:
         raise ValueError(
             "No bright-field disk found: no detector pixel exceeds the pattern's mean plus "
-            "one standard deviation (a flat or empty pattern). Pass center and radius explicitly."
+            "one standard deviation (a flat or empty pattern). Pass the center and the radius explicitly."
         )
     rows = np.arange(pattern.shape[0], dtype=np.float32)[:, None]
     cols = np.arange(pattern.shape[1], dtype=np.float32)[None, :]
@@ -114,11 +114,11 @@ def fit_probe(data) -> tuple[tuple[float, float], float]:
     return (center_row, center_col), float(np.sqrt(area / np.pi))
 
 
-def detector_mask(center, lo_px, hi_px, det_shape, *, dtype=np.float32) -> np.ndarray:
-    """Boolean ``(det_row, det_col)`` mask of the pixels between two radii of ``center``.
+def detector_mask(center_px, inner_radius_px, outer_radius_px, detector_shape, *, dtype=np.float32) -> np.ndarray:
+    """Boolean ``(det_row, det_col)`` mask of the pixels between two radii of ``center_px``.
 
-    A pixel is selected when its distance from ``center`` (row, col) lies in
-    ``[lo_px, hi_px]`` detector pixels. Every virtual detector (``bf``,
+    A pixel is selected when its distance from ``center_px`` (row, col) lies in
+    ``[inner_radius_px, outer_radius_px]`` detector pixels. Every virtual detector (``bf``,
     ``adf``, ``df`` and the Show4DSTEM circle/annulus ROIs) builds
     its mask here, so a viewer ROI and ``adf`` are pixel-identical.
 
@@ -129,73 +129,78 @@ def detector_mask(center, lo_px, hi_px, det_shape, *, dtype=np.float32) -> np.nd
     --------
     >>> mask = detector_mask((95.5, 95.5), 40, 80, (192, 192), dtype=np.float64)
     """
-    center_row, center_col = center
+    center_row, center_col = center_px
     precision = np.dtype(dtype)
     if precision not in (np.dtype(np.float32), np.dtype(np.float64)):
         raise ValueError(f"Use float32 or float64 detector geometry; got {dtype!r}.")
-    rows = np.arange(det_shape[0], dtype=precision)[:, None]
-    cols = np.arange(det_shape[1], dtype=precision)[None, :]
+    rows = np.arange(detector_shape[0], dtype=precision)[:, None]
+    cols = np.arange(detector_shape[1], dtype=precision)[None, :]
     if precision == np.dtype(np.float64):
         distance = np.hypot(rows - center_row, cols - center_col)
     else:
         distance = np.sqrt((rows - center_row) ** 2 + (cols - center_col) ** 2)
-    return (distance >= lo_px) & (distance <= hi_px)
+    return (distance >= inner_radius_px) & (distance <= outer_radius_px)
 
 
-def bf(data, center=None, radius=None) -> np.ndarray:
+def bf(data, bright_field_center_px=None, bright_field_radius_px=None) -> np.ndarray:
     """Bright-field image of ``data``: the bright disk (the unscattered probe).
 
-    The probe is fitted unless ``center``/``radius`` (detector pixels) are
-    given. Encoded acquisitions reuse their first disk fit across BF/ADF/DF
-    calls; mutable arrays are fitted on each call. Overrides affect only this
-    call; omitted geometry continues to use the automatic fit.
+    The probe is fitted unless ``bright_field_center_px`` (row, col) and
+    ``bright_field_radius_px`` (detector pixels) are given. Encoded
+    acquisitions reuse their first disk fit across BF/ADF/DF calls; mutable
+    arrays are fitted on each call. Overrides affect only this call; omitted
+    geometry continues to use the automatic fit.
 
     Examples
     --------
     >>> bright = bf(data)
-    >>> smaller_disk = bf(data, radius=30)
+    >>> smaller_disk = bf(data, bright_field_radius_px=30)
     """
-    center, radius = _probe(data, center, radius)
+    center, radius = _probe(data, bright_field_center_px, bright_field_radius_px)
     return _detector_image(data, center, 0.0, radius)
 
 
-def adf(data, inner: float | None = None, outer: float | None = None,
-        unit: str = "mrad", center=None, radius=None) -> np.ndarray:
-    """Annular-dark-field image of ``data``, collected between ``inner`` and ``outer``.
+def adf(data, *, inner_angle_mrad: float | None = None, outer_angle_mrad: float | None = None,
+        inner_radius_px: float | None = None, outer_radius_px: float | None = None,
+        bright_field_center_px=None, bright_field_edge_radius_px=None) -> np.ndarray:
+    """Annular-dark-field image of ``data``, collected between an inner and an outer bound.
 
-    ``unit='mrad'`` (default, needs ``semiangle_mrad`` in the metadata) or
-    ``unit='px'`` (raw detector pixels). Omit either for the automatic band:
-    ``inner`` = the bright-disk edge, ``outer`` = twice that. The probe is
-    fitted unless ``center``/``radius`` (detector pixels) are given; explicit
-    geometry affects only this call and does not replace the stored fit.
+    Give each bound as a collection angle (``inner_angle_mrad``,
+    ``outer_angle_mrad``; needs ``semiangle_mrad`` in the metadata) or as a
+    radius in detector pixels (``inner_radius_px``, ``outer_radius_px``), not
+    both. Omit a bound for the automatic band: inner = the bright-disk edge,
+    outer = twice that. The probe is fitted unless ``bright_field_center_px``
+    (row, col) and ``bright_field_edge_radius_px`` (detector pixels) are given;
+    explicit geometry affects only this call and does not replace the stored fit.
 
     Examples
     --------
     >>> annular = adf(data)
-    >>> wider_ring = adf(data, inner=60, outer=85, unit="px")
+    >>> wider_ring = adf(data, inner_radius_px=60, outer_radius_px=85)
     """
-    center, radius = _probe(data, center, radius)
-    inner_px = radius if inner is None else _to_px(data, inner, unit, radius)
-    outer_px = 2.0 * radius if outer is None else _to_px(data, outer, unit, radius)
+    center, radius = _probe(data, bright_field_center_px, bright_field_edge_radius_px)
+    inner_px = _bound_px(data, inner_angle_mrad, inner_radius_px, radius, radius)
+    outer_px = _bound_px(data, outer_angle_mrad, outer_radius_px, radius, 2.0 * radius)
     return _detector_image(data, center, inner_px, outer_px)
 
 
-def df(data, inner: float | None = None, unit: str = "mrad",
-       center=None, radius=None) -> np.ndarray:
-    """Dark-field image of ``data``: everything collected beyond ``inner``.
+def df(data, *, inner_angle_mrad: float | None = None, inner_radius_px: float | None = None,
+       bright_field_center_px=None, bright_field_edge_radius_px=None) -> np.ndarray:
+    """Dark-field image of ``data``: everything collected beyond the inner bound.
 
-    ``unit='mrad'`` (default, needs ``semiangle_mrad`` in the metadata) or
-    ``unit='px'``. Omit ``inner`` for everything outside the bright disk. The
-    probe is fitted unless ``center``/``radius`` (detector pixels) are given;
+    Give the bound as ``inner_angle_mrad`` (needs ``semiangle_mrad`` in the
+    metadata) or ``inner_radius_px``, not both. Omit it for everything outside
+    the bright disk. The probe is fitted unless ``bright_field_center_px``
+    (row, col) and ``bright_field_edge_radius_px`` (detector pixels) are given;
     explicit geometry affects only this call and does not replace the stored fit.
 
     Examples
     --------
     >>> dark = df(data)
-    >>> outer_signal = df(data, inner=60, unit="px")
+    >>> outer_signal = df(data, inner_radius_px=60)
     """
-    center, radius = _probe(data, center, radius)
-    inner_px = radius if inner is None else _to_px(data, inner, unit, radius)
+    center, radius = _probe(data, bright_field_center_px, bright_field_edge_radius_px)
+    inner_px = _bound_px(data, inner_angle_mrad, inner_radius_px, radius, radius)
     return _detector_image(data, center, inner_px, np.inf)
 
 
@@ -229,18 +234,20 @@ def _probe(data, center=None, radius=None):
     return center, radius
 
 
-def _to_px(data, value: float, unit: str, radius: float) -> float:
-    """Convert a collection angle to detector pixels.
+def _bound_px(data, angle_mrad: float | None, radius_px: float | None, edge_radius_px: float, default_px: float) -> float:
+    """One collection bound in detector pixels, from an angle, a radius, or the automatic value.
 
-    The bright disk radius spans ``semiangle_mrad``, so an angle in mrad maps
-    to ``mrad / semiangle_mrad * radius`` pixels; ``unit='px'`` is already
-    pixels (calibration-free, exact).
+    The bright disk edge spans ``semiangle_mrad``, so an angle in mrad maps to
+    ``mrad / semiangle_mrad * edge_radius_px`` pixels; a radius in pixels is
+    used as given (calibration-free, exact). A bound stated both ways is
+    refused: the two need not agree and one of them would be ignored.
     """
-    unit = str(unit).lower()
-    if unit in ("px", "pixel", "pixels"):
-        return float(value)
-    if unit != "mrad":
-        raise ValueError(f"unit must be 'mrad' or 'px', got {unit!r}")
+    if angle_mrad is not None and radius_px is not None:
+        raise ValueError("Give a collection bound as an angle in mrad or as a radius in pixels, not both.")
+    if radius_px is not None:
+        return float(radius_px)
+    if angle_mrad is None:
+        return default_px
     # Loaded data keeps calibration in metadata; quantem.core datasets, which this
     # package cannot import, carry either a metadata dict or a semiangle_mrad attribute.
     metadata = (data.metadata or {}) if isinstance(data, Dataset4dstemGPU) else getattr(data, "metadata", None)
@@ -250,10 +257,10 @@ def _to_px(data, value: float, unit: str, radius: float) -> float:
         semiangle_mrad = getattr(data, "semiangle_mrad", None)
     if not semiangle_mrad:
         raise ValueError(
-            "inner / outer are collection angles in mrad, but the convergence "
-            "semi-angle is unknown for this data. Store semiangle_mrad in metadata "
-            "or pass detector pixels instead: adf(data, inner=..., outer=..., unit='px').")
-    return float(value) / float(semiangle_mrad) * radius
+            "A collection angle in mrad needs the convergence semi-angle, which is "
+            "unknown for this data. Store semiangle_mrad in metadata or pass detector "
+            "pixels instead: adf(data, inner_radius_px=..., outer_radius_px=...).")
+    return float(angle_mrad) / float(semiangle_mrad) * edge_radius_px
 
 
 def _detector_image(data, center, inner_px: float, outer_px: float) -> np.ndarray:

@@ -352,7 +352,7 @@ def acquisition_settings(
             "QuantEM Live screening once, add the values to dataset.yaml, or "
             "pass the missing physical parameters to reconstruct_series()."
         )
-    values["bf_radius"] = saved.get("bf_radius")
+    values["bright_field_radius_px"] = saved.get("bright_field_radius_px")
     # a stored fit says whether its detector axes were exchanged; SSB.open refuses a True instead of ignoring it
     values["detector_transposed"] = bool(saved.get("detector_transposed", False))
     return values
@@ -366,7 +366,7 @@ def open_settings(settings: dict[str, object], scan_detector_rotation_deg: float
         "scan_sampling_A": settings["scan_sampling_A"],
         "scan_detector_rotation_deg": scan_detector_rotation_deg,
         "detector_transposed": settings["detector_transposed"],
-        "bf_radius": None if settings["bf_radius"] is None else round(float(settings["bf_radius"])),
+        "bright_field_radius_px": None if settings["bright_field_radius_px"] is None else round(float(settings["bright_field_radius_px"])),
     }
 
 
@@ -392,7 +392,7 @@ def write_fit_metadata(
         "scan_detector_rotation_deg": float(result.scan_detector_rotation_deg),
         "detector_transposed": bool(result.detector_transposed),
         "loss": None if result.loss is None else float(result.loss),
-        "bf_radius": result.bf_radius,
+        "bright_field_radius_px": result.bright_field_radius_px,
     }
     screen_path.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")

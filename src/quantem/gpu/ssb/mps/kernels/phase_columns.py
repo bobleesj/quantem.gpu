@@ -14,7 +14,7 @@ from quantem.gpu.ssb.mps.kernels.radix import small_fft_macros, twiddle_n
 @lru_cache(maxsize=32)
 def _phase_cols_small_reduced_kernel(
     n: int,
-    num_bf: int,
+    num_bright_field_pixels: int,
     k_bf: int,
     compute_loss: bool,
     cols_per_group: int = 4,
@@ -96,7 +96,7 @@ def _phase_cols_small_reduced_kernel(
         #define TW(i) float2(twiddle[(i)].real, twiddle[(i)].imag)
         {define_rev}
 
-        constexpr uint NUM_BF = {int(num_bf)};
+        constexpr uint NUM_BF = {int(num_bright_field_pixels)};
         constexpr uint BATCH = {int(batch)};
         constexpr uint K_BF = {int(k_bf)};
         constexpr uint N = {n}u;
@@ -199,7 +199,7 @@ def _phase_cols_small_reduced_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_phase_cols{n}_{name_suffix}_n{int(num_bf)}_"
+            f"ssb_phase_cols{n}_{name_suffix}_n{int(num_bright_field_pixels)}_"
             f"k{int(k_bf)}_c{int(cols_per_group)}_b{int(batch)}_"
             f"f1{int(register_first_stage)}"
         ),
@@ -213,7 +213,7 @@ def _phase_cols_small_reduced_kernel(
 @lru_cache(maxsize=16)
 def _phase_cols_small_scalar_pair_kernel(
     n: int,
-    num_bf: int,
+    num_bright_field_pixels: int,
     k_bf: int,
     cols_per_group: int = 4,
 ):
@@ -251,7 +251,7 @@ def _phase_cols_small_scalar_pair_kernel(
         #define TW(i) float2(twiddle[(i)].real, twiddle[(i)].imag)
         {define_rev}
 
-        constexpr uint NUM_BF = {int(num_bf)};
+        constexpr uint NUM_BF = {int(num_bright_field_pixels)};
         constexpr uint K_BF = {int(k_bf)};
         constexpr uint N = {n}u;
         constexpr uint T = {t}u;
@@ -372,7 +372,7 @@ def _phase_cols_small_scalar_pair_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_phase_cols{n}_scalar_pair_n{int(num_bf)}_"
+            f"ssb_phase_cols{n}_scalar_pair_n{int(num_bright_field_pixels)}_"
             f"k{int(k_bf)}_c{int(cols_per_group)}"
         ),
         input_names=["row_ifft", "twiddle"],
@@ -394,15 +394,15 @@ def phase_cols_small_sum_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
             "Expected row-IFFT chunk shape "
             f"(BF, 128/256/1024, 128/256/1024), got {shape}."
         )
-    num_bf = int(shape[0])
+    num_bright_field_pixels = int(shape[0])
     n = int(shape[-1])
     t = n // 4
     k_bf = max(1, int(k_bf))
     cols_per_group = 8 if n <= 256 else 4
-    groups = (num_bf + k_bf - 1) // k_bf
+    groups = (num_bright_field_pixels + k_bf - 1) // k_bf
     kernel = _phase_cols_small_reduced_kernel(
         n,
-        num_bf,
+        num_bright_field_pixels,
         k_bf,
         False,
         cols_per_group,
@@ -432,15 +432,15 @@ def phase_cols_small_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
             "Expected row-IFFT chunk shape "
             f"(BF, 128/256/1024, 128/256/1024), got {shape}."
         )
-    num_bf = int(shape[0])
+    num_bright_field_pixels = int(shape[0])
     n = int(shape[-1])
     t = n // 4
     k_bf = max(1, int(k_bf))
     cols_per_group = 4
-    groups = (num_bf + k_bf - 1) // k_bf
+    groups = (num_bright_field_pixels + k_bf - 1) // k_bf
     kernel = _phase_cols_small_reduced_kernel(
         n,
-        num_bf,
+        num_bright_field_pixels,
         k_bf,
         True,
         cols_per_group,
@@ -476,17 +476,17 @@ def phase_cols_small_scalar_loss_batch_from_row_ifft(
             "(batch, BF, 128/256/1024, 128/256/1024), "
             f"got {shape}."
         )
-    batch, num_bf, n, _ = shape
+    batch, num_bright_field_pixels, n, _ = shape
     t = n // 4
     k_bf = max(1, int(k_bf))
     cols_per_group = 4
-    groups = (num_bf + k_bf - 1) // k_bf
+    groups = (num_bright_field_pixels + k_bf - 1) // k_bf
     if packed_pair:
         if batch != 2:
             raise ValueError("Packed small MPS columns require two candidates.")
         kernel = _phase_cols_small_scalar_pair_kernel(
             n,
-            num_bf,
+            num_bright_field_pixels,
             k_bf,
             cols_per_group,
         )
@@ -494,7 +494,7 @@ def phase_cols_small_scalar_loss_batch_from_row_ifft(
     else:
         kernel = _phase_cols_small_reduced_kernel(
             n,
-            num_bf,
+            num_bright_field_pixels,
             k_bf,
             True,
             cols_per_group,
