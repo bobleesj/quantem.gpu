@@ -125,13 +125,19 @@ def _print_comparison(label: str, entry: dict) -> None:
 
 
 def _reference_candidates(entry: dict) -> tuple[str, ...]:
+    """The float32 key of one recorded Python reference trial, in the native engine's units.
+
+    The reference records the MPS search's own parameters, C10_A and C12_A in Angstrom and
+    phi12_deg, so C10 and C12 compare with the native Angstrom as they are and phi12 is
+    converted to radians. Read under other names, no reference candidate ever matches.
+    """
     params = entry["params"]
-    if "C10_nm" not in params:
+    if "C10_A" not in params:
         return ()
     return (
         float32_key({
-            "c10Angstroms": params["C10_nm"],
-            "c12Angstroms": params["C12_nm"],
+            "c10Angstroms": params["C10_A"],
+            "c12Angstroms": params["C12_A"],
             "phi12Radians": float(params.get("phi12_deg", 0.0)) * 3.141592653589793 / 180.0,
         }),
     )
@@ -219,8 +225,8 @@ def main(argv: list[str] | None = None) -> int:
             best = run["best_recorded"] or {"params": {}, "loss": float("nan")}
             params = best["params"]
             print(f"    optuna_batch_size={run['optuna_batch_size']} trials={run['recorded_trials']} "
-                  f"loss={best['loss']:.12g} C10={params.get('C10_nm')} "
-                  f"C12={params.get('C12_nm')} phi12_deg={params.get('phi12_deg')} "
+                  f"loss={best['loss']:.12g} C10_A={params.get('C10_A')} "
+                  f"C12_A={params.get('C12_A')} phi12_deg={params.get('phi12_deg')} "
                   f"result_loss={run['result_loss']}")
         native_runs = [("sequential", sequential)]
         if native.get("batched"):
