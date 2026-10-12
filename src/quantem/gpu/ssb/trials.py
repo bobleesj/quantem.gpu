@@ -5,6 +5,7 @@ from copy import deepcopy
 
 import numpy as np
 
+from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.results import SSBResult, host_array
 
 
@@ -16,7 +17,7 @@ def label_trials(result: SSBResult, *, search: int) -> None:
     at its own rotation and sample geometry.
     """
     for index, record in enumerate(result.trial_records or ()):
-        rotation = float(record["params"].pop("scan_detector_rotation_deg", result.scan_detector_rotation_deg)) % 360.0
+        rotation = wrap_degrees(record["params"].pop("scan_detector_rotation_deg", result.scan_detector_rotation_deg), 360.0)
         record.update(trial=index, search=search, scan_detector_rotation_deg=rotation)
         record.setdefault("stage", "search")
         record.setdefault("objective", "phase_variance")

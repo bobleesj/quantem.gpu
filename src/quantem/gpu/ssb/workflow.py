@@ -20,6 +20,7 @@ from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
+from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb import series
 from quantem.gpu.ssb.brightfield import crop_bright_field, disk_edge_radius
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
@@ -217,7 +218,7 @@ class SSB:
         self.detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
-        self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
+        self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
         self.detector_transposed = False
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
@@ -1233,7 +1234,7 @@ class SSB:
     def set_rotation(self, scan_detector_rotation_deg: float) -> None:
         """Set the physical scan-to-detector rotation (degrees, kept in [0, 360)) and refresh geometry."""
 
-        self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
+        self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
         self._backend().cache_rotation(math.radians(self.scan_detector_rotation_deg))
 
     @_on_scan_gpu

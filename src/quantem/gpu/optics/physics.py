@@ -62,6 +62,25 @@ def wavelength_A_from_kV(voltage_kV: float) -> float:
     return wavelength_m * 1e10
 
 
+def wrap_degrees(angle_deg: float, period_deg: float) -> float:
+    """Return an angle in ``[0, period_deg)``, wrapped once in double precision.
+
+    Every result and record states the scan-detector rotation in ``[0, 360)``, and an estimate
+    known modulo 180 degrees in ``[0, 180)``. Producers wrap here as their last step, after all
+    arithmetic with the angle: a value taken unwrapped was outside the range (the curl fit's
+    grid ends at float32 pi, 180.000005 degrees). ``%`` alone also returns the period itself
+    for a negative angle smaller than the rounding of the period (``-2e-15 % 360.0`` is
+    ``360.0``); that case is 0. An angle already in range is returned bit for bit.
+
+    Examples
+    --------
+    >>> wrap_degrees(-20.0, 360.0), wrap_degrees(190.0, 180.0), wrap_degrees(-2e-15, 360.0)
+    (340.0, 10.0, 0.0)
+    """
+    wrapped = float(angle_deg) % period_deg
+    return 0.0 if wrapped == period_deg else wrapped
+
+
 def ssb_upsampling_factor(
     *,
     voltage_kV: float,

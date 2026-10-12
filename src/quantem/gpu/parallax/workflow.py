@@ -25,6 +25,7 @@ from quantem.gpu import detector
 from quantem.gpu.detector.cuda.probe import detect_bf_radius
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
 from quantem.gpu.parallax.results import ParallaxResult
 from quantem.gpu.ssb.brightfield import disk_edge_radius
@@ -197,7 +198,7 @@ def run(
             )
             # The fit keeps its angle within 90 degrees of zero; a result states the physical rotation in
             # [0, 360), the one range every result and record uses, so -20 reads 340.
-            scan_detector_rotation_deg = signed_rotation_deg % 360.0
+            scan_detector_rotation_deg = wrap_degrees(signed_rotation_deg, 360.0)
         return ParallaxResult(
             image=image,
             density=density,
