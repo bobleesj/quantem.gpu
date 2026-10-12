@@ -86,10 +86,18 @@ new `rcN` heading when that rc is published to TestPyPI.
 - The axis word in arguments is `col`: `extract_diffraction_device(scan_row,
   scan_column)` of encoded residents becomes `(scan_row, scan_col)`, and
   regions are documented as `(row_start, row_stop, col_start, col_stop)`.
-- The WebGPU SSB engine (`ssb/webgpu`) follows the same vocabulary. Its
-  calibration must carry `"schema": "quantem.ssb-calibration/2"`, `num_bf`
-  becomes `num_bright_field_pixels` and `rotation_angle_deg` becomes
-  `scan_detector_rotation_deg` (the `rotation_angle_rad` fallback is removed).
+- The WebGPU SSB engine (`ssb/webgpu`) follows the same vocabulary. It reads
+  a ShowPtycho folder's `snapshots/cal.json` as quantem.widget writes it,
+  `"schema": "quantem.ssb-browser-calibration/2"`: `num_bf` becomes
+  `num_bright_field_pixels`, `rotation_angle_deg` becomes
+  `scan_detector_rotation_deg` (the `rotation_angle_rad` fallback is removed),
+  `kx_bf`, `ky_bf` become `bright_field_k_row`, `bright_field_k_col`, `qx_1d`,
+  `qy_1d` become `scan_q_row`, `scan_q_col`, and `semiangle_rad`,
+  `angular_sampling_rad` become `semiangle_mrad`, `detector_sampling_mrad`
+  (converted to radians once on entry). The bright-field source it reads is
+  the folder manifest's `source.bf_columns`: `numBf`, `scanShape`,
+  `bytesPerBf`, `bitsPerValue` become `num_bright_field_pixels`, `scan_shape`,
+  `bytes_per_bright_field_pixel`, `bits_per_value`.
   `reconstruct(c10, c12, phi12)` names its engine units `(c10A, c12A,
   phi12Rad)`; options `upsample`, `bfCount`, `rotationDeg` become
   `upsamplingFactor`, `numBrightFieldPixels`, `scanDetectorRotationDeg`;
@@ -148,11 +156,14 @@ new `rcN` heading when that rc is published to TestPyPI.
   one `[row, col]` pair in place of `tilt_row_mrad` and `tilt_col_mrad`.
 - An HDF5 master written by `io.save` stores the detector shape once, as
   `detector_shape`; the `det_shape` copy on `entry/data` is gone.
-- A ShowPtycho calibration (`snapshots/cal.json`) read by MPS SSB must carry
-  `"schema": "quantem.ssb-calibration/2"` with the keys `bright_field_rows`,
-  `bright_field_cols`, `bright_field_center_px`, `bright_field_radius_px` and
-  `detector_sampling_mrad` (they were `bf_rows`, `bf_cols`, `bf_center`,
-  `bf_radius_px`, `det_sampling_mrad_px`). Another calibration is refused.
+- A ShowPtycho calibration (`snapshots/cal.json`) read by MPS SSB is the file
+  quantem.widget writes: `"schema": "quantem.ssb-browser-calibration/2"` with
+  the keys `bright_field_rows`, `bright_field_cols`, `bright_field_center_px`,
+  `bright_field_radius_px` and `detector_sampling_mrad` (they were `bf_rows`,
+  `bf_cols`, `bf_center`, `bf_radius_px`, `det_sampling_mrad_px`), the scan
+  crop `scan_region` as `[row_start, row_stop, col_start, col_stop]` and
+  `scan_shape` as `[rows, cols]` (it was `scan_region.shape`). Another
+  calibration is refused.
 - A rotation fitted from the centre-of-mass curl is
   `scan_detector_rotation_mod180_deg`: `DPCResult.rotation_deg` and
   `ScreeningResult.rotation_deg` take that name, `DPCResult.use_transpose` and

@@ -26,10 +26,11 @@ from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.mps.hardware import require_mlx
 
-# Carried by a ShowPtycho calibration (snapshots/cal.json) under "schema"; another value is refused.
+# The layout of a ShowPtycho folder's snapshots/cal.json as quantem.widget writes it; another value is refused.
 # 2: keys follow the shared vocabulary (bright_field_rows, bright_field_cols, bright_field_center_px,
-#    bright_field_radius_px, detector_sampling_mrad); version 1 wrote schema_version 1 with bf_* keys.
-CALIBRATION_SCHEMA = "quantem.ssb-calibration/2"
+#    bright_field_radius_px, detector_sampling_mrad), scan_region is [row_start, row_stop, col_start, col_stop]
+#    and scan_shape is [rows, cols]; earlier exports wrote bf_* keys and a scan_region object.
+BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/2"
 
 
 def find_bf_columns(
@@ -111,10 +112,10 @@ def load_bf_columns_mps(
     payload = json.loads(cal_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"ShowPtycho calibration must be a JSON object: {cal_path}")
-    if payload.get("schema") != CALIBRATION_SCHEMA:
+    if payload.get("schema") != BROWSER_CALIBRATION_SCHEMA:
         # the keys of earlier exports name other quantities (bf_center, det_sampling_mrad_px); none is reinterpreted
         raise ValueError(
-            f"{cal_path} is not a {CALIBRATION_SCHEMA} calibration (schema {payload.get('schema')!r}); "
+            f"{cal_path} is not a {BROWSER_CALIBRATION_SCHEMA} calibration (schema {payload.get('schema')!r}); "
             "export the ShowPtycho folder again."
         )
     required_fields = (
@@ -123,6 +124,7 @@ def load_bf_columns_mps(
         "bright_field_center_px",
         "detector_shape",
         "scan_region",
+        "scan_shape",
     )
     missing_fields = [name for name in required_fields if name not in payload]
     if missing_fields:
@@ -131,14 +133,17 @@ def load_bf_columns_mps(
             f"{missing_fields}: {cal_path}"
         )
     companion = _resolve_bf_column_companion(cal_path, payload)
-    scan_region = payload["scan_region"]
-    if not isinstance(scan_region, dict) or "shape" not in scan_region:
-        raise ValueError(
-            f"Calibration scan_region must contain a 2D shape: {cal_path}"
-        )
-    scan_shape = scan_region["shape"]
+    scan_shape = payload["scan_shape"]
     if not isinstance(scan_shape, list) or len(scan_shape) != 2:
-        raise ValueError(f"Calibration has no valid 2D scan shape: {cal_path}")
+        raise ValueError(f"Calibration scan_shape must be [rows, cols]: {cal_path}")
+    scan_region = payload["scan_region"]
+    # the columns hold the scan positions of this crop of the acquisition, so the crop and the shape must agree
+    if (not isinstance(scan_region, list) or len(scan_region) != 4
+            or [scan_region[1] - scan_region[0], scan_region[3] - scan_region[2]] != scan_shape):
+        raise ValueError(
+            f"Calibration scan_region must be [row_start, row_stop, col_start, col_stop] spanning scan_shape "
+            f"{scan_shape}, got {scan_region!r}: {cal_path}"
+        )
     detector_shape = payload["detector_shape"]
     if not isinstance(detector_shape, list) or len(detector_shape) != 2:
         raise ValueError(

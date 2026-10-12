@@ -253,13 +253,14 @@ def _declaration(case: SSBParityCase) -> dict[str, object]:
     rows, cols = case.bf_rows_cols
     side = case.scan_side
     return {
-        "schema": "quantem.ssb-calibration/2",
+        "schema": "quantem.ssb-browser-calibration/2",
         "bright_field_rows": [int(value) for value in rows],
         "bright_field_cols": [int(value) for value in cols],
         "bright_field_center_px": [float(case.bright_field_center_px[0]), float(case.bright_field_center_px[1])],
         "bright_field_radius_px": float(case.bright_field_radius_px),
         "detector_shape": [192, 192],
-        "scan_region": {"shape": [side, side]},
+        "scan_region": [int(value) for value in case.scan_region],
+        "scan_shape": [side, side],
         "bf_column_companion_path": "bf_columns.u16",
         "bf_column_encoding": "u16",
         "bf_excluded_detector_pixels": [
