@@ -37,7 +37,8 @@ FLAT_KEYS = ("scan_sampling_A", *DETECTOR_SAMPLING_KEYS.values(), *(field for _,
 # Never stored in the header's retained ``metadata`` block. Flat keys and the groups below are
 # copies of scientific_metadata; the rest is what a loader knows about the host and the
 # resident it built, which a reopened copy measures again. The last two names are the
-# unit-less detector pair written before the suffixed keys: a copy that is never read.
+# unit-less detector pair written before the suffixed keys: the step is a copy that is never
+# read, and the unit is read once, by effective_metadata, as the unit of a saved origin.
 NOT_RETAINED = frozenset((
     *FLAT_KEYS, "detector_sampling", "detector_sampling_unit",
     "scientific_metadata", "container", "container_version",
@@ -730,7 +731,11 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
 
     Every flat calibration key of the result comes from ``scientific``: a
     recorded quantity, replaced by its calibration override when one is saved.
-    Nothing is read from a calibration copy in the retained ``metadata``.
+    Nothing is read from a calibration copy in the retained ``metadata``. A
+    saved ``origin`` without ``units`` is in the unit the detector step was
+    supplied in, which a header states under ``detector_sampling_unit`` when
+    that unit was not the stored one (``rad``, ``1/nm``): the result's
+    ``units`` name it, so the origin is scaled by the factor the step was.
 
     Examples
     --------
@@ -746,7 +751,10 @@ def effective_metadata(metadata: dict, scientific: dict) -> dict:
     if result.get("origin") is not None:
         # Preserve the origin's recorded units before resolving calibration.
         # Dataset4dstemGPU converts these coordinates to the effective units.
-        detector_unit = next((unit for unit, key in DETECTOR_SAMPLING_KEYS.items() if key in recorded), None)
+        # The step was converted to the stored unit when it was recorded and the origin was
+        # kept as supplied: read with the stored unit, an origin in rad is 1000 times too small.
+        detector_unit = metadata.get("detector_sampling_unit") or next(
+            (unit for unit, key in DETECTOR_SAMPLING_KEYS.items() if key in recorded), None)
         source_units = ["angstrom" if "scan_sampling_A" in recorded else None] * 2 + [detector_unit] * 2
         units = result.get("units")
         if units is None or np.isscalar(units):

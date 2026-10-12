@@ -24,7 +24,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   `detector_sampling_mrad` or `detector_sampling_inv_A`, each `[row, col]`,
   exactly one present. `io.save` refuses the old pair and refuses both new
   keys together. Stored `scientific_metadata` is unchanged; every schema-2
-  file loads with the same calibration.
+  file loads with the same calibration. A saved `origin` without `units` is
+  in the unit its header states under `detector_sampling_unit` (`rad`,
+  `1/nm`) and is scaled by the factor the detector step was, as before; where
+  the header states none it is in the stored detector unit.
 - `scan_sampling_A` in dataset metadata is a `[row, col]` pair; a single number
   raises in `Dataset4dstemGPU.sampling`.
 - `.qem` scientific metadata schema 1 is refused with a message that names the
