@@ -25,6 +25,12 @@ response before assuming an endpoint or field exists. New optional response
 fields are additive; changed scientific meaning requires a protocol version
 change.
 
+Every route refuses a query parameter it does not declare with HTTP 400. The
+message names the unknown parameters, the protocol version and the parameters
+the route takes, so a client that still sends the names of an earlier version
+(`sx`, `cx`, `det_bin`, `inner`) is told so, not answered with the image of
+the default scan position or mask.
+
 ## Endpoints
 
 | Route | Contract |

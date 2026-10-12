@@ -672,6 +672,32 @@ def test_out_of_memory_error_does_not_retain_the_loader_exception(
     assert raised.value.__context__ is None
 
 
+def test_every_route_refuses_a_query_parameter_it_does_not_declare(tmp_path):
+    """A request in protocol-1 names is refused with those names and the protocol version.
+
+    FastAPI ignores an undeclared parameter, so `sx=1&sy=1` answered HTTP 200 with the pattern of scan position
+    (0, 0) and `cx`, `cy`, `inner`, `outer` with the default mask: a wrong image the client could not detect.
+    """
+    master = _master(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    common = {"session": "detector/20260101_session", "file": master.name}
+    for route, earlier in (
+        ("/api/browse/cbed", {"sx": 1, "sy": 1}),
+        ("/api/browse/realspace", {"inner": 0.0, "outer": 0.5, "det_bin": 2}),
+        ("/api/browse/realspace-shape", {"cx": 0.0, "cy": 3.0, "outer_radius_px": 1.2}),
+        ("/api/browse/sessions", {"reload": True}),
+    ):
+        response = client.get(route, params={**common, **earlier} if route != "/api/browse/sessions" else earlier)
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        unknown = sorted(set(earlier) - {"outer_radius_px"})
+        assert f"unknown query parameters {unknown} for {route}" in detail
+        assert "protocol version 2" in detail
+    # the message lists what the route takes, so a client can correct its request
+    assert "'scan_row'" in client.get("/api/browse/cbed", params={**common, "sx": 1}).json()["detail"]
+    assert client.get("/api/browse/sessions", params={"refresh": True}).status_code == 200
+
+
 def test_catalog_and_acquisition_status_use_quantem_gpu_inspection(tmp_path):
     master = _master(tmp_path)
     client = TestClient(create_app(tmp_path))
