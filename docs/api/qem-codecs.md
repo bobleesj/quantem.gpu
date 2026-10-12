@@ -178,7 +178,12 @@ equal to `shape`, and contiguous `regions` covering every scan position, each wi
 (`rmse`, `max_abs_error`, clipped and overflow counts) is part of the report.
 `scientific_metadata.processing` must include `scaled_uint16_quantization` with
 `changes_measurements: true`; derivations such as `maped_merge` are listed too.
-`attributes` carries producer provenance strings unchanged.
+`attributes` carries producer provenance strings unchanged. A merged
+multi-tilt result stores its two records there as JSON text, under
+`quantem_maped_merge_v1` and `quantem_maped_summary_v1`, the names an HDF5
+copy of the result uses for its root attributes. Every reader returns them
+parsed, as `maped_merge` and `maped_summary`, whichever container it read;
+text that is not a JSON object with `"version": 1` is left out.
 
 Each chunk covers consecutive scans inside one region and names it with `region`.
 It holds three arrays, laid out exactly like arrays 0–2 of the integer codec

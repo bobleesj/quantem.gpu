@@ -337,6 +337,13 @@ new `rcN` heading when that rc is published to TestPyPI.
   `NX_class: "NXdata"` in its header's `metadata` block, a key the format
   does not list: the master reader copied the NeXus class of the `entry/data`
   group into the dataset metadata. It is no longer copied.
+- The two records of a merged multi-tilt result (`quantem_maped_merge_v1`,
+  `quantem_maped_summary_v1` in a scaled `.qem` header's `attributes`) came
+  back differently by reader: parsed as `maped_merge` and `maped_summary`
+  from an HDF5 master, as raw JSON text under `metadata["attributes"]` from
+  a `.qem` on an Apple GPU, and not at all from a `.qem` on the CPU. Every
+  reader now returns them parsed under `maped_merge` and `maped_summary`;
+  `metadata["attributes"]` is no longer returned.
 - Calibration overrides were stored twice in one file, in volts and metres in
   `metadata` and in kV and angstrom in `scientific_metadata`. They are stored
   once.

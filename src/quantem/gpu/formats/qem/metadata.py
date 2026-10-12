@@ -50,6 +50,9 @@ NOT_RETAINED = frozenset((
     "load_timings", "axis_order", "pixel_origin", "source_read_passes", "background_applied_by_reader",
     "dm_image_index", "dm_data_offset", "dm_data_order_swapped",
 ))
+# The records a merged multi-tilt result carries, and the versioned name each is stored under as JSON
+# text: a root attribute of an HDF5 master, an entry of ``attributes`` in a scaled .qem header.
+MAPED_RECORDS = {"maped_merge": "quantem_maped_merge_v1", "maped_summary": "quantem_maped_summary_v1"}
 # The retained hot_pixel_correction record carries this under "schema"; a record with another
 # value, or none, is the same as no record.
 # 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
@@ -136,6 +139,36 @@ def microscopy_metadata(scientific: dict) -> dict:
             if path in _QUANTITIES or path in DETECTOR_PIXEL_SIZE:
                 result[section][path] = _microscopy_quantity(quantity, path)
     return result
+
+
+def maped_records(attributes: dict) -> dict:
+    """Return a merged result's records, parsed, under ``maped_merge`` and ``maped_summary``.
+
+    ``attributes`` holds each record as JSON text under its versioned name (``MAPED_RECORDS``): the root
+    attributes of an HDF5 master, or ``attributes`` of a scaled ``.qem`` header. Text that is not a
+    version-1 record is left out. Every reader decodes through here: with one decoder per container the
+    same result came back parsed from HDF5, as raw text from a ``.qem`` on an Apple GPU and not at all
+    from a ``.qem`` on the CPU.
+
+    Examples
+    --------
+    >>> maped_records({"quantem_maped_merge_v1": '{"version": 1, "source_count": 7}'})
+    {'maped_merge': {'version': 1, 'source_count': 7}}
+    """
+    records = {}
+    for key, name in MAPED_RECORDS.items():
+        value = attributes.get(name)
+        if isinstance(value, bytes):
+            value = value.decode()
+        if not isinstance(value, str):
+            continue
+        try:
+            record = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get("version") == 1:
+            records[key] = record
+    return records
 
 
 def _validated_overrides(scientific: dict) -> dict:

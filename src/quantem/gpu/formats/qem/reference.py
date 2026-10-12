@@ -416,6 +416,8 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
     )
     if header["codec"] == SCALED_CODEC:
         metadata["precision"] = header["intensity_calibration"]
+        # a merged result's records, as the HDF5 reader of the same result returns them
+        metadata.update(qem_metadata.maped_records(header.get("attributes", {})))
         # restored intensities are not the counts of any file; for the other codecs the header's own
         # file_counts_exact stands, which says how the stored counts relate to the original acquisition
         metadata["file_counts_exact"] = False

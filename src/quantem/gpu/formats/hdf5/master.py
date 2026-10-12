@@ -1,11 +1,12 @@
 """Header-only acquisition metadata readers; no resident allocation."""
 
-import json
 import math
 from pathlib import Path
 
 import h5py
 import numpy as np
+
+from quantem.gpu.formats.qem.metadata import maped_records
 
 
 def read_pixel_mask(filepath):
@@ -144,7 +145,8 @@ def get_metadata(filepath: str) -> dict:
             if detector_dataset.ndim >= 3:
                 metadata.setdefault("n_frames", int(np.prod(detector_dataset.shape[:-2])))
     _derive_fields(metadata)
-    _decode_quantem_records(metadata)
+    # a merged result's records, under the keys every reader gives them
+    metadata.update(maped_records(metadata))
     return metadata
 
 
@@ -155,25 +157,6 @@ def _plain_value(value):
     if isinstance(value, np.ndarray) and value.ndim == 0:
         return value.item()
     return value
-
-
-def _decode_quantem_records(metadata: dict) -> None:
-    """Expose versioned QuantEM JSON attributes under stable public keys."""
-    for attribute, key in (
-        ("quantem_maped_merge_v1", "maped_merge"),
-        ("quantem_maped_summary_v1", "maped_summary"),
-    ):
-        value = metadata.get(attribute)
-        if isinstance(value, bytes):
-            value = value.decode()
-        if not isinstance(value, str):
-            continue
-        try:
-            record = json.loads(value)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict) and record.get("version") == 1:
-            metadata[key] = record
 
 
 def _derive_fields(metadata: dict) -> None:
