@@ -50,13 +50,16 @@ def test_qem_of_a_master_holds_no_hdf5_group_class(tmp_path) -> None:
     assert "NX_class" not in read_envelope(tmp_path / "scan.qem")[0]["metadata"]
 
 
-def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path, capsys) -> None:
-    """A master written by an earlier version loads with one line naming the calibration it holds and is not read.
+def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path) -> None:
+    """A master written by an earlier version loads with one warning naming the calibration it holds and is not read.
 
     Such a master keeps the detector step under ``detector_sampling`` with ``detector_sampling_unit`` and may hold
     one number as the scan step. Both loaded as uncalibrated axes without a word; the attributes stayed in the
     metadata, where the scan step raised when the sampling was read and the detector pair when a ``.qem`` was saved.
+    The message is a warning, so a quiet load (``verbose=False``, as ``io.convert`` loads) gives it too.
     """
+    import warnings
+
     import h5py
 
     from quantem.gpu import io
@@ -64,23 +67,26 @@ def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path, cap
     counts = np.random.default_rng(1).poisson(3, (2, 3, 8, 8)).astype(np.uint16)
     master = tmp_path / "scan_master.h5"
     io.save(master, counts, backend="cpu", verbose=False, metadata={"detector_sampling_inv_A": [0.02, 0.03]})
+    # a master of this version: nothing to say, on a quiet or a verbose load
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        for verbose in (False, True):
+            with io.load(master, backend="cpu", verbose=verbose) as current:
+                assert current.sampling == (None, None, 0.02, 0.03)
     with h5py.File(master, "r+") as handle:
         handle.attrs["scan_sampling_A"] = 0.264
         handle.attrs["detector_sampling"] = [0.2, 0.3]
         handle.attrs["detector_sampling_unit"] = "mrad"
-    capsys.readouterr()
-    with io.load(master, backend="cpu") as loaded:
-        lines = [line for line in capsys.readouterr().out.splitlines() if "not read" in line]
-        assert len(lines) == 1
+    for verbose in (False, True):
+        with pytest.warns(UserWarning, match="Calibration not read") as caught, io.load(master, backend="cpu", verbose=verbose) as loaded:
+            # nothing is converted: the scan axes are uncalibrated, and the pair this version reads is kept
+            assert loaded.sampling == (None, None, 0.02, 0.03)
+            assert not {"scan_sampling_A", "detector_sampling", "detector_sampling_unit"} & set(loaded.metadata)
+            if verbose:
+                io.save(tmp_path / "copy.qem", loaded, backend="cpu", verbose=False)
+        assert len(caught) == 1
         for name in ("scan_master.h5", "scan_sampling_A (not a [row, col] pair)", "detector_sampling,", "detector_sampling_unit"):
-            assert name in lines[0]
-        # nothing is converted: the scan axes are uncalibrated, and the pair this version reads is kept
-        assert loaded.sampling == (None, None, 0.02, 0.03)
-        assert not {"scan_sampling_A", "detector_sampling", "detector_sampling_unit"} & set(loaded.metadata)
-        io.save(tmp_path / "copy.qem", loaded, backend="cpu", verbose=False)
-    with io.load(master, backend="cpu", verbose=False) as quiet:
-        assert capsys.readouterr().out == ""
-        assert quiet.sampling == (None, None, 0.02, 0.03)
+            assert name in str(caught[0].message)
     with io.load(tmp_path / "copy.qem", backend="cpu", verbose=False) as copy:
         assert copy.sampling == (None, None, 0.02, 0.03)
         np.testing.assert_array_equal(copy.data, counts)

@@ -1,5 +1,6 @@
 """Backend-neutral loaded data and ownership contracts."""
 
+import warnings
 from dataclasses import dataclass
 from math import prod
 from pathlib import Path
@@ -394,3 +395,37 @@ def resident_metadata(shape, dtype, resident_bytes: int, *, backend: str, repres
         detector_bin=1,
         crop=None,
     )
+
+
+def drop_unread_calibration(loaded, sources):
+    """Remove the calibration attributes of an HDF5 master that this version does not read, and warn once per file.
+
+    A master's attributes reach the dataset metadata as stored. The unit-less detector pair of earlier masters
+    (``detector_sampling`` with ``detector_sampling_unit``) and a sampling stored as one number are not the
+    ``[row, col]`` pairs ``scan_sampling_A``, ``detector_sampling_mrad`` and ``detector_sampling_inv_A`` this
+    version reads, and no value is converted. Left in the metadata they made those axes uncalibrated without a
+    word, then raised when the sampling was read or the acquisition was saved as ``.qem``.
+
+    ``loaded`` is one dataset or a list, ``sources`` the files they came from; ``loaded`` is returned. The message
+    is a ``UserWarning``, not progress output: a calibration that is in the file and is not used must be seen
+    whatever ``verbose`` is, also by ``io.convert``, which loads quietly.
+    """
+    for item, source in zip(loaded if isinstance(loaded, list) else [loaded], sources):
+        unread = {name: name for name in ("detector_sampling", "detector_sampling_unit") if name in item.metadata}
+        unread.update({
+            name: f"{name} (not a [row, col] pair)"
+            for name in ("scan_sampling_A", "detector_sampling_mrad", "detector_sampling_inv_A")
+            if item.metadata.get(name) is not None and (np.isscalar(item.metadata[name]) or len(item.metadata[name]) != 2)
+        })
+        for name in unread:
+            del item.metadata[name]
+        if unread:
+            warnings.warn(
+                f"Calibration not read: {Path(source).name} holds {', '.join(unread.values())}, which this version "
+                "does not read; those axes are uncalibrated. It reads scan_sampling_A, detector_sampling_mrad and "
+                "detector_sampling_inv_A, each a [row, col] pair.",
+                UserWarning,
+                # the caller of io.load or of PairedLoader.stream, where the file is named
+                stacklevel=3,
+            )
+    return loaded
