@@ -413,10 +413,12 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
         dtype=data.dtype.name,
         scan_shape=shape[:2],
         detector_shape=shape[2:],
-        file_counts_exact=header["codec"] != SCALED_CODEC,
     )
     if header["codec"] == SCALED_CODEC:
         metadata["precision"] = header["intensity_calibration"]
+        # restored intensities are not the counts of any file; for the other codecs the header's own
+        # file_counts_exact stands, which says how the stored counts relate to the original acquisition
+        metadata["file_counts_exact"] = False
     elif header["codec"] == FLOAT_CODEC:
         metadata["qem_empad"] = header["empad"]
         metadata.setdefault("background_applied", False)

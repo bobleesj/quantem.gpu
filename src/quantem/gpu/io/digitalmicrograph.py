@@ -287,7 +287,9 @@ def _load_counts_mps(source: DMSource, started: float, verbose: bool) -> Dataset
                 resident.append(shared_array(staging, source.dtype, (count, *source.shape[2:])))
                 resident.spatial_chunks.append(build_index(resident, staging, count))
         source.assert_unchanged()
-        return mps_counts_dataset(resident, source.metadata, started, verbose)
+        # the camera file's own counts, unchanged: the same statement the CUDA reader of this file makes
+        exact = dict(source.metadata, file_counts_exact=True, working_counts_exact=True)
+        return mps_counts_dataset(resident, exact, started, verbose)
     except BaseException:
         resident.release()
         raise

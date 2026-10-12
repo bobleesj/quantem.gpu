@@ -161,18 +161,17 @@ def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: flo
     """Wrap an exact native-count Metal resident with the common loaded-data metadata.
 
     Saved ``.qem`` copies and native DigitalMicrograph cameras both end here,
-    so the two report identical fields.
+    so the two report identical fields. ``source_dtype``, ``file_counts_exact``
+    and ``working_counts_exact`` are the caller's: a ``.qem`` header states them
+    for the original acquisition, and a camera reader for the file it read.
     """
     shape = resident.shape
     record = dict(metadata)
     record.update(
         resident_metadata(shape, resident.dtype, resident.nbytes, backend="mps"),
         device="mps",
-        source_dtype=resident.dtype.name,
         source_logical_tensor_bytes=math.prod(shape) * resident.dtype.itemsize,
-        file_counts_exact=True,
         lossless_exact=True,
-        working_counts_exact=True,
         resident_profile=INTEGER_CODEC,
         load_timings=dict(
             resident.load_metrics, resident_ready_seconds=time.perf_counter() - started
@@ -270,14 +269,17 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
             metadata["container"] = header["container"]
             metadata["container_version"] = header["container_version"]
             metadata.setdefault("original_source_path", metadata.get("source_path"))
+            # source_dtype, file_counts_exact and working_counts_exact stay as the header states them: they are the
+            # evidence of how the stored counts relate to the original acquisition (format 0.0.4, retained block).
+            # Replaced here by what this load knows (the stored dtype, exact), a copy of a file rewrote a uint32
+            # source as uint16 and counts changed by a pixel correction as exact.
             metadata.update(
                 resident_metadata(shape, source.dtype, source.nbytes, backend="cuda"),
                 source_kind="resident", source_path=str(Path(path).resolve()),
-                source_dtype=source.dtype.name,
                 source_logical_tensor_bytes=math.prod(shape) * source.dtype.itemsize,
                 device=f"cuda:{selected}", resident_profile=INTEGER_CODEC,
                 index_bytes=source.index_nbytes,
-                file_counts_exact=True, working_counts_exact=True, lossless_exact=True,
+                lossless_exact=True,
                 load_timings=dict(resident_ready_seconds=time.perf_counter() - started,
                                   encode_seconds=0.0, index_seconds=0.0,
                                   pinned_staging_bytes=2 * capacity,
@@ -531,10 +533,8 @@ def _load_float(path, header, start, backend, device):
             source_kind="resident",
             device=f"cuda:{source.device}" if backend == "cuda" else "mps",
             shape=source.shape,
-            source_dtype="float32",
             resident_profile=FLOAT_CODEC,
             source_logical_tensor_bytes=source.logical_nbytes,
-            file_counts_exact=True,
             lossless_exact=True,
             background_applied=False,
             background_applied_by_reader=background is not None,

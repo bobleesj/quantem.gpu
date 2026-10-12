@@ -326,6 +326,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 - After a reciprocal-length calibration override the detector unit read
   `1/Å`; it is `1/angstrom` like every other route (now the key
   `detector_sampling_inv_A`).
+- Loading a `.qem` replaced the header's `source_dtype`,
+  `file_counts_exact` and `working_counts_exact` with what the load knew (the
+  stored dtype, exact), so a copy of a file rewrote them: a uint32 source
+  became `uint16`, and counts changed by a pixel correction or by zeroed flag
+  markers became exact. The integer, float32 and CPU reference readers now
+  return these three keys as the header states them and add none where it
+  has none; a copy stores the same values as its original.
 - Calibration overrides were stored twice in one file, in volts and metres in
   `metadata` and in kV and angstrom in `scientific_metadata`. They are stored
   once.
