@@ -63,7 +63,7 @@ def test_every_public_ssb_entry_point_defaults_to_full_bright_field() -> None:
 
     for entry_point in (SSB, SSB.open):
         signature = inspect.signature(entry_point)
-        assert signature.parameters["bf_intensity_threshold"].default == 0.0
+        assert signature.parameters["bright_field_intensity_threshold"].default == 0.0
 
 
 def test_ssb_auto_backend_never_falls_back_to_cpu(monkeypatch) -> None:
@@ -109,7 +109,7 @@ def test_reconstruct_series_reuses_only_exact_results(
             "semiangle_mrad": 30.0,
             "scan_sampling_A": 0.2,
             "scan_detector_rotation_deg": 173.0,
-            "bf_radius": 55.0,
+            "bright_field_radius_px": 55.0,
             "schema": FIT_SCHEMA,
             "aberrations": aberrations,
             "loss": 0.01 * index,
@@ -362,7 +362,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     # every value differs from dataset.yaml, so anything read from this block would show below
     (reference / "config.json").write_text(json.dumps({"computed": {"ssb": {
         "aberrations": earlier, "aberration_unit": "nm", "rotation_angle_deg": 0.0, "com_reversed": True, "loss": 0.014,
-        "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": 0.2, "bf_radius": 55.0}}}))
+        "voltage_kV": 80.0, "semiangle_mrad": 20.0, "scan_sampling_A": 0.2, "bright_field_radius_px": 55.0}}}))
     for frame in (1, 2):
         (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
         (raw / "live" / "screen" / f"scan_{frame}").mkdir(exist_ok=True)
@@ -405,7 +405,7 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
     # every session opens with the settings of dataset.yaml: nothing comes from the earlier block
     assert opened == [{"backend": "auto", "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": 0.5,
-                       "scan_detector_rotation_deg": 12.0, "detector_transposed": False, "bf_radius": None}] * 3
+                       "scan_detector_rotation_deg": 12.0, "detector_transposed": False, "bright_field_radius_px": None}] * 3
     assert [record["C10 (nm)"] for record in result.records] == [-10.5, -10.5]
     stored = json.loads((reference / "config.json").read_text())["computed"]["ssb"]
     assert stored["schema"] == FIT_SCHEMA
@@ -476,7 +476,7 @@ files:
                 aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)},
                 scan_detector_rotation_deg=12.0,
                 loss=0.25,
-                bf_radius=8.0,
+                bright_field_radius_px=8.0,
             )
 
     monkeypatch.setattr(

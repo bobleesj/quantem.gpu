@@ -846,7 +846,7 @@ class CustomFFT1024(CustomFFTBase):
         sin2phi12: float,
         factor: float,
         dc_value: complex,
-        num_bf: int,
+        num_bright_field_pixels: int,
         gqk_cols: int,
     ) -> None:
         """Row pass of both column-accumulate paths: correct G_qk for C10/C12 and IFFT each row into ``data``.
@@ -856,7 +856,7 @@ class CustomFFT1024(CustomFFTBase):
         """
         (kx_bf, ky_bf, qx_1d, qy_1d,
          wavelength, semiangle_rad, ang_y_rad, ang_x_rad) = self._require_geometry(cache)
-        grid_rows = (1, self._rows_fused_pk_grid_y, num_bf)
+        grid_rows = (1, self._rows_fused_pk_grid_y, num_bright_field_pixels)
         self._rows_fused_pk_split512(
             grid_rows,
             self._rows_split512_block,
@@ -868,7 +868,7 @@ class CustomFFT1024(CustomFFTBase):
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(-gqk_cols),
+                np.int32(num_bright_field_pixels), np.int32(-gqk_cols),
             ),
         )
 
@@ -890,16 +890,16 @@ class CustomFFT1024(CustomFFTBase):
     ) -> None:
         """Row FFT + fused column IFFT with transposed scratch accumulation."""
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bf + k_bf - 1) // k_bf
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
+        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):
             raise ValueError(f"partial buffers must have shape ({n_groups}, {N}, {N})")
-        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
+        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
         grid_cols = (1, self._cols_grid_y, n_groups)
         self._cols_accumulate_split512(
             grid_cols,
             self._cols_split512_block,
-            (data, partial_sum, partial_sumsq, np.int32(num_bf), np.int32(-k_bf)),
+            (data, partial_sum, partial_sumsq, np.int32(num_bright_field_pixels), np.int32(-k_bf)),
         )
 
     def ifft2_fused_pk_col_accumulate_sum(
@@ -919,14 +919,14 @@ class CustomFFT1024(CustomFFTBase):
     ) -> None:
         """Row FFT + fused column IFFT with phase-sum accumulation only."""
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bf + k_bf - 1) // k_bf
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
+        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N):
             raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
-        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
+        self._rows_split512(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
         grid_cols = (1, self._cols_grid_y, n_groups)
         self._cols_accumulate_sum_split512(
             grid_cols,
             self._cols_split512_block,
-            (data, partial_sum, np.int32(num_bf), np.int32(-k_bf)),
+            (data, partial_sum, np.int32(num_bright_field_pixels), np.int32(-k_bf)),
         )

@@ -19,8 +19,8 @@ def _direct_wave_average(ssb, factor, tilt, depth):
     q_row = torch.fft.fftfreq(rows, d=0.3 / factor, device=reference.device)
     q_col = torch.fft.fftfreq(cols, d=0.3 / factor, device=reference.device)
     wave_sum_t = torch.zeros((rows, cols), dtype=torch.complex128, device=reference.device)
-    for start in range(0, reference.num_bf, 4):
-        stop = min(start + 4, reference.num_bf)
+    for start in range(0, reference.num_bright_field_pixels, 4):
+        stop = min(start + 4, reference.num_bright_field_pixels)
         native_t = torch.fft.ifft2(reference._full_plane(reference.G[start:stop])).real
         sparse_t = torch.zeros((stop - start, rows, cols), device=reference.device)
         sparse_t[:, ::factor, ::factor] = native_t

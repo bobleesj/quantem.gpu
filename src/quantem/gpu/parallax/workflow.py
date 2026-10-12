@@ -37,9 +37,8 @@ BATCH_BYTES = 256 * 1024**2
 def run(
     data: Dataset4dstemGPU,
     *,
-    center: tuple[int, int] | None = None,
-    bf_radius: int | None = None,
-    sampling_radius: int | None = None,
+    bright_field_center_px: tuple[int, int] | None = None,
+    bright_field_radius_px: int | None = None,
     upsampling_factor: int = 2,
     fit_aberrations: bool = False,
     scan_sampling_A: float | None = None,
@@ -67,16 +66,14 @@ def run(
         The acquisition returned by ``quantem.gpu.io.load(path,
         backend="cuda")``, ordered ``(scan_row, scan_col, detector_row,
         detector_col)``.
-    center
+    bright_field_center_px
         Bright-field disk center ``(row, col)`` in detector pixels. Detected
         from the mean diffraction pattern when omitted.
-    bf_radius
-        Bright-field disk radius in detector pixels. Detected from the mean
-        diffraction pattern when omitted.
-    sampling_radius
-        Use only the pixels within this radius instead of ``bf_radius``, for
-        example to bound memory: the image stack holds one float32 scan image
-        per pixel.
+    bright_field_radius_px
+        Radius in detector pixels of the bright-field pixels to use. The disk
+        radius detected from the mean diffraction pattern when omitted; a
+        smaller value bounds memory, since the image stack holds one float32
+        scan image per pixel.
     upsampling_factor
         Each output image axis is this many times the scan axis. Every
         image's scan samples are placed at their measured sub-pixel shifts
@@ -153,14 +150,15 @@ def run(
         started = time.perf_counter()
         det_rows, det_cols = data.shape[2:]
         mean_pattern = None
-        if center is None or bf_radius is None:
+        center = bright_field_center_px
+        if center is None or bright_field_radius_px is None:
             mean_pattern = detector.mean(data)
             detected_center, detected_radius = detect_bf_radius(cp.asarray(mean_pattern))
             center = detected_center if center is None else center
-            bf_radius = detected_radius if bf_radius is None else bf_radius
+            bright_field_radius_px = detected_radius if bright_field_radius_px is None else bright_field_radius_px
             if verbose:
-                print(f"[parallax] Auto-detected center={center}, bf_radius={bf_radius}")
-        radius = int(bf_radius) if sampling_radius is None else sampling_radius
+                print(f"[parallax] Auto-detected bright_field_center_px={center}, bright_field_radius_px={bright_field_radius_px}")
+        radius = int(bright_field_radius_px)
         rows = cp.arange(det_rows, dtype=cp.float32)[:, None]
         cols = cp.arange(det_cols, dtype=cp.float32)[None, :]
         bf_mask = (rows - float(center[0])) ** 2 + (cols - float(center[1])) ** 2 <= float(radius) ** 2

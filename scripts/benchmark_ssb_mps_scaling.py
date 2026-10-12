@@ -371,7 +371,7 @@ def main() -> None:
             _file_sha256(calibration) if args.show_paths else None
         ),
         "native_scan_shape": list(native_prepared.scan_shape),
-        "logical_bf": int(native_prepared.num_bf),
+        "logical_bf": int(native_prepared.num_bright_field_pixels),
         "stored_bf": int(native_prepared.g_qk.shape[0]),
     }
     backend._prepared = None

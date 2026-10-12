@@ -107,9 +107,9 @@ def load_bf_columns_mps(
     if not isinstance(payload, dict):
         raise ValueError(f"ShowPtycho calibration must be a JSON object: {cal_path}")
     required_fields = (
-        "bf_rows",
-        "bf_cols",
-        "bf_center",
+        "bright_field_rows",
+        "bright_field_cols",
+        "bright_field_center_px",
         "detector_shape",
         "scan_region",
     )
@@ -133,47 +133,47 @@ def load_bf_columns_mps(
         raise ValueError(
             f"Calibration has no valid 2D detector shape: {cal_path}"
         )
-    bf_center = payload["bf_center"]
-    if not isinstance(bf_center, list) or len(bf_center) != 2:
+    bright_field_center_px = payload["bright_field_center_px"]
+    if not isinstance(bright_field_center_px, list) or len(bright_field_center_px) != 2:
         raise ValueError(
-            f"Calibration bf_center must be [row, col]: {cal_path}"
+            f"Calibration bright_field_center_px must be [row, col]: {cal_path}"
         )
-    bf_rows = payload["bf_rows"]
-    bf_cols = payload["bf_cols"]
+    bright_field_rows = payload["bright_field_rows"]
+    bright_field_cols = payload["bright_field_cols"]
     if (
-        not isinstance(bf_rows, list)
-        or not isinstance(bf_cols, list)
-        or not bf_rows
-        or len(bf_rows) != len(bf_cols)
+        not isinstance(bright_field_rows, list)
+        or not isinstance(bright_field_cols, list)
+        or not bright_field_rows
+        or len(bright_field_rows) != len(bright_field_cols)
     ):
         raise ValueError(
             f"Calibration BF rows and columns must be non-empty matching "
             f"lists: {cal_path}"
         )
 
-    rows_array = np.asarray(bf_rows, dtype=np.int32)
-    cols_array = np.asarray(bf_cols, dtype=np.int32)
-    center_row_col = tuple(float(value) for value in bf_center)
-    distance_sq = (rows_array.astype(np.float32) - center_row_col[0]) ** 2
-    distance_sq += (cols_array.astype(np.float32) - center_row_col[1]) ** 2
+    rows_array = np.asarray(bright_field_rows, dtype=np.int32)
+    cols_array = np.asarray(bright_field_cols, dtype=np.int32)
+    bright_field_center_px = tuple(float(value) for value in bright_field_center_px)
+    distance_sq = (rows_array.astype(np.float32) - bright_field_center_px[0]) ** 2
+    distance_sq += (cols_array.astype(np.float32) - bright_field_center_px[1]) ** 2
     coordinate_radius = float(np.sqrt(distance_sq).max()) + 1e-3
-    stored_radius = payload.get("bf_radius_px")
+    stored_radius = payload.get("bright_field_radius_px")
     radius = coordinate_radius if stored_radius is None else float(stored_radius)
     if not np.isfinite(radius) or radius <= 0:
         raise ValueError(
-            f"Calibration bf_radius_px must be positive and finite: {cal_path}"
+            f"Calibration bright_field_radius_px must be positive and finite: {cal_path}"
         )
     if float(np.sqrt(distance_sq).max()) > radius + 1e-3:
         raise ValueError(
-            "Calibration BF coordinates extend beyond bf_radius_px: "
+            "Calibration BF coordinates extend beyond bright_field_radius_px: "
             f"{cal_path}"
         )
     selection = BrightfieldDisk(
         rows=rows_array,
         cols=cols_array,
-        center_row_col=center_row_col,
-        radius_px=radius,
-        detected_radius_px=radius,
+        bright_field_center_px=bright_field_center_px,
+        bright_field_radius_px=radius,
+        bright_field_edge_radius_px=radius,
         detector_shape=tuple(int(value) for value in detector_shape),
     )
     stored_dc = payload.get("dc_value")

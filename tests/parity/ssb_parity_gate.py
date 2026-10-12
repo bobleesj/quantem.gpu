@@ -200,7 +200,7 @@ def run_mps(case: SSBParityCase, meta: dict[str, object], session=None) -> list[
                 "loss": None if loss is None else float(loss),
                 "object_seconds": object_seconds,
                 "preview_seconds": preview_seconds,
-                "num_bf": int(result.num_bf),
+                "num_bright_field_pixels": int(result.num_bright_field_pixels),
             }
         )
     return products
@@ -353,7 +353,7 @@ def run_case(
             ) | {
                 "object_seconds": mps["object_seconds"],
                 "preview_seconds": mps["preview_seconds"],
-                "num_bf": mps["num_bf"],
+                "num_bright_field_pixels": mps["num_bright_field_pixels"],
             }
         if metal_products is not None:
             variants = metal_products[index]["variants"]

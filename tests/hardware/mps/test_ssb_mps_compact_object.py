@@ -8,21 +8,21 @@ def test_compact_active_redraw_avoids_sparse_logical_scan() -> None:
     from quantem.gpu.ssb.mps.kernels.object_sum import _object_redraw_storage_topology
 
     compact = SimpleNamespace(
-        num_bf=12,
+        num_bright_field_pixels=12,
         g_qk=np.zeros((5, 1, 2), dtype=np.complex64),
         bf_storage_indices_np=np.asarray([0, 3, 4, 7, 11], dtype=np.int32),
     )
     assert _object_redraw_storage_topology(compact) == (5, False)
 
     noncompact = SimpleNamespace(
-        num_bf=12,
+        num_bright_field_pixels=12,
         g_qk=np.zeros((12, 1, 2), dtype=np.complex64),
         bf_storage_indices_np=None,
     )
     assert _object_redraw_storage_topology(noncompact) == (12, False)
 
     inconsistent_legacy = SimpleNamespace(
-        num_bf=12,
+        num_bright_field_pixels=12,
         g_qk=np.zeros((6, 1, 2), dtype=np.complex64),
         bf_storage_indices_np=np.asarray([0, 3, 4, 7, 11], dtype=np.int32),
     )
@@ -68,26 +68,26 @@ def test_compact_active_redraw_preserves_logical_dc_and_parity(monkeypatch) -> N
         semiangle_rad=1.0,
         ang_y_rad=1.0,
         ang_x_rad=1.0,
-        num_bf=12,
+        num_bright_field_pixels=12,
         bf_storage_indices_np=active,
     )
     launches = []
 
-    def fake_kernel(num_bf, logical_num_bf, chunk_bf, ny, nx, _cols, sparse):
-        launches.append((num_bf, logical_num_bf, sparse))
+    def fake_kernel(num_bright_field_pixels, logical_num_bf, chunk_bf, ny, nx, _cols, sparse):
+        launches.append((num_bright_field_pixels, logical_num_bf, sparse))
 
         def launch(*, inputs, output_shapes, **_kwargs):
             g_qk, *_middle, storage_map = inputs
             partial = np.zeros(output_shapes[0], dtype=np.complex64)
             groups = output_shapes[0][0]
-            if num_bf == logical_num_bf:
+            if num_bright_field_pixels == logical_num_bf:
                 for group in range(groups):
-                    valid = min(chunk_bf, num_bf - group * chunk_bf)
+                    valid = min(chunk_bf, num_bright_field_pixels - group * chunk_bf)
                     partial[group, 0, 0] = prepared.dc_value * valid
             else:
                 partial[0, 0, 0] = prepared.dc_value * logical_num_bf
             for group in range(groups):
-                stop = min((group + 1) * chunk_bf, num_bf)
+                stop = min((group + 1) * chunk_bf, num_bright_field_pixels)
                 for bf in range(group * chunk_bf, stop):
                     stored_bf = int(storage_map[bf]) if sparse else bf
                     if stored_bf >= 0:
@@ -110,7 +110,7 @@ def test_compact_active_redraw_preserves_logical_dc_and_parity(monkeypatch) -> N
     monkeypatch.setattr(
         mps,
         "_object_redraw_storage_topology",
-        lambda candidate: (candidate.num_bf, True),
+        lambda candidate: (candidate.num_bright_field_pixels, True),
     )
     logical = mps.object_fourier_sum_dynamic(
         prepared, C10=0.0, C12=0.0, phi12=0.0, chunk_bf=4

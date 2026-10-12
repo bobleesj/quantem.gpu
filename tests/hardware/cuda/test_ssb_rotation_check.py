@@ -248,8 +248,8 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
     _require_cuda()
     counts = np.full((128, 128, 16, 16), 20, dtype=np.uint16)
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20,
-             scan_sampling_A=0.5, det_sampling=5, bf_center=(8, 8),
-             bf_radius=4, scan_detector_rotation_deg=180) as session:
+             scan_sampling_A=0.5, det_sampling=5, bright_field_center_px=(8, 8),
+             bright_field_radius_px=4, scan_detector_rotation_deg=180) as session:
         original = session.reconstruct
         calls = []
 
@@ -277,13 +277,13 @@ def test_preview_context_follows_a_rotation_set_after_it_was_made():
 
     aberrations = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
     ssb, _ = _synthetic_session()
-    context = ssb.preview_context(ssb.num_bf // 4)
+    context = ssb.preview_context(ssb.num_bright_field_pixels // 4)
     ssb.set_rotation(40.0)
     subset_phase, _ = ssb.preview(aberrations, context=context)
     phase, loss = ssb.preview(aberrations)
     reference, _ = _synthetic_session()
     reference.set_rotation(40.0)
-    expected_subset, _ = reference.preview(aberrations, context=reference.preview_context(reference.num_bf // 4))
+    expected_subset, _ = reference.preview(aberrations, context=reference.preview_context(reference.num_bright_field_pixels // 4))
     expected, expected_loss = reference.preview(aberrations)
 
     np.testing.assert_array_equal(subset_phase, expected_subset)

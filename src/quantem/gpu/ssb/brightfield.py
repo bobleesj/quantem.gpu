@@ -27,11 +27,11 @@ class BrightfieldDisk:
 
     rows: np.ndarray
     cols: np.ndarray
-    center_row_col: tuple[float, float]
-    radius_px: float
+    bright_field_center_px: tuple[float, float]
+    bright_field_radius_px: float
     # The disk radius the detector calibration uses, semiangle / det_sampling: ``disk_edge_radius`` of the full-detector
     # mean pattern when the sampling is automatic.
-    detected_radius_px: float
+    bright_field_edge_radius_px: float
     detector_shape: tuple[int, int]
 
     def __post_init__(self) -> None:
@@ -60,25 +60,25 @@ class BrightfieldDisk:
         if np.unique(linear).size != rows.size:
             raise ValueError("BF coordinates must not contain duplicates.")
 
-        center = tuple(float(value) for value in self.center_row_col)
+        center = tuple(float(value) for value in self.bright_field_center_px)
         if len(center) != 2 or not all(math.isfinite(value) for value in center):
-            raise ValueError("center_row_col must contain two finite values.")
-        radius = float(self.radius_px)
-        detected_radius = float(self.detected_radius_px)
+            raise ValueError("bright_field_center_px must contain two finite values.")
+        radius = float(self.bright_field_radius_px)
+        detected_radius = float(self.bright_field_edge_radius_px)
         if not math.isfinite(radius) or radius <= 0:
-            raise ValueError("radius_px must be a positive finite value.")
+            raise ValueError("bright_field_radius_px must be a positive finite value.")
         if not math.isfinite(detected_radius) or detected_radius <= 0:
             raise ValueError(
-                "detected_radius_px must be a positive finite value."
+                "bright_field_edge_radius_px must be a positive finite value."
             )
 
         rows.flags.writeable = False
         cols.flags.writeable = False
         object.__setattr__(self, "rows", rows)
         object.__setattr__(self, "cols", cols)
-        object.__setattr__(self, "center_row_col", center)
-        object.__setattr__(self, "radius_px", radius)
-        object.__setattr__(self, "detected_radius_px", detected_radius)
+        object.__setattr__(self, "bright_field_center_px", center)
+        object.__setattr__(self, "bright_field_radius_px", radius)
+        object.__setattr__(self, "bright_field_edge_radius_px", detected_radius)
         object.__setattr__(self, "detector_shape", detector_shape)
 
     @property
@@ -92,20 +92,21 @@ def crop_bright_field(
     loaded: Dataset4dstemGPU,
     backend: str,
     threshold: float,
-    bf_radius: float | None,
+    bright_field_radius_px: float | None,
     *,
     calibrate_detector: bool = False,
-    bf_center: tuple[float, float] | None = None,
+    bright_field_center_px: tuple[float, float] | None = None,
 ):
     """Decode only the bright-field crop of an encoded acquisition, keeping the full-detector calibration.
 
-    Returns the counts (CuPy on CUDA), the disk centre inside the crop, the disk radius, and the calibration radius
-    (``disk_edge_radius`` of the full-detector mean pattern; None unless ``calibrate_detector``).
+    Returns the counts (CuPy on CUDA), the disk centre in full-detector pixels, the disk radius, the calibration radius
+    (``disk_edge_radius`` of the full-detector mean pattern; None unless ``calibrate_detector``) and the crop's first
+    detector ``(row, col)``, which a consumer of the crop subtracts from the centre.
 
     SSB reads nothing outside the bright-field disk, but decoding the whole 4D cube (19 GB for 512^2 x 192^2 uint16) is
     what the GPU loader forbids. The disk is found on the full-detector mean pattern with the backend's own rule
     (pixels above ``threshold`` x max, within the radius around the centroid of pixels above mean + std, or within
-    ``bf_radius`` around the weighted centroid), so the crop plus the pinned centre selects exactly the pixels a
+    ``bright_field_radius_px`` around the weighted centroid), so the crop plus the pinned centre selects exactly the pixels a
     full-detector session would (tests/hardware/cuda/test_ssb_open_encoded.py). This is the equal-area rule of
     ``detector.fit_probe`` evaluated in float64; ``fit_probe``'s float32 would move the centre in its last bits and
     with it the pixels the session reads.
@@ -113,7 +114,7 @@ def crop_bright_field(
     mean_pattern = np.asarray(detector.mean(loaded), dtype=np.float64)
     # The calibration reads the full detector: the crop below cuts the disk edge off.
     calibration_radius = disk_edge_radius(mean_pattern) if calibrate_detector else None
-    if bf_radius is None:
+    if bright_field_radius_px is None:
         disk = mean_pattern > mean_pattern.mean() + mean_pattern.std()
         total = int(disk.sum())
         if total == 0:
@@ -125,9 +126,9 @@ def crop_bright_field(
         rows, cols = np.nonzero(mean_pattern > mean_pattern.max() * float(threshold))
         weights = mean_pattern[rows, cols]
         center = (float((rows * weights).sum() / weights.sum()), float((cols * weights).sum() / weights.sum()))
-        radius = float(bf_radius)
-    if bf_center is not None:
-        center = tuple(float(value) for value in bf_center)
+        radius = float(bright_field_radius_px)
+    if bright_field_center_px is not None:
+        center = tuple(float(value) for value in bright_field_center_px)
     det_rows, det_cols = mean_pattern.shape
     # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
     row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
@@ -138,7 +139,7 @@ def crop_bright_field(
         # the acquisition's GPU, which need not be the current one
         with torch.cuda.device(counts.device), cp.cuda.Device(counts.device.index):
             counts = cp.from_dlpack(counts)
-    return counts, (center[0] - row0, center[1] - col0), radius, calibration_radius
+    return counts, center, radius, calibration_radius, (row0, col0)
 
 
 def disk_edge_radius(mean_pattern: np.ndarray) -> float:

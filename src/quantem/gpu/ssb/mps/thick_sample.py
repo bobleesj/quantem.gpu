@@ -86,7 +86,7 @@ def reconstruct_thick_reference(
     Same outputs and definitions as ``reconstruct.reconstruct_prepared`` (mean over bright-field pixels of the per-pixel phase
     of ifft2(G conj(gamma / |gamma|)) with the DC set to the stored DC value; loss = mean over the image of the per-pixel
     phase variance), with each pixel's correction averaged over the sample depth. Compacted inactive BF pixels (aperture 0)
-    are not stored and contribute phase 0, exactly as in the standard path, so the sums divide by ``prepared.num_bf``.
+    are not stored and contribute phase 0, exactly as in the standard path, so the sums divide by ``prepared.num_bright_field_pixels``.
     """
     mx = prepared.mx
     params = _params(prepared, C10, C12, phi12, tilt_mrad, thickness)
@@ -106,10 +106,10 @@ def reconstruct_thick_reference(
         phase_sum = phase_sum + chunk_sum
         phase_sumsq = phase_sumsq + chunk_sumsq
         mx.eval(phase_sum, phase_sumsq)
-    mean_phase = phase_sum / prepared.num_bf
+    mean_phase = phase_sum / prepared.num_bright_field_pixels
     loss = None
     if compute_loss:
-        loss = float(np.asarray(mx.mean(phase_sumsq / prepared.num_bf - mean_phase * mean_phase)))
+        loss = float(np.asarray(mx.mean(phase_sumsq / prepared.num_bright_field_pixels - mean_phase * mean_phase)))
     mx.eval(mean_phase)
     return np.asarray(mean_phase).astype(np.float32, copy=False), loss
 

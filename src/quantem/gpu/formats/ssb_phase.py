@@ -161,14 +161,14 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
     # The checksum and the .npy companion describe little-endian row-major float32 bytes.
     phase = np.ascontiguousarray(phase, dtype="<f4")
     phase_bytes = phase.tobytes(order="C")
-    radius = float(computed["bf_radius"])
+    radius = float(computed["bright_field_radius_px"])
     semiangle = float(ssb["semiangle_mrad"])
     step = float(ssb["scan_sampling_A"])
     calibration = dict(
         beamEnergyKeV=float(ssb["voltage_kV"]), semiangleMrad=semiangle,
         scanStepRowAngstroms=step, scanStepColumnAngstroms=step,
         detectorStepRowMrad=semiangle / radius, detectorStepColumnMrad=semiangle / radius,
-        centerRow=float(computed["bf_center"][0]), centerColumn=float(computed["bf_center"][1]),
+        centerRow=float(computed["bright_field_center_px"][0]), centerColumn=float(computed["bright_field_center_px"][1]),
         brightfieldRadiusPixels=radius,
     )
     aberrations = ssb["aberrations"]

@@ -81,7 +81,7 @@ class SSBResult(Mapping[str, float]):
     elapsed: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
     n_trials: int | None = None
-    num_bf: int | None = None
+    num_bright_field_pixels: int | None = None
     refine_method: str | None = None
     refine_nfev: int | None = None
     refine_elapsed: float | None = None
@@ -92,9 +92,9 @@ class SSBResult(Mapping[str, float]):
     phase_estimator: str = "complex_wave"
     amplitude_estimated: bool = True
     source_path: str | None = None
-    bf_center: tuple[float, float] | None = None
-    bf_radius: float | None = None
-    detected_bf_radius: float | None = None
+    bright_field_center_px: tuple[float, float] | None = None
+    bright_field_radius_px: float | None = None
+    bright_field_edge_radius_px: float | None = None
     # Every evaluated search trial in order, ``{"trial", "number", "search", "stage", "params": {"C10_nm", "C12_nm",
     # "phi12_deg"}, "loss"}`` (a tilt fit adds the objective, band, tilt and depth spread); ``trials`` tabulates them.
     trial_records: list[dict] | None = None
@@ -139,8 +139,8 @@ class SSBResult(Mapping[str, float]):
             lines.append("  Amplitude      not estimated (unit-amplitude phase representation)")
         if self.loss is not None:
             lines.append(f"  Loss           {self.loss:.6f}")
-        if self.num_bf is not None:
-            lines.append(f"  BF pixels      {self.num_bf}")
+        if self.num_bright_field_pixels is not None:
+            lines.append(f"  BF pixels      {self.num_bright_field_pixels}")
         if self.n_trials is not None:
             lines.append(f"  Trials         {self.n_trials}")
         if self.initial_scan_detector_rotation_deg is not None:

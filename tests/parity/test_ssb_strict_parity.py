@@ -325,7 +325,7 @@ def test_mps_full_disk_matches_double_reference(fast_reports: list[dict]) -> Non
     for entry in _entries(fast_reports, "arina-128-full-disk"):
         floor = entry["float32_floor"]
         metrics = entry["mps"]
-        assert metrics["num_bf"] == DOCUMENTED_BF_COUNT
+        assert metrics["num_bright_field_pixels"] == DOCUMENTED_BF_COUNT
         _assert_gate("mps object", "object_relative_l2", metrics["object_relative_l2"], floor)
         _assert_gate(
             "mps object",
@@ -544,7 +544,7 @@ def test_full_512_mps_finding_stays_open() -> None:
         metrics = entry.get("mps")
         if metrics is None:
             pytest.fail("the recorded 512 report carries no MPS row to check F1 against")
-        assert metrics["num_bf"] == DOCUMENTED_BF_COUNT
+        assert metrics["num_bright_field_pixels"] == DOCUMENTED_BF_COUNT
         for metric, key in (
             ("object_relative_l2", "object_relative_l2"),
             ("object_max_abs_error_relative", "object_max_abs_error_relative"),

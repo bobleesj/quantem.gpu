@@ -1056,7 +1056,7 @@ class CustomFFT512(CustomFFTBase):
         sin2phi12: float,
         factor: float,
         dc_value: complex,
-        num_bf: int,
+        num_bright_field_pixels: int,
         gqk_cols: int,
     ) -> None:
         """Radix-8 row pass of both column-accumulate paths: correct G_qk for C10/C12 and IFFT each row into ``data``.
@@ -1071,7 +1071,7 @@ class CustomFFT512(CustomFFTBase):
         max_ang = max(float(ang_y_rad), float(ang_x_rad))
         inner = (float(semiangle_rad) - 0.5 * max_ang) / float(wavelength)
         inner2 = np.float32(inner * inner if inner > 0.0 else -1.0)
-        grid_rows = (1, N // 4, num_bf)
+        grid_rows = (1, N // 4, num_bright_field_pixels)
         self._rows_fused_pk_r8(
             grid_rows,
             (64, 4, 1),
@@ -1083,7 +1083,7 @@ class CustomFFT512(CustomFFTBase):
                 np.float32(cos2phi12), np.float32(sin2phi12),
                 np.float32(factor), phase_scale, inner2, pk, G_qk, data,
                 np.float32(dc_value.real), np.float32(dc_value.imag),
-                np.int32(num_bf), np.int32(gqk_cols),
+                np.int32(num_bright_field_pixels), np.int32(gqk_cols),
             ),
         )
 
@@ -1105,11 +1105,11 @@ class CustomFFT512(CustomFFTBase):
     ) -> None:
         """Row FFT + radix-8 column IFFT with phase sum/sumsq accumulation, one partial plane per ``k_bf`` = 32 BF."""
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bf + k_bf - 1) // k_bf
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
+        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N) or partial_sumsq.shape != (n_groups, N, N):
             raise ValueError(f"partial buffers must have shape ({n_groups}, {N}, {N})")
-        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
+        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
         grid_cols = (1, self._rows_var_grid_y, n_groups)
         self._rows_var_batch(
             grid_cols,
@@ -1118,7 +1118,7 @@ class CustomFFT512(CustomFFTBase):
                 data,
                 partial_sum,
                 partial_sumsq,
-                np.int32(num_bf),
+                np.int32(num_bright_field_pixels),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
                 np.int32(1),
@@ -1145,11 +1145,11 @@ class CustomFFT512(CustomFFTBase):
         The variance kernel also writes the squared sums, into a scratch buffer that is never read.
         """
         N = self._size
-        num_bf, gqk_cols = self._plane_counts(data, G_qk, pk)
-        n_groups = (num_bf + k_bf - 1) // k_bf
+        num_bright_field_pixels, gqk_cols = self._plane_counts(data, G_qk, pk)
+        n_groups = (num_bright_field_pixels + k_bf - 1) // k_bf
         if partial_sum.shape != (n_groups, N, N):
             raise ValueError(f"partial_sum must have shape ({n_groups}, {N}, {N})")
-        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bf, gqk_cols)
+        self._rows_radix8(data, G_qk, cache, pk, C10, C12, cos2phi12, sin2phi12, factor, dc_value, num_bright_field_pixels, gqk_cols)
         if self._phase_sum_dummy_sumsq is None or self._phase_sum_dummy_sumsq.shape != partial_sum.shape:
             self._phase_sum_dummy_sumsq = cp.empty_like(partial_sum)
         grid_cols = (1, self._rows_var_grid_y, n_groups)
@@ -1160,7 +1160,7 @@ class CustomFFT512(CustomFFTBase):
                 data,
                 partial_sum,
                 self._phase_sum_dummy_sumsq[:n_groups],
-                np.int32(num_bf),
+                np.int32(num_bright_field_pixels),
                 np.int32(1),
                 np.float32(1.0 / (N * N)),
                 np.int32(1),

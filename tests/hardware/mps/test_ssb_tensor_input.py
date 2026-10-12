@@ -29,7 +29,7 @@ def test_mps_tensor_matches_existing_array_input_without_download(dtype, monkeyp
         counts /= 1024  # Preserve sub-unit simulated intensities.
     tensor = torch.from_numpy(counts).to("mps")
     settings = dict(backend="mps", voltage_kV=300, semiangle_mrad=30,
-                    scan_sampling_A=.99, det_sampling=6., bf_radius=4., bf_center=(5.5, 5.5))
+                    scan_sampling_A=.99, det_sampling=6., bright_field_radius_px=4., bright_field_center_px=(5.5, 5.5))
     coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
     original_cpu = torch.Tensor.cpu
 

@@ -109,7 +109,7 @@ def run(arguments, stages) -> None:
 
     def prepared(data):
         ssb = session(data)
-        ssb.num_bf  # first read prepares the backend: bright-field crop, spectra and G
+        ssb.num_bright_field_pixels  # first read prepares the backend: bright-field crop, spectra and G
         return ssb
 
     for master in arguments.masters:
@@ -120,7 +120,7 @@ def run(arguments, stages) -> None:
             for _ in range(arguments.repeats):
                 ssb, seconds = timed(lambda: prepared(data))
                 times.append(seconds)
-                hashes.append(f"num_bf {ssb.num_bf}, det_sampling {ssb.det_sampling!r}")
+                hashes.append(f"num_bf {ssb.num_bright_field_pixels}, det_sampling {ssb.det_sampling!r}")
                 ssb.close()
             report("session", times, hashes)
         if "reconstruct" in stages:
@@ -160,7 +160,7 @@ def run(arguments, stages) -> None:
             times, hashes = [], []
             for _ in range(arguments.repeats):
                 result, seconds = timed(lambda: parallax.run(
-                    data, sampling_radius=20, upsampling_factor=2, fit_aberrations=True,
+                    data, bright_field_radius_px=20, upsampling_factor=2, fit_aberrations=True,
                     scan_sampling_A=arguments.scan_sampling_A, semiangle_mrad=arguments.semiangle_mrad))
                 times.append(seconds)
                 hashes.append(f"image {digest(result.image)} density {digest(result.density)} "

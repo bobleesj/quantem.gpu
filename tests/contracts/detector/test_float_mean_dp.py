@@ -36,8 +36,8 @@ def test_float_mean_dp_matches_scaled_counts():
 def test_float_bright_field_mask_matches_counts():
     counts = _bright_disk_counts()
     intensities = (counts / SCALE).astype(np.float32)
-    counts_disk = resolve_bf_selection(counts, threshold=0.5, bf_radius=None)
-    float_disk = resolve_bf_selection(intensities, threshold=0.5, bf_radius=None)
+    counts_disk = resolve_bf_selection(counts, threshold=0.5, bright_field_radius_px=None)
+    float_disk = resolve_bf_selection(intensities, threshold=0.5, bright_field_radius_px=None)
     assert float_disk.size > 0
     np.testing.assert_array_equal(float_disk.rows, counts_disk.rows)
     np.testing.assert_array_equal(float_disk.cols, counts_disk.cols)
@@ -75,8 +75,8 @@ def test_reuse_fitted_disk_for_bright_and_dark_field(monkeypatch):
     monkeypatch.setattr(detector.workflow, "mean", already_computed)
     rows, columns = np.indices(mean_dp.shape)
     distance = np.hypot(rows - center[0], columns - center[1])
-    bright = detector.bf(data, center=center, radius=radius)
-    dark = detector.df(data, center=center, radius=radius)
+    bright = detector.bf(data, bright_field_center_px=center, bright_field_radius_px=radius)
+    dark = detector.df(data, bright_field_center_px=center, bright_field_edge_radius_px=radius)
     np.testing.assert_array_equal(
         bright, data[..., distance <= radius].sum(axis=-1, dtype=np.uint64)
     )
@@ -101,7 +101,7 @@ def test_automatic_disk_follows_array_edits_and_detector_crops():
     assert crop_center == (center[0] - 8, center[1] - 3)
     np.testing.assert_array_equal(
         detector.bf(crop),
-        detector.bf(crop, center=crop_center, radius=crop_radius),
+        detector.bf(crop, bright_field_center_px=crop_center, bright_field_radius_px=crop_radius),
     )
 
 

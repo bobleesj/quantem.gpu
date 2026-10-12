@@ -114,12 +114,12 @@ def _fourier_shift_image(image: np.ndarray, shift_row: float, shift_col: float) 
     return np.fft.ifft2(np.fft.fft2(image) * phase).real.astype(np.float32)
 
 
-def _make_circular_bf_mask(size_row: int, size_col: int, bf_radius: int) -> np.ndarray:
+def _make_circular_bf_mask(size_row: int, size_col: int, bright_field_radius_px: int) -> np.ndarray:
     center_row, center_col = size_row // 2, size_col // 2
     rows = np.fft.ifftshift(np.arange(size_row) - center_row)
     cols = np.fft.ifftshift(np.arange(size_col) - center_col)
     grid_row, grid_col = np.meshgrid(rows, cols, indexing="ij")
-    return grid_row**2 + grid_col**2 <= bf_radius**2
+    return grid_row**2 + grid_col**2 <= bright_field_radius_px**2
 
 
 @pytest.mark.parametrize(

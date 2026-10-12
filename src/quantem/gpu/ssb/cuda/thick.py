@@ -68,7 +68,7 @@ class ThickSample:
             )
         average_wave = phase_estimator == "phase_of_mean"
         cache = engine._cache
-        num_bf, ny, nx = engine._bf_grid()
+        num_bright_field_pixels, ny, nx = engine._bf_grid()
         native_ny, native_nx = ny, nx
         if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
             raise ValueError("upsampling_factor must be 1, 2, 3, 4, or 8.")
@@ -94,8 +94,8 @@ class ThickSample:
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
         phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
         params = self._kernel_scalars(C10, C12, phi12, tilt_mrad, thickness)
-        for start in range(0, num_bf, chunk):
-            stop = min(num_bf, start + chunk)
+        for start in range(0, num_bright_field_pixels, chunk):
+            stop = min(num_bright_field_pixels, start + chunk)
             if half:
                 source = engine.G_qk[start:stop]
                 full = cp.empty((stop - start, native_ny, native_nx), dtype=cp.complex64)
@@ -114,10 +114,10 @@ class ThickSample:
             if compute_loss:
                 phase_sumsq += (angles * angles).sum(axis=0)
             del full, corrected, angles
-        mean_phase = phase_sum / float(num_bf)
+        mean_phase = phase_sum / float(num_bright_field_pixels)
         if not compute_loss:
             return mean_phase, None
-        loss = float(cp.mean(phase_sumsq / float(num_bf) - mean_phase * mean_phase))
+        loss = float(cp.mean(phase_sumsq / float(num_bright_field_pixels) - mean_phase * mean_phase))
         return mean_phase, loss
 
     def _reconstruct_wave(
@@ -136,10 +136,10 @@ class ThickSample:
         """Accumulate float32 corrections in float64 before a single inverse FFT."""
         engine = self.engine
         cache = engine._cache
-        num_bf = int(cache["num_bf"])
+        num_bright_field_pixels = int(cache["num_bright_field_pixels"])
         rows, cols = qrow.size, qcol.size
         group_size = 32
-        groups = max(1, min(16, math.ceil(num_bf / group_size),
+        groups = max(1, min(16, math.ceil(num_bright_field_pixels / group_size),
                             chunk_bytes // (rows * cols * 16)))
         shape = (groups, rows, cols)
         if self._wave_sum_buffer is None or self._wave_sum_buffer.shape != shape:
@@ -147,19 +147,19 @@ class ThickSample:
         partial = self._wave_sum_buffer
         spectrum = cp.zeros((rows, cols), dtype=cp.complex128)
         params = self._kernel_scalars(C10, C12, phi12, tilt_mrad, thickness)
-        for start in range(0, num_bf, group_size * groups):
-            active = min(groups, math.ceil((num_bf - start) / group_size))
+        for start in range(0, num_bright_field_pixels, group_size * groups):
+            active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
             thick_wave_sum_kernel(
                 (math.ceil(rows * cols / 128), active), (128,),
                 (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial,
-                 np.int32(num_bf), np.int32(cache["ny"]), np.int32(cache["nx"]),
+                 np.int32(num_bright_field_pixels), np.int32(cache["ny"]), np.int32(cache["nx"]),
                  np.int32(engine.G_qk.shape[-1]), np.int32(rows), np.int32(cols),
                  np.int32(start), np.int32(group_size), np.complex64(engine._dc_value_host),
                  *params),
             )
             spectrum += partial[:active].sum(axis=0, dtype=cp.complex128)
         # the BF sum and the inverse FFT run in complex128; the phase is returned float32 like every other path
-        phase = cp.angle(cp.fft.ifft2(spectrum / num_bf)).astype(cp.float32)
+        phase = cp.angle(cp.fft.ifft2(spectrum / num_bright_field_pixels)).astype(cp.float32)
         loss = None
         if compute_loss:
             _, loss = self.reconstruct(
@@ -192,7 +192,7 @@ class ThickSample:
         """
         engine = self.engine
         cache = engine._cache
-        num_bf, ny, nx = engine._bf_grid()
+        num_bright_field_pixels, ny, nx = engine._bf_grid()
         half = engine.gqk_is_half_plane()
         cols = nx // 2 + 1 if half else nx
         key = (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1]))
@@ -215,9 +215,9 @@ class ThickSample:
         numerator = cp.zeros((n_band,), dtype=cp.complex64)
         denominator = cp.zeros((n_band,), dtype=cp.float32)
         params = self._kernel_scalars(C10, C12, phi12, tilt_mrad, thickness)
-        g_flat = engine.G_qk.reshape(num_bf, -1)
-        for start in range(0, num_bf, chunk):
-            stop = min(num_bf, start + chunk)
+        g_flat = engine.G_qk.reshape(num_bright_field_pixels, -1)
+        for start in range(0, num_bright_field_pixels, chunk):
+            stop = min(num_bright_field_pixels, start + chunk)
             gathered = g_flat[start:stop][:, flat]                      # (chunk, n_band): only the band's q, half-plane
             kx = cache["kx_bf"][start:stop].reshape(-1, 1)
             ky = cache["ky_bf"][start:stop].reshape(-1, 1)
@@ -237,7 +237,7 @@ class ThickSample:
         engine = self.engine
         params = np.atleast_2d(np.asarray(params, dtype=np.float64))
         cache = engine._cache
-        num_bf, ny, nx = engine._bf_grid()
+        num_bright_field_pixels, ny, nx = engine._bf_grid()
         cols = nx // 2 + 1 if engine.gqk_is_half_plane() else nx
         if self._band_key != (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1])):
             self.fit(0.0, 0.0, 0.0, (0.0, 0.0), 0.0, band_inv_A)      # builds the band index for this band
@@ -248,7 +248,7 @@ class ThickSample:
         blocks = (n_band + threads - 1) // threads
         # enough blocks to fill the GPU: split the pixel loop so blocks x k_blocks is a few thousand
         k_chunk = 256
-        k_blocks = (num_bf + k_chunk - 1) // k_chunk
+        k_blocks = (num_bright_field_pixels + k_chunk - 1) // k_chunk
         for start in range(0, len(params), THICK_FIT_MAX_BATCH):
             rows = params[start:start + THICK_FIT_MAX_BATCH]
             batch = len(rows)
@@ -263,7 +263,7 @@ class ThickSample:
                 (blocks, k_blocks), (threads,),
                 (engine.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], cp.asarray(trial.ravel()),
                  partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32), numerator, denominator,
-                 np.int32(num_bf), np.int64(engine.G_qk.shape[1] * engine.G_qk.shape[2]), np.int32(n_band), np.int32(batch),
+                 np.int32(num_bright_field_pixels), np.int64(engine.G_qk.shape[1] * engine.G_qk.shape[2]), np.int32(n_band), np.int32(batch),
                  np.float32(engine.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
                  np.float32(cache["ang_x_rad"]), np.float32(engine._factor), np.int32(k_chunk)),
             )

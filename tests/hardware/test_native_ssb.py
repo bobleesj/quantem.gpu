@@ -69,7 +69,7 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
     settings = dict(
         backend=backend, voltage_kV=300, semiangle_mrad=30,
         scan_sampling_A=0.99, det_sampling=6.0,
-        bf_radius=4.0, bf_center=(11.5, 11.5),
+        bright_field_radius_px=4.0, bright_field_center_px=(11.5, 11.5),
     )
     with io.load(path, backend=backend, verbose=False) as data:
         with SSB(data, **settings) as native, SSB(counts, **settings) as dense:
@@ -78,6 +78,12 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
             np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-5)
             assert actual_loss == pytest.approx(expected_loss, abs=1e-7, rel=1e-5)
             assert native._data.shape[-2:] == (12, 12)
+            # the centre counts from the first pixel of the full detector, also in the session that decoded only its
+            # crop; that session used to report the centre inside the crop
+            assert native.bright_field_center_px == dense.bright_field_center_px == (11.5, 11.5)
+            cropped_result = native.reconstruct(aberrations=ABERRATIONS, phase_estimator="complex_wave")
+            dense_result = dense.reconstruct(aberrations=ABERRATIONS, phase_estimator="complex_wave")
+            assert cropped_result.bright_field_center_px == dense_result.bright_field_center_px == (11.5, 11.5)
         np.testing.assert_array_equal(data[0, 0].cpu().numpy(), counts[0, 0])
 
 
@@ -111,7 +117,7 @@ def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(t
                 np.testing.assert_array_equal(phase, expected)
                 assert loss == expected_loss
                 result = automatic.reconstruct(aberrations=ABERRATIONS, phase_estimator="complex_wave")
-                assert result.detected_bf_radius == pytest.approx(radius, rel=1e-12)
+                assert result.bright_field_edge_radius_px == pytest.approx(radius, rel=1e-12)
 
 
 def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(tmp_path, backend):
@@ -132,7 +138,7 @@ def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(t
 def test_open_releases_the_acquisition_it_loads_and_its_crop_on_close(tmp_path, backend, opened):
     master = _arina_master(tmp_path / "scan_master.h5", _counts(4))
     with SSB.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
-                  scan_sampling_A=0.99, det_sampling=6.0, bf_radius=4) as session:
+                  scan_sampling_A=0.99, det_sampling=6.0, bright_field_radius_px=4) as session:
         assert opened[0].data.is_released
         session.preview(ABERRATIONS)
         crop = weakref.ref(session._data)

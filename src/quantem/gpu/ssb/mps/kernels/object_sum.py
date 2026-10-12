@@ -15,7 +15,7 @@ from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB, pk_from_prepared
 
 @lru_cache(maxsize=16)
 def _object_fourier_sum_dynamic_kernel(
-    num_bf: int,
+    num_bright_field_pixels: int,
     logical_num_bf: int,
     chunk_bf: int,
     ny: int,
@@ -24,10 +24,10 @@ def _object_fourier_sum_dynamic_kernel(
     sparse_storage: bool,
 ):
     mx = require_mlx()
-    groups = (int(num_bf) + int(chunk_bf) - 1) // int(chunk_bf)
+    groups = (int(num_bright_field_pixels) + int(chunk_bf) - 1) // int(chunk_bf)
     source = f"""
         uint elem = thread_position_in_grid.x;
-        constexpr uint NUM_BF = {int(num_bf)};
+        constexpr uint NUM_BF = {int(num_bright_field_pixels)};
         constexpr uint LOGICAL_NUM_BF = {int(logical_num_bf)};
         constexpr uint CHUNK = {int(chunk_bf)};
         constexpr uint GROUPS = {int(groups)};
@@ -182,7 +182,7 @@ def _object_fourier_sum_dynamic_kernel(
     """
     return mx.fast.metal_kernel(
         name=(
-            f"ssb_object_fourier_sum_dyn_fast_sincos_b{int(chunk_bf)}_n{int(num_bf)}_"
+            f"ssb_object_fourier_sum_dyn_fast_sincos_b{int(chunk_bf)}_n{int(num_bright_field_pixels)}_"
             f"logical{int(logical_num_bf)}_"
             f"sparse{int(bool(sparse_storage))}_"
             f"{int(ny)}_{int(nx)}_g{int(gqk_cols)}"
@@ -216,7 +216,7 @@ def object_fourier_sum_dynamic(
     groups = (kernel_num_bf + chunk_bf - 1) // chunk_bf
     kernel = _object_fourier_sum_dynamic_kernel(
         kernel_num_bf,
-        int(prepared.num_bf),
+        int(prepared.num_bright_field_pixels),
         chunk_bf,
         int(ny),
         int(nx),
@@ -241,7 +241,7 @@ def object_fourier_sum_dynamic(
     )
     pk = pk_from_prepared(prepared, C10=C10, C12=C12, phi12=phi12)
     if sparse_storage:
-        storage_map_np = np.full(prepared.num_bf, -1, dtype=np.int32)
+        storage_map_np = np.full(prepared.num_bright_field_pixels, -1, dtype=np.int32)
         storage_map_np[prepared.bf_storage_indices_np] = np.arange(
             int(prepared.g_qk.shape[0]), dtype=np.int32
         )
@@ -265,7 +265,7 @@ def object_fourier_sum_dynamic(
         output_shapes=[(groups, int(ny), int(nx))],
         output_dtypes=[mx.complex64],
     )[0]
-    fourier_sum = mx.sum(partial, axis=0) / prepared.num_bf
+    fourier_sum = mx.sum(partial, axis=0) / prepared.num_bright_field_pixels
     object_wave = mx.fft.ifft2(fourier_sum)
     mx.eval(object_wave)
     return object_wave
@@ -280,10 +280,10 @@ def _object_redraw_storage_topology(
     compact_active = (
         storage_indices is not None
         and stored_num_bf == int(storage_indices.size)
-        and stored_num_bf < int(prepared.num_bf)
+        and stored_num_bf < int(prepared.num_bright_field_pixels)
     )
     if compact_active:
         return stored_num_bf, False
     if storage_indices is not None:
-        return int(prepared.num_bf), True
+        return int(prepared.num_bright_field_pixels), True
     return stored_num_bf, False

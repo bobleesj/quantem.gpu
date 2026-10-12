@@ -221,20 +221,20 @@ def reconstruct_prepared(
 
     object_wave = None
     if compute_object:
-        object_wave_mx = accumulator / prepared.num_bf
+        object_wave_mx = accumulator / prepared.num_bright_field_pixels
         mx.eval(object_wave_mx)
         object_wave = np.asarray(object_wave_mx).astype(np.complex64, copy=False)
-    mean_phase_mx = phase_sum / prepared.num_bf
+    mean_phase_mx = phase_sum / prepared.num_bright_field_pixels
     loss = None
     if compute_loss:
         if use_scalar_loss:
             mean_sq = mx.mean(mean_phase_mx * mean_phase_mx)
             norm = float(
-                prepared.num_bf * prepared.scan_shape[0] * prepared.scan_shape[1]
+                prepared.num_bright_field_pixels * prepared.scan_shape[0] * prepared.scan_shape[1]
             )
             loss = float(np.asarray(phase_sumsq / norm - mean_sq))
         else:
-            var_per_pixel = phase_sumsq / prepared.num_bf - mean_phase_mx * mean_phase_mx
+            var_per_pixel = phase_sumsq / prepared.num_bright_field_pixels - mean_phase_mx * mean_phase_mx
             loss = float(np.asarray(mx.mean(var_per_pixel)))
     mean_phase = None
     if return_phase:

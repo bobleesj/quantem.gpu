@@ -16,7 +16,8 @@ import numpy as np
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
-# 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed.
+# 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed; the
+#    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before).
 _CACHE_VERSION = 4
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
@@ -46,8 +47,8 @@ class ScreeningResult:
     dpc_phase: np.ndarray
     com_row: np.ndarray
     com_col: np.ndarray
-    probe_center: tuple[float, float]
-    probe_radius: float
+    bright_field_center_px: tuple[float, float]
+    bright_field_edge_radius_px: float
     scan_detector_rotation_mod180_deg: float
     detector_transposed: bool
     metadata: dict[str, object]
@@ -113,13 +114,13 @@ def prepare(
     -------
     ScreeningResult
         Scan-shaped ``(row, col)`` images, the detector-shaped mean pattern,
-        the probe disk ``(row, col)`` centre and radius in detector pixels,
+        the bright-field disk ``(row, col)`` centre and edge radius in detector pixels,
         and provenance in ``metadata``.
 
     Examples
     --------
     >>> products = screening.prepare("scan_master.h5")
-    >>> products.bright_field.shape, products.probe_radius
+    >>> products.bright_field.shape, products.bright_field_edge_radius_px
     """
     master_path = Path(source).expanduser()
     if not master_path.exists():
@@ -237,8 +238,8 @@ def _build_products(
         "dtype": working_dtype,
         "hot_pixel_correction": "zero",
         "rotation_steps": int(rotation_steps),
-        "center": [float(center[0]), float(center[1])],
-        "radius_px": float(radius),
+        "bright_field_center_px": [float(center[0]), float(center[1])],
+        "bright_field_edge_radius_px": float(radius),
         "scan_detector_rotation_mod180_deg": float(rotation_mod180_deg),
         "detector_transposed": bool(transposed),
         "backend": backend,
@@ -257,8 +258,8 @@ def _build_products(
         dpc_phase=phase,
         com_row=com_row,
         com_col=com_col,
-        probe_center=(float(center[0]), float(center[1])),
-        probe_radius=float(radius),
+        bright_field_center_px=(float(center[0]), float(center[1])),
+        bright_field_edge_radius_px=float(radius),
         scan_detector_rotation_mod180_deg=float(rotation_mod180_deg),
         detector_transposed=bool(transposed),
         metadata={
@@ -542,8 +543,8 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             dpc_phase=np.asarray(data["dpc_phase"], dtype=np.float32),
             com_row=np.asarray(data["com_row"], dtype=np.float32),
             com_col=np.asarray(data["com_col"], dtype=np.float32),
-            probe_center=tuple(float(value) for value in parameters["center"]),
-            probe_radius=float(parameters["radius_px"]),
+            bright_field_center_px=tuple(float(value) for value in parameters["bright_field_center_px"]),
+            bright_field_edge_radius_px=float(parameters["bright_field_edge_radius_px"]),
             scan_detector_rotation_mod180_deg=float(parameters["scan_detector_rotation_mod180_deg"]),
             detector_transposed=bool(parameters["detector_transposed"]),
             metadata=metadata,

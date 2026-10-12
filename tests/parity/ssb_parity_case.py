@@ -95,8 +95,8 @@ class SSBParityCase:
     name: str
     description: str
     scan_region: tuple[int, int, int, int]
-    bf_center: tuple[float, float] = DOCUMENTED_CENTER
-    bf_radius: float = DOCUMENTED_RADIUS
+    bright_field_center_px: tuple[float, float] = DOCUMENTED_CENTER
+    bright_field_radius_px: float = DOCUMENTED_RADIUS
     det_sampling_mrad: float = DOCUMENTED_DET_SAMPLING_MRAD
     voltage_kV: float = 300.0
     semiangle_mrad: float = 30.0
@@ -151,8 +151,8 @@ class SSBParityCase:
 
         rows, cols = brightfield_disk(
             self.detector_shape_hint,
-            self.bf_center,
-            self.bf_radius,
+            self.bright_field_center_px,
+            self.bright_field_radius_px,
         )
         dead = detector_dead_pixels(self.source)
         if dead.size == 0:
@@ -193,7 +193,7 @@ CASES: dict[str, SSBParityCase] = {
             "kernel."
         ),
         scan_region=(0, 128, 0, 128),
-        bf_radius=24.0,
+        bright_field_radius_px=24.0,
     ),
     "arina-128-recorded-c10": SSBParityCase(
         name="arina-128-recorded-c10",
@@ -253,10 +253,10 @@ def _declaration(case: SSBParityCase) -> dict[str, object]:
     rows, cols = case.bf_rows_cols
     side = case.scan_side
     return {
-        "bf_rows": [int(value) for value in rows],
-        "bf_cols": [int(value) for value in cols],
-        "bf_center": [float(case.bf_center[0]), float(case.bf_center[1])],
-        "bf_radius_px": float(case.bf_radius),
+        "bright_field_rows": [int(value) for value in rows],
+        "bright_field_cols": [int(value) for value in cols],
+        "bright_field_center_px": [float(case.bright_field_center_px[0]), float(case.bright_field_center_px[1])],
+        "bright_field_radius_px": float(case.bright_field_radius_px),
         "detector_shape": [192, 192],
         "scan_region": {"shape": [side, side]},
         "bf_column_companion_path": "bf_columns.u16",
@@ -406,8 +406,8 @@ def export_case(
         "scan_region": list(case.scan_region),
         "scan_shape": [side, side],
         "detector_shape": [192, 192],
-        "bf_center": list(case.bf_center),
-        "bf_radius_px": float(case.bf_radius),
+        "bright_field_center_px": list(case.bright_field_center_px),
+        "bright_field_radius_px": float(case.bright_field_radius_px),
         "bf_count": int(rows.size),
         "documented_bf_count": DOCUMENTED_BF_COUNT,
         "voltage_kV": case.voltage_kV,
@@ -419,8 +419,8 @@ def export_case(
         "counts_max": int(counts.max()),
         "counts_sum": int(np.asarray(counts, dtype=np.int64).sum()),
         "counts_column_sums_exact": [int(value) for value in column_sums],
-        "brightfield_center": list(case.bf_center),
-        "brightfield_radius_px": float(case.bf_radius),
+        "brightfield_center": list(case.bright_field_center_px),
+        "brightfield_radius_px": float(case.bright_field_radius_px),
         "brightfield_policy": "documented_full_disk_minus_hardware_dead_pixels",
     }
     scientific.update(shared_geometry(case, source))
@@ -572,7 +572,7 @@ def _reciprocal_geometry(
     """
 
     rows, cols = case.bf_rows_cols
-    center = case.bf_center
+    center = case.bright_field_center_px
     wavelength = electron_wavelength_angstrom(case.voltage_kV)
     det_rad = case.det_sampling_mrad * 1e-3
     kx = (rows.astype(np.float64) - center[0]) * det_rad / wavelength

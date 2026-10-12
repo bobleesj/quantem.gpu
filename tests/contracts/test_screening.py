@@ -6,8 +6,8 @@ def _result(master, workflow):
         "schema": workflow._CACHE_SCHEMA,
         "source": workflow._source_fingerprint(master),
         "parameters": {
-            "center": [3.5, 4.5],
-            "radius_px": 2.0,
+            "bright_field_center_px": [3.5, 4.5],
+            "bright_field_edge_radius_px": 2.0,
             "scan_detector_rotation_mod180_deg": 17.0,
             "detector_transposed": False,
         },
@@ -21,8 +21,8 @@ def _result(master, workflow):
         dpc_phase=zeros.copy(),
         com_row=zeros.copy(),
         com_col=zeros.copy(),
-        probe_center=(3.5, 4.5),
-        probe_radius=2.0,
+        bright_field_center_px=(3.5, 4.5),
+        bright_field_edge_radius_px=2.0,
         scan_detector_rotation_mod180_deg=17.0,
         detector_transposed=False,
         metadata=metadata,
@@ -53,8 +53,8 @@ def test_screening_cache_roundtrip(monkeypatch, tmp_path) -> None:
     assert actual is not None
     assert actual.from_cache is True
     assert actual.cache_path == cache_path
-    assert actual.probe_center == (3.5, 4.5)
-    assert actual.probe_radius == 2.0
+    assert actual.bright_field_center_px == (3.5, 4.5)
+    assert actual.bright_field_edge_radius_px == 2.0
     np.testing.assert_array_equal(actual.mean_dp, expected.mean_dp)
     np.testing.assert_array_equal(actual.bright_field, expected.bright_field)
     np.testing.assert_array_equal(actual.dark_field, expected.dark_field)
