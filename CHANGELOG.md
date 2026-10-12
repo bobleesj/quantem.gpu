@@ -123,10 +123,12 @@ new `rcN` heading when that rc is published to TestPyPI.
   phi12Rad)`; options `upsample`, `bfCount`, `rotationDeg` become
   `upsamplingFactor`, `numBrightFieldPixels`, `scanDetectorRotationDeg`;
   `higherOrder` keys `<name>_mag` and `<name>_angle` become `<name>_A` and
-  `phi<nm>_deg`; sample options `tiltRowMrad`, `tiltColMrad`, `thickness`
-  become `sampleTiltMrad` (`[row, col]`) and `depthSpreadA`. The result's
-  `rotationDeg` and `bfCount` become `scanDetectorRotationDeg` and
-  `numBrightFieldPixels`.
+  `phi<nm>_deg`, and the two terms without an azimuth, `C30` and `C50`,
+  become `C30_A` and `C50_A`; a key outside that set throws with the list of
+  accepted keys (it read as 0). Sample options `tiltRowMrad`, `tiltColMrad`,
+  `thickness` become `sampleTiltMrad` (`[row, col]`, no tilt when omitted)
+  and `depthSpreadA`. The result's `rotationDeg` and `bfCount` become
+  `scanDetectorRotationDeg` and `numBrightFieldPixels`.
 - The remote server's HTTP parameters name their axis and unit (protocol
   version 2): `sx`, `sy` become `scan_row`, `scan_col`; `cx`, `cy` become
   `center_col_px`, `center_row_px`; `column_start`, `column_stop` become
