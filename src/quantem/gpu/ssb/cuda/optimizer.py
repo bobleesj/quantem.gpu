@@ -32,7 +32,7 @@ def batch_optimize(
     engine : SSBEngine
         The rotation-cached engine whose phase-variance loss is minimised.
     aberrations : dict
-        Parameter specs: key -> (low, high) tuple or fixed float. Keys: "C10_nm", "C12_nm", "phi12_deg".
+        Parameter specs: key -> (low, high) tuple or fixed float. Keys: "C10_A", "C12_A" (Angstrom), "phi12_deg".
     aberration_defaults : dict
         Current aberration values {C10, C12, phi12} for parameters ``aberrations`` leaves out.
     num_trials : int
@@ -73,8 +73,8 @@ def batch_optimize(
         c12_arr = np.empty(current_batch, dtype=np.float32)
         phi12_arr = np.empty(current_batch, dtype=np.float32)
         for i, trial in enumerate(trials):
-            c10_arr[i] = _suggest(trial, "C10_nm", aberrations.get("C10_nm", aberration_defaults.get("C10", 0.0)))
-            c12_arr[i] = _suggest(trial, "C12_nm", aberrations.get("C12_nm", aberration_defaults.get("C12", 0.0)))
+            c10_arr[i] = _suggest(trial, "C10_A", aberrations.get("C10_A", aberration_defaults.get("C10", 0.0)))
+            c12_arr[i] = _suggest(trial, "C12_A", aberrations.get("C12_A", aberration_defaults.get("C12", 0.0)))
             phi12_deg = _suggest(trial, "phi12_deg", aberrations.get("phi12_deg", math.degrees(aberration_defaults.get("phi12", 0.0))))
             phi12_arr[i] = math.radians(phi12_deg)
         host_losses = [_loss(engine, point) for point in zip(c10_arr, c12_arr, phi12_arr, strict=True)]
@@ -82,7 +82,7 @@ def batch_optimize(
             study.tell(trial, float(host_losses[i]))
             trial_history.append({
                 "number": trial.number,
-                "params": {"C10_nm": float(c10_arr[i]), "C12_nm": float(c12_arr[i]),
+                "params": {"C10_A": float(c10_arr[i]), "C12_A": float(c12_arr[i]),
                            "phi12_deg": math.degrees(float(phi12_arr[i]))},
                 "loss": float(host_losses[i]),
             })

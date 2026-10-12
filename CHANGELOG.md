@@ -48,6 +48,12 @@ new `rcN` heading when that rc is published to TestPyPI.
   `SSBResult[...]`, in `ParallaxResult.aberrations`, in the saved result and
   in the stored fit block, which no longer has `aberration_unit`. The earlier
   keys raise `ValueError`.
+- `find_aberrations(refine_lock=...)` names the public coefficients
+  (`C10_nm`, `C12_nm`, `phi12_deg`); it took the engines' `C10`, `C12`,
+  `phi12`. An unknown key in `search_ranges` or `refine_lock` raises. Inside
+  the engines the search ranges and trial parameters are `C10_A` and `C12_A`:
+  they held Angstrom under the names `C10_nm` and `C12_nm`. Seeded fits give
+  the same numbers.
 - `SSB.preview` takes higher orders as named keys of `aberrations`
   (`C21_nm` with `phi21_deg`, `C23_nm`, `C30_nm`, ... `C56_nm` with
   `phi56_deg`); the arrays `higher_order_magnitudes` and

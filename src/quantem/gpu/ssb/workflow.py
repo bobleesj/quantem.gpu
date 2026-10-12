@@ -53,6 +53,7 @@ from quantem.gpu.ssb.units import (
     aberrations_to_engine,
     higher_order_arrays,
     result_from_engine,
+    refine_lock_to_engine,
     search_ranges_to_engine,
     validate_aberrations,
 )
@@ -806,7 +807,7 @@ class SSB:
                 trials=int(trials),
                 refinement=refinement,
                 search_ranges=search_ranges_to_engine(search_ranges),
-                refine_lock=refine_lock,
+                refine_lock=refine_lock_to_engine(refine_lock),
                 seed=int(seed),
                 verbose=verbose,
             )

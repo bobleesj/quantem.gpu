@@ -78,21 +78,38 @@ def higher_order_arrays(aberrations: dict[str, float]) -> tuple[np.ndarray, np.n
     return magnitudes, angles
 
 
+ENGINE_KEYS = {"C10_nm": ("C10_A", ENGINE_PER_NM), "C12_nm": ("C12_A", ENGINE_PER_NM), "phi12_deg": ("phi12_deg", 1.0)}
+
+
 def search_ranges_to_engine(search_ranges: dict[str, object] | None) -> dict[str, object] | None:
     """Optuna search ranges in engine units: a ``(low, high)`` tuple (a list is read as one) or a fixed value per key.
 
-    The nm keys ``C10_nm`` and ``C12_nm`` are scaled into Angstrom; ``phi12_deg`` stays in degrees.
+    ``C10_nm`` and ``C12_nm`` become ``C10_A`` and ``C12_A`` in Angstrom; ``phi12_deg`` stays in degrees. Another key
+    raises: a range under a name the engines do not read would be dropped and the parameter searched over its default.
     """
     if search_ranges is None:
         return None
+    unknown = set(search_ranges) - set(ENGINE_KEYS)
+    if unknown:
+        raise ValueError(f"search_ranges keys are C10_nm, C12_nm and phi12_deg; got {sorted(unknown)}.")
     scaled = {}
     for key, value in search_ranges.items():
-        scale = ENGINE_PER_NM if key in ("C10_nm", "C12_nm") else 1.0
+        name, scale = ENGINE_KEYS[key]
         if isinstance(value, tuple | list):
-            scaled[key] = tuple(float(bound) * scale for bound in value)
+            scaled[name] = tuple(float(bound) * scale for bound in value)
         else:
-            scaled[key] = None if value is None else float(value) * scale
+            scaled[name] = None if value is None else float(value) * scale
     return scaled
+
+
+def refine_lock_to_engine(refine_lock: list[str] | None) -> list[str] | None:
+    """The engines' names (``C10``, ``C12``, ``phi12``) of the public coefficients a refinement keeps fixed."""
+    if refine_lock is None:
+        return None
+    unknown = set(refine_lock) - set(ENGINE_KEYS)
+    if unknown:
+        raise ValueError(f"refine_lock names C10_nm, C12_nm and phi12_deg; got {sorted(unknown)}.")
+    return [{"C10_nm": "C10", "C12_nm": "C12", "phi12_deg": "phi12"}[name] for name in refine_lock]
 
 
 def result_from_engine(result: SSBResult) -> SSBResult:
@@ -100,11 +117,10 @@ def result_from_engine(result: SSBResult) -> SSBResult:
     result.aberrations = aberrations_from_engine(result.aberrations)
     if result.trial_records:
         converted = []
+        public = {"C10_A": "C10_nm", "C12_A": "C12_nm"}
         for trial in result.trial_records:
-            params = dict(trial.get("params") or {})
-            for key in ("C10_nm", "C12_nm"):
-                if key in params:
-                    params[key] = float(params[key]) / ENGINE_PER_NM
+            params = {public.get(key, key): float(value) / ENGINE_PER_NM if key in public else value
+                      for key, value in (trial.get("params") or {}).items()}
             converted.append({**trial, "params": params})
         result.trial_records = converted
     return result

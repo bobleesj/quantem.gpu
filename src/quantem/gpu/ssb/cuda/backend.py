@@ -53,10 +53,10 @@ class CudaSSBBackend:
     bright-field pixel; a smaller ``bright_field_radius_px`` reduces it.
     """
 
-    # search ranges of optimize() when none are given (engine units despite the names)
+    # search ranges of optimize() when none are given, in engine units
     _DEFAULT_OPTIMIZE_RANGES: ClassVar[dict[str, tuple[int, int]]] = {
-        "C10_nm": (-400, 400),
-        "C12_nm": (0, 100),
+        "C10_A": (-400, 400),
+        "C12_A": (0, 100),
         "phi12_deg": (-90, 90),
     }
     backend = "cuda"
@@ -505,8 +505,8 @@ class CudaSSBBackend:
         Parameters
         ----------
         search_ranges : dict, optional
-            Search ranges per parameter, keys ``"C10_nm"``, ``"C12_nm"``, ``"phi12_deg"`` (engine Angstrom despite the
-            names): a ``(low, high)`` tuple to search, or a fixed float to lock the parameter. None searches C10
+            Search ranges per parameter, keys ``"C10_A"``, ``"C12_A"`` (Angstrom) and ``"phi12_deg"``: a
+            ``(low, high)`` tuple to search, or a fixed float to lock the parameter. None searches C10
             +-400, C12 0-100 and phi12 +-90 degrees.
         num_trials : int, default 200
             Number of Optuna trials; below 200 the exploration of the (C10, C12, phi12) loss landscape becomes
@@ -544,8 +544,8 @@ class CudaSSBBackend:
         self._best_loss = best_value
         # an optimized parameter takes its best value; a locked one keeps the value it was given
         for search_key, aberration_key, convert in [
-            ("C10_nm", "C10", None),
-            ("C12_nm", "C12", None),
+            ("C10_A", "C10", None),
+            ("C12_A", "C12", None),
             ("phi12_deg", "phi12", math.radians),
         ]:
             if search_key in best_params:
