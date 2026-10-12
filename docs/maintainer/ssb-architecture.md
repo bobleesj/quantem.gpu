@@ -16,14 +16,14 @@ with SSB.open(
     voltage_kV=300,
     semiangle_mrad=30,
     scan_sampling_A=(0.5, 0.5),
-    rotation_angle_deg=-8.2,
+    scan_detector_rotation_deg=351.8,
 ) as ssb:
     result = ssb.find_aberrations(save_to="results/ssb")
 ```
 
-The public units are fixed: kV, mrad, angstrom, nanometres for C10/C12,
-radians for phi12, degrees only for scan rotation, and `(row, col)` for all
-coordinates. Missing required data raises a deterministic error; adapters do
+The public units are fixed: kV, mrad, angstrom, nanometres for `C10_nm` and
+`C12_nm`, degrees for `phi12_deg` and the scan-detector rotation, and
+`(row, col)` for all coordinates. Missing required data raises a deterministic error; adapters do
 not probe loosely named attributes.
 
 `SSBResult` owns optimizer metadata and the final complex object wave, and
@@ -52,13 +52,13 @@ The same call does not return the same phase image on CUDA and MPS:
 
 - the default phase estimator is `phase_of_mean` on CUDA and `mean_phase` on
   MPS;
-- `reconstruct(..., upsample=...)` above 1 is CUDA only;
+- `reconstruct(..., upsampling_factor=...)` above 1 is CUDA only;
 - the bright-field disk is selected by the same rule with different rounding
   (CUDA device float32, MPS host float32), so edge pixels can differ; and
 - the Nelder-Mead tolerances and the loss reduction order differ.
 
 Each result records its backend, estimator and output factor
-(`result.phase_estimator`, `result.upsample`).
+(`result.phase_estimator`, `result.upsampling_factor`).
 
 ## Ownership boundaries
 

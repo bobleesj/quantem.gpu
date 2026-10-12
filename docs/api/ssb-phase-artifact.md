@@ -70,7 +70,8 @@ with `ssb.npy` beside it. The source stem retains the complete filename except
 its final extension. Different fits use numbered sibling folders (`-02`, `-03`);
 identical exports reuse the original. The application publisher places BF, DF,
 mean DP and CoM images in that same folder. This low-level exporter writes only
-the verified phase and metadata. Older arbitrary JSON/NumPy pairs remain readable.
+the verified phase and metadata. Pairs of another schema, including version-1
+`live.ssb` pairs, are refused by `read_result` with the schema it found.
 
 Swift `MetalSSBKernels.SSBPhaseArtifact.load` reads `.json` pairs of this
 schema and `savePair(to:)` writes them, with the same keys and checks as the
