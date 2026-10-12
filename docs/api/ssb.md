@@ -10,16 +10,20 @@ This page covers parameters, calibration, ownership, and backend limits.
 
 `SSB.open(path, ...)` loads a supported detector source. `SSB(data, ...)`
 accepts an existing `Dataset4dstemGPU` or supported array. Both require explicit
-`voltage_kV`, `semiangle_mrad`, and `scan_sampling_A`; read those values from
+`voltage_kV`, `semiangle_mrad`, and `scan_sampling_A` (a `(row, col)` pair); read those values from
 verified acquisition metadata or supply your microscope calibration.
-`rotation_angle_deg` defaults to zero. SSB does not call DPC automatically;
-provide a verified rotation or use a DPC estimate after checking
-`dpc_result.use_transpose`. `det_sampling` is detector angular sampling in
-mrad per pixel. When it is omitted, CUDA and MPS both use `semiangle_mrad`
+`scan_detector_rotation_deg` defaults to zero; it is the physical
+scan-to-detector rotation, kept in [0, 360). SSB does not call DPC automatically;
+provide a verified rotation or use a DPC estimate:
+`SSB(..., scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg, detector_transposed=dpc_result.detector_transposed)`.
+DPC knows the angle only modulo 180 degrees; `find_aberrations(check_rotation=True)`
+settles the 180-degree branch. SSB raises if `detector_transposed` is True.
+`detector_sampling_mrad` is detector angular sampling in
+mrad per pixel, `(row, col)`. When it is omitted, CUDA and MPS both use `semiangle_mrad`
 divided by the radius in detector pixels at which the bright-field disk of the
 full-detector mean pattern falls to half its plateau
 (`quantem.gpu.ssb.brightfield.disk_edge_radius`): the disk edge is the image of
-the aperture at the convergence semiangle. In `SSB(data, bf_center=..., bf_radius=...)`, disk geometry uses
+the aperture at the convergence semiangle. In `SSB(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
 the input detector grid. The session adjusts the center if it takes a
 bright-field crop.
 
@@ -46,10 +50,10 @@ bright-field geometry, timings, reuse state, and provenance metadata.
 
 - detector input: `I[scan_row, scan_column, detector_row, detector_column]`;
 - complex result: `object_wave[scan_row, scan_column]`, complex64, on the session's output grid;
-- `bf_center`: `(detector_row, detector_column)`;
-- `scan_sampling_A`: `(row, column)` when anisotropic, in Å;
-- `C10` and `C12`: nm; and
-- `phi12`: radians.
+- `bright_field_center_px`: `(detector_row, detector_column)`;
+- `scan_sampling_A` and `object_sampling_A`: `(row, col)` pairs, in Å;
+- `C10_nm` and `C12_nm`: nm; and
+- `phi12_deg`: degrees.
 
 For a dense CUDA input, native supported scan shapes are 128×128, 256×256,
 512×512 and 1024×1024. Other smaller scan shapes are padded with the mean
@@ -59,7 +63,7 @@ produces a 128×128 working grid before any requested upsampling. Check
 measured scan positions; the session prints one line naming the padded size.
 A scan larger than 1024 along either axis raises `ValueError` on CUDA: SSB
 never crops a scan, so select the intended square region before construction.
-Computational padding is separate from `reconstruct(..., upsample=2)`.
+Computational padding is separate from `reconstruct(..., upsampling_factor=2)`.
 
 The default fit evaluates 200 seeded TPE candidates with the exact full active
 bright-field phase-variance objective, chooses the minimum loss, and performs
@@ -80,7 +84,7 @@ ssb = SSB.open(
     "acquisition.qem",
     voltage_kV=300,  # kV
     semiangle_mrad=30,  # mrad
-    scan_sampling_A=0.264,  # Å per scan pixel
+    scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, col)
 )
 aberrations = ssb.find_aberrations(tilt=True, save_to="results/aberrations")
 aberrations.report()
@@ -101,8 +105,8 @@ recorded as `amplitude_estimated=False`. That amplitude is not a measured
 specimen transmission. Use explicit `phase_estimator="complex_wave"` for a
 native thin-sample complex-object reconstruction when amplitude is needed.
 
-`result.upsample` and `result.scan_sampling_A` record the output factor and
-pixel spacing. Input sampling stays in the saved signature. Changing the
+`result.upsampling_factor` and `result.object_sampling_A` record the output factor and
+`(row, col)` pixel spacing. Input sampling stays in the saved signature. Changing the
 estimator, sampling, or scientific parameters invalidates saved-result reuse.
 
 ### Inspect and replay search trials
@@ -112,20 +116,19 @@ ssb.show_trials(first=5)
 ssb.show_trials(last=5)
 ssb.show_trials(best=5)
 aberrations.trials  # DataFrame, indexed by stable trial ID
-aberrations["C10"]  # defocus, nm
-aberrations["C12"]  # twofold astigmatism, nm
-aberrations["phi12"]  # astigmatism angle, radians
-aberrations.tilt_mrad  # sample tilt (row, column), mrad; None if not fitted
+aberrations["C10_nm"]  # defocus, nm
+aberrations["C12_nm"]  # twofold astigmatism, nm
+aberrations["phi12_deg"]  # astigmatism angle, degrees
+aberrations.sample_tilt_mrad  # sample tilt (row, column), mrad; None if not fitted
 aberrations.depth_spread_nm  # model depth spread, nm; None if not fitted
 result.phase  # radians
-result.scan_sampling_A  # Å per output pixel
+result.object_sampling_A  # Å per output pixel, (row, column)
 ```
 
-Coefficients use dictionary indexing; units remain nm for C10/C12 and radians
-for phi12. `dict(aberrations)` makes a separate coefficient dictionary. Phase,
+Coefficients use dictionary indexing; each key carries its unit, nm for
+`C10_nm`/`C12_nm` and degrees for `phi12_deg`. `dict(aberrations)` makes a separate coefficient dictionary. Phase,
 tilt, rotation and trial history remain properties of the fitted result.
-The report table labels its angle column `phi12 (deg)`; it converts radians
-to degrees for display.
+The report table labels its angle column `phi12 (deg)`.
 
 Supply exactly one positive selector. Images share phase contrast and include
 scale bars and a parameter table. Trials are replayed from their recorded
@@ -138,7 +141,7 @@ from the search trials and its final result appears in `report()`.
 ```python
 attempts = ssb.reconstruct(aberrations, trials=aberrations.trials.tail(5).index)
 attempts.phase  # radians; axes (trial, row, column)
-adjusted = ssb.reconstruct(aberrations, aberrations={"C10": 12.5})  # nm
+adjusted = ssb.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ```
 
 Overrides preserve unspecified coefficients, tilt, depth spread and rotation.
@@ -151,7 +154,7 @@ rotation. Saved search results retain this history.
 Fit at native sampling, then reuse the fitted parameters for a finer preview:
 
 ```python
-result = ssb.reconstruct(aberrations, upsample="auto")
+result = ssb.reconstruct(aberrations, upsampling_factor="auto")
 ```
 
 `"auto"` selects the smallest supported factor (1, 2, 3, 4 or 8) whose output
@@ -169,8 +172,8 @@ MPS currently supports native output only.
 For an explicit sampling comparison:
 
 ```python
-result_2x = ssb.reconstruct(aberrations, upsample=2)
-result_4x = ssb.reconstruct(aberrations, upsample=4)
+result_2x = ssb.reconstruct(aberrations, upsampling_factor=2)
+result_4x = ssb.reconstruct(aberrations, upsampling_factor=4)
 ```
 
 Show both full fields with a marked, matching crop underneath:
@@ -185,7 +188,7 @@ Reconstruction carries those limits from the supplied aberration result, so its
 phase, rotation diagnostics and finer outputs use the same linear mapping. The
 results must cover the same physical field; this view does not align images.
 
-`find_aberrations()` has no `upsample` argument: the search stays at 1×.
+`find_aberrations()` has no `upsampling_factor` argument: the search stays at 1×.
 The {ref}`Gold comparison <gold-upsampling>` shows 1× and 4× outputs with shared
 contrast and a matched crop. That Gold result has visible bands at 4×;
 the example does not establish improved resolution.
@@ -197,7 +200,7 @@ aberrations = ssb.find_aberrations(
     scan_region=(128, 384, 128, 384),  # row start/stop, column start/stop; scan pixels
     tilt=True,
 )
-result = ssb.reconstruct(aberrations, upsample="auto")
+result = ssb.reconstruct(aberrations, upsampling_factor="auto")
 result.show()
 ```
 
@@ -380,7 +383,7 @@ optimizer should run:
 
 ```python
 result = ssb.reconstruct(
-    aberrations={"C10": 12.5, "C12": 3.0, "phi12": 0.25},
+    aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
     save_to="results/fixed-ssb",
 )
 ```
@@ -417,7 +420,7 @@ CUDA C10/C12 now defaults to phase after complex-wave averaging:
 ```python
 phase, native_loss = ssb.preview(
     dict(aberrations),
-    tilt_mrad=aberrations.tilt_mrad,
+    sample_tilt_mrad=aberrations.sample_tilt_mrad,
     depth_spread_nm=aberrations.depth_spread_nm,
     upsampling_factor=4,
     phase_estimator="phase_of_mean",
@@ -473,22 +476,22 @@ spread, in one search with the same trial budget as the standard fit:
 ```python
 import pandas as pd
 
-standard = ssb.find_aberrations()         # C10, C12, phi12
+standard = ssb.find_aberrations()         # C10_nm, C12_nm, phi12_deg
 tilted = ssb.find_aberrations(tilt=True)   # + specimen tilt and depth spread, jointly
 
-tilted.tilt_mrad          # (row, col) mrad, scan frame
+tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness
 tilted.tilt_fit_gain      # least-squares agreement relative to standard SSB (> 1: tilt explains more)
 pd.concat([standard.report(), tilted.report()])   # one row per fit
 ```
 
-After a tilt fit, `C10` is the defocus at mid-depth, so it can differ from the
+After a tilt fit, `C10_nm` is the defocus at mid-depth, so it can differ from the
 standard fit's. The search is joint on purpose: fitting the tilt after a
 standard fit leaves C10 behind and stalls (0.91-0.99 of the best agreement on
 two acquisitions, every seed). With 200 trials every seed reached the same tilt
 within 0.02 mrad; 300 and 400 trials gave the same answer.
 
-`preview(aberrations, tilt_mrad=(row, col), depth_spread_nm=d)` renders the
+`preview(aberrations, sample_tilt_mrad=(row, col), depth_spread_nm=d)` renders the
 thick-sample model for interactive viewers; with no depth spread the tilt has
 no effect. CUDA and MPS both implement it.
 
@@ -520,7 +523,7 @@ dark-field stacks, frame/dataset identifiers, source/results directories,
 backend request, optimizer settings, and per-acquisition records.
 
 A fit stored in `live/screen/<dataset>/config.json` is read only when its
-`computed.ssb` block carries `"schema": "quantem.ssb-fit/6"`
+`computed.ssb` block carries `"schema": "quantem.ssb-fit/7"`
 (`quantem.gpu.ssb.persistence.FIT_SCHEMA`), which `reconstruct_series` writes
 with every fit. A block with another schema or none is treated as absent: its
 aberrations, rotation and recorded settings are not read or converted, the

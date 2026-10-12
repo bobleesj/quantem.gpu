@@ -39,8 +39,8 @@ annular = detector.adf(data)
 dark = detector.df(data)
 
 # Override physical detector choices when needed.
-bright = detector.bf(data, radius=45)  # detector pixels
-annular = detector.adf(data, inner=60, outer=85, unit="px")
+bright = detector.bf(data, bright_field_radius_px=45)  # detector pixels
+annular = detector.adf(data, inner_radius_px=60, outer_radius_px=85)
 ```
 
 Detector radii use detector-space calibration. A value in pixels must not be
@@ -48,7 +48,8 @@ reported as mrad without calibration.
 
 The first BF/ADF/DF call fits the disk automatically and stores its geometry
 with the encoded acquisition. Subsequent calls reuse the fit. Explicit
-`center=(row, column)` and `radius` override only that call, without replacing
+`bright_field_center_px=(row, col)` and `bright_field_radius_px` (BF) or
+`bright_field_edge_radius_px` (ADF/DF) override only that call, without replacing
 the automatic fit. Reopening an acquisition gets a fresh fit. Array selections
 and mutable array inputs are fitted independently, so changes to measurements
 or detector coordinates cannot reuse an acquisition's old geometry.

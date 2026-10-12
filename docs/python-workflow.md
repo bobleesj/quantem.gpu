@@ -70,7 +70,7 @@ show_2d(
     norm=["power_sqrt", "power_sqrt", "minmax"], cmap="inferno", axsize=(3, 3),
     scalebar={"sampling": metadata["sampling"][0], "units": "Å"},
 )
-dpc_result.rotation_deg, dpc_result.use_transpose  # degrees; detector-axis swap flag
+dpc_result.scan_detector_rotation_mod180_deg, dpc_result.detector_transposed  # degrees, modulo 180; detector-axis swap flag
 ```
 
 ![Gold bright-field, annular dark-field and integrated DPC images before SSB](_static/gold-workflow-bf-adf-dpc.png)
@@ -81,10 +81,12 @@ finds the disk automatically. Integrated DPC comes from the measured
 center-of-mass shifts. Its displayed contrast is not calibrated in radians.
 Each panel uses independent contrast: square-root for BF/ADF and linear for DPC.
 
-DPC estimates the scan–detector rotation. This Gold acquisition reports
-`use_transpose=False`, so pass the angle directly to SSB. For other data, check
-that value first: a detector-axis swap must be resolved before reusing the
-angle alone. SSB does not run DPC automatically.
+DPC estimates the scan–detector rotation, known only modulo 180 degrees. This
+Gold acquisition reports `detector_transposed=False`, so pass the angle and the
+flag directly to SSB; `find_aberrations(check_rotation=True)` settles the
+180-degree branch. SSB raises if `detector_transposed` is True. For other data,
+check that value first: a detector-axis swap must be resolved before reusing
+the angle. SSB does not run DPC automatically.
 
 (reconstruct-phase)=
 ## Reconstruct SSB phase
@@ -96,15 +98,16 @@ ssb = SSB(
     data,
     voltage_kV=metadata["voltage_kV"],  # kV
     semiangle_mrad=metadata["probe_semiangle_mrad"],  # mrad
-    scan_sampling_A=metadata["sampling"][0],  # Å per scan pixel
-    det_sampling=metadata["sampling"][2],  # mrad per detector pixel
-    rotation_angle_deg=dpc_result.rotation_deg,  # degrees
+    scan_sampling_A=metadata["sampling"][:2],  # Å per scan pixel, (row, col)
+    detector_sampling_mrad=metadata["sampling"][2:],  # mrad per detector pixel, (row, col)
+    scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg,  # degrees
+    detector_transposed=dpc_result.detector_transposed,
 )
 aberrations = ssb.find_aberrations()
-result = ssb.reconstruct(aberrations, upsample=1)
+result = ssb.reconstruct(aberrations, upsampling_factor=1)
 show_2d(
     result.phase, title="Gold SSB phase (rad)", cmap="inferno", cbar=True,
-    scalebar={"sampling": result.scan_sampling_A, "units": "Å"},
+    scalebar={"sampling": result.object_sampling_A[1], "units": "Å"},
 )
 ```
 

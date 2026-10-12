@@ -47,7 +47,7 @@ with io.load("acquisition.qem") as data:
 ```
 
 The disk is fitted automatically. Within the `with` block, replace the ADF
-call with `detector.adf(data, inner=180, outer=360, unit="px")` when those are
+call with `detector.adf(data, inner_radius_px=180, outer_radius_px=360)` when those are
 the desired detector-pixel limits. Use the
 [static detector preview](../api/images_dpc.md) to inspect the selection.
 

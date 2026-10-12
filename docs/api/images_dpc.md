@@ -40,17 +40,19 @@ draw the same selection outlines. Pass `cmap="inferno"` to choose that colormap.
 ## Override the detector selection
 
 ```python
-bf = detector.bf(data, radius=45)  # radius in detector pixels
-adf = detector.adf(data, inner=60, outer=85, unit="px")
-df = detector.df(data, inner=60, unit="px")
-adf = detector.adf(data, inner=60, outer=85, unit="px", center=(96, 96))
+bf = detector.bf(data, bright_field_radius_px=45)  # radius in detector pixels
+adf = detector.adf(data, inner_radius_px=60, outer_radius_px=85)
+df = detector.df(data, inner_radius_px=60)
+adf = detector.adf(data, inner_radius_px=60, outer_radius_px=85, bright_field_center_px=(96, 96))
 ```
 
 Supply only the values you know. Missing geometry is fitted automatically;
 overrides apply to that call and do not replace the cached automatic fit.
-`radius` always means the bright-field disk radius in pixels. In ADF, it sets
-the default one-to-two-radius band; use `inner` and `outer` for explicit limits.
-Explicit ADF/DF limits default to milliradians, so include `unit="px"` for pixels.
+`bright_field_radius_px` (BF) and `bright_field_edge_radius_px` (ADF/DF) always
+mean the bright-field disk radius in pixels. In ADF, it sets
+the default one-to-two-radius band; use `inner_radius_px` and `outer_radius_px`
+for explicit limits in pixels, or `inner_angle_mrad` and `outer_angle_mrad` in
+milliradians. The unit is in the keyword name; a bound given both ways raises.
 
 ## Inputs and outputs
 
@@ -84,8 +86,8 @@ Every input follows `(scan_row, scan_column, detector_row, detector_column)`.
 Every BF/DF/ADF and DPC product follows `(scan_row, scan_column)`. Mean
 diffraction follows `(detector_row, detector_column)`.
 
-`center=(row, column)` is always detector order. Radii with `unit="px"` are
-detector pixels. Radii with `unit="mrad"` require convergence-semiangle
+`bright_field_center_px=(row, col)` is always detector order. Bounds named
+`*_radius_px` are detector pixels. Bounds named `*_angle_mrad` require convergence-semiangle
 calibration in the source metadata. The convenience detector products return
 float32 NumPy arrays, even for integer counts. For exact large integer totals,
 use the advanced session's `masked_sum_exact` described in
@@ -133,9 +135,11 @@ result = dpc.run(data)
 show_2d(result.phase, title="Integrated DPC phase", cmap="inferno")
 ```
 
-Supply `rotation_angle_deg` to hold the scan-detector rotation fixed, or omit
-it for the DPC rotation search. Inspect `result` for the rotation and CoM
-components. DPC does not estimate SSB aberrations.
+Supply `scan_detector_rotation_deg` (with `detector_transposed`) to hold the
+scan-detector rotation fixed, or omit it for the DPC rotation search. Inspect
+`result` for the rotation and CoM components: a fitted rotation is
+`scan_detector_rotation_mod180_deg`, known only modulo 180 degrees, and a given
+one is `scan_detector_rotation_deg`. DPC does not estimate SSB aberrations.
 
 For a client that needs several launch products from the same source, use
 `screening.prepare()` and reuse its small derived state instead of traversing
