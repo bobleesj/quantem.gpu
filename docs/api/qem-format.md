@@ -20,8 +20,8 @@ same calibration.
 ### Flat calibration keys
 
 The flat keys are the reading and writing interface of the format. A reader
-returns them beside the data (`data.metadata` in Python); a writer accepts them
-for a new copy. Each key has one unit, stated in its name, and one fixed place
+returns them beside the data (`data.metadata` in Python, `NativeANSSnapshot.metadata`
+in Swift); a writer accepts them for a new copy. Each key has one unit, stated in its name, and one fixed place
 in `scientific_metadata`, which remains the stored authority.
 
 | Flat key | Unit | Type | Stored at |

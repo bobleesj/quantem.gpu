@@ -132,43 +132,19 @@ extension MetalRuntimeANSResidentSource {
     for (pixel, valid) in validPixels.enumerated() where valid != 0 {
       packedValid[pixel / 8] |= 1 << (7 - pixel % 8)
     }
+    // The retained block holds provenance only (QEM specification 0.0.4). Calibration, source
+    // fields and loader state live once in scientific_metadata; a second copy here is what a
+    // reader could take instead of the stored value.
     var metadata: [String: Any] = [
-      "source_path": dataset.masterPath ?? "", "source_shape": shape,
+      "source_path": dataset.masterPath ?? "",
       "original_source_identity_sha256": dataset.metadata?["originalSourceIdentity"]
         ?? sourceIdentitySHA256,
-      "file_counts_exact": true, "lossless_exact": true, "median_correction_applied": false,
-      "source_metadata": dataset.metadata ?? [:],
-      "axis_order": ["scan_row", "scan_col", "detector_row", "detector_col"],
+      "file_counts_exact": true, "median_correction_applied": false,
     ]
     if let date = dataset.acquisitionDate { metadata["acquisition_date"] = date }
-    if let scan = dataset.sourceScanCalibration {
-      metadata["scan_sampling_A"] = [scan.rowSamplingAngstrom, scan.columnSamplingAngstrom]
-    }
-    if let row = dataset.kPixelSizeRow, let col = dataset.kPixelSizeCol,
-      dataset.kPixelUnit == "1/angstrom"
-    {
-      metadata["detector_sampling_inv_A"] = [row, col]
-    }
-    if let row = dataset.kPixelSizeRow, let col = dataset.kPixelSizeCol,
-      let unit = dataset.kPixelUnit
-    {
-      metadata["detector_sampling"] = [row, col]
-      metadata["detector_sampling_unit"] = unit
-    }
-    if let text = dataset.metadata?["electron_microscope/electron_source/accelerating_voltage"],
-      let voltage = Double(text)
-    {
-      metadata["voltage_kV"] =
-        dataset.metadata?["electron_microscope/electron_source/accelerating_voltage@units"] == "V"
-        ? voltage / 1000 : voltage
-    }
     for name in ["camera_model", "camera_id", "acquisition_processing"] {
       if let value = dataset.metadata?[name] { metadata[name] = value }
     }
-    let origins = (1...4).reversed().compactMap { axis in
-      dataset.metadata?["dm4.ImageData.Calibrations.Dimension.\(axis).Origin"].flatMap(Double.init)
-    }
-    if origins.count == 4 { metadata["pixel_origin"] = origins }
     var header: [String: Any] = [
       "version": 1, "profile": "runtime-column-rans-spatial-v2", "interval": 512,
       "shape": shape, "dtype": logicalDtype == .uint8 ? "uint8" : "uint16",

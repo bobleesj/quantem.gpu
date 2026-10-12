@@ -42,12 +42,10 @@ import Native4DSTEMIO
         $0["name"] as? String == source.url.deletingPathExtension().lastPathComponent
           || $0["name"] as? String == source.dataset.sourceDtype
       }!
+      // Frozen schema-2 metadata is compared as stored; schema-1 references are refused on open.
       let frozenMetadata = entry["scientific_metadata"] as! [String: Any]
-      let expectedMetadata = snapshot.scientificMetadata["schema"] as? String
-        == NativeQEMMetadataUnits.schema
-        ? try NativeQEMMetadataUnits.normalized(frozenMetadata) : frozenMetadata
       precondition(
-        NSDictionary(dictionary: snapshot.scientificMetadata).isEqual(to: expectedMetadata),
+        NSDictionary(dictionary: snapshot.scientificMetadata).isEqual(to: frozenMetadata),
         "Scientific metadata differs from the frozen reference")
     }
     let resident = try MetalRuntimeANSResidentSource.load(snapshot: snapshot, device: device)

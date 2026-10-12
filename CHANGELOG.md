@@ -199,6 +199,20 @@ new `rcN` heading when that rc is published to TestPyPI.
   whenever it declared nm, so `reconstruct_series(probe_reference_frame=...)`
   reconstructed with aberrations fitted under the earlier automatic detector
   sampling, which give a different image.
+- Native Swift `.qem` readers accept scientific metadata schema 2 only and
+  refuse schema 1 with a message that names it, as the Python reader does;
+  `NativeQEMMetadataUnits.legacySchema` is removed, and the scaled-uint16 writer
+  refuses caller metadata of schema 1. `NativeANSSnapshot.metadata` and
+  `NativeQEMMetadataUnits.recordedMetadata` give the flat keys of specification
+  0.0.4: `detector_sampling` with `detector_sampling_unit` becomes
+  `detector_sampling_mrad` or `detector_sampling_inv_A`, and `semiangle_mrad`,
+  `dwell_time_us` and `camera_length_mm` are added. The native writer
+  (`saveSnapshot`, `MetalQEMExporter`) no longer copies calibration, source
+  metadata or loader state into the retained `metadata` block (`scan_sampling_A`,
+  `detector_sampling_inv_A`, `detector_sampling`, `detector_sampling_unit`,
+  `voltage_kV`, `source_metadata`, `source_shape`, `axis_order`,
+  `lossless_exact`, `pixel_origin`), and the native reader drops such copies
+  from older files.
 
 ### Fixed
 

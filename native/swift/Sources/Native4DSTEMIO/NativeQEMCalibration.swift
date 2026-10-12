@@ -84,17 +84,16 @@ public enum NativeQEMCalibration {
   }
 
   /// Replace overrides without changing the recorded source quantities or axes.
+  ///
+  /// Overrides arrive in calculation units (m, V, s) and are stored in the schema-2 units.
   public static func applying(_ overrides: Overrides, to scientific: [String: Any]) throws
     -> [String: Any]
   {
     var result = scientific
     let record = try JSONSerialization.jsonObject(with: encoded(overrides))
-    let normalized = try NativeQEMMetadataUnits.normalized([
-      "schema": NativeQEMMetadataUnits.legacySchema, "calibration_overrides": record,
-    ])
-    result["calibration_overrides"] =
-      scientific["schema"] as? String == NativeQEMMetadataUnits.schema
-      ? normalized["calibration_overrides"] : record
+    result["calibration_overrides"] = try NativeQEMMetadataUnits.normalized([
+      "schema": NativeQEMMetadataUnits.schema, "calibration_overrides": record,
+    ])["calibration_overrides"]
     return result
   }
 }
