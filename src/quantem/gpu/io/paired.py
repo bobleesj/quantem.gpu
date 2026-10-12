@@ -30,7 +30,7 @@ from quantem.gpu.formats.hdf5.frames import (
     chunk_locations,
     detector_sources,
 )
-from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
+from quantem.gpu.io.dataset import Dataset4dstemGPU, drop_unread_calibration, resident_metadata
 from quantem.gpu.io.hdf5.cuda.decode import kernel
 from quantem.gpu.io.inspect import inspect
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
@@ -127,7 +127,8 @@ class PairedLoader:
         while later files are still streaming in.
         """
         for path, source, timings in self.load_many(paths, scan_shape=scan_shape, device=device, admit=admit):
-            yield path, _result(source, timings, verbose)
+            # as io.load does: master calibration this version does not read is left out, with a warning
+            yield path, drop_unread_calibration(_result(source, timings, verbose), [path])
 
     def load_many(self, paths, *, scan_shape=None, device=None, admit=None):
         """Yield ``(path, source, timings)`` for each acquisition, in order.

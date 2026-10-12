@@ -69,6 +69,25 @@ def test_lean_loader_admits_a_series_with_few_slots(tmp_path):
     assert names == [str(m) for m in masters]
 
 
+def test_streamed_acquisition_warns_of_master_calibration_it_does_not_read(tmp_path):
+    """``PairedLoader.stream`` reads a master's attributes itself: it warns and leaves out what ``io.load`` does."""
+    import h5py
+
+    from quantem.gpu.io import PairedLoader
+
+    current, _ = _acquisition(tmp_path, "current", 20)
+    earlier, _ = _acquisition(tmp_path, "earlier", 21)
+    with h5py.File(earlier, "r+") as handle:
+        handle.attrs["detector_sampling"] = [0.2, 0.3]
+        handle.attrs["detector_sampling_unit"] = "mrad"
+    with PairedLoader(readers=2) as loader, pytest.warns(UserWarning, match="Calibration not read") as caught:
+        streamed = dict(loader.stream([current, earlier], scan_shape=(32, 32)))
+    assert len(caught) == 1 and "earlier_master.h5 holds detector_sampling, detector_sampling_unit" in str(caught[0].message)
+    for item in streamed.values():
+        assert not {"detector_sampling", "detector_sampling_unit"} & set(item.metadata)
+        item.close()
+
+
 @pytest.mark.parametrize("method", ["median", "zero", "none"])
 def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, method):
     """Stored bad pixels are corrected before encoding, with exact image products."""

@@ -23,7 +23,7 @@ from quantem.gpu.device import select
 from quantem.gpu.formats import empad
 from quantem.gpu.formats.qem.snapshot import is_qem_file
 from quantem.gpu.io import arrays, digitalmicrograph, encoded, paired, qem
-from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.dataset import Dataset4dstemGPU, drop_unread_calibration
 from quantem.gpu.io.hdf5 import cpu
 from quantem.gpu.io.precision import load_precision, precision_name, saved_precision
 from quantem.gpu.io.representation import DataRepresentation
@@ -310,7 +310,7 @@ def load(
             for item in loaded:
                 item.close()
             raise
-        return _without_unread_calibration(loaded[0] if single else loaded, sources, verbose)
+        return drop_unread_calibration(loaded[0] if single else loaded, sources)
 
     # Ordinary HDF5: encoded on CUDA and MPS by default, paired on request.
     if representation is None and sources and all(
@@ -339,7 +339,7 @@ def load(
         else:
             loaded = paired.load_h5_paired(sources, scan_shape=scan_shape, device=device,
                                            verbose=verbose, hot_pixel_correction=hot_pixel_correction)
-        return _without_unread_calibration(loaded[0] if single else loaded, sources, verbose)
+        return drop_unread_calibration(loaded[0] if single else loaded, sources)
     if selected_representation is DataRepresentation.ENCODED:
         ans_backend = select.resolve_backend(backend)
         if ans_backend not in {"cuda", "mps"}:
@@ -374,7 +374,7 @@ def load(
             for result in results:
                 result.close()
             raise
-        return _without_unread_calibration(results[0] if single else results, sources, verbose)
+        return drop_unread_calibration(results[0] if single else results, sources)
 
     # The explicit CPU reference.
     if scan_region is not None or detector_region is not None:
@@ -391,7 +391,7 @@ def load(
         raise ValueError("The CPU reference returns stored counts; omit dtype.")
     if not sources:
         raise ValueError("Empty file list")
-    return _without_unread_calibration(cpu.load_reference(
+    return drop_unread_calibration(cpu.load_reference(
         sources,
         single=single,
         scan_shape=scan_shape,
@@ -400,34 +400,7 @@ def load(
         # Unlike compressed acquisitions, CPU reference arrays stack by default.
         stack=True if stack is None else stack,
         verbose=verbose,
-    ), sources, verbose)
-
-
-def _without_unread_calibration(loaded, sources, verbose: bool):
-    """Drop the calibration attributes of an HDF5 master that this version does not read, and say so once per file.
-
-    A master's attributes reach the dataset metadata as stored. The unit-less detector pair of earlier masters
-    (``detector_sampling`` with ``detector_sampling_unit``) and a sampling stored as one number are not the
-    ``[row, col]`` pairs ``scan_sampling_A``, ``detector_sampling_mrad`` and ``detector_sampling_inv_A`` this
-    version reads, and no value is converted. Left in the metadata they made those axes uncalibrated without a
-    word, then raised when the sampling was read or the acquisition was saved as ``.qem``.
-    """
-    for item, source in zip(loaded if isinstance(loaded, list) else [loaded], sources):
-        unread = {name: name for name in ("detector_sampling", "detector_sampling_unit") if name in item.metadata}
-        unread.update({
-            name: f"{name} (not a [row, col] pair)"
-            for name in ("scan_sampling_A", "detector_sampling_mrad", "detector_sampling_inv_A")
-            if item.metadata.get(name) is not None and (np.isscalar(item.metadata[name]) or len(item.metadata[name]) != 2)
-        })
-        for name in unread:
-            del item.metadata[name]
-        if unread and verbose:
-            print(
-                f"  Calibration not read: {Path(source).name} holds {', '.join(unread.values())}, which this version "
-                "does not read; those axes are uncalibrated. It reads scan_sampling_A, detector_sampling_mrad and "
-                "detector_sampling_inv_A, each a [row, col] pair."
-            )
-    return loaded
+    ), sources)
 
 
 def _device_backend(backend: str, device: int | str | None) -> tuple[str, int | str | None]:

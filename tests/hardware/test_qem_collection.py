@@ -68,6 +68,32 @@ def test_collection_preserves_flagged_counts_and_master(tmp_path, backend):
     assert not list(tmp_path.glob(".qem-convert-*"))
 
 
+def test_collection_warns_of_master_calibration_it_does_not_read(tmp_path, backend):
+    """Converting a master that holds calibration this version does not read warns, and the copy is uncalibrated there.
+
+    ``convert`` loads quietly. While the notice was a line of the verbose load report, such a master became a
+    ``.qem`` without its detector calibration and without a word.
+    """
+    import warnings
+
+    from quantem.gpu import io
+
+    master = _master(tmp_path, np.uint16)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert convert.convert(master, tmp_path / "current.qem", backend=backend).verified is True
+    with h5py.File(master, "r+") as handle:
+        handle.attrs["scan_sampling_A"] = [0.4, 0.6]
+        handle.attrs["detector_sampling"] = [0.2, 0.3]
+        handle.attrs["detector_sampling_unit"] = "mrad"
+    with pytest.warns(UserWarning, match="Calibration not read: scan_master.h5 holds detector_sampling, detector_sampling_unit") as caught:
+        result = convert.convert(master, tmp_path / "earlier.qem", backend=backend)
+    assert len(caught) == 1 and result.verified is True
+    with io.load(tmp_path / "earlier.qem", backend=backend, verbose=False) as copy:
+        assert copy.sampling == (0.4, 0.6, None, None)
+        assert copy.units == ("angstrom", "angstrom", None, None)
+
+
 def test_uint32_flagged_markers_are_stored_as_zero_and_valid_counts_never_wrap(tmp_path, backend):
     from quantem.gpu import io
 

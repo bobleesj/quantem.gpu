@@ -33,10 +33,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 - An HDF5 master written by an earlier version can hold calibration this
   version does not read: `detector_sampling` with `detector_sampling_unit`,
   or one number under `scan_sampling_A`. `io.load` leaves those attributes
-  out of the dataset metadata, so the axes are uncalibrated, and prints one
-  line that names them (with `verbose`, the default). No value is converted.
-  They loaded without a message, and the attributes left in the metadata
-  raised when the sampling was read or the acquisition was saved as `.qem`.
+  out of the dataset metadata, so the axes are uncalibrated, and gives one
+  `UserWarning` per file that names them, whatever `verbose` is; so do
+  `io.convert`, which loads quietly, and `PairedLoader.stream`. No value is
+  converted. They loaded without a message, and the attributes left in the
+  metadata raised when the sampling was read or the acquisition was saved as
+  `.qem`. `io.inspect` returns the attributes as stored.
 - `.qem` scientific metadata schema 1 is refused with a message that names the
   schema, in Python and in the WebGPU reader. It was read with unit
   conversion. Export such a file again from its source.
