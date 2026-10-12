@@ -199,13 +199,24 @@ class Catalog:
                 if size <= 0:
                     size = sum(item[1] for item in file_signature(master))
                 metadata = inspection.metadata or {}
-                scan_sampling = _pair(metadata, "scan_sampling_A")
+                cal_reason = None
+                try:
+                    scan_sampling, detector_mrad, detector_inv_A = (
+                        _pair(metadata, name)
+                        for name in ("scan_sampling_A", "detector_sampling_mrad", "detector_sampling_inv_A")
+                    )
+                except ValueError as error:
+                    # One master with a calibration that is not a pair stays in the list,
+                    # uncalibrated: raising here answered the whole catalogue with HTTP 500.
+                    scan_sampling = detector_mrad = detector_inv_A = None
+                    cal_reason = str(error)
                 files.append(
                     {
                         "name": master.name,
                         "shape": [*scan_shape, *detector_shape],
                         "dtype": inspection.dtype,
                         "cal": "ok" if scan_sampling is not None else "un",
+                        "cal_reason": cal_reason,
                         "size": format_size(size),
                         "size_bytes": size,
                         "loadable": bool(inspection.ready),
@@ -215,8 +226,8 @@ class Catalog:
                             "action": inspection.action,
                         },
                         "scan_sampling_A": scan_sampling,
-                        "detector_sampling_mrad": _pair(metadata, "detector_sampling_mrad"),
-                        "detector_sampling_inv_A": _pair(metadata, "detector_sampling_inv_A"),
+                        "detector_sampling_mrad": detector_mrad,
+                        "detector_sampling_inv_A": detector_inv_A,
                         "has_ssb": False,
                     }
                 )
@@ -392,7 +403,14 @@ def _pair(metadata: dict[str, object], name: str) -> list[float] | None:
     """Return one [row, col] calibration flat key of inspection metadata, or None when absent.
 
     Calling ``float`` on the pair failed for every calibrated ``.qem``, which the catalogue then listed as
-    uncalibrated.
+    uncalibrated. A recorded value that is not two numbers (one number for both axes, as earlier masters
+    held) raises ``ValueError`` naming the key and the value, which the catalogue reports for that master.
     """
     value = metadata.get(name)
-    return None if value is None else [float(value[0]), float(value[1])]
+    if value is None:
+        return None
+    try:
+        row, col = (float(item) for item in value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} is {value}, not a [row, col] pair of numbers; it is not read") from None
+    return [row, col]

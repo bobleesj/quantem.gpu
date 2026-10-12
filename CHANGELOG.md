@@ -265,6 +265,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 - The remote catalogue listed every master that records its scan step as a
   `[row, col]` pair as uncalibrated: it called `float()` on the pair.
   `k_pixel_size_mrad` read a key no reader writes and was always null.
+- One master whose `scan_sampling_A`, `detector_sampling_mrad` or
+  `detector_sampling_inv_A` attribute is not a pair of numbers (one number
+  for both axes, as earlier versions wrote) made `/api/browse/sessions`
+  answer HTTP 500 for the whole catalogue. That master is listed
+  uncalibrated, and its entry states why in the new field `cal_reason`
+  (null otherwise).
 - A DPC or screening fit made with exchanged detector axes could only be
   handed to SSB as a bare angle, so the exchange was dropped without a
   message. The flag travels with the angle (`detector_transposed`) and SSB

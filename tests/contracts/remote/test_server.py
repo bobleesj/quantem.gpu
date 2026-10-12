@@ -701,9 +701,27 @@ def test_catalog_reports_the_scan_step_pair_of_a_calibrated_master(tmp_path):
     with h5py.File(master, "r+") as handle:
         handle.attrs["scan_sampling_A"] = [0.4, 0.6]
     entry = TestClient(create_app(tmp_path)).get("/api/browse/sessions").json()["sessions"][0]["files"][0]
-    assert entry["cal"] == "ok"
+    assert entry["cal"] == "ok" and entry["cal_reason"] is None
     assert entry["scan_sampling_A"] == [0.4, 0.6]
     assert entry["detector_sampling_mrad"] is None and entry["detector_sampling_inv_A"] is None
+
+
+def test_catalog_lists_a_master_with_an_unreadable_calibration_as_uncalibrated(tmp_path):
+    """One master whose scan step is a single number does not take the catalogue down.
+
+    Earlier versions wrote one number for both axes. Reading it as a pair raised outside the
+    per-master guard, so every request for the catalogue answered HTTP 500.
+    """
+    h5py = pytest.importorskip("h5py")
+    for name, step in (("pair_master.h5", [0.4, 0.6]), ("scalar_master.h5", 0.264)):
+        with h5py.File(_master(tmp_path, name), "r+") as handle:
+            handle.attrs["scan_sampling_A"] = step
+    response = TestClient(create_app(tmp_path), raise_server_exceptions=False).get("/api/browse/sessions")
+    assert response.status_code == 200
+    pair, scalar = response.json()["sessions"][0]["files"]
+    assert (pair["name"], pair["cal"], pair["scan_sampling_A"], pair["cal_reason"]) == ("pair_master.h5", "ok", [0.4, 0.6], None)
+    assert (scalar["name"], scalar["cal"], scalar["scan_sampling_A"]) == ("scalar_master.h5", "un", None)
+    assert "scan_sampling_A is 0.264, not a [row, col] pair" in scalar["cal_reason"]
 
 
 def test_acquisition_poll_reuses_ready_inspection_until_master_changes(
