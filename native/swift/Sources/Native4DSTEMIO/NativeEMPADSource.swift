@@ -58,7 +58,7 @@ public struct NativeEMPADSource: Sendable {
     let microscope = NativeMicroscopeMetadata(metadata: parsed.microscopeMetadata)
     var values: NativeQEMCalibration.Overrides = [:]
     for (path, value, unit) in [
-      ("electron_source/accelerating_voltage", microscope.beamEnergyKeV.map { $0 * 1000 }, "V"),
+      ("electron_source/accelerating_voltage", microscope.voltageKV.map { $0 * 1000 }, "V"),
       ("imaging_system/camera_length", microscope.cameraLengthMillimeters.map { $0 / 1000 }, "m"),
       (
         "scan_controller/regular_scan/dwell_time",

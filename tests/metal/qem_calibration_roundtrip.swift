@@ -170,7 +170,7 @@ import Native4DSTEMIO
       let checked = try NativeANSSnapshot(url: path)
       precondition(checked.dataset.sourceScanCalibration?.rowSamplingAngstrom == 1)
       precondition(checked.dataset.sourceScanCalibration?.columnSamplingAngstrom == 2)
-      precondition(NativeMicroscopeMetadata(metadata: checked.dataset.metadata ?? [:]).beamEnergyKeV == 300)
+      precondition(NativeMicroscopeMetadata(metadata: checked.dataset.metadata ?? [:]).voltageKV == 300)
     }
     var contradictory = record
     var microscope = record["electron_microscope"] as! [String: Any]

@@ -213,6 +213,8 @@ new `rcN` heading when that rc is published to TestPyPI.
   `voltage_kV`, `source_metadata`, `source_shape`, `axis_order`,
   `lossless_exact`, `pixel_origin`), and the native reader drops such copies
   from older files.
+- `NativeMicroscopeMetadata.beamEnergyKeV` becomes `voltageKV`: it holds the
+  accelerating voltage in kV.
 
 ### Fixed
 

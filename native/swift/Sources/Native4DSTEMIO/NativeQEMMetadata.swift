@@ -25,7 +25,7 @@ public enum NativeQEMMetadata {
       quantities[path] = ["value": value, "unit": unit, "provenance": "source_metadata"]
     }
     quantity(
-      "electron_source/accelerating_voltage", microscope.beamEnergyKeV.map { $0 * 1000 }, "V")
+      "electron_source/accelerating_voltage", microscope.voltageKV.map { $0 * 1000 }, "V")
     quantity(
       "illumination_system/semi_convergence_angle", microscope.semiConvergenceAngleMrad, "mrad")
     quantity(
