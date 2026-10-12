@@ -21,6 +21,8 @@ def test_encoded_series_keeps_order_geometry_and_device(monkeypatch, tmp_path, b
         def __init__(self, index):
             self.shape = (index + 2, 3, 5, 7)
             self.closed = False
+            # a loaded acquisition carries the metadata io.load reads before handing it on
+            self.metadata = {}
 
         def close(self):
             self.closed = True
