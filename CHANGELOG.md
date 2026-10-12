@@ -308,6 +308,19 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- A rotation fitted from the centre-of-mass curl could be reported as
+  `180.00000500895632`, outside the [0, 180) of
+  `scan_detector_rotation_mod180_deg`: the fit's angle grid ends at 180
+  degrees, held as float32 pi, and a fit on that end point (an unrotated
+  scan) was returned unwrapped. `dpc.run` and `screening.prepare` now report
+  it as the same rotation half a turn back, `5.008956321717051e-06`, with
+  the phase and the aligned centre of mass of that angle, which are the
+  exact negatives of the ones returned before, so the angle still reproduces
+  the phase when it is given back. Every fit inside the range is unchanged,
+  bit for bit. Angles kept in [0, 360) (`SSB`, `SSBResult`, trial records,
+  `ParallaxResult`, a rotation given to `dpc.run` or `screening.prepare`)
+  are wrapped the same way, once, in double precision: a negative angle
+  below the rounding of 360 read `360.0` and reads `0.0`.
 - The native SSB phase pair stored the engine's Angstrom under
   `c10Nanometers` and `c12Nanometers`, ten times the value for a reader that
   took them as nm, and the azimuth in radians. The record now states

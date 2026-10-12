@@ -25,6 +25,7 @@ import numpy as np
 
 from quantem.gpu import detector
 from quantem.gpu.dpc.results import DPCResult
+from quantem.gpu.optics.physics import wrap_degrees
 
 
 def center_of_mass(data, scan_shape=None, mask=None):
@@ -104,7 +105,7 @@ def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, detector_tran
                      com_row_aligned=aligned_row.astype(np.float32),
                      com_col_aligned=aligned_col.astype(np.float32),
                      scan_detector_rotation_mod180_deg=angle if scan_detector_rotation_deg is None else None,
-                     scan_detector_rotation_deg=None if scan_detector_rotation_deg is None else angle % 360.0,
+                     scan_detector_rotation_deg=None if scan_detector_rotation_deg is None else wrap_degrees(angle, 360.0),
                      detector_transposed=transposed, elapsed_s=elapsed_s)
 
 
@@ -142,9 +143,10 @@ def find_optimal_rotation(com_row, com_col, rotation_steps=180):
     -------
     tuple
         The rotated ``(row, col)`` field as float32, the rotation in degrees
-        known modulo 180 (``scan_detector_rotation_mod180_deg``; the grid
-        includes its end point 180) and whether the detector axes were
-        transposed (``detector_transposed``).
+        known modulo 180, in [0, 180) (``scan_detector_rotation_mod180_deg``),
+        and whether the detector axes were transposed
+        (``detector_transposed``). The grid includes its end point 180; a fit
+        that lands there is returned as the same rotation half a turn back.
     """
     angles = np.linspace(0, np.pi, rotation_steps, dtype=np.float32)
     if min(com_row.shape) < 3:
@@ -159,7 +161,15 @@ def find_optimal_rotation(com_row, com_col, rotation_steps=180):
     angle = angles[best % rotation_steps]
     source_row, source_col = (com_col, com_row) if transposed else (com_row, com_col)
     rotated_row, rotated_col = _rotate_vector(source_row, source_col, angle)
-    return rotated_row, rotated_col, float(angle) * 180.0 / np.pi, transposed
+    grid_deg = float(angle) * 180.0 / np.pi
+    # Wrapped last, in double precision. Only the grid's end point is outside [0, 180): it is float32 pi, which
+    # reads 180.000005 degrees. The same rotation half a turn back is the field with the opposite sign, so the
+    # angle and the field returned still describe one geometry, and a caller who hands the angle back gets this
+    # field again. Returned unwrapped, the angle was outside the range every record states for it.
+    rotation_mod180_deg = wrap_degrees(grid_deg, 180.0)
+    if rotation_mod180_deg != grid_deg:
+        rotated_row, rotated_col = -rotated_row, -rotated_col
+    return rotated_row, rotated_col, rotation_mod180_deg, transposed
 
 
 def _rotation_curl_scores(v_row, v_col, angles_rad):

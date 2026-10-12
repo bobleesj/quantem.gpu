@@ -23,6 +23,7 @@ from quantem.gpu.ssb.results import SSBResult
         (180.0, 180.0),
         (360.0, 0.0),
         (525.5, 165.5),
+        (-2e-15, 0.0),      # the plain modulo rounds this to 360.0, outside the range
     ],
 )
 def test_result_holds_one_physical_rotation(angle, expected):

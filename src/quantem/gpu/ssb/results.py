@@ -8,6 +8,7 @@ from typing import Literal, Self
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.probe import model_probe, probe_grid
 
 # A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
@@ -113,7 +114,7 @@ class SSBResult(Mapping[str, float]):
 
     def __post_init__(self) -> None:
         # one representation of the physical angle, whatever turn count a caller or an engine gives
-        self.scan_detector_rotation_deg = float(self.scan_detector_rotation_deg) % 360.0
+        self.scan_detector_rotation_deg = wrap_degrees(self.scan_detector_rotation_deg, 360.0)
 
     def __getitem__(self, coefficient: str) -> float:
         """Return a coefficient: ``C10_nm`` or ``C12_nm`` in nm, ``phi12_deg`` in degrees.

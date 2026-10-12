@@ -14,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+from quantem.gpu.optics.physics import wrap_degrees
+
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
 # 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed; the
@@ -315,8 +317,8 @@ def _with_rotation(
     if scan_detector_rotation_deg is None:
         return result
     rotation = float(scan_detector_rotation_deg)
-    result.scan_detector_rotation_deg = rotation % 360.0
-    result.scan_detector_rotation_mod180_deg = rotation % 180.0
+    result.scan_detector_rotation_deg = wrap_degrees(rotation, 360.0)
+    result.scan_detector_rotation_mod180_deg = wrap_degrees(rotation, 180.0)
     result.detector_transposed = bool(detector_transposed)
     result.dpc_phase = _dpc_phase(
         result.com_row,

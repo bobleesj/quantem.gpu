@@ -69,7 +69,10 @@ def test_run_hands_its_fitted_geometry_back_without_losing_the_transposition(exc
     fitted = dpc.run(data, rotation_steps=30)
     assert fitted.detector_transposed == exchange_detector_axes
     assert fitted.scan_detector_rotation_deg is None
-    assert 0.0 <= fitted.scan_detector_rotation_mod180_deg <= 180.0 + 1e-5
+    # This unrotated field fits the end point of the angle grid, float32 pi. The bound was 180 + 1e-5 while that
+    # was returned as 180.000005 degrees, outside [0, 180); it is now the same rotation half a turn back.
+    assert 0.0 <= fitted.scan_detector_rotation_mod180_deg < 180.0
+    assert fitted.scan_detector_rotation_mod180_deg == pytest.approx(5.009e-6, abs=1e-9)
     given = dpc.run(data, scan_detector_rotation_deg=fitted.scan_detector_rotation_mod180_deg,
                     detector_transposed=fitted.detector_transposed)
     assert given.scan_detector_rotation_mod180_deg is None
