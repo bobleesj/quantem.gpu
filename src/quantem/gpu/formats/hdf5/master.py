@@ -7,8 +7,6 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from quantem.gpu.formats.qem.metadata import acquisition_metadata, recorded_metadata
-
 
 def read_pixel_mask(filepath):
     """Return the Arina pixel_mask array from a master HDF5.
@@ -58,7 +56,7 @@ def get_metadata(filepath: str) -> dict:
     - ``dwell_time_us`` : float or None
         Dwell per scan position in microseconds, as a saved ``.qem`` copy
         records it: the exposure ``count_time``, else the frame period
-        ``frame_time``, of an ARINA master.
+        ``frame_time``, of any master.
     - ``detector_shape`` : tuple[int, int] or None
         Detector pixel count as ``(height, width)``.
     - ``detector_name`` : str or None
@@ -194,9 +192,13 @@ def _derive_fields(metadata: dict) -> None:
         scan_shape = (side, side) if side * side == n_frames else None
 
     # The saved copy records exposure before frame period; reading the same rule here keeps
-    # the value from changing when an acquisition is saved and reopened.
-    source = {key: value for key, value in metadata.items() if isinstance(key, str) and key.startswith("entry/")}
-    dwell_time_us = recorded_metadata(acquisition_metadata((1, 1, 1, 1), source)).get("dwell_time_us")
+    # the value from changing when an acquisition is saved and reopened. The rule holds for
+    # every detector and for the numpy scalars h5py returns: a master of another detector
+    # or with a float32 time reported no dwell time at all.
+    exposure_s = metadata.get("entry/instrument/detector/count_time")
+    if exposure_s is None:
+        exposure_s = metadata.get("entry/instrument/detector/frame_time")
+    dwell_time_us = float(exposure_s) * 1e6 if exposure_s is not None else None
 
     detector_rows = metadata.get("entry/instrument/detector/detectorSpecific/y_pixels_in_detector")
     detector_cols = metadata.get("entry/instrument/detector/detectorSpecific/x_pixels_in_detector")
