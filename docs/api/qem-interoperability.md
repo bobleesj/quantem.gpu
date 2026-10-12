@@ -204,7 +204,7 @@ Nothing in this workflow uploads data automatically.
 
 The intended public home is
 [bobleesj/quantem-data](https://huggingface.co/datasets/bobleesj/quantem-data).
-At revision `00179851c0015612bfb6e6438e02387f5ffff0ae`, its dataset card declares
+At revision `5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20`, its dataset card declares
 MIT licensing. A conversion must preserve the applicable attribution and check
 any file-specific restrictions as well.
 

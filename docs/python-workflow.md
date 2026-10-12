@@ -12,7 +12,7 @@ search trials, upsampling, and saved results, use the
 
 ## Get the Gold data
 
-The public [Gold acquisition](https://huggingface.co/datasets/bobleesj/quantem-data/tree/00179851c0015612bfb6e6438e02387f5ffff0ae/4dstem/gold_512_npy_bin4)
+The public [Gold acquisition](https://huggingface.co/datasets/bobleesj/quantem-data/tree/5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20/4dstem/gold_512_npy_bin4)
 contains a **512 × 512 scan and 48 × 48 detector**. Only the detector was binned
 by four before upload. The download is about 1.2 GB, is MIT licensed, and stays
 in `data/` for reuse.
@@ -27,7 +27,7 @@ from quantem.core.visualization import show_2d
 
 snapshot_download(
     "bobleesj/quantem-data", repo_type="dataset",
-    revision="00179851c0015612bfb6e6438e02387f5ffff0ae",
+    revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
     allow_patterns="4dstem/gold_512_npy_bin4/*", local_dir="data", token=False,
 )
 folder = Path("data/4dstem/gold_512_npy_bin4")

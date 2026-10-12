@@ -55,7 +55,7 @@ from quantem.gpu import io
 
 folder = download(
     "denoise/simulated_au_nanobeam_pg_dose1",
-    revision="475260be22b5a00704f58382517a44aff94e252e",
+    revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
 )
 master = folder / "truth-events-dose-1.0_master.h5"
 data = io.load(master, hot_pixel_correction="none")
@@ -71,7 +71,7 @@ from huggingface_hub import snapshot_download
 
 root = snapshot_download(
     "bobleesj/quantem-data", repo_type="dataset",
-    revision="475260be22b5a00704f58382517a44aff94e252e",
+    revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
     allow_patterns="denoise/simulated_au_nanobeam_pg_dose1/*", token=False,
 )
 folder = Path(root) / "denoise/simulated_au_nanobeam_pg_dose1"
@@ -95,10 +95,8 @@ adjacent `geometry.json` or `noise-recipe.json`.
 | `widget/gold_session` | Not a 4D-STEM acquisition: 26 survey images for an image viewer. |
 | `widget/ducky` | Not a 4D-STEM acquisition: a synthetic reconstruction monitor and snapshots for a viewer. |
 
-The `widget/` paths exist in data revision
-`b30a28c295494b51139415d540819c4cbfde49b6` and are absent from the earlier
-revision used above. A revision fixes every path; do not combine files from
-two revisions in one input.
+Every path in the table exists at the one data revision used above,
+`5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20`.
 
 The Au input is a noiseless simulated expectation, float32, shaped
 `(32, 32, 192, 192)`, stored with an assumed noise recipe. It contains no
