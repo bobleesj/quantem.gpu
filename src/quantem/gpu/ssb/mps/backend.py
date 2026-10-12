@@ -55,7 +55,7 @@ class MpsSSBBackend:
         voltage_kV: float,
         semiangle_mrad: float,
         scan_sampling: float | tuple[float, float],
-        det_sampling: float | tuple[float, float] | None,
+        detector_sampling_mrad: float | tuple[float, float] | None,
         bright_field_intensity_threshold: float,
         bright_field_center_px: tuple[float, float] | None,
         bright_field_radius_px: int | None,
@@ -83,9 +83,9 @@ class MpsSSBBackend:
                 self._frames.tensor if isinstance(self._frames, MpsTensorFrames) else self._frames
             ))
         )
-        calibration = None if det_sampling is None else as_sampling(det_sampling)
+        calibration = None if detector_sampling_mrad is None else as_sampling(detector_sampling_mrad)
         if calibration is None and isinstance(self._frames, MpsBfColumnFrames):
-            calibration = self._frames.det_sampling
+            calibration = self._frames.detector_sampling_mrad
         self._selection = resolve_bf_selection(
             self._frames,
             bright_field_intensity_threshold,
@@ -149,7 +149,7 @@ class MpsSSBBackend:
             scan_sampling_A=self._scan_sampling,
             aberrations=aberrations,
             search_ranges=search_ranges,
-            n_trials=int(trials),
+            num_trials=int(trials),
             refine=refinement,
             refine_lock=refine_lock,
             scan_detector_rotation_deg=self._scan_detector_rotation_deg,
@@ -260,7 +260,7 @@ class MpsSSBBackend:
         *,
         upsampling_factor: int,
         compute_loss: bool,
-        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
     ) -> tuple[np.ndarray, float | None]:
@@ -289,7 +289,7 @@ class MpsSSBBackend:
             C10=float(aberrations["C10"]),
             C12=float(aberrations["C12"]),
             phi12=float(aberrations["phi12"]),
-            tilt_mrad=(float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
+            sample_tilt_mrad=(float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
             thickness=float(sample.get("thickness", 0.0)),
             compute_loss=compute_loss,
             chunk_bf=self._phase_chunk_bf,
@@ -353,7 +353,7 @@ class MpsSSBBackend:
                 voltage_kV=self._voltage_kV,
                 semiangle_mrad=self._semiangle_mrad,
                 scan_sampling=self._scan_sampling,
-                det_sampling=self._det_sampling,
+                detector_sampling_mrad=self._det_sampling,
                 scan_detector_rotation_deg=self._scan_detector_rotation_deg,
                 chunk_bf=self._setup_chunk_bf,
                 compact_inactive=True,
@@ -539,7 +539,7 @@ class MpsSSBBackend:
             max_value=maximum,
             detector_sum=exact_detector_sum,
             dc_value=self._dc_value_override,
-            det_sampling=self._det_sampling,
+            detector_sampling_mrad=self._det_sampling,
             verbose=False,
         )
         self._frames = replacement

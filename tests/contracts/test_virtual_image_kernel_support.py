@@ -37,7 +37,7 @@ def test_mps_u8_mean_dp_uses_resident_metal_detector_sum() -> None:
     backend = MetalRawBackend.__new__(MetalRawBackend)
     backend.frames = ChunkedFrames.__new__(ChunkedFrames)
     backend.frames.vi = SimpleNamespace(detector_sum_exact=lambda: detector_sum)
-    backend.det_shape = (2, 2)
+    backend.detector_shape = (2, 2)
     backend.n_frames = 4
 
     np.testing.assert_array_equal(
@@ -59,7 +59,7 @@ def test_mps_mean_dp_has_no_host_chunk_fallback() -> None:
     backend = MetalRawBackend.__new__(MetalRawBackend)
     backend.frames = ChunkedFrames.__new__(ChunkedFrames)
     backend.frames.vi = SimpleNamespace(detector_sum_exact=unsupported_detector_sum)
-    backend.det_shape = (2, 2)
+    backend.detector_shape = (2, 2)
     backend.n_frames = 4
 
     with pytest.raises(NotImplementedError, match="native Metal reducer"):

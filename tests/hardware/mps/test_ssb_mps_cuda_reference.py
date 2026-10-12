@@ -109,6 +109,7 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     )
     (source / "bf_columns.u8").write_bytes(columns.tobytes())
     (snapshots / "cal.json").write_text(json.dumps({
+        "schema": "quantem.ssb-calibration/2",
         "scan_region": {"shape": [4, 4]},
         "detector_shape": [4, 5],
         "bright_field_rows": bright_field_rows.tolist(),
@@ -159,7 +160,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     """Exact BF columns carry the detector sampling they were exported with, and a session given none uses it.
 
     The companion's stored radius is the selection's, not the disk edge the export was calibrated on; before
-    2026-10-05 a session opened on the columns ignored ``det_sampling_mrad_px`` and divided the semiangle by it.
+    2026-10-05 a session opened on the columns ignored ``detector_sampling_mrad`` and divided the semiangle by it.
     """
     pytest.importorskip("mlx.core")
     from quantem.gpu.ssb.mps.backend import MpsSSBBackend
@@ -170,6 +171,7 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     columns = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
     (source / "bf_columns.u8").write_bytes(columns.tobytes())
     calibration = {
+        "schema": "quantem.ssb-calibration/2",
         "scan_region": {"shape": [4, 4]},
         "detector_shape": [3, 3],
         "bright_field_rows": [0, 1, 1],
@@ -181,12 +183,12 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
         "dc_value": [1.0, 0.0],
     }
     if stored is not None:
-        calibration["det_sampling_mrad_px"] = stored
+        calibration["detector_sampling_mrad"] = stored
     (tmp_path / "cal.json").write_text(json.dumps(calibration))
 
     frames = load_bf_columns_mps(tmp_path)
     session = MpsSSBBackend(
-        frames, voltage_kV=300, semiangle_mrad=20, scan_sampling=1.0, det_sampling=None,
+        frames, voltage_kV=300, semiangle_mrad=20, scan_sampling=1.0, detector_sampling_mrad=None,
         bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=None, scan_detector_rotation_deg=0.0,
     )
     assert session._det_sampling == ((0.7, 0.8) if stored else (16.0, 16.0))
@@ -301,7 +303,7 @@ def test_mps_backend_writes_exact_integer_bf_columns(
     actual = np.memmap(path, mode="r", dtype=expected_dtype).reshape(3, 6)
     np.testing.assert_array_equal(actual, expected)
     assert isinstance(backend._frames, MpsBfColumnFrames)
-    assert backend._frames.det_sampling == (1.0, 1.0)
+    assert backend._frames.detector_sampling_mrad == (1.0, 1.0)
     np.testing.assert_array_equal(backend._frames.detector_sum, detector_sum)
     assert backend._bf_source_max_value == int(expected.max())
 
@@ -375,7 +377,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         voltage_kV=300.0,
         semiangle_mrad=30.0,
         scan_sampling=0.5,
-        det_sampling=1.0,
+        detector_sampling_mrad=1.0,
         bright_field_intensity_threshold=0.5,
         bright_field_center_px=None,
         bright_field_radius_px=None,
@@ -441,6 +443,7 @@ def test_load_bf_columns_mps_requires_authoritative_center(tmp_path) -> None:
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
     (snapshots / "cal.json").write_text(json.dumps({
+        "schema": "quantem.ssb-calibration/2",
         "scan_region": {"shape": [4, 4]},
         "detector_shape": [4, 5],
         "bright_field_rows": [0],
@@ -1792,7 +1795,7 @@ def test_mps_fit_reads_the_prepared_session_evidence() -> None:
     rng = np.random.default_rng(61)
     data = rng.poisson(4, size=(8, 8, 12, 12)).astype(np.uint16)
     session = MpsSSBBackend(
-        data, voltage_kV=300, semiangle_mrad=21.4, scan_sampling=1.0, det_sampling=None,
+        data, voltage_kV=300, semiangle_mrad=21.4, scan_sampling=1.0, detector_sampling_mrad=None,
         bright_field_intensity_threshold=0.0, bright_field_center_px=None, bright_field_radius_px=3, scan_detector_rotation_deg=0.0,
     )
     start = {"C10": 0.0, "C12": 10.0, "phi12": 0.0}

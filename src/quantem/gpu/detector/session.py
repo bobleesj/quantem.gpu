@@ -49,7 +49,7 @@ class DetectorSession:
     @property
     def detector_shape(self) -> tuple[int, int]:
         """Detector shape in public ``(row, col)`` order."""
-        return tuple(int(value) for value in self._backend.det_shape)
+        return tuple(int(value) for value in self._backend.detector_shape)
 
     @property
     def num_frames(self) -> int:

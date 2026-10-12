@@ -12,7 +12,7 @@ class FloatANSDetectorCompute(DetectorQueries):
         self.source = source
         self.device = f"cuda:{source.device}" if source.backend == "cuda" else "mps"
         self.scan_shape = source.shape[:2]
-        self.det_shape = source.shape[2:]
+        self.detector_shape = source.shape[2:]
         self.n_frames = int(np.prod(self.scan_shape))
         self.valid_pixels = source.valid_pixels
 
@@ -20,11 +20,11 @@ class FloatANSDetectorCompute(DetectorQueries):
         if type(index) is not int or not 0 <= index < self.n_frames:
             raise IndexError("Choose a scan index within the acquisition.")
         values = self.source._tensor(index, index + 1)
-        return _host(values, self.source.backend).reshape(self.det_shape)
+        return _host(values, self.source.backend).reshape(self.detector_shape)
 
     def frame_native(self, index, *, out=None, wait=True):
         """Return one corrected pattern without downloading measurements."""
-        result = self.source._tensor(index, index + 1).reshape(self.det_shape)
+        result = self.source._tensor(index, index + 1).reshape(self.detector_shape)
         return _into(out, result, "pattern")
 
     def masked_sum(self, mask):

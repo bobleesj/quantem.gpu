@@ -12,10 +12,10 @@ def _cupy_with_device():
     return cp
 
 
-def _mask(det_shape: tuple[int, int], radius: float, *, invert: bool = False) -> np.ndarray:
-    row = np.arange(det_shape[0], dtype=np.float32)[:, None]
-    col = np.arange(det_shape[1], dtype=np.float32)[None, :]
-    center = ((det_shape[0] - 1) / 2.0, (det_shape[1] - 1) / 2.0)
+def _mask(detector_shape: tuple[int, int], radius: float, *, invert: bool = False) -> np.ndarray:
+    row = np.arange(detector_shape[0], dtype=np.float32)[:, None]
+    col = np.arange(detector_shape[1], dtype=np.float32)[None, :]
+    center = ((detector_shape[0] - 1) / 2.0, (detector_shape[1] - 1) / 2.0)
     disk = (row - center[0]) ** 2 + (col - center[1]) ** 2 <= radius**2
     return ~disk if invert else disk
 
@@ -129,28 +129,28 @@ def test_cuda_dense_mask_matches_cupy() -> None:
 
 
 @pytest.mark.parametrize(
-    "dtype, det_shape",
+    "dtype, detector_shape",
     [(np.uint16, (400, 400)), (np.uint8, (5804, 5804))],
 )
 @pytest.mark.slow
-def test_cuda_float_masked_sum_of_saturated_frames_exceeds_32_bits(dtype, det_shape) -> None:
+def test_cuda_float_masked_sum_of_saturated_frames_exceeds_32_bits(dtype, detector_shape) -> None:
     """A saturated frame sums past 2^32 through either kernel: the selected pixels or total minus complement."""
     cp = _cupy_with_device()
     from quantem.gpu import detector
 
     maximum = int(np.iinfo(dtype).max)
-    pixels = det_shape[0] * det_shape[1]
+    pixels = detector_shape[0] * detector_shape[1]
     # Fewest pixels whose saturated sum crosses 2^32; still under half the detector.
     crossing = 2**32 // maximum + 1
     assert crossing * maximum > 2**32 and crossing < pixels // 2
-    data = cp.full((1, 2, *det_shape), maximum, dtype=dtype)
+    data = cp.full((1, 2, *detector_shape), maximum, dtype=dtype)
     session = detector.prepare(data)
     for selected in (crossing, pixels - crossing):
         mask = np.zeros(pixels, dtype=bool)
         mask[:selected] = True
         expected = np.full((1, 2), selected * maximum, dtype=np.uint64)
-        np.testing.assert_array_equal(session.masked_sum_exact(mask.reshape(det_shape)), expected)
-        np.testing.assert_array_equal(session.masked_sum(mask.reshape(det_shape)), expected.astype(np.float32))
+        np.testing.assert_array_equal(session.masked_sum_exact(mask.reshape(detector_shape)), expected)
+        np.testing.assert_array_equal(session.masked_sum(mask.reshape(detector_shape)), expected.astype(np.float32))
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])

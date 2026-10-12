@@ -74,6 +74,21 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
   `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
   radius selects the pixels used and defaults to the detected disk.
+- Counts, factors and samplings name their unit: `det_sampling` becomes
+  `detector_sampling_mrad` (`SSB`, `SSB.open`, `parallax.run`, the session
+  attribute and the result signature); `upsample` becomes `upsampling_factor`
+  (`SSB.reconstruct`, `SSB.show_trials`, `SSBResult`); `tilt_mrad` becomes
+  `sample_tilt_mrad` (`SSB.preview`, `SSB`, `SSBResult`); `n_trials` becomes
+  `num_trials` (`SSBResult`); `det_shape` becomes `detector_shape`
+  (`H5Writer`, detector sessions). Trial records hold `sample_tilt_mrad` as
+  one `[row, col]` pair in place of `tilt_row_mrad` and `tilt_col_mrad`.
+- An HDF5 master written by `io.save` stores the detector shape once, as
+  `detector_shape`; the `det_shape` copy on `entry/data` is gone.
+- A ShowPtycho calibration (`snapshots/cal.json`) read by MPS SSB must carry
+  `"schema": "quantem.ssb-calibration/2"` with the keys `bright_field_rows`,
+  `bright_field_cols`, `bright_field_center_px`, `bright_field_radius_px` and
+  `detector_sampling_mrad` (they were `bf_rows`, `bf_cols`, `bf_center`,
+  `bf_radius_px`, `det_sampling_mrad_px`). Another calibration is refused.
 - A rotation fitted from the centre-of-mass curl is
   `scan_detector_rotation_mod180_deg`: `DPCResult.rotation_deg` and
   `ScreeningResult.rotation_deg` take that name, `DPCResult.use_transpose` and

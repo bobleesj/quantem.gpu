@@ -349,7 +349,7 @@ def save(
     writer = H5Writer(
         filepath,
         n_frames=n_frames,
-        det_shape=(det_row, det_col),
+        detector_shape=(det_row, det_col),
         scan_shape=scan_shape,
         metadata=metadata,
         dtype=dtype,

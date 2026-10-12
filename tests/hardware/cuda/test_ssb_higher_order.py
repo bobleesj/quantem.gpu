@@ -62,7 +62,7 @@ def _session_256():
     counts = rng.poisson(40.0, size=(256, 256, 32, 32)).astype(np.uint16)
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200
-    ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.3, det_sampling=3.0,
+    ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.3, detector_sampling_mrad=3.0,
               scan_detector_rotation_deg=0.0)
     ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     return ssb

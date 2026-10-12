@@ -33,7 +33,7 @@ def optimize(
     scan_sampling_A: float | tuple[float, float],
     aberrations: dict | None = None,
     search_ranges: dict | None = None,
-    n_trials: int = 200,
+    num_trials: int = 200,
     refine: str | None = "nelder-mead",
     refine_lock: list[str] | None = None,
     scan_detector_rotation_deg: float = 0.0,
@@ -90,7 +90,7 @@ def optimize(
     trials.append({"stage": "initial", "params": dict(best), "loss": best_loss})
 
     optuna_started = time.perf_counter()
-    if n_trials > 0:
+    if num_trials > 0:
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         study = optuna.create_study(
             direction="minimize",
@@ -102,7 +102,7 @@ def optimize(
         n_completed = 0
         batch_size = max(1, int(optuna_batch_size))
         progress = tqdm(
-            total=int(n_trials),
+            total=int(num_trials),
             desc="SSB optimize",
             disable=not verbose,
             bar_format=(
@@ -110,8 +110,8 @@ def optimize(
                 "[{elapsed}<{remaining}]"
             ),
         )
-        while n_completed < int(n_trials):
-            current = min(batch_size, int(n_trials) - n_completed)
+        while n_completed < int(num_trials):
+            current = min(batch_size, int(num_trials) - n_completed)
             trial_records = [study.ask() for _ in range(current)]
             trial_params = []
             for trial in trial_records:
@@ -223,7 +223,7 @@ def optimize(
         loss=final_loss_value,
         elapsed=elapsed,
         timings=timings,
-        n_trials=int(n_trials),
+        num_trials=int(num_trials),
         num_bright_field_pixels=selection.size,
         refine_method=refine,
         refine_nfev=refine_nfev,
@@ -254,7 +254,7 @@ def fit_sample(
     (``thick_fit_batch``, same value as ``thick_fit``). Units: C10, C12, thickness in Angstrom (engine unit); tilt in mrad,
     scan frame (row, col)."""
     return fit_sample_search(
-        lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, tilt_mrad=tilt,
+        lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, sample_tilt_mrad=tilt,
                                                            thickness=thickness, band_inv_A=band_inv_A),
         objective_batch=lambda rows: thick_fit_batch(prepared, rows, band_inv_A),
         batch_size=THICK_FIT_MAX_BATCH,

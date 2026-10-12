@@ -293,7 +293,7 @@ def _fit_report(prepared, selection, args: argparse.Namespace):
         semiangle_mrad=args.semiangle_mrad,
         scan_sampling_A=args.scan_sampling_a,
         aberrations=None,
-        n_trials=args.trials,
+        num_trials=args.trials,
         refine="nelder-mead",
         seed=args.seed,
         verbose=False,

@@ -43,16 +43,16 @@ def test_trial_replay_and_tilt_stay_on_device(monkeypatch):
     ssb, _ = _synthetic_session()
     try:
         fitted = ssb.find_aberrations(trials=4, refinement=None, check_rotation=False, verbose=False)
-        ssb.tilt_mrad = (2.0, -1.0)
+        ssb.sample_tilt_mrad = (2.0, -1.0)
         ssb.depth_spread_nm = 5.0
-        ssb.reconstruct(upsample=2, force=True)
+        ssb.reconstruct(upsampling_factor=2, force=True)
 
         def no_host(*args, **kwargs):
             raise AssertionError("Reconstruction exported a CUDA array")
 
         with monkeypatch.context() as patch:
             patch.setattr(cp, "asnumpy", no_host)
-            result = ssb.reconstruct(upsample=2, force=True)
+            result = ssb.reconstruct(upsampling_factor=2, force=True)
             replay = ssb.reconstruct(fitted, trials=[0, 2])
         assert isinstance(result.object_wave, cp.ndarray)
         assert isinstance(replay.object_wave, cp.ndarray)

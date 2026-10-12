@@ -18,7 +18,7 @@ def test_get_metadata_reports_detector_source_dtype(tmp_path) -> None:
             dtype=np.uint16,
         )
         data.attrs["scan_shape"] = (2, 2)
-        data.attrs["det_shape"] = (6, 6)
+        data.attrs["detector_shape"] = (6, 6)
 
     metadata = get_metadata(str(master))
 

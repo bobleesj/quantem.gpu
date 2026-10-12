@@ -2,7 +2,7 @@
 
 The detector backends and the scaled-precision residents, which answer detector
 queries on their own encoded data, share this surface. Each defines
-``scan_shape``, ``det_shape`` and ``n_frames`` and implements ``frame``,
+``scan_shape``, ``detector_shape`` and ``n_frames`` and implements ``frame``,
 ``mean_dp``, ``masked_sum``, ``reduce_frames`` and ``center_of_mass``; the
 optional operations below raise until a source overrides them, so
 ``DetectorSession`` calls every operation directly and an unsupported request

@@ -29,7 +29,7 @@ class BrightfieldDisk:
     cols: np.ndarray
     bright_field_center_px: tuple[float, float]
     bright_field_radius_px: float
-    # The disk radius the detector calibration uses, semiangle / det_sampling: ``disk_edge_radius`` of the full-detector
+    # The disk radius the detector calibration uses, semiangle / detector_sampling_mrad: ``disk_edge_radius`` of the full-detector
     # mean pattern when the sampling is automatic.
     bright_field_edge_radius_px: float
     detector_shape: tuple[int, int]
@@ -146,7 +146,7 @@ def disk_edge_radius(mean_pattern: np.ndarray) -> float:
     """Return the radius in detector pixels at which the bright-field disk falls to half its plateau intensity.
 
     The disk is the image of the probe-forming aperture, so this radius corresponds to the convergence semiangle and
-    calibrates the detector: ``det_sampling = semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel. A
+    calibrates the detector: ``detector_sampling_mrad = semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel. A
     symmetric blur of the aperture edge (detector point spread, partial coherence) leaves the half-intensity contour
     at the geometric edge, while a higher threshold moves it inward. The plateau is the median of the pixels above
     mean + std (the disk ``detector.fit_probe`` finds), and the radius is that of a disk with the area of the pixels
@@ -169,7 +169,7 @@ def disk_edge_radius(mean_pattern: np.ndarray) -> float:
     if not disk.any():
         raise ValueError(
             "The mean diffraction pattern has no bright-field disk to calibrate the detector on; "
-            "pass det_sampling (mrad per detector pixel)."
+            "pass detector_sampling_mrad (mrad per detector pixel)."
         )
     half_plateau = 0.5 * float(np.median(pattern[disk]))
     return math.sqrt(np.count_nonzero(pattern > half_plateau) / math.pi)

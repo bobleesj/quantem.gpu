@@ -31,7 +31,7 @@ def _require_mps():
 def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
-    return SSB(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
+    return SSB(data, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, detector_sampling_mrad=det_mrad,
                           scan_detector_rotation_deg=0.0)
 
 
@@ -47,16 +47,16 @@ def _simulated_crystal(name):
     return np.load(folder / "data.npy") * np.float32(1e6), float(meta["det_mrad"])
 
 
-@pytest.mark.parametrize(("name", "tilt_mrad"), [("tilted_3_-4_t15", (3.0, -4.0)), ("untilted_t15", (0.0, 0.0))])
-def test_fit_tilt_recovers_known_tilt(name, tilt_mrad):
+@pytest.mark.parametrize(("name", "sample_tilt_mrad"), [("tilted_3_-4_t15", (3.0, -4.0)), ("untilted_t15", (0.0, 0.0))])
+def test_fit_tilt_recovers_known_tilt(name, sample_tilt_mrad):
     _require_mps()
     data, det_mrad = _simulated_crystal(name)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
     result = ssb.find_aberrations(tilt=True, verbose=False)
     # 1 mrad is the scan/detector sampling limit of this simulation (same bound as the CUDA test)
-    assert abs(result.tilt_mrad[0] - tilt_mrad[0]) < 1.0
-    assert abs(result.tilt_mrad[1] - tilt_mrad[1]) < 1.0
+    assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0
+    assert abs(result.sample_tilt_mrad[1] - sample_tilt_mrad[1]) < 1.0
     assert result.tilt_fit_gain > 1.2      # the thick model explains the thick data better than standard SSB
 
 
@@ -84,7 +84,7 @@ def test_batch_fit_matches_reference_fit():
     rows = np.column_stack([rng.uniform(-300, 300, 11), rng.uniform(0, 200, 11), rng.uniform(-1.5, 1.5, 11),
                             rng.uniform(-25, 25, 11), rng.uniform(-25, 25, 11), rng.uniform(20, 600, 11)])
     rows[0, 5], rows[1, 5] = 0.0, 400.0      # standard SSB and a thick crystal; 11 rows = one full batch of 8 plus 3
-    reference = np.array([thick_fit(prepared, C10=r[0], C12=r[1], phi12=r[2], tilt_mrad=(r[3], r[4]), thickness=r[5]) for r in rows])
+    reference = np.array([thick_fit(prepared, C10=r[0], C12=r[1], phi12=r[2], sample_tilt_mrad=(r[3], r[4]), thickness=r[5]) for r in rows])
     np.testing.assert_allclose(thick_fit_batch(prepared, rows), reference, rtol=1e-4)
 
 
@@ -95,7 +95,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
-        thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
+        thick, thick_loss = ssb.preview(aberrations, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
         np.testing.assert_allclose(thick, standard, atol=5e-6)
         assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
 
@@ -118,8 +118,8 @@ def test_fused_thick_preview_matches_reference_model():
     backend = ssb._backend()
     backend.cache_rotation(0.0)
     prepared = backend._prepared
-    for kw, atol in ((dict(C10=30.0, C12=5.0, phi12=0.3, tilt_mrad=(5.0, -3.0), thickness=150.0), 5e-8),
-                     (dict(C10=-400.0, C12=120.0, phi12=-1.0, tilt_mrad=(-20.0, 12.0), thickness=600.0), 1e-5)):
+    for kw, atol in ((dict(C10=30.0, C12=5.0, phi12=0.3, sample_tilt_mrad=(5.0, -3.0), thickness=150.0), 5e-8),
+                     (dict(C10=-400.0, C12=120.0, phi12=-1.0, sample_tilt_mrad=(-20.0, 12.0), thickness=600.0), 1e-5)):
         fused, fused_loss = reconstruct_thick(prepared, **kw)
         reference, reference_loss = reconstruct_thick_reference(prepared, **kw)
         np.testing.assert_allclose(fused, reference, rtol=0, atol=atol)
@@ -140,7 +140,7 @@ def test_drag_subset_context_standard_and_thick():
     assert context.num_bright_field_pixels == ssb.num_bright_field_pixels // 4
     standard, standard_loss = ssb.preview(aberrations, context=context)
     thick, thick_loss = ssb.preview(aberrations, context=context,
-                                    tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
+                                    sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
     np.testing.assert_allclose(thick, standard, atol=5e-6)
     assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
     assert np.abs(standard - full).max() > 1e-3      # the subset really is fewer BF pixels

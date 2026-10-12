@@ -152,7 +152,7 @@ class MPSStreamedCounts:
         return self.shape[:2]
 
     @property
-    def det_shape(self) -> tuple:
+    def detector_shape(self) -> tuple:
         return self.shape[2:]
 
     @property

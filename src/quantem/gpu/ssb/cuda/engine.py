@@ -254,7 +254,7 @@ class SSBEngine:
         detector_sampling = 0.5 * (
             float(self.angular_sampling[0]) + float(self.angular_sampling[1])
         )
-        # the disk radius this calibration implies: det_sampling = semiangle / radius
+        # the disk radius this calibration implies: detector_sampling_mrad = semiangle / radius
         detected_radius = float(self.semiangle_cutoff) / detector_sampling
         selection = BrightfieldDisk(
             rows=rows,

@@ -41,13 +41,13 @@ def _require_cuda_vram(min_gb: float = 3.0) -> None:
 
 
 def _detector_mask(
-    det_shape: tuple[int, int],
+    detector_shape: tuple[int, int],
     lo_px: float,
     hi_px: float,
 ) -> np.ndarray:
-    row = np.arange(det_shape[0], dtype=np.float32)[:, None]
-    col = np.arange(det_shape[1], dtype=np.float32)[None, :]
-    center = ((det_shape[0] - 1) / 2.0, (det_shape[1] - 1) / 2.0)
+    row = np.arange(detector_shape[0], dtype=np.float32)[:, None]
+    col = np.arange(detector_shape[1], dtype=np.float32)[None, :]
+    center = ((detector_shape[0] - 1) / 2.0, (detector_shape[1] - 1) / 2.0)
     dist = np.sqrt((row - center[0]) ** 2 + (col - center[1]) ** 2)
     return (dist >= float(lo_px)) & (dist <= float(hi_px))
 
@@ -128,16 +128,16 @@ def test_real_crop_products_match_independent_reference(backend: str) -> None:
     }
     result = load(master, **kwargs)
     data_np = _to_numpy(result.data)
-    det_shape = tuple(int(v) for v in data_np.shape[-2:])
+    detector_shape = tuple(int(v) for v in data_np.shape[-2:])
     radius = min(
         float(os.environ.get("QUANTEM_GPU_PRODUCT_MATCH_BF_RADIUS", "30")),
-        min(det_shape) / 2,
+        min(detector_shape) / 2,
     )
 
     masks = {
-        "bf": _detector_mask(det_shape, 0.0, radius),
-        "adf": _detector_mask(det_shape, radius, radius * 2.0),
-        "df": _detector_mask(det_shape, radius, np.inf),
+        "bf": _detector_mask(detector_shape, 0.0, radius),
+        "adf": _detector_mask(detector_shape, radius, radius * 2.0),
+        "df": _detector_mask(detector_shape, radius, np.inf),
     }
 
     for mask in masks.values():

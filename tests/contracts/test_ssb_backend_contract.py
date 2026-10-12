@@ -74,7 +74,7 @@ def test_public_ssb_has_one_backend_neutral_signature() -> None:
         "voltage_kV",
         "semiangle_mrad",
         "scan_sampling_A",
-        "det_sampling",
+        "detector_sampling_mrad",
         "aberrations",
         "scan_detector_rotation_deg",
         "bright_field_radius_px",
@@ -254,7 +254,7 @@ def test_ssb_result_owns_optimization_and_reconstruction_metadata() -> None:
         bright_field_center_px=selection.bright_field_center_px,
         bright_field_radius_px=selection.bright_field_radius_px,
         bright_field_edge_radius_px=selection.bright_field_edge_radius_px,
-        n_trials=200,
+        num_trials=200,
     )
 
     assert result.num_bright_field_pixels == 1

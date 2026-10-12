@@ -39,7 +39,7 @@ class ThickSample:
         C10: float,
         C12: float,
         phi12: float,
-        tilt_mrad: tuple[float, float],
+        sample_tilt_mrad: tuple[float, float],
         thickness: float,
         compute_loss: bool = True,
         chunk_bytes: int = 1 << 30,
@@ -50,7 +50,7 @@ class ThickSample:
 
         Same outputs and definitions as ``SSBEngine.reconstruct_with_loss`` (mean over bright-field pixels of the
         per-pixel phase; loss = mean over the image of the per-pixel phase variance), with each pixel's SSB correction
-        averaged over the sample depth. ``tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit; thickness
+        averaged over the sample depth. ``sample_tilt_mrad`` = (row, col) in the scan frame, ``thickness`` in the C10 unit; thickness
         0 reproduces the standard reconstruction. Reference path: element-wise correction then one inverse FFT per pixel,
         processed in chunks of bright-field pixels, not the fused FFT kernels, so it is slower than the standard path.
 
@@ -83,7 +83,7 @@ class ThickSample:
             qy = cache["qy_1d"].reshape(1, 1, nx)
         if average_wave:
             return self._reconstruct_wave(
-                C10, C12, phi12, tilt_mrad, thickness, qx.ravel(), qy.ravel(),
+                C10, C12, phi12, sample_tilt_mrad, thickness, qx.ravel(), qy.ravel(),
                 compute_loss=compute_loss, chunk_bytes=chunk_bytes,
             )
         half = engine.gqk_is_half_plane()
@@ -93,7 +93,7 @@ class ThickSample:
         chunk = max(1, int(chunk_bytes // (ny * nx * 8 * 3)))
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
         phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
-        params = self._kernel_scalars(C10, C12, phi12, tilt_mrad, thickness)
+        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
         for start in range(0, num_bright_field_pixels, chunk):
             stop = min(num_bright_field_pixels, start + chunk)
             if half:
@@ -125,7 +125,7 @@ class ThickSample:
         C10: float,
         C12: float,
         phi12: float,
-        tilt_mrad: tuple[float, float],
+        sample_tilt_mrad: tuple[float, float],
         thickness: float,
         qrow: cp.ndarray,
         qcol: cp.ndarray,
@@ -146,7 +146,7 @@ class ThickSample:
             self._wave_sum_buffer = cp.empty(shape, dtype=cp.complex128)
         partial = self._wave_sum_buffer
         spectrum = cp.zeros((rows, cols), dtype=cp.complex128)
-        params = self._kernel_scalars(C10, C12, phi12, tilt_mrad, thickness)
+        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
             thick_wave_sum_kernel(
@@ -163,7 +163,7 @@ class ThickSample:
         loss = None
         if compute_loss:
             _, loss = self.reconstruct(
-                C10, C12, phi12, tilt_mrad, thickness,
+                C10, C12, phi12, sample_tilt_mrad, thickness,
                 compute_loss=True, chunk_bytes=chunk_bytes,
             )
         return phase, loss
@@ -173,7 +173,7 @@ class ThickSample:
         C10: float,
         C12: float,
         phi12: float,
-        tilt_mrad: tuple[float, float],
+        sample_tilt_mrad: tuple[float, float],
         thickness: float,
         band_inv_A: tuple[float, float] = (0.2, 0.9),
         chunk_bytes: int = 1 << 30,
@@ -214,7 +214,7 @@ class ThickSample:
         chunk = max(1, int(chunk_bytes // (n_band * 8 * 3)))
         numerator = cp.zeros((n_band,), dtype=cp.complex64)
         denominator = cp.zeros((n_band,), dtype=cp.float32)
-        params = self._kernel_scalars(C10, C12, phi12, tilt_mrad, thickness)
+        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
         g_flat = engine.G_qk.reshape(num_bright_field_pixels, -1)
         for start in range(0, num_bright_field_pixels, chunk):
             stop = min(num_bright_field_pixels, start + chunk)
@@ -272,7 +272,7 @@ class ThickSample:
             out[start:start + batch] = cp.asnumpy(values)
         return out
 
-    def _kernel_scalars(self, C10: float, C12: float, phi12: float, tilt_mrad: tuple[float, float],
+    def _kernel_scalars(self, C10: float, C12: float, phi12: float, sample_tilt_mrad: tuple[float, float],
                         thickness: float) -> tuple[np.float32, ...]:
         """The float32 scalars every thick-sample kernel takes after its arrays.
 
@@ -285,5 +285,5 @@ class ThickSample:
         return tuple(np.float32(value) for value in (
             engine.wavelength, cache["semiangle_rad"], cache["ang_y_rad"], cache["ang_x_rad"],
             C10, C12, math.cos(2.0 * phi12), math.sin(2.0 * phi12), engine._factor,
-            thickness, tilt_mrad[0] * 1e-3, tilt_mrad[1] * 1e-3,
+            thickness, sample_tilt_mrad[0] * 1e-3, sample_tilt_mrad[1] * 1e-3,
         ))

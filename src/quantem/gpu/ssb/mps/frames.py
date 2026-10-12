@@ -26,6 +26,11 @@ from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.mps.hardware import require_mlx
 
+# Carried by a ShowPtycho calibration (snapshots/cal.json) under "schema"; another value is refused.
+# 2: keys follow the shared vocabulary (bright_field_rows, bright_field_cols, bright_field_center_px,
+#    bright_field_radius_px, detector_sampling_mrad); version 1 wrote schema_version 1 with bf_* keys.
+CALIBRATION_SCHEMA = "quantem.ssb-calibration/2"
+
 
 def find_bf_columns(
     source: str,
@@ -106,6 +111,12 @@ def load_bf_columns_mps(
     payload = json.loads(cal_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"ShowPtycho calibration must be a JSON object: {cal_path}")
+    if payload.get("schema") != CALIBRATION_SCHEMA:
+        # the keys of earlier exports name other quantities (bf_center, det_sampling_mrad_px); none is reinterpreted
+        raise ValueError(
+            f"{cal_path} is not a {CALIBRATION_SCHEMA} calibration (schema {payload.get('schema')!r}); "
+            "export the ShowPtycho folder again."
+        )
     required_fields = (
         "bright_field_rows",
         "bright_field_cols",
@@ -190,15 +201,15 @@ def load_bf_columns_mps(
             )
         dc_value = complex(float(dc_parts[0]), float(dc_parts[1]))
     # The export's detector calibration: the stored disk radius is the selection's, not the disk edge it was measured on.
-    stored_sampling = payload.get("det_sampling_mrad_px")
-    det_sampling = None
+    stored_sampling = payload.get("detector_sampling_mrad")
+    detector_sampling_mrad = None
     if stored_sampling is not None:
         sampling = np.asarray(stored_sampling, dtype=np.float64)
         if sampling.shape != (2,) or not bool(np.all(np.isfinite(sampling) & (sampling > 0))):
             raise ValueError(
-                f"Calibration det_sampling_mrad_px must be two positive (row, col) values: {cal_path}"
+                f"Calibration detector_sampling_mrad must be two positive (row, col) values: {cal_path}"
             )
-        det_sampling = (float(sampling[0]), float(sampling[1]))
+        detector_sampling_mrad = (float(sampling[0]), float(sampling[1]))
     return MpsBfColumnFrames(
         companion.path,
         selection=selection,
@@ -208,7 +219,7 @@ def load_bf_columns_mps(
         source_provenance=companion.provenance,
         max_value=companion.max_value,
         dc_value=dc_value,
-        det_sampling=det_sampling,
+        detector_sampling_mrad=detector_sampling_mrad,
         verbose=verbose,
     )
 
@@ -234,15 +245,15 @@ class MpsBfColumnFrames:
         max_value: int | None = None,
         detector_sum: np.ndarray | None = None,
         dc_value: complex | None = None,
-        det_sampling: tuple[float, float] | None = None,
+        detector_sampling_mrad: tuple[float, float] | None = None,
         verbose: bool = False,
     ) -> None:
         self.source_path = Path(path).expanduser().resolve()
         # (row, col) mrad per detector pixel the columns were exported with; SSB uses it when given none
-        self.det_sampling = det_sampling
+        self.detector_sampling_mrad = detector_sampling_mrad
         self.scan_shape = tuple(int(value) for value in scan_shape)
         self.selection = selection
-        self.det_shape = selection.detector_shape
+        self.detector_shape = selection.detector_shape
         self._n = int(np.prod(self.scan_shape))
         self._np_dtype = np.dtype(dtype)
         if self._np_dtype not in {np.dtype(np.uint8), np.dtype(np.uint16)}:
@@ -251,13 +262,13 @@ class MpsBfColumnFrames:
                 f"got {self._np_dtype}."
             )
         self.dtype = self._np_dtype
-        self.shape = (self._n, *self.det_shape)
+        self.shape = (self._n, *self.detector_shape)
         self.ndim = 3
         self.det_bin = int(detector_bin)
         if self.det_bin < 1:
             raise ValueError("detector_bin must be a positive integer.")
         self.source_provenance = dict(source_provenance or {})
-        self.vi = _BfColumnDetectorView(self.det_shape)
+        self.vi = _BfColumnDetectorView(self.detector_shape)
         # detector.mean recognizes GPU-frame objects through the common
         # chunk-backed dispatch. No detector chunks are present by design.
         self.chunks = ()
@@ -275,7 +286,7 @@ class MpsBfColumnFrames:
             mode="r",
             shape=(selection.size, self._n),
         )
-        self._lookup = np.full(self.det_shape, -1, dtype=np.int32)
+        self._lookup = np.full(self.detector_shape, -1, dtype=np.int32)
         self._lookup[selection.rows, selection.cols] = np.arange(
             selection.size, dtype=np.int32,
         )
@@ -297,10 +308,10 @@ class MpsBfColumnFrames:
         self._detector_sum = None
         if detector_sum is not None:
             exact_sum = np.asarray(detector_sum)
-            if exact_sum.shape != self.det_shape:
+            if exact_sum.shape != self.detector_shape:
                 raise ValueError(
                     "detector_sum shape does not match BF detector geometry: "
-                    f"{exact_sum.shape} versus {self.det_shape}."
+                    f"{exact_sum.shape} versus {self.detector_shape}."
                 )
             if not np.issubdtype(exact_sum.dtype, np.integer):
                 raise TypeError(
@@ -359,7 +370,7 @@ class MpsBfColumnFrames:
                 del block, reduced
             sums[bf_start:bf_stop] = partial
         mx.clear_cache()
-        detector_sum = np.zeros(self.det_shape, dtype=np.uint64)
+        detector_sum = np.zeros(self.detector_shape, dtype=np.uint64)
         detector_sum[self.selection.rows, self.selection.cols] = sums
         return detector_sum
 
@@ -455,11 +466,11 @@ class ArrayFrames:
         array = np.asarray(data)
         if array.ndim == 4:
             self.scan_shape = (int(array.shape[0]), int(array.shape[1]))
-            self.det_shape = (int(array.shape[2]), int(array.shape[3]))
-            self._flat = array.reshape(-1, *self.det_shape)
+            self.detector_shape = (int(array.shape[2]), int(array.shape[3]))
+            self._flat = array.reshape(-1, *self.detector_shape)
         elif array.ndim == 3:
             self.scan_shape = None
-            self.det_shape = (int(array.shape[1]), int(array.shape[2]))
+            self.detector_shape = (int(array.shape[1]), int(array.shape[2]))
             self._flat = array
         else:
             raise TypeError(
@@ -486,7 +497,7 @@ class ArrayFrames:
         cols = np.asarray(cols, dtype=np.intp).reshape(-1)
         if rows.shape != cols.shape:
             raise ValueError("rows and cols must have matching shapes.")
-        flat_indices = rows * int(self.det_shape[1]) + cols
+        flat_indices = rows * int(self.detector_shape[1]) + cols
         flat = np.asarray(self._flat).reshape(int(self._flat.shape[0]), -1)
         return np.take(flat, flat_indices, axis=1).T
 
@@ -506,8 +517,8 @@ class MpsTensorFrames:
     def __init__(self, data):
         self.tensor = data
         self.scan_shape = tuple(data.shape[:2]) if data.ndim == 4 else None
-        self.det_shape = tuple(data.shape[-2:])
-        self.shape = (int(data.numel() // np.prod(self.det_shape)), *self.det_shape)
+        self.detector_shape = tuple(data.shape[-2:])
+        self.shape = (int(data.numel() // np.prod(self.detector_shape)), *self.detector_shape)
         self.ndim = 3
         self.dtype = np.dtype(str(data.dtype).removeprefix("torch."))
         self._flat = data.reshape(self.shape[0], -1)
@@ -517,7 +528,7 @@ class MpsTensorFrames:
         import torch
 
         indices = torch.as_tensor(
-            np.asarray(rows) * self.det_shape[1] + np.asarray(cols),
+            np.asarray(rows) * self.detector_shape[1] + np.asarray(cols),
             dtype=torch.int64, device="mps",
         )
         values = self._flat.index_select(1, indices).T.to(torch.float32).contiguous()

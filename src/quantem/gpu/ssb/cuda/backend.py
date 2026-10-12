@@ -38,7 +38,7 @@ class CudaSSBBackend:
         Probe convergence semiangle in mrad.
     scan_sampling : float or (float, float)
         Scan step in Angstrom, (row, col).
-    det_sampling : float or (float, float), optional
+    detector_sampling_mrad : float or (float, float), optional
         Detector sampling in mrad per pixel; ``semiangle / disk_edge_radius(mean pattern)`` when omitted.
     voltage_kV : float
         Accelerating voltage in kV.
@@ -67,7 +67,7 @@ class CudaSSBBackend:
         data: object,
         semiangle: float,
         scan_sampling: float | tuple[float, float],
-        det_sampling: float | tuple[float, float] | None = None,
+        detector_sampling_mrad: float | tuple[float, float] | None = None,
         *,
         voltage_kV: float,
         scan_shape: tuple[int, int] | None = None,
@@ -145,17 +145,17 @@ class CudaSSBBackend:
             scan_sampling = (float(scan_sampling), float(scan_sampling))
 
         # The bright-field disk edge sits at the semiangle, which calibrates the detector.
-        if det_sampling is None:
-            det_sampling = semiangle / disk_edge_radius(cp.asnumpy(mean_dp(data)))
-            det_sampling = (det_sampling, det_sampling)
-        elif isinstance(det_sampling, (int, float)):
-            det_sampling = (float(det_sampling), float(det_sampling))
+        if detector_sampling_mrad is None:
+            detector_sampling_mrad = semiangle / disk_edge_radius(cp.asnumpy(mean_dp(data)))
+            detector_sampling_mrad = (detector_sampling_mrad, detector_sampling_mrad)
+        elif isinstance(detector_sampling_mrad, (int, float)):
+            detector_sampling_mrad = (float(detector_sampling_mrad), float(detector_sampling_mrad))
         if aberrations is None:
             aberrations = {"C10": 0.0, "C12": 0.0, "phi12": 0.0}
         self.voltage_kV = voltage_kV
         self.semiangle_mrad = semiangle
         self.scan_sampling = scan_sampling
-        self.angular_sampling = det_sampling
+        self.angular_sampling = detector_sampling_mrad
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.aberrations = aberrations.copy()
         self._scan_detector_rotation_rad = scan_detector_rotation_rad
@@ -165,8 +165,8 @@ class CudaSSBBackend:
 
         # Convert detector sampling: mrad -> reciprocal space
         reciprocal_sampling = (
-            det_sampling[0] * 1e-3 / wavelength,
-            det_sampling[1] * 1e-3 / wavelength,
+            detector_sampling_mrad[0] * 1e-3 / wavelength,
+            detector_sampling_mrad[1] * 1e-3 / wavelength,
         )
         sampling = (
             1.0 / (reciprocal_sampling[0] * det_gpts[0]),
@@ -199,7 +199,7 @@ class CudaSSBBackend:
         self._elapsed_refine: float = 0.0
         self._refine_method: str | None = None
         self._refine_nfev: int | None = None
-        self._n_trials: int | None = None
+        self._num_trials: int | None = None
         self._trial_records: list[dict] = []
 
     def free(self) -> None:
@@ -326,7 +326,7 @@ class CudaSSBBackend:
             scan_detector_rotation_deg=math.degrees(self._scan_detector_rotation_rad),
             loss=loss,
             elapsed=elapsed if elapsed > 0 else None,
-            n_trials=self._n_trials,
+            num_trials=self._num_trials,
             num_bright_field_pixels=len(self.bf_inds_row),
             refine_method=self._refine_method,
             refine_nfev=self._refine_nfev,
@@ -358,7 +358,7 @@ class CudaSSBBackend:
         # Each call owns a new search record, including a zero-trial refinement.
         # Replacing the list preserves records already returned to the caller.
         self._trial_records = []
-        self._n_trials = int(trials)
+        self._num_trials = int(trials)
         self._refine_method = None
         self._refine_nfev = None
         self._elapsed_optimize = 0.0
@@ -366,7 +366,7 @@ class CudaSSBBackend:
         if trials:
             self.optimize(
                 search_ranges=search_ranges,
-                n_trials=int(trials),
+                num_trials=int(trials),
                 seed=int(seed),
                 verbose=verbose,
             )
@@ -416,7 +416,7 @@ class CudaSSBBackend:
         *,
         upsampling_factor: int,
         compute_loss: bool,
-        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
     ) -> tuple[cp.ndarray, float | None]:
@@ -424,7 +424,7 @@ class CudaSSBBackend:
         accel = self._get_accelerator()
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.reconstruct(
-            *coefficients, tilt_mrad, thickness, compute_loss=False,
+            *coefficients, sample_tilt_mrad, thickness, compute_loss=False,
             upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
         )
@@ -432,7 +432,7 @@ class CudaSSBBackend:
         if compute_loss:
             if thickness > 0:
                 _, loss = accel.thick.reconstruct(
-                    *coefficients, tilt_mrad, thickness, compute_loss=True,
+                    *coefficients, sample_tilt_mrad, thickness, compute_loss=True,
                 )
             else:
                 _, loss = accel.reconstruct_with_loss(*coefficients)
@@ -496,13 +496,13 @@ class CudaSSBBackend:
     def optimize(
         self,
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
-        n_trials: int = 200,
+        num_trials: int = 200,
         seed: int = 42,
         verbose: bool = True,
     ) -> Self:
         """Global search of C10, C12, phi12 with Optuna TPE on the exact phase-variance objective.
 
-        Evaluates ``n_trials`` candidates in batches of 4 on the GPU (lower loss is a better correction). This finds the
+        Evaluates ``num_trials`` candidates in batches of 4 on the GPU (lower loss is a better correction). This finds the
         right region of parameter space but may be ~5 nm off on C10; ``refine()`` then walks to the exact minimum.
 
         Parameters
@@ -511,7 +511,7 @@ class CudaSSBBackend:
             Search ranges per parameter, keys ``"C10_nm"``, ``"C12_nm"``, ``"phi12_deg"`` (engine Angstrom despite the
             names): a ``(low, high)`` tuple to search, or a fixed float to lock the parameter. None searches C10
             +-400, C12 0-100 and phi12 +-90 degrees.
-        n_trials : int, default 200
+        num_trials : int, default 200
             Number of Optuna trials; below 200 the exploration of the (C10, C12, phi12) loss landscape becomes
             unreliable.
         seed : int, default 42
@@ -528,14 +528,14 @@ class CudaSSBBackend:
         if verbose:
             vram_free, vram_total = cp.cuda.runtime.memGetInfo()
             free_gb, total_gb = vram_free / 1e9, vram_total / 1e9
-            print(f"Optimizing aberrations ({n_trials} trials, {accel.num_bright_field_pixels} BF pixels)")
+            print(f"Optimizing aberrations ({num_trials} trials, {accel.num_bright_field_pixels} BF pixels)")
             print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB")
         try:
             best_params, best_value, trial_history = batch_optimize(
                 accel,
                 aberrations=search_ranges,
                 aberration_defaults=self.aberrations,
-                n_trials=n_trials,
+                num_trials=num_trials,
                 batch_size=4,
                 seed=seed,
                 verbose=verbose,
@@ -559,7 +559,7 @@ class CudaSSBBackend:
                 continue
             self.aberrations[aberration_key] = convert(value) if convert else value
         self._elapsed_optimize = time.perf_counter() - started
-        self._n_trials = n_trials
+        self._num_trials = num_trials
         if verbose:
             self._print_summary("Optimize", self._elapsed_optimize)
         return self

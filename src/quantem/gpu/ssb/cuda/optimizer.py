@@ -20,7 +20,7 @@ def batch_optimize(
     engine: SSBEngine,
     aberrations: dict,
     aberration_defaults: dict,
-    n_trials: int = 50,
+    num_trials: int = 50,
     batch_size: int = 16,
     seed: int = 42,
     verbose: bool = True,
@@ -35,7 +35,7 @@ def batch_optimize(
         Parameter specs: key -> (low, high) tuple or fixed float. Keys: "C10_nm", "C12_nm", "phi12_deg".
     aberration_defaults : dict
         Current aberration values {C10, C12, phi12} for parameters ``aberrations`` leaves out.
-    n_trials : int
+    num_trials : int
         Total number of Optuna trials.
     batch_size : int
         Number of trials to evaluate per GPU call.
@@ -62,12 +62,12 @@ def batch_optimize(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     sampler = TPESampler(seed=seed)
     study = optuna.create_study(direction="minimize", sampler=sampler)
-    progress = tqdm(total=n_trials, desc="SSB optimize", disable=not verbose,
+    progress = tqdm(total=num_trials, desc="SSB optimize", disable=not verbose,
                     bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
     trial_history = []
     n_completed = 0
-    while n_completed < n_trials:
-        current_batch = min(batch_size, n_trials - n_completed)
+    while n_completed < num_trials:
+        current_batch = min(batch_size, num_trials - n_completed)
         trials = [study.ask() for _ in range(current_batch)]
         c10_arr = np.empty(current_batch, dtype=np.float32)
         c12_arr = np.empty(current_batch, dtype=np.float32)

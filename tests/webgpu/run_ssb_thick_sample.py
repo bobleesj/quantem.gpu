@@ -19,14 +19,14 @@ import numpy as np
 from quantem.gpu.ssb.cuda.kernels.engine import thick_correct_kernel
 
 
-def run(thickness_A: float, tilt_mrad: tuple[float, float], num_points: int = 20000, seed: int = 0) -> dict:
+def run(thickness_A: float, sample_tilt_mrad: tuple[float, float], num_points: int = 20000, seed: int = 0) -> dict:
     rng = np.random.default_rng(seed)
     wavelength = 0.019687  # 300 kV, Angstrom
     semiangle = 0.030
     params = dict(
         wavelength=wavelength, semiangle_rad=semiangle, ang_y_rad=0.5554e-3, ang_x_rad=0.5554e-3,
         C10=-26.0, C12=42.0, cos2phi12=math.cos(2 * math.radians(-63)), sin2phi12=math.sin(2 * math.radians(-63)),
-        factor=math.pi / wavelength, thickness=thickness_A, tilt_row_rad=tilt_mrad[0] * 1e-3, tilt_col_rad=tilt_mrad[1] * 1e-3,
+        factor=math.pi / wavelength, thickness=thickness_A, tilt_row_rad=sample_tilt_mrad[0] * 1e-3, tilt_col_rad=sample_tilt_mrad[1] * 1e-3,
     )
     k_max = semiangle / wavelength
     radius = k_max * np.sqrt(rng.random(num_points)); angle = rng.random(num_points) * 2 * np.pi

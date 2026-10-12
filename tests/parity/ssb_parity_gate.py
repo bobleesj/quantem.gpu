@@ -170,7 +170,7 @@ def open_mps_session(case: SSBParityCase, meta: dict[str, object]):
         voltage_kV=case.voltage_kV,
         semiangle_mrad=case.semiangle_mrad,
         scan_sampling_A=case.scan_sampling_A,
-        det_sampling=float(meta["det_sampling_mrad"]),
+        detector_sampling_mrad=float(meta["det_sampling_mrad"]),
         scan_detector_rotation_deg=case.rotation_angle_deg,
         verbose=False,
     )

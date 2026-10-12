@@ -97,7 +97,7 @@ def load_result(
 
     if backend == "cuda":
         object_wave = cp.asarray(object_wave)
-    for name in ("scan_sampling_A", "bright_field_center_px", "tilt_mrad", "phase_clim", "fit_scan_region"):
+    for name in ("scan_sampling_A", "bright_field_center_px", "sample_tilt_mrad", "phase_clim", "fit_scan_region"):
         if isinstance(saved.get(name), list):
             saved[name] = tuple(saved[name])
     return SSBResult(

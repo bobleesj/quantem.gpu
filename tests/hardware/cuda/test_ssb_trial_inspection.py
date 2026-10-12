@@ -58,7 +58,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
                              signature=aberrations.metadata['signature'], backend='cuda')
         assert loaded.reused
         assert loaded.trial_records == records
-        override = ssb.reconstruct(loaded, aberrations={'C10_nm': 0.}, upsample=2)
+        override = ssb.reconstruct(loaded, aberrations={'C10_nm': 0.}, upsampling_factor=2)
         assert override.phase.shape == (256, 256)
         assert override.scan_sampling_A == .15
         assert override['C10_nm'] == 0.
@@ -104,12 +104,12 @@ def test_joint_history_carries_tilt_depth_and_objective():
         table = aberrations.trials
         assert len(table) == 8
         assert set(table.objective) == {'negative_thick_agreement'}
-        assert {'tilt_row_mrad', 'tilt_col_mrad', 'depth_spread_nm', 'band_inv_A'} <= set(table)
+        assert {'sample_tilt_mrad', 'depth_spread_nm', 'band_inv_A'} <= set(table)
         record = aberrations.trial_records[3]
         values = record['params']
         expected, _ = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
                                   'phi12_deg': values['phi12_deg']},
-                                 tilt_mrad=(record['tilt_row_mrad'], record['tilt_col_mrad']),
+                                 sample_tilt_mrad=tuple(record['sample_tilt_mrad']),
                                  depth_spread_nm=record['depth_spread_nm'])
         replay = ssb.reconstruct(aberrations, trials=[3])
         np.testing.assert_allclose(cp.asnumpy(replay.phase[0]), expected, atol=1e-7)
@@ -134,8 +134,8 @@ def test_explicit_complex_estimator_preserves_wave_amplitude():
         np.testing.assert_array_equal(cp.asnumpy(result.object_wave), cp.asnumpy(expected.object_wave))
         assert result.amplitude_estimated
         assert result.aberrations == coefs
-        with pytest.raises(ValueError, match='requires upsample=1'):
-            ssb.reconstruct(aberrations=coefs, phase_estimator='complex_wave', upsample=2)
+        with pytest.raises(ValueError, match='requires upsampling_factor=1'):
+            ssb.reconstruct(aberrations=coefs, phase_estimator='complex_wave', upsampling_factor=2)
     finally:
         ssb.close()
 
@@ -150,7 +150,7 @@ def test_zero_trial_search_does_not_relabel_previous_search():
         ssb.set_rotation(37.)
         second = ssb.find_aberrations(trials=0, refinement=None,
                                        check_rotation=False, verbose=False)
-        assert second.n_trials == 0
+        assert second.num_trials == 0
         assert second.trials.empty
         assert second.refine_nfev is None
         assert second.refine_method is None
@@ -198,10 +198,10 @@ def test_search_retains_anisotropic_scan_calibration():
     try:
         with SSB(original._data, backend='cuda', voltage_kV=300.0,
                  semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.45),
-                 det_sampling=3.0) as ssb:
+                 detector_sampling_mrad=3.0) as ssb:
             result = ssb.find_aberrations(trials=0, refinement=None,
                                           check_rotation=False, verbose=False)
             assert result.scan_sampling_A == (0.3, 0.45)
-            assert ssb.reconstruct(result, upsample=2).scan_sampling_A == (0.15, 0.225)
+            assert ssb.reconstruct(result, upsampling_factor=2).scan_sampling_A == (0.15, 0.225)
     finally:
         original.close()

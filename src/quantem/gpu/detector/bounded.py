@@ -24,7 +24,7 @@ class BoundedDetectorCompute(DetectorQueries):
     def __init__(self, data, native):
         self.data = data
         self.scan_shape = tuple(data.shape[:2])
-        self.det_shape = tuple(data.shape[2:])
+        self.detector_shape = tuple(data.shape[2:])
         self.n_frames = math.prod(self.scan_shape)
         self.device = torch.device(data.device)
         self.valid_pixels = None if data.valid is None else data.valid.cpu().numpy()

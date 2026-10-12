@@ -33,7 +33,7 @@ class SSBResult(Mapping[str, float]):
     ----------
     object_wave : cp.ndarray
         Complex transmission function (scan_row, scan_col).
-    tilt_mrad : tuple[float, float] | None
+    sample_tilt_mrad : tuple[float, float] | None
         Sample tilt (row, col) in mrad, scan frame, from ``find_aberrations(tilt=True)``; None for standard SSB.
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
@@ -48,7 +48,7 @@ class SSBResult(Mapping[str, float]):
     initial_scan_detector_rotation_deg : float | None
         The rotation before the polarity check, in [0, 360); the check changed the branch when it differs from
         ``scan_detector_rotation_deg``. None when no check ran.
-    upsample : int
+    upsampling_factor : int
         Output factor relative to the native scan grid. ``scan_sampling_A``
         records output pixel spacing, preserving the physical field of view.
     phase_estimator : str
@@ -72,7 +72,7 @@ class SSBResult(Mapping[str, float]):
     object_wave: object
     backend: Literal["cuda", "mps"]
     aberrations: dict[str, float] = field(default_factory=dict)
-    tilt_mrad: tuple[float, float] | None = None
+    sample_tilt_mrad: tuple[float, float] | None = None
     depth_spread_nm: float | None = None
     tilt_fit_gain: float | None = None
     scan_detector_rotation_deg: float = 0.0
@@ -80,7 +80,7 @@ class SSBResult(Mapping[str, float]):
     loss: float | None = None
     elapsed: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
-    n_trials: int | None = None
+    num_trials: int | None = None
     num_bright_field_pixels: int | None = None
     refine_method: str | None = None
     refine_nfev: int | None = None
@@ -88,7 +88,7 @@ class SSBResult(Mapping[str, float]):
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
     scan_sampling_A: float | tuple[float, float] | None = None
-    upsample: int = 1
+    upsampling_factor: int = 1
     phase_estimator: str = "complex_wave"
     amplitude_estimated: bool = True
     source_path: str | None = None
@@ -133,7 +133,7 @@ class SSBResult(Mapping[str, float]):
 
     def __repr__(self) -> str:
         lines = ["SSB Result"]
-        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsample}x output")
+        lines.append(f"  Shape          {tuple(self.object_wave.shape)} · {self.upsampling_factor}x output")
         lines.append(f"  Estimator      {self.phase_estimator}")
         if not self.amplitude_estimated:
             lines.append("  Amplitude      not estimated (unit-amplitude phase representation)")
@@ -141,8 +141,8 @@ class SSBResult(Mapping[str, float]):
             lines.append(f"  Loss           {self.loss:.6f}")
         if self.num_bright_field_pixels is not None:
             lines.append(f"  BF pixels      {self.num_bright_field_pixels}")
-        if self.n_trials is not None:
-            lines.append(f"  Trials         {self.n_trials}")
+        if self.num_trials is not None:
+            lines.append(f"  Trials         {self.num_trials}")
         if self.initial_scan_detector_rotation_deg is not None:
             lines.append(f"  Input rotation {self.initial_scan_detector_rotation_deg:.2f}°")
         lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
@@ -154,9 +154,9 @@ class SSBResult(Mapping[str, float]):
             )
         if self.aberrations:
             lines.append(_format_aberrations(self.aberrations))
-        if self.tilt_mrad is not None:
+        if self.sample_tilt_mrad is not None:
             lines.append(
-                f"  Sample tilt    ({self.tilt_mrad[0]:+.2f}, {self.tilt_mrad[1]:+.2f}) mrad scan frame, "
+                f"  Sample tilt    ({self.sample_tilt_mrad[0]:+.2f}, {self.sample_tilt_mrad[1]:+.2f}) mrad scan frame, "
                 f"depth spread {self.depth_spread_nm:.1f} nm"
             )
         if self.elapsed is not None:
@@ -204,11 +204,11 @@ class SSBResult(Mapping[str, float]):
         if self.initial_scan_detector_rotation_deg is not None:
             row["Suggested rotation (deg)"] = self.initial_scan_detector_rotation_deg
         row["SSB-selected rotation (deg)"] = self.scan_detector_rotation_deg
-        if self.tilt_mrad is not None:
-            row.update({"tilt row (mrad)": self.tilt_mrad[0],
-                        "tilt col (mrad)": self.tilt_mrad[1],
+        if self.sample_tilt_mrad is not None:
+            row.update({"tilt row (mrad)": self.sample_tilt_mrad[0],
+                        "tilt col (mrad)": self.sample_tilt_mrad[1],
                         "depth spread (nm)": self.depth_spread_nm})
-        model = "standard SSB" if self.tilt_mrad is None else "tilt-aware SSB"
+        model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         return pd.DataFrame([row], index=pd.Index([model], name="model")).round(3)
 
     @property
@@ -369,7 +369,7 @@ class SSBResult(Mapping[str, float]):
             sampling = np.asarray(self.scan_sampling_A)
             column_sampling = float(sampling if sampling.ndim == 0 else sampling[1])
             arrays = self.phase
-            titles = f"SSB phase · {self.upsample}× (rad)"
+            titles = f"SSB phase · {self.upsampling_factor}× (rad)"
             bars = {"sampling": column_sampling, "units": "Å", "fontsize": 13}
             panel_size = (12, 12)
         elif view == "probe":
@@ -612,12 +612,12 @@ def _phase_comparison(first, second, *, axsize: tuple[float, float]):
     all_bounds = [bounds, np.rint(mapped).astype(int)]
     crops = [phase[begin[0]:end[0], begin[1]:end[1]]
              for phase, (begin, end) in zip(phases, all_bounds, strict=True)]
-    titles = [f"{result.upsample}× phase · full field (rad)" for result in (first, second)]
-    crop_titles = [f"{result.upsample}× phase · marked crop (rad)" for result in (first, second)]
-    if (first.tilt_mrad is None) != (second.tilt_mrad is None):
-        labels = ["Tilt fixed at zero" if result.tilt_mrad is None else "Tilt-corrected"
+    titles = [f"{result.upsampling_factor}× phase · full field (rad)" for result in (first, second)]
+    crop_titles = [f"{result.upsampling_factor}× phase · marked crop (rad)" for result in (first, second)]
+    if (first.sample_tilt_mrad is None) != (second.sample_tilt_mrad is None):
+        labels = ["Tilt fixed at zero" if result.sample_tilt_mrad is None else "Tilt-corrected"
                   for result in (first, second)]
-        titles = [f"{label} · {result.upsample}× phase (rad)"
+        titles = [f"{label} · {result.upsampling_factor}× phase (rad)"
                   for label, result in zip(labels, (first, second), strict=True)]
         crop_titles = [f"{label} · marked crop (rad)" for label in labels]
     bars = [{"sampling": step[1], "units": "Å", "fontsize": 13} for step in sampling]

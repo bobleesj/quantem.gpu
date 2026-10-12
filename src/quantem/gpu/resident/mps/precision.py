@@ -371,7 +371,7 @@ class PrecisionSource(DetectorQueries):
 
     def __init__(self, chunks, shape, precision):
         self.parts, self.shape, self.precision = chunks, tuple(shape), precision
-        self.scan_shape, self.det_shape = self.shape[:2], self.shape[2:]
+        self.scan_shape, self.detector_shape = self.shape[:2], self.shape[2:]
         self.n_frames = math.prod(self.scan_shape)
         self._ends = []
         count = 0
@@ -399,14 +399,14 @@ class PrecisionSource(DetectorQueries):
 
     def _params(self, part):
         params, scalars = _parameters(report=self._reports[id(part)])
-        params[1:3] = [math.prod(self.det_shape), part.shape[1]]
+        params[1:3] = [math.prod(self.detector_shape), part.shape[1]]
         params[12] = 1  # parts are ANS-decoded ranges, read from their first scan
         return params, scalars
 
     def encoded_blocks(self):
         self._check()
         for part in self.parts:
-            result = MetalArray((part.shape[1], *self.det_shape), np.uint16)
+            result = MetalArray((part.shape[1], *self.detector_shape), np.uint16)
             params, scalars = self._params(part)
             params[0] = result.size
             with _part_buffers(part) as buffers:
@@ -417,13 +417,13 @@ class PrecisionSource(DetectorQueries):
         self._check()
         if not 0 <= index < self.n_frames:
             raise IndexError(f"Scan index must be in [0, {self.n_frames}); got {index}.")
-        if out is not None and (not isinstance(out, MetalArray) or out.shape != self.det_shape or out.dtype != self.dtype):
+        if out is not None and (not isinstance(out, MetalArray) or out.shape != self.detector_shape or out.dtype != self.dtype):
             raise ValueError("out must be a native float32 Metal diffraction result with matching shape.")
         part_index = bisect.bisect_right(self._ends, index)
         part = self.parts[part_index]
         params, scalars = self._params(part)
         params[0], params[8] = params[1], index - (self._ends[part_index - 1] if part_index else 0)
-        result = out if out is not None else MetalArray(self.det_shape, np.float32)
+        result = out if out is not None else MetalArray(self.detector_shape, np.float32)
         first = params[8]
         params[8] = 0
         with _part_buffers(part, first, first + 1) as buffers:
@@ -435,7 +435,7 @@ class PrecisionSource(DetectorQueries):
         self._check()
         if not 0 <= first < stop <= self.n_frames:
             raise ValueError("Read a nonempty range within the scan.")
-        output = torch.empty((stop - first, *self.det_shape), device="mps", dtype=torch.float32)
+        output = torch.empty((stop - first, *self.detector_shape), device="mps", dtype=torch.float32)
         start = 0
         for part, end in zip(self.parts, self._ends):
             low, high = max(first, start), min(stop, end)
@@ -472,7 +472,7 @@ class PrecisionSource(DetectorQueries):
 
     def mean_dp(self):
         self._check()
-        result = MetalArray(self.det_shape, np.float32)
+        result = MetalArray(self.detector_shape, np.float32)
         # Parts retain their buffers until this ordered submission finishes.
         command = metal_queue().commandBuffer()
         for index, part in enumerate(self.parts):
@@ -496,11 +496,11 @@ class PrecisionSource(DetectorQueries):
         self._check()
         binary = None
         values = mask.detach().cpu().numpy() if isinstance(mask, torch.Tensor) else np.asarray(mask)
-        if values.shape == self.det_shape and np.all((values == 0) | (values == 1)):
+        if values.shape == self.detector_shape and np.all((values == 0) | (values == 1)):
             binary = values.astype(bool)
         weights = None if binary is not None else upload(mask)
-        if weights is not None and (weights.shape != self.det_shape or str(weights.dtype).removeprefix("torch.") not in ("float32", "uint8", "bool")):
-            raise ValueError(f"Detector mask must have shape {self.det_shape} and float32/bool weights.")
+        if weights is not None and (weights.shape != self.detector_shape or str(weights.dtype).removeprefix("torch.") not in ("float32", "uint8", "bool")):
+            raise ValueError(f"Detector mask must have shape {self.detector_shape} and float32/bool weights.")
         result = out if out is not None else MetalArray(self.scan_shape, np.float32)
         if not isinstance(result, MetalArray) or result.shape != self.scan_shape or result.dtype != self.dtype:
             raise ValueError("out must be a native float32 Metal scan result with matching shape.")
@@ -537,7 +537,7 @@ class PrecisionSource(DetectorQueries):
         indices = list(indices)
         if not indices or reduce not in {"mean", "sum", "max"}:
             raise ValueError("Select at least one scan position and use mean, sum or max.")
-        result = MetalArray(self.det_shape, np.float32)
+        result = MetalArray(self.detector_shape, np.float32)
         buffer_view(result._mtl)[:] = b"\0" * result.nbytes
         if reduce == "max":
             self.frame_native(indices[0], out=result)
@@ -554,10 +554,10 @@ class PrecisionSource(DetectorQueries):
         return pattern
 
     def center_of_mass(self, mask=None):
-        weights = torch.ones(self.det_shape, device="mps") if mask is None else torch.as_tensor(mask, device="mps", dtype=torch.float32)
+        weights = torch.ones(self.detector_shape, device="mps") if mask is None else torch.as_tensor(mask, device="mps", dtype=torch.float32)
         denominator = self.masked_sum_native(weights)
-        row = self.masked_sum_native(weights * torch.arange(self.det_shape[0], device="mps")[:, None])
-        col = self.masked_sum_native(weights * torch.arange(self.det_shape[1], device="mps")[None, :])
+        row = self.masked_sum_native(weights * torch.arange(self.detector_shape[0], device="mps")[:, None])
+        col = self.masked_sum_native(weights * torch.arange(self.detector_shape[1], device="mps")[None, :])
         params, scalars = _parameters(denominator)
         for value in (row, col):
             _dispatch("divide", [value, denominator], params, scalars)

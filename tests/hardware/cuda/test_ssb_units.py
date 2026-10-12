@@ -42,9 +42,9 @@ def _simulate(defocus_A: float) -> tuple[np.ndarray, float]:
 def test_fitted_c10_is_nm(defocus_A):
     from quantem.gpu import SSB
 
-    counts, det_sampling = _simulate(defocus_A)
+    counts, detector_sampling_mrad = _simulate(defocus_A)
     ssb = SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0,
-              scan_sampling_A=0.25, det_sampling=det_sampling, scan_detector_rotation_deg=0.0)
+              scan_sampling_A=0.25, detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=0.0)
     ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
     expected_nm = -defocus_A / 10.0          # abTEM C10 = -defocus, Angstrom -> nm
     # validated 2026-09-24: -10.03 and +15.03 for -10 and +15 nm
@@ -52,7 +52,7 @@ def test_fitted_c10_is_nm(defocus_A):
 
 
 def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_defocus():
-    """Without det_sampling the bright-field disk edge calibrates the detector to abTEM's sampling.
+    """Without detector_sampling_mrad the bright-field disk edge calibrates the detector to abTEM's sampling.
 
     The detector sampling is semiangle / disk edge radius: 0.5486 mrad per pixel against abTEM's 0.5469 (+0.3 %), and
     the fit then finds C10 = -9.67 nm for the -10 nm truth. Before 2026-10-05 the automatic sampling was twice the
@@ -60,12 +60,12 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
     """
     from quantem.gpu import SSB
 
-    counts, det_sampling = _simulate(100.0)
+    counts, detector_sampling_mrad = _simulate(100.0)
     with SSB(counts, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
              scan_detector_rotation_deg=0.0) as ssb:
         result = ssb.find_aberrations(trials=200, refinement="nelder-mead", verbose=False)
         automatic_sampling = ssb._backend().angular_sampling[0]
-    assert automatic_sampling == pytest.approx(det_sampling, rel=0.004)
+    assert automatic_sampling == pytest.approx(detector_sampling_mrad, rel=0.004)
     assert result.aberrations["C10_nm"] == pytest.approx(-10.0, rel=0.04)
 
 

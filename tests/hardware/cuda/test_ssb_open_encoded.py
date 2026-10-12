@@ -16,12 +16,12 @@ cp = pytest.importorskip("cupy")
 
 # an Arina master of a real 512 x 512 x 192 x 192 acquisition, 300 kV, 30 mrad, 0.264 A scan step, rotation 158.9 deg
 SOURCE = Path(os.environ.get("QUANTEM_SSB_ARINA_MASTER", ""))
-SETTINGS = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, det_sampling=0.5554,
+SETTINGS = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, detector_sampling_mrad=0.5554,
                 scan_detector_rotation_deg=158.9)
 
 
-@pytest.mark.parametrize("det_sampling", [None, SETTINGS["det_sampling"]])
-def test_open_bright_field_crop_matches_full_detector(det_sampling):
+@pytest.mark.parametrize("detector_sampling_mrad", [None, SETTINGS["detector_sampling_mrad"]])
+def test_open_bright_field_crop_matches_full_detector(detector_sampling_mrad):
     if not SOURCE.is_file():
         pytest.skip("set QUANTEM_SSB_ARINA_MASTER to a real Arina master file")
     try:
@@ -33,10 +33,10 @@ def test_open_bright_field_crop_matches_full_detector(det_sampling):
     from quantem.gpu.io import load
 
     aberrations = {"C10_nm": 16.2, "C12_nm": 4.15, "phi12_deg": math.degrees(0.33)}
-    settings = {**SETTINGS, "det_sampling": det_sampling}
+    settings = {**SETTINGS, "detector_sampling_mrad": detector_sampling_mrad}
     cropped = SSB.open(str(SOURCE), **settings)
     assert cropped._data.shape[-2:] != (192, 192)          # only the bright-field region was decoded
-    factors = [1, 2, 3, 4] if det_sampling is None else [1]
+    factors = [1, 2, 3, 4] if detector_sampling_mrad is None else [1]
     crop_results = {
         factor: cropped.preview(aberrations, upsampling_factor=factor)
         for factor in factors
@@ -80,7 +80,7 @@ def test_open_flattened_rectangular_scan_uses_explicit_shape(tmp_path):
     with SSB.open(
         str(source), backend="cuda", scan_shape=(3, 4),
         voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.5,
-        det_sampling=1.0,
+        detector_sampling_mrad=1.0,
     ) as session:
         assert session._data.shape[:2] == (3, 4)
         np.testing.assert_array_equal(
@@ -111,7 +111,7 @@ def test_preview_is_in_the_same_scan_order_as_the_result():
         "chunked with loss": session.preview(aberrations)[0],
         "chunked without loss": session.preview(aberrations, compute_loss=False)[0],
         "full drag subset": session.preview(aberrations, context=session.preview_context(session.num_bright_field_pixels))[0],
-        "thick sample": session.preview(aberrations, tilt_mrad=(0.0, 0.0), depth_spread_nm=1e-6)[0],
+        "thick sample": session.preview(aberrations, sample_tilt_mrad=(0.0, 0.0), depth_spread_nm=1e-6)[0],
     }
     for name, phase in previews.items():
         phase = np.asarray(cp.asnumpy(phase), np.float64)

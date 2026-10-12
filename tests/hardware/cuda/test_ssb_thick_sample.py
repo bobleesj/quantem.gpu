@@ -26,8 +26,8 @@ def _require_cuda():
         pytest.skip("No CUDA runtime")
 
 
-def _simulated_crystal(tilt_mrad, thickness_A=152.0):
-    """abTEM 4D-STEM of BaTiO3 [001] (a = 4 A) leaning by ``tilt_mrad`` (row, col): every atom at depth z is shifted by z x tilt.
+def _simulated_crystal(sample_tilt_mrad, thickness_A=152.0):
+    """abTEM 4D-STEM of BaTiO3 [001] (a = 4 A) leaning by ``sample_tilt_mrad`` (row, col): every atom at depth z is shifted by z x tilt.
 
     300 kV, 30 mrad, probe focused at mid-depth, noise-free, 64 x 64 scan at 0.25 A = 4 x 4 unit cells (periodic for the scan
     FFT), potential box 9 x 9 cells so the detector sampling is lambda / 36 A = 0.55 mrad.
@@ -46,7 +46,7 @@ def _simulated_crystal(tilt_mrad, thickness_A=152.0):
                 for symbol, (fr, fc, fz) in basis:
                     z = (k + fz) * a
                     symbols.append(symbol)
-                    positions.append((((i + fr) * a + z * tilt_mrad[0] * 1e-3) % box, ((j + fc) * a + z * tilt_mrad[1] * 1e-3) % box, z + 0.5))
+                    positions.append((((i + fr) * a + z * sample_tilt_mrad[0] * 1e-3) % box, ((j + fc) * a + z * sample_tilt_mrad[1] * 1e-3) % box, z + 0.5))
     atoms = Atoms(symbols, positions=positions, cell=[box, box, layers * a + 1.0], pbc=True)
     potential = abtem.Potential(atoms, sampling=0.08, slice_thickness=a / 2, projection="infinite", parametrization="lobato")
     probe = abtem.Probe(energy=300e3, semiangle_cutoff=30, defocus=layers * a / 2)
@@ -58,20 +58,20 @@ def _simulated_crystal(tilt_mrad, thickness_A=152.0):
 def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
-    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, det_sampling=det_mrad,
+    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=scan_A, detector_sampling_mrad=det_mrad,
                           scan_detector_rotation_deg=0.0)
 
 
-@pytest.mark.parametrize("tilt_mrad", [(3.0, -4.0), (0.0, 0.0)])
-def test_fit_tilt_recovers_known_tilt(tilt_mrad):
+@pytest.mark.parametrize("sample_tilt_mrad", [(3.0, -4.0), (0.0, 0.0)])
+def test_fit_tilt_recovers_known_tilt(sample_tilt_mrad):
     _require_cuda()
-    data, det_mrad = _simulated_crystal(tilt_mrad)
+    data, det_mrad = _simulated_crystal(sample_tilt_mrad)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
     result = ssb.find_aberrations(tilt=True, verbose=False)
     # Validated 2026-09-24: (3, -4) -> (3.0, -4.1); (0, 0) -> (-0.3, -0.1). 1 mrad is the scan/detector sampling limit here.
-    assert abs(result.tilt_mrad[0] - tilt_mrad[0]) < 1.0
-    assert abs(result.tilt_mrad[1] - tilt_mrad[1]) < 1.0
+    assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0
+    assert abs(result.sample_tilt_mrad[1] - sample_tilt_mrad[1]) < 1.0
     assert result.tilt_fit_gain > 1.2      # the thick model explains the thick data better than standard SSB
 
 
@@ -89,7 +89,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
-        thick, thick_loss = ssb.preview(aberrations, tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
+        thick, thick_loss = ssb.preview(aberrations, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
         np.testing.assert_allclose(thick, standard, atol=5e-6)
         assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
 
@@ -133,7 +133,7 @@ def _thick_fit_full_plane(
     C10: float,
     C12: float,
     phi12: float,
-    tilt_mrad: tuple[float, float],
+    sample_tilt_mrad: tuple[float, float],
     thickness: float,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     chunk_bytes: int = 1 << 30,
@@ -152,7 +152,7 @@ def _thick_fit_full_plane(
     params = (
         cp.float32(engine.wavelength), cp.float32(c["semiangle_rad"]), cp.float32(c["ang_y_rad"]), cp.float32(c["ang_x_rad"]),
         cp.float32(C10), cp.float32(C12), cp.float32(math.cos(2.0 * phi12)), cp.float32(math.sin(2.0 * phi12)),
-        cp.float32(engine._factor), cp.float32(thickness), cp.float32(tilt_mrad[0] * 1e-3), cp.float32(tilt_mrad[1] * 1e-3),
+        cp.float32(engine._factor), cp.float32(thickness), cp.float32(sample_tilt_mrad[0] * 1e-3), cp.float32(sample_tilt_mrad[1] * 1e-3),
     )
     for start in range(0, num_bright_field_pixels, chunk):
         stop = min(num_bright_field_pixels, start + chunk)

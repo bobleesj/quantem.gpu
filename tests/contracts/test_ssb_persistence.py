@@ -27,7 +27,7 @@ class _Backend:
             loss=0.125,
             elapsed=2.5,
             timings={"fit": 2.0, "reconstruct": 0.5},
-            n_trials=trials,
+            num_trials=trials,
             num_bright_field_pixels=17,
             refine_method=settings["refinement"],
             refine_nfev=23,
@@ -83,7 +83,7 @@ def _session(monkeypatch, source, backend, device="mps"):
         voltage_kV=300.0,
         semiangle_mrad=30.0,
         scan_sampling_A=(0.2, 0.3),
-        det_sampling=(0.01, 0.01),
+        detector_sampling_mrad=(0.01, 0.01),
         source_path=str(source),
     )
     # This double represents the immutable source opened by SSB.open. Direct

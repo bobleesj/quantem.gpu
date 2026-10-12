@@ -51,9 +51,9 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     tilt, depth = (-9.0, 5.0), 18.0
     try:
-        native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth)
+        native, native_loss = ssb.preview(coefs, phase_estimator="mean_phase", sample_tilt_mrad=tilt, depth_spread_nm=depth)
         actual, loss = ssb.preview(
-            coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            coefs, phase_estimator="mean_phase", sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
         )
         expected, _ = engine.thick.reconstruct(
             -80.0, 40.0, -0.7, tilt, depth * 10, compute_loss=False,
@@ -61,12 +61,12 @@ def test_tilt_sampling_reuses_depth_kernel_and_native_loss(factor):
         )
         np.testing.assert_array_equal(actual, cp.asnumpy(expected))
         assert loss == native_loss
-        restored, restored_loss = ssb.preview(coefs, phase_estimator="mean_phase", tilt_mrad=tilt, depth_spread_nm=depth)
+        restored, restored_loss = ssb.preview(coefs, phase_estimator="mean_phase", sample_tilt_mrad=tilt, depth_spread_nm=depth)
         np.testing.assert_array_equal(restored, native)
         assert restored_loss == native_loss
         # UI can retain an angle after its higher-order magnitude is cleared.
         inactive, _ = ssb.preview(
-            coefs | {"phi21_deg": math.degrees(1.2)}, phase_estimator="mean_phase", tilt_mrad=tilt,
+            coefs | {"phi21_deg": math.degrees(1.2)}, phase_estimator="mean_phase", sample_tilt_mrad=tilt,
             depth_spread_nm=depth, upsampling_factor=factor,
         )
         np.testing.assert_allclose(inactive, actual, atol=2e-6)

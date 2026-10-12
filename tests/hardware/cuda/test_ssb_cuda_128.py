@@ -256,7 +256,7 @@ def test_ssb_engine_restores_subset_and_writes_exact_source(tmp_path):
     state = engine.export_state()
     assert state.scan_shape == (128, 128)
     assert state.brightfield.detector_shape == (32, 32)
-    # the radius the calibration implies, semiangle / det_sampling = 21.4 mrad / 1 mrad per pixel (42.8 before
+    # the radius the calibration implies, semiangle / detector_sampling_mrad = 21.4 mrad / 1 mrad per pixel (42.8 before
     # 2026-10-05, when the automatic calibration used twice the semiangle)
     assert state.brightfield.bright_field_edge_radius_px == pytest.approx(21.4)
 
@@ -449,7 +449,7 @@ def test_result_loss_is_the_exact_objective_with_or_without_a_fit() -> None:
     counts = np.random.RandomState(3).poisson(5, (256, 256, 16, 16)).astype(np.uint16)
     aberrations = {"C10_nm": -8.0, "C12_nm": 3.0, "phi12_deg": math.degrees(0.4)}
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=0.5,
-             det_sampling=2.0, bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5) as session:
+             detector_sampling_mrad=2.0, bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5) as session:
         before = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave").loss
         session.find_aberrations(trials=4, refinement=None, check_rotation=False, verbose=False)
         after = session.reconstruct(aberrations=aberrations, phase_estimator="complex_wave", force=True).loss
@@ -472,7 +472,7 @@ def test_cuda_512_chunked_calibration_matches_unfused_gpu_reference() -> None:
     counts = cp.random.RandomState(7).poisson(5, (512, 512, 16, 16)).astype(cp.uint16)
     with SSB(
         counts, backend="cuda", voltage_kV=300, semiangle_mrad=5,
-        scan_sampling_A=0.5, det_sampling=1,
+        scan_sampling_A=0.5, detector_sampling_mrad=1,
         bright_field_center_px=(7.5, 7.5), bright_field_radius_px=5,
     ) as ssb:
         backend = ssb._backend()
@@ -617,7 +617,7 @@ def test_ssb_default_hermitian_result_matches_full_storage_end_to_end() -> None:
         voltage_kV=300,
         semiangle=21.4,
         scan_sampling=0.5,
-        det_sampling=1.0,
+        detector_sampling_mrad=1.0,
         bright_field_radius_px=3,
         aberrations={"C10": -120.0, "C12": 55.0, "phi12": math.radians(17.0)},
     )
@@ -676,7 +676,7 @@ def test_ssb_hermitian_storage_preserves_half_plane_for_phase_reconstruction() -
         voltage_kV=300,
         semiangle=21.4,
         scan_sampling=0.5,
-        det_sampling=1.0,
+        detector_sampling_mrad=1.0,
         bright_field_radius_px=3,
     )
 
@@ -723,11 +723,11 @@ def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
         voltage_kV=300,
         semiangle=21.4,
         scan_sampling=0.5,
-        det_sampling=1.0,
+        detector_sampling_mrad=1.0,
         bright_field_radius_px=3,
     )
     before_nbytes = ssb.G_qk.nbytes
-    ssb.optimize(n_trials=2, verbose=False)
+    ssb.optimize(num_trials=2, verbose=False)
 
     assert ssb.G_qk.shape[2] == 65
     assert ssb.G_qk.nbytes == before_nbytes
@@ -801,7 +801,7 @@ def test_ssb_roi96_auto_pads_to_128_not_256(capsys) -> None:
         voltage_kV=300,
         semiangle=21.4,
         scan_sampling=0.5,
-        det_sampling=1.0,
+        detector_sampling_mrad=1.0,
         bright_field_radius_px=3,
     )
 
@@ -819,7 +819,7 @@ def test_ssb_refuses_to_crop_a_scan_larger_than_1024() -> None:
 
     data = cp.ones((1025, 2, 8, 8), dtype=cp.uint16)
     with pytest.raises(ValueError, match="at most 1024 x 1024 positions; got 1025x2"):
-        CudaSSBBackend(data, voltage_kV=300, semiangle=21.4, scan_sampling=0.5, det_sampling=1.0, bright_field_radius_px=2)
+        CudaSSBBackend(data, voltage_kV=300, semiangle=21.4, scan_sampling=0.5, detector_sampling_mrad=1.0, bright_field_radius_px=2)
 
 
 @pytest.mark.parametrize(("size", "num_bright_field_pixels"), [(128, 40), (256, 20), (512, 8), (1024, 3)])

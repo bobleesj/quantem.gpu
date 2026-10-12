@@ -23,7 +23,7 @@ class MetalRawBackend(DetectorQueries):
 
     def __init__(self, frames):
         self.frames = frames
-        self.det_shape = tuple(int(size) for size in frames.shape[1:])
+        self.detector_shape = tuple(int(size) for size in frames.shape[1:])
         self.n_frames = int(frames.shape[0])
         self.scan_shape = scan_shape_of(self.n_frames)
         self.device = "mps"
