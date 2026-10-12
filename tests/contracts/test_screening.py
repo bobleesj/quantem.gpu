@@ -432,12 +432,51 @@ def test_screening_forced_rotation_recomputes_phase(tmp_path) -> None:
 
     rotated = workflow._with_rotation(result, 35.0, False)
 
-    # the caller's physical rotation sits beside the fitted estimate, which is kept
+    # the caller's physical rotation replaces the fitted estimate, which the cache record keeps
     assert rotated.scan_detector_rotation_deg == 35.0
-    assert rotated.scan_detector_rotation_mod180_deg == 17.0
+    assert rotated.scan_detector_rotation_mod180_deg == 35.0
+    assert rotated.metadata["parameters"]["scan_detector_rotation_mod180_deg"] == 17.0
     assert rotated.detector_transposed is False
     assert rotated.dpc_phase.dtype == np.float32
     assert rotated.dpc_phase.shape == (4, 4)
+
+
+def test_screening_forced_rotation_describes_one_geometry(tmp_path) -> None:
+    """A caller's rotation replaces the fitted angle and flag together.
+
+    The fit of this field exchanges the detector axes. The result kept that
+    fitted angle beside the caller's flag: a pair that is neither the fit
+    nor the geometry the phase was integrated with.
+    """
+    from quantem.gpu.dpc.workflow import find_optimal_rotation
+    from quantem.gpu.screening import workflow
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    rows, cols = np.mgrid[:24, :28]
+    potential = 40 * np.exp(-((rows - 9) ** 2 + (cols - 15) ** 2) / 60)
+    # a detector whose axes are exchanged reports the row gradient along its columns
+    com_col, com_row = (gradient.astype(np.float32) for gradient in np.gradient(potential))
+    _, _, fitted_deg, fitted_transposed = find_optimal_rotation(com_row, com_col, rotation_steps=30)
+    assert fitted_transposed
+    fitted = _result(master, workflow)
+    fitted.com_row, fitted.com_col = com_row, com_col
+    fitted.scan_detector_rotation_mod180_deg = fitted.metadata["parameters"]["scan_detector_rotation_mod180_deg"] = float(fitted_deg)
+    fitted.detector_transposed = fitted.metadata["parameters"]["detector_transposed"] = True
+    cache_dir = tmp_path / "cache"
+    workflow._save_cache(fitted, workflow._cache_path(master, cache_dir))
+
+    reopened = workflow.prepare(master, cache_dir=cache_dir)
+    forced = workflow.prepare(master, cache_dir=cache_dir, scan_detector_rotation_deg=190.0)
+
+    assert (reopened.scan_detector_rotation_mod180_deg, reopened.detector_transposed) == (float(fitted_deg), True)
+    assert reopened.scan_detector_rotation_deg is None
+    assert (forced.scan_detector_rotation_mod180_deg, forced.detector_transposed) == (10.0, False)
+    assert forced.scan_detector_rotation_deg == 190.0
+    np.testing.assert_array_equal(forced.dpc_phase, workflow._dpc_phase(com_row, com_col, 190.0, False))
+    # the fit is still on record, as a pair
+    assert (forced.metadata["parameters"]["scan_detector_rotation_mod180_deg"],
+            forced.metadata["parameters"]["detector_transposed"]) == (float(fitted_deg), True)
 
 
 def test_screening_load_calls_use_public_api() -> None:

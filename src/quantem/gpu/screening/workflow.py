@@ -39,7 +39,11 @@ class ScreeningResult:
     are exact uint64 count maps. ``scan_detector_rotation_mod180_deg`` is the
     curl fit, known modulo 180 degrees; ``scan_detector_rotation_deg`` is the
     physical rotation a caller gave ``prepare`` and is None otherwise. The
-    phase uses the caller's rotation when there is one.
+    phase uses the caller's rotation when there is one. The pair
+    ``scan_detector_rotation_mod180_deg`` and ``detector_transposed`` always
+    describes the one geometry of the phase: with a caller's rotation it is
+    that angle modulo 180 and the caller's flag, and the fit stays in
+    ``metadata["parameters"]``.
     """
 
     mean_diffraction_pattern: np.ndarray
@@ -304,12 +308,15 @@ def _with_rotation(
     A user who knows the scan-detector rotation (for example from a
     calibration at this camera length) overrides the fitted one; only the
     phase depends on it, so the cached centre of mass is reused. The fitted
-    estimate stays in ``scan_detector_rotation_mod180_deg``.
+    estimate stays in ``metadata["parameters"]``; the result's angle and flag
+    both become the caller's, because a fitted angle beside the caller's flag
+    describes no geometry when the fit exchanged the detector axes.
     """
     if scan_detector_rotation_deg is None:
         return result
     rotation = float(scan_detector_rotation_deg)
     result.scan_detector_rotation_deg = rotation % 360.0
+    result.scan_detector_rotation_mod180_deg = rotation % 180.0
     result.detector_transposed = bool(detector_transposed)
     result.dpc_phase = _dpc_phase(
         result.com_row,

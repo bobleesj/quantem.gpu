@@ -184,8 +184,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   `ScreeningResult.transposed` become `detector_transposed`. The argument
   `rotation_angle_deg` of `dpc.run` and `screening.prepare` becomes
   `scan_detector_rotation_deg`, with a new `detector_transposed`; a result
-  then holds the given angle in `scan_detector_rotation_deg` and, for
-  `dpc.run`, no `scan_detector_rotation_mod180_deg`.
+  then holds the given angle in `scan_detector_rotation_deg`. Angle and flag
+  of a result describe one geometry: with a given rotation `dpc.run` has no
+  `scan_detector_rotation_mod180_deg`, and `screening.prepare` holds the
+  given angle modulo 180 there beside the given flag, with the fit kept in
+  `metadata["parameters"]`.
 - A saved SSB result record and its signature carry
   `"schema": "quantem.ssb-result/7"`, a string; it was the number 6.
 - `ScreeningResult.mean_dp` becomes `mean_diffraction_pattern`, as does its
