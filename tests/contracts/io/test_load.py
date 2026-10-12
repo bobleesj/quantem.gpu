@@ -26,12 +26,13 @@ def test_get_metadata_reports_detector_source_dtype(tmp_path) -> None:
     assert metadata["detector_shape"] == (6, 6)
 
 
-def test_qem_of_a_master_holds_no_hdf5_group_class(tmp_path) -> None:
-    """The NeXus class of a master's data group is not acquisition metadata and does not reach a saved ``.qem``.
+def test_qem_of_a_master_holds_no_hdf5_layout_attributes(tmp_path) -> None:
+    """The layout attributes of a master's data group are not acquisition metadata and do not reach a saved ``.qem``.
 
-    ``io.save`` marks ``entry/data`` of a master as ``NXdata``. The reader copied that attribute into the dataset
-    metadata, and every ``.qem`` made from such a master stored ``NX_class: "NXdata"`` in its header, a key the
-    format does not list.
+    ``io.save`` marks ``entry/data`` of a master as ``NXdata``, names its default dataset in ``signal`` and lists
+    the frame range of each data file in ``data_file_frame_ranges``. The reader copied all three into the dataset
+    metadata, and every ``.qem`` made from such a master stored them in its header: keys the format does not
+    list and no reader uses.
     """
     import h5py
 
@@ -42,12 +43,13 @@ def test_qem_of_a_master_holds_no_hdf5_group_class(tmp_path) -> None:
     counts = np.random.default_rng(1).poisson(3, (2, 3, 8, 8)).astype(np.uint16)
     master = tmp_path / "scan_master.h5"
     io.save(master, counts, backend="cpu", verbose=False)
+    layout = {"NX_class", "signal", "data_file_frame_ranges"}
     with h5py.File(master, "r") as handle:
-        assert handle["entry/data"].attrs["NX_class"] == b"NXdata"
-    assert "NX_class" not in get_metadata(str(master))
+        assert layout <= set(handle["entry/data"].attrs)
+    assert not layout & set(get_metadata(str(master)))
     with io.load(master, backend="cpu", verbose=False) as loaded:
         io.save(tmp_path / "scan.qem", loaded, backend="cpu", verbose=False)
-    assert "NX_class" not in read_envelope(tmp_path / "scan.qem")[0]["metadata"]
+    assert not layout & set(read_envelope(tmp_path / "scan.qem")[0]["metadata"])
 
 
 def test_load_names_master_calibration_attributes_it_does_not_read(tmp_path) -> None:
