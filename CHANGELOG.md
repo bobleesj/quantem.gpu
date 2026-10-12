@@ -8,6 +8,17 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- A session's `dataset.yaml` is read only at quantem.live's schema
+  `quantem.dataset/2` (`quantem.gpu.formats.dataset_yaml`), by `io.convert`
+  and `SSB.reconstruct_series`; another schema raises `ValueError` naming
+  quantem.live's `tools/rewrite_dataset_yaml.py` (`convert` then copies
+  without it and records why). The scan step is a `[row, col]` pair: the file
+  entry's own `scan_sampling_A`, else the `calibrations` row of its `mag`,
+  else `calibrations.default`. The rotation is
+  `files.<n>.scan_detector_rotation_deg`, else
+  `microscope.scan_detector_rotation_deg` (they were `rotation_deg` and
+  `screen_rotation_deg`); a per-file `0.0` counts. The older
+  `reference_structure` block is no longer read as a specimen; `specimen` is.
 - `.qem` flat calibration keys are specified (QEM specification 0.0.4) and
   carry their unit: `detector_sampling` with `detector_sampling_unit` becomes
   `detector_sampling_mrad` or `detector_sampling_inv_A`, each `[row, col]`,

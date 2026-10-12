@@ -26,6 +26,7 @@ import numpy as np
 import torch
 import yaml
 
+from quantem.gpu.formats import dataset_yaml
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import read_pixel_mask
 from quantem.gpu.formats.qem.metadata import validate_sample
@@ -71,13 +72,13 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     """Calibration an operator recorded for this acquisition in its session's ``dataset.yaml``.
 
     An Arina master records neither the probe semi-angle nor the scan step; the
-    session file next to it does, once per session (``microscope``) and per
-    magnification (``calibrations``) through the file's own ``files`` entry. The
-    values become calibration overrides whose evidence is the session file's
-    SHA-256, so every reader of the copy applies them ahead of the recorded
-    values, and the fields used are attached as a JSON source document. Only an
-    entry whose ``master`` is this file counts: a session can hold several series
-    with the same numbers.
+    session file next to it does, once per session (``microscope``) and as a
+    ``[row, col]`` step through the file's own ``files`` entry
+    (``formats.dataset_yaml.scan_sampling_A``). The values become calibration
+    overrides whose evidence is the session file's SHA-256, so every reader of
+    the copy applies them ahead of the recorded values, and the fields used are
+    attached as a JSON source document. Only an entry whose ``master`` is this
+    file counts: a session can hold several series with the same numbers.
 
     Parameters
     ----------
@@ -93,8 +94,8 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     Raises
     ------
     ValueError
-        The session file is not readable YAML with the expected sections;
-        ``convert`` then converts without it and says why.
+        The session file is not readable YAML of schema ``quantem.dataset/2`` with
+        the expected sections; ``convert`` then converts without it and says why.
 
     Examples
     --------
@@ -105,16 +106,15 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     if not sidecar.is_file():
         return {}, None
     document, evidence = _session_document(sidecar)
-    sections = {name: document.get(name) or {} for name in ("microscope", "files", "calibrations", "session")} if isinstance(document, dict) else {}
-    if not sections or not all(isinstance(section, dict) for section in sections.values()):
+    sections = {name: document.get(name) or {} for name in ("microscope", "files", "calibrations", "session")}
+    if not all(isinstance(section, dict) for section in sections.values()):
         raise ValueError(f"{sidecar}: microscope, files, calibrations and session must be mappings")
-    microscope, files, calibrations = sections["microscope"], sections["files"], sections["calibrations"]
+    microscope, files = sections["microscope"], sections["files"]
     key, entry, matched_by = session_file_entry(files, Path(master))
     if entry is not None:
         evidence += f", files[{key}] by {matched_by}"
-    mag = entry.get("mag") if entry else None
-    calibration = calibrations.get(mag) if isinstance(mag, str) else None
-    calibration = calibration if isinstance(calibration, dict) else {}
+    # a scan with no entry of its own takes only the session-wide step (calibrations.default), never another entry's
+    step = dataset_yaml.scan_sampling_A(document, entry, sidecar)
     overrides = {}
 
     def override(path, value, factor, unit):
@@ -123,15 +123,17 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
 
     override("electron_source/accelerating_voltage", microscope.get("voltage_kV"), 1000, "V")
     override("illumination_system/semi_convergence_angle", microscope.get("semiangle_mrad"), 1, "mrad")
-    for axis in ("row", "column"):
-        override(f"scan_controller/regular_scan/pixel_size_{axis}", calibration.get("scan_sampling_A"), 1e-10, "m")
+    if step is not None:
+        # the stored path names the column axis "column" (scientific_metadata strings are unchanged)
+        for axis, value in zip(("row", "column"), step, strict=True):
+            override(f"scan_controller/regular_scan/pixel_size_{axis}", value, 1e-10, "m")
     if not overrides:
         return {}, None
     # only the fields read: session and file notes can name people and links that do not belong in a portable copy
     used = {"session": str(sections["session"].get("name")),
             "microscope": {name: microscope.get(name) for name in ("voltage_kV", "semiangle_mrad")},
-            "file": {"key": str(key), "master": entry.get("master"), "mag": mag} if entry else None,
-            "calibration": {"scan_sampling_A": calibration.get("scan_sampling_A")}}
+            "file": {"key": str(key), "master": entry.get("master"), "mag": entry.get("mag")} if entry else None,
+            "calibration": {"scan_sampling_A": None if step is None else list(step)}}
     content = json.dumps(used, sort_keys=True, default=str)
     attachment = {"filename": "dataset.json", "mediaType": "application/json", "content": content,
                   "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
@@ -142,7 +144,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     """The specimen an operator declared for this acquisition in its session's ``dataset.yaml``, as the ``.qem``
     ``sample`` group (specification 0.0.3), and each component's CIF as a JSON source document.
 
-    ``specimen:`` (or an older one-crystal ``reference_structure:``) names the components; the file's own ``files``
+    ``specimen:`` names the components; the file's own ``files``
     entry (``session_file_entry``) adds which components it shows and its recorded thickness estimates, converted from
     ``value_nm`` to ``value`` in angstrom. Only declared fields are written, nothing is defaulted.
 
@@ -159,7 +161,8 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     Raises
     ------
     ValueError
-        The session file is not readable YAML, or its specimen is malformed (``formats.qem.metadata.validate_sample``).
+        The session file is not readable YAML of schema ``quantem.dataset/2``, or its specimen is malformed
+        (``formats.qem.metadata.validate_sample``).
 
     Examples
     --------
@@ -170,12 +173,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     if not sidecar.is_file():
         return None, []
     document, evidence = _session_document(sidecar)
-    if not isinstance(document, dict):
-        raise ValueError(f"{sidecar}: the top level must be a mapping")
     declared = document.get("specimen")
-    if declared is None and isinstance(document.get("reference_structure"), dict):
-        legacy = document["reference_structure"]
-        declared = {"components": {Path(str(legacy.get("cif") or "crystal")).stem: {"cif": legacy.get("cif"), "zone_axis": legacy.get("zone_axis")}}}
     if declared is None:
         return None, []
     files = document.get("files") or {}
@@ -227,8 +225,8 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     return sample, attached
 
 
-def _session_document(sidecar: Path) -> tuple[object, str]:
-    """Parse a session file, with the evidence string that names its exact bytes.
+def _session_document(sidecar: Path) -> tuple[dict, str]:
+    """Parse a session file of schema ``quantem.dataset/2``, with the evidence string that names its exact bytes.
 
     Calibration and specimen both cite the file by SHA-256, so a copy records
     which version of ``dataset.yaml`` its values came from.
@@ -238,7 +236,7 @@ def _session_document(sidecar: Path) -> tuple[object, str]:
         document = yaml.safe_load(text) or {}
     except yaml.YAMLError as error:
         raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
-    return document, f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
+    return dataset_yaml.checked_dataset(document, sidecar), f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
 
 
 def _cif_document(sidecar: Path, label: str, name: str, documents: dict[Path, dict]) -> dict:

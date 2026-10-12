@@ -146,8 +146,8 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
     file's own entry, the scan step; another series with the same number gets no
     scan step, and the attachment carries only the fields used, not the notes."""
     (tmp_path / "dataset.yaml").write_text(
-        "schema_version: 1\nsession:\n  name: s1\n  notes: private\n"
-        "calibrations:\n  mag_5p1:\n    scan_sampling_A: 0.373\n"
+        "schema: quantem.dataset/2\nsession:\n  name: s1\n  notes: private\n"
+        "calibrations:\n  mag_5p1:\n    scan_sampling_A: [0.373, 0.41]\n"
         "microscope:\n  voltage_kV: 300\n  semiangle_mrad: 30\n"
         "files:\n  16:\n    master: scan_16_master.h5\n    mag: mag_5p1\n    notes: file note\n"
     )
@@ -155,7 +155,7 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
     assert overrides["illumination_system/semi_convergence_angle"]["value"] == 30.0
     assert overrides["electron_source/accelerating_voltage"]["value"] == 300e3
     assert overrides["scan_controller/regular_scan/pixel_size_row"]["value"] == pytest.approx(0.373e-10)
-    assert overrides["scan_controller/regular_scan/pixel_size_column"]["value"] == pytest.approx(0.373e-10)
+    assert overrides["scan_controller/regular_scan/pixel_size_column"]["value"] == pytest.approx(0.41e-10)
     assert all(q["evidence"].startswith("dataset.yaml sha256:") for q in overrides.values())
     assert "private" not in attachment["content"] and "file note" not in attachment["content"]
     other, _ = convert.session_calibration(tmp_path / "other_16_master.h5")
@@ -164,19 +164,58 @@ def test_session_file_calibrates_its_own_acquisition(tmp_path):
         (2, 2, 8, 8), {"calibration_overrides": overrides, "source_documents": [attachment]})
     effective = qem_metadata.effective_metadata({}, scientific)
     assert effective["semiangle_mrad"] == 30.0 and effective["voltage_kV"] == 300.0
-    assert effective["scan_sampling_A"] == pytest.approx([0.373, 0.373])
+    assert effective["scan_sampling_A"] == pytest.approx([0.373, 0.41])
 
 
-@pytest.mark.parametrize("text", ["microscope: {voltage_kV: 300", "files: [a, b]", "session: s1", "- a\n- b",
-                                  "microscope: {voltage_kV: 300, 1: a}\nfiles:\n  1:\n    master: x_master.h5\n    mag: [a]\n"])
+@pytest.mark.parametrize("text", [
+    "schema: quantem.dataset/2\nmicroscope: {voltage_kV: 300",
+    "schema: quantem.dataset/2\nfiles: [a, b]",
+    "schema: quantem.dataset/2\nsession: s1",
+    "- a\n- b",
+    "schema: quantem.dataset/2\nmicroscope: {voltage_kV: 300, 1: a}\nfiles:\n  1:\n    master: x_master.h5\n    mag: [a]\n",
+    "schema: quantem.dataset/2\ncalibrations:\n  default:\n    scan_sampling_A: 0.5\n",            # a step is [row, col]
+    "schema: quantem.dataset/2\nfiles:\n  1:\n    master: x_master.h5\n    scan_sampling_A: [0.5, -1]\n",
+])
 def test_malformed_session_file_is_named_not_fatal(tmp_path, text):
     """A malformed dataset.yaml raises one ValueError naming the file (convert then copies without it), never a parser or
     attribute error that would stop a batch."""
     (tmp_path / "dataset.yaml").write_text(text)
-    try:
+    with pytest.raises(ValueError, match="dataset.yaml"):
         convert.session_calibration(tmp_path / "x_master.h5")
-    except ValueError as error:
-        assert "dataset.yaml" in str(error)
+
+
+def test_session_file_of_another_schema_is_refused_naming_the_rewrite(tmp_path):
+    """A dataset.yaml written before quantem.dataset/2 (one-number step, screen_rotation_deg) is refused by name; reading
+    it would find no step and no rotation without saying so. convert then copies without it and records why."""
+    (tmp_path / "dataset.yaml").write_text(
+        "schema_version: 1\nmicroscope:\n  voltage_kV: 300\n  semiangle_mrad: 30\n  screen_rotation_deg: 12\n"
+        "calibrations:\n  scan_sampling_A: 0.5\n  mag_5p1:\n    scan_sampling_A: 0.373\n"
+        "files:\n  16:\n    master: scan_16_master.h5\n    mag: mag_5p1\n    rotation_deg: 0.0\n"
+        "reference_structure:\n  cif: ./BaTiO3.cif\n")
+    for read in (convert.session_calibration, convert.session_specimen):
+        with pytest.raises(ValueError, match=r"schema None is not read.*quantem\.dataset/2.*tools/rewrite_dataset_yaml\.py"):
+            read(tmp_path / "scan_16_master.h5")
+
+
+def test_session_step_is_the_entry_pair_else_its_magnification_else_the_session_default(tmp_path):
+    """quantem.live's order for the [row, col] step: the file entry's own, the calibrations row of its mag, then
+    calibrations.default; a scan without an entry takes only the session default, never another entry's step."""
+    (tmp_path / "dataset.yaml").write_text(
+        "schema: quantem.dataset/2\nmicroscope:\n  semiangle_mrad: 30\n"
+        "calibrations:\n  default:\n    scan_sampling_A: [0.5, 0.6]\n  mag_5p1:\n    scan_sampling_A: [0.373, 0.41]\n"
+        "files:\n"
+        "  16:\n    master: scan_16_master.h5\n    mag: mag_5p1\n    scan_sampling_A: [0.2, 0.3]\n"
+        "  17:\n    master: scan_17_master.h5\n    mag: mag_5p1\n"
+        "  18:\n    master: scan_18_master.h5\n    mag: mag_9p9\n")
+    steps = {}
+    for scan in ("scan_16", "scan_17", "scan_18", "other_16"):
+        overrides, attachment = convert.session_calibration(tmp_path / f"{scan}_master.h5")
+        steps[scan] = tuple(overrides[f"scan_controller/regular_scan/pixel_size_{axis}"]["value"] * 1e10 for axis in ("row", "column"))
+        assert json.loads(attachment["content"])["calibration"]["scan_sampling_A"] == pytest.approx(list(steps[scan]))
+    assert steps["scan_16"] == pytest.approx((0.2, 0.3))
+    assert steps["scan_17"] == pytest.approx((0.373, 0.41))
+    assert steps["scan_18"] == pytest.approx((0.5, 0.6))
+    assert steps["other_16"] == pytest.approx((0.5, 0.6))
 
 
 
@@ -185,7 +224,7 @@ def test_session_listed_by_scan_number_calibrates_only_an_unambiguous_scan(tmp_p
     scan ending in that number, and says so in the evidence; two series ending
     in the same number get none."""
     (tmp_path / "dataset.yaml").write_text(
-        "calibrations:\n  mag_3p6:\n    scan_sampling_A: 0.525\nmicroscope:\n  semiangle_mrad: 30\n"
+        "schema: quantem.dataset/2\ncalibrations:\n  mag_3p6:\n    scan_sampling_A: [0.525, 0.525]\nmicroscope:\n  semiangle_mrad: 30\n"
         "files:\n  0:\n    mag: mag_3p6\n    notes: sample_54___00\n"
     )
     (tmp_path / "sample_54___00_master.h5").write_bytes(b"")
@@ -215,7 +254,7 @@ def test_session_specimen_becomes_the_sample_group(tmp_path):
     with the group validates and keeps it."""
     (tmp_path / "BaTiO3.cif").write_text("data_BaTiO3\n_cell_length_a 4.0\n")
     (tmp_path / "dataset.yaml").write_text(
-        "schema_version: 1\n"
+        "schema: quantem.dataset/2\n"
         "specimen:\n  name: BaTiO3 film on SrTiO3\n  geometry: cross-section\n  components:\n"
         "    BTO:\n      role: film\n      chemical_formula: BaTiO3\n      cif: BaTiO3.cif\n      zone_axis: [0, 0, 1]\n"
         "    STO:\n      chemical_formula: SrTiO3\n      zone_axis: '[1-10]'\n"
@@ -238,12 +277,12 @@ def test_session_specimen_becomes_the_sample_group(tmp_path):
     assert scientific["sample"] == sample
 
 
-def test_session_specimen_reads_the_older_reference_structure_and_rejects_a_missing_cif(tmp_path):
+def test_session_specimen_reads_only_specimen_and_rejects_a_missing_cif(tmp_path):
+    """quantem.dataset/2 declares the specimen under specimen; an older reference_structure block is not read."""
     (tmp_path / "BaTiO3.cif").write_text("data_BaTiO3\n")
-    (tmp_path / "dataset.yaml").write_text("reference_structure:\n  cif: ./BaTiO3.cif\n  zone_axis: '[100]'\n")
-    sample, documents = convert.session_specimen(tmp_path / "x_master.h5")
-    assert sample["components"]["BaTiO3"]["zone_axis"] == [1, 0, 0] and len(documents) == 1
-    (tmp_path / "dataset.yaml").write_text("specimen:\n  components:\n    A:\n      cif: missing.cif\n")
+    (tmp_path / "dataset.yaml").write_text("schema: quantem.dataset/2\nreference_structure:\n  cif: ./BaTiO3.cif\n")
+    assert convert.session_specimen(tmp_path / "x_master.h5") == (None, [])
+    (tmp_path / "dataset.yaml").write_text("schema: quantem.dataset/2\nspecimen:\n  components:\n    A:\n      cif: missing.cif\n")
     with pytest.raises(ValueError, match="missing.cif"):
         convert.session_specimen(tmp_path / "x_master.h5")
 
@@ -265,7 +304,7 @@ def test_session_specimen_reads_the_older_reference_structure_and_rejects_a_miss
 def test_a_malformed_specimen_is_one_named_error(tmp_path, specimen):
     """Every malformed specimen raises one ValueError naming dataset.yaml (convert then copies without it, with a note),
     never AttributeError or TypeError, and never embeds a file from outside the session folder."""
-    (tmp_path / "dataset.yaml").write_text(specimen)
+    (tmp_path / "dataset.yaml").write_text(specimen if specimen.startswith("-") else f"schema: quantem.dataset/2\n{specimen}")
     with pytest.raises(ValueError, match="dataset.yaml"):
         convert.session_specimen(tmp_path / "x_1_master.h5")
 
@@ -273,7 +312,7 @@ def test_a_malformed_specimen_is_one_named_error(tmp_path, specimen):
 def test_specimen_directions_and_shared_cif(tmp_path):
     """'[10 0 1]' keeps its two-digit index; two components sharing one CIF embed it once."""
     (tmp_path / "X.cif").write_text("data_X\n")
-    (tmp_path / "dataset.yaml").write_text("specimen:\n  components:\n    A:\n      cif: X.cif\n      zone_axis: '[10 0 1]'\n"
+    (tmp_path / "dataset.yaml").write_text("schema: quantem.dataset/2\nspecimen:\n  components:\n    A:\n      cif: X.cif\n      zone_axis: '[10 0 1]'\n"
                                            "    B:\n      cif: ./X.cif\n      zone_axis: '[1-10]'\n")
     sample, documents = convert.session_specimen(tmp_path / "x_1_master.h5")
     assert sample["components"]["A"]["zone_axis"] == [10, 0, 1] and sample["components"]["B"]["zone_axis"] == [1, -1, 0]

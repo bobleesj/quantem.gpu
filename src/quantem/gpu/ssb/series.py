@@ -16,6 +16,7 @@ import numpy as np
 import yaml
 
 from quantem.gpu import screening
+from quantem.gpu.formats import dataset_yaml
 from quantem.gpu.ssb.contract import RefineMethod
 from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA
 from quantem.gpu.ssb.results import (
@@ -314,12 +315,14 @@ def frame_number(path: Path) -> int:
 
 
 def read_dataset_yaml(source_root: Path) -> dict[str, object]:
-    """Read the optional session metadata used when no Live result exists yet; empty when absent."""
+    """Read the optional session metadata used when no Live result exists yet; empty when absent.
+
+    A file of another schema than ``quantem.dataset/2`` raises instead of supplying no rotation and no step.
+    """
     path = source_root / "dataset.yaml"
     if not path.is_file():
         return {}
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return document if isinstance(document, dict) else {}
+    return dataset_yaml.checked_dataset(yaml.safe_load(path.read_text(encoding="utf-8")), path)
 
 
 def acquisition_settings(
@@ -489,28 +492,22 @@ def _dataset_yaml_settings(
     document: dict[str, object],
     dataset: str,
 ) -> dict[str, object]:
-    """Resolve one dataset's physical SSB settings from ``dataset.yaml`` (microscope, per-file magnification calibration)."""
+    """Resolve one dataset's physical SSB settings from a ``quantem.dataset/2`` file (``formats.dataset_yaml``).
+
+    The beam is the session's ``microscope``; the scan step ``[row, col]`` and the scan-to-detector rotation are the
+    file entry's own, else the session's, in quantem.live's order. An empty document (no file) gives no values.
+    """
     microscope = document.get("microscope")
     files = document.get("files")
-    calibrations = document.get("calibrations")
     microscope = microscope if isinstance(microscope, dict) else {}
     files = files if isinstance(files, dict) else {}
-    calibrations = calibrations if isinstance(calibrations, dict) else {}
     match = re.search(r"(\d+)$", dataset)
     frame = None if match is None else int(match.group(1))
-    file_settings = files.get(frame, files.get(str(frame), {}))
-    file_settings = file_settings if isinstance(file_settings, dict) else {}
-    calibration = calibrations.get(file_settings.get("mag"), {})
-    calibration = calibration if isinstance(calibration, dict) else {}
-    # dataset.yaml records one scan step per magnification, the same along both scan axes
-    step = calibration.get("scan_sampling_A")
+    entry = files.get(frame, files.get(str(frame)))
+    entry = entry if isinstance(entry, dict) else None
     return {
         "voltage_kV": microscope.get("voltage_kV"),
         "semiangle_mrad": microscope.get("semiangle_mrad"),
-        "scan_sampling_A": None if step is None else (step, step),
-        # dataset.yaml keeps its own key names until its schema changes with quantem.live
-        "scan_detector_rotation_deg": file_settings.get(
-            "rotation_deg",
-            microscope.get("screen_rotation_deg"),
-        ),
+        "scan_sampling_A": dataset_yaml.scan_sampling_A(document, entry, "dataset.yaml"),
+        "scan_detector_rotation_deg": dataset_yaml.scan_detector_rotation_deg(document, entry),
     }
