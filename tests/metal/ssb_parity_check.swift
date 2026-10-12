@@ -105,16 +105,21 @@ private struct CaseReport: Encodable {
     var detectorSum = [UInt64](repeating: 0, count: payload.detector_shape[0] * payload.detector_shape[1])
     let calData = try Data(contentsOf: caseDirectory.appendingPathComponent("source/snapshots/cal.json"))
     let cal = try JSONDecoder().decode(CalibrationFile.self, from: calData)
-    guard cal.bf_rows.count == payload.bf_count, cal.bf_cols.count == payload.bf_count else {
-      fail("calibration declares \(cal.bf_rows.count) BF pixels, case declares \(payload.bf_count)")
+    guard cal.schema == "quantem.ssb-browser-calibration/2" else {
+      fail("cal.json is not a quantem.ssb-browser-calibration/2 calibration (schema \(cal.schema ?? "none"))")
+    }
+    guard cal.bright_field_rows.count == payload.bf_count,
+      cal.bright_field_cols.count == payload.bf_count
+    else {
+      fail("calibration declares \(cal.bright_field_rows.count) BF pixels, case declares \(payload.bf_count)")
     }
     let plane = side * side
     guard (payload.bf_count * plane) * MemoryLayout<UInt16>.size == counts.count else { fail("payload size") }
     counts.withUnsafeBytes { raw in
       let values = raw.bindMemory(to: UInt16.self)
       for index in 0..<payload.bf_count {
-        let detectorRow = cal.bf_rows[index]
-        let detectorColumn = cal.bf_cols[index]
+        let detectorRow = cal.bright_field_rows[index]
+        let detectorColumn = cal.bright_field_cols[index]
         var total: UInt64 = 0
         let base = index * plane
         for offset in 0..<plane { total += UInt64(values[base + offset]) }
@@ -261,8 +266,11 @@ private struct CaseReport: Encodable {
   }
 }
 
+// The widget's browser calibration (`snapshots/cal.json`), as quantem.widget and the parity
+// exporter write it; `bf_excluded_detector_pixels` is the exporter's own addition.
 private struct CalibrationFile: Decodable {
-  let bf_rows: [Int]
-  let bf_cols: [Int]
+  let schema: String?
+  let bright_field_rows: [Int]
+  let bright_field_cols: [Int]
   let bf_excluded_detector_pixels: [Int]?
 }
