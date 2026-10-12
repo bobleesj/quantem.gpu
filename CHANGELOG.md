@@ -333,6 +333,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   markers became exact. The integer, float32 and CPU reference readers now
   return these three keys as the header states them and add none where it
   has none; a copy stores the same values as its original.
+- A `.qem` made from an HDF5 master that `io.save` wrote stored
+  `NX_class: "NXdata"` in its header's `metadata` block, a key the format
+  does not list: the master reader copied the NeXus class of the `entry/data`
+  group into the dataset metadata. It is no longer copied.
 - Calibration overrides were stored twice in one file, in volts and metres in
   `metadata` and in kV and angstrom in `scientific_metadata`. They are stored
   once.
