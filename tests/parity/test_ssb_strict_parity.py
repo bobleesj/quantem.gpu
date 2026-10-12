@@ -22,6 +22,7 @@ launch the expensive CPU reference automatically.
 """
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -198,6 +199,27 @@ def _assert_gate(label: str, metric: str, value: float, floor: dict) -> None:
     )
 
 
+def test_gate_gives_the_session_each_setting_in_nm_and_degrees() -> None:
+    """A case holds ``(C10_A, C12_A, phi12_rad)``, the oracle's units; the public session takes nm and degrees.
+
+    The gate passed the Angstrom numbers under the nm keys, so the MPS session reconstructed at ten times the
+    oracle's defocus. The mapping it hands the session must return, through the session's own conversion, to the
+    float32 coefficients the oracle's setting gives the kernels. Needs no acquisition.
+    """
+    import numpy as np
+
+    from quantem.gpu.ssb.units import aberrations_to_engine
+    from ssb_parity_gate import _aberration_dict
+
+    for case in CASES.values():
+        for index, (c10_A, c12_A, phi12_rad) in enumerate(case.aberrations_A_rad):
+            public = _aberration_dict(case, index)
+            assert public == {"C10_nm": c10_A / 10.0, "C12_nm": c12_A / 10.0, "phi12_deg": math.degrees(phi12_rad)}
+            engine = aberrations_to_engine(public)
+            np.testing.assert_array_equal(np.float32([engine["C10"], engine["C12"], engine["phi12"]]),
+                                          np.float32([c10_A, c12_A, phi12_rad]), err_msg=f"{case.name}#{index}")
+
+
 def test_bf_policy_matches_documented_count() -> None:
     """The pinned disk reproduces the documented 8,937 logical BF pixels."""
 
@@ -281,7 +303,7 @@ def test_recorded_c10_settings_no_longer_disagree(fast_reports: list[dict]) -> N
     for entry in _entries(fast_reports, RECORDED_CASE):
         floor = entry["float32_floor"]
         assert floor["object_relative_l2"] < 1.0e-5, (
-            f"recorded C10={entry['aberrations']['C10']} is not a usable "
+            f"recorded C10={entry['aberrations']['C10_A']} is not a usable "
             f"float32 parity point: floor {floor['object_relative_l2']:.3g}"
         )
         cached = entry.get("metal_cached_vs_streamed")
