@@ -231,7 +231,7 @@ def test_ssb_open_does_not_swallow_declared_companion_error(
             backend="mps",
             voltage_kV=300.0,
             semiangle_mrad=30.0,
-            scan_sampling_A=0.25,
+            scan_sampling_A=(0.25, 0.25),
         )
 
 
@@ -324,7 +324,7 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
     rows, cols = np.mgrid[:12, :12]
     counts[:, :, (rows - 5.5) ** 2 + (cols - 5.5) ** 2 <= 16] += 300   # counts above 255 keep the uint16 file
     aberrations = {"C10_nm": 5.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
-    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=0.5) as session:
+    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5)) as session:
         before, before_loss = session.preview(aberrations)
         path, _seconds = session.export_brightfield(tmp_path / "bf")
         backend = session._backend()
@@ -377,7 +377,7 @@ def test_mps_engine_implements_backend_contract_for_exact_bf_source(tmp_path) ->
         voltage_kV=300.0,
         semiangle_mrad=30.0,
         scan_sampling=0.5,
-        detector_sampling_mrad=1.0,
+        detector_sampling_mrad=(1.0, 1.0),
         bright_field_intensity_threshold=0.5,
         bright_field_center_px=None,
         bright_field_radius_px=None,
@@ -1828,7 +1828,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
         backend="mps",
         voltage_kV=300,
         semiangle_mrad=21.4,
-        scan_sampling_A=1.0,
+        scan_sampling_A=(1.0, 1.0),
         bright_field_intensity_threshold=0.0,
         bright_field_radius_px=3,
     )

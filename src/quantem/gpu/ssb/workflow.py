@@ -81,13 +81,16 @@ def _on_scan_gpu(method):
     return on_scan_gpu
 
 
-def _sampling(value) -> float | tuple[float, float]:
-    """A sampling as the Python float or (row, col) floats the backends read.
+def _pair(name: str, value) -> tuple[float, float]:
+    """A sampling as the (row, col) Python floats the backends read.
 
-    A value read from NumPy metadata (``np.float32``) is not a ``float``, so the backends took it for a (row, col)
-    pair and failed indexing it.
+    One number for both axes is refused: the scan step of an acquisition is a [row, col] pair everywhere it is
+    stored, and a scalar read back from a record cannot be told from a pair that lost an axis. NumPy values
+    (``np.float32``) become Python floats, which the backends index safely.
     """
-    return float(value) if np.ndim(value) == 0 else (float(value[0]), float(value[1]))
+    if np.ndim(value) != 1 or len(value) != 2:
+        raise ValueError(f"{name} is a [row, col] pair; got {value!r}. Pass ({value!r}, {value!r}) for equal axes.")
+    return (float(value[0]), float(value[1]))
 
 
 class SSB:
@@ -115,12 +118,12 @@ class SSB:
         Accelerating voltage in kV.
     semiangle_mrad : float
         Probe convergence semiangle in mrad.
-    scan_sampling_A : float or (float, float)
+    scan_sampling_A : (float, float)
         Scan step in Angstrom, (row, col).
     scan_shape : (int, int), optional
         Scan shape of a 3D frame stack.
-    detector_sampling_mrad : float or (float, float), optional
-        Detector sampling in mrad per pixel. When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
+    detector_sampling_mrad : (float, float), optional
+        Detector sampling in mrad per pixel, (row, col). When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
     aberrations : dict, optional
         Starting ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
@@ -141,7 +144,7 @@ class SSB:
     Examples
     --------
     >>> ssb = SSB(patterns, voltage_kV=300, semiangle_mrad=30,
-    ...           scan_sampling_A=0.99, detector_sampling_mrad=0.6081)
+    ...           scan_sampling_A=(0.99, 0.99), detector_sampling_mrad=(0.6081, 0.6081))
     >>> aberrations = ssb.find_aberrations()
     >>> result = ssb.reconstruct(aberrations)
     """
@@ -153,9 +156,9 @@ class SSB:
         backend: Literal["auto", "cuda", "mps"] = "auto",
         voltage_kV: float,
         semiangle_mrad: float,
-        scan_sampling_A: float | tuple[float, float],
+        scan_sampling_A: tuple[float, float],
         scan_shape: tuple[int, int] | None = None,
-        detector_sampling_mrad: float | tuple[float, float] | None = None,
+        detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
         detector_transposed: bool = False,
@@ -184,7 +187,7 @@ class SSB:
                     calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
                 )
                 if detector_sampling_mrad is None:
-                    detector_sampling_mrad = semiangle_mrad / calibration_radius
+                    detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
             else:
                 data = data.data
         # The backends read dense arrays, plus the exact BF columns SSB.open finds on MPS. An encoded
@@ -220,8 +223,8 @@ class SSB:
         self._scan_shape = scan_shape
         self.voltage_kV = float(voltage_kV)
         self.semiangle_mrad = float(semiangle_mrad)
-        self.scan_sampling_A = _sampling(scan_sampling_A)
-        self.detector_sampling_mrad = None if detector_sampling_mrad is None else _sampling(detector_sampling_mrad)
+        self.scan_sampling_A = _pair("scan_sampling_A", scan_sampling_A)
+        self.detector_sampling_mrad = None if detector_sampling_mrad is None else _pair("detector_sampling_mrad", detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
         self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
@@ -263,9 +266,9 @@ class SSB:
         dtype: str | None = None,
         voltage_kV: float,
         semiangle_mrad: float,
-        scan_sampling_A: float | tuple[float, float],
+        scan_sampling_A: tuple[float, float],
         scan_shape: tuple[int, int] | None = None,
-        detector_sampling_mrad: float | tuple[float, float] | None = None,
+        detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
         detector_transposed: bool = False,
@@ -323,7 +326,7 @@ class SSB:
                 source_bytes = loaded.logical_bytes
                 correction = loaded.metadata.get("hot_pixel_correction")
             if detector_sampling_mrad is None:
-                detector_sampling_mrad = semiangle_mrad / calibration_radius
+                detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
             source_provenance = None if correction is None else {"hot_pixel_correction": correction}
             source_kind = "detector"
             source_storage_path = str(source)
@@ -594,7 +597,7 @@ class SSB:
         return SSBResult(
             object_wave=(cp if self.backend == "cuda" else np).stack(waves), backend=self.backend, trial_records=records,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor, phase_estimator=estimator,
+            object_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor, phase_estimator=estimator,
             amplitude_estimated=False, source_path=self.source_path,
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
@@ -766,7 +769,7 @@ class SSB:
                 center = detected_center if center is None else center
                 radius = detected_radius if radius is None else radius
                 if detector_sampling_mrad is None:
-                    detector_sampling_mrad = self.semiangle_mrad / disk_edge_radius(mean_pattern)
+                    detector_sampling_mrad = (self.semiangle_mrad / disk_edge_radius(mean_pattern),) * 2
             with SSB(
                 self._data[row_start:row_stop, column_start:column_stop],
                 backend=self.backend, voltage_kV=self.voltage_kV,
@@ -986,7 +989,7 @@ class SSB:
             scan_detector_rotation_deg=self.scan_detector_rotation_deg,
             loss=loss, elapsed=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor,
+            object_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor,
             phase_estimator=estimator, amplitude_estimated=False,
             phase_clim=correction.phase_limits if correction is not None else None,
             fit_scan_region=correction.fit_scan_region if correction is not None else None,
@@ -1182,16 +1185,15 @@ class SSB:
                          loss=None if loss is None else float(loss),
                          elapsed=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-                         scan_sampling_A=self.scan_sampling_A)
+                         object_sampling_A=self.scan_sampling_A)
 
     def _unit_wave(self, phase):
         """The unit-amplitude wave exp(i phase) of a phase-only reconstruction, on the session's device."""
         return cp.exp(1j * phase) if self.backend == "cuda" else np.exp(1j * np.asarray(phase))
 
-    def _output_sampling(self, upsampling_factor: int) -> float | tuple[float, float]:
-        """Output pixel size in Angstrom at ``upsampling_factor`` times the scan grid: one value or (row, col) like the input."""
-        sampling = np.asarray(self.scan_sampling_A) / upsampling_factor
-        return float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
+    def _output_sampling(self, upsampling_factor: int) -> tuple[float, float]:
+        """Output pixel size in Angstrom, (row, col), at ``upsampling_factor`` times the scan grid."""
+        return tuple((np.asarray(self.scan_sampling_A) / upsampling_factor).tolist())
 
     @_on_scan_gpu
     def preview_context(self, num_bright_field_pixels: int):

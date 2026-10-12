@@ -41,7 +41,7 @@ def test_a_fit_on_the_second_gpu_equals_the_fit_on_the_first():
     counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
     rows, cols = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rows, cols) < 10] += 200
-    settings = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.3, detector_sampling_mrad=3.0)
+    settings = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(3.0, 3.0))
     fits = []
     for device in (0, 1):
         with cp.cuda.Device(device):

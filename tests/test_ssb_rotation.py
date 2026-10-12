@@ -44,4 +44,4 @@ def test_ssb_refuses_a_transposed_detector_instead_of_ignoring_it():
     """A DPC or screening fit that exchanged the detector axes cannot be handed to SSB as if it had not."""
     patterns = np.zeros((2, 2, 4, 4), np.uint16)
     with pytest.raises(NotImplementedError, match="detector_transposed=True"):
-        SSB(patterns, voltage_kV=300, semiangle_mrad=20, scan_sampling_A=0.5, detector_transposed=True)
+        SSB(patterns, voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5), detector_transposed=True)

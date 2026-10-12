@@ -337,7 +337,7 @@ def main() -> None:
         calibration=str(calibration) if calibration else None,
         voltage_kV=args.voltage_kv,
         semiangle_mrad=args.semiangle_mrad,
-        scan_sampling_A=args.scan_sampling_a,
+        scan_sampling_A=(args.scan_sampling_a, args.scan_sampling_a),
     )
     backend = opened._backend_protocol
     backend.cache_rotation(0.0)
@@ -390,7 +390,7 @@ def main() -> None:
             calibration=str(calibration) if calibration else None,
             voltage_kV=args.voltage_kv,
             semiangle_mrad=args.semiangle_mrad,
-            scan_sampling_A=args.scan_sampling_a,
+            scan_sampling_A=(args.scan_sampling_a, args.scan_sampling_a),
         )
         backend = opened._backend_protocol
         backend.cache_rotation(0.0)

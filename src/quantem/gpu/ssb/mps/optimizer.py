@@ -230,7 +230,7 @@ def optimize(
         refine_elapsed=timings["refinement_seconds"],
         voltage_kV=float(voltage_kV),
         semiangle_mrad=float(semiangle_mrad),
-        scan_sampling_A=scan_sampling_A,
+        object_sampling_A=tuple(float(value) for value in np.broadcast_to(scan_sampling_A, (2,))),
         bright_field_center_px=selection.bright_field_center_px,
         bright_field_radius_px=selection.bright_field_radius_px,
         bright_field_edge_radius_px=selection.bright_field_edge_radius_px,

@@ -363,7 +363,7 @@ def open_settings(settings: dict[str, object], scan_detector_rotation_deg: float
     return {
         "voltage_kV": float(settings["voltage_kV"]),
         "semiangle_mrad": float(settings["semiangle_mrad"]),
-        "scan_sampling_A": settings["scan_sampling_A"],
+        "scan_sampling_A": tuple(settings["scan_sampling_A"]),
         "scan_detector_rotation_deg": scan_detector_rotation_deg,
         "detector_transposed": settings["detector_transposed"],
         "bright_field_radius_px": None if settings["bright_field_radius_px"] is None else round(float(settings["bright_field_radius_px"])),
@@ -493,10 +493,12 @@ def _dataset_yaml_settings(
     file_settings = file_settings if isinstance(file_settings, dict) else {}
     calibration = calibrations.get(file_settings.get("mag"), {})
     calibration = calibration if isinstance(calibration, dict) else {}
+    # dataset.yaml records one scan step per magnification, the same along both scan axes
+    step = calibration.get("scan_sampling_A")
     return {
         "voltage_kV": microscope.get("voltage_kV"),
         "semiangle_mrad": microscope.get("semiangle_mrad"),
-        "scan_sampling_A": calibration.get("scan_sampling_A"),
+        "scan_sampling_A": None if step is None else (step, step),
         # dataset.yaml keeps its own key names until its schema changes with quantem.live
         "scan_detector_rotation_deg": file_settings.get(
             "rotation_deg",

@@ -41,9 +41,9 @@ def run(
     bright_field_radius_px: int | None = None,
     upsampling_factor: int = 2,
     fit_aberrations: bool = False,
-    scan_sampling_A: float | None = None,
+    scan_sampling_A: tuple[float, float] | None = None,
     semiangle_mrad: float | None = None,
-    detector_sampling_mrad: float | tuple[float, float] | None = None,
+    detector_sampling_mrad: tuple[float, float] | None = None,
     verbose: bool = False,
 ) -> ParallaxResult:
     """Reconstruct a parallax image from the bright-field disk of a 4D-STEM acquisition.
@@ -84,13 +84,13 @@ def run(
         the shifts. Needs ``scan_sampling_A`` and the detector calibration,
         ``semiangle_mrad`` or ``detector_sampling_mrad``.
     scan_sampling_A
-        Scan step in Angstrom per pixel; converts the measured shifts to length.
+        Scan step in Angstrom per pixel, ``(row, col)``; converts the measured shifts to length.
     semiangle_mrad
         Probe convergence semiangle in mrad. Calibrates the detector as ``SSB``
         does: ``semiangle_mrad`` over the radius at which the bright-field disk
         of the mean pattern falls to half its plateau.
     detector_sampling_mrad
-        Detector sampling in mrad per pixel, one value or ``(row, col)``;
+        Detector sampling in mrad per pixel, ``(row, col)``;
         replaces the calibration from ``semiangle_mrad``.
     verbose
         Print the detected disk and the alignment progress.
@@ -119,8 +119,8 @@ def run(
     --------
     >>> from quantem.gpu import SSB, io, parallax
     >>> data = io.load("scan_master.h5", backend="cuda")
-    >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=0.5, semiangle_mrad=30)
-    >>> ssb = SSB(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.5,
+    >>> result = parallax.run(data, fit_aberrations=True, scan_sampling_A=(0.5, 0.5), semiangle_mrad=30)
+    >>> ssb = SSB(data, voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.5, 0.5),
     ...           aberrations=result.aberrations, scan_detector_rotation_deg=result.rotation_angle_deg)
     """
     if not isinstance(data, Dataset4dstemGPU):
@@ -178,13 +178,14 @@ def run(
             # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
                 mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
-                detector_sampling_mrad = semiangle_mrad / disk_edge_radius(mean_pattern)
+                detector_sampling_mrad = (semiangle_mrad / disk_edge_radius(mean_pattern),) * 2
             # The shifts are measured against the mean image, which is seen at the mean beam angle of the
             # selected pixels, so each pixel's beam angle is taken from their centroid.
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
-            angles_rad = (pixels - pixels.mean(axis=0)) * np.broadcast_to(detector_sampling_mrad, (2,)) * 1e-3
+            # a step per axis: row shifts in row steps, column shifts in column steps
+            angles_rad = (pixels - pixels.mean(axis=0)) * np.asarray(detector_sampling_mrad, dtype=np.float64) * 1e-3
             aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
-                cp.asnumpy(global_shifts).astype(np.float64) * scan_sampling_A, angles_rad
+                cp.asnumpy(global_shifts).astype(np.float64) * np.asarray(scan_sampling_A, dtype=np.float64), angles_rad
             )
         return ParallaxResult(
             image=image,

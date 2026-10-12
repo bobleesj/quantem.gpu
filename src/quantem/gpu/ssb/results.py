@@ -49,8 +49,10 @@ class SSBResult(Mapping[str, float]):
         The rotation before the polarity check, in [0, 360); the check changed the branch when it differs from
         ``scan_detector_rotation_deg``. None when no check ran.
     upsampling_factor : int
-        Output factor relative to the native scan grid. ``scan_sampling_A``
+        Output factor relative to the native scan grid. ``object_sampling_A``
         records output pixel spacing, preserving the physical field of view.
+    object_sampling_A : tuple[float, float] | None
+        Pixel size of the reconstructed image in Angstrom, (row, col): the scan step divided by ``upsampling_factor``.
     phase_estimator : str
         ``mean_phase`` or ``phase_of_mean`` for phase-only reconstruction;
         ``complex_wave`` identifies a direct complex-object reconstruction.
@@ -87,7 +89,7 @@ class SSBResult(Mapping[str, float]):
     refine_elapsed: float | None = None
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
-    scan_sampling_A: float | tuple[float, float] | None = None
+    object_sampling_A: tuple[float, float] | None = None
     upsampling_factor: int = 1
     phase_estimator: str = "complex_wave"
     amplitude_estimated: bool = True
@@ -366,8 +368,7 @@ class SSBResult(Mapping[str, float]):
         if view == "rotation":
             return _rotation_comparison(self, axsize=(6, 6) if axsize is None else axsize, histogram=histogram)
         if view == "phase":
-            sampling = np.asarray(self.scan_sampling_A)
-            column_sampling = float(sampling if sampling.ndim == 0 else sampling[1])
+            column_sampling = float(self.object_sampling_A[1])
             arrays = self.phase
             titles = f"SSB phase · {self.upsampling_factor}× (rad)"
             bars = {"sampling": column_sampling, "units": "Å", "fontsize": 13}
@@ -559,7 +560,7 @@ def _rotation_comparison(result, *, axsize: tuple[float, float], histogram: bool
                               left=.04, right=.97, bottom=.06,
                               top=1 - 1.05 / figure_height, wspace=.16, hspace=.15)
     axes = np.array([figure.add_subplot(grid[0, col]) for col in range(2)])
-    sampling = np.broadcast_to(result.scan_sampling_A, (2,))
+    sampling = result.object_sampling_A
     show_2d(list(phases), title=titles, figax=(figure, axes),
             norm={"interval_type": "manual", "vmin": result.phase_limits[0],
                   "vmax": result.phase_limits[1]}, cmap="inferno", cbar=True, title_fontsize=15,
@@ -595,11 +596,10 @@ def _phase_comparison(first, second, *, axsize: tuple[float, float]):
     phases = [first.phase, second.phase]
     if any(phase.ndim != 2 for phase in phases):
         raise ValueError("Compare two individual reconstructions, not trial stacks.")
-    sampling = [np.broadcast_to(result.scan_sampling_A, (2,)).astype(float)
-                for result in (first, second)]
+    sampling = [np.asarray(result.object_sampling_A, dtype=float) for result in (first, second)]
     shapes = [np.asarray(phase.shape) for phase in phases]
     if not all(np.all(np.isfinite(step) & (step > 0)) for step in sampling):
-        raise ValueError("Both results need positive scan_sampling_A in Å per pixel.")
+        raise ValueError("Both results need positive object_sampling_A in Å per pixel.")
     if not np.allclose(shapes[0] * sampling[0], shapes[1] * sampling[1]):
         raise ValueError("Compare results of the same physical scan field; their shape × sampling differs.")
 

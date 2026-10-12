@@ -19,7 +19,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
     np.save(source_path, data)
     options = dict(
         backend="cuda", voltage_kV=300, semiangle_mrad=30,
-        scan_sampling_A=0.3, detector_sampling_mrad=3,
+        scan_sampling_A=(0.3, 0.3), detector_sampling_mrad=(3, 3),
         bright_field_center_px=(15.5, 15.5), bright_field_radius_px=10,
         aberrations={"C10_nm": 3, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)},
         source_path=source_path,

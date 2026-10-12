@@ -224,7 +224,7 @@ def test_default_aberrations_remain_distinct_from_an_explicit_zero_start(
         "backend": "mps",
         "voltage_kV": 300.0,
         "semiangle_mrad": 30.0,
-        "scan_sampling_A": 1.0,
+        "scan_sampling_A": (1.0, 1.0),
     }
 
     default = workflow.SSB(data, **common)

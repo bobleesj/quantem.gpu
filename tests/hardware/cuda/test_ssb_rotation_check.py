@@ -21,7 +21,7 @@ pytestmark = pytest.mark.slow
 
 # an Arina master of a real 512 x 512 x 192 x 192 acquisition whose right rotation is 158.9 deg (atoms bright)
 SOURCE = Path(os.environ.get("QUANTEM_SSB_ARINA_MASTER", ""))
-REAL = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, detector_sampling_mrad=0.5554)
+REAL = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.264, 0.264), detector_sampling_mrad=(0.5554, 0.5554))
 REAL_ROTATION_DEG = 158.9
 
 
@@ -51,7 +51,7 @@ def _simulated(scan_detector_rotation_deg: float):
     from quantem.gpu import SSB
 
     data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
-    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
+    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                           detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=scan_detector_rotation_deg)
 
 
@@ -181,7 +181,7 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
     np.save(source, data)
     session = SSB(
         data, source_path=source, backend="cuda", voltage_kV=300.0,
-        semiangle_mrad=30.0, scan_sampling_A=0.25,
+        semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
         detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=rotation,
     )
     fit_calls, reconstruction_calls = [], []
@@ -248,7 +248,7 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
     _require_cuda()
     counts = np.full((128, 128, 16, 16), 20, dtype=np.uint16)
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20,
-             scan_sampling_A=0.5, detector_sampling_mrad=5, bright_field_center_px=(8, 8),
+             scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(5, 5), bright_field_center_px=(8, 8),
              bright_field_radius_px=4, scan_detector_rotation_deg=180) as session:
         original = session.reconstruct
         calls = []

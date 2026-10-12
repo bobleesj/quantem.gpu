@@ -2,7 +2,6 @@
 
 import math
 from collections.abc import Sequence
-from numbers import Real
 
 PLANCK_H = 6.62607015e-34  # Planck constant (J·s)
 ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
@@ -67,7 +66,7 @@ def ssb_upsampling_factor(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
-    scan_sampling_A: float | Sequence[float],
+    scan_sampling_A: Sequence[float],
 ) -> int:
     """Choose the smallest output grid covering nominal circular-aperture SSB support.
 
@@ -77,8 +76,8 @@ def ssb_upsampling_factor(
         Positive accelerating voltage in kilovolts.
     semiangle_mrad : float
         Positive probe convergence semi-angle in milliradians.
-    scan_sampling_A : float or sequence of float
-        Native scan step in Angstroms; scalar or ``(row, col)``.
+    scan_sampling_A : sequence of float
+        Native scan step in Angstroms, ``(row, col)``.
 
     Returns
     -------
@@ -96,20 +95,17 @@ def ssb_upsampling_factor(
     try:
         voltage = float(voltage_kV)
         angle = float(semiangle_mrad)
-        if isinstance(scan_sampling_A, Real):
-            spacing = (float(scan_sampling_A),)
-        else:
-            spacing = tuple(float(value) for value in scan_sampling_A)
+        spacing = tuple(float(value) for value in scan_sampling_A)
     except (TypeError, ValueError) as exc:
         raise ValueError(
             "Provide calibrated voltage, convergence semi-angle, and scan step."
         ) from exc
-    if len(spacing) not in (1, 2) or not all(
+    if len(spacing) != 2 or not all(
         math.isfinite(value) and value > 0 for value in (voltage, angle, *spacing)
     ):
         raise ValueError(
             "Voltage, semi-angle, and scan step must be finite and positive; "
-            "use a scalar or (row, col) step."
+            "use a (row, col) step."
         )
     target_spacing = wavelength_A_from_kV(voltage) / (4 * angle * 1e-3)
     required = max(spacing) / target_spacing
