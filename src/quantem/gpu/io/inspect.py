@@ -13,7 +13,7 @@ from quantem.gpu.formats.empad import load_array_source
 from quantem.gpu.formats.hdf5.master import get_metadata, read_pixel_mask
 from quantem.gpu.formats.hdf5.readiness import inspect_master_readiness
 from quantem.gpu.formats.prepared_stack import prepared_stack_metadata
-from quantem.gpu.formats.qem.metadata import effective_metadata
+from quantem.gpu.formats.qem.metadata import effective_metadata, maped_records
 from quantem.gpu.formats.qem.snapshot import decode_valid, is_qem_file, read_envelope
 from quantem.gpu.io.digitalmicrograph import NoDiffractionImage, read_dm_source
 from quantem.gpu.io.representation import DataRepresentation
@@ -111,6 +111,8 @@ def inspect(
         metadata["scientific_metadata"] = header["scientific_metadata"]
         metadata["container"] = header["container"]
         metadata["resident_profile"] = header["codec"]
+        # a merged result names its tilts in the header: the same two records a load returns
+        metadata.update(maped_records(header.get("attributes", {})))
         mask = None
         if "valid" in header:
             # Same convention as an Arina pixel_mask: uint32, nonzero marks an invalid pixel.
