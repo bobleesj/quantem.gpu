@@ -368,14 +368,14 @@ class MPSStreamedCounts:
             output.release()
             raise
 
-    def extract_diffraction_device(self, scan_row: int, scan_column: int):
+    def extract_diffraction_device(self, scan_row: int, scan_col: int):
         """Return one exact native-count pattern in caller-owned Metal storage."""
         self._check_resident()
-        if not 0 <= scan_row < self.shape[0] or not 0 <= scan_column < self.shape[1]:
+        if not 0 <= scan_row < self.shape[0] or not 0 <= scan_col < self.shape[1]:
             raise IndexError(
                 "Choose a scan row and column inside the loaded acquisition."
             )
-        first = scan_row * self.shape[1] + scan_column
+        first = scan_row * self.shape[1] + scan_col
         output = self.decode_scan_range_device(first, first + 1)
         output.shape = self.shape[2:]
         return output

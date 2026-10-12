@@ -95,17 +95,17 @@ def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, detector_tran
         (aligned_col, aligned_row) if transposed else (aligned_row, aligned_col)
     )
     phase = integrate(gradient_row, gradient_col)
-    elapsed = time.perf_counter() - started
+    elapsed_s = time.perf_counter() - started
     if verbose:
         print(f"DPC: rotation {angle:.1f} deg (transpose={transposed}), "
-              f"{com_row.shape[0]}x{com_row.shape[1]} in {elapsed:.2f}s")
+              f"{com_row.shape[0]}x{com_row.shape[1]} in {elapsed_s:.2f}s")
     # A forced angle rotates in float64; every DPC product is float32.
     return DPCResult(phase=phase, com_row=com_row, com_col=com_col,
                      com_row_aligned=aligned_row.astype(np.float32),
                      com_col_aligned=aligned_col.astype(np.float32),
                      scan_detector_rotation_mod180_deg=angle if scan_detector_rotation_deg is None else None,
                      scan_detector_rotation_deg=None if scan_detector_rotation_deg is None else angle % 360.0,
-                     detector_transposed=transposed, elapsed=elapsed)
+                     detector_transposed=transposed, elapsed_s=elapsed_s)
 
 
 def integrate(com_row, com_col) -> np.ndarray:

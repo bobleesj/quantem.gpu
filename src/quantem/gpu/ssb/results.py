@@ -60,7 +60,7 @@ class SSBResult(Mapping[str, float]):
         False for phase-only paths, whose complex wave has unit amplitude.
     loss : float | None
         Variance loss value.
-    elapsed : float | None
+    elapsed_s : float | None
         Wall-clock time in seconds.
     timings : dict[str, float]
         Backend stage timings in seconds when the operation records them.
@@ -80,13 +80,13 @@ class SSBResult(Mapping[str, float]):
     scan_detector_rotation_deg: float = 0.0
     detector_transposed: bool = False
     loss: float | None = None
-    elapsed: float | None = None
+    elapsed_s: float | None = None
     timings: dict[str, float] = field(default_factory=dict)
     num_trials: int | None = None
     num_bright_field_pixels: int | None = None
     refine_method: str | None = None
     refine_nfev: int | None = None
-    refine_elapsed: float | None = None
+    refine_elapsed_s: float | None = None
     voltage_kV: float | None = None
     semiangle_mrad: float | None = None
     object_sampling_A: tuple[float, float] | None = None
@@ -161,8 +161,8 @@ class SSBResult(Mapping[str, float]):
                 f"  Sample tilt    ({self.sample_tilt_mrad[0]:+.2f}, {self.sample_tilt_mrad[1]:+.2f}) mrad scan frame, "
                 f"depth spread {self.depth_spread_nm:.1f} nm"
             )
-        if self.elapsed is not None:
-            lines.append(f"  Time           {self.elapsed:.2f}s")
+        if self.elapsed_s is not None:
+            lines.append(f"  Time           {self.elapsed_s:.2f}s")
         if self.saved_path is not None:
             lines.append(
                 f"  Saved result   {self.saved_path}"

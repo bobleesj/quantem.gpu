@@ -35,7 +35,7 @@ from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 class SaveResult:
     """Completion handle returned by :func:`quantem.gpu.io.save`; a notebook shows it as a small table.
 
-    A finished ``.qem`` save also records what it wrote: ``elapsed_seconds`` is
+    A finished ``.qem`` save also records what it wrote: ``elapsed_s`` is
     the wall time of the save alone (writing and closing the file, not loading
     or flushing the disk), ``logical_bytes`` the size of the saved values as an
     uncompressed array (shape times dtype, not the source file) and
@@ -52,7 +52,7 @@ class SaveResult:
     path: str
     backend: str
     complete: bool = False
-    elapsed_seconds: float | None = None
+    elapsed_s: float | None = None
     logical_bytes: int | None = None
     file_bytes: int | None = None
 
@@ -63,7 +63,7 @@ class SaveResult:
 
         rows = {"File": self.path, "Status": "Saved" if self.complete else "Writing", "Backend": self.backend}
         if self.file_bytes is not None:
-            rows["Save time"] = f"{self.elapsed_seconds:.3f} s"
+            rows["Save time"] = f"{self.elapsed_s:.3f} s"
             rows["Uncompressed array"] = f"{self.logical_bytes / 2**20:.2f} MiB"
             rows["Lossless QEM"] = f"{self.file_bytes / 2**20:.2f} MiB"
             # A small or already compact array can grow: the file also carries its metadata.
@@ -284,7 +284,7 @@ def save(
                 "Load the acquisition with representation='encoded' first; nothing was written."
             )
         result = SaveResult(
-            str(filepath), saved_backend, complete=True, elapsed_seconds=time.perf_counter() - started,
+            str(filepath), saved_backend, complete=True, elapsed_s=time.perf_counter() - started,
             logical_bytes=math.prod(data.shape) * np.dtype(data.dtype).itemsize, file_bytes=Path(filepath).stat().st_size,
         )
         if verbose:
@@ -331,8 +331,8 @@ def save(
             compression_backend=compression_backend,
         )
         if verbose:
-            elapsed = time.perf_counter() - started
-            print(f"Saved {filepath} [{normalized_backend}/lz4] in {elapsed:.2f}s")
+            elapsed_s = time.perf_counter() - started
+            print(f"Saved {filepath} [{normalized_backend}/lz4] in {elapsed_s:.2f}s")
         result = SaveResult(str(filepath), normalized_backend, complete=True)
         return result.wait() if wait else result
 
@@ -363,12 +363,12 @@ def save(
         writer.close(wait=wait)
 
     if verbose:
-        elapsed = time.perf_counter() - started
+        elapsed_s = time.perf_counter() - started
         file_size = _output_file_size(filepath)
         raw_bytes = n_frames * det_row * det_col * dtype.itemsize
         print(
             f"Saved {filepath} [lz4]: {raw_bytes / 1e9:.2f} GB -> "
-            f"{file_size / 1e9:.2f} GB ({raw_bytes / file_size:.1f}x) in {elapsed:.2f}s"
+            f"{file_size / 1e9:.2f} GB ({raw_bytes / file_size:.1f}x) in {elapsed_s:.2f}s"
         )
     result = SaveResult(str(filepath), "cuda", complete=bool(wait))
     return result.wait() if wait else result

@@ -300,7 +300,7 @@ def _fit_report(prepared, selection, args: argparse.Namespace):
     )
     return {
         "wall_seconds": time.perf_counter() - started,
-        "elapsed_seconds": result.elapsed,
+        "elapsed_s": result.elapsed_s,
         "timings": result.timings,
         "records": len(result.trial_records),
         "refine_nfev": result.refine_nfev,

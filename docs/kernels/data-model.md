@@ -64,7 +64,7 @@ See [I/O](../api/io.md) for selection and lifetime rules.
 Both scan and detector regions use:
 
 ```text
-(row_start, row_stop, column_start, column_stop)
+(row_start, row_stop, col_start, col_stop)
 ```
 
 This is a half-open interval: the start is included and the stop is excluded.
