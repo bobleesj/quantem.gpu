@@ -109,8 +109,9 @@ def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> Non
     )
     (source / "bf_columns.u8").write_bytes(columns.tobytes())
     (snapshots / "cal.json").write_text(json.dumps({
-        "schema": "quantem.ssb-calibration/2",
-        "scan_region": {"shape": [4, 4]},
+        "schema": "quantem.ssb-browser-calibration/2",
+        "scan_region": [0, 4, 0, 4],
+        "scan_shape": [4, 4],
         "detector_shape": [4, 5],
         "bright_field_rows": bright_field_rows.tolist(),
         "bright_field_cols": bright_field_cols.tolist(),
@@ -171,8 +172,9 @@ def test_bf_column_session_uses_the_exported_detector_sampling(tmp_path, stored)
     columns = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
     (source / "bf_columns.u8").write_bytes(columns.tobytes())
     calibration = {
-        "schema": "quantem.ssb-calibration/2",
-        "scan_region": {"shape": [4, 4]},
+        "schema": "quantem.ssb-browser-calibration/2",
+        "scan_region": [0, 4, 0, 4],
+        "scan_shape": [4, 4],
         "detector_shape": [3, 3],
         "bright_field_rows": [0, 1, 1],
         "bright_field_cols": [1, 1, 2],
@@ -443,8 +445,9 @@ def test_load_bf_columns_mps_requires_authoritative_center(tmp_path) -> None:
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
     (snapshots / "cal.json").write_text(json.dumps({
-        "schema": "quantem.ssb-calibration/2",
-        "scan_region": {"shape": [4, 4]},
+        "schema": "quantem.ssb-browser-calibration/2",
+        "scan_region": [0, 4, 0, 4],
+        "scan_shape": [4, 4],
         "detector_shape": [4, 5],
         "bright_field_rows": [0],
         "bright_field_cols": [1],

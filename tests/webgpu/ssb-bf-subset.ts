@@ -16,14 +16,18 @@ function syntheticFolder(n: number, radius: number) {
   const numBf = kx.length, plane = n * n;
   const frequency = Array.from({ length: n }, (_, i) => (i < n / 2 ? i : i - n) / n);
   const cal = {
-    schema: "quantem.ssb-calibration/2", num_bright_field_pixels: numBf, g_shape: [numBf, n, n], wavelength_A: wavelength, semiangle_rad: (radius + 0.25) * angularSampling,
-    angular_sampling_rad: [angularSampling, angularSampling], dc_value: [plane * 3.0, 0], kx_bf: kx, ky_bf: ky,
-    qx_1d: frequency, qy_1d: frequency, aperture_k: kx.map(() => 1), alpha_k2: kx.map(() => 0), cos2phi_k: kx.map(() => 1),
+    schema: "quantem.ssb-browser-calibration/2", num_bright_field_pixels: numBf, g_shape: [numBf, n, n], wavelength_A: wavelength,
+    semiangle_mrad: (radius + 0.25) * angularSampling * 1e3, detector_sampling_mrad: [angularSampling * 1e3, angularSampling * 1e3],
+    dc_value: [plane * 3.0, 0], bright_field_k_row: kx, bright_field_k_col: ky,
+    scan_q_row: frequency, scan_q_col: frequency, aperture_k: kx.map(() => 1), alpha_k2: kx.map(() => 0), cos2phi_k: kx.map(() => 1),
     sin2phi_k: kx.map(() => 0), scan_detector_rotation_deg: 0, precision: { real_dtype: "float32", complex_dtype: "complex64" },
   };
   let state = 12345;
   const counts = Uint16Array.from({ length: numBf * plane }, () => { state = (state * 1103515245 + 12345) >>> 0; return state >>> 28; });
-  const source = { kind: "bf_columns", url: "bf_columns.u16", dtype: "uint16", encoding: "uint16", numBf, plane, scanShape: [n, n], bytesPerBf: plane * 2, bitsPerValue: 16 };
+  const source = {
+    kind: "bf_columns", url: "bf_columns.u16", dtype: "uint16", encoding: "uint16", num_bright_field_pixels: numBf, plane,
+    scan_shape: [n, n], bytes_per_bright_field_pixel: plane * 2, bits_per_value: 16,
+  };
   return { cal: JSON.stringify(cal), source: JSON.stringify(source), file: new File([counts], "bf_columns.u16"), numBf };
 }
 

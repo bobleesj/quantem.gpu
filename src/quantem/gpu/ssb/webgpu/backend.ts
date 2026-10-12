@@ -200,40 +200,51 @@ export async function readSSBFolderBytes(path: string): Promise<Uint8Array> {
   return readSourceBytes(path);
 }
 
-type SsbCal = {
+/** The layout of a ShowPtycho folder's `snapshots/cal.json`, which this engine reads as written. */
+export const BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/2";
+
+/** `snapshots/cal.json`: optics in kV, mrad and Angstrom; the bright-field reciprocal coordinates in the scan frame. */
+type BrowserCalibration = {
+  schema: string;
   gpu_memory_gb?: number;
   num_bright_field_pixels: number;
   g_shape: [number, number, number];
   wavelength_A: number;
-  semiangle_rad: number;
-  angular_sampling_rad: [number, number];
+  semiangle_mrad: number;
+  detector_sampling_mrad: [number, number];
   dc_value: [number, number];
-  kx_bf: number[];
-  ky_bf: number[];
-  qx_1d: number[];
-  qy_1d: number[];
+  bright_field_k_row: number[];
+  bright_field_k_col: number[];
+  scan_q_row: number[];
+  scan_q_col: number[];
   aperture_k: number[];
   alpha_k2: number[];
   cos2phi_k: number[];
   sin2phi_k: number[];
   scan_detector_rotation_deg?: number;
-  schema?: string;
   precision: {
     real_dtype: "float32";
     complex_dtype: "complex64";
   };
 };
 
+/** The calibration with its angles in the radians the kernels evaluate in, converted once at entry. */
+type SsbCal = BrowserCalibration & {
+  semiangle_rad: number;
+  angular_sampling_rad: [number, number];
+};
+
+/** The bright-field columns a ShowPtycho folder declares (`source.bf_columns` of its manifest). */
 type BfColumnSsbSource = {
   kind: "bf_columns";
   url: string;
   dtype?: "uint8" | "uint16";
   encoding?: "uint8" | "uint16" | "qem";
-  numBf: number;
+  num_bright_field_pixels: number;
   plane: number;
-  scanShape?: [number, number];
-  bytesPerBf: number;
-  bitsPerValue?: number;
+  scan_shape?: [number, number];
+  bytes_per_bright_field_pixel: number;
+  bits_per_value?: number;
 };
 
 type SsbBuffers = {
@@ -1102,7 +1113,7 @@ function bfGeometryFromCoord(cal: SsbCal, kx: number, ky: number): [number, numb
 function collectActiveBfIndices(cal: SsbCal, numBf: number, scanDetectorRotationDeg?: number): Uint32Array {
   const active: number[] = [];
   for (let i = 0; i < cal.num_bright_field_pixels; i++) {
-    const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[i], cal.ky_bf[i], scanDetectorRotationDeg);
+    const [kx, ky] = rotateBfCoord(cal, cal.bright_field_k_row[i], cal.bright_field_k_col[i], scanDetectorRotationDeg);
     const [, , , aperture] = bfGeometryFromCoord(cal, kx, ky);
     if (aperture !== 0) active.push(i);
   }
@@ -1126,7 +1137,7 @@ function packGeometry(cal: SsbCal, indices: Uint32Array, scanDetectorRotationDeg
   }
   for (let i = 0; i < indices.length; i++) {
     const src = indices[i];
-    const [kx, ky] = rotateBfCoord(cal, cal.kx_bf[src], cal.ky_bf[src], scanDetectorRotationDeg);
+    const [kx, ky] = rotateBfCoord(cal, cal.bright_field_k_row[src], cal.bright_field_k_col[src], scanDetectorRotationDeg);
     const [alpha2, cos2phi, sin2phi, aperture] = bfGeometryFromCoord(cal, kx, ky);
     geom[i * 4 + 0] = kx;
     geom[i * 4 + 1] = ky;
@@ -1215,8 +1226,8 @@ async function buildBfColumnGqkChunks(
     throw new Error(`BF-column source plane ${source.plane} does not match ${n}x${n}=${plane}.`);
   }
   const maxActiveSource = activeSourceIndices.reduce((max, value) => Math.max(max, value), 0);
-  if (Number(source.numBf) <= maxActiveSource) {
-    throw new Error(`BF-column source has ${source.numBf} BF columns; need source BF index ${maxActiveSource}.`);
+  if (Number(source.num_bright_field_pixels) <= maxActiveSource) {
+    throw new Error(`BF-column source has ${source.num_bright_field_pixels} BF columns; need source BF index ${maxActiveSource}.`);
   }
   emit({
     stage: "pipeline",
@@ -1237,7 +1248,7 @@ async function buildBfColumnGqkChunks(
   ]);
   // uint8 columns pack 4 counts per word (mode 1), uint16 2 (mode 0); .qem columns arrive decoded
   const mode = source.encoding === "uint8" ? 1 : 0;
-  const bytesPerBf = source.bytesPerBf;
+  const bytesPerBf = source.bytes_per_bright_field_pixel;
   const storedPlane = storedPlaneFor(n);
   const gqkChunks: GPUBuffer[] = [];
   const chunkBfCounts: number[] = [];
@@ -1258,7 +1269,7 @@ async function buildBfColumnGqkChunks(
     ans = await RansResidentSet.loadQemFile(device,
       new File([bytes as Uint8Array<ArrayBuffer>], "bf.qem"),
       detail => emit({stage: "gather", message: "Preparing lossless ANS counts", detail, percent: 35}));
-    if (ans.scanCount !== plane || ans.detSize !== source.numBf) {
+    if (ans.scanCount !== plane || ans.detSize !== source.num_bright_field_pixels) {
       ans.dispose(); throw new Error("BF QEM geometry does not match the SSB calibration.");
     }
     decodeMs += performance.now() - decodeStarted;
@@ -1406,7 +1417,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   private geometryBfCount: number | null = null;
   private onProgress: WebGPUProgressHandler | null = null;
 
-  // `detectorSource.json` describes the exported bright-field columns (kind "bf_columns").
+  // `calJson` is the folder's `snapshots/cal.json`; `detectorSource.json` its bright-field columns (kind "bf_columns").
   constructor(
     calJson: string,
     detectorSource: { json: string },
@@ -1416,11 +1427,16 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         "SSB WebGPU folder needs browser WebGPU. Open it from http://127.0.0.1, localhost, or HTTPS; LAN-IP HTTP pages cannot use WebGPU.",
       );
     }
-    this.cal = JSON.parse(calJson) as SsbCal;
+    const calibration = JSON.parse(calJson) as BrowserCalibration;
     // Earlier calibrations name other quantities (num_bf, rotation_angle_deg below 180); none is reinterpreted.
-    if (this.cal.schema !== "quantem.ssb-calibration/2") {
-      throw new Error(`SSB calibration schema ${JSON.stringify(this.cal.schema)} is not read; export the ShowPtycho folder again.`);
+    if (calibration.schema !== BROWSER_CALIBRATION_SCHEMA) {
+      throw new Error(`SSB calibration schema ${JSON.stringify(calibration.schema)} is not read; this engine reads ${BROWSER_CALIBRATION_SCHEMA}. Export the ShowPtycho folder again.`);
     }
+    this.cal = {
+      ...calibration,
+      semiangle_rad: calibration.semiangle_mrad * 1e-3,
+      angular_sampling_rad: [calibration.detector_sampling_mrad[0] * 1e-3, calibration.detector_sampling_mrad[1] * 1e-3],
+    };
     if (
       this.cal.precision?.real_dtype !== "float32"
       || this.cal.precision?.complex_dtype !== "complex64"
@@ -1710,8 +1726,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       variance: device.createBuffer({ size: plane * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC, label: "ssb variance" }),
       bfGeom: makeBufferFromArray(device, geom, GPUBufferUsage.STORAGE, "ssb bf geometry"),
       bfTrig: makeBufferFromArray(device, trig, GPUBufferUsage.STORAGE, "ssb bf trig"),
-      qx: makeBufferFromArray(device, new Float32Array(this.cal.qx_1d), GPUBufferUsage.STORAGE, "ssb qx"),
-      qy: makeBufferFromArray(device, new Float32Array(this.cal.qy_1d), GPUBufferUsage.STORAGE, "ssb qy"),
+      qx: makeBufferFromArray(device, new Float32Array(this.cal.scan_q_row), GPUBufferUsage.STORAGE, "ssb qx"),
+      qy: makeBufferFromArray(device, new Float32Array(this.cal.scan_q_col), GPUBufferUsage.STORAGE, "ssb qy"),
     };
     device.pushErrorScope("validation");
     // ssbRows and ssbObjSum (thin and thick variants) read the same resources
@@ -1896,7 +1912,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         const stage = make(n * n * 8), phase = make(n * n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
         const params = make(SSB_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
         const chunks = buffers.gqkChunks.map(() => make(SSB_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST));
-        const frequencies = [this.cal.qx_1d, this.cal.qy_1d].map(native => {
+        const frequencies = [this.cal.scan_q_row, this.cal.scan_q_col].map(native => {
           const q = Float32Array.from({length: n}, (_, i) => (i < n / 2 ? i : i - n) * native[1]);
           const buffer = make(q.byteLength); device.queue.writeBuffer(buffer, 0, q); return buffer;
         });
