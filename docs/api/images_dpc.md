@@ -139,7 +139,10 @@ Supply `scan_detector_rotation_deg` (with `detector_transposed`) to hold the
 scan-detector rotation fixed, or omit it for the DPC rotation search. Inspect
 `result` for the rotation and CoM components: a fitted rotation is
 `scan_detector_rotation_mod180_deg`, known only modulo 180 degrees, and a given
-one is `scan_detector_rotation_deg`. DPC does not estimate SSB aberrations.
+one is `scan_detector_rotation_deg`. The fitted value lies in [0, 180]: an
+unrotated scan fits the end point of the search grid, float32 pi, which reads
+`180.000005`, and 0 and 180 describe the same estimate. DPC does not estimate
+SSB aberrations.
 
 For a client that needs several launch products from the same source, use
 `screening.prepare()` and reuse its small derived state instead of traversing

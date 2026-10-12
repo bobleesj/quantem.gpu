@@ -10,8 +10,9 @@ class DPCResult:
 
     Exactly one rotation is set. ``scan_detector_rotation_mod180_deg`` is the
     curl fit, which fixes the scan-to-detector rotation only modulo 180
-    degrees, in [0, 180) (the fit grid runs from 0 to 180; its end point is
-    returned half a turn back, with the phase of that angle).
+    degrees (the fit grid runs from 0 to 180 and includes its end point). It
+    lies in [0, 180]: an unrotated scan fits the grid's end point, float32 pi,
+    which reads 180.000005; 0 and 180 describe the same estimate.
     ``scan_detector_rotation_deg`` is the physical rotation the caller gave
     ``dpc.run``, in [0, 360). ``detector_transposed`` says whether the detector
     axes are exchanged before the rotation.
