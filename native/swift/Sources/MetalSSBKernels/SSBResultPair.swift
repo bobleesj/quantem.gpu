@@ -5,7 +5,7 @@ extension SSBPhaseArtifact {
   public func contentDigest() throws -> String {
     var record =
       try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as! [String: Any]
-    record["runMetadata"] = try JSONSerialization.jsonObject(with: runMetadata)
+    record["run_metadata"] = try JSONSerialization.jsonObject(with: runMetadata)
     return Self.digest(try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]))
   }
   /// Write ordinary NumPy phase data followed by its readable JSON manifest.
@@ -19,12 +19,11 @@ extension SSBPhaseArtifact {
       try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as! [String: Any]
     let arrayURL = manifest.deletingPathExtension().appendingPathExtension("npy")
     record.removeValue(forKey: "phase")
-    record["format"] = "live.ssb"
-    record["phaseFile"] = arrayURL.lastPathComponent
-    record["runMetadata"] = try JSONSerialization.jsonObject(with: runMetadata)
+    record["phase_file"] = arrayURL.lastPathComponent
+    record["run_metadata"] = try JSONSerialization.jsonObject(with: runMetadata)
     let json = try JSONSerialization.data(
       withJSONObject: record, options: [.sortedKeys, .prettyPrinted])
-    var header = "{'descr': '<f4', 'fortran_order': False, 'shape': (\(rows), \(columns)), }"
+    var header = "{'descr': '<f4', 'fortran_order': False, 'shape': (\(shape[0]), \(shape[1])), }"
     header += String(repeating: " ", count: (64 - (10 + header.utf8.count + 1) % 64) % 64) + "\n"
     var array = Data([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59, 1, 0])
     array.append(UInt8(header.utf8.count & 255))
@@ -56,13 +55,21 @@ extension SSBPhaseArtifact {
   static func loadPair(from manifest: URL) throws -> Self {
     guard
       var record = try JSONSerialization.jsonObject(with: Data(contentsOf: manifest))
-        as? [String: Any],
-      record["format"] as? String == "live.ssb", record["schemaVersion"] as? Int == 1,
-      let filename = record["phaseFile"] as? String, filename.hasSuffix(".npy"),
+        as? [String: Any]
+    else {
+      throw PairError.invalid("Invalid SSB JSON. Keep the original JSON and NumPy files together.")
+    }
+    guard record["schema"] as? String == recordSchema else {
+      throw PairError.invalid(
+        "SSB result schema \(record["schema"].map { "\($0)" } ?? "none") is not read; this reader "
+          + "accepts \(recordSchema). Export the result again.")
+    }
+    guard let filename = record["phase_file"] as? String, filename.hasSuffix(".npy"),
       !filename.contains("/"), !filename.contains("\\"), !filename.hasPrefix("."),
-      let rows = record["rows"] as? Int, let columns = record["columns"] as? Int,
+      let shape = record["shape"] as? [Int], shape.count == 2,
+      let rows = shape.first, let columns = shape.last,
       rows > 0, columns > 0, rows <= 4096, columns <= 4096,
-      let metadata = record["runMetadata"] as? [String: Any]
+      let metadata = record["run_metadata"] as? [String: Any]
     else {
       throw PairError.invalid("Invalid SSB JSON. Keep the original JSON and NumPy files together.")
     }
@@ -91,7 +98,7 @@ extension SSBPhaseArtifact {
         "SSB phase must be row-major little-endian float32 with the recorded shape.")
     }
     record["phase"] = data.suffix(from: start).base64EncodedString()
-    record["runMetadata"] = try JSONSerialization.data(
+    record["run_metadata"] = try JSONSerialization.data(
       withJSONObject: metadata, options: [.sortedKeys]
     ).base64EncodedString()
     return try JSONDecoder().decode(Self.self, from: JSONSerialization.data(withJSONObject: record))
@@ -112,6 +119,10 @@ extension MetalSSBSavedRun {
 
   /// Export the displayed scientific phase, with calibration and fit provenance.
   /// The two private reconstruction buffers are not part of the portable result.
+  ///
+  /// The record states the engine's Angstrom and radians as `C10_nm`, `C12_nm` and
+  /// `phi12_deg`, and the rotation as the physical angle in [0, 360). The native engine has no
+  /// detector transposition, so `detector_transposed` is false.
   public func savePhasePair(to url: URL, phase: Data) throws {
     guard let calibration else { throw PairError.invalid("Cannot export SSB without calibration.") }
     let padded = calibrationProvenance?["scanPadding"] == "zero-bottom-right-v1"
@@ -123,16 +134,19 @@ extension MetalSSBSavedRun {
     else {
       throw PairError.invalid("The saved padding description lacks the original scan dimensions.")
     }
+    let rotation = Double(scanDetectorRotationDegrees).truncatingRemainder(dividingBy: 360)
     let artifact = SSBPhaseArtifact(
-      schemaVersion: 1, sourceIdentity: sourceIdentity,
-      rows: rows, columns: columns,
-      phaseEncoding: "float32-le-row-major", phaseUnits: "rad", phase: phase,
+      schema: SSBPhaseArtifact.recordSchema, sourceIdentity: sourceIdentity,
+      shape: [rows, columns],
+      phaseEncoding: "float32-le-row-major", phaseUnit: "rad", phase: phase,
       phaseSHA256: SSBPhaseArtifact.digest(phase), calibration: calibration,
-      c10Nanometers: Double(aberrations.c10Angstroms),
-      c12Nanometers: Double(aberrations.c12Angstroms),
-      phi12Radians: Double(aberrations.phi12Radians),
-      rotationDegrees: Double(scanDetectorRotationDegrees),
-      provenance: ["producer": "Live4DSTEM", "backendRevision": backendRevision],
+      aberrations: SSBPhaseArtifact.Aberrations(
+        c10Nanometers: Double(aberrations.c10Angstroms) / 10,
+        c12Nanometers: Double(aberrations.c12Angstroms) / 10,
+        phi12Degrees: Double(aberrations.phi12Radians) * 180 / .pi),
+      scanDetectorRotationDegrees: rotation < 0 ? rotation + 360 : rotation,
+      detectorTransposed: false,
+      provenance: ["producer": "Live4DSTEM", "backend_revision": backendRevision],
       runMetadata: try portableRunMetadata())
     try artifact.savePair(to: url)
   }

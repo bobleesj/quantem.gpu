@@ -72,11 +72,15 @@ identical exports reuse the original. The application publisher places BF, DF,
 mean DP and CoM images in that same folder. This low-level exporter writes only
 the verified phase and metadata. Older arbitrary JSON/NumPy pairs remain readable.
 
-Swift `MetalSSBKernels.SSBPhaseArtifact.load` recognizes `.json` pairs;
-`savePair(to:)` writes them. `MetalSSBSavedRun.savePhasePair(to:phase:)` exports
-native saved runs without reconstruction buffers. Swift does not invoke Python.
-Legacy `.ssbresult` remains import compatibility to preserve saved work, not
-the preferred output format.
+Swift `MetalSSBKernels.SSBPhaseArtifact.load` reads `.json` pairs of this
+schema and `savePair(to:)` writes them, with the same keys and checks as the
+Python reader. `MetalSSBSavedRun.savePhasePair(to:phase:)` exports native saved
+runs without reconstruction buffers: the native engine works in Angstrom and
+radians (`MetalSSBAberrations.c10Angstroms`, `c12Angstroms`, `phi12Radians`), and
+the record states them once, as `C10_nm`, `C12_nm` and `phi12_deg`, with the
+rotation in [0, 360) and `detector_transposed` false. Swift does not invoke
+Python. Single-file `.ssbresult` copies and version-1 pairs are refused; export
+them again.
 
 Identity excludes external paths and filenames: unchanged data moved or renamed
 still matches. Rewriting the H5 master or re-encoding shards changes identity.
