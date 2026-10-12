@@ -389,9 +389,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   return these three keys as the header states them and add none where it
   has none; a copy stores the same values as its original.
 - A `.qem` made from an HDF5 master that `io.save` wrote stored
-  `NX_class: "NXdata"` in its header's `metadata` block, a key the format
-  does not list: the master reader copied the NeXus class of the `entry/data`
-  group into the dataset metadata. It is no longer copied.
+  `NX_class: "NXdata"`, `signal` and `data_file_frame_ranges` in its
+  header's `metadata` block, keys the format does not list and no reader
+  uses: the master reader copied these layout attributes of the `entry/data`
+  group into the dataset metadata. They are no longer copied.
 - The two records of a merged multi-tilt result (`quantem_maped_merge_v1`,
   `quantem_maped_summary_v1` in a scaled `.qem` header's `attributes`) came
   back differently by reader: parsed as `maped_merge` and `maped_summary`

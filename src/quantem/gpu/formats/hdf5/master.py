@@ -117,9 +117,11 @@ def get_metadata(filepath: str) -> dict:
 
         def copy_attributes(attributes):
             for key, value in attributes.items():
-                # NX_class is the NeXus class of the HDF5 group it sits on, not a property of the
-                # acquisition: copied, it was saved into the header of every .qem made from the master
-                if key != "NX_class":
+                # These describe the HDF5 file's own layout, not the acquisition: the NeXus class of the
+                # group, the name of its default dataset, the frame range of each linked data file. No
+                # reader uses them and the .qem format lists none; copied, they were saved into the
+                # header of every .qem made from the master.
+                if key not in ("NX_class", "signal", "data_file_frame_ranges"):
                     metadata.setdefault(key, _plain_value(value))
 
         copy_attributes(handle.attrs)
