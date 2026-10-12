@@ -50,7 +50,7 @@ def reconstruct_thick(
     C10: float,
     C12: float,
     phi12: float,
-    tilt_mrad: tuple[float, float],
+    sample_tilt_mrad: tuple[float, float],
     thickness: float,
     compute_loss: bool = True,
     chunk_bf: int = 4096,
@@ -62,9 +62,9 @@ def reconstruct_thick(
     separate element-wise graph + MLX FFT per chunk); other shapes use the reference graph.
     """
     if tuple(prepared.scan_shape) not in _FUSED_SHAPES:
-        return reconstruct_thick_reference(prepared, C10=C10, C12=C12, phi12=phi12, tilt_mrad=tilt_mrad,
+        return reconstruct_thick_reference(prepared, C10=C10, C12=C12, phi12=phi12, sample_tilt_mrad=sample_tilt_mrad,
                                            thickness=thickness, compute_loss=compute_loss)
-    thick = (float(thickness), float(tilt_mrad[0]) * 1e-3, float(tilt_mrad[1]) * 1e-3)
+    thick = (float(thickness), float(sample_tilt_mrad[0]) * 1e-3, float(sample_tilt_mrad[1]) * 1e-3)
     _object, loss, phase = reconstruct_prepared(prepared, C10=float(C10), C12=float(C12), phi12=float(phi12),
                                                  chunk_bf=int(chunk_bf), compute_loss=compute_loss,
                                                  compute_object=False, thick=thick)
@@ -77,7 +77,7 @@ def reconstruct_thick_reference(
     C10: float,
     C12: float,
     phi12: float,
-    tilt_mrad: tuple[float, float],
+    sample_tilt_mrad: tuple[float, float],
     thickness: float,
     compute_loss: bool = True,
 ) -> tuple[np.ndarray, float | None]:
@@ -89,7 +89,7 @@ def reconstruct_thick_reference(
     are not stored and contribute phase 0, exactly as in the standard path, so the sums divide by ``prepared.num_bright_field_pixels``.
     """
     mx = prepared.mx
-    params = _params(prepared, C10, C12, phi12, tilt_mrad, thickness)
+    params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
     dc = mx.array(complex(np.complex64(prepared.dc_value)), dtype=mx.complex64)
     phase_sum = mx.zeros(prepared.scan_shape, dtype=mx.float32)
     phase_sumsq = mx.zeros(prepared.scan_shape, dtype=mx.float32)
@@ -120,7 +120,7 @@ def thick_fit(
     C10: float,
     C12: float,
     phi12: float,
-    tilt_mrad: tuple[float, float],
+    sample_tilt_mrad: tuple[float, float],
     thickness: float,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
 ) -> float:
@@ -132,7 +132,7 @@ def thick_fit(
     ``ThickSample.fit``.
     """
     mx = prepared.mx
-    params = _params(prepared, C10, C12, phi12, tilt_mrad, thickness)
+    params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
     numerator_real = mx.zeros(prepared.scan_shape, dtype=mx.float32)
     numerator_imag = mx.zeros(prepared.scan_shape, dtype=mx.float32)
     denominator = mx.zeros(prepared.scan_shape, dtype=mx.float32)
@@ -244,7 +244,7 @@ def _compiled_terms():
     return mx.compile(terms)
 
 
-def _params(prepared: PreparedMpsSSB, C10, C12, phi12, tilt_mrad, thickness):
+def _params(prepared: PreparedMpsSSB, C10, C12, phi12, sample_tilt_mrad, thickness):
     """Pack every scalar of the thick-sample model into one float32 array, in the order ``_compiled_terms`` reads.
 
     One array argument keeps the compiled graph from being traced again for each new parameter value.
@@ -254,7 +254,7 @@ def _params(prepared: PreparedMpsSSB, C10, C12, phi12, tilt_mrad, thickness):
         [
             prepared.wavelength, prepared.semiangle_rad, prepared.ang_y_rad, prepared.ang_x_rad,
             float(C10), float(C12), math.cos(2.0 * float(phi12)), math.sin(2.0 * float(phi12)),
-            prepared.factor, float(thickness), float(tilt_mrad[0]) * 1e-3, float(tilt_mrad[1]) * 1e-3,
+            prepared.factor, float(thickness), float(sample_tilt_mrad[0]) * 1e-3, float(sample_tilt_mrad[1]) * 1e-3,
         ],
         dtype=mx.float32,
     )

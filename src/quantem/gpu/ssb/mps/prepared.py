@@ -75,7 +75,7 @@ def prepare_selection(
     voltage_kV: float,
     semiangle_mrad: float,
     scan_sampling: tuple[float, float],
-    det_sampling: tuple[float, float],
+    detector_sampling_mrad: tuple[float, float],
     scan_detector_rotation_deg: float,
     chunk_bf: int,
     compact_inactive: bool = False,
@@ -91,20 +91,20 @@ def prepare_selection(
     bf_row = selection.rows
     bf_col = selection.cols
     center = selection.bright_field_center_px
-    det_shape = selection.detector_shape
+    detector_shape = selection.detector_shape
     wavelength = float(wavelength_A_from_kV(float(voltage_kV)))
     reciprocal_sampling = (
-        det_sampling[0] * 1e-3 / wavelength,
-        det_sampling[1] * 1e-3 / wavelength,
+        detector_sampling_mrad[0] * 1e-3 / wavelength,
+        detector_sampling_mrad[1] * 1e-3 / wavelength,
     )
     sampling = (
-        1.0 / (reciprocal_sampling[0] * det_shape[0]),
-        1.0 / (reciprocal_sampling[1] * det_shape[1]),
+        1.0 / (reciprocal_sampling[0] * detector_shape[0]),
+        1.0 / (reciprocal_sampling[1] * detector_shape[1]),
     )
     q_row_np, q_col_np = _spatial_frequencies(scan_shape, scan_sampling)
 
-    recip_y = 1.0 / (sampling[0] * det_shape[0])
-    recip_x = 1.0 / (sampling[1] * det_shape[1])
+    recip_y = 1.0 / (sampling[0] * detector_shape[0])
+    recip_x = 1.0 / (sampling[1] * detector_shape[1])
     kx_np = (bf_row.astype(np.float32) - center[0]) * recip_y
     ky_np = (bf_col.astype(np.float32) - center[1]) * recip_x
     if scan_detector_rotation_deg:
@@ -122,8 +122,8 @@ def prepare_selection(
     qx = q_row_mx[None, :, None]
     qy = q_col_mx[None, None, :]
     semiangle_rad = float(semiangle_mrad) * 1e-3
-    ang_y_rad = float(det_sampling[0]) * 1e-3
-    ang_x_rad = float(det_sampling[1]) * 1e-3
+    ang_y_rad = float(detector_sampling_mrad[0]) * 1e-3
+    ang_x_rad = float(detector_sampling_mrad[1]) * 1e-3
     alpha_k2_1d, cos2_k_1d, sin2_k_1d, aperture_k_1d = compute_geometry(
         mx,
         kx_mx,
@@ -435,7 +435,7 @@ def resolve_bf_selection(
 
     Without ``bright_field_radius_px`` the disk is ``detector.fit_probe``'s equal-area disk (pixels above mean + std); with it the
     centre is the intensity-weighted centroid. ``bright_field_edge_radius_px`` is the disk edge radius the detector calibration
-    uses: the caller's (``semiangle / det_sampling`` when the sampling is given, which a bright-field crop must pass
+    uses: the caller's (``semiangle / detector_sampling_mrad`` when the sampling is given, which a bright-field crop must pass
     because its pattern has no edge to measure) or ``disk_edge_radius`` of the mean pattern, the rule CUDA uses too.
     Exact BF columns carry the selection and radius they were exported with.
     """

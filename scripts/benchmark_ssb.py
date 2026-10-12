@@ -120,7 +120,7 @@ def run(arguments, stages) -> None:
             for _ in range(arguments.repeats):
                 ssb, seconds = timed(lambda: prepared(data))
                 times.append(seconds)
-                hashes.append(f"num_bf {ssb.num_bright_field_pixels}, det_sampling {ssb.det_sampling!r}")
+                hashes.append(f"num_bf {ssb.num_bright_field_pixels}, detector_sampling_mrad {ssb.detector_sampling_mrad!r}")
                 ssb.close()
             report("session", times, hashes)
         if "reconstruct" in stages:
@@ -144,7 +144,7 @@ def run(arguments, stages) -> None:
                 times.append(seconds)
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
                 hashes.append(f"phase {digest(result.phase)} loss {result.loss!r} aberrations "
-                              f"{digest(aberrations, result.tilt_mrad, result.depth_spread_nm, result.scan_detector_rotation_deg)}"
+                              f"{digest(aberrations, result.sample_tilt_mrad, result.depth_spread_nm, result.scan_detector_rotation_deg)}"
                               f" C10 {aberrations['C10_nm']:.6f} nm")
                 release_cached_memory()
             report(stage, times, hashes)

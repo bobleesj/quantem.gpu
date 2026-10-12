@@ -43,7 +43,7 @@ def run(
     fit_aberrations: bool = False,
     scan_sampling_A: float | None = None,
     semiangle_mrad: float | None = None,
-    det_sampling: float | tuple[float, float] | None = None,
+    detector_sampling_mrad: float | tuple[float, float] | None = None,
     verbose: bool = False,
 ) -> ParallaxResult:
     """Reconstruct a parallax image from the bright-field disk of a 4D-STEM acquisition.
@@ -82,14 +82,14 @@ def run(
     fit_aberrations
         Fit ``C10_nm``, ``C12_nm``, ``phi12_deg`` and the scan-detector rotation from
         the shifts. Needs ``scan_sampling_A`` and the detector calibration,
-        ``semiangle_mrad`` or ``det_sampling``.
+        ``semiangle_mrad`` or ``detector_sampling_mrad``.
     scan_sampling_A
         Scan step in Angstrom per pixel; converts the measured shifts to length.
     semiangle_mrad
         Probe convergence semiangle in mrad. Calibrates the detector as ``SSB``
         does: ``semiangle_mrad`` over the radius at which the bright-field disk
         of the mean pattern falls to half its plateau.
-    det_sampling
+    detector_sampling_mrad
         Detector sampling in mrad per pixel, one value or ``(row, col)``;
         replaces the calibration from ``semiangle_mrad``.
     verbose
@@ -139,10 +139,10 @@ def run(
             f"Parallax runs on a CUDA GPU, but this acquisition is on {device}. "
             "Load it with io.load(path, backend='cuda')."
         )
-    if fit_aberrations and (scan_sampling_A is None or (semiangle_mrad is None and det_sampling is None)):
+    if fit_aberrations and (scan_sampling_A is None or (semiangle_mrad is None and detector_sampling_mrad is None)):
         raise ValueError(
             "fit_aberrations=True needs scan_sampling_A (Angstrom per scan pixel) and the detector "
-            "calibration: semiangle_mrad, or det_sampling in mrad per detector pixel."
+            "calibration: semiangle_mrad, or detector_sampling_mrad in mrad per detector pixel."
         )
     # CuPy allocates and launches on its current device and torch exports DLPack from its own: both are the
     # acquisition's GPU for the whole reconstruction, which need not be the current one
@@ -176,13 +176,13 @@ def run(
         aberrations = rotation_angle_deg = None
         if fit_aberrations:
             # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
-            if det_sampling is None:
+            if detector_sampling_mrad is None:
                 mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
-                det_sampling = semiangle_mrad / disk_edge_radius(mean_pattern)
+                detector_sampling_mrad = semiangle_mrad / disk_edge_radius(mean_pattern)
             # The shifts are measured against the mean image, which is seen at the mean beam angle of the
             # selected pixels, so each pixel's beam angle is taken from their centroid.
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)
-            angles_rad = (pixels - pixels.mean(axis=0)) * np.broadcast_to(det_sampling, (2,)) * 1e-3
+            angles_rad = (pixels - pixels.mean(axis=0)) * np.broadcast_to(detector_sampling_mrad, (2,)) * 1e-3
             aberrations, rotation_angle_deg = fit_aberrations_from_shifts(
                 cp.asnumpy(global_shifts).astype(np.float64) * scan_sampling_A, angles_rad
             )

@@ -101,7 +101,7 @@ class SSB:
 
     The backends differ in what they return for the same call: CUDA averages corrected complex waves before taking
     the phase (``phase_of_mean``) where MPS averages per-pixel phases (``mean_phase``), finer output sampling
-    (``upsample``) is CUDA only, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
+    (``upsampling_factor``) is CUDA only, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
     backend's own, so fitted values and images agree closely but not to the bit.
 
     Parameters
@@ -119,7 +119,7 @@ class SSB:
         Scan step in Angstrom, (row, col).
     scan_shape : (int, int), optional
         Scan shape of a 3D frame stack.
-    det_sampling : float or (float, float), optional
+    detector_sampling_mrad : float or (float, float), optional
         Detector sampling in mrad per pixel. When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
     aberrations : dict, optional
@@ -141,7 +141,7 @@ class SSB:
     Examples
     --------
     >>> ssb = SSB(patterns, voltage_kV=300, semiangle_mrad=30,
-    ...           scan_sampling_A=0.99, det_sampling=0.6081)
+    ...           scan_sampling_A=0.99, detector_sampling_mrad=0.6081)
     >>> aberrations = ssb.find_aberrations()
     >>> result = ssb.reconstruct(aberrations)
     """
@@ -155,7 +155,7 @@ class SSB:
         semiangle_mrad: float,
         scan_sampling_A: float | tuple[float, float],
         scan_shape: tuple[int, int] | None = None,
-        det_sampling: float | tuple[float, float] | None = None,
+        detector_sampling_mrad: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
         detector_transposed: bool = False,
@@ -181,10 +181,10 @@ class SSB:
                 # tensors. The caller retains ownership of the acquisition.
                 data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin = crop_bright_field(
                     data, self.backend, bright_field_intensity_threshold, bright_field_radius_px,
-                    calibrate_detector=det_sampling is None, bright_field_center_px=bright_field_center_px,
+                    calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
                 )
-                if det_sampling is None:
-                    det_sampling = semiangle_mrad / calibration_radius
+                if detector_sampling_mrad is None:
+                    detector_sampling_mrad = semiangle_mrad / calibration_radius
             else:
                 data = data.data
         # The backends read dense arrays, plus the exact BF columns SSB.open finds on MPS. An encoded
@@ -221,7 +221,7 @@ class SSB:
         self.voltage_kV = float(voltage_kV)
         self.semiangle_mrad = float(semiangle_mrad)
         self.scan_sampling_A = _sampling(scan_sampling_A)
-        self.det_sampling = None if det_sampling is None else _sampling(det_sampling)
+        self.detector_sampling_mrad = None if detector_sampling_mrad is None else _sampling(detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
         self.scan_detector_rotation_deg = float(scan_detector_rotation_deg) % 360.0
@@ -231,7 +231,7 @@ class SSB:
         # (row, col) pixels of the full detector, also when the session holds only the bright-field crop of an encoded source
         self.bright_field_center_px = None if bright_field_center_px is None else (float(bright_field_center_px[0]), float(bright_field_center_px[1]))
         # latest find_aberrations(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
-        self.tilt_mrad: tuple[float, float] | None = None
+        self.sample_tilt_mrad: tuple[float, float] | None = None
         self.depth_spread_nm: float | None = None
         self.source_path = source_path
         self.calibration_path: str | None = None
@@ -265,7 +265,7 @@ class SSB:
         semiangle_mrad: float,
         scan_sampling_A: float | tuple[float, float],
         scan_shape: tuple[int, int] | None = None,
-        det_sampling: float | tuple[float, float] | None = None,
+        detector_sampling_mrad: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float = 0.0,
         detector_transposed: bool = False,
@@ -317,13 +317,13 @@ class SSB:
             ) as loaded:
                 data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin = crop_bright_field(
                     loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
-                    calibrate_detector=det_sampling is None,
+                    calibrate_detector=detector_sampling_mrad is None,
                 )
                 source_dtype = str(loaded.dtype)
                 source_bytes = loaded.logical_bytes
                 correction = loaded.metadata.get("hot_pixel_correction")
-            if det_sampling is None:
-                det_sampling = semiangle_mrad / calibration_radius
+            if detector_sampling_mrad is None:
+                detector_sampling_mrad = semiangle_mrad / calibration_radius
             source_provenance = None if correction is None else {"hot_pixel_correction": correction}
             source_kind = "detector"
             source_storage_path = str(source)
@@ -335,7 +335,7 @@ class SSB:
             semiangle_mrad=semiangle_mrad,
             scan_sampling_A=scan_sampling_A,
             scan_shape=scan_shape,
-            det_sampling=det_sampling,
+            detector_sampling_mrad=detector_sampling_mrad,
             aberrations=aberrations,
             scan_detector_rotation_deg=scan_detector_rotation_deg,
             bright_field_intensity_threshold=bright_field_intensity_threshold,
@@ -386,7 +386,7 @@ class SSB:
                     "voltage_kV": self.voltage_kV,
                     "semiangle_mrad": self.semiangle_mrad,
                     "scan_sampling_A": self.scan_sampling_A,
-                    "det_sampling": self.det_sampling,
+                    "detector_sampling_mrad": self.detector_sampling_mrad,
                 },
                 "ssb": {
                     "backend": self.backend,
@@ -436,7 +436,7 @@ class SSB:
             # a reused result, or one whose branch the polarity check changed, can sit on the other 180-degree branch; previews must use its rotation
             self.set_rotation(result.scan_detector_rotation_deg)
         self.aberrations = dict(result.aberrations)
-        self.tilt_mrad, self.depth_spread_nm = result.tilt_mrad, result.depth_spread_nm
+        self.sample_tilt_mrad, self.depth_spread_nm = result.sample_tilt_mrad, result.depth_spread_nm
         self._aberrations_explicit = True
         self.scan_detector_rotation_deg = result.scan_detector_rotation_deg
         self.best_loss = (
@@ -483,7 +483,7 @@ class SSB:
         if reuse_joint_fit:
             opposite = replace(
                 result, aberrations=start, scan_detector_rotation_deg=opposite_rotation,
-                tilt_mrad=tuple(-value for value in result.tilt_mrad),
+                sample_tilt_mrad=tuple(-value for value in result.sample_tilt_mrad),
             )
             # Recompute the native phase and diagnostic at the selected branch.
             # Simply negating stored pixels would miss discrete Nyquist effects.
@@ -495,14 +495,14 @@ class SSB:
                 loss=reconstruction.loss, elapsed=reconstruction.elapsed,
             )
         elif tilt:
-            refit = self._fit_tilt(result.n_trials or 200, refinement, tilt_limit_mrad, seed, False)
+            refit = self._fit_tilt(result.num_trials or 200, refinement, tilt_limit_mrad, seed, False)
         else:
             refit = self._in_detector_frame(result_from_engine(backend.fit(
                 aberrations=aberrations_to_engine(start), trials=0,
                 refinement=refinement or "nelder-mead", search_ranges=None,
                 refine_lock=None, seed=seed, verbose=False,
             )))
-            refit.n_trials = result.n_trials
+            refit.num_trials = result.num_trials
             refit.trial_records = []
         if not reuse_joint_fit:
             label_trials(refit, search=1)
@@ -556,7 +556,7 @@ class SSB:
 
                 self._compute = CudaSSBBackend(
                     data=self._data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
-                    det_sampling=self.det_sampling, voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
+                    detector_sampling_mrad=self.detector_sampling_mrad, voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
                     bright_field_intensity_threshold=self.bright_field_intensity_threshold, bright_field_radius_px=self.bright_field_radius_px,
                     bright_field_center_px=self._center_in_data(), scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                     aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
@@ -564,13 +564,13 @@ class SSB:
             else:
                 self._compute = MpsSSBBackend(
                     self._data, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-                    scan_sampling=self.scan_sampling_A, det_sampling=self.det_sampling,
+                    scan_sampling=self.scan_sampling_A, detector_sampling_mrad=self.detector_sampling_mrad,
                     bright_field_intensity_threshold=self.bright_field_intensity_threshold, bright_field_center_px=self._center_in_data(),
                     bright_field_radius_px=self.bright_field_radius_px, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 )
         return self._compute
 
-    def _reconstruct_trials(self, parameters, trials, *, upsample, phase_estimator):
+    def _reconstruct_trials(self, parameters, trials, *, upsampling_factor, phase_estimator):
         """Replay selected records without replacing the current search or correction."""
         parameters = self._aberration_search if parameters is None else parameters
         if parameters is None:
@@ -583,9 +583,9 @@ class SSB:
             self.set_rotation(record["scan_detector_rotation_deg"])
             phase, _ = self._phase(
                 record["params"],
-                tilt_mrad=(record["tilt_row_mrad"], record["tilt_col_mrad"]),
+                sample_tilt_mrad=tuple(record["sample_tilt_mrad"]),
                 depth_spread_nm=record["depth_spread_nm"],
-                upsampling_factor=upsample, phase_estimator=estimator, compute_loss=False,
+                upsampling_factor=upsampling_factor, phase_estimator=estimator, compute_loss=False,
             )
             # Native mean-phase kernels reuse a scratch buffer. Own each
             # wave before reconstructing the next trial on the same stream.
@@ -594,13 +594,13 @@ class SSB:
         return SSBResult(
             object_wave=(cp if self.backend == "cuda" else np).stack(waves), backend=self.backend, trial_records=records,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=self._output_sampling(upsample), upsample=upsample, phase_estimator=estimator,
+            scan_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor, phase_estimator=estimator,
             amplitude_estimated=False, source_path=self.source_path,
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
 
     def show_trials(self, *, best: int | None = None, last: int | None = None,
-                    first: int | None = None, upsample: int = 1,
+                    first: int | None = None, upsampling_factor: int = 1,
                     axsize: tuple[float, float] = (6, 6)):
         """Show selected attempts as phase images with a compact parameter table.
 
@@ -611,7 +611,7 @@ class SSB:
             search loss within the latest recorded search; ``last`` and ``first``
             select completed attempts in time order. Local refinement is not
             an Optuna trial and is displayed separately in the final report.
-        upsample
+        upsampling_factor
             Output sampling factor; never reruns the parameter search.
         axsize
             Width and height of each phase panel in inches. At most two
@@ -634,7 +634,7 @@ class SSB:
             raise ValueError("Run ssb.find_aberrations() before showing trials.")
         records = choose_trials(self._aberration_search.trial_records, best=best, last=last, first=first)
         result = self.reconstruct(self._aberration_search,
-                                  trials=[record["trial"] for record in records], upsample=upsample)
+                                  trials=[record["trial"] for record in records], upsampling_factor=upsampling_factor)
         kind = "Best" if best is not None else "Last" if last is not None else "First"
         return plot_trials(result, kind, axsize=axsize)
 
@@ -661,7 +661,7 @@ class SSB:
         aberrations in one search of ``trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
         C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
         not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
-        result's ``tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
+        result's ``sample_tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
         MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
         to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
 
@@ -759,19 +759,19 @@ class SSB:
                     side == column_stop - column_start and side in (128, 256, 512, 1024)):
                 raise ValueError(f"scan_region={scan_region} must be inside {rows} × {columns} and square with 128, 256, 512 or 1024 scan pixels per side.")
             # The region keeps the full scan's bright-field disk and detector calibration.
-            center, radius, det_sampling = self._center_in_data(), self.bright_field_radius_px, self.det_sampling
-            if center is None or radius is None or det_sampling is None:
+            center, radius, detector_sampling_mrad = self._center_in_data(), self.bright_field_radius_px, self.detector_sampling_mrad
+            if center is None or radius is None or detector_sampling_mrad is None:
                 mean_pattern = detector.mean(self._data)
                 detected_center, detected_radius = detector.fit_probe(mean_pattern)
                 center = detected_center if center is None else center
                 radius = detected_radius if radius is None else radius
-                if det_sampling is None:
-                    det_sampling = self.semiangle_mrad / disk_edge_radius(mean_pattern)
+                if detector_sampling_mrad is None:
+                    detector_sampling_mrad = self.semiangle_mrad / disk_edge_radius(mean_pattern)
             with SSB(
                 self._data[row_start:row_stop, column_start:column_stop],
                 backend=self.backend, voltage_kV=self.voltage_kV,
                 semiangle_mrad=self.semiangle_mrad, scan_sampling_A=self.scan_sampling_A,
-                det_sampling=det_sampling,
+                detector_sampling_mrad=detector_sampling_mrad,
                 aberrations=self.aberrations if self._aberrations_explicit else None,
                 scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 bright_field_center_px=center, bright_field_radius_px=radius,
@@ -835,7 +835,7 @@ class SSB:
         *,
         aberrations: dict[str, float] | None = None,
         trials: object = None,
-        upsample: int | Literal["auto"] = 1,
+        upsampling_factor: int | Literal["auto"] = 1,
         phase_estimator: Literal["mean_phase", "phase_of_mean", "complex_wave"] | None = None,
         compute_loss: bool = True,
         save_to: str | Path | None = None,
@@ -856,7 +856,7 @@ class SSB:
             Trial IDs from ``parameters.trials.index``. Reconstruct these
             attempts using their original rotation and sample geometry;
             return a phase stack without changing the active session.
-        upsample
+        upsampling_factor
             Output factor: 1, 2, 3, 4, or 8. Scan positions and measured
             diffraction patterns are unchanged. Output pixel size decreases
             by this factor, preserving the physical field of view.
@@ -894,18 +894,18 @@ class SSB:
         Examples
         --------
         >>> aberrations = ssb.find_aberrations(tilt=True)
-        >>> result = ssb.reconstruct(aberrations, upsample=4, save_to="results/4x")
+        >>> result = ssb.reconstruct(aberrations, upsampling_factor=4, save_to="results/4x")
         """
-        if upsample == "auto":
+        if upsampling_factor == "auto":
             from quantem.gpu.optics.physics import ssb_upsampling_factor
 
-            upsample = ssb_upsampling_factor(
+            upsampling_factor = ssb_upsampling_factor(
                 voltage_kV=self.voltage_kV,
                 semiangle_mrad=self.semiangle_mrad,
                 scan_sampling_A=self.scan_sampling_A,
             )
-        if type(upsample) is not int or upsample not in (1, 2, 3, 4, 8):
-            raise ValueError("upsample must be 'auto', 1, 2, 3, 4, or 8.")
+        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
+            raise ValueError("upsampling_factor must be 'auto', 1, 2, 3, 4, or 8.")
         if phase_estimator not in (None, "mean_phase", "phase_of_mean", "complex_wave"):
             raise ValueError("phase_estimator must be 'mean_phase', 'phase_of_mean', or 'complex_wave'.")
         if parameters is not None and not isinstance(parameters, SSBResult):
@@ -915,26 +915,26 @@ class SSB:
                 raise ValueError("Trial inspection returns phase images; choose mean_phase or phase_of_mean.")
             if aberrations is not None or save_to is not None:
                 raise ValueError("Replay trials without coefficient overrides or save_to; save the returned result separately.")
-            return self._reconstruct_trials(parameters, trials, upsample=upsample, phase_estimator=phase_estimator)
+            return self._reconstruct_trials(parameters, trials, upsampling_factor=upsampling_factor, phase_estimator=phase_estimator)
         correction = parameters
         if correction is not None:
             coefs = dict(correction.aberrations)
-            tilt = correction.tilt_mrad
+            tilt = correction.sample_tilt_mrad
             depth = correction.depth_spread_nm
             if correction.scan_detector_rotation_deg != self.scan_detector_rotation_deg:
                 self.set_rotation(correction.scan_detector_rotation_deg)
         else:
             coefs = dict(self.aberrations)
-            tilt = self.tilt_mrad
+            tilt = self.sample_tilt_mrad
             depth = self.depth_spread_nm
         coefs = validate_aberrations({**coefs, **(aberrations or {})})
         estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
-        if estimator == "complex_wave" and (upsample != 1 or depth or any(tilt or ())):
-            raise ValueError("complex_wave requires upsample=1 and no sample tilt/depth; choose a phase estimator instead.")
+        if estimator == "complex_wave" and (upsampling_factor != 1 or depth or any(tilt or ())):
+            raise ValueError("complex_wave requires upsampling_factor=1 and no sample tilt/depth; choose a phase estimator instead.")
         settings = {
             "aberrations": coefs, "compute_loss": bool(compute_loss),
-            "upsample": upsample, "phase_estimator": estimator,
-            "tilt_mrad": tilt, "depth_spread_nm": depth,
+            "upsampling_factor": upsampling_factor, "phase_estimator": estimator,
+            "sample_tilt_mrad": tilt, "depth_spread_nm": depth,
         }
         paths = signature = None
         if save_to is not None:
@@ -944,21 +944,21 @@ class SSB:
                 reused = load_result(paths=paths, signature=signature, backend=self.backend)
                 if reused is not None:
                     if verbose:
-                        print(f"Loading matching {upsample}x SSB result: {paths[0]}")
+                        print(f"Loading matching {upsampling_factor}x SSB result: {paths[0]}")
                     return self._accept_result(reused)
 
         if verbose:
             rows, cols = self.scan_shape
-            print(f"Reconstructing {upsample}x: {rows * upsample} x {cols * upsample}; "
+            print(f"Reconstructing {upsampling_factor}x: {rows * upsampling_factor} x {cols * upsampling_factor}; "
                   f"{estimator}; tilt {tilt or (0.0, 0.0)} mrad; "
                   f"depth spread {depth or 0.0:.3f} nm; loss at native 1x")
         cached = self._reconstruction
         if (not force and save_to is None and parameters is None and aberrations is None
-                and cached is not None and cached.upsample == upsample
+                and cached is not None and cached.upsampling_factor == upsampling_factor
                 and cached.phase_estimator == estimator
                 and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg
                 and cached.aberrations == coefs
-                and cached.tilt_mrad == tilt
+                and cached.sample_tilt_mrad == tilt
                 and cached.depth_spread_nm == depth
                 and (not compute_loss or cached.loss is not None)):
             return cached
@@ -976,17 +976,17 @@ class SSB:
             return result
         started = time.perf_counter()
         phase, loss = self._phase(
-            coefs, upsampling_factor=upsample, phase_estimator=estimator,
-            tilt_mrad=tilt or (0.0, 0.0), depth_spread_nm=depth or 0.0,
+            coefs, upsampling_factor=upsampling_factor, phase_estimator=estimator,
+            sample_tilt_mrad=tilt or (0.0, 0.0), depth_spread_nm=depth or 0.0,
             compute_loss=compute_loss,
         )
         result = SSBResult(
             object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
-            tilt_mrad=tilt, depth_spread_nm=depth,
+            sample_tilt_mrad=tilt, depth_spread_nm=depth,
             scan_detector_rotation_deg=self.scan_detector_rotation_deg,
             loss=loss, elapsed=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
-            scan_sampling_A=self._output_sampling(upsample), upsample=upsample,
+            scan_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor,
             phase_estimator=estimator, amplitude_estimated=False,
             phase_clim=correction.phase_limits if correction is not None else None,
             fit_scan_region=correction.fit_scan_region if correction is not None else None,
@@ -1006,7 +1006,7 @@ class SSB:
         compute_loss: bool = True,
         upsampling_factor: int = 1,
         context: AbstractContextManager | None = None,
-        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
         phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
     ) -> tuple[np.ndarray, float | None]:
@@ -1021,7 +1021,7 @@ class SSB:
         ``C32_nm``, ``C34_nm``, ``C41_nm``, ``C43_nm``, ``C45_nm``, ``C50_nm``, ``C52_nm``, ``C54_nm``, ``C56_nm`` and
         their ``phi.._deg`` (the round ``C30`` and ``C50`` have none). Naming any of them selects the 14-term
         aberration kernel. A positive ``depth_spread_nm`` switches to the thick-sample model:
-        each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``tilt_mrad``
+        each bright-field pixel's correction is averaged over that depth, with the crystal leaning by ``sample_tilt_mrad``
         (row, col; scan frame), as fitted by ``find_aberrations(tilt=True)``. With no depth spread the tilt has no effect and this is
         standard SSB. CUDA and MPS backends.
 
@@ -1046,14 +1046,14 @@ class SSB:
 
         >>> fitted = ssb.find_aberrations(tilt=True)  # native-grid joint fit
         >>> phase, loss = ssb.preview(
-        ...     dict(fitted), tilt_mrad=fitted.tilt_mrad,
+        ...     dict(fitted), sample_tilt_mrad=fitted.sample_tilt_mrad,
         ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
         ... )
 
         Compare the historical estimator explicitly, without changing the fit:
 
         >>> candidate, native_loss = ssb.preview(
-        ...     dict(fitted), tilt_mrad=fitted.tilt_mrad,
+        ...     dict(fitted), sample_tilt_mrad=fitted.sample_tilt_mrad,
         ...     depth_spread_nm=fitted.depth_spread_nm, upsampling_factor=4,
         ...     phase_estimator="mean_phase",
         ... )
@@ -1062,7 +1062,7 @@ class SSB:
         phase, loss = self._phase(
             aberrations, compute_loss=compute_loss,
             upsampling_factor=upsampling_factor, context=context,
-            tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
+            sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
             phase_estimator=phase_estimator,
         )
         if self.backend == "cuda":
@@ -1076,7 +1076,7 @@ class SSB:
         compute_loss: bool = True,
         upsampling_factor: int = 1,
         context: AbstractContextManager | None = None,
-        tilt_mrad: tuple[float, float] = (0.0, 0.0),
+        sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
         phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
     ) -> tuple[object, float | None]:
@@ -1122,12 +1122,12 @@ class SSB:
             with scope:
                 return backend.preview_upsampled(
                     coefs, upsampling_factor=upsampling_factor, compute_loss=compute_loss,
-                    tilt_mrad=tuple(float(value) for value in tilt_mrad),
+                    sample_tilt_mrad=tuple(float(value) for value in sample_tilt_mrad),
                     thickness=float(depth_spread_nm) * ENGINE_PER_NM,
                     phase_estimator=phase_estimator,
                 )
         if float(depth_spread_nm) > 0.0:
-            sample = {"tilt_row_mrad": float(tilt_mrad[0]), "tilt_col_mrad": float(tilt_mrad[1]),
+            sample = {"tilt_row_mrad": float(sample_tilt_mrad[0]), "tilt_col_mrad": float(sample_tilt_mrad[1]),
                       "thickness": float(depth_spread_nm) * ENGINE_PER_NM}
             if higher_order_magnitudes is not None:
                 raise ValueError("The thick-sample preview does not combine with higher-order aberrations yet.")
@@ -1146,7 +1146,7 @@ class SSB:
 
     @property
     def supports_tilt(self) -> bool:
-        """True when this session's backend implements the thick-sample model (``find_aberrations(tilt=True)``, ``preview(tilt_mrad=...)``).
+        """True when this session's backend implements the thick-sample model (``find_aberrations(tilt=True)``, ``preview(sample_tilt_mrad=...)``).
 
         Both Python backends, CUDA and MPS, implement it.
         """
@@ -1159,9 +1159,9 @@ class SSB:
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3)
         aberrations = aberrations_from_engine(fit)
-        tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
+        sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
-        phase, loss = self._phase(aberrations, tilt_mrad=tilt_mrad, depth_spread_nm=depth_spread_nm,
+        phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
                                    phase_estimator="mean_phase")
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         object_wave = self._unit_wave(phase)
@@ -1173,14 +1173,14 @@ class SSB:
                 "objective": "negative_thick_agreement", "band_inv_A": fit["band_inv_A"],
                 "params": {"C10_nm": values["C10"] / ENGINE_PER_NM, "C12_nm": values["C12"] / ENGINE_PER_NM,
                            "phi12_deg": math.degrees(values["phi12"])},
-                "tilt_row_mrad": values["tilt_row_mrad"], "tilt_col_mrad": values["tilt_col_mrad"],
+                "sample_tilt_mrad": [values["tilt_row_mrad"], values["tilt_col_mrad"]],
                 "depth_spread_nm": values["thickness"] / ENGINE_PER_NM,
             })
-        return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, tilt_mrad=tilt_mrad,
+        return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
                          depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]), amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
-                         elapsed=time.perf_counter() - started, n_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
+                         elapsed=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          scan_sampling_A=self.scan_sampling_A)
 
@@ -1188,9 +1188,9 @@ class SSB:
         """The unit-amplitude wave exp(i phase) of a phase-only reconstruction, on the session's device."""
         return cp.exp(1j * phase) if self.backend == "cuda" else np.exp(1j * np.asarray(phase))
 
-    def _output_sampling(self, upsample: int) -> float | tuple[float, float]:
-        """Output pixel size in Angstrom at ``upsample`` times the scan grid: one value or (row, col) like the input."""
-        sampling = np.asarray(self.scan_sampling_A) / upsample
+    def _output_sampling(self, upsampling_factor: int) -> float | tuple[float, float]:
+        """Output pixel size in Angstrom at ``upsampling_factor`` times the scan grid: one value or (row, col) like the input."""
+        sampling = np.asarray(self.scan_sampling_A) / upsampling_factor
         return float(sampling) if sampling.ndim == 0 else tuple(sampling.tolist())
 
     @_on_scan_gpu

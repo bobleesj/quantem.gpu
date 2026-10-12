@@ -50,12 +50,12 @@ def test_explicit_estimator_matches_direct_waves_and_preserves_native_loss(facto
     aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
     tilt = (-9.0, 5.0)
     try:
-        native, native_loss = ssb.preview(aberrations, tilt_mrad=tilt, depth_spread_nm=depth)
+        native, native_loss = ssb.preview(aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth)
         legacy, _ = ssb.preview(
-            aberrations, tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
         )
         candidate, loss = ssb.preview(
-            aberrations, tilt_mrad=tilt, depth_spread_nm=depth,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth,
             upsampling_factor=factor,
         )
         expected = _direct_wave_average(ssb, factor, tilt, depth)
@@ -63,12 +63,12 @@ def test_explicit_estimator_matches_direct_waves_and_preserves_native_loss(facto
         assert loss == native_loss
         assert np.isfinite(candidate).all()
         restored, restored_loss = ssb.preview(
-            aberrations, tilt_mrad=tilt, depth_spread_nm=depth,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth,
         )
         np.testing.assert_array_equal(restored, native)
         assert restored_loss == native_loss
         repeated, _ = ssb.preview(
-            aberrations, tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor,
         )
         np.testing.assert_array_equal(repeated, legacy)
     finally:
@@ -85,7 +85,7 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
     tilt = (-9.0, 5.0)
     try:
         candidate, loss = ssb.preview(
-            aberrations, tilt_mrad=tilt, depth_spread_nm=depth,
+            aberrations, sample_tilt_mrad=tilt, depth_spread_nm=depth,
             upsampling_factor=4, phase_estimator="phase_of_mean", compute_loss=False,
         )
         assert loss is None
@@ -97,7 +97,7 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
         np.testing.assert_allclose(cp.asnumpy(batched), candidate, atol=1e-6, rtol=0)
         # an azimuth left on a higher order whose magnitude is zero selects the packed coefficients
         packed, _ = ssb.preview(
-            aberrations | {"phi21_deg": math.degrees(1.2)}, tilt_mrad=tilt, depth_spread_nm=depth,
+            aberrations | {"phi21_deg": math.degrees(1.2)}, sample_tilt_mrad=tilt, depth_spread_nm=depth,
             upsampling_factor=4, phase_estimator="phase_of_mean", compute_loss=False,
         )
         np.testing.assert_allclose(packed, candidate, atol=1e-6, rtol=0)

@@ -52,7 +52,7 @@ class PairedSeriesCompute(StreamedSeriesCompute):
             blocks_total = sum(chunk.scans / self.interval for source in self.index_owners for chunk in source.chunks)
             self.pixel_weights = weights.get() / blocks_total
         # Leaves and roots of the polar index weigh each pixel by its expected decode cost.
-        self.permutation, self.leaves, self.roots = polar_layout(self.det_shape)
+        self.permutation, self.leaves, self.roots = polar_layout(self.detector_shape)
         self.indexed = self.permutation >= 0
         tile_weight = np.zeros(self.permutation.size, np.float64)
         tile_weight[self.indexed] = self.pixel_weights.ravel()[self.permutation[self.indexed]]
@@ -132,7 +132,7 @@ class PairedSeriesCompute(StreamedSeriesCompute):
 
     def _selected_totals(self, indices, maximum: bool):
         """Exact uint64 sum, or maximum, of the sorted scan ``indices``: the paired decoder expands each 512-scan block."""
-        totals = cp.zeros((len(self.index_owners), *self.det_shape), cp.uint64)
+        totals = cp.zeros((len(self.index_owners), *self.detector_shape), cp.uint64)
         # Group by codec block so sparse selections decode each block once.
         boundaries = np.flatnonzero(np.diff(indices // self.interval)) + 1
         for total, source in zip(totals, self.index_owners, strict=True):

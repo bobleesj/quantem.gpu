@@ -137,8 +137,8 @@ def get_metadata(filepath: str) -> dict:
         if detector_dataset is not None:
             if "scan_shape" in detector_dataset.attrs:
                 metadata.setdefault("scan_shape", tuple(int(size) for size in detector_dataset.attrs["scan_shape"]))
-            if "det_shape" in detector_dataset.attrs:
-                metadata.setdefault("detector_shape", tuple(int(size) for size in detector_dataset.attrs["det_shape"]))
+            if "detector_shape" in detector_dataset.attrs:
+                metadata.setdefault("detector_shape", tuple(int(size) for size in detector_dataset.attrs["detector_shape"]))
             metadata.setdefault("source_dtype", str(detector_dataset.dtype))
             if detector_dataset.ndim >= 3:
                 metadata.setdefault("n_frames", int(np.prod(detector_dataset.shape[:-2])))

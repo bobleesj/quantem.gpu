@@ -81,7 +81,7 @@ class TorchSSB:
         edge = torch.where(denom > 1e-15, (self.semiangle - r * self.wavelength) / denom.clamp_min(1e-15) + 0.5, torch.ones_like(r))
         return alpha2, cos2, sin2, edge.clamp(0.0, 1.0)
 
-    def _gamma(self, qx, qy, kx, ky, C10, C12, phi12, tilt_mrad=(0.0, 0.0), thickness=0.0) -> torch.Tensor:
+    def _gamma(self, qx, qy, kx, ky, C10, C12, phi12, sample_tilt_mrad=(0.0, 0.0), thickness=0.0) -> torch.Tensor:
         """Unnormalised gamma = w1 P(q-k) conj P(k) - w2 conj P(q+k) P(k) on broadcast (k, q) grids."""
         c2, s2 = math.cos(2.0 * phi12), math.sin(2.0 * phi12)
 
@@ -94,7 +94,7 @@ class TorchSSB:
         chi_k, chi_m, chi_p = chi(a_k, cos_k, sin_k), chi(a_m, cos_m, sin_m), chi(a_p, cos_p, sin_p)
         w1 = w2 = 1.0
         if thickness > 0.0:
-            shift = 2.0 * math.pi * (qx * tilt_mrad[0] * 1e-3 + qy * tilt_mrad[1] * 1e-3)
+            shift = 2.0 * math.pi * (qx * sample_tilt_mrad[0] * 1e-3 + qy * sample_tilt_mrad[1] * 1e-3)
             rate1 = -self.factor * (a_m - a_k) - shift
             rate2 = self.factor * (a_p - a_k) - shift
             w1 = torch.special.sinc(0.5 * rate1 * thickness / math.pi)     # torch sinc(x) = sin(pi x) / (pi x)
@@ -118,7 +118,7 @@ class TorchSSB:
     # --- public -----------------------------------------------------------------------------------------------------------
 
     @torch.inference_mode()
-    def reconstruct(self, C10: float, C12: float, phi12: float, tilt_mrad=(0.0, 0.0), thickness: float = 0.0,
+    def reconstruct(self, C10: float, C12: float, phi12: float, sample_tilt_mrad=(0.0, 0.0), thickness: float = 0.0,
                     compute_loss: bool = True) -> tuple[torch.Tensor, float | None]:
         """Mean phase over bright-field pixels and the phase-variance loss (standard SSB at thickness 0)."""
         ny, nx = self.ny, self.nx
@@ -130,7 +130,7 @@ class TorchSSB:
             stop = min(self.num_bright_field_pixels, start + chunk)
             full = self._full_plane(self.G[start:stop])
             gamma = self._gamma(qx, qy, self.kx[start:stop].reshape(-1, 1, 1), self.ky[start:stop].reshape(-1, 1, 1),
-                                C10, C12, phi12, tilt_mrad, thickness)
+                                C10, C12, phi12, sample_tilt_mrad, thickness)
             # gamma / |gamma|; where gamma vanishes (no overlap) the CUDA kernel scales by 1e8, which keeps it ~0 - same here
             mag2 = gamma.real ** 2 + gamma.imag ** 2
             unit = gamma * torch.where(mag2 > 1e-16, torch.rsqrt(mag2.clamp_min(1e-16)), torch.full_like(mag2, 1e8))
@@ -145,7 +145,7 @@ class TorchSSB:
         return mean, loss
 
     @torch.inference_mode()
-    def fit_power(self, C10: float, C12: float, phi12: float, tilt_mrad=(0.0, 0.0), thickness: float = 0.0,
+    def fit_power(self, C10: float, C12: float, phi12: float, sample_tilt_mrad=(0.0, 0.0), thickness: float = 0.0,
                   band_inv_A: tuple[float, float] = (0.2, 0.9)) -> float:
         """Least-squares agreement of the (thick) SSB model with G over a q band, on the half-plane (see module docstring)."""
         ny, nx = self.ny, self.nx
@@ -168,7 +168,7 @@ class TorchSSB:
         for start in range(0, self.num_bright_field_pixels, chunk):
             stop = min(self.num_bright_field_pixels, start + chunk)
             gamma = self._gamma(qx_b, qy_b, self.kx[start:stop].reshape(-1, 1), self.ky[start:stop].reshape(-1, 1),
-                                C10, C12, phi12, tilt_mrad, thickness)
+                                C10, C12, phi12, sample_tilt_mrad, thickness)
             numerator += (g_flat[start:stop][:, flat] * torch.conj(gamma)).sum(0)
             denominator += (gamma.real ** 2 + gamma.imag ** 2).sum(0)
         keep = denominator > 0

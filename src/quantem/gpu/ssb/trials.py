@@ -20,8 +20,7 @@ def label_trials(result: SSBResult, *, search: int) -> None:
         record.update(trial=index, search=search, scan_detector_rotation_deg=rotation)
         record.setdefault("stage", "search")
         record.setdefault("objective", "phase_variance")
-        record.setdefault("tilt_row_mrad", 0.0)
-        record.setdefault("tilt_col_mrad", 0.0)
+        record.setdefault("sample_tilt_mrad", [0.0, 0.0])
         record.setdefault("depth_spread_nm", 0.0)
 
 
@@ -97,7 +96,7 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6))
         params = record["params"]
         values.append([record["trial"], f"{params['C10_nm']:.2f}", f"{params['C12_nm']:.2f}",
                        f"{params['phi12_deg']:.1f}",
-                       f"{record['tilt_row_mrad']:.1f}, {record['tilt_col_mrad']:.1f}",
+                       f"{record['sample_tilt_mrad'][0]:.1f}, {record['sample_tilt_mrad'][1]:.1f}",
                        f"{record['depth_spread_nm']:.2f}", f"{record['scan_detector_rotation_deg']:.1f}", f"{record['loss']:.5g}"])
     table = table_axis.table(cellText=values, colLabels=labels, loc="center", cellLoc="center")
     table.auto_set_font_size(False)

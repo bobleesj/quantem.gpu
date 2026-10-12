@@ -63,10 +63,10 @@ class TorchBackend(DetectorQueries):
             self.scan_shape = scan_shape_of(int(tensor.shape[0]))
         else:
             raise ValueError(f"expected 3D/4D tensor, got {tuple(tensor.shape)}")
-        self.det_shape = (int(tensor.shape[-2]), int(tensor.shape[-1]))
+        self.detector_shape = (int(tensor.shape[-2]), int(tensor.shape[-1]))
         self.n_frames = math.prod(self.scan_shape)
         self.device = tensor.device
-        self._flat = tensor.reshape(-1, *self.det_shape)
+        self._flat = tensor.reshape(-1, *self.detector_shape)
 
     def frame(self, index: int) -> np.ndarray:
         return self._flat[int(index)].cpu().numpy()
@@ -88,7 +88,7 @@ class TorchBackend(DetectorQueries):
                 out[start:stop] = flat[start:stop].index_select(1, selected).to(torch.int64).sum(dim=1).to(torch.float32)
             return out.reshape(self.scan_shape).cpu().numpy()
         # Float intensities: sum the selected pixels of sparse masks directly.
-        det_pixels = self.det_shape[0] * self.det_shape[1]
+        det_pixels = self.detector_shape[0] * self.detector_shape[1]
         selected = int(mask.sum().item())
         if selected <= 0:
             return np.zeros(self.scan_shape, dtype=np.float32)
@@ -137,8 +137,8 @@ class TorchBackend(DetectorQueries):
         """
         if torch.is_floating_point(self._flat):
             return (self._float_total() / self.n_frames).astype(np.float32)
-        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
-        total = torch.zeros(self.det_shape, dtype=torch.int64, device=self.device)
+        step = max(1, _INT64_CHUNK_BYTES // (self.detector_shape[0] * self.detector_shape[1] * 8))
+        total = torch.zeros(self.detector_shape, dtype=torch.int64, device=self.device)
         for start in range(0, self.n_frames, step):
             # Cast first: some devices do not implement mixed uint16/int64 sums.
             total += self._flat[start : start + step].to(torch.int64).sum(dim=0)
@@ -164,7 +164,7 @@ class TorchBackend(DetectorQueries):
             return total.astype(exact) if reduce == "sum" else (total / len(scan_indices)).astype(np.float32)
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
         if reduce == "max":
-            step = max(1, _CHUNK_BYTE_BUDGET // (self.det_shape[0] * self.det_shape[1] * 4))
+            step = max(1, _CHUNK_BYTE_BUDGET // (self.detector_shape[0] * self.detector_shape[1] * 4))
             maximum = None
             for start in range(0, indices.size, step):
                 frames = self._flat.index_select(0, torch.as_tensor(indices[start : start + step], device=self.device))
@@ -183,7 +183,7 @@ class TorchBackend(DetectorQueries):
         running total is several units in the last place off after thousands
         of patterns.
         """
-        pixels = self.det_shape[0] * self.det_shape[1]
+        pixels = self.detector_shape[0] * self.detector_shape[1]
         count = self.n_frames if indices is None else indices.size
         in_place = self.device.type == "mps" and indices is None and self._flat.dtype == torch.float32
         step = count if in_place else max(1, (_CHUNK_BYTE_BUDGET // 4 if self.device.type == "mps" else _INT64_CHUNK_BYTES // 8) // pixels)
@@ -194,8 +194,8 @@ class TorchBackend(DetectorQueries):
         )
         if self.device.type == "mps":
             # The kernel reads float32; half floats widen first.
-            return pattern_total((values.float() for values in windows), pixels).reshape(self.det_shape)
-        total = torch.zeros(self.det_shape, dtype=torch.float64, device=self.device)
+            return pattern_total((values.float() for values in windows), pixels).reshape(self.detector_shape)
+        total = torch.zeros(self.detector_shape, dtype=torch.float64, device=self.device)
         for values in windows:
             total += values.to(torch.float64).sum(dim=0)
         return total.cpu().numpy()
@@ -219,7 +219,7 @@ class TorchBackend(DetectorQueries):
         maximum starts from the first chunk, so negative values survive.
         """
         indices = np.asarray(scan_indices, dtype=np.int64).reshape(-1)
-        step = max(1, _INT64_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
+        step = max(1, _INT64_CHUNK_BYTES // (self.detector_shape[0] * self.detector_shape[1] * 8))
         result = None
         for start in range(0, indices.size, step):
             selected = torch.as_tensor(indices[start : start + step], dtype=torch.int64, device=self.device)
@@ -230,7 +230,7 @@ class TorchBackend(DetectorQueries):
                 result = reduced if result is None else torch.maximum(result, reduced)
             else:
                 result = chunk.sum(dim=0) if result is None else result + chunk.sum(dim=0)
-        return np.zeros(self.det_shape, np.int64) if result is None else result.cpu().numpy()
+        return np.zeros(self.detector_shape, np.int64) if result is None else result.cpu().numpy()
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         """Per-scan-position centre of mass over the (masked) detector: the DPC vector field.
@@ -242,8 +242,8 @@ class TorchBackend(DetectorQueries):
         budget as ``masked_sum``; an empty pattern gives 0.
         """
         mask = None if det_mask is None else torch.as_tensor(np.ascontiguousarray(det_mask), device=self.device).float()
-        rows = torch.arange(self.det_shape[0], device=self.device, dtype=torch.float32)[:, None]
-        cols = torch.arange(self.det_shape[1], device=self.device, dtype=torch.float32)[None, :]
+        rows = torch.arange(self.detector_shape[0], device=self.device, dtype=torch.float32)[:, None]
+        cols = torch.arange(self.detector_shape[1], device=self.device, dtype=torch.float32)[None, :]
         com_col = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
         com_row = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
         step = self._frames_per_chunk()
@@ -260,7 +260,7 @@ class TorchBackend(DetectorQueries):
     def _frames_per_chunk(self) -> int:
         """Whole scan rows per chunk, so each float32 chunk stays inside ``_CHUNK_BYTE_BUDGET``."""
         row_length = self.scan_shape[-1]
-        bytes_per_row = row_length * self.det_shape[0] * self.det_shape[1] * 4
+        bytes_per_row = row_length * self.detector_shape[0] * self.detector_shape[1] * 4
         return max(1, _CHUNK_BYTE_BUDGET // max(1, bytes_per_row)) * row_length
 
 
@@ -281,10 +281,10 @@ class ArrayBackend(DetectorQueries):
             self.scan_shape = scan_shape_of(int(values.shape[0]))
         else:
             raise ValueError(f"Expected 3D or 4D 4D-STEM data, got {values.ndim}D with shape {values.shape}.")
-        self.det_shape = (int(values.shape[-2]), int(values.shape[-1]))
+        self.detector_shape = (int(values.shape[-2]), int(values.shape[-1]))
         self.n_frames = math.prod(self.scan_shape)
         self.device = "cpu"
-        self._flat = values.reshape(-1, *self.det_shape)
+        self._flat = values.reshape(-1, *self.detector_shape)
 
     def frame(self, index: int) -> np.ndarray:
         return np.asarray(self._flat[int(index)])
@@ -334,7 +334,7 @@ class ArrayBackend(DetectorQueries):
             for start in range(step, indices.size, step):
                 maximum = np.maximum(maximum, self._flat[indices[start : start + step]].max(axis=0))
             return maximum.astype(exact)
-        total = np.zeros(self.det_shape, accumulator)
+        total = np.zeros(self.detector_shape, accumulator)
         for start in range(0, indices.size, step):
             total += self._flat[indices[start : start + step]].sum(axis=0, dtype=accumulator)
         return total.astype(exact) if reduce == "sum" else (total / indices.size).astype(np.float32)
@@ -356,9 +356,9 @@ class ArrayBackend(DetectorQueries):
 
         An empty pattern gives 0: its denominator is clamped to 1e-10.
         """
-        mask = np.ones(self.det_shape, dtype=bool) if det_mask is None else self._mask(det_mask)
-        rows = np.arange(self.det_shape[0], dtype=np.float64)[None, :, None]
-        cols = np.arange(self.det_shape[1], dtype=np.float64)[None, None, :]
+        mask = np.ones(self.detector_shape, dtype=bool) if det_mask is None else self._mask(det_mask)
+        rows = np.arange(self.detector_shape[0], dtype=np.float64)[None, :, None]
+        cols = np.arange(self.detector_shape[1], dtype=np.float64)[None, None, :]
         com_row = np.empty(self.n_frames, dtype=np.float64)
         com_col = np.empty(self.n_frames, dtype=np.float64)
         step = self._frames_per_chunk()
@@ -372,13 +372,13 @@ class ArrayBackend(DetectorQueries):
 
     def _mask(self, det_mask) -> np.ndarray:
         mask = np.asarray(det_mask, dtype=bool)
-        if mask.shape != self.det_shape:
-            raise ValueError(f"det_mask shape {mask.shape} does not match detector shape {self.det_shape}.")
+        if mask.shape != self.detector_shape:
+            raise ValueError(f"det_mask shape {mask.shape} does not match detector shape {self.detector_shape}.")
         return mask
 
     def _frames_per_chunk(self) -> int:
         """Frames whose float64 copy fits ``_HOST_CHUNK_BYTES``."""
-        return max(1, _HOST_CHUNK_BYTES // (self.det_shape[0] * self.det_shape[1] * 8))
+        return max(1, _HOST_CHUNK_BYTES // (self.detector_shape[0] * self.detector_shape[1] * 8))
 
 
 def _host_accumulator(dtype) -> np.dtype:

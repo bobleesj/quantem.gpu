@@ -68,7 +68,7 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
     np.save(path, counts)
     settings = dict(
         backend=backend, voltage_kV=300, semiangle_mrad=30,
-        scan_sampling_A=0.99, det_sampling=6.0,
+        scan_sampling_A=0.99, detector_sampling_mrad=6.0,
         bright_field_radius_px=4.0, bright_field_center_px=(11.5, 11.5),
     )
     with io.load(path, backend=backend, verbose=False) as data:
@@ -89,13 +89,13 @@ def test_native_encoded_ssb_matches_dense_and_keeps_acquisition_open(tmp_path, b
 
 @pytest.mark.slow
 def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(tmp_path, backend):
-    """Without ``det_sampling`` every session calibrates the detector as semiangle / disk edge radius (mrad per pixel).
+    """Without ``detector_sampling_mrad`` every session calibrates the detector as semiangle / disk edge radius (mrad per pixel).
 
     The bright-field disk is the image of the aperture, so its edge sits at the convergence semiangle. Before 2026-10-05
     CUDA used twice the semiangle over an integer half-maximum radius, and MPS twice the semiangle over the equal-area
     radius, or over the half-maximum radius of the bright-field crop for a loaded dataset: about two times too coarse,
     and different per backend and input. An array, a loaded dataset and ``SSB.open`` now reconstruct exactly as a
-    session given ``det_sampling = semiangle / radius``.
+    session given ``detector_sampling_mrad = semiangle / radius``.
     """
     counts = _counts(5)
     rows, cols = np.mgrid[:12, :12]
@@ -105,10 +105,10 @@ def test_detector_sampling_defaults_to_the_semiangle_over_the_disk_edge_radius(t
     master = _arina_master(tmp_path / "scan_master.h5", counts)
     with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
         pairs = [
-            (SSB(counts, **settings), SSB(counts, det_sampling=30 / radius, **settings)),
-            (SSB(loaded, **settings), SSB(loaded, det_sampling=30 / radius, **settings)),
+            (SSB(counts, **settings), SSB(counts, detector_sampling_mrad=30 / radius, **settings)),
+            (SSB(loaded, **settings), SSB(loaded, detector_sampling_mrad=30 / radius, **settings)),
             (SSB.open(master, scan_shape=(128, 128), **settings),
-             SSB.open(master, scan_shape=(128, 128), det_sampling=30 / radius, **settings)),
+             SSB.open(master, scan_shape=(128, 128), detector_sampling_mrad=30 / radius, **settings)),
         ]
         for automatic, calibrated in pairs:
             with automatic, calibrated:
@@ -124,7 +124,7 @@ def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(t
     """``SSB(data.data)`` fails at construction; closing ``SSB(data)``, before or after computing, leaves it readable."""
     counts = _counts(3)
     master = _arina_master(tmp_path / "scan_master.h5", counts)
-    settings = {"backend": backend, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.99, "det_sampling": 6.0}
+    settings = {"backend": backend, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.99, "detector_sampling_mrad": 6.0}
     with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as data:
         with pytest.raises(TypeError, match="not its encoded storage data.data"):
             SSB(data.data, **settings)
@@ -138,7 +138,7 @@ def test_encoded_storage_is_refused_and_the_callers_acquisition_survives_close(t
 def test_open_releases_the_acquisition_it_loads_and_its_crop_on_close(tmp_path, backend, opened):
     master = _arina_master(tmp_path / "scan_master.h5", _counts(4))
     with SSB.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
-                  scan_sampling_A=0.99, det_sampling=6.0, bright_field_radius_px=4) as session:
+                  scan_sampling_A=0.99, detector_sampling_mrad=6.0, bright_field_radius_px=4) as session:
         assert opened[0].data.is_released
         session.preview(ABERRATIONS)
         crop = weakref.ref(session._data)
@@ -149,5 +149,5 @@ def test_open_releases_the_acquisition_when_no_bright_field_disk_is_found(tmp_pa
     master = _arina_master(tmp_path / "dark_master.h5", np.zeros((128, 128, 12, 12), dtype=np.uint16))
     with pytest.raises(ValueError, match="No bright-field disk"):
         SSB.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
-                 scan_sampling_A=0.99, det_sampling=6.0)
+                 scan_sampling_A=0.99, detector_sampling_mrad=6.0)
     assert opened[0].data.is_released

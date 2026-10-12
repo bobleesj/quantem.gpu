@@ -60,11 +60,11 @@ class CudaKernelCompute(DetectorQueries):
             self.scan_shape = scan_shape_of(int(data.shape[0]))
         else:
             raise ValueError(f"expected 3D/4D cupy array, got {tuple(data.shape)}")
-        self.det_shape = (int(data.shape[-2]), int(data.shape[-1]))
+        self.detector_shape = (int(data.shape[-2]), int(data.shape[-1]))
         self.n_frames = math.prod(self.scan_shape)
         self.device = "cuda"
         self._data = data
-        self._frames = data.reshape(-1, *self.det_shape)
+        self._frames = data.reshape(-1, *self.detector_shape)
         # The kernels read raw C-ordered memory of the native count dtypes only.
         self._suffix = _KERNEL_SUFFIX.get(np.dtype(data.dtype)) if data.flags.c_contiguous else None
         self._mask_indices = OrderedDict()
@@ -82,7 +82,7 @@ class CudaKernelCompute(DetectorQueries):
         if not mask.any():
             return np.zeros(self.scan_shape, dtype=np.float32)
         if self._suffix is None:
-            return self._torch_backend().masked_sum(mask.reshape(self.det_shape))
+            return self._torch_backend().masked_sum(mask.reshape(self.detector_shape))
         return self._selected_sums(mask, cp.float32).reshape(self.scan_shape).get()
 
     def masked_sum_exact(self, det_mask: np.ndarray) -> np.ndarray:
@@ -119,12 +119,12 @@ class CudaKernelCompute(DetectorQueries):
             pattern = frames.take(cp.asarray(indices[:step]), axis=0).max(axis=0)
             for start in range(step, indices.size, step):
                 pattern = cp.maximum(pattern, frames.take(cp.asarray(indices[start : start + step]), axis=0).max(axis=0))
-            return pattern.astype(exact).reshape(self.det_shape).get()
+            return pattern.astype(exact).reshape(self.detector_shape).get()
         total = cp.zeros(frames.shape[1], accumulator)
         for start in range(0, indices.size, step):
             total += frames.take(cp.asarray(indices[start : start + step]), axis=0).sum(axis=0, dtype=accumulator)
         pattern = total.astype(exact) if reduce == "sum" else (total / int(indices.size)).astype(cp.float32)
-        return pattern.reshape(self.det_shape).get()
+        return pattern.reshape(self.detector_shape).get()
 
     def reduce_frames_exact(self, scan_indices: np.ndarray) -> np.ndarray:
         """Exact uint64 sum of selected frames without a gathered frame tensor."""
@@ -134,7 +134,7 @@ class CudaKernelCompute(DetectorQueries):
             pattern = self._frames.reshape(self.n_frames, -1).take(cp.asarray(indices), axis=0).sum(axis=0, dtype=cp.uint64)
         else:
             pattern = self._reduce_selected_frames("selected_frame_sum_u64", indices, cp.uint64)
-        return pattern.reshape(self.det_shape).get()
+        return pattern.reshape(self.detector_shape).get()
 
     def reduce_frames_max(self, scan_indices: np.ndarray) -> np.ndarray:
         """Exact maximum of selected frames without a gathered frame tensor."""
@@ -144,7 +144,7 @@ class CudaKernelCompute(DetectorQueries):
             pattern = self._frames.reshape(self.n_frames, -1).take(cp.asarray(indices), axis=0).max(axis=0)
         else:
             pattern = self._reduce_selected_frames("selected_frame_max_u32", indices, cp.uint32)
-        return pattern.reshape(self.det_shape).get().astype(np.uint32, copy=False)
+        return pattern.reshape(self.detector_shape).get().astype(np.uint32, copy=False)
 
     def center_of_mass(self, det_mask: np.ndarray | None = None):
         """Absolute detector ``(com_col, com_row)``, flat float32, from exact integer moments.
@@ -159,15 +159,15 @@ class CudaKernelCompute(DetectorQueries):
         com_row = cp.empty(self.n_frames, dtype=cp.float32)
         com_col = cp.empty(self.n_frames, dtype=cp.float32)
         mask = None if det_mask is None else self._mask(det_mask)
-        selected = self.det_shape[0] * self.det_shape[1] if mask is None else int(mask.sum())
+        selected = self.detector_shape[0] * self.detector_shape[1] if mask is None else int(mask.sum())
         if selected == 0:
             com_row.fill(0)
             com_col.fill(0)
-        elif selected == self.det_shape[0] * self.det_shape[1]:
+        elif selected == self.detector_shape[0] * self.detector_shape[1]:
             self._launch(
                 f"center_of_mass_full_{self._suffix}_4f",
                 (128, 4, 1),
-                (self._data, com_row, com_col, np.int32(selected), np.int32(self.det_shape[1]), np.int32(self.n_frames)),
+                (self._data, com_row, com_col, np.int32(selected), np.int32(self.detector_shape[1]), np.int32(self.n_frames)),
             )
         else:
             self._launch(
@@ -179,8 +179,8 @@ class CudaKernelCompute(DetectorQueries):
                     com_row,
                     com_col,
                     np.int32(selected),
-                    np.int32(self.det_shape[0] * self.det_shape[1]),
-                    np.int32(self.det_shape[1]),
+                    np.int32(self.detector_shape[0] * self.detector_shape[1]),
+                    np.int32(self.detector_shape[1]),
                     np.int32(self.n_frames),
                 ),
             )
@@ -194,8 +194,8 @@ class CudaKernelCompute(DetectorQueries):
     def _mask(self, det_mask) -> np.ndarray:
         """Flat host boolean mask; selected-pixel indices are planned on the host."""
         mask = np.asarray(det_mask, dtype=bool)
-        if mask.shape != self.det_shape:
-            raise ValueError(f"det_mask shape {mask.shape} does not match detector shape {self.det_shape}.")
+        if mask.shape != self.detector_shape:
+            raise ValueError(f"det_mask shape {mask.shape} does not match detector shape {self.detector_shape}.")
         return np.ascontiguousarray(mask.reshape(-1))
 
     def _indices(self, mask: np.ndarray):
@@ -232,7 +232,7 @@ class CudaKernelCompute(DetectorQueries):
 
     def _sum_selected(self, kernel: str, indices, image):
         """Sum the selected pixels of every frame, one 32-lane warp per frame, into ``image``."""
-        counts = (np.int32(indices.size), np.int32(self.det_shape[0] * self.det_shape[1]), np.int32(self.n_frames))
+        counts = (np.int32(indices.size), np.int32(self.detector_shape[0] * self.detector_shape[1]), np.int32(self.n_frames))
         self._launch(f"{kernel}_{self._suffix}_16f", (32, 16, 1), (self._data, indices, image, *counts))
 
     def _reduce_selected_frames(self, kernel: str, indices: np.ndarray, dtype):
@@ -241,7 +241,7 @@ class CudaKernelCompute(DetectorQueries):
         Adjacent threads read adjacent detector values, so the reduction stays
         coalesced without a gathered ``selected_frames x pixels`` tensor.
         """
-        pixels = self.det_shape[0] * self.det_shape[1]
+        pixels = self.detector_shape[0] * self.detector_shape[1]
         if indices.size == 0:
             return cp.zeros(pixels, dtype=dtype)
         pattern = cp.empty(pixels, dtype=dtype)

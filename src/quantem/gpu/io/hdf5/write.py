@@ -65,14 +65,14 @@ class H5Writer:
     Pass a different dtype only when intentionally making a non-default export.
     """
 
-    def __init__(self, filepath, n_frames, det_shape, scan_shape=None,
+    def __init__(self, filepath, n_frames, detector_shape, scan_shape=None,
                  metadata=None, dtype=np.float32, source_master=None,
                  frames_per_file=32768):
         # Until construction finishes there is nothing for __del__ to close.
         self._closed = True
         self._filepath = Path(filepath)
         self._n_frames = int(n_frames)
-        self._det_row, self._det_col = (int(det_shape[0]), int(det_shape[1]))
+        self._det_row, self._det_col = (int(detector_shape[0]), int(detector_shape[1]))
         self._dtype = _normalize_save_dtype(dtype)
         self._frame_bytes = self._det_row * self._det_col * self._dtype.itemsize
         self._n_8kb = (self._frame_bytes + BLOCK_SIZE - 1) // BLOCK_SIZE
@@ -302,18 +302,18 @@ def save_compressed_arina_h5(
             raise ValueError(f"scan_shape={scan_shape} does not match data shape {inferred_scan}")
         scan_shape = inferred_scan
         n_frames = shape[0] * shape[1]
-        det_shape = shape[2:]
-        flat = data.reshape(n_frames, *det_shape)
+        detector_shape = shape[2:]
+        flat = data.reshape(n_frames, *detector_shape)
     elif len(shape) == 3:
         if scan_shape is None:
             raise ValueError("scan_shape is required for 3D frame stacks")
         n_frames = shape[0]
-        det_shape = shape[1:]
+        detector_shape = shape[1:]
         flat = data
     else:
         raise ValueError("save_compressed_arina_h5 expects 3D frames or 4D-STEM data")
 
-    det_row, det_col = (int(det_shape[0]), int(det_shape[1]))
+    det_row, det_col = (int(detector_shape[0]), int(detector_shape[1]))
     frames_per_file = int(frames_per_file)
     batch_size = int(batch_size)
     if frames_per_file <= 0 or batch_size <= 0:
@@ -392,7 +392,7 @@ def save_compressed_arina_h5(
         data_files,
         frame_ranges,
         scan_shape,
-        det_shape,
+        detector_shape,
         dtype,
         metadata,
         source_master,
@@ -462,7 +462,7 @@ def _write_master_file(
     data_files,
     frame_ranges,
     scan_shape,
-    det_shape,
+    detector_shape,
     dtype,
     metadata,
     source_master,
@@ -479,7 +479,7 @@ def _write_master_file(
     else:
         mode = "w"
 
-    detector_shape = tuple(int(size) for size in det_shape)
+    detector_shape = tuple(int(size) for size in detector_shape)
     n_frames = int(sum(high - low + 1 for low, high in frame_ranges))
     with h5py.File(master_path, mode) as master:
         entry = master.require_group("entry")
@@ -502,7 +502,7 @@ def _write_master_file(
         if scan_shape is not None:
             data_group.attrs["scan_shape"] = tuple(int(size) for size in scan_shape)
             master.attrs["scan_shape"] = tuple(int(size) for size in scan_shape)
-        data_group.attrs["det_shape"] = detector_shape
+        data_group.attrs["detector_shape"] = detector_shape
         data_group.attrs["dtype"] = str(np.dtype(dtype))
         data_group.attrs["n_frames"] = n_frames
         data_group.attrs["data_file_frame_ranges"] = np.asarray(frame_ranges, dtype=np.uint64)

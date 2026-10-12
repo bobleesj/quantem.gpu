@@ -140,7 +140,7 @@ def test_parallax_recovers_known_aberrations_and_rotation(tmp_path) -> None:
     ) as loaded:
         result = parallax.run(
             loaded, upsampling_factor=1, fit_aberrations=True,
-            scan_sampling_A=scan_sampling_A, det_sampling=1.0,
+            scan_sampling_A=scan_sampling_A, detector_sampling_mrad=1.0,
         )
 
     assert result.aberrations["C10_nm"] == pytest.approx(20.0, rel=0.01)

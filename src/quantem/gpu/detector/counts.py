@@ -16,7 +16,7 @@ class CountDetectorCompute(DetectorQueries):
     def __init__(self, source):
         self.source = source
         self.scan_shape = tuple(source.shape[:2])
-        self.det_shape = tuple(source.shape[2:])
+        self.detector_shape = tuple(source.shape[2:])
         self.n_frames = self.scan_shape[0] * self.scan_shape[1]
         self.valid_pixels = source.valid_pixels
 
@@ -74,15 +74,15 @@ class CountDetectorCompute(DetectorQueries):
         float32, and 0 where a pattern holds no counts. The moments weight each
         pixel by its row or column index; the total reads the tile index.
         """
-        weights = np.ones(self.det_shape, dtype=np.uint32)
+        weights = np.ones(self.detector_shape, dtype=np.uint32)
         if mask is not None:
             selected = np.asarray(mask, dtype=bool)
-            if selected.shape != self.det_shape:
+            if selected.shape != self.detector_shape:
                 raise ValueError(
-                    f"Detector mask shape {selected.shape} does not match {self.det_shape}."
+                    f"Detector mask shape {selected.shape} does not match {self.detector_shape}."
                 )
             weights *= selected
-        rows, cols = np.indices(self.det_shape, dtype=np.uint32)
+        rows, cols = np.indices(self.detector_shape, dtype=np.uint32)
         total = self.masked_sum_exact(weights)
         row_moment = self.weighted_sum_exact(weights * rows)
         col_moment = self.weighted_sum_exact(weights * cols)
@@ -142,7 +142,7 @@ class CountSeriesCompute(DetectorQueries):
                 "Linked acquisitions must have the same shape; open differently "
                 "shaped acquisitions separately."
             )
-        self.scan_shape, self.det_shape = first.scan_shape, first.det_shape
+        self.scan_shape, self.detector_shape = first.scan_shape, first.detector_shape
         self.n_frames = first.n_frames
         self.series_shape = (len(self.acquisitions),)
         self.valid_pixels = np.stack([member.valid_pixels for member in self.acquisitions])

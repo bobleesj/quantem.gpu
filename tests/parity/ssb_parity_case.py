@@ -253,6 +253,7 @@ def _declaration(case: SSBParityCase) -> dict[str, object]:
     rows, cols = case.bf_rows_cols
     side = case.scan_side
     return {
+        "schema": "quantem.ssb-calibration/2",
         "bright_field_rows": [int(value) for value in rows],
         "bright_field_cols": [int(value) for value in cols],
         "bright_field_center_px": [float(case.bright_field_center_px[0]), float(case.bright_field_center_px[1])],

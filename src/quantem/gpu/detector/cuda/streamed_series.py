@@ -63,14 +63,14 @@ class StreamedSeriesCompute(DetectorQueries):
             )
         first = sources[0]
         self.device = first.device
-        self.scan_shape, self.det_shape = first.shape[:2], first.shape[2:]
+        self.scan_shape, self.detector_shape = first.shape[:2], first.shape[2:]
         self.series_shape = (len(sources),)
         self.n_frames, self.pixels = (
             math.prod(self.scan_shape),
-            math.prod(self.det_shape),
+            math.prod(self.detector_shape),
         )
         self.interval = min(source.interval for source in sources)
-        self.fields = field_count(self.det_shape)
+        self.fields = field_count(self.detector_shape)
         self.frame_dtype = np.result_type(*[source.dtype for source in sources])
         maximum = self.pixels * int(np.iinfo(self.frame_dtype).max)
         if maximum * len(sources) > np.iinfo(np.uint64).max:
@@ -221,7 +221,7 @@ class StreamedSeriesCompute(DetectorQueries):
         """Decompose a signed mask into index fields plus residual pixels."""
         if self.pixels >= 512 * 512:
             if self._mask_planner is None:
-                self._mask_planner = CudaMaskPlanner(self.det_shape)
+                self._mask_planner = CudaMaskPlanner(self.detector_shape)
                 self.backend_metadata["mask_plan_backend"] = "cuda"
             return self._mask_planner(values)
         return plan(values)
@@ -377,7 +377,7 @@ class StreamedSeriesCompute(DetectorQueries):
             bases.append(blocks)
             stops.append(last)
             blocks += len(last)
-        totals = cp.zeros((len(self.index_owners), *self.det_shape), cp.uint64)
+        totals = cp.zeros((len(self.index_owners), *self.detector_shape), cp.uint64)
         errors = cp.zeros(1, cp.uint32)
         self.kernels["selected"](
             ((math.ceil(self.max_scans / self.interval) * self.pixels + 127) // 128, self.chunk_count),
@@ -414,9 +414,9 @@ class StreamedSeriesCompute(DetectorQueries):
         added. Row and column weights below 1024 on uint16 counts are one query.
         """
         values = np.asarray(weights)
-        if values.shape != self.det_shape or values.dtype.kind not in "uib":
+        if values.shape != self.detector_shape or values.dtype.kind not in "uib":
             raise ValueError(
-                f"Detector weights must be nonnegative integers with shape {self.det_shape}."
+                f"Detector weights must be nonnegative integers with shape {self.detector_shape}."
             )
         if np.any(values < 0) or np.any(values > np.iinfo(np.int32).max):
             raise ValueError("Detector weights must fit nonnegative int32 values.")
@@ -468,15 +468,15 @@ class StreamedSeriesCompute(DetectorQueries):
 
     def center_of_mass(self, mask=None):
         """Return exact count-weighted detector centers without dense expansion."""
-        valid = np.ones(self.det_shape, dtype=np.uint32)
+        valid = np.ones(self.detector_shape, dtype=np.uint32)
         if mask is not None:
             selected = np.asarray(mask, dtype=bool)
-            if selected.shape != self.det_shape:
+            if selected.shape != self.detector_shape:
                 raise ValueError(
-                    f"Detector mask shape {selected.shape} does not match {self.det_shape}."
+                    f"Detector mask shape {selected.shape} does not match {self.detector_shape}."
                 )
             valid *= selected
-        rows, cols = np.indices(self.det_shape, dtype=np.uint32)
+        rows, cols = np.indices(self.detector_shape, dtype=np.uint32)
         total = self.weighted_sum_exact(valid)
         row_moment, col_moment = self._moments(valid * rows, valid * cols)
         denominator = cp.maximum(total.astype(cp.float64), 1.0)
@@ -492,7 +492,7 @@ class StreamedSeriesCompute(DetectorQueries):
         twice. Here both sums come from one decode. The kernel adds 32 pixels' weight x count in
         int32 (see ``weight_digits``); weights beyond that bound take one query per digit instead.
         """
-        if max(self.det_shape) - 1 > (2**31 - 1) // (32 * int(np.iinfo(self.frame_dtype).max)):
+        if max(self.detector_shape) - 1 > (2**31 - 1) // (32 * int(np.iinfo(self.frame_dtype).max)):
             return self.weighted_sum_exact(row_weights), self.weighted_sum_exact(col_weights)
         pixels = np.flatnonzero((row_weights != 0) | (col_weights != 0)).astype(np.uint32)
         shape = (*self.series_shape, *self.scan_shape)
@@ -532,9 +532,9 @@ class StreamedSeriesCompute(DetectorQueries):
     def masked_sum_native(self, mask, *, out=None, wait=True, block_stride=1):
         """Return exact counts for a binary mask, planned as a delta of the previous mask when cheaper."""
         values = np.asarray(mask)
-        if values.shape != self.det_shape or not np.all((values == 0) | (values == 1)):
+        if values.shape != self.detector_shape or not np.all((values == 0) | (values == 1)):
             raise ValueError(
-                f"Provide a binary detector mask with shape {self.det_shape}."
+                f"Provide a binary detector mask with shape {self.detector_shape}."
             )
         values = values.astype(np.int32)
         with self.lock, cp.cuda.Device(self.device):
@@ -612,7 +612,7 @@ class StreamedSeriesCompute(DetectorQueries):
         with self.lock, cp.cuda.Device(self.device):
             started = time.perf_counter()
             result = self._output(
-                out, (*self.series_shape, *self.det_shape), self.frame_dtype
+                out, (*self.series_shape, *self.detector_shape), self.frame_dtype
             )
             begin, errors = self._launch()
             self.kernels[f"frame_u{self.frame_dtype.itemsize * 8}"](

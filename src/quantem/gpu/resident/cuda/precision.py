@@ -204,7 +204,7 @@ class PrecisionSource(DetectorQueries):
     def __init__(self, chunks, shape, precision):
         self.parts = chunks
         self.shape = tuple(shape)
-        self.scan_shape, self.det_shape = self.shape[:2], self.shape[2:]
+        self.scan_shape, self.detector_shape = self.shape[:2], self.shape[2:]
         self.n_frames = math.prod(self.scan_shape)
         self.precision = precision
         self._device_id = cp.cuda.Device().id
@@ -276,7 +276,7 @@ class PrecisionSource(DetectorQueries):
         if self.is_released or not 0 <= first < stop <= self.n_frames:
             raise ValueError("Read a nonempty scan range from an open source.")
         with cp.cuda.Device(self._device_id):
-            output = cp.empty((stop - first, *self.det_shape), cp.float32)
+            output = cp.empty((stop - first, *self.detector_shape), cp.float32)
             start = 0
             for part, end, report in zip(self.parts, self._ends, self._reports):
                 low, high = max(first, start), min(stop, end)
@@ -311,7 +311,7 @@ class PrecisionSource(DetectorQueries):
 
     def mean_dp(self):
         with cp.cuda.Device(self._device_id):
-            total = cp.zeros(self.det_shape, cp.float64)
+            total = cp.zeros(self.detector_shape, cp.float64)
             for part, report in zip(self.parts, self._reports):
                 total += (
                     part.detector_total_device().astype(cp.float64) * report["scale"]
@@ -322,8 +322,8 @@ class PrecisionSource(DetectorQueries):
     def masked_sum_native(self, mask, *, out=None):
         with cp.cuda.Device(self._device_id):
             weights = cp.asarray(mask, dtype=cp.float32)
-            if weights.shape != self.det_shape:
-                raise ValueError(f"Detector mask must have shape {self.det_shape}.")
+            if weights.shape != self.detector_shape:
+                raise ValueError(f"Detector mask must have shape {self.detector_shape}.")
             if bool(cp.all((weights == 0) | (weights == 1))):
                 # A binary mask sums stored codes exactly, then calibrates once per scan position.
                 selected = int(cp.count_nonzero(weights).get())
@@ -381,12 +381,12 @@ class PrecisionSource(DetectorQueries):
     def center_of_mass(self, mask=None):
         with cp.cuda.Device(self._device_id):
             weights = (
-                cp.ones(self.det_shape, cp.float32)
+                cp.ones(self.detector_shape, cp.float32)
                 if mask is None
                 else cp.asarray(mask, dtype=cp.float32)
             )
-            rows = cp.arange(self.det_shape[0], dtype=cp.float32)[:, None]
-            cols = cp.arange(self.det_shape[1], dtype=cp.float32)[None, :]
+            rows = cp.arange(self.detector_shape[0], dtype=cp.float32)[:, None]
+            cols = cp.arange(self.detector_shape[1], dtype=cp.float32)[None, :]
             row_result = cp.empty(self.n_frames, cp.float32)
             col_result = cp.empty_like(row_result)
             first = 0

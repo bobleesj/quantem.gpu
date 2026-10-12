@@ -298,7 +298,7 @@ def test_batches_waiting_for_the_writer_keep_their_own_staging_buffers(tmp_path)
     held_before = {id(entry) for entry in cuda_runtime._PINNED_BUFS if not entry["free"]}
     values = np.random.default_rng(11).poisson(4.0, (30, 64, 64)).astype(np.uint16)
     master = tmp_path / "batches_master.h5"
-    writer = write.H5Writer(master, n_frames=30, det_shape=(64, 64), scan_shape=(30, 1), dtype=np.uint16)
+    writer = write.H5Writer(master, n_frames=30, detector_shape=(64, 64), scan_shape=(30, 1), dtype=np.uint16)
     write._write_queue.put((hold, ()))
     for first in range(0, 30, 3):
         writer.write(cp.asarray(values[first : first + 3]))

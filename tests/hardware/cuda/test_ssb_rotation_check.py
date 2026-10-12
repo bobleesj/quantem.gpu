@@ -21,7 +21,7 @@ pytestmark = pytest.mark.slow
 
 # an Arina master of a real 512 x 512 x 192 x 192 acquisition whose right rotation is 158.9 deg (atoms bright)
 SOURCE = Path(os.environ.get("QUANTEM_SSB_ARINA_MASTER", ""))
-REAL = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, det_sampling=0.5554)
+REAL = dict(backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.264, detector_sampling_mrad=0.5554)
 REAL_ROTATION_DEG = 158.9
 
 
@@ -50,9 +50,9 @@ def _astigmatism(aberrations) -> complex:
 def _simulated(scan_detector_rotation_deg: float):
     from quantem.gpu import SSB
 
-    data, det_sampling = _simulated_crystal((3.0, -4.0))
+    data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
     return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
-                          det_sampling=det_sampling, scan_detector_rotation_deg=scan_detector_rotation_deg)
+                          detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=scan_detector_rotation_deg)
 
 
 # ---
@@ -176,13 +176,13 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
     from quantem.gpu.ssb.persistence import load_result, result_paths
 
     _require_cuda()
-    data, det_sampling = _simulated_crystal((3.0, -4.0))
+    data, detector_sampling_mrad = _simulated_crystal((3.0, -4.0))
     source = tmp_path / "tilted_crystal.npy"
     np.save(source, data)
     session = SSB(
         data, source_path=source, backend="cuda", voltage_kV=300.0,
         semiangle_mrad=30.0, scan_sampling_A=0.25,
-        det_sampling=det_sampling, scan_detector_rotation_deg=rotation,
+        detector_sampling_mrad=detector_sampling_mrad, scan_detector_rotation_deg=rotation,
     )
     fit_calls, reconstruction_calls = [], []
     fit = session._fit_tilt
@@ -190,7 +190,7 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
 
     def measured_fit(*args, **kwargs):
         result = fit(*args, **kwargs)
-        fit_calls.append((dict(result.aberrations), result.tilt_mrad))
+        fit_calls.append((dict(result.aberrations), result.sample_tilt_mrad))
         return result
 
     def measured_reconstruct(*args, **kwargs):
@@ -208,22 +208,22 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
         assert (result.initial_scan_detector_rotation_deg != result.scan_detector_rotation_deg) == (rotation == 180)
         assert result.scan_detector_rotation_deg == 0.0
         assert result.column_sign > 0.2
-        assert result.tilt_mrad == pytest.approx((3.0, -4.0), abs=1.0)
-        assert len(result.trial_records) == result.n_trials == 200
+        assert result.sample_tilt_mrad == pytest.approx((3.0, -4.0), abs=1.0)
+        assert len(result.trial_records) == result.num_trials == 200
         assert all(record["scan_detector_rotation_deg"] == rotation
                    for record in result.trial_records)
         if rotation == 180:
             initial_aberrations, initial_tilt = fit_calls[0]
             assert result.aberrations["C10_nm"] == -initial_aberrations["C10_nm"]
             assert result.aberrations["C12_nm"] == -initial_aberrations["C12_nm"]
-            assert result.tilt_mrad == tuple(-value for value in initial_tilt)
+            assert result.sample_tilt_mrad == tuple(-value for value in initial_tilt)
 
         restored = load_result(
             paths=result_paths(tmp_path / "joint", "find_aberrations"),
             signature=result.metadata["signature"], backend="cuda",
         )
         assert restored.scan_detector_rotation_deg == result.scan_detector_rotation_deg
-        assert restored.tilt_mrad == result.tilt_mrad
+        assert restored.sample_tilt_mrad == result.sample_tilt_mrad
         np.testing.assert_array_equal(_host(restored.phase), _host(result.phase))
         # The diagnostic belongs to the selected geometry, and sampling reuses it.
         native = reconstruct(restored, phase_estimator="mean_phase")
@@ -231,10 +231,10 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
             _host(native.phase), result.rotation_check_phases[1], atol=1e-6,
         )
         assert native.loss == pytest.approx(result.loss, rel=1e-6)
-        finer = reconstruct(restored, upsample=2)
+        finer = reconstruct(restored, upsampling_factor=2)
         assert finer.phase.shape == tuple(2 * size for size in native.phase.shape)
         assert finer.loss == pytest.approx(native.loss, rel=1e-6)
-        assert finer.tilt_mrad == restored.tilt_mrad
+        assert finer.sample_tilt_mrad == restored.sample_tilt_mrad
         assert finer.scan_detector_rotation_deg == restored.scan_detector_rotation_deg
         assert len(fit_calls) == 1
     finally:
@@ -248,7 +248,7 @@ def test_joint_rotation_check_keeps_an_unresolved_scan(monkeypatch):
     _require_cuda()
     counts = np.full((128, 128, 16, 16), 20, dtype=np.uint16)
     with SSB(counts, backend="cuda", voltage_kV=300, semiangle_mrad=20,
-             scan_sampling_A=0.5, det_sampling=5, bright_field_center_px=(8, 8),
+             scan_sampling_A=0.5, detector_sampling_mrad=5, bright_field_center_px=(8, 8),
              bright_field_radius_px=4, scan_detector_rotation_deg=180) as session:
         original = session.reconstruct
         calls = []

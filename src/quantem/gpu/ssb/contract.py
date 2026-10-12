@@ -113,7 +113,7 @@ class SSBProtocol(Protocol):
         *,
         upsampling_factor: int,
         compute_loss: bool,
-        tilt_mrad: tuple[float, float],
+        sample_tilt_mrad: tuple[float, float],
         thickness: float,
         phase_estimator: str,
     ) -> tuple[object, float | None]: ...
