@@ -24,7 +24,7 @@ class DPCResult:
     scan_detector_rotation_mod180_deg: float | None
     scan_detector_rotation_deg: float | None
     detector_transposed: bool
-    elapsed: float
+    elapsed_s: float
 
     def report(self):
         """Return the rotation and axis choice as a labeled parameter table.
@@ -36,7 +36,7 @@ class DPCResult:
         Returns
         -------
         pandas.DataFrame
-            Scan-detector rotation, axis swap and elapsed time in one row.
+            Scan-detector rotation, axis swap and elapsed_s time in one row.
 
         Examples
         --------
@@ -50,5 +50,5 @@ class DPCResult:
             "Scan-detector rotation (deg)": [self.scan_detector_rotation_mod180_deg if fitted else self.scan_detector_rotation_deg],
             "Known modulo 180": [fitted],
             "Detector transposed": [self.detector_transposed],
-            "Time (s)": [self.elapsed],
+            "Time (s)": [self.elapsed_s],
         }, index=pd.Index(["DPC"], name="method")).round(3)

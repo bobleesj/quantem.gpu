@@ -205,7 +205,7 @@ def torch_value(value):
 
 
 def _region(value, shape, name):
-    """Validate one ``(row_start, row_stop, column_start, column_stop)`` region.
+    """Validate one ``(row_start, row_stop, col_start, col_stop)`` region.
 
     ``None`` selects the whole axis pair, so a caller can crop only the scan or
     only the detector.
@@ -218,7 +218,7 @@ def _region(value, shape, name):
         or any(not isinstance(item, (int, np.integer)) for item in value)
     ):
         raise TypeError(
-            f"{name} must be (row_start, row_stop, column_start, column_stop)."
+            f"{name} must be (row_start, row_stop, col_start, col_stop)."
         )
     row0, row1, column0, column1 = map(int, value)
     if not (0 <= row0 < row1 <= shape[0] and 0 <= column0 < column1 <= shape[1]):

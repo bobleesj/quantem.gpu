@@ -12,7 +12,7 @@ class ParallaxResult:
     (the number of bright-field pixels when not upsampled), so
     ``image / density`` is their mean. ``shifts`` holds one ``(row, col)``
     shift in scan pixels per bright-field pixel, in row-major detector order;
-    ``elapsed`` is in seconds.
+    ``elapsed_s`` is in seconds.
 
     ``aberrations`` (``C10_nm`` and ``C12_nm`` in nm, ``phi12_deg`` in degrees,
     scan frame) and ``rotation_angle_deg`` hold the fit of
@@ -26,15 +26,15 @@ class ParallaxResult:
     shifts: list[tuple[float, float]]
     aberrations: dict[str, float] | None = None
     rotation_angle_deg: float | None = None
-    elapsed: float | None = None
+    elapsed_s: float | None = None
 
     def __repr__(self) -> str:
         lines = ["ParallaxResult:"]
         lines.append(f"  Image shape:  {tuple(self.image.shape)}")
         if self.shifts:
             lines.append(f"  BF positions: {len(self.shifts)}")
-        if self.elapsed is not None:
-            lines.append(f"  Elapsed:      {self.elapsed:.2f}s")
+        if self.elapsed_s is not None:
+            lines.append(f"  Elapsed:      {self.elapsed_s:.2f}s")
         if self.aberrations:
             lines.append(f"  C10:          {self.aberrations['C10_nm']:.3f} nm")
             lines.append(f"  C12:          {self.aberrations['C12_nm']:.3f} nm")

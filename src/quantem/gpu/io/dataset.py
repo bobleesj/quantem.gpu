@@ -342,7 +342,7 @@ class Dataset4dstemGPU:
     ):
         """Read one bounded logical region as a Torch tensor on the source GPU.
 
-        Regions use ``(row_start, row_stop, column_start, column_stop)`` with
+        Regions use ``(row_start, row_stop, col_start, col_stop)`` with
         exclusive stops. The resident representation, decoding, and transfer
         scheduling remain automatic. A complete read is allowed only when its
         dense tensor fits the accelerator's current working memory.

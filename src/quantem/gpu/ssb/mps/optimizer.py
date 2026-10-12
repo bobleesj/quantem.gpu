@@ -196,7 +196,7 @@ def optimize(
     )
     timings["final_phase_loss_seconds"] = time.perf_counter() - final_loss_started
     final_loss = full_loss if full_loss is not None else best_loss
-    elapsed = time.perf_counter() - started
+    elapsed_s = time.perf_counter() - started
     final_loss_value = float(final_loss if final_loss is not None else best_loss)
     if phase is None:
         raise RuntimeError("MPS optimizer did not produce its final exact phase.")
@@ -221,13 +221,13 @@ def optimize(
         aberrations=dict(best),
         scan_detector_rotation_deg=float(scan_detector_rotation_deg),
         loss=final_loss_value,
-        elapsed=elapsed,
+        elapsed_s=elapsed_s,
         timings=timings,
         num_trials=int(num_trials),
         num_bright_field_pixels=selection.size,
         refine_method=refine,
         refine_nfev=refine_nfev,
-        refine_elapsed=timings["refinement_seconds"],
+        refine_elapsed_s=timings["refinement_seconds"],
         voltage_kV=float(voltage_kV),
         semiangle_mrad=float(semiangle_mrad),
         object_sampling_A=tuple(float(value) for value in np.broadcast_to(scan_sampling_A, (2,))),

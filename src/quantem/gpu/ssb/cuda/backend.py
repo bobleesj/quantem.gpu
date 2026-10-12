@@ -314,7 +314,7 @@ class CudaSSBBackend:
             _, loss = accel.reconstruct_with_loss(
                 self.aberrations["C10"], self.aberrations["C12"], self.aberrations["phi12"],
             )
-        elapsed = self._elapsed_optimize + self._elapsed_refine
+        elapsed_s = self._elapsed_optimize + self._elapsed_refine
         brightfield = self.browser_state().brightfield
         return SSBResult(
             object_wave=object_wave,
@@ -322,12 +322,12 @@ class CudaSSBBackend:
             aberrations=self.aberrations.copy(),
             scan_detector_rotation_deg=math.degrees(self._scan_detector_rotation_rad),
             loss=loss,
-            elapsed=elapsed if elapsed > 0 else None,
+            elapsed_s=elapsed_s if elapsed_s > 0 else None,
             num_trials=self._num_trials,
             num_bright_field_pixels=len(self.bf_inds_row),
             refine_method=self._refine_method,
             refine_nfev=self._refine_nfev,
-            refine_elapsed=self._elapsed_refine if self._elapsed_refine > 0 else None,
+            refine_elapsed_s=self._elapsed_refine if self._elapsed_refine > 0 else None,
             voltage_kV=self.voltage_kV,
             semiangle_mrad=self.semiangle_mrad,
             object_sampling_A=tuple(float(value) for value in self.scan_sampling),
@@ -461,14 +461,14 @@ class CudaSSBBackend:
 
         self.free()
 
-    def _print_summary(self, stage: str, elapsed: float) -> None:
+    def _print_summary(self, stage: str, elapsed_s: float) -> None:
         """Print one-line optimization summary."""
         aberrations = self.aberrations   # engine units (Angstrom); the public API and this line report nm
         print(
             f"  {stage}: loss={self._best_loss:.6f}  "
             f"C10={aberrations['C10'] / 10.0:.2f} nm  C12={aberrations['C12'] / 10.0:.2f} nm  "
             f"phi12={math.degrees(aberrations['phi12']):.1f}°  "
-            f"{elapsed:.1f}s"
+            f"{elapsed_s:.1f}s"
         )
 
     def _out_of_memory(self, stage: str) -> MemoryError:
@@ -617,10 +617,10 @@ class CudaSSBBackend:
         self._best_loss = float(best_loss)
         nfev = n_evals
         method = "nelder-mead"
-        elapsed = time.perf_counter() - started
-        self._elapsed_refine = elapsed
+        elapsed_s = time.perf_counter() - started
+        self._elapsed_refine = elapsed_s
         self._refine_method = method
         self._refine_nfev = nfev
         if verbose:
-            self._print_summary(f"Refine ({method}, {nfev} evals)", elapsed)
+            self._print_summary(f"Refine ({method}, {nfev} evals)", elapsed_s)
         return self

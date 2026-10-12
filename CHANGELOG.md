@@ -74,6 +74,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
   `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
   radius selects the pixels used and defaults to the detected disk.
+- Elapsed times carry their unit: `SSBResult.elapsed` and `refine_elapsed`,
+  `DPCResult.elapsed` and `ParallaxResult.elapsed` become `elapsed_s` and
+  `refine_elapsed_s`; `SaveResult.elapsed_seconds` becomes `elapsed_s`.
+- The axis word in arguments is `col`: `extract_diffraction_device(scan_row,
+  scan_column)` of encoded residents becomes `(scan_row, scan_col)`, and
+  regions are documented as `(row_start, row_stop, col_start, col_stop)`.
 - The remote server's HTTP parameters name their axis and unit (protocol
   version 2): `sx`, `sy` become `scan_row`, `scan_col`; `cx`, `cy` become
   `center_col_px`, `center_row_px`; `column_start`, `column_stop` become

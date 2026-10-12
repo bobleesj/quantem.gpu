@@ -114,7 +114,7 @@ frame-span manifest permits whole nonintersecting shards to be omitted; selected
 row windows alone are decoded and uploaded. Reads inside each intersecting
 shard remain whole-file reads, so these rows are not intra-shard byte-range I/O.
 
-| Selected scan | Rectangle `(row_start,row_stop,column_start,column_stop)` | Shards read | Storage bytes read | Samples | Loader p50 | Loader p95 | Loader maximum | Logical resident | Browser-tree RSS peak | Observed swap delta |
+| Selected scan | Rectangle `(row_start,row_stop,col_start,col_stop)` | Shards read | Storage bytes read | Samples | Loader p50 | Loader p95 | Loader maximum | Logical resident | Browser-tree RSS peak | Observed swap delta |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `64x64` | `(0,64,0,64)` | 4 of 27 | 488,224,242 B | 5 | **0.147 s** | **0.1544 s** | **0.156 s** | 301,989,888 B | 1,724,317,696 B | 0 B |
 | `256x256` | `(128,384,128,384)` | 14 of 27 | 1,705,556,941 B | 5 | **0.381 s** | **0.3924 s** | **0.394 s** | 4,831,838,208 B | 3,002,875,904 B | 0 B |

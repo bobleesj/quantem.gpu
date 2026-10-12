@@ -495,7 +495,7 @@ class SSB:
             )
             refit = replace(
                 opposite, object_wave=reconstruction.object_wave,
-                loss=reconstruction.loss, elapsed=reconstruction.elapsed,
+                loss=reconstruction.loss, elapsed_s=reconstruction.elapsed_s,
             )
         elif tilt:
             refit = self._fit_tilt(result.num_trials or 200, refinement, tilt_limit_mrad, seed, False)
@@ -516,8 +516,8 @@ class SSB:
         refit.initial_scan_detector_rotation_deg = input_rotation
         refit.initial_column_sign = sign
         refit.rotation_check_phases = np.stack((initial_phase, host_array(refit.phase)))
-        if refit.elapsed is not None and result.elapsed is not None:
-            refit.elapsed += result.elapsed   # First pass plus branch selection.
+        if refit.elapsed_s is not None and result.elapsed_s is not None:
+            refit.elapsed_s += result.elapsed_s   # First pass plus branch selection.
         if show:
             draw_column_histogram(refit.phase, f"SSB-selected rotation {refit.scan_detector_rotation_deg:.2f}° · polarity score {refit.column_sign:+.2f}", limit=limit)
         if verbose:
@@ -685,7 +685,7 @@ class SSB:
         Near zero (no resolved columns) the rotation is kept.
         ``check_rotation=False`` keeps the rotation as given.
 
-        ``scan_region=(row_start, row_stop, column_start, column_stop)``
+        ``scan_region=(row_start, row_stop, col_start, col_stop)``
         restricts fitting to that scan region, with exclusive stops. Detector
         geometry is estimated from the full input unless supplied explicitly.
         The returned phase and rotation diagnostics describe the region;
@@ -751,15 +751,15 @@ class SSB:
                 print("Saved SSB settings changed; running fit end to end")
         if scan_region is not None:
             if len(scan_region) != 4 or any(type(value) is not int for value in scan_region):
-                raise ValueError("Use scan_region=(row_start, row_stop, column_start, column_stop), in integer scan pixels.")
+                raise ValueError("Use scan_region=(row_start, row_stop, col_start, col_stop), in integer scan pixels.")
             if len(self._data.shape) != 4:
                 raise NotImplementedError("Region fitting needs a dense 4D scan source. Open the original acquisition with io.load and pass it to SSB.")
-            row_start, row_stop, column_start, column_stop = scan_region
+            row_start, row_stop, col_start, col_stop = scan_region
             rows, columns = self._data.shape[:2]
             side = row_stop - row_start
             if not (0 <= row_start < row_stop <= rows and
-                    0 <= column_start < column_stop <= columns and
-                    side == column_stop - column_start and side in (128, 256, 512, 1024)):
+                    0 <= col_start < col_stop <= columns and
+                    side == col_stop - col_start and side in (128, 256, 512, 1024)):
                 raise ValueError(f"scan_region={scan_region} must be inside {rows} × {columns} and square with 128, 256, 512 or 1024 scan pixels per side.")
             # The region keeps the full scan's bright-field disk and detector calibration.
             center, radius, detector_sampling_mrad = self._center_in_data(), self.bright_field_radius_px, self.detector_sampling_mrad
@@ -771,7 +771,7 @@ class SSB:
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = (self.semiangle_mrad / disk_edge_radius(mean_pattern),) * 2
             with SSB(
-                self._data[row_start:row_stop, column_start:column_stop],
+                self._data[row_start:row_stop, col_start:col_stop],
                 backend=self.backend, voltage_kV=self.voltage_kV,
                 semiangle_mrad=self.semiangle_mrad, scan_sampling_A=self.scan_sampling_A,
                 detector_sampling_mrad=detector_sampling_mrad,
@@ -987,7 +987,7 @@ class SSB:
             object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
             sample_tilt_mrad=tilt, depth_spread_nm=depth,
             scan_detector_rotation_deg=self.scan_detector_rotation_deg,
-            loss=loss, elapsed=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
+            loss=loss, elapsed_s=time.perf_counter() - started, num_bright_field_pixels=self.num_bright_field_pixels,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             object_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor,
             phase_estimator=estimator, amplitude_estimated=False,
@@ -1183,7 +1183,7 @@ class SSB:
                          depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]), amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
-                         elapsed=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
+                         elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
                          refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          object_sampling_A=self.scan_sampling_A)
 
@@ -1217,8 +1217,8 @@ class SSB:
         written = self._backend().export_brightfield(self._data, path_stem)
         if written is None:
             return None
-        path, elapsed = written
-        return str(path), float(elapsed)
+        path, elapsed_s = written
+        return str(path), float(elapsed_s)
 
     @property
     @_on_scan_gpu

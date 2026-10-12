@@ -10,7 +10,7 @@ full source geometry → explicit half-open scan region → source-frame mapping
 ```
 
 ```text
-(row_start, row_stop, column_start, column_stop)
+(row_start, row_stop, col_start, col_stop)
 ```
 
 and each interval is half-open. The coordinate convention is

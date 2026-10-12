@@ -130,11 +130,11 @@ class FloatANSResident:
         output.shape = (stop - first, *self.detector_shape)
         return output
 
-    def extract_diffraction_device(self, scan_row: int, scan_column: int):
+    def extract_diffraction_device(self, scan_row: int, scan_col: int):
         """Return one original DP without applying a display correction."""
-        if not 0 <= scan_row < self.shape[0] or not 0 <= scan_column < self.shape[1]:
+        if not 0 <= scan_row < self.shape[0] or not 0 <= scan_col < self.shape[1]:
             raise IndexError("Choose a scan row and column within the acquisition.")
-        first = scan_row * self.shape[1] + scan_column
+        first = scan_row * self.shape[1] + scan_col
         output = self.decode_scan_range_device(first, first + 1)
         if self.backend == "cuda":
             return output.reshape(self.detector_shape)

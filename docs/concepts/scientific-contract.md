@@ -18,7 +18,7 @@ $\mathbf k=(k_r,k_c)$, and logical 4D-STEM array order is
 $I[R_r,R_c,k_r,k_c]$. Scan and detector regions are half-open:
 
 ```text
-(row_start, row_stop, column_start, column_stop)
+(row_start, row_stop, col_start, col_stop)
 ```
 
 Regions are scientific choices. They are never introduced automatically to

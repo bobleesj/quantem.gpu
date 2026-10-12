@@ -201,7 +201,7 @@ class MpsSSBBackend:
             aberrations=dict(aberrations),
             scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             loss=None if loss is None else float(loss),
-            elapsed=time.perf_counter() - started,
+            elapsed_s=time.perf_counter() - started,
             num_bright_field_pixels=self._selection.size,
             voltage_kV=self._voltage_kV,
             semiangle_mrad=self._semiangle_mrad,

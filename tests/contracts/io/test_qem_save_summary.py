@@ -30,7 +30,7 @@ def test_host_qem_save_reports_time_and_sizes(tmp_path, dtype):
     assert (result.complete, result.backend, result.path) == (True, "cpu", str(path))
     assert result.logical_bytes == values.nbytes
     assert result.file_bytes == path.stat().st_size
-    assert result.elapsed_seconds > 0
+    assert result.elapsed_s > 0
     text, html = repr(result), result._repr_html_()
     megabytes = f"{path.stat().st_size / 2**20:.2f} MiB"
     for label in ("Saved", "Save time", "Uncompressed array", "Lossless QEM", megabytes):
@@ -49,7 +49,7 @@ def test_summary_says_when_the_file_is_larger_than_the_array(tmp_path):
 
 def test_hdf5_save_summary_has_no_sizes(tmp_path):
     result = io.save(tmp_path / "scan_master.h5", _measurements(np.uint16), backend="cpu")
-    assert (result.complete, result.file_bytes, result.elapsed_seconds) == (True, None, None)
+    assert (result.complete, result.file_bytes, result.elapsed_s) == (True, None, None)
     assert "Saved" in repr(result) and "Lossless QEM" not in repr(result)
 
 

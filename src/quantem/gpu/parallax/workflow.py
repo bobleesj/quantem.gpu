@@ -193,7 +193,7 @@ def run(
             shifts=[(float(row), float(col)) for row, col in cp.asnumpy(global_shifts)],
             aberrations=aberrations,
             rotation_angle_deg=rotation_angle_deg,
-            elapsed=time.perf_counter() - started,
+            elapsed_s=time.perf_counter() - started,
         )
 
 
