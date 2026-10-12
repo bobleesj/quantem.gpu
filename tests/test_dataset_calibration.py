@@ -99,6 +99,38 @@ def test_origin_coordinates_follow_normalized_units(
         acquisition_metadata(shape, {"detector_sampling_mrad": [2.0, 2.0], "detector_sampling_inv_A": [0.02, 0.02]})
 
 
+@pytest.mark.parametrize("unit,spacing,key,origin,expected_unit,expected_spacing,expected_origin", [
+    ("rad", 0.002, "detector_sampling_mrad", -0.128, "mrad", 2.0, -128.0),
+    ("1/nm", 0.2, "detector_sampling_inv_A", -3.0, "1/angstrom", 0.02, -0.3),
+])
+@pytest.mark.parametrize("explicit_units", [None, ["nm", "nm", None, None]])
+def test_origin_without_detector_units_is_scaled_as_the_recorded_step_was(
+    unit, spacing, key, origin, expected_unit, expected_spacing, expected_origin, explicit_units,
+):
+    """A header that states the supplied detector unit beside the step keeps its origin's physical coordinate."""
+    shape = (16, 24, 128, 128)
+    # the retained block of a schema-2 file written with the unit-less pair: the axes hold the
+    # step in the stored unit, the origin stays in the supplied one and names no unit of its own
+    retained = {
+        "scan_sampling_A": [0.4, 0.6], "detector_sampling": [spacing, spacing], "detector_sampling_unit": unit,
+        "origin": [None, None, origin, origin], "units": explicit_units,
+    }
+    scientific = acquisition_metadata(shape, {"scan_sampling_A": [0.4, 0.6], key: [expected_spacing, expected_spacing]})
+    data = Dataset4dstemGPU(None, {**effective_metadata(retained, scientific), "working_shape": shape})
+    assert data.sampling[2:] == pytest.approx((expected_spacing,) * 2)
+    assert data.units[2:] == (expected_unit,) * 2
+    assert data.origin[2:] == pytest.approx((expected_origin,) * 2)
+    data.metadata["origin"][:2] = [1.0, -2.0]
+    data.metadata["units"][:2] = ["nm", "nm"]
+    assert data.origin[:2] == (10.0, -20.0)
+
+    # A saved number without a detector unit is not a physical calibration.
+    unknown = {"detector_sampling": [spacing, spacing]}
+    reopened = Dataset4dstemGPU(None, {**effective_metadata(unknown, acquisition_metadata(shape, {})), "working_shape": shape})
+    assert reopened.sampling == (None,) * 4
+    assert reopened.units == (None,) * 4
+
+
 def test_name_is_the_recorded_name_else_the_source_file():
     """A loaded acquisition names itself as a quantem core dataset does, without decoding data."""
     shape = {"working_shape": (2, 2, 4, 4)}
