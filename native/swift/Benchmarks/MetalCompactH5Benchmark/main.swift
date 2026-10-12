@@ -993,7 +993,7 @@ private func runTrajectory(
 ) throws -> (receipt: [String: Any], pass: Bool) {
   let families = [
     "detector_center",
-    "bf_radius",
+    "bright_field_radius",
     "abf_annulus",
     "adf_annulus",
     "custom_aperture",
@@ -1211,7 +1211,7 @@ private func trajectoryMask(
     centerColumn += 2.5 * cos(phase)
     inner = 0
     outer = 48
-  case "bf_radius":
+  case "bright_field_radius":
     inner = 0
     outer = 46 + 2 * sin(phase)
   case "abf_annulus":
