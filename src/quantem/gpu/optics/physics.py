@@ -65,12 +65,13 @@ def wavelength_A_from_kV(voltage_kV: float) -> float:
 def wrap_degrees(angle_deg: float, period_deg: float) -> float:
     """Return an angle in ``[0, period_deg)``, wrapped once in double precision.
 
-    Every result and record states the scan-detector rotation in ``[0, 360)``, and an estimate
-    known modulo 180 degrees in ``[0, 180)``. Producers wrap here as their last step, after all
-    arithmetic with the angle: a value taken unwrapped was outside the range (the curl fit's
-    grid ends at float32 pi, 180.000005 degrees). ``%`` alone also returns the period itself
-    for a negative angle smaller than the rounding of the period (``-2e-15 % 360.0`` is
-    ``360.0``); that case is 0. An angle already in range is returned bit for bit.
+    Every result and record states a scan-detector rotation that a caller or an engine gives
+    in ``[0, 360)``; ``screening.prepare`` also states a given angle modulo 180. Those producers
+    wrap here as their last step, after all arithmetic with the angle. ``%`` alone returns the
+    period itself for a negative angle smaller than the rounding of the period
+    (``-2e-15 % 360.0`` is ``360.0``); that case is 0. An angle already in range is returned
+    bit for bit. The rotation fitted from the centre-of-mass curl is not wrapped: it is the
+    angle the fit applied, in [0, 180], and its phase belongs to that angle.
 
     Examples
     --------

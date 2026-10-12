@@ -39,7 +39,9 @@ class ScreeningResult:
 
     ``total_intensity``, ``annular_bright_field`` and ``annular_dark_field``
     are exact uint64 count maps. ``scan_detector_rotation_mod180_deg`` is the
-    curl fit, known modulo 180 degrees; ``scan_detector_rotation_deg`` is the
+    curl fit, known modulo 180 degrees, in [0, 180]: an unrotated scan fits
+    the search grid's end point, float32 pi, which reads 180.000005, and 0 and
+    180 describe the same estimate. ``scan_detector_rotation_deg`` is the
     physical rotation a caller gave ``prepare`` and is None otherwise. The
     phase uses the caller's rotation when there is one. The pair
     ``scan_detector_rotation_mod180_deg`` and ``detector_transposed`` always

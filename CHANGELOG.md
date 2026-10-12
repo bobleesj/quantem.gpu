@@ -211,7 +211,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   `Known modulo 180`. Angle and flag of a result describe one geometry: with
   a given rotation `dpc.run` has no `scan_detector_rotation_mod180_deg`, and
   `screening.prepare` holds the given angle modulo 180 there beside the
-  given flag, with the fit kept in `metadata["parameters"]`.
+  given flag, with the fit kept in `metadata["parameters"]`. A fitted
+  `scan_detector_rotation_mod180_deg` lies in [0, 180]: an unrotated scan
+  fits the end point of the search grid, float32 pi, which reads
+  `180.000005`; 0 and 180 describe the same estimate. The fit and its phase
+  are the ones returned before.
 - A saved SSB result record and its signature carry
   `"schema": "quantem.ssb-result/7"`, a string; it was the number 6.
 - `ScreeningResult.mean_dp` becomes `mean_diffraction_pattern`, as does its
@@ -308,19 +312,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
-- A rotation fitted from the centre-of-mass curl could be reported as
-  `180.00000500895632`, outside the [0, 180) of
-  `scan_detector_rotation_mod180_deg`: the fit's angle grid ends at 180
-  degrees, held as float32 pi, and a fit on that end point (an unrotated
-  scan) was returned unwrapped. `dpc.run` and `screening.prepare` now report
-  it as the same rotation half a turn back, `5.008956321717051e-06`, with
-  the phase and the aligned centre of mass of that angle, which are the
-  exact negatives of the ones returned before, so the angle still reproduces
-  the phase when it is given back. Every fit inside the range is unchanged,
-  bit for bit. Angles kept in [0, 360) (`SSB`, `SSBResult`, trial records,
-  `ParallaxResult`, a rotation given to `dpc.run` or `screening.prepare`)
-  are wrapped the same way, once, in double precision: a negative angle
-  below the rounding of 360 read `360.0` and reads `0.0`.
+- A given rotation kept in [0, 360) (`SSB`, `SSB.set_rotation`, `SSBResult`,
+  trial records, `ParallaxResult`, a rotation given to `dpc.run` or
+  `screening.prepare`) could read `360.0`: a negative angle smaller than the
+  rounding of 360 wraps to the period itself under the plain modulo. These
+  angles are wrapped by one function, once, in double precision, and that
+  case reads `0.0`; every other value is unchanged, bit for bit. The
+  rotation fitted from the centre-of-mass curl is not wrapped.
 - A `live/screen/<dataset>/config.json` that `SSB.reconstruct_series`
   created held only `computed.ssb`. The file is quantem.live's screening
   record, read there only with `"schema": "quantem.screen-acquisition/2"` at
