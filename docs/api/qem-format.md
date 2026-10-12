@@ -54,8 +54,9 @@ in `scientific_metadata`, which remains the stored authority.
 - Writing: every flat key is accepted for a quantity the source did not
   record. The unit-less pair `detector_sampling` with `detector_sampling_unit`
   is refused with a message that names the two detector keys.
-- For an ARINA master the dwell time is `count_time`, else `frame_time`. A
-  loader reports the same value the saved copy records.
+- For an HDF5 master the dwell time is `count_time` when the master holds
+  one, else `frame_time`, whatever the detector. A loader reports the same
+  value the saved copy records.
 
 The scan-to-detector rotation and the detector transposition are not stored in
 a `.qem` file. They are flat keys of result and configuration records

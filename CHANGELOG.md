@@ -185,8 +185,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   signature and `SSBSeriesResult`); `det_shape` becomes `detector_shape`
   (`H5Writer`, detector sessions). Trial records hold `sample_tilt_mrad` as
   one `[row, col]` pair in place of `tilt_row_mrad` and `tilt_col_mrad`.
-- An HDF5 master written by `io.save` stores the detector shape once, as
-  `detector_shape`; the `det_shape` copy on `entry/data` is gone.
+- An HDF5 master written by `io.save` stores the detector shape once, as the
+  root attribute `detector_shape`, the one the master reader reads; the copy
+  on `entry/data` (`det_shape`) is gone.
 - A ShowPtycho calibration (`snapshots/cal.json`) read by MPS SSB is the file
   quantem.widget writes: `"schema": "quantem.ssb-browser-calibration/2"` with
   the keys `bright_field_rows`, `bright_field_cols`, `bright_field_center_px`,
@@ -201,15 +202,50 @@ new `rcN` heading when that rc is published to TestPyPI.
   `ScreeningResult.transposed` become `detector_transposed`. The argument
   `rotation_angle_deg` of `dpc.run` and `screening.prepare` becomes
   `scan_detector_rotation_deg`, with a new `detector_transposed`; a result
-  then holds the given angle in `scan_detector_rotation_deg`. Angle and flag
-  of a result describe one geometry: with a given rotation `dpc.run` has no
-  `scan_detector_rotation_mod180_deg`, and `screening.prepare` holds the
-  given angle modulo 180 there beside the given flag, with the fit kept in
-  `metadata["parameters"]`.
+  then holds the given angle in `scan_detector_rotation_deg`, wrapped into
+  [0, 360): `dpc.run(scan_detector_rotation_deg=-20)` reports `340`, where
+  `rotation_deg` held `-20`. `DPCResult.report()` names its flag column
+  `Detector transposed` (it was `Detector-axis swap`) and adds the column
+  `Known modulo 180`. Angle and flag of a result describe one geometry: with
+  a given rotation `dpc.run` has no `scan_detector_rotation_mod180_deg`, and
+  `screening.prepare` holds the given angle modulo 180 there beside the
+  given flag, with the fit kept in `metadata["parameters"]`.
 - A saved SSB result record and its signature carry
   `"schema": "quantem.ssb-result/7"`, a string; it was the number 6.
 - `ScreeningResult.mean_dp` becomes `mean_diffraction_pattern`, as does its
-  array in the screening cache.
+  array in the screening cache; in `ScreeningResult.metadata` and the cache
+  record, `exact_accumulation.mean_dp_divisor` becomes
+  `mean_diffraction_pattern_divisor`.
+- `scripts/benchmark_screening.py` writes its report with the result's
+  names: `probe_center_row` and `probe_center_column` become
+  `bright_field_center_px` (`[row, col]`), `probe_radius_pixels` becomes
+  `bright_field_edge_radius_px`, `rotation_degrees` becomes
+  `scan_detector_rotation_mod180_deg`, `transposed` becomes
+  `detector_transposed`, and the product `mean_dp` becomes
+  `mean_diffraction_pattern`. `scripts/benchmark_ssb_mps_scaling.py` writes
+  `elapsed_s` (it was `elapsed_seconds`).
+- The WebGPU detector engine names its iDPC geometry as the other engines
+  do: the parameters `rotationDeg` and `useTranspose` of
+  `DetectorCompute.maskedIDpc` and `maskedIDpcBuffer` become
+  `scanDetectorRotationDeg` and `detectorTransposed`.
+- The SSB parity harness (`tests/parity/ssb_parity_case.py`,
+  `ssb_parity_gate.py`, `tests/metal/ssb_parity_check.swift`,
+  `ssb_fit_trajectory.swift`) reads and writes the shared names. In
+  `case.json`: `bf_center` and `brightfield_center` become
+  `bright_field_center_px`, `bf_radius_px` and `brightfield_radius_px`
+  become `bright_field_radius_px`, `rotation_angle_deg` becomes
+  `scan_detector_rotation_deg`, `aberrations` becomes `aberrations_A_rad`
+  (Angstrom and radians, the engines' units), `det_sampling_mrad` (one
+  number) becomes `detector_sampling_mrad` (`[row, col]`), `det_sampling_rad`
+  becomes `detector_sampling_rad`, and `scan_sampling_A` is a `[row, col]`
+  pair. Its exported calibration is `quantem.ssb-browser-calibration/2`, with
+  `bf_excluded_detector_pixels` as `excluded_detector_pixels`. In the gate's
+  report, `num_bf` becomes `num_bright_field_pixels` and the aberration keys
+  `C10`, `C12`, `phi12` become `C10_A`, `C12_A`, `phi12_rad`; the trajectory
+  record's `bestC10Nanometers`, `bestC12Nanometers`, `c10Nanometers` and
+  `c12Nanometers` become `bestC10Angstroms`, `bestC12Angstroms`,
+  `c10Angstroms` and `c12Angstroms`. A case or calibration exported earlier
+  is exported again.
 - The screening cache is `<master stem>.screening-v4.npz` and carries
   `"schema": "quantem.screening-cache/4"` in place of `"version": 3`; a
   version-3 cache is rebuilt.
@@ -234,8 +270,12 @@ new `rcN` heading when that rc is published to TestPyPI.
   metadata or loader state into the retained `metadata` block (`scan_sampling_A`,
   `detector_sampling_inv_A`, `detector_sampling`, `detector_sampling_unit`,
   `voltage_kV`, `source_metadata`, `source_shape`, `axis_order`,
-  `lossless_exact`, `pixel_origin`), and the native reader drops such copies
-  from older files.
+  `lossless_exact`, `pixel_origin`). The native reader drops from the
+  retained block of every file what the Python reader drops: the 47 names of
+  `NativeQEMMetadataUnits.notRetained` (the flat calibration keys, the
+  unit-less detector pair, the copies of `scientific_metadata` groups and the
+  loader's host and resident state), every key that starts with `entry/`,
+  and a `hot_pixel_correction` record without the current schema.
 - `NativeMicroscopeMetadata.beamEnergyKeV` becomes `voltageKV`: it holds the
   accelerating voltage in kV.
 - The native SSB engine names the units it computes in. `c10Nanometers` and
