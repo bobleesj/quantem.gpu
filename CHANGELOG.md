@@ -281,6 +281,15 @@ new `rcN` heading when that rc is published to TestPyPI.
   and copied aberrations from a fit block of any schema (Angstrom under nm
   keys in older blocks). It now exports only a current fit, with its physical
   rotation and the detector sampling the fit used.
+- `SSB.open` on an exact bright-field column export (Apple backend) left the
+  session's `detector_sampling_mrad` unset while the backend derived one, so
+  `SSB.reconstruct_series` stored a fit block with
+  `"detector_sampling_mrad": null` and exporting that fit raised `TypeError`.
+  The session now holds the sampling the backend uses (the export's
+  calibration, else the semi-angle over the export's disk-edge radius) and
+  the fit block always holds the pair. A session built from a dense array
+  without `detector_sampling_mrad` still leaves the measurement to its
+  backend and reports None.
 - A DM4 detector step read 1/nm when loaded and 1/angstrom after a `.qem`
   round trip, a factor of 10 with a different unit string. Both now read
   1/angstrom (`detector_sampling_inv_A`); 1/Å and 1/µm axes are read too.

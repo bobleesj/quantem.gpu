@@ -310,6 +310,11 @@ class SSB:
             source_load_seconds = float(frames.load_seconds)
             source_detector_bin = frames.det_bin
             source_provenance = json_value(frames.source_provenance)
+            if detector_sampling_mrad is None:
+                # The backend's own rule for exact columns, applied here so the session holds the sampling the
+                # backend then uses: the export's calibration, else its disk edge at the semiangle. A session left
+                # without it stored a fit with no detector sampling, which could not be exported.
+                detector_sampling_mrad = frames.detector_sampling_mrad or (semiangle_mrad / frames.selection.bright_field_edge_radius_px,) * 2
         else:
             load_started = time.perf_counter()
             with io.load(

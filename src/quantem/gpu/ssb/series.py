@@ -381,7 +381,7 @@ def write_fit_metadata(
     screen_path: Path,
     settings: dict[str, object],
     result: SSBResult,
-    detector_sampling_mrad: tuple[float, float] | None,
+    detector_sampling_mrad: tuple[float, float],
 ) -> None:
     """Record a fresh GPU fit in ``config.json`` so Live screening and later series runs find it.
 
@@ -389,6 +389,8 @@ def write_fit_metadata(
     numbers that made it rather than ones derived again from another radius. It carries ``"schema": FIT_SCHEMA``,
     without which no reader accepts it. Fields Live added to a block of the
     current schema are kept; a block of any other schema is replaced whole, so none of its values pass as current.
+    ``detector_sampling_mrad`` is the session's after ``SSB.open``, which holds one on every backend; a block
+    without it cannot be exported.
     """
     config_path = screen_path / "config.json"
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
@@ -404,7 +406,7 @@ def write_fit_metadata(
         "loss": None if result.loss is None else float(result.loss),
         "bright_field_radius_px": result.bright_field_radius_px,
         "bright_field_center_px": None if result.bright_field_center_px is None else list(result.bright_field_center_px),
-        "detector_sampling_mrad": None if detector_sampling_mrad is None else list(detector_sampling_mrad),
+        "detector_sampling_mrad": list(detector_sampling_mrad),
     }
     screen_path.mkdir(parents=True, exist_ok=True)
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")

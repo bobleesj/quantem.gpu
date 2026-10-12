@@ -370,3 +370,57 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     config.write_text(json.dumps(written))
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
     assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
+
+
+def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_block_needs(tmp_path, monkeypatch):
+    """SSB.open on exact bright-field columns holds the detector sampling its backend uses, and the fit block exports.
+
+    The session kept None there and the backend derived the sampling on its own, so reconstruct_series stored a fit
+    with no detector sampling and export_result failed on it with a TypeError. The Apple backend needs MLX, so a
+    double takes its place: this checks what the session holds and hands over, not a reconstruction on Apple hardware.
+    """
+    import h5py
+
+    from quantem.gpu import SSBResult
+    from quantem.gpu.formats.ssb_phase import export_result, read_result
+    from quantem.gpu.ssb import workflow
+    from quantem.gpu.ssb.brightfield import BrightfieldDisk
+    from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames
+    from quantem.gpu.ssb.series import write_fit_metadata
+
+    received = []
+
+    class RecordingBackend:
+        """Stands in for the Apple backend, which needs MLX: it keeps the sampling the session hands it."""
+
+        def __init__(self, data, **settings):
+            received.append(settings["detector_sampling_mrad"])
+
+    selection = BrightfieldDisk(rows=np.asarray([1, 1]), cols=np.asarray([1, 2]), bright_field_center_px=(1.0, 1.5),
+                                bright_field_radius_px=1.0, bright_field_edge_radius_px=48.0, detector_shape=(3, 4))
+    columns = tmp_path / "columns.u16"
+    np.zeros((2, 4), dtype=np.uint16).tofile(columns)
+    monkeypatch.setattr(workflow, "resolve", lambda _backend: "mps")
+    monkeypatch.setattr(workflow, "MpsSSBBackend", RecordingBackend)
+    settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.25, 0.25)}
+    # an export with its own calibration, then one that records only the disk edge
+    for exported, expected in (((0.61, 0.62), (0.61, 0.62)), (None, (30.0 / 48.0, 30.0 / 48.0))):
+        frames = MpsBfColumnFrames(columns, selection=selection, scan_shape=(2, 2), dtype="uint16", dc_value=1.0,
+                                   detector_sampling_mrad=exported)
+        monkeypatch.setattr(workflow, "find_bf_columns", lambda *_args, frames=frames, **_kwargs: frames)
+        session = workflow.SSB.open(str(tmp_path / "scan_master.h5"), backend="mps", **settings)
+        assert session.detector_sampling_mrad == expected
+        session._backend()
+        assert received[-1] == expected
+
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(tmp_path / "scan_data.h5", "w") as handle:
+        handle["data"] = np.ones((2, 2, 2), dtype=np.uint16)
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
+    np.save(tmp_path / "ssb_phase.npy", np.zeros((2, 2), np.float32))
+    result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps", scan_detector_rotation_deg=192.0,
+                       aberrations={"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": 5.0}, bright_field_center_px=(1.0, 1.5))
+    write_fit_metadata(tmp_path, {**settings, "scan_detector_rotation_deg": 192.0}, result, session.detector_sampling_mrad)
+    record, _ = read_result(export_result(tmp_path, master, tmp_path / "out.json"))
+    assert record["calibration"]["detector_sampling_mrad"] == [30.0 / 48.0, 30.0 / 48.0]
