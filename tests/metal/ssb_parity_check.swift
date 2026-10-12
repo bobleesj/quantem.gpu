@@ -122,14 +122,14 @@ private struct CaseReport: Encodable {
       }
     }
     let calibration = MetalSSBCalibration(
-      beamEnergyKeV: payload.voltage_kV,
+      voltageKV: payload.voltage_kV,
       semiangleMrad: payload.semiangle_mrad,
-      scanStepRowAngstroms: payload.scan_sampling_A[0],
-      scanStepColumnAngstroms: payload.scan_sampling_A[1],
-      detectorStepRowMrad: payload.det_sampling_mrad,
-      detectorStepColumnMrad: payload.det_sampling_mrad,
-      centerRow: payload.brightfield_center[0],
-      centerColumn: payload.brightfield_center[1],
+      scanSamplingRowAngstroms: payload.scan_sampling_A[0],
+      scanSamplingColumnAngstroms: payload.scan_sampling_A[1],
+      detectorSamplingRowMrad: payload.det_sampling_mrad,
+      detectorSamplingColumnMrad: payload.det_sampling_mrad,
+      brightfieldCenterRowPixels: payload.brightfield_center[0],
+      brightfieldCenterColumnPixels: payload.brightfield_center[1],
       brightfieldRadiusPixels: payload.brightfield_radius_px,
       excludedDetectorPixels: cal.bf_excluded_detector_pixels)
     let rebuilt = try calibration.geometry(

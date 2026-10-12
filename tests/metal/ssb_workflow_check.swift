@@ -19,9 +19,10 @@ private func require(
       fatalError("An Apple GPU is required")
     }
     let n = 512
-    let calibration = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
-      scanStepRowAngstroms: 2, scanStepColumnAngstroms: 3,
-      detectorStepRowMrad: 10, detectorStepColumnMrad: 10, centerRow: 4, centerColumn: 4)
+    let calibration = MetalSSBCalibration(voltageKV: 300, semiangleMrad: 30,
+      scanSamplingRowAngstroms: 2, scanSamplingColumnAngstroms: 3,
+      detectorSamplingRowMrad: 10, detectorSamplingColumnMrad: 10,
+      brightfieldCenterRowPixels: 4, brightfieldCenterColumnPixels: 4)
     let calibrated = try calibration.geometry(detectorRows: 9, detectorColumns: 9,
       detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
     require(abs(calibrated.geometry.wavelengthAngstroms - 0.01968749) < 1e-7)
@@ -39,17 +40,17 @@ private func require(
     let maskedDisk = try diskCalibration.geometry(detectorRows: 9, detectorColumns: 9,
       detectorSum: Array(repeating: 100, count: 81), excludedPixels: [40])
     require(maskedDisk.pixels.count == 47 && !maskedDisk.pixels.contains(4))
-    var fullDisk = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
-      scanStepRowAngstroms: 0.264, scanStepColumnAngstroms: 0.264,
-      detectorStepRowMrad: 1.090909090909091, detectorStepColumnMrad: 1.090909090909091,
-      centerRow: 94.88451385498047, centerColumn: 96.35952758789062,
+    var fullDisk = MetalSSBCalibration(voltageKV: 300, semiangleMrad: 30,
+      scanSamplingRowAngstroms: 0.264, scanSamplingColumnAngstroms: 0.264,
+      detectorSamplingRowMrad: 1.090909090909091, detectorSamplingColumnMrad: 1.090909090909091,
+      brightfieldCenterRowPixels: 94.88451385498047, brightfieldCenterColumnPixels: 96.35952758789062,
       brightfieldRadiusPixels: 53.35992814757164, excludedDetectorPixels: [78 * 192 + 74])
     let sums = Array(repeating: UInt64(100), count: 192 * 192)
     let historical = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
     require(historical.pixels.count == 8937)
     require(historical.geometry.brightfieldAperture.filter { $0 > 0 }.count == 2464)
     try fullDisk.matchApertureToBrightfieldDisk()
-    require(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
+    require(abs(fullDisk.detectorSamplingRowMrad - 0.5622196476170719) < 1e-12)
     let complete = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
     require(complete.pixels == historical.pixels)
     require(complete.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
@@ -58,7 +59,7 @@ private func require(
     fullDisk.brightfieldRadiusPixels = 25
     let selected = try fullDisk.geometry(detectorRows: 192, detectorColumns: 192, detectorSum: sums)
     require(selected.pixels.count < complete.pixels.count)
-    require(abs(fullDisk.detectorStepRowMrad - 0.5622196476170719) < 1e-12)
+    require(abs(fullDisk.detectorSamplingRowMrad - 0.5622196476170719) < 1e-12)
     require(selected.geometry.brightfieldAperture.allSatisfy { $0 > 0 })
     let q = (0..<n).map { Float($0 < n / 2 ? $0 : $0 - n) * 0.001 }
     func makeGeometry(dc: SIMD2<Float>) -> MetalSSBGeometry {

@@ -79,9 +79,10 @@ private func timing(_ label: String, _ seconds: [Double]) {
       }
       print("\(size)x\(size), full disk \(reference.brightfieldCount) BF, CUDA \(reference.cudaRevision)")
       // Calibration follows the native scan without silently changing sampling.
-      let calibration = MetalSSBCalibration(beamEnergyKeV: 300, semiangleMrad: 30,
-        scanStepRowAngstroms: 2, scanStepColumnAngstroms: 3,
-        detectorStepRowMrad: 10, detectorStepColumnMrad: 10, centerRow: 4, centerColumn: 4)
+      let calibration = MetalSSBCalibration(voltageKV: 300, semiangleMrad: 30,
+        scanSamplingRowAngstroms: 2, scanSamplingColumnAngstroms: 3,
+        detectorSamplingRowMrad: 10, detectorSamplingColumnMrad: 10,
+        brightfieldCenterRowPixels: 4, brightfieldCenterColumnPixels: 4)
       let calibrated = try calibration.geometry(detectorRows: 9, detectorColumns: 9,
         detectorSum: Array(repeating: 100, count: 81), scanRows: size, scanColumns: size)
       require(calibrated.geometry.qxByRow.count == size, "Calibration native size")

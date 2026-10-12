@@ -146,6 +146,73 @@ final class MetalSSBKernelsTests: XCTestCase {
     XCTAssertLessThan(lossRelativeError, 5e-5)
   }
 
+  /// The exported pair is the record the Python reader checks (`quantem.ssb-phase/2`): its keys,
+  /// the engine's Angstrom and radians stated in nm and degrees, and the physical rotation.
+  func testPhasePairWritesTheSharedRecordInPublicUnits() throws {
+    let device = try metalDevice()
+    let geometry = makeGeometry(brightfieldCount: 1, dc: SIMD2<Float>(1, 0))
+    let engine = try MetalSSBEngine(device: device, geometry: geometry)
+    let source = try makeBuffer(device: device, values: [UInt8](repeating: 0, count: size * size))
+    try engine.prepare(brightfield: source)
+    let aberrations = MetalSSBAberrations(c10Angstroms: 150, c12Angstroms: 20, phi12Radians: 0.5)
+    let calibration = MetalSSBCalibration(
+      voltageKV: 300, semiangleMrad: 30,
+      scanSamplingRowAngstroms: 0.25, scanSamplingColumnAngstroms: 0.3,
+      detectorSamplingRowMrad: 0.55, detectorSamplingColumnMrad: 0.56,
+      brightfieldCenterRowPixels: 3, brightfieldCenterColumnPixels: 4, brightfieldRadiusPixels: 5)
+    let identity = String(repeating: "a", count: 64)
+    let run = try MetalSSBSavedRun(
+      result: try engine.reconstruct(aberrations: aberrations), sourceIdentity: identity,
+      backendRevision: "test", geometry: geometry, aberrations: aberrations,
+      scanDetectorRotationDegrees: -30, calibration: calibration)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let manifest = directory.appendingPathComponent("ssb.json")
+    let phase = (0..<size * size).map { Float($0 % 7) - 3 }.withUnsafeBytes { Data($0) }
+    try run.savePhasePair(to: manifest, phase: phase)
+
+    let record = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
+    XCTAssertEqual(
+      Set(record.keys),
+      [
+        "schema", "source_identity", "shape", "phase_encoding", "phase_unit", "phase_sha256",
+        "calibration", "aberrations", "scan_detector_rotation_deg", "detector_transposed",
+        "provenance", "run_metadata", "phase_file",
+      ])
+    XCTAssertEqual(record["schema"] as? String, "quantem.ssb-phase/2")
+    XCTAssertEqual(record["shape"] as? [Int], [size, size])
+    XCTAssertEqual(record["phase_file"] as? String, "ssb.npy")
+    let stated = try XCTUnwrap(record["aberrations"] as? [String: Double])
+    XCTAssertEqual(Set(stated.keys), ["C10_nm", "C12_nm", "phi12_deg"])
+    XCTAssertEqual(stated["C10_nm"], 15)
+    XCTAssertEqual(stated["C12_nm"], 2)
+    XCTAssertEqual(try XCTUnwrap(stated["phi12_deg"]), 0.5 * 180 / .pi, accuracy: 1e-12)
+    XCTAssertEqual(record["scan_detector_rotation_deg"] as? Double, 330)
+    XCTAssertEqual(record["detector_transposed"] as? Bool, false)
+    let stored = try XCTUnwrap(record["calibration"] as? [String: Any])
+    XCTAssertEqual(stored["voltage_kV"] as? Double, 300)
+    XCTAssertEqual(stored["semiangle_mrad"] as? Double, 30)
+    XCTAssertEqual(stored["scan_sampling_A"] as? [Double], [0.25, 0.3])
+    XCTAssertEqual(stored["detector_sampling_mrad"] as? [Double], [0.55, 0.56])
+    XCTAssertEqual(stored["bright_field_center_px"] as? [Double], [3, 4])
+    XCTAssertEqual(stored["bright_field_radius_px"] as? Double, 5)
+
+    let reopened = try SSBPhaseArtifact.load(from: manifest, matchingSourceIdentity: identity)
+    XCTAssertEqual(reopened.phase, phase)
+    XCTAssertEqual(reopened.calibration, calibration)
+    XCTAssertEqual(reopened.aberrations.c10Nanometers, 15)
+    // A version-1 record is refused with the reason, never read under its old keys.
+    var earlier = record
+    earlier["schema"] = nil
+    earlier["format"] = "live.ssb"
+    earlier["schemaVersion"] = 1
+    try JSONSerialization.data(withJSONObject: earlier).write(to: manifest)
+    XCTAssertThrowsError(try SSBPhaseArtifact.load(from: manifest)) { error in
+      XCTAssertTrue(error.localizedDescription.contains("quantem.ssb-phase/2"))
+    }
+  }
+
   func testRejectsIncompleteGeometryBeforeMetalAllocation() throws {
     let device = try metalDevice()
     let geometry = MetalSSBGeometry(

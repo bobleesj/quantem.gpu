@@ -225,9 +225,29 @@ new `rcN` heading when that rc is published to TestPyPI.
   its `rotationDegrees` and `optimizedRotationDegrees` become
   `scanDetectorRotationDegrees` and `optimizedScanDetectorRotationDegrees`, and
   an earlier saved run is refused with the reason.
+- The native SSB phase pair (`SSBPhaseArtifact`, `savePair`,
+  `MetalSSBSavedRun.savePhasePair`) reads and writes `quantem.ssb-phase/2`, the
+  record of the Python reader; version-1 `live.ssb` pairs and single-file
+  `.ssbresult` copies are refused. `SSBPhaseArtifact.schemaVersion` becomes
+  `schema`, `rows` and `columns` become `shape`, `phaseUnits` becomes
+  `phaseUnit`, `c10Nanometers`, `c12Nanometers` and `phi12Radians` become
+  `aberrations` (`SSBPhaseArtifact.Aberrations` in nm and degrees), and
+  `rotationDegrees` becomes `scanDetectorRotationDegrees` with
+  `detectorTransposed`. In `MetalSSBCalibration`, `beamEnergyKeV` becomes
+  `voltageKV`, `scanStepRowAngstroms` and `scanStepColumnAngstroms` become
+  `scanSamplingRowAngstroms` and `scanSamplingColumnAngstroms`,
+  `detectorStepRowMrad` and `detectorStepColumnMrad` become
+  `detectorSamplingRowMrad` and `detectorSamplingColumnMrad`, and `centerRow`
+  and `centerColumn` become `brightfieldCenterRowPixels` and
+  `brightfieldCenterColumnPixels`; its JSON is the record's `calibration` block.
 
 ### Fixed
 
+- The native SSB phase pair stored the engine's Angstrom under
+  `c10Nanometers` and `c12Nanometers`, ten times the value for a reader that
+  took them as nm, and the azimuth in radians. The record now states
+  `C10_nm`, `C12_nm` and `phi12_deg`, and the rotation as the physical angle
+  in [0, 360).
 - `SSB.bright_field_center_px` and `SSBResult.bright_field_center_px` are in
   pixels of the full detector for every input. A session built from an
   encoded acquisition or `SSB.open` reported the centre inside its decoded
