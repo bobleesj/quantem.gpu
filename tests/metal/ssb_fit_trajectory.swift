@@ -57,15 +57,15 @@ private struct CaseFile: Decodable {
 private struct Trial: Encodable {
   let index: Int
   let stage: String
-  let c10Nanometers: Double
-  let c12Nanometers: Double
+  let c10Angstroms: Double
+  let c12Angstroms: Double
   let phi12Radians: Double
   let loss: Double
 }
 
 private struct RunReport: Encodable {
-  let bestC10Nanometers: Double
-  let bestC12Nanometers: Double
+  let bestC10Angstroms: Double
+  let bestC12Angstroms: Double
   let bestPhi12Radians: Double
   let bestLoss: Double
   let globalTrials: Int
@@ -163,7 +163,7 @@ private struct FitReport: Encodable {
     try engine.prepare(brightfield: source, countType: .uint16)
 
     let start = SSBOptimizationPoint(
-      c10Nanometers: 0, c12Nanometers: 50, phi12Radians: 0)
+      c10Angstroms: 0, c12Angstroms: 50, phi12Radians: 0)
     let seed: UInt64 = 42
     let globalTrials = 200
 
@@ -171,8 +171,8 @@ private struct FitReport: Encodable {
       Double(
         try engine.phaseVariance(
           aberrations: MetalSSBAberrations(
-            c10Nanometers: Float(point.c10Nanometers),
-            c12Nanometers: Float(point.c12Nanometers),
+            c10Angstroms: Float(point.c10Angstroms),
+            c12Angstroms: Float(point.c12Angstroms),
             phi12Radians: Float(point.phi12Radians))).loss)
     }
 
@@ -182,8 +182,8 @@ private struct FitReport: Encodable {
         try engine.phaseVarianceBatch(
           aberrations: points.map {
             MetalSSBAberrations(
-              c10Nanometers: Float($0.c10Nanometers),
-              c12Nanometers: Float($0.c12Nanometers),
+              c10Angstroms: Float($0.c10Angstroms),
+              c12Angstroms: Float($0.c12Angstroms),
               phi12Radians: Float($0.phi12Radians))
           }
         ).map { Double($0.loss) }
@@ -197,8 +197,8 @@ private struct FitReport: Encodable {
       result.trials.enumerated().map { index, trial in
         Trial(
           index: index, stage: trial.stage,
-          c10Nanometers: trial.point.c10Nanometers,
-          c12Nanometers: trial.point.c12Nanometers,
+          c10Angstroms: trial.point.c10Angstroms,
+          c12Angstroms: trial.point.c12Angstroms,
           phi12Radians: trial.point.phi12Radians,
           loss: trial.loss)
       }
@@ -206,8 +206,8 @@ private struct FitReport: Encodable {
 
     func runReport(_ result: SSBOptimizationResult) -> RunReport {
       RunReport(
-        bestC10Nanometers: result.best.c10Nanometers,
-        bestC12Nanometers: result.best.c12Nanometers,
+        bestC10Angstroms: result.best.c10Angstroms,
+        bestC12Angstroms: result.best.c12Angstroms,
         bestPhi12Radians: result.best.phi12Radians,
         bestLoss: result.loss,
         globalTrials: result.globalTrials,
@@ -256,8 +256,8 @@ private struct FitReport: Encodable {
         trialsWithDifferentLossAtSameIndex: differentLosses,
         maxLossDifferenceAtSameIndex: maxLossDelta,
         bestSoFarDifferentCount: bestSoFarDifferent,
-        finalBestPointDeltaC10: right.best.c10Nanometers - left.best.c10Nanometers,
-        finalBestPointDeltaC12: right.best.c12Nanometers - left.best.c12Nanometers,
+        finalBestPointDeltaC10: right.best.c10Angstroms - left.best.c10Angstroms,
+        finalBestPointDeltaC12: right.best.c12Angstroms - left.best.c12Angstroms,
         finalBestPointDeltaPhi12: right.best.phi12Radians - left.best.phi12Radians,
         finalBestLossDelta: right.loss - left.loss,
         sharedCandidateLossMismatches: sharedMismatches)
@@ -274,7 +274,7 @@ private struct FitReport: Encodable {
       sequential.trials[50].point,
       sequential.best,
       SSBOptimizationPoint(
-        c10Nanometers: 73.18188621458395, c12Nanometers: 14.020962948808993,
+        c10Angstroms: 73.18188621458395, c12Angstroms: 14.020962948808993,
         phi12Radians: 0.4700365259977606),
     ]
     var firstPass: [Double] = []
@@ -291,8 +291,8 @@ private struct FitReport: Encodable {
       let fresh = Double(
         try freshEngine.phaseVariance(
           aberrations: MetalSSBAberrations(
-            c10Nanometers: Float(point.c10Nanometers),
-            c12Nanometers: Float(point.c12Nanometers),
+            c10Angstroms: Float(point.c10Angstroms),
+            c12Angstroms: Float(point.c12Angstroms),
             phi12Radians: Float(point.phi12Radians))).loss)
       if fresh != firstPass[index] { freshMismatches += 1 }
     }
@@ -301,13 +301,13 @@ private struct FitReport: Encodable {
     var aliasMismatches = 0
     var maxUlp: UInt32 = 0
     for (index, point) in probePoints.enumerated() {
-      let nudgedDouble = point.c10Nanometers.nextUp
+      let nudgedDouble = point.c10Angstroms.nextUp
       let nudged = SSBOptimizationPoint(
-        c10Nanometers: nudgedDouble,
-        c12Nanometers: point.c12Nanometers,
+        c10Angstroms: nudgedDouble,
+        c12Angstroms: point.c12Angstroms,
         phi12Radians: point.phi12Radians)
       let nudgeLoss = try loss(nudged)
-      let before = Float(point.c10Nanometers).bitPattern
+      let before = Float(point.c10Angstroms).bitPattern
       let after = Float(nudgedDouble).bitPattern
       if before == after {
         if nudgeLoss != firstPass[index] { aliasMismatches += 1 }
@@ -386,7 +386,7 @@ private struct FitReport: Encodable {
 
     // 5. The production entry point must reproduce the sequential trajectory.
     let production = try engine.optimize(
-      start: MetalSSBAberrations(c10Nanometers: 0, c12Nanometers: 50, phi12Radians: 0),
+      start: MetalSSBAberrations(c10Angstroms: 0, c12Angstroms: 50, phi12Radians: 0),
       globalTrials: globalTrials, seed: seed)
     let productionMatches =
       production.trials.count == sequential.trials.count
@@ -403,8 +403,8 @@ private struct FitReport: Encodable {
       seed: seed,
       globalTrials: globalTrials,
       start: [
-        "C10": start.c10Nanometers, "C12": start.c12Nanometers,
-        "phi12": start.phi12Radians,
+        "C10_A": start.c10Angstroms, "C12_A": start.c12Angstroms,
+        "phi12_rad": start.phi12Radians,
       ],
       caseJsonSha256: caseDigest,
       sequential: runReport(sequential),
@@ -429,11 +429,11 @@ private struct FitReport: Encodable {
     print("case=\(report.caseName) side=\(side) logical=\(report.logicalBrightfieldCount) "
       + "active=\(report.activeBrightfieldCount) trials=\(globalTrials) seed=\(seed)")
     print("case.json sha256=\(caseDigest)")
-    print("sequential best=\(sequential.best.c10Nanometers) \(sequential.best.c12Nanometers) "
+    print("sequential best=\(sequential.best.c10Angstroms) \(sequential.best.c12Angstroms) "
       + "\(sequential.best.phi12Radians) loss=\(sequential.loss) evals=\(sequential.trials.count)")
     for (name, result) in [("batched-closure", batched), ("batched-engine", batchedEngine)] {
       guard let result else { continue }
-      print("\(name) best=\(result.best.c10Nanometers) \(result.best.c12Nanometers) "
+      print("\(name) best=\(result.best.c10Angstroms) \(result.best.c12Angstroms) "
         + "\(result.best.phi12Radians) loss=\(result.loss) evals=\(result.trials.count)")
     }
     print("production optimize matches sequential=\(productionMatches)")
@@ -462,7 +462,7 @@ private struct FitReport: Encodable {
       "caseJsonSha256": caseDigest,
       "sequentialTrajectory": trajectoryDigest(report.sequential),
       "sequentialBest": [
-        sequential.best.c10Nanometers, sequential.best.c12Nanometers,
+        sequential.best.c10Angstroms, sequential.best.c12Angstroms,
         sequential.best.phi12Radians,
       ],
       "sequentialLoss": report.sequential.bestLoss,
@@ -497,21 +497,21 @@ private struct FitReport: Encodable {
 
   fileprivate static func point(of trial: Trial) -> SSBOptimizationPoint {
     SSBOptimizationPoint(
-      c10Nanometers: trial.c10Nanometers,
-      c12Nanometers: trial.c12Nanometers,
+      c10Angstroms: trial.c10Angstroms,
+      c12Angstroms: trial.c12Angstroms,
       phi12Radians: trial.phi12Radians)
   }
 
   fileprivate static func trialKey(_ trial: Trial) -> String {
-    let c10 = Float(trial.c10Nanometers).bitPattern
-    let c12 = Float(trial.c12Nanometers).bitPattern
+    let c10 = Float(trial.c10Angstroms).bitPattern
+    let c12 = Float(trial.c12Angstroms).bitPattern
     let phi = Float(trial.phi12Radians).bitPattern
     return "\(c10)-\(c12)-\(phi)"
   }
 
   fileprivate static func floatKey(_ point: SSBOptimizationPoint) -> String {
-    let c10 = Float(point.c10Nanometers).bitPattern
-    let c12 = Float(point.c12Nanometers).bitPattern
+    let c10 = Float(point.c10Angstroms).bitPattern
+    let c12 = Float(point.c12Angstroms).bitPattern
     let phi = Float(point.phi12Radians).bitPattern
     return "\(c10)-\(c12)-\(phi)"
   }

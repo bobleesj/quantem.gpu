@@ -10,6 +10,7 @@ private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
   }
 }
 
+// Keys of the frozen CUDA reference export: engine Angstrom and radians, rotation in degrees.
 private struct Candidate: Decodable {
   let c10: Float
   let c12: Float
@@ -19,7 +20,7 @@ private struct Candidate: Decodable {
   let cudaLoss: Double
   let cudaObjectRelativeL2: Double
   var aberrations: MetalSSBAberrations {
-    MetalSSBAberrations(c10Nanometers: c10, c12Nanometers: c12, phi12Radians: phi12)
+    MetalSSBAberrations(c10Angstroms: c10, c12Angstroms: c12, phi12Radians: phi12)
   }
 }
 
@@ -98,7 +99,7 @@ private func timing(_ label: String, _ seconds: [Double]) {
             Array($0.bindMemory(to: SIMD2<Float>.self))
           }
           let result = try engine.reconstruct(aberrations: candidate.aberrations,
-            rotationDegrees: candidate.rotation)
+            scanDetectorRotationDegrees: candidate.rotation)
           require(result.provenance.scanRows == size && result.provenance.scanColumns == size,
             "Native result provenance")
           require(result.provenance.logicalBrightfieldCount == reference.brightfieldCount,
@@ -115,19 +116,19 @@ private func timing(_ label: String, _ seconds: [Double]) {
           }
           require(maxPhaseError < 2e-4, "\(size) \(mode) phase error \(maxPhaseError)")
           let loss = try engine.phaseVariance(aberrations: candidate.aberrations,
-            rotationDegrees: candidate.rotation)
+            scanDetectorRotationDegrees: candidate.rotation)
           let lossError = abs(Double(loss.loss) - candidate.loss)
           print("\(mode) candidate=\(index) objectL2=\(error) phaseMax=\(maxPhaseError) lossError=\(lossError)")
           require(lossError <= 1e-6 + 1e-5 * abs(candidate.loss),
             "\(size) \(mode) loss \(loss.loss), expected \(candidate.loss); do not rewrite the reference")
           // Alternate loss and object to exercise cache-layout transitions.
           let restored = try engine.reconstruct(aberrations: candidate.aberrations,
-            rotationDegrees: candidate.rotation)
+            scanDetectorRotationDegrees: candidate.rotation)
           require(relativeError(complexValues(restored.object, count: size * size), expected) < 1e-4,
             "Reconstruct after loss")
           let saved = try MetalSSBSavedRun(result: result, sourceIdentity: "scan-\(size)",
             backendRevision: "test", geometry: geometry, aberrations: candidate.aberrations,
-            rotationDegrees: candidate.rotation)
+            scanDetectorRotationDegrees: candidate.rotation)
           let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
           defer { try? FileManager.default.removeItem(at: temporary) }
           try saved.save(to: temporary)
@@ -162,7 +163,7 @@ private func timing(_ label: String, _ seconds: [Double]) {
             try streamed.prepare(brightfield: source)
             for prototype in MetalSSBHigherOrder.supported {
               var term = prototype
-              term.magnitudeNanometers = 0.5
+              term.magnitudeAngstroms = 0.5
               term.angleRadians = 0.17
               var higher = candidate.aberrations
               higher.higherOrder = [term]
@@ -173,7 +174,7 @@ private func timing(_ label: String, _ seconds: [Double]) {
                 "\(size) higher-order \(term.name) cached/streamed parity")
             }
             let fit = try engine.optimize(start: candidate.aberrations,
-              rotationDegrees: 0, globalTrials: 200)
+              scanDetectorRotationDegrees: 0, globalTrials: 200)
             require(fit.loss.isFinite, "Native-size 200-trial optimizer")
             print("\(size) 200-trial fit wall=\(fit.elapsedSeconds) seconds; refine=\(fit.refinementEvaluations)")
           }

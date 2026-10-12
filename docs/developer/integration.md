@@ -86,8 +86,8 @@ let engine = try MetalSSBEngine(
 try engine.prepare(brightfield: planeMajorUInt8Buffer)
 let result = try engine.reconstruct(
   aberrations: MetalSSBAberrations(
-    c10Nanometers: 72.98,
-    c12Nanometers: 14.4,
+    c10Angstroms: 72.98,
+    c12Angstroms: 14.4,
     phi12Radians: 0.4686
   )
 )
@@ -112,8 +112,8 @@ remains the default throughout search and Nelder-Mead refinement.
 let fit = try engine.optimize(
   start: initialAberrations, globalTrials: 200, brightfieldFraction: 0.25)
 let final = try engine.reconstruct(aberrations: MetalSSBAberrations(
-  c10Nanometers: Float(fit.best.c10Nanometers),
-  c12Nanometers: Float(fit.best.c12Nanometers),
+  c10Angstroms: Float(fit.best.c10Angstroms),
+  c12Angstroms: Float(fit.best.c12Angstroms),
   phi12Radians: Float(fit.best.phi12Radians)))
 ```
 
@@ -167,7 +167,7 @@ source identity and both payloads.
 let saved = try MetalSSBSavedRun(
     result: reconstruction, sourceIdentity: sourceSHA256,
     backendRevision: revision, geometry: geometry, aberrations: fitted,
-    rotationDegrees: rotation, optimization: fit, seed: 42)
+    scanDetectorRotationDegrees: rotation, optimization: fit, seed: 42)
 try saved.save(to: resultURL)
 let previous = try MetalSSBSavedRun.load(
     from: resultURL, matchingSourceIdentity: sourceSHA256)

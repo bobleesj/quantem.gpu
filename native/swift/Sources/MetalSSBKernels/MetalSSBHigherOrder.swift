@@ -1,17 +1,17 @@
 import Foundation
 
-/// One polar aberration C_nm. Magnitudes use the same units as C10/C12;
+/// One polar aberration C_nm. Magnitudes are Angstrom, as C10 and C12 are in the engine;
 /// azimuths are radians. Orders 2...5 follow ShowPtycho's polar convention.
 public struct MetalSSBHigherOrder: Codable, Equatable, Sendable {
   public let order: Int
   public let symmetry: Int
-  public var magnitudeNanometers: Float
+  public var magnitudeAngstroms: Float
   public var angleRadians: Float
 
-  public init(order: Int, symmetry: Int, magnitudeNanometers: Float = 0, angleRadians: Float = 0) {
+  public init(order: Int, symmetry: Int, magnitudeAngstroms: Float = 0, angleRadians: Float = 0) {
     self.order = order
     self.symmetry = symmetry
-    self.magnitudeNanometers = magnitudeNanometers
+    self.magnitudeAngstroms = magnitudeAngstroms
     self.angleRadians = angleRadians
   }
 

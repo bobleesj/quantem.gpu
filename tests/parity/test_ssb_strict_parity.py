@@ -598,7 +598,7 @@ def _float32_key(point: dict) -> str:
 
     return "-".join(
         str(struct.unpack("<I", struct.pack("<f", float(point[key])))[0])
-        for key in ("c10Nanometers", "c12Nanometers", "phi12Radians")
+        for key in ("c10Angstroms", "c12Angstroms", "phi12Radians")
     )
 
 
@@ -719,8 +719,8 @@ def test_production_fit_matches_frozen_trajectory_pin(fit_trajectory: dict) -> N
         f"what changed. measured {digest}, pinned {pin['sequential']['trajectorySha256']}"
     )
     measured_optimum = [
-        float(sequential["bestC10Nanometers"]),
-        float(sequential["bestC12Nanometers"]),
+        float(sequential["bestC10Angstroms"]),
+        float(sequential["bestC12Angstroms"]),
         float(sequential["bestPhi12Radians"]),
     ]
     assert measured_optimum == [float(value) for value in pin["sequential"]["best"]]
@@ -764,12 +764,12 @@ def test_batched_pair_draw_is_a_different_trajectory(fit_trajectory: dict) -> No
     )
     assert comparison["maxLossDifferenceAtSameIndex"] > 0.0
     assert [
-        float(batched["bestC10Nanometers"]),
-        float(batched["bestC12Nanometers"]),
+        float(batched["bestC10Angstroms"]),
+        float(batched["bestC12Angstroms"]),
         float(batched["bestPhi12Radians"]),
     ] != [
-        float(sequential["bestC10Nanometers"]),
-        float(sequential["bestC12Nanometers"]),
+        float(sequential["bestC10Angstroms"]),
+        float(sequential["bestC12Angstroms"]),
         float(sequential["bestPhi12Radians"]),
     ], "the batched draw must not silently land on the sequential optimum"
     pin = json.loads(FIT_PIN.read_text(encoding="utf-8")) if FIT_PIN.is_file() else None

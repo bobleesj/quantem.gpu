@@ -128,9 +128,10 @@ extension MetalSSBSavedRun {
       rows: rows, columns: columns,
       phaseEncoding: "float32-le-row-major", phaseUnits: "rad", phase: phase,
       phaseSHA256: SSBPhaseArtifact.digest(phase), calibration: calibration,
-      c10Nanometers: Double(aberrations.c10Nanometers),
-      c12Nanometers: Double(aberrations.c12Nanometers),
-      phi12Radians: Double(aberrations.phi12Radians), rotationDegrees: Double(rotationDegrees),
+      c10Nanometers: Double(aberrations.c10Angstroms),
+      c12Nanometers: Double(aberrations.c12Angstroms),
+      phi12Radians: Double(aberrations.phi12Radians),
+      rotationDegrees: Double(scanDetectorRotationDegrees),
       provenance: ["producer": "Live4DSTEM", "backendRevision": backendRevision],
       runMetadata: try portableRunMetadata())
     try artifact.savePair(to: url)

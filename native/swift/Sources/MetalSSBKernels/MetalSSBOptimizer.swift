@@ -1,19 +1,20 @@
 import Foundation
 
+/// One fit candidate in the engine's units: C10 and C12 in Angstrom, phi12 in radians.
 public struct SSBOptimizationPoint: Codable, Equatable, Sendable {
-  public var c10Nanometers: Double
-  public var c12Nanometers: Double
+  public var c10Angstroms: Double
+  public var c12Angstroms: Double
   public var phi12Radians: Double
 
   public var phi12Degrees: Double { phi12Radians * 180 / .pi }
 
   public init(
-    c10Nanometers: Double,
-    c12Nanometers: Double,
+    c10Angstroms: Double,
+    c12Angstroms: Double,
     phi12Radians: Double
   ) {
-    self.c10Nanometers = c10Nanometers
-    self.c12Nanometers = c12Nanometers
+    self.c10Angstroms = c10Angstroms
+    self.c12Angstroms = c12Angstroms
     self.phi12Radians = phi12Radians
   }
 }
@@ -159,8 +160,8 @@ public struct SSBOptimizer: Sendable {
 
   private func uniformCandidate(random: inout SplitMix64) -> SSBOptimizationPoint {
     SSBOptimizationPoint(
-      c10Nanometers: random.uniform(-400, 400),
-      c12Nanometers: random.uniform(0, 100),
+      c10Angstroms: random.uniform(-400, 400),
+      c12Angstroms: random.uniform(0, 100),
       phi12Radians: random.uniform(-.pi / 2, .pi / 2)
     )
   }
@@ -182,12 +183,12 @@ public struct SSBOptimizer: Sendable {
     var winnerScore = -Double.infinity
     for _ in 0..<24 {
       let sampled = SSBOptimizationPoint(
-        c10Nanometers: sampleParzen(
-          good.map(\.c10Nanometers), bounds: -400...400,
+        c10Angstroms: sampleParzen(
+          good.map(\.c10Angstroms), bounds: -400...400,
           random: &random
         ),
-        c12Nanometers: sampleParzen(
-          good.map(\.c12Nanometers), bounds: 0...100,
+        c12Angstroms: sampleParzen(
+          good.map(\.c12Angstroms), bounds: 0...100,
           random: &random
         ),
         phi12Radians: sampleParzen(
@@ -197,13 +198,13 @@ public struct SSBOptimizer: Sendable {
       )
       let score =
         logDensity(
-          sampled.c10Nanometers,
-          good: good.map(\.c10Nanometers), bad: bad.map(\.c10Nanometers),
+          sampled.c10Angstroms,
+          good: good.map(\.c10Angstroms), bad: bad.map(\.c10Angstroms),
           bounds: -400...400
         )
         + logDensity(
-          sampled.c12Nanometers,
-          good: good.map(\.c12Nanometers), bad: bad.map(\.c12Nanometers),
+          sampled.c12Angstroms,
+          good: good.map(\.c12Angstroms), bad: bad.map(\.c12Angstroms),
           bounds: 0...100
         )
         + logDensity(
@@ -377,13 +378,13 @@ public struct SSBOptimizer: Sendable {
   }
 
   private func vector(_ point: SSBOptimizationPoint) -> [Double] {
-    [point.c10Nanometers, point.c12Nanometers, point.phi12Radians]
+    [point.c10Angstroms, point.c12Angstroms, point.phi12Radians]
   }
 
   private func point(_ values: [Double]) -> SSBOptimizationPoint {
     SSBOptimizationPoint(
-      c10Nanometers: values[0],
-      c12Nanometers: max(0, values[1]),
+      c10Angstroms: values[0],
+      c12Angstroms: max(0, values[1]),
       phi12Radians: values[2]
     )
   }
@@ -432,8 +433,8 @@ private struct Float32ObjectiveKey: Hashable {
   let sine: UInt32
 
   init(_ point: SSBOptimizationPoint) {
-    let c10 = Float(point.c10Nanometers)
-    let c12 = Float(point.c12Nanometers)
+    let c10 = Float(point.c10Angstroms)
+    let c12 = Float(point.c12Angstroms)
     let phi = Float(point.phi12Degrees) * .pi / 180
     self.c10 = c10.bitPattern
     self.c12 = c12.bitPattern

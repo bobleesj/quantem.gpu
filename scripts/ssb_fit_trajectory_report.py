@@ -24,7 +24,7 @@ from pathlib import Path
 def float32_key(point: dict) -> str:
     return "-".join(
         str(struct.unpack("<I", struct.pack("<f", float(point[key])))[0])
-        for key in ("c10Nanometers", "c12Nanometers", "phi12Radians")
+        for key in ("c10Angstroms", "c12Angstroms", "phi12Radians")
     )
 
 
@@ -39,8 +39,8 @@ def trial_digest(trials: list[dict]) -> str:
 
 def optimum(run: dict) -> tuple[float, float, float]:
     return (
-        float(run["bestC10Nanometers"]),
-        float(run["bestC12Nanometers"]),
+        float(run["bestC10Angstroms"]),
+        float(run["bestC12Angstroms"]),
         float(run["bestPhi12Radians"]),
     )
 
@@ -130,8 +130,8 @@ def _reference_candidates(entry: dict) -> tuple[str, ...]:
         return ()
     return (
         float32_key({
-            "c10Nanometers": params["C10_nm"],
-            "c12Nanometers": params["C12_nm"],
+            "c10Angstroms": params["C10_nm"],
+            "c12Angstroms": params["C12_nm"],
             "phi12Radians": float(params.get("phi12_deg", 0.0)) * 3.141592653589793 / 180.0,
         }),
     )
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     if native.get("caseJsonSha256"):
         print(f"case.json sha256 {native['caseJsonSha256']}")
 
-    print("\n  fit path                    C10 (nm)            C12 (nm)            phi12 (rad)         loss")
+    print("\n  fit path                    C10 (A)             C12 (A)             phi12 (rad)         loss")
     rows = [("sequential (production)", sequential)]
     if native.get("batched"):
         rows.append(("batched pair draw", native["batched"]))

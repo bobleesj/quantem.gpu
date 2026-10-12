@@ -52,12 +52,12 @@ def test_gpu_report_rejects_nondeterminism_and_impurity():
             "float32AliasBitwiseMismatches": 0,
         },
         "sequential": {
-            "bestC10Nanometers": 1.0,
-            "bestC12Nanometers": 0.0,
+            "bestC10Angstroms": 1.0,
+            "bestC12Angstroms": 0.0,
             "bestPhi12Radians": 0.0,
             "bestLoss": 0.5,
             "trials": [{
-                "c10Nanometers": 1.0, "c12Nanometers": 0.0,
+                "c10Angstroms": 1.0, "c12Angstroms": 0.0,
                 "phi12Radians": 0.0, "loss": 0.5, "stage": "global",
             }],
         },
