@@ -358,14 +358,15 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     result = SSBResult(object_wave=np.ones((2, 2), dtype=np.complex64), backend="cuda", aberrations=aberrations,
                        scan_detector_rotation_deg=200.0, loss=0.125, bright_field_radius_px=48.0)
     settings = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5), "scan_detector_rotation_deg": 200.0, "bright_field_radius_px": None}
-    write_fit_metadata(tmp_path, settings, result)
+    write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
     written = json.loads(config.read_text())
     block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.5, 0.5], "schema": FIT_SCHEMA, "aberrations": aberrations,
-             "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bright_field_radius_px": 48.0}
+             "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bright_field_radius_px": 48.0,
+             "bright_field_center_px": None, "detector_sampling_mrad": [0.55, 0.56]}
     assert written == {"human": {"notes": "kept"}, "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
     assert saved_fit(tmp_path) == block
     # a field the dashboard adds to a current block stays through the next fit
     written["computed"]["ssb"]["ran_at"] = "2026-10-11T12:00:00"
     config.write_text(json.dumps(written))
-    write_fit_metadata(tmp_path, settings, result)
+    write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
     assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}

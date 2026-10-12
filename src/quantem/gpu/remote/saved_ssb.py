@@ -8,7 +8,10 @@ from pathlib import Path
 
 import h5py
 
-from quantem.gpu.formats.ssb_phase import acquisition_identity, read_result
+from quantem.gpu.formats.ssb_phase import SCHEMA, acquisition_identity, read_result
+
+# The response of /api/ssb/saved-results: phase records of SCHEMA, phase and run metadata base64 encoded.
+RESPONSE_SCHEMA = "quantem.ssb-phase-results/2"
 
 
 class SavedSSBResults:
@@ -119,21 +122,20 @@ class SavedSSBResults:
                     raise ValueError("Saved SSB manifest exceeds 32 MB.")
                 candidates.append((manifest, json.loads(manifest.read_text())))
         if not candidates:
-            return {"schemaVersion": 1, "sourceIdentity": None, "results": []}
+            return {"schema": RESPONSE_SCHEMA, "source_identity": None, "results": []}
         identity = self._identity(master)
         results = []
         total_bytes = 0
         for manifest, hint in candidates:
-            if hint.get("sourceIdentity") != identity:
+            if hint.get("schema") != SCHEMA or hint.get("source_identity") != identity:
                 continue
             record, phase = read_result(manifest, identity)
             # Transport the validated artifact directly; neither G_k nor raw data.
             record = dict(record)
-            record.pop("phaseFile", None)
-            record.pop("format", None)
+            record.pop("phase_file", None)
             record["phase"] = base64.b64encode(phase.tobytes()).decode("ascii")
-            record["runMetadata"] = base64.b64encode(
-                json.dumps(record["runMetadata"], sort_keys=True).encode()
+            record["run_metadata"] = base64.b64encode(
+                json.dumps(record["run_metadata"], sort_keys=True).encode()
             ).decode("ascii")
             total_bytes += len(json.dumps(record))
             if total_bytes > 32 << 20:
@@ -141,4 +143,4 @@ class SavedSSBResults:
                     "Saved SSB results exceed the 32 MB transfer limit. Import individual result pairs."
                 )
             results.append(record)
-        return {"schemaVersion": 1, "sourceIdentity": identity, "results": results}
+        return {"schema": RESPONSE_SCHEMA, "source_identity": identity, "results": results}

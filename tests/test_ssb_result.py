@@ -6,7 +6,16 @@ import math
 import numpy as np
 import pytest
 
-from quantem.gpu.formats.ssb_phase import read_result
+from quantem.gpu.formats.ssb_phase import SCHEMA, read_result
+from quantem.gpu.ssb.persistence import FIT_SCHEMA
+
+
+def _fit(**changes):
+    """A stored fit block of the current schema, as SSB.reconstruct_series writes it."""
+    return {"schema": FIT_SCHEMA, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": [.25, .25],
+            "detector_sampling_mrad": [0.55, 0.56], "bright_field_center_px": [3, 4], "bright_field_radius_px": 5,
+            "scan_detector_rotation_deg": 192.0, "detector_transposed": False,
+            "aberrations": {"C10_nm": 7, "C12_nm": 2, "phi12_deg": math.degrees(.1)}, **changes}
 
 
 def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
@@ -25,11 +34,7 @@ def test_export_to_selected_catalogue_preserves_prior_results(tmp_path):
     run.mkdir()
     phase = np.array([[0, 1], [-1, 2]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase)
-    config = {"computed": {"bright_field_radius_px": 1, "bright_field_center_px": [1, 1], "ssb": {
-        "semiangle_mrad": 20, "scan_sampling_A": (0.5, 0.5), "voltage_kV": 200,
-        "aberrations": {"C10_nm": 0, "C12_nm": 0, "phi12_deg": 0},
-        "scan_detector_rotation_deg": 0,
-    }}}
+    config = {"computed": {"ssb": _fit(voltage_kV=200, scan_sampling_A=[0.5, 0.5])}}
     (run / "config.json").write_text(json.dumps(config))
     catalogue = tmp_path / "processed"
     first = export_result(run, master, output_folder=catalogue)
@@ -48,33 +53,64 @@ def test_real_pair_validation(tmp_path):
     import hashlib
     phase = np.array([[-0.0, -1.25], [3.5, 1e-20]], dtype="<f4")
     np.save(tmp_path / "phase.npy", phase, allow_pickle=False)
-    record = dict(format="live.ssb", schemaVersion=1, phaseFile="phase.npy",
-                  rows=2, columns=2, phaseEncoding="float32-le-row-major", phaseUnits="rad",
-                  sourceIdentity="a" * 64, phaseSHA256=hashlib.sha256(phase.tobytes()).hexdigest(),
-                  calibration={key: 1.0 for key in ("beamEnergyKeV", "semiangleMrad",
-                      "scanStepRowAngstroms", "scanStepColumnAngstroms", "detectorStepRowMrad", "detectorStepColumnMrad", "centerRow", "centerColumn")},
-                  c10Nanometers=0, c12Nanometers=0, phi12Radians=0, rotationDegrees=0,
+    record = dict(schema=SCHEMA, phase_file="phase.npy", shape=[2, 2], phase_encoding="float32-le-row-major",
+                  phase_unit="rad", source_identity="a" * 64, phase_sha256=hashlib.sha256(phase.tobytes()).hexdigest(),
+                  calibration=dict(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=[0.25, 0.25],
+                                   detector_sampling_mrad=[0.55, 0.56], bright_field_center_px=[3.0, 4.0]),
+                  aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
+                  scan_detector_rotation_deg=192.0, detector_transposed=False,
                   provenance={"producer": "test fixture"},
-                  runMetadata={"notes": "Exact phase, not a preview"})
+                  run_metadata={"notes": "Exact phase, not a preview"})
     manifest = tmp_path / "sample-01.json"
     manifest.write_text(json.dumps(record))
     _, restored = read_result(manifest, "a" * 64)
     assert restored.tobytes() == phase.tobytes()
     with pytest.raises(ValueError):
         read_result(manifest, "b" * 64)
-    for key, value in [("phaseFile", "../phase.npy"), ("phaseFile", "/phase.npy"),
-                       ("phaseSHA256", "0" * 64), ("phaseUnits", "unknown"),
-                       ("rows", 3), ("rows", 2.0), ("schemaVersion", 900),
-                       ("provenance", {}), ("calibration", {})]:
+    for key, value in [("phase_file", "../phase.npy"), ("phase_file", "/phase.npy"),
+                       ("phase_sha256", "0" * 64), ("phase_unit", "unknown"),
+                       ("shape", [3, 2]), ("shape", [2.0, 2]), ("schema", "quantem.ssb-phase/1"),
+                       ("provenance", {}), ("calibration", {}), ("detector_transposed", None),
+                       ("aberrations", {"C10_nm": 0.0, "C12_nm": 0.0, "phi12": 0.0})]:
         changed = copy.deepcopy(record)
         changed[key] = value
         manifest.write_text(json.dumps(changed))
-        with pytest.raises(ValueError):
+        with pytest.raises((ValueError, KeyError, TypeError)):
             read_result(manifest)
     manifest.write_text(json.dumps(record))
     (tmp_path / "phase.npy").unlink()
     with pytest.raises(FileNotFoundError):
         read_result(manifest)
+
+
+def test_export_takes_only_a_current_fit_and_its_physical_rotation(tmp_path):
+    """An exported record states the fit's own calibration, rotation and detector sampling.
+
+    The version-1 export copied the angle below 180 as the rotation without the reversal flag (180 degrees off for a
+    reversed scan), computed the detector sampling from another radius than the fit used, and copied aberrations from
+    a block of any schema.
+    """
+    import h5py
+    from quantem.gpu.formats.ssb_phase import export_result
+
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(tmp_path / "scan_data.h5", "w") as handle:
+        handle["data"] = np.ones((2, 2, 2), dtype=np.uint16)
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
+    run = tmp_path / "run"
+    run.mkdir()
+    np.save(run / "ssb_phase.npy", np.zeros((2, 2), np.float32))
+    earlier = {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.25, "aberration_unit": "nm",
+               "aberrations": {"C10": 7, "C12": 2, "phi12": .1}, "rotation_angle_deg": 12.0, "com_reversed": True}
+    (run / "config.json").write_text(json.dumps({"computed": {"bf_radius": 5, "bf_center": [3, 4], "ssb": earlier}}))
+    with pytest.raises(ValueError, match="no current SSB fit"):
+        export_result(run, master, tmp_path / "out.json")
+    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
+    record, _ = read_result(export_result(run, master, tmp_path / "out.json"))
+    assert record["scan_detector_rotation_deg"] == 192.0 and record["detector_transposed"] is False
+    assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]
+    assert record["aberrations"] == {"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": math.degrees(.1)}
 
 
 def test_numbered_exports_respect_selected_output_folder(tmp_path):
@@ -95,11 +131,7 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     run.mkdir(parents=True)
     phase = np.array([[-0., -1.25], [3.5, 1e-20]], dtype=np.float32)
     np.save(run / "ssb_phase.npy", phase)
-    config = {"source_master": str(master), "computed": {
-        "bright_field_center_px": [3, 4], "bright_field_radius_px": 5,
-        "ssb": {"voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": (.25, .25),
-                "scan_detector_rotation_deg": 12,
-                "aberrations": {"C10_nm": 7, "C12_nm": 2, "phi12_deg": math.degrees(.1)}}}}
+    config = {"source_master": str(master), "computed": {"ssb": _fit()}}
     (run / "config.json").write_text(json.dumps(config))
     first = export_result(run, master, output_folder=output_folder)
     assert first == output_folder / "gold_master/ssb.json"

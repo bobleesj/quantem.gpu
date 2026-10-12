@@ -74,6 +74,25 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `parallax.run(center=, bf_radius=, sampling_radius=)` becomes
   `parallax.run(bright_field_center_px=, bright_field_radius_px=)`; the one
   radius selects the pixels used and defaults to the detected disk.
+- The portable SSB phase record (`ssb.json` beside `ssb.npy`) is
+  `"schema": "quantem.ssb-phase/2"` with snake_case keys of the shared
+  vocabulary: `format`/`schemaVersion` become `schema`, `sourceIdentity`
+  `source_identity`, `rows`/`columns` `shape`, `phaseFile` `phase_file`,
+  `phaseEncoding` `phase_encoding`, `phaseUnits` `phase_unit`, `phaseSHA256`
+  `phase_sha256`, `runMetadata` `run_metadata`; in `calibration`
+  `beamEnergyKeV` becomes `voltage_kV`, `semiangleMrad` `semiangle_mrad`, the
+  two scan steps `scan_sampling_A`, the two detector steps
+  `detector_sampling_mrad`, `centerRow`/`centerColumn`
+  `bright_field_center_px`, `brightfieldRadiusPixels` `bright_field_radius_px`,
+  `excludedDetectorPixels` `excluded_detector_pixels`; `c10Nanometers`,
+  `c12Nanometers`, `phi12Radians` become `aberrations` with `C10_nm`, `C12_nm`,
+  `phi12_deg`; `rotationDegrees` becomes `scan_detector_rotation_deg` with
+  `detector_transposed`. Version-1 records are refused. The response of
+  `/api/ssb/saved-results` is `"schema": "quantem.ssb-phase-results/2"` with
+  `source_identity`. The exporter's flag `--expected-source-id` becomes
+  `--expected-source-identity`.
+- The stored fit block written by `SSB.reconstruct_series` also holds
+  `bright_field_center_px` and `detector_sampling_mrad`.
 - `SSBResult.scan_sampling_A` becomes `object_sampling_A`: the pixel size of
   the reconstructed image, always a `[row, col]` pair (it was the scan step
   divided by the upsampling factor under the scan step's name, a scalar when
@@ -133,8 +152,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   message. The flag travels with the angle (`detector_transposed`) and SSB
   refuses True.
 - The portable SSB phase record wrote the angle below 180 without the
-  reversal flag as its rotation, 180 degrees off for a reversed scan. It
-  writes the physical angle.
+  reversal flag as its rotation, 180 degrees off for a reversed scan, gave the
+  detector step as semiangle over a radius other than the one the fit used,
+  and copied aberrations from a fit block of any schema (Angstrom under nm
+  keys in older blocks). It now exports only a current fit, with its physical
+  rotation and the detector sampling the fit used.
 - A DM4 detector step read 1/nm when loaded and 1/angstrom after a `.qem`
   round trip, a factor of 10 with a different unit string. Both now read
   1/angstrom (`detector_sampling_inv_A`); 1/Å and 1/µm axes are read too.
