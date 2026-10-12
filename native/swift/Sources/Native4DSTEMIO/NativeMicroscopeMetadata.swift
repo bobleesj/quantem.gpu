@@ -4,7 +4,7 @@ import Foundation
 /// Unknown, nonfinite and nonpositive measurements remain absent; raw metadata
 /// is retained by the catalog for inspection rather than promoted to calibration.
 public struct NativeMicroscopeMetadata: Sendable {
-  public let beamEnergyKeV: Double?
+  public let voltageKV: Double?
   public let semiConvergenceAngleMrad: Double?
   public let dwellTimeMicroseconds: Double?
   public let cameraLengthMillimeters: Double?
@@ -26,7 +26,7 @@ public struct NativeMicroscopeMetadata: Sendable {
     let arina =
       metadata["entry/instrument/detector/description"]?.uppercased().contains("ARINA") == true
     let detector = "entry/instrument/detector/"
-    beamEnergyKeV =
+    voltageKV =
       quantity(root + "electron_source/accelerating_voltage", factors: ["V": 0.001, "kV": 1])
       ?? quantity("entry/instrument/detector/incident_energy", factors: ["eV": 0.001, "keV": 1])
       ?? (arina

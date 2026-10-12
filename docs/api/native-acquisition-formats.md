@@ -370,14 +370,14 @@ an inline unit. XML/EMD readers normalize their known fields to this contract.
 
 | Normalized path | Accepted units | Typed output |
 | --- | --- | --- |
-| `electron_source/accelerating_voltage` | V, kV | `beamEnergyKeV` |
+| `electron_source/accelerating_voltage` | V, kV | `voltageKV` |
 | `illumination_system/semi_convergence_angle` | rad, mrad | `semiConvergenceAngleMrad` |
 | `scan_controller/regular_scan/dwell_time` | s, ms, us, µs, μs | `dwellTimeMicroseconds` |
 | `imaging_system/camera_length` | m, cm, mm | `cameraLengthMillimeters` |
 | `imaging_system/reciprocal_pixel_size_y` | rad, mrad | `angularRowMrad` per pixel |
 | `imaging_system/reciprocal_pixel_size_x` | rad, mrad | `angularColumnMrad` per pixel |
 
-Beam energy also accepts `entry/instrument/detector/incident_energy` in eV/keV.
+`voltageKV` also accepts `entry/instrument/detector/incident_energy` in eV/keV.
 The NXem companion must match scan dimensions; unreadable or mismatched
 companions generate a metadata warning rather than contributing calibration.
 
