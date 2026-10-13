@@ -36,9 +36,3 @@ def hot_pixel_record(pixel_mask, method: str, *, backend: str) -> dict:
         "stage": "gpu_load_before_resident_encoding" if applied else "none",
         "backend": backend,
     }
-
-
-def correction_is_applied(metadata: dict) -> bool:
-    """Return whether resident counts already include pixel correction."""
-    record = metadata.get("hot_pixel_correction")
-    return isinstance(record, dict) and record.get("applied") is True
