@@ -21,8 +21,6 @@ the work performed without introducing another public wrapper or module.
 
 App workflow sequencing, settings and preview/save UI stay in the consumer.
 These filenames do not introduce different public types or duplicate kernels.
-`loadEncoded` remains a deprecated forwarder for existing consumers; new callers
-use `MetalEncodedSource.load(files:indexDirectory:device:)`.
 
 Run `bash scripts/check_metal_scientific_numerics.sh` for the frozen image,
 calibrated-detector and encoded-HDF5 checks without a consumer app or XCTest.

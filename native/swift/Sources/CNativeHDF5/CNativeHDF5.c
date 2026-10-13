@@ -1549,11 +1549,6 @@ void qh5_free_error(char *error_message) {
   free(error_message);
 }
 
-int qh5_chunk_writer_open(const char *path, const uint64_t shape[4],
-  qh5_chunk_writer **output, char **error_message) {
-  return qh5_chunk_writer_open_typed(path, shape, 2, output, error_message);
-}
-
 int qh5_chunk_writer_open_typed(const char *path, const uint64_t shape[4],
   uint32_t item_bytes, qh5_chunk_writer **output, char **error_message) {
   if (item_bytes != 2 && item_bytes != 4)
