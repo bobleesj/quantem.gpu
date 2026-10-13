@@ -625,13 +625,6 @@ class MPSStreamedCounts:
             release_buffer(sums)
         return totals
 
-    def detector_delta_device(self, mask, previous=None, output=None):
-        """Update an exact uint64 detector image from changed mask membership."""
-        self._check_resident()
-        if previous is None or output is None:
-            return self.detector_sum_device(mask)
-        return spatial.detector_delta(self, mask, previous, output)
-
     def release_scans_before(self, stop: int) -> None:
         """Free the chunks that end by scan ``stop``, so a source read once in scan order shrinks as it is read.
 

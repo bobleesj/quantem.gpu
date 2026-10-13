@@ -200,60 +200,6 @@ def detector_sum(resident, mask):
             release_buffer(buffer)
 
 
-def detector_delta(resident, mask, previous, output):
-    """Decode changed columns only and add their signed counts on Metal."""
-    masks = [np.asarray(value) for value in (mask, previous)]
-    if any(
-        value.shape != resident.shape[2:] or not np.all((value == 0) | (value == 1))
-        for value in masks
-    ):
-        raise ValueError(
-            "Current and previous masks must be binary and match the detector shape."
-        )
-    if (
-        output.is_released
-        or output.shape != resident.shape[:2]
-        or output.dtype != np.uint64
-    ):
-        raise ValueError(
-            "Pass the live uint64 output returned by detector_delta_device."
-        )
-    difference = (
-        (masks[0].astype(np.int8) - masks[1].astype(np.int8)) * resident.valid_pixels
-    ).ravel()
-    selected = np.flatnonzero(difference).astype(np.uint32)
-    if not selected.size:
-        return output
-    if selected.size > 4096:
-        fresh = resident.detector_sum_device(mask)
-        try:
-            command = metal_queue().commandBuffer()
-            blit = command.blitCommandEncoder()
-            blit.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
-                fresh._mtl, 0, output._mtl, 0, output.nbytes
-            )
-            blit.endEncoding()
-            complete_command(command, "camera detector rebase")
-        finally:
-            fresh.release()
-        return output
-    buffers = []
-    try:
-        ids = upload_shared(selected, "camera changed pixels")
-        buffers.append(ids)
-        signs = upload_shared(difference[selected].astype(np.int32), "camera changed signs")
-        buffers.append(signs)
-        resident._clear_errors()
-        command = metal_queue().commandBuffer()
-        _encode_delta(resident, command, ids, signs, output._mtl, selected.size)
-        complete_command(command, "camera detector delta")
-        resident._check_errors()
-        return output
-    finally:
-        for buffer in buffers:
-            release_buffer(buffer)
-
-
 def weighted_sum(resident, weights) -> np.ndarray:
     """Return exact uint64 per-scan sums of nonnegative integer pixel weights times counts.
 
