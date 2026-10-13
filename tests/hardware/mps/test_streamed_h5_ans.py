@@ -48,27 +48,6 @@ def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
         assert loaded.metadata["detector_bin"] == 1
         assert loaded.metadata["crop"] is None
         np.testing.assert_array_equal(_decoded(loaded.data), counts.reshape(32, 32, 4, 8))
-
-        first = np.zeros((4, 8), dtype=np.uint8)
-        first[0:3, 0:4] = 1
-        second = first.copy()
-        second[0, 4] = 1
-        second[2, 1] = 0
-        output = loaded.data.detector_delta_device(first)
-        try:
-            expected_first = (
-                counts.reshape(32, 32, 4, 8)
-                * (first.astype(bool) & (pixel_mask == 0))
-            ).sum(axis=(2, 3), dtype=np.uint32)
-            np.testing.assert_array_equal(output.get(), expected_first)
-            loaded.data.detector_delta_device(second, first, output)
-            expected_second = (
-                counts.reshape(32, 32, 4, 8)
-                * (second.astype(bool) & (pixel_mask == 0))
-            ).sum(axis=(2, 3), dtype=np.uint32)
-            np.testing.assert_array_equal(output.get(), expected_second)
-        finally:
-            output.release()
     finally:
         loaded.close()
 

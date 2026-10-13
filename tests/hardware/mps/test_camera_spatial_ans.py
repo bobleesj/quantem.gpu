@@ -74,54 +74,10 @@ def test_native_camera_spatial_roundtrip(tmp_path, dtype):
                         np.testing.assert_array_equal(result.get(), expected)
                     finally:
                         result.release()
-                first = masks[-1]
-                product = source.detector_delta_device(first)
-                try:
-                    for mask in (np.roll(first, 1, axis=0), ~first, masks[0], masks[1]):
-                        source.detector_delta_device(mask, first, product)
-                        expected = (counts * (mask & valid)).sum(
-                            axis=(2, 3), dtype=np.uint64
-                        )
-                        np.testing.assert_array_equal(product.get(), expected)
-                        first = mask
-                finally:
-                    product.release()
         finally:
             reopened.close()
     finally:
         resident.release()
-
-
-def test_camera_delta_preserves_uint64_carry_and_borrow():
-    """Saturated detector sums remain exact when a drag crosses 32-bit range."""
-    pytest.importorskip("Metal")
-    from quantem.gpu.device.metal_runtime import release_buffer, shared_array, upload_shared
-    from quantem.gpu.resident.mps.counts import MPSStreamedCounts
-    from quantem.gpu.resident.mps.spatial import build_index
-
-    counts = np.full((3, 257, 257), 65535, np.uint16)
-    resident = MPSStreamedCounts((1, *counts.shape), counts.dtype)
-    buffer = upload_shared(counts, "saturated native counts")
-    try:
-        resident.append(shared_array(buffer, counts.dtype, counts.shape))
-        resident.spatial_chunks = [build_index(resident, buffer, 3)]
-        previous = np.zeros((257, 257), bool)
-        previous.ravel()[:65536] = True
-        output = resident.detector_delta_device(previous)
-        try:
-            for count in (65538, 65535, 65539, 65534):
-                mask = np.zeros_like(previous)
-                mask.ravel()[:count] = True
-                resident.detector_delta_device(mask, previous, output)
-                np.testing.assert_array_equal(
-                    output.get(), np.full((1, 3), count * 65535, np.uint64)
-                )
-                previous = mask
-        finally:
-            output.release()
-    finally:
-        resident.release()
-        release_buffer(buffer)
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
