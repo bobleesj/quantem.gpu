@@ -72,43 +72,6 @@ def _format_optimum(run: dict) -> str:
     return f"{c10:<19.12g} {c12:<19.12g} {phi12:<19.12g} {run['bestLoss']:.12g}"
 
 
-def _trajectory_comparison(left: dict, right: dict) -> dict:
-    """Compare two native runs index by index without a shared artifact report."""
-
-    left_trials = left["trials"]
-    right_trials = right["trials"]
-    shared = min(len(left_trials), len(right_trials))
-    different_points = 0
-    different_losses = 0
-    max_loss_delta = 0.0
-    left_best = left_trials[0]["loss"]
-    right_best = right_trials[0]["loss"]
-    best_so_far_different = 0
-    for index in range(shared):
-        one = left_trials[index]
-        two = right_trials[index]
-        if float32_key(one) != float32_key(two):
-            different_points += 1
-        if one["loss"] != two["loss"]:
-            different_losses += 1
-            max_loss_delta = max(max_loss_delta, abs(one["loss"] - two["loss"]))
-        left_best = min(left_best, one["loss"])
-        right_best = min(right_best, two["loss"])
-        if left_best != right_best:
-            best_so_far_different += 1
-    return {
-        "trialsCompared": shared,
-        "trialsWithDifferentFloat32Point": different_points,
-        "trialsWithDifferentLossAtSameIndex": different_losses,
-        "maxLossDifferenceAtSameIndex": max_loss_delta,
-        "bestSoFarDifferentCount": best_so_far_different,
-        "finalBestPointDeltaC10": optimum(right)[0] - optimum(left)[0],
-        "finalBestPointDeltaC12": optimum(right)[1] - optimum(left)[1],
-        "finalBestPointDeltaPhi12": optimum(right)[2] - optimum(left)[2],
-        "finalBestLossDelta": float(right["bestLoss"]) - float(left["bestLoss"]),
-    }
-
-
 def _print_comparison(label: str, entry: dict) -> None:
     print(f"    {label}:")
     print(f"      trials compared                            {entry['trialsCompared']}")
