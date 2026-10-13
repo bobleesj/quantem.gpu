@@ -402,4 +402,3 @@ kernel void NAME(constant FusedTranslatedSource *sources [[buffer(0)]],constant 
 }
 FUSED_KERNEL(sample_fused_u8,uchar)
 FUSED_KERNEL(sample_fused_u16,ushort)
-FUSED_KERNEL(sample_fused_u32,uint)

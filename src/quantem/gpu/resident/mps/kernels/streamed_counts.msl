@@ -314,30 +314,6 @@ kernel void streamed_counts_selected_reduce(
     output[pixel] = total;
 }
 
-kernel void streamed_counts_reduce(
-    device const uchar *counts [[buffer(0)]],
-    device const uchar *mask [[buffer(1)]],
-    device ulong *output [[buffer(2)]],
-    constant ulong4 &p [[buffer(3)]],
-    uint scan [[threadgroup_position_in_grid]],
-    uint lane [[thread_index_in_threadgroup]]) {
-    ulong subtotal = 0;
-    for (uint pixel = lane; pixel < p.x; pixel += 128) {
-        ulong at = ulong(scan) * p.x + pixel;
-        uint value = p.y == 1 ? uint(counts[at])
-            : uint(reinterpret_cast<device const ushort *>(counts)[at]);
-        if (mask[pixel]) subtotal += value;
-    }
-    threadgroup ulong partials[128];
-    partials[lane] = subtotal;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint stride = 64; stride > 0; stride >>= 1) {
-        if (lane < stride) partials[lane] += partials[lane + stride];
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lane == 0) output[p.z + scan] = partials[0];
-}
-
 // Exact per-frame code sums over listed detector pixels, decoding only their
 // streams. A threadgroup of 256 lanes decodes 256 listed pixels of one block in
 // lockstep; SIMD sums combine lanes per frame, eight SIMD partials combine in

@@ -27,68 +27,6 @@ kernel void empad_dark_mean(device const float* input [[buffer(0)]],
     output[pixel] = sum;
 }
 
-// A block is one 128-pixel detector row. Common leading/trailing XOR bits
-// disappear from storage; no floating-point arithmetic occurs during packing.
-kernel void empad_describe(device const uint* input [[buffer(0)]],
-                           device uint4* descriptors [[buffer(1)]],
-                           uint block [[thread_position_in_grid]]) {
-    uint base = input[block * 128];
-    uint changed = 0;
-    for (uint i = 0; i < 128; ++i) changed |= input[block * 128 + i] ^ base;
-    uint shift = changed ? ctz(changed) : 0;
-    uint width = changed ? 32 - clz(changed) - shift : 0;
-    descriptors[block] = uint4(base, width, shift, 0);
-}
-
-kernel void empad_pack(device const uint* input [[buffer(0)]],
-                      device const uint4* descriptors [[buffer(1)]],
-                      device uint* packed [[buffer(2)]],
-                      uint block [[thread_position_in_grid]]) {
-    uint4 d = descriptors[block];
-    if (!d.y) return;
-    for (uint word = 0; word < d.y * 4; ++word) packed[d.w + word] = 0;
-    for (uint i = 0; i < 128; ++i) {
-        uint delta = (input[block * 128 + i] ^ d.x) >> d.z;
-        uint bit = i * d.y, word = d.w + bit / 32, shift = bit % 32;
-        packed[word] |= delta << shift;
-        if (shift + d.y > 32) packed[word + 1] |= delta >> (32 - shift);
-    }
-}
-
-// One SIMD group owns a complete row. Contiguous lanes read contiguous words,
-// and each output word has exactly one writer (no atomics or dense expansion).
-kernel void empad_describe_simd(device const uint* input [[buffer(0)]],
-                               device uint4* descriptors [[buffer(1)]],
-                               uint block [[threadgroup_position_in_grid]],
-                               ushort lane [[thread_index_in_simdgroup]]) {
-    uint base = input[block * 128], changed = 0;
-    for (uint i = lane; i < 128; i += 32) changed |= input[block * 128 + i] ^ base;
-    changed = simd_or(changed);
-    if (lane == 0) {
-        uint shift = changed ? ctz(changed) : 0;
-        descriptors[block] = uint4(base, changed ? 32 - clz(changed) - shift : 0, shift, 0);
-    }
-}
-
-kernel void empad_pack_simd(device const uint* input [[buffer(0)]],
-                          device const uint4* descriptors [[buffer(1)]],
-                          device uint* packed [[buffer(2)]],
-                          uint block [[threadgroup_position_in_grid]],
-                          ushort lane [[thread_index_in_simdgroup]]) {
-    uint4 d = descriptors[block];
-    if (!d.y) return;
-    for (uint word = lane; word < d.y * 4; word += 32) {
-        uint bit = word * 32, pixel = bit / d.y, skip = bit % d.y;
-        uint value = ((input[block * 128 + pixel] ^ d.x) >> d.z) >> skip;
-        uint filled = d.y - skip;
-        while (filled < 32 && ++pixel < 128) {
-            value |= ((input[block * 128 + pixel] ^ d.x) >> d.z) << filled;
-            filled += d.y;
-        }
-        packed[d.w + word] = value;
-    }
-}
-
 inline uint empad_word(device const uint* packed, device const uint4* descriptors,
                        uint index) {
     if (is_function_constant_defined(empad_decoded_words) && empad_decoded_words)
