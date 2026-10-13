@@ -414,10 +414,6 @@ function parseH5BlockIndex(buffer: ArrayBuffer, name: string): { meta: H5BlockIn
   return { meta, blockMeta };
 }
 
-export function readH5BlockIndexMetadata(buffer: ArrayBuffer, name: string): H5BlockIndexMetadata {
-  return parseH5BlockIndex(buffer, name).meta;
-}
-
 export function readH5VolumeFromBlockIndex(h5Buffer: ArrayBuffer, indexBuffer: ArrayBuffer, name: string): H5Volume {
   const { meta, blockMeta } = parseH5BlockIndex(indexBuffer, name);
   const fileBytes = new Uint8Array(h5Buffer);
