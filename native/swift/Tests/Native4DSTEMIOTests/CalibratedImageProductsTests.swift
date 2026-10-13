@@ -3,9 +3,7 @@ import Metal
 import Metal4DSTEMStreamingIO
 import MetalScientificNumerics
 
-#if !CALIBRATED_IMAGE_CHECK
-  import XCTest
-#endif
+import XCTest
 
 /// Independent full-frame reference, crossing both calibration and decode batch boundaries.
 private func checkCalibratedImageProducts() throws {
@@ -119,15 +117,9 @@ private func checkCalibratedImageProducts() throws {
   )
 }
 
-#if CALIBRATED_IMAGE_CHECK
-  @main struct CalibratedImageCheck {
-    static func main() throws { try checkCalibratedImageProducts() }
+final class CalibratedImageProductsTests: XCTestCase {
+  func testBatchProductsMatchIndependentReference() throws {
+    guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Requires Metal") }
+    try checkCalibratedImageProducts()
   }
-#else
-  final class CalibratedImageProductsTests: XCTestCase {
-    func testBatchProductsMatchIndependentReference() throws {
-      guard MTLCreateSystemDefaultDevice() != nil else { throw XCTSkip("Requires Metal") }
-      try checkCalibratedImageProducts()
-    }
-  }
-#endif
+}

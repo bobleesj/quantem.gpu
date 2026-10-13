@@ -40,20 +40,6 @@ private struct ANSFixture: Decodable {
 }
 
 final class MetalANSCountTests: XCTestCase {
-  private func littleEndianData<T: FixedWidthInteger>(_ values: [T]) -> Data {
-    var result = Data()
-    result.reserveCapacity(values.count * MemoryLayout<T>.stride)
-    for value in values {
-      var little = value.littleEndian
-      withUnsafeBytes(of: &little) { result.append(contentsOf: $0) }
-    }
-    return result
-  }
-
-  private func digest(_ data: Data) -> String {
-    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-  }
-
   private func literalArrays(
     shape: [Int], blockFrames: Int = 512, value: UInt16 = 7
   ) throws -> MetalANSCountArrays {

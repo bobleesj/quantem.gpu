@@ -526,41 +526,6 @@ struct PairedRuntimeTANSPolarPlan: Sendable {
       layoutKind: layoutKind, validPixels: validPixels)
   }
 
-  /// Reconstruct the complete signed detector delta exactly on the CPU.
-  func reconstructedDelta() -> [Int32] {
-    guard usedIndex, detectorRows == 192, detectorColumns == 192 else {
-      var result = [Int32](repeating: 0, count: max(0, detectorRows * detectorColumns))
-      for (pixel, coefficient) in zip(residualPixels, residualCoefficients)
-      where Int(pixel) < result.count {
-        result[Int(pixel)] += coefficient
-      }
-      return result
-    }
-    guard
-      let layout = Self.indexLayout(
-        leafPixels: leafPixelCount, layoutKind: layoutKind)
-    else { return [] }
-    var fields = [Int32](repeating: 0, count: layout.leaves + layout.roots)
-    for (field, coefficient) in zip(selectedFields, fieldCoefficients) {
-      guard Int(field) < fields.count else { return [] }
-      fields[Int(field)] = coefficient
-    }
-    var result = [Int32](repeating: 0, count: detectorRows * detectorColumns)
-    for ordinal in layout.permutation.indices {
-      let pixel = Int(layout.permutation[ordinal])
-      if pixel >= 0 && validPixels[pixel] != 0 {
-        let leaf = ordinal / leafPixelCount
-        let root = leaf / Self.rootLeaves
-        result[pixel] = fields[leaf] + fields[layout.leaves + root]
-      }
-    }
-    for (pixel, coefficient) in zip(residualPixels, residualCoefficients) {
-      guard Int(pixel) < result.count else { return [] }
-      result[Int(pixel)] += coefficient
-    }
-    return result
-  }
-
   private struct OrderedPixel {
     let pixel: Int
     let radialBand: Int
