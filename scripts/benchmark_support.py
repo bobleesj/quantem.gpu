@@ -6,7 +6,6 @@ import json
 import math
 import os
 import platform
-import re
 import resource
 import subprocess
 import sys
@@ -55,20 +54,6 @@ def _write_json_report(report: dict[str, Any], path: Path | None) -> None:
         finally:
             temporary.unlink(missing_ok=True)
     print(rendered, end="")
-
-
-def _numeric_delta(
-    before: dict[str, int | float | None],
-    after: dict[str, int | float | None],
-) -> dict[str, int | float]:
-    """Subtract matching numeric telemetry fields."""
-
-    return {
-        name: after_value - before_value
-        for name, before_value in before.items()
-        if isinstance(before_value, (int, float))
-        and isinstance((after_value := after.get(name)), (int, float))
-    }
 
 
 def _nearest_rank_summary(values: list[float]) -> dict[str, float | int]:
@@ -172,80 +157,6 @@ def _swap_used_bytes() -> int | None:
         return int(psutil.swap_memory().used)
     except (ImportError, AttributeError, OSError):
         return None
-
-
-def _darwin_vm_stat() -> dict[str, int]:
-    """Return byte-normalized macOS VM counters when ``vm_stat`` is available."""
-
-    if sys.platform != "darwin":
-        return {}
-    try:
-        output = subprocess.run(
-            ["vm_stat"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return {}
-    lines = output.splitlines()
-    if not lines:
-        return {}
-    match = re.search(r"page size of (\d+) bytes", lines[0])
-    if match is None:
-        return {}
-    page_size = int(match.group(1))
-    names = {
-        "Pageouts": "pageout_bytes",
-        "Swapins": "swapin_bytes",
-        "Swapouts": "swapout_bytes",
-        "Pages occupied by compressor": "compressor_bytes",
-    }
-    counters: dict[str, int] = {"page_size_bytes": page_size}
-    for line in lines[1:]:
-        key, separator, raw_value = line.partition(":")
-        output_name = names.get(key.strip())
-        if not separator or output_name is None:
-            continue
-        value = raw_value.strip().rstrip(".")
-        if value.isdigit():
-            counters[output_name] = int(value) * page_size
-    return counters
-
-
-def _system_memory_snapshot() -> dict[str, int | float | None]:
-    """Return whole-system pressure, swap, pageout, and compressor counters."""
-
-    snapshot: dict[str, int | float | None] = {
-        "physical_total_bytes": None,
-        "available_bytes": None,
-        "memory_used_percent": None,
-        "swap_used_bytes": None,
-        "swapin_bytes": None,
-        "swapout_bytes": None,
-        "pageout_bytes": None,
-        "compressor_bytes": None,
-        "page_size_bytes": None,
-    }
-    try:
-        import psutil
-
-        virtual = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-        snapshot.update(
-            {
-                "physical_total_bytes": int(virtual.total),
-                "available_bytes": int(virtual.available),
-                "memory_used_percent": float(virtual.percent),
-                "swap_used_bytes": int(swap.used),
-                "swapin_bytes": int(swap.sin),
-                "swapout_bytes": int(swap.sout),
-            }
-        )
-    except (ImportError, AttributeError, OSError):
-        pass
-    snapshot.update(_darwin_vm_stat())
-    return snapshot
 
 
 def _memory_snapshot(backend: str) -> dict[str, int | None]:
