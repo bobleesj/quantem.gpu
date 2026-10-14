@@ -39,7 +39,7 @@ def test_bin_is_the_exact_block_sum_of_integer_counts(library, axes, binned):
     data = torch.as_tensor(counts, device="cuda") if library == "torch" else cp.asarray(counts)
     out = bin(data, factor=4, axes=axes)
     assert type(out) is type(data)
-    assert out.dtype == (torch.int64 if library == "torch" else cp.uint32)
+    assert out.dtype == (torch.int64 if library == "torch" else cp.uint64)
     host = out.cpu().numpy() if library == "torch" else cp.asnumpy(out)
     np.testing.assert_array_equal(host, _block_sum(counts.astype(np.int64), 4, binned))
 
@@ -60,3 +60,16 @@ def test_partial_edges_keep_the_trailing_pixels_and_mean_divides_by_the_block():
         bin(data, factor=2, edge="partial", reduction="mean")
     with pytest.raises(ValueError, match="4D"):
         bin(data, factor=2, axes="scan")
+
+
+def test_signed_and_wide_counts_sum_without_wrapping():
+    """Negative values stay negative and uint32 counts past 2^32 per block stay whole."""
+    _require_cuda()
+    from quantem.gpu.io.load import bin
+
+    signed = cp.asarray(np.array([[-1, -1], [0, 0]], dtype=np.int16))
+    assert int(bin(signed, factor=2)[0, 0]) == -2
+    wide = cp.asarray(np.array([[4_000_000_000, 4_000_000_000], [1, 1]], dtype=np.uint32))
+    assert int(bin(wide, factor=2)[0, 0]) == 8_000_000_002
+    half = torch.full((2, 2), 30000, dtype=torch.float16, device="cuda")
+    assert float(bin(half, factor=2, dtype=torch.float32)[0, 0]) == 120000.0

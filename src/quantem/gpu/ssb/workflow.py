@@ -143,8 +143,8 @@ class SSB:
         does not compute it a second time.
 
     An encoded dataset stays open and the caller's. A result saved from it with ``find_aberrations(save_to=...)`` is
-    identified by the data (shape, dtype, the mean pattern's hash and the scan region) instead of by a file, and reused
-    by a later session on the same data.
+    identified by the data (shape, dtype, the mean pattern's hash, two integer sums of the decoded counts and the scan
+    region), with no file to inspect, and reused by a later session on the same data.
 
     Examples
     --------
@@ -200,9 +200,19 @@ class SSB:
                 )
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
+                # the mean pattern may be the caller's, so the decoded counts are identified too: their total, and their
+                # total weighted by scan position (1, 2, ...), exact integers modulo 2^64
+                frames = data.reshape(data.shape[0] * data.shape[1], -1)
+                if self.backend == "cuda":
+                    per_frame = frames.sum(axis=1, dtype=cp.uint64)
+                    positions = cp.arange(1, per_frame.size + 1, dtype=cp.uint64)
+                else:
+                    per_frame = frames.sum(dim=1, dtype=torch.int64)
+                    positions = torch.arange(1, per_frame.numel() + 1, dtype=torch.int64, device=per_frame.device)
                 self.resident_identity = {
                     "shape": list(shape), "dtype": dtype,
                     "mean_pattern_sha256": hashlib.sha256(np.ascontiguousarray(mean_pattern, dtype=np.float64).tobytes()).hexdigest(),
+                    "bright_field_sums": [int(per_frame.sum()) % 2**64, int((per_frame * positions).sum()) % 2**64],
                 }
             elif self.scan_region is not None:
                 row_start, row_stop, col_start, col_stop = self.scan_region
@@ -418,6 +428,7 @@ class SSB:
                     "detector_bin": self.source_detector_bin,
                     "source_provenance": self.source_provenance,
                     **({"scan_region": self.scan_region} if self.scan_region is not None else {}),
+                    **({"resident": self.resident_identity} if self.resident_identity is not None else {}),
                 },
                 "instrument": {
                     "voltage_kV": self.voltage_kV,
@@ -821,7 +832,8 @@ class SSB:
                 backend=self.backend, voltage_kV=self.voltage_kV,
                 semiangle_mrad=self.semiangle_mrad, scan_sampling_A=self.scan_sampling_A,
                 detector_sampling_mrad=detector_sampling_mrad,
-                aberrations=self.aberrations if self._aberrations_explicit else None,
+                # a refit with no trials starts from the session's aberrations, however they were set
+                aberrations=self.aberrations if self._aberrations_explicit or (tilt and int(num_trials) == 0) else None,
                 scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 bright_field_center_px=center, bright_field_radius_px=radius,
                 bright_field_intensity_threshold=self.bright_field_intensity_threshold,
@@ -1127,7 +1139,8 @@ class SSB:
             phase_estimator=phase_estimator,
         )
         if output == "native":
-            return phase, loss
+            # the mean-phase path returns the engine's reused buffer, which the next preview overwrites
+            return phase.copy(), loss
         if self.backend == "cuda":
             phase = cp.asnumpy(phase)
         return np.asarray(phase, dtype=np.float32), loss

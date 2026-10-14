@@ -414,8 +414,9 @@ def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: st
     ``data`` is 4D ``(scan_row, scan_col, det_row, det_col)``, 3D ``(frame, det_row, det_col)`` or 2D ``(det_row,
     det_col)``. ``axes`` is ``"detector"``, ``"scan"`` (4D only) or ``"all"`` (4D only). ``edge="crop"`` drops the
     trailing pixels that do not fill a block; ``edge="partial"`` keeps them by zero padding before an exact sum (a
-    partial mean would divide by the wrong count, so it is refused). Integer data sum exactly in a wide integer (uint32
-    for CuPy, int64 for Torch), anything else in float32, unless ``dtype`` is given.
+    partial mean would divide by the wrong count, so it is refused). Integer data sum exactly in a 64-bit integer (uint64 or
+    int64 by the input's sign for CuPy, int64 for Torch), anything else in float32, unless ``dtype`` is given; the sum
+    accumulates in that dtype.
 
     Examples
     --------
@@ -446,7 +447,8 @@ def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: st
         if reduction == "mean" or not integer:
             dtype = torch.float32 if is_torch else cp.float32
         else:
-            dtype = torch.int64 if is_torch else cp.uint32
+            # a wide accumulator of the input's sign: uint32 counts summed in uint32 would wrap
+            dtype = torch.int64 if is_torch else (cp.int64 if cp.issubdtype(data.dtype, cp.signedinteger) else cp.uint64)
     # the binned axes, counted from the end for the detector and from the start for the scan
     binned = {"detector": [data.ndim - 2, data.ndim - 1], "scan": [0, 1], "all": [0, 1, 2, 3]}[axes]
     sizes = list(data.shape)
@@ -470,7 +472,7 @@ def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: st
             shape.append(size)
     blocks = data.reshape(shape)
     if is_torch:
-        return blocks.mean(dim=reduced, dtype=dtype) if reduction == "mean" else blocks.sum(dim=reduced).to(dtype=dtype)
+        return blocks.mean(dim=reduced, dtype=dtype) if reduction == "mean" else blocks.sum(dim=reduced, dtype=dtype)
     return blocks.mean(axis=tuple(reduced), dtype=dtype) if reduction == "mean" else blocks.sum(axis=tuple(reduced), dtype=dtype)
 
 
