@@ -96,12 +96,19 @@ def crop_bright_field(
     *,
     calibrate_detector: bool = False,
     bright_field_center_px: tuple[float, float] | None = None,
+    scan_region: tuple[int, int, int, int] | None = None,
+    mean_pattern=None,
 ):
     """Decode only the bright-field crop of an encoded acquisition, keeping the full-detector calibration.
 
     Returns the counts (CuPy on CUDA), the disk centre in full-detector pixels, the disk radius, the calibration radius
-    (``disk_edge_radius`` of the full-detector mean pattern; None unless ``calibrate_detector``) and the crop's first
-    detector ``(row, col)``, which a consumer of the crop subtracts from the centre.
+    (``disk_edge_radius`` of the full-detector mean pattern; None unless ``calibrate_detector``), the crop's first
+    detector ``(row, col)``, which a consumer of the crop subtracts from the centre, and the float64 mean pattern the disk
+    was found on.
+
+    ``scan_region`` (row_start, row_stop, col_start, col_stop) decodes those scan positions only; the disk is still found
+    on the mean pattern of the whole scan, which ``mean_pattern`` hands over when the caller has computed it already
+    (``detector.mean(loaded)``), so it is not computed a second time.
 
     SSB reads nothing outside the bright-field disk, but decoding the whole 4D cube (19 GB for 512^2 x 192^2 uint16) is
     what the GPU loader forbids. The disk is found on the full-detector mean pattern with the backend's own rule
@@ -111,7 +118,7 @@ def crop_bright_field(
     ``detector.fit_probe`` evaluated in float64; ``fit_probe``'s float32 would move the centre in its last bits and
     with it the pixels the session reads.
     """
-    mean_pattern = np.asarray(detector.mean(loaded), dtype=np.float64)
+    mean_pattern = np.asarray(detector.mean(loaded) if mean_pattern is None else mean_pattern, dtype=np.float64)
     # The calibration reads the full detector: the crop below cuts the disk edge off.
     calibration_radius = disk_edge_radius(mean_pattern) if calibrate_detector else None
     if bright_field_radius_px is None:
@@ -133,13 +140,13 @@ def crop_bright_field(
     # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
     row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
     row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)
-    counts = loaded.read(detector_region=(row0, row1, col0, col1))
+    counts = loaded.read(scan_region=scan_region, detector_region=(row0, row1, col0, col1))
     if backend == "cuda":
         # torch exports a tensor through DLPack from its current device and CuPy imports it onto its own: both must be
         # the acquisition's GPU, which need not be the current one
         with torch.cuda.device(counts.device), cp.cuda.Device(counts.device.index):
             counts = cp.from_dlpack(counts)
-    return counts, center, radius, calibration_radius, (row0, col0)
+    return counts, center, radius, calibration_radius, (row0, col0), mean_pattern
 
 
 def disk_edge_radius(mean_pattern: np.ndarray) -> float:

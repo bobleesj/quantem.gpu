@@ -11,7 +11,7 @@ from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.results import SSBResult
 
 # the local refinement after the Optuna search: Nelder-Mead, or none
-RefineMethod = Literal["nelder-mead"] | None
+RefineMethod = Literal["nelder-mead", "newton"] | None
 
 
 @dataclass(frozen=True)

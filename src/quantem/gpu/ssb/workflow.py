@@ -4,6 +4,7 @@ This module owns the only public stateful SSB entry point. Backend modules own
 device preparation and kernels, but they do not define a second user API.
 """
 
+import hashlib
 import math
 import time
 from contextlib import AbstractContextManager, nullcontext
@@ -131,6 +132,19 @@ class SSB:
         The file the array came from, recorded with saved results.
     bright_field_center_px : (float, float), optional
         Bright-field centre (row, col) in pixels of the full detector; detected when omitted.
+    scan_region : (int, int, int, int), optional
+        ``(row_start, row_stop, col_start, col_stop)`` of a dataset ``io.load`` returns: the session holds those scan
+        positions alone, so only their bright-field columns are decoded and only their transform is built (a fit of a
+        192 x 192 region of a 512 x 512 scan costs a seventh of the whole scan's). The bright-field disk is still found
+        on the whole scan's mean pattern; the rotation and the detector sampling are the caller's to give from the whole
+        scan.
+    mean_pattern : array, optional
+        The whole scan's mean pattern (``detector.mean(data)``) when the caller has it already, so an encoded dataset
+        does not compute it a second time.
+
+    An encoded dataset stays open and the caller's. A result saved from it with ``find_aberrations(save_to=...)`` is
+    identified by the data (shape, dtype, the mean pattern's hash and the scan region) instead of by a file, and reused
+    by a later session on the same data.
 
     Examples
     --------
@@ -157,6 +171,8 @@ class SSB:
         bright_field_radius_px: float | None = None,
         source_path: str | None = None,
         bright_field_center_px: tuple[float, float] | None = None,
+        scan_region: tuple[int, int, int, int] | None = None,
+        mean_pattern=None,
     ) -> None:
         if detector_transposed:
             # a transposed detector reconstructed as if it were not gives a mirrored object with no error
@@ -167,20 +183,34 @@ class SSB:
         self.backend = resolve(backend)
         # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
         self._crop_origin = (0, 0)
+        self.scan_region = None if scan_region is None else tuple(int(value) for value in scan_region)
+        # what a saved result of a session on an encoded dataset is filed under: the data themselves, there is no file
+        self.resident_identity: dict[str, object] | None = None
         if isinstance(data, Dataset4dstemGPU):
             if data.ndim != 4:
                 raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
             if data.representation is not DataRepresentation.DENSE:
                 # Decode only the bright-field evidence into session-owned
                 # tensors. The caller retains ownership of the acquisition.
-                data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin = crop_bright_field(
+                shape, dtype = tuple(int(value) for value in data.shape), str(data.dtype)
+                data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
                     data, self.backend, bright_field_intensity_threshold, bright_field_radius_px,
                     calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
+                    scan_region=self.scan_region, mean_pattern=mean_pattern,
                 )
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
+                self.resident_identity = {
+                    "shape": list(shape), "dtype": dtype,
+                    "mean_pattern_sha256": hashlib.sha256(np.ascontiguousarray(mean_pattern, dtype=np.float64).tobytes()).hexdigest(),
+                }
+            elif self.scan_region is not None:
+                row_start, row_stop, col_start, col_stop = self.scan_region
+                data = data.data[row_start:row_stop, col_start:col_stop]
             else:
                 data = data.data
+        elif scan_region is not None:
+            raise ValueError("scan_region selects scan positions of a dataset io.load returns; slice an array before passing it.")
         # The backends read dense arrays, plus the exact BF columns SSB.open finds on MPS. An encoded
         # resident (``io.load(...).data``) has no bounded read of its own; only its dataset decodes the
         # bright-field crop, so it is refused here rather than at the first reconstruction.
@@ -227,11 +257,14 @@ class SSB:
         # latest find_aberrations(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
         self.sample_tilt_mrad: tuple[float, float] | None = None
         self.depth_spread_nm: float | None = None
+        # the running find_aberrations(tilt=True)'s choice, read by every tilt search of that fit (the refit of the other
+        # 180-degree branch included), so the gain a result carries is the one its saved-fit signature names
+        self._compare_standard = True
         self.source_path = source_path
         self.calibration_path: str | None = None
         self.source_manifest_path: str | None = None
         self.source_storage_path = source_path
-        self.source_kind: Literal["array", "detector", "bf_columns"] = "array"
+        self.source_kind: Literal["array", "resident", "detector", "bf_columns"] = "array" if self.resident_identity is None else "resident"
         self.source_dtype = str(data.dtype)
         self.source_bytes = int(data.nbytes)
         # SSB.open replaces these two for exact BF columns, which record their own binning and provenance
@@ -368,9 +401,13 @@ class SSB:
                 "schema": RESULT_SCHEMA,
                 "software": software_signature(),
                 "operation": operation,
-                "source": source_signature(
-                    self.source_path, scan_shape=self._scan_shape, storage_path=self.source_storage_path,
-                    calibration_path=self.calibration_path, manifest_path=self.source_manifest_path,
+                "source": (
+                    {"detector": self.resident_identity, "storage": None, "calibration": None, "manifest": None}
+                    if self.source_path is None and self.resident_identity is not None else
+                    source_signature(
+                        self.source_path, scan_shape=self._scan_shape, storage_path=self.source_storage_path,
+                        calibration_path=self.calibration_path, manifest_path=self.source_manifest_path,
+                    )
                 ),
                 "data": {
                     "kind": self.source_kind,
@@ -380,6 +417,7 @@ class SSB:
                     "scan_shape": self._scan_shape,
                     "detector_bin": self.source_detector_bin,
                     "source_provenance": self.source_provenance,
+                    **({"scan_region": self.scan_region} if self.scan_region is not None else {}),
                 },
                 "instrument": {
                     "voltage_kV": self.voltage_kV,
@@ -653,6 +691,7 @@ class SSB:
         save_to: str | Path | None = None,
         force: bool = False,
         verbose: bool = True,
+        compare_standard: bool = True,
     ) -> SSBResult:
         """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
 
@@ -663,6 +702,12 @@ class SSB:
         result's ``sample_tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
         MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
         to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
+        ``refinement="newton"`` (tilt fits) polishes with Newton steps on finite-difference models whose evaluations share
+        passes over the data, a few passes instead of hundreds (both backends evaluate the trials of a pass in one batch).
+        ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None).
+        ``num_trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
+        ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
+        costs one polish.
 
         ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
@@ -690,26 +735,28 @@ class SSB:
         per side; it is never silently padded or cropped. The stored source
         must expose a dense four-dimensional scan array.
 
-        Set ``save_to`` to reuse an exact prior result from ``SSB.open`` when the detector source,
-        calibration, backend, physical parameters, and fit settings all match.
+        Set ``save_to`` to reuse an exact prior result from ``SSB.open`` or from an encoded dataset when the detector
+        source, calibration, backend, physical parameters, and fit settings all match.
         Changed settings recompute automatically. Set ``force=True`` to recompute
         an otherwise matching result. Direct array inputs are saved but always
         recomputed: a source path does not identify an array's crop or mutations.
-        ``tilt=True`` requires at least one trial; zero trials are supported only
-        for the standard search, starting from the current session coefficients.
+        Zero trials start from the current session coefficients: the standard search refines them, and ``tilt=True``
+        refines them with the session's sample tilt and depth spread.
         """
 
         if tilt and (search_ranges is not None or refine_lock is not None):
             raise ValueError("search_ranges and refine_lock apply to the standard fit; tilt=True searches its own ranges.")
         if num_trials < 0:
             raise ValueError(f"num_trials must be non-negative, got {num_trials}.")
-        if tilt and int(num_trials) == 0:
+        if tilt and int(num_trials) == 0 and (self.sample_tilt_mrad is None or self.depth_spread_nm is None):
             raise ValueError(
-                "tilt=True requires at least one trial; use num_trials=200, "
-                "or reconstruct() to apply known parameters."
+                "find_aberrations(tilt=True, num_trials=0) refines from the session's aberrations, sample_tilt_mrad and "
+                "depth_spread_nm: set the last two (a previous scan's fit) first, or use num_trials=200."
             )
-        if refinement not in {"nelder-mead", None}:
-            raise ValueError("refinement must be 'nelder-mead' or None.")
+        if refinement not in {"nelder-mead", "newton", None}:
+            raise ValueError("refinement must be 'nelder-mead', 'newton' or None.")
+        if refinement == "newton" and not tilt:
+            raise ValueError("refinement='newton' polishes the tilt fit; the standard fit refines with 'nelder-mead'.")
         paths = None
         signature = None
         if save_to is not None:
@@ -725,6 +772,9 @@ class SSB:
                     "starting_aberrations": self.aberrations,
                     "starting_aberrations_explicit": self._aberrations_explicit,
                     **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
+                    **({"compare_standard": False} if tilt and not compare_standard else {}),
+                    **({"refined_from": {"sample_tilt_mrad": self.sample_tilt_mrad, "depth_spread_nm": self.depth_spread_nm}}
+                       if tilt and int(num_trials) == 0 else {}),
                     "check_rotation": bool(check_rotation),
                     "scan_region": scan_region,
                 },
@@ -776,11 +826,13 @@ class SSB:
                 bright_field_center_px=center, bright_field_radius_px=radius,
                 bright_field_intensity_threshold=self.bright_field_intensity_threshold,
             ) as regional:
+                if tilt and int(num_trials) == 0:
+                    regional.sample_tilt_mrad, regional.depth_spread_nm = self.sample_tilt_mrad, self.depth_spread_nm
                 result = regional.find_aberrations(
                     tilt=tilt, num_trials=num_trials, refinement=refinement,
                     search_ranges=search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
-                    seed=seed, verbose=verbose,
+                    seed=seed, verbose=verbose, compare_standard=compare_standard,
                 )
             result.fit_scan_region = tuple(scan_region)
             # the regional session indexed this session's array, which starts at the crop origin
@@ -792,6 +844,7 @@ class SSB:
             self.trial_history = list(result.trial_records or ())
             return result
         if tilt:
+            self._compare_standard = bool(compare_standard)
             result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
         else:
             result = self._backend().fit(
@@ -1008,12 +1061,17 @@ class SSB:
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         depth_spread_nm: float = 0.0,
         phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
-    ) -> tuple[np.ndarray, float | None]:
+        output: Literal["numpy", "native"] = "numpy",
+    ) -> tuple[object, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
 
-        The returned NumPy array has the full selected output resolution. "Preview"
+        The returned array has the full selected output resolution. "Preview"
         means it is not saved and does not replace the fitted calibration or
         stored result; it does not imply a lower-quality reconstruction.
+
+        ``output="numpy"`` returns a float32 host array for display. On CUDA, ``output="native"`` returns the CuPy phase
+        on the session's device, without exporting it to the host, so diagnostics can reduce a series of phase images
+        on the GPU (a through-focus series of 30 previews). Other backends require ``"numpy"``.
 
         ``aberrations`` holds ``C10_nm`` / ``C12_nm`` in nm and ``phi12_deg`` in degrees. It may also name higher
         orders, each with its unit in the key: ``C21_nm`` with ``phi21_deg``, ``C23_nm`` with ``phi23_deg``, ``C30_nm``,
@@ -1058,12 +1116,18 @@ class SSB:
         ... )
         """
 
+        if output not in ("numpy", "native"):
+            raise ValueError(f"Use output='numpy' or 'native'; got {output!r}.")
+        if output == "native" and self.backend != "cuda":
+            raise NotImplementedError("Native SSB preview output requires backend='cuda'; use output='numpy' on this backend.")
         phase, loss = self._phase(
             aberrations, compute_loss=compute_loss,
             upsampling_factor=upsampling_factor, context=context,
             sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
             phase_estimator=phase_estimator,
         )
+        if output == "native":
+            return phase, loss
         if self.backend == "cuda":
             phase = cp.asnumpy(phase)
         return np.asarray(phase, dtype=np.float32), loss
@@ -1155,8 +1219,14 @@ class SSB:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
         backend = self._backend()
         started = time.perf_counter()
+        start = None
+        if trials == 0:
+            # the previous scan's fit, in engine units, is the one point the polish starts from
+            engine = aberrations_to_engine(self.aberrations)
+            start = (engine["C10"], engine["C12"], engine["phi12"], *self.sample_tilt_mrad, self.depth_spread_nm * ENGINE_PER_NM)
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
-                                 polish_starts=0 if refinement is None else 3)
+                                 polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
+                                 compare_standard=self._compare_standard, start=start)
         aberrations = aberrations_from_engine(fit)
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
@@ -1176,7 +1246,8 @@ class SSB:
                 "depth_spread_nm": values["thickness"] / ENGINE_PER_NM,
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=float(fit["gain"]), amplitude_estimated=False, phase_estimator="mean_phase",
+                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
+                         amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
                          elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,

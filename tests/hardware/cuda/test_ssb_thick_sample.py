@@ -76,6 +76,51 @@ def test_fit_tilt_recovers_known_tilt(sample_tilt_mrad):
     assert result.tilt_fit_gain > 1.2      # the thick model explains the thick data better than standard SSB
 
 
+def _engine_row(result):
+    """A fit as the engine's (C10, C12, phi12, tilt_row, tilt_col, thickness) row: Angstrom, radians, mrad, Angstrom."""
+    return [result.aberrations["C10_nm"] * 10, result.aberrations["C12_nm"] * 10, math.radians(result.aberrations["phi12_deg"]),
+            *result.sample_tilt_mrad, result.depth_spread_nm * 10]
+
+
+def test_newton_polish_lands_on_the_nelder_mead_maximum():
+    """refinement="newton" (a few batched finite-difference passes) finds the maximum Nelder-Mead finds (hundreds of passes)."""
+    _require_cuda()
+    data, det_mrad = _simulated_crystal((3.0, -4.0))
+    ssb = _session(data, det_mrad)
+    fits = {}
+    for refinement in ("nelder-mead", "newton"):
+        result = ssb.find_aberrations(tilt=True, refinement=refinement, check_rotation=False, verbose=False, compare_standard=False)
+        assert result.tilt_fit_gain is None
+        engine = ssb._backend()._accelerator
+        fits[refinement] = (result, float(engine.thick.fit_batch(np.array([_engine_row(result)]))[0]))
+    (nelder_mead, nelder_mead_fit), (newton, newton_fit) = fits["nelder-mead"], fits["newton"]
+    assert newton_fit >= nelder_mead_fit * (1 - 1e-5)
+    assert abs(newton.sample_tilt_mrad[0] - nelder_mead.sample_tilt_mrad[0]) < 0.1
+    assert abs(newton.sample_tilt_mrad[1] - nelder_mead.sample_tilt_mrad[1]) < 0.1
+    assert abs(newton.aberrations["C10_nm"] - nelder_mead.aberrations["C10_nm"]) < 0.1
+
+
+def test_tilt_refit_from_the_previous_scan_needs_no_search():
+    """find_aberrations(tilt=True, num_trials=0) refines from the session's aberrations, tilt and depth spread (a previous
+    scan's fit, here moved by 0.5 mrad and 2 nm of defocus) and lands on the full search's maximum."""
+    _require_cuda()
+    data, det_mrad = _simulated_crystal((3.0, -4.0))
+    searched = _session(data, det_mrad).find_aberrations(tilt=True, refinement="newton", check_rotation=False, verbose=False,
+                                                         compare_standard=False)
+    following = _session(data, det_mrad)
+    following.aberrations = {**searched.aberrations, "C10_nm": searched.aberrations["C10_nm"] + 2.0}
+    following.sample_tilt_mrad = (searched.sample_tilt_mrad[0] + 0.5, searched.sample_tilt_mrad[1] - 0.5)
+    following.depth_spread_nm = searched.depth_spread_nm
+    refit = following.find_aberrations(tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False,
+                                       compare_standard=False)
+    assert refit.num_trials == 0
+    assert abs(refit.sample_tilt_mrad[0] - searched.sample_tilt_mrad[0]) < 0.1
+    assert abs(refit.sample_tilt_mrad[1] - searched.sample_tilt_mrad[1]) < 0.1
+    assert abs(refit.aberrations["C10_nm"] - searched.aberrations["C10_nm"]) < 0.1
+    with pytest.raises(ValueError, match="num_trials=0"):
+        _session(data, det_mrad).find_aberrations(tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False)
+
+
 # ---
 
 
