@@ -20,7 +20,7 @@ the branch's numbers?
 | `SSB.open(acquisition, scan_region=, mean_pattern=)` | `SSB(dataset, scan_region=, mean_pattern=)`; main's constructor already took a dataset |
 | saved fit of a resident acquisition identified by its data | same identity (shape, dtype, mean-pattern hash, scan region), `source_kind="resident"` |
 | `preview(output="native")` | same keyword |
-| `io.load.bin` | same path; integer Torch input now sums in int64 for every integer dtype, and `edge="partial"` applies to 2D and 3D input too |
+| `io.load.bin` | same path; integer input sums in a 64-bit integer (the branch summed CuPy counts in uint32 and Torch uint16 in float32), and `edge="partial"` applies to 2D and 3D input too |
 
 Not moved, because main already has its own form: the 180-degree branch taken from the first joint fit by symmetry
 (`find_aberrations(check_rotation=True)` reuses the fit on CUDA), fused FFT kernels built per device, a deterministic
