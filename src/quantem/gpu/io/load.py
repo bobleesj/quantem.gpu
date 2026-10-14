@@ -403,6 +403,77 @@ def load(
     ), sources)
 
 
+def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: str = "sum", edge: str = "crop"):
+    """Sum (or average) ``factor`` x ``factor`` blocks of a CuPy array or Torch tensor on its GPU; the same library out.
+
+    A binned pixel is the sum of the ``factor**2`` pixels it covers, out[i, j] = sum_{a, b < factor} data[f i + a, f j + b]
+    (divided by ``factor**2`` for ``reduction="mean"``): summing a detector b x b keeps every electron, which is why a
+    reconstruction reads a binned crop instead of an interpolated one. ``io.load`` refuses ``detector_bin`` for HDF5 and
+    .qem sources, so a caller bins as part of a read, ``bin(dataset.read(scan_region=...), factor=4)``.
+
+    ``data`` is 4D ``(scan_row, scan_col, det_row, det_col)``, 3D ``(frame, det_row, det_col)`` or 2D ``(det_row,
+    det_col)``. ``axes`` is ``"detector"``, ``"scan"`` (4D only) or ``"all"`` (4D only). ``edge="crop"`` drops the
+    trailing pixels that do not fill a block; ``edge="partial"`` keeps them by zero padding before an exact sum (a
+    partial mean would divide by the wrong count, so it is refused). Integer data sum exactly in a wide integer (uint32
+    for CuPy, int64 for Torch), anything else in float32, unless ``dtype`` is given.
+
+    Examples
+    --------
+    >>> from quantem.gpu.io.load import bin
+    >>> crop = bin(dataset.read(scan_region=(0, 64, 0, 64)), factor=4, axes="detector")
+    """
+    import torch
+
+    from quantem.gpu.device.cuda_runtime import cp
+
+    if reduction not in ("sum", "mean"):
+        raise ValueError(f"reduction must be 'sum' or 'mean', got {reduction!r}")
+    if edge not in ("crop", "partial"):
+        raise ValueError(f"edge must be 'crop' or 'partial', got {edge!r}")
+    if edge == "partial" and reduction == "mean":
+        raise ValueError("edge='partial' supports exact sum reduction only")
+    is_torch = isinstance(data, torch.Tensor)
+    if not is_torch and not (cp is not None and isinstance(data, cp.ndarray)):
+        raise TypeError(f"bin reads a CuPy array or a Torch tensor on the GPU, got {type(data).__name__}.")
+    if factor == 1:
+        return data
+    if axes not in ("detector", "scan", "all"):
+        raise ValueError(f"axes must be 'detector', 'scan', or 'all', got {axes!r}")
+    if (axes != "detector" and data.ndim != 4) or data.ndim not in (2, 3, 4):
+        raise ValueError(f"axes={axes!r} bins a {data.ndim}D array; scan axes need 4D (scan_row, scan_col, det_row, det_col).")
+    if dtype is None:
+        integer = (not data.dtype.is_floating_point and not data.dtype.is_complex) if is_torch else cp.issubdtype(data.dtype, cp.integer)
+        if reduction == "mean" or not integer:
+            dtype = torch.float32 if is_torch else cp.float32
+        else:
+            dtype = torch.int64 if is_torch else cp.uint32
+    # the binned axes, counted from the end for the detector and from the start for the scan
+    binned = {"detector": [data.ndim - 2, data.ndim - 1], "scan": [0, 1], "all": [0, 1, 2, 3]}[axes]
+    sizes = list(data.shape)
+    for axis in binned:
+        sizes[axis] = -(-sizes[axis] // factor) * factor if edge == "partial" else sizes[axis] // factor * factor
+        if sizes[axis] == 0:
+            raise ValueError(f"Shape {tuple(data.shape)} is too small for factor {factor}.")
+    if edge == "partial" and sizes != list(data.shape):
+        padded = torch.zeros(sizes, dtype=data.dtype, device=data.device) if is_torch else cp.zeros(sizes, dtype=data.dtype)
+        padded[tuple(slice(0, size) for size in data.shape)] = data
+        data = padded
+    data = data[tuple(slice(0, size) for size in sizes)]
+    if is_torch:
+        data = data.contiguous()
+    shape, reduced = [], []
+    for axis, size in enumerate(sizes):
+        if axis in binned:
+            shape += [size // factor, factor]
+            reduced.append(len(shape) - 1)
+        else:
+            shape.append(size)
+    blocks = data.reshape(shape)
+    if is_torch:
+        return blocks.mean(dim=reduced, dtype=dtype) if reduction == "mean" else blocks.sum(dim=reduced).to(dtype=dtype)
+    return blocks.mean(axis=tuple(reduced), dtype=dtype) if reduction == "mean" else blocks.sum(axis=tuple(reduced), dtype=dtype)
+
+
 def _device_backend(backend: str, device: int | str | None) -> tuple[str, int | str | None]:
     """Turn a ``device=`` name into the backend it implies and the CUDA device the loaders take.
 
