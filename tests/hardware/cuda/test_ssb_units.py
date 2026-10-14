@@ -14,8 +14,8 @@ pytestmark = pytest.mark.slow
 cp = pytest.importorskip("cupy")
 
 
-def _simulate(defocus_A: float) -> tuple[np.ndarray, float]:
-    """abTEM 4D-STEM of a one-cell BaTiO3 crystal at 300 kV, 30 mrad: the counts and abTEM's detector sampling (mrad)."""
+def _simulate(defocus_A: float) -> tuple[np.ndarray, tuple[float, float]]:
+    """abTEM 4D-STEM of a one-cell BaTiO3 crystal at 300 kV, 30 mrad: the counts and abTEM's (row, col) detector sampling (mrad)."""
     try:
         if cp.cuda.runtime.getDeviceCount() == 0:
             pytest.skip("No CUDA device")
@@ -35,7 +35,7 @@ def _simulate(defocus_A: float) -> tuple[np.ndarray, float]:
     probe = abtem.Probe(energy=300e3, semiangle_cutoff=30, defocus=defocus_A)
     scan = abtem.GridScan(start=(2 * a, 2 * a), end=(6 * a, 6 * a), gpts=(64, 64), endpoint=False)
     measurement = probe.scan(potential, scan=scan, detectors=abtem.PixelatedDetector(max_angle=45)).compute()
-    return np.asarray(measurement.array, dtype=np.float32), float(measurement.angular_sampling[0])
+    return np.asarray(measurement.array, dtype=np.float32), tuple(float(sampling) for sampling in measurement.angular_sampling)
 
 
 @pytest.mark.parametrize("defocus_A", [100.0, -150.0])
@@ -65,7 +65,7 @@ def test_automatic_detector_sampling_matches_the_simulation_and_recovers_the_def
              scan_detector_rotation_deg=0.0) as ssb:
         result = ssb.find_aberrations(num_trials=200, refinement="nelder-mead", verbose=False)
         automatic_sampling = ssb._backend().angular_sampling[0]
-    assert automatic_sampling == pytest.approx(detector_sampling_mrad, rel=0.004)
+    assert automatic_sampling == pytest.approx(detector_sampling_mrad[0], rel=0.004)
     assert result.aberrations["C10_nm"] == pytest.approx(-10.0, rel=0.04)
 
 
@@ -92,9 +92,9 @@ def test_numpy_scalar_sampling_is_read_as_a_number():
     rows, cols = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rows, cols) < 10] += 200
     aberrations = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
-    with _session(counts, det_mrad=np.float32(3.0), scan_A=np.float32(0.3)) as ssb:
+    with _session(counts, det_mrad=(np.float32(3.0), np.float32(3.0)), scan_A=np.float32(0.3)) as ssb:
         phase, loss = ssb.preview(aberrations)
-    with _session(counts, det_mrad=3.0, scan_A=float(np.float32(0.3))) as reference:
+    with _session(counts, det_mrad=(3.0, 3.0), scan_A=float(np.float32(0.3))) as reference:
         expected, expected_loss = reference.preview(aberrations)
 
     np.testing.assert_array_equal(phase, expected)
