@@ -197,6 +197,8 @@ parts:
         title: Releasing cached GPU memory (2026-10-11)
       - file: maintainer/2026-10-11-stored-fit-schema
         title: Stored SSB fit schema (2026-10-11)
+      - file: maintainer/2026-10-13-calibrate-speed-on-main
+        title: Calibration speed-up on main (2026-10-13)
       - file: maintainer/native-metal-ssb-migration
         title: Native Metal SSB migration
       - file: maintainer/history/index

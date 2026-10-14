@@ -6,6 +6,26 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Added
+
+- `SSB.find_aberrations(tilt=True, refinement="newton")` polishes the joint
+  tilt fit with Newton steps on finite-difference models whose evaluations
+  share passes over G: a few batched passes instead of hundreds of
+  Nelder-Mead evaluations. `compare_standard=False` skips the standard-SSB
+  search that only feeds `tilt_fit_gain` (then None). `num_trials=0` with
+  `tilt=True` refines from the session's aberrations, `sample_tilt_mrad` and
+  `depth_spread_nm` without a search.
+- `SSB(dataset, scan_region=..., mean_pattern=...)` holds the scan positions
+  of `scan_region` of an encoded dataset alone, with the bright-field disk of
+  the whole scan; `mean_pattern` reuses the caller's `detector.mean`. A fit
+  saved from an encoded dataset with `save_to` is identified by the data
+  (shape, dtype, mean-pattern hash, scan region) and reused by a later session
+  on the same data.
+- `SSB.preview(..., output="native")` returns the CuPy phase on CUDA without a
+  host copy.
+- `quantem.gpu.io.load.bin` sums (or averages) detector or scan blocks of a
+  CuPy array or Torch tensor on its GPU; integer counts sum exactly.
+
 ## rc17 - 2026-10-12
 
 ### Changed
