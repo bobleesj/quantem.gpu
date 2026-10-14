@@ -30,7 +30,8 @@ def _simulated_crystal(sample_tilt_mrad, thickness_A=152.0):
     """abTEM 4D-STEM of BaTiO3 [001] (a = 4 A) leaning by ``sample_tilt_mrad`` (row, col): every atom at depth z is shifted by z x tilt.
 
     300 kV, 30 mrad, probe focused at mid-depth, noise-free, 64 x 64 scan at 0.25 A = 4 x 4 unit cells (periodic for the scan
-    FFT), potential box 9 x 9 cells so the detector sampling is lambda / 36 A = 0.55 mrad.
+    FFT), potential box 9 x 9 cells so the detector sampling is lambda / 36 A = 0.55 mrad on both axes, returned as the
+    (row, col) pair SSB takes.
     """
     abtem = pytest.importorskip("abtem")
     from ase import Atoms
@@ -52,13 +53,13 @@ def _simulated_crystal(sample_tilt_mrad, thickness_A=152.0):
     probe = abtem.Probe(energy=300e3, semiangle_cutoff=30, defocus=layers * a / 2)
     scan = abtem.GridScan(start=(2 * a, 2 * a), end=(6 * a, 6 * a), gpts=(64, 64), endpoint=False)
     measurement = probe.scan(potential, scan=scan, detectors=abtem.PixelatedDetector(max_angle=45)).compute()
-    return np.asarray(measurement.array, dtype=np.float32), float(measurement.angular_sampling[0])
+    return np.asarray(measurement.array, dtype=np.float32), tuple(float(sampling) for sampling in measurement.angular_sampling)
 
 
 def _session(data, det_mrad, scan_A=0.25):
     from quantem.gpu import SSB
 
-    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(scan_A, scan_A), detector_sampling_mrad=(det_mrad, det_mrad),
+    return SSB(data, backend="cuda", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(scan_A, scan_A), detector_sampling_mrad=det_mrad,
                           scan_detector_rotation_deg=0.0)
 
 
@@ -85,7 +86,7 @@ def test_zero_depth_weighting_is_standard_ssb():
     counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200      # bright-field disk
-    ssb = _session(counts, det_mrad=3.0, scan_A=0.3)
+    ssb = _session(counts, det_mrad=(3.0, 3.0), scan_A=0.3)
     ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     for aberrations in ({"C10_nm": 30.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.3)}, {"C10_nm": -40.0, "C12_nm": 12.0, "phi12_deg": math.degrees(-1.0)}):
         standard, standard_loss = ssb.preview(aberrations)
@@ -99,7 +100,7 @@ def _synthetic_session():
     counts = rng.poisson(40.0, size=(128, 128, 32, 32)).astype(np.uint16)
     rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
     counts[:, :, np.hypot(rr, cc) < 10] += 200
-    ssb = _session(counts, det_mrad=3.0, scan_A=0.3)
+    ssb = _session(counts, det_mrad=(3.0, 3.0), scan_A=0.3)
     ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     return ssb, ssb._backend()._accelerator
 
@@ -205,7 +206,7 @@ def test_batched_fit_repeats_bit_identically():
     counts = rng.poisson(40.0, size=(128, 128, 64, 64)).astype(np.uint16)
     rows, cols = np.meshgrid(np.arange(64) - 31.5, np.arange(64) - 31.5, indexing="ij")
     counts[:, :, np.hypot(rows, cols) < 22] += 200
-    ssb = _session(counts, det_mrad=30 / 22, scan_A=0.3)
+    ssb = _session(counts, det_mrad=(30 / 22, 30 / 22), scan_A=0.3)
     ssb.reconstruct(aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0})
     engine = ssb._backend()._accelerator
     params = np.column_stack([rng.uniform(-300, 300, 16), rng.uniform(0, 200, 16), rng.uniform(-1.5, 1.5, 16),
