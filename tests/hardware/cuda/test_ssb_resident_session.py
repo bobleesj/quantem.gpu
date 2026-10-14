@@ -103,6 +103,32 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         standard.find_aberrations(refinement="newton", verbose=False)
 
 
+
+def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_assigned_optics(acquisition, monkeypatch):
+    """Each native preview survives the next one (the mean-phase path reuses an engine buffer), and a region refit with no
+    trials starts from the aberrations a caller assigned to the session, not from zero."""
+    from quantem.gpu import SSB
+
+    with SSB(acquisition, **SETTINGS) as ssb:
+        options = dict(phase_estimator="mean_phase", compute_loss=False)
+        first, _ = ssb.preview({"C10_nm": 1.0, "C12_nm": 0.0, "phi12_deg": 0.0}, output="native", **options)
+        kept = cp.asnumpy(first)
+        ssb.preview({"C10_nm": 30.0, "C12_nm": 0.0, "phi12_deg": 0.0}, output="native", **options)
+        np.testing.assert_array_equal(cp.asnumpy(first), kept)
+    starts = []
+    fit_tilt = SSB._fit_tilt
+
+    def recorded(self, *args, **kwargs):
+        starts.append(dict(self.aberrations))
+        return fit_tilt(self, *args, **kwargs)
+    monkeypatch.setattr(SSB, "_fit_tilt", recorded)
+    with SSB(acquisition, **SETTINGS) as ssb:
+        ssb.aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
+        ssb.sample_tilt_mrad, ssb.depth_spread_nm = (1.0, -2.0), 30.0
+        ssb.find_aberrations(tilt=True, num_trials=0, refinement="newton", compare_standard=False, check_rotation=False,
+                             scan_region=(0, 128, 0, 128), verbose=False)
+    assert starts == [{"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}]
+
 _OPENED: list[str] = []
 _WATCH = {"folder": None}
 
