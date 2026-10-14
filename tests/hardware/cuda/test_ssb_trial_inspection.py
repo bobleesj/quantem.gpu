@@ -178,13 +178,13 @@ def test_search_starts_from_the_current_public_coefficients(estimator):
 
 
 def test_zero_trial_tilt_search_fails_before_backend_work(monkeypatch):
-    """An empty tilt search must not first spend 200 trials on its control fit."""
+    """A tilt search with no trials and no previous fit to refine fails before spending 200 trials on its control fit."""
     ssb, _ = _synthetic_session()
     try:
         def forbidden(*args, **kwargs):
             raise AssertionError('An invalid tilt search reached the backend')
         monkeypatch.setattr(ssb, '_fit_tilt', forbidden)
-        with pytest.raises(ValueError, match='tilt=True requires at least one trial'):
+        with pytest.raises(ValueError, match='num_trials=0'):
             ssb.find_aberrations(tilt=True, num_trials=0, verbose=False)
     finally:
         ssb.close()

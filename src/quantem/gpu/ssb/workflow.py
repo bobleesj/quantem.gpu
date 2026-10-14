@@ -347,7 +347,7 @@ class SSB:
                 dtype=dtype,
                 verbose=verbose,
             ) as loaded:
-                data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin = crop_bright_field(
+                data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin, _ = crop_bright_field(
                     loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
                     calibrate_detector=detector_sampling_mrad is None,
                 )
