@@ -40,13 +40,19 @@ def fit_sample_search(
     verbose: bool = True,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
     polish_starts: int = 3,
+    batch_polish: bool = False,
+    refinement_objective_batch: BatchObjective | None = None,
     polish: str = "nelder-mead",
     compare_standard: bool = True,
     start=None,
 ) -> dict[str, object]:
     """Maximise ``objective(C10, C12, phi12, (tilt_row, tilt_col), thickness)``; returns the fitted parameters and the gain.
 
-    ``polish`` refines the best ``polish_starts`` distinct trials: "nelder-mead" (scipy, one start after another) or
+    ``batch_polish`` evaluates independent Nelder-Mead starts together.
+    ``refinement_objective_batch`` can preserve a backend's singleton numerical
+    policy during refinement while leaving its initial trial batches unchanged.
+
+    ``polish`` refines the best ``polish_starts`` distinct trials: "nelder-mead" (scipy, sequential unless ``batch_polish=True``) or
     "newton" (``newton_polish``: every start's finite-difference design in one batched evaluation, a few steps; needs
     ``objective_batch``). ``compare_standard=False`` skips the standard-SSB search that only feeds the gain, which is then
     None.
@@ -154,6 +160,21 @@ def fit_sample_search(
             upper = np.array([c10_range[1], c12_max, c12_max, tilt_limit_mrad, tilt_limit_mrad, thickness_range[1]])
             polished = newton_polish(starts, lambda rows: np.asarray(objective_batch(rows), dtype=np.float64) / scale,
                                      lower, upper, c12_max)
+        elif batch_polish and objective_batch is not None and len(starts) > 1:
+            from quantem.gpu.ssb.batch_refinement import _minimize_batch
+
+            def evaluate_starts(points: np.ndarray) -> np.ndarray:
+                rows = np.array([
+                    [p[0], abs(p[1]), wrap_phi(p[2]), p[3], p[4], abs(p[5])]
+                    for p in points
+                ], dtype=np.float64)
+                evaluate = refinement_objective_batch or objective_batch
+                return -evaluate(rows) / scale
+
+            polished = _minimize_batch(
+                evaluate_starts, starts, bounds=bounds,
+                options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400},
+            )
         else:
             polished = [minimize(lambda point: -single(point) / scale, kept, method="Nelder-Mead", bounds=bounds,
                                  options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400}) for kept in starts]

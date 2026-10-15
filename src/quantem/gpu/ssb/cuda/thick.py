@@ -228,11 +228,17 @@ class ThickSample:
         keep = denominator > 0
         return float((weight[keep] * cp.abs(numerator[keep]) ** 2 / denominator[keep]).sum())
 
-    def fit_batch(self, params, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
+    def fit_batch(self, params, band_inv_A: tuple[float, float] = (0.2, 0.9), *, independent: bool = False) -> np.ndarray:
         """``fit`` for many parameter sets at once, with the fused batch kernel (fast path used by the fit search).
 
         ``params``: (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness), engine units. Same value as
         ``fit`` row by row; G is read once per group of ``THICK_FIT_MAX_BATCH`` rows.
+
+        ``independent=True`` preserves the singleton reduction used by each
+        independent refinement. Copy each score row into aligned storage before
+        summing: a sliced row can otherwise choose a different reduction layout
+        even when all its values are identical. Initial batched search trials
+        keep their existing summation policy.
         """
         engine = self.engine
         params = np.atleast_2d(np.asarray(params, dtype=np.float64))
@@ -268,7 +274,16 @@ class ThickSample:
                  np.float32(cache["ang_x_rad"]), np.float32(engine._factor), np.int32(k_chunk)),
             )
             covered = denominator > 0
-            values = (weight[None] * cp.where(covered, cp.abs(numerator) ** 2 / cp.where(covered, denominator, 1.0), 0.0)).sum(axis=1)
+            contributions = weight[None] * cp.where(covered, cp.abs(numerator) ** 2 / cp.where(covered, denominator, 1.0), 0.0)
+            # A refinement previously evaluated each candidate alone. Preserve
+            # that reduction layout while sharing the expensive model kernel.
+            if independent:
+                values = cp.concatenate([
+                    contributions[index:index + 1].copy().sum(axis=1)
+                    for index in range(batch)
+                ])
+            else:
+                values = contributions.sum(axis=1)
             out[start:start + batch] = cp.asnumpy(values)
         return out
 
