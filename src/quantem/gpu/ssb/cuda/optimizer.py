@@ -249,4 +249,6 @@ def fit_sample(
     """Fit C10, C12, phi12, sample tilt and thickness by maximising ``ThickSample.fit`` (search: ``ssb.thick_sample_fit``)."""
     return fit_sample_search(lambda c10, c12, phi12, tilt, thickness: accel.thick.fit(c10, c12, phi12, tilt, thickness, band_inv_A),
                              objective_batch=lambda rows: accel.thick.fit_batch(rows, band_inv_A),
+                             batch_polish=True,
+                             refinement_objective_batch=lambda rows: accel.thick.fit_batch(rows, band_inv_A, independent=True),
                              band_inv_A=band_inv_A, **options)

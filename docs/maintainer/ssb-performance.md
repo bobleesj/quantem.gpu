@@ -4,6 +4,16 @@ This page records the CUDA, Python MPS, native Swift/Metal, and WebGPU SSB
 performance contracts so future work starts from measured behavior, not from
 memory.
 
+## Batched joint CUDA refinement, 2026-10-15
+
+Three independent Nelder-Mead searches now share batched model evaluations.
+On two complete 512 × 512 × 192 × 192 acquisitions, prepared joint search
+and save took 33.8% and 35.4% less time with identical search trajectories
+and phase arrays in the matched tests. The benchmark uses the same search
+budget on both sides and measures automatic output sampling separately.
+See [CUDA refinement batching](2026-10-15-cuda-batched-refinement.md) for the device, timing boundaries,
+numerical constraints, and reproduction checks.
+
 ## Conditional joint rotation check, 2026-10-04
 
 `find_aberrations(tilt=True, check_rotation=True)` first fits the native-grid

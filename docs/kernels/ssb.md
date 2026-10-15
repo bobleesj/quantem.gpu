@@ -412,6 +412,19 @@ An approximate preview is not calibration evidence. A fitted result is reused
 only when source identity, detector selection, calibration, backend, physical
 parameters, precision, and optimizer settings match.
 
+### Joint CUDA refinement
+
+The joint tilt/depth model evaluates independent Nelder-Mead starts in
+batches. Each solver retains its own candidate sequence, bounds, and
+stopping rules; the calling thread evaluates the shared device objective.
+A separate singleton reduction for each refinement candidate preserves
+its numerical policy. Initial trial batches keep their existing reduction.
+This scheduling change applies to the joint model, rather than the
+standard phase-variance example above. The public API is unchanged.
+
+[CUDA refinement batching](../maintainer/2026-10-15-cuda-batched-refinement.md) records the measured
+speedup, exact comparison scope, source map, and regression commands.
+
 ## Coordinate and unit checks
 
 - scan sampling is ordered `(row, column) ≡ (r, c)` and carries length units;
