@@ -89,6 +89,7 @@ dev = [
     "fastapi>=0.115",
     "httpx2",
     "opencv-python-headless",
+    "optuna<5",
     "pytest>=8",
     "scipy",
     "uvicorn>=0.30",
