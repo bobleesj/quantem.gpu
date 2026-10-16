@@ -186,6 +186,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
   private var failure: MTLBuffer!
   private var diffraction: MTLBuffer!
   private var meanDiffractionReducer: PairedRuntimeMeanDiffraction?
+  private var detectorColumnReader: PairedRuntimeDetectorColumns?
   private var detectorProduct: MTLBuffer!
   private var pendingCopyDestination: MTLBuffer?
   private let historyEnabled: Bool
@@ -1382,6 +1383,33 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       queue: queue, payload: payload, offsets: offsets,
       modes: modes, table: decodingTable, shape: shape, pixelOfStreamRank: pixelOfStreamRank,
       rows: rows ?? 0..<shape[0], columns: columns ?? 0..<shape[1], regionShape: selectionShape)
+  }
+
+  /// Read exact UInt32 detector planes directly from the encoded resident.
+  ///
+  /// `pixels` contains 1...32 flattened detector indices in the desired output
+  /// order; duplicates are allowed. `output` is caller-owned, on the same Metal
+  /// device, and stores `[pixels.count, shape[0], shape[1]]` in row-major order.
+  /// All original counts are retained, including detector pixels excluded from
+  /// virtual detectors. Apply `detectorValidityMask` when choosing SSB evidence.
+  /// The call waits for decoding and validates it before returning; it neither
+  /// expands the whole resident nor changes its representation.
+  /// Example: `try source.readDetectorColumns(pixels: [100, 101], into: output)`.
+  public func readDetectorColumns(pixels: [Int], into output: MTLBuffer) throws {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    try requireLive()
+    guard !pixels.isEmpty, pixels.count <= 32,
+      pixels.allSatisfy({ (0..<shape[2] * shape[3]).contains($0) })
+    else { throw Self.invalid("Choose 1...32 in-bounds detector pixels") }
+    if detectorColumnReader == nil {
+      detectorColumnReader = try PairedRuntimeDetectorColumns(
+        device: queue.device, library: sourceLibrary, compactOffsets: compactOffsetsEnabled)
+    }
+    try detectorColumnReader!.read(
+      queue: queue, payload: payload, offsets: offsets, modes: modes, table: decodingTable,
+      detectorPixels: shape[2] * shape[3], scanCount: shape[0] * shape[1],
+      selectedRanks: streamAddresses(pixels.map(UInt32.init)), into: output)
   }
 
   private struct UpdateProfile {
@@ -3499,6 +3527,7 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
     failure = nil
     diffraction = nil
     meanDiffractionReducer = nil
+    detectorColumnReader = nil
     detectorProduct = nil
     historyProduct = nil
     historyMask = nil

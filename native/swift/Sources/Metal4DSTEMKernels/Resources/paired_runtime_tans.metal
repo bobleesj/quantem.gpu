@@ -1451,6 +1451,31 @@ inline bool prt_packed_finished(thread PRTPackedReader &r) {
     return !prt_entropy_mode(r.mode) || prt_fast_finished(r.entropy);
 }
 
+// One thread decodes one complete selected detector stream. The destination
+// retains the caller's plane order, including duplicates, and every scan.
+kernel void paired_runtime_tans_detector_columns(
+    device const uchar *payload [[buffer(0)]], device const uint *offsets [[buffer(1)]],
+    device const uchar *modes [[buffer(2)]], device const uint *table [[buffer(3)]],
+    device uint *output [[buffer(4)]], device atomic_uint *failure [[buffer(5)]],
+    constant uint *p [[buffer(6)]], constant uint *selected [[buffer(7)]],
+    uint index [[thread_position_in_grid]]) {
+    uint pixels = p[0], packets = p[1], count = p[3];
+    if (index >= count * packets) return;
+    uint plane = index / packets, packet = index % packets;
+    uint stream = packet * pixels + selected[plane];
+    uint first = prt_source_offset(offsets, stream, pixels * packets);
+    uint end = prt_source_offset(offsets, stream + 1u, pixels * packets);
+    PRTPackedReader reader;
+    if (!prt_packed_begin(payload, table, first, end, p[2], uint(modes[stream]), reader)) {
+        atomic_store_explicit(failure, 112u, memory_order_relaxed); return;
+    }
+    ulong base = (ulong(plane) * packets + packet) * PRT_INTERVAL;
+    for (uint scan = 0u; scan < PRT_INTERVAL; ++scan)
+        output[base + scan] = prt_packed_next(payload, reader);
+    if (!prt_packed_finished(reader))
+        atomic_store_explicit(failure, 113u, memory_order_relaxed);
+}
+
 // One exact partial per detector stream and selected scan packet. Counts never
 // leave registers; a packet sum is at most 512 * 65535 and fits in uint32.
 kernel void paired_runtime_tans_region_partials(
