@@ -85,8 +85,13 @@ final class MetalSSBKernelsTests: XCTestCase {
     let device = try metalDevice()
     let count = 33
     let geometry = makeGeometry(brightfieldCount: count, dc: SIMD2<Float>(37, 0))
-    let values = (0..<(count * size * size)).map { index in
-      UInt16((index * 17 + index / 113 + index / (size * size)) % 29)
+    let plane = size * size
+    let valueCount = count * plane
+    let values: [UInt16] = (0..<valueCount).map { (index: Int) -> UInt16 in
+      let ramp = index * 17
+      let scanTerm = index / 113
+      let detectorTerm = index / plane
+      return UInt16((ramp + scanTerm + detectorTerm) % 29)
     }
     let source = try makeBuffer(device: device, values: values)
     let aberrations = MetalSSBAberrations(
