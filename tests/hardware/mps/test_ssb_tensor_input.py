@@ -77,3 +77,57 @@ def test_open_encoded_source_retains_mps_crop(tmp_path, monkeypatch):
         phase, loss = session.preview({"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": math.degrees(-.5)})
         assert phase.shape == (128, 128)
         assert np.isfinite(phase).all() and np.isfinite(loss)
+
+
+def test_transposed_detector_matches_explicit_swap_on_mps(tmp_path):
+    """Compare the automatic orientation against an explicitly exchanged detector."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    counts = _counts()[:, :, :11, :12]
+    tensor = torch.from_numpy(counts.copy()).to("mps")
+    settings = dict(backend="mps", voltage_kV=300, semiangle_mrad=30,
+                    scan_sampling_A=(.99, 1.1), scan_detector_rotation_deg=31.,
+                    bright_field_radius_px=4.)
+    coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
+    with SSB(tensor, detector_transposed=True, detector_sampling_mrad=(6., 7.),
+             bright_field_center_px=(5., 5.5), **settings) as candidate:
+        actual = candidate.reconstruct(aberrations=coefficients)
+        state = candidate.browser_state()
+        assert actual.detector_transposed is True
+        assert actual.bright_field_center_px == (5., 5.5)
+    with SSB(tensor.swapaxes(-1, -2).contiguous(), detector_sampling_mrad=(7., 6.),
+             bright_field_center_px=(5.5, 5.), **settings) as reference:
+        expected = reference.reconstruct(aberrations=coefficients)
+        reference_state = reference.browser_state()
+    np.testing.assert_array_equal(actual.phase, expected.phase)
+    assert actual.loss == expected.loss
+    assert state.scan_shape == reference_state.scan_shape
+
+
+def test_saved_geometry_reopens_the_same_encoded_brightfield(tmp_path):
+    """Reopening a fit retains its detector centre, fractional mask and calibration."""
+    import h5py
+    import hdf5plugin
+    from quantem.gpu import SSB
+
+    counts = _counts()
+    counts[:, :, :, 6:] *= 2
+    source = tmp_path / "counts.h5"
+    with h5py.File(source, "w") as handle:
+        handle.create_dataset("entry/data/data", data=counts.reshape(-1, 12, 12),
+                              chunks=(1, 12, 12), **hdf5plugin.Bitshuffle(cname="lz4"))
+    settings = dict(backend="mps", voltage_kV=300, semiangle_mrad=30,
+                    scan_sampling_A=(.99, 1.1), scan_shape=(128, 128),
+                    scan_detector_rotation_deg=31., detector_transposed=True,
+                    detector_sampling_mrad=(6., 7.))
+    coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
+    with SSB.open(str(source), **settings) as initial:
+        expected = initial.reconstruct(aberrations=coefficients)
+    with SSB.open(str(source), **settings,
+                  bright_field_center_px=expected.bright_field_center_px,
+                  bright_field_radius_px=expected.bright_field_radius_px) as reopened:
+        actual = reopened.reconstruct(aberrations=coefficients)
+    np.testing.assert_array_equal(actual.phase, expected.phase)
+    assert actual.loss == expected.loss

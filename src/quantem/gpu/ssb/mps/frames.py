@@ -8,7 +8,8 @@ integers on disk with a declaration that names them; ``find_bf_columns`` looks f
 
 import json
 import time
-from dataclasses import dataclass
+from copy import copy
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -338,6 +339,23 @@ class MpsBfColumnFrames:
     @property
     def nbytes(self) -> int:
         return int(self._columns.nbytes)
+
+    def transpose_detector(self):
+        """Return a detector-axis view, sharing the unchanged exact columns."""
+        view = copy(self)
+        view.selection = replace(
+            self.selection, rows=self.selection.cols, cols=self.selection.rows,
+            bright_field_center_px=self.selection.bright_field_center_px[::-1],
+            detector_shape=self.detector_shape[::-1],
+        )
+        view.detector_shape = self.detector_shape[::-1]
+        view.shape = (self._n, *view.detector_shape)
+        view.vi = _BfColumnDetectorView(view.detector_shape)
+        view._lookup = self._lookup.T
+        view._detector_sum = None if self._detector_sum is None else self._detector_sum.T
+        if self.detector_sampling_mrad is not None:
+            view.detector_sampling_mrad = self.detector_sampling_mrad[::-1]
+        return view
 
     @property
     def detector_sum(self) -> np.ndarray:

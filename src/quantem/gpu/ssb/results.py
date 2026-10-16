@@ -45,7 +45,7 @@ class SSBResult(Mapping[str, float]):
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
         ``find_aberrations(check_rotation=True)`` settles the branch from the atom columns (see ``column_sign``).
     detector_transposed : bool
-        Whether the detector axes are exchanged before the rotation. SSB reconstructs only False.
+        Whether the detector axes were exchanged before applying the rotation.
     initial_scan_detector_rotation_deg : float | None
         The rotation before the polarity check, in [0, 360); the check changed the branch when it differs from
         ``scan_detector_rotation_deg``. None when no check ran.
