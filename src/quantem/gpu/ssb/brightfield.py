@@ -146,6 +146,12 @@ def crop_bright_field(
         # the acquisition's GPU, which need not be the current one
         with torch.cuda.device(counts.device), cp.cuda.Device(counts.device.index):
             counts = cp.from_dlpack(counts)
+            # read() returns the original counts, including invalid detector
+            # pixels. Exclude those from scientific BF selection, keeping the
+            # encoded source untouched and the fitted/full-scan masks equal.
+            valid = getattr(loaded.data, "valid_pixels", None)
+            if valid is not None:
+                counts *= cp.asarray(valid[row0:row1, col0:col1], dtype=counts.dtype)
     return counts, center, radius, calibration_radius, (row0, col0), mean_pattern
 
 

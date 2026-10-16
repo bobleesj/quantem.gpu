@@ -23,6 +23,7 @@ _NAMES = (
     "compact",
     "decode_range_u8",
     "decode_range_u16",
+    "columns_f32",
     "total",
     "fields",
     "field_roots",

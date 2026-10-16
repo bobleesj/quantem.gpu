@@ -43,6 +43,7 @@ def test_workflow_drops_shared_source_before_mps_allocator_flush() -> None:
 
     workflow = SSB.__new__(SSB)
     workflow._device = None
+    workflow._owned_dataset = None
     workflow._data = np.ones((2, 2, 3, 3), dtype=np.uint16)
     observations: list[object | None] = []
 
