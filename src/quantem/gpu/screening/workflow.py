@@ -18,10 +18,11 @@ from quantem.gpu.optics.physics import wrap_degrees
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
+# 5: retain normalized microscope calibration and the calibrated aperture estimate.
 # 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed; the
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
-_CACHE_VERSION = 4
+_CACHE_VERSION = 5
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
@@ -111,7 +112,7 @@ def prepare(
         Whether the detector axes are exchanged before the given rotation;
         used only with ``scan_detector_rotation_deg``.
     cache, cache_dir, refresh : bool, str or Path, bool
-        Reuse and save ``<master stem>.screening-v4.npz``, by default in
+        Reuse and save ``<master stem>.screening-v5.npz``, by default in
         ``.quantem_gpu_cache`` beside the master. ``refresh`` rebuilds it.
         A cache is reused only while every source file is unchanged.
     rotation_steps : int
@@ -153,9 +154,37 @@ def prepare(
         verbose=verbose,
     )
     products.cache_path = cache_path if cache else None
+    _add_calibration(products)
     if cache:
         _save_cache(products, cache_path)
     return _with_rotation(products, scan_detector_rotation_deg, detector_transposed)
+
+
+def _add_calibration(products: ScreeningResult) -> None:
+    """Attach recorded optics and an aperture angle from calibrated detector pixels.
+
+    A disk radius alone has no angular scale. When only the convergence angle
+    is missing, the half-plateau disk area times the recorded angular pixel
+    area gives its equivalent circular semiangle. This is an estimate using
+    the recorded detector calibration, not an independent calibration of it.
+    """
+    from quantem.gpu.ssb.brightfield import disk_edge_radius
+
+    metadata = products.metadata
+    products.metadata.pop("semiangle_mrad_source", None)
+    products.metadata.pop("semiangle_disk_edge_radius_px", None)
+    sampling = metadata.get("detector_sampling_mrad")
+    if metadata.get("semiangle_mrad") is not None or sampling is None:
+        return
+    steps = np.asarray(sampling, dtype=float)
+    if steps.shape != (2,) or not np.all(np.isfinite(steps) & (steps > 0)):
+        return
+    radius = disk_edge_radius(products.mean_diffraction_pattern)
+    products.metadata.update(
+        semiangle_mrad=float(radius * np.sqrt(steps.prod())),
+        semiangle_mrad_source="mean diffraction disk and recorded detector sampling",
+        semiangle_disk_edge_radius_px=float(radius),
+    )
 
 
 # --- building the products from one encoded acquisition ---
@@ -221,6 +250,13 @@ def _build_products(
         sums = session.masked_sums_exact(np.stack(masks))
         com_row, com_col = session.center_of_mass()
         working_dtype = loaded.dtype.name
+        acquisition_metadata = {
+            name: loaded.metadata[name] for name in (
+                "voltage_kV", "semiangle_mrad", "scan_sampling_A",
+                "detector_sampling_mrad", "camera_length_mm",
+                "microscope_metadata_source", "microscope_metadata_warning",
+            ) if name in loaded.metadata
+        }
     reduced_s = time.perf_counter() - started - loaded_s
 
     total, bright_field, annular_bright_field, annular_dark_field, dark_field = sums
@@ -272,6 +308,7 @@ def _build_products(
         scan_detector_rotation_mod180_deg=float(rotation_mod180_deg),
         detector_transposed=bool(transposed),
         metadata={
+            **acquisition_metadata,
             "schema": _CACHE_SCHEMA,
             "source": source,
             "parameters": parameters,
