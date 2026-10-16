@@ -180,7 +180,9 @@ public final class MetalSSBEngine {
   private let halfColumns: Int
   private let halfPlane: Int
   private static let batchCapacity = 32
-  private static let phaseBatchCapacity = 8
+  // Share dispatch setup across 32 BF planes. The moment kernel still reduces
+  // eight planes at a time, preserving the existing float32 addition order.
+  private static let phaseBatchCapacity = 32
   // Streamed phase-loss batches reuse raw/FFT scratch and ordered phase sums.
   // Queue a bounded window before waiting so command-buffer synchronization
   // does not dominate the full-BF objective while avoiding an unbounded buffer.
@@ -910,8 +912,8 @@ public final class MetalSSBEngine {
       throw MetalSSBError.commandQueue
     }
     for (cache, cacheCount) in zip(cacheBuffers, cacheCounts) {
-      // The fused 512 path uses eight-plane tiles. Smaller scans reuse the
-      // full allocated scratch batch; each pixel still accumulates BF in order.
+      // The fused 512 path shares a larger dispatch while retaining its
+      // eight-plane reduction groups. Smaller scans keep their existing batch.
       let phaseBatch = size == 512 ? Self.phaseBatchCapacity : Self.batchCapacity
       for range in sampling.ranges(
         activeIndices: activeBrightfieldIndices,
