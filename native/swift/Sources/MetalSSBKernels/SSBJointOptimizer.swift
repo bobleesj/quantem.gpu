@@ -24,29 +24,39 @@ public struct SSBJointOptimizer: Sendable {
   public let refinementIterations: Int
   public let seed: UInt64
   private let bounds: [ClosedRange<Double>] = [
-    -300...300, 0...200, (-Double.pi / 2)...(Double.pi / 2), -25...25, -25...25, 20...600]
+    -300...300, 0...200, (-Double.pi / 2)...(Double.pi / 2), -25...25, -25...25, 20...600,
+  ]
 
   public init(globalTrials: Int = 200, refinementIterations: Int = 200, seed: UInt64 = 42) {
-    self.globalTrials = globalTrials; self.refinementIterations = refinementIterations; self.seed = seed
+    self.globalTrials = globalTrials
+    self.refinementIterations = refinementIterations
+    self.seed = seed
   }
 
-  public func run(start: SSBJointParameters,
-                  evaluate: (SSBJointParameters) throws -> Double,
-                  progress: (String, Int, Int, Double) -> Void = { _, _, _, _ in },
-                  isCancelled: () -> Bool = { false }) throws -> SSBJointOptimizationResult {
+  public func run(
+    start: SSBJointParameters,
+    evaluate: (SSBJointParameters) throws -> Double,
+    progress: (String, Int, Int, Double) -> Void = { _, _, _, _ in },
+    isCancelled: () -> Bool = { false }
+  ) throws -> SSBJointOptimizationResult {
     guard globalTrials > 0, refinementIterations > 0 else {
       throw MetalSSBError.invalidGeometry("Use at least one search trial and refinement iteration.")
     }
     let started = Date()
-    var random = JointRandom(state: seed), history: [SSBJointTrial] = []
-    var best = start, bestLoss = Double.infinity
+    var random = JointRandom(state: seed)
+    var history: [SSBJointTrial] = []
+    var best = start
+    var bestLoss = Double.infinity
     func loss(_ values: [Double], stage: String) throws -> Double {
       if isCancelled() { throw CancellationError() }
       let parameters = point(values)
       let value = try evaluate(parameters)
       guard value.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
       history.append(SSBJointTrial(parameters: parameters, loss: value, stage: stage))
-      if value < bestLoss { bestLoss = value; best = parameters }
+      if value < bestLoss {
+        bestLoss = value
+        best = parameters
+      }
       return value
     }
     _ = try loss(vector(start), stage: "initial")
@@ -55,14 +65,22 @@ public struct SSBJointOptimizer: Sendable {
       if trial >= max(30, globalTrials / 6) {
         let sorted = history.sorted { $0.loss < $1.loss }.map { vector($0.parameters) }
         let goodCount = max(1, min(25, Int(ceil(Double(sorted.count) * 0.1))))
-        let good = Array(sorted.prefix(goodCount)), bad = Array(sorted.dropFirst(goodCount))
+        let good = Array(sorted.prefix(goodCount))
+        let bad = Array(sorted.dropFirst(goodCount))
         var score = -Double.infinity
         for _ in 0..<24 {
-          let sample = bounds.indices.map { d in sampleParzen(good.map { $0[d] }, bounds: bounds[d], random: &random) }
-          let value = bounds.indices.reduce(0.0) { sum, d in
-            sum + logDensity(sample[d], good: good.map { $0[d] }, bad: bad.map { $0[d] }, bounds: bounds[d])
+          let sample = bounds.indices.map { d in
+            sampleParzen(good.map { $0[d] }, bounds: bounds[d], random: &random)
           }
-          if value > score { score = value; candidate = sample }
+          let value = bounds.indices.reduce(0.0) { sum, d in
+            sum
+              + logDensity(
+                sample[d], good: good.map { $0[d] }, bad: bad.map { $0[d] }, bounds: bounds[d])
+          }
+          if value > score {
+            score = value
+            candidate = sample
+          }
         }
       }
       _ = try loss(candidate, stage: "search")
@@ -74,7 +92,9 @@ public struct SSBJointOptimizer: Sendable {
     let separation: [Double] = [50, 20, 0.3, 2, 2, 50]
     for trial in history.sorted(by: { $0.loss < $1.loss }) {
       let v = vector(trial.parameters)
-      if starts.allSatisfy({ existing in zip(zip(v, existing), separation).map { abs($0.0.0 - $0.0.1) / $0.1 }.max()! > 1 }) {
+      if starts.allSatisfy({ existing in
+        zip(zip(v, existing), separation).map { abs($0.0.0 - $0.0.1) / $0.1 }.max()! > 1
+      }) {
         starts.append(v)
       }
       if starts.count == 3 { break }
@@ -92,9 +112,12 @@ public struct SSBJointOptimizer: Sendable {
       var losses = try simplex.map { try loss($0, stage: "refinement") / scale }
       for iteration in 0..<refinementIterations {
         let order = losses.indices.sorted { losses[$0] < losses[$1] }
-        simplex = order.map { simplex[$0] }; losses = order.map { losses[$0] }
-        progress("Refinement \(run + 1)/\(starts.count)", iteration + 1, refinementIterations, bestLoss)
-        let spread = simplex.dropFirst().flatMap { v in zip(v, simplex[0]).map { abs($0 - $1) } }.max() ?? 0
+        simplex = order.map { simplex[$0] }
+        losses = order.map { losses[$0] }
+        progress(
+          "Refinement \(run + 1)/\(starts.count)", iteration + 1, refinementIterations, bestLoss)
+        let spread =
+          simplex.dropFirst().flatMap { v in zip(v, simplex[0]).map { abs($0 - $1) } }.max() ?? 0
         if spread < 0.05 && losses.last! - losses[0] < 1e-6 { break }
         let centroid = bounds.indices.map { d in simplex.prefix(6).reduce(0) { $0 + $1[d] } / 6 }
         let reflected = clamp(zip(centroid, simplex[6]).map { 2 * $0 - $1 })
@@ -102,15 +125,19 @@ public struct SSBJointOptimizer: Sendable {
         if r < losses[0] {
           let expanded = clamp(zip(centroid, reflected).map { $0 + 2 * ($1 - $0) })
           let e = try loss(expanded, stage: "refinement") / scale
-          simplex[6] = e < r ? expanded : reflected; losses[6] = min(e, r)
+          simplex[6] = e < r ? expanded : reflected
+          losses[6] = min(e, r)
         } else if r < losses[5] {
-          simplex[6] = reflected; losses[6] = r
+          simplex[6] = reflected
+          losses[6] = r
         } else {
           let target = r < losses[6] ? reflected : simplex[6]
           let contracted = clamp(zip(centroid, target).map { $0 + 0.5 * ($1 - $0) })
           let c = try loss(contracted, stage: "refinement") / scale
-          if c < min(r, losses[6]) { simplex[6] = contracted; losses[6] = c }
-          else {
+          if c < min(r, losses[6]) {
+            simplex[6] = contracted
+            losses[6] = c
+          } else {
             for i in 1...6 {
               simplex[i] = clamp(zip(simplex[0], simplex[i]).map { $0 + 0.5 * ($1 - $0) })
               losses[i] = try loss(simplex[i], stage: "refinement") / scale
@@ -119,21 +146,27 @@ public struct SSBJointOptimizer: Sendable {
         }
       }
     }
-    return SSBJointOptimizationResult(best: best, loss: bestLoss, trials: history,
+    return SSBJointOptimizationResult(
+      best: best, loss: bestLoss, trials: history,
       elapsedSeconds: Date().timeIntervalSince(started), seed: seed, globalTrials: globalTrials,
       refinementIterationsPerStart: refinementIterations)
   }
 
   private func vector(_ p: SSBJointParameters) -> [Double] {
-    [Double(p.aberrations.c10Angstroms), Double(p.aberrations.c12Angstroms), Double(p.aberrations.phi12Radians),
-     Double(p.tiltRowMrad), Double(p.tiltColumnMrad), Double(p.depthAngstroms)]
+    [
+      Double(p.aberrations.c10Angstroms), Double(p.aberrations.c12Angstroms),
+      Double(p.aberrations.phi12Radians),
+      Double(p.tiltRowMrad), Double(p.tiltColumnMrad), Double(p.depthAngstroms),
+    ]
   }
   private func clamp(_ v: [Double]) -> [Double] {
     v.enumerated().map { d, x in min(bounds[d].upperBound, max(bounds[d].lowerBound, x)) }
   }
   private func point(_ v: [Double]) -> SSBJointParameters {
     let v = clamp(v)
-    return SSBJointParameters(aberrations: .init(c10Angstroms: Float(v[0]), c12Angstroms: Float(v[1]), phi12Radians: Float(v[2])),
+    return SSBJointParameters(
+      aberrations: .init(
+        c10Angstroms: Float(v[0]), c12Angstroms: Float(v[1]), phi12Radians: Float(v[2])),
       depthAngstroms: Float(v[5]), tiltRowMrad: Float(v[3]), tiltColumnMrad: Float(v[4]))
   }
   private func sampleParzen(

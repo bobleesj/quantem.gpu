@@ -1333,8 +1333,11 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       pixels.allSatisfy({ validPixels.indices.contains($0) }),
       scanRows >= shape[0], scanColumns >= shape[1], scanRows <= 512, scanColumns <= 512,
       output.length >= pixels.count * scanRows * scanColumns * 4,
-      output.device.registryID == queue.device.registryID else {
-      throw Self.invalid("Detector columns need 1...32 valid pixels and same-device full-scan UInt32 storage (at most 512 × 512).")
+      output.device.registryID == queue.device.registryID
+    else {
+      throw Self.invalid(
+        "Detector columns need 1...32 valid pixels and same-device full-scan UInt32 storage (at most 512 × 512)."
+      )
     }
     if detectorColumnReader == nil {
       detectorColumnReader = try PairedRuntimeDetectorColumns(

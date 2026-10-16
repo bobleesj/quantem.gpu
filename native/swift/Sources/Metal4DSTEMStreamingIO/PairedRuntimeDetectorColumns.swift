@@ -12,8 +12,9 @@ final class PairedRuntimeDetectorColumns {
     constants.setConstantValue(
       &compact, type: .bool,
       index: Metal4DSTEMKernels.pairedRuntimeTANSCompactOffsetsFunctionConstantIndex)
-    pipeline = try device.makeComputePipelineState(function: library.makeFunction(
-      name: "paired_runtime_tans_detector_columns", constantValues: constants))
+    pipeline = try device.makeComputePipelineState(
+      function: library.makeFunction(
+        name: "paired_runtime_tans_detector_columns", constantValues: constants))
   }
 
   func read(
@@ -23,18 +24,22 @@ final class PairedRuntimeDetectorColumns {
     layout: (sourceColumns: Int, rows: Int, columns: Int)? = nil
   ) throws {
     let sourceColumns = layout?.sourceColumns ?? scanCount
-    let rows = layout?.rows ?? 1, columns = layout?.columns ?? scanCount
+    let rows = layout?.rows ?? 1
+    let columns = layout?.columns ?? scanCount
     guard sourceColumns > 0, rows > 0, columns >= sourceColumns,
       scanCount % sourceColumns == 0, rows >= scanCount / sourceColumns,
       rows <= Int(UInt32.max), columns <= Int(UInt32.max),
       output.length / 4 / rows / columns >= selectedRanks.count,
       !selectedRanks.isEmpty, selectedRanks.count <= 32,
       detectorPixels > 0, scanCount > 0, scanCount % 512 == 0,
-      selectedRanks.allSatisfy({ UInt64($0) < UInt64(detectorPixels) || (layout != nil && $0 == UInt32.max) }),
+      selectedRanks.allSatisfy({
+        UInt64($0) < UInt64(detectorPixels) || (layout != nil && $0 == UInt32.max)
+      }),
       output.device.registryID == queue.device.registryID
     else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Detector columns need 1...32 valid pixels and a same-device UInt32 buffer for every scan position.")
+        "Detector columns need 1...32 valid pixels and a same-device UInt32 buffer for every scan position."
+      )
     }
     guard let failure = queue.device.makeBuffer(length: 4, options: .storageModeShared),
       let command = queue.makeCommandBuffer()
@@ -44,7 +49,8 @@ final class PairedRuntimeDetectorColumns {
     }
     if rows * columns != scanCount || selectedRanks.contains(UInt32.max) {
       guard let clear = command.makeBlitCommandEncoder() else {
-        throw Metal4DSTEMStreamingIOError.invalidRequest("Cannot clear detector-column padding. Retry.")
+        throw Metal4DSTEMStreamingIOError.invalidRequest(
+          "Cannot clear detector-column padding. Retry.")
       }
       clear.fill(buffer: output, range: 0..<(selectedRanks.count * rows * columns * 4), value: 0)
       clear.endEncoding()
@@ -57,8 +63,11 @@ final class PairedRuntimeDetectorColumns {
     for (index, buffer) in [payload, offsets, modes, table, output, failure].enumerated() {
       encoder.setBuffer(buffer, offset: 0, index: index)
     }
-    var parameters = [detectorPixels, scanCount / 512, payload.length, selectedRanks.count, sourceColumns, rows, columns]
-      .map(UInt32.init)
+    var parameters = [
+      detectorPixels, scanCount / 512, payload.length, selectedRanks.count, sourceColumns, rows,
+      columns,
+    ]
+    .map(UInt32.init)
     var selected = selectedRanks
     encoder.setBytes(&parameters, length: parameters.count * 4, index: 6)
     encoder.setBytes(&selected, length: selected.count * 4, index: 7)
@@ -71,7 +80,8 @@ final class PairedRuntimeDetectorColumns {
     let status = failure.contents().load(as: UInt32.self)
     guard command.status == .completed, command.error == nil, status == 0 else {
       throw Metal4DSTEMStreamingIOError.invalidRequest(
-        "Detector-column decoding failed (code \(status)): \(command.error?.localizedDescription ?? "invalid encoded stream"). Reopen the acquisition.")
+        "Detector-column decoding failed (code \(status)): \(command.error?.localizedDescription ?? "invalid encoded stream"). Reopen the acquisition."
+      )
     }
   }
 }
