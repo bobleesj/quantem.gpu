@@ -812,13 +812,16 @@ public final class MetalSSBEngine {
   ) throws -> MetalSSBJointModel {
     guard prepared else { throw MetalSSBError.notPrepared }
     let generation = preparationGeneration
-    return try MetalSSBJointModel(device: device, geometry: geometry,
+    return try MetalSSBJointModel(
+      device: device, geometry: geometry,
       activeIndices: activeBrightfieldIndices, rotation: scanDetectorRotationDegrees,
       band: bandInverseAngstroms, provenance: currentProvenance(),
       visit: { [self] body in try visitSpectra(body) },
       validatePreparation: { [self] in
         guard prepared, preparationGeneration == generation else {
-          throw MetalSSBError.invalidGeometry("The SSB source was prepared again. Create a new joint model before evaluating or reconstructing.")
+          throw MetalSSBError.invalidGeometry(
+            "The SSB source was prepared again. Create a new joint model before evaluating or reconstructing."
+          )
         }
       }, isCancelled: isCancelled)
   }
@@ -838,7 +841,8 @@ public final class MetalSSBEngine {
     for offset in stride(from: cachedBrightfieldCount, to: activeBrightfieldIndices.count, by: 8) {
       let count = min(8, activeBrightfieldIndices.count - offset)
       guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
-      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
+      try encodeBrightfield(
+        Array(activeBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
       encodeForwardFFT(commands, batch: count)
       try commitAndWait(commands)
       try body(fftA, 0, false, offset, count)

@@ -6,8 +6,9 @@ struct NativeSTEMMetadata {
   let raw: [String: String]
 
   init?(url: URL) {
-    guard let header = try? NativeHDF5Bridge.inspectMaster(
-      at: url, detectorRows: 0, detectorColumns: 0)
+    guard
+      let header = try? NativeHDF5Bridge.inspectMaster(
+        at: url, detectorRows: 0, detectorColumns: 0)
     else { return nil }
     raw = header.metadata.filter { $0.key.hasPrefix("STEM Metadata@") }
     guard !raw.isEmpty else { return nil }
@@ -47,7 +48,8 @@ struct NativeSTEMMetadata {
       metadata["scan_sampling_nominal_A"] = String(pixel * 10)
       if !isCalibrated {
         warnings.append(
-          "The recorded scan step is nominal (IsPixelSizeCalibrated is not 1). Confirm scan calibration before quantitative analysis.")
+          "The recorded scan step is nominal (IsPixelSizeCalibrated is not 1). Confirm scan calibration before quantitative analysis."
+        )
       }
     } else {
       warnings.append("The recorded scan step is invalid; supply a verified scan calibration.")
@@ -66,7 +68,8 @@ struct NativeSTEMMetadata {
       abs(voltage / 1000 - detectorVoltage) > 1e-6 * detectorVoltage
     {
       warnings.append(
-        "Detector photon_energy disagrees with microscope High Tension; the microscope voltage is used. Both recorded values are retained.")
+        "Detector photon_energy disagrees with microscope High Tension; the microscope voltage is used. Both recorded values are retained."
+      )
     }
     if !warnings.isEmpty {
       metadata["microscope_metadata_warning"] = warnings.joined(separator: " ")

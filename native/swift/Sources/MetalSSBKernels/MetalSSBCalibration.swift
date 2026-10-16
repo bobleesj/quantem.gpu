@@ -206,7 +206,8 @@ public struct MetalSSBCalibration: Codable, Equatable, Sendable {
         qyByColumn: frequencies(scanSamplingColumnAngstroms, count: scanColumns),
         wavelengthAngstroms: Float(wavelength), semiangleRadians: Float(angle),
         angularSamplingYRadians: Float(stepRow), angularSamplingXRadians: Float(stepColumn),
-        dcValue: SIMD2(Float(dc / Double(pixels.count)), 0), referenceRotationDegrees: 0, phaseFactor: Float(Double.pi / wavelength)), pixels
+        dcValue: SIMD2(Float(dc / Double(pixels.count)), 0), referenceRotationDegrees: 0,
+        phaseFactor: Float(Double.pi / wavelength)), pixels
     )
   }
 }

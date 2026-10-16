@@ -271,9 +271,13 @@ final class MetalSSBKernelsTests: XCTestCase {
   ) -> MetalSSBGeometry {
     let kxBase: [Float] = [-0.20, 0, 0.20]
     let kyBase: [Float] = [0.10, 0, -0.10]
-    let kx = brightfieldCount <= 3 ? Array(kxBase.prefix(brightfieldCount))
+    let kx =
+      brightfieldCount <= 3
+      ? Array(kxBase.prefix(brightfieldCount))
       : (0..<brightfieldCount).map { Float($0 % 7 - 3) * 0.08 }
-    let ky = brightfieldCount <= 3 ? Array(kyBase.prefix(brightfieldCount))
+    let ky =
+      brightfieldCount <= 3
+      ? Array(kyBase.prefix(brightfieldCount))
       : (0..<brightfieldCount).map { Float($0 / 7 - 2) * 0.07 }
     let wavelength: Float = 0.025
     var alphaSquared: [Float] = []
