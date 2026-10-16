@@ -95,6 +95,19 @@ def test_reads_the_columns_and_calibration_of_a_widget_folder(tmp_path):
     np.testing.assert_array_equal(frames.columns(np.array([1, 0]), np.array([2, 1])), COLUMNS[[2, 0]])
 
 
+def test_transposing_exact_columns_preserves_counts_and_original_coordinates(tmp_path):
+    write_widget_folder(tmp_path / "showptycho")
+    frames = load_bf_columns_mps(tmp_path / "showptycho")
+    view = frames.transpose_detector()
+    assert view._columns is frames._columns
+    assert view.selection.bright_field_center_px == (1.5, 1.0)
+    assert view.detector_sampling_mrad == (.8, .7)
+    np.testing.assert_array_equal(view.columns([2, 1], [1, 0]), COLUMNS[[2, 0]])
+    assert frames.selection.bright_field_center_px == (1.0, 1.5)
+    restored = view.transpose_detector()
+    np.testing.assert_array_equal(restored.columns([1, 0], [2, 1]), COLUMNS[[2, 0]])
+
+
 @pytest.mark.parametrize("schema", ["quantem.ssb-calibration/2", "quantem.ssb-browser-calibration/1", None])
 def test_another_calibration_layout_is_refused_by_name(tmp_path, schema):
     write_widget_folder(tmp_path / "showptycho", schema=schema)
