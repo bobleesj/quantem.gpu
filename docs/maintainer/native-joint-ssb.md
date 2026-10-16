@@ -1,0 +1,103 @@
+# Native joint tilt/depth SSB
+
+`MetalSSBKernels` now provides the depth-averaged transfer model used by the
+Python MPS joint SSB implementation. The app owns selection and presentation;
+the shared Swift package owns count extraction, Fourier preparation, the model,
+optimization and saved numerical state. Python is not needed at runtime.
+
+## Minimal workflow
+
+```swift
+let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
+let start = SSBJointParameters(
+  aberrations: .init(c10Angstroms: 0, c12Angstroms: 0, phi12Radians: 0),
+  depthAngstroms: 200)
+let fit = try SSBJointOptimizer().run(start: start, evaluate: model.loss)
+let phase = try model.reconstruct(
+  fit.best, upsamplingFactor: calibration.ssbUpsamplingFactor())
+```
+
+Prepare `engine` with the calibrated geometry and original unsigned counts.
+Source calls and the engine are serial. Preparing the engine again invalidates
+existing joint models; create a new model before evaluating that source. Pass `isCancelled` closures to long
+operations. `SSBScanRegion` copies an explicitly selected 128, 256 or 512 square
+in source `(row, column)` coordinates, retaining scan spacing and detector
+pixels. Compute geometry and DC from that same region's detector totals.
+
+## Scientific contract
+
+| Quantity | Contract |
+| --- | --- |
+| C10, C12 | Angstrom; `f = -C10` at the same reference plane |
+| C10 reference | Model midplane; not a microscope entrance-plane focus measurement |
+| Astigmatism angle | Radians |
+| Tilt | `(row, column)` in mrad, scan frame |
+| Depth | Nonnegative Angstrom; model depth spread, not an independently measured thickness |
+| Search | Original scan grid, every selected BF pixel, 0.2 < q < 0.9 inverse Angstrom |
+| Objective | Negative explained Fourier power; lower is better |
+| Final phase | Mean of individual corrected BF phases, radians |
+| Output sampling | Fourier-alias reconstruction; not interpolation |
+| Precision | Exact unsigned counts, Float32/complex64 science, Float64 final loss sum |
+
+Scalar angle conversions and pi/wavelength use Double before conversion to
+Float32. This matters near transfer zeros; changing the order of rounding can
+fail the phase-parity gate even when scalar losses agree.
+
+Automatic output sampling chooses the smallest supported factor in
+`[1, 2, 3, 4, 8]` covering nominal circular-aperture support from energy,
+convergence angle and scan spacing. It does not claim achieved resolution.
+Calibrations requiring more than 8x fail with a corrective error.
+
+The native seeded Parzen search runs 200 global trials by default, then at
+most three distinct Nelder-Mead starts with 200 iterations each. An iteration
+can evaluate multiple points. This optimizer is not proposal-identical to
+Optuna. Fixed-parameter model parity and optimizer behavior are separate tests.
+The search bounds are C10 ±300 A, C12 0..200 A, angle ±pi/2, tilt ±25 mrad per
+component, and depth 20..600 A. A boundary result deserves review.
+
+## Limits
+
+- Scan-detector rotation is supplied and held fixed during the joint search.
+  Trying both candidate angles is possible; this API does not certify the
+  physical branch or resolve all ambiguities automatically.
+- The joint model supports C10/C12 and tilt/depth. Nonzero higher-order
+  aberrations are rejected explicitly.
+- Supported scans are square 128, 256 and 512. There is no silent binning or
+  padding for this model.
+- Ordinary SSB retains its existing phase-of-mean estimator. Comparing it
+  directly with the joint mean-phase output changes both model and estimator.
+- No absolute potential, acquisition focus sign or specimen thickness claim
+  follows from contrast or optimizer loss alone.
+
+## Saved results
+
+`MetalSSBJointSavedRun` writes a phase-only `.jointssb` record with source
+identity, build identity, calibration, ROI, parameters, rotation, output
+sampling, trial history and a phase SHA-256. Reopening checks source identity,
+shape and checksum, then displays the exact stored phase without refitting.
+The format is distinct from the legacy complex-wave `.ssb` record.
+
+## Reproducible checks
+
+Generate disposable synthetic references using the independent Python MPS
+implementation and its alias-upsampling source:
+
+```sh
+python scripts/build_metal_ssb_joint_reference.py "$TEST_ARTIFACTS_DIR/reference" \
+  --upsampling-source /path/to/quantem/gpu/ssb/mps/upsampling.py
+SSB_JOINT_REFERENCE="$TEST_ARTIFACTS_DIR/reference" \
+  swift test --filter MetalSSBJointTests
+```
+
+The reference covers zero depth, nonzero tilt/depth, signed C10 and 1x/2x/3x/4x
+output. The frozen gates are loss relative error < 5e-5, phase relative L2
+< 2e-4 and maximum phase difference < 2e-4 rad. Tests exercise both cached and
+streamed Fourier input, exact UInt32 ROI extraction, optimizer repeatability,
+cancellation and save/reopen. An optional calibrated fixture test additionally
+covers native calibration and nonzero rotation. Missing external fixtures are
+reported as skips, never passes.
+
+Private measured-data evidence is archived under experiment
+`20261015-native-joint`. Keep acquisitions, screenshots and raw logs outside
+this repository. Native app interaction, numerical parity and release
+qualification are separate gates.

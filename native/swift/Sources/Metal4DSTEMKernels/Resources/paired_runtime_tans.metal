@@ -1451,29 +1451,34 @@ inline bool prt_packed_finished(thread PRTPackedReader &r) {
     return !prt_entropy_mode(r.mode) || prt_fast_finished(r.entropy);
 }
 
-// One thread decodes one complete selected detector stream. The destination
-// retains the caller's plane order, including duplicates, and every scan.
+// Exact bounded SSB input: decode each selected detector stream once per packet.
+// Indices are stream ranks; output planes retain requested order and duplicates.
 kernel void paired_runtime_tans_detector_columns(
     device const uchar *payload [[buffer(0)]], device const uint *offsets [[buffer(1)]],
     device const uchar *modes [[buffer(2)]], device const uint *table [[buffer(3)]],
     device uint *output [[buffer(4)]], device atomic_uint *failure [[buffer(5)]],
     constant uint *p [[buffer(6)]], constant uint *selected [[buffer(7)]],
     uint index [[thread_position_in_grid]]) {
-    uint pixels = p[0], packets = p[1], count = p[3];
-    if (index >= count * packets) return;
-    uint plane = index / packets, packet = index % packets;
-    uint stream = packet * pixels + selected[plane];
-    uint first = prt_source_offset(offsets, stream, pixels * packets);
-    uint end = prt_source_offset(offsets, stream + 1u, pixels * packets);
+    uint pixels=p[0], packets=p[1], count=p[3];
+    if (index >= packets*count) return;
+    uint plane=index/packets, packet=index%packets;
+    uint rank=selected[plane];
+    // A sentinel represents an excluded detector pixel.
+    if (rank == 0xffffffffu) return;
+    uint stream=packet*pixels+rank;
+    uint first=prt_source_offset(offsets,stream,pixels*packets);
+    uint end=prt_source_offset(offsets,stream+1u,pixels*packets);
     PRTPackedReader reader;
-    if (!prt_packed_begin(payload, table, first, end, p[2], uint(modes[stream]), reader)) {
-        atomic_store_explicit(failure, 112u, memory_order_relaxed); return;
+    if (!prt_packed_begin(payload,table,first,end,p[2],uint(modes[stream]),reader)) {
+        atomic_store_explicit(failure,120u,memory_order_relaxed); return;
     }
-    ulong base = (ulong(plane) * packets + packet) * PRT_INTERVAL;
-    for (uint scan = 0u; scan < PRT_INTERVAL; ++scan)
-        output[base + scan] = prt_packed_next(payload, reader);
+    for (uint local=0u; local<PRT_INTERVAL; ++local) {
+        uint scan=packet*PRT_INTERVAL+local;
+        uint destination=plane*p[5]*p[6]+(scan/p[4])*p[6]+scan%p[4];
+        output[destination]=prt_packed_next(payload,reader);
+    }
     if (!prt_packed_finished(reader))
-        atomic_store_explicit(failure, 113u, memory_order_relaxed);
+        atomic_store_explicit(failure,121u,memory_order_relaxed);
 }
 
 // One exact partial per detector stream and selected scan packet. Counts never
