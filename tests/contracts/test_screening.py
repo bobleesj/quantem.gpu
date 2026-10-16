@@ -1,6 +1,22 @@
 import numpy as np
 
 
+def test_missing_convergence_uses_recorded_angular_pixel_area(tmp_path):
+    from quantem.gpu.screening import workflow
+    from quantem.gpu.ssb.brightfield import disk_edge_radius
+
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"placeholder")
+    products = _result(master, workflow)
+    products.metadata["detector_sampling_mrad"] = [2., 3.]
+    workflow._add_calibration(products)
+    assert products.metadata["semiangle_mrad"] == disk_edge_radius(products.mean_diffraction_pattern) * np.sqrt(6.)
+    assert "recorded detector sampling" in products.metadata["semiangle_mrad_source"]
+    products.metadata["semiangle_mrad"] = 30.
+    workflow._add_calibration(products)
+    assert products.metadata["semiangle_mrad"] == 30.
+
+
 def _result(master, workflow):
     metadata = {
         "schema": workflow._CACHE_SCHEMA,
@@ -131,8 +147,8 @@ def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
 
     path = workflow._cache_path(master, tmp_path / "cache")
 
-    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/4"
-    assert path.name == "scan_master.screening-v4.npz"
+    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/5"
+    assert path.name == "scan_master.screening-v5.npz"
 
 
 def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:

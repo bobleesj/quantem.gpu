@@ -8,6 +8,7 @@ import h5py
 import numpy as np
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
+from quantem.gpu.formats.hdf5.nxem_metadata import _nxem_companion
 from quantem.gpu.formats.hdf5.stem_metadata import _companion_path
 
 
@@ -219,6 +220,9 @@ def inspect_master_readiness(
     companion = _companion_path(Path(master_path))
     if companion is not None:
         source_paths.add(str(companion))
+    nxem_companion = _nxem_companion(Path(master_path))
+    if nxem_companion is not None:
+        source_paths.add(str(nxem_companion))
     datasets: list[dict] = []
     initial_files = {path: file_signature(path) for path in source_paths}
     expected_frames = (
