@@ -205,12 +205,11 @@ extern "C" __global__ void sc_decode_range_u16(
                     detector_cols,row0,col0,crop_rows,crop_cols);
 }
 
-// Decode selected detector columns directly into the padded real scan planes
-// used by an in-place R2C FFT. uint8/uint16 counts are exact in float32.
-extern "C" __global__ void sc_columns_f32(
+// Keep adjacent decoded detector counts together. Writing each lane directly
+// into a separate FFT plane turns every store into a scattered transaction.
+extern "C" __global__ void sc_columns_u16(
     const u64* chunks, const u32* decoding, const u32* selected,
-    float* output, u32* errors, u32 columns, u32 pixels, u32 interval,
-    u32 scan_rows, u32 scan_cols
+    u16* output, u32* errors, u32 columns, u32 pixels, u32 interval
 ) {
     const u64* chunk = chunks + (u64)blockIdx.y * 5;
     const u32 index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -220,14 +219,37 @@ extern "C" __global__ void sc_columns_f32(
     StreamReader reader((const u8*)chunk[0], (const u32*)chunk[1],
                         (const u8*)chunk[2], decoding,
                         (index / columns) * pixels + selected[column]);
-    const u64 stride = (u64)scan_cols + 2;
-    const u64 plane = (u64)scan_rows * stride;
     for (u32 i = 0; i < min(interval, scans - first); ++i) {
         const u64 position = chunk[3] + first + i;
-        output[(u64)column * plane + (position / scan_cols) * stride
-               + position % scan_cols] = (float)reader.next();
+        output[position * columns + column] = (u16)reader.next();
     }
     if (!reader.finished()) atomicOr(errors, 1u);
+}
+
+// A 32-column batch is transposed through shared memory so both accesses are
+// contiguous. uint8/uint16 counts convert exactly to the padded float32 FFT input.
+extern "C" __global__ void sc_columns_fft(
+    const u16* counts, float* output, u32 columns, u32 scan_rows, u32 scan_cols
+) {
+    __shared__ float tile[32][33];
+    const u32 column = threadIdx.x;
+    const u64 first = (u64)blockIdx.x * 32 + threadIdx.y;
+    const u64 scans = (u64)scan_rows * scan_cols;
+    for (u32 offset = 0; offset < 32; offset += 8) {
+        tile[threadIdx.y + offset][threadIdx.x] =
+            column < columns && first + offset < scans
+            ? (float)counts[(first + offset) * columns + column] : 0.0f;
+    }
+    __syncthreads();
+    const u64 position = (u64)blockIdx.x * 32 + threadIdx.x;
+    const u64 stride = (u64)scan_cols + 2;
+    const u64 plane = (u64)scan_rows * stride;
+    for (u32 offset = 0; offset < 32; offset += 8) {
+        const u32 output_column = threadIdx.y + offset;
+        if (output_column < columns && position < scans)
+            output[(u64)output_column * plane + (position / scan_cols) * stride
+                   + position % scan_cols] = tile[threadIdx.x][output_column];
+    }
 }
 
 // Exact detector sum of one chunk without expanding it. A stream holds one detector pixel over

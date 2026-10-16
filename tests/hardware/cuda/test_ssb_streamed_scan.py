@@ -40,6 +40,39 @@ def _encoded(values, chunk_scans=1777):
     return Dataset4dstemGPU(source, resident_metadata(values.shape, values.dtype, source.nbytes, backend="cuda"))
 
 
+@pytest.mark.parametrize("scan_shape, dtype", [((130, 258), cp.uint16), ((128, 128), cp.uint8)])
+def test_encoded_fft_columns_preserve_counts(scan_shape, dtype):
+    """Selected counts survive irregular chunks and the last detector batch."""
+    values = _counts((*scan_shape, 8, 8)).astype(dtype)
+    values[..., 0, 0] = np.iinfo(dtype).max
+    with _encoded(values) as data:
+        source = data.data
+        descriptors = cp.asarray([
+            [*(array.data.ptr for array in chunk.arrays[:3]), chunk.first, chunk.scans]
+            for chunk in source.chunks
+        ], dtype=cp.uint64)
+        selected = cp.arange(61, dtype=cp.uint32)[::-1].copy()
+        scans = math.prod(scan_shape)
+        counts = cp.empty(scans * 32, cp.uint16)
+        output = cp.empty((32, scan_shape[0], scan_shape[1] + 2), cp.float32)
+        errors = cp.zeros(1, cp.uint32)
+        for first in range(0, len(selected), 32):
+            pixels = selected[first:first + 32]
+            streams = math.ceil(max(chunk.scans for chunk in source.chunks) / source.interval) * len(pixels)
+            source.kernels["columns_u16"](
+                (math.ceil(streams / 128), len(source.chunks)), (128,),
+                (descriptors, source.decoding, pixels, counts, errors,
+                 *(np.uint32(value) for value in (len(pixels), 64, source.interval))),
+            )
+            source.kernels["columns_fft"](
+                (math.ceil(scans / 32),), (32, 8),
+                (counts, output, *(np.uint32(value) for value in (len(pixels), *scan_shape))),
+            )
+            expected = values.reshape(scans, 64)[:, pixels].T.reshape(len(pixels), *scan_shape)
+            cp.testing.assert_array_equal(output[:len(pixels), :, :scan_shape[1]], expected)
+        assert int(errors.get()[0]) == 0
+
+
 @pytest.mark.parametrize("transposed, factor, depth", [(False, 1, 0.), (False, 3, 14.), (True, 2, 14.)])
 def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
     values = _counts((128, 128, 8, 8))

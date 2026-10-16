@@ -84,6 +84,12 @@ kernel, and accumulated before one inverse FFT. Scan tiles are not stitched.
 The full source and output must fit on the acquisition's GPU; distributing one
 SSB session across GPUs is not supported by this API yet.
 
+Decoded batches use a temporary scan-major uint16 buffer, then a tiled CUDA
+transpose writes the float32 FFT input. Counts remain exact in both buffers.
+The uint16 scratch uses two bytes per scan position per detector column; at
+2048×2048 with 32 columns, it adds 256 MiB. Batch sizing accounts for this
+scratch, FFT workspace and the full output arrays before reconstruction.
+
 ```python
 from quantem.gpu import SSB, io
 
