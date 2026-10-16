@@ -54,8 +54,8 @@ from quantem.gpu.ssb.units import (
     aberrations_from_engine,
     aberrations_to_engine,
     higher_order_arrays,
-    result_from_engine,
     refine_lock_to_engine,
+    result_from_engine,
     sampling_pair,
     search_ranges_to_engine,
     validate_aberrations,
@@ -96,7 +96,7 @@ class SSB:
 
     The backends differ in what they return for the same call: CUDA averages corrected complex waves before taking
     the phase (``phase_of_mean``) where MPS averages per-pixel phases (``mean_phase``), finer output sampling
-    (``upsampling_factor``) is CUDA only, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
+    (``upsampling_factor``) supports C10/C12 on both, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
     backend's own, so fitted values and images agree closely but not to the bit.
 
     Parameters
@@ -928,7 +928,7 @@ class SSB:
             Nyquist frequency covers the ideal circular-aperture SSB support,
             2 * semiangle / wavelength, on both scan axes. This is a grid
             criterion, not a measured resolution or a guarantee of useful
-            signal at the cutoff. Upsampling currently requires CUDA.
+            signal at the cutoff. C10/C12 upsampling runs on CUDA and MPS.
         phase_estimator
             CUDA defaults to ``phase_of_mean`` at every output factor. MPS
             retains ``mean_phase``. The loss is the native-grid search
@@ -1096,7 +1096,7 @@ class SSB:
 
         ``upsampling_factor`` selects 1, 2, 3, 4, or 8 times finer output sampling.
         Values above one support C10/C12 with or without tilt/depth correction
-        on CUDA. The diagnostic loss and aberration search remain on the native
+        on CUDA and MPS. The diagnostic loss and aberration search remain on the native
         scan grid. Sampling never fits parameters or interpolates detector data.
 
         By default, CUDA C10/C12 reconstruction averages corrected complex
@@ -1104,7 +1104,7 @@ class SSB:
         tilt, at every output factor. Explicit ``mean_phase`` retains the
         historical per-detector phase average for comparisons. Native MPS and
         higher-order paths retain their existing estimator; explicit wave
-        averaging on unsupported paths raises an error. Quantitative phase
+        averaging supports C10/C12 on both backends. Quantitative phase
         amplitude is not established by stronger image contrast. Diagnostic
         loss still uses native-grid per-detector phase variance; fitting is
         unaffected.

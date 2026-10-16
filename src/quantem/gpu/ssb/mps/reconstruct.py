@@ -48,13 +48,13 @@ def reconstruct_prepared(
     """Run SSB correction from a prepared BF FFT stack.
 
     ``thick`` = (thickness, tilt_row_rad, tilt_col_rad) applies the thick-sample depth weights inside the fused
-    128/256/1024 row kernel (``thick_sample.reconstruct_thick``); None is standard SSB.
+    128/256/512/1024 row kernel (``thick_sample.reconstruct_thick``); None is standard SSB.
     """
     mx = prepared.mx
     if thick is not None and (
-        prepared.scan_shape not in ((128, 128), (256, 256), (1024, 1024)) or compute_object
+        prepared.scan_shape not in ((128, 128), (256, 256), (512, 512), (1024, 1024)) or compute_object
     ):
-        raise ValueError("The fused thick-sample path covers 128/256/1024 phase images only.")
+        raise ValueError("The fused thick-sample path covers 128/256/512/1024 phase images only.")
     accumulator = (
         mx.zeros(prepared.scan_shape, dtype=mx.complex64)
         if compute_object else None
@@ -116,6 +116,7 @@ def reconstruct_prepared(
                     # (experiment 20260916-ssb-mps-hotpath).
                     return_active=True,
                     tiled_output=True,
+                    thick=thick,
                 )
                 if compute_loss:
                     batch_sum, batch_sumsq = (

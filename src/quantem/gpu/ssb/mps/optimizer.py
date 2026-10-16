@@ -258,6 +258,7 @@ def fit_sample(
                                                            thickness=thickness, band_inv_A=band_inv_A),
         objective_batch=lambda rows: thick_fit_batch(prepared, rows, band_inv_A),
         batch_size=THICK_FIT_MAX_BATCH,
+        batch_polish=True,
         band_inv_A=band_inv_A, **options)
 
 

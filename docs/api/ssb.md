@@ -167,7 +167,11 @@ noise, coherence, aberrations and alias separation can reduce useful bandwidth.
 See the [direct-ptychography upsampling paper](https://arxiv.org/abs/2507.18610).
 The current CUDA implementation can produce stripes; automatic selection
 does not certify their absence. More than 8× raises an explicit limit error.
-MPS currently supports native output only.
+CUDA and MPS support C10/C12 at every listed factor, with or without
+specimen tilt and depth correction. MPS keeps its `mean_phase` default;
+`phase_estimator="phase_of_mean"` explicitly selects wave averaging. These
+estimators are different scientific outputs. The aberration search and loss
+remain on the native grid.
 
 For an explicit sampling comparison:
 
