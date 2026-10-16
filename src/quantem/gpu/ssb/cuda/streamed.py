@@ -49,7 +49,8 @@ class StreamedSSB:
         self.device = source.device
         self.interval = source.interval
         self.decoding = source.decoding
-        self.decode = source.kernels["columns_f32"]
+        self.decode = source.kernels["columns_u16"]
+        self.to_fft = source.kernels["columns_fft"]
         self.descriptors = cp.asarray([
             [*(array.data.ptr for array in chunk.arrays[:3]), chunk.first, chunk.scans]
             for chunk in self.chunks
@@ -107,13 +108,13 @@ class StreamedSSB:
         fixed_bytes = output_pixels * 56
         per_column = rows * (cols + 2) * 4
         available = int(free_bytes * .8) - fixed_bytes
-        if available < per_column * 3:
+        if available < per_column * 4:
             raise MemoryError(
                 f"The full {output_shape} SSB output needs more free GPU memory. "
                 "Close other GPU allocations or explicitly select a smaller output sampling factor."
             )
         batch_size = max(1, min(32, self.num_bright_field_pixels,
-                                min(2 << 30, available // 3) // per_column))
+                                min(2 << 30, available // 4) // per_column))
         wavelength = wavelength_A_from_kV(voltage_kV)
         angular = self.detector_sampling_mrad[::-1] if self.transposed else self.detector_sampling_mrad
         center = self.center[::-1] if self.transposed else self.center
@@ -141,6 +142,7 @@ class StreamedSSB:
             sample_tilt_mrad[0] * 1e-3, sample_tilt_mrad[1] * 1e-3,
         ))
         buffer = cp.empty((batch_size, rows, cols + 2), cp.float32)
+        counts = cp.empty(batch_size * rows * cols, cp.uint16)
         spectra = buffer.view(cp.complex64)
         spectrum = cp.zeros(output_shape, cp.complex128)
         partial = cp.empty((1, *output_shape), cp.complex128)
@@ -154,9 +156,13 @@ class StreamedSSB:
             streams = math.ceil(self.max_chunk_scans / self.interval) * count
             self.decode(
                 (math.ceil(streams / 128), len(self.chunks)), (128,),
-                (self.descriptors, self.decoding, self.pixels[first:stop], buffer, errors,
+                (self.descriptors, self.decoding, self.pixels[first:stop], counts, errors,
                  *(np.uint32(value) for value in
-                   (count, math.prod(self.detector_shape), self.interval, rows, cols))),
+                   (count, math.prod(self.detector_shape), self.interval))),
+            )
+            self.to_fft(
+                (math.ceil(rows * cols / 32),), (32, 8),
+                (counts, buffer, *(np.uint32(value) for value in (count, rows, cols))),
             )
             if count != previous_count:
                 plan = None
@@ -178,7 +184,7 @@ class StreamedSSB:
             spectrum += partial[0]
         if int(errors.get()[0]):
             raise ValueError("An ANS detector column failed decoding. Reload the intact acquisition before reconstructing.")
-        del buffer, spectra, plan, partial
+        del buffer, counts, spectra, plan, partial
         spectrum /= self.num_bright_field_pixels
         spectrum[0, 0] = dc.mean()
         wave = cupyx.scipy.fft.ifft2(spectrum, overwrite_x=True)
