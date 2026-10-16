@@ -1319,6 +1319,37 @@ public final class MetalPairedRuntimeTANSResidentSource: @unchecked Sendable {
       maximumAdditionalBytes: maximumAdditionalBytes, staging: staging, shouldCancel: shouldCancel)
   }
 
+  /// Decode 1...32 detector columns to plane-major UInt32 storage on the GPU.
+  /// Preserves order and duplicates; excluded pixels and optional scan padding
+  /// are zero. The call owns its command buffer and completes before returning.
+  /// No dense four-dimensional array or CPU count readback is created.
+  public func readDetectorColumns(
+    pixels: [Int], into output: MTLBuffer, scanRows: Int, scanColumns: Int
+  ) throws {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    try requireLive()
+    guard !pixels.isEmpty, pixels.count <= 32,
+      pixels.allSatisfy({ validPixels.indices.contains($0) }),
+      scanRows >= shape[0], scanColumns >= shape[1], scanRows <= 512, scanColumns <= 512,
+      output.length >= pixels.count * scanRows * scanColumns * 4,
+      output.device.registryID == queue.device.registryID else {
+      throw Self.invalid("Detector columns need 1...32 valid pixels and same-device full-scan UInt32 storage (at most 512 × 512).")
+    }
+    if detectorColumnReader == nil {
+      detectorColumnReader = try PairedRuntimeDetectorColumns(
+        device: queue.device, library: sourceLibrary, compactOffsets: compactOffsetsEnabled)
+    }
+    let selected = zip(pixels, streamAddresses(pixels.map(UInt32.init))).map {
+      validPixels[$0.0] == 0 ? UInt32.max : $0.1
+    }
+    try detectorColumnReader!.read(
+      queue: queue, payload: payload, offsets: offsets, modes: modes, table: decodingTable,
+      detectorPixels: shape[2] * shape[3], scanCount: shape[0] * shape[1],
+      selectedRanks: selected, into: output,
+      layout: (shape[1], scanRows, scanColumns))
+  }
+
   /// Return one exact diffraction pattern, widened only for the public API.
   public func extractRawDiffraction(scanRow: Int, scanColumn: Int) throws -> [UInt32] {
     stateLock.lock()

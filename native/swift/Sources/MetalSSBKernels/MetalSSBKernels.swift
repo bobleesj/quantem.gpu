@@ -55,6 +55,8 @@ public struct MetalSSBGeometry: Codable, Sendable {
   public let angularSamplingXRadians: Float
   public let dcValue: SIMD2<Float>
   public let referenceRotationDegrees: Float
+  /// pi / wavelength, rounded once from the calibration in Double precision.
+  public let phaseFactor: Float?
 
   public var logicalBrightfieldCount: Int { brightfieldKX.count }
 
@@ -72,7 +74,8 @@ public struct MetalSSBGeometry: Codable, Sendable {
     angularSamplingYRadians: Float,
     angularSamplingXRadians: Float,
     dcValue: SIMD2<Float>,
-    referenceRotationDegrees: Float
+    referenceRotationDegrees: Float,
+    phaseFactor: Float? = nil
   ) {
     self.brightfieldKX = brightfieldKX
     self.brightfieldKY = brightfieldKY
@@ -88,6 +91,7 @@ public struct MetalSSBGeometry: Codable, Sendable {
     self.angularSamplingXRadians = angularSamplingXRadians
     self.dcValue = dcValue
     self.referenceRotationDegrees = referenceRotationDegrees
+    self.phaseFactor = phaseFactor
   }
 }
 
@@ -281,6 +285,7 @@ public final class MetalSSBEngine {
   private var chiTrigBuffer: MTLBuffer?
   private var crossTrigBuffer: MTLBuffer?
   private var prepared = false
+  private var preparationGeneration: UInt64 = 0
 
   /// Create a reusable SSB engine.
   ///
@@ -546,6 +551,8 @@ public final class MetalSSBEngine {
     progress: (Int, Int) -> Void = { _, _ in },
     encodeBrightfield: @escaping ([Int], MTLBuffer, MTLCommandBuffer) throws -> Void
   ) throws {
+    preparationGeneration &+= 1
+    prepared = false
     self.encodeBrightfield = encodeBrightfield
     let stagingBytes = Self.batchCapacity * plane * countType.byteWidth
     if rawBuffer.length != stagingBytes {
@@ -794,6 +801,48 @@ public final class MetalSSBEngine {
       gpuSeconds: gpuSeconds,
       provenance: currentProvenance()
     )
+  }
+
+  /// Build the joint tilt/depth model from this session's exact prepared spectra.
+  /// Calls must be serialized with all other operations on this engine.
+  public func jointModel(
+    scanDetectorRotationDegrees: Float,
+    bandInverseAngstroms: ClosedRange<Float> = 0.2...0.9,
+    isCancelled: () -> Bool = { false }
+  ) throws -> MetalSSBJointModel {
+    guard prepared else { throw MetalSSBError.notPrepared }
+    let generation = preparationGeneration
+    return try MetalSSBJointModel(device: device, geometry: geometry,
+      activeIndices: activeBrightfieldIndices, rotation: scanDetectorRotationDegrees,
+      band: bandInverseAngstroms, provenance: currentProvenance(),
+      visit: { [self] body in try visitSpectra(body) },
+      validatePreparation: { [self] in
+        guard prepared, preparationGeneration == generation else {
+          throw MetalSSBError.invalidGeometry("The SSB source was prepared again. Create a new joint model before evaluating or reconstructing.")
+        }
+      }, isCancelled: isCancelled)
+  }
+
+  // A narrow internal bridge: cached Hermitian spectra and streamed full spectra
+  // are consumed on the engine queue, never copied through CPU arrays.
+  private func visitSpectra(_ body: MetalSSBJointModel.SpectrumVisitor) throws {
+    guard prepared, let encodeBrightfield else { throw MetalSSBError.notPrepared }
+    try setCacheColumnMajor(false)
+    let strideBytes = halfPlane * MemoryLayout<SIMD2<Float>>.stride
+    for offset in stride(from: 0, to: cachedBrightfieldCount, by: 8) {
+      let count = min(8, cachedBrightfieldCount - offset)
+      let chunk = offset / cacheChunkCapacity
+      let byteOffset = (offset % cacheChunkCapacity) * strideBytes
+      try body(cacheBuffers[chunk], byteOffset, true, offset, count)
+    }
+    for offset in stride(from: cachedBrightfieldCount, to: activeBrightfieldIndices.count, by: 8) {
+      let count = min(8, activeBrightfieldIndices.count - offset)
+      guard let commands = queue.makeCommandBuffer() else { throw MetalSSBError.commandQueue }
+      try encodeBrightfield(Array(activeBrightfieldIndices[offset..<(offset + count)]), rawBuffer, commands)
+      encodeForwardFFT(commands, batch: count)
+      try commitAndWait(commands)
+      try body(fftA, 0, false, offset, count)
+    }
   }
 
   /// Convert an owned complex object to its scalar phase, in radians, on Metal.
@@ -1782,6 +1831,7 @@ public final class MetalSSBEngine {
     }
     guard geometry.wavelengthAngstroms.isFinite,
       geometry.wavelengthAngstroms > 0,
+      geometry.phaseFactor.map({ $0.isFinite && $0 > 0 }) ?? true,
       geometry.semiangleRadians.isFinite,
       geometry.semiangleRadians > 0,
       geometry.angularSamplingYRadians.isFinite,

@@ -61,6 +61,28 @@ final class PairedRuntimeDetectorColumnsTests: XCTestCase {
         XCTAssertThrowsError(try reader.read(queue: queue, payload: payload, offsets: offsets, modes: modes,
           table: table, detectorPixels: pixels, scanCount: scans, selectedRanks: [UInt32(pixels)], into: output))
       }
+      // Explicit padding and excluded columns share the same decoder.
+      let selected: [UInt32] = [4, UInt32.max, 4]
+      let sourceColumns = 64, paddedRows = 80, paddedColumns = 96
+      let paddedPlane = paddedRows * paddedColumns
+      let padded = try XCTUnwrap(device.makeBuffer(length: selected.count * paddedPlane * 4 + 4, options: .storageModeShared))
+      memset(padded.contents(), 0xCD, padded.length)
+      try reader.read(queue: queue, payload: payload, offsets: offsets, modes: modes,
+        table: table, detectorPixels: pixels, scanCount: scans, selectedRanks: selected, into: padded,
+        layout: (sourceColumns, paddedRows, paddedColumns))
+      let actual = padded.contents().assumingMemoryBound(to: UInt32.self)
+      for plane in selected.indices {
+        for row in 0..<paddedRows { for column in 0..<paddedColumns {
+          let scan = row * sourceColumns + column
+          let expected: UInt32 = plane == 1 || row >= scans / sourceColumns || column >= sourceColumns
+            ? 0 : UInt32(streams[scan / 512 * pixels + 4][scan % 512])
+          XCTAssertEqual(actual[plane * paddedPlane + row * paddedColumns + column], expected)
+        } }
+      }
+      XCTAssertEqual(actual[selected.count * paddedPlane], 0xCDCDCDCD)
+      XCTAssertThrowsError(try reader.read(queue: queue, payload: payload, offsets: offsets, modes: modes,
+        table: table, detectorPixels: pixels, scanCount: scans, selectedRanks: [4], into: padded,
+        layout: (sourceColumns, paddedRows, sourceColumns - 1)))
       let short = try XCTUnwrap(device.makeBuffer(length: scans * 4 - 4, options: .storageModeShared))
       XCTAssertThrowsError(try reader.read(queue: queue, payload: payload, offsets: offsets, modes: modes,
         table: table, detectorPixels: pixels, scanCount: scans, selectedRanks: [0], into: short))
