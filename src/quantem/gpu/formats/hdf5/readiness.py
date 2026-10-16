@@ -2,11 +2,13 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import h5py
 import numpy as np
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
+from quantem.gpu.formats.hdf5.stem_metadata import _companion_path
 
 
 @dataclass(frozen=True)
@@ -214,8 +216,11 @@ def inspect_master_readiness(
     explicit_scan_shape = _normalize_readiness_scan_shape(scan_shape)
     master_path = _absolute_source_path(filepath)
     source_paths = {master_path}
+    companion = _companion_path(Path(master_path))
+    if companion is not None:
+        source_paths.add(str(companion))
     datasets: list[dict] = []
-    initial_files = {master_path: file_signature(master_path)}
+    initial_files = {path: file_signature(path) for path in source_paths}
     expected_frames = (
         explicit_scan_shape[0] * explicit_scan_shape[1]
         if explicit_scan_shape is not None

@@ -79,8 +79,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     }
     let signatureFiles =
       (FileManager.default.fileExists(atPath: source.path) ? [source] : [])
-      + dataFiles + [companionMetadata(for: source)].compactMap { $0 }
-    let signature = try nativeDatasetSignature(for: signatureFiles) + "-metadata-v3"
+      + dataFiles + [companionMetadata(for: source), stemMetadata(for: source)].compactMap { $0 }
+    let signature = try nativeDatasetSignature(for: signatureFiles) + "-metadata-v4"
     let indexRoot = cacheDirectory.appendingPathComponent(signature, isDirectory: true)
     let datasetCache = indexRoot.appendingPathComponent("dataset.json")
     if let cached = try cachedDataset(
@@ -183,13 +183,24 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
       detectorRows: first.detectorRows,
       detectorColumns: first.detectorColumns
     )
-    let scanShape = try scanShape(master: master, totalFrames: totalFrames)
+    let stemURL = companionMetadata(for: source) == nil ? stemMetadata(for: source) : nil
+    let stem = stemURL.flatMap { NativeSTEMMetadata(url: $0) }
+    let scanShape: (rows: Int, columns: Int)
+    if master.scanShape == nil, let shape = stem?.shape,
+      shape.rows.multipliedReportingOverflow(by: shape.columns) == (totalFrames, false),
+      master.expectedFrames == nil || master.expectedFrames == totalFrames
+    {
+      scanShape = shape
+    } else {
+      scanShape = try self.scanShape(master: master, totalFrames: totalFrames)
+    }
     let spatialCalibration = spatialCalibration(
       source: source,
       master: master,
-      scanShape: scanShape
+      scanShape: scanShape, stem: stem, stemURL: stemURL
     )
-    let companion = microscopeMetadata(source: source, scanShape: scanShape)
+    let companion = microscopeMetadata(
+      source: source, scanShape: scanShape, master: master, stem: stem, stemURL: stemURL)
     let metadata = master.metadata.merging(companion) { _, new in new }
       .merging(spatialCalibration.metadata) { _, new in new }
     let microscope = NativeMicroscopeMetadata(metadata: metadata)
@@ -471,7 +482,8 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
   private func spatialCalibration(
     source: URL,
     master: NativeHDF5Master,
-    scanShape: (rows: Int, columns: Int)
+    scanShape: (rows: Int, columns: Int),
+    stem: NativeSTEMMetadata?, stemURL: URL?
   ) -> (
     sampling: (row: Double, column: Double)?,
     metadata: [String: String]
@@ -493,6 +505,15 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
         sampling, ["spatial_calibration_source": "NXem companion · \(companion.lastPathComponent)"]
       )
     }
+    if let stemURL {
+      guard let shape = stem?.shape,
+        shape.rows == scanShape.rows, shape.columns == scanShape.columns,
+        let sampling = stem?.sampling
+      else { return (nil, [:]) }
+      return (
+        sampling, ["spatial_calibration_source": "STEM companion · \(stemURL.lastPathComponent)"]
+      )
+    }
     guard let emd = unambiguousVeloxSibling(for: source),
       let fieldOfView = try? NativeHDF5Bridge.veloxFieldOfViewNanometer(at: emd),
       scanShape.rows > 0,
@@ -510,8 +531,21 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
   }
 
   private func microscopeMetadata(
-    source: URL, scanShape: (rows: Int, columns: Int)
+    source: URL, scanShape: (rows: Int, columns: Int),
+    master: NativeHDF5Master, stem: NativeSTEMMetadata?, stemURL: URL?
   ) -> [String: String] {
+    if let stemURL {
+      guard let stem, let shape = stem.shape,
+        shape.rows == scanShape.rows, shape.columns == scanShape.columns
+      else {
+        var metadata = stem?.raw ?? [:]
+        metadata["sourceFormat"] = "ARINA HDF5"
+        metadata["microscope_metadata_warning"] =
+          "Paired microscope metadata is unreadable or has mismatched scan dimensions; its calibration was not applied."
+        return metadata
+      }
+      return stem.normalized(source: stemURL, master: master)
+    }
     guard let url = companionMetadata(for: source) else {
       return ["sourceFormat": "ARINA HDF5"]
     }
@@ -538,6 +572,14 @@ public struct Native4DSTEMCatalogBuilder: Sendable {
     guard name.hasSuffix("_master.h5") else { return nil }
     let companion = source.deletingLastPathComponent().appendingPathComponent(
       String(name.dropLast("_master.h5".count)) + "_em_metadata.h5")
+    return FileManager.default.fileExists(atPath: companion.path) ? companion : nil
+  }
+
+  private func stemMetadata(for source: URL) -> URL? {
+    let name = source.lastPathComponent
+    guard name.hasSuffix("_master.h5") else { return nil }
+    let companion = source.deletingLastPathComponent().appendingPathComponent(
+      String(name.dropLast("_master.h5".count)) + ".h5")
     return FileManager.default.fileExists(atPath: companion.path) ? companion : nil
   }
 

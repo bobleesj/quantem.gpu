@@ -262,7 +262,11 @@ def _nexus_source_metadata(metadata: dict) -> dict:
     """Gather the NXmx master fields that the HDF5 reader retains as flat keys."""
     source = {
         key: value for key, value in metadata.items()
-        if isinstance(key, str) and key.startswith("entry/")
+        if isinstance(key, str) and (
+            key.startswith(("entry/", "STEM Metadata@", "electron_microscope/"))
+            or key in ("microscope_metadata_source", "microscope_metadata_warning",
+                       "scan_sampling_nominal_A", "scan_sampling_calibrated")
+        )
     }
     if source:
         description = str(source.get("entry/instrument/detector/description", ""))
