@@ -119,6 +119,50 @@ class CatalogCalibrationTests(unittest.TestCase):
         self.assertEqual(rejected["metadata"]["sourceFormat"], "ARINA HDF5")
         self.assertNotIn("kPixelSizeRow", rejected)
 
+    def stem_metadata(self, calibrated=1, rows=2, pixel=0.05):
+        with h5py.File(self.master.with_name("acquisition.h5"), "w") as f:
+            attrs = f.create_group("STEM Metadata").attrs
+            for key, value in {
+                "NumPixelsY": rows, "NumPixelsX": 3, "Pixel Size": pixel,
+                "IsPixelSizeCalibrated": calibrated, "High Tension": 300000.0,
+                "Camera Length": 0.091, "NumPixelsPrescan": 16, "Rotation": 12,
+            }.items():
+                attrs[key] = [value]
+
+    def test_stem_nominal_calibrated_cache_and_removal(self):
+        self.stem_metadata(calibrated=0)
+        nominal = self.read()
+        self.assertNotIn("sourceScanCalibration", nominal)
+        self.assertEqual(nominal["metadata"]["scan_sampling_nominal_A"], "0.5")
+        self.assertIn("nominal", nominal["metadata"]["microscope_metadata_warning"])
+        self.stem_metadata(calibrated=1)
+        calibrated = self.read()
+        self.assertNotEqual(nominal["id"], calibrated["id"])
+        self.assertEqual(calibrated["sourceScanCalibration"]["rowSamplingAngstrom"], 0.5)
+        self.assertEqual(calibrated["metadata"][
+            "electron_microscope/electron_source/accelerating_voltage"], "300000.0")
+        self.assertNotIn("kPixelSizeRow", calibrated)
+        self.master.with_name("acquisition.h5").unlink()
+        self.assertNotIn("sourceScanCalibration", self.read())
+
+    def test_stem_invalid_or_wrong_grid_not_promoted(self):
+        for arguments in ({"rows": 3}, {"pixel": 5e-324}, {"pixel": 0}):
+            with self.subTest(arguments=arguments):
+                self.stem_metadata(**arguments)
+                result = self.read()
+                self.assertNotIn("sourceScanCalibration", result)
+                self.assertIn("microscope_metadata_warning", result["metadata"])
+
+    def test_stem_microscope_voltage_takes_precedence(self):
+        self.stem_metadata()
+        with h5py.File(self.master, "a") as f:
+            f["entry/instrument/detector/description"] = "Dectris ARINA Si"
+            f["entry/instrument/detector/detectorSpecific/photon_energy"] = 200000.0
+        metadata = self.read()["metadata"]
+        self.assertIn("disagrees", metadata["microscope_metadata_warning"])
+        self.assertEqual(metadata["electron_microscope/electron_source/accelerating_voltage"],
+                         "300000.0")
+
 
 if __name__ == "__main__":
     unittest.main()

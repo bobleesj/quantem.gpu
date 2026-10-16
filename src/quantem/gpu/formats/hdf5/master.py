@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 
 from quantem.gpu.formats.qem.metadata import maped_records
+from quantem.gpu.formats.hdf5.stem_metadata import _read_stem_metadata
 
 
 def read_pixel_mask(filepath):
@@ -73,11 +74,11 @@ def get_metadata(filepath: str) -> dict:
 
     .. note::
 
-        Scope-side parameters (``voltage_kV``, ``semiangle_mrad``,
-        ``scan_sampling_A``, ``camera_length_mm``, rotation) are NOT in the
-        h5 master: they must be passed to ``SSB`` explicitly or loaded
-        from a site config. If a field is in this dict, it came from the
-        file.
+        An exactly paired ``<acquisition>.h5`` containing ``STEM Metadata``
+        supplies microscope voltage, camera length and scan information.
+        Uncalibrated scan steps are retained as ``scan_sampling_nominal_A``;
+        only a source-marked calibrated step becomes ``scan_sampling_A``.
+        Missing detector-angle calibration must still be supplied or measured.
 
     Parameters
     ----------
@@ -146,7 +147,9 @@ def get_metadata(filepath: str) -> dict:
             metadata.setdefault("source_dtype", str(detector_dataset.dtype))
             if detector_dataset.ndim >= 3:
                 metadata.setdefault("n_frames", int(np.prod(detector_dataset.shape[:-2])))
+    recorded_shape = metadata.get("scan_shape")
     _derive_fields(metadata)
+    metadata.update(_read_stem_metadata(Path(filepath), metadata, recorded_shape))
     # a merged result's records, under the keys every reader gives them
     metadata.update(maped_records(metadata))
     return metadata
