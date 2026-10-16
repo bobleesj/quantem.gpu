@@ -2,7 +2,7 @@ import Metal
 @_spi(PairedRuntimeTANSPrototype) import Metal4DSTEMKernels
 import XCTest
 
-@_spi(PairedRuntimeTANSPrototype) @testable import Metal4DSTEMStreamingIO
+@testable @_spi(PairedRuntimeTANSPrototype) import Metal4DSTEMStreamingIO
 
 final class PairedRuntimeDetectorColumnsTests: XCTestCase {
   func testExactColumnsAcrossPacketsModesAndOffsetLayouts() throws {
