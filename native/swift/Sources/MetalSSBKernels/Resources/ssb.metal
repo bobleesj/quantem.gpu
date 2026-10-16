@@ -1398,11 +1398,18 @@ kernel void ssb_ifft512_rows_hermitian_phase_moments(
             sum[lane] += phase;
             sumsq[lane] += phase * phase;
         }
-    }
-    for (uint lane = 0u; lane < 8u; ++lane) {
-        const uint col = tid + lane * 64u;
-        const uint pixel = row * n + col;
-        phase_sum[pixel] += sum[lane];
-        phase_sumsq[pixel] += sumsq[lane];
+        // Match the original eight-plane dispatch's reduction exactly while
+        // sharing the column transform and boundary dispatches across more BF
+        // planes. Combining these groups before adding would change the loss
+        // rounding and can change a deterministic optimization trajectory.
+        if ((local_bf & 7u) == 7u || local_bf + 1u == batch) {
+            for (uint lane = 0u; lane < 8u; ++lane) {
+                const uint pixel = row * n + tid + lane * 64u;
+                phase_sum[pixel] += sum[lane];
+                phase_sumsq[pixel] += sumsq[lane];
+                sum[lane] = 0.0f;
+                sumsq[lane] = 0.0f;
+            }
+        }
     }
 }

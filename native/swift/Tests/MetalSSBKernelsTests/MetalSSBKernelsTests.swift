@@ -81,6 +81,35 @@ final class MetalSSBKernelsTests: XCTestCase {
     XCTAssertEqual(loss.loss, 0, accuracy: 1e-8)
   }
 
+  func testPhaseBatchTailAgreesAcrossCacheBoundaries() throws {
+    let device = try metalDevice()
+    let count = 33
+    let geometry = makeGeometry(brightfieldCount: count, dc: SIMD2<Float>(37, 0))
+    let values = (0..<(count * size * size)).map { index in
+      UInt16((index * 17 + index / 113 + index / (size * size)) % 29)
+    }
+    let source = try makeBuffer(device: device, values: values)
+    let aberrations = MetalSSBAberrations(
+      c10Angstroms: 55, c12Angstroms: 13, phi12Radians: 0.23)
+    let reference = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: 0)
+    try reference.prepare(brightfield: source, countType: .uint16)
+    let referenceObject = complexValues(try reference.reconstruct(aberrations: aberrations).object)
+    let referenceLoss = try reference.phaseVariance(aberrations: aberrations).loss
+
+    // A complete 32-plane batch plus a tail, and a cache boundary inside it.
+    let bytesPerPlane = size * (size / 2 + 1) * 8
+    for cachedPlanes in [13, count] {
+      let candidate = try MetalSSBEngine(
+        device: device, geometry: geometry, cacheBudgetBytes: cachedPlanes * bytesPerPlane)
+      try candidate.prepare(brightfield: source, countType: .uint16)
+      let result = try candidate.reconstruct(aberrations: aberrations)
+      XCTAssertEqual(result.provenance.executedBrightfieldCount, count)
+      XCTAssertLessThan(relativeL2(complexValues(result.object), referenceObject), 1e-4)
+      let loss = try candidate.phaseVariance(aberrations: aberrations).loss
+      XCTAssertLessThan(abs(loss - referenceLoss) / max(abs(referenceLoss), 1e-12), 5e-5)
+    }
+  }
+
   func testCachedAndStreamedPathsAgreeForNontrivialInput() throws {
     let device = try metalDevice()
     let geometry = makeGeometry(
@@ -242,8 +271,10 @@ final class MetalSSBKernelsTests: XCTestCase {
   ) -> MetalSSBGeometry {
     let kxBase: [Float] = [-0.20, 0, 0.20]
     let kyBase: [Float] = [0.10, 0, -0.10]
-    let kx = Array(kxBase.prefix(brightfieldCount))
-    let ky = Array(kyBase.prefix(brightfieldCount))
+    let kx = brightfieldCount <= 3 ? Array(kxBase.prefix(brightfieldCount))
+      : (0..<brightfieldCount).map { Float($0 % 7 - 3) * 0.08 }
+    let ky = brightfieldCount <= 3 ? Array(kyBase.prefix(brightfieldCount))
+      : (0..<brightfieldCount).map { Float($0 / 7 - 2) * 0.07 }
     let wavelength: Float = 0.025
     var alphaSquared: [Float] = []
     var cosine: [Float] = []
