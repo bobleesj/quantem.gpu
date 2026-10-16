@@ -11,6 +11,46 @@ from quantem.gpu.ssb.mps.kernels.radix import small_fft_macros, twiddle_512, twi
 from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB, pk_batch_from_prepared
 
 
+def _depth_code(thick: bool) -> tuple[str, str, str]:
+    """Shared depth weights and phase-difference gamma for fused row kernels."""
+    # geometry of k once per thread, same formula as prepared.compute_geometry
+    thick_load = (
+        "float thickness = thick_params[0]; float theta_row = thick_params[1]; float theta_col = thick_params[2]; "
+        "float k_r2 = kxv * kxv + kyv * kyv; float k_r = metal::sqrt(k_r2); float k_alpha = k_r * wavelength; "
+        "float alpha_kv = k_alpha * k_alpha; float k_inv_r2 = k_r2 > 1.0e-30f ? 1.0f / k_r2 : 0.0f; "
+        "float cos2_kv = (kxv * kxv - kyv * kyv) * k_inv_r2; float sin2_kv = 2.0f * kxv * kyv * k_inv_r2; "
+        "float k_inv_r = k_r > 1.0e-15f ? 1.0f / k_r : 0.0f; "
+        "float k_denom = metal::sqrt((kxv * ang_y) * (kxv * ang_y) + (kyv * ang_x) * (kyv * ang_x)) * k_inv_r; "
+        "float k_edge = k_denom > 1.0e-15f ? (semiangle - k_alpha) / k_denom + 0.5f : 1.0f; "
+        "float ap_kv = metal::clamp(k_edge, 0.0f, 1.0f);"
+        if thick else ""
+    )
+    # depth weights of the two SSB terms; |x| < 1e-6 gives w = 1 exactly (standard SSB), as in thick_sample
+    thick_weights = (
+        "float shift = 6.283185307179586f * (qxv * theta_row + qyv * theta_col); "
+        "float x1 = 0.5f * thickness * (-factor * (alpha2_m - alpha_kv) - shift); "
+        "float x2 = 0.5f * thickness * (factor * (alpha2_p - alpha_kv) - shift); "
+        "float w1 = metal::abs(x1) < 1.0e-6f ? 1.0f : metal::precise::sin(x1) / x1; "
+        "float w2 = metal::abs(x2) < 1.0e-6f ? 1.0f : metal::precise::sin(x2) / x2;"
+        if thick else ""
+    )
+    if thick:
+        gamma_lines = (
+            "float chi_k = factor * alpha_kv * (c12v * (cos2_kv * cos2v + sin2_kv * sin2v) + c10v); "
+            "float d1 = chi_m - chi_k; float d2 = chi_p - chi_k; "
+            "float c1; float s1 = metal::precise::sincos(d1, c1); "
+            "float cp; float sp = metal::precise::sincos(d2, cp); "
+            "float b1 = w1 * ap_m * ap_kv; float b2 = w2 * ap_p * ap_kv; "
+            "float gamma_r = b1 * c1 - b2 * cp; float gamma_i = -b1 * s1 - b2 * sp;"
+        )
+    else:
+        gamma_lines = (
+            "float gamma_r = (pmr * pkr + pmi * pki) - (ppr * pkr + ppi * pki);\n"
+            "                    float gamma_i = (pmi * pkr - pmr * pki) - (ppr * pki - ppi * pkr);"
+        )
+    return thick_load, thick_weights, gamma_lines
+
+
 @lru_cache(maxsize=32)
 def _row_ifft512_dynamic_kernel(
     batch: int,
@@ -18,6 +58,7 @@ def _row_ifft512_dynamic_kernel(
     gqk_cols: int,
     tiled_output: bool = False,
     storage_chunk: int | None = None,
+    thick: bool = False,
 ):
     mx = require_mlx()
     storage_chunk = int(chunk if storage_chunk is None else storage_chunk)
@@ -75,6 +116,7 @@ def _row_ifft512_dynamic_kernel(
         row_ifft_store = row_ifft_store.replace("CHUNK", "STORAGE_CHUNK")
         storage_define = f"constexpr uint STORAGE_CHUNK = {storage_chunk}u;"
         storage_name = f"_s{storage_chunk}"
+    thick_load, thick_weights, gamma_lines = _depth_code(thick)
     source = f"""
         #define CADD(a, b) float2((a).x + (b).x, (a).y + (b).y)
         #define CSUB(a, b) float2((a).x - (b).x, (a).y - (b).y)
@@ -134,6 +176,7 @@ def _row_ifft512_dynamic_kernel(
         float kxv = kx[bf];
         float kyv = ky[bf];
         float qxv = q_row[row];
+        {thick_load}
 
         uint candidate_begin = FUSE_CANDIDATES ? 0u : batch;
         uint candidate_end = FUSE_CANDIDATES ? FUSED_CANDIDATES : batch + 1u;
@@ -184,6 +227,7 @@ def _row_ifft512_dynamic_kernel(
                 denom = metal::sqrt(denom_num2) * inv_r;
                 edge = denom > 1.0e-15f ? (semiangle - alpha) / denom + 0.5f : 1.0f;
                 float ap_p = metal::clamp(edge, 0.0f, 1.0f);
+                {thick_weights}
 
                 if (ap_m == 0.0f && ap_p == 0.0f) {{
                     for (uint candidate=candidate_begin; candidate<candidate_end; ++candidate) {{
@@ -231,8 +275,7 @@ def _row_ifft512_dynamic_kernel(
                     float ppr = ap_p * cos_chi_p;
                     float ppi = -ap_p * sin_chi_p;
 
-                    float gamma_r = (pmr * pkr + pmi * pki) - (ppr * pkr + ppi * pki);
-                    float gamma_i = (pmi * pkr - pmr * pki) - (ppr * pki - ppi * pkr);
+                    {gamma_lines}
                     float mag = metal::sqrt(gamma_r * gamma_r + gamma_i * gamma_i);
                     float inv_mag = 1.0f / metal::max(mag, 1.0e-8f);
                     float conj_gamma_r = gamma_r * inv_mag;
@@ -295,10 +338,12 @@ def _row_ifft512_dynamic_kernel(
         #undef W8_3
         #undef RADIX8
     """
+    if thick:
+        source = source.replace("metal::sqrt(", "metal::precise::sqrt(")
     return mx.fast.metal_kernel(
         name=(
             f"ssb_row_ifft512_dyn_n{int(batch)}_b{int(chunk)}_"
-            f"g{int(gqk_cols)}_t{int(tiled_output)}{storage_name}"
+            f"g{int(gqk_cols)}_t{int(tiled_output)}{storage_name}_d{int(thick)}"
         ),
         input_names=[
             "g",
@@ -313,10 +358,10 @@ def _row_ifft512_dynamic_kernel(
             "sin2phi12",
             "scalars",
             "twiddle",
-        ],
+        ] + (["thick_params"] if thick else []),
         output_names=["row_ifft"],
         source=source,
-        compile_options={"math_mode": "fast"},
+        compile_options={"math_mode": "safe" if thick else "fast"},
     )
 
 
@@ -331,8 +376,9 @@ def row_ifft512_from_dynamic_geometry(
     sin2phi12,
     return_active: bool = False,
     tiled_output: bool = False,
+    thick=None,
 ):
-    """Fused dynamic correction + 512 row IFFT for exact MPS phase/loss."""
+    """Fuse correction and a 512-point row IFFT with optional depth weighting."""
     mx = prepared.mx
     if prepared.scan_shape != (512, 512):
         raise ValueError("Fused MPS row IFFT currently supports only 512x512.")
@@ -344,6 +390,7 @@ def row_ifft512_from_dynamic_geometry(
         chunk,
         int(prepared.g_qk.shape[-1]),
         bool(tiled_output),
+        thick=thick is not None,
     )
     scalars = mx.array(
         [
@@ -380,7 +427,7 @@ def row_ifft512_from_dynamic_geometry(
             sin2phi12,
             scalars,
             twiddle_512(mx),
-        ],
+        ] + ([] if thick is None else [mx.array(thick, dtype=mx.float32)]),
         template=[],
         grid=(64, 512, chunk),
         threadgroup=(64, 4, 1),
@@ -495,41 +542,7 @@ def _row_ifft_small_dynamic_kernel(
     t = n // 4
     half = n // 2
     define_rev, undef_rev, radix4_max, has_final = small_fft_macros(n)
-    # geometry of k once per thread, same formula as prepared.compute_geometry
-    thick_load = (
-        "float thickness = thick_params[0]; float theta_row = thick_params[1]; float theta_col = thick_params[2]; "
-        "float k_r2 = kxv * kxv + kyv * kyv; float k_r = metal::sqrt(k_r2); float k_alpha = k_r * wavelength; "
-        "float alpha_kv = k_alpha * k_alpha; float k_inv_r2 = k_r2 > 1.0e-30f ? 1.0f / k_r2 : 0.0f; "
-        "float cos2_kv = (kxv * kxv - kyv * kyv) * k_inv_r2; float sin2_kv = 2.0f * kxv * kyv * k_inv_r2; "
-        "float k_inv_r = k_r > 1.0e-15f ? 1.0f / k_r : 0.0f; "
-        "float k_denom = metal::sqrt((kxv * ang_y) * (kxv * ang_y) + (kyv * ang_x) * (kyv * ang_x)) * k_inv_r; "
-        "float k_edge = k_denom > 1.0e-15f ? (semiangle - k_alpha) / k_denom + 0.5f : 1.0f; "
-        "float ap_kv = metal::clamp(k_edge, 0.0f, 1.0f);"
-        if thick else ""
-    )
-    # depth weights of the two SSB terms; |x| < 1e-6 gives w = 1 exactly (standard SSB), as in thick_sample
-    thick_weights = (
-        "float shift = 6.283185307179586f * (qxv * theta_row + qyv * theta_col); "
-        "float x1 = 0.5f * thickness * (-factor * (alpha2_m - alpha_kv) - shift); "
-        "float x2 = 0.5f * thickness * (factor * (alpha2_p - alpha_kv) - shift); "
-        "float w1 = metal::abs(x1) < 1.0e-6f ? 1.0f : metal::precise::sin(x1) / x1; "
-        "float w2 = metal::abs(x2) < 1.0e-6f ? 1.0f : metal::precise::sin(x2) / x2;"
-        if thick else ""
-    )
-    if thick:
-        gamma_lines = (
-            "float chi_k = factor * alpha_kv * (c12v * (cos2_kv * cos2v + sin2_kv * sin2v) + c10v); "
-            "float d1 = chi_m - chi_k; float d2 = chi_p - chi_k; "
-            "float c1; float s1 = metal::precise::sincos(d1, c1); "
-            "float cp; float sp = metal::precise::sincos(d2, cp); "
-            "float b1 = w1 * ap_m * ap_kv; float b2 = w2 * ap_p * ap_kv; "
-            "float gamma_r = b1 * c1 - b2 * cp; float gamma_i = -b1 * s1 - b2 * sp;"
-        )
-    else:
-        gamma_lines = (
-            "float gamma_r = (pmr * pkr + pmi * pki) - (ppr * pkr + ppi * pki);\n"
-            "                    float gamma_i = (pmi * pkr - pmr * pki) - (ppr * pki - ppi * pkr);"
-        )
+    thick_load, thick_weights, gamma_lines = _depth_code(thick)
     final_stage = ""
     if has_final:
         final_stage = f"""

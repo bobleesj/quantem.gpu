@@ -14,6 +14,21 @@ budget on both sides and measures automatic output sampling separately.
 See [CUDA refinement batching](2026-10-15-cuda-batched-refinement.md) for the device, timing boundaries,
 numerical constraints, and reproduction checks.
 
+## MPS sampling and joint search, 2026-10-15
+
+The Python MPS backend supports automatic fine-grid C10/C12 reconstruction.
+Matched full 512 × 512 × 192 × 192 measurements reduce prepared tilt/depth
+phase latency from approximately 2.7 s to 0.18 s and joint-search time from
+44–48 s to 33–34 s. See the [sampling and search evidence](2026-10-15-mps-ssb-upsampling.md)
+for numerical differences, unchanged ordinary-search timing, exact scope and
+the separation between prepared and complete workflow measurements.
+
+A follow-up on the same backend batches independent refinement evaluations
+and pipelines fine-grid reconstruction. Against that optimized baseline, the
+two measured public joint searches take 25% and 29% less time, with bit-exact
+returned results. The detailed evidence above includes timing ranges, memory
+tradeoffs and the rotation-reuse experiment that was not enabled.
+
 ## Conditional joint rotation check, 2026-10-04
 
 `find_aberrations(tilt=True, check_rotation=True)` first fits the native-grid

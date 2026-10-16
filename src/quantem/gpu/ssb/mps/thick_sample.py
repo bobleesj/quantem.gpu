@@ -15,7 +15,7 @@ correction exactly. Units: q, k in 1/A; C10, C12, thickness in Angstrom (the eng
 
 Two implementations of the thick preview. ``reconstruct_thick`` (the interactive path) runs the standard fused MPS
 row kernel with the depth weights added per (k, q) (``kernels.row_ifft._row_ifft_small_dynamic_kernel(thick=True)``) and the same
-column-IFFT phase kernel, so it costs about what the standard preview costs; 128/256/1024 scans. ``reconstruct_thick_reference``
+column-IFFT phase kernel, so it costs about what the standard preview costs; 128/256/512/1024 scans. ``reconstruct_thick_reference``
 is the element-wise model as one ``mx.compile`` graph with MLX inverse FFTs: any scan shape, the definition the fast path
 is tested against, and the fallback for shapes the fused kernels do not cover.
 """
@@ -35,7 +35,7 @@ from quantem.gpu.ssb.mps.prepared import (
 )
 from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 
-_FUSED_SHAPES = ((128, 128), (256, 256), (1024, 1024))
+_FUSED_SHAPES = ((128, 128), (256, 256), (512, 512), (1024, 1024))
 # A chunk of the element-wise model keeps _LIVE_PLANES complex64 plane-sized temporaries per BF pixel; _chunk_bf sizes
 # chunks so they stay near _CHUNK_BYTES.
 _CHUNK_BYTES = 256 << 20
@@ -57,7 +57,7 @@ def reconstruct_thick(
 ) -> tuple[np.ndarray, float | None]:
     """Mean phase and phase-variance loss for a thick, tilted crystal (interactive path).
 
-    Same outputs as ``reconstruct_thick_reference``. On 128/256/1024 scans the depth weights run inside the standard
+    Same outputs as ``reconstruct_thick_reference``. On 128/256/512/1024 scans the depth weights run inside the standard
     fused row kernel, ``chunk_bf`` BF pixels per dispatch (why: the per-call cost is then the standard preview's, not a
     separate element-wise graph + MLX FFT per chunk); other shapes use the reference graph.
     """
@@ -176,8 +176,19 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
         batch_size = len(rows)
         trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
                           rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
+        trial_mx = mx.array(trial.ravel())
+        # These terms depend on k and the trial, but not on q. Calculate them
+        # once per BF pixel instead of repeating them across the whole band.
+        probe_geometry, probe_chi = _trial_probe_kernel()(
+            inputs=[prepared.kx, prepared.ky, scalars, trial_mx],
+            template=[("NUM_BF", storage_bf), ("B", batch_size)],
+            grid=(storage_bf, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(storage_bf, 4), (storage_bf, batch_size)],
+            output_dtypes=[mx.float32, mx.float32],
+        )
         numer_real, numer_imag, denom = kernel(
-            inputs=[g, flat, band_qx, band_qy, prepared.kx, prepared.ky, mx.array(trial.ravel()), scalars],
+            inputs=[g, flat, band_qx, band_qy, prepared.kx, prepared.ky,
+                    trial_mx, scalars, probe_geometry, probe_chi],
             template=[
                 ("B", batch_size), ("N_BAND", n_band), ("NUM_BF", storage_bf), ("PLANE", plane), ("K_CHUNK", _K_CHUNK),
             ],
@@ -275,18 +286,50 @@ def _chunk_terms(prepared: PreparedMpsSSB, start: int, stop: int, params):
 _THICK_FIT_BATCH_HEADER = """
 inline float4 tf_geometry(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x) {
     float r2 = dx * dx + dy * dy;
+#ifdef SSB_PRECISE_GEOMETRY
+    float r = metal::precise::sqrt(r2);
+#else
     float r = metal::sqrt(r2);
+#endif
     float alpha = r * wl;
     float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
     float cos2 = (dx * dx - dy * dy) * inv_r2;
     float sin2 = 2.0f * dx * dy * inv_r2;
     float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+#ifdef SSB_PRECISE_GEOMETRY
+    // Match compute_geometry's squared angular components on the fine grid.
+    float denom = metal::precise::sqrt((dx * ang_y) * (dx * ang_y) + (dy * ang_x) * (dy * ang_x)) * inv_r;
+#else
     float denom = metal::sqrt(dx * ang_y * dx * ang_y + dy * ang_x * dy * ang_x) * inv_r;
+#endif
     float edge = (denom > 1e-15f) ? ((semiangle - alpha) / denom + 0.5f) : 1.0f;
     return float4(alpha * alpha, cos2, sin2, metal::clamp(edge, 0.0f, 1.0f));
 }
 inline float tf_sinc(float x) { return (metal::abs(x) < 1e-6f) ? 1.0f : metal::precise::sin(x) / x; }
 """
+
+
+@lru_cache(maxsize=1)
+def _trial_probe_kernel():
+    """Keep the original float32 geometry and chi(k) expression per trial."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_thick_trial_probe",
+        input_names=["kx", "ky", "scalars", "trial"],
+        output_names=["probe_geometry", "probe_chi"],
+        header=_THICK_FIT_BATCH_HEADER,
+        source="""
+        uint k = thread_position_in_grid.x;
+        if (k >= NUM_BF) return;
+        float4 gk = tf_geometry(kx[k], ky[k], scalars[0], scalars[1], scalars[2], scalars[3]);
+        for (uint i = 0; i < 4; ++i) probe_geometry[k * 4 + i] = gk[i];
+        for (int b = 0; b < B; ++b) {
+            float c10 = trial[b * 7], c12 = trial[b * 7 + 1];
+            float c2 = trial[b * 7 + 2], s2 = trial[b * 7 + 3];
+            probe_chi[k * B + b] = scalars[4] * gk.x * (c12 * (gk.y * c2 + gk.z * s2) + c10);
+        }
+        """,
+    )
 
 
 _THICK_FIT_BATCH_SOURCE = """
@@ -303,7 +346,8 @@ _THICK_FIT_BATCH_SOURCE = """
     for (uint k = k0; k < k1; ++k) {
         float kxv = kx[k], kyv = ky[k];
         // geometry of k, q - k, q + k once per (k, q), shared by every parameter set
-        float4 gk = tf_geometry(kxv, kyv, wl, semiangle, ang_y, ang_x);
+        float4 gk = float4(probe_geometry[k * 4], probe_geometry[k * 4 + 1],
+                           probe_geometry[k * 4 + 2], probe_geometry[k * 4 + 3]);
         float4 gm = tf_geometry(qx - kxv, qy - kyv, wl, semiangle, ang_y, ang_x);
         float4 gp = tf_geometry(qx + kxv, qy + kyv, wl, semiangle, ang_y, ang_x);
         float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
@@ -313,7 +357,7 @@ _THICK_FIT_BATCH_SOURCE = """
         for (int b = 0; b < B; ++b) {
             float C10 = trial[b * 7 + 0], C12 = trial[b * 7 + 1], c2 = trial[b * 7 + 2], s2 = trial[b * 7 + 3];
             float t = trial[b * 7 + 4], thr = trial[b * 7 + 5], thc = trial[b * 7 + 6];
-            float chi_k = factor * gk.x * (C12 * (gk.y * c2 + gk.z * s2) + C10);
+            float chi_k = probe_chi[k * B + b];
             float chi_m = factor * gm.x * (C12 * (gm.y * c2 + gm.z * s2) + C10);
             float chi_p = factor * gp.x * (C12 * (gp.y * c2 + gp.z * s2) + C10);
             float shift = 6.283185307179586f * (qx * thr + qy * thc);
@@ -321,8 +365,9 @@ _THICK_FIT_BATCH_SOURCE = """
             float w2 = tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift));
             // chi reaches hundreds of rad at large defocus: precise range reduction keeps the phase differences exact
             float d1 = chi_m - chi_k, d2 = chi_p - chi_k;
-            float c1 = metal::precise::cos(d1), s1 = metal::precise::sin(d1);
-            float cp = metal::precise::cos(d2), sp = metal::precise::sin(d2);
+            float c1, cp;
+            float s1 = metal::precise::sincos(d1, c1);
+            float sp = metal::precise::sincos(d2, cp);
             float b1 = w1 * a1, b2 = w2 * a2;
             float gr = b1 * c1 - b2 * cp;
             float gi = -b1 * s1 - b2 * sp;
@@ -348,7 +393,8 @@ def _thick_fit_batch_kernel():
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_thick_fit_batch",
-        input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky", "trial", "scalars"],
+        input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky",
+                     "trial", "scalars", "probe_geometry", "probe_chi"],
         output_names=["numer_real", "numer_imag", "denom"],
         source=_THICK_FIT_BATCH_SOURCE,
         header=_THICK_FIT_BATCH_HEADER,

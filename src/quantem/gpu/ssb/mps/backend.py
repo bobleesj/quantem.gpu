@@ -35,6 +35,7 @@ from quantem.gpu.ssb.mps.prepared import (
 )
 from quantem.gpu.ssb.mps.reconstruct import reconstruct_prepared
 from quantem.gpu.ssb.mps.thick_sample import reconstruct_thick
+from quantem.gpu.ssb.mps.upsampling import _reconstruct_upsampled
 from quantem.gpu.ssb.results import SSBResult
 
 
@@ -264,11 +265,28 @@ class MpsSSBBackend:
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
     ) -> tuple[np.ndarray, float | None]:
-        """Finer output sampling and wave averaging have no Metal implementation; they run on CUDA."""
-
-        raise NotImplementedError(
-            "Upsampled or wave-average SSB preview requires the CUDA backend; use backend='cuda'."
+        """Unfold measured aliases on Metal; preserve the native search loss."""
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        phase = _reconstruct_upsampled(
+            self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
+            thickness=thickness, upsampling_factor=upsampling_factor,
+            phase_estimator=phase_estimator,
         )
+        loss = None
+        if compute_loss:
+            if thickness > 0.0:
+                _, loss = self.preview_sample(
+                    aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
+                                  "tilt_col_mrad": sample_tilt_mrad[1],
+                                  "thickness": thickness}, compute_loss=True,
+                )
+            else:
+                _, loss = self.preview(
+                    aberrations, higher_order_magnitudes=None,
+                    higher_order_angles=None, compute_loss=True,
+                )
+        return phase, loss
 
     def preview_sample(
         self,
