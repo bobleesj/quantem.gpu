@@ -17,7 +17,8 @@ scan-to-detector rotation, kept in [0, 360). SSB does not call DPC automatically
 provide a verified rotation or use a DPC estimate:
 `SSB(..., scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg, detector_transposed=dpc_result.detector_transposed)`.
 DPC knows the angle only modulo 180 degrees; `find_aberrations(check_rotation=True)`
-settles the 180-degree branch. SSB raises if `detector_transposed` is True.
+settles the 180-degree branch. `detector_transposed=True` applies the saved
+detector-axis convention while keeping reported centers in the original detector axes.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. When it is omitted, CUDA and MPS both use `semiangle_mrad`
 divided by the radius in detector pixels at which the bright-field disk of the
@@ -30,9 +31,9 @@ bright-field crop.
 `SSB.open` uses the canonical `io.load` path, including its ANS-only GPU
 acquisition policy.
 
-`SSB.open` owns the acquisition it loads: it decodes the bright-field crop,
-releases the acquisition, and releases the crop at `close()` or context-manager
-exit. `SSB(data, ...)` borrows the caller-owned dataset or array and never
+`SSB.open` owns the acquisition it loads. For fit-sized scans it decodes the
+bright-field crop and releases the acquisition; large CUDA integer sources stay
+encoded until `close()` or context-manager exit. `SSB(data, ...)` borrows the caller-owned dataset or array and never
 releases it; `close()` frees only the session's own crop and Fourier data.
 Encoded inputs decode only the bright-field evidence needed by the session.
 Treat detector values as fixed for the lifetime of a session: SSB retains their
@@ -61,8 +62,8 @@ diffraction pattern to a supported square. For example, a 32×32 input currently
 produces a 128×128 working grid before any requested upsampling. Check
 `ssb.scan_shape` and `result.phase.shape`; padded pixels are not additional
 measured scan positions; the session prints one line naming the padded size.
-A scan larger than 1024 along either axis raises `ValueError` on CUDA: SSB
-never crops a scan, so select the intended square region before construction.
+Dense CUDA arrays larger than 1024 along either axis are unsupported. Use the
+encoded acquisition for the bounded-memory large-scan workflow below.
 Computational padding is separate from `reconstruct(..., upsampling_factor=2)`.
 
 The default fit evaluates 200 seeded TPE candidates with the exact full active
@@ -73,6 +74,71 @@ This is the implemented calibration workflow; Levenberg–Marquardt is not an
 available refinement mode. The browser SSB engine has no aberration search:
 run `find_aberrations()` on CUDA or MPS. The browser never substitutes fewer
 trials or a reduced objective.
+
+## Fit a region, reconstruct a large encoded scan
+
+CUDA integer ANS acquisitions with native 1024, 2048 or 4096 scan dimensions
+can remain encoded during SSB. Each detector-column batch is decoded exactly,
+transformed across **every scan position**, corrected with the existing SSB
+kernel, and accumulated before one inverse FFT. Scan tiles are not stitched.
+The full source and output must fit on the acquisition's GPU; distributing one
+SSB session across GPUs is not supported by this API yet.
+
+```python
+from quantem.gpu import SSB, io
+
+with io.load("acquisition.qem", backend="cuda") as data:
+    with SSB(
+        data,
+        voltage_kV=300,
+        semiangle_mrad=30,
+        scan_sampling_A=(0.3, 0.3),
+        detector_sampling_mrad=(0.55, 0.55),
+        scan_detector_rotation_deg=12,
+    ) as ssb:
+        fitted = ssb.find_aberrations(
+            scan_region=(256, 768, 256, 768),
+            tilt=True,
+        )
+        result = ssb.reconstruct(fitted, compute_loss=False)
+        # Native 2048 input produces 2048 output here, with unchanged field of view.
+```
+
+Use measured calibration; the numbers above illustrate the units. A session
+borrows `data`, so it can also inspect the same counts through detector APIs.
+`SSB.open("acquisition.h5", ...)` uses the normal automatic ANS loader and owns
+its encoded source. No manual conversion or saved intermediate is required.
+Invalid detector pixels are excluded from scientific selection; their original
+stored counts remain unchanged.
+
+The fit region is an explicit square of 128, 256, 512 or 1024 scan positions.
+Its returned phase, loss and rotation diagnostics describe **that region**.
+Reconstruction applies the selected aberrations, tilt and depth spread to the
+whole scan. This assumes those optics apply across the field; regional fitting
+does not establish that assumption for a specimen with varying thickness or
+long-scan drift. `result.fit_scan_region` records the region used.
+
+The bounded path supports a native 1024×1024 scan and even scan dimensions
+above 1024 up to 4096, including rectangular grids, uint8/uint16 ANS, C10/C12,
+and optional sample tilt/depth. Smaller rectangular scans retain their existing
+square computational padding.
+It uses complex64 forward spectra, complex128 summation/inverse FFT and
+float32 phase. Its default `phase_of_mean` estimator matches the existing CUDA
+wave-average path within floating-point FFT rounding, not bit for bit.
+Use `compute_loss=False` for the bounded path. Full-field per-detector
+phase-variance loss, higher-order aberrations, `mean_phase` and
+complex-amplitude reconstruction still use the existing Fourier-stack backend
+for 1024 scans, retaining their prior behavior and memory cost. Those operations
+are unsupported above 1024. Fit diagnostics remain available on the small
+region. A full 1024 fit remains available, but an explicit smaller region avoids
+keeping its entire Fourier stack during optimization.
+
+`upsampling_factor="auto"` or an explicit factor changes output sampling and
+memory requirements, **not the measured field of view**. A 4096 output from a
+512 scan is distinct from a native 4096 scan. Large output arrays can still
+exceed available GPU memory. Borrowed resident inputs without a persistent
+source identity recompute saved results; file-backed sessions retain exact
+saved-result reuse.
 
 (ssb-find-and-reconstruct)=
 ## Find aberrations, then reconstruct

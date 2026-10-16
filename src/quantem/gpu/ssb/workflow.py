@@ -85,6 +85,17 @@ def _on_scan_gpu(method):
     return on_scan_gpu
 
 
+def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
+    """Select large integer ANS scans without changing smaller/float workflows."""
+    if backend != "cuda":
+        return False
+    from quantem.gpu.resident.cuda.counts import StreamedCounts
+
+    return max(data.shape[:2]) > 1024 or (
+        data.shape[:2] == (1024, 1024) and type(data.data) is StreamedCounts
+    )
+
+
 class SSB:
     """Single-sideband ptychography of one 4D-STEM acquisition on CUDA or MPS.
 
@@ -176,6 +187,8 @@ class SSB:
         mean_pattern=None,
     ) -> None:
         self.backend = resolve(backend)
+        self._streamed = None
+        self._owned_dataset = None
         # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
         self._crop_origin = (0, 0)
         self.scan_region = None if scan_region is None else tuple(int(value) for value in scan_region)
@@ -185,30 +198,26 @@ class SSB:
             if data.ndim != 4:
                 raise ValueError("SSB needs one 4D acquisition; select a dataset from the series first.")
             if data.representation is not DataRepresentation.DENSE:
-                # Decode only the bright-field evidence into session-owned
-                # tensors. The caller retains ownership of the acquisition.
-                shape, dtype = tuple(int(value) for value in data.shape), str(data.dtype)
-                data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
-                    data, self.backend, bright_field_intensity_threshold, bright_field_radius_px,
-                    calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
-                    scan_region=self.scan_region, mean_pattern=mean_pattern,
-                )
-                if detector_sampling_mrad is None:
-                    detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
-                # the mean pattern may be the caller's, so the decoded counts are identified too: their total, and their
-                # total weighted by scan position (1, 2, ...), exact integers modulo 2^64
-                frames = data.reshape(data.shape[0] * data.shape[1], -1)
-                if self.backend == "cuda":
-                    per_frame = frames.sum(axis=1, dtype=cp.uint64)
-                    positions = cp.arange(1, per_frame.size + 1, dtype=cp.uint64)
+                if self.scan_region is None and _streams_scan(data, self.backend):
+                    from quantem.gpu.ssb.cuda.streamed import StreamedSSB
+
+                    if data.device is None or data.device.type != "cuda":
+                        raise ValueError("CUDA SSB needs the acquisition resident on a CUDA device.")
+                    with cp.cuda.Device(data.device.index):
+                        self._streamed = StreamedSSB(
+                            data, mean_pattern=mean_pattern, center=bright_field_center_px,
+                            radius=bright_field_radius_px, threshold=bright_field_intensity_threshold,
+                            semiangle_mrad=semiangle_mrad, detector_sampling_mrad=detector_sampling_mrad,
+                            detector_transposed=detector_transposed,
+                        )
+                    bright_field_center_px = self._streamed.center
+                    bright_field_radius_px = self._streamed.radius
+                    detector_sampling_mrad = self._streamed.detector_sampling_mrad
                 else:
-                    per_frame = frames.sum(dim=1, dtype=torch.int64)
-                    positions = torch.arange(1, per_frame.numel() + 1, dtype=torch.int64, device=per_frame.device)
-                self.resident_identity = {
-                    "shape": list(shape), "dtype": dtype,
-                    "mean_pattern_sha256": hashlib.sha256(np.ascontiguousarray(mean_pattern, dtype=np.float64).tobytes()).hexdigest(),
-                    "bright_field_sums": [int(per_frame.sum()) % 2**64, int((per_frame * positions).sum()) % 2**64],
-                }
+                    data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern = self._decode_resident(
+                        data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad,
+                        bright_field_intensity_threshold, semiangle_mrad, mean_pattern,
+                    )
             elif self.scan_region is not None:
                 row_start, row_stop, col_start, col_stop = self.scan_region
                 data = data.data[row_start:row_stop, col_start:col_stop]
@@ -216,19 +225,16 @@ class SSB:
                 data = data.data
         elif scan_region is not None:
             raise ValueError("scan_region selects scan positions of a dataset io.load returns; slice an array before passing it.")
-        # The backends read dense arrays, plus the exact BF columns SSB.open finds on MPS. An encoded
-        # resident (``io.load(...).data``) has no bounded read of its own; only its dataset decodes the
-        # bright-field crop, so it is refused here rather than at the first reconstruction.
+        # The backends read dense arrays, exact BF columns, or a borrowed large
+        # ANS source whose detector columns are decoded during reconstruction.
         backend_array = cp.ndarray if self.backend == "cuda" else MpsBfColumnFrames
-        if not isinstance(data, np.ndarray | backend_array | torch.Tensor):
+        if self._streamed is None and not isinstance(data, np.ndarray | backend_array | torch.Tensor):
             raise TypeError(
                 f"SSB reads the dataset io.load returns or a NumPy, CuPy or Torch array; got "
                 f"{type(data).__name__}. Pass the loaded dataset itself, SSB(data, ...), not its "
                 "encoded storage data.data, or open the file with SSB.open(path, ...)."
             )
         if scan_shape is not None and data.ndim == 3 and not isinstance(data, backend_array):
-            # a flat NumPy or Torch frame stack gets its scan axes as a view; CuPy stacks are reshaped by the
-            # CUDA backend, and exact BF columns are stored flat
             rows, cols = int(scan_shape[0]), int(scan_shape[1])
             if rows * cols != int(data.shape[0]):
                 raise ValueError(
@@ -238,11 +244,12 @@ class SSB:
             data = data.reshape(rows, cols, data.shape[1], data.shape[2])
         self._data = (
             data.transpose_detector() if isinstance(data, MpsBfColumnFrames) else data.swapaxes(-1, -2)
-        ) if detector_transposed else data
-        # the GPU a CUDA session computes on: its array's own, or the current one for host data it copies over
+        ) if detector_transposed and self._streamed is None else data
         self._device = None
         if self.backend == "cuda":
-            if isinstance(data, cp.ndarray):
+            if self._streamed is not None:
+                self._device = self._streamed.device
+            elif isinstance(data, cp.ndarray):
                 self._device = data.device.id
             elif isinstance(data, torch.Tensor) and data.is_cuda:
                 self._device = data.device.index
@@ -259,13 +266,9 @@ class SSB:
         self.detector_transposed = bool(detector_transposed)
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
-        # (row, col) pixels of the full detector, also when the session holds only the bright-field crop of an encoded source
         self.bright_field_center_px = None if bright_field_center_px is None else (float(bright_field_center_px[0]), float(bright_field_center_px[1]))
-        # latest find_aberrations(tilt=True): sample tilt (row, col) mrad, scan frame, and depth spread nm; None after a standard fit
         self.sample_tilt_mrad: tuple[float, float] | None = None
         self.depth_spread_nm: float | None = None
-        # the running find_aberrations(tilt=True)'s choice, read by every tilt search of that fit (the refit of the other
-        # 180-degree branch included), so the gain a result carries is the one its saved-fit signature names
         self._compare_standard = True
         self.source_path = source_path
         self.calibration_path: str | None = None
@@ -273,17 +276,52 @@ class SSB:
         self.source_storage_path = source_path
         self.source_kind: Literal["array", "resident", "detector", "bf_columns"] = "array" if self.resident_identity is None else "resident"
         self.source_dtype = str(data.dtype)
-        self.source_bytes = int(data.nbytes)
-        # SSB.open replaces these two for exact BF columns, which record their own binning and provenance
+        self.source_bytes = int(data.logical_bytes if isinstance(data, Dataset4dstemGPU) else data.nbytes)
         self.source_detector_bin = 1
         self.source_provenance: dict[str, object] | None = None
         self.source_load_seconds: float | None = None
-        # the CUDA or MPS implementation, built by _backend() on first use
         self._compute: SSBProtocol | None = None
         self._reconstruction: SSBResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
         self._aberration_search: SSBResult | None = None
+
+    def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
+                         detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern):
+        """Decode one fit-sized crop and identify its exact resident evidence."""
+        shape, dtype = tuple(int(value) for value in data.shape), str(data.dtype)
+        data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
+            data, self.backend, threshold, bright_field_radius_px,
+            calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
+            scan_region=self.scan_region, mean_pattern=mean_pattern,
+        )
+        if detector_sampling_mrad is None:
+            detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
+        frames = data.reshape(data.shape[0] * data.shape[1], -1)
+        if self.backend == "cuda":
+            per_frame = frames.sum(axis=1, dtype=cp.uint64)
+            positions = cp.arange(1, per_frame.size + 1, dtype=cp.uint64)
+        else:
+            per_frame = frames.sum(dim=1, dtype=torch.int64)
+            positions = torch.arange(1, per_frame.numel() + 1, dtype=torch.int64, device=per_frame.device)
+        self.resident_identity = {
+            "shape": list(shape), "dtype": dtype,
+            "mean_pattern_sha256": hashlib.sha256(np.ascontiguousarray(mean_pattern, dtype=np.float64).tobytes()).hexdigest(),
+            "bright_field_sums": [int(per_frame.sum()) % 2**64, int((per_frame * positions).sum()) % 2**64],
+        }
+        return data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern
+
+    def _backend_input(self):
+        """Return dense counts only for operations needing the <=1024 backend."""
+        if self._streamed is None:
+            return self._data
+        data, _, _, _, self._crop_origin, _ = crop_bright_field(
+            self._data, self.backend, self.bright_field_intensity_threshold,
+            self.bright_field_radius_px,
+            bright_field_center_px=self.bright_field_center_px,
+            mean_pattern=self._streamed.mean_pattern,
+        )
+        return data.swapaxes(-1, -2) if self.detector_transposed else data
 
     # one implementation in ``series``, bound here so the public spelling is ``SSB.reconstruct_series``
     reconstruct_series = classmethod(series.reconstruct_series)
@@ -327,6 +365,7 @@ class SSB:
 
         selected = resolve(backend)
         crop_origin = (0, 0)
+        owned = None
         source_detector_bin = 1
         # on MPS an exact BF-column export beside the source replaces decoding the detector
         frames = find_bf_columns(source, calibration, verbose=verbose) if selected == "mps" else None
@@ -346,43 +385,57 @@ class SSB:
                 detector_sampling_mrad = frames.detector_sampling_mrad or (semiangle_mrad / frames.selection.bright_field_edge_radius_px,) * 2
         else:
             load_started = time.perf_counter()
-            with io.load(
+            loaded = io.load(
                 source,
                 backend=selected,
                 scan_shape=scan_shape,
                 dtype=dtype,
                 verbose=verbose,
-            ) as loaded:
-                data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin, _ = crop_bright_field(
-                    loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
-                    calibrate_detector=detector_sampling_mrad is None,
-                    bright_field_center_px=bright_field_center_px,
-                )
+            )
+            try:
+                if _streams_scan(loaded, selected):
+                    owned = loaded
+                    data = loaded
+                else:
+                    data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin, _ = crop_bright_field(
+                        loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
+                        calibrate_detector=detector_sampling_mrad is None,
+                        bright_field_center_px=bright_field_center_px,
+                    )
                 source_dtype = str(loaded.dtype)
                 source_bytes = loaded.logical_bytes
                 correction = loaded.metadata.get("hot_pixel_correction")
-            if detector_sampling_mrad is None:
+            finally:
+                if owned is None:
+                    loaded.close()
+            if detector_sampling_mrad is None and owned is None:
                 detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
             source_provenance = None if correction is None else {"hot_pixel_correction": correction}
             source_kind = "detector"
             source_storage_path = str(source)
             source_load_seconds = time.perf_counter() - load_started
-        session = cls(
-            data,
-            backend=selected,
-            voltage_kV=voltage_kV,
-            semiangle_mrad=semiangle_mrad,
-            scan_sampling_A=scan_sampling_A,
-            scan_shape=scan_shape,
-            detector_sampling_mrad=detector_sampling_mrad,
-            aberrations=aberrations,
-            scan_detector_rotation_deg=scan_detector_rotation_deg,
-            detector_transposed=detector_transposed,
-            bright_field_intensity_threshold=bright_field_intensity_threshold,
-            bright_field_radius_px=bright_field_radius_px,
-            source_path=str(source),
-            bright_field_center_px=bright_field_center_px,
-        )
+        try:
+            session = cls(
+                data,
+                backend=selected,
+                voltage_kV=voltage_kV,
+                semiangle_mrad=semiangle_mrad,
+                scan_sampling_A=scan_sampling_A,
+                scan_shape=scan_shape,
+                detector_sampling_mrad=detector_sampling_mrad,
+                aberrations=aberrations,
+                scan_detector_rotation_deg=scan_detector_rotation_deg,
+                detector_transposed=detector_transposed,
+                bright_field_intensity_threshold=bright_field_intensity_threshold,
+                bright_field_radius_px=bright_field_radius_px,
+                source_path=str(source),
+                bright_field_center_px=bright_field_center_px,
+            )
+        except Exception:
+            if owned is not None:
+                owned.close()
+            raise
+        session._owned_dataset = owned
         session._crop_origin = crop_origin
         session.source_kind = source_kind
         session.source_detector_bin = source_detector_bin
@@ -608,13 +661,22 @@ class SSB:
         Building it reads the bright-field evidence and transforms it (seconds and gigabytes on a full scan), so a
         session that is only configured, saved or closed never pays for it.
         """
+        if self._streamed is not None and max(self._streamed.scan_shape) > 1024:
+            raise NotImplementedError(
+                "This large resident uses streamed full-scan reconstruction. "
+                "Fit with find_aberrations(scan_region=(row_start, row_stop, col_start, col_stop)), "
+                "then reconstruct(parameters, compute_loss=False)."
+            )
         if self._compute is None:
             if self.backend == "cuda":
                 # CuPy loads with the CUDA implementation only, so MPS sessions run without it
                 from quantem.gpu.ssb.cuda.backend import CudaSSBBackend
 
+                # Preserve <=1024 loss, higher-order and subset APIs; their
+                # Fourier stack is prepared only when those operations need it.
+                data = self._backend_input()
                 self._compute = CudaSSBBackend(
-                    data=self._data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
+                    data=data, semiangle=self.semiangle_mrad, scan_sampling=self.scan_sampling_A,
                     detector_sampling_mrad=self._sampling_in_data(), voltage_kV=self.voltage_kV, scan_shape=self._scan_shape,
                     bright_field_intensity_threshold=self.bright_field_intensity_threshold, bright_field_radius_px=self.bright_field_radius_px,
                     bright_field_center_px=self._center_in_data(), scan_detector_rotation_deg=self.scan_detector_rotation_deg,
@@ -754,9 +816,11 @@ class SSB:
         geometry is estimated from the full input unless supplied explicitly.
         The returned phase and rotation diagnostics describe the region;
         ``ssb.reconstruct(result)`` applies its parameters to the full scan.
-        Currently the region must be square with 128, 256, 512 or 1024 samples
-        per side; it is never silently padded or cropped. The stored source
-        must expose a dense four-dimensional scan array.
+        The region must be square with 128, 256, 512 or 1024 samples per side;
+        it is never silently padded or cropped. Large CUDA integer ANS sources
+        decode only that region's bright-field crop. Their full reconstruction
+        streams detector columns and requires ``compute_loss=False``; the fit's
+        diagnostic loss describes the region, not the full field of view.
 
         Set ``save_to`` to reuse an exact prior result from ``SSB.open`` or from an encoded dataset when the detector
         source, calibration, backend, physical parameters, and fit settings all match.
@@ -818,6 +882,16 @@ class SSB:
                     return reused
             if verbose and any(path.exists() for path in paths):
                 print("Saved SSB settings changed; running fit end to end")
+        if self._streamed is not None and scan_region is None:
+            rows, columns = self._streamed.scan_shape
+            if rows == columns == 1024:
+                scan_region = (0, rows, 0, columns)
+            else:
+                raise ValueError(
+                    "Fit a small region of the large acquisition with "
+                    "scan_region=(row_start, row_stop, col_start, col_stop), "
+                    "then reconstruct the full scan with compute_loss=False."
+                )
         if scan_region is not None:
             if len(scan_region) != 4 or any(type(value) is not int for value in scan_region):
                 raise ValueError("Use scan_region=(row_start, row_stop, col_start, col_stop), in integer scan pixels.")
@@ -832,6 +906,11 @@ class SSB:
                 raise ValueError(f"scan_region={scan_region} must be inside {rows} × {columns} and square with 128, 256, 512 or 1024 scan pixels per side.")
             # The region keeps the full scan's bright-field disk and detector calibration.
             center, radius, detector_sampling_mrad = self._center_in_data(), self.bright_field_radius_px, self._sampling_in_data()
+            region_options = {}
+            if self._streamed is not None:
+                center, detector_sampling_mrad = self.bright_field_center_px, self.detector_sampling_mrad
+                region_options = {"scan_region": scan_region, "mean_pattern": self._streamed.mean_pattern,
+                                  "detector_transposed": self.detector_transposed}
             if center is None or radius is None or detector_sampling_mrad is None:
                 mean_pattern = detector.mean(self._data)
                 detected_center, detected_radius = detector.fit_probe(mean_pattern)
@@ -840,7 +919,7 @@ class SSB:
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = (self.semiangle_mrad / disk_edge_radius(mean_pattern),) * 2
             with SSB(
-                self._data[row_start:row_stop, col_start:col_stop],
+                self._data if self._streamed is not None else self._data[row_start:row_stop, col_start:col_stop],
                 backend=self.backend, voltage_kV=self.voltage_kV,
                 semiangle_mrad=self.semiangle_mrad, scan_sampling_A=self.scan_sampling_A,
                 detector_sampling_mrad=detector_sampling_mrad,
@@ -849,6 +928,7 @@ class SSB:
                 scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 bright_field_center_px=center, bright_field_radius_px=radius,
                 bright_field_intensity_threshold=self.bright_field_intensity_threshold,
+                **region_options,
             ) as regional:
                 if tilt and int(num_trials) == 0:
                     regional.sample_tilt_mrad, regional.depth_spread_nm = self.sample_tilt_mrad, self.depth_spread_nm
@@ -860,7 +940,7 @@ class SSB:
                 )
             result.fit_scan_region = tuple(scan_region)
             # the regional session indexed this session's array, which starts at the crop origin
-            self._accept_result(self._in_detector_frame(result))
+            self._accept_result(result if self._streamed is not None else self._in_detector_frame(result))
             self._reconstruction = None
             if paths is not None:
                 result = self._save_result(result, paths=paths, signature=signature)
@@ -1200,6 +1280,21 @@ class SSB:
                          "phi12": float(higher_order_angles[1])}
                 higher_order_magnitudes = higher_order_angles = None
         scope = nullcontext() if context is None else context
+        if self._streamed is not None:
+            bounded = (not compute_loss and phase_estimator == "phase_of_mean"
+                       and higher_order_magnitudes is None and context is None)
+            if not bounded and max(self._streamed.scan_shape) > 1024:
+                raise NotImplementedError(
+                    "Streamed full-scan SSB supports C10/C12 phase_of_mean with compute_loss=False. "
+                    "The regional fit retains its own diagnostic loss; it is not a full-scan loss."
+                )
+            if bounded:
+                return self._streamed.phase(
+                    coefs, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                    scan_sampling_A=self.scan_sampling_A, rotation_deg=self.scan_detector_rotation_deg,
+                    upsampling_factor=upsampling_factor, sample_tilt_mrad=sample_tilt_mrad,
+                    thickness=float(depth_spread_nm) * ENGINE_PER_NM,
+                )
         if upsampling_factor != 1 or phase_estimator == "phase_of_mean":
             if higher_order_magnitudes is not None:
                 raise ValueError(
@@ -1306,7 +1401,7 @@ class SSB:
     ) -> tuple[str, float] | None:
         """Persist exact raw-count bright-field columns when supported."""
 
-        written = self._backend().export_brightfield(self._data, path_stem)
+        written = self._backend().export_brightfield(self._backend_input(), path_stem)
         if written is None:
             return None
         path, elapsed_s = written
@@ -1317,33 +1412,38 @@ class SSB:
     def scan_shape(self) -> tuple[int, int]:
         """Prepared scan shape in public ``(row, col)`` order."""
 
-        return self._backend().scan_shape
+        return self._streamed.scan_shape if self._streamed is not None else self._backend().scan_shape
 
     @property
     @_on_scan_gpu
     def num_bright_field_pixels(self) -> int:
         """Number of pixels in the complete detected bright-field disk."""
 
-        return self._backend().num_bright_field_pixels
+        return self._streamed.num_bright_field_pixels if self._streamed is not None else self._backend().num_bright_field_pixels
 
     @_on_scan_gpu
     def set_rotation(self, scan_detector_rotation_deg: float) -> None:
         """Set the physical scan-to-detector rotation (degrees, kept in [0, 360)) and refresh geometry."""
 
         self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
-        self._backend().cache_rotation(math.radians(self.scan_detector_rotation_deg))
+        if self._streamed is None or self._compute is not None:
+            self._backend().cache_rotation(math.radians(self.scan_detector_rotation_deg))
 
     @_on_scan_gpu
     def close(self) -> None:
         """Release the session's GPU state; data passed to ``SSB(data)`` stays the caller's.
 
         The session owns only what it made: the bright-field crop decoded from a
-        loaded dataset (``SSB.open`` releases its acquisition as soon as the crop
-        is read) and the backends' prepared Fourier data. A borrowed array or
-        dataset is never released here.
+        loaded dataset, backends' Fourier data, and the encoded acquisition
+        retained by a large ``SSB.open`` session. A borrowed array or dataset
+        is never released here.
         """
 
         self._data = None
+        self._streamed = None
+        if self._owned_dataset is not None:
+            self._owned_dataset.close()
+            self._owned_dataset = None
         # the MPS backend's final allocator flush must run after the workflow has dropped the source and the backend
         backend, self._compute = self._compute, None
         if backend is not None:
