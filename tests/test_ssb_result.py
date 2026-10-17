@@ -147,3 +147,40 @@ def test_numbered_exports_respect_selected_output_folder(tmp_path):
     with pytest.raises(ValueError, match="either an output filename or output_folder"):
         export_result(run, master, tmp_path / "conflict.json", output_folder=output_folder)
     assert not (tmp_path / "conflict.json").exists()
+
+
+@pytest.mark.parametrize("changed", ["master", "member", "replacement"])
+def test_early_verification_rejects_changed_source(tmp_path, changed):
+    """Hash once during computation; refuse replacement or modified inputs."""
+    import hashlib
+    import os
+    import h5py
+    from quantem.gpu.formats.ssb_phase import AcquisitionVerification, export_result
+
+    member = tmp_path / "scan_data.h5"
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(member, "w") as handle:
+        handle["data"] = np.ones((2, 2, 2), dtype=np.uint16)
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink(member.name, "/data")
+    hashes = [hashlib.sha256(path.read_bytes()).hexdigest() for path in (master, member)]
+    expected = hashlib.sha256(b"live4dstem.dataset/v0.1\0" + "\0".join(hashes).encode()).hexdigest()
+    verified = AcquisitionVerification(master)
+    assert verified.identity(master) == expected
+    np.save(tmp_path / "ssb_phase.npy", np.ones((2, 2), dtype=np.float32))
+    (tmp_path / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
+    record, _ = read_result(export_result(tmp_path, master, tmp_path / "result.json", verification=verified))
+    assert record["source_identity"] == expected
+    path = master if changed == "master" else member
+    if changed == "replacement":
+        original = path.stat()
+        replacement = path.with_suffix(".replacement")
+        replacement.write_bytes(path.read_bytes())
+        os.utime(replacement, ns=(original.st_atime_ns, original.st_mtime_ns))
+        os.replace(replacement, path)
+    else:
+        with h5py.File(path, "a") as handle:
+            handle.attrs["updated"] = True
+    with pytest.raises(ValueError, match="changed"):
+        export_result(tmp_path, master, tmp_path / "refused.json", verification=verified)
+    assert not (tmp_path / "refused.json").exists()
