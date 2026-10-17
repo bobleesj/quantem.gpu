@@ -33,6 +33,32 @@ def test_float_blocks_save_without_changing_any_bits(tmp_path, device):
         assert reopened.metadata["maped_merge"] == {"version": 1}
 
 
+@pytest.mark.parametrize("device", ["cuda", "mps"])
+def test_float_ans_scaled_export_stays_bounded_and_preserves_calibration(tmp_path, device):
+    """An encoded float result can be exported compactly without decoding the full scan."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("requires MPS")
+    values_t = torch.arange(17 * 17 * 192 * 192, device=device).float()
+    values_t = (values_t.remainder(10007) / 7 - 100).reshape(17, 17, 192, 192)
+    dataset = io.Dataset4dstemGPU(values_t, {"scan_sampling_A": [0.4, 0.6]})
+    path = tmp_path / "float_master.h5"
+    io.save(path, dataset, backend=device)
+    with io.load(path, device=device, verbose=False) as source:
+        compact_path = tmp_path / "compact_master.h5"
+        io.save(compact_path, source, dtype="scaled_uint16")
+        assert 0 < source.data.peak_decode_bytes <= 32 * 1024**2
+        with io.load(compact_path, device=device, verbose=False) as compact:
+            report = compact.metadata["precision"]
+            assert report["storage"] == "scaled_uint16"
+            assert len(report["regions"]) >= 2
+            assert compact.sampling[:2] == dataset.sampling[:2]
+            torch.testing.assert_close(
+                compact.read(), values_t, rtol=0, atol=report["max_abs_error"],
+            )
+
+
 def test_cpu_masked_counts_keep_tilt_identity_and_correction(tmp_path):
     """A masked detector sentinel is excluded and its correction stays explicit."""
     counts_t = torch.arange(4 * 4 * 8 * 8).reshape(4, 4, 8, 8).to(torch.uint16)

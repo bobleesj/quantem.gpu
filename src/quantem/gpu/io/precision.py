@@ -32,6 +32,7 @@ from quantem.gpu.io.hdf5.write import H5Writer, wait_for_saves
 from quantem.gpu.io.inspect import inspect
 from quantem.gpu.resident import precision as conversion
 from quantem.gpu.resident.cuda import precision as cuda
+from quantem.gpu.resident.float_ans import MAX_DECODE_BYTES, FloatANSResident
 from quantem.gpu.resident.mps import precision as metal
 from quantem.gpu.resident.mps.arrays import MetalArray
 
@@ -268,8 +269,8 @@ class _Source:
             if len(self.shape) == 3 and scan_shape is not None:
                 self.shape = (*scan_shape, *self.shape[-2:])
             self.dtype = np.dtype(str(source.dtype).removeprefix("torch."))
-            # Arrays are read by frame index; anything else is an algorithm's
-            # generated source that yields its own blocks.
+            # Dense arrays are indexed; encoded floats and algorithm sources
+            # are consumed in bounded device blocks.
             self.generated = not (
                 isinstance(source, (np.ndarray, h5py.Dataset, torch.Tensor))
                 or (cp is not None and isinstance(source, cp.ndarray))
@@ -343,7 +344,14 @@ class _Source:
                 raise ValueError(
                     "Generated 4D-STEM sources are saved at their declared complete geometry."
                 )
-            yield from self.array.blocks()
+            if isinstance(self.array, FloatANSResident):
+                frames = math.prod(self.shape[:2])
+                batch = MAX_DECODE_BYTES // self.array.frame_bytes
+                with self.array.device_context():
+                    for first in range(0, frames, batch):
+                        yield self.array.decode_scan_range_device(first, min(first + batch, frames))
+            else:
+                yield from self.array.blocks()
             return
         self.check()
         rows, cols, det_rows, det_cols = self.shape
