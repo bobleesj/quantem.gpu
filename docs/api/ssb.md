@@ -169,6 +169,26 @@ The numbers above illustrate the units; use your acquisition's calibration.
 aberrations. Omit it for the standard aberration search.
 Keep `ssb` open for the examples below and call `ssb.close()` when finished.
 
+Measure conditional focus–depth and tilt objective slices while the same SSB
+session is open:
+
+```python
+ssb.measure_parameters(aberrations)
+aberrations.show()  # phase beside the saved parameter slices
+aberrations.show("parameters")
+aberrations.show(show_parameters=False)  # phase alone
+```
+
+This evaluates up to 201 additional parameter settings on the selected GPU
+without changing the fitted optics or phase. The saved axes use nm and mrad;
+agreement is normalized to the fitted point. These are conditional objective
+cuts, not uncertainty estimates or proof of a global optimum. If the fit was
+saved, the measurements are saved with it and reopening performs no new
+calculations. Measure a regional fit in the same regional session, rather than
+against the full acquisition. Joint fitting requires measured spatial-frequency
+support in its fitting band; unsupported scans raise a corrective error instead
+of returning a zero-agreement fit.
+
 `find_aberrations()` searches on the native scan grid.
 `reconstruct()` applies the supplied parameters without
 searching. CUDA uses `phase_of_mean` at every output factor; MPS uses

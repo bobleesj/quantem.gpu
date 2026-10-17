@@ -985,6 +985,66 @@ class SSB:
         return result
 
     @_on_scan_gpu
+    def measure_parameters(self, parameters: SSBResult | None = None) -> dict[str, object]:
+        """Measure focus-depth and tilt objective slices without refitting.
+
+        The same prepared evidence and joint objective evaluate up to 201
+        points. All unplotted parameters stay fixed. These conditional cuts
+        describe local interpretation, not uncertainty or a global optimum.
+
+        Parameters
+        ----------
+        parameters : SSBResult or None, optional
+            A joint fit from this session. None uses its latest fit. Measure
+            regional fits in the same regional session used for fitting.
+
+        Returns
+        -------
+        dict
+            Recorded axes in nm and mrad, relative agreement, the fitted
+            point and evaluation time. Also attached to the result and its
+            saved record. Values above one exceed the fitted agreement;
+            they do not replace the fitted parameters.
+
+        Examples
+        --------
+        >>> fit = ssb.find_aberrations(tilt=True)
+        >>> slices = ssb.measure_parameters(fit)
+        >>> fit.show()  # phase with measured parameters; no further compute
+        >>> fit.show(show_parameters=False)
+        """
+        from quantem.gpu.ssb.parameters import measure_slices
+
+        result = self._aberration_search if parameters is None else parameters
+        if result is None or result.sample_tilt_mrad is None or result.depth_spread_nm is None:
+            raise ValueError("Measure a joint fit: run ssb.find_aberrations(tilt=True) first.")
+        if result.fit_scan_region is not None:
+            raise ValueError("Open the selected scan region as its own SSB session before measuring parameter slices.")
+        point = np.array([
+            result.aberrations["C10_nm"] * ENGINE_PER_NM,
+            result.aberrations["C12_nm"] * ENGINE_PER_NM,
+            math.radians(result.aberrations["phi12_deg"]),
+            *result.sample_tilt_mrad, result.depth_spread_nm * ENGINE_PER_NM,
+        ])
+        band = (0.2, 0.9)
+        rotation = self.scan_detector_rotation_deg
+        try:
+            self.set_rotation(result.scan_detector_rotation_deg)
+            backend = self._backend()
+            evidence = measure_slices(
+                lambda rows: backend.sample_agreement(rows, band), point,
+                rotation_deg=result.scan_detector_rotation_deg, band_inv_A=band,
+            )
+        finally:
+            self.set_rotation(rotation)
+        result.parameter_slices = evidence
+        result.timings["parameter_slices_s"] = evidence["elapsed_s"]
+        if result.saved_path is not None and result.metadata.get("signature"):
+            self._save_result(result, paths=(result.saved_path, result.saved_path.with_suffix(".json")),
+                              signature=result.metadata["signature"])
+        return evidence
+
+    @_on_scan_gpu
     def reconstruct(
         self,
         parameters: SSBResult | None = None,

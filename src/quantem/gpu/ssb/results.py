@@ -71,6 +71,10 @@ class SSBResult(Mapping[str, float]):
         Array artifact used for persistence, when ``save_to`` was provided.
     metadata : dict[str, object]
         Complete saved scientific signature, provenance, and result metadata.
+    parameter_slices : dict[str, object] or None
+        Measured conditional focus-depth and tilt objective slices, added by
+        ``ssb.measure_parameters(result)``. Includes units, rotation and timing;
+        reloading or showing them does not rerun the objective.
     """
     object_wave: object
     backend: Literal["cuda", "mps"]
@@ -111,6 +115,7 @@ class SSBResult(Mapping[str, float]):
     reused: bool = False
     saved_path: Path | None = None
     metadata: dict[str, object] = field(default_factory=dict)
+    parameter_slices: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         # one representation of the physical angle, whatever turn count a caller or an engine gives
@@ -305,9 +310,9 @@ class SSBResult(Mapping[str, float]):
             raise ValueError("A trial stack has several probes. Reconstruct one trial's parameters first.")
         return model_probe(self, space=space)
 
-    def show(self, view: Literal["phase", "probe", "rotation"] = "phase", *,
+    def show(self, view: Literal["phase", "probe", "rotation", "parameters"] = "phase", *,
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
-             histogram: bool = False):
+             histogram: bool = False, show_parameters: bool = True):
         """Show a large phase image or the real-space and Fourier-space probes.
 
         Phase views reuse symmetric linear limits from their fitted result.
@@ -316,7 +321,7 @@ class SSBResult(Mapping[str, float]):
 
         Parameters
         ----------
-        view : {"phase", "probe", "rotation"}, optional
+        view : {"phase", "probe", "rotation", "parameters"}, optional
             Show the reconstructed phase alone, or two model-probe intensity
             panels side by side. Fourier intensity shows the aperture;
             aberrations are encoded in the complex Fourier probe's phase.
@@ -338,6 +343,11 @@ class SSBResult(Mapping[str, float]):
             Add median-centered phase histograms to the rotation view, with
             the recorded decision scores and shared horizontal and vertical
             limits. The comparison is omitted when the rotation is unchanged.
+        show_parameters : bool, optional
+            Include saved objective slices beside a single phase image by
+            default. This only displays recorded values; it runs no fitting
+            or GPU evaluations. Use ``view="parameters"`` for the plots alone.
+            Measure them first with ``ssb.measure_parameters(result)``.
 
         Returns
         -------
@@ -356,6 +366,8 @@ class SSBResult(Mapping[str, float]):
         >>> result.show(axsize=(14, 14))  # width and height in inches
         >>> result.show(compare=result_4x, axsize=(7, 7))
         >>> aberrations.show("rotation", histogram=True, axsize=(7, 7))
+        >>> ssb.measure_parameters(aberrations)
+        >>> aberrations.show("parameters")
         """
         import matplotlib.pyplot as plt
         from quantem.core.visualization import show_2d
@@ -368,6 +380,10 @@ class SSBResult(Mapping[str, float]):
             return _phase_comparison(self, compare, axsize=(6, 6) if axsize is None else axsize)
         if view == "rotation":
             return _rotation_comparison(self, axsize=(6, 6) if axsize is None else axsize, histogram=histogram)
+        if view == "parameters" or (view == "phase" and show_parameters and self.parameter_slices):
+            from quantem.gpu.ssb.parameters import plot_parameters
+
+            return plot_parameters(self, include_phase=view == "phase", axsize=axsize)
         if view == "phase":
             column_sampling = float(self.object_sampling_A[1])
             arrays = self.phase
@@ -383,7 +399,7 @@ class SSBResult(Mapping[str, float]):
             ]
             panel_size = (6, 6)
         else:
-            raise ValueError(f"Choose view='phase', 'probe' or 'rotation'; got {view!r}.")
+            raise ValueError(f"Choose view='phase', 'probe', 'rotation' or 'parameters'; got {view!r}.")
         figure, _ = show_2d(
             arrays, title=titles,
             norm=({"interval_type": "manual", "vmin": self.phase_limits[0],
