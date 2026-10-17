@@ -160,3 +160,23 @@ def test_automatic_sampling_rotation_and_saved_result(tmp_path):
         )
         np.testing.assert_array_equal(restored.phase, original)
         assert (tmp_path / "fine" / "ssb-reconstruct.npz").is_file()
+
+
+@pytest.mark.parametrize("depth_nm", [0.0, 18.0])
+def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_nm):
+    """Reduce paired frequencies only when the complete soft aperture fits."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling
+
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    sample = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm)
+    with _disk_session() as ssb:
+        ssb.set_rotation(165.8)
+        half, _ = ssb.preview(coefs, **sample, upsampling_factor=4, compute_loss=False)
+        prepared = ssb._backend()._prepared
+        assert upsampling._coherent_columns(prepared, 512) == 257
+        # Native Nyquist frequencies intersect the aperture and are unpaired.
+        assert upsampling._coherent_columns(prepared, 128) == 128
+        monkeypatch.setattr(upsampling, "_coherent_columns", lambda prepared, n: n)
+        full, _ = ssb.preview(coefs, **sample, upsampling_factor=4, compute_loss=False)
+        np.testing.assert_allclose(half, full, rtol=0, atol=2e-5)
