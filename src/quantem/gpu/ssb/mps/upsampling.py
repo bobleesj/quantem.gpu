@@ -54,18 +54,22 @@ inline float2 alias_corrected(
         return float2(0.0f);
     }
     float chi_k = probe[k * 5 + 4];
-    float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
-    float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
-    if (HIGHER) {
-        chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
-        chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
-    }
     float shift = 6.283185307179586f * (qr * tr + qc * tc);
-    float a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
-    float b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
-    float ca, cb;
-    float sa = metal::precise::sincos(chi_m - chi_k, ca);
-    float sb = metal::precise::sincos(chi_p - chi_k, cb);
+    // A closed aperture contributes exactly zero, independent of its phase.
+    float a = 0.0f, b = 0.0f;
+    float ca = 0.0f, cb = 0.0f, sa = 0.0f, sb = 0.0f;
+    if (gm.w != 0.0f) {
+        float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
+        if (HIGHER) chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
+        a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+        sa = metal::precise::sincos(chi_m - chi_k, ca);
+    }
+    if (gp.w != 0.0f) {
+        float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
+        if (HIGHER) chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
+        b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+        sb = metal::precise::sincos(chi_p - chi_k, cb);
+    }
     float re = a * ca - b * cb, im = -a * sa - b * sb;
     float inv = 1.0f / metal::max(metal::precise::sqrt(re * re + im * im), 1e-8f);
     // Only the source G has Hermitian symmetry. Corrected aliases do not.
@@ -172,17 +176,19 @@ def _coherent_alias_kernel():
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_coherent_alias",
-        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients", "bounds"],
+        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc",
+                     "probe", "coefficients", "bounds", "row_indices", "col_indices"],
         output_names=["partial"],
         header=_HEADER + _ALIAS_TRANSFER,
         compile_options={"math_mode": "safe"},
         source="""
-        uint col = thread_position_in_grid.x;
-        uint row = thread_position_in_grid.y;
+        uint col_index = thread_position_in_grid.x;
+        uint row_index = thread_position_in_grid.y;
         uint group = thread_position_in_grid.z;
         uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
-        if (col >= COLS || row >= N || start >= K) return;
-        size_t out = ((size_t)group * N + row) * COLS + col;
+        if (col_index >= COLS || row_index >= ROWS || start >= K) return;
+        uint row = row_indices[row_index], col = col_indices[col_index];
+        size_t out = ((size_t)group * ROWS + row_index) * COLS + col_index;
         float2 sum = float2(0.0f);
         if (row == 0u && col == 0u) {
             for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
@@ -236,6 +242,28 @@ def _ordered_alias_sum_kernel():
     )
 
 
+def _coherent_support(
+    prepared: PreparedMpsSSB, n: int, columns: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Retain every nonzero aperture frequency, with an outward grid margin."""
+    radius = (
+        prepared.semiangle_rad
+        + 0.5 * max(prepared.ang_y_rad, prepared.ang_x_rad)
+    ) / prepared.wavelength
+    radius *= 1.0 + 8.0 * np.finfo(np.float32).eps
+    frequency = np.abs(np.fft.fftfreq(n) * n)
+    indices = []
+    for coordinates, step, count in (
+        (prepared.kx_np, prepared.q_row[1], n),
+        (prepared.ky_np, prepared.q_col[1], columns),
+    ):
+        support = float(np.max(np.abs(coordinates))) + radius
+        # One extra grid point includes float32 frequency and geometry rounding.
+        limit = np.ceil(support / abs(float(step))) + 1
+        indices.append(np.flatnonzero(frequency[:count] <= limit).astype(np.uint32))
+    return indices[0], indices[1]
+
+
 def _coherent_spectrum(
     prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
     higher: bool, n: int, chunk: int, columns: int,
@@ -244,36 +272,62 @@ def _coherent_spectrum(
     mx = prepared.mx
     stored = int(prepared.g_qk.shape[0])
     source_n = int(prepared.scan_shape[0])
-    total = mx.zeros((n, columns), dtype=mx.complex64)
-    group_count = (stored + chunk - 1) // chunk
-    bounds = _alias_group_bounds_kernel()(
-        inputs=[prepared.kx, prepared.ky, params],
-        template=[("K", stored), ("CHUNK", chunk)],
-        grid=(group_count, 1, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(group_count, 5)], output_dtypes=[mx.float32],
-    )[0]
-    # Preserve the established BF chunk boundaries; only the inner sum changes
-    # from MLX's reduction to sequential float32 addition in the fused kernel.
-    groups_per_batch = max(1, _WORK_BYTES // (n * columns * 8))
+    # Bounds and support depend on the grid and rotated BF geometry, not on
+    # aberrations, tilt or depth. Keep one latest set with the frequency grid.
+    cached = prepared.upsampled_geometry
+    geometry_key = (columns, chunk)
+    if cached is not None and cached[0] == n and cached[3] == geometry_key:
+        row_indices, col_indices, row_indices_m, col_indices_m, bounds = cached[4]
+    else:
+        row_indices, col_indices = _coherent_support(prepared, n, columns)
+        row_indices_m = mx.array(row_indices)
+        col_indices_m = mx.array(col_indices)
+        group_count = (stored + chunk - 1) // chunk
+        bounds = _alias_group_bounds_kernel()(
+            inputs=[prepared.kx, prepared.ky, params],
+            template=[("K", stored), ("CHUNK", chunk)],
+            grid=(group_count, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(group_count, 5)], output_dtypes=[mx.float32],
+        )[0]
+        geometry = (row_indices, col_indices, row_indices_m, col_indices_m, bounds)
+        prepared.upsampled_geometry = (n, qr, qc, geometry_key, geometry)
+    rows, cols = len(row_indices), len(col_indices)
+    total = mx.zeros((rows, cols), dtype=mx.complex64)
+    # Preserve BF chunk boundaries and sequential float32 accumulation order.
+    # Omit only the identically zero frequencies from temporary storage.
+    groups_per_batch = max(1, _WORK_BYTES // (rows * cols * 8))
     for start in range(0, stored, groups_per_batch * chunk):
         stop = min(start + groups_per_batch * chunk, stored)
         groups = (stop - start + chunk - 1) // chunk
         partial = _coherent_alias_kernel()(
             inputs=[prepared.g_qk[start:stop], qr, qc, prepared.kx[start:stop],
                     prepared.ky[start:stop], params, dc, probe[start:stop], coefficients,
-                    bounds[start // chunk:start // chunk + groups]],
-            template=[("N", n), ("COLS", columns), ("SOURCE_N", source_n),
+                    bounds[start // chunk:start // chunk + groups],
+                    row_indices_m, col_indices_m],
+            template=[("N", n), ("ROWS", rows), ("COLS", cols), ("SOURCE_N", source_n),
                       ("G_COLS", int(prepared.g_qk.shape[-1])),
                       ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk)],
-            grid=(columns, n, groups), threadgroup=(32, 8, 1),
-            output_shapes=[(groups, n, columns)], output_dtypes=[mx.complex64],
+            grid=(cols, rows, groups), threadgroup=(32, 8, 1),
+            output_shapes=[(groups, rows, cols)], output_dtypes=[mx.complex64],
         )[0]
         total = _ordered_alias_sum_kernel()(
-            inputs=[partial, total], template=[("N", n), ("COLS", columns), ("GROUPS", groups)],
-            grid=(n * columns, 1, 1), threadgroup=(256, 1, 1),
-            output_shapes=[(n, columns)], output_dtypes=[mx.complex64],
+            inputs=[partial, total], template=[("N", rows), ("COLS", cols), ("GROUPS", groups)],
+            grid=(rows * cols, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(rows, cols)], output_dtypes=[mx.complex64],
         )[0]
         mx.eval(total)
+    if rows == n and cols == columns:
+        return total
+    # Restore the full Fourier grid before the unchanged inverse FFT.
+    for axis, indices, count in ((0, row_indices, n), (1, col_indices, columns)):
+        if len(indices) == count:
+            continue
+        gaps = np.flatnonzero(np.diff(indices) > 1)
+        split = int(gaps[0] + 1) if len(gaps) else len(indices)
+        shape = list(total.shape)
+        shape[axis] = count - len(indices)
+        before, after = mx.split(total, [split], axis=axis)
+        total = mx.concatenate((before, mx.zeros(shape, dtype=mx.complex64), after), axis=axis)
     return total
 
 
@@ -322,22 +376,35 @@ def _reconstruct_upsampled(
     mx = prepared.mx
     source_n = int(prepared.scan_shape[0])
     n = source_n * upsampling_factor
-    frequencies = np.fft.fftfreq(n) * n
-    qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
-    qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
+    cached_geometry = prepared.upsampled_geometry
+    if cached_geometry is not None and cached_geometry[0] == n:
+        qr, qc = cached_geometry[1:3]
+    else:
+        frequencies = np.fft.fftfreq(n) * n
+        qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
+        qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
+        prepared.upsampled_geometry = (n, qr, qc, None, None)
     params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
     higher = higher_order_magnitudes is not None
-    coefficients = mx.array(pack_coefficients(higher_order_magnitudes, higher_order_angles)
-                            if higher else np.zeros((14, 2), np.float32))
+    packed = (pack_coefficients(higher_order_magnitudes, higher_order_angles)
+              if higher else np.zeros((14, 2), np.float32))
+    coefficients = mx.array(packed)
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
     chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
     stored = int(prepared.g_qk.shape[0])
-    probe = _alias_probe_kernel()(
-        inputs=[prepared.kx, prepared.ky, params, coefficients],
-        template=[("K", stored), ("HIGHER", higher)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
-    )[0]
+    probe_key = (float(C10), float(C12), float(phi12), higher, packed.tobytes())
+    cached_probe = prepared.upsampled_probe
+    if cached_probe is not None and cached_probe[0] == probe_key:
+        probe = cached_probe[1]
+    else:
+        probe = _alias_probe_kernel()(
+            inputs=[prepared.kx, prepared.ky, params, coefficients],
+            template=[("K", stored), ("HIGHER", higher)],
+            grid=(stored, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
+        )[0]
+        prepared.upsampled_probe = (probe_key, probe)
     if wave_mean:
         columns = _coherent_columns(prepared, n) if not higher and upsampling_factor > 1 else n
         total = _coherent_spectrum(
