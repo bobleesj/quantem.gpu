@@ -1,10 +1,36 @@
 """Scientific algorithms can return dense datasets without losing IO support."""
 
+import h5py
 import pytest
 import torch
-import h5py
 
 from quantem.gpu import io
+
+
+@pytest.mark.parametrize("device", ["cuda", "mps"])
+def test_float_blocks_save_without_changing_any_bits(tmp_path, device):
+    """A bounded algorithm result reopens exactly, including fractional negatives."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("requires MPS")
+    values_t = (torch.arange(5 * 7 * 8 * 8, device=device).float() / 7 - 100).reshape(5, 7, 8, 8)
+
+    class Result:
+        shape = values_t.shape
+        dtype = "float32"
+        def __init__(self):
+            self.save_metadata = {"quantem_maped_merge_v1": '{"version": 1}'}
+
+        def blocks(self):
+            yield values_t[:2].flatten(0, 1)
+            yield values_t[2:].flatten(0, 1)
+
+    path = tmp_path / "merged_master.h5"
+    io.save(path, Result(), backend=device, batch_size=5, frames_per_file=13)
+    with io.load(path, device=device, verbose=False) as reopened:
+        assert torch.equal(reopened.read().view(torch.int32), values_t.view(torch.int32))
+        assert reopened.metadata["maped_merge"] == {"version": 1}
 
 
 def test_cpu_masked_counts_keep_tilt_identity_and_correction(tmp_path):
