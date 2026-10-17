@@ -1,6 +1,30 @@
 /// <reference types="@webgpu/types" />
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
 import { qemFileSource } from "../../src/quantem/gpu/detector/webgpu/qem-source";
+import { createQemHasher } from "../../src/quantem/gpu/detector/webgpu/qem-checksum";
+
+/** Real browser workers, or the same digest with worker-src blocked by CSP. */
+export async function runQemChecksumParity(expectWorkers = true): Promise<Record<string, boolean>> {
+  const controller = new AbortController(), hasher = createQemHasher(4, controller.signal);
+  const inputs = Array.from({ length: 4 }, (_, i) => Uint8Array.from({ length: 65537 }, (_, j) => (i + j) & 255));
+  const copies = inputs.map(bytes => bytes.slice());
+  const hashes = await Promise.all(inputs.map(bytes => crypto.subtle.digest("SHA-256", bytes)));
+  try {
+    const results = await Promise.all(inputs.map(bytes => hasher.digest(bytes.buffer)));
+    for (let i = 0; i < results.length; i++) {
+      if ((inputs[i].byteLength === 0) !== expectWorkers) throw new Error("Unexpected checksum worker/fallback path");
+      const bytes = new Uint8Array(results[i].bytes), hash = new Uint8Array(results[i].hash);
+      if (bytes.length !== copies[i].length || bytes.some((value, j) => value !== copies[i][j])) throw new Error("Checksum transfer changed bytes");
+      if (hash.length !== 32 || hash.some((value, j) => value !== new Uint8Array(hashes[i])[j])) throw new Error("Worker SHA-256 mismatch");
+    }
+    controller.abort(new Error("checksum cancelled"));
+    let rejected = false;
+    try { await hasher.digest(new ArrayBuffer(8)); }
+    catch (error) { rejected = String(error).includes("checksum cancelled"); }
+    if (!rejected) throw new Error("Cancelled checksum job was accepted");
+    return { transferred_bytes_exact: true, sha256_exact: true, cancellation_rejected: true };
+  } finally { hasher.dispose(); }
+}
 
 type Case = { name: string; shape: number[]; dtype: "uint8" | "uint16"; block_frames: number };
 function exact(label: string, actual: Float32Array, expected: Float32Array): void {
