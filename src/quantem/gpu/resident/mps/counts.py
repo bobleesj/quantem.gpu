@@ -300,6 +300,8 @@ class MPSStreamedCounts:
         count: int,
         output,
         output_offset_bytes: int = 0,
+        *,
+        detector_region=None,
     ):
         """Append one chunk's decode of ``count`` scans from ``local_first`` to ``command``.
 
@@ -308,8 +310,10 @@ class MPSStreamedCounts:
         ``output_offset_bytes`` into ``output``.
         """
         pixels = math.prod(self.shape[2:])
-        first_stream = (local_first // self.interval) * pixels
-        stop_stream = math.ceil((local_first + count) / self.interval) * pixels
+        row0, row1, col0, col1 = self._detector_region(detector_region)
+        selected_pixels = (row1 - row0) * (col1 - col0)
+        first_stream = (local_first // self.interval) * selected_pixels
+        stop_stream = math.ceil((local_first + count) / self.interval) * selected_pixels
         parameters = np.asarray(
             [
                 chunk.scans,
@@ -320,12 +324,16 @@ class MPSStreamedCounts:
                 first_stream,
                 stop_stream,
                 self.dtype.itemsize,
+                self.shape[3], row0, col0, row1 - row0, col1 - col0,
             ],
             dtype=np.uint64,
         ).tobytes()
         encoder = command.computeCommandEncoder()
         encoder.setComputePipelineState_(
-            self._pipelines["camera_frame_native" if count == 1 else "decode_range"]
+            self._pipelines[
+                "camera_frame_native"
+                if count == 1 and selected_pixels == pixels else "decode_range"
+            ]
         )
         for index, buffer in enumerate((*chunk.buffers, self._decoding, self._errors)):
             encoder.setBuffer_offset_atIndex_(buffer, 0, index)
@@ -380,12 +388,28 @@ class MPSStreamedCounts:
         output.shape = self.shape[2:]
         return output
 
-    def decode_scan_range_torch(self, first: int, stop: int):
-        """Decode directly into independently owned Torch accelerator storage."""
+    def _detector_region(self, region):
+        """Validate the detector rectangle without changing count validity."""
+        if region is None:
+            return 0, self.shape[2], 0, self.shape[3]
+        row0, row1, col0, col1 = map(int, region)
+        if not (0 <= row0 < row1 <= self.shape[2]
+                and 0 <= col0 < col1 <= self.shape[3]):
+            raise ValueError("Detector region must lie within the detector shape.")
+        return row0, row1, col0, col1
+
+    def decode_scan_range_torch(self, first: int, stop: int, *, detector_region=None):
+        """Decode selected counts directly into owned Torch accelerator storage.
+
+        Only requested detector streams are decoded. The complete acquisition
+        remains encoded, and the output keeps stored invalid-pixel values just
+        as a full-frame read does.
+        """
         first, stop = int(first), int(stop)
         self.check_readable(first, stop)
+        row0, row1, col0, col1 = self._detector_region(detector_region)
         output = torch.empty(
-            (stop - first, *self.shape[2:]),
+            (stop - first, row1 - row0, col1 - col0),
             dtype=getattr(torch, self.dtype.name),
             device="mps",
         )
@@ -400,13 +424,21 @@ class MPSStreamedCounts:
                 "Torch storage must belong to the same Metal device as the resident."
             )
         command = metal_queue().commandBuffer()
-        self._encode_scan_range_into(command, first, stop, buffer)
+        self._encode_scan_range_into(
+            command, first, stop, buffer, detector_region=detector_region
+        )
         complete_command(command, "ANS Torch range read")
         self._check_errors()
         return output
 
-    def _encode_scan_range_into(self, command, first: int, stop: int, output):
+    def _encode_scan_range_into(
+        self, command, first: int, stop: int, output, *, detector_region=None
+    ):
         """Append an exact range decode to an existing Metal command buffer."""
+        row0, row1, col0, col1 = self._detector_region(detector_region)
+        pixels = (row1 - row0) * (col1 - col0)
+        # Float bit-lane subclasses keep their full-frame decode contract.
+        selection = {} if detector_region is None else {"detector_region": detector_region}
         self._clear_errors()
         for chunk in self.chunks:
             overlap_first = max(first, chunk.first)
@@ -420,8 +452,9 @@ class MPSStreamedCounts:
                 overlap_stop - overlap_first,
                 output,
                 (overlap_first - first)
-                * math.prod(self.shape[2:])
+                * pixels
                 * self.dtype.itemsize,
+                **selection,
             )
 
     def decode_block_device(self, block_index: int):
