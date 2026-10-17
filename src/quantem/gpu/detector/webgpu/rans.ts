@@ -11,8 +11,8 @@
  * verified to terminate each column stream exactly at build time.
  */
 
-import { copyRansPayload, payloadGroupLimit, type RansByteSource, type RansPayloadProfile } from "./rans-source";
-import { qemFilesSource, type QemByteFile } from "./qem-source";
+import { copyRansPayload, payloadGroupLimit, type RansByteSource, type RansPayloadProfile, type RansPreparedGroup } from "./rans-source";
+import { qemFilesSource, type QemByteFile, type QemCheckpointGroup } from "./qem-source";
 import { DetectorCompute } from "./backend";
 import { EXACT_INTEGER_COM_WGSL } from "./exact-com";
 import type { Uint32ImageView } from "./borrowed-image";
@@ -251,6 +251,8 @@ fn normalize_display(@builtin(global_invocation_id) gid: vec3<u32>) {
 export interface RansLoadProfile extends RansPayloadProfile {
   metadataReadMs: number;
   payloadBuffers: number;
+  /** These groups were validated during admission, not by the final timed pass. */
+  checkpointPrebuiltGroups?: number;
 }
 
 export interface RansManifest { tilts: RansTiltMeta[]; bad_pixels?: number[]; scan_shape?: number[]; detector_shape?: number[]; source_metadata?: Record<string, unknown>; native_dtype?: "uint8" | "uint16" }
@@ -262,6 +264,71 @@ interface UnitRec { payload_word: number; offsets_base: number; colmeta_word: nu
 
 const pad4 = (n: number) => Math.ceil(n / 4) * 4;
 function concatU32(parts: Uint32Array[]): Uint32Array { const total = parts.reduce((a, b) => a + b.length, 0); const o = new Uint32Array(total); let off = 0; for (const p of parts) { o.set(p, off); off += p.length; } return o; }
+
+/** Submit the same decoder on verified groups while later bytes are in flight.
+ * Submission parameters are temporary; the source owns bookmarks and reusable tables.
+ * A single fault readback gates admission of every submitted group.
+ */
+function checkpointAdmission(device: GPUDevice) {
+  let pipeline: GPUComputePipeline | undefined, faults: GPUBuffer | undefined;
+  return {
+    submit({ payload, K, nativeDtype, entries, blocks }: QemCheckpointGroup): RansPreparedGroup {
+      pipeline ??= device.createComputePipeline({ layout: "auto", compute: {
+        module: device.createShaderModule({ code: BUILD_WGSL }), entryPoint: "build_checkpoints",
+        constants: { BINARY_LOOKUP: 1 },
+      } });
+      faults ??= device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+      const temporary: GPUBuffer[] = [];
+      const upload = (parts: Uint32Array[], usage = GPUBufferUsage.STORAGE) => {
+        const size = parts.reduce((total, words) => total + words.byteLength, 0);
+        const buffer = device.createBuffer({ size: Math.max(4, size), usage, mappedAtCreation: true });
+        temporary.push(buffer);
+        const target = new Uint32Array(buffer.getMappedRange());
+        let offset = 0;
+        for (const words of parts) { target.set(words, offset); offset += words.length; }
+        buffer.unmap(); return buffer;
+      };
+      const chk = device.createBuffer({ size: blocks.length * K * 2 * 2 * 4, usage: GPUBufferUsage.STORAGE });
+      try {
+        const columns = blocks.length * K * 3;
+        const table = upload([...blocks.map(block => block.columns), entries]);
+        const offsets = upload(blocks.map(block => block.offsets));
+        const units = upload([Uint32Array.from(blocks.flatMap((block, i) => [
+          Math.floor(block.offset / 4), i * (K + 1), i * K * 3, columns, 0, i * K * 4, 0,
+          (block.frames | ((block.offset % 4) << 28) | 0x80000000 | (nativeDtype === "uint8" ? 0x40000000 : 0)) >>> 0,
+        ]))]);
+        const params = upload([new Uint32Array([512, K, 10, 2, 0, 0, blocks.length, 0])], GPUBufferUsage.UNIFORM);
+        const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+          { binding: 0, resource: { buffer: payload } }, { binding: 1, resource: { buffer: offsets } },
+          { binding: 2, resource: { buffer: table } }, { binding: 3, resource: { buffer: chk } },
+          { binding: 5, resource: { buffer: faults } }, { binding: 6, resource: { buffer: units } },
+          { binding: 7, resource: { buffer: params } },
+        ] });
+        const encoder = device.createCommandEncoder(), pass = encoder.beginComputePass();
+        pass.setPipeline(pipeline); pass.setBindGroup(0, group);
+        pass.dispatchWorkgroups(Math.ceil(K / 64), 1, blocks.length); pass.end();
+        device.queue.submit([encoder.finish()]);
+        // Keep the group's tables for resident operations too: no second host
+        // concatenation or GPU upload when the final set takes ownership.
+        temporary.splice(temporary.indexOf(table), 1);
+        temporary.splice(temporary.indexOf(offsets), 1);
+        return { checkpoints: chk, tables: table, offsets, entriesWord: columns };
+      } catch (error) { chk.destroy(); throw error; }
+      finally { for (const buffer of temporary) buffer.destroy(); }
+    },
+    async finish() {
+      if (!faults) return;
+      const readback = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      try {
+        const encoder = device.createCommandEncoder(); encoder.copyBufferToBuffer(faults, 0, readback, 0, 16);
+        device.queue.submit([encoder.finish()]); await readback.mapAsync(GPUMapMode.READ);
+        const count = new Uint32Array(readback.getMappedRange())[0];
+        if (count) throw new Error(`rANS streams did not terminate exactly (${count} columns); the export is corrupt`);
+      } finally { readback.destroy(); }
+    },
+    dispose() { faults?.destroy(); },
+  };
+}
 
 /** All acquisitions of one exported rANS series, resident in browser GPU memory. */
 export class RansResidentSet {
@@ -330,16 +397,20 @@ export class RansResidentSet {
   /** Load an ordered, compatible series of .qem count acquisitions into one batched resident set. */
   static async loadQemFiles(device: GPUDevice, files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], signal?: AbortSignal): Promise<RansResidentSet> {
     const started = performance.now();
-    const source = await qemFilesSource(files, onStatus, badPixels, device, signal);
+    const admission = checkpointAdmission(device);
+    let source: RansByteSource | undefined;
     // The source owns its staged payload until the resident set takes it over.
     try {
+      source = await qemFilesSource(files, onStatus, badPixels, device, signal, admission.submit);
+      await admission.finish();
       signal?.throwIfAborted();
       const set = await this.loadSource(device, source, onStatus, started);
       // Cancelled while the decoder was being built: nothing of the load survives.
       if (signal?.aborted) { set.dispose(); signal.throwIfAborted(); }
       return set;
     }
-    catch (error) { source.dispose?.(); throw error; }
+    catch (error) { source?.dispose?.(); throw error; }
+    finally { admission.dispose(); }
   }
 
   private static async loadSource(device: GPUDevice, source: RansByteSource, onStatus: (text: string) => void, started = performance.now()): Promise<RansResidentSet> {
@@ -354,6 +425,11 @@ export class RansResidentSet {
     const binaryLookup = Boolean(tilts[0].binary_lookup);
     if (tilts.some(tilt => Boolean(tilt.binary_lookup) !== binaryLookup)) throw new Error("Use one rANS table profile per resident series");
     const { K, frames, blocks, scale } = tilts[0]; const windows = Math.ceil(frames / WINDOW); const N = manifest.scan_shape ? manifest.scan_shape[0] * manifest.scan_shape[1] : frames * blocks;
+    const preparedOnly = tilts.every(tilt => tilt.blocks_meta.every(block => {
+      const segment = tilt.payload_url && block.byte_start !== undefined && block.byte_end !== undefined
+        ? source.residentPayload?.(tilt.payload_url, block.byte_start, block.byte_end) : undefined;
+      return segment && source.residentCheckpoints?.(segment.buffer);
+    }));
     const upload = (data: ArrayBufferView, usage: GPUBufferUsageFlags) => {
       const size = pad4(data.byteLength);
       const buffer = device.createBuffer({ size, usage: usage | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
@@ -369,6 +445,7 @@ export class RansResidentSet {
     const sharedLookup = new Map<string, number>();
     for (let tiltIndex = 0; tiltIndex < T; tiltIndex++) {
       const prefix = `t${tilts[tiltIndex].tilt}-`; modelBases.push([]);
+      if (preparedOnly) continue;
       for (const model of tilts[tiltIndex].models) {
         onStatus(`Loading rANS tables ${tiltIndex + 1}/${T} (model ${model.index + 1}/${tilts[tiltIndex].models.length})`);
         let columnMeta: Uint32Array;
@@ -394,7 +471,7 @@ export class RansResidentSet {
     }
     // Each part is copied straight into the final mapping, so the column
     // metadata, the largest table, is never concatenated on the host.
-    const tablesBuf = device.createBuffer({ size: (colmetaLen + entriesLen) * 4 + lutBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+    const tablesBuf = device.createBuffer({ size: Math.max(4, (colmetaLen + entriesLen) * 4 + lutBytes), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
     const tableBytes = new Uint8Array(tablesBuf.getMappedRange());
     let tableAt = 0;
     for (const part of [...colmetaParts, ...entriesParts]) {
@@ -461,11 +538,15 @@ export class RansResidentSet {
         // Four bounded reads feed one mapped payload group. Read service times
         // overlap; payloadReadWaitMs measures only waits exposed to this loop.
         if (!group.resident) await copyRansPayload(source, name, start, block.bytes, mapped!, offset, loadProfile);
-        const blockOffsets = new Uint32Array(await readFile(`${prefix}offsets-${String(block.index).padStart(2, "0")}.u32`));
+        const prepared = source.residentCheckpoints?.(group.payload);
+        const blockOffsets = prepared ? undefined : new Uint32Array(await readFile(`${prefix}offsets-${String(block.index).padStart(2, "0")}.u32`));
         payloadBytes += block.bytes;
-        const modelBase = modelBases[tiltIndex][block.model];
+        const modelBase = prepared
+          ? { colmeta_word: group.units.length * K * 3, entries_word: prepared.entriesWord, lut_word: 0 }
+          : modelBases[tiltIndex][block.model];
         const unit: UnitRec = { payload_word: Math.floor(offset / 4), offsets_base: group.offLen, ...modelBase, chk_base: group.units.length * K * windows * 2, out_base: tiltIndex * N + block.index * frames, tilt: tiltIndex, block: block.index, frameFlags: ((block.frames ?? 0) | ((offset % 4) << 28) | (tilt.binary_lookup ? 0x80000000 : 0) | (manifest.native_dtype === "uint8" ? 0x40000000 : 0)) >>> 0 };
-        group.offParts.push(blockOffsets); group.offLen += blockOffsets.length; group.units.push(unit);
+        if (blockOffsets) group.offParts.push(blockOffsets);
+        group.offLen += blockOffsets?.length ?? K + 1; group.units.push(unit);
       }
     } catch (error) {
       // The read helper drains its bounded requests before this storage is freed.
@@ -502,11 +583,14 @@ export class RansResidentSet {
     const applyGroup = device.createBindGroup({ layout: applyPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: out } }, { binding: 1, resource: { buffer: images } }, { binding: 2, resource: { buffer: imagesF32 } }, { binding: 3, resource: { buffer: imageCountParams } }] });
     let unitCursor = 0;
     for (const planned of pending) {
-      const payload = planned.payload, offsets = upload(concatU32(planned.offParts), GPUBufferUsage.STORAGE);
-      const chk = device.createBuffer({ size: planned.units.length * K * windows * 2 * 4, usage: GPUBufferUsage.STORAGE });
+      const payload = planned.payload;
+      const prepared = source.residentCheckpoints?.(payload);
+      const offsets = prepared?.offsets ?? upload(concatU32(planned.offParts), GPUBufferUsage.STORAGE);
+      const chk = prepared?.checkpoints ?? device.createBuffer({ size: planned.units.length * K * windows * 2 * 4, usage: GPUBufferUsage.STORAGE });
+      if (prepared) loadProfile.checkpointPrebuiltGroups = (loadProfile.checkpointPrebuiltGroups ?? 0) + 1;
       const params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       const bind = (paramsBuf: GPUBuffer, outBuf: GPUBuffer = out, colsB: GPUBuffer = colsBuf, unitsB: GPUBuffer = unitsBuf) => device.createBindGroup({ layout, entries: [
-        { binding: 0, resource: { buffer: payload } }, { binding: 1, resource: { buffer: offsets } }, { binding: 2, resource: { buffer: tablesBuf } },
+        { binding: 0, resource: { buffer: payload } }, { binding: 1, resource: { buffer: offsets } }, { binding: 2, resource: { buffer: prepared?.tables ?? tablesBuf } },
         { binding: 3, resource: { buffer: chk } }, { binding: 4, resource: { buffer: colsB } }, { binding: 5, resource: { buffer: outBuf } },
         { binding: 6, resource: { buffer: unitsB } }, { binding: 7, resource: { buffer: paramsBuf } }] });
       const group = bind(params);
@@ -529,13 +613,19 @@ export class RansResidentSet {
     device.queue.writeBuffer(out, 0, new Uint32Array(T * N * 2 + 4));
     const checkpointBegin = performance.now();
     const encoder = device.createCommandEncoder(); const pass = encoder.beginComputePass(); pass.setPipeline(buildPipe);
-    for (const group of groups) { device.queue.writeBuffer(group.params, 0, new Uint32Array([frames, K, scale, windows, 0, group.unit0, group.units.length, T * N])); pass.setBindGroup(0, group.group); pass.dispatchWorkgroups(Math.ceil(K / 64), 1, group.units.length); }
+    for (const group of groups) {
+      if (source.residentCheckpoints?.(group.payload)) continue;
+      device.queue.writeBuffer(group.params, 0, new Uint32Array([frames, K, scale, windows, 0, group.unit0, group.units.length, T * N])); pass.setBindGroup(0, group.group); pass.dispatchWorkgroups(Math.ceil(K / 64), 1, group.units.length);
+    }
     pass.end(); device.queue.submit([encoder.finish()]); await device.queue.onSubmittedWorkDone();
     const checkpointMs = performance.now() - checkpointBegin;
     const faultReadback = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }); const faultEncoder = device.createCommandEncoder(); faultEncoder.copyBufferToBuffer(out, T * N * 2 * 4, faultReadback, 0, 16); device.queue.submit([faultEncoder.finish()]);
     await faultReadback.mapAsync(GPUMapMode.READ); const faults = new Uint32Array(faultReadback.getMappedRange().slice(0))[0]; faultReadback.unmap(); faultReadback.destroy();
     const set = new RansResidentSet(device, manifest, { groups, out, images, imagesF32, colsBuf, unitsBuf, intPipe, gatherPipe, applyPipe, applyGroup, imageCountParams, payloadBytes, loadMs, checkpointMs, readyMs: performance.now() - started, loadProfile, acquisitionMode: source.mode });
-    set._setTables(tablesBuf);
+    set._setTables([tablesBuf, ...pending.flatMap(group => {
+      const prepared = source.residentCheckpoints?.(group.payload);
+      return prepared ? [prepared.tables] : [];
+    })]);
     // A rejected export keeps nothing on the device.
     if (faults) { set.dispose(); throw new Error(`rANS streams did not terminate exactly (${faults} columns); the export is corrupt`); }
     onStatus("");
@@ -680,7 +770,7 @@ export class RansResidentSet {
     return temps;
   }
   pattern(tilt: number, scanIdx: number): Promise<Float32Array> { return this.reduceMany(tilt, [scanIdx], false); }
-  private tablesBuf!: GPUBuffer;
+  private tablesBuffers!: GPUBuffer[];
 
   /** Copy current images into caller-owned display buffers in one submission.
    * Existing destinations remain stable across drag steps; queue order ensures
@@ -811,11 +901,11 @@ export class RansResidentSet {
     for (const params of this.normalizeDisplayParams) params.destroy();
     this.normalizeDisplayParams = [];
     for (const group of this.groups) { group.payload.destroy(); group.offsets.destroy(); group.chk.destroy(); group.params.destroy(); for (const span of group.spans.values()) span.params.destroy(); }
-    this.tablesBuf.destroy();
+    for (const buffer of this.tablesBuffers) buffer.destroy();
     this.out.destroy(); this.images.destroy(); this.imagesF32.destroy(); this.colsBuf.destroy(); this.unitsBuf.destroy(); this.imageCountParams.destroy();
   }
   /** @internal set by load() */
-  _setTables(tables: GPUBuffer): void { this.tablesBuf = tables; }
+  _setTables(tables: GPUBuffer[]): void { this.tablesBuffers = tables; }
 }
 
 /** One acquisition of a RansResidentSet, presenting the subset of the DetectorCompute surface the widget uses. */

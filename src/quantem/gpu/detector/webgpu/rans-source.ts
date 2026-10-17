@@ -1,3 +1,11 @@
+/** Verified group storage owned by admission until a resident set takes it over. */
+export interface RansPreparedGroup {
+  checkpoints: GPUBuffer;
+  tables: GPUBuffer;
+  offsets: GPUBuffer;
+  entriesWord: number;
+}
+
 /** Byte reader of one .qem series as the resident set loads it (qem-source.ts builds it). */
 export interface RansByteSource {
   mode: "http" | "local-folder";
@@ -6,6 +14,8 @@ export interface RansByteSource {
    * device stages every block and throws for any other range; a source that answers
    * undefined sends that block to the per-block upload path. */
   residentPayload?(name: string, start: number, end: number): { buffer: GPUBuffer; offset: number } | undefined;
+  /** Exact checkpoints built while later authenticated payload groups loaded. */
+  residentCheckpoints?(payload: GPUBuffer): RansPreparedGroup | undefined;
   /** Release staged GPU storage; a loaded resident set owns it instead. */
   dispose?(): void;
 }
