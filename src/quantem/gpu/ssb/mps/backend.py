@@ -26,6 +26,7 @@ from quantem.gpu.ssb.mps.hardware import (
 from quantem.gpu.ssb.mps.kernels.object_sum import object_fourier_sum_dynamic
 from quantem.gpu.ssb.mps.optimizer import fit_sample
 from quantem.gpu.ssb.mps.optimizer import optimize as optimize_mps
+from quantem.gpu.ssb.mps.padding import pad_scan
 from quantem.gpu.ssb.mps.prepared import (
     PreparedMpsSSB,
     as_sampling,
@@ -44,6 +45,9 @@ class MpsSSBBackend:
 
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
+    Dense rectangles are centered on the next supported square FFT grid using
+    their mean detector pattern, matching CUDA's padding convention. Padding
+    is announced; reconstructed phases include the padded extent.
     """
 
     backend = "mps"
@@ -62,7 +66,7 @@ class MpsSSBBackend:
         bright_field_radius_px: int | None,
         scan_detector_rotation_deg: float,
     ) -> None:
-        self._frames = as_chunked_frames(data)
+        self._frames = as_chunked_frames(pad_scan(data))
         self._scan_shape = frames_scan_shape(self._frames)
         self._detector_shape = tuple(int(size) for size in self._frames.shape[-2:])
         self._voltage_kV = float(voltage_kV)

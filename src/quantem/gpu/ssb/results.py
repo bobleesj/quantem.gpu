@@ -39,6 +39,9 @@ class SSBResult(Mapping[str, float]):
     depth_spread_nm : float | None
         Depth over which the tilted columns spread in the thick-sample model (a model parameter, not a measured
         thickness); None for standard SSB.
+    sample_agreement : float | None
+        Final thick-sample objective, comparable between starts on the same
+        data, region, band and calibration. Not normalized across regions.
     tilt_fit_gain : float | None
         Least-squares agreement with the data of the tilt fit relative to standard SSB (> 1: the tilt explains more).
     scan_detector_rotation_deg : float
@@ -116,6 +119,7 @@ class SSBResult(Mapping[str, float]):
     saved_path: Path | None = None
     metadata: dict[str, object] = field(default_factory=dict)
     parameter_slices: dict[str, object] | None = None
+    sample_agreement: float | None = None
 
     def __post_init__(self) -> None:
         # one representation of the physical angle, whatever turn count a caller or an engine gives
