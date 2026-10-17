@@ -1,6 +1,30 @@
 /// <reference types="@webgpu/types" />
 import { RansResidentSet } from "../../src/quantem/gpu/detector/webgpu/rans";
 import { qemFileSource } from "../../src/quantem/gpu/detector/webgpu/qem-source";
+import { createQemHasher } from "../../src/quantem/gpu/detector/webgpu/qem-checksum";
+
+/** Real browser workers, or the same digest with worker-src blocked by CSP. */
+export async function runQemChecksumParity(expectWorkers = true): Promise<Record<string, boolean>> {
+  const controller = new AbortController(), hasher = createQemHasher(4, controller.signal);
+  const inputs = Array.from({ length: 4 }, (_, i) => Uint8Array.from({ length: 65537 }, (_, j) => (i + j) & 255));
+  const copies = inputs.map(bytes => bytes.slice());
+  const hashes = await Promise.all(inputs.map(bytes => crypto.subtle.digest("SHA-256", bytes)));
+  try {
+    const results = await Promise.all(inputs.map(bytes => hasher.digest(bytes.buffer)));
+    for (let i = 0; i < results.length; i++) {
+      if ((inputs[i].byteLength === 0) !== expectWorkers) throw new Error("Unexpected checksum worker/fallback path");
+      const bytes = new Uint8Array(results[i].bytes), hash = new Uint8Array(results[i].hash);
+      if (bytes.length !== copies[i].length || bytes.some((value, j) => value !== copies[i][j])) throw new Error("Checksum transfer changed bytes");
+      if (hash.length !== 32 || hash.some((value, j) => value !== new Uint8Array(hashes[i])[j])) throw new Error("Worker SHA-256 mismatch");
+    }
+    controller.abort(new Error("checksum cancelled"));
+    let rejected = false;
+    try { await hasher.digest(new ArrayBuffer(8)); }
+    catch (error) { rejected = String(error).includes("checksum cancelled"); }
+    if (!rejected) throw new Error("Cancelled checksum job was accepted");
+    return { transferred_bytes_exact: true, sha256_exact: true, cancellation_rejected: true };
+  } finally { hasher.dispose(); }
+}
 
 type Case = { name: string; shape: number[]; dtype: "uint8" | "uint16"; block_frames: number };
 function exact(label: string, actual: Float32Array, expected: Float32Array): void {
@@ -68,6 +92,39 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
       if (!rejected) throw new Error("Modified payload was not rejected by checksum admission");
     }
     results.payload_corruption_rejected = true;
+    // A valid SHA is not enough: an invalid ANS state must still fail the GPU
+    // termination check, including when checkpoints were submitted early.
+    {
+      const item = cases.find(item => item.name === "uint16-qem-modes")!;
+      const bytes = new Uint8Array(await (await fetch(base + item.name + ".qem")).arrayBuffer());
+      const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
+      let text = new TextDecoder().decode(bytes.subarray(56, body));
+      const header = JSON.parse(text);
+      let damaged = -1;
+      for (const chunk of header.chunks) {
+        const offsets = new DataView(bytes.buffer, body + chunk.arrays[1].offset);
+        for (let i = 0; i < chunk.arrays[2].count; i++) if (bytes[body + chunk.arrays[2].offset + i] < 64) {
+          damaged = chunk.arrays[0].offset + offsets.getUint32(i * 4, true);
+          bytes.fill(0, body + damaged, body + damaged + 4);
+          break;
+        }
+        if (damaged >= 0) break;
+      }
+      if (damaged < 0) throw new Error("Fixture has no entropy column for decode verification");
+      const hex = async (part: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", part as Uint8Array<ArrayBuffer>))]
+        .map(value => value.toString(16).padStart(2, "0")).join("");
+      const first = Math.floor(damaged / (64 << 20)), last = Math.floor((damaged + 3) / (64 << 20));
+      for (let index = first; index <= last; index++) {
+        text = text.replace(header.sha256[index], await hex(bytes.subarray(body + index * (64 << 20), Math.min(bytes.length, body + (index + 1) * (64 << 20)))));
+      }
+      bytes.set(new TextEncoder().encode(text), 56);
+      bytes.set(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.subarray(56, body))), 24);
+      let rejected = false;
+      try { await RansResidentSet.loadQemFile(device, new File([bytes], "invalid-state.qem")); }
+      catch (error) { rejected = String(error).includes("did not terminate exactly"); }
+      if (!rejected) throw new Error("Checksum-valid invalid ANS state passed checkpoint verification");
+      results.checksum_valid_decode_corruption_rejected = true;
+    }
     // Groups smaller than a chunk on the real device: the split staged payload and
     // the GPU copy of the block a split cuts must decode exactly.
     for (const item of cases.filter(item => item.name.endsWith("-qem-blocks"))) {

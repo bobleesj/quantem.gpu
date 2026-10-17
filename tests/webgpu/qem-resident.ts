@@ -38,6 +38,94 @@ const boundBuffers = (groups: GPUBindGroupDescriptor[], binding: number, entries
 const stagedBytes = (segment: { buffer: GPUBuffer; offset: number }, length: number) =>
   new Uint8Array((segment.buffer as unknown as FakeBuffer).bytes, segment.offset, length);
 
+test("checkpoint submission starts only after group payload and tables authenticate, before the last chunk", async () => {
+  const bytes = syntheticQem([[40 << 20], [40 << 20], [40 << 20]]);
+  const gpu = fakeDevice({ maxBufferSize: 48 << 20, maxStorageBufferBindingSize: 48 << 20 });
+  const submissions: { status: string; payload: GPUBuffer; checkpoint: GPUBuffer }[] = [];
+  let status = "";
+  const file = countingFile(bytes);
+  const source = await qemFileSource(file, text => { status = text; }, gpu.device, undefined, group => {
+    assert.equal((group.payload as unknown as FakeBuffer).mapped, false);
+    assert.equal(group.blocks.length, 1);
+    assert.equal(group.blocks[0].offsets.at(-1), 40 << 20);
+    assert.deepEqual([...group.blocks[0].columns], [0, 33, 2]);
+    const checkpoint = gpu.device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+    submissions.push({ status, payload: group.payload, checkpoint });
+    return { checkpoints: checkpoint, tables: checkpoint, offsets: checkpoint, entriesWord: 0 };
+  });
+  assert.equal(submissions.length, 3);
+  assert.equal(submissions[0].status, "Verifying .qem 1/2");
+  assert.equal(submissions[2].status, "Verifying .qem 2/2");
+  for (const item of submissions) assert.equal(source.residentCheckpoints!(item.payload)!.checkpoints, item.checkpoint);
+  assert.equal(file.read, file.payload, "no payload reread for early checkpoints");
+  source.dispose!();
+  assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
+});
+
+test("later corruption or cancellation releases previously submitted checkpoints", async () => {
+  const original = syntheticQem([[40 << 20], [40 << 20], [40 << 20]]);
+  for (const mode of ["corrupt", "cancel"]) {
+    const bytes = original.slice(), controller = new AbortController();
+    if (mode === "corrupt") bytes[bytes.length - 1000] ^= 1;
+    const gpu = fakeDevice({ maxBufferSize: 48 << 20, maxStorageBufferBindingSize: 48 << 20 });
+    let submitted = 0;
+    await assert.rejects(qemFileSource(countingFile(bytes), () => {}, gpu.device, controller.signal, () => {
+      submitted++;
+      const checkpoint = gpu.device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE });
+      if (mode === "cancel") controller.abort(new Error("cancelled during overlap"));
+      return { checkpoints: checkpoint, tables: checkpoint, offsets: checkpoint, entriesWord: 0 };
+    }), mode === "corrupt" ? /payload checksum mismatch/ : /cancelled during overlap/);
+    assert.equal(submitted, 1);
+    assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
+  }
+});
+
+test("a resident reuses early checkpoints and split chunks retain the validated fallback", async () => {
+  for (const limit of [1 << 20, 8192]) {
+    const gpu = fakeDevice({ maxBufferSize: limit, maxStorageBufferBindingSize: limit });
+    const set = await RansResidentSet.loadQemFile(gpu.device, countingFile(syntheticQem([[4096, 4096, 4096]])));
+    assert.equal(set.loadProfile.checkpointPrebuiltGroups ?? 0, limit === 8192 ? 0 : 1);
+    set.dispose();
+    assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
+  }
+});
+
+test("early checkpoint tables and offsets are reused by the final decoder bindings", async () => {
+  const gpu = fakeDevice();
+  const set = await RansResidentSet.loadQemFile(gpu.device, countingFile(unaligned));
+  const early = gpu.bindGroups.filter(group => [...group.entries].length === 7);
+  const resident = gpu.bindGroups.filter(group => [...group.entries].length === 8);
+  assert.ok(early.length > 0 && resident.length > 0);
+  const buffer = (group: GPUBindGroupDescriptor, binding: number) =>
+    ([...group.entries].find(entry => entry.binding === binding)!.resource as GPUBufferBinding).buffer;
+  for (const group of early) {
+    const match = resident.find(other => buffer(other, 0) === buffer(group, 0));
+    assert.ok(match);
+    for (const binding of [1, 2, 3]) assert.equal(buffer(match, binding), buffer(group, binding));
+  }
+  set.dispose();
+  assert.ok(gpu.buffers.every(buffer => buffer.destroyed));
+});
+
+test("column metadata preserves every entropy model and special stream mode", async () => {
+  const models = [...Array.from({ length: 64 }, (_, index) => index), 252, 253, 254, 255];
+  const sizes = [...new Array(64).fill(4), 4, 0, 1024, 2];
+  const source = await qemFileSource(countingFile(syntheticQem([sizes], false, [models])));
+  try {
+    for (const [index, model] of models.entries()) {
+      const expected = model < 64 ? [model * 33, (model + 1) * 33, 2]
+        : [0, 0, [5, 3, 1, 4][model - 252]];
+      assert.deepEqual([...new Uint32Array(await source.read(`columns-${index}`))], expected);
+    }
+  } finally { source.dispose?.(); }
+});
+
+test("metadata construction still rejects invalid encoded modes and lengths", async () => {
+  for (const [model, size] of [[64, 4], [251, 4], [0, 3], [252, 3], [253, 2], [254, 1022], [255, 4]]) {
+    await assert.rejects(qemFileSource(countingFile(syntheticQem([[size]], false, [[model]]))), /invalid encoded stream mode or length/);
+  }
+});
+
 test("every block's stream bytes are staged once, where the resident payload reports them", async () => {
   for (const bytes of [fixture, unaligned]) {
     const gpu = fakeDevice();

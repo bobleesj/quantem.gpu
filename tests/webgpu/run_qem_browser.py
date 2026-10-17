@@ -89,6 +89,7 @@ def main() -> None:
                             description: adapter.info.description,
                             isFallbackAdapter: adapter.info.isFallbackAdapter,
                           },
+                          qem_checksum_workers: await QemBrowserParity.runQemChecksumParity(),
                           qem: await QemBrowserParity.runQemBrowserParity(
                             device, location.origin + '/fixtures/'),
                           retained_rans: await RansProductParity.runRansProductParity(device, location.origin + '/fixtures/'),
@@ -106,6 +107,16 @@ def main() -> None:
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)
+                    page.route("**/checksum-blocked.html", lambda route: route.fulfill(
+                        status=200,
+                        headers={"Content-Type": "text/html", "Content-Security-Policy": "worker-src 'none'"},
+                        body="<title>QEM checksum fallback</title>",
+                    ))
+                    page.goto(f"http://127.0.0.1:{server.server_port}/checksum-blocked.html")
+                    page.add_script_tag(url="/qem-browser.js")
+                    result["qem_checksum_csp_fallback"] = page.evaluate(
+                        "QemBrowserParity.runQemChecksumParity(false)"
+                    )
                     print(json.dumps(result, indent=2))
                 finally:
                     browser.close()
