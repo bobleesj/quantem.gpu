@@ -46,6 +46,7 @@ def fit_sample_search(
     polish: str = "nelder-mead",
     compare_standard: bool = True,
     start=None,
+    fixed_aberrations: dict[str, float] | None = None,
 ) -> dict[str, object]:
     """Maximise ``objective(C10, C12, phi12, (tilt_row, tilt_col), thickness)``; returns the fitted parameters and the gain.
 
@@ -68,6 +69,11 @@ def fit_sample_search(
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     half_pi = math.pi / 2.0
+    fixed = None if fixed_aberrations is None else np.array(
+        [fixed_aberrations[name] for name in PARAMETERS[:3]], dtype=np.float64
+    )
+    if fixed is not None and polish not in ("newton",):
+        raise ValueError("Fixed aberrations use polish='newton'.")
 
     def sampler(**options):
         # multivariate TPE is flagged experimental; it is what finds the joint (C10, tilt) optimum here. The warning is
@@ -77,7 +83,9 @@ def fit_sample_search(
             return optuna.samplers.TPESampler(seed=seed, multivariate=True, **options)
 
     def suggest(trial, with_sample: bool) -> list[float]:
-        row = [trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max), trial.suggest_float("phi12", -half_pi, half_pi)]
+        row = ([trial.suggest_float(name, value, value) for name, value in zip(PARAMETERS[:3], fixed)]
+               if fixed is not None else
+               [trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max), trial.suggest_float("phi12", -half_pi, half_pi)])
         if with_sample:
             row += [trial.suggest_float("tilt_row_mrad", -tilt_limit_mrad, tilt_limit_mrad),
                     trial.suggest_float("tilt_col_mrad", -tilt_limit_mrad, tilt_limit_mrad), trial.suggest_float("thickness", *thickness_range)]
@@ -111,6 +119,8 @@ def fit_sample_search(
 
     def single(point) -> float:
         row = np.array([[point[0], abs(point[1]), wrap_phi(point[2]), point[3], point[4], abs(point[5])]], dtype=np.float64)
+        if fixed is not None:
+            row[0, :3] = fixed
         return float(objective_batch(row)[0]) if objective_batch is not None else objective(row[0, 0], row[0, 1], row[0, 2], (row[0, 3], row[0, 4]), row[0, 5])
 
     timings = {}
@@ -140,6 +150,8 @@ def fit_sample_search(
     if start is not None:
         # C12 >= 0 and phi12 wrapped, as searched: a fit kept from the other 180-degree branch carries -C12
         starts.append(from_newton(to_newton(np.asarray(start, dtype=np.float64))))
+        if fixed is not None:
+            starts[-1][:3] = fixed
     # Nelder-Mead on the objective scaled to ~1 by the best trial: its function-change test (fatol) is absolute, and at the
     # raw scale (~1e12) it never passes, so the polish ran to maxiter (641 of 704 evaluations on the full logic field).
     best_point = np.array([ranked[0].params[name] for name in PARAMETERS]) if ranked else starts[0]
@@ -166,7 +178,7 @@ def fit_sample_search(
             lower = np.array([c10_range[0], -c12_max, -c12_max, -tilt_limit_mrad, -tilt_limit_mrad, thickness_range[0]])
             upper = np.array([c10_range[1], c12_max, c12_max, tilt_limit_mrad, tilt_limit_mrad, thickness_range[1]])
             polished = newton_polish(starts, lambda rows: np.asarray(objective_batch(rows), dtype=np.float64) / scale,
-                                     lower, upper, c12_max)
+                                     lower, upper, c12_max, fixed_aberrations=fixed)
         elif batch_polish and objective_batch is not None and len(starts) > 1:
             from quantem.gpu.ssb.batch_refinement import _minimize_batch
 
@@ -196,6 +208,8 @@ def fit_sample_search(
             "SSB (tilt=False) when tilt cannot be estimated."
         )
     best["C12"], best["thickness"], best["phi12"] = abs(best["C12"]), abs(best["thickness"]), wrap_phi(best["phi12"])
+    if fixed is not None:
+        best.update(zip(PARAMETERS[:3], map(float, fixed), strict=True))
     records = [{"number": trial.number, "params": dict(trial.params), "loss": float(trial.value)}
                for trial in ranked if math.isfinite(trial.value)]
     records.sort(key=lambda record: record["number"])
@@ -216,7 +230,7 @@ NEWTON_STEP = np.array([2.0, 2.0, 2.0, 0.25, 0.25, 5.0])
 NEWTON_TOLERANCE = np.array([0.05, 0.05, 0.05, 0.005, 0.005, 0.5])
 
 
-def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=30):
+def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=30, *, fixed_aberrations=None):
     """Maximise the objective from every start at once by Newton steps on finite-difference models.
 
     Each iteration evaluates, for every unfinished start, the design around its current point (``_newton_design``) in ONE
@@ -236,9 +250,15 @@ def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=
     """
     from scipy.optimize import OptimizeResult
 
-    size = len(NEWTON_STEP)
+    locked = fixed_aberrations is not None
+    step = NEWTON_STEP[3:] if locked else NEWTON_STEP
+    tolerance = NEWTON_TOLERANCE[3:] if locked else NEWTON_TOLERANCE
+    lower, upper = (lower[3:], upper[3:]) if locked else (lower, upper)
+    encode = (lambda point: np.asarray(point[3:], dtype=np.float64)) if locked else to_newton
+    decode = (lambda z: np.concatenate((fixed_aberrations, z))) if locked else from_newton
+    size = len(step)
     active = list(range(len(starts)))
-    center = [to_newton(point) for point in starts]
+    center = [encode(point) for point in starts]
     curvature = [np.zeros((size, size)) for _ in starts]
     full = [True] * len(starts)
     radius = [8.0] * len(starts)
@@ -250,16 +270,16 @@ def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=
 
     def clip(z):
         z = np.clip(z, lower, upper)        # rounding only: _bounded_step already stays inside the box
-        norm = math.hypot(z[1], z[2])
-        if norm > c12_max:
+        norm = 0.0 if locked else math.hypot(z[1], z[2])
+        if not locked and norm > c12_max:
             z[1:3] *= c12_max / norm
         return z
 
     for iteration in range(max_iterations):
         if not active:
             break
-        designs = [_newton_design(center[index], NEWTON_STEP, full[index]) for index in active]
-        rows = np.array([from_newton(z) for design in designs for z in design])
+        designs = [_newton_design(center[index], step, full[index]) for index in active]
+        rows = np.array([decode(z) for design in designs for z in design])
         values = np.asarray(objective_rows(rows), dtype=np.float64)
         offset = 0
         for index, design in zip(list(active), designs, strict=True):
@@ -270,20 +290,20 @@ def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=
             if previous[index] is not None and design_values[0] < previous[index][1]:
                 # the step lowered the objective: go back, and step a quarter as far from the kept model (a quarter of
                 # the region alone would repeat a step that was already shorter than that)
-                rejected = float(np.linalg.norm((center[index] - previous[index][0]) / NEWTON_STEP))
+                rejected = float(np.linalg.norm((center[index] - previous[index][0]) / step))
                 center[index], _, gradient, hessian = previous[index]
                 radius[index] = min(radius[index], rejected) / 4.0
             else:
-                gradient, hessian = _newton_model(design_values, NEWTON_STEP, curvature[index])
-                moved = math.inf if previous[index] is None else float(np.linalg.norm((center[index] - previous[index][0]) / NEWTON_STEP))
+                gradient, hessian = _newton_model(design_values, step, curvature[index])
+                moved = math.inf if previous[index] is None else float(np.linalg.norm((center[index] - previous[index][0]) / step))
                 if previous[index] is not None and moved >= 0.99 * radius[index]:
                     radius[index] *= 2.0
                 curvature[index] = hessian
                 # the mixed terms are measured again only after a long step: near the maximum they barely change
                 full[index] = previous[index] is not None and moved > 2.0
                 previous[index] = (center[index].copy(), float(design_values[0]), gradient, hessian)
-            proposal = clip(center[index] + _bounded_step(center[index], gradient, hessian, NEWTON_STEP, radius[index], lower, upper))
-            if np.all(np.abs(proposal - center[index]) < NEWTON_TOLERANCE):
+            proposal = clip(center[index] + _bounded_step(center[index], gradient, hessian, step, radius[index], lower, upper))
+            if np.all(np.abs(proposal - center[index]) < tolerance):
                 converged[index] = True
                 active.remove(index)
                 heading[index] = center[index]
@@ -294,8 +314,8 @@ def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=
             for other in range(len(starts)):
                 if other == index or previous[other] is None or previous[index] is None:
                     continue
-                near = (np.all(np.abs(previous[index][0] - previous[other][0]) < 4 * NEWTON_STEP)
-                        or np.all(np.abs(heading[index] - heading[other]) < 2 * NEWTON_STEP))
+                near = (np.all(np.abs(previous[index][0] - previous[other][0]) < 4 * step)
+                        or np.all(np.abs(heading[index] - heading[other]) < 2 * step))
                 if near and (previous[index][1], -index) < (previous[other][1], -other):
                     active.remove(index)
                     break
@@ -303,8 +323,8 @@ def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=
             active = [max(active, key=lambda index: (previous[index][1], -index))]
     results = []
     for index in range(len(starts)):
-        z, value = (previous[index][0], previous[index][1]) if previous[index] is not None else (to_newton(starts[index]), -math.inf)
-        results.append(OptimizeResult(x=from_newton(z), fun=-value, nfev=evaluations[index], nit=iterations[index],
+        z, value = (previous[index][0], previous[index][1]) if previous[index] is not None else (encode(starts[index]), -math.inf)
+        results.append(OptimizeResult(x=decode(z), fun=-value, nfev=evaluations[index], nit=iterations[index],
                                       success=converged[index]))
     return results
 
