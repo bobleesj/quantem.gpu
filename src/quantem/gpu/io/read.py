@@ -31,14 +31,17 @@ def read(data, *, scan_region=None, detector_region=None):
         detector_region, shape[2:], "detector_region"
     )
     payload = data.data
-    if isinstance(payload, np.ndarray):
-        # The dense CPU reference (backend="cpu") is already a host array.
-        return torch.from_numpy(payload[
+    if isinstance(payload, np.ndarray) or (
+        isinstance(payload, torch.Tensor) and payload.device.type == "cpu"
+    ):
+        # CPU readers and scientific algorithms may own arrays or tensors.
+        selected = payload[
             row0:row1,
             column0:column1,
             detector_row0:detector_row1,
             detector_column0:detector_column1,
-        ]).contiguous()
+        ]
+        return torch.as_tensor(selected).contiguous()
     device = resident_device(payload)
     if device is None or device.type not in {"cuda", "mps"}:
         raise TypeError("read() requires a CUDA or MPS resident source.")
