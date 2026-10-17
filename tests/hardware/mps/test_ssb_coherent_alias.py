@@ -66,3 +66,32 @@ def test_coherent_sum_matches_per_detector_correction(monkeypatch, factor, aniso
         assert loss is None
         # Existing MPS coherent-object tolerance; no reduced support or precision.
         np.testing.assert_allclose(actual, np.asarray(expected), rtol=0, atol=1e-7)
+
+
+@pytest.mark.parametrize("native", [128, 256, 512, 1024])
+def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
+    """Fine-grid tilt previews retain the full phase when zero support is omitted."""
+    from quantem.gpu.ssb.mps import upsampling as up
+    from .test_ssb_upsampling import _disk_session
+
+    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    # Odd and even aberration orders exercise the complete corrected spectrum.
+    if native == 256:
+        coefs.update(C21_nm=3., phi21_deg=25., C30_nm=20.)
+    sample = {"sample_tilt_mrad": (-9., 5.), "depth_spread_nm": 18.}
+    with _disk_session(native, detector_sampling=(8., 12.)) as ssb:
+        compact, loss = ssb.preview(
+            coefs, **sample, upsampling_factor=2,
+            phase_estimator="phase_of_mean", compute_loss=False,
+        )
+        monkeypatch.setattr(
+            up, "_coherent_support",
+            lambda prepared, n, columns: (np.arange(n, dtype=np.uint32),
+                                          np.arange(columns, dtype=np.uint32)),
+        )
+        dense, dense_loss = ssb.preview(
+            coefs, **sample, upsampling_factor=2,
+            phase_estimator="phase_of_mean", compute_loss=False,
+        )
+        np.testing.assert_array_equal(compact, dense)
+        assert loss is dense_loss is None
