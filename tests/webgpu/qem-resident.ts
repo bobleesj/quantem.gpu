@@ -38,6 +38,25 @@ const boundBuffers = (groups: GPUBindGroupDescriptor[], binding: number, entries
 const stagedBytes = (segment: { buffer: GPUBuffer; offset: number }, length: number) =>
   new Uint8Array((segment.buffer as unknown as FakeBuffer).bytes, segment.offset, length);
 
+test("column metadata preserves every entropy model and special stream mode", async () => {
+  const models = [...Array.from({ length: 64 }, (_, index) => index), 252, 253, 254, 255];
+  const sizes = [...new Array(64).fill(4), 4, 0, 1024, 2];
+  const source = await qemFileSource(countingFile(syntheticQem([sizes], false, [models])));
+  try {
+    for (const [index, model] of models.entries()) {
+      const expected = model < 64 ? [model * 33, (model + 1) * 33, 2]
+        : [0, 0, [5, 3, 1, 4][model - 252]];
+      assert.deepEqual([...new Uint32Array(await source.read(`columns-${index}`))], expected);
+    }
+  } finally { source.dispose?.(); }
+});
+
+test("metadata construction still rejects invalid encoded modes and lengths", async () => {
+  for (const [model, size] of [[64, 4], [251, 4], [0, 3], [252, 3], [253, 2], [254, 1022], [255, 4]]) {
+    await assert.rejects(qemFileSource(countingFile(syntheticQem([[size]], false, [[model]]))), /invalid encoded stream mode or length/);
+  }
+});
+
 test("every block's stream bytes are staged once, where the resident payload reports them", async () => {
   for (const bytes of [fixture, unaligned]) {
     const gpu = fakeDevice();
