@@ -68,3 +68,32 @@ def test_native_detector_rejects_invalid_output(device, invalid):
             session.masked_sum(np.ones((5, 7), bool), output="native", out=buffers[invalid])
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.int32, torch.uint16])
+@pytest.mark.parametrize("dense", [False, True])
+@pytest.mark.parametrize("tensor_mask", [False, True])
+def test_weighted_detector_matches_independent_reference(
+    device, dtype, dense, tensor_mask, monkeypatch,
+):
+    """Fractional and negative custom weights survive integer/sparse branches."""
+    host = np.arange(3 * 4 * 5 * 7, dtype=np.float32).reshape(3, 4, 5, 7)
+    if dtype == torch.float32:
+        host /= 17
+    values = torch.as_tensor(host, device=device).to(dtype)
+    mask = np.full((5, 7), 0.5 if dense else 0, dtype=np.float32)
+    mask.flat[:3] = [0.25, 0.75, -0.5]
+    reference = (host.astype(np.float64) * mask).sum(axis=(-2, -1)).astype(np.float32)
+    supplied = torch.as_tensor(mask, device=device) if tensor_mask else mask
+    session = detector.prepare(values)
+    try:
+        # Force more than one reduction chunk; the last chunk is partial.
+        monkeypatch.setattr(session._backend, "_frames_per_chunk", lambda: 5)
+        actual = session.masked_sum(supplied, output="native")
+        np.testing.assert_allclose(actual.cpu().numpy(), reference, rtol=2e-6, atol=0)
+        np.testing.assert_array_equal(session.masked_sum(mask), actual.cpu().numpy())
+        out = torch.empty_like(actual)
+        assert session.masked_sum(supplied, output="native", out=out) is out
+        torch.testing.assert_close(out, actual, rtol=0, atol=0)
+    finally:
+        session.close()
