@@ -89,6 +89,9 @@ def test_full_phase_matches_dense_fourier_support(monkeypatch, native):
             lambda prepared, n, columns: (np.arange(n, dtype=np.uint32),
                                           np.arange(columns, dtype=np.uint32)),
         )
+        # Rebuild the independent dense-support oracle rather than reusing
+        # the compact geometry retained by the previous slider evaluation.
+        ssb._backend()._prepared.upsampled_geometry = None
         dense, dense_loss = ssb.preview(
             coefs, **sample, upsampling_factor=2,
             phase_estimator="phase_of_mean", compute_loss=False,
