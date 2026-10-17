@@ -38,14 +38,14 @@ def test_uint32_screening_preserves_measured_counts(tmp_path):
     ):
         np.testing.assert_array_equal(getattr(outputs[0], field), getattr(outputs[1], field))
     np.testing.assert_array_equal(outputs[1].total_intensity, counts.sum(axis=(-2, -1)))
-    assert outputs[1].metadata["parameters"]["dtype"] == "uint16"
+    assert outputs[1].metadata["parameters"]["dtype"] == "uint32"
 
 
 def test_uint32_screening_does_not_truncate_large_counts(tmp_path):
-    """An unrepresentable count stops screening before products are saved."""
+    """Counts above 65535 remain native uint32 through screening."""
     counts = np.ones((4, 4, 32, 32), dtype=np.uint32)
     counts[-1, -1, 16, 16] = 65536
     path = tmp_path / "high-counts.h5"
     write_counts(path, counts)
-    with pytest.raises(ValueError, match="above 65535"):
-        screening.prepare(path, backend="cuda", cache=False)
+    result = screening.prepare(path, backend="cuda", cache=False)
+    np.testing.assert_array_equal(result.total_intensity, counts.sum(axis=(-2, -1)))

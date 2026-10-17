@@ -184,7 +184,7 @@ def test_float_original_to_qem_and_native_patterns(
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
         if format_name in ("dm3", "dm4"):
             correction = loaded.metadata["hot_pixel_correction"]
-            assert correction["method"] == "median"
+            assert correction["method"] == "none"
             assert correction["pixel_count"] == 0
             assert correction["applied"] is False
         session = detector.prepare(loaded)
@@ -276,11 +276,11 @@ def test_float_ingestion_preserves_ieee_bits(tmp_path, backend, detector_shape):
             )
 
 
-@pytest.mark.parametrize("maximum,stored_dtype", [(27, "uint8"), (1024, "uint16")])
+@pytest.mark.parametrize("maximum", [27, 1024])
 def test_simulated_integer_counts_to_qem(
-    tmp_path, backend, monkeypatch, maximum, stored_dtype
+    tmp_path, backend, monkeypatch, maximum
 ):
-    """Poisson counts saved as int32 retain every value and narrowing provenance."""
+    """Simulated int32 counts retain every value and their signed dtype."""
     values = (np.arange(6 * 80 * 80).reshape(2, 3, 80, 80) % (maximum + 1)).astype(
         "int32"
     )
@@ -289,8 +289,8 @@ def test_simulated_integer_counts_to_qem(
     monkeypatch.setattr(arrays, "MAX_INGEST_BYTES", 2 * 80 * 80 * 4)
     with io.load(original, backend=backend, verbose=False) as loaded:
         assert loaded.metadata["source_dtype"] == "int32"
-        assert loaded.metadata["dtype"] == stored_dtype
-        assert loaded.metadata["count_range"] == dict(minimum=0, maximum=maximum)
+        assert loaded.metadata["dtype"] == "int32"
+        assert "count_range" not in loaded.metadata
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= 2 * 80 * 80 * 4
         session = detector.prepare(loaded)
         np.testing.assert_array_equal(session.frame(5), values[-1, -1])
@@ -301,14 +301,13 @@ def test_simulated_integer_counts_to_qem(
         np.testing.assert_array_equal(
             detector.prepare(reopened).frame(5), values[-1, -1]
         )
-        assert (
-            reopened.metadata["scientific_metadata"]["processing"][1]["operation"]
-            == "exact_integer_narrowing"
-        )
+        assert all(record["operation"] != "exact_integer_narrowing"
+                   for record in reopened.metadata["scientific_metadata"]["processing"])
     values[-1, -1, -1, -1] = 65536
     np.save(original, values)
-    with pytest.raises(NotImplementedError, match="no clipping"):
-        io.load(original, backend=backend, verbose=False)
+    with io.load(original, backend=backend, verbose=False) as loaded:
+        assert loaded.dtype == np.int32
+        assert int(loaded[-1, -1, -1, -1]) == 65536
 
 
 @pytest.mark.parametrize("format_name", ["numpy", "hdf5", "hdf5-gzip"])
@@ -339,40 +338,36 @@ def test_exact_promoted_float_measurements(tmp_path, backend, monkeypatch, forma
     monkeypatch.setattr(arrays, "MAX_INGEST_BYTES", limit)
     with io.load(original, backend=backend, verbose=False) as loaded:
         assert loaded.metadata["source_dtype"] == "float64"
-        assert loaded.metadata["working_dtype"] == "float32"
-        assert (
-            loaded.metadata["exact_float_narrowing"]["verified_values"] == values.size
-        )
+        assert loaded.metadata["working_dtype"] == "float64"
+        assert "exact_float_narrowing" not in loaded.metadata
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
-        np.testing.assert_array_equal(
-            detector.prepare(loaded).frame(0).view(np.uint32),
-            values[0, 0].view(np.uint32),
-        )
+        decoded = loaded.data.extract_diffraction_device(0, 0)
+        try:
+            assert decoded.get().tobytes() == promoted[0, 0].tobytes()
+        finally:
+            if hasattr(decoded, "release"):
+                decoded.release()
         io.save(saved, loaded)
     assert validate_qem(saved)["integrity"] == "verified"
     with io.load(saved, backend=backend, verbose=False) as reopened:
-        session = detector.prepare(reopened)
         for index, expected in enumerate(promoted.reshape(6, 8, 12)):
-            np.testing.assert_array_equal(
-                session.frame(index).astype(np.float64).view(np.uint64),
-                expected.view(np.uint64),
-            )
-        assert (
-            reopened.metadata["scientific_metadata"]["processing"][1]["operation"]
-            == "exact_float_narrowing"
-        )
+            decoded = reopened.data.extract_diffraction_device(*divmod(index, 3))
+            try:
+                assert decoded.get().tobytes() == expected.tobytes()
+            finally:
+                if hasattr(decoded, "release"):
+                    decoded.release()
+        assert all(record["operation"] != "exact_float_narrowing"
+                   for record in reopened.metadata["scientific_metadata"]["processing"])
     promoted[-1, -1, -1, -1] = np.nextafter(promoted[-1, -1, -1, -1], np.inf)
     write_source()
-    from quantem.gpu.resident import float_ans
-
-    def no_allocation(*args, **kwargs):
-        raise AssertionError(
-            "Lossy input must be rejected before any resident allocation."
-        )
-
-    monkeypatch.setattr(float_ans, "FloatANSResident", no_allocation)
-    with pytest.raises(NotImplementedError, match="not exactly representable"):
-        io.load(original, backend=backend, verbose=False)
+    with io.load(original, backend=backend, verbose=False) as loaded:
+        decoded = loaded.data.extract_diffraction_device(1, 2)
+        try:
+            assert decoded.get().tobytes() == promoted[1, 2].tobytes()
+        finally:
+            if hasattr(decoded, "release"):
+                decoded.release()
 
 
 def test_empad_multiple_detector_regions(tmp_path, backend):

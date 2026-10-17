@@ -36,7 +36,7 @@ __device__ void correct_one(
     }
     unsigned int result = 0;
     if (count & 1) result = values[count / 2];
-    else if (count) result = (values[count / 2 - 1] + values[count / 2]) / 2;
+    else if (count) result = ((unsigned long long)values[count / 2 - 1] + values[count / 2]) / 2;
     frames[frame * height * width + pixel] = T(result);
 }
 
@@ -63,6 +63,22 @@ extern "C" __global__ void hot_zero_u8(
 }
 extern "C" __global__ void hot_zero_u16(
     unsigned short* frames, const unsigned char* valid, const int* bad,
+    int bad_count, int height, int width, unsigned long long total
+) {
+    unsigned long long item = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (item < total) correct_one(frames, valid, bad, bad_count, height, width, item, false);
+}
+
+extern "C" __global__ void hot_median_u32(
+    unsigned int* frames, const unsigned char* valid, const int* bad,
+    int bad_count, int height, int width, unsigned long long total
+) {
+    unsigned long long item = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (item < total) correct_one(frames, valid, bad, bad_count, height, width, item, true);
+}
+
+extern "C" __global__ void hot_zero_u32(
+    unsigned int* frames, const unsigned char* valid, const int* bad,
     int bad_count, int height, int width, unsigned long long total
 ) {
     unsigned long long item = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;

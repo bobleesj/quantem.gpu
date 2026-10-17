@@ -58,6 +58,12 @@ class Inspection:
             'Header status': self.reason.replace('_', ' '),
             'Next step': self.action,
         }
+        if self.scan_shape is not None and self.detector_shape is not None:
+            from quantem.gpu.io.dataset import calibration_summary
+
+            calibration = calibration_summary((*self.scan_shape, *self.detector_shape), self.metadata)
+            rows.update({name: f"{row.Value} {row.Unit} · {row.Source}"
+                         for name, row in calibration.iterrows()})
         return pd.DataFrame({'Value': rows}).rename_axis('Property')
 
     def __repr__(self):

@@ -1,0 +1,29 @@
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void integer_mean(
+    device const ulong *totals [[buffer(0)]],
+    device float *output [[buffer(1)]],
+    constant ulong *p [[buffer(2)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= p[0]) return;
+    ulong value = totals[pixel], denominator = p[1];
+    bool negative = p[2] && (value >> 63);
+    if (negative) value = ~value + 1ul;
+    if (!value) { output[pixel] = 0.0f; return; }
+    int exponent = int(clz(denominator)) - int(clz(value));
+    if (exponent >= 0) {
+        if ((value >> exponent) < denominator) --exponent;
+    } else if ((value << -exponent) < denominator) --exponent;
+    // count < 2^31 keeps either scaled integer inside 64 bits.
+    int shift = 23 - exponent;
+    ulong numerator = shift >= 0 ? value << shift : value;
+    ulong divisor = shift < 0 ? denominator << -shift : denominator;
+    ulong significand = numerator / divisor;
+    ulong remainder = numerator % divisor;
+    if (remainder > divisor - remainder ||
+        (remainder == divisor - remainder && (significand & 1ul))) ++significand;
+    float mean = ldexp(float(significand), exponent - 23);
+    output[pixel] = negative ? -mean : mean;
+}

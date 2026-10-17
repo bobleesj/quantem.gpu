@@ -30,11 +30,17 @@ GROUPS = {
         ],
         "metal": [NATIVE + "test_count_numpy_export_reopen"],
     },
-    "NumPy int32 exact narrowing": {
+    "Native int32 measurements": {
         "python": [ARRAY + "test_simulated_integer_counts_to_qem"],
     },
-    "Exact promoted float64 measurements": {
+    "Native float64 storage": {
         "python": [ARRAY + "test_exact_promoted_float_measurements"],
+    },
+    "Typed integer and float QEM round trips": {
+        "python": ["tests/hardware/test_typed_qem_roundtrip.py"],
+    },
+    "Native uint32 detector markers": {
+        "python": ["tests/hardware/test_uint32_flagged_master.py"],
     },
     "Float32 detector geometries": {
         "python": [

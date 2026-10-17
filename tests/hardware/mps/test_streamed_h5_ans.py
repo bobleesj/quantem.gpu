@@ -36,8 +36,8 @@ def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
         tmp_path, "runtime-ans", counts, pixel_mask=pixel_mask
     )
 
-    # Loads correct flagged pixels by default (median); "none" keeps the file's counts.
-    loaded = io.load(master, backend="mps", apply_mask=False, hot_pixel_correction="none")
+    # The default keeps every file count; detector queries apply validity separately.
+    loaded = io.load(master, backend="mps", apply_mask=False)
     try:
         assert loaded.representation is io.DataRepresentation.ENCODED
         assert loaded.shape == (32, 32, 4, 8)

@@ -33,6 +33,7 @@ from quantem.gpu.formats.qem.reference import load_array
 from quantem.gpu.formats.qem.snapshot import (
     ARRAY_DTYPES,
     BLOCK_BYTES,
+    BIT_CODEC,
     FLOAT_CODEC,
     INTEGER_CODEC,
     SCALED_CODEC,
@@ -45,6 +46,7 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.io.hdf5.cpu import record_dense_representation
 from quantem.gpu.resident.cuda.counts import Chunk, StreamedCounts
 from quantem.gpu.resident.float_ans import FloatANSResident
+from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts, _Chunk
 from quantem.gpu.resident.mps.precision import PrecisionSource, _ANSPart
 
@@ -94,9 +96,10 @@ def save_streamed(path, source, metadata: dict | None = None) -> None:
     write_envelope(path, header, cursor, spans if metal else _staged(spans))
 
 
-def save_float(path: str | Path, source: FloatANSResident, metadata: dict | None = None) -> None:
-    """Save encoded float32 bit lanes as ``.qem`` without a decoded cube or the original file."""
+def save_bits(path: str | Path, source: BitANSResident, metadata: dict | None = None) -> None:
+    """Save encoded measurement bit lanes as ``.qem`` without a decoded cube or the original file."""
     source._check()
+    source._lanes.check_readable(0, math.prod(source.shape[:2]))
     path = Path(path)
     if path.suffix.lower() != ".qem" or path.exists():
         raise ValueError("Choose a non-existing .qem destination.")
@@ -143,8 +146,8 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     shape = tuple(header["shape"])
     if scan_shape is not None and tuple(scan_shape) != shape[:2]:
         raise ValueError("scan_shape disagrees with the saved acquisition; omit scan_shape.")
-    if header["codec"] == FLOAT_CODEC:
-        return _load_float(path, header, start, selected_backend, device)
+    if header["codec"] in (FLOAT_CODEC, BIT_CODEC):
+        return _load_bits(path, header, start, selected_backend, device)
     if header["codec"] == SCALED_CODEC:
         if selected_backend != "mps":
             raise NotImplementedError(
@@ -465,10 +468,10 @@ def _read_verified(path, header, start, spans):
         raise
 
 
-def _load_float(path, header, start, backend, device):
-    """Authenticate and upload encoded float32 bit lanes; never expand a complete source."""
+def _load_bits(path, header, start, backend, device):
+    """Authenticate and upload encoded measurement bit lanes; never expand a complete source."""
     started = time.perf_counter()
-    source = FloatANSResident(header, backend, device)
+    source = (FloatANSResident if header["codec"] == FLOAT_CODEC else BitANSResident)(header, backend, device)
     digest, block_bytes, block_index = hashlib.sha256(), 0, 0
     arrays = []
     try:
@@ -517,7 +520,7 @@ def _load_float(path, header, start, backend, device):
             if block_bytes and digest.hexdigest() != header["sha256"][block_index]:
                 raise ValueError("QEM body checksum mismatch; recopy the file.")
         source._lanes.ready_scans = math.prod(source.shape[:2])
-        background = header["empad"].get("background")
+        background = header.get("empad", {}).get("background")
         if background is not None:
             raw = base64.b64decode(background["values_float32_le"], validate=True)
             if len(raw) != source.frame_bytes:
@@ -532,16 +535,17 @@ def _load_float(path, header, start, backend, device):
             header.get("metadata", {}), header["scientific_metadata"]
         )
         metadata.update(
-            resident_metadata(source.shape, np.float32, source.nbytes, backend=backend),
+            resident_metadata(source.shape, source.dtype, source.nbytes, backend=backend),
             scientific_metadata=header["scientific_metadata"],
-            qem_empad=header["empad"],
+            qem_empad=header.get("empad", {}),
+            valid_pixels=source.valid_pixels,
             container=header["container"],
             container_version=header["container_version"],
             source_path=str(Path(path).resolve()),
             source_kind="resident",
             device=f"cuda:{source.device}" if backend == "cuda" else "mps",
             shape=source.shape,
-            resident_profile=FLOAT_CODEC,
+            resident_profile=header["codec"],
             source_logical_tensor_bytes=source.logical_nbytes,
             lossless_exact=True,
             background_applied=False,
