@@ -1,7 +1,7 @@
 """Bounded reads of a loaded acquisition as Torch tensors on its own GPU.
 
 A complete scan rarely fits as a dense array, so only the requested detector
-pixels are kept: whole scan rows of exact CUDA counts decode straight into the
+pixels are kept: whole scan rows of exact integer counts decode straight into the
 result, and every other region in scan blocks of at most 256 MiB.
 """
 
@@ -31,14 +31,17 @@ def read(data, *, scan_region=None, detector_region=None):
         detector_region, shape[2:], "detector_region"
     )
     payload = data.data
-    if isinstance(payload, np.ndarray):
-        # The dense CPU reference (backend="cpu") is already a host array.
-        return torch.from_numpy(payload[
+    if isinstance(payload, np.ndarray) or (
+        isinstance(payload, torch.Tensor) and payload.device.type == "cpu"
+    ):
+        # CPU readers and scientific algorithms may own arrays or tensors.
+        selected = payload[
             row0:row1,
             column0:column1,
             detector_row0:detector_row1,
             detector_column0:detector_column1,
-        ]).contiguous()
+        ]
+        return torch.as_tensor(selected).contiguous()
     device = resident_device(payload)
     if device is None or device.type not in {"cuda", "mps"}:
         raise TypeError("read() requires a CUDA or MPS resident source.")
@@ -57,11 +60,11 @@ def read(data, *, scan_region=None, detector_region=None):
             detector_column0:detector_column1,
         ].contiguous()
 
-    # Bound decoded scratch by scan blocks. Native CUDA streamed counts select
+    # Bound decoded scratch by scan blocks. Native integer residents select
     # detector pixels while decoding; every other resident decodes whole frames.
     # Calibrated subclasses decode differently, so only the exact type crops.
     selected_region = None
-    if type(payload) is StreamedCounts:
+    if type(payload) in (StreamedCounts, MPSStreamedCounts):
         selected_region = (
             detector_row0, detector_row1, detector_column0, detector_column1
         )
@@ -70,7 +73,11 @@ def read(data, *, scan_region=None, detector_region=None):
             # cropped into its output: that output is the result. Block by block, every
             # count was decoded into scratch and copied again (an SSB bright-field crop
             # of a 512 x 512 scan spent 45% of its read on the copies).
-            counts = payload.decode_scan_range_device(
+            decode = (
+                payload.decode_scan_range_torch if device.type == "mps"
+                else payload.decode_scan_range_device
+            )
+            counts = decode(
                 row0 * shape[1], row1 * shape[1], detector_region=selected_region
             )
             return torch_value(counts).reshape(output_shape)
@@ -140,7 +147,7 @@ def _decode_rows(
     """Decode scan rows [row0, row1) and columns [column0, column1).
 
     Each resident type has one bounded decoder: streamed counts and float ANS
-    decode a scan range (exact CUDA streamed counts also crop
+    decode a scan range (exact integer residents also crop
     ``detector_region``), precision and Metal streamed residents decode a
     range straight into a tensor, and plain device arrays are sliced. Returns a
     ``(positions, detector_row, detector_col)`` tensor in row-major scan order.
@@ -155,6 +162,8 @@ def _decode_rows(
             decode = partial(decode, detector_region=detector_region)
     elif isinstance(payload, decoded_to_tensor):
         decode = payload.decode_scan_range_torch
+        if detector_region is not None:
+            decode = partial(decode, detector_region=detector_region)
     else:
         # A plain device array, such as a dense CuPy acquisition.
         try:
