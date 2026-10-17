@@ -158,6 +158,39 @@ The additional Python geometry and original-input tests are in
 `tests/hardware/test_emd_ans_workflows.py`. These do not retroactively broaden
 that earlier experiment's evidence or certify an application's frame rate.
 
+## Typed codec: typed-bit-lanes-rans-v1
+
+Python CUDA and MPS use this profile for wider or signed integers, float16,
+float64, and masked float32 measurements. `version=1`; `dtype` is one of
+`uint8`, `uint16`, `uint32`, `uint64`, `int8`, `int16`, `int32`, `int64`,
+`float16`, `float32`, `float64`. The four positive axes retain their original
+order and dimensions. Complex, boolean and structured arrays are unsupported.
+Existing uint8/uint16 spatial and unmasked float32 profiles are unchanged.
+
+Let `P` be the detector pixel count and `W=max(1,itemsize/2)`. There are `P*W`
+independent uint16 streams, low word first within each pixel. Eight-bit values
+occupy the low byte of one word; a decoded word above 255 is invalid. Larger
+values are reassembled from their words and reinterpreted in the declared dtype,
+without arithmetic conversion. Foreign-endian input is normalized to
+little-endian words with the measurement bits preserved.
+
+The three arrays and stream models are those of the float32 profile above,
+with `P*W+1` offsets and `P*W` model selectors. Each chunk holds 1 through
+`min(512, floor(32 MiB / (2*P*W)))` consecutive scans. `valid` is required and
+uses the integer profile's detector mask encoding. It affects products, never
+the stored bits. This profile has no spatial-sum arrays or mean-dark recipe.
+Envelope and body checksums are required; a logical measurement hash is not.
+
+Integer detector products accumulate into signed or unsigned 64-bit results
+and report overflow explicitly. Raw reads preserve the source dtype. Display
+means and SSB use their documented calculation precision; Metal float64
+storage does not imply float64 Metal arithmetic. Use `read(output="native")`
+to obtain exact float64 Metal arrays when Torch cannot represent that dtype.
+
+Native Swift and WebGPU readers do not yet implement this profile. They must
+reject its codec identifier; do not reinterpret it as the older count or
+float32 profile. Python GPU qualification is separate from native app support.
+
 ### Retired float codec: empad-xor-row-packed-v1
 
 This earlier row-XOR float profile is retired. No reader in this package

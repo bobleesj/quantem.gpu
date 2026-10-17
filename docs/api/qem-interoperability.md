@@ -21,6 +21,13 @@ chunk and stream-array bounds checks with `codec_layout=verified`. Neither check
 decodes measurements. Unknown codecs are rejected explicitly.
 `decoded_parity=not_checked` is always reported by this command.
 
+The `typed-bit-lanes-rans-v1` extension has Python CUDA/MPS writers, readers
+and bounded reference checks in `tests/hardware/test_typed_qem_roundtrip.py`.
+These cover all eleven real numeric dtypes through 64 bits, byte-order
+normalization, moved files without their original source, checked integer
+reductions and calibration edits. Native Swift and WebGPU support is pending;
+their older codec support must not be reported as typed-profile qualification.
+
 See the [metadata map](qem-metadata-mapping.md) for fields normalized by readers,
 fields merely retained, and missing/unsupported quantities. The integrity tool
 does not assert that every normalized value is physically correct or that the
