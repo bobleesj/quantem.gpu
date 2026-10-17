@@ -10,7 +10,7 @@ import numpy as np
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.results import SSBResult
 
-# the local refinement after the Optuna search: Nelder-Mead, or none
+# Effective local refinement after the public workflow resolves "auto".
 RefineMethod = Literal["nelder-mead", "newton"] | None
 
 

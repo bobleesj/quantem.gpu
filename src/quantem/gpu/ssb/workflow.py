@@ -767,7 +767,7 @@ class SSB:
         tilt: bool = False,
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
-        refinement: RefineMethod = "nelder-mead",
+        refinement: RefineMethod | Literal["auto"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
         tilt_limit_mrad: float = 25.0,
@@ -781,12 +781,15 @@ class SSB:
         """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
 
         ``tilt=True`` also fits the sample tilt and a depth spread for a thick, tilted crystal, jointly with the
-        aberrations in one search of ``num_trials`` trials plus Nelder-Mead (fitting the tilt after a standard fit gets stuck:
+        aberrations in one search of ``num_trials`` trials plus local refinement (fitting the tilt after a standard fit gets stuck:
         C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
         not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
         result's ``sample_tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
         MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
         to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
+        ``refinement="auto"`` (default) selects Newton for tilt fits and Nelder-Mead for standard fits.
+        Explicit ``"nelder-mead"`` retains the previous optimizer; None skips local refinement.
+        The 200-trial coarse search is unchanged. Saved settings record the selected optimizer, not ``"auto"``.
         ``refinement="newton"`` (tilt fits) polishes with Newton steps on finite-difference models whose evaluations share
         passes over the data, a few passes instead of hundreds (both backends evaluate the trials of a pass in one batch).
         ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None).
@@ -840,8 +843,10 @@ class SSB:
                 "find_aberrations(tilt=True, num_trials=0) refines from the session's aberrations, sample_tilt_mrad and "
                 "depth_spread_nm: set the last two (a previous scan's fit) first, or use num_trials=200."
             )
+        if refinement == "auto":
+            refinement = "newton" if tilt else "nelder-mead"
         if refinement not in {"nelder-mead", "newton", None}:
-            raise ValueError("refinement must be 'nelder-mead', 'newton' or None.")
+            raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt:
             raise ValueError("refinement='newton' polishes the tilt fit; the standard fit refines with 'nelder-mead'.")
         paths = None

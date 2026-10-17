@@ -573,3 +573,50 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
     unsaved.source_path = str(tmp_path / "other.bin")
     with pytest.raises(ValueError, match="original SSB source"):
         session.measure_parameters(unsaved)
+
+
+@pytest.mark.parametrize("tilt, method", [(True, "newton"), (False, "nelder-mead")])
+def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypatch, tilt, method):
+    """Automatic selection stores the effective optimizer and shares its cache."""
+    source = tmp_path / "scan.bin"
+    source.write_bytes(b"detector counts")
+    saved = tmp_path / "result"
+    backend = _Backend()
+    joint_calls = []
+
+    def fit_sample(**settings):
+        joint_calls.append(settings)
+        return {"C10": -101.0, "C12": 4.0, "phi12": 0.25,
+                "tilt_row_mrad": 3.0, "tilt_col_mrad": -4.0,
+                "thickness": 150.0, "gain": 1.5, "trial_records": []}
+
+    backend.fit_sample = fit_sample
+    backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
+    settings = dict(tilt=tilt, save_to=saved, check_rotation=False, verbose=False)
+    first = _session(monkeypatch, source, backend).find_aberrations(**settings)
+    explicit = _session(monkeypatch, source, backend).find_aberrations(
+        refinement=method, **settings,
+    )
+    assert first.refine_method == method
+    assert first.num_trials == 200
+    assert explicit.reused
+    assert explicit.metadata["signature"]["settings"]["refinement"] == method
+    np.testing.assert_array_equal(explicit.object_wave, first.object_wave)
+    if tilt:
+        assert len(joint_calls) == 1
+        assert joint_calls[0]["polish"] == "newton"
+        changed = _session(monkeypatch, source, backend).find_aberrations(
+            refinement="nelder-mead", **settings,
+        )
+        assert not changed.reused
+        assert changed.refine_method == "nelder-mead"
+        assert joint_calls[-1]["polish"] == "nelder-mead"
+    else:
+        assert backend.fit_calls == 1
+    unrefined = _session(monkeypatch, source, backend).find_aberrations(
+        refinement=None, **settings,
+    )
+    assert not unrefined.reused
+    assert unrefined.refine_method is None
+    if tilt:
+        assert joint_calls[-1]["polish_starts"] == 0
