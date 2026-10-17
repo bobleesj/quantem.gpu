@@ -210,7 +210,7 @@ def _staged(spans):
 
 
 def _load_counts_cuda(path, header, start, device, verbose, started):
-    """Upload checked integer-codec arrays to CUDA through two bounded pinned buffers."""
+    """Read and authenticate bounded blocks in parallel before uploading them."""
     import cupy as cp
 
     shape = tuple(header["shape"])
@@ -223,39 +223,45 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
         start_after_queued_work(stream)
         arena = cp.empty(header["bytes"], cp.uint8)
         capacity = min(BLOCK_BYTES, header["bytes"])
-        owners = [cp.cuda.alloc_pinned_memory(capacity) for _ in range(2)]
+        workers = min(4, len(header["sha256"]))
+        owners = [cp.cuda.alloc_pinned_memory(capacity) for _ in range(workers)]
         buffers = [np.frombuffer(owner, np.uint8, count=capacity) for owner in owners]
-        events = [None, None]
         try:
-            with open(path, "rb", buffering=0) as handle, ThreadPoolExecutor(max_workers=1) as reader:
-                handle.seek(start)
-
-                def read(number):
-                    slot = number % 2
+            with ThreadPoolExecutor(max_workers=workers) as reader:
+                def read(number, uploaded=None):
+                    # A slot cannot be overwritten until its previous upload
+                    # finishes. Waiting in the worker leaves other reads active.
+                    if uploaded is not None:
+                        with cp.cuda.Device(selected):
+                            uploaded.synchronize()
+                    slot = number % workers
                     count = min(BLOCK_BYTES, header["bytes"] - number * BLOCK_BYTES)
                     view = memoryview(buffers[slot][:count])
-                    cursor = 0
-                    while cursor < count:
-                        length = handle.readinto(view[cursor:])
-                        if not length:
-                            raise ValueError("ANS snapshot ended during loading; recopy it.")
-                        cursor += length
+                    # Independent file positions let reads and SHA-256 checks
+                    # overlap without sharing a seek cursor between workers.
+                    with open(path, "rb", buffering=0) as handle:
+                        handle.seek(start + number * BLOCK_BYTES)
+                        cursor = 0
+                        while cursor < count:
+                            length = handle.readinto(view[cursor:])
+                            if not length:
+                                raise ValueError("ANS snapshot ended during loading; recopy it.")
+                            cursor += length
                     if hashlib.sha256(view).hexdigest() != header["sha256"][number]:
                         raise ValueError(f"ANS checksum mismatch in block {number}; recopy the file.")
                     return count
 
-                pending = reader.submit(read, 0)
+                pending = [reader.submit(read, number) for number in range(workers)]
                 for number in range(len(header["sha256"])):
-                    count = pending.result()
-                    slot = number % 2
-                    if number + 1 < len(header["sha256"]):
-                        if events[1 - slot] is not None:
-                            events[1 - slot].synchronize()
-                        pending = reader.submit(read, number + 1)
+                    slot = number % workers
+                    count = pending[slot].result()
                     with stream:
                         arena[number * BLOCK_BYTES:number * BLOCK_BYTES + count].set(buffers[slot][:count], stream=stream)
-                        events[slot] = cp.cuda.Event()
-                        events[slot].record(stream)
+                        uploaded = cp.cuda.Event()
+                        uploaded.record(stream)
+                    following = number + workers
+                    if following < len(header["sha256"]):
+                        pending[slot] = reader.submit(read, following, uploaded)
                 stream.synchronize()
             for chunk in header["chunks"]:
                 arrays = []
@@ -282,7 +288,8 @@ def _load_counts_cuda(path, header, start, device, verbose, started):
                 lossless_exact=True,
                 load_timings=dict(resident_ready_seconds=time.perf_counter() - started,
                                   encode_seconds=0.0, index_seconds=0.0,
-                                  pinned_staging_bytes=2 * capacity,
+                                  pinned_staging_bytes=workers * capacity,
+                                  verified_read_workers=workers,
                                   verified_encoded_bytes=header["bytes"]),
             )
             if verbose:
