@@ -154,7 +154,7 @@ class H5Writer:
             torch.is_tensor(data_gpu)
             and data_gpu.device.type == "mps" and np.dtype(str(data_gpu.dtype).removeprefix("torch.")) == self._dtype
         )
-        if (native_metal or native_mps) and self._dtype.itemsize != 2:
+        if native_metal and self._dtype.itemsize != 2:
             raise ValueError("Native Metal precision writing requires 16-bit storage.")
         if not native_metal and not native_mps and not isinstance(data_gpu, cp.ndarray):
             data_gpu = cp.asarray(np.asarray(data_gpu))
