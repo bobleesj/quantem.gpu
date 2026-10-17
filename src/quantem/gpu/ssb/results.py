@@ -489,6 +489,50 @@ def column_sign(phase: object) -> float:
     return float(np.mean(values ** 3) / variance ** 1.5)
 
 
+def column_histogram(
+    phase: object, *, limit: float | None = None, bins: int = 100,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Measure the median-centered phase distribution used by rotation plots.
+
+    Parameters
+    ----------
+    phase : array-like
+        Finite phase samples in radians. Host-side report reduction, not a
+        reconstruction or an accelerator hot-path operation.
+    limit : float, optional
+        Positive symmetric axis half-width in radians. By default use the
+        99.9th percentile of absolute median-centered phase, as in the notebook.
+        A constant image uses a one-radian half-width for a nondegenerate axis.
+    bins : int, optional
+        Number of equal-width bins, by default 100.
+
+    Returns
+    -------
+    fractions, edges : tuple of numpy.ndarray
+        Fractions of all input pixels and bin edges, in NumPy histogram order.
+        Samples outside the axis remain in the denominator, not renormalized
+        away. Reversing the fractions gives the mirrored *distribution*, not
+        an opposite-rotation reconstruction.
+
+    Examples
+    --------
+    >>> fractions, edges = column_histogram(np.array([0., 0., 0., 1.]))
+    """
+    values = host_array(phase)
+    if np.iscomplexobj(values) or not values.size or not np.isfinite(values).all():
+        raise ValueError("Phase must contain finite real samples. Select a complete saved phase image.")
+    if isinstance(bins, bool) or not isinstance(bins, (int, np.integer)) or bins < 1:
+        raise ValueError("bins must be a positive integer.")
+    values = values.astype(np.float64).ravel()
+    values = values - np.median(values)
+    if limit is None:
+        limit = float(np.percentile(np.abs(values), 99.9)) or 1.0
+    if not np.isfinite(limit) or limit <= 0:
+        raise ValueError("limit must be a positive finite phase half-width in radians.")
+    edges = np.linspace(-limit, limit, bins + 1)
+    return np.histogram(values, edges)[0] / values.size, edges
+
+
 def draw_column_histogram(phase: object, title: str, *, limit: float | None = None, bins: int = 101) -> float:
     """Draw the phase histogram about its median with its mirror image (dashed); return the axis half-width used.
 
@@ -499,12 +543,9 @@ def draw_column_histogram(phase: object, title: str, *, limit: float | None = No
     import matplotlib.pyplot as plt
     from IPython.display import display
 
-    values = host_array(phase).astype(np.float64).ravel()
-    values = values - np.median(values)
-    if limit is None:
-        limit = float(np.percentile(np.abs(values), 99.9))
-    edges = np.linspace(-limit, limit, bins)
-    counts = np.histogram(values, edges)[0] / values.size
+    # Retain the notebook's established edge-count argument and exact bins.
+    counts, edges = column_histogram(phase, limit=limit, bins=bins - 1)
+    limit = float(edges[-1])
     centres = (edges[1:] + edges[:-1]) / 2.0
     figure, axis = plt.subplots(figsize=(6, 2.6))
     axis.bar(centres, counts, width=edges[1] - edges[0], color="#e6873c")
