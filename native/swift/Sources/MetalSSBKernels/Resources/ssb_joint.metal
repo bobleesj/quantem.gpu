@@ -127,17 +127,24 @@ kernel void joint_correct(device const float2* g [[buffer(0)]],device const floa
     float2 q=float2(qr*p.dqRow,qc*p.dqColumn);
     uint r=uint((qr%int(p.n)+int(p.n))%int(p.n));
     uint c=uint((qc%int(p.n)+int(p.n))%int(p.n));
-    float2 value=joint_read(g,r,c,tid.y,p);
-    float2 gamma=joint_gamma(q,k[p.bfOffset+tid.y],p,t);
-    float2 result=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y)/max(length(gamma),1e-8f);
+    float2 pixel=k[p.bfOffset+tid.y];
+    float4 gk=joint_geometry(pixel,p),gm=joint_geometry(q-pixel,p),gp=joint_geometry(q+pixel,p);
+    float2 result=0;
+    if(gm.w*gk.w!=0 || gp.w*gk.w!=0) {
+        float2 value=joint_read(g,r,c,tid.y,p);
+        float2 gamma=joint_gamma_geometry(q,gk,gm,gp,p,t);
+        result=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y)/max(length(gamma),1e-8f);
+    }
     if(tid.x==0)result=float2(p.dcReal,p.dcImag);
     corrected[(size_t)tid.y*plane+tid.x]=result;
 }
 kernel void joint_phase_add(device const float2* object [[buffer(0)]],device float* phase [[buffer(1)]],
     constant JointGrid& p [[buffer(2)]],uint i [[thread_position_in_grid]]) {
     uint plane=p.outputN*p.outputN;if(i>=plane)return;
-    float sum=0;for(uint k=0;k<p.count;k++){float2 v=object[(size_t)k*plane+i];sum+=atan2(v.y,v.x);}
-    phase[i]+=sum;
+    for(uint start=0;start<p.count;start+=8) {
+        float sum=0;for(uint k=start;k<min(start+8,p.count);k++){float2 v=object[(size_t)k*plane+i];sum+=atan2(v.y,v.x);}
+        phase[i]+=sum;
+    }
 }
 kernel void joint_phase_normalize(device float* phase [[buffer(0)]],constant uint& count [[buffer(1)]],
     constant float& divisor [[buffer(2)]],uint i [[thread_position_in_grid]]) {
