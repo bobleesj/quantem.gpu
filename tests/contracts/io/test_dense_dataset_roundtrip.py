@@ -2,8 +2,31 @@
 
 import pytest
 import torch
+import h5py
 
 from quantem.gpu import io
+
+
+def test_cpu_masked_counts_keep_tilt_identity_and_correction(tmp_path):
+    """A masked detector sentinel is excluded and its correction stays explicit."""
+    counts_t = torch.arange(4 * 4 * 8 * 8).reshape(4, 4, 8, 8).to(torch.uint16)
+    counts_t[:, :, 2, 3] = 65535
+    path = tmp_path / "tilt_-17.0x_0.0y_master.h5"
+    io.save(path, counts_t, backend="cpu", verbose=False)
+    mask_t = torch.zeros((8, 8), dtype=torch.uint32)
+    mask_t[2, 3] = 16
+    with h5py.File(path, "a") as handle:
+        handle.create_dataset(
+            "entry/instrument/detector/detectorSpecific/pixel_mask", data=mask_t.numpy()
+        )
+    with io.load(path, device="cpu", hot_pixel_correction="zero", verbose=False) as loaded:
+        expected_t = counts_t.clone()
+        expected_t[:, :, 2, 3] = 0
+        assert torch.equal(loaded.read(), expected_t)
+        assert loaded.metadata["source_path"] == str(path)
+        correction = loaded.metadata["hot_pixel_correction"]
+        assert correction["method"] == "zero" and correction["applied"]
+        assert correction["coordinates_row_col"] == [[2, 3]]
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda", "mps"])
