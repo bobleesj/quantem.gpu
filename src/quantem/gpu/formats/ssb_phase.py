@@ -26,27 +26,83 @@ from quantem.gpu.ssb.series import stored_fit
 SCHEMA = "quantem.ssb-phase/2"
 
 
+def _file_generation(path: Path) -> tuple[int, int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+class AcquisitionVerification:
+    """Hash one completed acquisition, then guard it until publication.
+
+    This short-lived verification lets a pipeline overlap hashing with GPU
+    work. It is never persisted or reused after a member changes. Creating it
+    reads every source byte; ``identity`` rechecks all members before export.
+
+    Parameters
+    ----------
+    master : Path
+        Completed ARINA master with external detector members.
+
+    Examples
+    --------
+    >>> verification = AcquisitionVerification(master)
+    >>> export_result(run_folder, master, verification=verification)
+    """
+
+    def __init__(self, master: Path) -> None:
+        self._master = Path(master).resolve()
+        before_master = _file_generation(self._master)
+        with h5py.File(self._master, "r") as handle:
+            sources = detector_sources(handle)
+        if not all(source.external for source in sources):
+            raise ValueError("This export currently requires an ARINA master with external data members.")
+        self._paths = (self._master, *(Path(source.path).resolve() for source in sources))
+        self._generation = tuple(_file_generation(path) for path in self._paths)
+        if self._generation[0] != before_master:
+            raise ValueError("Acquisition changed during verification. Retry with a completed acquisition.")
+        digest = hashlib.sha256(b"live4dstem.dataset/v0.1\0")
+        for index, path in enumerate(self._paths):
+            with path.open("rb") as stream:
+                member = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest.update((b"\0" if index else b"") + member.encode())
+        self._digest = digest.hexdigest()
+        self.identity(master)
+
+    def identity(self, master: Path) -> str:
+        """Return the byte identity only while every member is unchanged.
+
+        Parameters
+        ----------
+        master : Path
+            The same source master that was verified before computation.
+
+        Returns
+        -------
+        str
+            SHA-256 identity of the complete acquisition.
+
+        Raises
+        ------
+        ValueError
+            A source member was modified or replaced after verification.
+
+        Examples
+        --------
+        >>> verification.identity(master)
+        """
+        if (Path(master).resolve() != self._master
+                or tuple(_file_generation(path) for path in self._paths) != self._generation):
+            raise ValueError("Acquisition changed during verification. Retry with a completed acquisition.")
+        return self._digest
+
+
 def acquisition_identity(master: Path) -> str:
     """Hash unchanged acquisition bytes in logical HDF5 member order.
 
     Folder names, paths and timestamps do not enter the identity. Rewriting an
     HDF5 master or re-encoding its shards deliberately creates another identity.
     """
-    with h5py.File(master, "r") as handle:
-        sources = detector_sources(handle)
-    if not all(source.external for source in sources):
-        raise ValueError("This export currently requires an ARINA master with external data members.")
-    members = [Path(source.path) for source in sources]
-    digest = hashlib.sha256(b"live4dstem.dataset/v0.1\0")
-    for index, path in enumerate([master, *members]):
-        before = path.stat()
-        with path.open("rb") as stream:
-            member = hashlib.file_digest(stream, "sha256").hexdigest()
-        after = path.stat()
-        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-            raise ValueError("Acquisition changed during verification. Retry with a completed acquisition.")
-        digest.update((b"\0" if index else b"") + member.encode())
-    return digest.hexdigest()
+    return AcquisitionVerification(master).identity(master)
 
 
 def read_result(manifest: Path, expected_identity: str | None = None) -> tuple[dict, np.ndarray]:
@@ -141,7 +197,8 @@ def _publish(path: Path, data: bytes) -> None:
 
 def export_result(run_folder: Path, master: Path, output: Path | None = None,
                   expected_identity: str | None = None, *,
-                  output_folder: Path | None = None) -> Path:
+                  output_folder: Path | None = None,
+                  verification: AcquisitionVerification | None = None) -> Path:
     """Preserve phase bits and physical settings in a JSON/NumPy result pair.
 
     ``output_folder`` selects the parent of numbered acquisition folders;
@@ -150,12 +207,15 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
 
     Example: export_result(run_folder, master, Path('result.json'), digest).
 
+    ``verification`` can carry a byte hash computed earlier in the same job.
+    Every source member must still match its verified file generation.
+
     ``output_folder`` selects a result catalogue without writing beside the raw
     acquisition. Automatic names retain previous results on repeated exports.
     """
     if output is not None and output_folder is not None:
         raise ValueError("Choose either an output filename or output_folder, not both.")
-    identity = acquisition_identity(master)
+    identity = acquisition_identity(master) if verification is None else verification.identity(master)
     if expected_identity is not None and identity != expected_identity:
         raise ValueError("Local acquisition does not match the verified remote source. No result was exported.")
     config = json.loads((run_folder / "config.json").read_text())
@@ -196,7 +256,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         provenance={
             "producer": "quantem.live original screen result",
             "run": str(ssb.get("ran_at", config.get("timestamp", "unrecorded"))),
-            "source_binding": "Current acquisition bytes hashed at export; this does not establish an unrecorded historical run digest",
+            "source_binding": "Current acquisition bytes hashed and verified unchanged at export; this does not establish an unrecorded historical run digest",
             "detector_sampling": "The detector sampling the fit used, from the stored fit",
             "phase_variant": "original ssb_phase.npy; not picked, calibrated or denoised",
             "backend_revision": str(ssb.get("backend_revision", "not recorded by original run")),
@@ -226,6 +286,8 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
     result["phase_file"] = output.with_suffix(".npy").name
     buffer = io.BytesIO()
     np.save(buffer, phase, allow_pickle=False)
+    if verification is not None:
+        verification.identity(master)
     _publish(output.with_suffix(".npy"), buffer.getvalue())
     _publish(output, (json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n").encode())
     read_result(output, identity)
