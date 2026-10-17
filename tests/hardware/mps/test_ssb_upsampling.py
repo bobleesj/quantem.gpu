@@ -169,7 +169,7 @@ def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_n
     from quantem.gpu.ssb.mps import upsampling
 
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
-    sample = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm)
+    sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
     with _disk_session() as ssb:
         ssb.set_rotation(165.8)
         half, _ = ssb.preview(coefs, **sample, upsampling_factor=4, compute_loss=False)
@@ -194,17 +194,39 @@ def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, highe
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher_order:
         coefs.update(C21_nm=300.0, phi21_deg=23.0)
-    sample = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm)
+    sample = {"sample_tilt_mrad": (-9.0, 5.0), "depth_spread_nm": depth_nm}
     with _poisson_disk_session() as ssb:
         ssb.set_rotation(165.8)
         actual, loss = ssb.preview(coefs, **sample, upsampling_factor=3)
         stored = int(ssb._backend()._prepared.g_qk.shape[0])
-        assert stored > upsampling._COHERENT_CHUNK
-        assert stored % upsampling._COHERENT_GROUP != 0
+        chunk = upsampling._WORK_BYTES // ((128 * 3) ** 2 * 8 * 3)
+        assert stored > chunk
+        assert stored % chunk != 0
+
+        def per_detector(prepared, qr, qc, params, dc, probe, coefficients,
+                         higher, n, chunk, columns):
+            mx = prepared.mx
+            total = mx.zeros((n, n), dtype=mx.complex64)
+            # A final single-BF tile exercises constant-address MLX inputs.
+            for start in range(0, stored, stored - 1):
+                stop = min(start + stored - 1, stored)
+                corrected = upsampling._alias_correction_kernel()(
+                    inputs=[prepared.g_qk[start:stop], qr, qc,
+                            prepared.kx[start:stop], prepared.ky[start:stop],
+                            params, dc, probe[start:stop], coefficients],
+                    template=[("N", n), ("SOURCE_N", 128),
+                              ("G_COLS", prepared.g_qk.shape[-1]),
+                              ("K", stop - start), ("HIGHER", higher)],
+                    grid=(n, n, stop - start), threadgroup=(32, 8, 1),
+                    output_shapes=[(stop - start, n, n)],
+                    output_dtypes=[mx.complex64],
+                )[0]
+                total = total + mx.sum(corrected, axis=0)
+                mx.eval(total)
+            return total[:, :columns]
+
         with monkeypatch.context() as ungrouped:
-            ungrouped.setattr(upsampling, "_COHERENT_GROUP", 1)
-            # A final single-BF tile uses constant-address MLX scalar inputs.
-            ungrouped.setattr(upsampling, "_COHERENT_CHUNK", stored - 1)
+            ungrouped.setattr(upsampling, "_coherent_spectrum", per_detector)
             expected, expected_loss = ssb.preview(coefs, **sample, upsampling_factor=3)
         np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-5)
         assert loss == expected_loss

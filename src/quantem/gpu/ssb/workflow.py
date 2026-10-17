@@ -800,6 +800,7 @@ class SSB:
         force: bool = False,
         verbose: bool = True,
         compare_standard: bool = True,
+        fixed_aberrations: dict[str, float] | None = None,
     ) -> SSBResult:
         """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
 
@@ -819,6 +820,13 @@ class SSB:
         ``num_trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
         ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
         costs one polish.
+
+        ``fixed_aberrations`` holds C10_nm, C12_nm and phi12_deg common across
+        local tilt fits. Supply a previously calibrated thick-sample optical
+        model, ``tilt=True`` and ``check_rotation=False``. The same batched
+        Newton solver optimizes only tilt and depth spread on CUDA and MPS.
+        This conditional fit does not determine whether the common optics are
+        correct. Use ``compare_standard=False`` to omit the optional thin fit.
 
         ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
@@ -868,6 +876,12 @@ class SSB:
             )
         if refinement == "auto":
             refinement = "newton" if tilt else "nelder-mead"
+        if fixed_aberrations is not None:
+            fixed_aberrations = validate_aberrations(fixed_aberrations)
+            if not all(math.isfinite(v) for v in fixed_aberrations.values()):
+                raise ValueError("fixed_aberrations must contain finite coefficients.")
+            if not tilt or refinement != "newton" or check_rotation:
+                raise ValueError("Use fixed_aberrations with tilt=True, refinement='newton' (or 'auto'), and check_rotation=False.")
         if refinement not in {"nelder-mead", "newton", None}:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt:
@@ -892,6 +906,7 @@ class SSB:
                        if tilt and int(num_trials) == 0 else {}),
                     "check_rotation": bool(check_rotation),
                     "scan_region": scan_region,
+                    **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else {}),
                 },
             )
             if not force and self.source_kind != "array":
@@ -965,6 +980,7 @@ class SSB:
                     search_ranges=search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
+                    fixed_aberrations=fixed_aberrations,
                 )
             result.fit_scan_region = tuple(scan_region)
             # the regional session indexed this session's array, which starts at the crop origin
@@ -977,7 +993,8 @@ class SSB:
             return result
         if tilt:
             self._compare_standard = bool(compare_standard)
-            result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
+            result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
+                                                      fixed_aberrations=fixed_aberrations))
         else:
             result = self._backend().fit(
                 aberrations=(
@@ -1454,7 +1471,8 @@ class SSB:
         """
         return self.backend in ("cuda", "mps")
 
-    def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
+    def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool,
+                  *, fixed_aberrations: dict[str, float] | None = None) -> SSBResult:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
         preparation_started = time.perf_counter()
         backend = self._backend()
@@ -1465,9 +1483,10 @@ class SSB:
             # the previous scan's fit, in engine units, is the one point the polish starts from
             engine = aberrations_to_engine(self.aberrations)
             start = (engine["C10"], engine["C12"], engine["phi12"], *self.sample_tilt_mrad, self.depth_spread_nm * ENGINE_PER_NM)
+        fixed = {} if fixed_aberrations is None else {"fixed_aberrations": aberrations_to_engine(fixed_aberrations)}
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
-                                 compare_standard=self._compare_standard, start=start)
+                                 compare_standard=self._compare_standard, start=start, **fixed)
         aberrations = aberrations_from_engine(fit)
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
@@ -1491,7 +1510,7 @@ class SSB:
                 "depth_spread_nm": values["thickness"] / ENGINE_PER_NM,
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                         timings=timings, depth_spread_nm=depth_spread_nm, tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
+                         timings=timings, depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
                          amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),

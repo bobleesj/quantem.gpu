@@ -588,7 +588,7 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
         joint_calls.append(settings)
         return {"C10": -101.0, "C12": 4.0, "phi12": 0.25,
                 "tilt_row_mrad": 3.0, "tilt_col_mrad": -4.0,
-                "thickness": 150.0, "gain": 1.5, "trial_records": []}
+                "thickness": 150.0, "fit": 9.0, "gain": 1.5, "trial_records": []}
 
     backend.fit_sample = fit_sample
     backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
@@ -620,3 +620,32 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
     assert unrefined.refine_method is None
     if tilt:
         assert joint_calls[-1]["polish_starts"] == 0
+
+
+def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_path, monkeypatch):
+    """A regional fixed-optics result reloads only under the same calibration."""
+    source = tmp_path / "scan.bin"
+    source.write_bytes(b"detector counts")
+    backend = _Backend()
+    calls = []
+
+    def fit_sample(**settings):
+        calls.append(settings)
+        return {**settings["fixed_aberrations"], "tilt_row_mrad": 3.0,
+                "tilt_col_mrad": -4.0, "thickness": 150.0, "fit": 9.0,
+                "gain": None, "trial_records": []}
+
+    backend.fit_sample = fit_sample
+    backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
+    optics = {"C10_nm": -10.1, "C12_nm": .4, "phi12_deg": 15.0}
+    settings = dict(tilt=True, fixed_aberrations=optics, save_to=tmp_path / "result",
+                    check_rotation=False, compare_standard=False, verbose=False)
+    first = _session(monkeypatch, source, backend).find_aberrations(**settings)
+    second = _session(monkeypatch, source, backend).find_aberrations(**settings)
+    assert first.sample_agreement == second.sample_agreement == 9.0
+    assert second.reused and len(calls) == 1
+    assert calls[0]["polish"] == "newton"
+    assert calls[0]["fixed_aberrations"]["C10"] == -101.0
+    settings["fixed_aberrations"] = {**optics, "C10_nm": -9.0}
+    changed = _session(monkeypatch, source, backend).find_aberrations(**settings)
+    assert not changed.reused and len(calls) == 2
