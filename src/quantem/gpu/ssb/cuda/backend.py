@@ -178,7 +178,8 @@ class CudaSSBBackend:
 
         # The raw counts stay in their native dtype (usually uint16): the selection reduces them with an integer
         # accumulator and the spectra cast only the selected pixels to complex64, never the full 4D block.
-        self.bf_inds_row, self.bf_inds_col, self.bright_field_center_px = select_bright_field(
+        (self.bf_inds_row, self.bf_inds_col, self.bright_field_center_px,
+         self.bright_field_radius_px) = select_bright_field(
             data, bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px,
         )
         self.G_qk, self.dc_value = bright_field_spectra(
@@ -237,6 +238,7 @@ class CudaSSBBackend:
                 bf_inds_row=self.bf_inds_row,
                 bf_inds_col=self.bf_inds_col,
                 bright_field_center_px=self.bright_field_center_px,
+                bright_field_radius_px=self.bright_field_radius_px,
                 dc_value=self.dc_value,
                 gpts=self.gpts,
                 sampling=self.sampling,
