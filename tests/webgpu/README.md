@@ -169,6 +169,12 @@ whose payloads cross 64 MiB chunks and the 256 MiB group limit cheaply.
 - `qem-http.ts`: served files read through uncached HEAD and range requests
   admit the same streams as a local File; servers that ignore ranges, missing
   files and names outside the folder are rejected.
+- `qem-checksum.ts`: transferred chunks retain exact bytes and SHA-256 hashes,
+  out-of-order jobs return to the right caller, worker startup restrictions use
+  the original WebCrypto path, and cancellation/runtime failures release workers
+  without admitting unverified bytes. The headed browser gate additionally tests
+  real worker transfers; `runQemChecksumParity(false)` tests a page with
+  `Content-Security-Policy: worker-src 'none'`.
 - `qem-stream.ts`: fragmented BYOB and default streams arrive as exact chunks,
   short and long responses are rejected, stopping early cancels the download,
   admission verifies every chunk from one ranged response with four local reads

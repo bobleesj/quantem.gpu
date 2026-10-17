@@ -1,5 +1,6 @@
 /** Authenticated integer QEM admission; detector measurements remain encoded. */
 import tables from "../../formats/qem/qem-rans-tables-v1.json";
+import { createQemHasher } from "./qem-checksum";
 import { payloadGroupLimit, type RansByteSource } from "./rans-source";
 import type { RansManifest } from "./rans";
 
@@ -461,16 +462,19 @@ async function admitQemFile(
   const stopping = new AbortController();
   const cancel = signal ? AbortSignal.any([signal, stopping.signal]) : stopping.signal;
   const stream = file.chunks?.(body, file.size, chunkBytes, cancel);
+  const hasher = createQemHasher(header.sha256.length, cancel);
   const verifiedChunk = async (index: number) => {
     const begin = index * chunkBytes;
     const end = Math.min(header.bytes, (index + 1) * chunkBytes);
     cancel.throwIfAborted();
     // Request before the first await: queued stream reads resolve in call order.
-    const bytes = stream
+    let bytes = stream
       ? await stream.next().then(part => part.done ? new ArrayBuffer(0) : part.value)
       : await file.slice(body + begin, body + end).arrayBuffer();
     requireQem(bytes.byteLength === end - begin, "truncated authentication chunk");
-    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const verified = await hasher.digest(bytes);
+    bytes = verified.bytes;
+    const hash = new Uint8Array(verified.hash);
     const actual = Array.from(hash, value => value.toString(16).padStart(2, "0")).join("");
     requireQem(actual === header.sha256[index], "payload checksum mismatch");
     return new Uint8Array(bytes);
@@ -519,6 +523,7 @@ async function admitQemFile(
       // also wait for them so no chunk arrives after the groups are released.
       // Ending the download first makes those reads settle at once.
       stopping.abort();
+      hasher.dispose();
       await Promise.all(pending);
       await stream?.return(undefined);
     }
@@ -580,16 +585,17 @@ async function admitQemFile(
                       : model === 255 && size === 2),
             "invalid encoded stream mode or length",
           );
-          metadata.set(
-            model < 64
-              ? [model * 33, (model + 1) * 33, 2]
-              : [
-                  0,
-                  0,
-                  model === 252 ? 5 : model === 253 ? 3 : model === 254 ? 1 : 4,
-                ],
-            k * 3,
-          );
+          // Write the three words directly: a full acquisition can have
+          // millions of columns, each of which otherwise allocates an array.
+          const at = k * 3;
+          if (model < 64) {
+            metadata[at] = model * 33;
+            metadata[at + 1] = (model + 1) * 33;
+            metadata[at + 2] = 2;
+          } else {
+            // The first two words remain zero in the new Uint32Array.
+            metadata[at + 2] = model === 252 ? 5 : model === 253 ? 3 : model === 254 ? 1 : 4;
+          }
           relative[k] = local[first + k] - start;
         }
         relative[K] = end - start;
