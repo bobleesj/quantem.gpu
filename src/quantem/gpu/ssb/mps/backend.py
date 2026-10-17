@@ -328,7 +328,16 @@ class MpsSSBBackend:
 
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        return thick_fit_batch(self._prepared, parameters, band_inv_A)
+        # Four candidates run the diagnostic batches faster on MPS.
+        # Preserve each candidate's arithmetic and the search's eight-trial
+        # scheduling; these are independent measurements after the fit.
+        parameters = np.atleast_2d(parameters)
+        agreement = np.empty(len(parameters), dtype=np.float64)
+        for start in range(0, len(parameters), 4):
+            agreement[start:start + 4] = thick_fit_batch(
+                self._prepared, parameters[start:start + 4], band_inv_A,
+            )
+        return agreement
 
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""

@@ -99,6 +99,8 @@ def test_batch_fit_matches_reference_fit():
     rows[0, 5], rows[1, 5] = 0.0, 400.0      # standard SSB and a thick crystal; 11 rows = one full batch of 8 plus 3
     reference = np.array([thick_fit(prepared, C10=r[0], C12=r[1], phi12=r[2], sample_tilt_mrad=(r[3], r[4]), thickness=r[5]) for r in rows])
     np.testing.assert_allclose(thick_fit_batch(prepared, rows), reference, rtol=1e-4)
+    # Diagnostic batches preserve the existing fused kernel's exact values.
+    np.testing.assert_array_equal(backend.sample_agreement(rows, (0.2, 0.9)), thick_fit_batch(prepared, rows))
 
 
 def test_zero_depth_weighting_is_standard_ssb():
