@@ -1020,6 +1020,33 @@ class SSB:
             raise ValueError("Measure a joint fit: run ssb.find_aberrations(tilt=True) first.")
         if result.fit_scan_region is not None:
             raise ValueError("Open the selected scan region as its own SSB session before measuring parameter slices.")
+        mismatch = "Measure this fit in its original SSB source and calibration, or fit the current session first."
+        if result.source_path is not None and (
+            self.source_path is None
+            or Path(result.source_path).expanduser().resolve() != Path(self.source_path).expanduser().resolve()
+        ):
+            raise ValueError(mismatch)
+        signature = result.metadata.get("signature")
+        if result.saved_path is not None and not signature:
+            raise ValueError("The saved fit lacks provenance. Fit the current session before measuring parameter slices.")
+        # A path cannot establish the contents of a caller-owned array.
+        # As with fit reuse, only this session's live fit is trusted. Anonymous
+        # unsaved corrections explicitly apply parameters to the current data.
+        if (self.source_kind == "array" and (signature or result.source_path is not None)
+                and result is not self._aberration_search):
+            raise ValueError("Array fits must be measured in the session that fitted them. Fit this session first.")
+        if signature:
+            current = self._result_signature("find_aberrations", {})
+            if any(signature.get(key) != current[key] for key in ("source", "data", "instrument")):
+                raise ValueError(mismatch)
+            # The fit can select the opposite rotation branch; evaluation below
+            # uses its recorded angle. Every other preparation setting must match.
+            saved_preparation = dict(signature.get("ssb", {}))
+            current_preparation = dict(current["ssb"])
+            saved_preparation.pop("scan_detector_rotation_deg", None)
+            current_preparation.pop("scan_detector_rotation_deg")
+            if saved_preparation != current_preparation:
+                raise ValueError(mismatch)
         point = np.array([
             result.aberrations["C10_nm"] * ENGINE_PER_NM,
             result.aberrations["C12_nm"] * ENGINE_PER_NM,
