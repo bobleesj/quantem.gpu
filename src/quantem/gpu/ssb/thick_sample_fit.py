@@ -14,6 +14,7 @@ like with like. Units: C10, C12, thickness in the engine's C10 unit (Angstrom); 
 """
 
 import math
+import time
 import warnings
 from collections.abc import Callable
 
@@ -112,10 +113,14 @@ def fit_sample_search(
         row = np.array([[point[0], abs(point[1]), wrap_phi(point[2]), point[3], point[4], abs(point[5])]], dtype=np.float64)
         return float(objective_batch(row)[0]) if objective_batch is not None else objective(row[0, 0], row[0, 1], row[0, 2], (row[0, 3], row[0, 4]), row[0, 5])
 
+    timings = {}
+    stage_started = time.perf_counter()
     thin = None
     if compare_standard:
         thin = optuna.create_study(sampler=sampler())
         run(thin, 200, with_sample=False)
+    timings["standard_comparison_s"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     if trials == 0 and start is None:
         raise ValueError("trials=0 polishes from start: give the point to refine from.")
     ranked = []
@@ -129,6 +134,8 @@ def fit_sample_search(
         if progress is not None:
             progress.close()
         ranked = sorted((trial for trial in study.trials if trial.value is not None), key=lambda trial: trial.value)
+    timings["coarse_search_s"] = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
     starts: list[np.ndarray] = []
     if start is not None:
         # C12 >= 0 and phi12 wrapped, as searched: a fit kept from the other 180-degree branch carries -C12
@@ -181,6 +188,7 @@ def fit_sample_search(
         outcome = min(polished, key=lambda outcome: outcome.fun)
         best = dict(zip(PARAMETERS, (float(value) for value in outcome.x), strict=True))
         fit = float(-outcome.fun) * scale
+    timings["refinement_s"] = time.perf_counter() - stage_started
     if not math.isfinite(fit) or fit <= 0:
         raise ValueError(
             "Joint tilt fitting found no positive finite model agreement. "
@@ -191,7 +199,7 @@ def fit_sample_search(
     records = [{"number": trial.number, "params": dict(trial.params), "loss": float(trial.value)}
                for trial in ranked if math.isfinite(trial.value)]
     records.sort(key=lambda record: record["number"])
-    common = {"band_inv_A": list(band_inv_A), "trials": int(trials), "trial_records": records}
+    common = {"band_inv_A": list(band_inv_A), "trials": int(trials), "trial_records": records, "timings": timings}
     if thin is None:
         return {**best, "fit": fit, "standard_fit": None, "gain": None, "standard": None, **common}
     standard_fit = float(-thin.best_value)

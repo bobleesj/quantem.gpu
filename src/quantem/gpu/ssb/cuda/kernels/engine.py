@@ -186,7 +186,10 @@ extern "C" __global__ void thick_wave_sum(
         float qr = qrow[row], qc = qcol[col];
         // No overlap of soft probe apertures beyond this radius.
         float support = 2.0f * (semiangle_rad + 0.5f * fmaxf(ang_y_rad, ang_x_rad)) / wavelength;
-        if (qr*qr + qc*qc <= support*support) {
+        // Replicas of the scan mean contain no spatial contrast. The
+        // true origin above retains the common real normalization.
+        bool dc_alias = row % native_rows == 0 && col % native_cols == 0;
+        if (!dc_alias && qr*qr + qc*qc <= support*support) {
             int sr = row % native_rows, sc = col % native_cols;
             bool conjugate = stored_cols != native_cols && sc >= stored_cols;
             if (conjugate) { sr = (native_rows-sr) % native_rows; sc = native_cols-sc; }

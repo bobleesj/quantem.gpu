@@ -4,6 +4,12 @@ This page records the CUDA, Python MPS, native Swift/Metal, and WebGPU SSB
 performance contracts so future work starts from measured behavior, not from
 memory.
 
+## Shared C10/C12 reconstruction, 2026-10-16
+
+Python MPS and CUDA now use coherent wave averaging for displayed C10/C12
+phase and exclude repeated scan means during upsampling. The search objective
+is unchanged. See [the scientific contract and checks](2026-10-16-ssb-coherent-reconstruction.md).
+
 ## Batched joint CUDA refinement, 2026-10-15
 
 Three independent Nelder-Mead searches now share batched model evaluations.

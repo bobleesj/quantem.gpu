@@ -108,6 +108,9 @@ class ThickSample:
             kx = cache["kx_bf"][start:stop].reshape(-1, 1, 1)
             ky = cache["ky_bf"][start:stop].reshape(-1, 1, 1)
             corrected = thick_correct_kernel(full, qx, qy, kx, ky, *params)
+            if upsampling_factor != 1:
+                # Exclude scan-mean replicas; retain the true DC below.
+                corrected[:, ::native_ny, ::native_nx] = 0
             corrected[:, 0, 0] = engine._dc_value_host
             angles = cp.angle(cp.fft.ifft2(corrected, axes=(1, 2)))
             phase_sum += angles.sum(axis=0)

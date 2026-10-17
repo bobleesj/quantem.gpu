@@ -33,7 +33,8 @@ class _Backend:
         raise NotImplementedError
 
     def preview_upsampled(self, aberrations, **kwargs):
-        raise NotImplementedError
+        assert kwargs["phase_estimator"] == "phase_of_mean"
+        return np.zeros(self.scan_shape, dtype=np.float32), None
 
     def preview_sample(self, aberrations, sample, *, compute_loss):
         raise NotImplementedError
