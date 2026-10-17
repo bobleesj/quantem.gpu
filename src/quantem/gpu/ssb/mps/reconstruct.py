@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 
+from quantem.gpu.ssb._execution import checkpoint, is_cancellable
 from quantem.gpu.ssb.mps.hardware import default_phase_col_k_bf
 from quantem.gpu.ssb.mps.kernels.corrected import (
     corrected_from_cached_geometry,
@@ -14,9 +15,11 @@ from quantem.gpu.ssb.mps.kernels.phase_columns import (
     phase_cols_small_sum_from_row_ifft,
 )
 from quantem.gpu.ssb.mps.kernels.phase_columns_512 import (
+    continue_phase_cols512_loss,
     phase_cols512_scalar_loss_batch_from_row_ifft,
     phase_cols512_scalar_loss_from_row_ifft,
     phase_cols512_sum_from_row_ifft,
+    reduce_phase_cols512_loss,
 )
 from quantem.gpu.ssb.mps.kernels.phase_sums import (
     phase_sum_from_complex,
@@ -31,6 +34,8 @@ from quantem.gpu.ssb.mps.prepared import (
     bf_storage_chunks,
     ifft2_chunked,
 )
+
+_DIAGNOSTIC_BF_TILE = 256
 
 
 def reconstruct_prepared(
@@ -92,12 +97,20 @@ def reconstruct_prepared(
     phase_col_k_bf = default_phase_col_k_bf(prepared.scan_shape)
 
     for start, stop in bf_storage_chunks(prepared, chunk_bf):
+        checkpoint()
         use_fused_row = (
             prepared.scan_shape in ((128, 128), (256, 256), (512, 512), (1024, 1024))
             and not compute_object
             and (prepared.alpha_k2 is None or thick is not None)
         )
-        if use_fused_row:
+        if (use_fused_row and prepared.scan_shape == (512, 512)
+                and compute_loss and is_cancellable()):
+            chunk_sum, chunk_sumsq = _cancellable_512_loss_chunk(
+                prepared, start=start, stop=stop, c10=c10_values, c12=c12_values,
+                cos2phi12=cos2phi12_values, sin2phi12=sin2phi12_values,
+                phase_col_k_bf=phase_col_k_bf, thick=thick,
+            )
+        elif use_fused_row:
             if prepared.scan_shape == (512, 512):
                 row_ifft, active_bf = row_ifft512_from_dynamic_geometry(
                     prepared,
@@ -221,6 +234,7 @@ def reconstruct_prepared(
         )
 
     object_wave = None
+    checkpoint()
     if compute_object:
         object_wave_mx = accumulator / prepared.num_bright_field_pixels
         mx.eval(object_wave_mx)
@@ -242,3 +256,40 @@ def reconstruct_prepared(
         mx.eval(mean_phase_mx)
         mean_phase = np.asarray(mean_phase_mx).astype(np.float32, copy=False)
     return object_wave, loss, mean_phase
+
+
+def _cancellable_512_loss_chunk(
+    prepared, *, start, stop, c10, c12, cos2phi12, sin2phi12, phase_col_k_bf, thick,
+):
+    """Tile independent BF groups without changing any reduction boundary.
+
+    A diagnostic can yield between completed row/column FFT batches. Partial
+    groups retain their original order and are joined before the unchanged
+    reduction, so neither BF coverage nor float32 accumulation changes.
+    """
+    mx = prepared.mx
+    sums, squares = [], []
+    for group in range(start, stop, phase_col_k_bf):
+        group_stop = min(group + phase_col_k_bf, stop)
+        partial = mx.zeros((1, 1, 512, 512), dtype=mx.float32)
+        partial_sq = mx.zeros_like(partial)
+        for first in range(group, group_stop, _DIAGNOSTIC_BF_TILE):
+            checkpoint()
+            last = min(first + _DIAGNOSTIC_BF_TILE, group_stop)
+            row_ifft, active_bf = row_ifft512_from_dynamic_geometry(
+                prepared, start=first, stop=last,
+                c10=c10, c12=c12, cos2phi12=cos2phi12, sin2phi12=sin2phi12,
+                return_active=True, tiled_output=True, thick=thick,
+            )
+            partial, partial_sq = continue_phase_cols512_loss(
+                mx, row_ifft, active_bf, partial, partial_sq,
+                finalize=last == group_stop,
+            )
+            mx.eval(partial, partial_sq)
+        sums.append(partial)
+        squares.append(partial_sq)
+    checkpoint()
+    partial = sums[0] if len(sums) == 1 else mx.concatenate(sums, axis=1)
+    partial_sq = squares[0] if len(squares) == 1 else mx.concatenate(squares, axis=1)
+    total, total_sq = reduce_phase_cols512_loss(mx, partial, partial_sq)
+    return total[0], total_sq[0]

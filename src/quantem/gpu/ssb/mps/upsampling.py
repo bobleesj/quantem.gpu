@@ -10,6 +10,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from quantem.gpu.ssb._execution import checkpoint
 from quantem.gpu.ssb.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.ssb.mps.hardware import require_mlx
 from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sum_from_complex
@@ -32,18 +33,15 @@ template <uint SOURCE_N, uint G_COLS, bool HIGHER,
           typename G, typename KRow, typename KCol, typename Params,
           typename Probe, typename Coefficients>
 inline float2 alias_corrected(
-    uint row, uint col, uint k, float qr, float qc,
+    uint row, uint col, uint k, float qr, float qc, float shift, float radius,
     G g, KRow k_row, KCol k_col, Params params, Probe probe, Coefficients coefficients
 ) {
     float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
     float c10 = params[4], c12 = params[5], c2 = params[6], s2 = params[7];
-    float factor = params[8], depth = params[9], tr = params[10], tc = params[11];
+    float factor = params[8], depth = params[9];
     float kr = k_row[k], kc = k_col[k];
     float4 gk = float4(probe[k * 5], probe[k * 5 + 1], probe[k * 5 + 2], probe[k * 5 + 3]);
     // Bound the complete soft aperture before evaluating its geometry.
-    // The outward margin includes float32 roundoff and anisotropic pixels.
-    float radius = (semi + 0.5f * metal::max(ay, ax)) / wl;
-    radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
     float mr = qr - kr, mc = qc - kc, pr = qr + kr, pc = qc + kc;
     if (metal::min(mr * mr + mc * mc, pr * pr + pc * pc) > radius * radius) {
         return float2(0.0f);
@@ -54,7 +52,6 @@ inline float2 alias_corrected(
         return float2(0.0f);
     }
     float chi_k = probe[k * 5 + 4];
-    float shift = 6.283185307179586f * (qr * tr + qc * tc);
     // A closed aperture contributes exactly zero, independent of its phase.
     float a = 0.0f, b = 0.0f;
     float ca = 0.0f, cb = 0.0f, sa = 0.0f, sb = 0.0f;
@@ -161,8 +158,12 @@ def _alias_correction_kernel():
             corrected[out].imag = 0.0f;
             return;
         }
+        float qr = q_row[row], qc = q_col[col];
+        float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
+        float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
         float2 value = alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-            row, col, k, q_row[row], q_col[col],
+            row, col, k, qr, qc, shift, radius,
             g, k_row, k_col, params, probe, coefficients);
         corrected[out].real = value.x;
         corrected[out].imag = value.y;
@@ -207,9 +208,13 @@ def _coherent_alias_kernel():
                 partial[out].imag = 0.0f;
                 return;
             }
+            // Reuse q-dependent values without changing BF accumulation order.
+            float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
+            float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
+            radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
             for (uint k = start; k < stop; ++k) {
                 sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-                    row, col, k, qr, qc, g, k_row, k_col, params, probe, coefficients);
+                    row, col, k, qr, qc, shift, radius, g, k_row, k_col, params, probe, coefficients);
             }
         }
         partial[out].real = sum.x;
@@ -297,6 +302,7 @@ def _coherent_spectrum(
     # Omit only the identically zero frequencies from temporary storage.
     groups_per_batch = max(1, _WORK_BYTES // (rows * cols * 8))
     for start in range(0, stored, groups_per_batch * chunk):
+        checkpoint()
         stop = min(start + groups_per_batch * chunk, stored)
         groups = (stop - start + chunk - 1) // chunk
         partial = _coherent_alias_kernel()(
@@ -420,12 +426,15 @@ def _reconstruct_upsampled(
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         phase = mx.arctan2(mx.imag(wave), mx.real(wave))
         mx.eval(phase)
+        checkpoint()
         return np.asarray(phase, dtype=np.float32), None
 
     total = mx.zeros((n, n), dtype=mx.float32)
     squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
     kernel = _alias_correction_kernel()
     for start in range(0, stored, chunk):
+        if (start // chunk) % _PENDING_CHUNKS == 0:
+            checkpoint()
         stop = min(start + chunk, stored)
         corrected = kernel(
             inputs=[
@@ -464,5 +473,6 @@ def _reconstruct_upsampled(
             mx.eval(total)
     phase = total / prepared.num_bright_field_pixels
     mx.eval(phase)
+    checkpoint()
     loss = float(mx.mean(squares / prepared.num_bright_field_pixels - phase * phase)) if compute_loss else None
     return np.asarray(phase, dtype=np.float32), loss

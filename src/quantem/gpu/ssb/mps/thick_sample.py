@@ -25,6 +25,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from quantem.gpu.ssb._execution import checkpoint
 from quantem.gpu.ssb.mps.hardware import require_mlx
 from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
 from quantem.gpu.ssb.mps.prepared import (
@@ -99,6 +100,7 @@ def reconstruct_thick_reference(
     storage_bf = int(prepared.g_qk.shape[0])
     chunk = _chunk_bf(prepared)
     for start in range(0, storage_bf, chunk):
+        checkpoint()
         stop = min(storage_bf, start + chunk)
         projected_real, projected_imag, weight2 = _chunk_terms(prepared, start, stop, params)
         # phase-only correction G conj(gamma) / |gamma|, same floor as the standard kernels

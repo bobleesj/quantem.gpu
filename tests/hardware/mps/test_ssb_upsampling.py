@@ -161,6 +161,54 @@ def test_slider_changes_match_fresh_sessions():
             np.testing.assert_array_equal(phase, expected)
 
 
+@pytest.mark.parametrize("estimator,factor,higher", [
+    ("mean_phase", 1, False), ("phase_of_mean", 3, False),
+    ("mean_phase", 1, True),
+])
+def test_cancelled_preview_returns_no_partial_result_and_session_recovers(estimator, factor, higher):
+    """A renewed drag can abandon a diagnostic and reuse the same GPU session."""
+    from concurrent.futures import CancelledError
+
+    _require_mps()
+    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    if higher:
+        coefs.update(C21_nm=20., phi21_deg=12.)
+    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.,
+                    phase_estimator=estimator, upsampling_factor=factor)
+    with _disk_session() as ssb:
+        expected, expected_loss = ssb.preview(coefs, **settings)
+        checks = []
+
+        def cancel():
+            checks.append(True)
+            return len(checks) >= 3
+
+        with pytest.raises(CancelledError):
+            ssb.preview(coefs, **settings, cancel=cancel)
+        assert len(checks) == 3
+        phase, loss = ssb.preview(coefs, **settings, cancel=lambda: False)
+        np.testing.assert_array_equal(phase, expected)
+        assert loss == expected_loss
+
+
+@pytest.mark.parametrize("depth_nm", [0., 18.])
+def test_interruptible_native_loss_keeps_exact_full_bf_sums(monkeypatch, depth_nm):
+    """Persist accumulators across partial BF tiles, including a short last tile."""
+    from quantem.gpu.ssb.mps import reconstruct
+
+    _require_mps()
+    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    options = dict(phase_estimator="mean_phase", sample_tilt_mrad=(-9., 5.),
+                   depth_spread_nm=depth_nm)
+    with _disk_session(512) as ssb:
+        expected, expected_loss = ssb.preview(coefs, **options)
+        for tile in [8, 17]:
+            monkeypatch.setattr(reconstruct, "_DIAGNOSTIC_BF_TILE", tile)
+            phase, loss = ssb.preview(coefs, **options, cancel=lambda: False)
+            np.testing.assert_array_equal(phase, expected)
+            assert loss == expected_loss
+
+
 def test_automatic_sampling_rotation_and_saved_result(tmp_path):
     """Replay fine sampling and both rotations without refitting."""
     _require_mps()

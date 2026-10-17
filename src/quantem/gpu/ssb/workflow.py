@@ -7,6 +7,7 @@ device preparation and kernels, but they do not define a second user API.
 import hashlib
 import math
 import time
+from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
 from functools import wraps
@@ -23,6 +24,7 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb import series
+from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.brightfield import crop_bright_field, disk_edge_radius
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
@@ -1305,12 +1307,20 @@ class SSB:
         depth_spread_nm: float = 0.0,
         phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
         output: Literal["numpy", "native"] = "numpy",
+        cancel: Callable[[], bool] | None = None,
     ) -> tuple[object, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
 
         The returned array has the full selected output resolution. "Preview"
         means it is not saved and does not replace the fitted calibration or
         stored result; it does not imply a lower-quality reconstruction.
+
+        Interactive applications may provide ``cancel``, a predicate that is
+        true when this request is obsolete. Cancellation raises
+        ``concurrent.futures.CancelledError`` and never returns a partial
+        image or loss. MPS checks between completed GPU batches; other
+        backends check before and after computation. A running GPU kernel is
+        not interrupted. Omitting this option leaves computation unchanged.
 
         ``output="numpy"`` returns a float32 host array for display. On CUDA, ``output="native"`` returns the CuPy phase
         on the session's device, without exporting it to the host, so diagnostics can reduce a series of phase images
@@ -1363,12 +1373,13 @@ class SSB:
             raise ValueError(f"Use output='numpy' or 'native'; got {output!r}.")
         if output == "native" and self.backend != "cuda":
             raise NotImplementedError("Native SSB preview output requires backend='cuda'; use output='numpy' on this backend.")
-        phase, loss = self._phase(
-            aberrations, compute_loss=compute_loss,
-            upsampling_factor=upsampling_factor, context=context,
-            sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
-            phase_estimator=phase_estimator,
-        )
+        with cancellation_scope(cancel):
+            phase, loss = self._phase(
+                aberrations, compute_loss=compute_loss,
+                upsampling_factor=upsampling_factor, context=context,
+                sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
+                phase_estimator=phase_estimator,
+            )
         if output == "native":
             # the mean-phase path returns the engine's reused buffer, which the next preview overwrites
             return phase.copy(), loss

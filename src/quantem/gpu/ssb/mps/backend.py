@@ -276,6 +276,22 @@ class MpsSSBBackend:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         higher = dict(higher_order_magnitudes=higher_order_magnitudes,
                       higher_order_angles=higher_order_angles)
+        if compute_loss and phase_estimator == "mean_phase" and upsampling_factor == 1:
+            # The returned native per-BF phase already belongs to this loss;
+            # do not reconstruct it once more before computing the variance.
+            if higher_order_magnitudes is not None:
+                return _reconstruct_upsampled(
+                    self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
+                    thickness=thickness, upsampling_factor=1,
+                    phase_estimator="mean_phase", compute_loss=True, **higher,
+                )
+            if thickness > 0.0:
+                return self.preview_sample(
+                    aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
+                                  "tilt_col_mrad": sample_tilt_mrad[1],
+                                  "thickness": thickness}, compute_loss=True,
+                )
+            return self.preview(aberrations, compute_loss=True, **higher)
         phase, _ = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
             thickness=thickness, upsampling_factor=upsampling_factor,
