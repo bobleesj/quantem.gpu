@@ -92,6 +92,39 @@ export async function runQemBrowserParity(device: GPUDevice, baseURL: string): P
       if (!rejected) throw new Error("Modified payload was not rejected by checksum admission");
     }
     results.payload_corruption_rejected = true;
+    // A valid SHA is not enough: an invalid ANS state must still fail the GPU
+    // termination check, including when checkpoints were submitted early.
+    {
+      const item = cases.find(item => item.name === "uint16-qem-modes")!;
+      const bytes = new Uint8Array(await (await fetch(base + item.name + ".qem")).arrayBuffer());
+      const body = Number(new DataView(bytes.buffer).getBigUint64(16, true));
+      let text = new TextDecoder().decode(bytes.subarray(56, body));
+      const header = JSON.parse(text);
+      let damaged = -1;
+      for (const chunk of header.chunks) {
+        const offsets = new DataView(bytes.buffer, body + chunk.arrays[1].offset);
+        for (let i = 0; i < chunk.arrays[2].count; i++) if (bytes[body + chunk.arrays[2].offset + i] < 64) {
+          damaged = chunk.arrays[0].offset + offsets.getUint32(i * 4, true);
+          bytes.fill(0, body + damaged, body + damaged + 4);
+          break;
+        }
+        if (damaged >= 0) break;
+      }
+      if (damaged < 0) throw new Error("Fixture has no entropy column for decode verification");
+      const hex = async (part: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", part as Uint8Array<ArrayBuffer>))]
+        .map(value => value.toString(16).padStart(2, "0")).join("");
+      const first = Math.floor(damaged / (64 << 20)), last = Math.floor((damaged + 3) / (64 << 20));
+      for (let index = first; index <= last; index++) {
+        text = text.replace(header.sha256[index], await hex(bytes.subarray(body + index * (64 << 20), Math.min(bytes.length, body + (index + 1) * (64 << 20)))));
+      }
+      bytes.set(new TextEncoder().encode(text), 56);
+      bytes.set(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.subarray(56, body))), 24);
+      let rejected = false;
+      try { await RansResidentSet.loadQemFile(device, new File([bytes], "invalid-state.qem")); }
+      catch (error) { rejected = String(error).includes("did not terminate exactly"); }
+      if (!rejected) throw new Error("Checksum-valid invalid ANS state passed checkpoint verification");
+      results.checksum_valid_decode_corruption_rejected = true;
+    }
     // Groups smaller than a chunk on the real device: the split staged payload and
     // the GPU copy of the block a split cuts must decode exactly.
     for (const item of cases.filter(item => item.name.endsWith("-qem-blocks"))) {

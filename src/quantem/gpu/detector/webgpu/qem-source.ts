@@ -1,7 +1,7 @@
 /** Authenticated integer QEM admission; detector measurements remain encoded. */
 import tables from "../../formats/qem/qem-rans-tables-v1.json";
 import { createQemHasher } from "./qem-checksum";
-import { payloadGroupLimit, type RansByteSource } from "./rans-source";
+import { payloadGroupLimit, type RansByteSource, type RansPreparedGroup } from "./rans-source";
 import type { RansManifest } from "./rans";
 
 /** Byte access to one .qem acquisition: a local File or a file served beside the viewer. */
@@ -19,6 +19,15 @@ export interface QemByteFile {
 }
 
 type Span = { offset: number; count: number };
+/** Fully authenticated, unmapped payload and its validated per-block tables. */
+export type QemCheckpointGroup = {
+  payload: GPUBuffer;
+  K: number;
+  nativeDtype: string;
+  entries: Uint32Array;
+  blocks: { offset: number; frames: number; offsets: Uint32Array; columns: Uint32Array }[];
+};
+export type QemCheckpointSubmit = (group: QemCheckpointGroup) => RansPreparedGroup;
 type Chunk = { first: number; scans: number; arrays: Span[] };
 type Header = {
   container: string;
@@ -407,8 +416,9 @@ export async function qemFileSource(
   onStatus: (text: string) => void = () => {},
   device?: GPUDevice,
   signal?: AbortSignal,
+  checkpoint?: QemCheckpointSubmit,
 ): Promise<RansByteSource> {
-  return admitQemFile(file, await readQemHeader(file, signal), onStatus, device, signal);
+  return admitQemFile(file, await readQemHeader(file, signal), onStatus, device, signal, checkpoint);
 }
 
 /** Authenticate and stage the payload described by an already checked header. */
@@ -418,6 +428,7 @@ async function admitQemFile(
   onStatus: (text: string) => void,
   device?: GPUDevice,
   signal?: AbortSignal,
+  checkpoint?: QemCheckpointSubmit,
 ): Promise<RansByteSource> {
   const [rows, cols, detRows, detCols] = header.shape,
     K = detRows * detCols;
@@ -431,11 +442,13 @@ async function admitQemFile(
   // ever decoded. A chunk larger than one group is split across groups on a
   // word boundary; the blocks a split cuts are copied whole on the GPU once
   // the authenticated offset tables locate them.
-  type PayloadGroup = { size: number; end: number; buffer?: GPUBuffer; mapped?: Uint8Array };
+  type PayloadGroup = { size: number; end: number; readyEnd?: number; buffer?: GPUBuffer; mapped?: Uint8Array };
   type Region = { start: number; end: number; offset: number; group: PayloadGroup };
   const groups: PayloadGroup[] = [];
   const regions: Region[] = [];
   const groupLimit = device ? payloadGroupLimit(device) : 0;
+  const checkpoints = new Map<GPUBuffer, RansPreparedGroup>();
+  const overlap = checkpoint && device && header.chunks.every(chunk => chunk.arrays[0].count <= groupLimit);
   if (device) {
     for (const chunk of header.chunks) {
       let { offset: start, count } = chunk.arrays[0];
@@ -449,6 +462,7 @@ async function admitQemFile(
         // An empty region must not delay unmapping the group's last copied bytes.
         if (piece) group.end = start + piece;
         regions.push({ start, end: start + piece, offset, group });
+        group.readyEnd = chunk.arrays[2].offset + chunk.arrays[2].count;
         start += piece; count -= piece;
         if (!count) break;
         group = undefined;
@@ -459,101 +473,32 @@ async function admitQemFile(
   // WebCrypto uses the platform's SHA-256 implementation without a JavaScript
   // loop over every byte. A served file streams the chunks through one response.
   // Cancellation, or any failure, ends that download instead of waiting for reads in flight.
-  const stopping = new AbortController();
-  const cancel = signal ? AbortSignal.any([signal, stopping.signal]) : stopping.signal;
-  const stream = file.chunks?.(body, file.size, chunkBytes, cancel);
-  const hasher = createQemHasher(header.sha256.length, cancel);
-  const verifiedChunk = async (index: number) => {
-    const begin = index * chunkBytes;
-    const end = Math.min(header.bytes, (index + 1) * chunkBytes);
-    cancel.throwIfAborted();
-    // Request before the first await: queued stream reads resolve in call order.
-    let bytes = stream
-      ? await stream.next().then(part => part.done ? new ArrayBuffer(0) : part.value)
-      : await file.slice(body + begin, body + end).arrayBuffer();
-    requireQem(bytes.byteLength === end - begin, "truncated authentication chunk");
-    const verified = await hasher.digest(bytes);
-    bytes = verified.bytes;
-    const hash = new Uint8Array(verified.hash);
-    const actual = Array.from(hash, value => value.toString(16).padStart(2, "0")).join("");
-    requireQem(actual === header.sha256[index], "payload checksum mismatch");
-    return new Uint8Array(bytes);
-  };
-  // Four reads and digests stay in flight, so reading overlaps hashing while
-  // at most four 64 MiB chunks are held.
-  type Verified = { bytes: Uint8Array<ArrayBuffer> } | { error: unknown };
-  const pending: Promise<Verified>[] = [];
-  let next = 0;
-  const enqueue = () => {
-    const index = next++;
-    pending.push(verifiedChunk(index).then(bytes => ({ bytes }), error => ({ error })));
-  };
-  for (let depth = 0; depth < 4 && next < header.sha256.length; depth++) enqueue();
-  try {
-    try {
-      for (let index = 0; index < header.sha256.length; index++) {
-        onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
-        signal?.throwIfAborted();
-        const result = await pending.shift()!;
-        if ("error" in result) throw result.error;
-        const bytes = result.bytes, start = index * chunkBytes, end = start + bytes.length;
-        for (const region of regions) {
-          const first = Math.max(start, region.start), last = Math.min(end, region.end);
-          if (last <= first) continue;
-          const group = region.group;
-          if (!group.buffer) {
-            group.buffer = device!.createBuffer({ size: Math.ceil(group.size / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
-            group.mapped = new Uint8Array(group.buffer.getMappedRange());
-          }
-          group.mapped!.set(bytes.subarray(first - start, last - start), region.offset + first - region.start);
-          if (last === group.end) { group.buffer.unmap(); group.mapped = undefined; }
-        }
-        for (const { offset, target } of tableCopies) {
-          const first = Math.max(start, offset), last = Math.min(end, offset + target.length);
-          if (last > first) target.set(bytes.subarray(first - start, last - start), first - offset);
-        }
-        // Hashed and copied: nothing reads this chunk again, so its buffer may carry a later one.
-        file.recycleChunk?.(bytes.buffer);
-        if (next < header.sha256.length) enqueue();
-      }
-      // Resume the stream once more: its check for an oversized response runs after the last chunk.
-      if (stream) requireQem((await stream.next()).done, "unexpected trailing authentication chunk");
-    } finally {
-      // The stream can only close after its queued reads settle; a failure must
-      // also wait for them so no chunk arrives after the groups are released.
-      // Ending the download first makes those reads settle at once.
-      stopping.abort();
-      hasher.dispose();
-      await Promise.all(pending);
-      await stream?.return(undefined);
-    }
-    for (const group of groups) {
-      // A group whose chunks hold no stream bytes still needs a bindable buffer.
-      group.buffer ??= device!.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-      if (group.mapped) { group.buffer.unmap(); group.mapped = undefined; }
-    }
-    const entries = new Uint32Array(64 * 33 * 2);
-    tables.frequencies.forEach((frequencies, model) => {
-      let cumulative = 0;
-      frequencies.forEach((frequency, symbol) => {
-        const at = (model * 33 + symbol) * 2;
-        entries[at] = (cumulative << 16) | symbol;
-        entries[at + 1] = frequency;
-        cumulative += frequency;
-      });
-      requireQem(cumulative === 1024, "invalid fixed probability table");
+  const entries = new Uint32Array(64 * 33 * 2);
+  tables.frequencies.forEach((frequencies, model) => {
+    let cumulative = 0;
+    frequencies.forEach((frequency, symbol) => {
+      const at = (model * 33 + symbol) * 2;
+      entries[at] = (cumulative << 16) | symbol;
+      entries[at + 1] = frequency;
+      cumulative += frequency;
     });
-    const blockMeta: {
-      index: number;
-      bytes: number;
-      model: number;
-      byte_start: number;
-      byte_end: number;
-      frames: number;
-    }[] = [];
-    const offsets: Uint32Array<ArrayBuffer>[] = [],
-      columns: Uint32Array<ArrayBuffer>[] = [];
-    for (const [chunkIndex, chunk] of header.chunks.entries()) {
+    requireQem(cumulative === 1024, "invalid fixed probability table");
+  });
+  const blockMeta: {
+    index: number;
+    bytes: number;
+    model: number;
+    byte_start: number;
+    byte_end: number;
+    frames: number;
+  }[] = [];
+  const offsets: Uint32Array<ArrayBuffer>[] = [],
+    columns: Uint32Array<ArrayBuffer>[] = [];
+  let preparedChunks = 0;
+  const prepareTables = (verifiedEnd: number) => {
+    for (; preparedChunks < header.chunks.length; preparedChunks++) {
+      const chunkIndex = preparedChunks, chunk = header.chunks[chunkIndex];
+      if (chunk.arrays[2].offset + chunk.arrays[2].count > verifiedEnd) break;
       const payload = chunk.arrays[0],
         blocks = Math.ceil(chunk.scans / 512);
       const local = new Uint32Array(tableCopies[chunkIndex * 2].target.buffer),
@@ -612,6 +557,100 @@ async function admitQemFile(
         columns.push(metadata);
       }
     }
+  };
+  const submitReady = (verifiedEnd: number) => {
+    if (!overlap) return;
+    for (const group of groups) {
+      if (!group.buffer || group.mapped || group.readyEnd! > verifiedEnd || checkpoints.has(group.buffer)) continue;
+      const parts = blockMeta.flatMap(block => {
+        const region = regions.find(region => region.group === group &&
+          block.byte_start - body >= region.start && block.byte_end - body <= region.end);
+        return region ? [{
+          offset: region.offset + block.byte_start - body - region.start,
+          frames: block.frames, offsets: offsets[block.index], columns: columns[block.index],
+        }] : [];
+      });
+      if (parts.length) checkpoints.set(group.buffer, checkpoint!({
+        payload: group.buffer, K, nativeDtype: header.dtype, entries, blocks: parts,
+      }));
+    }
+  };
+  const stopping = new AbortController();
+  const cancel = signal ? AbortSignal.any([signal, stopping.signal]) : stopping.signal;
+  const stream = file.chunks?.(body, file.size, chunkBytes, cancel);
+  const hasher = createQemHasher(header.sha256.length, cancel);
+  const verifiedChunk = async (index: number) => {
+    const begin = index * chunkBytes;
+    const end = Math.min(header.bytes, (index + 1) * chunkBytes);
+    cancel.throwIfAborted();
+    // Request before the first await: queued stream reads resolve in call order.
+    let bytes = stream
+      ? await stream.next().then(part => part.done ? new ArrayBuffer(0) : part.value)
+      : await file.slice(body + begin, body + end).arrayBuffer();
+    requireQem(bytes.byteLength === end - begin, "truncated authentication chunk");
+    const verified = await hasher.digest(bytes);
+    bytes = verified.bytes;
+    const hash = new Uint8Array(verified.hash);
+    const actual = Array.from(hash, value => value.toString(16).padStart(2, "0")).join("");
+    requireQem(actual === header.sha256[index], "payload checksum mismatch");
+    return new Uint8Array(bytes);
+  };
+  // Four reads and digests stay in flight, so reading overlaps hashing while
+  // at most four 64 MiB chunks are held.
+  type Verified = { bytes: Uint8Array<ArrayBuffer> } | { error: unknown };
+  const pending: Promise<Verified>[] = [];
+  let next = 0;
+  const enqueue = () => {
+    const index = next++;
+    pending.push(verifiedChunk(index).then(bytes => ({ bytes }), error => ({ error })));
+  };
+  for (let depth = 0; depth < 4 && next < header.sha256.length; depth++) enqueue();
+  try {
+    try {
+      for (let index = 0; index < header.sha256.length; index++) {
+        onStatus(`Verifying .qem ${index + 1}/${header.sha256.length}`);
+        signal?.throwIfAborted();
+        const result = await pending.shift()!;
+        if ("error" in result) throw result.error;
+        const bytes = result.bytes, start = index * chunkBytes, end = start + bytes.length;
+        for (const region of regions) {
+          const first = Math.max(start, region.start), last = Math.min(end, region.end);
+          if (last <= first) continue;
+          const group = region.group;
+          if (!group.buffer) {
+            group.buffer = device!.createBuffer({ size: Math.ceil(group.size / 4) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+            group.mapped = new Uint8Array(group.buffer.getMappedRange());
+          }
+          group.mapped!.set(bytes.subarray(first - start, last - start), region.offset + first - region.start);
+          if (last === group.end) { group.buffer.unmap(); group.mapped = undefined; }
+        }
+        for (const { offset, target } of tableCopies) {
+          const first = Math.max(start, offset), last = Math.min(end, offset + target.length);
+          if (last > first) target.set(bytes.subarray(first - start, last - start), first - offset);
+        }
+        // Hashed and copied: nothing reads this chunk again, so its buffer may carry a later one.
+        prepareTables(end);
+        submitReady(end);
+        file.recycleChunk?.(bytes.buffer);
+        if (next < header.sha256.length) enqueue();
+      }
+      // Resume the stream once more: its check for an oversized response runs after the last chunk.
+      if (stream) requireQem((await stream.next()).done, "unexpected trailing authentication chunk");
+    } finally {
+      // The stream can only close after its queued reads settle; a failure must
+      // also wait for them so no chunk arrives after the groups are released.
+      // Ending the download first makes those reads settle at once.
+      stopping.abort();
+      hasher.dispose();
+      await Promise.all(pending);
+      await stream?.return(undefined);
+    }
+    for (const group of groups) {
+      // A group whose chunks hold no stream bytes still needs a bindable buffer.
+      group.buffer ??= device!.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      if (group.mapped) { group.buffer.unmap(); group.mapped = undefined; }
+    }
+    prepareTables(header.bytes);
     // Copy each block cut by a group split, whole and from authenticated bytes,
     // so the decoder binds every block in one buffer. Word-aligned extents keep
     // the GPU copies valid; the decoder skips the unaligned head through its
@@ -690,7 +729,13 @@ async function admitQemFile(
         requireQem(name === "payload" && region && end >= start, "invalid resident payload range");
         return { buffer: region.group.buffer!, offset: region.offset + start - body - region.start };
       },
-      dispose() { for (const group of groups) group.buffer?.destroy(); },
+      residentCheckpoints(payload) { return checkpoints.get(payload); },
+      dispose() {
+        for (const group of groups) group.buffer?.destroy();
+        for (const prepared of checkpoints.values()) {
+          prepared.checkpoints.destroy(); prepared.tables.destroy(); prepared.offsets.destroy();
+        }
+      },
       async read(name) {
         if (name === "manifest.json")
           return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
@@ -712,6 +757,9 @@ async function admitQemFile(
   } catch (error) {
     // Staged groups belong to this admission until it returns a source.
     for (const group of groups) group.buffer?.destroy();
+    for (const prepared of checkpoints.values()) {
+      prepared.checkpoints.destroy(); prepared.tables.destroy(); prepared.offsets.destroy();
+    }
     throw error;
   }
 }
@@ -742,7 +790,7 @@ export function prefixedStatus(prefix: string, onStatus: (text: string) => void)
 }
 
 /** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
-export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal): Promise<RansByteSource> {
+export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal, checkpoint?: QemCheckpointSubmit): Promise<RansByteSource> {
   const ordered = Array.from(files);
   // Each header is read once: its checksums authenticate the payload admitted below.
   const headers = await readQemSeriesHeaders(ordered, signal);
@@ -755,7 +803,7 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
     for (let index = 0; index < ordered.length; index++) {
       // One file needs no position; a series names it once around this source.
       const status = ordered.length > 1 ? prefixedStatus(`${index + 1}/${ordered.length} ${ordered[index].name}`, onStatus) : onStatus;
-      const source = await admitQemFile(ordered[index], headers[index], status, device, signal);
+      const source = await admitQemFile(ordered[index], headers[index], status, device, signal, checkpoint);
       // Owned from here, so a later failure releases its staged storage.
       sources.push(source);
       manifests.push(JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))) as RansManifest);
@@ -775,6 +823,13 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
       }),
     };
     return { mode: sources[0].mode,
+      residentCheckpoints(payload) {
+        for (const source of sources) {
+          const found = source.residentCheckpoints?.(payload);
+          if (found) return found;
+        }
+        return undefined;
+      },
       residentPayload(name, start, end) {
         const namespaced = /^acquisition-(\d+)\/(.+)$/.exec(name);
         requireQem(namespaced, "invalid resident acquisition name");
