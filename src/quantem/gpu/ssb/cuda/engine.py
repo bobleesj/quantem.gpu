@@ -162,6 +162,7 @@ class SSBEngine:
         wavelength: float,
         semiangle_cutoff: float,
         angular_sampling: tuple[float, float],
+        bright_field_radius_px: float | None = None,
     ):
         n_bf = int(G_qk.shape[0])
         n_row = int(bf_inds_row.shape[0])
@@ -178,6 +179,7 @@ class SSBEngine:
         if bright_field_center_px is None:
             bright_field_center_px = ((gpts[0] - 1) * 0.5, (gpts[1] - 1) * 0.5)
         self.bright_field_center_px = bright_field_center_px
+        self.bright_field_radius_px = bright_field_radius_px
         self._dc_value_host = complex(dc_value)
         self.gpts = gpts
         self.sampling = sampling
@@ -250,7 +252,11 @@ class SSBEngine:
         center = (float(self.bright_field_center_px[0]), float(self.bright_field_center_px[1]))
         distance_sq = (rows.astype(np.float64) - center[0]) ** 2
         distance_sq += (cols.astype(np.float64) - center[1]) ** 2
-        radius = float(np.sqrt(distance_sq).max()) + 1e-3
+        # Replaying a fit must select the same edge pixels. A padded radius
+        # inferred from selected pixels can admit their unselected neighbours.
+        radius = self.bright_field_radius_px
+        if radius is None:
+            radius = float(np.sqrt(distance_sq).max()) + 1e-3
         detector_sampling = 0.5 * (
             float(self.angular_sampling[0]) + float(self.angular_sampling[1])
         )
