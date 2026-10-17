@@ -187,6 +187,7 @@ class SSB:
         mean_pattern=None,
     ) -> None:
         self.backend = resolve(backend)
+        source_dataset = data if isinstance(data, Dataset4dstemGPU) else None
         self._streamed = None
         self._owned_dataset = None
         # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
@@ -217,6 +218,7 @@ class SSB:
                     data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern = self._decode_resident(
                         data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad,
                         bright_field_intensity_threshold, semiangle_mrad, mean_pattern,
+                        identify=source_path is None,
                     )
             elif self.scan_region is not None:
                 row_start, row_stop, col_start, col_stop = self.scan_region
@@ -280,6 +282,12 @@ class SSB:
         self.source_detector_bin = 1
         self.source_provenance: dict[str, object] | None = None
         self.source_load_seconds: float | None = None
+        if source_dataset is not None:
+            self.source_kind = "resident"
+            self.source_dtype = str(source_dataset.dtype)
+            self.source_bytes = source_dataset.logical_bytes
+            correction = source_dataset.metadata.get("hot_pixel_correction")
+            self.source_provenance = None if correction is None else {"hot_pixel_correction": correction}
         self._compute: SSBProtocol | None = None
         self._reconstruction: SSBResult | None = None
         self.best_loss = float("inf")
@@ -287,7 +295,7 @@ class SSB:
         self._aberration_search: SSBResult | None = None
 
     def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
-                         detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern):
+                         detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern, *, identify=True):
         """Decode one fit-sized crop and identify its exact resident evidence."""
         shape, dtype = tuple(int(value) for value in data.shape), str(data.dtype)
         data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
@@ -297,6 +305,10 @@ class SSB:
         )
         if detector_sampling_mrad is None:
             detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
+        # File-backed sessions use source_signature, including the recorded
+        # preprocessing. Their saved identity never uses resident checksums.
+        if not identify:
+            return data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern
         frames = data.reshape(data.shape[0] * data.shape[1], -1)
         if self.backend == "cuda":
             per_frame = frames.sum(axis=1, dtype=cp.uint64)

@@ -7,7 +7,7 @@ import hdf5plugin
 import numpy as np
 import pytest
 
-from quantem.gpu import detector, screening
+from quantem.gpu import SSB, detector, io, screening
 from quantem.gpu.dpc.workflow import find_optimal_rotation
 from quantem.gpu.screening.workflow import _dpc_phase
 
@@ -43,7 +43,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     disk = np.hypot(rows - 11.4 - shift_row, cols - 13.7 - shift_col) < 6.5
     counts = rng.poisson(np.where(disk, 60.0, 1.5)).astype(np.uint16)
     pixel_mask = np.zeros((24, 28), dtype=np.uint32)
-    pixel_mask[[2, 17], [3, 25]] = 1
+    pixel_mask[[2, 11, 17], [3, 14, 25]] = 1
     counts[..., pixel_mask != 0] = 0xFFFF
     master = write_master(tmp_path, counts, pixel_mask)
 
@@ -83,12 +83,32 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
         "dpc_phase": _dpc_phase(com_row, com_col, rotation_deg, transposed),
     }
     reopened = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
+    with io.load(master, backend=backend, hot_pixel_correction="median", verbose=False) as loaded:
+        borrowed = screening.prepare(loaded, rotation_steps=30)
+        assert borrowed.cache_path is None and not borrowed.from_cache
+        # Screening leaves the median-corrected source alive for SSB.
+        frame = loaded[0, 0]
+        assert tuple(frame.shape) == (24, 28)
+        assert int(frame[11, 14]) > 0
+        optics = dict(backend=backend, voltage_kV=300, semiangle_mrad=30,
+                      scan_sampling_A=(0.3, 0.3), scan_detector_rotation_deg=17)
+        correction = dict(sample_tilt_mrad=(1., -2.), depth_spread_nm=15., compute_loss=True)
+        aberrations = {"C10_nm": 4., "C12_nm": 1., "phi12_deg": 23.}
+        with SSB(loaded, source_path=str(master), **optics) as reused:
+            phase, loss = reused.preview(aberrations, **correction)
+            assert reused.source_provenance["hot_pixel_correction"] == loaded.metadata["hot_pixel_correction"]
+            assert reused.source_bytes == loaded.logical_bytes
+            assert reused.resident_identity is None  # The file signature identifies this source.
+        with SSB.open(str(master), verbose=False, **optics) as fresh:
+            reference_phase, reference_loss = fresh.preview(aberrations, **correction)
+        np.testing.assert_array_equal(phase, reference_phase)
+        assert loss == reference_loss
     assert (result.from_cache, reopened.from_cache) == (False, True)
     assert result.bright_field_center_px == center and result.bright_field_edge_radius_px == radius
     assert (result.scan_detector_rotation_mod180_deg, result.detector_transposed) == (rotation_deg, transposed)
     assert result.scan_detector_rotation_deg is None
     for name, values in expected.items():
-        for products in (result, reopened):
+        for products in (result, reopened, borrowed):
             assert getattr(products, name).dtype == values.dtype
             np.testing.assert_array_equal(getattr(products, name), values, err_msg=name)
 
