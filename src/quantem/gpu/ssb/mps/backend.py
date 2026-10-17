@@ -264,18 +264,29 @@ class MpsSSBBackend:
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[np.ndarray, float | None]:
         """Unfold measured aliases on Metal; preserve the native search loss."""
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        phase = _reconstruct_upsampled(
+        higher = dict(higher_order_magnitudes=higher_order_magnitudes,
+                      higher_order_angles=higher_order_angles)
+        phase, _ = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
             thickness=thickness, upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
+            **higher,
         )
         loss = None
         if compute_loss:
-            if thickness > 0.0:
+            if higher_order_magnitudes is not None:
+                _, loss = _reconstruct_upsampled(
+                    self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
+                    thickness=thickness, upsampling_factor=1,
+                    phase_estimator="mean_phase", compute_loss=True, **higher,
+                )
+            elif thickness > 0.0:
                 _, loss = self.preview_sample(
                     aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
                                   "tilt_col_mrad": sample_tilt_mrad[1],

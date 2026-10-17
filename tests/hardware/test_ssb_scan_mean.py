@@ -61,12 +61,12 @@ def test_shared_default_retains_native_diagnostic_and_saved_policy(tmp_path):
         assert saved.metadata["signature"]["reconstruction"]["upsampling_dc_policy"] == "single_origin"
 
 
-def test_higher_order_default_still_uses_supported_estimator():
+def test_higher_order_default_uses_shared_estimator():
     from quantem.gpu.ssb.workflow import _default_phase_estimator
 
     assert _default_phase_estimator({"C10_nm": 2.}) == "phase_of_mean"
     base = {"C10_nm": 0., "C12_nm": 0., "phi12_deg": 0.}
-    assert _default_phase_estimator(base | {"C30_nm": 1.}) == "mean_phase"
+    assert _default_phase_estimator(base | {"C30_nm": 1.}) == "phase_of_mean"
     assert _default_phase_estimator(base | {"C30_nm": 0., "phi21_deg": 20.}) == "phase_of_mean"
 
 

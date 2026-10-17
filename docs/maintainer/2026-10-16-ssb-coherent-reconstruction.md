@@ -1,9 +1,9 @@
 # Coherent SSB reconstruction and scan-mean aliases
 
-C10/C12 reconstruction now uses `phase_of_mean` on both Python MPS and CUDA.
+Reconstruction uses `phase_of_mean` on both Python MPS and CUDA.
 The corrected complex waves are summed before phase is extracted. Explicit
 `phase_estimator="mean_phase"` retains the previous per-detector phase average;
-higher-order reconstruction retains its supported estimator. This changes
+Higher-order reconstruction now also uses the coherent estimator. This changes
 MPS displayed phases intentionally. It is not a bit-exact speed optimization.
 
 ## Why this choice
@@ -49,7 +49,7 @@ completed-result boundaries and do not add synchronization to inner kernels.
 ## Saved results
 
 Reconstruction policy is part of the exact result signature:
-`default_c10_c12_estimator="phase_of_mean"` and
+`default_estimator="phase_of_mean"`, `higher_order_model="krivanek14"` and
 `upsampling_dc_policy="single_origin"`. A previous image cannot silently pass
 exact-image reuse. The fit schema remains valid because units, fitted-parameter
 meaning and search objective have not changed. Historical saved arrays remain
@@ -59,3 +59,28 @@ Private evidence identifier: `20261016-ssb-coherent-arrival`.
 Acquisition names, images, manifests and raw benchmark logs remain outside this
 public repository. Timings from shared hardware are observations, not an
 isolated speedup or a guarantee of microscope frame rate.
+
+## Higher-order extension
+
+The 14-term Krivanek polynomial is shared as Cartesian shader source between
+Metal and CUDA. Coefficients are converted from public nm/degrees to engine
+Angstrom/radians once. The existing aperture, transfer-function signs, depth
+weights, DC normalization and alias handling are retained. This extension does
+not change the C10/C12 kernels or search objective. Higher-order coefficients
+are supplied to reconstruction; the optimizer does not search those extra terms.
+
+The independent small-scan oracle evaluates polar chi in float64, then builds
+each corrected detector wave and sums it. It covers active terms through C56,
+tilt/depth, output factors 1/2/3/4, native diagnostic loss, constant-scan nulls
+through 8x, and saved Auto results on physical MPS and CUDA. Historical CUDA
+mean-phase tests retain their existing reference and tolerance explicitly.
+
+Private validation `20261017-ssb-higher-order` uses two full
+512 by 512 by 192 by 192 acquisitions with fixed optics. Existing C10/C12
+images remain bitwise equal before/after on each backend. Controlled nonzero
+higher-order coefficients test the new path; they are not experimental fits
+or evidence of improved absolute potential accuracy. Cross-backend float32
+phases agree within 1e-5 rad RMS on these acquisitions. CUDA accumulates in
+float64, while Metal uses its existing float32 reduction; bitwise equality
+between devices is not claimed. Large streamed scans retain their explicit
+C10/C12 support limit rather than silently changing estimators.

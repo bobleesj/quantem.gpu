@@ -116,6 +116,8 @@ class SSBProtocol(Protocol):
         sample_tilt_mrad: tuple[float, float],
         thickness: float,
         phase_estimator: str,
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[object, float | None]: ...
 
     def preview_sample(

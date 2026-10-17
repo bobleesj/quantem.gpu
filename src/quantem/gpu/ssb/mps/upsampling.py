@@ -10,6 +10,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from quantem.gpu.ssb.higher_order import CHI_SOURCE, pack_coefficients
 from quantem.gpu.ssb.mps.hardware import require_mlx
 from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sum_from_complex
 from quantem.gpu.ssb.mps.prepared import PreparedMpsSSB, ifft2_chunked
@@ -18,6 +19,9 @@ from quantem.gpu.ssb.mps.thick_sample import _THICK_FIT_BATCH_HEADER, _params
 # Bound the correction and FFT working arrays independently of the BF count.
 _WORK_BYTES = 512 << 20
 _PENDING_CHUNKS = 4
+_HEADER = ("#define SSB_PRECISE_GEOMETRY\n#define SSB_DEVICE inline\n"
+           "#define SSB_COEFFICIENTS const device float*\n"
+           + _THICK_FIT_BATCH_HEADER + CHI_SOURCE)
 
 
 @lru_cache(maxsize=1)
@@ -26,9 +30,9 @@ def _alias_probe_kernel():
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_alias_probe",
-        input_names=["k_row", "k_col", "params"],
+        input_names=["k_row", "k_col", "params", "coefficients"],
         output_names=["probe"],
-        header="#define SSB_PRECISE_GEOMETRY\n" + _THICK_FIT_BATCH_HEADER,
+        header=_HEADER,
         compile_options={"math_mode": "safe"},
         source="""
         uint k = thread_position_in_grid.x;
@@ -36,6 +40,7 @@ def _alias_probe_kernel():
         float4 gk = tf_geometry(k_row[k], k_col[k], params[0], params[1], params[2], params[3]);
         for (uint i = 0; i < 4; ++i) probe[k * 5 + i] = gk[i];
         probe[k * 5 + 4] = params[8] * gk.x * (params[5] * (gk.y * params[6] + gk.z * params[7]) + params[4]);
+        if (HIGHER) probe[k * 5 + 4] = ssb_chi_full(k_row[k], k_col[k], params[0], coefficients);
         """,
     )
 
@@ -45,9 +50,9 @@ def _alias_correction_kernel():
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_alias_correction",
-        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe"],
+        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
         output_names=["corrected"],
-        header="#define SSB_PRECISE_GEOMETRY\n" + _THICK_FIT_BATCH_HEADER,
+        header=_HEADER,
         compile_options={"math_mode": "safe"},
         source="""
         uint col = thread_position_in_grid.x;
@@ -81,6 +86,10 @@ def _alias_correction_kernel():
         float chi_k = probe[k * 5 + 4];
         float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
         float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
+        if (HIGHER) {
+            chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
+            chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
+        }
         float shift = 6.283185307179586f * (qr * tr + qc * tc);
         float a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
         float b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
@@ -114,7 +123,10 @@ def _reconstruct_upsampled(
     thickness: float,
     upsampling_factor: int,
     phase_estimator: str,
-) -> np.ndarray:
+    higher_order_magnitudes: np.ndarray | None = None,
+    higher_order_angles: np.ndarray | None = None,
+    compute_loss: bool = False,
+) -> tuple[np.ndarray, float | None]:
     """Return the full fine-grid phase with every selected BF contribution.
 
     ``mean_phase`` averages per-detector phases after their inverse FFTs.
@@ -124,6 +136,8 @@ def _reconstruct_upsampled(
     """
     if phase_estimator not in ("mean_phase", "phase_of_mean"):
         raise ValueError("Choose phase_estimator='mean_phase' or 'phase_of_mean'.")
+    if compute_loss and (upsampling_factor != 1 or phase_estimator != "mean_phase"):
+        raise ValueError("The phase-variance diagnostic requires native-grid mean_phase.")
     mx = prepared.mx
     source_n = int(prepared.scan_shape[0])
     n = source_n * upsampling_factor
@@ -131,14 +145,18 @@ def _reconstruct_upsampled(
     qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
     qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
     params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
+    higher = higher_order_magnitudes is not None
+    coefficients = mx.array(pack_coefficients(higher_order_magnitudes, higher_order_angles)
+                            if higher else np.zeros((14, 2), np.float32))
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
     total = mx.zeros((n, n), dtype=mx.complex64 if wave_mean else mx.float32)
+    squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
     chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
     stored = int(prepared.g_qk.shape[0])
     probe = _alias_probe_kernel()(
-        inputs=[prepared.kx, prepared.ky, params],
-        template=[("K", stored)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
+        inputs=[prepared.kx, prepared.ky, params, coefficients],
+        template=[("K", stored), ("HIGHER", higher)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
         output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
     )[0]
     kernel = _alias_correction_kernel()
@@ -154,12 +172,14 @@ def _reconstruct_upsampled(
                 params,
                 dc,
                 probe[start:stop],
+                coefficients,
             ],
             template=[
                 ("N", n),
                 ("SOURCE_N", source_n),
                 ("G_COLS", int(prepared.g_qk.shape[-1])),
                 ("K", stop - start),
+                ("HIGHER", higher),
             ],
             grid=(n, n, stop - start),
             threadgroup=(32, 8, 1),
@@ -169,7 +189,12 @@ def _reconstruct_upsampled(
         if wave_mean:
             total = total + mx.sum(corrected, axis=0)
         else:
-            total = total + phase_sum_from_complex(mx, ifft2_chunked(mx, corrected))
+            waves = ifft2_chunked(mx, corrected)
+            total = total + phase_sum_from_complex(mx, waves)
+            if compute_loss:
+                angles = mx.arctan2(mx.imag(waves), mx.real(waves))
+                squares = squares + mx.sum(angles * angles, axis=0)
+                mx.eval(squares)
         # Keep the same accumulation order while overlapping chunk submission.
         # Periodic completion bounds the number of live temporary arrays.
         mx.async_eval(total)
@@ -183,4 +208,5 @@ def _reconstruct_upsampled(
     else:
         phase = total / prepared.num_bright_field_pixels
     mx.eval(phase)
-    return np.asarray(phase, dtype=np.float32)
+    loss = float(mx.mean(squares / prepared.num_bright_field_pixels - phase * phase)) if compute_loss else None
+    return np.asarray(phase, dtype=np.float32), loss
