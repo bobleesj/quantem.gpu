@@ -1,6 +1,7 @@
 /** Authenticated integer QEM admission; detector measurements remain encoded. */
 import tables from "../../formats/qem/qem-rans-tables-v1.json";
-import { payloadGroupLimit, type RansByteSource } from "./rans-source";
+import { createQemHasher } from "./qem-checksum";
+import { payloadGroupLimit, type RansByteSource, type RansPreparedGroup } from "./rans-source";
 import type { RansManifest } from "./rans";
 
 /** Byte access to one .qem acquisition: a local File or a file served beside the viewer. */
@@ -18,6 +19,15 @@ export interface QemByteFile {
 }
 
 type Span = { offset: number; count: number };
+/** Fully authenticated, unmapped payload and its validated per-block tables. */
+export type QemCheckpointGroup = {
+  payload: GPUBuffer;
+  K: number;
+  nativeDtype: string;
+  entries: Uint32Array;
+  blocks: { offset: number; frames: number; offsets: Uint32Array; columns: Uint32Array }[];
+};
+export type QemCheckpointSubmit = (group: QemCheckpointGroup) => RansPreparedGroup;
 type Chunk = { first: number; scans: number; arrays: Span[] };
 type Header = {
   container: string;
@@ -406,8 +416,9 @@ export async function qemFileSource(
   onStatus: (text: string) => void = () => {},
   device?: GPUDevice,
   signal?: AbortSignal,
+  checkpoint?: QemCheckpointSubmit,
 ): Promise<RansByteSource> {
-  return admitQemFile(file, await readQemHeader(file, signal), onStatus, device, signal);
+  return admitQemFile(file, await readQemHeader(file, signal), onStatus, device, signal, checkpoint);
 }
 
 /** Authenticate and stage the payload described by an already checked header. */
@@ -417,6 +428,7 @@ async function admitQemFile(
   onStatus: (text: string) => void,
   device?: GPUDevice,
   signal?: AbortSignal,
+  checkpoint?: QemCheckpointSubmit,
 ): Promise<RansByteSource> {
   const [rows, cols, detRows, detCols] = header.shape,
     K = detRows * detCols;
@@ -430,11 +442,13 @@ async function admitQemFile(
   // ever decoded. A chunk larger than one group is split across groups on a
   // word boundary; the blocks a split cuts are copied whole on the GPU once
   // the authenticated offset tables locate them.
-  type PayloadGroup = { size: number; end: number; buffer?: GPUBuffer; mapped?: Uint8Array };
+  type PayloadGroup = { size: number; end: number; readyEnd?: number; buffer?: GPUBuffer; mapped?: Uint8Array };
   type Region = { start: number; end: number; offset: number; group: PayloadGroup };
   const groups: PayloadGroup[] = [];
   const regions: Region[] = [];
   const groupLimit = device ? payloadGroupLimit(device) : 0;
+  const checkpoints = new Map<GPUBuffer, RansPreparedGroup>();
+  const overlap = checkpoint && device && header.chunks.every(chunk => chunk.arrays[0].count <= groupLimit);
   if (device) {
     for (const chunk of header.chunks) {
       let { offset: start, count } = chunk.arrays[0];
@@ -448,6 +462,7 @@ async function admitQemFile(
         // An empty region must not delay unmapping the group's last copied bytes.
         if (piece) group.end = start + piece;
         regions.push({ start, end: start + piece, offset, group });
+        group.readyEnd = chunk.arrays[2].offset + chunk.arrays[2].count;
         start += piece; count -= piece;
         if (!count) break;
         group = undefined;
@@ -458,19 +473,124 @@ async function admitQemFile(
   // WebCrypto uses the platform's SHA-256 implementation without a JavaScript
   // loop over every byte. A served file streams the chunks through one response.
   // Cancellation, or any failure, ends that download instead of waiting for reads in flight.
+  const entries = new Uint32Array(64 * 33 * 2);
+  tables.frequencies.forEach((frequencies, model) => {
+    let cumulative = 0;
+    frequencies.forEach((frequency, symbol) => {
+      const at = (model * 33 + symbol) * 2;
+      entries[at] = (cumulative << 16) | symbol;
+      entries[at + 1] = frequency;
+      cumulative += frequency;
+    });
+    requireQem(cumulative === 1024, "invalid fixed probability table");
+  });
+  const blockMeta: {
+    index: number;
+    bytes: number;
+    model: number;
+    byte_start: number;
+    byte_end: number;
+    frames: number;
+  }[] = [];
+  const offsets: Uint32Array<ArrayBuffer>[] = [],
+    columns: Uint32Array<ArrayBuffer>[] = [];
+  let preparedChunks = 0;
+  const prepareTables = (verifiedEnd: number) => {
+    for (; preparedChunks < header.chunks.length; preparedChunks++) {
+      const chunkIndex = preparedChunks, chunk = header.chunks[chunkIndex];
+      if (chunk.arrays[2].offset + chunk.arrays[2].count > verifiedEnd) break;
+      const payload = chunk.arrays[0],
+        blocks = Math.ceil(chunk.scans / 512);
+      const local = new Uint32Array(tableCopies[chunkIndex * 2].target.buffer),
+        models = tableCopies[chunkIndex * 2 + 1].target;
+      requireQem(
+        local[0] === 0 && local[local.length - 1] === payload.count,
+        "stream table does not partition payload",
+      );
+      for (let block = 0; block < blocks; block++) {
+        const first = block * K,
+          start = local[first],
+          end = local[first + K],
+          frames = Math.min(512, chunk.scans - block * 512);
+        const relative = new Uint32Array(K + 1),
+          metadata = new Uint32Array(K * 3);
+        for (let k = 0; k < K; k++) {
+          const model = models[first + k],
+            size = local[first + k + 1] - local[first + k];
+          requireQem(
+            local[first + k + 1] >= local[first + k] &&
+              (model < 64
+                ? size >= 4
+                : model === 252
+                  ? size % 2 === 0 && size <= frames * 2
+                  : model === 253
+                    ? size === 0
+                    : model === 254
+                      ? size === frames * 2
+                      : model === 255 && size === 2),
+            "invalid encoded stream mode or length",
+          );
+          // Write the three words directly: a full acquisition can have
+          // millions of columns, each of which otherwise allocates an array.
+          const at = k * 3;
+          if (model < 64) {
+            metadata[at] = model * 33;
+            metadata[at + 1] = (model + 1) * 33;
+            metadata[at + 2] = 2;
+          } else {
+            // The first two words remain zero in the new Uint32Array.
+            metadata[at + 2] = model === 252 ? 5 : model === 253 ? 3 : model === 254 ? 1 : 4;
+          }
+          relative[k] = local[first + k] - start;
+        }
+        relative[K] = end - start;
+        const index = blockMeta.length;
+        blockMeta.push({
+          index,
+          bytes: end - start,
+          model: index,
+          byte_start: body + payload.offset + start,
+          byte_end: body + payload.offset + end,
+          frames,
+        });
+        offsets.push(relative);
+        columns.push(metadata);
+      }
+    }
+  };
+  const submitReady = (verifiedEnd: number) => {
+    if (!overlap) return;
+    for (const group of groups) {
+      if (!group.buffer || group.mapped || group.readyEnd! > verifiedEnd || checkpoints.has(group.buffer)) continue;
+      const parts = blockMeta.flatMap(block => {
+        const region = regions.find(region => region.group === group &&
+          block.byte_start - body >= region.start && block.byte_end - body <= region.end);
+        return region ? [{
+          offset: region.offset + block.byte_start - body - region.start,
+          frames: block.frames, offsets: offsets[block.index], columns: columns[block.index],
+        }] : [];
+      });
+      if (parts.length) checkpoints.set(group.buffer, checkpoint!({
+        payload: group.buffer, K, nativeDtype: header.dtype, entries, blocks: parts,
+      }));
+    }
+  };
   const stopping = new AbortController();
   const cancel = signal ? AbortSignal.any([signal, stopping.signal]) : stopping.signal;
   const stream = file.chunks?.(body, file.size, chunkBytes, cancel);
+  const hasher = createQemHasher(header.sha256.length, cancel);
   const verifiedChunk = async (index: number) => {
     const begin = index * chunkBytes;
     const end = Math.min(header.bytes, (index + 1) * chunkBytes);
     cancel.throwIfAborted();
     // Request before the first await: queued stream reads resolve in call order.
-    const bytes = stream
+    let bytes = stream
       ? await stream.next().then(part => part.done ? new ArrayBuffer(0) : part.value)
       : await file.slice(body + begin, body + end).arrayBuffer();
     requireQem(bytes.byteLength === end - begin, "truncated authentication chunk");
-    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const verified = await hasher.digest(bytes);
+    bytes = verified.bytes;
+    const hash = new Uint8Array(verified.hash);
     const actual = Array.from(hash, value => value.toString(16).padStart(2, "0")).join("");
     requireQem(actual === header.sha256[index], "payload checksum mismatch");
     return new Uint8Array(bytes);
@@ -509,6 +629,8 @@ async function admitQemFile(
           if (last > first) target.set(bytes.subarray(first - start, last - start), first - offset);
         }
         // Hashed and copied: nothing reads this chunk again, so its buffer may carry a later one.
+        prepareTables(end);
+        submitReady(end);
         file.recycleChunk?.(bytes.buffer);
         if (next < header.sha256.length) enqueue();
       }
@@ -519,6 +641,7 @@ async function admitQemFile(
       // also wait for them so no chunk arrives after the groups are released.
       // Ending the download first makes those reads settle at once.
       stopping.abort();
+      hasher.dispose();
       await Promise.all(pending);
       await stream?.return(undefined);
     }
@@ -527,85 +650,7 @@ async function admitQemFile(
       group.buffer ??= device!.createBuffer({ size: 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       if (group.mapped) { group.buffer.unmap(); group.mapped = undefined; }
     }
-    const entries = new Uint32Array(64 * 33 * 2);
-    tables.frequencies.forEach((frequencies, model) => {
-      let cumulative = 0;
-      frequencies.forEach((frequency, symbol) => {
-        const at = (model * 33 + symbol) * 2;
-        entries[at] = (cumulative << 16) | symbol;
-        entries[at + 1] = frequency;
-        cumulative += frequency;
-      });
-      requireQem(cumulative === 1024, "invalid fixed probability table");
-    });
-    const blockMeta: {
-      index: number;
-      bytes: number;
-      model: number;
-      byte_start: number;
-      byte_end: number;
-      frames: number;
-    }[] = [];
-    const offsets: Uint32Array<ArrayBuffer>[] = [],
-      columns: Uint32Array<ArrayBuffer>[] = [];
-    for (const [chunkIndex, chunk] of header.chunks.entries()) {
-      const payload = chunk.arrays[0],
-        blocks = Math.ceil(chunk.scans / 512);
-      const local = new Uint32Array(tableCopies[chunkIndex * 2].target.buffer),
-        models = tableCopies[chunkIndex * 2 + 1].target;
-      requireQem(
-        local[0] === 0 && local[local.length - 1] === payload.count,
-        "stream table does not partition payload",
-      );
-      for (let block = 0; block < blocks; block++) {
-        const first = block * K,
-          start = local[first],
-          end = local[first + K],
-          frames = Math.min(512, chunk.scans - block * 512);
-        const relative = new Uint32Array(K + 1),
-          metadata = new Uint32Array(K * 3);
-        for (let k = 0; k < K; k++) {
-          const model = models[first + k],
-            size = local[first + k + 1] - local[first + k];
-          requireQem(
-            local[first + k + 1] >= local[first + k] &&
-              (model < 64
-                ? size >= 4
-                : model === 252
-                  ? size % 2 === 0 && size <= frames * 2
-                  : model === 253
-                    ? size === 0
-                    : model === 254
-                      ? size === frames * 2
-                      : model === 255 && size === 2),
-            "invalid encoded stream mode or length",
-          );
-          metadata.set(
-            model < 64
-              ? [model * 33, (model + 1) * 33, 2]
-              : [
-                  0,
-                  0,
-                  model === 252 ? 5 : model === 253 ? 3 : model === 254 ? 1 : 4,
-                ],
-            k * 3,
-          );
-          relative[k] = local[first + k] - start;
-        }
-        relative[K] = end - start;
-        const index = blockMeta.length;
-        blockMeta.push({
-          index,
-          bytes: end - start,
-          model: index,
-          byte_start: body + payload.offset + start,
-          byte_end: body + payload.offset + end,
-          frames,
-        });
-        offsets.push(relative);
-        columns.push(metadata);
-      }
-    }
+    prepareTables(header.bytes);
     // Copy each block cut by a group split, whole and from authenticated bytes,
     // so the decoder binds every block in one buffer. Word-aligned extents keep
     // the GPU copies valid; the decoder skips the unaligned head through its
@@ -684,7 +729,13 @@ async function admitQemFile(
         requireQem(name === "payload" && region && end >= start, "invalid resident payload range");
         return { buffer: region.group.buffer!, offset: region.offset + start - body - region.start };
       },
-      dispose() { for (const group of groups) group.buffer?.destroy(); },
+      residentCheckpoints(payload) { return checkpoints.get(payload); },
+      dispose() {
+        for (const group of groups) group.buffer?.destroy();
+        for (const prepared of checkpoints.values()) {
+          prepared.checkpoints.destroy(); prepared.tables.destroy(); prepared.offsets.destroy();
+        }
+      },
       async read(name) {
         if (name === "manifest.json")
           return new TextEncoder().encode(JSON.stringify(mapped)).buffer;
@@ -706,6 +757,9 @@ async function admitQemFile(
   } catch (error) {
     // Staged groups belong to this admission until it returns a source.
     for (const group of groups) group.buffer?.destroy();
+    for (const prepared of checkpoints.values()) {
+      prepared.checkpoints.destroy(); prepared.tables.destroy(); prepared.offsets.destroy();
+    }
     throw error;
   }
 }
@@ -736,7 +790,7 @@ export function prefixedStatus(prefix: string, onStatus: (text: string) => void)
 }
 
 /** Join compatible .qem acquisitions into one series without decoding counts or changing their order. */
-export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal): Promise<RansByteSource> {
+export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (text: string) => void = () => {}, badPixels: number[] = [], device?: GPUDevice, signal?: AbortSignal, checkpoint?: QemCheckpointSubmit): Promise<RansByteSource> {
   const ordered = Array.from(files);
   // Each header is read once: its checksums authenticate the payload admitted below.
   const headers = await readQemSeriesHeaders(ordered, signal);
@@ -749,7 +803,7 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
     for (let index = 0; index < ordered.length; index++) {
       // One file needs no position; a series names it once around this source.
       const status = ordered.length > 1 ? prefixedStatus(`${index + 1}/${ordered.length} ${ordered[index].name}`, onStatus) : onStatus;
-      const source = await admitQemFile(ordered[index], headers[index], status, device, signal);
+      const source = await admitQemFile(ordered[index], headers[index], status, device, signal, checkpoint);
       // Owned from here, so a later failure releases its staged storage.
       sources.push(source);
       manifests.push(JSON.parse(new TextDecoder().decode(await source.read("manifest.json"))) as RansManifest);
@@ -769,6 +823,13 @@ export async function qemFilesSource(files: ArrayLike<QemByteFile>, onStatus: (t
       }),
     };
     return { mode: sources[0].mode,
+      residentCheckpoints(payload) {
+        for (const source of sources) {
+          const found = source.residentCheckpoints?.(payload);
+          if (found) return found;
+        }
+        return undefined;
+      },
       residentPayload(name, start, end) {
         const namespaced = /^acquisition-(\d+)\/(.+)$/.exec(name);
         requireQem(namespaced, "invalid resident acquisition name");

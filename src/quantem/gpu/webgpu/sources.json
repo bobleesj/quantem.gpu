@@ -3,6 +3,7 @@
   "detector/webgpu/borrowed-image.ts",
   "detector/webgpu/exact-com.ts",
   "detector/webgpu/geometry.ts",
+  "detector/webgpu/qem-checksum.ts",
   "detector/webgpu/qem-source.ts",
   "detector/webgpu/rans-series.ts",
   "detector/webgpu/rans-source.ts",

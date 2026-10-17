@@ -10,8 +10,9 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
  * Large sizes cross 64 MiB authentication chunks and GPU group limits cheaply.
  * `misdeclare` makes the first chunk's authenticated offset table claim one byte
  * fewer than its payload.
+ * `models` optionally selects each block's mode for metadata-validation tests.
  */
-export function syntheticQem(chunks: number[][], misdeclare = false): Uint8Array {
+export function syntheticQem(chunks: number[][], misdeclare = false, models?: number[][]): Uint8Array {
   const widths = [1, 4, 1, 4, 8, 1];
   let previousEnd = 0;
   const layout = chunks.map((blocks, index) => {
@@ -33,6 +34,7 @@ export function syntheticQem(chunks: number[][], misdeclare = false): Uint8Array
     chunks[index].forEach((size, block) => { end += size; table.setUint32((block + 1) * 4, end, true); });
     if (misdeclare && index === 0) table.setUint32(chunks[0].length * 4, end - 1, true);
     payload.fill(0, arrays[2].offset, arrays[2].offset + arrays[2].count);
+    if (models) payload.set(models[index], arrays[2].offset);
   });
   const chunkBytes = 64 << 20;
   const hashes = [];
