@@ -1,11 +1,7 @@
-"""Arina uint32 masters with flagged pixels load as the same uint16 counts on CUDA and MPS.
+"""ARINA uint32 input stays uint32, including flagged markers and large valid counts.
 
-Arina writes uint32 counts and 0xFFFFFFFF at every pixel its mask flags. The
-loader replaces the flagged pixels on the GPU (by default with the median of
-their valid 3x3 neighbors), then checks that every count fits uint16 before
-encoding. Without correction a flagged sentinel is stored as 0 and counted. MPS used to check the raw counts on the host before the correction
-and refused these files. h5py with hdf5plugin's bitshuffle filter and a NumPy
-median are the oracle.
+Optional corrections run on the GPU and are recorded as changed measurements.
+The uncorrected route preserves all original counts; product masks remain separate.
 """
 
 import os
@@ -70,13 +66,13 @@ def _corrected(counts, pixel_mask, method):
             and pixel_mask[neighbor_row, neighbor_col] == 0
         ]
         expected[:, row, col] = 0 if method == "zero" else np.median(np.stack(neighbors, axis=-1), axis=-1)
-    return expected.astype(np.uint16)
+    return expected
 
 
 # 1100 scans span two Metal load batches; a 48 x 48 uint32 frame (9216 bytes)
 # ends in a partial bitshuffle block.
 @pytest.mark.parametrize("method", ["median", "zero"])
-def test_flagged_uint32_master_loads_corrected_uint16_counts(tmp_path, method):
+def test_flagged_uint32_master_preserves_dtype_with_explicit_correction(tmp_path, method):
     backend = _backend()
     scan_shape, detector_shape = (25, 44), (48, 48)
     counts, pixel_mask = _flagged_counts(25 * 44, detector_shape)
@@ -84,7 +80,7 @@ def test_flagged_uint32_master_loads_corrected_uint16_counts(tmp_path, method):
     expected = _corrected(counts, pixel_mask, method)
 
     with io.load(master, backend=backend, scan_shape=scan_shape, hot_pixel_correction=method, verbose=False) as loaded:
-        assert loaded.dtype == np.uint16
+        assert loaded.dtype == np.uint32
         assert loaded.metadata["source_dtype"] == "uint32"
         assert loaded.metadata["hot_pixel_correction"]["applied"] is True
         assert loaded.metadata["file_counts_exact"] is False
@@ -106,65 +102,53 @@ def test_flagged_uint32_master_loads_corrected_uint16_counts(tmp_path, method):
         np.testing.assert_array_equal(handle["entry/data/data_000001"][:3], counts[:3])
 
 
-def test_flagged_uint32_master_refuses_valid_counts_uint16_cannot_hold(tmp_path, capsys):
+def test_flagged_uint32_master_retains_all_original_counts(tmp_path, capsys):
     backend = _backend()
     counts, pixel_mask = _flagged_counts(1024, (48, 48))
-    counts[700, 10, 10] = 65536  # a genuine count at a valid pixel is never clipped
-    (tmp_path / "over-range").mkdir()
-    with pytest.raises(ValueError, match="counts above 65535"):
-        io.load(_write_master(tmp_path / "over-range", counts, pixel_mask), backend=backend,
-                scan_shape=(32, 32), verbose=False)
-
-    # Without correction the flagged sentinels cannot be uint16 counts. They are
-    # stored as 0 and counted; the mask keeps their positions and every valid
-    # count stays the file's.
-    counts[700, 10, 10] = 3
-    (tmp_path / "uncorrected").mkdir()
-    master = _write_master(tmp_path / "uncorrected", counts, pixel_mask)
+    counts[700, 10, 10] = 70000
+    master = _write_master(tmp_path, counts, pixel_mask)
     with io.load(master, backend=backend, scan_shape=(32, 32), hot_pixel_correction="none",
                  apply_mask=False, verbose=True) as loaded:
-        assert "4 bad pixels kept in the mask, their uint32 marker stored as 0" in capsys.readouterr().out
-        stored = loaded.read().cpu().numpy().reshape(counts.shape)
-        assert loaded.metadata["flagged_markers_stored_as_zero"] == 1024 * 4
-        assert loaded.metadata["detector_mask_policy"] == "flagged-markers-stored-as-zero"
+        assert "4 bad pixels left as recorded" in capsys.readouterr().out
+        assert loaded.dtype == np.uint32
+        assert loaded.metadata["file_counts_exact"] is True
+        assert loaded.metadata["flagged_markers_stored_as_zero"] == 0
+        assert loaded.metadata["detector_mask_policy"] == "preserve-stored-counts"
+        np.testing.assert_array_equal(loaded.read().cpu().numpy().reshape(counts.shape), counts)
         np.testing.assert_array_equal(np.asarray(loaded.metadata["pixel_mask"]), pixel_mask)
-    valid = pixel_mask == 0
-    np.testing.assert_array_equal(stored[:, valid], counts[:, valid])
-    assert not stored[:, ~valid].any()
+        session = detector.prepare(loaded)
+        valid = pixel_mask == 0
+        np.testing.assert_array_equal(session.masked_sum_exact(valid), counts[:, valid].sum(1).reshape(32, 32))
+        np.testing.assert_array_equal(session.frame(0)[~valid], 0)
 
 
-def test_failed_uint32_load_releases_the_partial_resident(tmp_path):
-    """A count above 65535 found in a later load block frees the blocks already encoded.
+def test_failed_uint32_load_releases_the_partial_resident(tmp_path, monkeypatch):
+    """A later encoder failure frees earlier chunks even while a traceback survives."""
+    from quantem.gpu.resident.bit_ans import BitANSResident
 
-    The traceback keeps the loader's locals alive (an IPython session keeps
-    the last one), so an unreleased partial resident would hold its device
-    memory until the session ends.
-    """
-    import traceback
-
-    from quantem.gpu.resident.cuda.counts import StreamedCounts
-
-    if _backend() != "cuda":
-        pytest.skip("The CUDA loader encodes 16384-scan blocks; this checks its failure path.")
-    counts = np.random.default_rng(3).integers(0, 50, (17000, 8, 8), dtype=np.uint32)
-    counts[16900, 3, 3] = 70000
+    backend = _backend()
+    counts = np.random.default_rng(3).integers(0, 50, (1700, 8, 8), dtype=np.uint32)
     master = _write_master(tmp_path, counts, np.zeros((8, 8), np.uint32))
-    with pytest.raises(ValueError, match="above 65535") as failure:
-        io.load(str(master), scan_shape=(17000, 1), backend="cuda", verbose=False)
-    partial = [
-        frame.f_locals["source"]
-        for frame, _ in traceback.walk_tb(failure.tb)
-        if isinstance(frame.f_locals.get("source"), StreamedCounts)
-    ]
-    assert partial and all(source.is_released and not source.chunks for source in partial)
+    append = BitANSResident.append_device
+    partial = []
+
+    def fail_later(source, raw):
+        if source._lanes.ready_scans:
+            partial.append(source)
+            raise ValueError("injected encoder failure")
+        return append(source, raw)
+
+    monkeypatch.setattr(BitANSResident, "append_device", fail_later)
+    with pytest.raises(ValueError, match="injected encoder failure"):
+        io.load(str(master), scan_shape=(1700, 1), backend=backend, verbose=False)
+    assert partial and all(source.is_released and source._lanes is None for source in partial)
 
 
 @pytest.mark.parametrize("method", ["median", "none"])
 def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(tmp_path, method):
     """A plain 4D uint32 dataset with flagged-pixel markers loads like an Arina master.
 
-    Metal refused it: its range check counted the 0xFFFFFFFF markers that the
-    CUDA loader stores as 0 (or corrects).
+    Stored markers remain intact unless correction was explicitly selected.
     """
     backend = _backend()
     counts, pixel_mask = _flagged_counts(6 * 8, (48, 48))
@@ -173,11 +157,8 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
         handle["data"] = counts.reshape(6, 8, 48, 48)
         handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = pixel_mask
     expected = _corrected(counts, pixel_mask, "median") if method == "median" else counts.copy()
-    if method == "none":
-        expected[:, pixel_mask != 0] = 0
-        expected = expected.astype(np.uint16)
     with io.load(path, backend=backend, hot_pixel_correction=method, apply_mask=False, verbose=False) as loaded:
-        assert loaded.dtype == np.uint16
+        assert loaded.dtype == np.uint32
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected.reshape(6, 8, 48, 48))
         if method == "none":
-            assert loaded.metadata["flagged_markers_stored_as_zero"] == 6 * 8 * 4
+            assert loaded.metadata["flagged_markers_stored_as_zero"] == 0

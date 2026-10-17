@@ -94,7 +94,7 @@ def test_collection_warns_of_master_calibration_it_does_not_read(tmp_path, backe
         assert copy.units == ("angstrom", "angstrom", None, None)
 
 
-def test_uint32_flagged_markers_are_stored_as_zero_and_valid_counts_never_wrap(tmp_path, backend):
+def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, backend):
     from quantem.gpu import io
 
     master = _master(tmp_path, np.uint32)
@@ -113,25 +113,27 @@ def test_uint32_flagged_markers_are_stored_as_zero_and_valid_counts_never_wrap(t
         mask = handle["entry/instrument/detector/detectorSpecific/pixel_mask"][()]
     result = convert.convert(master, tmp_path / "markers.qem", backend=backend)
     assert result.verified is True
-    assert result.verification["flagged_markers_stored_as_zero"] == 1024
+    assert result.verification["flagged_markers_stored_as_zero"] == 0
     header, _ = read_header(tmp_path / "markers.qem")
-    assert header["metadata"]["flagged_markers_stored_as_zero"] == 1024
-    assert header["metadata"]["file_counts_exact"] is False
+    assert header["metadata"]["flagged_markers_stored_as_zero"] == 0
+    assert header["metadata"]["file_counts_exact"] is True
     operations = {record["operation"] for record in header["scientific_metadata"]["processing"]}
-    assert "flagged_marker_zeroing" in operations
+    assert "flagged_marker_zeroing" not in operations
     with io.load(tmp_path / "markers.qem", backend=backend, apply_mask=False, verbose=False) as loaded:
         counts = loaded.read().cpu().numpy().reshape(source.shape)
         np.testing.assert_array_equal(np.asarray(loaded.metadata["pixel_mask"]), mask)
     valid = mask == 0
     np.testing.assert_array_equal(counts[:, valid], source[:, valid])
-    assert not counts[:, ~valid].any()
+    np.testing.assert_array_equal(counts[:, ~valid], source[:, ~valid])
 
-    # A count above 65535 at an unflagged pixel is a measurement: refuse, never clip.
+    # A wide valid count must remain native uint32, just like a flagged marker.
     with h5py.File(tmp_path / "detector.h5", "r+") as handle:
         handle["entry/data/data"][0, 1, 1] = 70000
-    rejected = convert.convert(master, tmp_path / "wide.qem", backend=backend)
-    assert rejected.failed and "above 65535" in rejected.skipped
-    assert not (tmp_path / "wide.qem").exists()
+    wider = convert.convert(master, tmp_path / "wide.qem", backend=backend)
+    assert wider.verified is True
+    with io.load(tmp_path / "wide.qem", backend=backend, verbose=False) as loaded:
+        assert loaded.dtype == np.uint32
+        assert int(loaded[0, 0, 1, 1]) == 70000
 
 
 def test_failed_verification_does_not_publish_a_copy(tmp_path, backend, monkeypatch):

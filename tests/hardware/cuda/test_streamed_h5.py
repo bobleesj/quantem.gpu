@@ -62,7 +62,7 @@ def test_index_sum_preserves_uint64_bound(tmp_path):
 @pytest.mark.parametrize(
     "representation", ["encoded", None], ids=["encoded", "default-encoded"]
 )
-def test_h5_defaults_to_gpu_median_hot_pixel_correction(
+def test_h5_explicit_gpu_median_hot_pixel_correction(
     tmp_path, dtype, representation
 ):
     raw = (np.arange(2 * 5 * 5 * 5).reshape(2, 5, 5, 5) * 7 % 251).astype(dtype)
@@ -80,6 +80,7 @@ def test_h5_defaults_to_gpu_median_hot_pixel_correction(
         path,
         backend="cuda",
         representation=representation,
+        hot_pixel_correction="median",
         apply_mask=False,
         verbose=False,
     )
@@ -251,9 +252,10 @@ def test_uint32_master_sentinels_are_corrected_before_encoding(tmp_path, method)
     # A genuine over-range count at a valid pixel must never be clipped.
     with h5py.File(path, "r+") as handle:
         handle["entry/data/data_000001"][0, 1, 1] = 70000
-    with pytest.raises(ValueError, match="counts above 65535"):
-        io.load(path, backend="cuda", representation="encoded", scan_shape=(2, 5),
-                apply_mask=False, hot_pixel_correction=method, verbose=False)
+    with io.load(path, backend="cuda", representation="encoded", scan_shape=(2, 5),
+                 apply_mask=False, hot_pixel_correction=method, verbose=False) as loaded:
+        assert loaded.dtype == np.dtype("uint32")
+        assert loaded[0, 0][1, 1].item() == 70000
 
 
 @pytest.mark.slow

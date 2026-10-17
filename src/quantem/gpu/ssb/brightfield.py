@@ -140,7 +140,18 @@ def crop_bright_field(
     # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
     row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
     row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)
-    counts = loaded.read(scan_region=scan_region, detector_region=(row0, row1, col0, col1))
+    if backend == "mps" and loaded.dtype == np.dtype("float64"):
+        from quantem.gpu.resident.mps.float64_display import float32_view
+
+        original = loaded.read(scan_region=scan_region, detector_region=(row0, row1, col0, col1), output="native")
+        try:
+            # SSB prepares float32 FFT input on both backends. Retain native
+            # float64 storage and perform this calculation conversion on GPU.
+            counts = float32_view(original)
+        finally:
+            original.release()
+    else:
+        counts = loaded.read(scan_region=scan_region, detector_region=(row0, row1, col0, col1))
     if backend == "cuda":
         # torch exports a tensor through DLPack from its current device and CuPy imports it onto its own: both must be
         # the acquisition's GPU, which need not be the current one
@@ -151,7 +162,17 @@ def crop_bright_field(
             # encoded source untouched and the fitted/full-scan masks equal.
             valid = getattr(loaded.data, "valid_pixels", None)
             if valid is not None:
-                counts *= cp.asarray(valid[row0:row1, col0:col1], dtype=counts.dtype)
+                counts = cp.where(cp.asarray(valid[row0:row1, col0:col1]), counts, 0)
+    else:
+        valid = getattr(loaded.data, "valid_pixels", None)
+        if valid is not None:
+            mask = torch.as_tensor(valid[row0:row1, col0:col1], device=counts.device)
+            # Mask signed storage views when Torch lacks unsigned where kernels.
+            if str(counts.dtype).startswith("torch.uint"):
+                signed = getattr(torch, f"int{counts.element_size() * 8}")
+                counts = torch.where(mask, counts.view(signed), 0).view(counts.dtype)
+            else:
+                counts = torch.where(mask, counts, 0)
     return counts, center, radius, calibration_radius, (row0, col0), mean_pattern
 
 

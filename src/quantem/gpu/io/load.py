@@ -43,8 +43,8 @@ def load(
     scan_region: tuple[int, int, int, int] | None = None,
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
-    hot_pixel_correction: str = "median",
-    auto_narrow: bool = True,
+    hot_pixel_correction: str = "none",
+    auto_narrow: bool = False,
     stack: bool | None = None,
     device: int | str | None = None,
     verbose: bool = True,
@@ -52,8 +52,8 @@ def load(
     """Load one or more 4D-STEM sources through an accelerated backend.
 
     Supported original acquisitions default to bounded ANS ingestion
-    on CUDA and MPS. Integer sources retain uint8/uint16; float32 sources retain
-    IEEE bits at native detector geometry. Use ``scan_shape`` for
+    on CUDA and MPS. Real numeric sources retain their 8/16/32/64-bit integer
+    or 16/32/64-bit floating dtype and original bits at native detector geometry. Use ``scan_shape`` for
     headerless EMPAD RAW. CPU reference access is explicit, never a fallback.
     Generic HDF5 layouts use bounded storage reads where the direct compressed
     chunk decoder cannot apply. Saved copies retain calibration and provenance.
@@ -81,8 +81,8 @@ def load(
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
     on CUDA and MPS. Each result remains an independent encoded owner, not a
-    dense stacked array. Stored detector-mask pixels use GPU median replacement
-    by default before encoding.
+    dense stacked array. Stored detector-mask values are preserved by default;
+    request GPU median or zero replacement explicitly when needed.
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Ordinary HDF5 selects
@@ -108,11 +108,12 @@ def load(
     resident representation.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
 
-    ``hot_pixel_correction="median"`` is the default for an ordinary HDF5
-    acquisition loaded into resident ANS storage. Stored detector-mask
-    pixels are replaced on the selected GPU by the integer local 3x3 median
-    before encoding. Use ``"zero"`` for zero replacement or ``"none"`` to
-    retain raw masked-pixel counts.
+    The default ``hot_pixel_correction="none"`` preserves every original
+    measurement and its dtype, including flagged-pixel markers. Scientific
+    detector products exclude recorded invalid pixels without changing storage.
+    Explicit ``"median"`` or ``"zero"`` correction changes flagged counts on
+    GPU and records that change in the saved copy. ``auto_narrow`` applies only
+    to an explicitly selected dense CPU reader; encoded loading retains dtype.
 
     Parameters
     ----------
@@ -219,7 +220,6 @@ def load(
                             metadata,
                             backend=array_backend,
                             device=device,
-                            auto_narrow=auto_narrow,
                             hot_pixel_correction=hot_pixel_correction,
                             verbose=verbose,
                         ))
@@ -367,7 +367,6 @@ def load(
                         verbose=verbose,
                         backend=ans_backend,
                         hot_pixel_correction=hot_pixel_correction,
-                        auto_narrow=auto_narrow,
                     )
                 )
         except BaseException:

@@ -29,7 +29,7 @@ from quantem.gpu.io.hdf5.write import (
 )
 from quantem.gpu.io.precision import precision_name, save_precision
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.resident.float_ans import FloatANSResident
+from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 
 
@@ -106,7 +106,7 @@ def save(
     ``format="quantem"`` instead writes one self-contained ``.qem`` copy, not an
     HDF5 master/shard set. A complete encoded CUDA or MPS/Metal resident saves
     its existing bytes without re-encoding. Explicit ``backend="cpu"`` accepts
-    a 4D NumPy uint8/uint16 or float32 array, using the
+    a 4D NumPy real integer or floating array through 64 bits, using the
     portable reference encoder. Calibration is retained and an
     existing destination is never replaced. Saved copies reopen on CUDA or
     MPS/Metal as encoded counts, or explicitly on CPU as original dense measurements.
@@ -270,10 +270,10 @@ def save(
         if backend == "cpu" and isinstance(data, np.ndarray):
             save_array(filepath, data, metadata, chunk_scans=512 if batch_size is None else batch_size)
             saved_backend = "cpu"
-        elif isinstance(data, FloatANSResident):
+        elif isinstance(data, BitANSResident):
             if backend not in ("auto", data.backend) or batch_size is not None:
                 raise ValueError("Save the float resident on its own backend without batch_size.")
-            qem.save_float(filepath, data, metadata)
+            qem.save_bits(filepath, data, metadata)
             saved_backend = data.backend
         elif isinstance(data, (StreamedCounts, MPSStreamedCounts)):
             saved_backend = "mps" if isinstance(data, MPSStreamedCounts) else "cuda"
