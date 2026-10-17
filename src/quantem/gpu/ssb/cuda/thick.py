@@ -200,6 +200,13 @@ class ThickSample:
             q_magnitude = cp.hypot(cache["qx_1d"].reshape(ny, 1), cache["qy_1d"][:cols].reshape(1, cols))
             inside = (q_magnitude > band_inv_A[0]) & (q_magnitude < band_inv_A[1])
             rows_idx, cols_idx = cp.nonzero(inside)
+            if rows_idx.size == 0:
+                raise ValueError(
+                    f"Joint tilt fitting needs spatial frequencies in {band_inv_A[0]:g}–{band_inv_A[1]:g} 1/A, "
+                    f"but this scan reaches only {float(q_magnitude.max()):.3g} 1/A. "
+                    "Use ordinary SSB (tilt=False), or acquire a finer scan. "
+                    "Reconstruction upsampling does not add measured frequencies."
+                )
             if half:
                 # columns 0 and nx/2 map onto themselves (their mirror is in the stored half): count once there
                 self_mirror = (cols_idx == 0) | ((nx % 2 == 0) & (cols_idx == nx // 2))

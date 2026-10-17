@@ -418,6 +418,13 @@ def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     q_col = np.asarray(prepared.q_col, dtype=np.float32).reshape(-1)[:cols]
     q = np.hypot(q_row[:, None], q_col[None, :])
     rows, columns = np.nonzero((q > key[0]) & (q < key[1]))
+    if rows.size == 0:
+        raise ValueError(
+            f"Joint tilt fitting needs spatial frequencies in {key[0]:g}–{key[1]:g} 1/A, "
+            f"but this scan reaches only {float(q.max()):.3g} 1/A. "
+            "Use ordinary SSB (tilt=False), or acquire a finer scan. "
+            "Reconstruction upsampling does not add measured frequencies."
+        )
     if half:
         self_mirror = (columns == 0) | ((nx % 2 == 0) & (columns == nx // 2))
         weight = np.where(self_mirror, 1.0, 2.0)

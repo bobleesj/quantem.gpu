@@ -12,6 +12,17 @@ import pytest
 
 from quantem.gpu.ssb import thick_sample_fit
 
+
+def test_joint_search_rejects_zero_signal():
+    """No model agreement cannot be reported as a successful tilt estimate."""
+    import pytest
+
+    with pytest.raises(ValueError, match="no positive finite model agreement"):
+        thick_sample_fit.fit_sample_search(
+            lambda *args: 0.0, trials=8, polish_starts=0,
+            compare_standard=False, verbose=False,
+        )
+
 # a maximum in engine units (C10, C12, phi12, tilt_row, tilt_col, thickness) and a curvature with the scales of the real
 # objective: about 1e-4 relative drop for 1 A of defocus or astigmatism, 0.01 mrad of tilt, 3 A of thickness, coupled
 MAXIMUM = np.array([-86.5, 17.0, 0.4, 0.72, 2.99, 135.0])

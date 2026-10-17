@@ -181,6 +181,12 @@ def fit_sample_search(
         outcome = min(polished, key=lambda outcome: outcome.fun)
         best = dict(zip(PARAMETERS, (float(value) for value in outcome.x), strict=True))
         fit = float(-outcome.fun) * scale
+    if not math.isfinite(fit) or fit <= 0:
+        raise ValueError(
+            "Joint tilt fitting found no positive finite model agreement. "
+            "Check scan sampling and signal in the fitting band; use ordinary "
+            "SSB (tilt=False) when tilt cannot be estimated."
+        )
     best["C12"], best["thickness"], best["phi12"] = abs(best["C12"]), abs(best["thickness"]), wrap_phi(best["phi12"])
     records = [{"number": trial.number, "params": dict(trial.params), "loss": float(trial.value)}
                for trial in ranked if math.isfinite(trial.value)]

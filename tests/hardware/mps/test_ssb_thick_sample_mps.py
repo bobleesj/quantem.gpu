@@ -71,6 +71,19 @@ def _poisson_disk_session():
     return _session(counts, det_mrad=3.0, scan_A=0.3)
 
 
+def test_joint_fit_rejects_scan_with_no_fitting_frequencies():
+    """A coarse scan cannot return arbitrary tilt from an empty objective."""
+    _require_mps()
+    counts = np.ones((128, 128, 32, 32), dtype=np.uint16)
+    rr, cc = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
+    counts[:, :, np.hypot(rr, cc) < 10] += 200
+    with (
+        _session(counts, det_mrad=3.0, scan_A=5.0) as ssb,
+        pytest.raises(ValueError, match="acquire a finer scan"),
+    ):
+        ssb.find_aberrations(tilt=True, num_trials=8, verbose=False)
+
+
 def test_batch_fit_matches_reference_fit():
     """The fused Metal batch objective (half-plane band, shared geometry, skipped non-overlap pairs) equals ``thick_fit``."""
     _require_mps()
