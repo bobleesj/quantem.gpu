@@ -229,15 +229,23 @@ kernel void streamed_counts_decode_range(
     uint scans = uint(p[0]), pixels = uint(p[1]), interval = uint(p[2]);
     uint first = uint(p[3]), count = uint(p[4]), first_stream = uint(p[5]);
     uint stop_stream = uint(p[6]), item_bytes = uint(p[7]);
-    uint stream = first_stream + local_stream;
-    if (stream >= stop_stream) return;
-    uint block_first = (stream / pixels) * interval, pixel = stream % pixels;
+    uint cols = uint(p[8]), row0 = uint(p[9]), col0 = uint(p[10]);
+    uint crop_rows = uint(p[11]), crop_cols = uint(p[12]);
+    uint selected_pixels = crop_rows * crop_cols;
+    uint selected_stream = first_stream + local_stream;
+    if (selected_stream >= stop_stream) return;
+    uint block = selected_stream / selected_pixels;
+    uint selected_pixel = selected_stream % selected_pixels;
+    uint pixel = (row0 + selected_pixel / crop_cols) * cols
+        + col0 + selected_pixel % crop_cols;
+    uint stream = block * pixels + pixel;
+    uint block_first = block * interval;
     uint block_count = min(interval, scans - block_first), stop = first + count;
     StreamReader reader(payload, offsets, models, decoding, stream);
     for (uint i = 0; i < block_count; ++i) {
         uint value = reader.next(), scan = block_first + i;
         if (scan >= first && scan < stop) {
-            ulong at = ulong(scan - first) * pixels + pixel;
+            ulong at = ulong(scan - first) * selected_pixels + selected_pixel;
             if (item_bytes == 1) output[at] = uchar(value);
             else reinterpret_cast<device ushort *>(output)[at] = ushort(value);
         }
