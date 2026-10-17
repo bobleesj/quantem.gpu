@@ -24,6 +24,56 @@ _HEADER = ("#define SSB_PRECISE_GEOMETRY\n#define SSB_DEVICE inline\n"
            + _THICK_FIT_BATCH_HEADER + CHI_SOURCE)
 
 
+# One transfer-function implementation for per-detector and coherent outputs.
+# Keep precise geometry, trigonometry, and float32 evaluation on both paths.
+# Pointer types retain MLX's constant/device address spaces for small BF groups.
+_ALIAS_TRANSFER = """
+template <uint SOURCE_N, uint G_COLS, bool HIGHER,
+          typename G, typename KRow, typename KCol, typename Params,
+          typename Probe, typename Coefficients>
+inline float2 alias_corrected(
+    uint row, uint col, uint k, float qr, float qc,
+    G g, KRow k_row, KCol k_col, Params params, Probe probe, Coefficients coefficients
+) {
+    float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
+    float c10 = params[4], c12 = params[5], c2 = params[6], s2 = params[7];
+    float factor = params[8], depth = params[9], tr = params[10], tc = params[11];
+    float kr = k_row[k], kc = k_col[k];
+    float4 gk = float4(probe[k * 5], probe[k * 5 + 1], probe[k * 5 + 2], probe[k * 5 + 3]);
+    float4 gm = tf_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
+    float4 gp = tf_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
+    if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
+        return float2(0.0f);
+    }
+    float chi_k = probe[k * 5 + 4];
+    float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
+    float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
+    if (HIGHER) {
+        chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
+        chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
+    }
+    float shift = 6.283185307179586f * (qr * tr + qc * tc);
+    float a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+    float b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+    float ca, cb;
+    float sa = metal::precise::sincos(chi_m - chi_k, ca);
+    float sb = metal::precise::sincos(chi_p - chi_k, cb);
+    float re = a * ca - b * cb, im = -a * sa - b * sb;
+    float inv = 1.0f / metal::max(metal::precise::sqrt(re * re + im * im), 1e-8f);
+    // Only the source G has Hermitian symmetry. Corrected aliases do not.
+    uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
+    bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
+    if (mirror) {
+        source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
+        source_col = SOURCE_N - source_col;
+    }
+    auto value = g[((size_t)k * SOURCE_N + source_row) * G_COLS + source_col];
+    float vr = value.real, vi = mirror ? -value.imag : value.imag;
+    return float2((vr * re + vi * im) * inv, (vi * re - vr * im) * inv);
+}
+"""
+
+
 @lru_cache(maxsize=1)
 def _alias_probe_kernel():
     """Calculate the geometry and phase at k once for all fine-grid q."""
@@ -52,7 +102,7 @@ def _alias_correction_kernel():
         name="ssb_alias_correction",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
         output_names=["corrected"],
-        header=_HEADER,
+        header=_HEADER + _ALIAS_TRANSFER,
         compile_options={"math_mode": "safe"},
         source="""
         uint col = thread_position_in_grid.x;
@@ -71,46 +121,110 @@ def _alias_correction_kernel():
             corrected[out].imag = 0.0f;
             return;
         }
-        float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
-        float c10 = params[4], c12 = params[5], c2 = params[6], s2 = params[7];
-        float factor = params[8], depth = params[9], tr = params[10], tc = params[11];
-        float qr = q_row[row], qc = q_col[col], kr = k_row[k], kc = k_col[k];
-        float4 gk = float4(probe[k * 5], probe[k * 5 + 1], probe[k * 5 + 2], probe[k * 5 + 3]);
-        float4 gm = tf_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
-        float4 gp = tf_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
-        if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
-            corrected[out].real = 0.0f;
-            corrected[out].imag = 0.0f;
-            return;
-        }
-        float chi_k = probe[k * 5 + 4];
-        float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
-        float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
-        if (HIGHER) {
-            chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
-            chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
-        }
-        float shift = 6.283185307179586f * (qr * tr + qc * tc);
-        float a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
-        float b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
-        float ca, cb;
-        float sa = metal::precise::sincos(chi_m - chi_k, ca);
-        float sb = metal::precise::sincos(chi_p - chi_k, cb);
-        float re = a * ca - b * cb, im = -a * sa - b * sb;
-        float inv = 1.0f / metal::max(metal::precise::sqrt(re * re + im * im), 1e-8f);
-        // Only the source G has Hermitian symmetry. Corrected aliases do not.
-        uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
-        bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
-        if (mirror) {
-            source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
-            source_col = SOURCE_N - source_col;
-        }
-        auto value = g[((size_t)k * SOURCE_N + source_row) * G_COLS + source_col];
-        float vr = value.real, vi = mirror ? -value.imag : value.imag;
-        corrected[out].real = (vr * re + vi * im) * inv;
-        corrected[out].imag = (vi * re - vr * im) * inv;
+        float2 value = alias_corrected<SOURCE_N, G_COLS, HIGHER>(
+            row, col, k, q_row[row], q_col[col],
+            g, k_row, k_col, params, probe, coefficients);
+        corrected[out].real = value.x;
+        corrected[out].imag = value.y;
         """,
     )
+
+
+@lru_cache(maxsize=1)
+def _coherent_alias_kernel():
+    """Correct and sum a detector group without materializing every spectrum."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_coherent_alias",
+        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
+        output_names=["partial"],
+        header=_HEADER + _ALIAS_TRANSFER,
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint col = thread_position_in_grid.x;
+        uint row = thread_position_in_grid.y;
+        uint group = thread_position_in_grid.z;
+        uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+        if (col >= N || row >= N || start >= K) return;
+        size_t out = ((size_t)group * N + row) * N + col;
+        float2 sum = float2(0.0f);
+        if (row == 0u && col == 0u) {
+            for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
+        } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
+            float qr = q_row[row], qc = q_col[col];
+            // Both apertures vanish beyond twice their maximum radius.
+            // This bound includes the antialiased rim and a conservative
+            // float32 margin. Frequencies inside it retain the full model.
+            float radius = 2.0f * (params[1] + 0.5f * metal::max(params[2], params[3]))
+                           / params[0] * 1.00001f + 1e-6f;
+            if (qr * qr + qc * qc <= radius * radius) {
+                for (uint k = start; k < stop; ++k) {
+                    sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
+                        row, col, k, qr, qc, g, k_row, k_col, params, probe, coefficients);
+                }
+            }
+        }
+        partial[out].real = sum.x;
+        partial[out].imag = sum.y;
+        """,
+    )
+
+
+@lru_cache(maxsize=1)
+def _ordered_alias_sum_kernel():
+    """Retain detector-group accumulation order across bounded launches."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_ordered_alias_sum",
+        input_names=["partial", "previous"],
+        output_names=["total"],
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint i = thread_position_in_grid.x;
+        if (i >= N * N) return;
+        float re = previous[i].real, im = previous[i].imag;
+        for (uint group = 0; group < GROUPS; ++group) {
+            auto value = partial[(size_t)group * N * N + i];
+            re += value.real;
+            im += value.imag;
+        }
+        total[i].real = re;
+        total[i].imag = im;
+        """,
+    )
+
+
+def _coherent_spectrum(
+    prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
+    higher: bool, n: int, chunk: int,
+):
+    """Accumulate every BF contribution with at most one bounded partial array."""
+    mx = prepared.mx
+    stored = int(prepared.g_qk.shape[0])
+    source_n = int(prepared.scan_shape[0])
+    total = mx.zeros((n, n), dtype=mx.complex64)
+    # Preserve the established BF chunk boundaries; only the inner sum changes
+    # from MLX's reduction to sequential float32 addition in the fused kernel.
+    groups_per_batch = max(1, _WORK_BYTES // (n * n * 8))
+    for start in range(0, stored, groups_per_batch * chunk):
+        stop = min(start + groups_per_batch * chunk, stored)
+        groups = (stop - start + chunk - 1) // chunk
+        partial = _coherent_alias_kernel()(
+            inputs=[prepared.g_qk[start:stop], qr, qc, prepared.kx[start:stop],
+                    prepared.ky[start:stop], params, dc, probe[start:stop], coefficients],
+            template=[("N", n), ("SOURCE_N", source_n),
+                      ("G_COLS", int(prepared.g_qk.shape[-1])),
+                      ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk)],
+            grid=(n, n, groups), threadgroup=(32, 8, 1),
+            output_shapes=[(groups, n, n)], output_dtypes=[mx.complex64],
+        )[0]
+        total = _ordered_alias_sum_kernel()(
+            inputs=[partial, total], template=[("N", n), ("GROUPS", groups)],
+            grid=(n * n, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(n, n)], output_dtypes=[mx.complex64],
+        )[0]
+        mx.eval(total)
+    return total
 
 
 def _reconstruct_upsampled(
@@ -150,8 +264,6 @@ def _reconstruct_upsampled(
                             if higher else np.zeros((14, 2), np.float32))
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
-    total = mx.zeros((n, n), dtype=mx.complex64 if wave_mean else mx.float32)
-    squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
     chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
     stored = int(prepared.g_qk.shape[0])
     probe = _alias_probe_kernel()(
@@ -159,6 +271,18 @@ def _reconstruct_upsampled(
         template=[("K", stored), ("HIGHER", higher)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
         output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
     )[0]
+    if wave_mean:
+        total = _coherent_spectrum(
+            prepared, qr, qc, params, dc, probe, coefficients, higher, n, chunk)
+        # Compacted inactive BF columns still carry the common real DC term.
+        total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
+        wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
+        phase = mx.arctan2(mx.imag(wave), mx.real(wave))
+        mx.eval(phase)
+        return np.asarray(phase, dtype=np.float32), None
+
+    total = mx.zeros((n, n), dtype=mx.float32)
+    squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
     kernel = _alias_correction_kernel()
     for start in range(0, stored, chunk):
         stop = min(start + chunk, stored)
@@ -186,27 +310,18 @@ def _reconstruct_upsampled(
             output_shapes=[(stop - start, n, n)],
             output_dtypes=[mx.complex64],
         )[0]
-        if wave_mean:
-            total = total + mx.sum(corrected, axis=0)
-        else:
-            waves = ifft2_chunked(mx, corrected)
-            total = total + phase_sum_from_complex(mx, waves)
-            if compute_loss:
-                angles = mx.arctan2(mx.imag(waves), mx.real(waves))
-                squares = squares + mx.sum(angles * angles, axis=0)
-                mx.eval(squares)
+        waves = ifft2_chunked(mx, corrected)
+        total = total + phase_sum_from_complex(mx, waves)
+        if compute_loss:
+            angles = mx.arctan2(mx.imag(waves), mx.real(waves))
+            squares = squares + mx.sum(angles * angles, axis=0)
+            mx.eval(squares)
         # Keep the same accumulation order while overlapping chunk submission.
         # Periodic completion bounds the number of live temporary arrays.
         mx.async_eval(total)
         if (start // chunk + 1) % _PENDING_CHUNKS == 0:
             mx.eval(total)
-    if wave_mean:
-        # Compacted inactive BF columns still carry the common real DC term.
-        total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
-        wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
-        phase = mx.arctan2(mx.imag(wave), mx.real(wave))
-    else:
-        phase = total / prepared.num_bright_field_pixels
+    phase = total / prepared.num_bright_field_pixels
     mx.eval(phase)
     loss = float(mx.mean(squares / prepared.num_bright_field_pixels - phase * phase)) if compute_loss else None
     return np.asarray(phase, dtype=np.float32), loss
