@@ -73,6 +73,14 @@ inline float2 ssb_corrected_alias(
     float factor = params[8], depth = params[9], tr = params[10], tc = params[11];
     float qr = q_row[row], qc = q_col[col];
     float4 gk = float4(probe[k * 5], probe[k * 5 + 1], probe[k * 5 + 2], probe[k * 5 + 3]);
+    // Bound the complete soft aperture before evaluating its geometry.
+    // The outward margin includes float32 roundoff and anisotropic pixels.
+    float radius = (semi + 0.5f * metal::max(ay, ax)) / wl;
+    radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+    float mr = qr - kr, mc = qc - kc, pr = qr + kr, pc = qc + kc;
+    if (metal::min(mr * mr + mc * mc, pr * pr + pc * pc) > radius * radius) {
+        return float2(0.0f);
+    }
     float4 gm = tf_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
     float4 gp = tf_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
     if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
@@ -109,12 +117,40 @@ inline float2 ssb_corrected_alias(
 
 
 @lru_cache(maxsize=1)
+def _alias_group_bounds_kernel():
+    """Bound groups of BF coordinates without changing their contributions."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_alias_group_bounds",
+        input_names=["k_row", "k_col", "params"],
+        output_names=["bounds"],
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint group = thread_position_in_grid.x;
+        uint first = group * BF_GROUP;
+        if (first >= K) return;
+        float row_min = k_row[first], row_max = row_min;
+        float col_min = k_col[first], col_max = col_min;
+        for (uint k = first + 1u; k < min(first + BF_GROUP, uint(K)); ++k) {
+            row_min = min(row_min, k_row[k]); row_max = max(row_max, k_row[k]);
+            col_min = min(col_min, k_col[k]); col_max = max(col_max, k_col[k]);
+        }
+        float radius = (params[1] + 0.5f * max(params[2], params[3])) / params[0];
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+        bounds[group * 5] = row_min; bounds[group * 5 + 1] = row_max;
+        bounds[group * 5 + 2] = col_min; bounds[group * 5 + 3] = col_max;
+        bounds[group * 5 + 4] = radius * radius;
+        """,
+    )
+
+
+@lru_cache(maxsize=1)
 def _alias_correction_kernel():
     """Correct each BF spectrum, optionally summing coherent groups on chip."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_alias_correction",
-        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
+        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients", "bounds"],
         output_names=["corrected"],
         header=_HEADER + _CORRECTION_HEADER,
         compile_options={"math_mode": "safe"},
@@ -124,6 +160,23 @@ def _alias_correction_kernel():
         uint group = thread_position_in_grid.z;
         uint first = group * BF_GROUP;
         if (col >= COLS || row >= N || first >= K) return;
+        // Outside the union of the two aperture bounds every term is zero.
+        // Preserve true DC and its aliases through the common correction.
+        if (BF_GROUP > 1 && !(row % SOURCE_N == 0u && col % SOURCE_N == 0u)) {
+            float qr = q_row[row], qc = q_col[col];
+            float row_min = bounds[group * 5], row_max = bounds[group * 5 + 1];
+            float col_min = bounds[group * 5 + 2], col_max = bounds[group * 5 + 3];
+            float rm = max(max(row_min - qr, qr - row_max), 0.0f);
+            float cm = max(max(col_min - qc, qc - col_max), 0.0f);
+            float rp = max(max(row_min + qr, -qr - row_max), 0.0f);
+            float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
+            if (min(rm * rm + cm * cm, rp * rp + cp * cp) > bounds[group * 5 + 4]) {
+                size_t out = ((size_t)group * N + row) * COLS + col;
+                corrected[out].real = 0.0f;
+                corrected[out].imag = 0.0f;
+                return;
+            }
+        }
         float2 value = ssb_corrected_alias(
             row, col, first, SOURCE_N, G_COLS, HIGHER,
             g, q_row, q_col, k_row[first], k_col[first], params, dc[0], probe, coefficients);
@@ -210,6 +263,15 @@ def _reconstruct_upsampled(
         template=[("K", stored), ("HIGHER", higher)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
         output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
     )[0]
+    bounds = mx.zeros((1, 5), dtype=mx.float32)
+    if wave_mean:
+        groups = (stored + bf_group - 1) // bf_group
+        bounds = _alias_group_bounds_kernel()(
+            inputs=[prepared.kx, prepared.ky, params],
+            template=[("K", stored), ("BF_GROUP", bf_group)],
+            grid=(groups, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(groups, 5)], output_dtypes=[mx.float32],
+        )[0]
     kernel = _alias_correction_kernel()
     for start in range(0, stored, chunk):
         stop = min(start + chunk, stored)
@@ -225,6 +287,8 @@ def _reconstruct_upsampled(
                 dc,
                 probe[start:stop],
                 coefficients,
+                bounds[start // bf_group:(stop + bf_group - 1) // bf_group]
+                if wave_mean else bounds,
             ],
             template=[
                 ("N", n),
