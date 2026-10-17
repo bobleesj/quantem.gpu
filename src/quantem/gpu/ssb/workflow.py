@@ -62,6 +62,12 @@ from quantem.gpu.ssb.units import (
 )
 
 
+def _default_phase_estimator(aberrations: dict[str, float]) -> str:
+    """Use coherent C10/C12 reconstruction on both physical backends."""
+    higher = higher_order_arrays(aberrations)
+    return "mean_phase" if higher is not None and np.any(higher[0][2:]) else "phase_of_mean"
+
+
 def _in_notebook() -> bool:
     """True inside a Jupyter kernel, where fit() draws its histograms."""
     try:
@@ -105,10 +111,11 @@ class SSB:
     bright-field pixels); ``reconstruct`` and ``preview`` apply known aberrations. The full automatically detected
     bright-field disk, the exact phase-variance objective, float32 real and complex64 object storage are fixed.
 
-    The backends differ in what they return for the same call: CUDA averages corrected complex waves before taking
-    the phase (``phase_of_mean``) where MPS averages per-pixel phases (``mean_phase``), finer output sampling
-    (``upsampling_factor``) supports C10/C12 on both, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
-    backend's own, so fitted values and images agree closely but not to the bit.
+    C10/C12 reconstruction averages corrected complex waves before taking the
+    phase (``phase_of_mean``) on CUDA and MPS. Both support finer output sampling
+    through ``upsampling_factor``. Bright-field selection, loss reduction order
+    and Nelder-Mead settings remain backend-specific, so fitted values and images
+    need not agree bit for bit.
 
     Parameters
     ----------
@@ -474,6 +481,10 @@ class SSB:
                 "schema": RESULT_SCHEMA,
                 "software": software_signature(),
                 "operation": operation,
+                "reconstruction": {
+                    "default_c10_c12_estimator": "phase_of_mean",
+                    "upsampling_dc_policy": "single_origin",
+                },
                 "source": (
                     {"detector": self.resident_identity, "storage": None, "calibration": None, "manifest": None}
                     if self.source_path is None and self.resident_identity is not None else
@@ -709,7 +720,7 @@ class SSB:
         if parameters is None:
             raise ValueError("Run ssb.find_aberrations() before reconstructing trials.")
         records = select_records(parameters.trial_records, trials)
-        estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
+        estimator = phase_estimator or _default_phase_estimator(records[0]["params"])
         saved_rotation = self.scan_detector_rotation_deg
         waves = []
         for record in records:
@@ -986,8 +997,10 @@ class SSB:
             result = self._accept_result(self._resolve_rotation_branch(
                 result, refinement=refinement, tilt=tilt, tilt_limit_mrad=float(tilt_limit_mrad), seed=int(seed),
                 verbose=verbose))
-        estimator = "phase_of_mean" if self.backend == "cuda" else "mean_phase"
+        estimator = _default_phase_estimator(result.aberrations)
+        reconstruction_started = time.perf_counter()
         displayed = self.reconstruct(result, phase_estimator=estimator, compute_loss=False, force=True)
+        result.timings["final_native_reconstruction_s"] = time.perf_counter() - reconstruction_started
         result.object_wave = displayed.object_wave
         result.phase_clim = result.phase_limits
         result.phase_estimator = displayed.phase_estimator
@@ -1126,8 +1139,9 @@ class SSB:
             criterion, not a measured resolution or a guarantee of useful
             signal at the cutoff. C10/C12 upsampling runs on CUDA and MPS.
         phase_estimator
-            CUDA defaults to ``phase_of_mean`` at every output factor. MPS
-            retains ``mean_phase``. The loss is the native-grid search
+            C10/C12 defaults to ``phase_of_mean`` on CUDA and MPS at every
+            output factor. Higher-order paths retain ``mean_phase``.
+            The loss is the native-grid search
             diagnostic, not a score computed from the displayed phase.
             ``complex_wave`` explicitly retains amplitude for native, thin-sample
             reconstruction, including coherent temporal averaging.
@@ -1188,7 +1202,7 @@ class SSB:
             tilt = self.sample_tilt_mrad
             depth = self.depth_spread_nm
         coefs = validate_aberrations({**coefs, **(aberrations or {})})
-        estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
+        estimator = phase_estimator or _default_phase_estimator(coefs)
         if estimator == "complex_wave" and (upsampling_factor != 1 or depth or any(tilt or ())):
             raise ValueError("complex_wave requires upsampling_factor=1 and no sample tilt/depth; choose a phase estimator instead.")
         settings = {
@@ -1295,12 +1309,12 @@ class SSB:
         on CUDA and MPS. The diagnostic loss and aberration search remain on the native
         scan grid. Sampling never fits parameters or interpolates detector data.
 
-        By default, CUDA C10/C12 reconstruction averages corrected complex
+        By default, CUDA and MPS C10/C12 reconstruction averages corrected complex
         waves before taking phase (``phase_of_mean``), with or without sample
         tilt, at every output factor. Explicit ``mean_phase`` retains the
-        historical per-detector phase average for comparisons. Native MPS and
-        higher-order paths retain their existing estimator; explicit wave
-        averaging supports C10/C12 on both backends. Quantitative phase
+        historical per-detector phase average for comparisons. Higher-order
+        paths retain their existing estimator. Upsampling excludes replicas
+        of the scan mean and retains one normalization at q=0. Quantitative phase
         amplitude is not established by stronger image contrast. Diagnostic
         loss still uses native-grid per-detector phase variance; fitting is
         unaffected.
@@ -1358,11 +1372,7 @@ class SSB:
         # 14-slot magnitudes (nm) and azimuths (rad) when the mapping names a higher order; else both None
         higher_order_magnitudes, higher_order_angles = higher_order_arrays(aberrations) or (None, None)
         if phase_estimator is None:
-            # Keep unsupported native backends/higher-order paths available.
-            # C10/C12 uses one estimator at every output factor on CUDA.
-            higher_order_active = higher_order_magnitudes is not None and np.any(higher_order_magnitudes[2:])
-            phase_estimator = ("phase_of_mean" if self.backend == "cuda"
-                               and not higher_order_active else "mean_phase")
+            phase_estimator = _default_phase_estimator(aberrations)
         if phase_estimator not in ("mean_phase", "phase_of_mean"):
             raise ValueError(
                 "phase_estimator must be 'mean_phase' or 'phase_of_mean'; "
@@ -1441,7 +1451,9 @@ class SSB:
 
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
+        preparation_started = time.perf_counter()
         backend = self._backend()
+        backend_preparation_s = time.perf_counter() - preparation_started
         started = time.perf_counter()
         start = None
         if trials == 0:
@@ -1454,8 +1466,12 @@ class SSB:
         aberrations = aberrations_from_engine(fit)
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
+        diagnostic_started = time.perf_counter()
         phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
                                    phase_estimator="mean_phase")
+        timings = dict(fit.get("timings", {}))
+        timings["backend_preparation_s"] = backend_preparation_s
+        timings["native_phase_diagnostic_s"] = time.perf_counter() - diagnostic_started
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         object_wave = self._unit_wave(phase)
         records = []
@@ -1470,7 +1486,7 @@ class SSB:
                 "depth_spread_nm": values["thickness"] / ENGINE_PER_NM,
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
+                         timings=timings, depth_spread_nm=depth_spread_nm, tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
                          amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),

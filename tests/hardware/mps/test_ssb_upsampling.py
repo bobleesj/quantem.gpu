@@ -117,7 +117,8 @@ def test_fused_depth_model_at_all_native_sizes(n, atol):
     with _disk_session(n) as ssb:
         coefs = {"C10_nm": 3.0, "C12_nm": 0.5, "phi12_deg": math.degrees(0.3)}
         phase, loss = ssb.preview(
-            coefs, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=15.0
+            coefs, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=15.0,
+            phase_estimator="mean_phase",  # Preserve the fused mean-phase oracle.
         )
         expected, expected_loss = reconstruct_thick_reference(
             ssb._backend()._prepared,

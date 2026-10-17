@@ -59,6 +59,13 @@ def _alias_correction_kernel():
             corrected[out] = dc[0];
             return;
         }
+        // The scan mean is background, not measured nonzero-q structure.
+        // Keep its normalization only at the true origin, never its aliases.
+        if (row % SOURCE_N == 0u && col % SOURCE_N == 0u) {
+            corrected[out].real = 0.0f;
+            corrected[out].imag = 0.0f;
+            return;
+        }
         float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
         float c10 = params[4], c12 = params[5], c2 = params[6], s2 = params[7];
         float factor = params[8], depth = params[9], tr = params[10], tc = params[11];

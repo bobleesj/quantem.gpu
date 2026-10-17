@@ -454,7 +454,12 @@ class CudaSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
-        return fit_sample(self._get_accelerator(), **options)
+        started = time.perf_counter()
+        engine = self._get_accelerator()
+        preparation_s = time.perf_counter() - started
+        result = fit_sample(engine, **options)
+        result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
+        return result
 
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
         """Evaluate the joint objective on the session's existing evidence."""

@@ -316,9 +316,12 @@ class MpsSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
+        started = time.perf_counter()
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        preparation_s = time.perf_counter() - started
         result = fit_sample(self._prepared, **options)
+        result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
         require_mlx().clear_cache()
         return result
 
