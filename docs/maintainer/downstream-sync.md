@@ -60,7 +60,7 @@ module of quantem.gpu at 3a8abad6 whose names moved, to where its public names l
 | `quantem.gpu.detector.backends.cuda.probe` | `quantem.gpu.detector.cuda.probe` |  |
 | `quantem.gpu.detector.backends.cuda.series` | deleted |  |
 | `quantem.gpu.detector.backends.dispatch` | `quantem.gpu.detector.cuda.dense`, `quantem.gpu.detector.mps.dense`, `quantem.gpu.detector.tensors` | 2 of 5 names deleted |
-| `quantem.gpu.detector.backends.float_ans` | `quantem.gpu.detector.float_ans` |  |
+| `quantem.gpu.detector.backends.float_ans` | `quantem.gpu.detector.bit_ans` |  |
 | `quantem.gpu.detector.backends.mps` | deleted |  |
 | `quantem.gpu.detector.backends.mps.ans_series` | deleted | 1 of 1 names deleted |
 | `quantem.gpu.detector.backends.mps.kernels` | `quantem.gpu.resident.mps.frames`, `quantem.gpu.resident.mps.virtual_image` | 1 of 4 names deleted |

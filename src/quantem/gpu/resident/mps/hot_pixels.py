@@ -33,9 +33,9 @@ class MPSHotPixelCorrector:
     def apply(self, values) -> None:
         """Correct one Metal ``(scan, detector_row, detector_col)`` batch.
 
-        uint32 batches are Arina counts corrected before they are stored as
-        uint16: the median reads only valid neighbors, so a 0xFFFFFFFF flagged
-        pixel never enters a replacement value.
+        Explicit correction retains the native count dtype. The median reads
+        only valid neighbors, so a 0xFFFFFFFF flagged uint32 pixel never enters
+        a replacement value.
         """
         if not self.record["applied"]:
             return

@@ -23,7 +23,7 @@ to its `electron_microscope` object. Source `y` means row and `x` means column.
 | Quantity | Common destination | Input recognized by native reader | Saved unit/status |
 | --- | --- | --- | --- |
 | Scan/detector shape | `axes[].name`, `axes[].size` | Validated source dimensions; DM4 axes reversed into scan row/column, detector row/column | Preserved, four named axes |
-| Count representation | header `dtype`, `shape` | Native uint8/uint16; native EMPAD float32 codec | Preserved; no implicit narrowing |
+| Measurement representation | header `dtype`, `shape` | Python CUDA/MPS: real integer and floating dtypes through 64 bits; native applications support their declared codec set | Preserved; no implicit narrowing |
 | Scan row/column step | `axes[0:2].sampling`, `scan_controller/regular_scan/pixel_size_row` and `pixel_size_column` | ARINA/NCEM scan calibration; DM4 `ImageData.Calibrations.Dimension.*.Scale/Units`; EMPAD reader calibration | Normalized to `angstrom`; unknown omitted |
 | Detector row/column step | `axes[2:4].sampling` | Reader detector calibration; DM4 reciprocal axes (1/nm, 1/Å, 1/µm), read as `detector_sampling_inv_A` | Normalized to `mrad` or `1/angstrom`; angular and reciprocal-length units remain distinct |
 | Beam voltage | `electron_source/accelerating_voltage` | NCEM same path (V/kV); ARINA `entry/instrument/detector/incident_energy` (eV/keV); DM4 `ImageTags.Microscope Info.Voltage` (V) | Normalized to `kV`; existing electron-energy conversion policy unchanged |
@@ -78,7 +78,7 @@ contract, but runtime/source-reader qualification remains separate.
 | ARINA/NCEM HDF5 | Reader-qualified counts and companion microscope vocabulary | Archiving every HDF5 object, every acquisition variant, or every private tag |
 | EMPAD | Native float32 codec; explicit Python CPU reference encode/decode, Python CUDA and MPS readers of the float32 codec, and float-export XML/RAW import | Treating encoded EMPAD2 words as corrected float32 |
 | NumPy | Native little-endian C-order 4D uint8/uint16, retained NumPy header | Microscope metadata that was not supplied; signed/float/Fortran-order export through this count codec |
-| Derived/scaled results | Regional scaled `uint16` codes with their complete precision report (`scaled-uint16-column-rans-v1`, see [QEM codecs](qem-codecs.md)) | Scaled codes read as detector counts; `uint32`, 3D/5D or reconstruction export as QEM |
+| Derived/scaled results | Regional scaled `uint16` codes with their complete precision report (`scaled-uint16-column-rans-v1`, see [QEM codecs](qem-codecs.md)) | Scaled codes read as detector counts; arbitrary 3D/5D or reconstruction export as QEM |
 
 SSB result images/calibration remain separate JSON/NumPy result artifacts; they
 are not silently embedded as an acquisition's recorded microscope calibration.

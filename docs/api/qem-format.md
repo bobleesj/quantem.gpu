@@ -73,7 +73,7 @@ that `scientific_metadata` already states.
 | `source_files[]` (`name`, `bytes`, `sha256`), `source_master_file` (`name`, `encoding`, `data`) | every source file of a converted acquisition; the master file itself, zlib then base64 |
 | `source_dtype`, `dtype`, `exact_float_narrowing`, `file_counts_exact`, `working_counts_exact` | evidence for a declared dtype change |
 | `hot_pixel_correction` | what was done to flagged detector pixels, see below |
-| `flagged_markers_stored_as_zero` | count of uint32 flag markers stored as 0 |
+| `flagged_markers_stored_as_zero` | legacy count of uint32 flag markers stored as 0; new raw-preserving writers leave markers intact |
 
 Writers do not store:
 
@@ -251,7 +251,9 @@ for portability, small examples and independent verification, not speed claims.
 
 No implicit crop, binning, masking, background subtraction, integer narrowing or
 float quantization is permitted. Integer counts and floating-point bit patterns
-must round-trip exactly. Two operations are permitted only when declared in
+must round-trip exactly. Current Python GPU writers preserve the source dtype
+through the typed bit-lane profile; no range audit or narrowing is needed.
+Older files may declare the following processing operations. They are permitted only when declared in
 `processing`. A writer may store uint32 source counts as uint16 after checking
 every stored value, refusing the file when any count exceeds 65535
 (`exact_integer_narrowing`). Masked pixels are not an exception to this range
@@ -379,8 +381,9 @@ not accepted as float32 merely because an XML label says float32.
   `MetalPackedSource.saveQEM(to:scientificMetadata:)` and `MetalPackedSource.loadQEM(url:device:)`
   keep the resident codes and calibration unchanged. Python `io.load(path)` reopens
   them on Apple GPUs as encoded float32 data (`backend="cpu"` is a dense NumPy
-  reference) and `quantem-gpu validate` checks them. uint32 counts and other arbitrary dense arrays do not yet
-  have QEM export codecs; unsupported exports fail rather than writing another
+  reference) and `quantem-gpu validate` checks them. Python CUDA/MPS also support
+  the typed bit-lane profile for real integer and floating arrays through 64 bits.
+  That profile is not yet implemented by native Swift or WebGPU. Unsupported exports fail rather than writing another
   container under a `.qem` filename.
 
 `scientific_metadata.calibration_overrides` stores explicit user edits separately
