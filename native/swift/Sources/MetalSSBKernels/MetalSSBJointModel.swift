@@ -76,6 +76,11 @@ public final class MetalSSBJointModel {
   private var grid: Grid
   private let kBuffer, qBuffer, indexBuffer, weights, bandG, partial, power: MTLBuffer
   private let gather, objective, reduce, correct, addPhase, normalize: MTLComputePipelineState
+  private let objectiveBatch, reduceBatch: MTLComputePipelineState
+  private let makeProbeGeometry, trialProbe: MTLComputePipelineState
+  private let probeGeometry, probeChi: MTLBuffer
+  private var batchPartial: MTLBuffer?
+  private var batchPower: MTLBuffer?
 
   init(
     device: MTLDevice, geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Float,
@@ -116,6 +121,10 @@ public final class MetalSSBJointModel {
     gather = try pipeline("joint_gather")
     objective = try pipeline("joint_objective")
     reduce = try pipeline("joint_power")
+    objectiveBatch = try pipeline("joint_objective_batch")
+    reduceBatch = try pipeline("joint_power_batch")
+    makeProbeGeometry = try pipeline("joint_probe_geometry")
+    trialProbe = try pipeline("joint_trial_probe")
     correct = try pipeline("joint_correct")
     addPhase = try pipeline("joint_phase_add")
     normalize = try pipeline("joint_phase_normalize")
@@ -150,6 +159,8 @@ public final class MetalSSBJointModel {
       return SIMD2(x * cosine + y * sine, -x * sine + y * cosine)
     }
     kBuffer = try Self.buffer(device, ks)
+    probeGeometry = try Self.allocate(device, activeIndices.count * 16)
+    probeChi = try Self.allocate(device, activeIndices.count * 8 * 4)
     qBuffer = try Self.buffer(device, qs)
     indexBuffer = try Self.buffer(device, indices)
     weights = try Self.buffer(device, ws)
@@ -166,6 +177,14 @@ public final class MetalSSBJointModel {
       dqRow: geometry.qxByRow[1], dqColumn: geometry.qyByColumn[1],
       dcReal: geometry.dcValue.x, dcImag: geometry.dcValue.y,
       factor: geometry.phaseFactor ?? Float.pi / geometry.wavelengthAngstroms)
+    let probeCommands = try command()
+    let probeEncoder = try encoder(probeCommands, makeProbeGeometry)
+    probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
+    probeEncoder.setBuffer(probeGeometry, offset: 0, index: 1)
+    var probeGrid = grid
+    probeEncoder.setBytes(&probeGrid, length: MemoryLayout<Grid>.stride, index: 2)
+    dispatch(probeEncoder, width: activeIndices.count)
+    try finish(probeCommands)
     try withoutActuallyEscaping(isCancelled) { cancelled in
       try visit { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
@@ -193,12 +212,15 @@ public final class MetalSSBJointModel {
     var p = grid
     let t = parameters.packed
     let commands = try command()
+    try encodeProbe(commands, parameters: t, batch: 1)
     let encoder = try self.encoder(commands, objective)
     for (index, buffer) in [bandG, kBuffer, qBuffer, partial].enumerated() {
       encoder.setBuffer(buffer, offset: 0, index: index)
     }
     encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
     encoder.setBytes(t, length: t.count * 4, index: 5)
+    encoder.setBuffer(probeGeometry, offset: 0, index: 6)
+    encoder.setBuffer(probeChi, offset: 0, index: 7)
     dispatch(encoder, width: bandCount, height: Int(p.chunks))
     let reduction = try self.encoder(commands, reduce)
     for (index, buffer) in [partial, weights, power].enumerated() {
@@ -213,6 +235,74 @@ public final class MetalSSBJointModel {
     for i in 0..<bandCount { sum += Double(values[i]) }
     guard sum.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
     return -sum
+  }
+
+  /// Evaluate independent candidates together on the same measured BF evidence.
+  /// Geometry and input reads are shared across up to eight candidates. The
+  /// precision and accumulation order of each scalar objective are retained.
+  public func losses(
+    _ parameters: [SSBJointParameters], isCancelled: () -> Bool = { false }
+  ) throws -> [Double] {
+    try validatePreparation()
+    if parameters.isEmpty { return [] }
+    for value in parameters { try value.validate() }
+    if batchPartial == nil {
+      batchPartial = try Self.allocate(device, partial.length * 8)
+      batchPower = try Self.allocate(device, power.length * 8, shared: true)
+    }
+    guard let batchPartial, let batchPower else { throw MetalSSBError.commandQueue }
+    var result: [Double] = []
+    result.reserveCapacity(parameters.count)
+    for first in stride(from: 0, to: parameters.count, by: 8) {
+      if isCancelled() { throw CancellationError() }
+      let candidates = parameters[first..<min(first + 8, parameters.count)]
+      let packed = candidates.flatMap(\.packed)
+      var p = grid
+      var batch = UInt32(candidates.count)
+      let commands = try command()
+      try encodeProbe(commands, parameters: packed, batch: batch)
+      let compute = try encoder(commands, objectiveBatch)
+      for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
+        compute.setBuffer(buffer, offset: 0, index: index)
+      }
+      compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
+      compute.setBytes(packed, length: packed.count * 4, index: 5)
+      compute.setBytes(&batch, length: 4, index: 6)
+      compute.setBuffer(probeGeometry, offset: 0, index: 7)
+      compute.setBuffer(probeChi, offset: 0, index: 8)
+      dispatch(compute, width: bandCount, height: Int(p.chunks))
+      let reduction = try encoder(commands, reduceBatch)
+      for (index, buffer) in [batchPartial, weights, batchPower].enumerated() {
+        reduction.setBuffer(buffer, offset: 0, index: index)
+      }
+      reduction.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+      reduction.setBytes(&batch, length: 4, index: 4)
+      dispatch(reduction, width: bandCount, height: Int(batch))
+      try finish(commands)
+      // Preserve the existing Float64 scalar reduction; no scientific image
+      // or Fourier array is copied to the host by this operation.
+      let values = batchPower.contents().assumingMemoryBound(to: Float.self)
+      for candidate in 0..<Int(batch) {
+        var sum = 0.0
+        for i in 0..<bandCount { sum += Double(values[candidate * bandCount + i]) }
+        guard sum.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+        result.append(-sum)
+      }
+    }
+    return result
+  }
+
+  private func encodeProbe(_ commands: MTLCommandBuffer, parameters: [Float], batch: UInt32) throws
+  {
+    var p = grid
+    var count = batch
+    let compute = try encoder(commands, trialProbe)
+    compute.setBuffer(probeGeometry, offset: 0, index: 0)
+    compute.setBuffer(probeChi, offset: 0, index: 1)
+    compute.setBytes(parameters, length: parameters.count * 4, index: 2)
+    compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+    compute.setBytes(&count, length: 4, index: 4)
+    dispatch(compute, width: Int(p.totalBF))
   }
 
   /// Reconstruct with all BF pixels. Cancellation is checked between GPU batches.

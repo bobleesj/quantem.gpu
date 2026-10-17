@@ -14,28 +14,40 @@ public struct SSBJointOptimizationResult: Codable, Sendable {
   public let seed: UInt64
   public let globalTrials: Int
   public let refinementIterationsPerStart: Int
+  public let refinementMethod: SSBJointRefinement?
 }
 
-/// Six-dimensional seeded Parzen search followed by bounded Nelder–Mead.
+public enum SSBJointRefinement: String, Codable, Sendable {
+  case newton
+  case nelderMead = "nelder-mead"
+}
+
+/// Six-dimensional seeded Parzen search followed by bounded refinement.
 /// Native trial proposals are independent of Optuna; fixed-parameter losses
 /// follow the same joint transfer model. Fitting never changes scan rotation.
 public struct SSBJointOptimizer: Sendable {
   public let globalTrials: Int
   public let refinementIterations: Int
+  public let refinement: SSBJointRefinement
   public let seed: UInt64
   private let bounds: [ClosedRange<Double>] = [
     -300...300, 0...200, (-Double.pi / 2)...(Double.pi / 2), -25...25, -25...25, 20...600,
   ]
 
-  public init(globalTrials: Int = 200, refinementIterations: Int = 200, seed: UInt64 = 42) {
+  public init(
+    globalTrials: Int = 200, refinementIterations: Int? = nil, seed: UInt64 = 42,
+    refinement: SSBJointRefinement = .newton
+  ) {
     self.globalTrials = globalTrials
-    self.refinementIterations = refinementIterations
+    self.refinementIterations = refinementIterations ?? (refinement == .newton ? 30 : 200)
+    self.refinement = refinement
     self.seed = seed
   }
 
   public func run(
     start: SSBJointParameters,
     evaluate: (SSBJointParameters) throws -> Double,
+    evaluateBatch: (([SSBJointParameters]) throws -> [Double])? = nil,
     progress: (String, Int, Int, Double) -> Void = { _, _, _, _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> SSBJointOptimizationResult {
@@ -86,8 +98,8 @@ public struct SSBJointOptimizer: Sendable {
       _ = try loss(candidate, stage: "search")
       progress("Search trials", trial + 1, globalTrials, bestLoss)
     }
-    // Refine three separated basins. Report iteration count independently of
-    // evaluations: a simplex iteration can evaluate more than one candidate.
+    // Refine three separated basins. Report iterations independently of
+    // evaluations: either refinement can evaluate several candidates per step.
     var starts: [[Double]] = []
     let separation: [Double] = [50, 20, 0.3, 2, 2, 50]
     for trial in history.sorted(by: { $0.loss < $1.loss }) {
@@ -100,47 +112,80 @@ public struct SSBJointOptimizer: Sendable {
       if starts.count == 3 { break }
     }
     let scale = max(abs(bestLoss), 1e-30)
-    for (run, initial) in starts.enumerated() {
-      var simplex = [initial]
-      let minimumSteps = [2.0, 2.0, 0.04, 0.2, 0.2, 2.0]
-      for d in bounds.indices {
-        var v = initial
-        let step = max(abs(v[d]) * 0.05, minimumSteps[d])
-        v[d] += v[d] + step <= bounds[d].upperBound ? step : -step
-        simplex.append(clamp(v))
-      }
-      var losses = try simplex.map { try loss($0, stage: "refinement") / scale }
-      for iteration in 0..<refinementIterations {
-        let order = losses.indices.sorted { losses[$0] < losses[$1] }
-        simplex = order.map { simplex[$0] }
-        losses = order.map { losses[$0] }
-        progress(
-          "Refinement \(run + 1)/\(starts.count)", iteration + 1, refinementIterations, bestLoss)
-        let spread =
-          simplex.dropFirst().flatMap { v in zip(v, simplex[0]).map { abs($0 - $1) } }.max() ?? 0
-        if spread < 0.05 && losses.last! - losses[0] < 1e-6 { break }
-        let centroid = bounds.indices.map { d in simplex.prefix(6).reduce(0) { $0 + $1[d] } / 6 }
-        let reflected = clamp(zip(centroid, simplex[6]).map { 2 * $0 - $1 })
-        let r = try loss(reflected, stage: "refinement") / scale
-        if r < losses[0] {
-          let expanded = clamp(zip(centroid, reflected).map { $0 + 2 * ($1 - $0) })
-          let e = try loss(expanded, stage: "refinement") / scale
-          simplex[6] = e < r ? expanded : reflected
-          losses[6] = min(e, r)
-        } else if r < losses[5] {
-          simplex[6] = reflected
-          losses[6] = r
-        } else {
-          let target = r < losses[6] ? reflected : simplex[6]
-          let contracted = clamp(zip(centroid, target).map { $0 + 0.5 * ($1 - $0) })
-          let c = try loss(contracted, stage: "refinement") / scale
-          if c < min(r, losses[6]) {
-            simplex[6] = contracted
-            losses[6] = c
+    if refinement == .newton {
+      let result = try SSBJointNewton.run(
+        starts: starts, iterations: refinementIterations,
+        evaluate: { rows in
+          if isCancelled() { throw CancellationError() }
+          // Finite-difference probes may lie outside the search box, exactly as
+          // in the Python model. Only accepted centers are fitted solutions.
+          let candidates = rows.map { values in
+            SSBJointParameters(
+              aberrations: .init(
+                c10Angstroms: Float(values[0]),
+                c12Angstroms: Float(values[1]), phi12Radians: Float(values[2])),
+              depthAngstroms: Float(values[5]), tiltRowMrad: Float(values[3]),
+              tiltColumnMrad: Float(values[4]))
+          }
+          let values = try evaluateBatch?(candidates) ?? candidates.map(evaluate)
+          guard values.count == candidates.count, values.allSatisfy(\.isFinite) else {
+            throw SSBOptimizationError.nonFiniteLoss
+          }
+          for (parameters, value) in zip(candidates, values) {
+            history.append(SSBJointTrial(parameters: parameters, loss: value, stage: "refinement"))
+          }
+          return values.map { -$0 / scale }
+        },
+        progress: { completed, value in
+          progress("Newton refinement", completed, refinementIterations, -value * scale)
+        }, isCancelled: isCancelled)
+      // A derivative probe is not an accepted iterate and must not replace the
+      // solution merely because it has a better score outside the search box.
+      best = point(result.point)
+      bestLoss = -result.value * scale
+    } else {
+      for (run, initial) in starts.enumerated() {
+        var simplex = [initial]
+        let minimumSteps = [2.0, 2.0, 0.04, 0.2, 0.2, 2.0]
+        for d in bounds.indices {
+          var v = initial
+          let step = max(abs(v[d]) * 0.05, minimumSteps[d])
+          v[d] += v[d] + step <= bounds[d].upperBound ? step : -step
+          simplex.append(clamp(v))
+        }
+        var losses = try simplex.map { try loss($0, stage: "refinement") / scale }
+        for iteration in 0..<refinementIterations {
+          let order = losses.indices.sorted { losses[$0] < losses[$1] }
+          simplex = order.map { simplex[$0] }
+          losses = order.map { losses[$0] }
+          progress(
+            "Refinement \(run + 1)/\(starts.count)", iteration + 1, refinementIterations, bestLoss)
+          let spread =
+            simplex.dropFirst().flatMap { v in zip(v, simplex[0]).map { abs($0 - $1) } }.max() ?? 0
+          if spread < 0.05 && losses.last! - losses[0] < 1e-6 { break }
+          let centroid = bounds.indices.map { d in simplex.prefix(6).reduce(0) { $0 + $1[d] } / 6 }
+          let reflected = clamp(zip(centroid, simplex[6]).map { 2 * $0 - $1 })
+          let r = try loss(reflected, stage: "refinement") / scale
+          if r < losses[0] {
+            let expanded = clamp(zip(centroid, reflected).map { $0 + 2 * ($1 - $0) })
+            let e = try loss(expanded, stage: "refinement") / scale
+            simplex[6] = e < r ? expanded : reflected
+            losses[6] = min(e, r)
+          } else if r < losses[5] {
+            simplex[6] = reflected
+            losses[6] = r
           } else {
-            for i in 1...6 {
-              simplex[i] = clamp(zip(simplex[0], simplex[i]).map { $0 + 0.5 * ($1 - $0) })
-              losses[i] = try loss(simplex[i], stage: "refinement") / scale
+            let target = r < losses[6] ? reflected : simplex[6]
+            let contracted = clamp(zip(centroid, target).map { $0 + 0.5 * ($1 - $0) })
+            let c = try loss(contracted, stage: "refinement") / scale
+            if c < min(r, losses[6]) {
+              simplex[6] = contracted
+              losses[6] = c
+            } else {
+              for i in 1...6 {
+                simplex[i] = clamp(zip(simplex[0], simplex[i]).map { $0 + 0.5 * ($1 - $0) })
+                losses[i] = try loss(simplex[i], stage: "refinement") / scale
+              }
             }
           }
         }
@@ -149,7 +194,7 @@ public struct SSBJointOptimizer: Sendable {
     return SSBJointOptimizationResult(
       best: best, loss: bestLoss, trials: history,
       elapsedSeconds: Date().timeIntervalSince(started), seed: seed, globalTrials: globalTrials,
-      refinementIterationsPerStart: refinementIterations)
+      refinementIterationsPerStart: refinementIterations, refinementMethod: refinement)
   }
 
   private func vector(_ p: SSBJointParameters) -> [Double] {

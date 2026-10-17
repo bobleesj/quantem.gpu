@@ -12,7 +12,8 @@ let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
 let start = SSBJointParameters(
   aberrations: .init(c10Angstroms: 0, c12Angstroms: 0, phi12Radians: 0),
   depthAngstroms: 200)
-let fit = try SSBJointOptimizer().run(start: start, evaluate: model.loss)
+let fit = try SSBJointOptimizer().run(
+  start: start, evaluate: model.loss, evaluateBatch: { try model.losses($0) })
 let phase = try model.reconstruct(
   fit.best, upsamplingFactor: calibration.ssbUpsamplingFactor())
 ```
@@ -48,10 +49,22 @@ Automatic output sampling chooses the smallest supported factor in
 convergence angle and scan spacing. It does not claim achieved resolution.
 Calibrations requiring more than 8x fail with a corrective error.
 
-The native seeded Parzen search runs 200 global trials by default, then at
-most three distinct Nelder-Mead starts with 200 iterations each. An iteration
-can evaluate multiple points. This optimizer is not proposal-identical to
-Optuna. Fixed-parameter model parity and optimizer behavior are separate tests.
+The native seeded Parzen search runs 200 global trials by default, followed by
+bounded Newton refinement from up to three distinct starts. Refinement uses
+Cartesian astigmatism coordinates and at most 30 iterations. Its finite
+differences are evaluated in GPU batches of up to eight candidates, sharing
+probe geometry and measured Fourier reads. Each candidate retains the scalar
+kernel's accumulation order. Only accepted iterates can become the final
+solution; derivative probes outside the search bounds cannot.
+
+Pass `evaluateBatch` to use GPU batching; the scalar closure remains supported.
+The explicit `.nelderMead` refinement option preserves the previous method
+and its default 200-iteration budget. Saved results record the chosen method;
+older records without this field remain readable.
+
+An iteration can evaluate multiple points. The global optimizer is not
+proposal-identical to Optuna. Fixed-parameter model parity and optimizer
+behavior are separate tests.
 The search bounds are C10 ±300 A, C12 0..200 A, angle ±pi/2, tilt ±25 mrad per
 component, and depth 20..600 A. A boundary result deserves review.
 

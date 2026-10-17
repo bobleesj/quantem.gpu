@@ -13,10 +13,9 @@ inline float4 joint_geometry(float2 k, constant JointGrid& p) {
     return float4(a*a,(k.x*k.x-k.y*k.y)*inv,2*k.x*k.y*inv,aperture);
 }
 inline float joint_sinc(float x) { return abs(x)<1e-6f?1.0f:precise::sin(x)/x; }
-inline float2 joint_gamma(float2 q, float2 k, constant JointGrid& p, constant float* t) {
-    float4 gk=joint_geometry(k,p), gm=joint_geometry(q-k,p), gp=joint_geometry(q+k,p);
+inline float2 joint_gamma_geometry_chi(float2 q, float4 gk, float4 gm, float4 gp,
+                                      constant JointGrid& p, constant float* t, float ck) {
     float f=p.factor;
-    float ck=f*gk.x*(t[0]+t[1]*(gk.y*t[2]+gk.z*t[3]));
     float cm=f*gm.x*(t[0]+t[1]*(gm.y*t[2]+gm.z*t[3]));
     float cp=f*gp.x*(t[0]+t[1]*(gp.y*t[2]+gp.z*t[3]));
     float shift=2*M_PI_F*(q.x*t[5]+q.y*t[6]);
@@ -24,6 +23,15 @@ inline float2 joint_gamma(float2 q, float2 k, constant JointGrid& p, constant fl
     float b2=joint_sinc(0.5f*t[4]*( f*(gp.x-gk.x)-shift))*gp.w*gk.w;
     return float2(b1*precise::cos(cm-ck)-b2*precise::cos(cp-ck),
                  -b1*precise::sin(cm-ck)-b2*precise::sin(cp-ck));
+}
+inline float2 joint_gamma_geometry(float2 q, float4 gk, float4 gm, float4 gp,
+                                  constant JointGrid& p, constant float* t) {
+    float ck=p.factor*gk.x*(t[0]+t[1]*(gk.y*t[2]+gk.z*t[3]));
+    return joint_gamma_geometry_chi(q,gk,gm,gp,p,t,ck);
+}
+inline float2 joint_gamma(float2 q, float2 k, constant JointGrid& p, constant float* t) {
+    return joint_gamma_geometry(q,joint_geometry(k,p),joint_geometry(q-k,p),
+                                joint_geometry(q+k,p),p,t);
 }
 inline float2 joint_read(device const float2* g,uint row,uint col,uint k,constant JointGrid& p) {
     if (!p.sourceHalf) return g[(size_t)k*p.n*p.n+row*p.n+col];
@@ -37,13 +45,32 @@ kernel void joint_gather(device const float2* g [[buffer(0)]], device float2* ba
     uint2 q=indices[tid.x];
     band[(size_t)(p.bfOffset+tid.y)*p.bandCount+tid.x]=joint_read(g,q.x,q.y,tid.y,p);
 }
+kernel void joint_probe_geometry(device const float2* k [[buffer(0)]],device float4* geometry [[buffer(1)]],
+    constant JointGrid& p [[buffer(2)]],uint i [[thread_position_in_grid]]) {
+    if(i<p.totalBF)geometry[i]=joint_geometry(k[i],p);
+}
+kernel void joint_trial_probe(device const float4* geometry [[buffer(0)]],device float* chi [[buffer(1)]],
+    constant float* parameters [[buffer(2)]],constant JointGrid& p [[buffer(3)]],
+    constant uint& batch [[buffer(4)]],uint i [[thread_position_in_grid]]) {
+    if(i>=p.totalBF)return;
+    float4 gk=geometry[i];
+    for(uint b=0;b<batch;b++) {
+        constant float* t=parameters+b*7;
+        chi[(size_t)i*batch+b]=p.factor*gk.x*(t[0]+t[1]*(gk.y*t[2]+gk.z*t[3]));
+    }
+}
 kernel void joint_objective(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
     device const float2* q [[buffer(2)]],device float4* partial [[buffer(3)]],
-    constant JointGrid& p [[buffer(4)]],constant float* t [[buffer(5)]],uint2 tid [[thread_position_in_grid]]) {
+    constant JointGrid& p [[buffer(4)]],constant float* t [[buffer(5)]],
+    device const float4* geometry [[buffer(6)]],device const float* chi [[buffer(7)]],
+    uint2 tid [[thread_position_in_grid]]) {
     if(tid.x>=p.bandCount||tid.y>=p.chunks)return;
     float2 numerator=0;float denominator=0;
     for(uint i=tid.y*256;i<min(p.totalBF,(tid.y+1)*256);i++) {
-        float2 gamma=joint_gamma(q[tid.x],k[i],p,t);
+        float2 frequency=q[tid.x],pixel=k[i];
+        float4 gk=geometry[i],gm=joint_geometry(frequency-pixel,p),gp=joint_geometry(frequency+pixel,p);
+        if(gm.w*gk.w==0 && gp.w*gk.w==0)continue;
+        float2 gamma=joint_gamma_geometry_chi(frequency,gk,gm,gp,p,t,chi[i]);
         float2 value=g[(size_t)i*p.bandCount+tid.x];
         numerator+=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y);
         denominator+=dot(gamma,gamma);
@@ -55,6 +82,39 @@ kernel void joint_power(device const float4* partial [[buffer(0)]],device const 
     if(i>=p.bandCount)return;
     float3 sum=0;for(uint c=0;c<p.chunks;c++)sum+=partial[(size_t)c*p.bandCount+i].xyz;
     power[i]=sum.z>0?weights[i]*dot(sum.xy,sum.xy)/sum.z:0;
+}
+// Independent candidates share geometry and measured Fourier reads. Each
+// candidate retains the scalar kernel's BF and chunk accumulation order.
+kernel void joint_objective_batch(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
+    device const float2* q [[buffer(2)]],device float4* partial [[buffer(3)]],
+    constant JointGrid& p [[buffer(4)]],constant float* parameters [[buffer(5)]],
+    constant uint& batch [[buffer(6)]],device const float4* geometry [[buffer(7)]],
+    device const float* chi [[buffer(8)]],uint2 tid [[thread_position_in_grid]]) {
+    if(tid.x>=p.bandCount||tid.y>=p.chunks)return;
+    float2 numerator[8];float denominator[8];
+    for(uint b=0;b<batch;b++){numerator[b]=0;denominator[b]=0;}
+    float2 frequency=q[tid.x];
+    for(uint i=tid.y*256;i<min(p.totalBF,(tid.y+1)*256);i++) {
+        float2 pixel=k[i];
+        float4 gk=geometry[i],gm=joint_geometry(frequency-pixel,p),gp=joint_geometry(frequency+pixel,p);
+        if(gm.w*gk.w==0 && gp.w*gk.w==0)continue;
+        float2 value=g[(size_t)i*p.bandCount+tid.x];
+        for(uint b=0;b<batch;b++) {
+            float2 gamma=joint_gamma_geometry_chi(frequency,gk,gm,gp,p,parameters+b*7,chi[(size_t)i*batch+b]);
+            numerator[b]+=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y);
+            denominator[b]+=dot(gamma,gamma);
+        }
+    }
+    for(uint b=0;b<batch;b++)
+        partial[((size_t)tid.y*batch+b)*p.bandCount+tid.x]=float4(numerator[b],denominator[b],0);
+}
+kernel void joint_power_batch(device const float4* partial [[buffer(0)]],device const float* weights [[buffer(1)]],
+    device float* power [[buffer(2)]],constant JointGrid& p [[buffer(3)]],
+    constant uint& batch [[buffer(4)]],uint2 tid [[thread_position_in_grid]]) {
+    if(tid.x>=p.bandCount||tid.y>=batch)return;
+    float3 sum=0;
+    for(uint c=0;c<p.chunks;c++)sum+=partial[((size_t)c*batch+tid.y)*p.bandCount+tid.x].xyz;
+    power[(size_t)tid.y*p.bandCount+tid.x]=sum.z>0?weights[tid.x]*dot(sum.xy,sum.xy)/sum.z:0;
 }
 kernel void joint_correct(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
     device float2* corrected [[buffer(2)]],constant JointGrid& p [[buffer(3)]],
