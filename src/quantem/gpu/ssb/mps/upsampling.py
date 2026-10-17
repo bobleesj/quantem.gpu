@@ -58,8 +58,8 @@ def _alias_correction_kernel():
         uint col = thread_position_in_grid.x;
         uint row = thread_position_in_grid.y;
         uint k = thread_position_in_grid.z;
-        if (col >= N || row >= N || k >= K) return;
-        size_t out = ((size_t)k * N + row) * N + col;
+        if (col >= COLS || row >= N || k >= K) return;
+        size_t out = ((size_t)k * N + row) * COLS + col;
         if (col == 0u && row == 0u) {
             corrected[out] = dc[0];
             return;
@@ -98,7 +98,8 @@ def _alias_correction_kernel():
         float sb = metal::precise::sincos(chi_p - chi_k, cb);
         float re = a * ca - b * cb, im = -a * sa - b * sb;
         float inv = 1.0f / metal::max(metal::precise::sqrt(re * re + im * im), 1e-8f);
-        // Only the source G has Hermitian symmetry. Corrected aliases do not.
+        // Source G is Hermitian. The corrected non-DC spectrum is
+        // anti-Hermitian only for an even probe and paired frequencies.
         uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
         bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
         if (mirror) {
@@ -111,6 +112,23 @@ def _alias_correction_kernel():
         corrected[out].imag = (vi * re - vr * im) * inv;
         """,
     )
+
+
+def _coherent_columns(prepared: PreparedMpsSSB, n: int) -> int:
+    """Use the unique half only when both Nyquist edges have zero support."""
+    radius = (
+        prepared.semiangle_rad
+        + 0.5 * max(prepared.ang_y_rad, prepared.ang_x_rad)
+    ) / prepared.wavelength
+    # Round the support bound outwards, including the soft aperture edge.
+    radius *= 1.0 + 8.0 * np.finfo(np.float32).eps
+    row_support = float(np.max(np.abs(prepared.kx_np))) + radius
+    col_support = float(np.max(np.abs(prepared.ky_np))) + radius
+    row_nyquist = n // 2 * abs(float(prepared.q_row[1]))
+    col_nyquist = n // 2 * abs(float(prepared.q_col[1]))
+    if row_nyquist > row_support and col_nyquist > col_support:
+        return n // 2 + 1
+    return n
 
 
 def _reconstruct_upsampled(
@@ -150,7 +168,10 @@ def _reconstruct_upsampled(
                             if higher else np.zeros((14, 2), np.float32))
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
-    total = mx.zeros((n, n), dtype=mx.complex64 if wave_mean else mx.float32)
+    columns = n
+    if wave_mean and not higher and upsampling_factor > 1:
+        columns = _coherent_columns(prepared, n)
+    total = mx.zeros((n, columns), dtype=mx.complex64 if wave_mean else mx.float32)
     squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
     chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
     stored = int(prepared.g_qk.shape[0])
@@ -176,14 +197,15 @@ def _reconstruct_upsampled(
             ],
             template=[
                 ("N", n),
+                ("COLS", columns),
                 ("SOURCE_N", source_n),
                 ("G_COLS", int(prepared.g_qk.shape[-1])),
                 ("K", stop - start),
                 ("HIGHER", higher),
             ],
-            grid=(n, n, stop - start),
+            grid=(columns, n, stop - start),
             threadgroup=(32, 8, 1),
-            output_shapes=[(stop - start, n, n)],
+            output_shapes=[(stop - start, n, columns)],
             output_dtypes=[mx.complex64],
         )[0]
         if wave_mean:
@@ -203,6 +225,12 @@ def _reconstruct_upsampled(
     if wave_mean:
         # Compacted inactive BF columns still carry the common real DC term.
         total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
+        if columns != n:
+            # Gamma(-q,k) = -conj(Gamma(q,k)) for the C10/C12 probe.
+            # Preserve the real DC separately and reflect only paired columns.
+            mirror_rows = mx.array((-np.arange(n)) % n)
+            negative = -mx.conj(total[mirror_rows, 1:n // 2][:, ::-1])
+            total = mx.concatenate((total, negative), axis=1)
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         phase = mx.arctan2(mx.imag(wave), mx.real(wave))
     else:

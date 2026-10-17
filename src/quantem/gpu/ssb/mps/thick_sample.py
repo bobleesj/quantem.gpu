@@ -41,6 +41,9 @@ _FUSED_SHAPES = ((128, 128), (256, 256), (512, 512), (1024, 1024))
 _CHUNK_BYTES = 256 << 20
 _LIVE_PLANES = 6
 THICK_FIT_MAX_BATCH = 8
+# Keep search proposals in groups of eight. Smaller execution tiles reduce
+# register pressure without changing proposal order or BF reduction order.
+_FIT_DISPATCH_BATCH = 4
 _K_CHUNK = 256      # bright-field pixels summed per thread; the partial sums over chunks are reduced afterwards
 
 
@@ -156,7 +159,7 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
     """``thick_fit`` for many parameter sets at once with the fused Metal kernel (fast path used by the fit search).
 
     ``params``: (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness), engine units. Same value as
-    ``thick_fit`` row by row (rel ~1e-6); G is read once per group of ``THICK_FIT_MAX_BATCH`` rows, only at the band's q on
+    ``thick_fit`` row by row (rel ~1e-6); G is read once per execution tile, only at the band's q on
     the stored half-plane, and (k, q) pairs with no double overlap are skipped.
     """
     mx = prepared.mx
@@ -171,8 +174,8 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
                        dtype=mx.float32)
     kernel = _thick_fit_batch_kernel()
     out = np.empty(len(params))
-    for start in range(0, len(params), THICK_FIT_MAX_BATCH):
-        rows = params[start:start + THICK_FIT_MAX_BATCH]
+    for start in range(0, len(params), _FIT_DISPATCH_BATCH):
+        rows = params[start:start + _FIT_DISPATCH_BATCH]
         batch_size = len(rows)
         trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
                           rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
