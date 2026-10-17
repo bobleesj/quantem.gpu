@@ -8,7 +8,7 @@ import pytest
 from .test_ssb_thick_sample_mps import _require_mps
 
 
-def _disk_session(n=128, source_path=None):
+def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
     from quantem.gpu import SSB
 
     rng = np.random.default_rng(9)
@@ -23,7 +23,7 @@ def _disk_session(n=128, source_path=None):
         voltage_kV=300,
         semiangle_mrad=30,
         scan_sampling_A=(0.3, 0.3),
-        detector_sampling_mrad=(10.0, 10.0),
+        detector_sampling_mrad=detector_sampling,
         source_path=None if source_path is None else str(source_path),
     )
 
@@ -233,3 +233,21 @@ def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, highe
         repeated, repeated_loss = ssb.preview(coefs, **sample, upsampling_factor=3)
         np.testing.assert_array_equal(repeated, actual)
         assert repeated_loss == loss
+
+
+@pytest.mark.parametrize("depth_nm", [0.0, 18.0])
+def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
+    """A rotated detector with unequal pixel angles retains its soft edge."""
+    _require_mps()
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
+    with _disk_session(detector_sampling=(10.0, 7.0)) as ssb:
+        ssb.set_rotation(165.8)
+        phase, _ = ssb.preview(
+            coefs, sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm,
+            upsampling_factor=3, compute_loss=False,
+        )
+        expected = _zero_inserted_reference(
+            ssb._backend()._prepared, 3, (-80.0, 40.0, -0.7),
+            (-9.0, 5.0), depth_nm * 10, "phase_of_mean",
+        )
+        np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)

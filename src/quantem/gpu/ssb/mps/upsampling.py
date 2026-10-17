@@ -40,6 +40,14 @@ inline float2 alias_corrected(
     float factor = params[8], depth = params[9], tr = params[10], tc = params[11];
     float kr = k_row[k], kc = k_col[k];
     float4 gk = float4(probe[k * 5], probe[k * 5 + 1], probe[k * 5 + 2], probe[k * 5 + 3]);
+    // Bound the complete soft aperture before evaluating its geometry.
+    // The outward margin includes float32 roundoff and anisotropic pixels.
+    float radius = (semi + 0.5f * metal::max(ay, ax)) / wl;
+    radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+    float mr = qr - kr, mc = qc - kc, pr = qr + kr, pc = qc + kc;
+    if (metal::min(mr * mr + mc * mc, pr * pr + pc * pc) > radius * radius) {
+        return float2(0.0f);
+    }
     float4 gm = tf_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
     float4 gp = tf_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
     if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
@@ -96,6 +104,34 @@ def _alias_probe_kernel():
 
 
 @lru_cache(maxsize=1)
+def _alias_group_bounds_kernel():
+    """Bound groups of BF coordinates without changing their contributions."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_alias_group_bounds",
+        input_names=["k_row", "k_col", "params"],
+        output_names=["bounds"],
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint group = thread_position_in_grid.x;
+        uint first = group * CHUNK;
+        if (first >= K) return;
+        float row_min = k_row[first], row_max = row_min;
+        float col_min = k_col[first], col_max = col_min;
+        for (uint k = first + 1u; k < min(first + CHUNK, uint(K)); ++k) {
+            row_min = min(row_min, k_row[k]); row_max = max(row_max, k_row[k]);
+            col_min = min(col_min, k_col[k]); col_max = max(col_max, k_col[k]);
+        }
+        float radius = (params[1] + 0.5f * max(params[2], params[3])) / params[0];
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+        bounds[group * 5] = row_min; bounds[group * 5 + 1] = row_max;
+        bounds[group * 5 + 2] = col_min; bounds[group * 5 + 3] = col_max;
+        bounds[group * 5 + 4] = radius * radius;
+        """,
+    )
+
+
+@lru_cache(maxsize=1)
 def _alias_correction_kernel():
     mx = require_mlx()
     return mx.fast.metal_kernel(
@@ -136,7 +172,7 @@ def _coherent_alias_kernel():
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_coherent_alias",
-        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
+        input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients", "bounds"],
         output_names=["partial"],
         header=_HEADER + _ALIAS_TRANSFER,
         compile_options={"math_mode": "safe"},
@@ -152,16 +188,22 @@ def _coherent_alias_kernel():
             for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
         } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
             float qr = q_row[row], qc = q_col[col];
-            // Both apertures vanish beyond twice their maximum radius.
-            // This bound includes the antialiased rim and a conservative
-            // float32 margin. Frequencies inside it retain the full model.
-            float radius = 2.0f * (params[1] + 0.5f * metal::max(params[2], params[3]))
-                           / params[0] * 1.00001f + 1e-6f;
-            if (qr * qr + qc * qc <= radius * radius) {
-                for (uint k = start; k < stop; ++k) {
-                    sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-                        row, col, k, qr, qc, g, k_row, k_col, params, probe, coefficients);
-                }
+            // Outside both expanded group bounds every contribution is zero.
+            // True DC and its aliases retain the rules above.
+            float row_min = bounds[group * 5], row_max = bounds[group * 5 + 1];
+            float col_min = bounds[group * 5 + 2], col_max = bounds[group * 5 + 3];
+            float rm = max(max(row_min - qr, qr - row_max), 0.0f);
+            float cm = max(max(col_min - qc, qc - col_max), 0.0f);
+            float rp = max(max(row_min + qr, -qr - row_max), 0.0f);
+            float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
+            if (min(rm * rm + cm * cm, rp * rp + cp * cp) > bounds[group * 5 + 4]) {
+                partial[out].real = 0.0f;
+                partial[out].imag = 0.0f;
+                return;
+            }
+            for (uint k = start; k < stop; ++k) {
+                sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
+                    row, col, k, qr, qc, g, k_row, k_col, params, probe, coefficients);
             }
         }
         partial[out].real = sum.x;
@@ -203,6 +245,13 @@ def _coherent_spectrum(
     stored = int(prepared.g_qk.shape[0])
     source_n = int(prepared.scan_shape[0])
     total = mx.zeros((n, columns), dtype=mx.complex64)
+    group_count = (stored + chunk - 1) // chunk
+    bounds = _alias_group_bounds_kernel()(
+        inputs=[prepared.kx, prepared.ky, params],
+        template=[("K", stored), ("CHUNK", chunk)],
+        grid=(group_count, 1, 1), threadgroup=(256, 1, 1),
+        output_shapes=[(group_count, 5)], output_dtypes=[mx.float32],
+    )[0]
     # Preserve the established BF chunk boundaries; only the inner sum changes
     # from MLX's reduction to sequential float32 addition in the fused kernel.
     groups_per_batch = max(1, _WORK_BYTES // (n * columns * 8))
@@ -211,7 +260,8 @@ def _coherent_spectrum(
         groups = (stop - start + chunk - 1) // chunk
         partial = _coherent_alias_kernel()(
             inputs=[prepared.g_qk[start:stop], qr, qc, prepared.kx[start:stop],
-                    prepared.ky[start:stop], params, dc, probe[start:stop], coefficients],
+                    prepared.ky[start:stop], params, dc, probe[start:stop], coefficients,
+                    bounds[start // chunk:start // chunk + groups]],
             template=[("N", n), ("COLS", columns), ("SOURCE_N", source_n),
                       ("G_COLS", int(prepared.g_qk.shape[-1])),
                       ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk)],
