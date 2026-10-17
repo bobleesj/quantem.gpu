@@ -198,7 +198,7 @@ def load_h5_ans(
 def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal."""
     # Metal decoding is imported only on the MPS path, like every platform decoder.
-    from quantem.gpu.io.hdf5.mps.decode import exact_uint16, load_prepared_frames
+    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor, exact_uint16
 
     started = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
@@ -220,6 +220,7 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     source = MPSStreamedCounts(shape, dtype, valid)
     zeroed_markers = 0
     reader = FrameReader(str(path))
+    decoder = None
     scans = math.prod(info.scan_shape)
     # Bound simultaneous decoded counts and ANS encoding scratch on smaller Macs;
     # uint32 batches hold half the scans, so their decoded bytes stay the same.
@@ -241,7 +242,21 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
                 prepared = pending.result()
                 if index + 1 < len(ranges):
                     pending = pool.submit(reader.prepare, np.arange(*ranges[index + 1]))
-                raw = load_prepared_frames(prepared)
+                compressed_bytes = max(1, len(prepared["read_buffer"]))
+                if decoder is None or compressed_bytes > decoder.max_compressed_bytes:
+                    if decoder is not None:
+                        decoder.free()
+                    # Reuse bounded decode scratch across batches. Reserve room
+                    # for compressed-size variation without rebuilding every
+                    # block; decoded output still has independent ownership.
+                    frame_bytes = int(prepared["frame_bytes"])
+                    decoder = MPSDecompressor(
+                        max_compressed_bytes=2 * compressed_bytes,
+                        max_frames=chunk_scans,
+                        frame_bytes=frame_bytes,
+                        n_blocks_per_frame=(frame_bytes + 8191) // 8192,
+                    )
+                raw = decoder.load_prepared_frames(prepared)
                 try:
                     # The median reads only valid neighbors, so flagged uint32
                     # sentinels are replaced before the range check, as on CUDA.
@@ -274,6 +289,8 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
         raise
     finally:
         reader.close()
+        if decoder is not None:
+            decoder.free()
         corrector.close()
     metadata = dict(info.metadata)
     metadata.update(
