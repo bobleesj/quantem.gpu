@@ -86,19 +86,27 @@ def _phase_sum_kernel(batch: int, chunk: int, ny: int, nx: int):
         }}
         uint batch = elem / PLANE;
         uint pixel = elem - batch * PLANE;
-        size_t base = ((size_t)batch * (size_t)CHUNK * (size_t)PLANE) + (size_t)pixel;
+        // Column IFFTs leave rows contiguous. Read that layout directly rather
+        // than copying the entire object stack to row-major order first.
+        bool row_first = abs(long(obj_strides[2])) < abs(long(obj_strides[3]));
+        uint row = row_first ? pixel % NY : pixel / NX;
+        uint col = row_first ? pixel / NY : pixel % NX;
+        long base = long(batch) * long(obj_strides[0])
+                  + long(row) * long(obj_strides[2])
+                  + long(col) * long(obj_strides[3]);
         float s = 0.0f;
         for (uint bf = 0; bf < CHUNK; ++bf) {{
-            auto z = obj[base + (size_t)bf * (size_t)PLANE];
+            auto z = obj[base + long(bf) * long(obj_strides[1])];
             s += metal::atan2(z.imag, z.real);
         }}
-        sum_out[elem] = s;
+        sum_out[batch * PLANE + row * NX + col] = s;
     """
     return mx.fast.metal_kernel(
         name=f"ssb_phase_sum_n{int(batch)}_b{int(chunk)}_{int(ny)}_{int(nx)}",
         input_names=["obj"],
         output_names=["sum_out"],
         source=source,
+        ensure_row_contiguous=False,
         compile_options={"math_mode": "fast"},
     )
 
