@@ -175,6 +175,13 @@ whose payloads cross 64 MiB chunks and the 256 MiB group limit cheaply.
   without admitting unverified bytes. The headed browser gate additionally tests
   real worker transfers; `runQemChecksumParity(false)` tests a page with
   `Content-Security-Policy: worker-src 'none'`.
+- QEM admission builds exact decoder checkpoints as complete GPU groups and
+  their tables authenticate, overlapping later reads. The resident reuses those
+  checkpoints, offsets and tables. Split chunks retain the original decoder
+  path. `qem-resident.ts` tests ordering, reuse, cancellation and later-corruption
+  cleanup; the real-browser gate rejects invalid ANS states even with valid SHA.
+  `checkpointPrebuiltGroups` records the early groups; `checkpointMs` measures
+  only the final pass, not total overlapped GPU work. Use `readyMs` for load timing.
 - `qem-stream.ts`: fragmented BYOB and default streams arrive as exact chunks,
   short and long responses are rejected, stopping early cancels the download,
   admission verifies every chunk from one ranged response with four local reads
