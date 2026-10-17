@@ -132,6 +132,35 @@ def test_fused_depth_model_at_all_native_sizes(n, atol):
         assert abs(loss - expected_loss) <= 1e-6 * abs(expected_loss)
 
 
+def test_slider_changes_match_fresh_sessions():
+    """Reuse a session while changing optics, rotation, and output sampling."""
+    _require_mps()
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    states = [
+        (coefs, (-9., 5.), 18., 0., 3),
+        (coefs, (-7., 5.), 18., 0., 3),
+        (coefs, (-7., 5.), 24., 0., 3),
+        (coefs | {"C10_nm": 6.0}, (-7., 5.), 24., 0., 3),
+        (coefs | {"C21_nm": 20., "phi21_deg": 12.}, (-7., 5.), 24., 0., 3),
+        (coefs, (-9., 5.), 18., 180., 3),
+        (coefs, (-9., 5.), 18., 180., 2),
+        (coefs, (0., 0.), 0., 0., 3),
+        (coefs, (-9., 5.), 18., 0., 3),
+    ]
+    with _disk_session() as reused:
+        for aberrations, tilt, depth, rotation, factor in states:
+            options = dict(
+                sample_tilt_mrad=tilt, depth_spread_nm=depth,
+                upsampling_factor=factor, compute_loss=False,
+            )
+            reused.set_rotation(rotation)
+            phase, _ = reused.preview(aberrations, **options)
+            with _disk_session() as fresh:
+                fresh.set_rotation(rotation)
+                expected, _ = fresh.preview(aberrations, **options)
+            np.testing.assert_array_equal(phase, expected)
+
+
 def test_automatic_sampling_rotation_and_saved_result(tmp_path):
     """Replay fine sampling and both rotations without refitting."""
     _require_mps()

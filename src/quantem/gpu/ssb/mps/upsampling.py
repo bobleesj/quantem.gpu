@@ -87,18 +87,22 @@ inline float2 ssb_corrected_alias(
         return float2(0.0f);
     }
     float chi_k = probe[k * 5 + 4];
-    float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
-    float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
-    if (higher) {
-        chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
-        chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
-    }
     float shift = 6.283185307179586f * (qr * tr + qc * tc);
-    float a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
-    float b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
-    float ca, cb;
-    float sa = metal::precise::sincos(chi_m - chi_k, ca);
-    float sb = metal::precise::sincos(chi_p - chi_k, cb);
+    // A zero aperture contributes exactly zero. Keep the original arithmetic
+    // for each supported term and the original order of their combination.
+    float a = 0.0f, b = 0.0f, ca = 0.0f, sa = 0.0f, cb = 0.0f, sb = 0.0f;
+    if (gm.w != 0.0f) {
+        float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
+        if (higher) chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
+        a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+        sa = metal::precise::sincos(chi_m - chi_k, ca);
+    }
+    if (gp.w != 0.0f) {
+        float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
+        if (higher) chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
+        b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+        sb = metal::precise::sincos(chi_p - chi_k, cb);
+    }
     float re = a * ca - b * cb, im = -a * sa - b * sb;
     float inv = 1.0f / metal::max(metal::precise::sqrt(re * re + im * im), 1e-8f);
     // Source G is Hermitian. The corrected non-DC spectrum is
@@ -237,13 +241,11 @@ def _reconstruct_upsampled(
     mx = prepared.mx
     source_n = int(prepared.scan_shape[0])
     n = source_n * upsampling_factor
-    frequencies = np.fft.fftfreq(n) * n
-    qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
-    qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
     params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
     higher = higher_order_magnitudes is not None
-    coefficients = mx.array(pack_coefficients(higher_order_magnitudes, higher_order_angles)
-                            if higher else np.zeros((14, 2), np.float32))
+    packed = (pack_coefficients(higher_order_magnitudes, higher_order_angles)
+              if higher else np.zeros((14, 2), np.float32))
+    coefficients = mx.array(packed)
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
     columns = n
@@ -258,20 +260,40 @@ def _reconstruct_upsampled(
         planes = max(1, _WORK_BYTES // (n * columns * 8 * 3))
         chunk = min(_COHERENT_CHUNK, planes * bf_group)
     stored = int(prepared.g_qk.shape[0])
-    probe = _alias_probe_kernel()(
-        inputs=[prepared.kx, prepared.ky, params, coefficients],
-        template=[("K", stored), ("HIGHER", higher)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
-    )[0]
-    bounds = mx.zeros((1, 5), dtype=mx.float32)
-    if wave_mean:
-        groups = (stored + bf_group - 1) // bf_group
-        bounds = _alias_group_bounds_kernel()(
-            inputs=[prepared.kx, prepared.ky, params],
-            template=[("K", stored), ("BF_GROUP", bf_group)],
-            grid=(groups, 1, 1), threadgroup=(256, 1, 1),
-            output_shapes=[(groups, 5)], output_dtypes=[mx.float32],
+    # Tilt and depth do not change the probe. Retain only the latest probe,
+    # rather than accumulating parameter states during a slider drag.
+    probe_key = (float(C10), float(C12), float(phi12), higher, packed.tobytes())
+    cached_probe = prepared.upsampled_probe
+    if cached_probe is not None and cached_probe[0] == probe_key:
+        probe = cached_probe[1]
+    else:
+        probe = _alias_probe_kernel()(
+            inputs=[prepared.kx, prepared.ky, params, coefficients],
+            template=[("K", stored), ("HIGHER", higher)],
+            grid=(stored, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
         )[0]
+        prepared.upsampled_probe = (probe_key, probe)
+    # The frequency grid and aperture bounds are independent of aberrations,
+    # tilt, and depth. Rotation changes clear these session-owned caches.
+    grid_key = (n, bf_group)
+    cached_geometry = prepared.upsampled_geometry
+    if cached_geometry is not None and cached_geometry[0] == grid_key:
+        qr, qc, bounds = cached_geometry[1:]
+    else:
+        frequencies = np.fft.fftfreq(n) * n
+        qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
+        qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
+        bounds = mx.zeros((1, 5), dtype=mx.float32)
+        if wave_mean:
+            groups = (stored + bf_group - 1) // bf_group
+            bounds = _alias_group_bounds_kernel()(
+                inputs=[prepared.kx, prepared.ky, params],
+                template=[("K", stored), ("BF_GROUP", bf_group)],
+                grid=(groups, 1, 1), threadgroup=(256, 1, 1),
+                output_shapes=[(groups, 5)], output_dtypes=[mx.float32],
+            )[0]
+        prepared.upsampled_geometry = (grid_key, qr, qc, bounds)
     kernel = _alias_correction_kernel()
     for start in range(0, stored, chunk):
         stop = min(start + chunk, stored)

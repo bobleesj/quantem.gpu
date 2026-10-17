@@ -65,6 +65,9 @@ class PreparedMpsSSB:
     bf_storage_indices_np: np.ndarray | None = None
     # thick-sample fit band (band limits, band arrays); it depends only on the q grid, so it survives rotation changes
     thick_band: tuple | None = None
+    # One latest reconstruction grid/probe, invalidated with rotated geometry.
+    upsampled_geometry: tuple | None = None
+    upsampled_probe: tuple | None = None
 
 
 def prepare_selection(
@@ -402,6 +405,8 @@ def retarget_prepared_rotation(
 
     prepared.kx = kx
     prepared.ky = ky
+    prepared.upsampled_geometry = None
+    prepared.upsampled_probe = None
     prepared.kx_np = kx_np
     prepared.ky_np = ky_np
     prepared.alpha_k2_1d = alpha_k2_1d
