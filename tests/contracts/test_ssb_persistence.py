@@ -4,6 +4,7 @@ import json
 import math
 
 import numpy as np
+import pytest
 
 
 class _Backend:
@@ -47,6 +48,9 @@ class _Backend:
         )
 
     num_bright_field_pixels = 17
+
+    def cache_rotation(self, angle):
+        """Accept the workflow's temporary diagnostic rotation."""
 
     def preview(self, aberrations, *, compute_loss=True, **kwargs):
         self.reconstruct_calls += 1
@@ -477,3 +481,95 @@ def test_fit_is_stored_only_in_a_current_screening_record(tmp_path):
             write_fit_metadata(folder, settings, result, (0.6, 0.6))
         assert str(folder / "config.json") in str(refused.value) and repr(earlier.get("schema")) in str(refused.value)
         assert (folder / "config.json").read_bytes() == before and sorted(path.name for path in folder.iterdir()) == ["config.json"]
+
+
+def _saved_joint_fit(tmp_path, monkeypatch):
+    from quantem.gpu import SSBResult
+
+    source = tmp_path / "scan.bin"
+    source.write_bytes(b"detector counts")
+    session = _session(monkeypatch, source, _Backend())
+    result = SSBResult(
+        object_wave=np.ones((2, 2), dtype=np.complex64), backend="mps",
+        aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": 3.0},
+        sample_tilt_mrad=(1.0, 2.0), depth_spread_nm=10.0,
+        source_path=str(source), scan_detector_rotation_deg=12.0,
+    )
+    paths = (tmp_path / "fit.npz", tmp_path / "fit.json")
+    session._save_result(result, paths=paths, signature=session._result_signature("find_aberrations", {}))
+    return session, result, paths
+
+
+@pytest.mark.parametrize("change", ["source", "counts", "sampling", "detector", "shape", "signature"])
+def test_parameter_slices_reject_mismatched_saved_fit_without_writes(tmp_path, monkeypatch, change):
+    session, result, paths = _saved_joint_fit(tmp_path, monkeypatch)
+    before = [path.read_bytes() for path in paths]
+    if change == "source":
+        session.source_path = str(tmp_path / "other.bin")
+    elif change == "counts":
+        (tmp_path / "scan.bin").write_bytes(b"changed detector counts")
+    elif change == "sampling":
+        session.scan_sampling_A = (0.4, 0.3)
+    elif change == "detector":
+        session.detector_transposed = True
+    elif change == "shape":
+        session._data = np.zeros((4, 2, 3, 3), dtype=np.uint16)
+    else:
+        result.metadata.pop("signature")
+    monkeypatch.setattr(session, "_backend", lambda: pytest.fail("Mismatched input must not evaluate the objective"))
+    with pytest.raises(ValueError, match="session"):
+        session.measure_parameters(result)
+    assert result.parameter_slices is None
+    assert [path.read_bytes() for path in paths] == before
+
+
+def test_parameter_slices_require_live_ownership_for_saved_array_fit(tmp_path, monkeypatch):
+    session, result, paths = _saved_joint_fit(tmp_path, monkeypatch)
+    session.source_kind = "array"
+    session._save_result(result, paths=paths, signature=session._result_signature("find_aberrations", {}))
+    before = [path.read_bytes() for path in paths]
+    with pytest.raises(ValueError, match="Array fits"):
+        session.measure_parameters(result)
+    assert [path.read_bytes() for path in paths] == before
+    result.saved_path = None
+    result.metadata = {}
+    with pytest.raises(ValueError, match="Array fits"):
+        session.measure_parameters(result)
+
+
+def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path, monkeypatch):
+    from quantem.gpu import SSBResult
+    from quantem.gpu.ssb import parameters
+    from quantem.gpu.ssb.persistence import load_result
+
+    session, result, paths = _saved_joint_fit(tmp_path, monkeypatch)
+    signature = result.metadata["signature"]
+    session.scan_detector_rotation_deg = 24.0
+    measured = {"elapsed_s": 0.5, "slices": {}}
+
+    def measure(*args, **kwargs):
+        assert session.scan_detector_rotation_deg == result.scan_detector_rotation_deg
+        return measured
+
+    monkeypatch.setattr(parameters, "measure_slices", measure)
+    assert session.measure_parameters(result) == measured
+    assert session.scan_detector_rotation_deg == 24.0
+    metadata = json.loads(paths[1].read_text())
+    assert metadata["signature"] == signature
+    assert metadata["parameter_slices"] == measured
+    assert "parameter_slices" not in metadata["result"]
+    # The existing scientific payload needs no new constructor keyword.
+    assert SSBResult(object_wave=result.object_wave, **metadata["result"]).parameter_slices is None
+    restored = load_result(paths=paths, signature=signature, backend="mps")
+    assert restored.parameter_slices == measured
+    assert session.measure_parameters(restored) == measured
+
+    unsaved = SSBResult(
+        object_wave=result.object_wave, backend="mps", aberrations=result.aberrations,
+        sample_tilt_mrad=result.sample_tilt_mrad, depth_spread_nm=result.depth_spread_nm,
+        scan_detector_rotation_deg=result.scan_detector_rotation_deg,
+    )
+    assert session.measure_parameters(unsaved) == measured
+    unsaved.source_path = str(tmp_path / "other.bin")
+    with pytest.raises(ValueError, match="original SSB source"):
+        session.measure_parameters(unsaved)

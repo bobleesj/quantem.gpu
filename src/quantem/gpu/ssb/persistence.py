@@ -40,7 +40,7 @@ SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 RESULT_SCHEMA = f"quantem.ssb-result/{SCHEMA}"
 
 
-_ARTIFACT_FIELDS = {"object_wave", "rotation_check_phases", "reused", "saved_path", "metadata"}
+_ARTIFACT_FIELDS = {"object_wave", "rotation_check_phases", "reused", "saved_path", "metadata", "parameter_slices"}
 
 
 def save_result(
@@ -66,6 +66,10 @@ def save_result(
         "signature": signature,
         "result": json_value(result_metadata),
     }
+    # Optional diagnostics leave the scientific result payload readable by
+    # readers of this schema that predate parameter plots.
+    if result.parameter_slices is not None:
+        metadata["parameter_slices"] = json_value(result.parameter_slices)
     arrays = {"object_wave": host_array(result.object_wave)}
     if result.rotation_check_phases is not None:
         arrays["rotation_check_phases"] = result.rotation_check_phases
@@ -93,6 +97,7 @@ def load_result(
         if metadata.get("schema") != RESULT_SCHEMA or metadata.get("signature") != signature:
             return None
         saved = dict(metadata["result"])
+        saved.setdefault("parameter_slices", metadata.get("parameter_slices"))
         with np.load(array_path, allow_pickle=False) as arrays:
             object_wave = arrays["object_wave"]
             rotation_check_phases = arrays["rotation_check_phases"] if saved.get("initial_scan_detector_rotation_deg") is not None else None
