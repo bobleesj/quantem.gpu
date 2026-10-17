@@ -41,7 +41,8 @@ class AcquisitionVerification:
     Parameters
     ----------
     master : Path
-        Completed ARINA master with external detector members.
+        Completed ARINA master with external detector members, or a QEM file.
+        A QEM identity hashes its own bytes and is distinct from its HDF5 source.
 
     Examples
     --------
@@ -52,15 +53,24 @@ class AcquisitionVerification:
     def __init__(self, master: Path) -> None:
         self._master = Path(master).resolve()
         before_master = _file_generation(self._master)
-        with h5py.File(self._master, "r") as handle:
-            sources = detector_sources(handle)
-        if not all(source.external for source in sources):
-            raise ValueError("This export currently requires an ARINA master with external data members.")
-        self._paths = (self._master, *(Path(source.path).resolve() for source in sources))
+        from quantem.gpu.formats.qem.snapshot import is_qem_file
+        from quantem.gpu.formats.qem.validation import validate_qem
+
+        if is_qem_file(self._master):
+            validate_qem(self._master)
+            self._paths = (self._master,)
+            domain = b"quantem.qem-source/v1\0"
+        else:
+            with h5py.File(self._master, "r") as handle:
+                sources = detector_sources(handle)
+            if not all(source.external for source in sources):
+                raise ValueError("Export requires a QEM file or an ARINA master with external data members.")
+            self._paths = (self._master, *(Path(source.path).resolve() for source in sources))
+            domain = b"live4dstem.dataset/v0.1\0"
         self._generation = tuple(_file_generation(path) for path in self._paths)
         if self._generation[0] != before_master:
             raise ValueError("Acquisition changed during verification. Retry with a completed acquisition.")
-        digest = hashlib.sha256(b"live4dstem.dataset/v0.1\0")
+        digest = hashlib.sha256(domain)
         for index, path in enumerate(self._paths):
             with path.open("rb") as stream:
                 member = hashlib.file_digest(stream, "sha256").hexdigest()

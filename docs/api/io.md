@@ -705,3 +705,9 @@ an additional background subtraction. Original XML is retained; storage footer
 words are not detector measurements. See [QEM interoperability](qem-interoperability.md)
 for independent validation and the [metadata mapping](qem-metadata-mapping.md) for
 which source fields are normalized or merely retained.
+
+Portable SSB export also accepts a `.qem` acquisition as its source. Its source
+identity hashes the validated QEM bytes and is distinct from the original HDF5
+identity. Re-encoding the acquisition changes that identity; the exported phase
+values are unchanged. Keep the conversion record when relating the QEM working
+counts to an archived raw acquisition.
