@@ -87,6 +87,8 @@ class TorchBackend(DetectorQueries):
         ----------
         det_mask
             Detector mask in (row, col) order, as a NumPy array or Torch tensor.
+            Boolean or binary masks select pixels; other real-valued masks
+            apply float32 weights, including negative and fractional values.
         out
             Optional contiguous float32 tensor with the scan shape on the
             source device. The returned tensor is complete and independently
@@ -121,8 +123,14 @@ class TorchBackend(DetectorQueries):
     def _masked_sum_tensor(self, det_mask: np.ndarray | torch.Tensor) -> torch.Tensor:
         """Keep the existing bounded reduction and its float32 result on device."""
         values = det_mask if isinstance(det_mask, torch.Tensor) else np.ascontiguousarray(det_mask)
-        mask = torch.as_tensor(values, device=self.device, dtype=torch.bool).reshape(-1)
-        if not torch.is_floating_point(self._flat):
+        # Keep the existing exact integer and sparse Boolean reductions. Custom
+        # real-valued masks must not lose their weights in those selection paths.
+        weights = torch.as_tensor(values, device=self.device, dtype=torch.float32)
+        weighted = values.dtype not in (torch.bool, np.dtype(bool)) and not bool(
+            torch.all((weights == 0) | (weights == 1)).item()
+        )
+        mask = weights.bool().reshape(-1)
+        if not torch.is_floating_point(self._flat) and not weighted:
             selected = torch.nonzero(mask, as_tuple=False).reshape(-1)
             if selected.numel() == 0:
                 return torch.zeros(self.scan_shape, dtype=torch.float32, device=self.device)
@@ -141,7 +149,7 @@ class TorchBackend(DetectorQueries):
         if selected <= 0:
             return torch.zeros(self.scan_shape, dtype=torch.float32, device=self.device)
         # Dense tensordot is better once the ROI covers a large detector fraction.
-        if selected <= det_pixels // 4:
+        if selected <= det_pixels // 4 and not weighted:
             pixel_indices = torch.nonzero(mask, as_tuple=False).reshape(-1)
             flat = self._flat.reshape(self.n_frames, det_pixels)
             out = torch.empty(self.n_frames, dtype=torch.float32, device=self.device)
@@ -150,7 +158,6 @@ class TorchBackend(DetectorQueries):
                 stop = min(self.n_frames, start + step)
                 out[start:stop] = flat[start:stop].index_select(1, pixel_indices).sum(dim=1)
             return out.reshape(self.scan_shape)
-        weights = torch.as_tensor(values, device=self.device).float()
         out = torch.zeros(self.n_frames, dtype=torch.float32, device=self.device)
         step = self._frames_per_chunk()
         for start in range(0, self.n_frames, step):
