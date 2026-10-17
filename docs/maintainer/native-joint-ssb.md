@@ -114,3 +114,29 @@ Private measured-data evidence is archived under experiment
 `20261015-native-joint`. Keep acquisitions, screenshots and raw logs outside
 this repository. Native app interaction, numerical parity and release
 qualification are separate gates.
+
+## Full-resolution phase reconstruction
+
+For a 512×512 scan with calibrated 3× output, the native renderer uses a fused
+1536-point Metal FFT when the complete aperture support ends before both
+Nyquist boundaries. The transfer function satisfies
+`Gamma(-q, k) = -conj(Gamma(q, k))`. After removing DC and rotating by `-i`,
+the corrected spectrum is Hermitian. The implementation transforms its unique
+half, restores DC, evaluates each BF phase, and then averages the phases.
+It does not replace `mean_phase` with `phase_of_mean`.
+
+Each 1536-point transform combines three of the shared 512-point radix-8
+transforms with a radix-3 stage. Correction is fused with the first transform;
+the second transform accumulates phases directly. Calibrated BF geometry is
+reused from the joint model. Eight-BF reduction groups,
+logical BF normalization, native source counts, and float32/complex64
+arithmetic are retained. FFT roundoff is checked against the general GPU
+implementation; the specialized FFT is not advertised as bit-identical.
+
+The intermediate workspace is bounded to 16 BF planes in Hermitian layout,
+including partial cache and streamed tails. Cancellation occurs between GPU
+batches, and result buffers remain independently owned. Other scan sizes,
+sampling factors, and geometries with nonzero Nyquist support use the general
+complex FFT path. Its correction, FFT and phase reduction share a command
+buffer to avoid intermediate host waits. No source crop, BF sampling, or
+resolution reduction is selected for speed.
