@@ -63,9 +63,8 @@ from quantem.gpu.ssb.units import (
 
 
 def _default_phase_estimator(aberrations: dict[str, float]) -> str:
-    """Use coherent C10/C12 reconstruction on both physical backends."""
-    higher = higher_order_arrays(aberrations)
-    return "mean_phase" if higher is not None and np.any(higher[0][2:]) else "phase_of_mean"
+    """Use coherent reconstruction for every aberration on both backends."""
+    return "phase_of_mean"
 
 
 def _in_notebook() -> bool:
@@ -482,7 +481,8 @@ class SSB:
                 "software": software_signature(),
                 "operation": operation,
                 "reconstruction": {
-                    "default_c10_c12_estimator": "phase_of_mean",
+                    "default_estimator": "phase_of_mean",
+                    "higher_order_model": "krivanek14",
                     "upsampling_dc_policy": "single_origin",
                 },
                 "source": (
@@ -1137,10 +1137,11 @@ class SSB:
             Nyquist frequency covers the ideal circular-aperture SSB support,
             2 * semiangle / wavelength, on both scan axes. This is a grid
             criterion, not a measured resolution or a guarantee of useful
-            signal at the cutoff. C10/C12 upsampling runs on CUDA and MPS.
+            signal at the cutoff. All 14 aberration terms support upsampling
+            and tilt/depth correction on CUDA and MPS.
         phase_estimator
-            C10/C12 defaults to ``phase_of_mean`` on CUDA and MPS at every
-            output factor. Higher-order paths retain ``mean_phase``.
+            Defaults to ``phase_of_mean`` on CUDA and MPS at every output
+            factor, including higher-order aberrations.
             The loss is the native-grid search
             diagnostic, not a score computed from the displayed phase.
             ``complex_wave`` explicitly retains amplitude for native, thin-sample
@@ -1201,8 +1202,11 @@ class SSB:
             coefs = dict(self.aberrations)
             tilt = self.sample_tilt_mrad
             depth = self.depth_spread_nm
-        coefs = validate_aberrations({**coefs, **(aberrations or {})})
+        coefs = validate_aberrations({**coefs, **(aberrations or {})}, higher_order=True)
         estimator = phase_estimator or _default_phase_estimator(coefs)
+        higher = higher_order_arrays(coefs)
+        if estimator == "complex_wave" and higher is not None and np.any(higher[0][2:]):
+            raise ValueError("Higher-order reconstruction supports phase_of_mean or mean_phase; choose either phase estimator.")
         if estimator == "complex_wave" and (upsampling_factor != 1 or depth or any(tilt or ())):
             raise ValueError("complex_wave requires upsampling_factor=1 and no sample tilt/depth; choose a phase estimator instead.")
         settings = {
@@ -1305,15 +1309,15 @@ class SSB:
         standard SSB. CUDA and MPS backends.
 
         ``upsampling_factor`` selects 1, 2, 3, 4, or 8 times finer output sampling.
-        Values above one support C10/C12 with or without tilt/depth correction
+        Values above one support all 14 terms with or without tilt/depth correction
         on CUDA and MPS. The diagnostic loss and aberration search remain on the native
         scan grid. Sampling never fits parameters or interpolates detector data.
 
-        By default, CUDA and MPS C10/C12 reconstruction averages corrected complex
+        By default, CUDA and MPS reconstruction averages corrected complex
         waves before taking phase (``phase_of_mean``), with or without sample
         tilt, at every output factor. Explicit ``mean_phase`` retains the
         historical per-detector phase average for comparisons. Higher-order
-        paths retain their existing estimator. Upsampling excludes replicas
+        coefficients use the same coherent estimator. Upsampling excludes replicas
         of the scan mean and retains one normalization at q=0. Quantitative phase
         amplitude is not established by stronger image contrast. Diagnostic
         loss still uses native-grid per-detector phase variance; fitting is
@@ -1409,19 +1413,20 @@ class SSB:
                     upsampling_factor=upsampling_factor, sample_tilt_mrad=sample_tilt_mrad,
                     thickness=float(depth_spread_nm) * ENGINE_PER_NM,
                 )
-        if upsampling_factor != 1 or phase_estimator == "phase_of_mean":
-            if higher_order_magnitudes is not None:
-                raise ValueError(
-                    "Upsampling and wave averaging support C10_nm/C12_nm with "
-                    "tilt/depth; leave out the higher-order aberrations."
-                )
+        if (upsampling_factor != 1 or phase_estimator == "phase_of_mean"
+                or (higher_order_magnitudes is not None and (depth_spread_nm > 0 or self.backend == "mps"))):
             backend = self._backend()
+            higher = {} if higher_order_magnitudes is None else {
+                "higher_order_magnitudes": higher_order_magnitudes * np.float32(ENGINE_PER_NM),
+                "higher_order_angles": higher_order_angles,
+            }
             with scope:
                 return backend.preview_upsampled(
                     coefs, upsampling_factor=upsampling_factor, compute_loss=compute_loss,
                     sample_tilt_mrad=tuple(float(value) for value in sample_tilt_mrad),
                     thickness=float(depth_spread_nm) * ENGINE_PER_NM,
                     phase_estimator=phase_estimator,
+                    **higher,
                 )
         if float(depth_spread_nm) > 0.0:
             sample = {"tilt_row_mrad": float(sample_tilt_mrad[0]), "tilt_col_mrad": float(sample_tilt_mrad[1]),

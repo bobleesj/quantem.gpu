@@ -14,10 +14,13 @@ import numpy as np
 from quantem.gpu.ssb.cuda.kernels.engine import (
     THICK_FIT_MAX_BATCH,
     thick_correct_kernel,
+    thick_correct_full_kernel,
     thick_fit_batch_kernel,
     thick_fit_kernel,
     thick_wave_sum_kernel,
+    thick_wave_sum_full_kernel,
 )
+from quantem.gpu.ssb.higher_order import pack_coefficients
 
 
 class ThickSample:
@@ -45,6 +48,8 @@ class ThickSample:
         chunk_bytes: int = 1 << 30,
         upsampling_factor: int = 1,
         phase_estimator: str = "mean_phase",
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
         """Mean phase and variance loss for a thick, tilted crystal (see ``thick_correct_kernel``).
 
@@ -85,6 +90,8 @@ class ThickSample:
             return self._reconstruct_wave(
                 C10, C12, phi12, sample_tilt_mrad, thickness, qx.ravel(), qy.ravel(),
                 compute_loss=compute_loss, chunk_bytes=chunk_bytes,
+                higher_order_magnitudes=higher_order_magnitudes,
+                higher_order_angles=higher_order_angles,
             )
         half = engine.gqk_is_half_plane()
         # other half of the plane for a real bright-field image: G(-q) = conj(G(q))
@@ -94,6 +101,10 @@ class ThickSample:
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
         phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
+        kernel = thick_correct_kernel
+        if higher_order_magnitudes is not None:
+            kernel = thick_correct_full_kernel
+            params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, chunk):
             stop = min(num_bright_field_pixels, start + chunk)
             if half:
@@ -107,7 +118,7 @@ class ThickSample:
                 full = cp.tile(full, (1, upsampling_factor, upsampling_factor))
             kx = cache["kx_bf"][start:stop].reshape(-1, 1, 1)
             ky = cache["ky_bf"][start:stop].reshape(-1, 1, 1)
-            corrected = thick_correct_kernel(full, qx, qy, kx, ky, *params)
+            corrected = kernel(full, qx, qy, kx, ky, *params)
             if upsampling_factor != 1:
                 # Exclude scan-mean replicas; retain the true DC below.
                 corrected[:, ::native_ny, ::native_nx] = 0
@@ -135,6 +146,8 @@ class ThickSample:
         *,
         compute_loss: bool,
         chunk_bytes: int,
+        higher_order_magnitudes: np.ndarray | None,
+        higher_order_angles: np.ndarray | None,
     ) -> tuple[cp.ndarray, float | None]:
         """Accumulate float32 corrections in float64 before a single inverse FFT."""
         engine = self.engine
@@ -150,9 +163,13 @@ class ThickSample:
         partial = self._wave_sum_buffer
         spectrum = cp.zeros((rows, cols), dtype=cp.complex128)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
+        kernel = thick_wave_sum_kernel
+        if higher_order_magnitudes is not None:
+            kernel = thick_wave_sum_full_kernel
+            params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
-            thick_wave_sum_kernel(
+            kernel(
                 (math.ceil(rows * cols / 128), active), (128,),
                 (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial,
                  np.int32(num_bright_field_pixels), np.int32(cache["ny"]), np.int32(cache["nx"]),
@@ -168,6 +185,8 @@ class ThickSample:
             _, loss = self.reconstruct(
                 C10, C12, phi12, sample_tilt_mrad, thickness,
                 compute_loss=True, chunk_bytes=chunk_bytes,
+                higher_order_magnitudes=higher_order_magnitudes,
+                higher_order_angles=higher_order_angles,
             )
         return phase, loss
 

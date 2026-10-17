@@ -418,6 +418,8 @@ class CudaSSBBackend:
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
         """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
@@ -426,12 +428,16 @@ class CudaSSBBackend:
             *coefficients, sample_tilt_mrad, thickness, compute_loss=False,
             upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
+            higher_order_magnitudes=higher_order_magnitudes,
+            higher_order_angles=higher_order_angles,
         )
         loss = None
         if compute_loss:
-            if thickness > 0:
+            if thickness > 0 or higher_order_magnitudes is not None:
                 _, loss = accel.thick.reconstruct(
                     *coefficients, sample_tilt_mrad, thickness, compute_loss=True,
+                    higher_order_magnitudes=higher_order_magnitudes,
+                    higher_order_angles=higher_order_angles,
                 )
             else:
                 _, loss = accel.reconstruct_with_loss(*coefficients)

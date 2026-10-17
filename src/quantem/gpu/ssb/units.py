@@ -41,7 +41,7 @@ def validate_aberrations(aberrations: dict[str, float] | None, *, higher_order: 
     """Return a complete, owned C10_nm/C12_nm/phi12_deg mapping (nm, nm, degrees); None means no aberrations.
 
     ``higher_order=True`` also keeps the keys of ``HIGHER_ORDER`` (``C21_nm``, ``phi21_deg``, ...), which only the
-    preview applies. A key outside the accepted set raises: a coefficient that is silently dropped, or read in another
+    fixed-parameter reconstruction applies. A key outside the accepted set raises: a coefficient that is silently dropped, or read in another
     unit, reconstructs a different image with no error.
     """
     if aberrations is None:
