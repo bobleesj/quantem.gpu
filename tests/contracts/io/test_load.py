@@ -4,6 +4,34 @@ import pytest
 from quantem.gpu.device import cuda_runtime as memory_module
 
 
+@pytest.mark.parametrize("apply_mask", [False, True])
+def test_cpu_reference_records_source_and_actual_mask_policy(tmp_path, apply_mask):
+    """Reference loading reports zero masking accurately without changing other counts."""
+    import h5py
+
+    from quantem.gpu import io
+
+    counts = np.full((2, 3, 8, 8), 17, dtype=np.uint16)
+    master = tmp_path / "source_master.h5"
+    io.save(master, counts, backend="cpu", verbose=False)
+    mask = np.zeros((8, 8), dtype=np.uint32)
+    mask[2, 4] = 16
+    with h5py.File(master, "r+") as handle:
+        handle.create_dataset("entry/instrument/detector/detectorSpecific/pixel_mask", data=mask)
+    with io.load(master, backend="cpu", apply_mask=apply_mask, verbose=False) as loaded:
+        assert loaded.metadata["source_path"] == str(master)
+        correction = loaded.metadata["hot_pixel_correction"]
+        assert correction["backend"] == "cpu"
+        assert correction["applied"] is apply_mask
+        assert correction["method"] == ("zero" if apply_mask else "none")
+        assert correction["stage"] == ("cpu_load_before_dense_storage" if apply_mask else "none")
+        expected = counts.copy()
+        if apply_mask:
+            expected[..., 2, 4] = 0
+            assert correction["coordinates_row_col"] == [[2, 4]]
+        np.testing.assert_array_equal(loaded.read(), expected)
+
+
 def test_get_metadata_reports_detector_source_dtype(tmp_path) -> None:
     """Metadata inspection records the stored count dtype before load transforms."""
     import h5py
