@@ -184,3 +184,28 @@ def test_early_verification_rejects_changed_source(tmp_path, changed):
     with pytest.raises(ValueError, match="changed"):
         export_result(tmp_path, master, tmp_path / "refused.json", verification=verified)
     assert not (tmp_path / "refused.json").exists()
+
+
+def test_qem_export_binds_its_own_bytes_and_preserves_phase(tmp_path):
+    import hashlib
+    from quantem.gpu.formats.qem.reference import save_array
+    from quantem.gpu.formats.ssb_phase import AcquisitionVerification, export_result
+
+    source = tmp_path / "scan.qem"
+    save_array(source, np.arange(16, dtype=np.uint16).reshape(2, 2, 2, 2))
+    verified = AcquisitionVerification(source)
+    expected = hashlib.sha256(b"quantem.qem-source/v1\0" + hashlib.sha256(source.read_bytes()).hexdigest().encode()).hexdigest()
+    assert verified.identity(source) == expected
+    phase = np.array([[1, -1], [0.1, -0.0]], dtype=np.float32)
+    np.save(tmp_path / "ssb_phase.npy", phase)
+    (tmp_path / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
+    manifest = export_result(tmp_path, source, tmp_path / "result.json", verification=verified)
+    record, recovered = read_result(manifest, expected)
+    assert recovered.tobytes() == phase.tobytes()
+    with source.open("r+b") as stream:
+        stream.seek(-1, 2)
+        stream.write(b"x")
+    with pytest.raises(ValueError):
+        verified.identity(source)
+    with pytest.raises(ValueError):
+        AcquisitionVerification(source)
