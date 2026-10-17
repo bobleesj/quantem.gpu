@@ -90,4 +90,4 @@ public preview checks on the two full-size acquisitions. These include
 ordinary and tilted models, both rotation branches, signed defocus, sampling,
 higher-order terms, and completed calls with cancellation enabled. Every
 comparison was bit-identical. Private experiment id:
-`mps-ssb-combined-20261017`.
+`ssb-slider-rotation-integration-20261017`.
