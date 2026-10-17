@@ -180,3 +180,34 @@ def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_n
         monkeypatch.setattr(upsampling, "_coherent_columns", lambda prepared, n: n)
         full, _ = ssb.preview(coefs, **sample, upsampling_factor=4, compute_loss=False)
         np.testing.assert_allclose(half, full, rtol=0, atol=2e-5)
+
+
+@pytest.mark.parametrize("depth_nm", [0.0, 18.0])
+@pytest.mark.parametrize("higher_order", [False, True])
+def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, higher_order):
+    """Every BF contribution survives grouping, including an incomplete tail."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling
+
+    from .test_ssb_thick_sample_mps import _poisson_disk_session
+
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    if higher_order:
+        coefs.update(C21_nm=300.0, phi21_deg=23.0)
+    sample = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm)
+    with _poisson_disk_session() as ssb:
+        ssb.set_rotation(165.8)
+        actual, loss = ssb.preview(coefs, **sample, upsampling_factor=3)
+        stored = int(ssb._backend()._prepared.g_qk.shape[0])
+        assert stored > upsampling._COHERENT_CHUNK
+        assert stored % upsampling._COHERENT_GROUP != 0
+        with monkeypatch.context() as ungrouped:
+            ungrouped.setattr(upsampling, "_COHERENT_GROUP", 1)
+            # A final single-BF tile uses constant-address MLX scalar inputs.
+            ungrouped.setattr(upsampling, "_COHERENT_CHUNK", stored - 1)
+            expected, expected_loss = ssb.preview(coefs, **sample, upsampling_factor=3)
+        np.testing.assert_allclose(actual, expected, rtol=0, atol=2e-5)
+        assert loss == expected_loss
+        repeated, repeated_loss = ssb.preview(coefs, **sample, upsampling_factor=3)
+        np.testing.assert_array_equal(repeated, actual)
+        assert repeated_loss == loss

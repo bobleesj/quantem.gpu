@@ -4,6 +4,14 @@ This page records the CUDA, Python MPS, native Swift/Metal, and WebGPU SSB
 performance contracts so future work starts from measured behavior, not from
 memory.
 
+## Coherent MPS reduction, 2026-10-17
+
+Group corrected BF spectra before writing scratch buffers to reduce repeated
+full-field preview latency by 1.7–1.8× in matched measurements. All BF pixels,
+the estimator and precision are retained. See the
+[timing and complete-array checks](2026-10-17-mps-coherent-reduction.md), including
+the numerical reduction-order difference and unavailable legacy fixture gate.
+
 ## Shared C10/C12 reconstruction, 2026-10-16
 
 Python MPS and CUDA now use coherent wave averaging for displayed C10/C12
