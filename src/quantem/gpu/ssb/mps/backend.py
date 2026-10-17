@@ -322,6 +322,14 @@ class MpsSSBBackend:
         require_mlx().clear_cache()
         return result
 
+    def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
+        """Evaluate the joint objective on the session's existing evidence."""
+        from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
+
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        return thick_fit_batch(self._prepared, parameters, band_inv_A)
+
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""
 

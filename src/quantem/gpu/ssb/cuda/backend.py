@@ -456,6 +456,10 @@ class CudaSSBBackend:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
         return fit_sample(self._get_accelerator(), **options)
 
+    def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
+        """Evaluate the joint objective on the session's existing evidence."""
+        return self._get_accelerator().thick.fit_batch(parameters, band_inv_A)
+
     def close(self) -> None:
         """Release CUDA-owned session state."""
 
