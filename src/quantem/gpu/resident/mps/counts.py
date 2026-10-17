@@ -557,6 +557,21 @@ class MPSStreamedCounts:
             output.release()
             raise
 
+    def detector_mean_device(self):
+        """Return the complete-detector mean per scan as float32 Metal storage.
+
+        Reduce integer counts on the device, then use the same exact-total,
+        float64-division rule as ``mean_dp_device`` for the small output image.
+        """
+        sums = self.detector_sum_device(np.ones(self.shape[2:], dtype=bool))
+        try:
+            mean = (sums.get() / math.prod(self.shape[2:])).astype(np.float32)
+        finally:
+            sums.release()
+        result = MetalArray(self.shape[:2], np.float32)
+        buffer_view(result._mtl)[: mean.nbytes] = memoryview(mean).cast("B")
+        return result
+
     def weighted_code_sums(self, weights) -> np.ndarray:
         """Exact uint64 per-scan sums of nonnegative integer pixel weights times counts.
 

@@ -20,6 +20,7 @@ from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import get_metadata, read_pixel_mask
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
+from quantem.gpu.resident.hot_pixels import hot_pixel_record
 
 
 def load_reference(
@@ -43,9 +44,14 @@ def load_reference(
 
     def load_one(path):
         meta = get_metadata(str(path))
+        meta["source_path"] = str(path)
         mask = read_pixel_mask(str(path)) if apply_mask else None
         data = load_master(str(path), pixel_mask=mask, verbose=verbose)
         source_dtype = np.dtype(data.dtype)
+        correction = hot_pixel_record(mask, "zero" if apply_mask else "none", backend="cpu")
+        if correction["applied"]:
+            correction["stage"] = "cpu_load_before_dense_storage"
+        meta["hot_pixel_correction"] = correction
         if mask is not None:
             meta["pixel_mask"] = mask
         if auto_narrow and data.dtype == np.uint32 and int(data.max()) < 65536:
