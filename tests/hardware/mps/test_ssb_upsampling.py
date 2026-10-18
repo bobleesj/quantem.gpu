@@ -263,7 +263,10 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
             dispatched.append(True)
             return kernel(**kwargs)
 
-        monkeypatch.setattr(upsampling, "_coherent_alias_kernel", lambda: tracked_kernel)
+        monkeypatch.setattr(
+            upsampling, "_coherent_alias_kernel",
+            lambda has_depth=True: tracked_kernel,
+        )
         with pytest.raises(CancelledError):
             ssb.preview(coefs, **settings, cancel=lambda: len(dispatched) >= 4)
         assert len(dispatched) == 4
@@ -370,7 +373,7 @@ def test_coherent_reduction_keeps_partial_bf_groups(
             assert stored // chunk >= 100
 
         def per_detector(prepared, qr, qc, params, dc, probe, coefficients,
-                         higher, n, chunk, columns):
+                         higher, n, chunk, columns, has_depth=True):
             mx = prepared.mx
             total = mx.zeros((n, n), dtype=mx.complex64)
             # A final single-BF tile exercises constant-address MLX inputs.
@@ -417,3 +420,34 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
             (-9.0, 5.0), depth_nm * 10, "phase_of_mean",
         )
         np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)
+
+
+@pytest.mark.parametrize("estimator", ["phase_of_mean", "mean_phase"])
+@pytest.mark.parametrize("higher", [False, True])
+def test_zero_depth_specialization_preserves_all_phase_bits(
+    monkeypatch, estimator, higher,
+):
+    """Turning depth off retains the full phase of the general optical model."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling as up
+
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    if higher:
+        coefs.update(C21_nm=0.47, phi21_deg=21.0)
+    with _disk_session() as ssb:
+        settings = dict(
+            sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=0.0,
+            upsampling_factor=3, phase_estimator=estimator, compute_loss=False,
+        )
+        actual, _ = ssb.preview(coefs, **settings)
+        coherent = up._coherent_alias_kernel
+        detector = up._alias_correction_kernel
+        with monkeypatch.context() as general:
+            general.setattr(
+                up, "_coherent_alias_kernel", lambda has_depth=True: coherent(True),
+            )
+            general.setattr(
+                up, "_alias_correction_kernel", lambda has_depth=True: detector(True),
+            )
+            expected, _ = ssb.preview(coefs, **settings)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))

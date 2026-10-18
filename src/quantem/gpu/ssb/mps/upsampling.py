@@ -87,13 +87,19 @@ inline float2 alias_corrected(
     if (gm.w != 0.0f) {
         float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
         if (HIGHER) chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
-        a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+        a = gm.w * gk.w;
+        if (SSB_ALIAS_DEPTH) {
+            a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+        }
         sa = metal::precise::sincos(chi_m - chi_k, ca);
     }
     if (gp.w != 0.0f) {
         float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
         if (HIGHER) chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
-        b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+        b = gp.w * gk.w;
+        if (SSB_ALIAS_DEPTH) {
+            b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+        }
         sb = metal::precise::sincos(chi_p - chi_k, cb);
     }
     float re = a * ca - b * cb, im = -a * sa - b * sb;
@@ -161,14 +167,16 @@ def _alias_group_bounds_kernel():
     )
 
 
-@lru_cache(maxsize=1)
-def _alias_correction_kernel():
+@lru_cache(maxsize=2)
+def _alias_correction_kernel(has_depth: bool = True):
+    """Specialize the zero-depth model without changing optical arithmetic."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_alias_correction",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
         output_names=["corrected"],
-        header=_HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER,
+        header=(f"#define SSB_ALIAS_DEPTH {int(has_depth)}\n"
+                + _HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER),
         compile_options={"math_mode": "safe"},
         source="""
         uint col = thread_position_in_grid.x;
@@ -200,10 +208,11 @@ def _alias_correction_kernel():
     )
 
 
-@lru_cache(maxsize=1)
-def _coherent_alias_kernel():
+@lru_cache(maxsize=2)
+def _coherent_alias_kernel(has_depth: bool = True):
     """Correct detector groups and accumulate them without partial spectra.
 
+    Zero depth omits only the identically-one thickness weights.
     Each thread retains the original BF group boundaries and addition order.
     Grid-dependent values are shared across groups, and only their accumulated
     spectrum is written to device memory.
@@ -214,7 +223,8 @@ def _coherent_alias_kernel():
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc",
                      "probe", "coefficients", "bounds", "row_indices", "col_indices", "previous"],
         output_names=["total"],
-        header=_HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER,
+        header=(f"#define SSB_ALIAS_DEPTH {int(has_depth)}\n"
+                + _HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER),
         compile_options={"math_mode": "safe"},
         source="""
         uint col_index = thread_position_in_grid.x;
@@ -280,7 +290,7 @@ def _coherent_support(
 
 def _coherent_spectrum(
     prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
-    higher: bool, n: int, chunk: int, columns: int,
+    higher: bool, n: int, chunk: int, columns: int, has_depth: bool = True,
 ):
     """Accumulate every BF contribution in its original group and sum order."""
     mx = prepared.mx
@@ -316,7 +326,7 @@ def _coherent_spectrum(
             checkpoint()
         stop = min(start + groups_per_batch * chunk, stored)
         groups = (stop - start + chunk - 1) // chunk
-        total = _coherent_alias_kernel()(
+        total = _coherent_alias_kernel(has_depth)(
             inputs=[prepared.g_qk[start:stop], qr, qc, prepared.kx[start:stop],
                     prepared.ky[start:stop], params, dc, probe[start:stop], coefficients,
                     bounds[start // chunk:start // chunk + groups],
@@ -424,7 +434,9 @@ def _reconstruct_upsampled(
     if wave_mean:
         columns = _coherent_columns(prepared, n) if not higher and upsampling_factor > 1 else n
         total = _coherent_spectrum(
-            prepared, qr, qc, params, dc, probe, coefficients, higher, n, chunk, columns)
+            prepared, qr, qc, params, dc, probe, coefficients, higher, n,
+            chunk, columns, has_depth=thickness != 0.0,
+        )
         # Compacted inactive BF columns still carry the common real DC term.
         total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
         if columns != n:
@@ -441,7 +453,7 @@ def _reconstruct_upsampled(
 
     total = mx.zeros((n, n), dtype=mx.float32)
     squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
-    kernel = _alias_correction_kernel()
+    kernel = _alias_correction_kernel(thickness != 0.0)
     for start in range(0, stored, chunk):
         if (start // chunk) % _PENDING_CHUNKS == 0:
             checkpoint()
