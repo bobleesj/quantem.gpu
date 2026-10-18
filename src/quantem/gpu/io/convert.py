@@ -27,16 +27,17 @@ import torch
 import yaml
 
 from quantem.gpu.formats import dataset_yaml
+from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import read_pixel_mask
 from quantem.gpu.formats.qem.metadata import validate_sample
-from quantem.gpu.formats.qem.snapshot import read_header
+from quantem.gpu.formats.qem.snapshot import BIT_DTYPES, read_header
 from quantem.gpu.io import load, save
 from quantem.gpu.io.read import torch_value
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 
 _MASTER_SUFFIX = "_master.h5"
-_STORED_DTYPES = ("uint8", "uint16", "uint32")
+_STORED_DTYPES = BIT_DTYPES
 _HASH_BLOCK = 64 << 20
 _READABLE_VALUES = 64
 _EMBEDDED_MASTER_LIMIT = 8 << 20
@@ -526,16 +527,13 @@ def restore_master(qem: Path, destination: Path) -> Path:
 
 
 def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> dict:
-    """Compare every saved value with the detector files read through h5py.
+    """Compare every original measurement bit, including flagged detector pixels.
 
-    Every stored value is compared, including flagged detector pixels. A
-    flagged pixel's value above 65535 (the uint32 detector marker, which uint16
-    cannot hold) must be stored as 0, and the number of such values must match
-    the copy's record; every other value must equal the source. Reads and
-    comparisons are bounded; the full acquisition stays encoded on GPU.
+    No marker substitution is accepted as raw preservation. Bit comparisons
+    run on the requested GPU in bounded windows, including for float64 on
+    Metal, whose tensor arithmetic does not support that floating dtype.
     """
     header, _ = read_header(qem)
-    recorded_markers = int(header.get("metadata", {}).get("flagged_markers_stored_as_zero") or 0)
     rows, columns, detector_rows, detector_columns = header["shape"]
     mask = read_pixel_mask(master)
     valid = np.ones((detector_rows, detector_columns), bool) if mask is None else mask == 0
@@ -552,43 +550,46 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
             for dataset, start in zip(datasets, starts):
                 low, high = max(first, start), min(stop, start + len(dataset))
                 if low < high:
-                    parts.append(dataset[low - start: high - start])
+                    parts.append(dataset[low - start: high - start].view(hdf5_dtype(dataset)))
             return np.concatenate(parts)
 
-        differing = compared = markers = 0
-        step = max(1, (64 << 20) // (pixels * 16))
+        differing = compared = 0
+        step = min(512, max(1, (32 << 20) // (pixels * max(2, np.dtype(header["dtype"]).itemsize))))
         with load(qem, backend=backend, representation="encoded", verbose=False) as saved:
-            # Public read() masks flagged pixels for analysis. Verification must
-            # inspect the stored values, using the resident's bounded raw decode;
-            # Metal residents decode straight into Torch storage.
+            # Compare stored values, including flagged pixels, using bounded
+            # raw decode. Detector-product masking is a separate operation.
             if isinstance(saved.data, MPSStreamedCounts):
                 decode = saved.data.decode_scan_range_torch
             else:
                 decode = saved.data.decode_scan_range_device
-            flagged_t = None
             for first in range(0, rows * columns, step):
                 stop = min(rows * columns, first + step)
-                copy = torch_value(decode(first, stop))
-                raw = frames(first, stop)
-                source = torch.from_numpy(raw).to(copy.device).reshape(copy.shape)
-                # int32 holds uint16 exactly and maps uint32 one-to-one, so a wide
-                # source count can never compare equal by wrapping; above 65535
-                # is then above 65535 or negative.
-                source = source.to(torch.int32)
-                if flagged_t is None:
-                    flagged_t = torch.from_numpy(~valid).to(copy.device)
-                stored_as_zero = flagged_t & ((source > 0xFFFF) | (source < 0))
-                markers += int(stored_as_zero.sum())
-                expected = source.masked_fill(stored_as_zero, 0)
-                differing += int((copy.to(torch.int32) != expected).sum())
+                decoded = decode(first, stop)
+                raw = np.ascontiguousarray(frames(first, stop))
+                if np.dtype(header["dtype"]) != raw.dtype:
+                    raise ValueError("The QEM dtype differs from the source dtype.")
+                if hasattr(decoded, "_mtl"):
+                    decoded.dtype = np.dtype("uint8")
+                    decoded.shape = (raw.nbytes,)
+                    copy = torch_value(decoded)
+                elif isinstance(decoded, torch.Tensor):
+                    copy = decoded.view(torch.uint8).reshape(-1)
+                elif is_float8(header["dtype"]):
+                    copy = torch_value(decoded).view(torch.uint8).reshape(-1)
+                else:
+                    copy = torch_value(decoded.view(np.uint8)).reshape(-1)
+                source = torch.from_numpy(raw.view(np.uint8).reshape(-1)).to(copy.device)
+                unequal = (copy != source).reshape(-1, raw.dtype.itemsize).any(dim=1)
+                differing += int(unequal.sum())
                 compared += pixels * (stop - first)
+                del decoded, copy, source, raw, unequal
     flagged = int((~valid).sum())
     return dict(
-        identical=differing == 0 and markers == recorded_markers,
+        identical=differing == 0,
         compared_values=compared,
         differing_values=differing,
         flagged_pixels=flagged,
-        flagged_markers_stored_as_zero=markers,
+        flagged_markers_stored_as_zero=0,
     )
 
 
@@ -634,12 +635,12 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         return result
     try:
         with h5py.File(files[0], "r") as handle:
-            dtype = handle["entry/data/data"].dtype.name
+            dtype = hdf5_dtype(handle["entry/data/data"]).name
     except (OSError, KeyError) as error:
         result.skipped = f"unreadable detector file: {error}"
         return result
     if dtype not in _STORED_DTYPES:
-        result.skipped = f"stored as {dtype}; this collection command supports integer counts up to 65535"
+        result.skipped = f"stored as {dtype}; use a supported real numeric acquisition dtype"
         return result
     started = time.perf_counter()
     try:

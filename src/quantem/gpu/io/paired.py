@@ -67,7 +67,7 @@ class PairedLoader:
         acquisitions of a series when little device memory remains.
     hot_pixel_correction
         Replace stored-mask pixels before encoding. ``"none"`` preserves raw
-        counts; the public ``io.load`` entry point defaults to ``"median"``.
+        counts; the public ``io.load`` entry point defaults to ``"none"``.
 
     Examples
     --------

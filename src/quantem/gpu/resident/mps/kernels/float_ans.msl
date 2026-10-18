@@ -38,7 +38,7 @@ kernel void float_ans_selected_entropy(
     device ushort* output [[buffer(4)]], device atomic_uint* errors [[buffer(5)]],
     device const uchar* mask [[buffer(6)]], constant uint& scans [[buffer(7)]],
     uint lane [[thread_position_in_grid]]) {
-    if (lane >= FLOAT_LANES || !mask[lane / 2] || models[lane] >= 253u) return;
+    if (lane >= FLOAT_LANES || !mask[lane / FLOAT_WORDS] || models[lane] >= 253u) return;
     StreamReader reader(payload, offsets, models, decoding, lane);
     for (uint scan = 0; scan < scans; ++scan) output[scan * FLOAT_LANES + lane] = reader.next();
     if (!reader.finished()) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
@@ -67,19 +67,60 @@ kernel void float_ans_detector(
     device const uchar* models [[buffer(2)]], device const ushort* decoded [[buffer(3)]],
     device const uchar* mask [[buffer(4)]], device const float* dark [[buffer(5)]],
     device float* output [[buffer(6)]], constant uint2& parameters [[buffer(7)]],
+#if FLOAT8_FORMAT >= 0
+    device atomic_uint* errors [[buffer(8)]],
+#endif
     uint scan [[threadgroup_position_in_grid]], uint local [[thread_index_in_threadgroup]],
     ushort lane [[thread_index_in_simdgroup]], ushort group [[simdgroup_index_in_threadgroup]]) {
     threadgroup float2 partials[4];
+#if FLOAT8_FORMAT == 4
+    // Corrected E8M0 uses range normalization; ordinary sums count code 0 separately.
+    threadgroup uint maxima[4], tiny_partials[4];
+    uint scale = 0;
+    uint tiny_count = 0;
+    if (parameters.y) {
+        for (uint pixel = local; pixel < FLOAT_LANES; pixel += 128) {
+            if (!mask[pixel]) continue;
+            scale = max(scale, float_lane(payload, offsets, models, decoded, pixel, scan) & 255u);
+            scale = max(scale, (as_type<uint>(dark[pixel]) >> 23) & 255u);
+        }
+        scale = simd_max(scale);
+        if (lane == 0) maxima[group] = scale;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        scale = max(max(maxima[0], maxima[1]), max(maxima[2], maxima[3]));
+    }
+#endif
     float sum=0, residual=0;
-    for (uint pixel=local; pixel<FLOAT_LANES/2; pixel+=128) {
+    for (uint pixel=local; pixel<FLOAT_LANES/FLOAT_WORDS; pixel+=128) {
         if (mask[pixel]) {
+#if FLOAT8_FORMAT >= 0
+            uint word=float_lane(payload,offsets,models,decoded,pixel,scan);
+            if (word>255u) atomic_fetch_or_explicit(errors,1u,memory_order_relaxed);
+#if FLOAT8_FORMAT == 4
+            if (!parameters.y && word == 0u) { ++tiny_count; continue; }
+            float value = !parameters.y ? as_type<float>(float8_bits(word & 255u, 4))
+                : word == 255u ? as_type<float>(0x7fc00000u)
+                : ldexp(1.0f, int(word & 255u) - int(scale));
+#else
+            float value=as_type<float>(float8_bits(word & 255u,FLOAT8_FORMAT));
+#endif
+#else
             uint word=float_lane(payload,offsets,models,decoded,pixel*2,scan)
                      | (float_lane(payload,offsets,models,decoded,pixel*2+1,scan)<<16);
             float value=as_type<float>(word);
-            if (parameters.y) value-=dark[pixel];
+#endif
+#if FLOAT8_FORMAT == 4
+            if (parameters.y) value -= float8_scale(dark[pixel], 127 - int(scale));
+#else
+            if (parameters.y) value -= dark[pixel];
+#endif
             float_accumulate(value,sum,residual);
         }
     }
+#if FLOAT8_FORMAT == 4
+    tiny_count = simd_sum(tiny_count);
+    if (lane == 0) tiny_partials[group] = tiny_count;
+#endif
     float total=0, compensation=0;
     for (ushort i=0;i<32;++i) {
         float high=simd_broadcast(sum,i), low=simd_broadcast(residual,i);
@@ -90,6 +131,15 @@ kernel void float_ans_detector(
     if (local==0) {
         total=0; compensation=0;
         for (uint i=0;i<4;++i) { float_accumulate(partials[i].x,total,compensation); float_accumulate(partials[i].y,total,compensation); }
-        output[parameters.x+scan]=total+compensation;
+#if FLOAT8_FORMAT == 4
+        float value = total + compensation;
+        const uint tiny = tiny_partials[0] + tiny_partials[1] + tiny_partials[2] + tiny_partials[3];
+        if (parameters.y) value = float8_scale(value, int(scale) - 127);
+        else if (tiny && (as_type<uint>(value) & 0x7fffffffu) < 0x3f800000u)
+            value = float8_scale(float8_scale(value, 1) + float(tiny) * 0x1p-126f, -1);
+        output[parameters.x+scan] = value;
+#else
+        output[parameters.x+scan] = total + compensation;
+#endif
     }
 }

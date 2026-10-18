@@ -10,6 +10,7 @@ from pathlib import Path
 
 from quantem.gpu.formats.qem.snapshot import (
     BLOCK_BYTES,
+    BIT_CODEC,
     FLOAT_CODEC,
     INTEGER_CODEC,
     SCALED_CODEC,
@@ -60,7 +61,7 @@ def validate_qem(path: str | Path) -> dict[str, object]:
     ):
         raise ValueError("Invalid QEM shape; expected four positive integer axes.")
     codec = header.get("codec")
-    if codec not in (INTEGER_CODEC, FLOAT_CODEC, SCALED_CODEC):
+    if codec not in (INTEGER_CODEC, FLOAT_CODEC, BIT_CODEC, SCALED_CODEC):
         raise NotImplementedError(
             f"QEM codec {codec!r} is not supported by this validator."
         )
@@ -81,7 +82,7 @@ def validate_qem(path: str | Path) -> dict[str, object]:
         raise ValueError("Incomplete QEM checksum table; recopy the file.")
     with path.open("rb") as handle:
         verify_body(handle, header, start)
-        if codec == FLOAT_CODEC:
+        if codec in (FLOAT_CODEC, BIT_CODEC):
             validate_float_layout(handle, header, start)
         else:
             # The same geometry and span check the loaders run.

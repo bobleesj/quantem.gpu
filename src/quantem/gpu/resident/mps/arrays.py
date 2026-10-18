@@ -10,6 +10,7 @@ from quantem.gpu.device.metal_runtime import (
     copy_to_torch,
     release_buffer,
 )
+from quantem.gpu.formats.float8 import is_float8, torch_dtype
 
 
 class MetalArray:
@@ -55,6 +56,8 @@ class MetalArray:
         """Copy the array into a Torch MPS tensor."""
         if self._mtl is None:
             raise RuntimeError("This Metal result was released; request it again.")
+        if is_float8(self.dtype):
+            return copy_to_torch(self._mtl, self.shape, np.uint8, "FP8 byte transfer").view(torch_dtype(self.dtype))
         return copy_to_torch(self._mtl, self.shape, self.dtype, "Metal array Torch transfer")
 
     def __array__(self, dtype=None, copy=None):

@@ -17,6 +17,8 @@ import numpy as np
 from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.snapshot import (
     BLOCK_BYTES,
+    BIT_CODEC,
+    BIT_DTYPES,
     FLOAT_CODEC,
     INTEGER_CODEC,
     SCALED_CODEC,
@@ -205,7 +207,8 @@ def _integer_arrays(frames: np.ndarray, valid: np.ndarray) -> tuple[bytes, ...]:
 
 def _float_arrays(frames: np.ndarray) -> tuple[bytes, bytes, bytes]:
     """Reference ANS encoding of IEEE bits, never float-to-integer conversion."""
-    lanes = frames.view("<u2").reshape(len(frames), -1)
+    lanes = (frames.view("u1").astype("<u2") if frames.dtype.itemsize == 1
+             else frames.view("<u2")).reshape(len(frames), -1)
     payload, offsets, models = bytearray(), [0], []
     for lane in lanes.T:
         model, encoded = _encode_stream(lane)
@@ -230,14 +233,14 @@ def save_array(
     if (
         data.ndim != 4
         or min(data.shape) <= 0
-        or data.dtype
-        not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("float32"))
+        or data.dtype.name not in BIT_DTYPES
     ):
         raise ValueError(
-            "QEM needs 4D uint8/uint16 counts or float32 measurements; do not cast measurements silently."
+            "QEM needs a 4D real integer or floating array up to 64 bits; do not cast measurements silently."
         )
-    floating = data.dtype == np.float32
-    frame_bytes = math.prod(data.shape[2:]) * data.dtype.itemsize
+    floating = data.dtype.name not in ("uint8", "uint16")
+    legacy_float = data.dtype.name == "float32"
+    frame_bytes = math.prod(data.shape[2:]) * max(2, data.dtype.itemsize)
     if floating and frame_bytes > 32 << 20:
         raise ValueError("One float32 diffraction frame exceeds the 32 MiB decode budget.")
     maximum = min(512, (32 << 20) // frame_bytes) if floating else 1024
@@ -262,12 +265,8 @@ def save_array(
     )
     if valid.shape != data.shape[2:]:
         raise ValueError("valid_pixels must match the detector shape.")
-    if floating and not valid.all():
-        raise NotImplementedError(
-            "The float32 QEM codec cannot retain a detector validity mask yet; "
-            "keep the original acquisition instead of silently discarding the mask."
-        )
-    codec = FLOAT_CODEC if floating else INTEGER_CODEC
+    legacy_float &= bool(valid.all())
+    codec = (FLOAT_CODEC if legacy_float else BIT_CODEC) if floating else INTEGER_CODEC
     header = dict(
         container="quantem.qem",
         container_version=1,
@@ -276,6 +275,7 @@ def save_array(
         codec=codec,
         shape=list(data.shape),
         dtype=data.dtype.name,
+        **({"valid": encode_valid(valid)} if codec == BIT_CODEC else {}),
         scientific_metadata=scientific,
         metadata=qem_metadata.retained_metadata(metadata),
         chunks=[],
@@ -286,6 +286,8 @@ def save_array(
         logical = hashlib.sha256()
         for first in range(0, len(frames), chunk_scans):
             block = np.ascontiguousarray(frames[first : first + chunk_scans])
+            if block.dtype.byteorder == ">" or (block.dtype.byteorder == "=" and not np.little_endian):
+                block = block.byteswap().view(block.dtype.newbyteorder("<"))
             if floating:
                 logical.update(block.tobytes())
                 entry = dict(first=first, scans=len(block))
@@ -308,7 +310,7 @@ def save_array(
                 header["chunks"].append(
                     dict(first=first, scans=len(block), arrays=arrays)
                 )
-        if floating:
+        if legacy_float:
             header["logical_sha256"] = logical.hexdigest()
             header["empad"] = metadata.get(
                 "qem_empad",
@@ -320,7 +322,7 @@ def save_array(
                     },
                 ),
             )
-        else:
+        elif not floating:
             header.update(interval=512, valid=encode_valid(valid))
         size = body.tell()
         body.seek(0)
@@ -378,15 +380,20 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
                     frames[
                         first + block * 512 : first + block * 512 + length, pixel
                     ] = values
-            elif header["codec"] == FLOAT_CODEC:
+            elif header["codec"] in (FLOAT_CODEC, BIT_CODEC):
                 handle.seek(start + chunk["payload_offset"])
                 payload = handle.read(chunk["payload_bytes"])
                 offsets = np.frombuffer(handle.read(chunk["offset_bytes"]), "<u4")
                 models = handle.read(chunk["model_bytes"])
-                lanes = frames[first:first + count].view("<u2")
+                lanes = (np.empty((count, frames.shape[1]), "<u2") if dtype.itemsize == 1
+                         else frames[first:first + count].view("<u2"))
                 for lane, model in enumerate(models):
                     lanes[:, lane] = _decode_stream(
                         payload[int(offsets[lane]):int(offsets[lane + 1])], model, count)
+                if dtype.itemsize == 1:
+                    if np.any(lanes > 255):
+                        raise ValueError("Decoded byte lane exceeds the declared 8-bit dtype.")
+                    frames[first:first + count] = lanes.astype("u1").view(dtype)
             else:
                 raise NotImplementedError(f"Unsupported QEM codec {header['codec']!r}.")
     if header["codec"] == SCALED_CODEC:
@@ -421,8 +428,10 @@ def load_array(path: str | Path) -> tuple[np.ndarray, dict]:
         # restored intensities are not the counts of any file; for the other codecs the header's own
         # file_counts_exact stands, which says how the stored counts relate to the original acquisition
         metadata["file_counts_exact"] = False
-    elif header["codec"] == FLOAT_CODEC:
-        metadata["qem_empad"] = header["empad"]
+    elif header["codec"] in (FLOAT_CODEC, BIT_CODEC):
+        metadata["qem_empad"] = header.get("empad", {})
+        if "valid" in header:
+            metadata["valid_pixels"] = decode_valid(header["valid"], shape[2:])
         metadata.setdefault("background_applied", False)
         metadata["background_applied_by_reader"] = False
     else:

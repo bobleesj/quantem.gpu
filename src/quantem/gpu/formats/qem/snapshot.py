@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from quantem.gpu.formats.float8 import FLOAT8_DTYPES
 from quantem.gpu.formats.precision import validate_regions
 from quantem.gpu.formats.publish import publish_file
 from quantem.gpu.formats.qem import metadata
@@ -25,6 +26,11 @@ from quantem.gpu.formats.qem import metadata
 INTEGER_CODEC = "runtime-column-rans-spatial-v2"
 SCALED_CODEC = "scaled-uint16-column-rans-v1"
 FLOAT_CODEC = "float32-bit-lanes-rans-v1"
+BIT_CODEC = "typed-bit-lanes-rans-v1"
+BIT_DTYPES = (
+    "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
+    "float16", "float32", "float64", *FLOAT8_DTYPES,
+)
 BLOCK_BYTES = 64 << 20
 # Per chunk of the integer codec: payload, stream offsets, models, then the
 # spatial index's packed words, their starts and their bit widths.
@@ -83,7 +89,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
                 or len(header["sha256"]) != math.ceil(header["bytes"] / BLOCK_BYTES)):
             raise ValueError("Incomplete scaled .qem file or checksum table; recopy the file.")
         return header, start
-    if codec == FLOAT_CODEC:
+    if codec in (FLOAT_CODEC, BIT_CODEC):
         shape = header.get("shape")
         if (not isinstance(shape, list) or len(shape) != 4
                 or any(type(size) is not int or not 0 < size < 1 << 24 for size in shape)
@@ -337,14 +343,21 @@ def _validate_scaled_layout(header: dict) -> None:
 
 
 def validate_float_layout(handle, header: dict, start: int) -> None:
-    """Validate bounded IEEE bit-lane streams without decoding measurements."""
-    if (header.get("version") != 1 or header.get("dtype") != "float32"
+    """Validate bounded typed or IEEE bit-lane streams without decoding values."""
+    typed = header.get("codec") == BIT_CODEC
+    if typed:
+        if header.get("version") != 1 or header.get("dtype") not in BIT_DTYPES:
+            raise ValueError("Unsupported typed bit-lane dtype or version.")
+        pixels = math.prod(header["shape"][2:])
+        if len(bytes.fromhex(header.get("valid", ""))) != (pixels + 7) // 8:
+            raise ValueError("Invalid typed bit-lane detector validity mask.")
+    elif (header.get("version") != 1 or header.get("dtype") != "float32"
             or not isinstance(header.get("empad"), dict)
             or not isinstance(header.get("logical_sha256"), str)
             or len(header["logical_sha256"]) != 64):
         raise ValueError("Invalid QEM floating-point ANS description.")
     frames = header["shape"][0] * header["shape"][1]
-    lanes = header["shape"][2] * header["shape"][3] * 2
+    lanes = math.prod(header["shape"][2:]) * max(1, np.dtype(header["dtype"]).itemsize // 2)
     frame_bytes = lanes * 2
     if frame_bytes > 32 << 20:
         raise ValueError("Float ANS frame exceeds the 32 MiB decode budget.")
@@ -358,7 +371,8 @@ def validate_float_layout(handle, header: dict, start: int) -> None:
         arrays = {}
         for name in ("payload", "offset", "model"):
             length = chunk[name + "_bytes"]
-            if (type(length) is not int or length <= 0
+            if (type(length) is not int or length < 0
+                    or (name != "payload" and length == 0)
                     or chunk[name + "_offset"] != cursor
                     or length > header["bytes"] - cursor
                     or (name == "offset" and length != (lanes + 1) * 4)

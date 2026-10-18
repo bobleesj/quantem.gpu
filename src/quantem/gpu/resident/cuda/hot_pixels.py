@@ -8,7 +8,7 @@ from quantem.gpu.device.cuda_runtime import cuda_module
 from quantem.gpu.resident.hot_pixels import hot_pixel_record
 
 _SOURCE = (Path(__file__).with_name("kernels") / "hot_pixels.cu").read_text()
-_NAMES = ("hot_median_u8", "hot_median_u16", "hot_zero_u8", "hot_zero_u16")
+_NAMES = ("hot_median_u8", "hot_median_u16", "hot_zero_u8", "hot_zero_u16", "hot_median_u32", "hot_zero_u32")
 
 
 class CUDAHotPixelCorrector:
@@ -36,9 +36,10 @@ class CUDAHotPixelCorrector:
         if not isinstance(values, cp.ndarray) or values.dtype not in (
             cp.dtype("uint8"),
             cp.dtype("uint16"),
+            cp.dtype("uint32"),
         ):
             raise TypeError(
-                "CUDA hot-pixel correction requires native uint8/uint16 counts."
+                "CUDA hot-pixel correction requires native uint8/uint16/uint32 counts."
             )
         if not values.flags.c_contiguous or tuple(values.shape[-2:]) != tuple(
             self.mask.shape

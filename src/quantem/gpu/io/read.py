@@ -1,4 +1,4 @@
-"""Bounded reads of a loaded acquisition as Torch tensors on its own GPU.
+"""Bounded reads of original measurements as Torch or native GPU arrays.
 
 A complete scan rarely fits as a dense array, so only the requested detector
 pixels are kept: whole scan rows of exact integer counts decode straight into the
@@ -11,9 +11,11 @@ from functools import partial
 import numpy as np
 import torch
 
+from quantem.gpu.formats.float8 import is_float8, torch_dtype
+
 from quantem.gpu.resident.cuda import precision as cuda_precision
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.resident.float_ans import MAX_DECODE_BYTES, FloatANSResident
+from quantem.gpu.resident.bit_ans import MAX_DECODE_BYTES, BitANSResident
 from quantem.gpu.resident.mps import precision as metal_precision
 from quantem.gpu.resident.mps.arrays import MetalArray
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
@@ -21,8 +23,10 @@ from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 _BLOCK_BYTES = 256 * 1024**2
 
 
-def read(data, *, scan_region=None, detector_region=None):
-    """Return a requested logical region as a Torch tensor on the source GPU, or on the CPU for the CPU reference."""
+def read(data, *, scan_region=None, detector_region=None, output="torch"):
+    """Return a region as Torch or a native array, preserving its original bits."""
+    if output not in ("torch", "native"):
+        raise ValueError("Choose output='torch' or output='native'.")
     shape = tuple(data.shape)
     if len(shape) != 4:
         raise ValueError(f"read() requires 4D-STEM shape; got {shape}.")
@@ -41,24 +45,32 @@ def read(data, *, scan_region=None, detector_region=None):
             detector_row0:detector_row1,
             detector_column0:detector_column1,
         ]
-        return torch.as_tensor(selected).contiguous()
+        return np.array(selected, copy=True) if output == "native" else torch.as_tensor(selected).contiguous()
     device = resident_device(payload)
     if device is None or device.type not in {"cuda", "mps"}:
         raise TypeError("read() requires a CUDA or MPS resident source.")
+    metal_double = device.type == "mps" and np.dtype(data.dtype) == np.dtype("float64")
+    float8 = is_float8(data.dtype)
+    if metal_double and output == "torch":
+        raise NotImplementedError(
+            "Torch MPS has no float64 tensor. Use read(output='native') for "
+            "exact float64 Metal storage, or CUDA for float64 tensor calculations."
+        )
     output_shape = (
         row1 - row0,
         column1 - column0,
         detector_row1 - detector_row0,
         detector_column1 - detector_column0,
     )
-    _check_allocation(output_shape, data.dtype, device)
+    _check_allocation(((2,) + output_shape) if output == "native" and device.type == "mps" else output_shape, data.dtype, device)
     if torch.is_tensor(payload):
-        return payload[
+        result = payload[
             row0:row1,
             column0:column1,
             detector_row0:detector_row1,
             detector_column0:detector_column1,
         ].contiguous()
+        return _native_result(result, data.dtype) if output == "native" else result
 
     # Bound decoded scratch by scan blocks. Native integer residents select
     # detector pixels while decoding; every other resident decodes whole frames.
@@ -80,12 +92,15 @@ def read(data, *, scan_region=None, detector_region=None):
             counts = decode(
                 row0 * shape[1], row1 * shape[1], detector_region=selected_region
             )
-            return torch_value(counts).reshape(output_shape)
+            result = torch_value(counts).reshape(output_shape)
+            return _native_result(result, data.dtype) if output == "native" else result
     frame_shape = output_shape[2:] if selected_region else shape[2:]
     frame_bytes = math.prod(frame_shape) * np.dtype(data.dtype).itemsize
+    if isinstance(payload, BitANSResident):
+        frame_bytes = payload.decode_frame_bytes
     decode_bytes = (
         min(_BLOCK_BYTES, MAX_DECODE_BYTES)
-        if isinstance(payload, FloatANSResident)
+        if isinstance(payload, BitANSResident)
         else _BLOCK_BYTES
     )
     block_columns = min(column1 - column0, max(1, decode_bytes // frame_bytes))
@@ -98,6 +113,7 @@ def read(data, *, scan_region=None, detector_region=None):
             block = _decode_rows(
                 payload, shape, device, block_row0, block_row1,
                 block_column0, block_column1, detector_region=selected_region,
+                reinterpret_dtype=np.int64 if metal_double else (np.uint8 if float8 else None),
             )
             if selected_region is None:
                 block = block[
@@ -117,7 +133,38 @@ def read(data, *, scan_region=None, detector_region=None):
             )
             # Free this block before the next decode, so one block of scratch is live.
             del block
-    return tensor
+    if output == "native":
+        return _native_result(tensor, data.dtype)
+    return tensor.view(torch_dtype(data.dtype)) if float8 else tensor
+
+
+def _native_result(tensor, dtype):
+    """Return an independently owned native array, without a host transfer."""
+    if tensor.device.type == "cuda":
+        from quantem.gpu.device.cuda_runtime import cp
+
+        with cp.cuda.Device(tensor.device.index):
+            if is_float8(dtype):
+                from quantem.gpu.resident.cuda.float8 import Float8Array
+
+                return Float8Array(cp.from_dlpack(tensor.view(torch.uint8)), dtype)
+            return cp.from_dlpack(tensor)
+    from quantem.gpu.device.metal_runtime import complete_command, metal_queue, tensor_buffer
+
+    result = MetalArray(tensor.shape, dtype)
+    try:
+        torch.mps.synchronize()
+        command = metal_queue().commandBuffer()
+        encoder = command.blitCommandEncoder()
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(
+            tensor_buffer(tensor), tensor.storage_offset() * tensor.element_size(), result._mtl, 0, result.nbytes
+        )
+        encoder.endEncoding()
+        complete_command(command, "Native read output")
+        return result
+    except BaseException:
+        result.release()
+        raise
 
 
 def resident_device(payload):
@@ -142,7 +189,8 @@ def resident_device(payload):
 
 
 def _decode_rows(
-    payload, shape, device, row0, row1, column0, column1, *, detector_region=None
+    payload, shape, device, row0, row1, column0, column1, *, detector_region=None,
+    reinterpret_dtype=None,
 ):
     """Decode scan rows [row0, row1) and columns [column0, column1).
 
@@ -156,7 +204,7 @@ def _decode_rows(
         (cuda_precision.PrecisionSource,) if device.type == "cuda"
         else (metal_precision.PrecisionSource, MPSStreamedCounts)
     )
-    if isinstance(payload, (StreamedCounts, FloatANSResident)):
+    if isinstance(payload, (StreamedCounts, BitANSResident)):
         decode = payload.decode_scan_range_device
         if detector_region is not None:
             decode = partial(decode, detector_region=detector_region)
@@ -177,15 +225,15 @@ def _decode_rows(
     # Range decoders take flat row-major scan indices, so a block narrower than
     # the scan decodes one range per scan row.
     if column0 == 0 and column1 == shape[1]:
-        return torch_value(decode(row0 * shape[1], row1 * shape[1]))
+        return torch_value(decode(row0 * shape[1], row1 * shape[1]), reinterpret_dtype=reinterpret_dtype)
     parts = [
-        torch_value(decode(row * shape[1] + column0, row * shape[1] + column1))
+        torch_value(decode(row * shape[1] + column0, row * shape[1] + column1), reinterpret_dtype=reinterpret_dtype)
         for row in range(row0, row1)
     ]
     return parts[0] if len(parts) == 1 else torch.cat(parts, dim=0)
 
 
-def torch_value(value):
+def torch_value(value, *, reinterpret_dtype=None):
     """Wrap one decoded block as a Torch tensor on its GPU without a host copy.
 
     CUDA decoders return CuPy arrays, shared through DLPack. Metal decoders
@@ -195,8 +243,22 @@ def torch_value(value):
         if value.device.type not in {"cuda", "mps"}:
             raise TypeError("read() requires accelerator-resident data.")
         return value
+    from quantem.gpu.resident.cuda.float8 import Float8Array
+
+    if isinstance(value, Float8Array):
+        try:
+            if reinterpret_dtype is not None:
+                return torch.from_dlpack(value.values)
+            tensor = value.to_torch()
+            return tensor
+        finally:
+            value.release()
     if isinstance(value, MetalArray):
         try:
+            if reinterpret_dtype is not None:
+                if np.dtype(reinterpret_dtype).itemsize != value.dtype.itemsize:
+                    raise ValueError("A raw read view must retain the element size.")
+                value.dtype = np.dtype(reinterpret_dtype)
             tensor = value.to_torch()
             torch.mps.synchronize()
             return tensor

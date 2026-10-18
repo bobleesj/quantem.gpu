@@ -4,8 +4,7 @@ Bounded encoded and precision loads read a block of compressed HDF5 chunks on
 the host (``formats.hdf5.reads.FrameReader.prepare``) and decode it here, with
 Metal compute shaders writing straight into a unified-memory buffer that the
 ANS encoder or the precision converter then consumes. Decoded values keep
-their stored dtype; ``exact_uint16`` stores uint32 counts that fit 16 bits as
-uint16 for the encoded loader. Kernels compile on first use, so this module
+their stored dtype, including uint32 detector markers. Kernels compile on first use, so this module
 imports on Linux.
 """
 
@@ -17,17 +16,15 @@ import numpy as np
 from quantem.gpu.device.metal_runtime import (
     SharedArray,
     allocate_shared,
-    complete_command,
     metal_module,
     metal_pipelines,
     metal_queue,
     numpy_view,
     release_buffer,
     shared_array,
-    upload_shared,
 )
 
-__all__ = ["MPSDecompressor", "exact_uint16", "load_prepared_frames"]
+__all__ = ["MPSDecompressor", "load_prepared_frames"]
 
 _KERNELS = Path(__file__).parent / "kernels"
 # LZ4 occupancy: compressed 8 KB bitshuffle blocks packed per threadgroup (more
@@ -46,7 +43,6 @@ _NAMES = (
     "shuf_tail_16_batched",
     "shuf_tail_32_batched",
     "shuf_8_batched",
-    "narrow_u32_u16",
 )
 
 
@@ -70,56 +66,6 @@ def load_prepared_frames(prepared: dict) -> SharedArray:
         return decoder.load_prepared_frames(prepared)
     finally:
         decoder.free()
-
-
-def exact_uint16(frames: SharedArray, first: int, valid: np.ndarray) -> tuple[SharedArray, int]:
-    """Copy decoded uint32 counts into a new uint16 array without changing any valid count.
-
-    Arina writes uint32 files whose counts fit 16 bits, and the encoded
-    resident stores uint16. The kernel copies every value and flags a valid
-    count above 65535 instead of clipping it, so such a batch is refused and
-    the original file must be kept. A value above 65535 at a flagged pixel
-    (``valid`` False) is the detector's uint32 marker; it is stored as 0 and
-    counted, and the pixel mask keeps the position. ``first`` is the batch's
-    first scan index, named in the error. Returns the uint16 array and the
-    number of markers stored as 0; the caller releases ``frames`` and the
-    returned array.
-    """
-    count = int(frames.size)
-    flag = allocate_shared(8, "count range flags")
-    mask = upload_shared(np.asarray(valid, np.uint8).reshape(-1), "valid detector pixels")
-    output = allocate_shared(count * 2, "uint16 counts")
-    try:
-        numpy_view(flag, np.uint32, 2)[:] = 0
-        command = metal_queue().commandBuffer()
-        encoder = command.computeCommandEncoder()
-        encoder.setComputePipelineState_(metal_pipelines(_SOURCE, _NAMES)["narrow_u32_u16"])
-        encoder.setBuffer_offset_atIndex_(frames._mtl, 0, 0)
-        encoder.setBuffer_offset_atIndex_(output, 0, 1)
-        encoder.setBuffer_offset_atIndex_(flag, 0, 2)
-        _set_u32(encoder, 3, count)
-        encoder.setBuffer_offset_atIndex_(mask, 0, 4)
-        _set_u32(encoder, 5, int(valid.size))
-        encoder.dispatchThreads_threadsPerThreadgroup_(
-            metal_module().MTLSizeMake(count, 1, 1), metal_module().MTLSizeMake(256, 1, 1)
-        )
-        encoder.endEncoding()
-        complete_command(command, "uint32 count narrowing")
-        above, zeroed = (int(value) for value in numpy_view(flag, np.uint32, 2))
-    except BaseException:
-        release_buffer(output)
-        raise
-    finally:
-        release_buffer(flag)
-        release_buffer(mask)
-    if above:
-        release_buffer(output)
-        raise ValueError(
-            f"Frames {first} to {first + len(frames) - 1} hold counts above 65535 at unflagged "
-            "pixels, so the uint32 acquisition cannot be encoded as exact uint16 counts. Keep "
-            "the original file; this encoded writer does not support these uint32 values."
-        )
-    return shared_array(output, np.dtype("uint16"), frames.shape), zeroed
 
 
 class MPSDecompressor:

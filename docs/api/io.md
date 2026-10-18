@@ -94,8 +94,8 @@ folder = Path(root) / "denoise/simulated_au_nanobeam_pg_dose1"
 ```
 
 Keep `data` open while analyzing it or using a viewer, then call `data.close()`.
-`hot_pixel_correction="none"` requests no replacement of pixels flagged in the
-stored detector mask; the default replaces them with a local 3 × 3 median.
+The default `hot_pixel_correction="none"` retains pixels flagged in the
+stored detector mask. Request `"median"` explicitly to replace them with a local 3 × 3 median.
 This master flags no pixels, so both settings return the same values here.
 Neither setting fits a detector noise model. Use `io.inspect(master)` for an
 optional header-only check before loading.
@@ -272,10 +272,10 @@ original metadata and normalized scientific fields without expanding the cube.
 
 | Original source | Encoded loading |
 | --- | --- |
-| NumPy `.npy` | Four axes, uint8/uint16 or float32; wider integer counts require an exact range audit |
+| NumPy `.npy` | Four axes; signed/unsigned 8, 16, 32, 64-bit integers or float16/32/64 |
 | EMPAD-G1 `.raw` / `.xml` | Float32 records; 130×128 storage, 128×128 detector |
 | EMPAD2 `.xml` | Calibrated 128×128 float32 exports, not encoded sensor words |
-| DigitalMicrograph `.dm3` / `.dm4` | Native uint8/uint16 or float32; one calibrated four-axis image |
+| DigitalMicrograph `.dm3` / `.dm4` | One calibrated four-axis real numeric image; reader must support its vendor dtype |
 | NCEM EMD `.emd` | Four-axis arrays; `dataset_path` selects among multiple acquisitions |
 | HDF5 | 4D datasets or flattened 3D frames, including contiguous and gzip layouts |
 
@@ -306,11 +306,10 @@ error before allocating a resident cube.
 
 NumPy simulations stored as `int32`, such as those in
 [the SrTiO3 dislocation dataset](https://doi.org/10.5281/zenodo.7464234),
-are audited in bounded windows before allocation. With `auto_narrow=True`
-(the default), nonnegative counts up to 65,535 use uint8 or uint16 ANS
-without changing any value. The original dtype, complete count range, and
-exact-narrowing provenance survive `.qem` export. Negative or larger values
-are rejected rather than clipped. EMPAD RAW loading finds a sibling XML that
+retain int32, including negative values and counts above 65,535. GPU encoded
+loading retains the original dtype and every measurement bit; it does not
+narrow after a range audit. `auto_narrow` applies only to the explicit dense
+reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
 names the RAW file, retaining its scan dimensions, instrument fields, and
 independently indexed virtual-detector regions. If multiple XML files name the
 same RAW, open the intended XML explicitly. The archive's separate `para.txt`
@@ -337,13 +336,72 @@ with io.load("data_roi0_Ndp128_dp.hdf5", backend="mps") as loaded:
 
 Use `backend="cuda"` for an NVIDIA device. Gzip HDF5 uses bounded host reads
 followed by GPU ANS encoding; this is not GPU gzip decompression. Float64 input
-is accepted only when `auto_narrow=True` and a complete bounded bitwise
-float64 → float32 → float64 audit proves every value unchanged. Otherwise it
-fails before resident allocation. Exact narrowing and the original dtype are
-recorded in `.qem` provenance; arbitrary float64 support is not implied.
+retains all original IEEE bits in typed ANS on both CUDA and MPS. Torch MPS
+cannot represent float64 tensors: use `loaded.read(output="native")` for an
+owned Metal array, and call its `release()` after use. Display and SSB products
+use float32 arithmetic on Metal; that conversion leaves stored values intact.
 Reconstruction objects, probes and result TIFFs are not diffraction acquisitions.
 These Python paths do not certify the native Swift reader, which still limits
 float acquisition geometry to 128 × 128 and does not read these gzip stacks.
+
+(original-fp8-input)=
+### Original FP8 input
+
+CUDA and MPS preserve these original FP8 variants without quantization:
+`float8_e4m3fn`, `float8_e5m2`, `float8_e4m3fnuz`, `float8_e5m2fnuz`, and
+`float8_e8m0fnu`. Pass an already typed four-dimensional NumPy array
+(`ml_dtypes`) or Torch tensor directly:
+
+```python
+from quantem.gpu import detector, io
+
+with io.load(original_fp8_array, backend="mps") as loaded:
+    original_pattern = loaded[10, 12]  # original FP8 Torch tensor on the GPU
+    image = detector.bf(loaded)       # float32 calculation on the GPU
+    io.save("acquisition.qem", loaded)
+```
+
+Use `backend="cuda"` on NVIDIA. Default reads retain every FP8 byte; inspect
+their bits through `original_pattern.view(torch.uint8)` when the caller's
+tensor library lacks FP8 arithmetic. Detector products and SSB interpret the
+original values in float32 with CUDA/Metal kernels. They do not change stored
+precision. The E8M0 format includes no zero or negative finite values; it is
+not a signed measurement substitute. External tensor or block scales are not
+inferred or applied.
+
+Ordinary NumPy and HDF5 saves can lose the FP8 variant name. For HDF5, retain
+one original byte per measurement as `uint8` or opaque `V1` and set the
+measurement dataset's `quantem_dtype` attribute to its exact FP8 name:
+
+```python
+import h5py
+
+with h5py.File("acquisition.h5", "w") as handle:
+    data = handle.create_dataset("data", data=original_fp8_array.view("uint8"))
+    data.attrs["quantem_dtype"] = original_fp8_array.dtype.name
+
+loaded = io.load("acquisition.h5", backend="cuda")
+io.save("acquisition.qem", loaded)
+loaded.close()
+```
+
+For a three-dimensional frame stack, also pass `dataset_path` and the complete
+`scan_shape`. Untagged `uint8` remains integer counts; an untagged opaque array
+is not interpreted as FP8. Use `io.load` followed by optional `io.save` for
+this workflow. Tagged external detector chunks also use the existing collection
+converter, including its GPU comparison of every original measurement byte.
+Original input files remain unchanged. FP8 requires
+`hot_pixel_correction="none"`; recorded bad pixels are excluded from products
+while their stored bytes remain intact. QEM preserves calibration, overrides,
+and the exact variant on reopen. Additional `io.save(..., metadata={...})`
+fields augment a loaded acquisition's metadata.
+
+FP8 requires the Python CUDA/MPS reader with `ml_dtypes`. Default typed reads
+also require a Torch build that defines the requested FP8 dtype; an older
+build reports an actionable error. Native byte-preserving reads remain
+available through `read(output="native")`. Native Swift and
+WebGPU do not yet read this typed profile. Older readers reject unknown dtype
+names instead of treating the bytes as integer counts.
 
 (cuda-h5-encoded-residency)=
 ### Stream complete H5 counts into CUDA encoded residency
@@ -355,9 +413,9 @@ loaded = io.load("scan_master.h5", backend="cuda")
 pattern = loaded[0, 0]
 ```
 
-This default CUDA path streams bounded chunks of a complete uint8/uint16 H5
-acquisition, preserves every stored count, and builds exact spatial sums while
-those chunks are available. The library's default H5 representation on
+This default CUDA path streams bounded chunks of a complete H5 acquisition
+and preserves every stored count. uint8/uint16 use exact spatial sums;
+uint32 uses typed bit lanes without narrowing or spatial indexes. The library's default H5 representation on
 accelerator backends is encoded. Existing encoded files keep their original
 buffers. Keep acquisitions separately with `io.load(paths, stack=False)` and select
 an owner for each detector or reconstruction operation.
@@ -435,8 +493,7 @@ There is no CPU scientific fallback or complete dense-cube
 allocation. Copying retains original IEEE float bits, calibration, source
 documents and the saved background recipe. The output must not already exist.
 See the [float codec contract](qem-codecs.md)
-for supported geometry, reduction precision and memory limits. This does not
-extend the collection converter below to raw float32 HDF5 inputs.
+for supported geometry, reduction precision and memory limits.
 
 ### Converting a collection from the command line
 
@@ -468,14 +525,11 @@ session notes. The command line names the calibrated fields for each copy. After
 compared with the detector files read through h5py before the copy is published.
 Flagged pixels are kept and checked too: conversion disables display-time
 hot-pixel correction, and the detector pixel mask is saved with the copy. CUDA and
-MPS store `uint32` files as `uint16` only after every count at an unflagged pixel
-is shown to fit, with the original dtype retained in metadata; a larger count at
-an unflagged pixel is refused. Arina marks flagged pixels of a `uint32` file with
-0xFFFFFFFF, which `uint16` cannot hold: a flagged value above 65535 is stored as
-0, counted in `flagged_markers_stored_as_zero` and declared as the
-`flagged_marker_zeroing` processing step, and verification checks that mapping.
-Reads exclude flagged pixels through the pixel mask, so no measurement changes. `float32` acquisitions are
-not supported by this collection command (other `.qem` writers support them).
+MPS retain `uint32` files as uint32, including flagged 0xFFFFFFFF markers and
+valid counts above 65,535. Raw reads and source verification include every
+pixel. Detector products exclude invalid pixels through the separate validity
+mask. The collection converter also supports the real numeric dtypes listed
+above; unsupported vendor layouts still fail explicitly.
 Use `--backend cuda` or `--backend mps` to select a device backend. An
 acquisition whose copy would be larger than its HDF5 files is reported and left
 as HDF5. Oversized masters that cannot be embedded are not converted, so long

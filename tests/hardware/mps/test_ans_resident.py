@@ -37,7 +37,7 @@ def _median_corrected(raw, pixel_mask):
     return expected
 
 
-def test_h5_ans_defaults_to_gpu_median_hot_pixel_correction(tmp_path):
+def test_h5_ans_explicit_gpu_median_hot_pixel_correction(tmp_path):
     raw = (np.arange(2 * 5 * 6 * 8).reshape(2, 5, 6, 8) * 7 % 251).astype(
         np.uint16
     )
@@ -65,6 +65,7 @@ def test_h5_ans_defaults_to_gpu_median_hot_pixel_correction(tmp_path):
     loaded = io.load(
         path,
         backend="mps",
+        hot_pixel_correction="median",
         scan_shape=(2, 5),
         apply_mask=False,
         verbose=False,

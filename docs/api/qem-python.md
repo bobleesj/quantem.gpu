@@ -30,10 +30,13 @@ acquisition retains that storage without expanding the full array.
 | Source metadata and processing history | Know where values came from and which corrections were applied |
 | Integrity checks | Detect damaged or incomplete stored data |
 
-Lossless storage preserves the values being saved. It does not undo preprocessing
-that happened during acquisition or loading. For example, the Gold source's
-flagged-pixel correction is recorded as a change to measurements; use
-`hot_pixel_correction="none"` when loading if you need the original values.
+Lossless storage preserves the values being saved. Loading defaults to
+`hot_pixel_correction="none"`: original measurements, dtype and detector flags
+survive encoding and saving. This includes uint32 flag markers. Scientific
+detector products exclude invalid pixels using the separate validity mask.
+Requesting `hot_pixel_correction="median"` or `"zero"` explicitly replaces
+flagged pixels and records that change. Saving cannot undo acquisition-time
+processing or an explicitly requested replacement.
 Missing calibration stays unknown. Retaining vendor tags does not mean that
 every tag has been interpreted or that every proprietary object is archived.
 
@@ -54,6 +57,51 @@ The same indexing and detector calls work after reopening. `saved[10, 12]`
 returns a GPU Torch tensor; `bf` is a reduced NumPy image. Close `saved` when
 finished. Read sampling together with its unit; do not assume an unlabelled
 number is in angstrom, nm, or mrad.
+
+The Python GPU path retains signed and unsigned 8/16/32/64-bit integers and
+float16/32/64 bits, including signed zero and NaN payloads. Storage support does
+not imply identical calculation precision on every GPU. Integer detector sums
+use checked 64-bit accumulation; a sum that cannot fit raises instead of wrapping.
+Torch MPS does not support float64 tensors. For exact float64 reads on Metal:
+
+```python
+pattern = saved.read(scan_region=(10, 11, 12, 13), output="native")
+try:
+    original_pattern = pattern.get()  # one exact pattern, copied to host
+finally:
+    pattern.release()  # Metal result ownership ends here
+```
+
+CUDA native reads normally return CuPy arrays. FP8 uses an owned byte wrapper
+with `dtype`, `shape`, `get()`, `to_torch()`, and `release()`, because CuPy has
+no corresponding numeric dtype. Default reads return typed Torch tensors on
+either accelerator. See {ref}`original FP8 input <original-fp8-input>`.
+Metal display and SSB products round to
+float32 on the GPU without modifying the saved float64 measurements.
+
+## Review calibration once
+
+`data.calibration` shows voltage, convergence angle, scan sampling and detector
+sampling, with units and Recorded / Overridden / Missing status. The notebook
+summary and `io.inspect(path)` expose these quantities without decoding counts.
+Unknown calibration does not prevent raw inspection or saving.
+
+```python
+data.calibration
+data.set_calibration(
+    semiangle_mrad=30,
+    scan_sampling_A=(0.4, 0.4),
+    evidence="Session calibration, measured scan step and aperture",
+)
+io.save("calibrated.qem", data)
+```
+
+Use measured values for your acquisition. Edits are separate from recorded
+metadata and survive save, move, reopen and resave. Nothing saves automatically.
+Recreate an existing reconstruction session after editing its calibration.
+SSB needs voltage and scan sampling, plus detector sampling or a calibrated
+convergence angle from which the disk radius can determine detector sampling.
+It cannot determine an absolute angular scale from the disk radius alone.
 
 For a header-only check without a GPU, use `io.inspect("gold.qem")`.
 For a stored-file integrity check:
