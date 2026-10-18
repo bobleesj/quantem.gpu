@@ -72,3 +72,16 @@ def test_iteration_selects_rows_lazily(monkeypatch):
     with pytest.raises(StopIteration):
         next(iterator)
     assert calls == [0, 1, 2]
+
+
+def test_dataset_means_preserve_counts_and_fractional_intensities():
+    """Both axis-pair means round once, including full-range detector counts."""
+    import numpy as np
+    import torch
+
+    counts = np.linspace(0, 65535, 24 * 8 * 4 * 4).reshape(24, 8, 4, 4).astype(np.uint16)
+    for values in (counts, counts.astype(np.float32) * 1.25 - 0.125):
+        acquisition = Dataset4dstemGPU(values, {})
+        for dim in ((0, 1), (2, 3)):
+            expected_t = torch.from_numpy(values).double().mean(dim=dim).float()
+            assert torch.equal(acquisition.mean(dim=dim), expected_t)
