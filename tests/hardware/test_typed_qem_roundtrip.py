@@ -162,7 +162,7 @@ def test_calibration_override_survives_save_move_and_resave(tmp_path, backend):
             evidence="Fixture calibration",
         )
         summary = data.calibration.copy()
-        io.save(saved, data, verbose=False)
+        io.save(saved, data, metadata={"source_note": "Calibrated acquisition"}, verbose=False)
     original.unlink()
     moved = tmp_path / "moved.qem"
     saved.rename(moved)

@@ -261,7 +261,7 @@ def save(
                 "use compression='ans', or format='arina' for bitshuffle/LZ4."
             )
         if isinstance(data, Dataset4dstemGPU):
-            metadata = dict(data.metadata) if metadata is None else metadata
+            metadata = dict(data.metadata) | (metadata or {})
             data = data.data
             if isinstance(data, torch.Tensor) and data.is_cuda:
                 data = cp.from_dlpack(data.detach())
