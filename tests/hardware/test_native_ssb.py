@@ -151,3 +151,43 @@ def test_open_releases_the_acquisition_when_no_bright_field_disk_is_found(tmp_pa
         SSB.open(master, backend=backend, scan_shape=(128, 128), voltage_kV=300, semiangle_mrad=30,
                  scan_sampling_A=(0.99, 0.99), detector_sampling_mrad=(6.0, 6.0))
     assert opened[0].data.is_released
+
+
+@pytest.mark.parametrize("depth_nm", [0.0, 18.0])
+def test_open_retains_detector_correction_and_matches_saved_counts(tmp_path, backend, depth_nm):
+    """Reopening raw H5 and corrected QEM keeps the same SSB phase and loss."""
+    counts = _counts(7).astype(np.uint32)
+    counts[..., 5, 5] = np.iinfo(np.uint32).max
+    master = _arina_master(tmp_path / "masked_master.h5", counts)
+    mask = np.zeros((12, 12), dtype=np.uint32)
+    mask[5, 5] = 1
+    with h5py.File(master, "a") as handle:
+        handle.create_dataset("entry/instrument/detector/pixel_mask", data=mask)
+    settings = dict(
+        backend=backend, voltage_kV=300, semiangle_mrad=30,
+        scan_sampling_A=(0.99, 0.99), detector_sampling_mrad=(6.0, 6.0),
+        bright_field_radius_px=4.0, bright_field_center_px=(5.5, 5.5),
+    )
+    preview = dict(
+        upsampling_factor=3, sample_tilt_mrad=(-2.0, 3.0), depth_spread_nm=depth_nm,
+    )
+    # The acquisition loader remains lossless; the SSB file workflow owns its
+    # explicit preprocessing choice and never changes the source file.
+    with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as raw:
+        np.testing.assert_array_equal(raw[0, 0].cpu().numpy(), counts[0, 0])
+    with io.load(
+        master, backend=backend, scan_shape=(128, 128),
+        hot_pixel_correction="median", verbose=False,
+    ) as corrected:
+        saved = tmp_path / "corrected.qem"
+        io.save(saved, corrected)
+        with SSB(corrected, **settings) as expected:
+            expected_phase, expected_loss = expected.preview(ABERRATIONS, **preview)
+    for source in (master, str(saved)):
+        with SSB.open(source, scan_shape=(128, 128), **settings) as actual:
+            phase, loss = actual.preview(ABERRATIONS, **preview)
+            np.testing.assert_array_equal(phase, expected_phase)
+            assert loss == expected_loss
+            assert actual.source_provenance["hot_pixel_correction"]["method"] == "median"
+    with h5py.File(master) as handle:
+        np.testing.assert_array_equal(handle["entry/data/data"][0], counts[0, 0])
