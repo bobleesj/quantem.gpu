@@ -126,7 +126,8 @@ public final class MetalSSBJointModel {
     fusedColumn = try pipeline("joint_ifft1536_half_columns")
     fusedRow = try pipeline("joint_ifft1536_half_rows_phase")
     let twiddles = (0..<2048).map { i -> SIMD2<Float> in
-      let angle = i < 512
+      let angle =
+        i < 512
         ? -2 * Double.pi * Double(i) / 512
         : 2 * Double.pi * Double(i - 512) / 1536
       return SIMD2(Float(cos(angle)), Float(sin(angle)))
@@ -168,12 +169,14 @@ public final class MetalSSBJointModel {
     // The real-field path needs no Nyquist correction when the calibrated
     // aperture support ends strictly before both unfolded-grid boundaries.
     // A conservative margin also covers Float32 coordinate roundoff.
-    let radius = (geometry.semiangleRadians
-      + 0.5 * max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
+    let radius =
+      (geometry.semiangleRadians
+        + 0.5 * max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
       / geometry.wavelengthAngstroms
     let rowSupport = ((ks.map { abs($0.x) }.max() ?? 0) + radius) * 1.00001
     let columnSupport = ((ks.map { abs($0.y) }.max() ?? 0) + radius) * 1.00001
-    supportsFused1536 = n == 512
+    supportsFused1536 =
+      n == 512
       && 768 * abs(geometry.qxByRow[1]) > rowSupport
       && 768 * abs(geometry.qyByColumn[1]) > columnSupport
       && geometry.dcValue.x > 0
@@ -338,8 +341,9 @@ public final class MetalSSBJointModel {
     if upsamplingFactor == 3 && supportsFused1536 {
       return try reconstructFused1536(parameters, isCancelled: isCancelled)
     }
-    return try reconstructGeneral(parameters, upsamplingFactor: upsamplingFactor,
-                                  isCancelled: isCancelled)
+    return try reconstructGeneral(
+      parameters, upsamplingFactor: upsamplingFactor,
+      isCancelled: isCancelled)
   }
 
   // General complex FFT path retained for other sizes and nonzero boundary
@@ -428,7 +432,9 @@ public final class MetalSSBJointModel {
     _ parameters: SSBJointParameters, isCancelled: () -> Bool
   ) throws -> MetalSSBJointPhase {
     let started = Date()
-    let n = 1536, plane = 1536 * 1536, batchSize = 16
+    let n = 1536
+    let plane = 1536 * 1536
+    let batchSize = 16
     let phase = try Self.allocate(device, plane * 4, shared: true)
     let intermediate = try Self.allocate(device, batchSize * n * (n / 2 + 1) * 8)
     let clear = try command()
@@ -475,7 +481,8 @@ public final class MetalSSBJointModel {
     }
     let final = try command()
     let norm = try encoder(final, normalize)
-    var count = UInt32(plane), divisor = Float(geometry.logicalBrightfieldCount)
+    var count = UInt32(plane)
+    var divisor = Float(geometry.logicalBrightfieldCount)
     norm.setBuffer(phase, offset: 0, index: 0)
     norm.setBytes(&count, length: 4, index: 1)
     norm.setBytes(&divisor, length: 4, index: 2)
