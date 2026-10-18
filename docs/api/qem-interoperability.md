@@ -28,6 +28,12 @@ normalization, moved files without their original source, checked integer
 reductions and calibration edits. Native Swift and WebGPU support is pending;
 their older codec support must not be reported as typed-profile qualification.
 
+`tests/hardware/test_float8_qem.py` additionally covers all five named FP8
+variants, all 256 byte encodings, tagged HDF5, native NumPy/Torch inputs,
+masked detector products, and fixed normal/tilt SSB at 2× output sampling.
+These checks compare each backend with its float32 inputs and with saved/reopened
+FP8 results. They do not qualify optimizer fits or native app FP8 ingestion.
+
 See the [metadata map](qem-metadata-mapping.md) for fields normalized by readers,
 fields merely retained, and missing/unsupported quantities. The integrity tool
 does not assert that every normalized value is physically correct or that the

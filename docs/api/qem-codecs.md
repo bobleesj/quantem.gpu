@@ -160,10 +160,17 @@ that earlier experiment's evidence or certify an application's frame rate.
 
 ## Typed codec: typed-bit-lanes-rans-v1
 
-Python CUDA and MPS use this profile for wider or signed integers, float16,
+Python CUDA and MPS use this profile for wider or signed integers, FP8, float16,
 float64, and masked float32 measurements. `version=1`; `dtype` is one of
 `uint8`, `uint16`, `uint32`, `uint64`, `int8`, `int16`, `int32`, `int64`,
-`float16`, `float32`, `float64`. The four positive axes retain their original
+`float16`, `float32`, `float64`, `float8_e4m3fn`, `float8_e5m2`,
+`float8_e4m3fnuz`, `float8_e5m2fnuz`, `float8_e8m0fnu`.
+The FP8 names use the bit interpretations documented by
+[ml_dtypes](https://github.com/jax-ml/ml_dtypes). Every original byte, including
+NaN encodings and signed zero where defined, survives storage. FP8 values are
+unscaled; this profile defines no per-tensor or block-scale application.
+Readers must reject unknown dtype names rather than interpret them as uint8.
+The four positive axes retain their original
 order and dimensions. Complex, boolean and structured arrays are unsupported.
 Existing uint8/uint16 spatial and unmasked float32 profiles are unchanged.
 
@@ -173,6 +180,9 @@ occupy the low byte of one word; a decoded word above 255 is invalid. Larger
 values are reassembled from their words and reinterpreted in the declared dtype,
 without arithmetic conversion. Foreign-endian input is normalized to
 little-endian words with the measurement bits preserved.
+FP8 is not necessarily smaller than its one-byte input: incompressible literal
+streams use two-byte words plus indexing overhead. This profile does not pack
+two FP8 pixels into one word or quantize another dtype to reduce storage.
 
 The three arrays and stream models are those of the float32 profile above,
 with `P*W+1` offsets and `P*W` model selectors. Each chunk holds 1 through
@@ -186,6 +196,20 @@ and report overflow explicitly. Raw reads preserve the source dtype. Display
 means and SSB use their documented calculation precision; Metal float64
 storage does not imply float64 Metal arithmetic. Use `read(output="native")`
 to obtain exact float64 Metal arrays when Torch cannot represent that dtype.
+FP8 detector products and SSB convert to float32 on-device. Batched detector
+queries decode only selected entropy lanes, interpret literal bytes in the
+reduction kernel, and use the existing compensated float32 accumulation.
+They reuse one bounded word window and check errors once per completed query.
+Uncorrected E8M0 detector sums count the sole subnormal encoding separately,
+then combine it through IEEE bit scaling so it can contribute to a normal sum
+without being flushed to zero. Corrected sums use exponent normalization.
+These are float32 products, not a guarantee of correctly rounded exact-real sums.
+Pattern reductions read decoded words directly, without a dense floating-point
+window. CUDA accumulates in float64; MPS submits its compensated reductions in
+one command. E8M0 means need additional range handling: Metal normalizes sums
+to a per-pixel power of two. Both backends write
+the final float32 bits explicitly to preserve the smallest E8M0 value even when
+ordinary GPU casts flush float32 subnormals. Stored measurements are unchanged.
 
 Native Swift and WebGPU readers do not yet implement this profile. They must
 reject its codec identifier; do not reinterpret it as the older count or

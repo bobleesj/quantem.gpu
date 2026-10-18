@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from quantem.gpu.formats.float8 import FLOAT8_DTYPES
 from quantem.gpu.formats.precision import validate_regions
 from quantem.gpu.formats.publish import publish_file
 from quantem.gpu.formats.qem import metadata
@@ -28,7 +29,7 @@ FLOAT_CODEC = "float32-bit-lanes-rans-v1"
 BIT_CODEC = "typed-bit-lanes-rans-v1"
 BIT_DTYPES = (
     "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64",
-    "float16", "float32", "float64",
+    "float16", "float32", "float64", *FLOAT8_DTYPES,
 )
 BLOCK_BYTES = 64 << 20
 # Per chunk of the integer codec: payload, stream offsets, models, then the

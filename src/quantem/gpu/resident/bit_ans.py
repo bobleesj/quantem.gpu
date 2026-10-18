@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from quantem.gpu.device.cuda_runtime import cuda_device_index
+from quantem.gpu.formats.float8 import FORMAT_CODES, is_float8
 from quantem.gpu.formats.qem.snapshot import decode_valid
 from quantem.gpu.resident.cuda.float_ans import CUDAFloatLanes
 from quantem.gpu.resident.mps.float_ans import MPSFloatLanes
@@ -41,6 +42,7 @@ class BitANSResident:
         self.header = copy.deepcopy(header)
         self.shape = tuple(header["shape"])
         self.dtype = np.dtype(header["dtype"])
+        self.is_float8 = is_float8(self.dtype)
         self.words_per_value = max(1, self.dtype.itemsize // 2)
         self.backend = backend
         self.is_released = False
@@ -80,7 +82,8 @@ class BitANSResident:
         """Encode one bounded GPU window without converting its measurements."""
         if (
             tuple(raw.shape[1:]) != self.detector_shape
-            or np.dtype(raw.dtype) != self.dtype
+            or (np.dtype(raw.dtype) != self.dtype
+                and not (self.is_float8 and np.dtype(raw.dtype) == np.dtype("uint8")))
         ):
             raise ValueError(
                 "Provide a GPU window with the acquisition's dtype and detector shape."
@@ -169,6 +172,17 @@ class BitANSResident:
         The buffer is a CuPy array on CUDA and a Metal array on MPS.
         """
         self._check(first, stop)
+        if self.is_float8:
+            if self.backend == "cuda":
+                from quantem.gpu.resident.cuda.float8 import Float8Array, decode_bytes
+
+                with self.device_context():
+                    return Float8Array(decode_bytes(self._lanes, first, stop), self.dtype)
+            from quantem.gpu.resident.mps.float8 import decode_bytes
+
+            output = decode_bytes(self._lanes, first, stop)
+            output.dtype = self.dtype
+            return output
         output = self._lanes.decode_scan_range_device(first, stop)
         if self.backend == "cuda":
             if self.dtype.itemsize == 1:
@@ -224,7 +238,21 @@ class BitANSResident:
     def _tensor(self, first, stop, *, corrected=True):
         """Decode a scan range as a CuPy array or Torch MPS tensor, dark-subtracted by default."""
         self._check(first, stop)
-        if self.backend == "cuda":
+        if self.is_float8:
+            words = self._lanes.decode_scan_range_device(first, stop)
+            if self.backend == "cuda":
+                from quantem.gpu.resident.cuda.float8 import float32_view
+
+                output = float32_view(words, self.dtype)
+            else:
+                from quantem.gpu.resident.mps.float8 import float32_view
+
+                try:
+                    output = float32_view(words, self.dtype)
+                finally:
+                    words.release()
+            output = output.reshape(stop - first, *self.detector_shape)
+        elif self.backend == "cuda":
             output = self.decode_scan_range_device(first, stop)
         else:
             if self.dtype == np.dtype("float64"):
@@ -302,6 +330,9 @@ class BitANSResident:
         return torch.where(condition, values, other)
 
     def _mask(self, mask):
+        return self._array(self.detector_mask(mask))
+
+    def detector_mask(self, mask):
         """Validate a binary detector selection and exclude recorded bad pixels."""
         selected = (
             np.ones(self.detector_shape, bool) if mask is None else np.asarray(mask)
@@ -312,7 +343,7 @@ class BitANSResident:
             raise ValueError(
                 f"Use a binary detector mask with shape {self.detector_shape}."
             )
-        return self._array(selected.astype(bool) & self.valid_pixels)
+        return selected.astype(bool) & self.valid_pixels
 
     def _integer_sum(self, values, selected):
         """Sum integer pixels exactly; raise rather than overflow a 64-bit result.
@@ -421,6 +452,14 @@ class BitANSResident:
     def detector_sum_device(self, mask):
         """Return an exact 64-bit integer VI, or a floating VI in calculation precision."""
         self._check()
+        if self.is_float8:
+            self._lanes.check_readable(0, math.prod(self.shape[:2]))
+            size = max(chunk.scans for chunk in self._lanes.chunks) * self.decode_frame_bytes
+            self.peak_decode_bytes = max(self.peak_decode_bytes, size)
+            return self._lanes.float_detector(
+                self.detector_mask(mask), self._background,
+                float8_format=FORMAT_CODES[self.dtype.name],
+            )
         selected = self._mask(mask)
         if self.backend == "cuda":
             import cupy as xp
@@ -520,6 +559,18 @@ class BitANSResident:
         if mode not in ("mean", "sum", "max"):
             raise ValueError("Use mean, sum or max for selected patterns.")
         self._lanes.check_readable(int(indices.min()), int(indices.max()) + 1)
+        if self.is_float8 and self.backend == "cuda" and self._background is None:
+            from quantem.gpu.resident.cuda.float8 import reduce_patterns
+
+            size = max(chunk.scans for chunk in self._lanes.chunks) * self.decode_frame_bytes
+            self.peak_decode_bytes = max(self.peak_decode_bytes, size)
+            return reduce_patterns(self._lanes, indices, self.dtype, self.valid_pixels, mode)
+        if self.is_float8 and self.backend == "mps" and mode != "max" and self._background is None:
+            from quantem.gpu.resident.mps.float8 import reduce_patterns
+
+            size = max(chunk.scans for chunk in self._lanes.chunks) * self.decode_frame_bytes
+            self.peak_decode_bytes = max(self.peak_decode_bytes, size)
+            return reduce_patterns(self._lanes, indices, self.dtype, self.valid_pixels, mean=mode == "mean")
         if self.dtype.kind in "iu" and mode != "max":
             result = self.detector_total_device(indices)
             if mode == "sum":

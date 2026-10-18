@@ -13,11 +13,20 @@ _READER_SOURCE = (_KERNELS / "streamed.cu").read_text().split('extern "C" __glob
 _FLOAT_SOURCE = (_KERNELS / "float_ans.cu").read_text()
 
 
-def _kernels(device, lanes):
+def _kernels(device, lanes, float8_format=None):
     """Return the float bit-lane kernels for ``device``; the lane count is a compile-time constant."""
     import cupy as cp
 
-    source = _READER_SOURCE + f"\n#define FLOAT_LANES {lanes}u\n" + _FLOAT_SOURCE
+    conversion = ""
+    if float8_format is not None:
+        from quantem.gpu.resident.cuda.float8 import SOURCE
+
+        conversion = SOURCE
+    source = (_READER_SOURCE + conversion
+              + f"\n#define FLOAT_LANES {lanes}u\n"
+              + f"#define FLOAT_WORDS {2 if float8_format is None else 1}u\n"
+              + f"#define FLOAT8_FORMAT {-1 if float8_format is None else float8_format}\n"
+              + _FLOAT_SOURCE)
     names = tuple("float_ans_" + name for name in ("direct", "entropy", "selected_entropy", "detector"))
     with cp.cuda.Device(device):
         functions = cuda_module(source, names, ("--std=c++17", "--fmad=false"))
@@ -79,13 +88,13 @@ class CUDAFloatLanes(counts.StreamedCounts):
                 )
             return output
 
-    def float_detector(self, mask, background=None):
+    def float_detector(self, mask, background=None, *, float8_format=None):
         """Read literal streams directly and decode only selected entropy lanes."""
         import cupy as cp
 
         with cp.cuda.Device(self.device):
             lanes = int(np.prod(self.shape[2:]))
-            entropy, reduce = _kernels(self.device, lanes)[2:]
+            entropy, reduce = _kernels(self.device, lanes, float8_format)[2:]
             selected = cp.asarray(mask, dtype=cp.uint8)
             scratch = cp.empty((max(chunk.scans for chunk in self.chunks), lanes), cp.uint16)
             output = cp.empty(self.shape[:2], cp.float32)
@@ -114,6 +123,7 @@ class CUDAFloatLanes(counts.StreamedCounts):
                         output,
                         np.uint32(chunk.first),
                         np.uint32(background is not None),
+                        *((errors,) if float8_format is not None else ()),
                     ),
                 )
             if int(errors.get()[0]):

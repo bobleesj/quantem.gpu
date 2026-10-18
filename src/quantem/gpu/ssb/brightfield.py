@@ -152,6 +152,15 @@ def crop_bright_field(
             original.release()
     else:
         counts = loaded.read(scan_region=scan_region, detector_region=(row0, row1, col0, col1))
+    from quantem.gpu.formats.float8 import is_float8
+
+    if is_float8(loaded.dtype):
+        if backend == "mps":
+            from quantem.gpu.resident.mps.float8 import float32_view
+
+            counts = float32_view(counts, loaded.dtype)
+        else:
+            counts = counts.to(torch.float32)
     if backend == "cuda":
         # torch exports a tensor through DLPack from its current device and CuPy imports it onto its own: both must be
         # the acquisition's GPU, which need not be the current one

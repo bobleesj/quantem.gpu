@@ -17,10 +17,12 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import torch
 
 from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import shared_array
 from quantem.gpu.formats.hdf5.frames import detector_sources
+from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.formats.qem.snapshot import BIT_CODEC, BIT_DTYPES, FLOAT_CODEC, INTEGER_CODEC, encode_valid
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
@@ -37,8 +39,20 @@ from quantem.gpu.resident.mps.spatial import build_index
 MAX_INGEST_BYTES = 32 << 20
 
 
-def read_frame_block(data, shape: tuple[int, ...], first: int, stop: int) -> np.ndarray:
+def read_frame_block(data, shape: tuple[int, ...], first: int, stop: int) -> np.ndarray | torch.Tensor:
     """Copy file-backed rows without reshaping a noncontiguous acquisition."""
+    if torch.is_tensor(data):
+        bits_t = data.detach().view(torch.uint8)
+        block_t = torch.empty(
+            (stop - first, *shape[2:]), dtype=torch.uint8, device=data.device
+        )
+        cursor = first
+        while cursor < stop:
+            row, column = divmod(cursor, shape[1])
+            count = min(shape[1] - column, stop - cursor)
+            block_t[cursor - first:cursor - first + count] = bits_t[row, column:column + count]
+            cursor += count
+        return block_t.view(data.dtype)
     if data.ndim == 3:
         return np.ascontiguousarray(data[first:stop])
     block = np.empty((stop - first, *shape[2:]), data.dtype)
@@ -55,8 +69,8 @@ def read_frame_block(data, shape: tuple[int, ...], first: int, stop: int) -> np.
 
 def load_array_resident(
     shape: tuple[int, ...],
-    dtype: np.dtype | str,
-    read_frames: Callable[[int, int], np.ndarray],
+    dtype: np.dtype | str | torch.dtype,
+    read_frames: Callable[[int, int], np.ndarray | torch.Tensor],
     metadata: dict,
     *,
     backend: str,
@@ -67,13 +81,19 @@ def load_array_resident(
 ) -> Dataset4dstemGPU:
     """Encode bounded input windows; never allocate a dense acquisition."""
     started = time.perf_counter()
-    shape, source_dtype = tuple(shape), np.dtype(dtype)
+    shape = tuple(shape)
+    source_dtype = np.dtype(str(dtype).removeprefix("torch.")) if isinstance(dtype, torch.dtype) else np.dtype(dtype)
     dtype = source_dtype.newbyteorder("=")
     peak_bytes = 0
     if dtype.name not in BIT_DTYPES:
         raise NotImplementedError(
             f"ANS supports real integer and floating dtypes through 64 bits; got {dtype}. "
             "Keep the original source; no cast or upload occurred."
+        )
+    if is_float8(dtype) and hot_pixel_correction != "none":
+        raise ValueError(
+            "FP8 ingestion preserves original bits; use hot_pixel_correction='none'. "
+            "Recorded bad pixels are excluded from detector products."
         )
     correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
     floating = dtype == np.dtype("float32")
@@ -114,27 +134,41 @@ def load_array_resident(
             for first in range(0, math.prod(shape[:2]), block_scans):
                 stop = min(first + block_scans, math.prod(shape[:2]))
                 block = read_frames(first, stop)
+                tensor_input = torch.is_tensor(block)
+                block_dtype = np.dtype(str(block.dtype).removeprefix("torch.")) if tensor_input else block.dtype
                 if (
                     block.shape != (stop - first, *shape[2:])
-                    or block.dtype != source_dtype
+                    or block_dtype != source_dtype
                 ):
                     raise ValueError(
                         "The source changed shape or dtype while loading; reopen it."
                     )
-                block = np.ascontiguousarray(block)
-                if not block.dtype.isnative:
-                    block = block.byteswap().view(dtype)
-                peak_bytes = max(peak_bytes, block.nbytes)
+                if not tensor_input:
+                    block = np.ascontiguousarray(block)
+                    if not block.dtype.isnative:
+                        block = block.byteswap().view(dtype)
+                peak_bytes = max(peak_bytes, block.numel() * block.element_size() if tensor_input else block.nbytes)
                 if floating:
                     logical.update(memoryview(block).cast("B"))
                 if backend == "cuda":
-                    raw = cp.asarray(block)
+                    raw = (
+                        cp.from_dlpack(block.view(torch.uint8).to(f"cuda:{selected}"))
+                        if tensor_input else cp.asarray(block.view(np.uint8) if is_float8(dtype) else block)
+                    )
                     if corrector is not None:
                         corrector.apply(raw)
                     (source.append_device if bit_lanes else resident.append)(raw)
                     del raw
                 else:
-                    raw = metal_precision.upload(block)
+                    if tensor_input:
+                        from quantem.gpu.device.metal_runtime import tensor_buffer
+
+                        block_t = block.view(torch.uint8).to("mps")
+                        torch.mps.synchronize()
+                        source.append_device(shared_array(tensor_buffer(block_t), dtype, block_t.shape))
+                        del block_t, block
+                        continue
+                    raw = metal_precision.upload(block.view(np.uint8) if is_float8(dtype) else block)
                     try:
                         if corrector is not None:
                             corrector.apply(raw)
@@ -294,7 +328,7 @@ def load_hdf5_array_resident(
             if (
                 data.ndim not in (3, 4)
                 or data.shape[-2:] != shape[2:]
-                or np.dtype(data.dtype) != np.dtype(info.dtype)
+                or hdf5_dtype(data) != np.dtype(info.dtype)
             ):
                 raise ValueError(
                     "HDF5 detector datasets disagree in geometry or dtype; select one calibrated acquisition."
@@ -325,7 +359,7 @@ def load_hdf5_array_resident(
         ]
 
         def read_frames(first, stop):
-            result = np.empty((stop - first, *shape[2:]), np.dtype(info.dtype))
+            result = np.empty((stop - first, *shape[2:]), datasets[0].dtype)
             cursor = first
             while cursor < stop:
                 index = bisect.bisect_right(starts, cursor) - 1
@@ -348,7 +382,7 @@ def load_hdf5_array_resident(
                         local + end - cursor,
                     )
                 cursor = end
-            return result
+            return result.view(np.dtype(info.dtype)) if is_float8(info.dtype) else result
 
         loaded = load_array_resident(
             shape,

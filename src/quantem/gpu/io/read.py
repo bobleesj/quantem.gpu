@@ -11,6 +11,8 @@ from functools import partial
 import numpy as np
 import torch
 
+from quantem.gpu.formats.float8 import is_float8, torch_dtype
+
 from quantem.gpu.resident.cuda import precision as cuda_precision
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.bit_ans import MAX_DECODE_BYTES, BitANSResident
@@ -48,6 +50,7 @@ def read(data, *, scan_region=None, detector_region=None, output="torch"):
     if device is None or device.type not in {"cuda", "mps"}:
         raise TypeError("read() requires a CUDA or MPS resident source.")
     metal_double = device.type == "mps" and np.dtype(data.dtype) == np.dtype("float64")
+    float8 = is_float8(data.dtype)
     if metal_double and output == "torch":
         raise NotImplementedError(
             "Torch MPS has no float64 tensor. Use read(output='native') for "
@@ -106,7 +109,7 @@ def read(data, *, scan_region=None, detector_region=None, output="torch"):
             block = _decode_rows(
                 payload, shape, device, block_row0, block_row1,
                 block_column0, block_column1, detector_region=selected_region,
-                reinterpret_dtype=np.int64 if metal_double else None,
+                reinterpret_dtype=np.int64 if metal_double else (np.uint8 if float8 else None),
             )
             if selected_region is None:
                 block = block[
@@ -126,7 +129,9 @@ def read(data, *, scan_region=None, detector_region=None, output="torch"):
             )
             # Free this block before the next decode, so one block of scratch is live.
             del block
-    return _native_result(tensor, data.dtype) if output == "native" else tensor
+    if output == "native":
+        return _native_result(tensor, data.dtype)
+    return tensor.view(torch_dtype(data.dtype)) if float8 else tensor
 
 
 def _native_result(tensor, dtype):
@@ -135,6 +140,10 @@ def _native_result(tensor, dtype):
         from quantem.gpu.device.cuda_runtime import cp
 
         with cp.cuda.Device(tensor.device.index):
+            if is_float8(dtype):
+                from quantem.gpu.resident.cuda.float8 import Float8Array
+
+                return Float8Array(cp.from_dlpack(tensor.view(torch.uint8)), dtype)
             return cp.from_dlpack(tensor)
     from quantem.gpu.device.metal_runtime import complete_command, metal_queue, tensor_buffer
 
@@ -228,6 +237,16 @@ def torch_value(value, *, reinterpret_dtype=None):
         if value.device.type not in {"cuda", "mps"}:
             raise TypeError("read() requires accelerator-resident data.")
         return value
+    from quantem.gpu.resident.cuda.float8 import Float8Array
+
+    if isinstance(value, Float8Array):
+        try:
+            if reinterpret_dtype is not None:
+                return torch.from_dlpack(value.values)
+            tensor = value.to_torch()
+            return tensor
+        finally:
+            value.release()
     if isinstance(value, MetalArray):
         try:
             if reinterpret_dtype is not None:
