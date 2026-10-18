@@ -151,6 +151,14 @@ and returning to the full count must reproduce a fresh full engine exactly.
 live GPU buffer bytes: the build peak must not exceed the bytes the ready engine
 keeps, so the full-plane G(q,k) of every chunk is never resident at once.
 
+`ssb-qem.ts` exercises the exported-folder consumer with the same synthetic
+bright-field counts stored as raw uint16 and QEM. HTTP QEM uses the shared
+authenticated streaming loader; a picked local file uses bounded slices. Both
+must read every byte once without a whole-file host read and reproduce the
+complete regular and tilt/depth-corrected phase arrays and losses exactly.
+The test includes a filename with a space, a required URL query token, and 2x
+corrected reconstruction.
+
 ## Decoder pipelines per device (CPU-only)
 
 `pipeline-device-cache.ts` is a Node test with fake devices: a device created

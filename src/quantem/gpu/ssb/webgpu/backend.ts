@@ -15,6 +15,7 @@ import type {
 } from "./protocol";
 import { fit } from "./optimizer";
 import { RansResidentSet } from "../../detector/webgpu/rans";
+import { qemHttpFile, type QemByteFile } from "../../detector/webgpu/qem-source";
 
 const MAX_BF_WORKGROUPS_PER_SUBMIT = 256;
 const MAX_GQK_CHUNK_BYTES = 1024 * 1024 * 1024;
@@ -101,6 +102,11 @@ export function ssbNeedsLocalSource(): boolean {
   } catch {
     return false;
   }
+}
+
+async function openQemFile(path: string): Promise<QemByteFile> {
+  if (localSourceResolver) return localSourceResolver(path);
+  return qemHttpFile(path);
 }
 
 async function readSourceBytes(url: string, byteOffset?: number, byteLength?: number): Promise<Uint8Array> {
@@ -1273,11 +1279,13 @@ async function buildBfColumnGqkChunks(
   try {
   if (source.encoding === "qem") {
     const started = performance.now();
-    const bytes = await readSourceBytes(source.url);
-    fetchBytes = bytes.byteLength; fetchMs = performance.now() - started;
+    // Admission reads authenticated chunks directly from the selected file or
+    // HTTP stream, without holding a second complete encoded copy on the host.
+    const file = await openQemFile(source.url);
+    fetchBytes = file.size; fetchMs = performance.now() - started;
     const decodeStarted = performance.now();
     ans = await RansResidentSet.loadQemFile(device,
-      new File([bytes as Uint8Array<ArrayBuffer>], "bf.qem"),
+      file,
       detail => emit({stage: "gather", message: "Preparing lossless ANS counts", detail, percent: 35}));
     if (ans.scanCount !== plane || ans.detSize !== source.num_bright_field_pixels) {
       ans.dispose(); throw new Error("BF QEM geometry does not match the SSB calibration.");
@@ -1362,10 +1370,13 @@ async function buildBfColumnGqkChunks(
   await previous;
   gpuWaitMs += performance.now() - waitT;
   const totalMs = performance.now() - t0;
+  const readTiming = source.encoding === "qem"
+    ? `open ${fetchMs.toFixed(1)} ms stream/admit ${decodeMs.toFixed(1)} ms`
+    : `fetch ${fetchMs.toFixed(1)} ms`;
   console.log(
     `[ssb] BF-column source prepared ${activeSourceIndices.length} BF from ${plane} scan positions `
     + `read ${(fetchBytes / 1e9).toFixed(2)} GB ${source.encoding || source.dtype || "uint16"}, `
-    + `fetch ${fetchMs.toFixed(1)} ms ANS ${decodeMs.toFixed(1)} ms GPU wait ${gpuWaitMs.toFixed(1)} ms total ${totalMs.toFixed(1)} ms`,
+    + `${readTiming} GPU wait ${gpuWaitMs.toFixed(1)} ms total ${totalMs.toFixed(1)} ms`,
   );
   emit({
     stage: "ready",
