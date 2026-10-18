@@ -55,8 +55,13 @@ if [ "$BUILD_METAL" = 1 ]; then
   swift build -c release --disable-sandbox --product metal-ssb-benchmark
   build_dir=$(swift build -c release --show-bin-path)
   mkdir -p build
+  # Ignore orphan objects left behind by earlier source names.
+  objects=()
+  while IFS= read -r source; do
+    objects+=("$build_dir/MetalSSBKernels.build/$(basename "$source").o")
+  done < "$build_dir/MetalSSBKernels.build/sources"
   swiftc -O -I "$build_dir/Modules" tests/metal/ssb_parity_check.swift \
-    "$build_dir"/MetalSSBKernels.build/*.o -o build/ssb-parity-check -parse-as-library
+    "${objects[@]}" -o build/ssb-parity-check -parse-as-library
   printf '{"binary": "%s"}\n' "$PWD/build/ssb-parity-check" > build/ssb-parity-check.json
 fi
 
