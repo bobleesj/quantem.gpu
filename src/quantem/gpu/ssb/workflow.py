@@ -1815,6 +1815,29 @@ class SSB:
         return str(path), float(elapsed_s)
 
     @property
+    def input_scan_shape(self) -> tuple[int, int]:
+        """Measured scan dimensions before backend padding, in ``(row, col)`` order.
+
+        A selected region reports its own dimensions. ``scan_shape`` instead
+        describes the prepared Fourier grid, which may include padding.
+        Reading this metadata does not prepare or reconstruct the acquisition.
+        """
+        if self._data is None:
+            raise RuntimeError("This SSB session is closed. Reopen the acquisition to inspect its scan.")
+        if isinstance(self._data, MpsBfColumnFrames):
+            shape = self._data.scan_shape
+        elif self._data.ndim == 4:
+            shape = self._data.shape[:2]
+        elif self._scan_shape is not None:
+            shape = self._scan_shape
+        else:
+            side = math.isqrt(int(self._data.shape[0]))
+            if side * side != self._data.shape[0]:
+                raise ValueError("A nonsquare flattened scan needs scan_shape=(rows, cols).")
+            shape = (side, side)
+        return tuple(int(size) for size in shape)
+
+    @property
     @_on_scan_gpu
     def scan_shape(self) -> tuple[int, int]:
         """Prepared scan shape in public ``(row, col)`` order."""
