@@ -6,6 +6,7 @@ from math import prod
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from quantem.gpu.formats.qem.metadata import DETECTOR_SAMPLING_KEYS, _microscopy_quantity
 from quantem.gpu.io.read import read, resident_device
@@ -29,6 +30,111 @@ class Dataset4dstemGPU:
 
     data: object
     metadata: dict[str, object]
+
+    @classmethod
+    def from_blocks(
+        cls, source, *, dtype: str = "float32",
+        device: str | torch.device | None = None, save_to: str | Path | None = None,
+    ) -> "Dataset4dstemGPU":
+        """Store ordered scientific results without a complete decoded copy.
+
+        Algorithms can construct an output through their supplied dataset's
+        class without importing a reader or codec.
+
+        Parameters
+        ----------
+        source
+            Object with ``shape``, ``dtype`` and ``blocks()`` yielding ordered
+            Torch tensors of shape ``(frames, detector_row, detector_col)``.
+            Optional ``save_metadata`` is retained by the ordinary IO path.
+        dtype : str
+            ``"float32"`` preserves computed values; ``"scaled_uint16"``
+            explicitly accepts calibrated rounding with a precision report.
+        device : str or torch.device, optional
+            Destination device. Defaults to ``source.device``.
+        save_to : str or pathlib.Path, optional
+            Write bounded blocks to HDF5 and reopen the saved acquisition.
+
+        Returns
+        -------
+        Dataset4dstemGPU
+            Encoded result on the chosen device.
+
+        Examples
+        --------
+        >>> merged = type(acquisition).from_blocks(regions, dtype="scaled_uint16")
+        """
+        from quantem.gpu.io.load import load
+        from quantem.gpu.io.save import save
+
+        device = str(source.device if device is None else device)
+        if save_to is None:
+            return load(source, dtype=dtype, device=device, verbose=False)
+        save(save_to, source, dtype=dtype, backend=device.split(":")[0], verbose=False)
+        return load(
+            save_to, dtype="native" if dtype == "float32" else dtype,
+            device=device, verbose=False, hot_pixel_correction="none",
+        )
+
+    def mean(self, dim: tuple[int, int]) -> torch.Tensor:
+        """Return a float32 scan image or mean diffraction pattern as a tensor.
+
+        Cached encoded-count reductions are reused without decoding the scan.
+        Integer totals are rounded only after division.
+
+        Parameters
+        ----------
+        dim : tuple of int
+            ``(0, 1)`` averages scan positions; ``(2, 3)`` averages detector
+            pixels. Other reductions are not supported by this method.
+
+        Returns
+        -------
+        torch.Tensor
+            Two-dimensional mean on the acquisition's device.
+
+        Examples
+        --------
+        >>> mean_pattern = acquisition.mean(dim=(0, 1))
+        >>> scan_image = acquisition.mean(dim=(2, 3))
+        """
+        dim = tuple(dim)
+        if dim not in ((0, 1), (2, 3)):
+            raise ValueError("Use dim=(0, 1) for the pattern or dim=(2, 3) for the scan image.")
+        if self.ndim != 4:
+            raise ValueError(f"Select one 4D-STEM acquisition before mean(); got {self.shape}.")
+        if self.device is None or self.device.type == "cpu":
+            rows, columns, *detector_shape = self.shape
+            result_t = torch.zeros(
+                detector_shape if dim == (0, 1) else (rows, columns), dtype=torch.float64,
+            )
+            for row in range(0, rows, 16):
+                stop = min(row + 16, rows)
+                values_t = self.read(scan_region=(row, stop, 0, columns)).to(torch.float64)
+                if dim == (0, 1):
+                    result_t += values_t.sum(dim=dim)
+                else:
+                    result_t[row:stop] = values_t.mean(dim=dim)
+            if dim == (0, 1):
+                result_t /= rows * columns
+            return result_t.to(torch.float32)
+
+        from quantem.gpu.detector import prepare
+        from quantem.gpu.io.read import torch_value
+
+        method = "mean_dp_device" if dim == (0, 1) else "detector_mean_device"
+        cached_mean = getattr(self.data, method, None)
+        if callable(cached_mean):
+            return torch_value(cached_mean())
+        session = prepare(self)
+        if dim == (0, 1):
+            return torch_value(session.mean_dp(output="native"))
+        total_t = torch_value(
+            session.masked_sum(np.ones(session.detector_shape, dtype=bool), output="native")
+        )
+        if not total_t.is_floating_point():
+            total_t = total_t.to(torch.float64)
+        return (total_t / prod(session.detector_shape)).to(torch.float32)
 
     def __reduce_ex__(self, protocol):
         raise TypeError(
