@@ -162,3 +162,101 @@ def test_convert_command_writes_a_qem_copy_with_the_source_counts(tmp_path, back
     with io.load(copy, backend=backend, apply_mask=False, verbose=False) as loaded:
         counts = loaded.read().cpu().numpy()
     np.testing.assert_array_equal(counts.reshape(expected.shape), expected)
+
+
+@pytest.mark.parametrize("sidecar", [None, "dataset.yaml", "dataset.yml"])
+def test_command_calibrates_and_repairs_one_acquisition(tmp_path, backend, capsys, sidecar):
+    from quantem.gpu import io
+    from quantem.gpu.cli import main
+
+    master = _master(tmp_path, np.uint32)
+    with h5py.File(tmp_path / "detector.h5", "r+") as handle:
+        handle["entry/data/data"][:, 2, 3] = 0xFFFFFFFF
+        original = handle["entry/data/data"][()]
+    if sidecar:
+        (tmp_path / sidecar).write_text(
+            "schema: quantem.dataset/2\nmicroscope:\n  voltage_kV: 80\n"
+            "  semiangle_mrad: 10\n  detector_sampling_mrad: [0.2, 0.3]\n"
+            "calibrations:\n  default:\n    scan_sampling_A: [0.1, 0.2]\n"
+        )
+    out = tmp_path / "copies"
+    assert main([
+        "convert", str(master), "--out", str(out), "--backend", backend,
+        "--voltage-kv", "300", "--semiangle-mrad", "30",
+        "--scan-sampling-a", "0.5", "--detector-sampling-mrad", "0.8", "0.9",
+        "--hot-pixel-correction", "median",
+    ]) == 0
+    printed = capsys.readouterr().out
+    assert "median correction: 1 detector pixels" in printed
+    assert "1,024 replacements checked" in printed
+    expected = original.copy()
+    neighbors = [(r, c) for r in range(1, 4) for c in range(2, 5) if (r, c) != (2, 3)]
+    expected[:, 2, 3] = np.floor(np.median(np.stack([original[:, r, c] for r, c in neighbors], axis=1), axis=1))
+    with io.load(out / "scan.qem", backend=backend, verbose=False) as data:
+        assert data.sampling == pytest.approx((0.5, 0.5, 0.8, 0.9))
+        assert data.metadata["voltage_kV"] == 300 and data.metadata["semiangle_mrad"] == 30
+        assert data.metadata["hot_pixel_correction"]["coordinates_row_col"] == [[2, 3]]
+        np.testing.assert_array_equal(data.read().cpu().numpy().reshape(expected.shape), expected)
+        records = data.metadata["scientific_metadata"]
+        assert all("Explicit conversion parameter" in value["evidence"] for value in records["calibration_overrides"].values())
+        assert any(record["changes_measurements"] for record in records["processing"])
+    with h5py.File(tmp_path / "detector.h5", "r") as handle:
+        np.testing.assert_array_equal(handle["entry/data/data"][()], original)
+
+
+def test_conversion_retains_session_detector_sampling_without_cli_values(tmp_path, backend):
+    from quantem.gpu import io
+
+    master = _master(tmp_path, np.uint16)
+    (tmp_path / "dataset.yml").write_text(
+        "schema: quantem.dataset/2\nmicroscope:\n  semiangle_mrad: 30\n"
+        "  detector_sampling_mrad: 0.8\ncalibrations:\n  default:\n    scan_sampling_A: [0.5, 0.6]\n"
+    )
+    destination = tmp_path / "calibrated.qem"
+    result = convert.convert(master, destination, backend=backend)
+    assert result.verified is True
+    assert all("dataset.yml sha256:" in value["evidence"] for value in result.session_calibration.values())
+    with io.load(destination, backend=backend, verbose=False) as data:
+        assert data.sampling == pytest.approx((0.5, 0.6, 0.8, 0.8))
+        assert data.metadata["voltage_kV"] == 200  # source value, no session or CLI override
+        assert data.metadata["semiangle_mrad"] == 30
+
+
+@pytest.mark.parametrize("method", ["median", "zero"])
+def test_requested_mask_correction_keeps_wide_valid_counts(tmp_path, backend, method):
+    from quantem.gpu import io
+
+    master = _master(tmp_path, np.uint32)
+    with h5py.File(master, "r+") as handle:
+        mask_path = "entry/instrument/detector/detectorSpecific/pixel_mask"
+        mask = handle[mask_path][()]
+        mask[0, 0] = mask[0, 1] = 1
+        handle[mask_path][...] = mask
+    with h5py.File(tmp_path / "detector.h5", "r+") as handle:
+        values = handle["entry/data/data"][()]
+        values[:, :4, :5] += np.uint32(0xFFFFFF00)
+        values[:, mask != 0] = np.uint32(0xFFFFFFFF)
+        handle["entry/data/data"][...] = values
+    expected = values.copy()
+    for row, col in np.argwhere(mask):
+        neighbors = [(r, c)
+                     for r in range(max(0, row - 1), min(16, row + 2))
+                     for c in range(max(0, col - 1), min(16, col + 2))
+                     if mask[r, c] == 0]
+        replacement = 0
+        if method == "median" and neighbors:
+            selected = np.sort(np.stack([values[:, r, c] for r, c in neighbors], axis=1), axis=1)
+            n = selected.shape[1]
+            replacement = (selected[:, (n - 1) // 2].astype(np.uint64)
+                           + selected[:, n // 2].astype(np.uint64)) // 2
+        expected[:, row, col] = replacement
+    destination = tmp_path / "corrected.qem"
+    result = convert.convert(master, destination, backend=backend,
+                             hot_pixel_correction=method)
+    assert result.verified is True and not result.failed
+    assert result.verification["corrected_values_compared"] == 1024 * int(np.count_nonzero(mask))
+    with io.load(destination, backend=backend, apply_mask=False, verbose=False) as reopened:
+        decoded = reopened.read().cpu().numpy().reshape(expected.shape)
+    np.testing.assert_array_equal(decoded, expected)
+    with h5py.File(tmp_path / "detector.h5", "r") as handle:
+        np.testing.assert_array_equal(handle["entry/data/data"][()], values)

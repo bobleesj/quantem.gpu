@@ -6,6 +6,88 @@ can be reopened without the original vendor files. It is an experimental open
 format; use the [current source installation](../install.md) and record its
 Git revision.
 
+(convert-one-hdf5-acquisition)=
+## Convert one HDF5 acquisition
+
+Keep the ARINA master beside all its detector files, then run:
+
+```bash
+quantem-gpu convert scan_master.h5 --out ./qem
+```
+
+This writes `qem/scan.qem`, verifies it against the source, and keeps the
+originals. Existing destinations are never overwritten. A folder can replace
+`scan_master.h5` to convert a collection. Copies larger than the original HDF5
+acquisition are reported and not written.
+
+No session file is required. Supply any missing calibration directly:
+
+```bash
+quantem-gpu convert scan_master.h5 --out ./qem \
+  --voltage-kv 300 --semiangle-mrad 30 \
+  --scan-sampling-a 0.5 --detector-sampling-mrad 0.8
+```
+
+Use your measured values, not these examples. Scan sampling is in angstrom
+per pixel; detector sampling is in mrad per pixel. One sampling value applies
+to both axes; two values, such as `--scan-sampling-a 0.5 0.6`, specify
+**row, column**. Values must be positive and finite.
+
+Explicit options override `dataset.yaml` or `dataset.yml`, which override the
+acquisition metadata. Only one of these session files may be present. The
+converter records the supplied values and their provenance inside QEM and prints
+them with their units. Missing calibration is reported as unknown, not guessed.
+The [conversion reference](converting-a-collection-from-the-command-line)
+describes the session schema and source metadata retained.
+
+### Repair detector-mask pixels
+
+Conversion is unfiltered by default. To repair only pixels identified by the
+detector's stored mask:
+
+```bash
+quantem-gpu convert scan_master.h5 --out ./qem --hot-pixel-correction median
+```
+
+Median correction uses valid neighbors in a 3 × 3 detector neighborhood, excludes
+other flagged pixels, and rounds fractional medians down. With no valid neighbors
+the replacement is zero. This is not whole-image smoothing or automatic outlier
+detection. `zero` replaces flagged pixels with zero; `none` requests no correction.
+
+The output reports the number and `(row, column)` coordinates of repaired pixels,
+their original flags, and verification of the replacements. QEM records this
+processing history. Its encoding is lossless **after the declared correction**;
+the corrected values are not unchanged raw measurements. Reopening does not
+apply the correction again. Reconstruction settings such as defocus guesses,
+iteration counts, or an assumed scan-detector rotation belong in a separate recipe.
+
+Without correction, the original dtype and every measurement bit are preserved,
+including flagged uint32 markers. Median and zero correction are opt-in and
+supported for uint8/uint16/uint32 acquisitions.
+
+### The same converter from Python
+
+```python
+from quantem.gpu.io.convert import convert
+
+result = convert(
+    "scan_master.h5", "scan.qem",
+    voltage_kV=300, semiangle_mrad=30,
+    scan_sampling_A=0.5, detector_sampling_mrad=0.8,
+    hot_pixel_correction="median",
+)
+result.verified
+```
+
+For a successful conversion, the last expression returns `True`. Inspect
+`result.skipped` or `result.larger` when no file was written. The CLI calls this
+same function; no dataset-specific conversion script is needed. Use `--dry`
+for a GPU payload-size estimate without writing, and `--backend cuda` or
+`--backend mps` only when selecting a backend deliberately.
+
+If an editable source environment has not installed the console entry point,
+use `python -m quantem.gpu.cli convert ...` with the same arguments.
+
 ## Save a loaded acquisition
 
 ```python
