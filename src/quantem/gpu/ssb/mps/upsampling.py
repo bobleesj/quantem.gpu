@@ -173,76 +173,56 @@ def _alias_correction_kernel():
 
 @lru_cache(maxsize=1)
 def _coherent_alias_kernel():
-    """Correct and sum a detector group without materializing every spectrum."""
+    """Correct detector groups and accumulate them without partial spectra.
+
+    Each thread retains the original BF group boundaries and addition order.
+    Grid-dependent values are shared across groups, and only their accumulated
+    spectrum is written to device memory.
+    """
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_coherent_alias",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc",
-                     "probe", "coefficients", "bounds", "row_indices", "col_indices"],
-        output_names=["partial"],
+                     "probe", "coefficients", "bounds", "row_indices", "col_indices", "previous"],
+        output_names=["total"],
         header=_HEADER + _ALIAS_TRANSFER,
         compile_options={"math_mode": "safe"},
         source="""
         uint col_index = thread_position_in_grid.x;
         uint row_index = thread_position_in_grid.y;
-        uint group = thread_position_in_grid.z;
-        uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
-        if (col_index >= COLS || row_index >= ROWS || start >= K) return;
+        if (col_index >= COLS || row_index >= ROWS) return;
         uint row = row_indices[row_index], col = col_indices[col_index];
-        size_t out = ((size_t)group * ROWS + row_index) * COLS + col_index;
-        float2 sum = float2(0.0f);
-        if (row == 0u && col == 0u) {
-            for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
-        } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
-            float qr = q_row[row], qc = q_col[col];
-            // Outside both expanded group bounds every contribution is zero.
-            // True DC and its aliases retain the rules above.
-            float row_min = bounds[group * 5], row_max = bounds[group * 5 + 1];
-            float col_min = bounds[group * 5 + 2], col_max = bounds[group * 5 + 3];
-            float rm = max(max(row_min - qr, qr - row_max), 0.0f);
-            float cm = max(max(col_min - qc, qc - col_max), 0.0f);
-            float rp = max(max(row_min + qr, -qr - row_max), 0.0f);
-            float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
-            if (min(rm * rm + cm * cm, rp * rp + cp * cp) > bounds[group * 5 + 4]) {
-                partial[out].real = 0.0f;
-                partial[out].imag = 0.0f;
-                return;
-            }
-            // Reuse q-dependent values without changing BF accumulation order.
-            float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
-            float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
-            radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
-            for (uint k = start; k < stop; ++k) {
-                sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-                    row, col, k, qr, qc, shift, radius, g, k_row, k_col, params, probe, coefficients);
-            }
-        }
-        partial[out].real = sum.x;
-        partial[out].imag = sum.y;
-        """,
-    )
-
-
-@lru_cache(maxsize=1)
-def _ordered_alias_sum_kernel():
-    """Retain detector-group accumulation order across bounded launches."""
-    mx = require_mlx()
-    return mx.fast.metal_kernel(
-        name="ssb_ordered_alias_sum",
-        input_names=["partial", "previous"],
-        output_names=["total"],
-        compile_options={"math_mode": "safe"},
-        source="""
-        uint i = thread_position_in_grid.x;
-        if (i >= N * COLS) return;
-        float re = previous[i].real, im = previous[i].imag;
+        size_t out = (size_t)row_index * COLS + col_index;
+        float2 result = float2(previous[out].real, previous[out].imag);
+        float qr = q_row[row], qc = q_col[col];
+        float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
+        float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
         for (uint group = 0; group < GROUPS; ++group) {
-            auto value = partial[(size_t)group * N * COLS + i];
-            re += value.real;
-            im += value.imag;
+            uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+            float2 sum = float2(0.0f);
+            if (row == 0u && col == 0u) {
+                for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
+            } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
+                uint bound = group * 5;
+                float row_min = bounds[bound], row_max = bounds[bound + 1];
+                float col_min = bounds[bound + 2], col_max = bounds[bound + 3];
+                float rm = max(max(row_min - qr, qr - row_max), 0.0f);
+                float cm = max(max(col_min - qc, qc - col_max), 0.0f);
+                float rp = max(max(row_min + qr, -qr - row_max), 0.0f);
+                float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
+                if (min(rm * rm + cm * cm, rp * rp + cp * cp) <= bounds[bound + 4]) {
+                    for (uint k = start; k < stop; ++k) {
+                        sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
+                            row, col, k, qr, qc, shift, radius, g, k_row, k_col,
+                            params, probe, coefficients);
+                    }
+                }
+            }
+            result += sum;
         }
-        total[i].real = re;
-        total[i].imag = im;
+        total[out].real = result.x;
+        total[out].imag = result.y;
         """,
     )
 
@@ -273,7 +253,7 @@ def _coherent_spectrum(
     prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
     higher: bool, n: int, chunk: int, columns: int,
 ):
-    """Accumulate every BF contribution with at most one bounded partial array."""
+    """Accumulate every BF contribution in its original group and sum order."""
     mx = prepared.mx
     stored = int(prepared.g_qk.shape[0])
     source_n = int(prepared.scan_shape[0])
@@ -299,26 +279,21 @@ def _coherent_spectrum(
     rows, cols = len(row_indices), len(col_indices)
     total = mx.zeros((rows, cols), dtype=mx.complex64)
     # Preserve BF chunk boundaries and sequential float32 accumulation order.
-    # Omit only the identically zero frequencies from temporary storage.
-    groups_per_batch = max(1, _WORK_BYTES // (rows * cols * 8))
+    # Reuse each frequency and tilt term across groups without partial spectra.
+    groups_per_batch = 64
     for start in range(0, stored, groups_per_batch * chunk):
         checkpoint()
         stop = min(start + groups_per_batch * chunk, stored)
         groups = (stop - start + chunk - 1) // chunk
-        partial = _coherent_alias_kernel()(
+        total = _coherent_alias_kernel()(
             inputs=[prepared.g_qk[start:stop], qr, qc, prepared.kx[start:stop],
                     prepared.ky[start:stop], params, dc, probe[start:stop], coefficients,
                     bounds[start // chunk:start // chunk + groups],
-                    row_indices_m, col_indices_m],
+                    row_indices_m, col_indices_m, total],
             template=[("N", n), ("ROWS", rows), ("COLS", cols), ("SOURCE_N", source_n),
                       ("G_COLS", int(prepared.g_qk.shape[-1])),
-                      ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk)],
-            grid=(cols, rows, groups), threadgroup=(32, 8, 1),
-            output_shapes=[(groups, rows, cols)], output_dtypes=[mx.complex64],
-        )[0]
-        total = _ordered_alias_sum_kernel()(
-            inputs=[partial, total], template=[("N", rows), ("COLS", cols), ("GROUPS", groups)],
-            grid=(rows * cols, 1, 1), threadgroup=(256, 1, 1),
+                      ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk), ("GROUPS", groups)],
+            grid=(cols, rows, 1), threadgroup=(32, 8, 1),
             output_shapes=[(rows, cols)], output_dtypes=[mx.complex64],
         )[0]
         mx.eval(total)
