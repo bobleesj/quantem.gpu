@@ -8,6 +8,54 @@ import pytest
 from .test_ssb_thick_sample_mps import _require_mps
 
 
+@pytest.mark.parametrize("angular_sampling", [(0.0007, 0.0006), (0.0003, 0.005), (0.08, 0.01)])
+def test_alias_aperture_bounds_preserve_soft_edges(angular_sampling):
+    """Check open, closed and anisotropic soft edges against the GPU model."""
+    _require_mps()
+    from quantem.gpu.ssb.mps.hardware import require_mlx
+    from quantem.gpu.ssb.mps.upsampling import _ALIAS_GEOMETRY, _HEADER
+
+    mx = require_mlx()
+    wavelength, semiangle = 0.02, 0.03
+    ay, ax = angular_sampling
+    angles = np.linspace(-np.pi, np.pi, 513, dtype=np.float32)
+    edge_width = np.hypot(np.cos(angles) * ay, np.sin(angles) * ax)
+    offsets = np.linspace(-1.0, 1.0, 65, dtype=np.float32)
+    radius = np.maximum(0, semiangle + offsets[:, None] * edge_width) / wavelength
+    # Include both one-ULP neighbours of the soft-edge samples and the origin.
+    radius = np.concatenate((radius, np.nextafter(radius, np.float32(0)),
+                             np.nextafter(radius, np.float32(np.inf))))
+    row = np.append((radius * np.cos(angles)).ravel(), np.float32(0))
+    col = np.append((radius * np.sin(angles)).ravel(), np.float32(0))
+    kernel = mx.fast.metal_kernel(
+        name="test_alias_aperture_bounds",
+        input_names=["row", "col", "params"],
+        output_names=["original", "bounded"],
+        header=_HEADER + _ALIAS_GEOMETRY,
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint i = thread_position_in_grid.x;
+        if (i >= COUNT) return;
+        float4 a = tf_geometry(row[i], col[i], params[0], params[1], params[2], params[3]);
+        float4 b = alias_geometry(row[i], col[i], params[0], params[1], params[2], params[3]);
+        for (uint j = 0; j < 4; ++j) {
+            original[i * 4 + j] = a[j];
+            bounded[i * 4 + j] = b[j];
+        }
+        """,
+    )
+    original, bounded = kernel(
+        inputs=[mx.array(row), mx.array(col), mx.array([wavelength, semiangle, ay, ax])],
+        template=[("COUNT", row.size)], grid=(row.size, 1, 1),
+        threadgroup=(256, 1, 1), output_shapes=[(row.size, 4)] * 2,
+        output_dtypes=[mx.float32] * 2,
+    )
+    original, bounded = np.asarray(original), np.asarray(bounded)
+    np.testing.assert_array_equal(bounded[:, 3].view(np.uint32), original[:, 3].view(np.uint32))
+    active = original[:, 3] != 0
+    np.testing.assert_array_equal(bounded[active].view(np.uint32), original[active].view(np.uint32))
+
+
 def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
     from quantem.gpu import SSB
 
@@ -189,6 +237,39 @@ def test_cancelled_preview_returns_no_partial_result_and_session_recovers(estima
         phase, loss = ssb.preview(coefs, **settings, cancel=lambda: False)
         np.testing.assert_array_equal(phase, expected)
         assert loss == expected_loss
+
+
+def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch):
+    """A superseded slider request discards completed partial accumulation."""
+    from concurrent.futures import CancelledError
+
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling
+
+    from .test_ssb_thick_sample_mps import _poisson_disk_session
+
+    monkeypatch.setattr(upsampling, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    settings = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=18.0,
+                    phase_estimator="phase_of_mean", upsampling_factor=3,
+                    compute_loss=False)
+    with _poisson_disk_session() as ssb:
+        expected, _ = ssb.preview(coefs, **settings)
+        assert ssb._backend()._prepared.g_qk.shape[0] > 4 * 64
+        kernel = upsampling._coherent_alias_kernel()
+        dispatched = []
+
+        def tracked_kernel(**kwargs):
+            dispatched.append(True)
+            return kernel(**kwargs)
+
+        monkeypatch.setattr(upsampling, "_coherent_alias_kernel", lambda: tracked_kernel)
+        with pytest.raises(CancelledError):
+            ssb.preview(coefs, **settings, cancel=lambda: len(dispatched) >= 4)
+        assert len(dispatched) == 4
+        actual, loss = ssb.preview(coefs, **settings, cancel=lambda: False)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+        assert loss is None
 
 
 @pytest.mark.parametrize("depth_nm", [0., 18.])
