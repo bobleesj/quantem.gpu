@@ -5,6 +5,8 @@ import pytest
 
 from tests.hardware.test_ssb_scan_mean import _session
 
+pytest.importorskip("mlx.core", reason="Physical Apple Metal backend required")
+
 
 @pytest.mark.parametrize("factor", [1, 2, 3, 4])
 @pytest.mark.parametrize("anisotropic", [False, True])
