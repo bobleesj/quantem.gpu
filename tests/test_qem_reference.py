@@ -103,18 +103,23 @@ def test_float_measurement_bits_survive_without_quantization(tmp_path):
         np.testing.assert_array_equal(restored.data.view(np.uint32), words)
 
 
-def test_float_export_rejects_unrepresentable_validity_mask(tmp_path):
+def test_float_export_preserves_validity_mask_and_measurement_bits(tmp_path):
     valid = np.ones((128, 128), dtype=bool)
     valid[0, 0] = False
     path = tmp_path / "masked.qem"
-    with pytest.raises(NotImplementedError, match="validity mask"):
-        io.save(
-            path,
-            np.zeros((1, 1, 128, 128), np.float32),
-            backend="cpu",
-            metadata={"valid_pixels": valid},
-        )
-    assert not path.exists()
+    counts = np.arange(128 * 128, dtype=np.float32).reshape(1, 1, 128, 128) / 8
+    # An invalid detector pixel remains a measurement, not a destructive edit.
+    counts[0, 0, 0, 0] = -12.5
+    io.save(path, counts, backend="cpu", metadata={"valid_pixels": valid})
+    assert validate_qem(path)["codec_layout"] == "verified"
+    with io.load(path, backend="cpu") as restored:
+        np.testing.assert_array_equal(restored.data.view(np.uint32), counts.view(np.uint32))
+        np.testing.assert_array_equal(restored.metadata["valid_pixels"], valid)
+        copied = tmp_path / "copied-mask.qem"
+        io.save(copied, restored, backend="cpu")
+    with io.load(copied, backend="cpu") as restored:
+        np.testing.assert_array_equal(restored.data.view(np.uint32), counts.view(np.uint32))
+        np.testing.assert_array_equal(restored.metadata["valid_pixels"], valid)
 
 
 def test_float_export_does_not_mislabel_already_corrected_data(tmp_path):
