@@ -103,10 +103,20 @@ final class MetalSSBJointReconstructionTests: XCTestCase {
     let kx = (0..<count).map { Float($0 % 7 - 3) * 0.3 }
     let ky = (0..<count).map { Float($0 / 7 - 2) * 0.3 }
     let wavelength: Float = 0.0197
-    let radius = zip(kx, ky).map { $0 * $0 + $1 * $1 }
-    let cosine = zip(zip(kx, ky), radius).map { p, r in r == 0 ? 0 : (p.0 * p.0 - p.1 * p.1) / r }
-    let sine = zip(zip(kx, ky), radius).map { p, r in r == 0 ? 0 : 2 * p.0 * p.1 / r }
-    let q = (0..<512).map { Float($0 < 256 ? $0 : $0 - 512) / (512 * 0.373) }
+    let radius: [Float] = zip(kx, ky).map { $0 * $0 + $1 * $1 }
+    let cosine: [Float] = kx.indices.map { index in
+      let r = radius[index]
+      return r == 0 ? 0 : (kx[index] * kx[index] - ky[index] * ky[index]) / r
+    }
+    let sine: [Float] = kx.indices.map { index in
+      let r = radius[index]
+      return r == 0 ? 0 : 2 * kx[index] * ky[index] / r
+    }
+    let period: Float = 512 * 0.373
+    let q: [Float] = (0..<512).map { index in
+      let frequency = index < 256 ? index : index - 512
+      return Float(frequency) / period
+    }
     return MetalSSBGeometry(
       brightfieldKX: kx, brightfieldKY: ky,
       brightfieldAlphaSquared: radius.map { $0 * wavelength * wavelength },
