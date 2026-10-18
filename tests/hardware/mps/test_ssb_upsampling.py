@@ -8,6 +8,54 @@ import pytest
 from .test_ssb_thick_sample_mps import _require_mps
 
 
+@pytest.mark.parametrize("angular_sampling", [(0.0007, 0.0006), (0.0003, 0.005), (0.08, 0.01)])
+def test_alias_aperture_bounds_preserve_soft_edges(angular_sampling):
+    """Check open, closed and anisotropic soft edges against the GPU model."""
+    _require_mps()
+    from quantem.gpu.ssb.mps.hardware import require_mlx
+    from quantem.gpu.ssb.mps.upsampling import _ALIAS_GEOMETRY, _HEADER
+
+    mx = require_mlx()
+    wavelength, semiangle = 0.02, 0.03
+    ay, ax = angular_sampling
+    angles = np.linspace(-np.pi, np.pi, 513, dtype=np.float32)
+    edge_width = np.hypot(np.cos(angles) * ay, np.sin(angles) * ax)
+    offsets = np.linspace(-1.0, 1.0, 65, dtype=np.float32)
+    radius = np.maximum(0, semiangle + offsets[:, None] * edge_width) / wavelength
+    # Include both one-ULP neighbours of the soft-edge samples and the origin.
+    radius = np.concatenate((radius, np.nextafter(radius, np.float32(0)),
+                             np.nextafter(radius, np.float32(np.inf))))
+    row = np.append((radius * np.cos(angles)).ravel(), np.float32(0))
+    col = np.append((radius * np.sin(angles)).ravel(), np.float32(0))
+    kernel = mx.fast.metal_kernel(
+        name="test_alias_aperture_bounds",
+        input_names=["row", "col", "params"],
+        output_names=["original", "bounded"],
+        header=_HEADER + _ALIAS_GEOMETRY,
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint i = thread_position_in_grid.x;
+        if (i >= COUNT) return;
+        float4 a = tf_geometry(row[i], col[i], params[0], params[1], params[2], params[3]);
+        float4 b = alias_geometry(row[i], col[i], params[0], params[1], params[2], params[3]);
+        for (uint j = 0; j < 4; ++j) {
+            original[i * 4 + j] = a[j];
+            bounded[i * 4 + j] = b[j];
+        }
+        """,
+    )
+    original, bounded = kernel(
+        inputs=[mx.array(row), mx.array(col), mx.array([wavelength, semiangle, ay, ax])],
+        template=[("COUNT", row.size)], grid=(row.size, 1, 1),
+        threadgroup=(256, 1, 1), output_shapes=[(row.size, 4)] * 2,
+        output_dtypes=[mx.float32] * 2,
+    )
+    original, bounded = np.asarray(original), np.asarray(bounded)
+    np.testing.assert_array_equal(bounded[:, 3].view(np.uint32), original[:, 3].view(np.uint32))
+    active = original[:, 3] != 0
+    np.testing.assert_array_equal(bounded[active].view(np.uint32), original[active].view(np.uint32))
+
+
 def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
     from quantem.gpu import SSB
 
@@ -132,6 +180,119 @@ def test_fused_depth_model_at_all_native_sizes(n, atol):
         assert abs(loss - expected_loss) <= 1e-6 * abs(expected_loss)
 
 
+def test_slider_changes_match_fresh_sessions():
+    """Reuse a session while changing optics, rotation, and output sampling."""
+    _require_mps()
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    states = [
+        (coefs, (-9., 5.), 18., 0., 3),
+        (coefs, (-7., 5.), 18., 0., 3),
+        (coefs, (-7., 5.), 24., 0., 3),
+        (coefs | {"C10_nm": 6.0}, (-7., 5.), 24., 0., 3),
+        (coefs | {"C21_nm": 20., "phi21_deg": 12.}, (-7., 5.), 24., 0., 3),
+        (coefs, (-9., 5.), 18., 180., 3),
+        (coefs, (-9., 5.), 18., 180., 2),
+        (coefs, (0., 0.), 0., 0., 3),
+        (coefs, (-9., 5.), 18., 0., 3),
+    ]
+    with _disk_session() as reused:
+        for aberrations, tilt, depth, rotation, factor in states:
+            options = dict(
+                sample_tilt_mrad=tilt, depth_spread_nm=depth,
+                upsampling_factor=factor, compute_loss=False,
+            )
+            reused.set_rotation(rotation)
+            phase, _ = reused.preview(aberrations, **options)
+            with _disk_session() as fresh:
+                fresh.set_rotation(rotation)
+                expected, _ = fresh.preview(aberrations, **options)
+            np.testing.assert_array_equal(phase, expected)
+
+
+@pytest.mark.parametrize("estimator,factor,higher", [
+    ("mean_phase", 1, False), ("phase_of_mean", 3, False),
+    ("mean_phase", 1, True),
+])
+def test_cancelled_preview_returns_no_partial_result_and_session_recovers(estimator, factor, higher):
+    """A renewed drag can abandon a diagnostic and reuse the same GPU session."""
+    from concurrent.futures import CancelledError
+
+    _require_mps()
+    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    if higher:
+        coefs.update(C21_nm=20., phi21_deg=12.)
+    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.,
+                    phase_estimator=estimator, upsampling_factor=factor)
+    with _disk_session() as ssb:
+        expected, expected_loss = ssb.preview(coefs, **settings)
+        checks = []
+
+        def cancel():
+            checks.append(True)
+            return len(checks) >= 3
+
+        with pytest.raises(CancelledError):
+            ssb.preview(coefs, **settings, cancel=cancel)
+        assert len(checks) == 3
+        phase, loss = ssb.preview(coefs, **settings, cancel=lambda: False)
+        np.testing.assert_array_equal(phase, expected)
+        assert loss == expected_loss
+
+
+def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch):
+    """A superseded slider request discards completed partial accumulation."""
+    from concurrent.futures import CancelledError
+
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling
+
+    from .test_ssb_thick_sample_mps import _poisson_disk_session
+
+    monkeypatch.setattr(upsampling, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    settings = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=18.0,
+                    phase_estimator="phase_of_mean", upsampling_factor=3,
+                    compute_loss=False)
+    with _poisson_disk_session() as ssb:
+        expected, _ = ssb.preview(coefs, **settings)
+        assert ssb._backend()._prepared.g_qk.shape[0] > 4 * 64
+        kernel = upsampling._coherent_alias_kernel()
+        dispatched = []
+
+        def tracked_kernel(**kwargs):
+            dispatched.append(True)
+            return kernel(**kwargs)
+
+        monkeypatch.setattr(
+            upsampling, "_coherent_alias_kernel",
+            lambda has_depth=True: tracked_kernel,
+        )
+        with pytest.raises(CancelledError):
+            ssb.preview(coefs, **settings, cancel=lambda: len(dispatched) >= 4)
+        assert len(dispatched) == 4
+        actual, loss = ssb.preview(coefs, **settings, cancel=lambda: False)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+        assert loss is None
+
+
+@pytest.mark.parametrize("depth_nm", [0., 18.])
+def test_interruptible_native_loss_keeps_exact_full_bf_sums(monkeypatch, depth_nm):
+    """Persist accumulators across partial BF tiles, including a short last tile."""
+    from quantem.gpu.ssb.mps import reconstruct
+
+    _require_mps()
+    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    options = dict(phase_estimator="mean_phase", sample_tilt_mrad=(-9., 5.),
+                   depth_spread_nm=depth_nm)
+    with _disk_session(512) as ssb:
+        expected, expected_loss = ssb.preview(coefs, **options)
+        for tile in [8, 17]:
+            monkeypatch.setattr(reconstruct, "_DIAGNOSTIC_BF_TILE", tile)
+            phase, loss = ssb.preview(coefs, **options, cancel=lambda: False)
+            np.testing.assert_array_equal(phase, expected)
+            assert loss == expected_loss
+
+
 def test_automatic_sampling_rotation_and_saved_result(tmp_path):
     """Replay fine sampling and both rotations without refitting."""
     _require_mps()
@@ -184,13 +345,19 @@ def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_n
 
 @pytest.mark.parametrize("depth_nm", [0.0, 18.0])
 @pytest.mark.parametrize("higher_order", [False, True])
-def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, higher_order):
+@pytest.mark.parametrize("small_work_budget", [False, True])
+def test_coherent_reduction_keeps_partial_bf_groups(
+    monkeypatch, depth_nm, higher_order, small_work_budget
+):
     """Every BF contribution survives grouping, including an incomplete tail."""
     _require_mps()
     from quantem.gpu.ssb.mps import upsampling
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
+    if small_work_budget:
+        # Exercise accumulation across several launches and an incomplete tail.
+        monkeypatch.setattr(upsampling, "_WORK_BYTES", 3 * (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher_order:
         coefs.update(C21_nm=300.0, phi21_deg=23.0)
@@ -202,9 +369,11 @@ def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, highe
         chunk = upsampling._WORK_BYTES // ((128 * 3) ** 2 * 8 * 3)
         assert stored > chunk
         assert stored % chunk != 0
+        if small_work_budget:
+            assert stored // chunk >= 100
 
         def per_detector(prepared, qr, qc, params, dc, probe, coefficients,
-                         higher, n, chunk, columns):
+                         higher, n, chunk, columns, has_depth=True):
             mx = prepared.mx
             total = mx.zeros((n, n), dtype=mx.complex64)
             # A final single-BF tile exercises constant-address MLX inputs.
@@ -253,49 +422,32 @@ def test_coherent_reconstruction_preserves_anisotropic_aperture(depth_nm):
         np.testing.assert_allclose(phase, expected, rtol=0, atol=2e-5)
 
 
-@pytest.mark.parametrize("estimator,factor,higher", [
-    ("mean_phase", 1, False), ("phase_of_mean", 3, False),
-    ("mean_phase", 1, True),
-])
-def test_cancelled_preview_returns_no_partial_result_and_session_recovers(estimator, factor, higher):
-    """A renewed drag can abandon a diagnostic and reuse the same GPU session."""
-    from concurrent.futures import CancelledError
-
+@pytest.mark.parametrize("estimator", ["phase_of_mean", "mean_phase"])
+@pytest.mark.parametrize("higher", [False, True])
+def test_zero_depth_specialization_preserves_all_phase_bits(
+    monkeypatch, estimator, higher,
+):
+    """Turning depth off retains the full phase of the general optical model."""
     _require_mps()
-    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    from quantem.gpu.ssb.mps import upsampling as up
+
+    coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher:
-        coefs.update(C21_nm=20., phi21_deg=12.)
-    settings = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=18.,
-                    phase_estimator=estimator, upsampling_factor=factor)
+        coefs.update(C21_nm=0.47, phi21_deg=21.0)
     with _disk_session() as ssb:
-        expected, expected_loss = ssb.preview(coefs, **settings)
-        checks = []
-
-        def cancel():
-            checks.append(True)
-            return len(checks) >= 3
-
-        with pytest.raises(CancelledError):
-            ssb.preview(coefs, **settings, cancel=cancel)
-        assert len(checks) == 3
-        phase, loss = ssb.preview(coefs, **settings, cancel=lambda: False)
-        np.testing.assert_array_equal(phase, expected)
-        assert loss == expected_loss
-
-
-@pytest.mark.parametrize("depth_nm", [0., 18.])
-def test_interruptible_native_loss_keeps_exact_full_bf_sums(monkeypatch, depth_nm):
-    """Persist accumulators across partial BF tiles, including a short last tile."""
-    from quantem.gpu.ssb.mps import reconstruct
-
-    _require_mps()
-    coefs = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
-    options = dict(phase_estimator="mean_phase", sample_tilt_mrad=(-9., 5.),
-                   depth_spread_nm=depth_nm)
-    with _disk_session(512) as ssb:
-        expected, expected_loss = ssb.preview(coefs, **options)
-        for tile in [8, 17]:
-            monkeypatch.setattr(reconstruct, "_DIAGNOSTIC_BF_TILE", tile)
-            phase, loss = ssb.preview(coefs, **options, cancel=lambda: False)
-            np.testing.assert_array_equal(phase, expected)
-            assert loss == expected_loss
+        settings = dict(
+            sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=0.0,
+            upsampling_factor=3, phase_estimator=estimator, compute_loss=False,
+        )
+        actual, _ = ssb.preview(coefs, **settings)
+        coherent = up._coherent_alias_kernel
+        detector = up._alias_correction_kernel
+        with monkeypatch.context() as general:
+            general.setattr(
+                up, "_coherent_alias_kernel", lambda has_depth=True: coherent(True),
+            )
+            general.setattr(
+                up, "_alias_correction_kernel", lambda has_depth=True: detector(True),
+            )
+            expected, _ = ssb.preview(coefs, **settings)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))

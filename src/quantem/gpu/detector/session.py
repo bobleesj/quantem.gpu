@@ -171,6 +171,8 @@ class DetectorSession:
             ``"numpy"`` retains the float32 host default. ``"native"`` for a
             count series returns exact uint32/uint64 counts, shape
             ``(*series_shape, *scan_shape)``, without host conversion.
+            For a Torch tensor source, native output is a float32 Torch tensor
+            on the source device with the same values as the host result.
         out
             Optional contiguous native output array on the source device.
             Only valid with ``output="native"``. The result is complete on
