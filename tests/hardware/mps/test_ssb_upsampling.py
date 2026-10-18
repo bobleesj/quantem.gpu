@@ -261,13 +261,19 @@ def test_coherent_half_spectrum_retains_full_complex_result(monkeypatch, depth_n
 
 @pytest.mark.parametrize("depth_nm", [0.0, 18.0])
 @pytest.mark.parametrize("higher_order", [False, True])
-def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, higher_order):
+@pytest.mark.parametrize("small_work_budget", [False, True])
+def test_coherent_reduction_keeps_partial_bf_groups(
+    monkeypatch, depth_nm, higher_order, small_work_budget
+):
     """Every BF contribution survives grouping, including an incomplete tail."""
     _require_mps()
     from quantem.gpu.ssb.mps import upsampling
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
+    if small_work_budget:
+        # Exercise accumulation across several launches and an incomplete tail.
+        monkeypatch.setattr(upsampling, "_WORK_BYTES", 3 * (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     if higher_order:
         coefs.update(C21_nm=300.0, phi21_deg=23.0)
@@ -279,6 +285,8 @@ def test_coherent_reduction_keeps_partial_bf_groups(monkeypatch, depth_nm, highe
         chunk = upsampling._WORK_BYTES // ((128 * 3) ** 2 * 8 * 3)
         assert stored > chunk
         assert stored % chunk != 0
+        if small_work_budget:
+            assert stored // chunk >= 100
 
         def per_detector(prepared, qr, qc, params, dc, probe, coefficients,
                          higher, n, chunk, columns):
