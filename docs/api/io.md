@@ -328,6 +328,65 @@ Reconstruction objects, probes and result TIFFs are not diffraction acquisitions
 These Python paths do not certify the native Swift reader, which still limits
 float acquisition geometry to 128 × 128 and does not read these gzip stacks.
 
+(original-fp8-input)=
+### Original FP8 input
+
+CUDA and MPS preserve these original FP8 variants without quantization:
+`float8_e4m3fn`, `float8_e5m2`, `float8_e4m3fnuz`, `float8_e5m2fnuz`, and
+`float8_e8m0fnu`. Pass an already typed four-dimensional NumPy array
+(`ml_dtypes`) or Torch tensor directly:
+
+```python
+from quantem.gpu import detector, io
+
+with io.load(original_fp8_array, backend="mps") as loaded:
+    original_pattern = loaded[10, 12]  # original FP8 Torch tensor on the GPU
+    image = detector.bf(loaded)       # float32 calculation on the GPU
+    io.save("acquisition.qem", loaded)
+```
+
+Use `backend="cuda"` on NVIDIA. Default reads retain every FP8 byte; inspect
+their bits through `original_pattern.view(torch.uint8)` when the caller's
+tensor library lacks FP8 arithmetic. Detector products and SSB interpret the
+original values in float32 with CUDA/Metal kernels. They do not change stored
+precision. The E8M0 format includes no zero or negative finite values; it is
+not a signed measurement substitute. External tensor or block scales are not
+inferred or applied.
+
+Ordinary NumPy and HDF5 saves can lose the FP8 variant name. For HDF5, retain
+one original byte per measurement as `uint8` or opaque `V1` and set the
+measurement dataset's `quantem_dtype` attribute to its exact FP8 name:
+
+```python
+import h5py
+
+with h5py.File("acquisition.h5", "w") as handle:
+    data = handle.create_dataset("data", data=original_fp8_array.view("uint8"))
+    data.attrs["quantem_dtype"] = original_fp8_array.dtype.name
+
+loaded = io.load("acquisition.h5", backend="cuda")
+io.save("acquisition.qem", loaded)
+loaded.close()
+```
+
+For a three-dimensional frame stack, also pass `dataset_path` and the complete
+`scan_shape`. Untagged `uint8` remains integer counts; an untagged opaque array
+is not interpreted as FP8. Use `io.load` followed by optional `io.save` for
+this workflow. Tagged external detector chunks also use the existing collection
+converter, including its GPU comparison of every original measurement byte.
+Original input files remain unchanged. FP8 requires
+`hot_pixel_correction="none"`; recorded bad pixels are excluded from products
+while their stored bytes remain intact. QEM preserves calibration, overrides,
+and the exact variant on reopen. Additional `io.save(..., metadata={...})`
+fields augment a loaded acquisition's metadata.
+
+FP8 requires the Python CUDA/MPS reader with `ml_dtypes`. Default typed reads
+also require a Torch build that defines the requested FP8 dtype; an older
+build reports an actionable error. Native byte-preserving reads remain
+available through `read(output="native")`. Native Swift and
+WebGPU do not yet read this typed profile. Older readers reject unknown dtype
+names instead of treating the bytes as integer counts.
+
 (cuda-h5-encoded-residency)=
 ### Stream complete H5 counts into CUDA encoded residency
 

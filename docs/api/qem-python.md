@@ -72,7 +72,11 @@ finally:
     pattern.release()  # Metal result ownership ends here
 ```
 
-CUDA native reads return CuPy arrays. Metal display and SSB products round to
+CUDA native reads normally return CuPy arrays. FP8 uses an owned byte wrapper
+with `dtype`, `shape`, `get()`, `to_torch()`, and `release()`, because CuPy has
+no corresponding numeric dtype. Default reads return typed Torch tensors on
+either accelerator. See {ref}`original FP8 input <original-fp8-input>`.
+Metal display and SSB products round to
 float32 on the GPU without modifying the saved float64 measurements.
 
 ## Review calibration once

@@ -39,6 +39,9 @@ GROUPS = {
     "Typed integer and float QEM round trips": {
         "python": ["tests/hardware/test_typed_qem_roundtrip.py"],
     },
+    "Original FP8 bits and GPU products": {
+        "python": ["tests/hardware/test_float8_qem.py"],
+    },
     "Native uint32 detector markers": {
         "python": ["tests/hardware/test_uint32_flagged_master.py"],
     },

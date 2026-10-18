@@ -27,6 +27,7 @@ import torch
 import yaml
 
 from quantem.gpu.formats import dataset_yaml
+from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import read_pixel_mask
 from quantem.gpu.formats.qem.metadata import validate_sample
@@ -549,7 +550,7 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
             for dataset, start in zip(datasets, starts):
                 low, high = max(first, start), min(stop, start + len(dataset))
                 if low < high:
-                    parts.append(dataset[low - start: high - start])
+                    parts.append(dataset[low - start: high - start].view(hdf5_dtype(dataset)))
             return np.concatenate(parts)
 
         differing = compared = 0
@@ -573,6 +574,8 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                     copy = torch_value(decoded)
                 elif isinstance(decoded, torch.Tensor):
                     copy = decoded.view(torch.uint8).reshape(-1)
+                elif is_float8(header["dtype"]):
+                    copy = torch_value(decoded).view(torch.uint8).reshape(-1)
                 else:
                     copy = torch_value(decoded.view(np.uint8)).reshape(-1)
                 source = torch.from_numpy(raw.view(np.uint8).reshape(-1)).to(copy.device)
@@ -632,12 +635,12 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         return result
     try:
         with h5py.File(files[0], "r") as handle:
-            dtype = handle["entry/data/data"].dtype.name
+            dtype = hdf5_dtype(handle["entry/data/data"]).name
     except (OSError, KeyError) as error:
         result.skipped = f"unreadable detector file: {error}"
         return result
     if dtype not in _STORED_DTYPES:
-        result.skipped = f"stored as {dtype}; this collection command supports integer counts up to 65535"
+        result.skipped = f"stored as {dtype}; use a supported real numeric acquisition dtype"
         return result
     started = time.perf_counter()
     try:
