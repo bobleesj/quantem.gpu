@@ -219,6 +219,9 @@ type BrowserCalibration = {
   semiangle_mrad: number;
   detector_sampling_mrad: [number, number];
   dc_value: [number, number];
+  detector_shape?: [number, number];
+  bright_field_rows?: number[];
+  bright_field_cols?: number[];
   bright_field_k_row: number[];
   bright_field_k_col: number[];
   scan_q_row: number[];
@@ -252,6 +255,57 @@ type BfColumnSsbSource = {
   bytes_per_bright_field_pixel: number;
   bits_per_value?: number;
 };
+
+/** An unchanged acquisition; BF coordinates refer to the calibrated detector crop. */
+type FullDetectorSsbSource = Omit<BfColumnSsbSource, "kind" | "encoding" | "scan_shape"> & {
+  kind: "full_detector";
+  encoding: "qem";
+  scan_shape: [number, number];
+  detector_shape: [number, number];
+  detector_origin_px: [number, number];
+  detector_transposed: boolean;
+  header_sha256: string;
+};
+type DetectorSsbSource = BfColumnSsbSource | FullDetectorSsbSource;
+
+function fullDetectorColumns(cal: SsbCal, source: FullDetectorSsbSource): Uint32Array {
+  const shape = source.detector_shape;
+  const origin = source.detector_origin_px;
+  const crop = cal.detector_shape;
+  const rows = cal.bright_field_rows, cols = cal.bright_field_cols;
+  const count = cal.num_bright_field_pixels;
+  if (source.encoding !== "qem" || !["uint8", "uint16"].includes(source.dtype ?? "")
+      || source.scan_shape?.[0] !== cal.g_shape[1] || source.scan_shape?.[1] !== cal.g_shape[2]
+      || source.num_bright_field_pixels !== count
+      || !shape || shape.length !== 2 || shape.some(value => !Number.isSafeInteger(value) || value <= 0)
+      || shape[0] * shape[1] > 0xffffffff
+      || !origin || origin.length !== 2 || origin.some(value => !Number.isSafeInteger(value) || value < 0)
+      || typeof source.detector_transposed !== "boolean"
+      || !/^[0-9a-f]{64}$/.test(source.header_sha256 ?? "")
+      || !crop || crop.length !== 2 || crop.some(value => !Number.isSafeInteger(value) || value <= 0)
+      || rows?.length !== count || cols?.length !== count) {
+    throw new Error("Full-detector QEM needs matching scan geometry, native count dtype and complete BF coordinates; export the review again.");
+  }
+  const sourceCrop = source.detector_transposed ? [crop[1], crop[0]] : crop;
+  if (sourceCrop.some((value, axis) => value + origin[axis] > shape[axis])) {
+    throw new Error("The calibrated detector crop is outside the full QEM; export the review again.");
+  }
+  const columns = new Uint32Array(count);
+  for (let index = 0; index < count; index++) {
+    const row = rows[index], col = cols[index];
+    if (!Number.isSafeInteger(row) || !Number.isSafeInteger(col)
+        || row < 0 || row >= crop[0] || col < 0 || col >= crop[1]) {
+      throw new Error("SSB BF coordinates must lie inside the calibrated detector crop.");
+    }
+    const sourceRow = origin[0] + (source.detector_transposed ? col : row);
+    const sourceCol = origin[1] + (source.detector_transposed ? row : col);
+    columns[index] = sourceRow * shape[1] + sourceCol;
+  }
+  if (new Set(columns).size !== count) {
+    throw new Error("SSB BF coordinates contain duplicates; export a complete unique BF selection.");
+  }
+  return columns;
+}
 
 type SsbBuffers = {
   params: GPUBuffer;
@@ -1228,7 +1282,7 @@ async function fetchPackedBfColumnBytes(
 async function buildBfColumnGqkChunks(
   device: GPUDevice,
   cal: SsbCal,
-  source: BfColumnSsbSource,
+  source: DetectorSsbSource,
   n: SupportedSsbSize,
   plane: number,
   activeSourceIndices: Uint32Array,
@@ -1245,6 +1299,8 @@ async function buildBfColumnGqkChunks(
   if (Number(source.num_bright_field_pixels) <= maxActiveSource) {
     throw new Error(`BF-column source has ${source.num_bright_field_pixels} BF columns; need source BF index ${maxActiveSource}.`);
   }
+  const detectorColumns = source.kind === "full_detector" ? fullDetectorColumns(cal, source) : null;
+  const selectedColumns = detectorColumns ? activeSourceIndices.map(index => detectorColumns[index]) : activeSourceIndices;
   emit({
     stage: "pipeline",
     message: "Preparing WebGPU kernels",
@@ -1282,13 +1338,23 @@ async function buildBfColumnGqkChunks(
     // Admission reads authenticated chunks directly from the selected file or
     // HTTP stream, without holding a second complete encoded copy on the host.
     const file = await openQemFile(source.url);
+    const input = source.kind === "full_detector" ? {
+      name: file.name, size: file.size, mode: file.mode,
+      slice: file.slice.bind(file), chunks: file.chunks?.bind(file),
+      recycleChunk: file.recycleChunk?.bind(file),
+      expectedHeaderSha256: source.header_sha256,
+    } : file;
     fetchBytes = file.size; fetchMs = performance.now() - started;
     const decodeStarted = performance.now();
     ans = await RansResidentSet.loadQemFile(device,
-      file,
+      input,
       detail => emit({stage: "gather", message: "Preparing lossless ANS counts", detail, percent: 35}));
-    if (ans.scanCount !== plane || ans.detSize !== source.num_bright_field_pixels) {
-      ans.dispose(); throw new Error("BF QEM geometry does not match the SSB calibration.");
+    const expectedShape = source.kind === "full_detector"
+      ? [...source.scan_shape, ...source.detector_shape] : null;
+    if (ans.scanCount !== plane || (expectedShape
+      ? expectedShape.some((value, axis) => ans!.shape?.[axis] !== value) || ans.nativeDtype !== source.dtype
+      : ans.detSize !== source.num_bright_field_pixels)) {
+      throw new Error("QEM geometry or native count dtype does not match the SSB source; export the review again.");
     }
     decodeMs += performance.now() - decodeStarted;
   }
@@ -1319,7 +1385,7 @@ async function buildBfColumnGqkChunks(
     const enc = device.createCommandEncoder();
     if (ans) {
       const decodeT = performance.now();
-      await ans.columnsComplex(0, activeSourceIndices.slice(bfOffset, bfOffset + chunkBf), full);
+      await ans.columnsComplex(0, selectedColumns.slice(bfOffset, bfOffset + chunkBf), full);
       decodeMs += performance.now() - decodeT;
     } else {
       const dataBuffer = makeBufferFromBytes(device, packed!, GPUBufferUsage.STORAGE, `ssb bf-column packed ${bfOffset}`);
@@ -1425,7 +1491,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   private cal: SsbCal;
   private n: SupportedSsbSize;
   private plane: number;
-  private source: BfColumnSsbSource;
+  private source: DetectorSsbSource;
   private device: GPUDevice | null = null;
   private buffers: SsbBuffers | null = null;
   private pipelines: SsbPipelines | null = null;
@@ -1438,7 +1504,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   private geometryBfCount: number | null = null;
   private onProgress: WebGPUProgressHandler | null = null;
 
-  // `calJson` is the folder's `snapshots/cal.json`; `detectorSource.json` its bright-field columns (kind "bf_columns").
+  // `calJson` is the folder's `snapshots/cal.json`; the source holds exact BF columns or a full QEM.
   constructor(
     calJson: string,
     detectorSource: { json: string },
@@ -1476,14 +1542,16 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     }
     this.n = n;
     this.plane = n * n;
-    this.source = JSON.parse(detectorSource.json) as BfColumnSsbSource;
-    if (this.source.kind !== "bf_columns") {
-      throw new Error(`SSB WebGPU reads exported bright-field columns; this folder declares a "${this.source.kind}" source; export the folder again to write them.`);
+    this.source = JSON.parse(detectorSource.json) as DetectorSsbSource;
+    if (this.source.kind === "full_detector") {
+      fullDetectorColumns(this.cal, this.source);
+    } else if (this.source.kind !== "bf_columns") {
+      throw new Error("SSB WebGPU reads BF columns or full-detector QEM; export this unsupported source again.");
     }
   }
 
   get readyLabel(): string {
-    return `WebGPU SSB ready: ${this.n}x${this.n}, ${this.cal.num_bright_field_pixels} BF pixels, detector BF columns`;
+    return `WebGPU SSB ready: ${this.n}x${this.n}, ${this.cal.num_bright_field_pixels} BF pixels, ${this.source.kind === "full_detector" ? "full-detector QEM" : "detector BF columns"}`;
   }
 
   async prepare(): Promise<void> {
@@ -1628,7 +1696,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         `Exact full-BF WebGPU SSB needs ${activeSourceIndices.length} active BF pixels, `
         + `but the ${(gqkBudgetBytes(this.cal) / 1e9).toFixed(1)} GB GPU budget fits ${budgetMaxBf} `
         + `(${(perBfBytes / 1e6).toFixed(1)} MB/BF in ${GQK_MODE} mode). `
-        + "Set viewer.export(..., gpu_memory_gb=...) for a GPU with enough memory, or use an explicitly labeled preview; "
+        + "Export the review again with the current package and use a GPU with enough memory; "
         + "scientific fitting never subsamples automatically.",
       );
     }

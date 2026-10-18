@@ -85,11 +85,54 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
       return super.slice(first, end);
     }
   }
-  setSSBLocalFiles([new SelectedFile([bytes], qemName)]);
-  const local = new WebGPUSSBBackend(calibration, source(qemName, "qem"));
-  try {
-    await compare(local, "local");
-    readOnce(localReads, bytes.byteLength);
-  } finally { local.close(); }
+  // Reuse a full acquisition, including an invalid-pixel flag, without
+  // filtering the calibrated disk or changing its order or detector values.
+  const fullBytes = await (await fetch(base + "ssb-full.qem")).arrayBuffer();
+  const fullSource = {
+    ...JSON.parse(source(base + "ssb-full.qem", "qem").json),
+    kind: "full_detector", detector_shape: [12, 13],
+    detector_origin_px: [1, 2], detector_transposed: false,
+    header_sha256: [...new Uint8Array(fullBytes, 24, 32)].map(value => value.toString(16).padStart(2, "0")).join(""),
+  };
+  for (const localFile of [false, true]) {
+    if (localFile) {
+      setSSBLocalFiles([new SelectedFile([bytes], qemName)]);
+      const local = new WebGPUSSBBackend(calibration, source(qemName, "qem"));
+      try {
+        await compare(local, "local");
+        readOnce(localReads, bytes.byteLength);
+      } finally { local.close(); }
+      setSSBLocalFiles([new SelectedFile([bytes], qemName), new File([fullBytes], "ssb-full.qem")]);
+    }
+    for (const transposed of [false, true]) {
+      const mappedCal = transposed ? { ...cal, detector_shape: cal.detector_shape.slice().reverse(),
+        bright_field_rows: cal.bright_field_cols, bright_field_cols: cal.bright_field_rows } : cal;
+      const engine = new WebGPUSSBBackend(JSON.stringify(mappedCal), { json: JSON.stringify({
+        ...fullSource, url: localFile ? "ssb-full.qem" : base + "ssb-full.qem",
+        detector_transposed: transposed,
+      }) });
+      try { await compare(engine, `full_${localFile ? "local" : "http"}_${transposed ? "transposed" : "native"}`); }
+      finally { engine.close(); }
+    }
+  }
+  // Equal pixel counts cannot certify the row/column geometry of a source.
+  const wrongShape = new WebGPUSSBBackend(calibration, { json: JSON.stringify({
+    ...fullSource, detector_shape: [13, 12], url: "ssb-full.qem",
+  }) });
+  let rejected = false;
+  try { await wrongShape.prepare(); }
+  catch (error) { rejected = String(error).includes("QEM geometry"); }
+  finally { wrongShape.close(); }
+  if (!rejected) throw new Error("SSB accepted a full QEM with the wrong detector shape");
+  results.full_detector_shape_mismatch_rejected = 1;
+  const replaced = new WebGPUSSBBackend(calibration, { json: JSON.stringify({
+    ...fullSource, header_sha256: "0".repeat(64), url: "ssb-full.qem",
+  }) });
+  rejected = false;
+  try { await replaced.prepare(); }
+  catch (error) { rejected = String(error).includes("acquisition differs from the saved review"); }
+  finally { replaced.close(); }
+  if (!rejected) throw new Error("SSB accepted a substituted QEM acquisition");
+  results.full_detector_identity_mismatch_rejected = 1;
   return { ...results, qem_bytes: bytes.byteLength, http_reads: requests.length, local_reads: localReads.length };
 }
