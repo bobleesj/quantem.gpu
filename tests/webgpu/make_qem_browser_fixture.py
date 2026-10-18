@@ -124,6 +124,35 @@ def generate_h5(directory: Path) -> None:
     (directory / "h5-cases.json").write_text(json.dumps(records))
 
 
+def generate_ssb(directory: Path) -> None:
+    """Write identical raw and QEM bright-field columns for browser SSB."""
+    directory.mkdir(parents=True, exist_ok=True)
+    size, radius = 128, 3
+    row, col = np.mgrid[-radius:radius + 1, -radius:radius + 1]
+    disk = row**2 + col**2 <= radius**2
+    wavelength, angular_sampling = 0.019687, 0.0075
+    rows = row[disk] * angular_sampling / wavelength
+    cols = col[disk] * angular_sampling / wavelength
+    counts = np.random.default_rng(47).poisson(5, (size, size, 1, len(rows))).astype(np.uint16)
+    save_array(directory / "ssb columns.qem", counts, chunk_scans=1024)
+    counts.reshape(size * size, -1).T.copy().tofile(directory / "ssb-columns.u16")
+    calibration = {
+        "schema": "quantem.ssb-browser-calibration/2",
+        "num_bright_field_pixels": len(rows), "g_shape": [len(rows), size, size],
+        "wavelength_A": wavelength, "semiangle_mrad": (radius + 0.25) * angular_sampling * 1e3,
+        "detector_sampling_mrad": [angular_sampling * 1e3] * 2,
+        "dc_value": [float(counts.sum(dtype=np.uint64)) / len(rows), 0],
+        "bright_field_k_row": rows.tolist(), "bright_field_k_col": cols.tolist(),
+        "scan_q_row": np.fft.fftfreq(size).tolist(), "scan_q_col": np.fft.fftfreq(size).tolist(),
+        "aperture_k": [1] * len(rows), "alpha_k2": [0] * len(rows),
+        "cos2phi_k": [1] * len(rows), "sin2phi_k": [0] * len(rows),
+        "scan_detector_rotation_deg": 0,
+        "precision": {"real_dtype": "float32", "complex_dtype": "complex64"},
+    }
+    (directory / "ssb-calibration.json").write_text(json.dumps(calibration))
+
+
 if __name__ == "__main__":
     generate(Path(sys.argv[1]))
     generate_h5(Path(sys.argv[1]))
+    generate_ssb(Path(sys.argv[1]))

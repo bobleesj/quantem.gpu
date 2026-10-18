@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { qemFileSource, qemHttpFiles } from "../../src/quantem/gpu/detector/webgpu/qem-source";
+import { qemFileSource, qemHttpFile, qemHttpFiles } from "../../src/quantem/gpu/detector/webgpu/qem-source";
 import { fakeDevice, type FakeBuffer } from "./fake-gpu";
 
 const fixture = new Uint8Array(readFileSync("tests/data/qem-v2/u16-multiple-chunks.qem"));
@@ -61,4 +61,17 @@ test("missing files and names outside the served folder are rejected", async () 
   for (const name of ["", ".", "..", "../other.qem", "sub/other.qem", "sub\\other.qem"]) {
     await assert.rejects(qemHttpFiles("data/", [name]), /invalid QEM file name/);
   }
+});
+
+test("single-file admission preserves query parameters on HEAD and every range", async () => {
+  const requests = serve(fixture);
+  const url = "http://localhost/viewer/data/counts%20encoded.qem?token=range%2Faccess%3D1&revision=2";
+  const file = await qemHttpFile(url);
+  assert.equal(file.name, "counts encoded.qem");
+  const source = await qemFileSource(file, () => {}, fakeDevice().device);
+  assert.equal(source.mode, "http");
+  assert.equal(requests[0].method, "HEAD");
+  assert.ok(requests.length > 2);
+  assert.ok(requests.every(request => request.url === url));
+  assert.ok(requests.slice(1).every(request => request.method === "GET" && request.range));
 });

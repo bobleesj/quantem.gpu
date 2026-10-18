@@ -132,107 +132,111 @@ const digest = (bytes: Uint8Array) => {
   return hash.finish();
 };
 
-/** Open .qem files served beside the viewer by a Range-capable HTTP server.
- * Every request bypasses the browser HTTP cache: admission authenticates every
- * byte it reads, and caching multi-gigabyte ranges only adds disk writes.
- * `signal` aborts every request these files make.
+/** Open one exact QEM URL, preserving query parameters on every uncached request.
+ * Admission authenticates every byte. `signal` aborts all requests for the file.
  */
+export async function qemHttpFile(source: string | URL, signal?: AbortSignal): Promise<QemByteFile> {
+  const url = new URL(source, location.href);
+  const name = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+  const header = await fetch(url, { method: "HEAD", cache: "no-store", signal });
+  const size = Number(header.headers.get("Content-Length"));
+  requireQem(header.ok && Number.isSafeInteger(size) && size >= 56, `cannot open ${name}; keep the data file beside the viewer`);
+  // Finished 64 MiB chunks carry later ones instead of a new allocation per
+  // chunk. At most four wait here, and none outlives the stream that read them.
+  const reusable: ArrayBuffer[] = [];
+  let streaming = false;
+  const acquire = (wanted: number) => {
+    const index = reusable.findIndex(buffer => buffer.byteLength === wanted);
+    return new Uint8Array(index < 0 ? new ArrayBuffer(wanted) : reusable.splice(index, 1)[0]);
+  };
+  return { name, size, mode: "http" as const, async *chunks(start: number, end: number, chunkBytes: number, cancel?: AbortSignal) {
+    // One ranged response carries every authentication chunk instead of one
+    // request per 64 MiB; each chunk is still hashed on its own.
+    const stop = cancel && signal ? AbortSignal.any([signal, cancel]) : cancel ?? signal;
+    const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal: stop });
+    // A server that ignores the range would otherwise go on sending the whole file.
+    if (response.status !== 206) await response.body?.cancel();
+    requireQem(response.status === 206 && response.body, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
+    // A byte stream fills each chunk in place (BYOB); any other stream is copied from its parts.
+    let reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>;
+    let byob = true;
+    try { reader = response.body.getReader({ mode: "byob" }); }
+    catch (error) {
+      // Only a body that is not a byte stream refuses a BYOB reader, with a TypeError.
+      if (!(error instanceof TypeError)) throw error;
+      reader = response.body.getReader(); byob = false;
+    }
+    let remaining = end - start;
+    streaming = true;
+    try {
+      if (byob) {
+        // The `min` read option (Chrome 125, Node 22) is missing from TypeScript 5.9's DOM types.
+        const byteReader = reader as unknown as { read(view: Uint8Array, options: { min: number }): Promise<ReadableStreamReadResult<Uint8Array<ArrayBuffer>>> };
+        while (remaining > 0) {
+          const wanted = Math.min(chunkBytes, remaining);
+          let chunk = acquire(wanted), filled = 0;
+          while (filled < wanted) {
+            const part = await byteReader.read(chunk.subarray(filled), { min: wanted - filled });
+            requireQem(part.value && part.value.byteLength > 0, `truncated stream in ${name}`);
+            filled += part.value.byteLength;
+            remaining -= part.value.byteLength;
+            // Every BYOB read transfers the buffer it fills; continue in the returned one.
+            chunk = new Uint8Array(part.value.buffer, 0, wanted);
+          }
+          yield chunk.buffer;
+        }
+        const tail = await byteReader.read(new Uint8Array(1), { min: 1 });
+        requireQem(tail.done && !tail.value?.byteLength, `oversized stream in ${name}`);
+        return;
+      }
+      const defaultReader = reader as ReadableStreamDefaultReader<Uint8Array>;
+      let chunk = acquire(Math.min(chunkBytes, remaining)), filled = 0;
+      while (remaining > 0) {
+        const part = await defaultReader.read();
+        requireQem(!part.done, `truncated stream in ${name}`);
+        for (let at = 0; at < part.value.length;) {
+          requireQem(remaining > 0, `oversized stream in ${name}`);
+          const count = Math.min(chunk.length - filled, part.value.length - at);
+          chunk.set(part.value.subarray(at, at + count), filled);
+          at += count; filled += count; remaining -= count;
+          if (filled === chunk.length) {
+            yield chunk.buffer;
+            filled = 0;
+            if (remaining > 0) chunk = acquire(Math.min(chunkBytes, remaining));
+          }
+        }
+      }
+      requireQem((await defaultReader.read()).done, `oversized stream in ${name}`);
+    } finally {
+      // Stops the download when admission ends early, on success or failure.
+      // An aborted request has already ended it; cancelling that errored body
+      // would reject and replace the error admission is reporting.
+      streaming = false;
+      reusable.length = 0;
+      if (!stop?.aborted) await reader.cancel();
+      reader.releaseLock();
+    }
+  }, recycleChunk(buffer: ArrayBuffer) {
+    // A BYOB read transfers a reused buffer: the caller must not keep any view of it.
+    if (streaming && reusable.length < 4) reusable.push(buffer);
+  }, slice(start = 0, end = size) {
+    return { async arrayBuffer() {
+      const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal });
+      if (response.status !== 206) await response.body?.cancel();
+      requireQem(response.status === 206, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
+      const bytes = await response.arrayBuffer();
+      requireQem(bytes.byteLength === end - start, `truncated range in ${name}`);
+      return bytes;
+    } };
+  } };
+}
+
+/** Open .qem files served beside the viewer by a Range-capable HTTP server. */
 export async function qemHttpFiles(base: string, names: string[], signal?: AbortSignal): Promise<QemByteFile[]> {
   return Promise.all(names.map(async name => {
     // Plain file names only: a path could reach files outside the served folder.
     requireQem(name.length > 0 && !/[\\/]/.test(name) && name !== "." && name !== "..", "invalid QEM file name");
-    const url = new URL(encodeURIComponent(name), new URL(base, location.href));
-    const header = await fetch(url, { method: "HEAD", cache: "no-store", signal });
-    const size = Number(header.headers.get("Content-Length"));
-    requireQem(header.ok && Number.isSafeInteger(size) && size >= 56, `cannot open ${name}; keep the data file beside the viewer`);
-    // Finished 64 MiB chunks carry later ones instead of a new allocation per
-    // chunk. At most four wait here, and none outlives the stream that read them.
-    const reusable: ArrayBuffer[] = [];
-    let streaming = false;
-    const acquire = (wanted: number) => {
-      const index = reusable.findIndex(buffer => buffer.byteLength === wanted);
-      return new Uint8Array(index < 0 ? new ArrayBuffer(wanted) : reusable.splice(index, 1)[0]);
-    };
-    return { name, size, mode: "http" as const, async *chunks(start: number, end: number, chunkBytes: number, cancel?: AbortSignal) {
-      // One ranged response carries every authentication chunk instead of one
-      // request per 64 MiB; each chunk is still hashed on its own.
-      const stop = cancel && signal ? AbortSignal.any([signal, cancel]) : cancel ?? signal;
-      const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal: stop });
-      // A server that ignores the range would otherwise go on sending the whole file.
-      if (response.status !== 206) await response.body?.cancel();
-      requireQem(response.status === 206 && response.body, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
-      // A byte stream fills each chunk in place (BYOB); any other stream is copied from its parts.
-      let reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>;
-      let byob = true;
-      try { reader = response.body.getReader({ mode: "byob" }); }
-      catch (error) {
-        // Only a body that is not a byte stream refuses a BYOB reader, with a TypeError.
-        if (!(error instanceof TypeError)) throw error;
-        reader = response.body.getReader(); byob = false;
-      }
-      let remaining = end - start;
-      streaming = true;
-      try {
-        if (byob) {
-          // The `min` read option (Chrome 125, Node 22) is missing from TypeScript 5.9's DOM types.
-          const byteReader = reader as unknown as { read(view: Uint8Array, options: { min: number }): Promise<ReadableStreamReadResult<Uint8Array<ArrayBuffer>>> };
-          while (remaining > 0) {
-            const wanted = Math.min(chunkBytes, remaining);
-            let chunk = acquire(wanted), filled = 0;
-            while (filled < wanted) {
-              const part = await byteReader.read(chunk.subarray(filled), { min: wanted - filled });
-              requireQem(part.value && part.value.byteLength > 0, `truncated stream in ${name}`);
-              filled += part.value.byteLength;
-              remaining -= part.value.byteLength;
-              // Every BYOB read transfers the buffer it fills; continue in the returned one.
-              chunk = new Uint8Array(part.value.buffer, 0, wanted);
-            }
-            yield chunk.buffer;
-          }
-          const tail = await byteReader.read(new Uint8Array(1), { min: 1 });
-          requireQem(tail.done && !tail.value?.byteLength, `oversized stream in ${name}`);
-          return;
-        }
-        const defaultReader = reader as ReadableStreamDefaultReader<Uint8Array>;
-        let chunk = acquire(Math.min(chunkBytes, remaining)), filled = 0;
-        while (remaining > 0) {
-          const part = await defaultReader.read();
-          requireQem(!part.done, `truncated stream in ${name}`);
-          for (let at = 0; at < part.value.length;) {
-            requireQem(remaining > 0, `oversized stream in ${name}`);
-            const count = Math.min(chunk.length - filled, part.value.length - at);
-            chunk.set(part.value.subarray(at, at + count), filled);
-            at += count; filled += count; remaining -= count;
-            if (filled === chunk.length) {
-              yield chunk.buffer;
-              filled = 0;
-              if (remaining > 0) chunk = acquire(Math.min(chunkBytes, remaining));
-            }
-          }
-        }
-        requireQem((await defaultReader.read()).done, `oversized stream in ${name}`);
-      } finally {
-        // Stops the download when admission ends early, on success or failure.
-        // An aborted request has already ended it; cancelling that errored body
-        // would reject and replace the error admission is reporting.
-        streaming = false;
-        reusable.length = 0;
-        if (!stop?.aborted) await reader.cancel();
-        reader.releaseLock();
-      }
-    }, recycleChunk(buffer: ArrayBuffer) {
-      // A BYOB read transfers a reused buffer: the caller must not keep any view of it.
-      if (streaming && reusable.length < 4) reusable.push(buffer);
-    }, slice(start = 0, end = size) {
-      return { async arrayBuffer() {
-        const response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${start}-${end - 1}` }, signal });
-        if (response.status !== 206) await response.body?.cancel();
-        requireQem(response.status === 206, `the server ignored a byte range of ${name}; serve the folder with a Range-capable server`);
-        const bytes = await response.arrayBuffer();
-        requireQem(bytes.byteLength === end - start, `truncated range in ${name}`);
-        return bytes;
-      } };
-    } };
+    return qemHttpFile(new URL(encodeURIComponent(name), new URL(base, location.href)), signal);
   }));
 }
 
