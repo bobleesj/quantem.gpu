@@ -1,12 +1,11 @@
 """A loaded acquisition summarizes, iterates and exports without materializing its storage."""
 
-from quantem.gpu.io.dataset import Dataset4dstemGPU
-
 import pytest
 
+from quantem.gpu.io.dataset import Dataset4dstemGPU
 
 
-def test_acquisition_summary_does_not_materialize_storage():
+def test_acquisition_summary_does_not_materialize_storage(tmp_path):
     """Notebook inspection is cheap even for a huge logical acquisition."""
     import numpy as np
 
@@ -21,7 +20,12 @@ def test_acquisition_summary_does_not_materialize_storage():
             raise AssertionError("Inspection must not format resident detector values")
 
     storage = EncodedOwner()
-    metadata = {"representation": "encoded"}
+    source = tmp_path / "scan.qem"
+    source.write_bytes(b"header and encoded payload")
+    metadata = {
+        "representation": "encoded", "resident_profile": "runtime-column-rans-spatial-v2",
+        "physical_resident_bytes": 3_109_470_478, "source_path": str(source),
+    }
     data = Dataset4dstemGPU(storage, metadata)
     assert data.data is storage
     assert data.metadata is metadata
@@ -31,9 +35,16 @@ def test_acquisition_summary_does_not_materialize_storage():
     assert data.ndim == 4
     assert data.size == 512 * 256 * 192 * 192
     assert data.logical_bytes == data.size * 2
+    table = data.metadata_table()
+    assert table.loc["ANS resident size", "Value"] == 3.109470478
+    assert table.loc["QEM file size", "Value"] == source.stat().st_size / 1e9
+    assert table.loc["Uncompressed size", "Value"] == data.size * 2 / 1e9
+    assert table.loc["ANS resident size", "Unit"] == "GB"
     summary = repr(data)
-    assert "shape=(512, 256, 192, 192)" in summary
-    assert "dtype=uint16" in summary
+    assert "512 × 256 × 192 × 192" in summary
+    assert "uint16" in summary
+    assert "Not recorded" in summary
+    assert "<table" in data._repr_html_()
     with pytest.raises(TypeError, match="Select a bounded region first"):
         np.asarray(data)
 

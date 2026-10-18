@@ -36,6 +36,9 @@ FIXTURE_DIRECTORIES = ("tests/data/",)
 # h5py's global lock object shares its name with a private host; only these exact lines may use it.
 H5PY_LOCK = "ph" + "il"  # built from parts so this guard does not trip on itself
 H5PY_LOCK_LINES = {f"from h5py._objects import {H5PY_LOCK}", f"with {H5PY_LOCK}:"}
+# The Cephes copyright holder shares a first name with a private collaborator.
+# Preserve this required, public attribution only in the third-party notice.
+CEPHES_COPYRIGHT = "Copyright 1984, 1987, 1988, 1992 by " + "Ste" + "phen L. Moshier."
 
 
 def _tracked_files() -> list[str]:
@@ -71,7 +74,11 @@ def _public_text(path: str) -> str | None:
                     if not mime.startswith("image/"):
                         parts.append("".join(value) if isinstance(value, list) else str(value))
         text = "\n".join(parts)
-    return "\n".join(line for line in text.splitlines() if line.strip() not in H5PY_LOCK_LINES)
+    return "\n".join(
+        line for line in text.splitlines()
+        if line.strip() not in H5PY_LOCK_LINES
+        and not (path == "THIRD_PARTY_NOTICES.md" and line.strip() == CEPHES_COPYRIGHT)
+    )
 
 
 def test_experiment_evidence_is_not_tracked() -> None:

@@ -244,3 +244,43 @@ def test_reads_of_scans_not_held_raise():
         source.decode_scan_range_torch(100, 600)
     np.testing.assert_array_equal(source.decode_scan_range_torch(512, 600).cpu().numpy(), values[512:600])
     source.release()
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+@pytest.mark.parametrize("scan_region", [None, (1, 5, 0, 257), (1, 5, 13, 209)])
+@pytest.mark.parametrize("detector_region", [None, (1, 6, 2, 8), (2, 3, 4, 5)])
+def test_direct_region_reads_across_codec_blocks(dtype, scan_region, detector_region):
+    """Full and cropped scan reads retain all counts across chunks and tails."""
+    shape = (6, 257, 6, 8)
+    values = np.random.default_rng(7).integers(
+        0, np.iinfo(dtype).max + 1, size=shape, dtype=dtype
+    )
+    # Constant and sparse streams exercise the codec's shortcuts too.
+    values[..., 0, 0] = 0
+    values[..., 2, 4] = np.iinfo(dtype).max
+    values[..., 1, 3] = 0
+    values.reshape(-1, 6, 8)[[511, 512, 1023, 1024, 1541], 1, 3] = 17
+    valid = np.ones(shape[2:], bool)
+    valid[2, 4] = False
+    source = MPSStreamedCounts(shape, dtype, valid)
+    try:
+        frames = values.reshape(-1, *shape[2:])
+        for first in range(0, len(frames), 1024):
+            staged = upload(frames[first:first + 1024])
+            try:
+                source.append(shared_array(staged._mtl, staged.dtype, staged.shape))
+            finally:
+                staged.release()
+        loaded = Dataset4dstemGPU(
+            source, {"working_shape": shape, "working_dtype": np.dtype(dtype).name,
+                     "representation": "encoded"}
+        )
+        observed = loaded.read(scan_region=scan_region, detector_region=detector_region)
+        r0, r1, c0, c1 = scan_region or (0, shape[0], 0, shape[1])
+        y0, y1, x0, x1 = detector_region or (0, shape[2], 0, shape[3])
+        assert observed.device.type == "mps"
+        np.testing.assert_array_equal(
+            observed.cpu().numpy(), values[r0:r1, c0:c1, y0:y1, x0:x1]
+        )
+    finally:
+        source.release()

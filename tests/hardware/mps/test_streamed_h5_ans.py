@@ -76,6 +76,22 @@ def test_original_h5_series_stays_independent_and_batches_diffraction(tmp_path):
             item.close()
 
 
+def test_decode_scratch_handles_changing_compressed_batch_sizes(tmp_path):
+    """A sparse batch followed by a larger dense batch stays exact on reload."""
+    pytest.importorskip("Metal")
+    counts = np.zeros((12288, 4, 8), np.uint16)
+    counts[8192:] = np.random.default_rng(13).integers(
+        0, 65536, size=counts[8192:].shape, dtype=np.uint16
+    )
+    master = _write_bslz4_master(tmp_path, "varying-batches", counts)
+    for _ in range(2):
+        with io.load(master, backend="mps", scan_shape=(96, 128), verbose=False) as loaded:
+            assert len(loaded.data.chunks) == 2
+            np.testing.assert_array_equal(
+                _decoded(loaded.data), counts.reshape(96, 128, 4, 8)
+            )
+
+
 DAMAGED_LZ4_SCRIPT = r"""
 import sys
 

@@ -253,6 +253,14 @@ def fit_sample(
     shared with CUDA). Trials are evaluated in batches of ``THICK_FIT_MAX_BATCH`` with the fused Metal kernel
     (``thick_fit_batch``, same value as ``thick_fit``). Units: C10, C12, thickness in Angstrom (engine unit); tilt in mrad,
     scan frame (row, col)."""
+    if options.get("polish", "newton") == "newton" or options.get("polish_starts", 3) == 0:
+        from quantem.gpu.ssb._resident_search import fit_resident
+        from quantem.gpu.ssb.mps.resident_fit import evaluate
+
+        if options.get("polish_starts", 3) == 0:
+            options = {**options, "polish": None}
+        return fit_resident(lambda trial: evaluate(prepared, trial, band_inv_A),
+                            backend="mps", band_inv_A=band_inv_A, **options)
     return fit_sample_search(
         lambda c10, c12, phi12, tilt, thickness: thick_fit(prepared, C10=c10, C12=c12, phi12=phi12, sample_tilt_mrad=tilt,
                                                            thickness=thickness, band_inv_A=band_inv_A),

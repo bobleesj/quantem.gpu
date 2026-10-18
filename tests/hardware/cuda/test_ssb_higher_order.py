@@ -98,8 +98,8 @@ def test_higher_order_preview_matches_float64_chi_reference():
         )
         magnitudes, angles = _packed(*coefficients)
         aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": math.degrees(-0.7)}
-        phase, loss = ssb.preview(_aberrations(*coefficients))
-        dragged, no_loss = ssb.preview(_aberrations(*coefficients), compute_loss=False)
+        phase, loss = ssb.preview(_aberrations(*coefficients), phase_estimator="mean_phase")
+        dragged, no_loss = ssb.preview(_aberrations(*coefficients), compute_loss=False, phase_estimator="mean_phase")
         reference = KrivanekSSB.from_ssb(ssb)
         reference.magnitudes_A = magnitudes.astype(np.float64) * 10.0    # the engine takes Angstrom
         reference.angles_rad = angles.astype(np.float64)

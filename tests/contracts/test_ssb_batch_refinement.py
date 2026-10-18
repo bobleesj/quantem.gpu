@@ -40,7 +40,11 @@ def test_joint_search_preserves_trials_parameters_and_diagnostic_gain():
     settings = dict(objective_batch=objective, trials=24, seed=42, verbose=False)
     expected = fit_sample_search(scalar, **settings)
     actual = fit_sample_search(scalar, batch_polish=True, **settings)
-    assert actual == expected
+    actual_timings = actual.pop("timings")
+    expected_timings = expected.pop("timings")
+    assert actual_timings.keys() == expected_timings.keys()
+    assert all(np.isfinite(value) and value >= 0 for value in actual_timings.values())
+    assert actual == expected  # Every scientific field and trial remains exact.
 
 
 def test_objective_failure_releases_refinement_workers():
