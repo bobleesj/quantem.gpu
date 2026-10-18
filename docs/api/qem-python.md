@@ -37,7 +37,7 @@ Explicit options override `dataset.yaml` or `dataset.yml`, which override the
 acquisition metadata. Only one of these session files may be present. The
 converter records the supplied values and their provenance inside QEM and prints
 them with their units. Missing calibration is reported as unknown, not guessed.
-The [conversion reference](converting-a-collection-from-the-command-line)
+The [conversion reference](io.md#converting-a-collection-from-the-command-line)
 describes the session schema and source metadata retained.
 
 ### Repair detector-mask pixels
