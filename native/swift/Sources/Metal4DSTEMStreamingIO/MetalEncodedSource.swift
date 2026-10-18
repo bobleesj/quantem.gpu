@@ -240,6 +240,7 @@ public final class MetalEncodedSource {
       let stopStream = ((stop - chunk.first + interval - 1) / interval) * pixels
       let p = [
         chunk.count, pixels, interval, local, stop - start, firstStream, stopStream, itemBytes,
+        shape[3], 0, 0, shape[2], shape[3],
       ].map(UInt64.init)
       let enc = try encoder(
         command, "streamed_counts_decode_range",
