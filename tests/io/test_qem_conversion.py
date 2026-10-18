@@ -55,6 +55,26 @@ def test_convert_refuses_without_writing(tmp_path):
     assert (tmp_path / "present.qem").read_bytes() == b"keep"
 
 
+def test_conversion_refuses_ambiguous_calibration_before_loading(tmp_path):
+    master = _acquisition(tmp_path, "scan", "uint16")
+    for suffix in ("yaml", "yml"):
+        (tmp_path / f"dataset.{suffix}").write_text("schema: quantem.dataset/2\n")
+    with pytest.raises(ValueError, match="Both dataset.yaml and dataset.yml"):
+        convert.convert(master, tmp_path / "scan.qem")
+    assert not (tmp_path / "scan.qem").exists()
+
+
+@pytest.mark.parametrize("arguments", [
+    ["--voltage-kv", "nan"], ["--semiangle-mrad", "-1"],
+    ["--scan-sampling-a", "0.1", "0.2", "0.3"], ["--detector-sampling-mrad", "0"],
+])
+def test_command_refuses_invalid_physical_calibration(tmp_path, arguments):
+    from quantem.gpu.cli import main
+
+    with pytest.raises(SystemExit, match="positive"):
+        main(["convert", str(tmp_path / "scan_master.h5"), *arguments])
+
+
 def test_arina_master_fields_become_scientific_metadata():
     metadata = {
         "entry/instrument/detector/description": "Dectris ARINA Si",
@@ -329,3 +349,11 @@ def test_specimen_directions_and_shared_cif(tmp_path):
     sample, documents = convert.session_specimen(tmp_path / "x_1_master.h5")
     assert sample["components"]["A"]["zone_axis"] == [10, 0, 1] and sample["components"]["B"]["zone_axis"] == [1, -1, 0]
     assert len(documents) == 1 and sample["components"]["A"]["cif"] == sample["components"]["B"]["cif"]
+
+
+@pytest.mark.parametrize("method", ["median", "zero"])
+def test_mask_correction_refuses_unsupported_dtype_before_loading(tmp_path, method):
+    master = _acquisition(tmp_path, "float_scan", "float32")
+    with pytest.raises(ValueError, match="hot_pixel_correction='none'"):
+        convert.convert(master, tmp_path / "scan.qem", hot_pixel_correction=method)
+    assert not (tmp_path / "scan.qem").exists()

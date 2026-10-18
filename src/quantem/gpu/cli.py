@@ -21,8 +21,10 @@ def _parser() -> argparse.ArgumentParser:
         help="convert Arina HDF5 acquisitions into verified .qem copies",
         description=(
             "Write a .qem copy of one acquisition, or of every *_master.h5 below a "
-            "folder. Counts are stored exactly in compressed form and acquisition "
-            "metadata is retained. Each copy is compared with its source files. "
+            "folder. Original values are encoded losslessly by default; explicitly "
+            "requested detector-mask corrections are recorded. "
+            "Calibration is retained. Each copy is verified against its source "
+            "and any declared correction. "
             "Source files are never modified or removed."
         ),
     )
@@ -31,6 +33,14 @@ def _parser() -> argparse.ArgumentParser:
     convert_command.add_argument("--dry", action="store_true", help="encode on GPU and estimate payload size without writing a copy")
     convert_command.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
     convert_command.add_argument("--no-verify", action="store_true", help="skip comparing each copy with its source files")
+    convert_command.add_argument("--voltage-kv", type=float, help="accelerating voltage in kV; overrides session/source metadata")
+    convert_command.add_argument("--semiangle-mrad", type=float, help="convergence semiangle in mrad; overrides session/source metadata")
+    convert_command.add_argument("--scan-sampling-a", type=float, nargs="+", metavar="VALUE",
+                                 help="scan spacing in angstrom: one value, or row column")
+    convert_command.add_argument("--detector-sampling-mrad", type=float, nargs="+", metavar="VALUE",
+                                 help="detector spacing in mrad/pixel: one value, or row column")
+    convert_command.add_argument("--hot-pixel-correction", choices=("none", "median", "zero"), default="none",
+                                 help="repair only stored-mask pixels before encoding (default: none)")
     validate_command = commands.add_parser(
         "validate",
         help="check .qem integrity and metadata without a GPU",
@@ -75,6 +85,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested QuantEM GPU command."""
     args = _parser().parse_args(argv)
     if args.command == "convert":
+        try:
+            convert._explicit_calibration(args.voltage_kv, args.semiangle_mrad,
+                                          args.scan_sampling_a, args.detector_sampling_mrad)
+        except ValueError as error:
+            raise SystemExit(f"quantem-gpu convert: {error}") from None
         # convert every acquisition under the source and print sizes before and after
         try:
             masters = convert.find_masters(args.source)
@@ -82,10 +97,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(f"quantem-gpu convert: {error}") from None
         if not masters:
             raise SystemExit(f"No *_master.h5 acquisitions under {args.source}")
-        print(
-            f"{len(masters)} acquisition(s). Every detector count and the pixel mask are kept exactly; "
-            "flagged pixels holding the uint32 marker (above 65535) are stored as 0. Source files are not modified."
-        )
+        print(f"{len(masters)} acquisition(s). Source files are not modified.")
+        if args.hot_pixel_correction == "none":
+            print("No hot-pixel correction; original values and flagged markers are preserved exactly.")
+        else:
+            print(f"Stored-mask pixels receive {args.hot_pixel_correction} correction. QEM losslessly stores the corrected values.")
         if args.dry:
             print("Dry run: GPU encoding estimates payload size; metadata and file overhead are additional. No copies written.")
         before = after = failed = kept = 0
@@ -95,6 +111,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = convert.convert(
                     master, destination, write=not args.dry, verify=not args.no_verify,
                     backend=args.backend,
+                    voltage_kV=args.voltage_kv, semiangle_mrad=args.semiangle_mrad,
+                    scan_sampling_A=args.scan_sampling_a, detector_sampling_mrad=args.detector_sampling_mrad,
+                    hot_pixel_correction=args.hot_pixel_correction,
                 )
             except (OSError, ValueError, RuntimeError) as error:
                 failed += 1
@@ -121,10 +140,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not result.master_embedded:
                 line += "  (master file too large to embed; its fields are kept, its long tables are not)"
             if result.session_calibration:
-                line += f"  (calibration from dataset.yaml: {', '.join(path.rsplit('/', 1)[-1] for path in result.session_calibration)})"
+                for path, quantity in result.session_calibration.items():
+                    line += f"\n    {path}: {quantity['value']:g} {quantity['unit']} ({quantity['evidence']})"
+            correction = result.hot_pixel_correction
+            if correction.get("applied"):
+                line += (f"\n    {correction['method']} correction: {correction['pixel_count']} detector pixels; "
+                         f"(row, column) {correction['coordinates_row_col']}; original flags {correction['source_flags']}")
             if result.verified is True:
                 check = result.verification
                 line += f"  verified: {check['compared_values']:,} values identical"
+                if check.get("corrected_values_compared"):
+                    line += f" after declared correction ({check['corrected_values_compared']:,} replacements checked)"
                 if check["flagged_pixels"]:
                     line += f"; {check['flagged_pixels']} flagged pixels also verified"
                 if check.get("flagged_markers_stored_as_zero"):

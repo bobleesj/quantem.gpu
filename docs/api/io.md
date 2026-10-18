@@ -495,7 +495,12 @@ documents and the saved background recipe. The output must not already exist.
 See the [float codec contract](qem-codecs.md)
 for supported geometry, reduction precision and memory limits.
 
+(converting-a-collection-from-the-command-line)=
 ### Converting a collection from the command line
+
+For one acquisition, manual calibration, or declared median correction, start
+with [Convert one HDF5 acquisition](convert-one-hdf5-acquisition).
+The CLI and `quantem.gpu.io.convert.convert` use the same conversion method.
 
 ```bash
 quantem-gpu convert /data/arina/session --dry     # GPU payload-size estimate; no copies written
@@ -507,9 +512,11 @@ Each published copy keeps master-file fields and attributes (units included) und
 its HDF5 path, embeds the master file itself so that long tables such as the
 flatfield survive (`quantem.gpu.io.convert.restore_master` writes it back byte for
 byte), records the name, size and SHA-256 of its source files, and fills the scientific metadata (source format, accelerating
-voltage, dwell time) from the Arina master. An Arina master records neither the
+voltage, dwell time) from the Arina master.
+
+An Arina master records neither the
 probe semi-angle nor the scan step; when the acquisition's folder has a session
-`dataset.yaml` of schema `quantem.dataset/2`, its `microscope` voltage and
+`dataset.yaml` (or `dataset.yml`) of schema `quantem.dataset/2`, its `microscope` voltage and
 semi-angle and the `[row, col]` scan step become calibration overrides whose
 evidence is the session file's SHA-256
 (`quantem.gpu.io.convert.session_calibration`). The step is the one QuantEM Live
@@ -521,15 +528,31 @@ without it with the reason in the conversion notes. Readers then report them as 
 effective `semiangle_mrad`, `voltage_kV` and `scan_sampling_A`, so the copy
 needs no sidecar. The session's values override what the master records (an Arina's
 `photon_energy` field can hold a stale voltage). Only the fields used are attached (`dataset.json`), not the
-session notes. The command line names the calibrated fields for each copy. After writing, every value is
+session notes.
+
+`microscope.detector_sampling_mrad` supplies detector sampling;
+a matching `files` entry's `detector_sampling_mrad` takes precedence. This field
+accepts one positive value or a `[row, column]` pair. Explicit `--voltage-kv`,
+`--semiangle-mrad`, `--scan-sampling-a`, and `--detector-sampling-mrad` override
+session calibration, with parameter provenance retained in QEM. Both session
+filenames at once are an error; choose one. The command line names the calibrated
+fields, values, units, and sources for each copy.
+
+After writing, every value is
 compared with the detector files read through h5py before the copy is published.
 Flagged pixels are kept and checked too: conversion disables display-time
-hot-pixel correction, and the detector pixel mask is saved with the copy. CUDA and
+hot-pixel correction by default, and the detector pixel mask is saved with the copy. CUDA and
 MPS retain `uint32` files as uint32, including flagged 0xFFFFFFFF markers and
 valid counts above 65,535. Raw reads and source verification include every
 pixel. Detector products exclude invalid pixels through the separate validity
 mask. The collection converter also supports the real numeric dtypes listed
 above; unsupported vendor layouts still fail explicitly.
+
+For uint8/uint16/uint32 acquisitions, `--hot-pixel-correction median` or `zero`
+explicitly requests replacement of stored-mask pixels. Verification compares
+against an independent reference of that correction and checks all originally
+valid counts unchanged. The method, coordinates, original flags and processing
+history remain in QEM; reopening does not repeat correction.
 Use `--backend cuda` or `--backend mps` to select a device backend. An
 acquisition whose copy would be larger than its HDF5 files is reported and left
 as HDF5. Oversized masters that cannot be embedded are not converted, so long

@@ -70,7 +70,7 @@ def test_unsupported_volume_does_not_expose_partial_acquisition(tmp_path, monkey
     assert not destination.exists()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS exclusive rename")
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="native exclusive rename")
 def test_native_exclusive_rename_publishes_complete_file(tmp_path, monkeypatch):
     source = tmp_path / "staged"
     destination = tmp_path / "acquisition.qem"

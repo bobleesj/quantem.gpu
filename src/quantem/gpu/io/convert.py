@@ -30,18 +30,23 @@ from quantem.gpu.formats import dataset_yaml
 from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import read_pixel_mask
-from quantem.gpu.formats.qem.metadata import validate_sample
+from quantem.gpu.formats.publish import publish_file
+from quantem.gpu.formats.qem.metadata import (
+    acquisition_metadata,
+    effective_metadata,
+    validate_sample,
+)
 from quantem.gpu.formats.qem.snapshot import BIT_DTYPES, read_header
 from quantem.gpu.io import load, save
 from quantem.gpu.io.read import torch_value
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
+from quantem.gpu.resident.hot_pixels import normalize_hot_pixel_correction
 
 _MASTER_SUFFIX = "_master.h5"
 _STORED_DTYPES = BIT_DTYPES
 _HASH_BLOCK = 64 << 20
 _READABLE_VALUES = 64
 _EMBEDDED_MASTER_LIMIT = 8 << 20
-_SESSION_FILE = "dataset.yaml"
 _MAX_CIF_DOCUMENTS = 8                 # of the 16 source documents a .qem carries; the rest stay for the source's own metadata
 _MAX_CIF_BYTES = 2 << 20               # of the 4 MiB attachment budget
 
@@ -62,11 +67,52 @@ class ConvertedAcquisition:
     verification: dict = field(default_factory=dict)
     session_calibration: dict = field(default_factory=dict)
     session_notes: list = field(default_factory=list)
+    hot_pixel_correction: dict = field(default_factory=dict)
 
     @property
     def verified(self) -> bool | None:
         """True or False after verification; None when it did not run."""
         return self.verification.get("identical") if self.verification else None
+
+
+def _session_path(master: Path) -> Path:
+    candidates = [master.parent / name for name in ("dataset.yaml", "dataset.yml")]
+    present = [path for path in candidates if path.is_file()]
+    if len(present) > 1:
+        raise ValueError("Both dataset.yaml and dataset.yml exist; keep one session file before converting.")
+    return present[0] if present else candidates[0]
+
+
+def _sampling_pair(value, name: str) -> tuple[float, float]:
+    values = np.atleast_1d(value).astype(float)
+    if values.ndim != 1 or values.size not in (1, 2) or not np.all(np.isfinite(values) & (values > 0)):
+        raise ValueError(f"{name} needs one or two positive finite values, in (row, column) order; got {value!r}.")
+    return tuple(np.repeat(values, 2) if values.size == 1 else values)
+
+
+def _explicit_calibration(voltage_kV, semiangle_mrad, scan_sampling_A, detector_sampling_mrad) -> dict:
+    overrides = {}
+    for field, value, path, factor, unit in (
+        ("voltage_kV", voltage_kV, "electron_source/accelerating_voltage", 1000, "V"),
+        ("semiangle_mrad", semiangle_mrad, "illumination_system/semi_convergence_angle", 1, "mrad"),
+        ("scan_sampling_A", scan_sampling_A, "scan_controller/regular_scan/pixel_size", 1e-10, "m"),
+        ("detector_sampling_mrad", detector_sampling_mrad, "imaging_system/reciprocal_pixel_size", 1, "mrad"),
+    ):
+        if value is None:
+            continue
+        if "sampling" in field:
+            values = _sampling_pair(value, field)
+            quantities = [(f"{path}_{axis}", number) for axis, number in zip(("row", "column"), values)]
+        else:
+            if isinstance(value, bool) or not np.isfinite(value) or value <= 0:
+                raise ValueError(f"{field} must be positive and finite; got {value!r}.")
+            quantities = [(path, value)]
+        for key, number in quantities:
+            overrides[key] = dict(value=float(number) * factor, unit=unit, provenance="user_override",
+                                  evidence=f"Explicit conversion parameter {field}={value!r}")
+    # Apply the same scientific validation used by the writer, before GPU work.
+    acquisition_metadata((1, 1, 1, 1), {"calibration_overrides": overrides})
+    return overrides
 
 
 def session_calibration(master: Path) -> tuple[dict, dict | None]:
@@ -103,7 +149,7 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
     >>> session_calibration(Path("no/such/scan_master.h5"))
     ({}, None)
     """
-    sidecar = Path(master).parent / _SESSION_FILE
+    sidecar = _session_path(Path(master))
     if not sidecar.is_file():
         return {}, None
     document, evidence = _session_document(sidecar)
@@ -128,13 +174,19 @@ def session_calibration(master: Path) -> tuple[dict, dict | None]:
         # the stored path names the column axis "column" (scientific_metadata strings are unchanged)
         for axis, value in zip(("row", "column"), step, strict=True):
             override(f"scan_controller/regular_scan/pixel_size_{axis}", value, 1e-10, "m")
+    detector_step = (entry or {}).get("detector_sampling_mrad", microscope.get("detector_sampling_mrad"))
+    if detector_step is not None:
+        detector_step = _sampling_pair(detector_step, "detector_sampling_mrad")
+        for axis, value in zip(("row", "column"), detector_step):
+            override(f"imaging_system/reciprocal_pixel_size_{axis}", value, 1, "mrad")
     if not overrides:
         return {}, None
     # only the fields read: session and file notes can name people and links that do not belong in a portable copy
     used = {"session": str(sections["session"].get("name")),
             "microscope": {name: microscope.get(name) for name in ("voltage_kV", "semiangle_mrad")},
             "file": {"key": str(key), "master": entry.get("master"), "mag": entry.get("mag")} if entry else None,
-            "calibration": {"scan_sampling_A": None if step is None else list(step)}}
+            "calibration": {"scan_sampling_A": None if step is None else list(step),
+                            "detector_sampling_mrad": detector_step}}
     content = json.dumps(used, sort_keys=True, default=str)
     attachment = {"filename": "dataset.json", "mediaType": "application/json", "content": content,
                   "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
@@ -170,7 +222,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
     >>> session_specimen(Path("no/such/scan_master.h5"))
     (None, [])
     """
-    sidecar = Path(master).parent / _SESSION_FILE
+    sidecar = _session_path(Path(master))
     if not sidecar.is_file():
         return None, []
     document, evidence = _session_document(sidecar)
@@ -182,7 +234,7 @@ def session_specimen(master: Path) -> tuple[dict | None, list[dict]]:
         raise ValueError(f"{sidecar}: specimen and its components, and files, must be mappings")
     key, entry, matched_by = session_file_entry(files, Path(master))
     evidence += f", files[{key}] by {matched_by}" if entry else ""
-    sample: dict = {"provenance": _SESSION_FILE, "evidence": evidence}
+    sample: dict = {"provenance": sidecar.name, "evidence": evidence}
     for name in ("id", "name", "geometry", "description", "orientation_relationship"):
         if declared.get(name) is not None:
             sample[name] = str(declared[name])
@@ -237,7 +289,7 @@ def _session_document(sidecar: Path) -> tuple[dict, str]:
         document = yaml.safe_load(text) or {}
     except yaml.YAMLError as error:
         raise ValueError(f"{sidecar} is not readable YAML: {error}") from error
-    return dataset_yaml.checked_dataset(document, sidecar), f"{_SESSION_FILE} sha256:{hashlib.sha256(text).hexdigest()}"
+    return dataset_yaml.checked_dataset(document, sidecar), f"{sidecar.name} sha256:{hashlib.sha256(text).hexdigest()}"
 
 
 def _cif_document(sidecar: Path, label: str, name: str, documents: dict[Path, dict]) -> dict:
@@ -529,7 +581,9 @@ def restore_master(qem: Path, destination: Path) -> Path:
 def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> dict:
     """Compare every original measurement bit, including flagged detector pixels.
 
-    No marker substitution is accepted as raw preservation. Bit comparisons
+    Without an explicit correction, no marker substitution is accepted as raw
+    preservation. Declared mask corrections are checked against bounded source
+    neighborhoods; all other values retain their original bits. Bit comparisons
     run on the requested GPU in bounded windows, including for float64 on
     Metal, whose tensor arithmetic does not support that floating dtype.
     """
@@ -537,6 +591,9 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
     rows, columns, detector_rows, detector_columns = header["shape"]
     mask = read_pixel_mask(master)
     valid = np.ones((detector_rows, detector_columns), bool) if mask is None else mask == 0
+    correction = header.get("metadata", {}).get("hot_pixel_correction", {})
+    method = correction.get("method", "none") if correction.get("applied") else "none"
+    method = normalize_hot_pixel_correction(method)
     pixels = detector_rows * detector_columns
     with ExitStack() as stack:
         handles = [stack.enter_context(h5py.File(path, "r")) for path in detector_files(master)]
@@ -568,6 +625,23 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                 raw = np.ascontiguousarray(frames(first, stop))
                 if np.dtype(header["dtype"]) != raw.dtype:
                     raise ValueError("The QEM dtype differs from the source dtype.")
+                if method != "none":
+                    expected = raw.copy()
+                    for row, column in np.argwhere(~valid):
+                        neighbors = [
+                            (r, c)
+                            for r in range(max(0, row - 1), min(detector_rows, row + 2))
+                            for c in range(max(0, column - 1), min(detector_columns, column + 2))
+                            if valid[r, c]
+                        ]
+                        replacement = 0
+                        if method == "median" and neighbors:
+                            # Correction supports uint8/16/32. Their pairwise
+                            # median is exactly representable in float64.
+                            local = np.stack([raw[:, r, c] for r, c in neighbors], axis=1)
+                            replacement = np.floor(np.median(local, axis=1)).astype(raw.dtype)
+                        expected[:, row, column] = replacement
+                    raw = expected
                 if hasattr(decoded, "_mtl"):
                     decoded.dtype = np.dtype("uint8")
                     decoded.shape = (raw.nbytes,)
@@ -590,11 +664,17 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
         differing_values=differing,
         flagged_pixels=flagged,
         flagged_markers_stored_as_zero=0,
+        hot_pixel_correction=method,
+        corrected_values_compared=flagged * rows * columns if method != "none" else 0,
     )
 
 
 def convert(master: Path, destination: Path, *, write: bool = True, verify: bool = True,
-            backend: str = "auto") -> ConvertedAcquisition:
+            backend: str = "auto", voltage_kV: float | None = None,
+            semiangle_mrad: float | None = None,
+            scan_sampling_A: float | tuple[float, float] | None = None,
+            detector_sampling_mrad: float | tuple[float, float] | None = None,
+            hot_pixel_correction: str = "none") -> ConvertedAcquisition:
     """Preserve a complete acquisition in a verified, no-overwrite saved copy.
 
     Parameters
@@ -610,6 +690,17 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         before publishing. False explicitly skips that integrity gate.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerator for loading, encoding and decoded-value comparison.
+    voltage_kV, semiangle_mrad
+        Explicit positive microscope calibration, overriding the session file
+        and source metadata. Omit to retain available calibration.
+    scan_sampling_A, detector_sampling_mrad
+        Positive scan spacing in angstrom and detector spacing in mrad per
+        pixel. One value applies to both axes; a pair is (row, column).
+    hot_pixel_correction : {"none", "median", "zero"}, default "none"
+        Optional correction for uint8/uint16/uint32 acquisitions only.
+        Corrects stored-mask pixels before encoding. Median uses valid
+        3x3 neighbors, with fractional medians rounded down. Verification
+        compares against the declared correction, not against unchanged raw data.
 
     Returns
     -------
@@ -624,6 +715,9 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
     True
     """
     master, destination = Path(master), Path(destination)
+    explicit = _explicit_calibration(voltage_kV, semiangle_mrad, scan_sampling_A, detector_sampling_mrad)
+    hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
+    _session_path(master)  # Ambiguous sidecars must not silently discard calibration.
     result = ConvertedAcquisition(master, destination)
     files = detector_files(master)
     result.source_bytes = sum(path.stat().st_size for path in [master, *files])
@@ -642,12 +736,18 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
     if dtype not in _STORED_DTYPES:
         result.skipped = f"stored as {dtype}; use a supported real numeric acquisition dtype"
         return result
+    if hot_pixel_correction != "none" and dtype not in {"uint8", "uint16", "uint32"}:
+        raise ValueError(
+            f"Hot-pixel correction requires uint8/uint16/uint32 counts; got {dtype}. "
+            "Use hot_pixel_correction='none' to preserve the original values."
+        )
     started = time.perf_counter()
     try:
         paths = [master, *files]
         signatures = [(path.stat().st_size, path.stat().st_mtime_ns) for path in paths]
         with load(master, backend=backend, representation="encoded", verbose=False,
-                  hot_pixel_correction="none") as acquisition:
+                  hot_pixel_correction=hot_pixel_correction) as acquisition:
+            result.hot_pixel_correction = dict(acquisition.metadata.get("hot_pixel_correction", {}))
             result.qem_bytes = int(acquisition.resident_bytes)
             if result.qem_bytes >= result.source_bytes:
                 result.larger = True
@@ -666,16 +766,28 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                     overrides, attachment = session_calibration(master)
                 except ValueError as error:          # an optional sidecar never blocks a lossless copy
                     overrides, attachment = {}, None
-                    result.session_notes.append(f"{_SESSION_FILE} ignored: {error}")
+                    result.session_notes.append(f"{_session_path(master).name} ignored: {error}")
                 if overrides:
                     metadata["calibration_overrides"] = overrides
                     metadata["source_documents"] = [*metadata.get("source_documents", []), attachment]
                     result.session_calibration = overrides
+                if explicit:
+                    for key in explicit.keys() & overrides.keys():
+                        result.session_notes.append(f"Explicit {key} overrides the session value.")
+                    metadata["calibration_overrides"] = {**overrides, **explicit}
+                    result.session_calibration = metadata["calibration_overrides"]
+                scientific = acquisition_metadata(acquisition.shape, metadata)
+                result.session_calibration = scientific["calibration_overrides"]
+                effective = effective_metadata(metadata, scientific)
+                missing = [key for key in ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad")
+                           if key not in effective]
+                if missing:
+                    result.session_notes.append(f"Calibration unknown: {', '.join(missing)}; values were not guessed.")
                 try:
                     sample, cif_documents = session_specimen(master)
                 except ValueError as error:          # a malformed specimen never blocks a lossless copy
                     sample, cif_documents = None, []
-                    result.session_notes.append(f"{_SESSION_FILE} specimen ignored: {error}")
+                    result.session_notes.append(f"{_session_path(master).name} specimen ignored: {error}")
                 if sample is not None:
                     metadata["sample"] = sample
                     metadata["source_documents"] = [*metadata.get("source_documents", []), *cif_documents]
@@ -694,7 +806,7 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
                         if signatures != [(path.stat().st_size, path.stat().st_mtime_ns) for path in paths]:
                             raise ValueError("Source files changed during conversion; retry after acquisition finishes.")
                         if not result.failed:
-                            os.link(candidate, destination)
+                            publish_file(candidate, destination)
     except (TypeError, ValueError, NotImplementedError, MemoryError) as error:
         result.skipped = f"{type(error).__name__}: {error}"
         result.failed = True
