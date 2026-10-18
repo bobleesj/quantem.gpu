@@ -816,7 +816,7 @@ public final class MetalSSBEngine {
       device: device, geometry: geometry,
       activeIndices: activeBrightfieldIndices, rotation: scanDetectorRotationDegrees,
       band: bandInverseAngstroms, provenance: currentProvenance(),
-      visit: { [self] body in try visitSpectra(body) },
+      visit: { [self] batchSize, body in try visitSpectra(batchSize: batchSize, body) },
       validatePreparation: { [self] in
         guard prepared, preparationGeneration == generation else {
           throw MetalSSBError.invalidGeometry(
@@ -828,15 +828,17 @@ public final class MetalSSBEngine {
 
   // A narrow internal bridge: cached Hermitian spectra and streamed full spectra
   // are consumed on the engine queue, never copied through CPU arrays.
-  private func visitSpectra(_ body: MetalSSBJointModel.SpectrumVisitor) throws {
+  private func visitSpectra(batchSize: Int, _ body: MetalSSBJointModel.SpectrumVisitor) throws {
     guard prepared, let encodeBrightfield else { throw MetalSSBError.notPrepared }
     try setCacheColumnMajor(false)
     let strideBytes = halfPlane * MemoryLayout<SIMD2<Float>>.stride
-    for offset in stride(from: 0, to: cachedBrightfieldCount, by: 8) {
-      let count = min(8, cachedBrightfieldCount - offset)
+    var offset = 0
+    while offset < cachedBrightfieldCount {
+      let within = offset % cacheChunkCapacity
+      let count = min(batchSize, cachedBrightfieldCount - offset, cacheChunkCapacity - within)
       let chunk = offset / cacheChunkCapacity
-      let byteOffset = (offset % cacheChunkCapacity) * strideBytes
-      try body(cacheBuffers[chunk], byteOffset, true, offset, count)
+      try body(cacheBuffers[chunk], within * strideBytes, true, offset, count)
+      offset += count
     }
     for offset in stride(from: cachedBrightfieldCount, to: activeBrightfieldIndices.count, by: 8) {
       let count = min(8, activeBrightfieldIndices.count - offset)
@@ -1902,25 +1904,9 @@ public final class MetalSSBEngine {
   }
 
   private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
-    let packagedURL = Bundle.main.resourceURL?
-      .appendingPathComponent(
-        "MetalKernels_MetalSSBKernels.bundle",
-        isDirectory: true
-      )
-      .appendingPathComponent("Resources", isDirectory: true)
-      .appendingPathComponent("ssb.metal")
-    let url =
-      packagedURL.flatMap {
-        FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
-      } ?? Bundle.module.url(
-        forResource: "ssb",
-        withExtension: "metal",
-        subdirectory: "Resources"
-      ) ?? Bundle.module.url(forResource: "ssb", withExtension: "metal")
-    guard let url else { throw MetalSSBError.missingResource("ssb.metal") }
     do {
       return try device.makeLibrary(
-        source: String(contentsOf: url, encoding: .utf8),
+        source: MetalSSBShaderSource.load(["ssb_fft", "ssb"]),
         options: nil
       )
     } catch {

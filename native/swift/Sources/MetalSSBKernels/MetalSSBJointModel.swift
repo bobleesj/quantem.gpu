@@ -1,5 +1,6 @@
 import Foundation
 import Metal
+import MetalPerformanceShaders
 import MetalPerformanceShadersGraph
 
 /// The depth-averaged SSB transfer model. C10 is at the specimen midplane;
@@ -58,7 +59,7 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
 /// an explicit part of the least-squares objective, in inverse Angstrom.
 public final class MetalSSBJointModel {
   typealias SpectrumVisitor = (MTLBuffer, Int, Bool, Int, Int) throws -> Void
-  typealias VisitSpectra = (@escaping SpectrumVisitor) throws -> Void
+  typealias VisitSpectra = (Int, @escaping SpectrumVisitor) throws -> Void
 
   private struct Grid {
     var n, outputN, count, bfOffset, totalBF, bandCount, sourceHalf, chunks: UInt32
@@ -76,6 +77,14 @@ public final class MetalSSBJointModel {
   private var grid: Grid
   private let kBuffer, qBuffer, indexBuffer, weights, bandG, partial, power: MTLBuffer
   private let gather, objective, reduce, correct, addPhase, normalize: MTLComputePipelineState
+  private let fusedColumn, fusedRow: MTLComputePipelineState
+  private let fusedTwiddle: MTLBuffer
+  let supportsFused1536: Bool
+  private let objectiveBatch, reduceBatch: MTLComputePipelineState
+  private let makeProbeGeometry, trialProbe: MTLComputePipelineState
+  private let probeGeometry, probeChi: MTLBuffer
+  private var batchPartial: MTLBuffer?
+  private var batchPower: MTLBuffer?
 
   init(
     device: MTLDevice, geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Float,
@@ -96,17 +105,11 @@ public final class MetalSSBJointModel {
     bandInverseAngstroms = band
     guard let queue = device.makeCommandQueue() else { throw MetalSSBError.commandQueue }
     self.queue = queue
-    let packaged = Bundle.main.resourceURL?.appendingPathComponent(
-      "MetalKernels_MetalSSBKernels.bundle/Resources/ssb_joint.metal")
-    let url =
-      packaged.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
-      ?? Bundle.module.url(
-        forResource: "ssb_joint", withExtension: "metal", subdirectory: "Resources")
-    guard let url else { throw MetalSSBError.missingResource("ssb_joint.metal") }
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
     let library = try device.makeLibrary(
-      source: String(contentsOf: url, encoding: .utf8), options: options)
+      source: MetalSSBShaderSource.load(["ssb_fft", "ssb_joint", "ssb_joint_fft"]),
+      options: options)
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw MetalSSBError.missingFunction(name)
@@ -116,6 +119,19 @@ public final class MetalSSBJointModel {
     gather = try pipeline("joint_gather")
     objective = try pipeline("joint_objective")
     reduce = try pipeline("joint_power")
+    objectiveBatch = try pipeline("joint_objective_batch")
+    reduceBatch = try pipeline("joint_power_batch")
+    makeProbeGeometry = try pipeline("joint_probe_geometry")
+    trialProbe = try pipeline("joint_trial_probe")
+    fusedColumn = try pipeline("joint_ifft1536_half_columns")
+    fusedRow = try pipeline("joint_ifft1536_half_rows_phase")
+    let twiddles = (0..<2048).map { i -> SIMD2<Float> in
+      let angle = i < 512
+        ? -2 * Double.pi * Double(i) / 512
+        : 2 * Double.pi * Double(i - 512) / 1536
+      return SIMD2(Float(cos(angle)), Float(sin(angle)))
+    }
+    fusedTwiddle = try Self.buffer(device, twiddles)
     correct = try pipeline("joint_correct")
     addPhase = try pipeline("joint_phase_add")
     normalize = try pipeline("joint_phase_normalize")
@@ -149,7 +165,21 @@ public final class MetalSSBJointModel {
       let y = geometry.brightfieldKY[i]
       return SIMD2(x * cosine + y * sine, -x * sine + y * cosine)
     }
+    // The real-field path needs no Nyquist correction when the calibrated
+    // aperture support ends strictly before both unfolded-grid boundaries.
+    // A conservative margin also covers Float32 coordinate roundoff.
+    let radius = (geometry.semiangleRadians
+      + 0.5 * max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
+      / geometry.wavelengthAngstroms
+    let rowSupport = ((ks.map { abs($0.x) }.max() ?? 0) + radius) * 1.00001
+    let columnSupport = ((ks.map { abs($0.y) }.max() ?? 0) + radius) * 1.00001
+    supportsFused1536 = n == 512
+      && 768 * abs(geometry.qxByRow[1]) > rowSupport
+      && 768 * abs(geometry.qyByColumn[1]) > columnSupport
+      && geometry.dcValue.x > 0
     kBuffer = try Self.buffer(device, ks)
+    probeGeometry = try Self.allocate(device, activeIndices.count * 16)
+    probeChi = try Self.allocate(device, activeIndices.count * 8 * 4)
     qBuffer = try Self.buffer(device, qs)
     indexBuffer = try Self.buffer(device, indices)
     weights = try Self.buffer(device, ws)
@@ -166,8 +196,16 @@ public final class MetalSSBJointModel {
       dqRow: geometry.qxByRow[1], dqColumn: geometry.qyByColumn[1],
       dcReal: geometry.dcValue.x, dcImag: geometry.dcValue.y,
       factor: geometry.phaseFactor ?? Float.pi / geometry.wavelengthAngstroms)
+    let probeCommands = try command()
+    let probeEncoder = try encoder(probeCommands, makeProbeGeometry)
+    probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
+    probeEncoder.setBuffer(probeGeometry, offset: 0, index: 1)
+    var probeGrid = grid
+    probeEncoder.setBytes(&probeGrid, length: MemoryLayout<Grid>.stride, index: 2)
+    dispatch(probeEncoder, width: activeIndices.count)
+    try finish(probeCommands)
     try withoutActuallyEscaping(isCancelled) { cancelled in
-      try visit { [self] source, offset, half, bfOffset, count in
+      try visit(8) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
         var p = grid
         p.sourceHalf = half ? 1 : 0
@@ -193,12 +231,15 @@ public final class MetalSSBJointModel {
     var p = grid
     let t = parameters.packed
     let commands = try command()
+    try encodeProbe(commands, parameters: t, batch: 1)
     let encoder = try self.encoder(commands, objective)
     for (index, buffer) in [bandG, kBuffer, qBuffer, partial].enumerated() {
       encoder.setBuffer(buffer, offset: 0, index: index)
     }
     encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
     encoder.setBytes(t, length: t.count * 4, index: 5)
+    encoder.setBuffer(probeGeometry, offset: 0, index: 6)
+    encoder.setBuffer(probeChi, offset: 0, index: 7)
     dispatch(encoder, width: bandCount, height: Int(p.chunks))
     let reduction = try self.encoder(commands, reduce)
     for (index, buffer) in [partial, weights, power].enumerated() {
@@ -215,6 +256,74 @@ public final class MetalSSBJointModel {
     return -sum
   }
 
+  /// Evaluate independent candidates together on the same measured BF evidence.
+  /// Geometry and input reads are shared across up to eight candidates. The
+  /// precision and accumulation order of each scalar objective are retained.
+  public func losses(
+    _ parameters: [SSBJointParameters], isCancelled: () -> Bool = { false }
+  ) throws -> [Double] {
+    try validatePreparation()
+    if parameters.isEmpty { return [] }
+    for value in parameters { try value.validate() }
+    if batchPartial == nil {
+      batchPartial = try Self.allocate(device, partial.length * 8)
+      batchPower = try Self.allocate(device, power.length * 8, shared: true)
+    }
+    guard let batchPartial, let batchPower else { throw MetalSSBError.commandQueue }
+    var result: [Double] = []
+    result.reserveCapacity(parameters.count)
+    for first in stride(from: 0, to: parameters.count, by: 8) {
+      if isCancelled() { throw CancellationError() }
+      let candidates = parameters[first..<min(first + 8, parameters.count)]
+      let packed = candidates.flatMap(\.packed)
+      var p = grid
+      var batch = UInt32(candidates.count)
+      let commands = try command()
+      try encodeProbe(commands, parameters: packed, batch: batch)
+      let compute = try encoder(commands, objectiveBatch)
+      for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
+        compute.setBuffer(buffer, offset: 0, index: index)
+      }
+      compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
+      compute.setBytes(packed, length: packed.count * 4, index: 5)
+      compute.setBytes(&batch, length: 4, index: 6)
+      compute.setBuffer(probeGeometry, offset: 0, index: 7)
+      compute.setBuffer(probeChi, offset: 0, index: 8)
+      dispatch(compute, width: bandCount, height: Int(p.chunks))
+      let reduction = try encoder(commands, reduceBatch)
+      for (index, buffer) in [batchPartial, weights, batchPower].enumerated() {
+        reduction.setBuffer(buffer, offset: 0, index: index)
+      }
+      reduction.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+      reduction.setBytes(&batch, length: 4, index: 4)
+      dispatch(reduction, width: bandCount, height: Int(batch))
+      try finish(commands)
+      // Preserve the existing Float64 scalar reduction; no scientific image
+      // or Fourier array is copied to the host by this operation.
+      let values = batchPower.contents().assumingMemoryBound(to: Float.self)
+      for candidate in 0..<Int(batch) {
+        var sum = 0.0
+        for i in 0..<bandCount { sum += Double(values[candidate * bandCount + i]) }
+        guard sum.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+        result.append(-sum)
+      }
+    }
+    return result
+  }
+
+  private func encodeProbe(_ commands: MTLCommandBuffer, parameters: [Float], batch: UInt32) throws
+  {
+    var p = grid
+    var count = batch
+    let compute = try encoder(commands, trialProbe)
+    compute.setBuffer(probeGeometry, offset: 0, index: 0)
+    compute.setBuffer(probeChi, offset: 0, index: 1)
+    compute.setBytes(parameters, length: parameters.count * 4, index: 2)
+    compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+    compute.setBytes(&count, length: 4, index: 4)
+    dispatch(compute, width: Int(p.totalBF))
+  }
+
   /// Reconstruct with all BF pixels. Cancellation is checked between GPU batches.
   public func reconstruct(
     _ parameters: SSBJointParameters, upsamplingFactor: Int = 1,
@@ -225,12 +334,27 @@ public final class MetalSSBJointModel {
     guard [1, 2, 3, 4, 8].contains(upsamplingFactor) else {
       throw MetalSSBError.invalidGeometry("Use an SSB sampling factor of 1, 2, 3, 4 or 8.")
     }
+    if isCancelled() { throw CancellationError() }
+    if upsamplingFactor == 3 && supportsFused1536 {
+      return try reconstructFused1536(parameters, isCancelled: isCancelled)
+    }
+    return try reconstructGeneral(parameters, upsamplingFactor: upsamplingFactor,
+                                  isCancelled: isCancelled)
+  }
+
+  // General complex FFT path retained for other sizes and nonzero boundary
+  // support. It is also the independent GPU control for the specialized path.
+  func reconstructGeneral(
+    _ parameters: SSBJointParameters, upsamplingFactor: Int,
+    isCancelled: () -> Bool = { false }
+  ) throws -> MetalSSBJointPhase {
     let started = Date()
     let n = Int(grid.n) * upsamplingFactor
     let plane = n * n
     let phase = try Self.allocate(device, plane * 4, shared: true)
-    let corrected = try Self.allocate(device, 8 * plane * 8)
-    let object = try Self.allocate(device, 8 * plane * 8)
+    let batchSize = 8
+    let corrected = try Self.allocate(device, batchSize * plane * 8)
+    let object = try Self.allocate(device, batchSize * plane * 8)
     let clear = try command()
     guard let blit = clear.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
     blit.fill(buffer: phase, range: 0..<phase.length, value: 0)
@@ -238,8 +362,10 @@ public final class MetalSSBJointModel {
     try finish(clear)
     let t = parameters.packed
     var plans: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
+    let execution = MPSGraphExecutionDescriptor()
+    execution.waitUntilCompleted = false
     try withoutActuallyEscaping(isCancelled) { cancelled in
-      try visit { [self] source, offset, half, bfOffset, count in
+      try visit(batchSize) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
         var p = grid
         p.outputN = UInt32(n)
@@ -254,7 +380,7 @@ public final class MetalSSBJointModel {
         encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
         encoder.setBytes(t, length: t.count * 4, index: 4)
         dispatch(encoder, width: plane, height: count)
-        try finish(commands)
+        let scheduled = MPSCommandBuffer(commandBuffer: commands)
         let shape: [NSNumber] = [NSNumber(value: count), NSNumber(value: n), NSNumber(value: n)]
         if plans[count] == nil {
           let graph = MPSGraph()
@@ -268,20 +394,19 @@ public final class MetalSSBJointModel {
           plans[count] = (graph, input, output)
         }
         let (graph, input, output) = plans[count]!
-        graph.run(
-          with: queue,
+        graph.encode(
+          to: scheduled,
           feeds: [input: MPSGraphTensorData(corrected, shape: shape, dataType: .complexFloat32)],
           targetOperations: nil,
           resultsDictionary: [
             output: MPSGraphTensorData(object, shape: shape, dataType: .complexFloat32)
-          ])
-        let sumCommands = try command()
-        let sum = try self.encoder(sumCommands, addPhase)
+          ], executionDescriptor: execution)
+        let sum = try self.encoder(scheduled, addPhase)
         sum.setBuffer(object, offset: 0, index: 0)
         sum.setBuffer(phase, offset: 0, index: 1)
         sum.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 2)
         dispatch(sum, width: plane)
-        try finish(sumCommands)
+        try finish(scheduled)
       }
     }
     let final = try command()
@@ -295,6 +420,69 @@ public final class MetalSSBJointModel {
     try finish(final)
     return MetalSSBJointPhase(
       phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+      wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
+      scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance)
+  }
+
+  private func reconstructFused1536(
+    _ parameters: SSBJointParameters, isCancelled: () -> Bool
+  ) throws -> MetalSSBJointPhase {
+    let started = Date()
+    let n = 1536, plane = 1536 * 1536, batchSize = 16
+    let phase = try Self.allocate(device, plane * 4, shared: true)
+    let intermediate = try Self.allocate(device, batchSize * n * (n / 2 + 1) * 8)
+    let clear = try command()
+    guard let blit = clear.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+    blit.fill(buffer: phase, range: 0..<phase.length, value: 0)
+    blit.endEncoding()
+    try finish(clear)
+    let t = parameters.packed
+    try withoutActuallyEscaping(isCancelled) { cancelled in
+      try visit(batchSize) { [self] source, offset, half, bfOffset, count in
+        if cancelled() { throw CancellationError() }
+        var p = grid
+        p.outputN = UInt32(n)
+        p.sourceHalf = half ? 1 : 0
+        p.count = UInt32(count)
+        p.bfOffset = UInt32(bfOffset)
+        let commands = try command()
+        let column = try encoder(commands, fusedColumn)
+        column.setBuffer(source, offset: offset, index: 0)
+        column.setBuffer(kBuffer, offset: 0, index: 1)
+        column.setBuffer(intermediate, offset: 0, index: 2)
+        column.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+        column.setBytes(t, length: t.count * 4, index: 4)
+        column.setBuffer(fusedTwiddle, offset: 0, index: 5)
+        column.setBuffer(probeGeometry, offset: 0, index: 6)
+        column.dispatchThreadgroups(
+          MTLSize(width: n / 2 + 1, height: count, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 192, height: 1, depth: 1))
+        column.endEncoding()
+        let row = try encoder(commands, fusedRow)
+        row.setBuffer(intermediate, offset: 0, index: 0)
+        row.setBuffer(phase, offset: 0, index: 1)
+        row.setBuffer(fusedTwiddle, offset: 0, index: 2)
+        row.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
+        row.setBuffer(kBuffer, offset: 0, index: 4)
+        row.dispatchThreadgroups(
+          MTLSize(width: n, height: 1, depth: 1),
+          threadsPerThreadgroup: MTLSize(width: 192, height: 1, depth: 1))
+        row.endEncoding()
+        // This also protects the engine's reusable streamed-spectrum buffer.
+        // The completed phase stays owned by this result across later calls.
+        try finish(commands)
+      }
+    }
+    let final = try command()
+    let norm = try encoder(final, normalize)
+    var count = UInt32(plane), divisor = Float(geometry.logicalBrightfieldCount)
+    norm.setBuffer(phase, offset: 0, index: 0)
+    norm.setBytes(&count, length: 4, index: 1)
+    norm.setBytes(&divisor, length: 4, index: 2)
+    dispatch(norm, width: plane)
+    try finish(final)
+    return MetalSSBJointPhase(
+      phase: phase, rows: n, columns: n, upsamplingFactor: 3,
       wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
       scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance)
   }

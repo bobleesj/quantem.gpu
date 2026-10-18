@@ -112,6 +112,15 @@ final class MetalSSBJointTests: XCTestCase {
         device: device, geometry: geometry, cacheBudgetBytes: cacheBudget)
       try engine.prepare(brightfield: input, countType: .uint16)
       let model = try engine.jointModel(scanDetectorRotationDegrees: 0)
+      let batchCases = (0..<17).map { cases[$0 % cases.count].parameters }
+      let scalarLosses = try batchCases.map(model.loss)
+      for count in [1, 7, 8, 9, 17] {
+        let batched = try model.losses(Array(batchCases.prefix(count)))
+        XCTAssertEqual(
+          batched, Array(scalarLosses.prefix(count)), "GPU batching changed a scalar objective")
+      }
+      XCTAssertEqual(try model.losses([]), [])
+      XCTAssertThrowsError(try model.losses(batchCases, isCancelled: { true }))
       for fixture in cases {
         let measured = try model.loss(fixture.parameters)
         let relative = abs(measured - fixture.loss) / max(abs(fixture.loss), 1)
@@ -240,9 +249,49 @@ final class MetalSSBJointTests: XCTestCase {
     }
     let optimizer = SSBJointOptimizer(globalTrials: 40, refinementIterations: 200)
     let first = try optimizer.run(start: initial, evaluate: loss)
-    let second = try optimizer.run(start: initial, evaluate: loss)
+    var batches = 0
+    let second = try optimizer.run(
+      start: initial, evaluate: loss,
+      evaluateBatch: { candidates in
+        batches += 1
+        return candidates.map(loss)
+      })
+    XCTAssertGreaterThan(batches, 0)
     XCTAssertEqual(first.best, second.best)
+    XCTAssertEqual(first.loss, second.loss)
+    XCTAssertEqual(second.refinementMethod, .newton)
     XCTAssertLessThan(first.loss, 0.01)
     XCTAssertThrowsError(try optimizer.run(start: initial, evaluate: loss, isCancelled: { true }))
+    XCTAssertThrowsError(
+      try optimizer.run(start: initial, evaluate: loss, evaluateBatch: { _ in [] }))
+
+    // Saved fits written before the refinement-method field remain readable.
+    let encoded = try JSONEncoder().encode(first)
+    var record = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    record.removeValue(forKey: "refinementMethod")
+    let restored = try JSONDecoder().decode(
+      SSBJointOptimizationResult.self, from: JSONSerialization.data(withJSONObject: record))
+    XCTAssertNil(restored.refinementMethod)
+    XCTAssertEqual(restored.best, first.best)
+    XCTAssertEqual(restored.loss, first.loss)
+  }
+
+  func testNewtonTrustRegionAndBoundedCoupling() throws {
+    // A bounded six-scalar optimizer-control check, not an image CPU oracle.
+    // Holding x at its bound changes the optimum in the coupled y coordinate.
+    let move = try SSBJointNewton.boundedStep(
+      center: [0, 0, 0, 0, 0, 40], gradient: [8, 5, 0, 0, 0, 0],
+      hessian: [
+        [-2, -1, 0, 0, 0, 0], [-1, -2, 0, 0, 0, 0],
+        [0, 0, -1, 0, 0, 0], [0, 0, 0, -1, 0, 0],
+        [0, 0, 0, 0, -1, 0], [0, 0, 0, 0, 0, -1],
+      ],
+      radius: 100, lower: [-1, -200, -200, -25, -25, 20],
+      upper: [1, 200, 200, 25, 25, 600])
+    XCTAssertEqual(move[0], 1, accuracy: 1e-12)
+    XCTAssertEqual(move[1], 2, accuracy: 1e-12)
+    let design = SSBJointNewton.design([0, 5, 0, 0, 0, 200], full: true)
+    XCTAssertEqual(design.count, 28)
+    XCTAssertEqual(SSBJointNewton.design(design[0], full: false).count, 13)
   }
 }
