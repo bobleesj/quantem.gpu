@@ -499,7 +499,7 @@ for supported geometry, reduction precision and memory limits.
 ### Converting a collection from the command line
 
 For one acquisition, manual calibration, or declared median correction, start
-with [Convert one HDF5 acquisition](convert-one-hdf5-acquisition).
+with [Convert one HDF5 acquisition](qem-python.md#convert-one-hdf5-acquisition).
 The CLI and `quantem.gpu.io.convert.convert` use the same conversion method.
 
 ```bash
