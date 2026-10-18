@@ -497,6 +497,12 @@ class SSB:
 
         GPU acquisitions use ANS-encoded storage.
 
+        File-based SSB retains its detector preprocessing: recorded invalid
+        pixels receive the local median on the GPU. The original file is
+        unchanged, and the correction is recorded in ``source_provenance``.
+        To choose another policy, load with ``io.load`` and pass that dataset
+        to ``SSB(data)``.
+
         Omitted voltage, convergence semiangle and scan step come from the
         acquisition's calibrated metadata. Missing physical values raise an
         error rather than being guessed. Detector sampling uses an explicit
@@ -544,6 +550,7 @@ class SSB:
                 backend=selected,
                 scan_shape=scan_shape,
                 dtype=dtype,
+                hot_pixel_correction="median",
                 verbose=verbose,
             )
             file_calibration = calibration_rows(loaded.metadata)
