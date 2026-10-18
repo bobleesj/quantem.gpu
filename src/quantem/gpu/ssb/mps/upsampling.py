@@ -334,7 +334,7 @@ def _coherent_spectrum(
             template=[("N", n), ("ROWS", rows), ("COLS", cols), ("SOURCE_N", source_n),
                       ("G_COLS", int(prepared.g_qk.shape[-1])),
                       ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk), ("GROUPS", groups)],
-            grid=(cols, rows, 1), threadgroup=(32, 8, 1),
+            grid=(cols, rows, 1), threadgroup=(16, 8, 1),
             output_shapes=[(rows, cols)], output_dtypes=[mx.complex64],
         )[0]
         # Queue a bounded set of dependent batches without waiting on the CPU
