@@ -44,8 +44,14 @@ if [ "$BUILD_METAL" = 1 ]; then
   swift build -c release --disable-sandbox --product metal-ssb-benchmark
   build_dir=$(swift build -c release --show-bin-path)
   mkdir -p build
+  # Source renames can leave orphan objects in an incremental build directory.
+  # Match the objects to the current SwiftPM source manifest.
+  objects=()
+  while IFS= read -r source; do
+    objects+=("$build_dir/MetalSSBKernels.build/$(basename "$source").o")
+  done < "$build_dir/MetalSSBKernels.build/sources"
   swiftc "${SWIFT_FLAGS[@]}" -I "$build_dir/Modules" tests/metal/ssb_fit_trajectory.swift \
-    "$build_dir"/MetalSSBKernels.build/*.o -o build/ssb-fit-trajectory -parse-as-library
+    "${objects[@]}" -o build/ssb-fit-trajectory -parse-as-library
 fi
 if [ ! -x build/ssb-fit-trajectory ]; then
   echo "check_ssb_fit_trajectory: build/ssb-fit-trajectory is missing; pass --build-metal" >&2
