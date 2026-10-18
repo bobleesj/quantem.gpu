@@ -46,6 +46,8 @@ class SSBExportState:
     bf_source_path: pathlib.Path | None = None
     bf_source_dtype: np.dtype | None = None
     bf_source_max_value: int | None = None
+    # Present only when the original QEM still describes this session's exact counts.
+    qem_source: dict[str, object] | None = None
 
     @property
     def num_bright_field_pixels(self) -> int:

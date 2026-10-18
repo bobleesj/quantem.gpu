@@ -136,12 +136,23 @@ def generate_ssb(directory: Path) -> None:
     counts = np.random.default_rng(47).poisson(5, (size, size, 1, len(rows))).astype(np.uint16)
     save_array(directory / "ssb columns.qem", counts, chunk_scans=1024)
     counts.reshape(size * size, -1).T.copy().tofile(directory / "ssb-columns.u16")
+    # An off-centre crop on a rectangular full detector. A flagged BF pixel
+    # remains measured evidence: source admission must not mask or replace it.
+    detector_rows, detector_cols = row[disk] + radius, col[disk] + radius
+    full_counts = np.random.default_rng(48).poisson(2, (size, size, 12, 13)).astype(np.uint16)
+    full_counts[..., detector_rows + 1, detector_cols + 2] = counts[..., 0, :]
+    valid = np.ones((12, 13), bool)
+    valid[detector_rows[0] + 1, detector_cols[0] + 2] = False
+    save_array(directory / "ssb-full.qem", full_counts,
+               metadata={"valid_pixels": valid}, chunk_scans=1024)
     calibration = {
         "schema": "quantem.ssb-browser-calibration/2",
         "num_bright_field_pixels": len(rows), "g_shape": [len(rows), size, size],
         "wavelength_A": wavelength, "semiangle_mrad": (radius + 0.25) * angular_sampling * 1e3,
         "detector_sampling_mrad": [angular_sampling * 1e3] * 2,
         "dc_value": [float(counts.sum(dtype=np.uint64)) / len(rows), 0],
+        "detector_shape": [7, 9],
+        "bright_field_rows": detector_rows.tolist(), "bright_field_cols": detector_cols.tolist(),
         "bright_field_k_row": rows.tolist(), "bright_field_k_col": cols.tolist(),
         "scan_q_row": np.fft.fftfreq(size).tolist(), "scan_q_col": np.fft.fftfreq(size).tolist(),
         "aperture_k": [1] * len(rows), "alpha_k2": [0] * len(rows),

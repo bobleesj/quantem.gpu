@@ -20,6 +20,7 @@ import torch
 from quantem.gpu import detector, io
 from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.metadata_display import calibration_rows
 from quantem.gpu.io.representation import DataRepresentation
@@ -68,6 +69,36 @@ from quantem.gpu.ssb.units import (
 def _default_phase_estimator(aberrations: dict[str, float]) -> str:
     """Use coherent reconstruction for every aberration on both backends."""
     return "phase_of_mean"
+
+
+def _browser_qem_source(data: object) -> dict[str, object] | None:
+    """Retain the identity of an unchanged, native-count QEM acquisition."""
+    if not isinstance(data, Dataset4dstemGPU):
+        return None
+    metadata = data.metadata
+    if (data.ndim != 4 or data.representation is DataRepresentation.DENSE
+            or metadata.get("container") != "quantem.qem"
+            or metadata.get("resident_profile") != INTEGER_CODEC
+            or str(data.dtype).removeprefix("torch.") not in {"uint8", "uint16"}
+            or not metadata.get("source_path")
+            or not metadata.get("qem_header_sha256")):
+        return None
+    path = Path(metadata["source_path"]).expanduser().resolve()
+    try:
+        stat = path.stat()
+        with path.open("rb") as handle:
+            if handle.read(56)[24:].hex() != metadata["qem_header_sha256"]:
+                return None
+    except OSError:
+        return None
+    return {
+        "path": path, "scan_shape": tuple(data.shape[:2]),
+        "detector_shape": tuple(data.shape[2:]),
+        "dtype": str(data.dtype).removeprefix("torch."),
+        "signature": (stat.st_size, stat.st_mtime_ns),
+        "header_sha256": metadata["qem_header_sha256"],
+        "valid_pixels": np.asarray(data.data.valid_pixels, dtype=bool).copy(),
+    }
 
 
 def _source_calibration(
@@ -239,6 +270,7 @@ class SSB:
         }
         self.backend = resolve(backend)
         source_dataset = data if isinstance(data, Dataset4dstemGPU) else None
+        self._browser_qem = _browser_qem_source(source_dataset)
         metadata = {} if source_dataset is None else source_dataset.metadata
         voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
             metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
@@ -524,6 +556,7 @@ class SSB:
         crop_origin = (0, 0)
         owned = None
         source_detector_bin = 1
+        browser_qem = None
         # on MPS an exact BF-column export beside the source replaces decoding the detector
         frames = find_bf_columns(source, calibration, verbose=verbose) if selected == "mps" else None
         if frames is not None:
@@ -554,6 +587,7 @@ class SSB:
                 verbose=verbose,
             )
             file_calibration = calibration_rows(loaded.metadata)
+            browser_qem = _browser_qem_source(loaded)
             try:
                 voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
                     loaded.metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
@@ -616,6 +650,7 @@ class SSB:
         session.source_dtype = source_dtype
         session.source_bytes = source_bytes
         session.source_load_seconds = source_load_seconds
+        session._browser_qem = browser_qem
         return session
 
     @_on_scan_gpu
@@ -1799,7 +1834,34 @@ class SSB:
     def browser_state(self):
         """Return compact backend-neutral state for browser WebGPU."""
 
-        return self._backend().browser_state()
+        state = self._backend().browser_state()
+        source = self._browser_qem
+        if source is None or self.scan_region is not None or tuple(source["scan_shape"]) != tuple(state.scan_shape):
+            return state
+        try:
+            stat = source["path"].stat()
+            with source["path"].open("rb") as handle:
+                if handle.read(56)[24:].hex() != source["header_sha256"]:
+                    return state
+        except OSError:
+            return state
+        if (stat.st_size, stat.st_mtime_ns) != source["signature"]:
+            return state
+        rows, cols = state.brightfield.rows, state.brightfield.cols
+        if self.detector_transposed:
+            rows, cols = cols, rows
+        rows, cols = rows + self._crop_origin[0], cols + self._crop_origin[1]
+        if (np.any(rows < 0) or np.any(cols < 0)
+                or np.any(rows >= source["detector_shape"][0])
+                or np.any(cols >= source["detector_shape"][1])
+                or not source["valid_pixels"][rows, cols].all()):
+            # Dense SSB masks invalid pixels after loading. Its exact BF
+            # export preserves that preprocessing; the original QEM does not.
+            return state
+        return replace(state, qem_source={
+            name: source[name] for name in ("path", "scan_shape", "detector_shape", "dtype", "header_sha256")
+        } | {"detector_origin_px": self._crop_origin,
+             "detector_transposed": self.detector_transposed})
 
     @_on_scan_gpu
     def export_brightfield(

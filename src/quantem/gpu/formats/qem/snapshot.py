@@ -55,6 +55,12 @@ def read_envelope(path: str | Path) -> tuple[dict, int]:
     keys are refused (``json`` would silently keep the last), and the metadata
     contract is validated. No detector data is read.
     """
+    header, start, _digest = _read_envelope(path)
+    return header, start
+
+
+def _read_envelope(path: str | Path) -> tuple[dict, int, str]:
+    """Return the header and the identity authenticated in the same read."""
     with open(path, "rb") as handle:
         prefix = handle.read(56)
         if len(prefix) != 56 or prefix[:8] != metadata.MAGIC:
@@ -68,7 +74,7 @@ def read_envelope(path: str | Path) -> tuple[dict, int]:
             raise ValueError("QEM header checksum mismatch; recopy the file.")
     header = json.loads(blob, object_pairs_hook=_unique_keys)
     metadata.validate_header(header)
-    return header, start
+    return header, start, prefix[24:].hex()
 
 
 def read_header(path: str | Path) -> tuple[dict, int]:
@@ -77,7 +83,13 @@ def read_header(path: str | Path) -> tuple[dict, int]:
     Loaders call this before allocating, so a truncated or inconsistent file
     fails with a clear message instead of a decoder fault.
     """
-    header, start = read_envelope(path)
+    header, start, _digest = read_header_with_digest(path)
+    return header, start
+
+
+def read_header_with_digest(path: str | Path) -> tuple[dict, int, str]:
+    """Authenticate the header and layout, retaining its exact SHA-256 identity."""
+    header, start, digest = _read_envelope(path)
     size = os.stat(path).st_size
     codec = header.get("codec")
     if codec == SCALED_CODEC:
@@ -88,7 +100,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
         if (start + header["bytes"] != size or not isinstance(header.get("sha256"), list)
                 or len(header["sha256"]) != math.ceil(header["bytes"] / BLOCK_BYTES)):
             raise ValueError("Incomplete scaled .qem file or checksum table; recopy the file.")
-        return header, start
+        return header, start, digest
     if codec in (FLOAT_CODEC, BIT_CODEC):
         shape = header.get("shape")
         if (not isinstance(shape, list) or len(shape) != 4
@@ -103,7 +115,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
             validate_float_layout(handle, header, start)
         if any(chunk["payload_bytes"] > 32 << 20 for chunk in header["chunks"]):
             raise ValueError("Float ANS payload padding exceeds the 32 MiB GPU window; re-export the source.")
-        return header, start
+        return header, start, digest
     if codec != INTEGER_CODEC:
         raise NotImplementedError(
             f"This Python reader does not support QEM codec {codec!r}. "
@@ -146,7 +158,7 @@ def read_header(path: str | Path) -> tuple[dict, int]:
             raise ValueError("Invalid acquisition metadata.")
     except (KeyError, TypeError, IndexError, OverflowError) as error:
         raise ValueError("Malformed ANS snapshot header; recopy the file.") from error
-    return header, start
+    return header, start, digest
 
 
 def write_envelope(path: Path, header: dict, size: int, spans) -> None:

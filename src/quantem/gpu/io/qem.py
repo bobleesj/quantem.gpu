@@ -39,7 +39,7 @@ from quantem.gpu.formats.qem.snapshot import (
     SCALED_CODEC,
     decode_valid,
     encode_valid,
-    read_header,
+    read_header_with_digest,
     write_envelope,
 )
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
@@ -142,7 +142,8 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
     if selected_backend not in ("cuda", "mps") or representation not in (None, "encoded"):
         raise NotImplementedError("ANS snapshots reopen as encoded counts; choose backend='cuda' or 'mps'.")
     started = time.perf_counter()
-    header, start = read_header(path)
+    # The authenticated header binds the payload checksum table as well.
+    header, start, header_digest = read_header_with_digest(path)
     shape = tuple(header["shape"])
     if scan_shape is not None and tuple(scan_shape) != shape[:2]:
         raise ValueError("scan_shape disagrees with the saved acquisition; omit scan_shape.")
@@ -156,8 +157,18 @@ def load_streamed(path, *, backend, representation, scan_shape, device, verbose)
             )
         return _load_scaled_mps(path, header, start, verbose)
     if selected_backend == "mps":
-        return _load_counts_mps(path, header, start, verbose)
-    return _load_counts_cuda(path, header, start, device, verbose, started)
+        dataset = _load_counts_mps(path, header, start, verbose)
+    else:
+        dataset = _load_counts_cuda(path, header, start, device, verbose, started)
+    try:
+        with open(path, "rb") as handle:
+            if handle.read(56)[24:].hex() != header_digest:
+                raise ValueError("QEM changed while loading; reopen the completed file.")
+    except Exception:
+        dataset.close()
+        raise
+    dataset.metadata["qem_header_sha256"] = header_digest
+    return dataset
 
 
 def mps_counts_dataset(resident: MPSStreamedCounts, metadata: dict, started: float, verbose: bool) -> Dataset4dstemGPU:

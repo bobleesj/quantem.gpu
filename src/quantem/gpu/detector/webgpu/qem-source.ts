@@ -10,6 +10,8 @@ export interface QemByteFile {
   size: number;
   /** "http" for a served file; a local File leaves it unset. */
   mode?: "http";
+  /** Optional identity of the exact acquisition used to prepare a saved review. */
+  expectedHeaderSha256?: string;
   slice(start?: number, end?: number): { arrayBuffer(): Promise<ArrayBuffer> };
   /** Consecutive chunkBytes-sized pieces of [start, end), read in order from one stream;
    * `cancel` ends the download itself. */
@@ -268,13 +270,16 @@ async function readQemHeader(file: QemByteFile, signal?: AbortSignal): Promise<Q
     "invalid envelope bounds",
   );
   const json = new Uint8Array(await file.slice(56, body).arrayBuffer());
+  const headerDigest = digest(json);
   requireQem(
-    digest(json) ===
+    headerDigest ===
       [...prefix.subarray(24)]
         .map((value) => value.toString(16).padStart(2, "0"))
         .join(""),
     "header checksum mismatch",
   );
+  requireQem(!file.expectedHeaderSha256 || headerDigest === file.expectedHeaderSha256,
+    "acquisition differs from the saved review; restore the original QEM or export the review again");
   const header = parseManifest(new TextDecoder().decode(json)) as Header;
   requireQem(
     header && typeof header === "object" && !Array.isArray(header),
