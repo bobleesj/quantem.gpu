@@ -30,48 +30,30 @@ and reconstruction tools contributed to your research, please consider citing:
 
 ## Install
 
-Python 3.11 or newer is required. For the current ANS loading and SSB workflows,
-install from source:
+Use Python 3.11 or newer. Download the source:
 
 ```bash
 git clone https://github.com/bobleesj/quantem.gpu.git
 cd quantem.gpu
-python -m pip install -e ".[cuda]"   # NVIDIA GPU: CuPy for CUDA 13, driver 580+ (Linux tested; Windows untested)
-python -m pip install -e ".[mps]"    # Apple silicon Mac: Metal and MLX
-python -m pip install -e ".[cpu]"    # no GPU: the dense CPU reference only (Linux and Windows tested)
 ```
 
-Pick the extra for the GPU you have. A wrong pick installs no GPU package, and
-if a GPU is present but its runtime is not installed, quantem.gpu prints one
-line with the `pip` command that enables it. An Intel Mac is not supported
-(PyTorch publishes no torch 2.3 or newer for it). On Windows on ARM, `[cuda]`
-skips CuPy, and PyPI has no torch or hdf5plugin wheel for ARM64 Python.
-The Mac SSB backend uses MLX and Metal. Array indexing returns PyTorch tensors;
-quantem.gpu installs PyTorch 2.3 or newer (2.11 or newer with `[cuda]`, the first
-PyPI release built on CUDA 13), and a particular CUDA build of PyTorch can be
-installed first.
-For DM3/DM4 files, add the `dm` extra: `".[cuda,dm]"` or `".[mps,dm]"`. For
-the `show_2d` figures below and `result.show()`, add `plot` (Matplotlib, IPython and
-QuantEM): `".[cuda,plot]"`. For GIF and MP4 export, add `movie`.
-Record `git rev-parse HEAD` with your results to reproduce the exact version.
+Then run **one** command for your computer:
 
-This is pre-release software. Release candidates are published on TestPyPI;
-the `version` field of a source checkout is stamped only when a release is
-tagged, so the commit identifies the code. See
-[installation and runtime checks](docs/install.md) for details.
+```bash
+python -m pip install -e ".[cuda]"  # NVIDIA
+python -m pip install -e ".[mps]"   # Apple silicon
+python -m pip install -e ".[cpu]"   # CPU only
+```
+
+NVIDIA requires driver 580 or newer. For CPU-only use, optional file formats,
+and troubleshooting, see the [installation guide](docs/install.md).
 
 ## Load diffraction patterns
 
 These examples use a gold acquisition: a 512 × 512 scan with a 192 × 192
 detector. Replace `gold_master.h5` with your file and keep its companion HDF5
-files beside it. The `show_2d` examples need the `plot` extra; PyTorch supplies
-GPU tensors for selected regions. The data are not bundled here.
-
-For shared tutorial inputs, see [Shared tutorial data](docs/api/io.md#shared-tutorial-data):
-download at a fixed revision with `quantem.data` (newer than its 0.0.1rc4
-release) or `huggingface_hub`, then open the local acquisition with
-`quantem.gpu.io`. Several tutorials can reuse the same input without another
-dataset copy.
+files beside it. The data are not bundled here; see
+[example data](docs/api/io.md#shared-tutorial-data) or use your own acquisition.
 
 ### Load and inspect
 
