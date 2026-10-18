@@ -25,6 +25,35 @@ _HEADER = ("#define SSB_PRECISE_GEOMETRY\n#define SSB_DEVICE inline\n"
            + _THICK_FIT_BATCH_HEADER + CHI_SOURCE)
 
 
+# Fine-grid redraws often evaluate a shifted probe well outside or inside the
+# aperture. Keep the original geometry arithmetic at the soft edge, and avoid
+# its extra square root/divisions only where conservative bounds prove 0 or 1.
+_ALIAS_GEOMETRY = """
+inline float4 alias_geometry(float dx, float dy, float wl, float semi,
+                             float ay, float ax) {
+    float r2 = dx * dx + dy * dy;
+    float outer = (semi + 0.5f * max(ay, ax)) / wl;
+    outer *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+    if (r2 > outer * outer) return float4(0.0f);
+    float r = metal::precise::sqrt(r2);
+    float alpha = r * wl;
+    float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+    float cos2 = (dx * dx - dy * dy) * inv_r2;
+    float sin2 = 2.0f * dx * dy * inv_r2;
+    float inner = semi - 0.5f * max(ay, ax);
+    inner *= 1.0f - 8.0f * 1.1920928955078125e-7f;
+    if (inner > 0.0f && alpha < inner) {
+        return float4(alpha * alpha, cos2, sin2, 1.0f);
+    }
+    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+    float denom = metal::precise::sqrt((dx * ay) * (dx * ay)
+                                     + (dy * ax) * (dy * ax)) * inv_r;
+    float edge = (denom > 1e-15f) ? ((semi - alpha) / denom + 0.5f) : 1.0f;
+    return float4(alpha * alpha, cos2, sin2, metal::clamp(edge, 0.0f, 1.0f));
+}
+"""
+
+
 # One transfer-function implementation for per-detector and coherent outputs.
 # Keep precise geometry, trigonometry, and float32 evaluation on both paths.
 # Pointer types retain MLX's constant/device address spaces for small BF groups.
@@ -46,8 +75,8 @@ inline float2 alias_corrected(
     if (metal::min(mr * mr + mc * mc, pr * pr + pc * pc) > radius * radius) {
         return float2(0.0f);
     }
-    float4 gm = tf_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
-    float4 gp = tf_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
+    float4 gm = alias_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
+    float4 gp = alias_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
     if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
         return float2(0.0f);
     }
@@ -139,7 +168,7 @@ def _alias_correction_kernel():
         name="ssb_alias_correction",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
         output_names=["corrected"],
-        header=_HEADER + _ALIAS_TRANSFER,
+        header=_HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER,
         compile_options={"math_mode": "safe"},
         source="""
         uint col = thread_position_in_grid.x;
@@ -185,7 +214,7 @@ def _coherent_alias_kernel():
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc",
                      "probe", "coefficients", "bounds", "row_indices", "col_indices", "previous"],
         output_names=["total"],
-        header=_HEADER + _ALIAS_TRANSFER,
+        header=_HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER,
         compile_options={"math_mode": "safe"},
         source="""
         uint col_index = thread_position_in_grid.x;
@@ -282,7 +311,9 @@ def _coherent_spectrum(
     # Reuse each frequency and tilt term across groups without partial spectra.
     groups_per_batch = 64
     for start in range(0, stored, groups_per_batch * chunk):
-        checkpoint()
+        batch = start // (groups_per_batch * chunk)
+        if batch % _PENDING_CHUNKS == 0:
+            checkpoint()
         stop = min(start + groups_per_batch * chunk, stored)
         groups = (stop - start + chunk - 1) // chunk
         total = _coherent_alias_kernel()(
@@ -296,7 +327,11 @@ def _coherent_spectrum(
             grid=(cols, rows, 1), threadgroup=(32, 8, 1),
             output_shapes=[(rows, cols)], output_dtypes=[mx.complex64],
         )[0]
-        mx.eval(total)
+        # Queue a bounded set of dependent batches without waiting on the CPU
+        # after each dispatch. Synchronize before the next cancellation check.
+        mx.async_eval(total)
+        if (batch + 1) % _PENDING_CHUNKS == 0 or stop == stored:
+            mx.eval(total)
     if rows == n and cols == columns:
         return total
     # Restore the full Fourier grid before the unchanged inverse FFT.
