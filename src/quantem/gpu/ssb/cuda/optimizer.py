@@ -247,6 +247,13 @@ def fit_sample(
     **options,
 ) -> dict[str, object]:
     """Fit C10, C12, phi12, sample tilt and thickness by maximising ``ThickSample.fit`` (search: ``ssb.thick_sample_fit``)."""
+    if options.get("polish", "newton") == "newton" or options.get("polish_starts", 3) == 0:
+        from quantem.gpu.ssb._resident_search import fit_resident
+
+        if options.get("polish_starts", 3) == 0:
+            options = {**options, "polish": None}
+        return fit_resident(lambda trial: accel.thick.fit_resident(trial, band_inv_A),
+                            backend="cuda", band_inv_A=band_inv_A, **options)
     return fit_sample_search(lambda c10, c12, phi12, tilt, thickness: accel.thick.fit(c10, c12, phi12, tilt, thickness, band_inv_A),
                              objective_batch=lambda rows: accel.thick.fit_batch(rows, band_inv_A),
                              batch_polish=True,

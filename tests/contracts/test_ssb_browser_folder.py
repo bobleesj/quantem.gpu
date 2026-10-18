@@ -88,6 +88,7 @@ def test_reads_the_columns_and_calibration_of_a_widget_folder(tmp_path):
     assert frames.selection.bright_field_center_px == (1.0, 1.5)
     assert frames.selection.bright_field_radius_px == 1.25
     assert frames.detector_sampling_mrad == (0.7, 0.8)
+    assert frames.metadata == {"voltage_kV": 300.0, "semiangle_mrad": 20.0, "scan_sampling_A": [0.5, 0.5]}
     assert frames.dc_value == complex(376.0, 0.0)
     assert frames.max_value == 47
     np.testing.assert_array_equal(frames.selection.rows, [0, 1, 1])

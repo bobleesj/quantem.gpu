@@ -14,10 +14,13 @@ import numpy as np
 from quantem.gpu.ssb.cuda.kernels.engine import (
     THICK_FIT_MAX_BATCH,
     thick_correct_kernel,
+    thick_correct_full_kernel,
     thick_fit_batch_kernel,
     thick_fit_kernel,
     thick_wave_sum_kernel,
+    thick_wave_sum_full_kernel,
 )
+from quantem.gpu.ssb.higher_order import pack_coefficients
 
 
 class ThickSample:
@@ -45,6 +48,8 @@ class ThickSample:
         chunk_bytes: int = 1 << 30,
         upsampling_factor: int = 1,
         phase_estimator: str = "mean_phase",
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
         """Mean phase and variance loss for a thick, tilted crystal (see ``thick_correct_kernel``).
 
@@ -85,6 +90,8 @@ class ThickSample:
             return self._reconstruct_wave(
                 C10, C12, phi12, sample_tilt_mrad, thickness, qx.ravel(), qy.ravel(),
                 compute_loss=compute_loss, chunk_bytes=chunk_bytes,
+                higher_order_magnitudes=higher_order_magnitudes,
+                higher_order_angles=higher_order_angles,
             )
         half = engine.gqk_is_half_plane()
         # other half of the plane for a real bright-field image: G(-q) = conj(G(q))
@@ -94,6 +101,10 @@ class ThickSample:
         phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
         phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
+        kernel = thick_correct_kernel
+        if higher_order_magnitudes is not None:
+            kernel = thick_correct_full_kernel
+            params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, chunk):
             stop = min(num_bright_field_pixels, start + chunk)
             if half:
@@ -107,7 +118,10 @@ class ThickSample:
                 full = cp.tile(full, (1, upsampling_factor, upsampling_factor))
             kx = cache["kx_bf"][start:stop].reshape(-1, 1, 1)
             ky = cache["ky_bf"][start:stop].reshape(-1, 1, 1)
-            corrected = thick_correct_kernel(full, qx, qy, kx, ky, *params)
+            corrected = kernel(full, qx, qy, kx, ky, *params)
+            if upsampling_factor != 1:
+                # Exclude scan-mean replicas; retain the true DC below.
+                corrected[:, ::native_ny, ::native_nx] = 0
             corrected[:, 0, 0] = engine._dc_value_host
             angles = cp.angle(cp.fft.ifft2(corrected, axes=(1, 2)))
             phase_sum += angles.sum(axis=0)
@@ -132,6 +146,8 @@ class ThickSample:
         *,
         compute_loss: bool,
         chunk_bytes: int,
+        higher_order_magnitudes: np.ndarray | None,
+        higher_order_angles: np.ndarray | None,
     ) -> tuple[cp.ndarray, float | None]:
         """Accumulate float32 corrections in float64 before a single inverse FFT."""
         engine = self.engine
@@ -147,9 +163,13 @@ class ThickSample:
         partial = self._wave_sum_buffer
         spectrum = cp.zeros((rows, cols), dtype=cp.complex128)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
+        kernel = thick_wave_sum_kernel
+        if higher_order_magnitudes is not None:
+            kernel = thick_wave_sum_full_kernel
+            params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
-            thick_wave_sum_kernel(
+            kernel(
                 (math.ceil(rows * cols / 128), active), (128,),
                 (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial,
                  np.int32(num_bright_field_pixels), np.int32(cache["ny"]), np.int32(cache["nx"]),
@@ -165,6 +185,8 @@ class ThickSample:
             _, loss = self.reconstruct(
                 C10, C12, phi12, sample_tilt_mrad, thickness,
                 compute_loss=True, chunk_bytes=chunk_bytes,
+                higher_order_magnitudes=higher_order_magnitudes,
+                higher_order_angles=higher_order_angles,
             )
         return phase, loss
 
@@ -192,6 +214,31 @@ class ThickSample:
         """
         engine = self.engine
         cache = engine._cache
+        num_bright_field_pixels, _, _ = engine._bf_grid()
+        self._prepare_fit_band(band_inv_A)
+        _, _, flat, qx, qy, weight = self._band
+        n_band = int(flat.size)
+        chunk = max(1, int(chunk_bytes // (n_band * 8 * 3)))
+        numerator = cp.zeros((n_band,), dtype=cp.complex64)
+        denominator = cp.zeros((n_band,), dtype=cp.float32)
+        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
+        g_flat = engine.G_qk.reshape(num_bright_field_pixels, -1)
+        for start in range(0, num_bright_field_pixels, chunk):
+            stop = min(num_bright_field_pixels, start + chunk)
+            gathered = g_flat[start:stop][:, flat]                      # (chunk, n_band): only the band's q, half-plane
+            kx = cache["kx_bf"][start:stop].reshape(-1, 1)
+            ky = cache["ky_bf"][start:stop].reshape(-1, 1)
+            projected, weight2 = thick_fit_kernel(gathered, qx, qy, kx, ky, *params)
+            numerator += projected.sum(axis=0)
+            denominator += weight2.sum(axis=0)
+            del gathered, projected, weight2
+        keep = denominator > 0
+        return float((weight[keep] * cp.abs(numerator[keep]) ** 2 / denominator[keep]).sum())
+
+    def _prepare_fit_band(self, band_inv_A):
+        """Cache frequency indices without evaluating or downloading an objective."""
+        engine = self.engine
+        cache = engine._cache
         num_bright_field_pixels, ny, nx = engine._bf_grid()
         half = engine.gqk_is_half_plane()
         cols = nx // 2 + 1 if half else nx
@@ -216,24 +263,7 @@ class ThickSample:
             self._band = (rows_idx, cols_idx, (rows_idx * cols + cols_idx).astype(cp.int64),
                           cache["qx_1d"][rows_idx].reshape(1, -1), cache["qy_1d"][cols_idx].reshape(1, -1), weight)
             self._band_key = key
-        _, _, flat, qx, qy, weight = self._band
-        n_band = int(flat.size)
-        chunk = max(1, int(chunk_bytes // (n_band * 8 * 3)))
-        numerator = cp.zeros((n_band,), dtype=cp.complex64)
-        denominator = cp.zeros((n_band,), dtype=cp.float32)
-        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
-        g_flat = engine.G_qk.reshape(num_bright_field_pixels, -1)
-        for start in range(0, num_bright_field_pixels, chunk):
-            stop = min(num_bright_field_pixels, start + chunk)
-            gathered = g_flat[start:stop][:, flat]                      # (chunk, n_band): only the band's q, half-plane
-            kx = cache["kx_bf"][start:stop].reshape(-1, 1)
-            ky = cache["ky_bf"][start:stop].reshape(-1, 1)
-            projected, weight2 = thick_fit_kernel(gathered, qx, qy, kx, ky, *params)
-            numerator += projected.sum(axis=0)
-            denominator += weight2.sum(axis=0)
-            del gathered, projected, weight2
-        keep = denominator > 0
-        return float((weight[keep] * cp.abs(numerator[keep]) ** 2 / denominator[keep]).sum())
+        return self._band
 
     def fit_batch(self, params, band_inv_A: tuple[float, float] = (0.2, 0.9), *, independent: bool = False) -> np.ndarray:
         """``fit`` for many parameter sets at once, with the fused batch kernel (fast path used by the fit search).
@@ -247,26 +277,33 @@ class ThickSample:
         even when all its values are identical. Initial batched search trials
         keep their existing summation policy.
         """
-        engine = self.engine
         params = np.atleast_2d(np.asarray(params, dtype=np.float64))
+        trial = np.stack([params[:, 0], params[:, 1], np.cos(2 * params[:, 2]),
+                          np.sin(2 * params[:, 2]), params[:, 5],
+                          params[:, 3] * 1e-3, params[:, 4] * 1e-3], axis=1).astype(np.float32)
+        return cp.asnumpy(self._fit_encoded(cp.asarray(trial), band_inv_A, independent=independent))
+
+    def fit_resident(self, trial, band_inv_A=(0.2, 0.9)):
+        """Return extended scores without copying candidate points or scores to the host."""
+        return self._fit_encoded(trial, band_inv_A, extended=True)
+
+    def _fit_encoded(self, trial, band_inv_A, *, independent=False, extended=False):
+        """Share the model kernel between diagnostic and resident solver calls."""
+        engine = self.engine
         cache = engine._cache
         num_bright_field_pixels, ny, nx = engine._bf_grid()
-        cols = nx // 2 + 1 if engine.gqk_is_half_plane() else nx
-        if self._band_key != (ny, nx, cols, float(band_inv_A[0]), float(band_inv_A[1])):
-            self.fit(0.0, 0.0, 0.0, (0.0, 0.0), 0.0, band_inv_A)      # builds the band index for this band
+        self._prepare_fit_band(band_inv_A)
         _, _, flat, qx, qy, weight = self._band
         n_band = int(flat.size)
-        out = np.empty(len(params))
+        output = []
         threads = 256
         blocks = (n_band + threads - 1) // threads
         # enough blocks to fill the GPU: split the pixel loop so blocks x k_blocks is a few thousand
         k_chunk = 256
         k_blocks = (num_bright_field_pixels + k_chunk - 1) // k_chunk
-        for start in range(0, len(params), THICK_FIT_MAX_BATCH):
-            rows = params[start:start + THICK_FIT_MAX_BATCH]
+        for start in range(0, len(trial), THICK_FIT_MAX_BATCH):
+            rows = trial[start:start + THICK_FIT_MAX_BATCH]
             batch = len(rows)
-            trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
-                              rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
             # one partial sum per 256-pixel slice, added in slice order by the kernel
             partial_numerator = cp.empty((k_blocks, batch, n_band), dtype=cp.complex64)
             partial_denominator = cp.empty((k_blocks, batch, n_band), dtype=cp.float32)
@@ -274,14 +311,20 @@ class ThickSample:
             denominator = cp.empty((batch, n_band), dtype=cp.float32)
             thick_fit_batch_kernel(
                 (blocks, k_blocks), (threads,),
-                (engine.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], cp.asarray(trial.ravel()),
+                (engine.G_qk, flat, qx.ravel(), qy.ravel(), cache["kx_bf"], cache["ky_bf"], rows.ravel(),
                  partial_numerator, partial_denominator, cp.zeros(blocks, dtype=cp.uint32), numerator, denominator,
                  np.int32(num_bright_field_pixels), np.int64(engine.G_qk.shape[1] * engine.G_qk.shape[2]), np.int32(n_band), np.int32(batch),
                  np.float32(engine.wavelength), np.float32(cache["semiangle_rad"]), np.float32(cache["ang_y_rad"]),
                  np.float32(cache["ang_x_rad"]), np.float32(engine._factor), np.int32(k_chunk)),
             )
             covered = denominator > 0
-            contributions = weight[None] * cp.where(covered, cp.abs(numerator) ** 2 / cp.where(covered, denominator, 1.0), 0.0)
+            if extended:
+                real = numerator.real.astype(cp.float64)
+                imag = numerator.imag.astype(cp.float64)
+                den = denominator.astype(cp.float64)
+                contributions = weight[None] * cp.where(covered, (real * real + imag * imag) / cp.where(covered, den, 1.0), 0.0)
+            else:
+                contributions = weight[None] * cp.where(covered, cp.abs(numerator) ** 2 / cp.where(covered, denominator, 1.0), 0.0)
             # A refinement previously evaluated each candidate alone. Preserve
             # that reduction layout while sharing the expensive model kernel.
             if independent:
@@ -291,8 +334,14 @@ class ThickSample:
                 ])
             else:
                 values = contributions.sum(axis=1)
-            out[start:start + batch] = cp.asnumpy(values)
-        return out
+            output.append(values)
+        result = cp.concatenate(output)
+        if extended:
+            high = result.astype(cp.float32)
+            middle = (result - high).astype(cp.float32)
+            low = (result - high - middle).astype(cp.float32)
+            return cp.stack((high, middle, low), axis=-1)
+        return result
 
     def _kernel_scalars(self, C10: float, C12: float, phi12: float, sample_tilt_mrad: tuple[float, float],
                         thickness: float) -> tuple[np.float32, ...]:

@@ -226,6 +226,7 @@ def load_bf_columns_mps(
         max_value=companion.max_value,
         dc_value=dc_value,
         detector_sampling_mrad=detector_sampling_mrad,
+        metadata={name: payload[name] for name in ("voltage_kV", "semiangle_mrad", "scan_sampling_A") if name in payload},
         verbose=verbose,
     )
 
@@ -252,11 +253,13 @@ class MpsBfColumnFrames:
         detector_sum: np.ndarray | None = None,
         dc_value: complex | None = None,
         detector_sampling_mrad: tuple[float, float] | None = None,
+        metadata: dict[str, object] | None = None,
         verbose: bool = False,
     ) -> None:
         self.source_path = Path(path).expanduser().resolve()
         # (row, col) mrad per detector pixel the columns were exported with; SSB uses it when given none
         self.detector_sampling_mrad = detector_sampling_mrad
+        self.metadata = dict(metadata or {})
         self.scan_shape = tuple(int(value) for value in scan_shape)
         self.selection = selection
         self.detector_shape = selection.detector_shape

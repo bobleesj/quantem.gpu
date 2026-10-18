@@ -178,7 +178,8 @@ class CudaSSBBackend:
 
         # The raw counts stay in their native dtype (usually uint16): the selection reduces them with an integer
         # accumulator and the spectra cast only the selected pixels to complex64, never the full 4D block.
-        self.bf_inds_row, self.bf_inds_col, self.bright_field_center_px = select_bright_field(
+        (self.bf_inds_row, self.bf_inds_col, self.bright_field_center_px,
+         self.bright_field_radius_px) = select_bright_field(
             data, bright_field_intensity_threshold, bright_field_radius_px, bright_field_center_px,
         )
         self.G_qk, self.dc_value = bright_field_spectra(
@@ -237,6 +238,7 @@ class CudaSSBBackend:
                 bf_inds_row=self.bf_inds_row,
                 bf_inds_col=self.bf_inds_col,
                 bright_field_center_px=self.bright_field_center_px,
+                bright_field_radius_px=self.bright_field_radius_px,
                 dc_value=self.dc_value,
                 gpts=self.gpts,
                 sampling=self.sampling,
@@ -416,6 +418,8 @@ class CudaSSBBackend:
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[cp.ndarray, float | None]:
         """Upsampled depth-aware SSB with the diagnostic loss kept on the native grid."""
         accel = self._get_accelerator()
@@ -424,12 +428,16 @@ class CudaSSBBackend:
             *coefficients, sample_tilt_mrad, thickness, compute_loss=False,
             upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
+            higher_order_magnitudes=higher_order_magnitudes,
+            higher_order_angles=higher_order_angles,
         )
         loss = None
         if compute_loss:
-            if thickness > 0:
+            if thickness > 0 or higher_order_magnitudes is not None:
                 _, loss = accel.thick.reconstruct(
                     *coefficients, sample_tilt_mrad, thickness, compute_loss=True,
+                    higher_order_magnitudes=higher_order_magnitudes,
+                    higher_order_angles=higher_order_angles,
                 )
             else:
                 _, loss = accel.reconstruct_with_loss(*coefficients)
@@ -454,7 +462,12 @@ class CudaSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
-        return fit_sample(self._get_accelerator(), **options)
+        started = time.perf_counter()
+        engine = self._get_accelerator()
+        preparation_s = time.perf_counter() - started
+        result = fit_sample(engine, **options)
+        result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
+        return result
 
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
         """Evaluate the joint objective on the session's existing evidence."""

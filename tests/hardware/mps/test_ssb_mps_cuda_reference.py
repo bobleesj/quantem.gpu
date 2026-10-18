@@ -1864,6 +1864,9 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
     phase, loss = workflow.preview(
         optimized.aberrations,
         compute_loss=True,
+        # The fit retains the native loss estimator; coherent reconstruction
+        # is the public display default and has its own reconstruction path.
+        phase_estimator="mean_phase",
     )
     np.testing.assert_array_equal(
         phase,

@@ -7,11 +7,12 @@ device preparation and kernels, but they do not define a second user API.
 import hashlib
 import math
 import time
+from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import replace
 from functools import wraps
 from pathlib import Path
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 import numpy as np
 import torch
@@ -20,9 +21,11 @@ from quantem.gpu import detector, io
 from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io.metadata_display import calibration_rows
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb import series
+from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.brightfield import crop_bright_field, disk_edge_radius
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
@@ -62,6 +65,31 @@ from quantem.gpu.ssb.units import (
 )
 
 
+def _default_phase_estimator(aberrations: dict[str, float]) -> str:
+    """Use coherent reconstruction for every aberration on both backends."""
+    return "phase_of_mean"
+
+
+def _source_calibration(
+    metadata: dict[str, object], voltage_kV: float | None,
+    semiangle_mrad: float | None, scan_sampling_A: tuple[float, float] | None,
+) -> tuple[float, float, tuple[float, float]]:
+    """Resolve physical inputs from explicit values, then acquisition metadata."""
+    values = {"voltage_kV": voltage_kV, "semiangle_mrad": semiangle_mrad, "scan_sampling_A": scan_sampling_A}
+    for name, value in values.items():
+        if value is None:
+            values[name] = metadata.get(name)
+    missing = [name for name, value in values.items() if value is None]
+    if missing:
+        raise ValueError(
+            f"SSB acquisition metadata is missing {', '.join(missing)}. "
+            "Pass those calibrated values to SSB(data, ...) or SSB.open(...); scan_sampling_A is (row, col) in Angstrom. "
+            "A diffraction disk fit cannot determine the real-space scan step."
+        )
+    return (float(values["voltage_kV"]), float(values["semiangle_mrad"]),
+            sampling_pair("scan_sampling_A", values["scan_sampling_A"]))
+
+
 def _in_notebook() -> bool:
     """True inside a Jupyter kernel, where fit() draws its histograms."""
     try:
@@ -85,6 +113,9 @@ def _on_scan_gpu(method):
     return on_scan_gpu
 
 
+if TYPE_CHECKING:
+    import pandas as pd
+
 def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
     """Select large integer ANS scans without changing smaller/float workflows."""
     if backend != "cuda":
@@ -105,10 +136,11 @@ class SSB:
     bright-field pixels); ``reconstruct`` and ``preview`` apply known aberrations. The full automatically detected
     bright-field disk, the exact phase-variance objective, float32 real and complex64 object storage are fixed.
 
-    The backends differ in what they return for the same call: CUDA averages corrected complex waves before taking
-    the phase (``phase_of_mean``) where MPS averages per-pixel phases (``mean_phase``), finer output sampling
-    (``upsampling_factor``) supports C10/C12 on both, and the bright-field selection, loss reduction order and Nelder-Mead settings are each
-    backend's own, so fitted values and images agree closely but not to the bit.
+    C10/C12 reconstruction averages corrected complex waves before taking the
+    phase (``phase_of_mean``) on CUDA and MPS. Both support finer output sampling
+    through ``upsampling_factor``. Bright-field selection, loss reduction order
+    and Nelder-Mead settings remain backend-specific, so fitted values and images
+    need not agree bit for bit.
 
     Parameters
     ----------
@@ -117,21 +149,28 @@ class SSB:
         counts, 4D ``(scan_row, scan_col, det_row, det_col)`` or 3D ``(scan, det_row, det_col)`` with ``scan_shape``.
     backend : {"auto", "cuda", "mps"}
         Accelerator; there is no CPU fallback.
-    voltage_kV : float
-        Accelerating voltage in kV.
-    semiangle_mrad : float
-        Probe convergence semiangle in mrad.
-    scan_sampling_A : (float, float)
-        Scan step in Angstrom, (row, col).
+    voltage_kV : float, optional
+        Accelerating voltage in kV; defaults to the loaded dataset's metadata.
+    semiangle_mrad : float, optional
+        Probe convergence semiangle in mrad; defaults to the loaded dataset's metadata.
+    scan_sampling_A : (float, float), optional
+        Scan step in Angstrom, (row, col); defaults to the loaded dataset's metadata.
+        These three values remain required for an array without metadata.
     scan_shape : (int, int), optional
         Scan shape of a 3D frame stack.
     detector_sampling_mrad : (float, float), optional
         Detector sampling in mrad per pixel, (row, col). When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
+        A loaded dataset's recorded detector sampling takes priority over that
+        estimate; explicit keyword values take priority over metadata.
     aberrations : dict, optional
         Starting ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
-    scan_detector_rotation_deg : float
-        Physical scan-to-detector rotation in degrees; kept in [0, 360). An estimate known only modulo 180 degrees
+    scan_detector_rotation_deg : float, optional
+        Physical scan-to-detector rotation in degrees; kept in [0, 360).
+        Pass the recorded ``data.metadata["scan_detector_rotation_deg"]`` or
+        your calibrated angle explicitly. Omission keeps a 0-degree starting
+        default, labeled as such in ``calibration_table()``.
+        An estimate known only modulo 180 degrees
         (``dpc.run``, ``screening.prepare``) may be given: ``find_aberrations(check_rotation=True)`` settles the branch.
     detector_transposed : bool
         Exchange the two detector axes before applying the rotation. Detector
@@ -164,6 +203,13 @@ class SSB:
     ...           scan_sampling_A=(0.99, 0.99), detector_sampling_mrad=(0.6081, 0.6081))
     >>> aberrations = ssb.find_aberrations()
     >>> result = ssb.reconstruct(aberrations)
+
+    Load and inspect calibration separately before opening an interactive view:
+
+    >>> data = io.load("acquisition.qem")
+    >>> data.metadata_table()
+    >>> ssb = SSB(data, scan_detector_rotation_deg=12.3)
+    >>> # data stays open for other algorithms until data.close().
     """
 
     def __init__(
@@ -171,13 +217,13 @@ class SSB:
         data: object,
         *,
         backend: Literal["auto", "cuda", "mps"] = "auto",
-        voltage_kV: float,
-        semiangle_mrad: float,
-        scan_sampling_A: tuple[float, float],
+        voltage_kV: float | None = None,
+        semiangle_mrad: float | None = None,
+        scan_sampling_A: tuple[float, float] | None = None,
         scan_shape: tuple[int, int] | None = None,
         detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
-        scan_detector_rotation_deg: float = 0.0,
+        scan_detector_rotation_deg: float | None = None,
         detector_transposed: bool = False,
         bright_field_intensity_threshold: float = 0.0,
         bright_field_radius_px: float | None = None,
@@ -186,7 +232,21 @@ class SSB:
         scan_region: tuple[int, int, int, int] | None = None,
         mean_pattern=None,
     ) -> None:
+        supplied = {
+            "voltage_kV": voltage_kV, "semiangle_mrad": semiangle_mrad,
+            "scan_sampling_A": scan_sampling_A, "detector_sampling_mrad": detector_sampling_mrad,
+            "scan_detector_rotation_deg": scan_detector_rotation_deg,
+        }
         self.backend = resolve(backend)
+        source_dataset = data if isinstance(data, Dataset4dstemGPU) else None
+        metadata = {} if source_dataset is None else source_dataset.metadata
+        voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
+            metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
+        if source_dataset is not None:
+            if detector_sampling_mrad is None:
+                detector_sampling_mrad = metadata.get("detector_sampling_mrad")
+            if source_path is None:
+                source_path = metadata.get("source_path")
         self._streamed = None
         self._owned_dataset = None
         # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
@@ -217,6 +277,7 @@ class SSB:
                     data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern = self._decode_resident(
                         data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad,
                         bright_field_intensity_threshold, semiangle_mrad, mean_pattern,
+                        identify=source_path is None,
                     )
             elif self.scan_region is not None:
                 row_start, row_stop, col_start, col_stop = self.scan_region
@@ -262,7 +323,8 @@ class SSB:
         self.detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
-        self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
+        self.scan_detector_rotation_deg = wrap_degrees(
+            0.0 if scan_detector_rotation_deg is None else scan_detector_rotation_deg, 360.0)
         self.detector_transposed = bool(detector_transposed)
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
@@ -280,14 +342,88 @@ class SSB:
         self.source_detector_bin = 1
         self.source_provenance: dict[str, object] | None = None
         self.source_load_seconds: float | None = None
+        if source_dataset is not None:
+            self.source_kind = "resident"
+            self.source_dtype = str(source_dataset.dtype)
+            self.source_bytes = source_dataset.logical_bytes
+            correction = source_dataset.metadata.get("hot_pixel_correction")
+            self.source_provenance = None if correction is None else {"hot_pixel_correction": correction}
         self._compute: SSBProtocol | None = None
         self._reconstruction: SSBResult | None = None
         self.best_loss = float("inf")
         self.trial_history: list[dict[str, object]] = []
         self._aberration_search: SSBResult | None = None
+        self._calibration_file = calibration_rows(metadata)
+        self._calibration_supplied = {name for name, value in supplied.items() if value is not None}
+        self._calibration_initial = {name: getattr(self, name) for name in supplied}
+
+    def calibration_table(self) -> "pd.DataFrame":
+        """Compare loaded file calibration with the settings this session uses.
+
+        The table retains the metadata seen at construction and distinguishes
+        explicit keywords (even equal values), saved overrides, defaults and
+        probe estimates. It never changes the acquisition or starts a fit.
+        A detector estimate is pending until the first backend preparation.
+        ShowPtycho displays this table automatically when first shown.
+
+        Returns
+        -------
+        pandas.DataFrame
+            File value, value used, units and the source of each value used.
+            File values are the loader's effective metadata, including saved
+            calibration overrides; original source records stay in the dataset.
+
+        Examples
+        --------
+        >>> data = io.load("scan.qem")
+        >>> ssb = SSB(data, scan_detector_rotation_deg=12.3)
+        >>> ssb.calibration_table()
+        """
+        import pandas as pd
+
+        fields = {
+            "voltage_kV": "Accelerating voltage",
+            "semiangle_mrad": "Convergence semiangle",
+            "scan_sampling_A": "Scan step (row, col)",
+            "detector_sampling_mrad": "Detector step (row, col)",
+            "scan_detector_rotation_deg": "Scan-detector rotation",
+        }
+        rows = {}
+        for name, label in fields.items():
+            recorded = self._calibration_file[label]
+            value = getattr(self, name)
+            source = recorded["Metadata"]
+            if name in self._calibration_supplied:
+                source = "Explicit override"
+            elif name == "scan_detector_rotation_deg":
+                source = "Default"
+            elif source == "Not recorded" or (
+                name == "detector_sampling_mrad" and recorded["Unit"] != "mrad per pixel"
+            ):
+                source = "Estimated"
+            initial = self._calibration_initial[name]
+            if initial is not None and not np.array_equal(value, initial):
+                source = "Modified in session"
+            if name == "detector_sampling_mrad" and value is None:
+                if self._compute is not None:
+                    value = (self._compute._det_sampling if self.backend == "mps"
+                             else self._compute.angular_sampling)
+                    if self.detector_transposed:
+                        value = value[::-1]
+                else:
+                    value = "Pending probe fit"
+            if isinstance(value, (list, tuple)):
+                value = tuple(value)
+            rows[label] = {
+                "File value": recorded["Value"], "File unit": recorded["Unit"],
+                "Value used": value,
+                "Unit used": "mrad per pixel" if name == "detector_sampling_mrad" else recorded["Unit"],
+                "Source": source,
+            }
+        return pd.DataFrame.from_dict(rows, orient="index").rename_axis("SSB launch calibration")
 
     def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
-                         detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern):
+                         detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern, *, identify=True):
         """Decode one fit-sized crop and identify its exact resident evidence."""
         shape, dtype = tuple(int(value) for value in data.shape), str(data.dtype)
         data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
@@ -297,6 +433,10 @@ class SSB:
         )
         if detector_sampling_mrad is None:
             detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
+        # File-backed sessions use source_signature, including the recorded
+        # preprocessing. Their saved identity never uses resident checksums.
+        if not identify:
+            return data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern
         frames = data.reshape(data.shape[0] * data.shape[1], -1)
         if self.backend == "cuda":
             per_frame = frames.sum(axis=1, dtype=cp.uint64)
@@ -333,13 +473,13 @@ class SSB:
         *,
         backend: Literal["auto", "cuda", "mps"] = "auto",
         dtype: str | None = None,
-        voltage_kV: float,
-        semiangle_mrad: float,
-        scan_sampling_A: tuple[float, float],
+        voltage_kV: float | None = None,
+        semiangle_mrad: float | None = None,
+        scan_sampling_A: tuple[float, float] | None = None,
         scan_shape: tuple[int, int] | None = None,
         detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
-        scan_detector_rotation_deg: float = 0.0,
+        scan_detector_rotation_deg: float | None = None,
         detector_transposed: bool = False,
         bright_field_intensity_threshold: float = 0.0,
         bright_field_radius_px: float | None = None,
@@ -357,12 +497,23 @@ class SSB:
 
         GPU acquisitions use ANS-encoded storage.
 
+        Omitted voltage, convergence semiangle and scan step come from the
+        acquisition's calibrated metadata. Missing physical values raise an
+        error rather than being guessed. Detector sampling uses an explicit
+        value, then stored calibration, then the bright-field disk edge and
+        the known convergence semiangle. Explicit values always take priority.
+
         Pass a saved ``bright_field_center_px``, ``bright_field_radius_px``
         and ``detector_sampling_mrad`` together when replaying a fit. The
         centre remains in the original full-detector ``(row, col)`` axes,
         including when ``detector_transposed=True``.
         """
 
+        supplied = {
+            "voltage_kV": voltage_kV, "semiangle_mrad": semiangle_mrad,
+            "scan_sampling_A": scan_sampling_A, "detector_sampling_mrad": detector_sampling_mrad,
+            "scan_detector_rotation_deg": scan_detector_rotation_deg,
+        }
         selected = resolve(backend)
         crop_origin = (0, 0)
         owned = None
@@ -370,7 +521,10 @@ class SSB:
         # on MPS an exact BF-column export beside the source replaces decoding the detector
         frames = find_bf_columns(source, calibration, verbose=verbose) if selected == "mps" else None
         if frames is not None:
+            file_calibration = calibration_rows(frames.metadata)
             data = frames
+            voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
+                frames.metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
             source_kind = "bf_columns"
             source_storage_path = str(frames.source_path)
             source_dtype = str(frames.dtype)
@@ -392,7 +546,12 @@ class SSB:
                 dtype=dtype,
                 verbose=verbose,
             )
+            file_calibration = calibration_rows(loaded.metadata)
             try:
+                voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
+                    loaded.metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
+                if detector_sampling_mrad is None:
+                    detector_sampling_mrad = loaded.metadata.get("detector_sampling_mrad")
                 if _streams_scan(loaded, selected):
                     owned = loaded
                     data = loaded
@@ -435,6 +594,8 @@ class SSB:
             if owned is not None:
                 owned.close()
             raise
+        session._calibration_file = file_calibration
+        session._calibration_supplied = {name for name, value in supplied.items() if value is not None}
         session._owned_dataset = owned
         session._crop_origin = crop_origin
         session.source_kind = source_kind
@@ -450,6 +611,103 @@ class SSB:
         session.source_load_seconds = source_load_seconds
         return session
 
+    @_on_scan_gpu
+    def select_region(
+        self,
+        scan_region: tuple[int, int, int, int],
+        *,
+        aberrations: dict[str, float] | None = None,
+        scan_detector_rotation_deg: float | None = None,
+    ) -> Self:
+        """Open an independent fit session over existing scan evidence.
+
+        Dense resident counts are borrowed without reopening or decoding their
+        file. The detector calibration and full bright-field disk are shared;
+        fitting or closing the returned session leaves this session unchanged.
+        Encoded sources decode the requested positions through their existing
+        loader. Rectangular MPS regions retain every measured position and use
+        the backend's ordinary mean-pattern padding.
+
+        Parameters
+        ----------
+        scan_region : tuple of int
+            ``(row_start, row_stop, col_start, col_stop)`` relative to this scan.
+        aberrations : dict, optional
+            Starting optics in the usual nm/degree units; defaults to this
+            session's optics. These parameters remain free in a joint fit.
+        scan_detector_rotation_deg : float, optional
+            Shared scan-to-detector rotation; defaults to this session's value.
+
+        Returns
+        -------
+        SSB
+            A separately owned fitting session. Use it as a context manager.
+
+        Examples
+        --------
+        >>> with ssb.select_region((32, 160, 64, 192)) as region:
+        ...     fitted = region.find_aberrations(tilt=True, num_trials=200)
+        """
+        if self._data is None:
+            raise RuntimeError("This SSB session is closed. Reopen the acquisition before selecting a region.")
+        if len(scan_region) != 4 or any(type(value) is not int for value in scan_region):
+            raise ValueError("Use scan_region=(row_start, row_stop, col_start, col_stop), in integer scan pixels.")
+        dense = self._streamed is None and not isinstance(self._data, MpsBfColumnFrames)
+        shape = self._data.shape[:2] if len(self._data.shape) == 4 else self.scan_shape
+        row_start, row_stop, col_start, col_stop = scan_region
+        if not (0 <= row_start < row_stop <= shape[0] and 0 <= col_start < col_stop <= shape[1]):
+            raise ValueError(f"scan_region={scan_region} is outside the {shape[0]} x {shape[1]} scan.")
+        options = {
+            "backend": self.backend, "voltage_kV": self.voltage_kV,
+            "semiangle_mrad": self.semiangle_mrad, "scan_sampling_A": self.scan_sampling_A,
+            "detector_sampling_mrad": self.detector_sampling_mrad,
+            "bright_field_center_px": self.bright_field_center_px,
+            "bright_field_radius_px": self.bright_field_radius_px,
+            "bright_field_intensity_threshold": self.bright_field_intensity_threshold,
+            "detector_transposed": self.detector_transposed, "source_path": self.source_path,
+            "aberrations": self.aberrations if aberrations is None else aberrations,
+            "scan_detector_rotation_deg": self.scan_detector_rotation_deg
+            if scan_detector_rotation_deg is None else scan_detector_rotation_deg,
+        }
+        if dense:
+            if len(self._data.shape) != 4:
+                raise ValueError("Region selection needs explicit scan rows and columns. Open a 4D acquisition with SSB.open().")
+            if any(options[name] is None for name in (
+                "bright_field_center_px", "bright_field_radius_px", "detector_sampling_mrad"
+            )):
+                pattern = detector.mean(self._data)
+                center, radius = detector.fit_probe(pattern)
+                if options["bright_field_center_px"] is None:
+                    center = center[::-1] if self.detector_transposed else center
+                    options["bright_field_center_px"] = tuple(float(value) + origin for value, origin in zip(center, self._crop_origin))
+                if options["bright_field_radius_px"] is None:
+                    options["bright_field_radius_px"] = radius
+                if options["detector_sampling_mrad"] is None:
+                    options["detector_sampling_mrad"] = (self.semiangle_mrad / disk_edge_radius(pattern),) * 2
+            counts = self._data[row_start:row_stop, col_start:col_stop]
+            # __init__ applies the detector convention once. The parent's
+            # resident array has already had it applied.
+            if self.detector_transposed:
+                counts = counts.swapaxes(-1, -2)
+            regional = type(self)(counts, **options)
+            regional._crop_origin = self._crop_origin
+        elif self._streamed is not None:
+            regional = type(self)(self._data, scan_region=scan_region,
+                                  mean_pattern=self._streamed.mean_pattern, **options)
+        else:
+            if not self.source_path:
+                raise ValueError("These detector columns have no original acquisition. Open the original file with SSB.open() to fit regions.")
+            with io.load(self.source_path, backend=self.backend, verbose=False) as acquisition:
+                regional = type(self)(acquisition, scan_region=scan_region, **options)
+        origin = self.scan_region or (0, 0, 0, 0)
+        regional.scan_region = (row_start + origin[0], row_stop + origin[0],
+                                col_start + origin[2], col_stop + origin[2])
+        for name in ("source_kind", "source_storage_path", "source_dtype", "source_bytes",
+                     "source_detector_bin", "source_provenance", "calibration_path",
+                     "source_manifest_path", "resident_identity"):
+            setattr(regional, name, getattr(self, name))
+        return regional
+
     def _result_signature(
         self,
         operation: Literal["find_aberrations", "reconstruct"],
@@ -462,6 +720,11 @@ class SSB:
                 "schema": RESULT_SCHEMA,
                 "software": software_signature(),
                 "operation": operation,
+                "reconstruction": {
+                    "default_estimator": "phase_of_mean",
+                    "higher_order_model": "krivanek14",
+                    "upsampling_dc_policy": "single_origin",
+                },
                 "source": (
                     {"detector": self.resident_identity, "storage": None, "calibration": None, "manifest": None}
                     if self.source_path is None and self.resident_identity is not None else
@@ -689,6 +952,13 @@ class SSB:
                     bright_field_intensity_threshold=self.bright_field_intensity_threshold, bright_field_center_px=self._center_in_data(),
                     bright_field_radius_px=self.bright_field_radius_px, scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                 )
+            if self.detector_sampling_mrad is None:
+                # Retain the backend's probe estimate in the working calibration
+                # so region sessions and Save use the value actually computed.
+                sampling = (self._compute._det_sampling if self.backend == "mps"
+                            else self._compute.angular_sampling)
+                self.detector_sampling_mrad = tuple(sampling[::-1] if self.detector_transposed else sampling)
+                self._calibration_initial["detector_sampling_mrad"] = self.detector_sampling_mrad
         return self._compute
 
     def _reconstruct_trials(self, parameters, trials, *, upsampling_factor, phase_estimator):
@@ -697,7 +967,7 @@ class SSB:
         if parameters is None:
             raise ValueError("Run ssb.find_aberrations() before reconstructing trials.")
         records = select_records(parameters.trial_records, trials)
-        estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
+        estimator = phase_estimator or _default_phase_estimator(records[0]["params"])
         saved_rotation = self.scan_detector_rotation_deg
         waves = []
         for record in records:
@@ -777,6 +1047,7 @@ class SSB:
         force: bool = False,
         verbose: bool = True,
         compare_standard: bool = True,
+        fixed_aberrations: dict[str, float] | None = None,
     ) -> SSBResult:
         """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
 
@@ -796,6 +1067,13 @@ class SSB:
         ``num_trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
         ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
         costs one polish.
+
+        ``fixed_aberrations`` holds C10_nm, C12_nm and phi12_deg common across
+        local tilt fits. Supply a previously calibrated thick-sample optical
+        model, ``tilt=True`` and ``check_rotation=False``. The same batched
+        Newton solver optimizes only tilt and depth spread on CUDA and MPS.
+        This conditional fit does not determine whether the common optics are
+        correct. Use ``compare_standard=False`` to omit the optional thin fit.
 
         ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
@@ -845,6 +1123,12 @@ class SSB:
             )
         if refinement == "auto":
             refinement = "newton" if tilt else "nelder-mead"
+        if fixed_aberrations is not None:
+            fixed_aberrations = validate_aberrations(fixed_aberrations)
+            if not all(math.isfinite(v) for v in fixed_aberrations.values()):
+                raise ValueError("fixed_aberrations must contain finite coefficients.")
+            if not tilt or refinement != "newton" or check_rotation:
+                raise ValueError("Use fixed_aberrations with tilt=True, refinement='newton' (or 'auto'), and check_rotation=False.")
         if refinement not in {"nelder-mead", "newton", None}:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt:
@@ -869,6 +1153,7 @@ class SSB:
                        if tilt and int(num_trials) == 0 else {}),
                     "check_rotation": bool(check_rotation),
                     "scan_region": scan_region,
+                    **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else {}),
                 },
             )
             if not force and self.source_kind != "array":
@@ -942,6 +1227,7 @@ class SSB:
                     search_ranges=search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
+                    fixed_aberrations=fixed_aberrations,
                 )
             result.fit_scan_region = tuple(scan_region)
             # the regional session indexed this session's array, which starts at the crop origin
@@ -954,7 +1240,8 @@ class SSB:
             return result
         if tilt:
             self._compare_standard = bool(compare_standard)
-            result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose))
+            result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
+                                                      fixed_aberrations=fixed_aberrations))
         else:
             result = self._backend().fit(
                 aberrations=(
@@ -974,8 +1261,10 @@ class SSB:
             result = self._accept_result(self._resolve_rotation_branch(
                 result, refinement=refinement, tilt=tilt, tilt_limit_mrad=float(tilt_limit_mrad), seed=int(seed),
                 verbose=verbose))
-        estimator = "phase_of_mean" if self.backend == "cuda" else "mean_phase"
+        estimator = _default_phase_estimator(result.aberrations)
+        reconstruction_started = time.perf_counter()
         displayed = self.reconstruct(result, phase_estimator=estimator, compute_loss=False, force=True)
+        result.timings["final_native_reconstruction_s"] = time.perf_counter() - reconstruction_started
         result.object_wave = displayed.object_wave
         result.phase_clim = result.phase_limits
         result.phase_estimator = displayed.phase_estimator
@@ -1112,10 +1401,12 @@ class SSB:
             Nyquist frequency covers the ideal circular-aperture SSB support,
             2 * semiangle / wavelength, on both scan axes. This is a grid
             criterion, not a measured resolution or a guarantee of useful
-            signal at the cutoff. C10/C12 upsampling runs on CUDA and MPS.
+            signal at the cutoff. All 14 aberration terms support upsampling
+            and tilt/depth correction on CUDA and MPS.
         phase_estimator
-            CUDA defaults to ``phase_of_mean`` at every output factor. MPS
-            retains ``mean_phase``. The loss is the native-grid search
+            Defaults to ``phase_of_mean`` on CUDA and MPS at every output
+            factor, including higher-order aberrations.
+            The loss is the native-grid search
             diagnostic, not a score computed from the displayed phase.
             ``complex_wave`` explicitly retains amplitude for native, thin-sample
             reconstruction, including coherent temporal averaging.
@@ -1175,8 +1466,11 @@ class SSB:
             coefs = dict(self.aberrations)
             tilt = self.sample_tilt_mrad
             depth = self.depth_spread_nm
-        coefs = validate_aberrations({**coefs, **(aberrations or {})})
-        estimator = phase_estimator or ("phase_of_mean" if self.backend == "cuda" else "mean_phase")
+        coefs = validate_aberrations({**coefs, **(aberrations or {})}, higher_order=True)
+        estimator = phase_estimator or _default_phase_estimator(coefs)
+        higher = higher_order_arrays(coefs)
+        if estimator == "complex_wave" and higher is not None and np.any(higher[0][2:]):
+            raise ValueError("Higher-order reconstruction supports phase_of_mean or mean_phase; choose either phase estimator.")
         if estimator == "complex_wave" and (upsampling_factor != 1 or depth or any(tilt or ())):
             raise ValueError("complex_wave requires upsampling_factor=1 and no sample tilt/depth; choose a phase estimator instead.")
         settings = {
@@ -1258,12 +1552,20 @@ class SSB:
         depth_spread_nm: float = 0.0,
         phase_estimator: Literal["mean_phase", "phase_of_mean"] | None = None,
         output: Literal["numpy", "native"] = "numpy",
+        cancel: Callable[[], bool] | None = None,
     ) -> tuple[object, float | None]:
         """Reconstruct a transient phase image for an interactive viewer.
 
         The returned array has the full selected output resolution. "Preview"
         means it is not saved and does not replace the fitted calibration or
         stored result; it does not imply a lower-quality reconstruction.
+
+        Interactive applications may provide ``cancel``, a predicate that is
+        true when this request is obsolete. Cancellation raises
+        ``concurrent.futures.CancelledError`` and never returns a partial
+        image or loss. MPS checks between completed GPU batches; other
+        backends check before and after computation. A running GPU kernel is
+        not interrupted. Omitting this option leaves computation unchanged.
 
         ``output="numpy"`` returns a float32 host array for display. On CUDA, ``output="native"`` returns the CuPy phase
         on the session's device, without exporting it to the host, so diagnostics can reduce a series of phase images
@@ -1279,16 +1581,16 @@ class SSB:
         standard SSB. CUDA and MPS backends.
 
         ``upsampling_factor`` selects 1, 2, 3, 4, or 8 times finer output sampling.
-        Values above one support C10/C12 with or without tilt/depth correction
+        Values above one support all 14 terms with or without tilt/depth correction
         on CUDA and MPS. The diagnostic loss and aberration search remain on the native
         scan grid. Sampling never fits parameters or interpolates detector data.
 
-        By default, CUDA C10/C12 reconstruction averages corrected complex
+        By default, CUDA and MPS reconstruction averages corrected complex
         waves before taking phase (``phase_of_mean``), with or without sample
         tilt, at every output factor. Explicit ``mean_phase`` retains the
-        historical per-detector phase average for comparisons. Native MPS and
-        higher-order paths retain their existing estimator; explicit wave
-        averaging supports C10/C12 on both backends. Quantitative phase
+        historical per-detector phase average for comparisons. Higher-order
+        coefficients use the same coherent estimator. Upsampling excludes replicas
+        of the scan mean and retains one normalization at q=0. Quantitative phase
         amplitude is not established by stronger image contrast. Diagnostic
         loss still uses native-grid per-detector phase variance; fitting is
         unaffected.
@@ -1316,12 +1618,13 @@ class SSB:
             raise ValueError(f"Use output='numpy' or 'native'; got {output!r}.")
         if output == "native" and self.backend != "cuda":
             raise NotImplementedError("Native SSB preview output requires backend='cuda'; use output='numpy' on this backend.")
-        phase, loss = self._phase(
-            aberrations, compute_loss=compute_loss,
-            upsampling_factor=upsampling_factor, context=context,
-            sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
-            phase_estimator=phase_estimator,
-        )
+        with cancellation_scope(cancel):
+            phase, loss = self._phase(
+                aberrations, compute_loss=compute_loss,
+                upsampling_factor=upsampling_factor, context=context,
+                sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
+                phase_estimator=phase_estimator,
+            )
         if output == "native":
             # the mean-phase path returns the engine's reused buffer, which the next preview overwrites
             return phase.copy(), loss
@@ -1346,11 +1649,7 @@ class SSB:
         # 14-slot magnitudes (nm) and azimuths (rad) when the mapping names a higher order; else both None
         higher_order_magnitudes, higher_order_angles = higher_order_arrays(aberrations) or (None, None)
         if phase_estimator is None:
-            # Keep unsupported native backends/higher-order paths available.
-            # C10/C12 uses one estimator at every output factor on CUDA.
-            higher_order_active = higher_order_magnitudes is not None and np.any(higher_order_magnitudes[2:])
-            phase_estimator = ("phase_of_mean" if self.backend == "cuda"
-                               and not higher_order_active else "mean_phase")
+            phase_estimator = _default_phase_estimator(aberrations)
         if phase_estimator not in ("mean_phase", "phase_of_mean"):
             raise ValueError(
                 "phase_estimator must be 'mean_phase' or 'phase_of_mean'; "
@@ -1387,19 +1686,20 @@ class SSB:
                     upsampling_factor=upsampling_factor, sample_tilt_mrad=sample_tilt_mrad,
                     thickness=float(depth_spread_nm) * ENGINE_PER_NM,
                 )
-        if upsampling_factor != 1 or phase_estimator == "phase_of_mean":
-            if higher_order_magnitudes is not None:
-                raise ValueError(
-                    "Upsampling and wave averaging support C10_nm/C12_nm with "
-                    "tilt/depth; leave out the higher-order aberrations."
-                )
+        if (upsampling_factor != 1 or phase_estimator == "phase_of_mean"
+                or (higher_order_magnitudes is not None and (depth_spread_nm > 0 or self.backend == "mps"))):
             backend = self._backend()
+            higher = {} if higher_order_magnitudes is None else {
+                "higher_order_magnitudes": higher_order_magnitudes * np.float32(ENGINE_PER_NM),
+                "higher_order_angles": higher_order_angles,
+            }
             with scope:
                 return backend.preview_upsampled(
                     coefs, upsampling_factor=upsampling_factor, compute_loss=compute_loss,
                     sample_tilt_mrad=tuple(float(value) for value in sample_tilt_mrad),
                     thickness=float(depth_spread_nm) * ENGINE_PER_NM,
                     phase_estimator=phase_estimator,
+                    **higher,
                 )
         if float(depth_spread_nm) > 0.0:
             sample = {"tilt_row_mrad": float(sample_tilt_mrad[0]), "tilt_col_mrad": float(sample_tilt_mrad[1]),
@@ -1427,23 +1727,31 @@ class SSB:
         """
         return self.backend in ("cuda", "mps")
 
-    def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
+    def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool,
+                  *, fixed_aberrations: dict[str, float] | None = None) -> SSBResult:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
+        preparation_started = time.perf_counter()
         backend = self._backend()
+        backend_preparation_s = time.perf_counter() - preparation_started
         started = time.perf_counter()
         start = None
         if trials == 0:
             # the previous scan's fit, in engine units, is the one point the polish starts from
             engine = aberrations_to_engine(self.aberrations)
             start = (engine["C10"], engine["C12"], engine["phi12"], *self.sample_tilt_mrad, self.depth_spread_nm * ENGINE_PER_NM)
+        fixed = {} if fixed_aberrations is None else {"fixed_aberrations": aberrations_to_engine(fixed_aberrations)}
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
-                                 compare_standard=self._compare_standard, start=start)
+                                 compare_standard=self._compare_standard, start=start, **fixed)
         aberrations = aberrations_from_engine(fit)
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
+        diagnostic_started = time.perf_counter()
         phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
                                    phase_estimator="mean_phase")
+        timings = dict(fit.get("timings", {}))
+        timings["backend_preparation_s"] = backend_preparation_s
+        timings["native_phase_diagnostic_s"] = time.perf_counter() - diagnostic_started
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         object_wave = self._unit_wave(phase)
         records = []
@@ -1458,7 +1766,7 @@ class SSB:
                 "depth_spread_nm": values["thickness"] / ENGINE_PER_NM,
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                         depth_spread_nm=depth_spread_nm, tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
+                         timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
                          amplitude_estimated=False, phase_estimator="mean_phase",
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),

@@ -9,9 +9,27 @@ This page covers parameters, calibration, ownership, and backend limits.
 ## Inputs and outputs
 
 `SSB.open(path, ...)` loads a supported detector source. `SSB(data, ...)`
-accepts an existing `Dataset4dstemGPU` or supported array. Both require explicit
-`voltage_kV`, `semiangle_mrad`, and `scan_sampling_A` (a `(row, col)` pair); read those values from
-verified acquisition metadata or supply your microscope calibration.
+accepts an existing `Dataset4dstemGPU` or supported array. Prefer loading once
+and inspecting the acquisition before constructing the algorithm:
+
+```python
+from quantem.gpu import SSB, io
+
+data = io.load("acquisition.qem")
+data  # The notebook displays geometry, calibration, units, and saved overrides.
+```
+
+In the next cell, pass that same dataset to SSB:
+
+```python
+ssb = SSB(data, scan_detector_rotation_deg=12.3)  # Use your calibrated angle.
+```
+
+Both file-backed entry points use the loaded `voltage_kV`, `semiangle_mrad`,
+`scan_sampling_A`, and `detector_sampling_mrad` metadata unless explicitly
+overridden. The first three remain required when supplying an array without
+metadata. Missing physical calibration raises an error. Explicit keyword
+overrides affect the session without rewriting `data.metadata`.
 `scan_detector_rotation_deg` defaults to zero; it is the physical
 scan-to-detector rotation, kept in [0, 360). SSB does not call DPC automatically;
 provide a verified rotation or use a DPC estimate:
@@ -20,7 +38,7 @@ DPC knows the angle only modulo 180 degrees; `find_aberrations(check_rotation=Tr
 settles the 180-degree branch. `detector_transposed=True` applies the saved
 detector-axis convention while keeping reported centers in the original detector axes.
 `detector_sampling_mrad` is detector angular sampling in
-mrad per pixel, `(row, col)`. When it is omitted, CUDA and MPS both use `semiangle_mrad`
+mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`
 divided by the radius in detector pixels at which the bright-field disk of the
 full-detector mean pattern falls to half its plateau
 (`quantem.gpu.ssb.brightfield.disk_edge_radius`): the disk edge is the image of
@@ -191,8 +209,8 @@ of returning a zero-agreement fit.
 
 `find_aberrations()` searches on the native scan grid.
 `reconstruct()` applies the supplied parameters without
-searching. CUDA uses `phase_of_mean` at every output factor; MPS uses
-`mean_phase`. Both return phase-only complex waves with unit amplitude,
+searching. CUDA and MPS use `phase_of_mean` at every output factor, including
+all 14 higher-order terms. Both return phase-only complex waves with unit amplitude,
 recorded as `amplitude_estimated=False`. That amplitude is not a measured
 specimen transmission. Use explicit `phase_estimator="complex_wave"` for a
 native thin-sample complex-object reconstruction when amplitude is needed.
@@ -257,13 +275,12 @@ This uses the calibrated voltage, convergence semiangle and scan spacing.
 It is a numerical grid criterion, not a measured resolution: detector coverage,
 noise, coherence, aberrations and alias separation can reduce useful bandwidth.
 See the [direct-ptychography upsampling paper](https://arxiv.org/abs/2507.18610).
-The current CUDA implementation can produce stripes; automatic selection
-does not certify their absence. More than 8× raises an explicit limit error.
-CUDA and MPS support C10/C12 at every listed factor, with or without
-specimen tilt and depth correction. MPS keeps its `mean_phase` default;
-`phase_estimator="phase_of_mean"` explicitly selects wave averaging. These
-estimators are different scientific outputs. The aberration search and loss
-remain on the native grid.
+More than 8× raises an explicit limit error. CUDA and MPS support all 14
+aberration terms at every listed factor, with or without specimen tilt and
+depth correction. Both use `phase_of_mean` automatically. Explicit
+`phase_estimator="mean_phase"` retains the historical diagnostic comparison.
+The aberration search and loss remain on the native grid. Upsampling excludes
+replicas of the scan mean while retaining the normalization at the true origin.
 
 For an explicit sampling comparison:
 
@@ -413,12 +430,12 @@ been checked on hardware for this addition.
 
 ## Upsampling support
 
-CUDA supports factors 1, 2, 3, 4 and 8 with C10/C12 and optional tilt/depth
+CUDA and MPS support factors 1, 2, 3, 4 and 8 with all 14 aberration terms and optional tilt/depth
 correction. The field of view stays fixed. The search and diagnostic loss stay
 on the native scan grid; changing the factor does not refit parameters or
 interpolate detector measurements. More output pixels do not guarantee more
-resolved specimen detail. Factors above one do not yet support MPS, WebGPU or
-higher-order aberrations.
+resolved specimen detail. These Python backend guarantees do not qualify the
+separate browser WebGPU or native Swift implementations.
 
 When migrating hard-coded aberrations from releases before the nm correction,
 divide old C10/C12 numbers and search bounds by 10. For example, an old value of
@@ -511,7 +528,7 @@ transform, take the real part, normalize by BF weight, and sum contributions.
 It does not average per-contribution phase angles. Do not describe our
 DC-referenced `angle(mean(waves))` as numerically identical to that output.
 
-CUDA C10/C12 now defaults to phase after complex-wave averaging:
+CUDA and MPS default to phase after complex-wave averaging, including higher orders:
 
 ```python
 phase, native_loss = ssb.preview(
@@ -523,14 +540,14 @@ phase, native_loss = ssb.preview(
 )
 ```
 
-Both estimators reuse the existing C10/C12 depth-aware correction kernel, the
+Both estimators use the same supplied aberration polynomial and depth weights, the
 same measured diffraction patterns and the supplied calibration. Fitting never
 runs inside `preview`. Diagnostic loss retains the original native-grid
 per-detector phase variance, even for wave averaging. Use
 `compute_loss=False` when only the image is needed.
 
 The estimator choice applies at **every** output factor, including 1x. CUDA
-C10/C12 previews now use wave averaging at 1x as well; request `mean_phase`
+and MPS previews use wave averaging at 1x as well; request `mean_phase`
 explicitly to reproduce historical preview output. To compare 1x/2x/3x/4x
 scientifically, use the same estimator at each factor. Switching from legacy
 1x to wave-average 2x introduces an estimator change as well as a sampling change.
@@ -539,12 +556,13 @@ Reduced contrast compression from wave averaging does not establish
 quantitative phase accuracy. Known-phase controls still show amplitude
 attenuation, and improvement is not uniform across tested noise/sampling cases.
 There is no fitted gain, display normalization or detector interpolation in
-this option. Active higher-order magnitudes and non-CUDA backends are not
-supported; zero higher-order magnitudes with retained angles are allowed.
+this option. Higher-order corrections, tilt/depth and automatic sampling can
+be combined on both backends. The fit still searches C10/C12 and specimen
+geometry; higher-order coefficients are supplied corrections, not extra fitted parameters.
 
 This estimator does not change the native aberration-search objective.
 It is also accepted by `reconstruct`, where it participates in saved-result reuse.
-Live uses the public preview default for supported CUDA C10/C12 outputs.
+Live uses the same public preview default on both backends.
 If persisting the returned array, record `phase_estimator`,
 `upsampling_factor`, native scan sampling, aberrations, tilt and depth alongside
 it. Any application adopting the option must include the estimator in its
@@ -655,3 +673,46 @@ mathematics and [SSB performance evidence](../maintainer/ssb-performance.md)
 for dated, revision- and device-qualified measurements. Performance numbers do
 not live in this API contract because a new benchmark must not silently change
 API semantics.
+
+### Inspect the launch calibration
+
+Load first so acquisition metadata remains available independently of SSB:
+
+```python
+from quantem.gpu import SSB, io
+
+data = io.load("scan.qem")
+data
+```
+
+Voltage, convergence semiangle and scan step are read from the loaded metadata.
+For scan-detector rotation, explicitly use the recorded angle, or provide an
+independently calibrated angle when the file does not record one:
+
+```python
+ssb = SSB(data, scan_detector_rotation_deg=data.metadata["scan_detector_rotation_deg"])
+ssb.calibration_table()
+```
+
+The metadata lookup intentionally raises if rotation is missing. Replace it
+with your known calibrated angle; do not silently substitute zero. Omitting
+rotation retains the API's 0-degree starting default, labeled **Default**,
+not a measured calibration.
+
+`ssb.calibration_table()` returns a DataFrame with **File value**, **File unit**,
+**Value used**, **Unit used**, and **Source**, using the session's current values.
+File values include saved calibration overrides. Source labels are **Recorded**,
+**Saved override**, **Explicit override**, **Estimated**, and **Default**. Later
+session changes are labeled **Modified in session**. Explicit keywords remain
+overrides even when they equal stored values. Labels describe provenance,
+not validation or confidence. Reading the table does not reconstruct or alter
+source data; detector estimates remain **Pending probe fit** until preparation.
+
+Detector sampling is optional: omit `detector_sampling_mrad` to reuse the
+loaded acquisition's saved calibration. If missing, SSB estimates sampling
+from the full-field probe disk edge and the known convergence semiangle.
+The working session retains the estimate for reconstruction, regional sessions
+and persistence. The source QEM and its recorded metadata remain unchanged.
+An explicit numerical keyword remains available for an independent calibration.
+The convergence semiangle must be known; disk radius alone cannot set an
+absolute angular scale.

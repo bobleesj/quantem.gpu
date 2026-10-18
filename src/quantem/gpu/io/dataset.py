@@ -4,12 +4,19 @@ import warnings
 from dataclasses import dataclass
 from math import prod
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from quantem.gpu.formats.qem.metadata import DETECTOR_SAMPLING_KEYS, _microscopy_quantity
+from quantem.gpu.formats.qem.metadata import (
+    DETECTOR_SAMPLING_KEYS,
+    _microscopy_quantity,
+)
 from quantem.gpu.io.read import read, resident_device
 from quantem.gpu.io.representation import DataRepresentation
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -30,6 +37,62 @@ class Dataset4dstemGPU:
     data: object
     metadata: dict[str, object]
 
+    def metadata_table(self) -> "pd.DataFrame":
+        """Inspect acquisition calibration before choosing an algorithm.
+
+        The table describes the loaded metadata, including saved calibration
+        overrides. Missing values remain explicitly unrecorded; an algorithm's
+        defaults or later keyword overrides do not rewrite this table. No
+        detector values are read. Complete source records remain in ``metadata``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Acquisition geometry and calibration with units and provenance.
+
+        Examples
+        --------
+        >>> data = io.load("acquisition.qem")
+        >>> data.metadata_table()
+        """
+        import pandas as pd
+
+        from quantem.gpu.formats.qem.snapshot import (
+            FLOAT_CODEC,
+            INTEGER_CODEC,
+            SCALED_CODEC,
+        )
+        from quantem.gpu.io.metadata_display import calibration_rows
+
+        rows = {
+            "Source": {"Value": self.metadata.get("source_path", "In-memory acquisition")},
+            "Format": {"Value": self.metadata.get("container", self.metadata.get("source_kind", "Not recorded"))},
+            "Shape (scan, detector)": {"Value": " × ".join(map(str, self.shape))},
+            "Data dtype": {"Value": str(self.dtype)},
+        }
+        source = Path(str(self.metadata.get("source_path", "")))
+        if source.suffix.lower() == ".qem" and source.is_file():
+            rows["QEM file size"] = {
+                "Value": source.stat().st_size / 1e9, "Unit": "GB", "Metadata": "On disk",
+            }
+        ans = self.representation is DataRepresentation.ENCODED and (
+            self.metadata.get("resident_codec") == "ans"
+            or self.metadata.get("resident_profile") in (INTEGER_CODEC, SCALED_CODEC, FLOAT_CODEC)
+        )
+        resident_bytes = self.resident_bytes
+        rows["ANS resident size" if ans else "Resident size"] = {
+            "Value": "Not reported" if resident_bytes is None else resident_bytes / 1e9,
+            "Unit": "GB", "Metadata": "Loaded storage" if resident_bytes is not None else "Not reported",
+        }
+        rows["Uncompressed size"] = {
+            "Value": self.logical_bytes / 1e9, "Unit": "GB", "Metadata": "Shape × dtype",
+        }
+        rows.update(calibration_rows(self.metadata))
+        return pd.DataFrame.from_dict(rows, orient="index").fillna("").rename_axis("Property")
+
+    def _repr_html_(self) -> str:
+        return self.metadata_table().to_html(escape=True)
+
     def __reduce_ex__(self, protocol):
         raise TypeError(
             "Save resident acquisitions with quantem.gpu.io.save(path, data); device handles cannot be pickled."
@@ -47,10 +110,7 @@ class Dataset4dstemGPU:
 
     def __repr__(self) -> str:
         """Summarize the acquisition without decoding detector values."""
-        return (
-            f"Dataset4dstemGPU(shape={self.shape}, dtype={self.dtype}, "
-            f"representation={self.representation.value!r})"
-        )
+        return self.metadata_table().to_string()
 
     @property
     def ndim(self) -> int:

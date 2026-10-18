@@ -19,9 +19,11 @@ from quantem.gpu.io.inspect import inspect as inspect_source
 from quantem.gpu.ssb.results import SSBResult, host_array
 
 # One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
-# Bump it whenever the same stored values would reconstruct a different image or read differently: the automatic
+# Bump it when fitted values acquire a different physical meaning or record layout: the automatic
 # detector sampling rule, the unit, sign or angle reference of an aberration, the rotation convention,
 # the bright-field selection rule, the loss definition, or the record layout. Every older fit is then fitted again.
+# A reconstruction-only policy belongs in the result signature instead. This invalidates exact image reuse
+# without declaring unchanged fitted coefficients unreadable or rescheduling a historical acquisition.
 # 7: the record follows the shared vocabulary. The rotation is one physical angle, scan_detector_rotation_deg in
 #    [0, 360), with detector_transposed; it was an angle below 180 with com_reversed. The saved result's own "schema"
 #    is a string like the fit block's.

@@ -26,6 +26,7 @@ from quantem.gpu.ssb.mps.hardware import (
 from quantem.gpu.ssb.mps.kernels.object_sum import object_fourier_sum_dynamic
 from quantem.gpu.ssb.mps.optimizer import fit_sample
 from quantem.gpu.ssb.mps.optimizer import optimize as optimize_mps
+from quantem.gpu.ssb.mps.padding import pad_scan
 from quantem.gpu.ssb.mps.prepared import (
     PreparedMpsSSB,
     as_sampling,
@@ -44,6 +45,9 @@ class MpsSSBBackend:
 
     The prepared state (``prepared.py``) owns MPS preparation and device state. UI and export consumers
     use only the public reconstruction methods and :meth:`browser_state`.
+    Dense rectangles are centered on the next supported square FFT grid using
+    their mean detector pattern, matching CUDA's padding convention. Padding
+    is announced; reconstructed phases include the padded extent.
     """
 
     backend = "mps"
@@ -62,7 +66,7 @@ class MpsSSBBackend:
         bright_field_radius_px: int | None,
         scan_detector_rotation_deg: float,
     ) -> None:
-        self._frames = as_chunked_frames(data)
+        self._frames = as_chunked_frames(pad_scan(data))
         self._scan_shape = frames_scan_shape(self._frames)
         self._detector_shape = tuple(int(size) for size in self._frames.shape[-2:])
         self._voltage_kV = float(voltage_kV)
@@ -264,18 +268,45 @@ class MpsSSBBackend:
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
         thickness: float = 0.0,
         phase_estimator: str = "mean_phase",
+        higher_order_magnitudes: np.ndarray | None = None,
+        higher_order_angles: np.ndarray | None = None,
     ) -> tuple[np.ndarray, float | None]:
         """Unfold measured aliases on Metal; preserve the native search loss."""
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        phase = _reconstruct_upsampled(
+        higher = dict(higher_order_magnitudes=higher_order_magnitudes,
+                      higher_order_angles=higher_order_angles)
+        if compute_loss and phase_estimator == "mean_phase" and upsampling_factor == 1:
+            # The returned native per-BF phase already belongs to this loss;
+            # do not reconstruct it once more before computing the variance.
+            if higher_order_magnitudes is not None:
+                return _reconstruct_upsampled(
+                    self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
+                    thickness=thickness, upsampling_factor=1,
+                    phase_estimator="mean_phase", compute_loss=True, **higher,
+                )
+            if thickness > 0.0:
+                return self.preview_sample(
+                    aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
+                                  "tilt_col_mrad": sample_tilt_mrad[1],
+                                  "thickness": thickness}, compute_loss=True,
+                )
+            return self.preview(aberrations, compute_loss=True, **higher)
+        phase, _ = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
             thickness=thickness, upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
+            **higher,
         )
         loss = None
         if compute_loss:
-            if thickness > 0.0:
+            if higher_order_magnitudes is not None:
+                _, loss = _reconstruct_upsampled(
+                    self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
+                    thickness=thickness, upsampling_factor=1,
+                    phase_estimator="mean_phase", compute_loss=True, **higher,
+                )
+            elif thickness > 0.0:
                 _, loss = self.preview_sample(
                     aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
                                   "tilt_col_mrad": sample_tilt_mrad[1],
@@ -316,10 +347,14 @@ class MpsSSBBackend:
 
     def fit_sample(self, **options) -> dict[str, object]:
         """Fit aberrations, sample tilt and thickness together (``optimizer.fit_sample``)."""
+        started = time.perf_counter()
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        preparation_s = time.perf_counter() - started
         result = fit_sample(self._prepared, **options)
-        require_mlx().clear_cache()
+        result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
+        # Reuse allocator buffers for the following phase diagnostic and for
+        # repeated fits. close() releases the session and clears the cache.
         return result
 
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
@@ -328,7 +363,16 @@ class MpsSSBBackend:
 
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        return thick_fit_batch(self._prepared, parameters, band_inv_A)
+        # Four candidates run the diagnostic batches faster on MPS.
+        # Preserve each candidate's arithmetic and the search's eight-trial
+        # scheduling; these are independent measurements after the fit.
+        parameters = np.atleast_2d(parameters)
+        agreement = np.empty(len(parameters), dtype=np.float64)
+        for start in range(0, len(parameters), 4):
+            agreement[start:start + 4] = thick_fit_batch(
+                self._prepared, parameters[start:start + 4], band_inv_A,
+            )
+        return agreement
 
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""

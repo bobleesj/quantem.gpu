@@ -79,6 +79,34 @@ def test_open_encoded_source_retains_mps_crop(tmp_path, monkeypatch):
         assert np.isfinite(phase).all() and np.isfinite(loss)
 
 
+def test_open_uses_recorded_calibration_and_keeps_explicit_overrides(tmp_path):
+    """Opening calibrated counts needs no duplicated microscope settings."""
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB, io
+
+    counts = _counts()
+    calibration = dict(voltage_kV=300, semiangle_mrad=30,
+                       scan_sampling_A=(.99, .99), detector_sampling_mrad=(6., 6.))
+    source = tmp_path / "calibrated.qem"
+    io.save(source, counts, format="quantem", compression="ans", backend="cpu", metadata=calibration)
+    recorded_step = tuple(io.inspect(source).metadata["scan_sampling_A"])
+    coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
+    with SSB.open(str(source)) as automatic, SSB.open(str(source), **calibration) as explicit:
+        actual, actual_loss = automatic.preview(coefficients)
+        expected, expected_loss = explicit.preview(coefficients)
+        np.testing.assert_array_equal(actual, expected)
+        assert actual_loss == expected_loss
+        assert automatic.scan_sampling_A == recorded_step
+    with SSB.open(str(source), detector_sampling_mrad=(7., 7.)) as overridden:
+        assert overridden.detector_sampling_mrad == (7., 7.)
+        assert overridden.scan_sampling_A == recorded_step
+    uncalibrated = tmp_path / "uncalibrated.qem"
+    io.save(uncalibrated, counts, format="quantem", compression="ans", backend="cpu",
+            metadata={"voltage_kV": 300, "semiangle_mrad": 30})
+    with pytest.raises(ValueError, match="missing scan_sampling_A"):
+        SSB.open(str(uncalibrated))
+
+
 def test_transposed_detector_matches_explicit_swap_on_mps(tmp_path):
     """Compare the automatic orientation against an explicitly exchanged detector."""
     torch = pytest.importorskip("torch")

@@ -9,11 +9,13 @@ small cache beside the master so the next look at the same scan is instant.
 import json
 import os
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.optics.physics import wrap_degrees
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
@@ -72,7 +74,7 @@ class ScreeningResult:
 
 
 def prepare(
-    source: str | Path,
+    source: str | Path | Dataset4dstemGPU,
     *,
     backend: str = "auto",
     scan_shape: tuple[int, int] | None = None,
@@ -97,9 +99,12 @@ def prepare(
 
     Parameters
     ----------
-    source : str or Path
+    source : str, Path or Dataset4dstemGPU
         HDF5 master (for example an Arina ``*_master.h5``) or another
-        acquisition that ``io.load`` reads into integer counts.
+        acquisition that ``io.load`` reads into integer counts. A loaded
+        acquisition is borrowed and stays open. Its stored flagged pixels
+        are excluded from screening, even if loading replaced them by a median.
+        File-cache reuse is disabled for borrowed data.
     backend : str
         ``"auto"``, ``"cuda"`` or ``"mps"``; only a cache miss needs a GPU.
     scan_shape : tuple of int, optional
@@ -132,6 +137,17 @@ def prepare(
     >>> products = screening.prepare("scan_master.h5")
     >>> products.bright_field.shape, products.bright_field_edge_radius_px
     """
+    loaded = source if isinstance(source, Dataset4dstemGPU) else None
+    if loaded is not None:
+        recorded_path = loaded.metadata.get("source_path")
+        if not recorded_path:
+            raise ValueError("Screening a loaded acquisition needs its recorded source_path; use io.load(path).")
+        if loaded.ndim != 4 or (scan_shape is not None and tuple(scan_shape) != loaded.shape[:2]):
+            raise ValueError("Screening needs one 4D acquisition with its recorded scan shape.")
+        loaded_backend = loaded.device.type if loaded.device is not None else "cpu"
+        if backend not in ("auto", loaded_backend) or loaded_backend not in ("cuda", "mps"):
+            raise ValueError("Screening uses the acquisition's CUDA or MPS device; omit backend or match that device.")
+        source, backend, cache = str(recorded_path), loaded_backend, False
     master_path = Path(source).expanduser()
     if not master_path.exists():
         raise FileNotFoundError(f"HDF5 master not found: {master_path}")
@@ -152,6 +168,7 @@ def prepare(
         scan_shape=scan_shape,
         rotation_steps=int(rotation_steps),
         verbose=verbose,
+        loaded=loaded,
     )
     products.cache_path = cache_path if cache else None
     _add_calibration(products)
@@ -197,6 +214,7 @@ def _build_products(
     scan_shape: tuple[int, int] | None,
     rotation_steps: int,
     verbose: bool,
+    loaded: Dataset4dstemGPU | None = None,
 ) -> ScreeningResult:
     """Derive every screening product from the encoded resident ``io.load`` returns.
 
@@ -214,13 +232,15 @@ def _build_products(
 
     started = time.perf_counter()
     source = _source_fingerprint(master)
-    with load(
+    borrowed = loaded is not None
+    owner = nullcontext(loaded) if borrowed else load(
         str(master),
         backend=backend,
         scan_shape=scan_shape,
         hot_pixel_correction="zero",
         verbose=verbose,
-    ) as loaded:
+    )
+    with owner as loaded:
         # A live acquisition may still be writing; products of a moving
         # source must not be cached under its final identity.
         if _source_fingerprint(master) != source:
@@ -241,14 +261,18 @@ def _build_products(
         frame_count = session.num_frames
         # The exact total divided in float64 and rounded once, like every mean pattern.
         mean_diffraction_pattern = (session.detector_total() / frame_count).astype(np.float32)
+        valid = np.ones(detector_shape, dtype=bool)
+        if borrowed and loaded.metadata.get("pixel_mask") is not None:
+            valid &= np.asarray(loaded.metadata["pixel_mask"]) == 0
+            mean_diffraction_pattern[~valid] = 0
         center, radius = detector.fit_probe(mean_diffraction_pattern)
         masks = [np.ones(detector_shape, dtype=bool)]
         masks += [
             detector.detector_mask(center, inner * radius, outer * radius, detector_shape)
             for inner, outer in _BAND_RADII
         ]
-        sums = session.masked_sums_exact(np.stack(masks))
-        com_row, com_col = session.center_of_mass()
+        sums = session.masked_sums_exact(np.stack(masks) & valid)
+        com_row, com_col = session.center_of_mass(valid if borrowed else None)
         working_dtype = loaded.dtype.name
         acquisition_metadata = {
             name: loaded.metadata[name] for name in (

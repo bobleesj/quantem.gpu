@@ -1,5 +1,6 @@
 """Save encoded acquisitions as ``.qem`` copies and arrays as Arina HDF5."""
 
+import json
 import math
 import time
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ import torch
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats.qem.reference import save_array
+from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
 from quantem.gpu.io import qem
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.hdf5.write import (
@@ -301,6 +303,14 @@ def save(
             f"format='arina' writes bitshuffle/LZ4; got compression={compression!r}. "
             "Use compression='lz4' (or 'auto')."
         )
+    if isinstance(data, Dataset4dstemGPU) and data.representation.value == "dense":
+        metadata = dict(data.metadata if metadata is None else metadata)
+        for key, attribute in MAPED_RECORDS.items():
+            if isinstance(metadata.get(key), dict):
+                metadata[attribute] = json.dumps(metadata[key], default=json_metadata)
+        data = data.data
+        if isinstance(data, torch.Tensor) and data.is_cuda:
+            data = cp.from_dlpack(data.detach())
     normalized_backend = str(backend).lower()
     if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")

@@ -13,6 +13,28 @@ import pytest
 from quantem.gpu.ssb import thick_sample_fit
 
 
+@pytest.mark.parametrize("seed", [11, 29, 47, 71, 101])
+def test_batched_search_preserves_stock_tpe_trials_and_newton_fit(monkeypatch, seed):
+    """Repeated joint searches keep every adaptive trial and the final fit."""
+    import optuna
+
+    def objective(rows):
+        center = np.array([12.0, 36.0, 0.2, 4.0, 7.0, 150.0])
+        scale = np.array([50.0, 50.0, 0.4, 10.0, 10.0, 100.0])
+        return 1000.0 - np.sum(((rows - center) / scale) ** 2, axis=1)
+
+    options = dict(
+        objective_batch=objective, trials=200, batch_size=8, seed=seed,
+        polish="newton", compare_standard=True, verbose=False,
+    )
+    candidate = thick_sample_fit.fit_sample_search(None, **options)
+    monkeypatch.setattr(thick_sample_fit, "_make_sampler", optuna.samplers.TPESampler)
+    reference = thick_sample_fit.fit_sample_search(None, **options)
+    candidate.pop("timings")
+    reference.pop("timings")
+    assert candidate == reference
+
+
 def test_joint_search_rejects_zero_signal():
     """No model agreement cannot be reported as a successful tilt estimate."""
     import pytest
@@ -123,3 +145,44 @@ def test_search_with_no_trials_polishes_from_the_given_start(monkeypatch):
     assert fit["gain"] is None and fit["trials"] == 0
     assert sum(calls) < 200       # fewer evaluations than the search it replaces has trials
 
+
+
+def test_fixed_optics_newton_recovers_conditional_maximum_without_optical_evaluations():
+    """A coupled optimum moves when optics are fixed; every queried row keeps them."""
+    fixed = MAXIMUM[:3] + np.array([3.0, 2.0, 0.05])
+    target = np.array([1.2, -2.4, 147.0])
+    calls = []
+
+    def objective(rows):
+        calls.append(len(rows))
+        np.testing.assert_array_equal(rows[:, :3], np.broadcast_to(fixed, rows[:, :3].shape))
+        delta = (rows[:, 3:] - target) / np.array([2.0, 2.0, 20.0])
+        return np.exp(-0.5 * np.sum(delta**2, axis=1))
+
+    lower, upper = _box()
+    start = np.r_[fixed, target + [0.4, -0.3, 12.0]]
+    result = thick_sample_fit.newton_polish(
+        [start], objective, lower, upper, 200.0, fixed_aberrations=fixed,
+    )[0]
+    np.testing.assert_array_equal(result.x[:3], fixed)
+    np.testing.assert_allclose(result.x[3:], target, atol=0.01, rtol=0)
+    assert calls[0] == 10  # Three-dimensional Hessian, not six optical/sample variables.
+
+
+def test_fixed_optics_coarse_search_and_warm_refinement_keep_same_calibration():
+    fixed = dict(zip(thick_sample_fit.PARAMETERS[:3], MAXIMUM[:3]))
+    target = MAXIMUM[3:]
+
+    def objective(rows):
+        np.testing.assert_array_equal(rows[:, :3], np.broadcast_to(MAXIMUM[:3], rows[:, :3].shape))
+        return np.exp(-np.sum(((rows[:, 3:] - target) / [8, 8, 100]) ** 2, axis=1))
+
+    for trials in (0, 16):
+        result = thick_sample_fit.fit_sample_search(
+            lambda *args: None, objective_batch=objective, trials=trials,
+            start=MAXIMUM + [0, 0, 0, .2, -.2, 10],
+            fixed_aberrations=fixed, polish='newton', compare_standard=False,
+            seed=7, verbose=False,
+        )
+        assert {key: result[key] for key in fixed} == fixed
+        assert result['fit'] > .99999

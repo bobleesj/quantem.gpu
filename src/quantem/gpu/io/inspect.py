@@ -16,6 +16,7 @@ from quantem.gpu.formats.prepared_stack import prepared_stack_metadata
 from quantem.gpu.formats.qem.metadata import effective_metadata, maped_records
 from quantem.gpu.formats.qem.snapshot import decode_valid, is_qem_file, read_envelope
 from quantem.gpu.io.digitalmicrograph import NoDiffractionImage, read_dm_source
+from quantem.gpu.io.metadata_display import calibration_rows
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.resident.cuda.paired import QUERY_ABI, _read_header
 
@@ -58,7 +59,9 @@ class Inspection:
             'Header status': self.reason.replace('_', ' '),
             'Next step': self.action,
         }
-        return pd.DataFrame({'Value': rows}).rename_axis('Property')
+        table = {name: {'Value': value} for name, value in rows.items()}
+        table.update(calibration_rows(self.metadata))
+        return pd.DataFrame.from_dict(table, orient='index').fillna('').rename_axis('Property')
 
     def __repr__(self):
         return self._summary().to_string()

@@ -138,3 +138,35 @@ def test_name_is_the_recorded_name_else_the_source_file():
     assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan.npy"}).name == "scan"
     assert Dataset4dstemGPU(None, {**shape, "source_path": "/data/scan.npy", "name": "gold"}).name == "gold"
     assert Dataset4dstemGPU(None, shape).name == ""
+
+
+def test_metadata_table_preserves_saved_overrides_and_missing_rotation():
+    """Review calibration before reconstruction without reading detector counts."""
+    import copy
+
+    shape = (16, 24, 128, 128)
+    recorded = {"scan_sampling_A": [0.4, 0.6], "voltage_kV": 200.0}
+    scientific = acquisition_metadata(shape, recorded)
+    scientific["calibration_overrides"] = {
+        "electron_source/accelerating_voltage": {
+            "value": 300.0, "unit": "kV", "provenance": "user_override",
+            "evidence": "calibration measurement",
+        },
+    }
+    metadata = {
+        **effective_metadata(recorded, scientific), "scientific_metadata": scientific,
+        "working_shape": shape, "dtype": "uint16", "source_path": "<script>scan</script>",
+    }
+    original = copy.deepcopy(metadata)
+    # No array owner is needed to review stored metadata.
+    data = Dataset4dstemGPU(None, metadata)
+    table = data.metadata_table()
+    assert table.loc["Accelerating voltage", "Value"] == 300.0
+    assert table.loc["Accelerating voltage", "Metadata"] == "Saved override"
+    assert table.loc["Detector step (row, col)", "Value"] == "Not recorded"
+    assert table.loc["Scan-detector rotation", "Value"] == "Not recorded"
+    assert "<script>" not in data._repr_html_()
+    assert "Saved override" in repr(data)
+    assert metadata == original
+    metadata["scan_detector_rotation_deg"] = 0.0
+    assert data.metadata_table().loc["Scan-detector rotation", "Value"] == 0.0

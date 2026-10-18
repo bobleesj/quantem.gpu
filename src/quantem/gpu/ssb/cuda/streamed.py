@@ -83,7 +83,7 @@ class StreamedSSB:
         self.transposed = bool(detector_transposed)
         mean = self.mean_pattern.T if self.transposed else self.mean_pattern
         compute_center = self.center[::-1] if self.transposed else self.center
-        self.rows, self.cols, _ = select_bright_field(
+        self.rows, self.cols, _, _ = select_bright_field(
             cp.asarray(mean, dtype=cp.float32)[None, None], threshold,
             self.radius, compute_center,
         )

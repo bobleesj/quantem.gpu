@@ -17,8 +17,8 @@ def select_bright_field(
     threshold: float,
     bright_field_radius_px: float | None = None,
     bright_field_center_px: tuple[float, float] | None = None,
-) -> tuple[cp.ndarray, cp.ndarray, tuple[float, float]]:
-    """Return the (row, col) detector indices of the bright-field pixels and the disk centre.
+) -> tuple[cp.ndarray, cp.ndarray, tuple[float, float], float]:
+    """Return the detector indices, disk centre and exact selection radius.
 
     Candidates are the pixels of the mean diffraction pattern above ``threshold`` x max. Without ``bright_field_radius_px`` the
     disk is the equal-area disk of the pixels above mean + std, around their unweighted centroid (the rule of
@@ -105,7 +105,7 @@ def select_bright_field(
             f"No bright-field pixels within bright_field_radius_px={selected_radius}. "
             "Increase bright_field_radius_px or check detector geometry."
         )
-    return bf_inds_row, bf_inds_col, (center_row, center_col)
+    return bf_inds_row, bf_inds_col, (center_row, center_col), selected_radius
 
 
 def bright_field_spectra(

@@ -25,6 +25,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from quantem.gpu.ssb._execution import checkpoint
 from quantem.gpu.ssb.mps.hardware import require_mlx
 from quantem.gpu.ssb.mps.kernels.phase_sums import phase_sums_from_complex
 from quantem.gpu.ssb.mps.prepared import (
@@ -41,6 +42,15 @@ _FUSED_SHAPES = ((128, 128), (256, 256), (512, 512), (1024, 1024))
 _CHUNK_BYTES = 256 << 20
 _LIVE_PLANES = 6
 THICK_FIT_MAX_BATCH = 8
+# Keep search proposals in groups of eight. Smaller execution tiles reduce
+# register pressure without changing proposal order or BF reduction order.
+_FIT_DISPATCH_BATCH = 4
+# Small scans benefit from scheduling Newton's independent candidate tiles
+# together. Larger scans already supply enough work in each execution tile.
+_FIT_PARALLEL_SHAPES = ((128, 128), (256, 256))
+# Bound queued partial reductions while letting independent Metal tiles run
+# without a CPU readback between every four candidates.
+_FIT_PENDING_BYTES = 64 << 20
 _K_CHUNK = 256      # bright-field pixels summed per thread; the partial sums over chunks are reduced afterwards
 
 
@@ -96,6 +106,7 @@ def reconstruct_thick_reference(
     storage_bf = int(prepared.g_qk.shape[0])
     chunk = _chunk_bf(prepared)
     for start in range(0, storage_bf, chunk):
+        checkpoint()
         stop = min(storage_bf, start + chunk)
         projected_real, projected_imag, weight2 = _chunk_terms(prepared, start, stop, params)
         # phase-only correction G conj(gamma) / |gamma|, same floor as the standard kernels
@@ -156,8 +167,11 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
     """``thick_fit`` for many parameter sets at once with the fused Metal kernel (fast path used by the fit search).
 
     ``params``: (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness), engine units. Same value as
-    ``thick_fit`` row by row (rel ~1e-6); G is read once per group of ``THICK_FIT_MAX_BATCH`` rows, only at the band's q on
+    ``thick_fit`` row by row (rel ~1e-6); G is read once per execution tile, only at the band's q on
     the stored half-plane, and (k, q) pairs with no double overlap are skipped.
+
+    Independent Newton tiles run together for small scans. The search proposal
+    schedule, per-thread accumulation and final reductions remain unchanged.
     """
     mx = prepared.mx
     params = np.atleast_2d(np.asarray(params, dtype=np.float64))
@@ -170,10 +184,20 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
     scalars = mx.array([prepared.wavelength, prepared.semiangle_rad, prepared.ang_y_rad, prepared.ang_x_rad, prepared.factor],
                        dtype=mx.float32)
     kernel = _thick_fit_batch_kernel()
+    execution_batch = _FIT_DISPATCH_BATCH
+    if tuple(prepared.scan_shape) in _FIT_PARALLEL_SHAPES and len(params) > THICK_FIT_MAX_BATCH:
+        bytes_per_candidate = (k_chunks + 1) * n_band * 3 * 4
+        execution_batch = max(
+            _FIT_DISPATCH_BATCH,
+            (_FIT_PENDING_BYTES // bytes_per_candidate // _FIT_DISPATCH_BATCH) * _FIT_DISPATCH_BATCH,
+        )
     out = np.empty(len(params))
-    for start in range(0, len(params), THICK_FIT_MAX_BATCH):
-        rows = params[start:start + THICK_FIT_MAX_BATCH]
+    pending = []
+    pending_bytes = 0
+    for start in range(0, len(params), execution_batch):
+        rows = params[start:start + execution_batch]
         batch_size = len(rows)
+        tile_size = min(_FIT_DISPATCH_BATCH, batch_size)
         trial = np.stack([rows[:, 0], rows[:, 1], np.cos(2 * rows[:, 2]), np.sin(2 * rows[:, 2]), rows[:, 5],
                           rows[:, 3] * 1e-3, rows[:, 4] * 1e-3], axis=1).astype(np.float32)
         trial_mx = mx.array(trial.ravel())
@@ -190,19 +214,33 @@ def thick_fit_batch(prepared: PreparedMpsSSB, params, band_inv_A: tuple[float, f
             inputs=[g, flat, band_qx, band_qy, prepared.kx, prepared.ky,
                     trial_mx, scalars, probe_geometry, probe_chi],
             template=[
-                ("B", batch_size), ("N_BAND", n_band), ("NUM_BF", storage_bf), ("PLANE", plane), ("K_CHUNK", _K_CHUNK),
+                ("B", tile_size), ("TOTAL", batch_size), ("N_BAND", n_band),
+                ("NUM_BF", storage_bf), ("PLANE", plane), ("K_CHUNK", _K_CHUNK),
             ],
-            grid=(n_band, k_chunks, 1),
-            threadgroup=(256, 1, 1),
+            grid=(n_band, k_chunks, (batch_size + tile_size - 1) // tile_size),
+            threadgroup=(64, 1, 1),
             output_shapes=[(k_chunks, batch_size, n_band)] * 3,
             output_dtypes=[mx.float32] * 3,
         )
         sums = mx.stack([mx.sum(numer_real, axis=0), mx.sum(numer_imag, axis=0), mx.sum(denom, axis=0)])
-        sums = np.asarray(sums).astype(np.float64)
-        den = sums[2]
-        ok = den > 0
-        power = np.where(ok, (sums[0] ** 2 + sums[1] ** 2) / np.where(ok, den, 1.0), 0.0)
-        out[start:start + batch_size] = (weight[None] * power).sum(axis=1)
+        pending.append((start, batch_size, sums))
+        pending_bytes += (k_chunks + 1) * batch_size * n_band * 3 * 4
+        if (
+            execution_batch > _FIT_DISPATCH_BATCH
+            or pending_bytes >= _FIT_PENDING_BYTES
+            or start + batch_size == len(params)
+        ):
+            mx.eval(*(item[2] for item in pending))
+            for offset, count, partials in pending:
+                # Keep the existing float32 BF reduction and float64 band sum
+                # in exactly the same order; only dispatch scheduling changes.
+                values = np.asarray(partials).astype(np.float64)
+                den = values[2]
+                ok = den > 0
+                power = np.where(ok, (values[0] ** 2 + values[1] ** 2) / np.where(ok, den, 1.0), 0.0)
+                out[offset:offset + count] = (weight[None] * power).sum(axis=1)
+            pending.clear()
+            pending_bytes = 0
     return out
 
 
@@ -335,6 +373,7 @@ def _trial_probe_kernel():
 _THICK_FIT_BATCH_SOURCE = """
     uint q = thread_position_in_grid.x;
     uint chunk = thread_position_in_grid.y;
+    uint base = thread_position_in_grid.z * B;
     if (q >= N_BAND) return;
     float wl = scalars[0], semiangle = scalars[1], ang_y = scalars[2], ang_x = scalars[3], factor = scalars[4];
     float qx = band_qx[q], qy = band_qy[q];
@@ -355,20 +394,27 @@ _THICK_FIT_BATCH_SOURCE = """
         auto g = G[(size_t)k * (size_t)PLANE + (size_t)off];
         float gre = g.real, gim = g.imag;
         for (int b = 0; b < B; ++b) {
-            float C10 = trial[b * 7 + 0], C12 = trial[b * 7 + 1], c2 = trial[b * 7 + 2], s2 = trial[b * 7 + 3];
-            float t = trial[b * 7 + 4], thr = trial[b * 7 + 5], thc = trial[b * 7 + 6];
-            float chi_k = probe_chi[k * B + b];
-            float chi_m = factor * gm.x * (C12 * (gm.y * c2 + gm.z * s2) + C10);
-            float chi_p = factor * gp.x * (C12 * (gp.y * c2 + gp.z * s2) + C10);
+            if (base + b >= TOTAL) break;
+            float C10 = trial[(base + b) * 7 + 0], C12 = trial[(base + b) * 7 + 1];
+            float c2 = trial[(base + b) * 7 + 2], s2 = trial[(base + b) * 7 + 3];
+            float t = trial[(base + b) * 7 + 4], thr = trial[(base + b) * 7 + 5], thc = trial[(base + b) * 7 + 6];
+            float chi_k = probe_chi[k * TOTAL + base + b];
             float shift = 6.283185307179586f * (qx * thr + qy * thc);
-            float w1 = tf_sinc(0.5f * t * (-factor * (gm.x - gk.x) - shift));
-            float w2 = tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift));
-            // chi reaches hundreds of rad at large defocus: precise range reduction keeps the phase differences exact
-            float d1 = chi_m - chi_k, d2 = chi_p - chi_k;
-            float c1, cp;
-            float s1 = metal::precise::sincos(d1, c1);
-            float sp = metal::precise::sincos(d2, cp);
-            float b1 = w1 * a1, b2 = w2 * a2;
+            // A zero aperture contributes exactly zero. Retain precise range
+            // reduction for each active side, including soft aperture edges.
+            float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
+            if (a1 != 0.0f) {
+                float chi_m = factor * gm.x * (C12 * (gm.y * c2 + gm.z * s2) + C10);
+                float w1 = tf_sinc(0.5f * t * (-factor * (gm.x - gk.x) - shift));
+                s1 = metal::precise::sincos(chi_m - chi_k, c1);
+                b1 = w1 * a1;
+            }
+            if (a2 != 0.0f) {
+                float chi_p = factor * gp.x * (C12 * (gp.y * c2 + gp.z * s2) + C10);
+                float w2 = tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift));
+                sp = metal::precise::sincos(chi_p - chi_k, cp);
+                b2 = w2 * a2;
+            }
             float gr = b1 * c1 - b2 * cp;
             float gi = -b1 * s1 - b2 * sp;
             nr[b] += gre * gr + gim * gi;        // G conj(gamma)
@@ -377,7 +423,8 @@ _THICK_FIT_BATCH_SOURCE = """
         }
     }
     for (int b = 0; b < B; ++b) {
-        size_t o = ((size_t)chunk * B + b) * N_BAND + q;
+        if (base + b >= TOTAL) break;
+        size_t o = ((size_t)chunk * TOTAL + base + b) * N_BAND + q;
         numer_real[o] = nr[b];
         numer_imag[o] = ni[b];
         denom[o] = dd[b];
@@ -389,7 +436,10 @@ _THICK_FIT_BATCH_SOURCE = """
 def _thick_fit_batch_kernel():
     """Metal kernel: per band q (one thread) and chunk of ``_K_CHUNK`` BF pixels, the partial sums of G conj(gamma) and
     |gamma|^2 for up to ``THICK_FIT_MAX_BATCH`` parameter sets. Mirrors CUDA ``thick_fit_batch_kernel``; the chunk partials
-    are written out and summed afterwards instead of atomically added, so the result is deterministic."""
+    are written out and summed afterwards instead of atomically added, so the result is deterministic.
+    Grid z schedules independent B-candidate tiles within the TOTAL candidates;
+    the per-thread arrays retain their small execution-tile size.
+    """
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_thick_fit_batch",

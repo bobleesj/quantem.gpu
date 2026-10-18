@@ -206,6 +206,8 @@ def _phase_cols512_radix8_batch_kernel(
     storage_num_bf: int | None = None,
     bf_offset: int = 0,
     bf_ranges: tuple[tuple[int, int], ...] | None = None,
+    continuation: bool = False,
+    finalize: bool = True,
 ):
     """Build the 64-thread radix-8 exact phase/loss column kernel."""
     mx = require_mlx()
@@ -344,6 +346,28 @@ def _phase_cols512_radix8_batch_kernel(
             s[base2+32u]=r4; s[base2+40u]=r5; s[base2+48u]=r6; s[base2+56u]=r7;
             threadgroup_barrier(mem_flags::mem_threadgroup);
         """
+    initial_accumulators = """
+        float sum0=0.0f, sum1=0.0f, sum2=0.0f, sum3=0.0f;
+        float sum4=0.0f, sum5=0.0f, sum6=0.0f, sum7=0.0f;
+        float sq0=0.0f, sq1=0.0f, sq2=0.0f, sq3=0.0f;
+        float sq4=0.0f, sq5=0.0f, sq6=0.0f, sq7=0.0f;
+    """
+    if continuation:
+        initial_accumulators = "size_t seed=((size_t)cand*GROUPS+group)*512u*512u+col;\n"
+        initial_accumulators += "\n".join(
+            f"float sum{i}=previous_sum[seed+(tid+{i * 64}u)*512u]; "
+            f"float sq{i}=previous_squares[seed+(tid+{i * 64}u)*512u];"
+            for i in range(8)
+        )
+    squares_output = """
+        sumsq_tile[(((size_t)cand*(size_t)GROUPS+(size_t)group)*512u+(size_t)col)*64u+tid]
+            =sq0+sq1+sq2+sq3+sq4+sq5+sq6+sq7;
+    """
+    if continuation and not finalize:
+        squares_output = "\n".join(
+            f"sumsq_tile[out_base+(tid+{i * 64}u)*512u]=sq{i};"
+            for i in range(8)
+        )
     source = f"""
         #define CADD(a, b) float2((a).x + (b).x, (a).y + (b).y)
         #define CSUB(a, b) float2((a).x - (b).x, (a).y - (b).y)
@@ -386,10 +410,7 @@ def _phase_cols512_radix8_batch_kernel(
 
         threadgroup float2 shared_cols[8][512];
         threadgroup float2* s = &shared_cols[local_col][0];
-        float sum0=0.0f, sum1=0.0f, sum2=0.0f, sum3=0.0f;
-        float sum4=0.0f, sum5=0.0f, sum6=0.0f, sum7=0.0f;
-        float sq0=0.0f, sq1=0.0f, sq2=0.0f, sq3=0.0f;
-        float sq4=0.0f, sq5=0.0f, sq6=0.0f, sq7=0.0f;
+        {initial_accumulators}
         uint logical = tid * 8u;
         uint src0=OCTREV512(logical), src1=OCTREV512(logical+1u);
         uint src2=OCTREV512(logical+2u), src3=OCTREV512(logical+3u);
@@ -430,8 +451,7 @@ def _phase_cols512_radix8_batch_kernel(
         sum_out[out_base+(size_t)(tid+320u)*512u]=sum5;
         sum_out[out_base+(size_t)(tid+384u)*512u]=sum6;
         sum_out[out_base+(size_t)(tid+448u)*512u]=sum7;
-        sumsq_tile[(((size_t)cand*(size_t)GROUPS+(size_t)group)*512u+(size_t)col)*64u+tid]
-            =sq0+sq1+sq2+sq3+sq4+sq5+sq6+sq7;
+        {squares_output}
 
         #undef CADD
         #undef CSUB
@@ -448,9 +468,10 @@ def _phase_cols512_radix8_batch_kernel(
         name=(
             f"ssb_phase_cols512_radix8_batch_n{batch}_bf{num_bright_field_pixels}_"
             f"k{k_bf}_t{int(tiled_input)}_s{storage_num_bf}_o{bf_offset}"
-            f"_x{int(simd_radix8)}{range_name}"
+            f"_x{int(simd_radix8)}{range_name}_c{int(continuation)}_f{int(finalize)}"
         ),
-        input_names=["row_ifft", "active_bf", "twiddle"],
+        input_names=["row_ifft", "active_bf", "twiddle"]
+        + (["previous_sum", "previous_squares"] if continuation else []),
         output_names=["sum_out", "sumsq_tile"],
         source=source,
         header=twiddle_512_metal_header(),
@@ -504,9 +525,37 @@ def phase_cols512_scalar_loss_batch_from_row_ifft(
         output_shapes=[(batch, groups, 512, 512), (batch, groups, 512, 64)],
         output_dtypes=[mx.float32, mx.float32],
     )
-    phase_sum = partial_sum[:, 0, :, :] if groups == 1 else mx.sum(partial_sum, axis=1)
+    return reduce_phase_cols512_loss(mx, partial_sum, partial_sumsq_tile)
+
+
+def reduce_phase_cols512_loss(mx, partial_sum, partial_sumsq_tile):
+    """Keep the original reduction after joining ordered diagnostic tiles."""
+    phase_sum = (
+        partial_sum[:, 0, :, :] if partial_sum.shape[1] == 1
+        else mx.sum(partial_sum, axis=1)
+    )
     phase_sumsq = mx.sum(mx.sum(mx.sum(partial_sumsq_tile, axis=3), axis=2), axis=1)
     return phase_sum, phase_sumsq
+
+
+def continue_phase_cols512_loss(
+    mx, row_ifft, active_bf, previous_sum, previous_squares, *, finalize,
+):
+    """Resume the same BF sums after a completed, interruptible FFT tile.
+
+    The eight per-thread square sums are stored independently until the final
+    tile. Summing them at an intermediate boundary would change roundoff.
+    """
+    count = int(row_ifft.shape[0])
+    kernel = _phase_cols512_radix8_batch_kernel(
+        1, count, count, True, continuation=True, finalize=finalize,
+    )
+    return kernel(
+        inputs=[row_ifft[None, ...], active_bf, twiddle_512(mx), previous_sum, previous_squares],
+        template=[], grid=(64, 512, 1), threadgroup=(64, 8, 1),
+        output_shapes=[(1, 1, 512, 512), (1, 1, 512, 64 if finalize else 512)],
+        output_dtypes=[mx.float32, mx.float32],
+    )
 
 
 def phase_cols512_pack_loss_batch_from_row_ifft(

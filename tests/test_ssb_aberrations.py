@@ -52,15 +52,11 @@ def test_higher_orders_are_named_keys_packed_in_krivanek_order():
 @pytest.mark.parametrize("compute_loss", [False, True])
 def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monkeypatch, compute_loss):
     """The session converts nm to Angstrom once, before the backend: for one public mapping CUDA and MPS are handed
-    the same 14 magnitudes in Angstrom and azimuths in radians (recorded at ``preview`` of a backend double).
-
-    MPS then reads slots 0 and 1 as its engine C10 and C12 (``_three_param_from_full``, its ``magnitudes_A``) and
-    refuses a nonzero higher order, so no nm value reaches an MPS kernel.
+    the same 14 magnitudes in Angstrom and azimuths in radians at the coherent backend boundary.
     """
     from types import SimpleNamespace
 
     from quantem.gpu.ssb import workflow
-    from quantem.gpu.ssb.mps.backend import MpsSSBBackend
 
     received = {}
 
@@ -68,7 +64,8 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
         def __init__(self, name):
             self.name = name
 
-        def preview(self, aberrations, *, compute_loss, higher_order_magnitudes, higher_order_angles):
+        def preview_upsampled(self, aberrations, *, compute_loss, higher_order_magnitudes=None, higher_order_angles=None, **kwargs):
+            assert kwargs["phase_estimator"] == "phase_of_mean"
             received[self.name] = (aberrations, higher_order_magnitudes, higher_order_angles)
             return np.zeros((2, 2), np.float32), 0.5 if compute_loss else None
 
@@ -94,13 +91,11 @@ def test_higher_orders_reach_cuda_and_mps_in_angstrom_from_one_public_input(monk
     # C10 -8 nm, C12 4 nm, C21 4 nm, C30 1000 nm as Angstrom in slots 0, 1, 2 and 4
     np.testing.assert_array_equal(mps_magnitudes[[0, 1, 2, 4]], np.float32([-80.0, 40.0, 40.0, 10000.0]))
     np.testing.assert_array_equal(mps_angles[[1, 2]], np.float32([math.radians(30.0)] * 2))
-    with pytest.raises(NotImplementedError, match="C10/C12/phi12 only"):
-        MpsSSBBackend._three_param_from_full(mps_magnitudes, mps_angles)
-
-    # a higher-order key at zero still takes the 14-slot path on MPS: its kernel coefficients are those Angstrom
+    # Zero higher-order magnitudes reuse the two-term kernels, including retained angles.
     session("mps").preview(PUBLIC | {"C21_nm": 0.0}, compute_loss=compute_loss)
-    _, magnitudes, angles = received["mps"]
-    assert MpsSSBBackend._three_param_from_full(magnitudes, angles) == (-80.0, 40.0, float(np.float32(math.radians(30.0))))
+    coefs, magnitudes, angles = received["mps"]
+    assert magnitudes is angles is None
+    assert coefs == {"C10": -80., "C12": 40., "phi12": float(np.float32(math.radians(30.)))}
 
 
 def test_search_ranges_reach_the_engines_in_angstrom_under_angstrom_names():

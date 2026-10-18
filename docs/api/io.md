@@ -19,6 +19,22 @@ For ordinary work, load once and read metadata from the returned acquisition.
 `inspect` is optional: use it for header-only checks, acquisition-readiness
 polling, or metadata access without an accelerator.
 
+Leave the loaded dataset as the last expression in a notebook cell to show
+its calibration table before starting SSB, ptychography, or another algorithm:
+
+```python
+data = io.load("acquisition.qem")
+data
+```
+
+`data.metadata_table()` returns the same table as a pandas DataFrame. It shows
+the recorded geometry, physical values and units, saved calibration overrides,
+and pixel-correction metadata without decoding detector values. Missing
+rotation is shown as **Not recorded**, not as a measured zero. Complete source
+records remain available in `data.metadata`. Header-only `io.inspect(path)`
+shows the same calibration fields before loading; header inspection does not
+authenticate the detector payload.
+
 Metadata parsing may run on the host, but detector decoding and compression do
 not silently fall back to CPU. `backend="auto"` selects CUDA or MPS and raises
 with a corrective message when neither accelerated backend is available. The
@@ -705,3 +721,16 @@ an additional background subtraction. Original XML is retained; storage footer
 words are not detector measurements. See [QEM interoperability](qem-interoperability.md)
 for independent validation and the [metadata mapping](qem-metadata-mapping.md) for
 which source fields are normalized or merely retained.
+
+Portable SSB export also accepts a `.qem` acquisition as its source. Its source
+identity hashes the validated QEM bytes and is distinct from the original HDF5
+identity. Re-encoding the acquisition changes that identity; the exported phase
+values are unchanged. Keep the conversion record when relating the QEM working
+counts to an archived raw acquisition.
+
+The loaded acquisition's metadata table also separates **QEM file size** on
+disk, **ANS resident size** (or **Resident size** for other representations),
+and **Uncompressed size** from shape and dtype. All three use decimal GB
+(1 GB = 1,000,000,000 bytes). Resident storage includes the encoded representation
+and its indexes, not temporary SSB workspaces or total device memory. Inspecting
+these sizes does not decode the acquisition.

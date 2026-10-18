@@ -84,9 +84,10 @@ def test_joint_fit_rejects_scan_with_no_fitting_frequencies():
         ssb.find_aberrations(tilt=True, num_trials=8, verbose=False)
 
 
-def test_batch_fit_matches_reference_fit():
+def test_batch_fit_matches_reference_fit(monkeypatch):
     """The fused Metal batch objective (half-plane band, shared geometry, skipped non-overlap pairs) equals ``thick_fit``."""
     _require_mps()
+    from quantem.gpu.ssb.mps import thick_sample
     from quantem.gpu.ssb.mps.thick_sample import thick_fit, thick_fit_batch
 
     ssb = _poisson_disk_session()
@@ -96,9 +97,35 @@ def test_batch_fit_matches_reference_fit():
     rng = np.random.default_rng(3)
     rows = np.column_stack([rng.uniform(-300, 300, 11), rng.uniform(0, 200, 11), rng.uniform(-1.5, 1.5, 11),
                             rng.uniform(-25, 25, 11), rng.uniform(-25, 25, 11), rng.uniform(20, 600, 11)])
-    rows[0, 5], rows[1, 5] = 0.0, 400.0      # standard SSB and a thick crystal; 11 rows = one full batch of 8 plus 3
+    rows[0, 5], rows[1, 5] = 0.0, 400.0      # zero-depth control, thick crystal, and a partial execution tile
     reference = np.array([thick_fit(prepared, C10=r[0], C12=r[1], phi12=r[2], sample_tilt_mrad=(r[3], r[4]), thickness=r[5]) for r in rows])
     np.testing.assert_allclose(thick_fit_batch(prepared, rows), reference, rtol=1e-4)
+    # Diagnostic batches preserve the existing fused kernel's exact values.
+    np.testing.assert_array_equal(backend.sample_agreement(rows, (0.2, 0.9)), thick_fit_batch(prepared, rows))
+    # The former eight-candidate execution and the four-candidate execution
+    # must give the same values, including both correction models and tails.
+    current = thick_fit_batch(prepared, rows)
+    # Reading each execution tile immediately is the previous scheduling
+    # policy. Queuing those tiles must preserve every objective bit.
+    monkeypatch.setattr(thick_sample, "_FIT_PENDING_BYTES", 0)
+    np.testing.assert_array_equal(thick_fit_batch(prepared, rows), current)
+    monkeypatch.setattr(thick_sample, "_FIT_DISPATCH_BATCH", 8)
+    np.testing.assert_array_equal(thick_fit_batch(prepared, rows), current)
+    # Evaluate both sides even outside their aperture, as in the original
+    # fused objective. Skipping zero-weight terms must preserve every bit.
+    mx = prepared.mx
+    unpruned = mx.fast.metal_kernel(
+        name="ssb_thick_fit_unpruned_test",
+        input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky",
+                     "trial", "scalars", "probe_geometry", "probe_chi"],
+        output_names=["numer_real", "numer_imag", "denom"],
+        source=thick_sample._THICK_FIT_BATCH_SOURCE.replace(
+            "if (a1 != 0.0f)", "if (true)"
+        ).replace("if (a2 != 0.0f)", "if (true)"),
+        header=thick_sample._THICK_FIT_BATCH_HEADER,
+    )
+    monkeypatch.setattr(thick_sample, "_thick_fit_batch_kernel", lambda: unpruned)
+    np.testing.assert_array_equal(thick_fit_batch(prepared, rows), current)
 
 
 def test_zero_depth_weighting_is_standard_ssb():
@@ -111,6 +138,36 @@ def test_zero_depth_weighting_is_standard_ssb():
         thick, thick_loss = ssb.preview(aberrations, sample_tilt_mrad=(5.0, -3.0), depth_spread_nm=1e-9)
         np.testing.assert_allclose(thick, standard, atol=5e-6)
         assert abs(thick_loss - standard_loss) <= 1e-5 * abs(standard_loss)
+
+
+@pytest.mark.parametrize("batch_size", [28, 39, 84])
+def test_newton_candidate_tiles_preserve_objectives(monkeypatch, batch_size):
+    """Parallel Newton tiles preserve serial values, tails and bounded batches."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import thick_sample
+
+    rng = np.random.default_rng(47)
+    rows = rng.uniform(
+        [-300, 0, -1.5, -25, -25, 0],
+        [300, 200, 1.5, 25, 25, 600],
+        (batch_size, 6),
+    )
+    rows[0, 5] = 0.0
+    with _poisson_disk_session() as ssb:
+        backend = ssb._backend()
+        backend.cache_rotation(0.0)
+        prepared = backend._prepared
+        with monkeypatch.context() as serial:
+            serial.setattr(thick_sample, "_FIT_PARALLEL_SHAPES", ())
+            expected = thick_sample.thick_fit_batch(prepared, rows)
+        np.testing.assert_array_equal(thick_sample.thick_fit_batch(prepared, rows), expected)
+
+        # Force multiple dispatches and a partial last tile without changing
+        # either BF accumulation order or the complete candidate sequence.
+        n_band = len(thick_sample._band(prepared, (0.2, 0.9))[3])
+        chunks = (int(prepared.g_qk.shape[0]) + thick_sample._K_CHUNK - 1) // thick_sample._K_CHUNK
+        monkeypatch.setattr(thick_sample, "_FIT_PENDING_BYTES", (chunks + 1) * n_band * 3 * 4 * 8)
+        np.testing.assert_array_equal(thick_sample.thick_fit_batch(prepared, rows), expected)
 
 
 def test_fused_thick_preview_matches_reference_model():
