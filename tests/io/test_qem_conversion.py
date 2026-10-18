@@ -40,9 +40,9 @@ def test_destination_sits_beside_the_master_or_mirrors_the_collection(tmp_path):
 
 
 def test_convert_refuses_without_writing(tmp_path):
-    real = _acquisition(tmp_path, "real", "float32")
+    real = _acquisition(tmp_path, "real", "complex64")
     result = convert.convert(real, tmp_path / "real.qem")
-    assert "float32" in result.skipped and not (tmp_path / "real.qem").exists()
+    assert "complex64" in result.skipped and not (tmp_path / "real.qem").exists()
 
     alone = tmp_path / "alone_master.h5"
     with h5py.File(alone, "w"):

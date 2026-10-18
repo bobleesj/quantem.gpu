@@ -223,7 +223,7 @@ def _build_products(
     the probe fit; one batch of exact binary-mask sums then gives, per scan
     position, the total and the four bands, and the session's centre of mass
     divides exact detector moments by the exact total. Flagged pixels are
-    zeroed at load (``io.load`` defaults to a local median), as screening
+    explicitly zeroed at load (``io.load`` itself preserves raw values), as screening
     products have always counted them.
     """
     from quantem.gpu import detector

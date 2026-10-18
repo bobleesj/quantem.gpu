@@ -1,0 +1,33 @@
+#include <metal_stdlib>
+using namespace metal;
+
+kernel void float64_display(
+    device const ulong *input [[buffer(0)]],
+    device uint *output [[buffer(1)]],
+    constant uint &count [[buffer(2)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    ulong word = input[index], fraction = word & ((1ul << 52) - 1ul);
+    uint sign = uint(word >> 32) & 0x80000000u;
+    uint encoded_exponent = uint((word >> 52) & 2047ul);
+    if (encoded_exponent == 2047u) {
+        output[index] = sign | 0x7f800000u | (fraction ? (uint(fraction >> 29) | 0x00400000u) : 0u);
+        return;
+    }
+    int exponent = int(encoded_exponent) - 1023;
+    if (exponent > 127) { output[index] = sign | 0x7f800000u; return; }
+    if (exponent < -150) { output[index] = sign; return; }
+    ulong significand = fraction | (1ul << 52);
+    uint shift = exponent < -126 ? uint(-exponent - 97) : 29u;
+    ulong rounded = significand >> shift;
+    ulong remainder = significand & ((1ul << shift) - 1ul);
+    ulong halfway = 1ul << (shift - 1u);
+    if (remainder > halfway || (remainder == halfway && (rounded & 1ul))) ++rounded;
+    if (exponent < -126) {
+        output[index] = sign | uint(rounded);
+    } else {
+        if (rounded == (1ul << 24)) { rounded >>= 1; ++exponent; }
+        output[index] = sign | (uint(exponent + 127) << 23) | (uint(rounded) & 0x007fffffu);
+    }
+}

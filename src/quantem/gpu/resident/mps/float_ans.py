@@ -70,9 +70,18 @@ def _encode_pattern_total(command, values, total, patterns: int, pixels: int, da
     encoder.endEncoding()
 
 
-def _kernels(lanes):
+def _kernels(lanes, float8_format=None):
     """Return the float bit-lane pipelines; the lane count is a compile-time constant of the source."""
-    source = _READER_SOURCE + f"\n#define FLOAT_LANES {lanes}u\n" + _FLOAT_SOURCE
+    conversion = ""
+    if float8_format is not None:
+        from quantem.gpu.resident.mps.float8 import SOURCE
+
+        conversion = SOURCE
+    source = (_READER_SOURCE + conversion
+              + f"\n#define FLOAT_LANES {lanes}u\n"
+              + f"#define FLOAT_WORDS {2 if float8_format is None else 1}u\n"
+              + f"#define FLOAT8_FORMAT {-1 if float8_format is None else float8_format}\n"
+              + _FLOAT_SOURCE)
     pipelines = metal_pipelines(source, _NAMES, fast_math=False)
     return [pipelines[name] for name in _NAMES]
 
@@ -105,10 +114,10 @@ class MPSFloatLanes(MPSStreamedCounts):
         self._dispatch_threads(encoder, lanes)
         encoder.endEncoding()
 
-    def float_detector(self, mask, background=None):
+    def float_detector(self, mask, background=None, *, float8_format=None):
         """Submit ordered selected decode/reduction pairs with one completion wait."""
         lanes = int(np.prod(self.shape[2:]))
-        entropy, reduce = _kernels(lanes)[2:]
+        entropy, reduce = _kernels(lanes, float8_format)[2:]
         output = torch.empty(self.shape[:2], dtype=torch.float32, device="mps")
         torch.mps.synchronize()
         target = tensor_buffer(output)
@@ -140,6 +149,8 @@ class MPSFloatLanes(MPSStreamedCounts):
                     [chunk.first, background is not None], np.uint32
                 ).tobytes()
                 encoder.setBytes_length_atIndex_(parameters, len(parameters), 7)
+                if float8_format is not None:
+                    encoder.setBuffer_offset_atIndex_(self._errors, 0, 8)
                 encoder.dispatchThreadgroups_threadsPerThreadgroup_(
                     self._metal.MTLSizeMake(chunk.scans, 1, 1),
                     self._metal.MTLSizeMake(128, 1, 1),

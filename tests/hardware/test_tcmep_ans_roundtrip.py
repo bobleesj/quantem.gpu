@@ -98,12 +98,13 @@ def test_published_acquisition_roundtrip(path, tmp_path, record_property):
         assert validate_qem(saved)["integrity"] == "verified"
         with io.load(saved, backend=backend, verbose=False) as restored:
             for row in range(rows):
-                actual = (
-                    restored.read(scan_region=(row, row + 1, 0, columns))
-                    .cpu()
-                    .numpy()
-                    .astype(data.dtype)
-                )
+                native = restored.read(scan_region=(row, row + 1, 0, columns), output="native")
+                try:
+                    actual = native.get()
+                finally:
+                    if hasattr(native, "release"):
+                        native.release()
+                assert actual.dtype == data.dtype
                 np.testing.assert_array_equal(
                     actual.view(f"u{data.dtype.itemsize}"),
                     expected_row(row).view(f"u{data.dtype.itemsize}"),

@@ -17,14 +17,17 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import torch
 
 from quantem.gpu.device.cuda_runtime import cuda_device_index
 from quantem.gpu.device.metal_runtime import shared_array
 from quantem.gpu.formats.hdf5.frames import detector_sources
+from quantem.gpu.formats.float8 import hdf5_dtype, is_float8
 from quantem.gpu.formats.qem import metadata as qem_metadata
-from quantem.gpu.formats.qem.snapshot import FLOAT_CODEC, INTEGER_CODEC
+from quantem.gpu.formats.qem.snapshot import BIT_CODEC, BIT_DTYPES, FLOAT_CODEC, INTEGER_CODEC, encode_valid
 from quantem.gpu.io.dataset import Dataset4dstemGPU, resident_metadata
 from quantem.gpu.resident import float_ans
+from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
 from quantem.gpu.resident.hot_pixels import hot_pixel_record
@@ -36,8 +39,20 @@ from quantem.gpu.resident.mps.spatial import build_index
 MAX_INGEST_BYTES = 32 << 20
 
 
-def read_frame_block(data, shape: tuple[int, ...], first: int, stop: int) -> np.ndarray:
+def read_frame_block(data, shape: tuple[int, ...], first: int, stop: int) -> np.ndarray | torch.Tensor:
     """Copy file-backed rows without reshaping a noncontiguous acquisition."""
+    if torch.is_tensor(data):
+        bits_t = data.detach().view(torch.uint8)
+        block_t = torch.empty(
+            (stop - first, *shape[2:]), dtype=torch.uint8, device=data.device
+        )
+        cursor = first
+        while cursor < stop:
+            row, column = divmod(cursor, shape[1])
+            count = min(shape[1] - column, stop - cursor)
+            block_t[cursor - first:cursor - first + count] = bits_t[row, column:column + count]
+            cursor += count
+        return block_t.view(data.dtype)
     if data.ndim == 3:
         return np.ascontiguousarray(data[first:stop])
     block = np.empty((stop - first, *shape[2:]), data.dtype)
@@ -54,143 +69,40 @@ def read_frame_block(data, shape: tuple[int, ...], first: int, stop: int) -> np.
 
 def load_array_resident(
     shape: tuple[int, ...],
-    dtype: np.dtype | str,
-    read_frames: Callable[[int, int], np.ndarray],
+    dtype: np.dtype | str | torch.dtype,
+    read_frames: Callable[[int, int], np.ndarray | torch.Tensor],
     metadata: dict,
     *,
     backend: str,
     device: int | str | None = None,
     pixel_mask: np.ndarray | None = None,
-    hot_pixel_correction: str = "median",
-    auto_narrow: bool = False,
+    hot_pixel_correction: str = "none",
     verbose: bool = False,
-    float_audit_blocks: Callable | None = None,
 ) -> Dataset4dstemGPU:
     """Encode bounded input windows; never allocate a dense acquisition."""
     started = time.perf_counter()
-    shape, dtype = tuple(shape), np.dtype(dtype)
-    source_dtype = dtype
+    shape = tuple(shape)
+    source_dtype = np.dtype(str(dtype).removeprefix("torch.")) if isinstance(dtype, torch.dtype) else np.dtype(dtype)
+    dtype = source_dtype.newbyteorder("=")
     peak_bytes = 0
-    exact_float_narrowing = dtype == np.dtype("float64")
-    if exact_float_narrowing:
-        if not auto_narrow:
-            raise NotImplementedError(
-                "float64 ANS ingestion requires auto_narrow=True and a complete "
-                "bitwise float32 round-trip audit; no rounding is permitted."
-            )
-        # Include both casts and the comparison mask in the scratch budget.
-        audit_frame_bytes = math.prod(shape[2:]) * 24
-        if audit_frame_bytes > MAX_INGEST_BYTES:
-            raise MemoryError("One audited detector frame exceeds the ingestion limit.")
-        audit_scans = min(512, MAX_INGEST_BYTES // audit_frame_bytes)
-        blocks = (
-            float_audit_blocks()
-            if float_audit_blocks is not None
-            else (
-                read_frames(first, min(first + audit_scans, math.prod(shape[:2])))
-                for first in range(0, math.prod(shape[:2]), audit_scans)
-            )
+    if dtype.name not in BIT_DTYPES:
+        raise NotImplementedError(
+            f"ANS supports real integer and floating dtypes through 64 bits; got {dtype}. "
+            "Keep the original source; no cast or upload occurred."
         )
-        verified_values = 0
-        for audit_block in blocks:
-            block = np.ascontiguousarray(audit_block)
-            if block.dtype != dtype or block.size * 24 > MAX_INGEST_BYTES:
-                raise ValueError(
-                    "Float audit block exceeds its dtype or scratch contract."
-                )
-            with np.errstate(over="ignore", invalid="ignore"):
-                restored = block.astype(np.float32).astype(np.float64)
-            if not np.array_equal(block.view(np.uint64), restored.view(np.uint64)):
-                raise NotImplementedError(
-                    "These float64 measurements are not exactly representable as "
-                    "float32. Keep the original; no rounding or GPU upload occurred."
-                )
-            peak_bytes = max(peak_bytes, block.size * 24)
-            verified_values += block.size
-            del audit_block, block, restored
-        if verified_values != math.prod(shape):
-            raise ValueError(
-                "Float audit did not cover every measurement; reopen the acquisition."
-            )
-        dtype = np.dtype("float32")
-        metadata = dict(
-            metadata,
-            exact_float_narrowing={
-                "method": "float64-float32-float64-bitwise",
-                "verified_values": math.prod(shape),
-            },
+    if is_float8(dtype) and hot_pixel_correction != "none":
+        raise ValueError(
+            "FP8 ingestion preserves original bits; use hot_pixel_correction='none'. "
+            "Recorded bad pixels are excluded from detector products."
         )
     correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
-    flagged = np.empty(0, np.intp) if pixel_mask is None else np.flatnonzero(np.asarray(pixel_mask).reshape(-1))
-
-    def clear_flagged(block) -> int:
-        """Store flagged-pixel values that no uint16 holds as 0, as the Arina loaders do.
-
-        uint32 detectors write 0xffffffff at every pixel their mask flags. A
-        requested correction replaces flagged pixels anyway, so all of them are
-        cleared before the range check; otherwise only values above 65535 are
-        stored as 0 and counted, and ``pixel_mask`` keeps their positions.
-        """
-        if not flagged.size:
-            return 0
-        pixels = block.reshape(len(block), -1)
-        if correction["applied"]:
-            pixels[:, flagged] = 0
-            return 0
-        kept = pixels[:, flagged]
-        markers = kept > 0xFFFF
-        pixels[:, flagged] = np.where(markers, 0, kept)
-        return int(np.count_nonzero(markers))
-
-    zeroed_markers = 0
-    if dtype.kind in "iu" and dtype.itemsize > 2:
-        if not auto_narrow:
-            raise NotImplementedError(
-                f"{dtype} ingestion requires an exact count-range audit. "
-                "Use auto_narrow=True; values outside uint16 remain unsupported."
-            )
-        frame_bytes = math.prod(shape[2:]) * dtype.itemsize
-        if frame_bytes > MAX_INGEST_BYTES:
-            raise MemoryError("One detector frame exceeds the 32 MiB ingestion limit.")
-        audit_scans = min(512, MAX_INGEST_BYTES // frame_bytes)
-        minimum, maximum = np.iinfo(dtype).max, np.iinfo(dtype).min
-        for first in range(0, math.prod(shape[:2]), audit_scans):
-            block = read_frames(first, min(first + audit_scans, math.prod(shape[:2])))
-            clear_flagged(block)
-            minimum = min(minimum, int(block.min()))
-            maximum = max(maximum, int(block.max()))
-            peak_bytes = max(peak_bytes, block.nbytes)
-            if minimum < 0 or maximum > 65535:
-                raise NotImplementedError(
-                    f"{dtype} counts span [{minimum}, {maximum}] and cannot be stored "
-                    "exactly as uint16. Keep the original; no clipping was performed."
-                )
-            del block
-        dtype = np.dtype("uint8" if maximum <= 255 else "uint16")
-        metadata = dict(metadata, count_range=dict(minimum=minimum, maximum=maximum))
     floating = dtype == np.dtype("float32")
-    if dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("float32")):
-        raise NotImplementedError(
-            f"Exact ANS ingestion supports uint8, uint16 and float32; got {dtype}. "
-            "Keep the original file; no precision conversion was performed."
-        )
-    if floating and pixel_mask is not None and np.any(pixel_mask):
-        raise NotImplementedError(
-            "Float ANS cannot yet retain detector masks; keep the original file."
-        )
-    frame_bytes = math.prod(shape[2:]) * source_dtype.itemsize
+    bit_lanes = dtype not in (np.dtype("uint8"), np.dtype("uint16"))
+    # The word codec uses two bytes even for signed 8-bit measurements.
+    frame_bytes = math.prod(shape[2:]) * max(2, dtype.itemsize)
     if frame_bytes > MAX_INGEST_BYTES:
         raise MemoryError("One detector frame exceeds the 32 MiB ingestion limit.")
-    staging_bytes = frame_bytes
-    if source_dtype != dtype:
-        staging_bytes += math.prod(shape[2:]) * dtype.itemsize
-    if exact_float_narrowing:
-        staging_bytes = math.prod(shape[2:]) * 24
-    if staging_bytes > MAX_INGEST_BYTES:
-        raise MemoryError(
-            "One detector frame and its exact conversion exceed the 32 MiB ingestion limit."
-        )
-    block_scans = min(512, MAX_INGEST_BYTES // staging_bytes)
+    block_scans = min(512, MAX_INGEST_BYTES // frame_bytes)
     valid = np.ones(shape[2:], bool)
     if pixel_mask is not None and not correction["applied"]:
         valid &= np.asarray(pixel_mask) == 0
@@ -209,92 +121,61 @@ def load_array_resident(
     logical = hashlib.sha256()
     with context:
         try:
-            if floating:
-                scientific = qem_metadata.acquisition_metadata(shape, metadata)
-                description = dict(metadata.get("qem_empad") or {})
-                description.setdefault("format_identifier", "float32")
-                description.setdefault("format_name", "Float32")
-                description.setdefault(
-                    "microscope_metadata",
-                    {
-                        str(key): str(value)
-                        for key, value in scientific["source_metadata"].items()
-                    },
-                )
-                header = dict(
-                    container="quantem.qem",
-                    container_version=1,
-                    version=1,
-                    profile=FLOAT_CODEC,
-                    codec=FLOAT_CODEC,
-                    shape=list(shape),
-                    dtype=dtype.name,
-                    metadata=qem_metadata.retained_metadata(metadata),
-                    scientific_metadata=scientific,
-                    empad=description,
-                )
-                source = float_ans.FloatANSResident(header, backend, device)
+            if bit_lanes:
+                source = bit_resident(shape, dtype, metadata, valid, backend, device)
                 resident = source._lanes
             elif backend == "cuda":
                 source = resident = StreamedCounts(shape, dtype, valid)
-                corrector = CUDAHotPixelCorrector(pixel_mask, hot_pixel_correction)
             else:
                 source = resident = MPSStreamedCounts(shape, dtype, valid)
-                corrector = MPSHotPixelCorrector(pixel_mask, hot_pixel_correction)
+            corrector_type = CUDAHotPixelCorrector if backend == "cuda" else MPSHotPixelCorrector
+            corrector = corrector_type(pixel_mask, hot_pixel_correction)
 
             for first in range(0, math.prod(shape[:2]), block_scans):
                 stop = min(first + block_scans, math.prod(shape[:2]))
                 block = read_frames(first, stop)
+                tensor_input = torch.is_tensor(block)
+                block_dtype = np.dtype(str(block.dtype).removeprefix("torch.")) if tensor_input else block.dtype
                 if (
                     block.shape != (stop - first, *shape[2:])
-                    or block.dtype != source_dtype
+                    or block_dtype != source_dtype
                 ):
                     raise ValueError(
                         "The source changed shape or dtype while loading; reopen it."
                     )
-                block = np.ascontiguousarray(block)
-                peak_bytes = max(peak_bytes, block.nbytes)
-                if source_dtype != dtype:
-                    if source_dtype.kind in "iu":
-                        zeroed_markers += clear_flagged(block)
-                    # Recheck each window in case the input changes after the audit.
-                    narrowed = block.astype(dtype)
-                    if exact_float_narrowing:
-                        restored = narrowed.astype(np.float64)
-                        if not np.array_equal(
-                            block.view(np.uint64), restored.view(np.uint64)
-                        ):
-                            raise ValueError(
-                                "Float values changed after the exactness audit; reopen the acquisition."
-                            )
-                        peak_bytes = max(peak_bytes, block.size * 24)
-                        del restored
-                    elif block.min() < 0 or block.max() > np.iinfo(dtype).max:
-                        raise ValueError(
-                            "Counts changed after the range audit; reopen the acquisition."
-                        )
-                    peak_bytes = max(peak_bytes, block.nbytes + narrowed.nbytes)
-                    block = narrowed
-                    del narrowed
+                if not tensor_input:
+                    block = np.ascontiguousarray(block)
+                    if not block.dtype.isnative:
+                        block = block.byteswap().view(dtype)
+                peak_bytes = max(peak_bytes, block.numel() * block.element_size() if tensor_input else block.nbytes)
                 if floating:
                     logical.update(memoryview(block).cast("B"))
-                    # Reinterpret IEEE bits; do not convert float measurements to counts.
-                    block = block.view(np.uint16).reshape(
-                        len(block), shape[2], shape[3] * 2
-                    )
                 if backend == "cuda":
-                    raw = cp.asarray(block)
+                    raw = (
+                        cp.from_dlpack(block.view(torch.uint8).to(f"cuda:{selected}"))
+                        if tensor_input else cp.asarray(block.view(np.uint8) if is_float8(dtype) else block)
+                    )
                     if corrector is not None:
                         corrector.apply(raw)
-                    resident.append(raw)
+                    (source.append_device if bit_lanes else resident.append)(raw)
                     del raw
                 else:
-                    raw = metal_precision.upload(block)
+                    if tensor_input:
+                        from quantem.gpu.device.metal_runtime import tensor_buffer
+
+                        block_t = block.view(torch.uint8).to("mps")
+                        torch.mps.synchronize()
+                        source.append_device(shared_array(tensor_buffer(block_t), dtype, block_t.shape))
+                        del block_t, block
+                        continue
+                    raw = metal_precision.upload(block.view(np.uint8) if is_float8(dtype) else block)
                     try:
                         if corrector is not None:
                             corrector.apply(raw)
-                        resident.append(shared_array(raw._mtl, raw.dtype, raw.shape))
-                        if not floating:
+                        (source.append_device if bit_lanes else resident.append)(
+                            shared_array(raw._mtl, raw.dtype, raw.shape)
+                        )
+                        if not bit_lanes:
                             resident.spatial_chunks.append(
                                 build_index(resident, raw._mtl, len(block))
                             )
@@ -309,8 +190,8 @@ def load_array_resident(
                 device=f"cuda:{selected}" if backend == "cuda" else "mps",
                 source_dtype=source_dtype.name,
                 source_logical_tensor_bytes=math.prod(shape) * source_dtype.itemsize,
-                resident_profile=FLOAT_CODEC if floating else INTEGER_CODEC,
-                **correction_metadata(correction, zeroed_markers),
+                resident_profile=source.header["codec"] if bit_lanes else INTEGER_CODEC,
+                **correction_metadata(correction),
                 load_timings=dict(
                     resident.load_metrics,
                     peak_ingest_bytes=peak_bytes,
@@ -330,6 +211,31 @@ def load_array_resident(
         finally:
             if corrector is not None:
                 corrector.close()
+
+
+def bit_resident(shape, dtype, metadata, valid, backend, device=None):
+    """Construct an empty typed GPU word resident with acquisition metadata."""
+    dtype = np.dtype(dtype)
+    floating = dtype == np.dtype("float32") and bool(np.all(valid))
+    codec = FLOAT_CODEC if floating else BIT_CODEC
+    scientific = qem_metadata.acquisition_metadata(shape, metadata)
+    header = dict(
+        container="quantem.qem", container_version=1, version=1,
+        profile=codec, codec=codec, shape=list(shape), dtype=dtype.name,
+        metadata=qem_metadata.retained_metadata(metadata),
+        scientific_metadata=scientific,
+    )
+    if floating:
+        header["empad"] = dict(metadata.get("qem_empad") or {})
+        header["empad"].setdefault("format_identifier", "float32")
+        header["empad"].setdefault("format_name", "Float32")
+        header["empad"].setdefault("microscope_metadata", {
+            str(key): str(value) for key, value in scientific["source_metadata"].items()
+        })
+    else:
+        header["valid"] = encode_valid(valid)
+    resident_type = float_ans.FloatANSResident if floating else BitANSResident
+    return resident_type(header, backend, device)
 
 
 def _inflate_frames(data, result, first) -> None:
@@ -383,7 +289,6 @@ def load_hdf5_array_resident(
     verbose,
     hot_pixel_correction,
     info,
-    auto_narrow=True,
 ):
     """Use storage-library reads only where the direct chunk reader cannot apply."""
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
@@ -411,7 +316,6 @@ def load_hdf5_array_resident(
             for data in datasets
         )
         # Keep the existing accelerated bitshuffle/LZ4 reader for its native layout.
-        # It corrects flagged uint32 pixels before verifying that every count fits uint16.
         if (
             selected is None
             and direct
@@ -419,14 +323,12 @@ def load_hdf5_array_resident(
             in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32"))
         ):
             return None
-        if backend == "cuda" and np.dtype(info.dtype) == np.dtype("uint32"):
-            return None  # Existing count-range verification owns exact narrowing.
         starts = [0]
         for data in datasets:
             if (
                 data.ndim not in (3, 4)
                 or data.shape[-2:] != shape[2:]
-                or np.dtype(data.dtype) != np.dtype(info.dtype)
+                or hdf5_dtype(data) != np.dtype(info.dtype)
             ):
                 raise ValueError(
                     "HDF5 detector datasets disagree in geometry or dtype; select one calibrated acquisition."
@@ -457,7 +359,7 @@ def load_hdf5_array_resident(
         ]
 
         def read_frames(first, stop):
-            result = np.empty((stop - first, *shape[2:]), np.dtype(info.dtype))
+            result = np.empty((stop - first, *shape[2:]), datasets[0].dtype)
             cursor = first
             while cursor < stop:
                 index = bisect.bisect_right(starts, cursor) - 1
@@ -480,20 +382,7 @@ def load_hdf5_array_resident(
                         local + end - cursor,
                     )
                 cursor = end
-            return result
-
-        # A full-scan storage chunk must be audited once, not once per scan row.
-        # Oversized or contiguous storage keeps the existing bounded frame path.
-        chunk_audit = np.dtype(info.dtype) == np.dtype("float64") and all(
-            data.chunks is not None
-            and math.prod(data.chunks) * 24 <= MAX_INGEST_BYTES
-            for data in datasets
-        )
-
-        def audit_blocks():
-            for data in datasets:
-                for selection in data.iter_chunks():
-                    yield data[selection]
+            return result.view(np.dtype(info.dtype)) if is_float8(info.dtype) else result
 
         loaded = load_array_resident(
             shape,
@@ -505,8 +394,6 @@ def load_hdf5_array_resident(
             pixel_mask=info.pixel_mask,
             hot_pixel_correction=hot_pixel_correction,
             verbose=verbose,
-            auto_narrow=auto_narrow,
-            float_audit_blocks=audit_blocks if chunk_audit else None,
         )
         try:
             for source, signature in signatures.items():
@@ -522,29 +409,24 @@ def load_hdf5_array_resident(
         return loaded
 
 
-def correction_metadata(record: dict, zeroed_markers: int) -> dict:
+def correction_metadata(record: dict) -> dict:
     """Record how stored detector-mask pixels were handled and what that means for exactness.
 
     A corrected pixel no longer holds the file's count, so the working data is
     exact (its own codes decode bit for bit) but no longer the file's counts.
-    ``zeroed_markers`` counts flagged-pixel values above 65535 (the uint32
-    detector marker) stored as 0 when uncorrected uint32 counts become uint16:
-    every valid count and every other flagged value is still the file's, and
-    ``pixel_mask`` keeps the flagged positions.
+    Uncorrected loading keeps every original bit, including detector markers.
     """
     applied = record["applied"]
     if applied:
         policy = f"gpu-{record['method']}-corrected"
-    elif zeroed_markers:
-        policy = "flagged-markers-stored-as-zero"
     else:
         policy = "preserve-stored-counts"
-    exact = not applied and not zeroed_markers
+    exact = not applied
     return dict(
         lossless_exact=exact,
         file_counts_exact=exact,
         detector_mask_policy=policy,
         hot_pixel_correction=record,
         working_counts_exact=True,
-        flagged_markers_stored_as_zero=int(zeroed_markers),
+        flagged_markers_stored_as_zero=0,
     )

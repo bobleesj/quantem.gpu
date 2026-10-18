@@ -1,0 +1,131 @@
+#include <metal_stdlib>
+using namespace metal;
+
+uint float8_bits(uint value, uint format) {
+    if (format == 4) {
+        if (value == 255) return 0x7fc00000u;
+        return value ? value << 23 : 0x00400000u;
+    }
+    const uint mantissa_bits = (format == 1 || format == 3) ? 2 : 3;
+    const int bias = (mantissa_bits == 2 ? 15 : 7) + (format >= 2);
+    const uint sign = (value & 128u) << 24;
+    const uint mantissa = value & ((1u << mantissa_bits) - 1);
+    const uint exponent = (value & 127u) >> mantissa_bits;
+    if ((format >= 2 && value == 128) ||
+        (format == 0 && (value & 127u) == 127)) return 0x7fc00000u;
+    if (format == 1 && exponent == 31)
+        return sign | (mantissa ? 0x7fc00000u : 0x7f800000u);
+    if (!exponent) {
+        if (!mantissa) return sign;
+        const uint top = 31 - clz(mantissa);
+        return sign | (uint(128 - bias - int(mantissa_bits) + int(top)) << 23)
+            | ((mantissa << (23 - top)) & 0x7fffffu);
+    }
+    return sign | (uint(int(exponent) - bias + 127) << 23)
+        | (mantissa << (23 - mantissa_bits));
+}
+
+// Scale through IEEE bits so subnormal inputs and outputs survive device FTZ.
+float float8_scale(float value, int shift) {
+    const unsigned bits = as_type<uint>(value);
+    const unsigned sign = bits & 0x80000000u;
+    int exponent = int((bits >> 23) & 255u);
+    unsigned mantissa = bits & 0x7fffffu;
+    if (exponent == 255 || !(bits & 0x7fffffffu)) return value;
+    if (exponent) mantissa |= 0x800000u;
+    else {
+        const unsigned normalize = clz(mantissa) - 8u;
+        mantissa <<= normalize;
+        exponent = 1 - int(normalize);
+    }
+    exponent += shift;
+    unsigned result;
+    if (exponent >= 255) result = 0x7f800000u;
+    else if (exponent > 0) result = (unsigned(exponent) << 23) | (mantissa & 0x7fffffu);
+    else {
+        const unsigned displacement = unsigned(1 - exponent);
+        result = 0;
+        if (displacement <= 24) {
+            const unsigned remainder = mantissa & ((1u << displacement) - 1u);
+            const unsigned midpoint = 1u << (displacement - 1u);
+            result = mantissa >> displacement;
+            result += remainder > midpoint || (remainder == midpoint && (result & 1u));
+        }
+    }
+    return as_type<float>(result | sign);
+}
+
+kernel void float8_decode(
+    const device uchar* input [[buffer(0)]], device float* output [[buffer(1)]],
+    device atomic_uint* invalid [[buffer(2)]], constant uint* parameters [[buffer(3)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= parameters[0]) return;
+    const uint value = parameters[1] == 1 ? input[index]
+        : reinterpret_cast<const device ushort*>(input)[index];
+    if (value > 255) atomic_store_explicit(invalid, 1u, memory_order_relaxed);
+    output[index] = as_type<float>(float8_bits(value & 255u, parameters[2]));
+}
+
+kernel void float8_bytes(
+    const device ushort* input [[buffer(0)]], device uchar* output [[buffer(1)]],
+    device atomic_uint* errors [[buffer(2)]], constant uint& count [[buffer(3)]],
+    uint index [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    const uint value = input[index];
+    if (value > 255u) atomic_fetch_or_explicit(errors, 1u, memory_order_relaxed);
+    output[index] = uchar(value);
+}
+
+// The same three-term compensated accumulation used by float32 pattern totals,
+// applied directly to decoded FP8 words. No full float32 window is materialized.
+kernel void float8_pattern_total(
+    const device ushort* values [[buffer(0)]], device float* total [[buffer(1)]],
+    const device uchar* selected [[buffer(2)]], const device uchar* valid [[buffer(3)]],
+    device atomic_uint* errors [[buffer(4)]], constant uint4& p [[buffer(5)]],
+    uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel >= p.y || !valid[pixel]) return;
+    float sum=total[4*pixel], first=total[4*pixel+1], second=total[4*pixel+2];
+    uint maximum=uint(total[4*pixel+3]);
+    for (uint scan=0; scan<p.x; ++scan) {
+        if (!selected[p.z+scan]) continue;
+        uint word=values[ulong(scan)*p.y+pixel];
+        if (word>255u) atomic_fetch_or_explicit(errors,1u,memory_order_relaxed);
+        float value=as_type<float>(float8_bits(word & 255u,p.w));
+        // E8M0 spans the entire float32 exponent range. Accumulate in units
+        // of the largest positive power of two so finite means cannot overflow.
+        if (p.w==4 && word<255u) {
+            if (word>maximum) {
+                float factor=ldexp(1.0f,int(maximum)-int(word));
+                sum*=factor; first*=factor; second*=factor;
+                maximum=word;
+            }
+            value=ldexp(1.0f,int(word)-int(maximum));
+        }
+        float next=sum+value;
+        float error=abs(sum)>=abs(value) ? (sum-next)+value : (value-next)+sum;
+        sum=next;
+        next=first+error;
+        second+=abs(first)>=abs(error) ? (first-next)+error : (error-next)+first;
+        first=next;
+    }
+    bool finite=isfinite(sum) && isfinite(first) && isfinite(second);
+    total[4*pixel]=sum;
+    total[4*pixel+1]=finite ? first : 0;
+    total[4*pixel+2]=finite ? second : 0;
+    total[4*pixel+3]=float(maximum);
+}
+
+kernel void float8_pattern_finish(
+    const device float* total [[buffer(0)]], device float* output [[buffer(1)]],
+    constant uint3& p [[buffer(2)]], uint pixel [[thread_position_in_grid]]
+) {
+    if (pixel>=p.x) return;
+    float divisor=float(p.y);
+    float value=(total[4*pixel]/divisor + total[4*pixel+1]/divisor)
+                  + total[4*pixel+2]/divisor;
+    output[pixel] = p.z == 4
+        ? float8_scale(value, int(total[4*pixel+3]) - 127) : value;
+}

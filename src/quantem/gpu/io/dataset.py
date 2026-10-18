@@ -1,5 +1,6 @@
 """Backend-neutral loaded data and ownership contracts."""
 
+import json
 import warnings
 from dataclasses import dataclass
 from math import prod
@@ -12,11 +13,40 @@ from quantem.gpu.formats.qem.metadata import (
     DETECTOR_SAMPLING_KEYS,
     _microscopy_quantity,
 )
+from quantem.gpu.formats.qem import metadata as qem_metadata
 from quantem.gpu.io.read import read, resident_device
 from quantem.gpu.io.representation import DataRepresentation
 
 if TYPE_CHECKING:
     import pandas as pd
+
+
+def calibration_summary(shape, metadata):
+    """Format recorded, overridden or missing calibration for existing IO views."""
+    import pandas as pd
+
+    scientific = qem_metadata.acquisition_metadata(shape, metadata)
+    recorded = scientific.get("electron_microscope", {})
+    overrides = scientific.get("calibration_overrides", {})
+    axes = scientific["axes"]
+    rows = {}
+    for label, paths, axis_ids in (
+        ("Voltage", ("electron_source/accelerating_voltage",), ()),
+        ("Convergence semiangle", ("illumination_system/semi_convergence_angle",), ()),
+        ("Scan sampling (row, col)", qem_metadata.SCAN_PIXEL_SIZE, (0, 1)),
+        ("Detector sampling (row, col)", qem_metadata.DETECTOR_PIXEL_SIZE, (2, 3)),
+    ):
+        quantities = [overrides.get(path) or recorded.get(path) or (
+            axes[axis_ids[index]].get("sampling") if axis_ids else None
+        ) for index, path in enumerate(paths)]
+        if any(quantity is None for quantity in quantities):
+            rows[label] = ("Missing", "", "Missing")
+            continue
+        values = ", ".join(f"{quantity['value']:.6g}" for quantity in quantities)
+        units = ", ".join(dict.fromkeys(quantity["unit"] for quantity in quantities))
+        state = "Overridden" if any(path in overrides for path in paths) else "Recorded"
+        rows[label] = (values, units, state)
+    return pd.DataFrame.from_dict(rows, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -111,6 +141,93 @@ class Dataset4dstemGPU:
     def __repr__(self) -> str:
         """Summarize the acquisition without decoding detector values."""
         return self.metadata_table().to_string()
+
+    @property
+    def calibration(self):
+        """Return values, units and provenance without reading detector data.
+
+        Missing calibration stays missing. Explicit overrides take precedence
+        while the recorded values remain in ``metadata['scientific_metadata']``.
+
+        Examples
+        --------
+        >>> data = io.load("acquisition.h5")  # doctest: +SKIP
+        >>> data.calibration  # doctest: +SKIP
+        """
+        return calibration_summary(self.shape, self.metadata)
+
+
+    def set_calibration(
+        self, *, voltage_kV: float | None = None, semiangle_mrad: float | None = None,
+        scan_sampling_A: tuple[float, float] | None = None,
+        detector_sampling_mrad: tuple[float, float] | None = None,
+        detector_sampling_inv_A: tuple[float, float] | None = None,
+        evidence: str,
+    ) -> None:
+        """Record user calibration without replacing acquisition metadata or counts.
+
+        Parameters
+        ----------
+        voltage_kV, semiangle_mrad : float, optional
+            Accelerating voltage in kV and convergence semiangle in mrad.
+        scan_sampling_A : tuple[float, float], optional
+            Scan pixel sizes in angstrom, in ``(row, col)`` order.
+        detector_sampling_mrad, detector_sampling_inv_A : tuple[float, float], optional
+            Detector pixel sizes, angular or reciprocal. Provide only one unit.
+        evidence : str
+            Nonempty explanation of the calibration, retained in a QEM copy.
+
+        Notes
+        -----
+        Omitted quantities remain unchanged. Recreate existing reconstruction
+        sessions after changing calibration. Nothing is saved automatically;
+        ``io.save(path, data)`` retains the recorded values and these overrides.
+
+        Examples
+        --------
+        >>> data.set_calibration(semiangle_mrad=30, evidence="Measured aperture")  # doctest: +SKIP
+        >>> io.save("calibrated.qem", data)  # doctest: +SKIP
+        """
+        if not isinstance(evidence, str) or not evidence.strip():
+            raise ValueError("Provide nonempty evidence describing the calibration.")
+        if detector_sampling_mrad is not None and detector_sampling_inv_A is not None:
+            raise ValueError("Provide detector sampling in mrad or inverse angstrom, not both.")
+        scientific = qem_metadata.acquisition_metadata(self.shape, self.metadata)
+        # Stored scientific metadata uses JSON values. HDF5 tags can still be
+        # NumPy arrays in memory; normalize their representation without
+        # dropping tags or changing their values before retaining this record.
+        scientific = json.loads(json.dumps(scientific, default=qem_metadata.json_metadata))
+        overrides = scientific.setdefault("calibration_overrides", {})
+
+        def record(path, value, unit):
+            overrides[path] = _microscopy_quantity(dict(
+                value=value, unit=unit, provenance="user_override", evidence=evidence.strip()
+            ), path)
+
+        for path, value, unit in (
+            ("electron_source/accelerating_voltage", voltage_kV, "kV"),
+            ("illumination_system/semi_convergence_angle", semiangle_mrad, "mrad"),
+        ):
+            if value is not None:
+                record(path, value, unit)
+        for paths, values, unit in (
+            (qem_metadata.SCAN_PIXEL_SIZE, scan_sampling_A, "angstrom"),
+            (qem_metadata.DETECTOR_PIXEL_SIZE, detector_sampling_mrad, "mrad"),
+            (qem_metadata.DETECTOR_PIXEL_SIZE, detector_sampling_inv_A, "1/angstrom"),
+        ):
+            if values is None:
+                continue
+            if not isinstance(values, (tuple, list)) or len(values) != 2:
+                raise ValueError("Provide sampling as a (row, col) pair.")
+            for path, value in zip(paths, values, strict=True):
+                record(path, value, unit)
+        updated = qem_metadata.effective_metadata(self.metadata, scientific)
+        # Commit only after all values, units and paired axes pass validation.
+        updated["scientific_metadata"] = scientific
+        for key in qem_metadata.FLAT_KEYS:
+            self.metadata.pop(key, None)
+        self.metadata.pop("calibration_overrides", None)
+        self.metadata.update(updated)
 
     @property
     def ndim(self) -> int:
@@ -400,18 +517,25 @@ class Dataset4dstemGPU:
         *,
         scan_region: tuple[int, int, int, int] | None = None,
         detector_region: tuple[int, int, int, int] | None = None,
+        output: str = "torch",
     ):
-        """Read one bounded logical region as a Torch tensor on the source GPU.
+        """Read one logical region on its GPU, preserving every measurement bit.
 
         Regions use ``(row_start, row_stop, col_start, col_stop)`` with
         exclusive stops. The resident representation, decoding, and transfer
         scheduling remain automatic. A complete read is allowed only when its
         dense tensor fits the accelerator's current working memory.
+
+        ``output='torch'`` returns a Torch tensor. ``output='native'`` returns
+        a CuPy array on CUDA or an owned Metal array with ``get()``/``release()``
+        on MPS. Use native output for float64 Metal data, since Torch MPS has
+        no float64 tensors. Close a Metal output after its consumer finishes.
         """
         return read(
             self,
             scan_region=scan_region,
             detector_region=detector_region,
+            output=output,
         )
 
     def __len__(self):

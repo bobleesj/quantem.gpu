@@ -18,14 +18,14 @@ from quantem.gpu.detector.counts import CountDetectorCompute, CountSeriesCompute
 from quantem.gpu.detector.cuda.dense import CudaKernelCompute
 from quantem.gpu.detector.cuda.paired_series import PairedSeriesCompute
 from quantem.gpu.detector.cuda.streamed_series import StreamedSeriesCompute
-from quantem.gpu.detector.float_ans import FloatANSDetectorCompute
+from quantem.gpu.detector.bit_ans import BitANSDetectorCompute
 from quantem.gpu.detector.mps.dense import MetalRawBackend
 from quantem.gpu.detector.tensors import ArrayBackend, TorchBackend
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.paired import PairedCounts
 from quantem.gpu.resident.cuda.precision import PrecisionSource as CUDAPrecisionSource
-from quantem.gpu.resident.float_ans import FloatANSResident
+from quantem.gpu.resident.bit_ans import BitANSResident
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from quantem.gpu.resident.mps.frames import ChunkedFrames
 from quantem.gpu.resident.mps.precision import PrecisionSource as MPSPrecisionSource
@@ -96,7 +96,9 @@ class DetectorSession:
             requests a supported device-native result without a host copy.
         out
             Optional contiguous device buffer, only with ``output="native"``.
-            Point patterns retain uint8/uint16 with leading ``series_shape``.
+            Point patterns retain their measurement dtype with leading ``series_shape``.
+            Float64 Metal patterns return owned Metal arrays; call ``release()``
+            after use. That output currently requires ``out=None``.
             The operation finishes before returning; do not reuse ``out`` while
             a consumer still reads it. Without ``out``, the result owns storage.
         wait
@@ -125,7 +127,7 @@ class DetectorSession:
     def reduce_frames(self, indices, mode: str = "mean") -> np.ndarray:
         """Reduce selected scan frames with ``mean``, ``sum``, or ``max``.
 
-        Integer counts give exact uint64 ``sum`` and ``max``; float sources
+        Integer counts give exact 64-bit ``sum`` and native-width ``max``; float sources
         (scaled precision, float ANS, bounded float reads) give float32. The
         ``mean`` is float32 on every source: an integer total is divided in
         float64 and rounded once, as for :meth:`mean_dp`.
@@ -133,7 +135,7 @@ class DetectorSession:
         return np.asarray(self._backend.reduce_frames(indices, reduce=mode))
 
     def reduce_frames_exact(self, indices) -> np.ndarray:
-        """Return the exact uint64 sum of selected scan frames."""
+        """Return the checked signed/unsigned 64-bit sum of selected scan frames."""
         return _exact_to_numpy(self._backend.reduce_frames_exact(indices)).reshape(self.detector_shape)
 
     def reduce_frames_max(self, indices) -> np.ndarray:
@@ -144,7 +146,8 @@ class DetectorSession:
         """Return the float32 mean diffraction pattern on the host or device.
 
         Integer counts sum exactly; the total is divided by the number of scan
-        positions in float64 and rounded once to float32 on every backend.
+        positions before rounding to float32. Typed Metal residents use an
+        integer quotient/remainder kernel without float64 arithmetic.
         """
         _check_output(output, None)
         if output == "native":
@@ -209,14 +212,14 @@ class DetectorSession:
         return self._backend.masked_sum_native(mask, out=out, **options)
 
     def masked_sum_exact(self, mask, *, output: str = "numpy", out=None):
-        """Return an exact uint64 virtual-detector image for one mask.
+        """Return an exact signed/unsigned 64-bit virtual-detector image for one mask.
 
         Parameters
         ----------
         mask
             Full-resolution detector mask. Compact masks must be binary.
         output
-            ``"numpy"`` retains the exact uint64 host default. ``"native"``
+            ``"numpy"`` returns int64 for signed data and uint64 for unsigned data. ``"native"``
             returns exact counts on the CUDA device of a count series or an
             encoded CUDA acquisition, with leading ``series_shape``, in the
             sum dtype the native dtype and detector size need (uint32 or
@@ -274,7 +277,7 @@ class DetectorSession:
         return result.reshape((*self.series_shape, *self.scan_shape))
 
     def detector_total(self) -> np.ndarray:
-        """Return the exact uint64 sum of every scan position's pattern.
+        """Return the exact signed/unsigned 64-bit sum of all scan patterns.
 
         Encoded acquisitions decode each detector pixel's streams once, which
         is far faster than ``reduce_frames_exact`` over every scan index.
@@ -387,8 +390,8 @@ def resolve_backend(data, *, immutable: bool = False):
     # Scaled-precision residents answer detector queries on their own encoded data.
     if isinstance(data, (MPSPrecisionSource, CUDAPrecisionSource)):
         return data
-    if isinstance(data, FloatANSResident):
-        return FloatANSDetectorCompute(data)
+    if isinstance(data, BitANSResident):
+        return BitANSDetectorCompute(data)
     if isinstance(data, StreamedCounts):
         # One acquisition is a series of one, presented without the series axis.
         result = (PairedSeriesCompute if isinstance(data, PairedCounts) else StreamedSeriesCompute)([data])
@@ -461,7 +464,7 @@ def _exact_to_numpy(data) -> np.ndarray:
             "Exact detector sums require integer detector data; "
             f"the backend returned {array.dtype}."
         )
-    return array.astype(np.uint64, copy=False)
+    return array.astype(np.int64 if array.dtype.kind == "i" else np.uint64, copy=False)
 
 
 def _to_host(data) -> np.ndarray:
