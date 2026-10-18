@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
 from quantem.gpu.formats.qem.reference import save_array
 from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
 from quantem.gpu.io import qem
@@ -187,6 +188,9 @@ def save(
         region as it goes. Optional ``save_metadata`` attributes are copied
         into the output. This is the public bridge for bounded algorithm output;
         the I/O package does not own the algorithm that produces the blocks.
+        Float32 block output is saved bit-exactly with GPU bitshuffle/LZ4, in
+        one bounded pass. For example, ``io.save("merged_master.h5", result,
+        backend="cuda")`` accepts an algorithm result implementing this protocol.
     scan_shape : tuple[int, int] | None
         Scan grid shape. Required for 3D inputs; inferred from 4D inputs.
     dtype : str or np.dtype or None
@@ -315,6 +319,12 @@ def save(
     if normalized_backend not in {"auto", "cuda", "mps", "cpu"}:
         raise ValueError("backend must be 'auto', 'cuda', 'mps', or 'cpu'")
 
+    if callable(getattr(data, "blocks", None)):
+        return _save_blocks(
+            filepath, data, normalized_backend, dtype, metadata, scan_shape,
+            batch_size, frames_per_file, source_master,
+        )
+
     if normalized_backend == "auto":
         if _is_cuda_array(data):
             normalized_backend = "cuda"
@@ -382,6 +392,44 @@ def save(
         )
     result = SaveResult(str(filepath), "cuda", complete=bool(wait))
     return result.wait() if wait else result
+
+
+def _save_blocks(filepath, data, backend, dtype, metadata, scan_shape,
+                 batch_size, frames_per_file, source_master):
+    """Write algorithm output without allocating the complete result."""
+    shape = tuple(data.shape)
+    if len(shape) != 4 or (scan_shape is not None and tuple(scan_shape) != shape[:2]):
+        raise ValueError("A block source must have a 4D shape matching scan_shape.")
+    output_metadata = dict(getattr(data, "save_metadata", {}))
+    output_metadata.update(metadata or {})
+    storage_dtype = _normalize_save_dtype(data.dtype if dtype is None else dtype)
+    writer = None
+    try:
+        for block in data.blocks():
+            if isinstance(block, torch.Tensor) and block.is_cuda:
+                block = cp.from_dlpack(block.detach())
+            block_backend = "cuda" if _is_cuda_array(block) else "mps" if _is_mps_array(block) else None
+            if block_backend is None or backend not in ("auto", block_backend):
+                raise ValueError("Block output must stay on the requested CUDA or MPS device.")
+            backend = block_backend
+            if writer is None:
+                writer = H5Writer(
+                    filepath, math.prod(shape[:2]), shape[2:], scan_shape=shape[:2],
+                    metadata=output_metadata, dtype=storage_dtype,
+                    source_master=source_master, frames_per_file=frames_per_file,
+                )
+            count = 512 if batch_size is None else int(batch_size)
+            if count <= 0:
+                raise ValueError("batch_size must be positive.")
+            for start in range(0, len(block), count):
+                writer.write(block[start:start + count])
+        if writer is None:
+            raise ValueError("The block source produced no frames; no complete file was saved.")
+        output_metadata.update(getattr(data, "save_metadata", {}))
+    finally:
+        if writer is not None:
+            writer.close(wait=True)
+    return SaveResult(str(filepath), backend, complete=True)
 
 
 def _prepare_save_data(data, dtype, scan_shape):

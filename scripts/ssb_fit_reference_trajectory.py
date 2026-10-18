@@ -17,18 +17,61 @@ Usage:
 """
 
 import argparse
+from contextlib import contextmanager
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "tests" / "parity"))
+DEFAULT_RUNS = Path(os.environ.get(
+    "QUANTEM_SSB_PARITY_RUNS", Path.home() / "perf-lab/ssb-audit/parity-runs"
+))
 
-from ssb_parity_case import CASES, ensure_case_directory, load_case_declaration  # noqa: E402
 
-DEFAULT_RUNS = Path.home() / "perf-lab/ssb-audit/parity-runs"
+@contextmanager
+def _reference_input(root: Path):
+    """Adapt archived declarations in temporary storage, never in the fixture."""
+    meta = json.loads((root / "case.json").read_text())
+    source = root / "source"
+    calibration = json.loads((source / "snapshots/cal.json").read_text())
+    detector_sampling = meta.get("detector_sampling_mrad")
+    if detector_sampling is None:
+        detector_sampling = [meta["det_sampling_mrad"]] * 2
+    options = {
+        "voltage_kV": meta["voltage_kV"],
+        "semiangle_mrad": meta["semiangle_mrad"],
+        "scan_sampling_A": tuple(meta["scan_sampling_A"]),
+        "detector_sampling_mrad": tuple(detector_sampling),
+        "scan_detector_rotation_deg": (
+            meta["scan_detector_rotation_deg"] if "scan_detector_rotation_deg" in meta
+            else meta["rotation_angle_deg"]
+        ),
+    }
+    if calibration.get("schema") == "quantem.ssb-browser-calibration/2":
+        yield source, meta, options
+        return
+    # Only the known frozen archive layout is mapped; no calibration is fitted.
+    current = {
+        "schema": "quantem.ssb-browser-calibration/2",
+        "bright_field_rows": calibration["bf_rows"],
+        "bright_field_cols": calibration["bf_cols"],
+        "bright_field_center_px": calibration["bf_center"],
+        "bright_field_radius_px": calibration["bf_radius_px"],
+        "detector_shape": calibration["detector_shape"],
+        "scan_region": meta["scan_region"],
+        "scan_shape": meta["scan_shape"],
+        "bf_column_companion_path": "bf_columns.u16",
+        "bf_column_encoding": "u16",
+        "excluded_detector_pixels": calibration["bf_excluded_detector_pixels"],
+    }
+    with tempfile.TemporaryDirectory(prefix="ssb-fit-input-") as temporary:
+        view = Path(temporary)
+        (view / "cal.json").write_text(json.dumps(current))
+        (view / "bf_columns.u16").symlink_to((source / "bf_columns.u16").resolve())
+        yield view, meta, options
 
 
 def record(session, *, trials: int, seed: int, batch: int) -> dict:
@@ -70,6 +113,10 @@ def record(session, *, trials: int, seed: int, batch: int) -> dict:
         key=lambda entry: entry["loss"],
         default=None,
     )
+    if len(recorded) != trials or any(
+        entry["loss"] is None or not np.isfinite(entry["loss"]) for entry in recorded
+    ):
+        raise RuntimeError(f"Expected {trials} finite reference trials; recorded {len(recorded)}.")
     return {
         "optuna_batch_size": int(batch),
         "recorded_trials": len(recorded),
@@ -89,34 +136,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", default=str(DEFAULT_RUNS))
     args = parser.parse_args(argv)
 
-    case = CASES[args.case]
-    root = ensure_case_directory(case)
-    meta = load_case_declaration(case)
+    root = Path(args.runs) / "strict-parity" / args.case
+    meta = json.loads((root / "case.json").read_text())
 
     from quantem.gpu.ssb import SSB
 
     batches = args.batch or [2, 1]
     report = {
-        "case": case.name,
-        "source": str(case.source),
-        "scan_side": int(case.scan_side),
+        "case": args.case,
+        "source": str(root),
+        "scan_side": int(meta["scan_shape"][0]),
         "bf_count": int(len(meta["brightfield_kx"])),
         "trials": int(args.trials),
         "seed": int(args.seed),
         "runs": [],
     }
     for batch in batches:
-        session = SSB.open(
-            str(root / "source"),
-            backend="mps",
-            voltage_kV=case.voltage_kV,
-            semiangle_mrad=case.semiangle_mrad,
-            scan_sampling_A=case.scan_sampling_A,
-            detector_sampling_mrad=tuple(float(step) for step in meta["detector_sampling_mrad"]),
-            scan_detector_rotation_deg=case.scan_detector_rotation_deg,
-            verbose=False,
-        )
-        run = record(session, trials=args.trials, seed=args.seed, batch=batch)
+        with _reference_input(root) as (source, _, options):
+            with SSB.open(str(source), backend="mps", verbose=False, **options) as session:
+                run = record(session, trials=args.trials, seed=args.seed, batch=batch)
         report["runs"].append(run)
         best = run["best_recorded"] or {}
         params = best.get("params", {})

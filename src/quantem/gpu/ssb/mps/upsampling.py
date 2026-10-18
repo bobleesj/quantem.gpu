@@ -25,6 +25,35 @@ _HEADER = ("#define SSB_PRECISE_GEOMETRY\n#define SSB_DEVICE inline\n"
            + _THICK_FIT_BATCH_HEADER + CHI_SOURCE)
 
 
+# Fine-grid redraws often evaluate a shifted probe well outside or inside the
+# aperture. Keep the original geometry arithmetic at the soft edge, and avoid
+# its extra square root/divisions only where conservative bounds prove 0 or 1.
+_ALIAS_GEOMETRY = """
+inline float4 alias_geometry(float dx, float dy, float wl, float semi,
+                             float ay, float ax) {
+    float r2 = dx * dx + dy * dy;
+    float outer = (semi + 0.5f * max(ay, ax)) / wl;
+    outer *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+    if (r2 > outer * outer) return float4(0.0f);
+    float r = metal::precise::sqrt(r2);
+    float alpha = r * wl;
+    float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+    float cos2 = (dx * dx - dy * dy) * inv_r2;
+    float sin2 = 2.0f * dx * dy * inv_r2;
+    float inner = semi - 0.5f * max(ay, ax);
+    inner *= 1.0f - 8.0f * 1.1920928955078125e-7f;
+    if (inner > 0.0f && alpha < inner) {
+        return float4(alpha * alpha, cos2, sin2, 1.0f);
+    }
+    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+    float denom = metal::precise::sqrt((dx * ay) * (dx * ay)
+                                     + (dy * ax) * (dy * ax)) * inv_r;
+    float edge = (denom > 1e-15f) ? ((semi - alpha) / denom + 0.5f) : 1.0f;
+    return float4(alpha * alpha, cos2, sin2, metal::clamp(edge, 0.0f, 1.0f));
+}
+"""
+
+
 # One transfer-function implementation for per-detector and coherent outputs.
 # Keep precise geometry, trigonometry, and float32 evaluation on both paths.
 # Pointer types retain MLX's constant/device address spaces for small BF groups.
@@ -46,27 +75,31 @@ inline float2 alias_corrected(
     if (metal::min(mr * mr + mc * mc, pr * pr + pc * pc) > radius * radius) {
         return float2(0.0f);
     }
-    float4 gm = tf_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
-    float4 gp = tf_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
+    float4 gm = alias_geometry(qr - kr, qc - kc, wl, semi, ay, ax);
+    float4 gp = alias_geometry(qr + kr, qc + kc, wl, semi, ay, ax);
     if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
         return float2(0.0f);
     }
     float chi_k = probe[k * 5 + 4];
-    float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
-    float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
-    if (HIGHER) {
-        chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
-        chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
-    }
     // A closed aperture contributes exactly zero, independent of its phase.
     float a = 0.0f, b = 0.0f;
     float ca = 0.0f, cb = 0.0f, sa = 0.0f, sb = 0.0f;
     if (gm.w != 0.0f) {
-        a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+        float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
+        if (HIGHER) chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
+        a = gm.w * gk.w;
+        if (SSB_ALIAS_DEPTH) {
+            a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;
+        }
         sa = metal::precise::sincos(chi_m - chi_k, ca);
     }
     if (gp.w != 0.0f) {
-        b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+        float chi_p = factor * gp.x * (c12 * (gp.y * c2 + gp.z * s2) + c10);
+        if (HIGHER) chi_p = ssb_chi_full(qr + kr, qc + kc, wl, coefficients);
+        b = gp.w * gk.w;
+        if (SSB_ALIAS_DEPTH) {
+            b = tf_sinc(0.5f * depth * (factor * (gp.x - gk.x) - shift)) * gp.w * gk.w;
+        }
         sb = metal::precise::sincos(chi_p - chi_k, cb);
     }
     float re = a * ca - b * cb, im = -a * sa - b * sb;
@@ -134,14 +167,16 @@ def _alias_group_bounds_kernel():
     )
 
 
-@lru_cache(maxsize=1)
-def _alias_correction_kernel():
+@lru_cache(maxsize=2)
+def _alias_correction_kernel(has_depth: bool = True):
+    """Specialize the zero-depth model without changing optical arithmetic."""
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_alias_correction",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc", "probe", "coefficients"],
         output_names=["corrected"],
-        header=_HEADER + _ALIAS_TRANSFER,
+        header=(f"#define SSB_ALIAS_DEPTH {int(has_depth)}\n"
+                + _HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER),
         compile_options={"math_mode": "safe"},
         source="""
         uint col = thread_position_in_grid.x;
@@ -162,7 +197,6 @@ def _alias_correction_kernel():
         }
         float qr = q_row[row], qc = q_col[col];
         float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
-        // Preserve the outward roundoff margin and the original expressions.
         float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
         radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
         float2 value = alias_corrected<SOURCE_N, G_COLS, HIGHER>(
@@ -174,79 +208,60 @@ def _alias_correction_kernel():
     )
 
 
-@lru_cache(maxsize=1)
-def _coherent_alias_kernel():
-    """Correct and sum a detector group without materializing every spectrum."""
+@lru_cache(maxsize=2)
+def _coherent_alias_kernel(has_depth: bool = True):
+    """Correct detector groups and accumulate them without partial spectra.
+
+    Zero depth omits only the identically-one thickness weights.
+    Each thread retains the original BF group boundaries and addition order.
+    Grid-dependent values are shared across groups, and only their accumulated
+    spectrum is written to device memory.
+    """
     mx = require_mlx()
     return mx.fast.metal_kernel(
         name="ssb_coherent_alias",
         input_names=["g", "q_row", "q_col", "k_row", "k_col", "params", "dc",
-                     "probe", "coefficients", "bounds", "row_indices", "col_indices"],
-        output_names=["partial"],
-        header=_HEADER + _ALIAS_TRANSFER,
+                     "probe", "coefficients", "bounds", "row_indices", "col_indices", "previous"],
+        output_names=["total"],
+        header=(f"#define SSB_ALIAS_DEPTH {int(has_depth)}\n"
+                + _HEADER + _ALIAS_GEOMETRY + _ALIAS_TRANSFER),
         compile_options={"math_mode": "safe"},
         source="""
         uint col_index = thread_position_in_grid.x;
         uint row_index = thread_position_in_grid.y;
-        uint group = thread_position_in_grid.z;
-        uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
-        if (col_index >= COLS || row_index >= ROWS || start >= K) return;
+        if (col_index >= COLS || row_index >= ROWS) return;
         uint row = row_indices[row_index], col = col_indices[col_index];
-        size_t out = ((size_t)group * ROWS + row_index) * COLS + col_index;
-        float2 sum = float2(0.0f);
-        if (row == 0u && col == 0u) {
-            for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
-        } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
-            float qr = q_row[row], qc = q_col[col];
-            // Outside both expanded group bounds every contribution is zero.
-            // True DC and its aliases retain the rules above.
-            float row_min = bounds[group * 5], row_max = bounds[group * 5 + 1];
-            float col_min = bounds[group * 5 + 2], col_max = bounds[group * 5 + 3];
-            float rm = max(max(row_min - qr, qr - row_max), 0.0f);
-            float cm = max(max(col_min - qc, qc - col_max), 0.0f);
-            float rp = max(max(row_min + qr, -qr - row_max), 0.0f);
-            float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
-            if (min(rm * rm + cm * cm, rp * rp + cp * cp) > bounds[group * 5 + 4]) {
-                partial[out].real = 0.0f;
-                partial[out].imag = 0.0f;
-                return;
-            }
-            // These values depend on q, not the detector contribution k.
-            float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
-            // Preserve the outward roundoff margin and the original expressions.
-            float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
-            radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
-            for (uint k = start; k < stop; ++k) {
-                sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-                    row, col, k, qr, qc, shift, radius, g, k_row, k_col, params, probe, coefficients);
-            }
-        }
-        partial[out].real = sum.x;
-        partial[out].imag = sum.y;
-        """,
-    )
-
-
-@lru_cache(maxsize=1)
-def _ordered_alias_sum_kernel():
-    """Retain detector-group accumulation order across bounded launches."""
-    mx = require_mlx()
-    return mx.fast.metal_kernel(
-        name="ssb_ordered_alias_sum",
-        input_names=["partial", "previous"],
-        output_names=["total"],
-        compile_options={"math_mode": "safe"},
-        source="""
-        uint i = thread_position_in_grid.x;
-        if (i >= N * COLS) return;
-        float re = previous[i].real, im = previous[i].imag;
+        size_t out = (size_t)row_index * COLS + col_index;
+        float2 result = float2(previous[out].real, previous[out].imag);
+        float qr = q_row[row], qc = q_col[col];
+        float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
+        float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
         for (uint group = 0; group < GROUPS; ++group) {
-            auto value = partial[(size_t)group * N * COLS + i];
-            re += value.real;
-            im += value.imag;
+            uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+            float2 sum = float2(0.0f);
+            if (row == 0u && col == 0u) {
+                for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
+            } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
+                uint bound = group * 5;
+                float row_min = bounds[bound], row_max = bounds[bound + 1];
+                float col_min = bounds[bound + 2], col_max = bounds[bound + 3];
+                float rm = max(max(row_min - qr, qr - row_max), 0.0f);
+                float cm = max(max(col_min - qc, qc - col_max), 0.0f);
+                float rp = max(max(row_min + qr, -qr - row_max), 0.0f);
+                float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
+                if (min(rm * rm + cm * cm, rp * rp + cp * cp) <= bounds[bound + 4]) {
+                    for (uint k = start; k < stop; ++k) {
+                        sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
+                            row, col, k, qr, qc, shift, radius, g, k_row, k_col,
+                            params, probe, coefficients);
+                    }
+                }
+            }
+            result += sum;
         }
-        total[i].real = re;
-        total[i].imag = im;
+        total[out].real = result.x;
+        total[out].imag = result.y;
         """,
     )
 
@@ -275,48 +290,58 @@ def _coherent_support(
 
 def _coherent_spectrum(
     prepared: PreparedMpsSSB, qr, qc, params, dc, probe, coefficients,
-    higher: bool, n: int, chunk: int, columns: int,
+    higher: bool, n: int, chunk: int, columns: int, has_depth: bool = True,
 ):
-    """Accumulate every BF contribution with at most one bounded partial array."""
+    """Accumulate every BF contribution in its original group and sum order."""
     mx = prepared.mx
     stored = int(prepared.g_qk.shape[0])
     source_n = int(prepared.scan_shape[0])
-    row_indices, col_indices = _coherent_support(prepared, n, columns)
+    # Bounds and support depend on the grid and rotated BF geometry, not on
+    # aberrations, tilt or depth. Keep one latest set with the frequency grid.
+    cached = prepared.upsampled_geometry
+    geometry_key = (columns, chunk)
+    if cached is not None and cached[0] == n and cached[3] == geometry_key:
+        row_indices, col_indices, row_indices_m, col_indices_m, bounds = cached[4]
+    else:
+        row_indices, col_indices = _coherent_support(prepared, n, columns)
+        row_indices_m = mx.array(row_indices)
+        col_indices_m = mx.array(col_indices)
+        group_count = (stored + chunk - 1) // chunk
+        bounds = _alias_group_bounds_kernel()(
+            inputs=[prepared.kx, prepared.ky, params],
+            template=[("K", stored), ("CHUNK", chunk)],
+            grid=(group_count, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(group_count, 5)], output_dtypes=[mx.float32],
+        )[0]
+        geometry = (row_indices, col_indices, row_indices_m, col_indices_m, bounds)
+        prepared.upsampled_geometry = (n, qr, qc, geometry_key, geometry)
     rows, cols = len(row_indices), len(col_indices)
-    row_indices_m = mx.array(row_indices)
-    col_indices_m = mx.array(col_indices)
     total = mx.zeros((rows, cols), dtype=mx.complex64)
-    group_count = (stored + chunk - 1) // chunk
-    bounds = _alias_group_bounds_kernel()(
-        inputs=[prepared.kx, prepared.ky, params],
-        template=[("K", stored), ("CHUNK", chunk)],
-        grid=(group_count, 1, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(group_count, 5)], output_dtypes=[mx.float32],
-    )[0]
     # Preserve BF chunk boundaries and sequential float32 accumulation order.
-    # Omit only the identically zero frequencies from temporary storage.
-    groups_per_batch = max(1, _WORK_BYTES // (rows * cols * 8))
+    # Reuse each frequency and tilt term across groups without partial spectra.
+    groups_per_batch = 64
     for start in range(0, stored, groups_per_batch * chunk):
-        checkpoint()
+        batch = start // (groups_per_batch * chunk)
+        if batch % _PENDING_CHUNKS == 0:
+            checkpoint()
         stop = min(start + groups_per_batch * chunk, stored)
         groups = (stop - start + chunk - 1) // chunk
-        partial = _coherent_alias_kernel()(
+        total = _coherent_alias_kernel(has_depth)(
             inputs=[prepared.g_qk[start:stop], qr, qc, prepared.kx[start:stop],
                     prepared.ky[start:stop], params, dc, probe[start:stop], coefficients,
                     bounds[start // chunk:start // chunk + groups],
-                    row_indices_m, col_indices_m],
+                    row_indices_m, col_indices_m, total],
             template=[("N", n), ("ROWS", rows), ("COLS", cols), ("SOURCE_N", source_n),
                       ("G_COLS", int(prepared.g_qk.shape[-1])),
-                      ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk)],
-            grid=(cols, rows, groups), threadgroup=(32, 8, 1),
-            output_shapes=[(groups, rows, cols)], output_dtypes=[mx.complex64],
-        )[0]
-        total = _ordered_alias_sum_kernel()(
-            inputs=[partial, total], template=[("N", rows), ("COLS", cols), ("GROUPS", groups)],
-            grid=(rows * cols, 1, 1), threadgroup=(256, 1, 1),
+                      ("K", stop - start), ("HIGHER", higher), ("CHUNK", chunk), ("GROUPS", groups)],
+            grid=(cols, rows, 1), threadgroup=(32, 8, 1),
             output_shapes=[(rows, cols)], output_dtypes=[mx.complex64],
         )[0]
-        mx.eval(total)
+        # Queue a bounded set of dependent batches without waiting on the CPU
+        # after each dispatch. Synchronize before the next cancellation check.
+        mx.async_eval(total)
+        if (batch + 1) % _PENDING_CHUNKS == 0 or stop == stored:
+            mx.eval(total)
     if rows == n and cols == columns:
         return total
     # Restore the full Fourier grid before the unchanged inverse FFT.
@@ -377,26 +402,41 @@ def _reconstruct_upsampled(
     mx = prepared.mx
     source_n = int(prepared.scan_shape[0])
     n = source_n * upsampling_factor
-    frequencies = np.fft.fftfreq(n) * n
-    qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
-    qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
+    cached_geometry = prepared.upsampled_geometry
+    if cached_geometry is not None and cached_geometry[0] == n:
+        qr, qc = cached_geometry[1:3]
+    else:
+        frequencies = np.fft.fftfreq(n) * n
+        qr = mx.array((frequencies * float(prepared.q_row[1])).astype(np.float32))
+        qc = mx.array((frequencies * float(prepared.q_col[1])).astype(np.float32))
+        prepared.upsampled_geometry = (n, qr, qc, None, None)
     params = _params(prepared, C10, C12, phi12, sample_tilt_mrad, thickness)
     higher = higher_order_magnitudes is not None
-    coefficients = mx.array(pack_coefficients(higher_order_magnitudes, higher_order_angles)
-                            if higher else np.zeros((14, 2), np.float32))
+    packed = (pack_coefficients(higher_order_magnitudes, higher_order_angles)
+              if higher else np.zeros((14, 2), np.float32))
+    coefficients = mx.array(packed)
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
     chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
     stored = int(prepared.g_qk.shape[0])
-    probe = _alias_probe_kernel()(
-        inputs=[prepared.kx, prepared.ky, params, coefficients],
-        template=[("K", stored), ("HIGHER", higher)], grid=(stored, 1, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
-    )[0]
+    probe_key = (float(C10), float(C12), float(phi12), higher, packed.tobytes())
+    cached_probe = prepared.upsampled_probe
+    if cached_probe is not None and cached_probe[0] == probe_key:
+        probe = cached_probe[1]
+    else:
+        probe = _alias_probe_kernel()(
+            inputs=[prepared.kx, prepared.ky, params, coefficients],
+            template=[("K", stored), ("HIGHER", higher)],
+            grid=(stored, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
+        )[0]
+        prepared.upsampled_probe = (probe_key, probe)
     if wave_mean:
         columns = _coherent_columns(prepared, n) if not higher and upsampling_factor > 1 else n
         total = _coherent_spectrum(
-            prepared, qr, qc, params, dc, probe, coefficients, higher, n, chunk, columns)
+            prepared, qr, qc, params, dc, probe, coefficients, higher, n,
+            chunk, columns, has_depth=thickness != 0.0,
+        )
         # Compacted inactive BF columns still carry the common real DC term.
         total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
         if columns != n:
@@ -413,7 +453,7 @@ def _reconstruct_upsampled(
 
     total = mx.zeros((n, n), dtype=mx.float32)
     squares = mx.zeros((n, n), dtype=mx.float32) if compute_loss else None
-    kernel = _alias_correction_kernel()
+    kernel = _alias_correction_kernel(thickness != 0.0)
     for start in range(0, stored, chunk):
         if (start // chunk) % _PENDING_CHUNKS == 0:
             checkpoint()

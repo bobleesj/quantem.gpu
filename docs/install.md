@@ -1,5 +1,8 @@
 # Install
 
+This is pre-release software. Release candidates are published on TestPyPI;
+the instructions below install the current source instead.
+
 ## Current source
 
 Python 3.11 or newer is required. Record `git rev-parse HEAD` with your results;
