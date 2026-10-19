@@ -184,6 +184,7 @@ _THICK_WAVE_SUM_SOURCE = r"""
 extern "C" __global__ void thick_wave_sum(
     const float2* source, const float* qrow, const float* qcol,
     const float* krow, const float* kcol, double2* partial,
+    const float* bounds,
     int num_bf, int native_rows, int native_cols, int stored_cols,
     int rows, int cols, int output_cols, int first_bf, int group_size, float2 dc,
     float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
@@ -209,7 +210,23 @@ extern "C" __global__ void thick_wave_sum(
         // Replicas of the scan mean contain no spatial contrast. The
         // true origin above retains the common real normalization.
         bool dc_alias = row % native_rows == 0 && col % native_cols == 0;
-        if (!dc_alias && qr*qr + qc*qc <= support*support) {
+        // If neither shifted soft aperture can reach this BF group's box,
+        // every correction in it is exactly zero. Preserve the soft edge with
+        // an outward rounding margin; the nonzero arithmetic stays unchanged.
+        bool overlap = true;
+#ifdef SSB_WAVE_BOUNDS
+        int group = first_bf / group_size + blockIdx.y;
+        float row_min = bounds[group*4], row_max = bounds[group*4+1];
+        float col_min = bounds[group*4+2], col_max = bounds[group*4+3];
+        float minus_row = fmaxf(fmaxf(row_min-qr, qr-row_max), 0.0f);
+        float minus_col = fmaxf(fmaxf(col_min-qc, qc-col_max), 0.0f);
+        float plus_row = fmaxf(fmaxf(row_min+qr, -qr-row_max), 0.0f);
+        float plus_col = fmaxf(fmaxf(col_min+qc, -qc-col_max), 0.0f);
+        float radius = support * 0.5f * (1.0f + 8.0f * 1.1920928955078125e-7f);
+        overlap = fminf(minus_row*minus_row + minus_col*minus_col,
+                        plus_row*plus_row + plus_col*plus_col) <= radius*radius;
+#endif
+        if (!dc_alias && qr*qr + qc*qc <= support*support && overlap) {
             int sr = row % native_rows, sc = col % native_cols;
             bool conjugate = stored_cols != native_cols && sc >= stored_cols;
             if (conjugate) { sr = (native_rows-sr) % native_rows; sc = native_cols-sc; }
@@ -232,6 +249,10 @@ extern "C" __global__ void thick_wave_sum(
 }
 """
 thick_wave_sum_kernel = cp.RawKernel("#define SSB_WAVE\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+thick_wave_sum_bounded_kernel = cp.RawKernel(
+    "#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
+    "thick_wave_sum",
+)
 
 # The same polynomial as Metal. No higher-order coefficients enter fitting.
 _HIGHER_CORRECTION_SOURCE = (
@@ -239,6 +260,10 @@ _HIGHER_CORRECTION_SOURCE = (
     "#define SSB_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_CORRECTION_SOURCE
 )
 thick_wave_sum_full_kernel = cp.RawKernel("#define SSB_WAVE\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+thick_wave_sum_bounded_full_kernel = cp.RawKernel(
+    "#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
+    "thick_wave_sum",
+)
 thick_correct_full_kernel = cp.ElementwiseKernel(
     in_params="""
         complex64 G, float32 qx, float32 qy, float32 kx, float32 ky,

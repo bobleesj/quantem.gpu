@@ -123,3 +123,35 @@ def test_wave_average_chunking_and_inactive_higher_order_angles(depth):
         np.testing.assert_allclose(packed, candidate, atol=1e-6, rtol=0)
     finally:
         ssb.close()
+
+
+@pytest.mark.parametrize("depth", [0.0, 18.0])
+@pytest.mark.parametrize("higher", [False, True])
+def test_group_support_keeps_full_bf_phase_after_rotation(depth, higher, monkeypatch):
+    """Compare tight support with unpruned GPU sums through sampling and rotation changes."""
+    import cupy as cp
+
+    ssb, engine = _synthetic_session()
+    bounds = engine.thick._wave_group_bounds
+    aberrations = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+    if higher:
+        aberrations.update(C21_nm=1.0, phi21_deg=23.0, C30_nm=10.0)
+
+    def unpruned(group_size):
+        shape = bounds(group_size).shape
+        limits = cp.array([-cp.inf, cp.inf, -cp.inf, cp.inf], dtype=cp.float32)
+        return cp.broadcast_to(limits, shape).copy()
+
+    try:
+        for rotation in (16.3, 196.3, 0.0):
+            ssb.set_rotation(rotation)
+            for factor in (1, 4):
+                options = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth,
+                               upsampling_factor=factor, compute_loss=False)
+                candidate, _ = ssb.preview(aberrations, **options)
+                with monkeypatch.context() as patch:
+                    patch.setattr(engine.thick, "_wave_group_bounds", unpruned)
+                    expected, _ = ssb.preview(aberrations, **options)
+                np.testing.assert_array_equal(candidate, expected)
+    finally:
+        ssb.close()
