@@ -221,13 +221,14 @@ class CudaSSBBackend:
         """
         if self._accelerator is not None:
             self._accelerator.release_reconstruction_buffers()
-        gc.collect()
-        cp.get_default_memory_pool().free_all_blocks()
         self.G_qk = None
         if self._accelerator is not None:
             # the geometry arrays too, so the pool flush below returns their memory
             self._accelerator._cache.clear()
             self._accelerator = None
+        # ThickSample refers back to its engine. Collect that cycle only after
+        # dropping our owner reference, before returning unused blocks to CUDA.
+        gc.collect()
         cp.get_default_memory_pool().free_all_blocks()
 
     def _get_accelerator(self) -> SSBEngine:

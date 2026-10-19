@@ -4,6 +4,49 @@ This page records the CUDA, Python MPS, native Swift/Metal, and WebGPU SSB
 performance contracts so future work starts from measured behavior, not from
 memory.
 
+## CUDA and browser redraws, 2026-10-18
+
+Auto output now uses paired Fourier frequencies for C10/C12 probes when both
+Nyquist edges lie outside the complete soft-aperture support. Higher-order
+probes retain the full plane. CUDA retains the original BF groups and float64
+reduction; WebGPU retains float32 arithmetic and BF summation order. Both
+skip phase/depth arithmetic only where the aperture weight is exactly zero.
+WebGPU also evaluates the incident probe once per BF pixel per update.
+
+Two complete 512 × 512 × 192 × 192 acquisitions retain 8,807 and 8,930 BF
+pixels. Prepared CUDA Auto tilt/depth redraw medians changed from about
+125 to 57 ms (1536² output) and 230 to 100 ms (2048²). Browser WebGPU on Apple
+silicon changed from about 213 to 66 ms and 411 to 114 ms, both at 2048².
+These are resident reconstruction measurements, excluding loading, fitting,
+display work and the optional loss diagnostic. Shared CUDA workloads caused
+occasional long tails; these medians do not establish sustained 60 FPS.
+
+Complete arrays were compared against the frozen implementation. Native-grid
+phase remained bit-exact in those comparisons; optimized Auto output differed
+by less than 1.3e-6 rad, within existing tolerances. No tolerance, source
+precision, BF selection or estimator was changed. The CUDA direct-wave and
+scan-mean tests and headed WebGPU tests cover regular and tilt/depth output.
+
+A separate browser correctness fix excludes replicas of the scan mean from
+upsampled phase, matching CUDA/MPS's existing single-origin rule. A constant
+scan previously produced false periodic contrast; it now stays exactly flat.
+This fix intentionally changes affected browser Auto phase. Its comparison
+is kept separate from the numerical checks of the optimizations.
+
+Browser diagnostics accept an optional `AbortSignal` and yield between
+complete BF chunks. Cancellation returns no partial scientific result and
+leaves subsequent reconstruction usable. ShowPtycho can therefore show the
+phase immediately and request loss after input settles, without redoing the
+display reconstruction. Closing an engine releases its buffers after queued
+work settles. Private measurements and screenshots are retained separately
+from public source changes.
+
+CUDA close now drops the engine owner before collecting its thick-model
+reference cycle. Previously, switching acquisitions could retain the old
+Fourier spectra and exhaust VRAM. The regression test checks that the old
+engine and spectra are released, a saved phase remains valid, and reopening
+produces the same phase. The test fails on the previous close implementation.
+
 ## Coherent MPS reduction, 2026-10-17
 
 Group corrected BF spectra before writing scratch buffers to reduce repeated

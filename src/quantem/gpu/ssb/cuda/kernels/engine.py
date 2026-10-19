@@ -124,6 +124,11 @@ __device__ float2 thick_correct(float2 G, float qx, float qy, float kx, float ky
         float4 g_k = thick_geometry(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
         float4 g_m = thick_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
         float4 g_p = thick_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+#ifdef SSB_WAVE
+        // Closed apertures have exactly zero weight. Keep every BF pixel and
+        // the soft aperture edge, but omit phases and depth weights at zero.
+        if (g_k.w == 0.0f || (g_m.w == 0.0f && g_p.w == 0.0f)) return make_float2(0.0f, 0.0f);
+#endif
         float chi_k = factor * g_k.x * fmaf(C12, fmaf(g_k.y, cos2phi12, g_k.z * sin2phi12), C10);
         float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
         float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
@@ -180,7 +185,7 @@ extern "C" __global__ void thick_wave_sum(
     const float2* source, const float* qrow, const float* qcol,
     const float* krow, const float* kcol, double2* partial,
     int num_bf, int native_rows, int native_cols, int stored_cols,
-    int rows, int cols, int first_bf, int group_size, float2 dc,
+    int rows, int cols, int output_cols, int first_bf, int group_size, float2 dc,
     float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
     float C10, float C12, float cos2phi12, float sin2phi12, float factor,
     float thickness, float theta_r, float theta_c
@@ -189,7 +194,7 @@ extern "C" __global__ void thick_wave_sum(
 #endif
     ) {
     int q = blockIdx.x * blockDim.x + threadIdx.x;
-    int plane = rows * cols;
+    int plane = rows * output_cols;
     if (q >= plane) return;
     int start = first_bf + blockIdx.y * group_size;
     int stop = min(start + group_size, num_bf);
@@ -197,7 +202,7 @@ extern "C" __global__ void thick_wave_sum(
     if (q == 0) {
         sum = make_double2((double)dc.x * (stop-start), (double)dc.y * (stop-start));
     } else {
-        int row = q / cols, col = q % cols;
+        int row = q / output_cols, col = q % output_cols;
         float qr = qrow[row], qc = qcol[col];
         // No overlap of soft probe apertures beyond this radius.
         float support = 2.0f * (semiangle_rad + 0.5f * fmaxf(ang_y_rad, ang_x_rad)) / wavelength;
@@ -226,14 +231,14 @@ extern "C" __global__ void thick_wave_sum(
     partial[(size_t)blockIdx.y * plane + q] = sum;
 }
 """
-thick_wave_sum_kernel = cp.RawKernel(_THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+thick_wave_sum_kernel = cp.RawKernel("#define SSB_WAVE\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
 
 # The same polynomial as Metal. No higher-order coefficients enter fitting.
 _HIGHER_CORRECTION_SOURCE = (
     "#define SSB_HIGHER_ORDER\n#define SSB_DEVICE __device__ __forceinline__\n"
     "#define SSB_COEFFICIENTS const float*\n" + CHI_SOURCE + _THICK_CORRECTION_SOURCE
 )
-thick_wave_sum_full_kernel = cp.RawKernel(_HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
+thick_wave_sum_full_kernel = cp.RawKernel("#define SSB_WAVE\n" + _HIGHER_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE, "thick_wave_sum")
 thick_correct_full_kernel = cp.ElementwiseKernel(
     in_params="""
         complex64 G, float32 qx, float32 qy, float32 kx, float32 ky,

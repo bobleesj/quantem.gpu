@@ -36,6 +36,7 @@ class ThickSample:
         self._band_key = None
         self._band = None
         self._wave_sum_buffer = None
+        self._wave_pairing = None
 
     def reconstruct(
         self,
@@ -154,14 +155,18 @@ class ThickSample:
         cache = engine._cache
         num_bright_field_pixels = int(cache["num_bright_field_pixels"])
         rows, cols = qrow.size, qcol.size
+        unique_cols = (
+            self._wave_columns(rows, cols)
+            if higher_order_magnitudes is None else cols
+        )
         group_size = 32
         groups = max(1, min(16, math.ceil(num_bright_field_pixels / group_size),
                             chunk_bytes // (rows * cols * 16)))
-        shape = (groups, rows, cols)
+        shape = (groups, rows, unique_cols)
         if self._wave_sum_buffer is None or self._wave_sum_buffer.shape != shape:
             self._wave_sum_buffer = cp.empty(shape, dtype=cp.complex128)
         partial = self._wave_sum_buffer
-        spectrum = cp.zeros((rows, cols), dtype=cp.complex128)
+        spectrum = cp.zeros((rows, unique_cols), dtype=cp.complex128)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
         kernel = thick_wave_sum_kernel
         if higher_order_magnitudes is not None:
@@ -170,14 +175,19 @@ class ThickSample:
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
             kernel(
-                (math.ceil(rows * cols / 128), active), (128,),
+                (math.ceil(rows * unique_cols / 128), active), (128,),
                 (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial,
                  np.int32(num_bright_field_pixels), np.int32(cache["ny"]), np.int32(cache["nx"]),
-                 np.int32(engine.G_qk.shape[-1]), np.int32(rows), np.int32(cols),
+                 np.int32(engine.G_qk.shape[-1]), np.int32(rows), np.int32(cols), np.int32(unique_cols),
                  np.int32(start), np.int32(group_size), np.complex64(engine._dc_value_host),
                  *params),
             )
             spectrum += partial[:active].sum(axis=0, dtype=cp.complex128)
+        if unique_cols != cols:
+            # Even C10/C12 optics give F(-q) = -conj(F(q)), including the
+            # paired depth/tilt weights. The guard excludes Nyquist support.
+            negative = -cp.conj(spectrum[(-cp.arange(rows)) % rows, 1:cols // 2][:, ::-1])
+            spectrum = cp.concatenate((spectrum, negative), axis=1)
         # the BF sum and the inverse FFT run in complex128; the phase is returned float32 like every other path
         phase = cp.angle(cp.fft.ifft2(spectrum / num_bright_field_pixels)).astype(cp.float32)
         loss = None
@@ -189,6 +199,30 @@ class ThickSample:
                 higher_order_angles=higher_order_angles,
             )
         return phase, loss
+
+    def _wave_columns(self, rows: int, cols: int) -> int:
+        """Use paired frequencies only beyond the full soft-aperture support.
+
+        All BF contributions and their float64 reduction order are retained.
+        Native grids and higher-order probes use the complete Fourier plane.
+        """
+        cache = self.engine._cache
+        if rows % 2 or cols % 2 or rows == cache["ny"] or cols == cache["nx"]:
+            return cols
+        key = (id(cache), rows, cols)
+        if self._wave_pairing is None or self._wave_pairing[0] != key:
+            radius = 2 * (
+                cache["semiangle_rad"]
+                + .5 * max(cache["ang_y_rad"], cache["ang_x_rad"])
+            ) / self.engine.wavelength
+            radius *= 1 + 8 * np.finfo(np.float32).eps
+            nyquist = cp.minimum(
+                cp.abs(cache["qx_1d"][1]) * (rows // 2),
+                cp.abs(cache["qy_1d"][1]) * (cols // 2),
+            )
+            columns = cols // 2 + 1 if float(nyquist) > radius else cols
+            self._wave_pairing = (key, columns)
+        return self._wave_pairing[1]
 
     def fit(
         self,

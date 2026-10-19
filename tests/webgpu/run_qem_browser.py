@@ -88,6 +88,7 @@ def main() -> None:
             ("dense-h5-parity", "DenseH5Parity"),
             ("ssb-bf-subset", "SsbBfSubset"),
             ("ssb-qem", "SsbQem"),
+            ("ssb-interaction", "SsbInteraction"),
         ):
             subprocess.run(
                 [str(args.esbuild), str(sources / f"{filename}.ts"), "--bundle",
@@ -118,6 +119,7 @@ def main() -> None:
                     page.add_script_tag(url="/dense-h5-parity.js")
                     page.add_script_tag(url="/ssb-bf-subset.js")
                     page.add_script_tag(url="/ssb-qem.js")
+                    page.add_script_tag(url="/ssb-interaction.js")
                     result = page.evaluate("""async (expected) => {
                       const adapter = await navigator.gpu.requestAdapter();
                       if (!adapter || adapter.info.isFallbackAdapter) {
@@ -150,6 +152,7 @@ def main() -> None:
                           product_first: await DenseH5Parity.runProductFirstParity(location.origin + '/fixtures/'),
                           resident: await DenseH5Parity.runResidentParity(location.origin + '/fixtures/'),
                           virtual_image: await DenseH5Parity.runDenseVirtualImageParity(device),
+                          ssb_interaction: await SsbInteraction.runSsbInteractionParity(location.origin + "/fixtures/"),
                           ssb_qem: await SsbQem.runSsbQemParity(location.origin + '/fixtures/'),
                           ssb_bf_subset: await SsbBfSubset.runSsbBfSubsetParity(),
                           ssb_build_peak: await SsbBfSubset.runSsbBuildPeak(),
