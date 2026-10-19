@@ -19,6 +19,8 @@ from quantem.gpu.ssb.cuda.kernels.engine import (
     thick_fit_kernel,
     thick_wave_sum_kernel,
     thick_wave_sum_full_kernel,
+    thick_wave_sum_bounded_kernel,
+    thick_wave_sum_bounded_full_kernel,
 )
 from quantem.gpu.ssb.higher_order import pack_coefficients
 
@@ -37,6 +39,7 @@ class ThickSample:
         self._band = None
         self._wave_sum_buffer = None
         self._wave_pairing = None
+        self._wave_bounds = None
 
     def reconstruct(
         self,
@@ -162,24 +165,28 @@ class ThickSample:
         # Fine grids otherwise write and reduce a large partial plane for
         # every 32 BF pixels. Larger groups retain all float32 corrections
         # and float64 accumulation while reducing that intermediate traffic.
-        group_size = 128 if rows > cache["ny"] and cols > cache["nx"] else 32
+        fine_grid = rows > cache["ny"] and cols > cache["nx"]
+        group_size = 128 if fine_grid else 32
         groups = max(1, min(16, math.ceil(num_bright_field_pixels / group_size),
                             chunk_bytes // (rows * cols * 16)))
         shape = (groups, rows, unique_cols)
         if self._wave_sum_buffer is None or self._wave_sum_buffer.shape != shape:
             self._wave_sum_buffer = cp.empty(shape, dtype=cp.complex128)
         partial = self._wave_sum_buffer
+        # Native grids do not benefit from group culling; that kernel does not
+        # read the bounds argument and keeps its existing execution path.
+        bounds = self._wave_group_bounds(group_size) if fine_grid else cache["kx_bf"]
         spectrum = cp.zeros((rows, unique_cols), dtype=cp.complex128)
         params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
-        kernel = thick_wave_sum_kernel
+        kernel = thick_wave_sum_bounded_kernel if fine_grid else thick_wave_sum_kernel
         if higher_order_magnitudes is not None:
-            kernel = thick_wave_sum_full_kernel
+            kernel = thick_wave_sum_bounded_full_kernel if fine_grid else thick_wave_sum_full_kernel
             params = (*params, cp.asarray(pack_coefficients(higher_order_magnitudes, higher_order_angles)))
         for start in range(0, num_bright_field_pixels, group_size * groups):
             active = min(groups, math.ceil((num_bright_field_pixels - start) / group_size))
             kernel(
                 (math.ceil(rows * unique_cols / 128), active), (128,),
-                (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial,
+                (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], partial, bounds,
                  np.int32(num_bright_field_pixels), np.int32(cache["ny"]), np.int32(cache["nx"]),
                  np.int32(engine.G_qk.shape[-1]), np.int32(rows), np.int32(cols), np.int32(unique_cols),
                  np.int32(start), np.int32(group_size), np.complex64(engine._dc_value_host),
@@ -202,6 +209,27 @@ class ThickSample:
                 higher_order_angles=higher_order_angles,
             )
         return phase, loss
+
+    def _wave_group_bounds(self, group_size: int) -> cp.ndarray:
+        """Cache exact coordinate bounds for each complete BF group on GPU."""
+        cache = self.engine._cache
+        krow, kcol = cache["kx_bf"], cache["ky_bf"]
+        cached = self._wave_bounds
+        if (cached is not None and cached[0] == group_size
+                and cached[1] is krow and cached[2] is kcol):
+            return cached[3]
+        # Repeat the final coordinate only to pad the reduction. The correction
+        # loop still stops at the actual BF count, with its original sum order.
+        padding = (-krow.size) % group_size
+        limits = []
+        for coordinates in (krow, kcol):
+            groups = cp.pad(coordinates, (0, padding), mode="edge").reshape(-1, group_size)
+            limits.extend((groups.min(axis=1), groups.max(axis=1)))
+        bounds = cp.stack(limits, axis=1)
+        # Array identity also invalidates this cache after rotation or an
+        # explicitly requested BF subset, even when the BF count is unchanged.
+        self._wave_bounds = (group_size, krow, kcol, bounds)
+        return bounds
 
     def _wave_columns(self, rows: int, cols: int) -> int:
         """Use paired frequencies only beyond the full soft-aperture support.
