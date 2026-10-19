@@ -22,6 +22,8 @@ export interface WebGPUReconstructionOptions {
   readonly preview?: boolean;
   readonly numBrightFieldPixels?: number;
   readonly computeLoss?: boolean;
+  /** Cancel a diagnostic between GPU chunks; never return a partial result. */
+  readonly signal?: AbortSignal;
   readonly scanDetectorRotationDeg?: number;
   /** Higher orders by name: magnitudes in Angstrom (`C21_A`, `C30_A`, ...), azimuths in degrees (`phi21_deg`, ...).
    * A key outside that set throws. */

@@ -467,7 +467,7 @@ const THICK_TERMS = `  var t1 = cmul(pm, pk_conj);
 const THIN_TERMS = `  let t1 = cmul(pm, pk_conj);
   let t2 = cmul(pp_conj, pk);`;
 
-function makeSsbShader(n: number, thick = false, native = n): string {
+function makeSsbShader(n: number, thick = false, native = n, cacheProbe = false): string {
   const workgroupSize = Math.min(n, 256);
   const half = native / 2;
   const halfW = half + 1;
@@ -504,7 +504,7 @@ struct Params {
   dc_im: f32,
   inv_n2: f32,
   chunk_bf: u32,
-  _reserved_storage_mode: u32,
+  output_cols: u32,
   partial_groups: u32,
   compute_loss: u32,
   active_bf: u32,
@@ -523,6 +523,7 @@ ${gqkDecl}
 @group(0) @binding(10) var<storage, read_write> phaseOut: array<f32>;
 @group(0) @binding(11) var<storage, read_write> varianceOut: array<f32>;
 @group(0) @binding(12) var<storage, read> abr: array<vec4<f32>, 14>;
+${cacheProbe ? "@group(0) @binding(13) var<storage, read_write> cachedProbe: array<vec2<f32>>;" : ""}
 
 var<workgroup> s: array<vec2<f32>, ${n}>;
 
@@ -549,6 +550,8 @@ fn compute_geometry(dx: f32, dy: f32) -> vec4<f32> {
 ${thick ? "fn thick_sinc(x: f32) -> f32 { return select(sin(x) / x, 1.0, abs(x) < 1e-6); }\n" + THICK_GAMMA_SIGNATURE : THIN_GAMMA_SIGNATURE}
   let m = compute_geometry(qx - kx, qy - ky);
   let p = compute_geometry(qx + kx, qy + ky);
+  ${cacheProbe ? `// Closed apertures contribute zero; retain the soft edge and BF sum order.
+  if (m.w == 0.0 && p.w == 0.0) { return vec2<f32>(0.0); }` : ""}
   var chi_m: f32;
   var chi_p: f32;
   if (params.full_aberration != 0u) {
@@ -749,13 +752,36 @@ fn finalizePartialGroups(@builtin(global_invocation_id) gid: vec3<u32>) {
 // The loss/variance commit path still uses the exact per-BF pipeline above,
 // because mean(angle(object)) != angle(mean(object)).
 // ---------------------------------------------------------------------------
+${cacheProbe ? `
+// The incident probe depends on detector position and optics, not output q.
+// Evaluate it once per BF pixel, retaining the original float32 expressions.
+@compute @workgroup_size(256)
+fn prepareProbe(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let bf = gid.x;
+  if (bf >= params.active_bf) { return; }
+  let bg = bfGeom[bf];
+  let bt = bfTrig[bf];
+  var chi_k: f32;
+  if (params.full_aberration != 0u) {
+    chi_k = chi_full(bg.x, bg.y);
+  } else {
+    let cos_term_k = bt.x * params.cos2phi12 + bt.y * params.sin2phi12;
+    chi_k = params.factor * bg.z * (params.C12 * cos_term_k + params.C10);
+  }
+  cachedProbe[bf] = vec2<f32>(bg.w * cos(chi_k), -bg.w * sin(chi_k));
+}
+` : ""}
 @compute @workgroup_size(256)
 fn ssbObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let idx = gid.x + gid.y * 65535u * 256u;
-  if (idx >= params.plane) { return; }
-  let row = idx / ${n}u;
-  let x = idx - row * ${n}u;
+  let linear = gid.x + gid.y * 65535u * 256u;
+  if (linear >= params.n * params.output_cols) { return; }
+  let row = linear / params.output_cols;
+  let x = linear - row * params.output_cols;
+  let idx = row * ${n}u + x;
   var acc = vec2<f32>(0.0, 0.0);
+  ${n > native ? `// Match native GPU single-origin handling of the scan background.
+  // The output buffer was cleared; its DC replicas must remain zero.
+  if (row % ${native}u == 0u && x % ${native}u == 0u && idx != 0u) { return; }` : ""}
   // Both shifted apertures are exactly zero outside this support. Avoid
   // evaluating thousands of BF terms in the unused corners of a finer grid.
   let support = 2.0 * (params.semiangle_rad + 0.5 * max(params.ang_y_rad, params.ang_x_rad)) / params.wavelength;
@@ -770,7 +796,7 @@ fn ssbObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
       acc += vec2<f32>(params.dc_re, params.dc_im);
       continue;
     }
-    let bt = bfTrig[bf];
+    ${cacheProbe ? "let pk = cachedProbe[bf];" : `let bt = bfTrig[bf];
     var chi_k: f32;
     if (params.full_aberration != 0u) {
       chi_k = chi_full(bg.x, bg.y);
@@ -778,12 +804,24 @@ fn ssbObjSum(@builtin(global_invocation_id) gid: vec3<u32>) {
       let cos_term_k = bt.x * params.cos2phi12 + bt.y * params.sin2phi12;
       chi_k = params.factor * bg.z * (params.C12 * cos_term_k + params.C10);
     }
-    let pk = vec2<f32>(bg.w * cos(chi_k), -bg.w * sin(chi_k));
+    let pk = vec2<f32>(bg.w * cos(chi_k), -bg.w * sin(chi_k));`}
     acc += gamma_mul(qx1d[row], qy1d[x], bg.x, bg.y, ${thick ? "bg.z, " : ""}pk, fetch_g(bf - params.bf_offset, bf, row, x));
   }
   // stage[0..plane] is the accumulation plane for the fast path (cleared
   // before the first chunk; chunks add sequentially via separate dispatches).
   stage[idx] = stage[idx] + acc;
+}
+
+@compute @workgroup_size(256)
+fn ssbMirrorColumns(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let idx = gid.x + gid.y * 65535u * 256u;
+  if (idx >= params.plane) { return; }
+  let row = idx / ${n}u;
+  let col = idx % ${n}u;
+  if (col <= ${n / 2}u) { return; }
+  let mirrorRow = select(${n}u - row, 0u, row == 0u);
+  let value = stage[mirrorRow * ${n}u + ${n}u - col];
+  stage[idx] = vec2<f32>(-value.x, value.y);
 }
 
 @compute @workgroup_size(${workgroupSize})
@@ -1056,6 +1094,7 @@ export function makeParams(
   activeBfCount = numBrightFieldPixels,
   fullAberration = false,
   sample?: WebGPUSampleOptions,
+  outputCols = n,
 ): ArrayBuffer {
   const plane = n * n;
   const b = new ArrayBuffer(SSB_PARAMS_BYTES);
@@ -1077,7 +1116,7 @@ export function makeParams(
   f[14] = cal.dc_value[1];
   f[15] = 1 / plane;
   u[16] = Math.max(1, Math.round(chunkBf || u[0]));
-  u[17] = 0;
+  u[17] = outputCols;
   u[18] = Math.max(1, Math.ceil(Math.max(1, Math.round(activeBfCount || u[0])) / REDUCE_BF_GROUP));
   u[19] = computeLoss ? 1 : 0;
   u[20] = Math.max(1, Math.round(activeBfCount || u[0]));
@@ -1487,6 +1526,8 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     phase: GPUBuffer; stage: GPUBuffer; params: GPUBuffer; chunks: GPUBuffer[];
     sum: GPUComputePipeline; rows: GPUComputePipeline; cols: GPUComputePipeline;
     sumGroups: GPUBindGroup[]; rowGroup: GPUBindGroup; colGroup: GPUBindGroup;
+    probePipeline: GPUComputePipeline; probeGroup: GPUBindGroup;
+    mirrorPipeline: GPUComputePipeline; mirrorGroup: GPUBindGroup;
   } | null = null;
   private cal: SsbCal;
   private n: SupportedSsbSize;
@@ -1503,6 +1544,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   private geometryRotationDeg: number | null = null;
   private geometryBfCount: number | null = null;
   private onProgress: WebGPUProgressHandler | null = null;
+  private closed = false;
 
   // `calJson` is the folder's `snapshots/cal.json`; the source holds exact BF columns or a full QEM.
   constructor(
@@ -1565,8 +1607,13 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
   }
 
   close(): void {
-    this.resetGpuBuffers();
-    this.device = null;
+    this.closed = true;
+    this.onProgress = null;
+    // Submitted work may still reference these buffers when a view closes.
+    void this.operationQueue.then(() => {
+      this.resetGpuBuffers();
+      this.device = null;
+    });
   }
 
   setProgressHandler(handler: WebGPUProgressHandler | null): void {
@@ -1620,6 +1667,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
     });
     await previous.catch(() => undefined);
     try {
+      if (this.closed) throw new Error("SSB backend is closed; create a new backend to reconstruct again.");
       return await operation();
     } finally {
       release();
@@ -1962,6 +2010,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       throw new Error("Upsampling uses phase_of_mean; keep the diagnostic loss on the native grid.");
     }
     return this.runExclusive(async () => {
+      options.signal?.throwIfAborted();
       // Loss is a native-grid diagnostic. It must not change the displayed estimator on release.
       const wantsLoss = options.computeLoss !== false;
       const native = wantsLoss || factor === 1
@@ -1995,11 +2044,12 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         const out = device.createBuffer({size, usage}); owned.push(out); return out;
       };
       try {
-        const module = device.createShaderModule({code: makeSsbShader(n, thick, this.n)});
-        const [sum, rows, cols] = await Promise.all(["ssbObjSum", "ssbObjFftRows", "ssbObjFftCols"].map(entryPoint =>
+        const module = device.createShaderModule({code: makeSsbShader(n, thick, this.n, true)});
+        const [sum, rows, cols, probePipeline, mirrorPipeline] = await Promise.all(["ssbObjSum", "ssbObjFftRows", "ssbObjFftCols", "prepareProbe", "ssbMirrorColumns"].map(entryPoint =>
           device.createComputePipelineAsync({layout: "auto", compute: {module, entryPoint}})));
         const stage = make(n * n * 8), phase = make(n * n * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
         const params = make(SSB_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+        const probe = make(buffers.activeBfCount * 8);
         const chunks = buffers.gqkChunks.map(() => make(SSB_PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST));
         const frequencies = [this.cal.scan_q_row, this.cal.scan_q_col].map(native => {
           const q = Float32Array.from({length: n}, (_, i) => (i < n / 2 ? i : i - n) * native[1]);
@@ -2009,28 +2059,45 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
           layout: pipeline.getBindGroupLayout(0), entries: entries.map(([binding, buffer]) => ({binding, resource: {buffer}})),
         });
         const sumGroups = chunks.map((params, i) => group(sum, [
-          [0, params], [1, buffers.gqkChunks[i]], [2, stage], [3, buffers.bfGeom], [4, buffers.bfTrig],
-          [5, frequencies[0]], [6, frequencies[1]], [12, buffers.aberrations],
+          [0, params], [1, buffers.gqkChunks[i]], [2, stage], [3, buffers.bfGeom],
+          [5, frequencies[0]], [6, frequencies[1]], [12, buffers.aberrations], [13, probe],
         ]));
         this.outputPlan = {n, thick, owned, stage, phase, params, chunks, sum, rows, cols, sumGroups,
+          probePipeline, probeGroup: group(probePipeline, [[0, params], [3, buffers.bfGeom],
+            [4, buffers.bfTrig], [12, buffers.aberrations], [13, probe]]),
+          mirrorPipeline, mirrorGroup: group(mirrorPipeline, [[0, params], [2, stage]]),
           rowGroup: group(rows, [[2, stage]]), colGroup: group(cols, [[0, params], [2, stage], [10, phase]])};
       } catch (error) { owned.forEach(buffer => buffer.destroy()); throw error; }
     }
     const plan = this.outputPlan;
     const aberrations = packAberrations(c10, c12, phi12 * 180 / Math.PI, options.higherOrder);
+    // Even C10/C12 optics pair corrected frequencies. Require both Nyquist
+    // edges outside the complete soft-aperture support before using symmetry.
+    const support = 2 * (this.cal.semiangle_rad + .5 * Math.max(...this.cal.angular_sampling_rad))
+      / this.cal.wavelength_A * (1 + 8 * 2 ** -23);
+    const paired = !aberrations.active && n / 2 * Math.min(Math.abs(this.cal.scan_q_row[1]), Math.abs(this.cal.scan_q_col[1])) > support;
+    const outputCols = paired ? n / 2 + 1 : n;
     device.queue.writeBuffer(buffers.aberrations, 0, aberrations.data as Float32Array<ArrayBuffer>);
     const started = performance.now(), enc = device.createCommandEncoder();
     enc.clearBuffer(plan.stage);
+    device.queue.writeBuffer(plan.params, 0, makeParams(this.cal, n, c10, c12, phi12 * 180 / Math.PI,
+      numBrightFieldPixels, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample));
+    const probePass = enc.beginComputePass();
+    probePass.setPipeline(plan.probePipeline); probePass.setBindGroup(0, plan.probeGroup);
+    probePass.dispatchWorkgroups(Math.ceil(buffers.activeBfCount / 256)); probePass.end();
     let offset = 0;
     for (let i = 0; i < buffers.gqkChunks.length; i++) {
       const count = buffers.chunkBfCounts[i];
       device.queue.writeBuffer(plan.chunks[i], 0, makeParams(this.cal, n, c10, c12, phi12 * 180 / Math.PI,
-        numBrightFieldPixels, offset, count, false, buffers.activeBfCount, aberrations.active, options.sample));
+        numBrightFieldPixels, offset, count, false, buffers.activeBfCount, aberrations.active, options.sample, outputCols));
       const pass = enc.beginComputePass(); pass.setPipeline(plan.sum); pass.setBindGroup(0, plan.sumGroups[i]);
-      pass.dispatchWorkgroups(Math.min(65535, Math.ceil(n * n / 256)), Math.ceil(n * n / (256 * 65535))); pass.end(); offset += count;
+      pass.dispatchWorkgroups(Math.min(65535, Math.ceil(n * outputCols / 256)), Math.ceil(n * outputCols / (256 * 65535))); pass.end(); offset += count;
     }
-    device.queue.writeBuffer(plan.params, 0, makeParams(this.cal, n, c10, c12, phi12 * 180 / Math.PI,
-      numBrightFieldPixels, 0, 1, false, buffers.activeBfCount, aberrations.active, options.sample));
+    if (paired) {
+      const pass = enc.beginComputePass();
+      pass.setPipeline(plan.mirrorPipeline); pass.setBindGroup(0, plan.mirrorGroup);
+      pass.dispatchWorkgroups(Math.min(65535, Math.ceil(n * n / 256)), Math.ceil(n * n / (256 * 65535))); pass.end();
+    }
     for (const [pipeline, bind] of [[plan.rows, plan.rowGroup], [plan.cols, plan.colGroup]] as const) {
       const pass = enc.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, bind);
       pass.dispatchWorkgroups(1, n); pass.end();
@@ -2068,7 +2135,7 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
       const thick = sampleThickness(options.sample) > 0;
       device.queue.writeBuffer(buffers.aberrations, 0, aberrations.data as unknown as BufferSource);
       const t0 = performance.now();
-      const enc = device.createCommandEncoder();
+      let enc = device.createCommandEncoder();
       // Object-redraw fast path (ported from the CUDA SSB engine): sum
       // corrected G over BF pixels in Fourier space, one iFFT, angle once -
       // skips two FFT passes + atan2 per BF pixel. Displays angle(mean(obj)),
@@ -2159,6 +2226,14 @@ export class WebGPUSSBBackend implements SSBProtocol<WebGPUSSBResult> {
         pass.setBindGroup(0, bindGroups.reducePartial[chunkIndex]);
         pass.dispatchWorkgroups(Math.ceil(Math.ceil(chunkBf / REDUCE_BF_GROUP) * this.plane / 256));
         pass.end();
+        if (options.signal) {
+          // Diagnostics yield between complete BF chunks. A renewed drag can
+          // stop the remaining work without returning a partial phase or loss.
+          device.queue.submit([enc.finish()]);
+          await device.queue.onSubmittedWorkDone();
+          options.signal.throwIfAborted();
+          enc = device.createCommandEncoder();
+        }
       }
       device.queue.writeBuffer(
         buffers.params,

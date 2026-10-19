@@ -9,6 +9,26 @@ from .test_ssb_thick_sample import _synthetic_session
 pytestmark = pytest.mark.slow
 
 
+@pytest.mark.parametrize("depth", [0., 18.])
+def test_paired_frequencies_match_full_plane_and_keep_native_diagnostics(depth, monkeypatch):
+    """Retain the complete BF sum when a finer grid permits frequency pairing."""
+    ssb, engine = _synthetic_session()
+    options = dict(sample_tilt_mrad=(-9., 5.), depth_spread_nm=depth,
+                   upsampling_factor=4)
+    aberrations = {"C10_nm": -8., "C12_nm": 4., "phi12_deg": -40.}
+    try:
+        assert engine.thick._wave_columns(128, 128) == 128
+        # The native Nyquist edge crosses the aperture support. At 4x it does not.
+        assert engine.thick._wave_columns(512, 512) == 257
+        paired, paired_loss = ssb.preview(aberrations, **options)
+        monkeypatch.setattr(engine.thick, "_wave_columns", lambda rows, cols: cols)
+        full, full_loss = ssb.preview(aberrations, **options)
+        np.testing.assert_allclose(paired, full, atol=1e-6, rtol=1e-5)
+        assert paired_loss == full_loss
+    finally:
+        ssb.close()
+
+
 def _direct_wave_average(ssb, factor, tilt, depth):
     """Independent Torch correction and per-detector inverse transforms."""
     import torch
