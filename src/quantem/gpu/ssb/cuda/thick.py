@@ -159,7 +159,10 @@ class ThickSample:
             self._wave_columns(rows, cols)
             if higher_order_magnitudes is None else cols
         )
-        group_size = 32
+        # Fine grids otherwise write and reduce a large partial plane for
+        # every 32 BF pixels. Larger groups retain all float32 corrections
+        # and float64 accumulation while reducing that intermediate traffic.
+        group_size = 128 if rows > cache["ny"] and cols > cache["nx"] else 32
         groups = max(1, min(16, math.ceil(num_bright_field_pixels / group_size),
                             chunk_bytes // (rows * cols * 16)))
         shape = (groups, rows, unique_cols)
