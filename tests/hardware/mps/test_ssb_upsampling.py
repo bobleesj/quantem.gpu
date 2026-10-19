@@ -180,7 +180,8 @@ def test_fused_depth_model_at_all_native_sizes(n, atol):
         assert abs(loss - expected_loss) <= 1e-6 * abs(expected_loss)
 
 
-def test_slider_changes_match_fresh_sessions():
+@pytest.mark.parametrize("estimator", ["mean_phase", "phase_of_mean"])
+def test_slider_changes_match_fresh_sessions(estimator):
     """Reuse a session while changing optics, rotation, and output sampling."""
     _require_mps()
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
@@ -200,6 +201,7 @@ def test_slider_changes_match_fresh_sessions():
             options = dict(
                 sample_tilt_mrad=tilt, depth_spread_nm=depth,
                 upsampling_factor=factor, compute_loss=False,
+                phase_estimator=estimator,
             )
             reused.set_rotation(rotation)
             phase, _ = reused.preview(aberrations, **options)
