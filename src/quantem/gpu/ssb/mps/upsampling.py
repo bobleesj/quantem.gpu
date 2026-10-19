@@ -58,12 +58,13 @@ inline float4 alias_geometry(float dx, float dy, float wl, float semi,
 # Keep precise geometry, trigonometry, and float32 evaluation on both paths.
 # Pointer types retain MLX's constant/device address spaces for small BF groups.
 _ALIAS_TRANSFER = """
-template <uint SOURCE_N, uint G_COLS, bool HIGHER,
+template <uint SOURCE_N, uint G_COLS, bool HIGHER, bool INDEX32,
           typename G, typename KRow, typename KCol, typename Params,
           typename Probe, typename Coefficients>
 inline float2 alias_corrected(
-    uint row, uint col, uint k, float qr, float qc, float shift, float radius,
-    G g, KRow k_row, KCol k_col, Params params, Probe probe, Coefficients coefficients
+    uint k, float qr, float qc, float shift, float radius,
+    G g, KRow k_row, KCol k_col, Params params, Probe probe,
+    Coefficients coefficients, size_t source_offset, bool mirror
 ) {
     float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
     float c10 = params[4], c12 = params[5], c2 = params[6], s2 = params[7];
@@ -80,6 +81,12 @@ inline float2 alias_corrected(
     if (gk.w == 0.0f || (gm.w == 0.0f && gp.w == 0.0f)) {
         return float2(0.0f);
     }
+    // Start the source load before the optical arithmetic. Narrow addressing
+    // is exact when the chunk fits; larger chunks retain size_t arithmetic.
+    auto value = g[INDEX32
+        ? size_t(k * (SOURCE_N * G_COLS) + uint(source_offset))
+        : size_t(k) * SOURCE_N * G_COLS + source_offset];
+    float vr = value.real, vi = mirror ? -value.imag : value.imag;
     float chi_k = probe[k * 5 + 4];
     // A closed aperture contributes exactly zero, independent of its phase.
     float a = 0.0f, b = 0.0f;
@@ -104,15 +111,6 @@ inline float2 alias_corrected(
     }
     float re = a * ca - b * cb, im = -a * sa - b * sb;
     float inv = 1.0f / metal::max(metal::precise::sqrt(re * re + im * im), 1e-8f);
-    // Only the source G has Hermitian symmetry. Corrected aliases do not.
-    uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
-    bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
-    if (mirror) {
-        source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
-        source_col = SOURCE_N - source_col;
-    }
-    auto value = g[((size_t)k * SOURCE_N + source_row) * G_COLS + source_col];
-    float vr = value.real, vi = mirror ? -value.imag : value.imag;
     return float2((vr * re + vi * im) * inv, (vi * re - vr * im) * inv);
 }
 """
@@ -199,9 +197,18 @@ def _alias_correction_kernel(has_depth: bool = True):
         float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
         float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
         radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
-        float2 value = alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-            row, col, k, qr, qc, shift, radius,
-            g, k_row, k_col, params, probe, coefficients);
+        // Only the source G has Hermitian symmetry. Corrected aliases do not.
+        uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
+        bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
+        if (mirror) {
+            source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
+            source_col = SOURCE_N - source_col;
+        }
+        size_t source_offset = size_t(source_row) * G_COLS + source_col;
+        constexpr bool INDEX32 = size_t(K) * SOURCE_N * G_COLS <= (size_t(1) << 32);
+        float2 value = alias_corrected<SOURCE_N, G_COLS, HIGHER, INDEX32>(
+            k, qr, qc, shift, radius, g, k_row, k_col, params, probe,
+            coefficients, source_offset, mirror);
         corrected[out].real = value.x;
         corrected[out].imag = value.y;
         """,
@@ -237,6 +244,16 @@ def _coherent_alias_kernel(has_depth: bool = True):
         float shift = 6.283185307179586f * (qr * params[10] + qc * params[11]);
         float radius = (params[1] + 0.5f * metal::max(params[2], params[3])) / params[0];
         radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+        // Reuse the source address for every BF pixel at this output frequency.
+        // Only the source G has Hermitian symmetry. Corrected aliases do not.
+        uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
+        bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
+        if (mirror) {
+            source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
+            source_col = SOURCE_N - source_col;
+        }
+        size_t source_offset = size_t(source_row) * G_COLS + source_col;
+        constexpr bool INDEX32 = size_t(K) * SOURCE_N * G_COLS <= (size_t(1) << 32);
         for (uint group = 0; group < GROUPS; ++group) {
             uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
             float2 sum = float2(0.0f);
@@ -252,9 +269,9 @@ def _coherent_alias_kernel(has_depth: bool = True):
                 float cp = max(max(col_min + qc, -qc - col_max), 0.0f);
                 if (min(rm * rm + cm * cm, rp * rp + cp * cp) <= bounds[bound + 4]) {
                     for (uint k = start; k < stop; ++k) {
-                        sum += alias_corrected<SOURCE_N, G_COLS, HIGHER>(
-                            row, col, k, qr, qc, shift, radius, g, k_row, k_col,
-                            params, probe, coefficients);
+                        sum += alias_corrected<SOURCE_N, G_COLS, HIGHER, INDEX32>(
+                            k, qr, qc, shift, radius, g, k_row, k_col,
+                            params, probe, coefficients, source_offset, mirror);
                     }
                 }
             }
