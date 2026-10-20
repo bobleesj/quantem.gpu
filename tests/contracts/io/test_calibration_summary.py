@@ -21,14 +21,14 @@ def test_calibration_summary_and_atomic_override():
             "source_metadata": {"detector/pixel_flags": np.asarray([0, 1, 2], np.uint32)},
         },
     )
-    assert data.calibration.table().loc["Voltage", "Source"] == "Recorded"
-    assert data.calibration.table().loc["Convergence semiangle", "Source"] == "Missing"
+    assert data.calibration.table().loc["Accelerating voltage", "Source"] == "Recorded"
+    assert data.calibration.table().loc["Convergence semiangle", "Source"] == "Not recorded"
     data.calibration.semiangle_mrad = 30
     data.calibration.detector_sampling_inv_A = (0.02, 0.03)
     assert "detector_sampling_mrad" not in data.metadata
     assert data.sampling == (0.4, 0.5, 0.02, 0.03)
     assert data.calibration.table().loc["Convergence semiangle", "Source"] == "Overridden"
-    assert data.calibration.table().loc["Detector sampling (row, col)", "Unit"] == "1/angstrom"
+    assert data.calibration.table().loc["Detector step (row, col)", "Unit"] == "1/angstrom per pixel"
     stored = metadata.acquisition_metadata(data.shape, data.metadata)
     assert stored["source_metadata"]["detector/pixel_flags"] == [0, 1, 2]
     assert stored["axes"][2]["sampling"]["value"] == 0.2
@@ -54,7 +54,7 @@ def test_calibration_summary_and_atomic_override():
 def test_unknown_calibration_does_not_prevent_raw_inspection():
     values = np.ones((2, 3, 4, 5), np.uint16)
     data = Dataset4dstemGPU(values, {})
-    assert set(data.calibration.table().Source) == {"Missing"}
+    assert set(data.calibration.table().Source) == {"Not recorded"}
     assert data.calibration.voltage_kV is None
     np.testing.assert_array_equal(data.read().numpy(), values)
     assert "Not recorded" in data._repr_html_()
@@ -68,4 +68,21 @@ def test_calibration_fields_are_named_and_a_scalar_sets_both_axes():
         data.calibration.voltage_kv = 300
     with pytest.raises(AttributeError, match="no field"):
         data.calibration.rotation
-    assert "Scan sampling (row, col)" in data.calibration._repr_html_()
+    assert "Scan step (row, col)" in data.calibration._repr_html_()
+
+
+def test_every_calibration_table_uses_one_label_set():
+    """data.calibration.table(), data.metadata_table() and SSB.calibration_table() name rows and units alike."""
+    from quantem.gpu.io import metadata_display as labels
+
+    data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {
+        "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
+        "detector_sampling_mrad": [0.55, 0.55]})
+    calibration = data.calibration.table()
+    overview = data.metadata_table()
+    for name in ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad"):
+        label, unit = labels.CALIBRATION_LABELS[name], labels.CALIBRATION_UNITS[name]
+        assert calibration.loc[label, "Unit"] == overview.loc[label, "Unit"] == unit
+        assert calibration.loc[label, "Source"] == overview.loc[label, "Metadata"] == labels.RECORDED
+    assert calibration.loc["Scan step (row, col)", "Value"] == (0.264, 0.264)
+    assert overview.loc["Scan-detector rotation", "Metadata"] == labels.NOT_RECORDED

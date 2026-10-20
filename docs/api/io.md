@@ -30,7 +30,16 @@ data
 `data.metadata_table()` returns the same table as a pandas DataFrame. It shows
 the recorded geometry, physical values and units, saved calibration overrides,
 and pixel-correction metadata without decoding detector values. Missing
-rotation is shown as **Not recorded**, not as a measured zero. Complete source
+rotation is shown as **Not recorded**, not as a measured zero. `data.calibration`
+(and `data.calibration.table()`) shows the four microscope calibrations alone,
+with **Value**, **Unit** and **Source** columns. Every calibration table,
+including `SSB.calibration_table()`, uses one label set
+(`quantem.gpu.io.metadata_display.CALIBRATION_LABELS`): **Accelerating
+voltage** (kV), **Convergence semiangle** (mrad), **Scan step (row, col)**
+(angstrom), **Detector step (row, col)** (mrad per pixel, or 1/angstrom per
+pixel), **Scan-detector rotation** (deg) and **Rotation flipped**, with the
+sources **Recorded**, **Overridden**, **Recorded + overridden** and **Not
+recorded**. A zero or negative physical value is **Not recorded**. Complete source
 records remain available in `data.metadata`. Header-only `io.inspect(path)`
 shows the same calibration fields before loading; header inspection does not
 authenticate the detector payload.
