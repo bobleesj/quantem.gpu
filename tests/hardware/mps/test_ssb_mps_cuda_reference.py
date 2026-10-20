@@ -1948,3 +1948,26 @@ def test_mps_sparse_row_packs_preserve_reduction_boundaries() -> None:
         [(0, 2)],
         [(2, 4), (4, 5)],
     ]
+
+
+@pytest.mark.parametrize("detector_bin", [1, 2])
+def test_ssb_open_says_when_it_reads_binned_bright_field_columns(tmp_path, capsys, detector_bin) -> None:
+    """An export binned on the detector replaces the native counts only with one printed line (no silent reduction)."""
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "bf_columns.u8").write_bytes(np.arange(3 * 16, dtype=np.uint8).tobytes())
+    (tmp_path / "cal.json").write_text(json.dumps({
+        "schema": "quantem.ssb-browser-calibration/2", "scan_region": [0, 4, 0, 4], "scan_shape": [4, 4],
+        "detector_shape": [3, 3], "bright_field_rows": [0, 1, 1], "bright_field_cols": [1, 1, 2],
+        "bright_field_center_px": [1.0, 1.5], "bright_field_radius_px": 1.25,
+        "bf_column_companion_path": "source/bf_columns.u8", "bf_column_encoding": "uint8", "dc_value": [1.0, 0.0],
+        "detector_sampling_mrad": [0.7, 0.8], "detector_bin": detector_bin,
+    }))
+    with SSB.open(str(tmp_path), backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=1.0,
+                  scan_detector_rotation_deg=0.0) as session:
+        assert session.source_detector_bin == detector_bin
+    out = capsys.readouterr().out
+    assert ("binned 2 x 2 on the detector" in out) == (detector_bin == 2)
