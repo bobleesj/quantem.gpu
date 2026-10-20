@@ -1,6 +1,7 @@
 """Saved-result reuse for the public SSB workflow."""
 
 import json
+from pathlib import Path
 import math
 
 import numpy as np
@@ -138,7 +139,7 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     assert second.saved_path == saved / "ssb-find_aberrations.npz"
     assert second.metadata["signature"]["settings"]["num_trials"] == 200
     assert second.metadata["signature"]["software"]["ssb_source_sha256"]
-    assert second.metadata["input"]["source_path"] == str(source)
+    assert second.metadata["input"]["source"] == {"file_name": "scan.bin", "relative_path": None}
     assert second.metadata["result"]["loss"] == 0.125
 
     readable = json.loads((saved / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
@@ -677,14 +678,65 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
 
 
 def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
-    """quantem.ssb-result/8 recorded the polarity check as column_sign; /9 reads only its own layout and says so."""
+    """quantem.ssb-result/9 named its source by absolute path; /10 reads only its own layout and says so."""
     from quantem.gpu.ssb.persistence import RESULT_SCHEMA, load_result, result_paths
 
-    assert RESULT_SCHEMA == "quantem.ssb-result/9"
+    assert RESULT_SCHEMA == "quantem.ssb-result/10"
     paths = result_paths(tmp_path / "fit", "find_aberrations")
     paths[0].parent.mkdir()
     np.savez(paths[0], object_wave=np.ones((2, 2), np.complex64))
-    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/8", "signature": {}, "result": {"column_sign": None}}))
+    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/9", "signature": {}, "result": {}}))
     assert load_result(paths=paths, signature={}, backend="mps") is None
     out = capsys.readouterr().out
-    assert "'quantem.ssb-result/8' record" in out and "'quantem.ssb-result/9' only" in out
+    assert "'quantem.ssb-result/9' record" in out and "'quantem.ssb-result/10' only" in out
+
+
+def _absolute_paths(value, found=None):
+    """Every string in a JSON value that is an absolute path or names the home directory."""
+    found = [] if found is None else found
+    if isinstance(value, dict):
+        for item in value.values():
+            _absolute_paths(item, found)
+    elif isinstance(value, list):
+        for item in value:
+            _absolute_paths(item, found)
+    elif isinstance(value, str) and (value.startswith("/") or str(Path.home()) in value or "\\" in value):
+        found.append(value)
+    return found
+
+
+def test_saved_result_is_reused_after_its_folder_moves_and_holds_no_absolute_path(tmp_path, monkeypatch):
+    """The record names its source relative to the results folder and matches on content, so a moved folder reuses it.
+
+    A different file of the same name (another size or header) is a different acquisition and is fitted again.
+    """
+    import shutil
+
+    from quantem.gpu.ssb.persistence import acquisition_identity
+
+    folder = tmp_path / "session"
+    source = folder / "data" / "scan.bin"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"detector counts")
+    backend = _Backend()
+    first = _session(monkeypatch, source, backend).find_aberrations(tilt=False, save_dir=folder, verbose=False)
+    record = json.loads((folder / "ssb-find_aberrations.json").read_text(encoding="utf-8"))
+    assert record["input"]["source"] == {"file_name": "scan.bin", "relative_path": "data/scan.bin"}
+    assert _absolute_paths(record) == []
+    identity = record["signature"]["source"]["detector"]
+    assert identity == acquisition_identity(source)
+    assert set(identity) == {"schema", "file_name", "size", "header_sha256", "header_bytes", "linked_files",
+                             "scan_shape", "detector_shape", "hot_pixel_correction"}
+
+    moved = tmp_path / "elsewhere" / "session"
+    moved.parent.mkdir()
+    shutil.move(folder, moved)
+    again = _session(monkeypatch, moved / "data" / "scan.bin", backend).find_aberrations(
+        tilt=False, save_dir=moved, verbose=False)
+    assert again.reused and backend.fit_calls == 1
+    np.testing.assert_array_equal(again.object_wave, first.object_wave)
+
+    (moved / "data" / "scan.bin").write_bytes(b"other detector counts")
+    other = _session(monkeypatch, moved / "data" / "scan.bin", backend).find_aberrations(
+        tilt=False, save_dir=moved, verbose=False)
+    assert not other.reused and backend.fit_calls == 2
