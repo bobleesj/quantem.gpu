@@ -13,7 +13,6 @@ import torch
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
 from quantem.gpu.formats.qem.reference import save_array
-from quantem.gpu.formats.qem.metadata import MAPED_RECORDS, json_metadata
 from quantem.gpu.io import qem
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.hdf5.write import (
