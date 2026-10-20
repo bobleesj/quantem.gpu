@@ -21,6 +21,8 @@ from quantem.gpu.io.representation import DataRepresentation
 if TYPE_CHECKING:
     import pandas as pd
 
+    from quantem.gpu.detector import BrightFieldDiskFit
+
 
 class Calibration:
     """Microscope calibration of a loaded acquisition, read and set by name.
@@ -36,6 +38,7 @@ class Calibration:
     >>> data.calibration.voltage_kV = 300  # doctest: +SKIP
     >>> data.calibration.semiangle_mrad = 30  # doctest: +SKIP
     >>> data.calibration.scan_sampling_A = (0.264, 0.264)  # doctest: +SKIP
+    >>> fit = data.calibration.fit_detector_sampling()  # doctest: +SKIP
     >>> data.calibration  # doctest: +SKIP
     """
 
@@ -49,22 +52,76 @@ class Calibration:
         "detector_sampling_inv_A": ("1/angstrom", True),
     }
 
+    # the bright-field disk fit_detector_sampling records: read here, never set by hand (give a centre or a radius to
+    # SSB or Show4DSTEM instead)
+    FITTED = {
+        "bright_field_center_px": ("px", True),
+        "bright_field_edge_radius_px": ("px", False),
+    }
+
     def __init__(self, dataset: "Dataset4dstemGPU") -> None:
         object.__setattr__(self, "_dataset", dataset)
 
     def __getattr__(self, name: str):
-        if name not in Calibration.FIELDS:
+        if name in Calibration.FITTED:
+            value = (self._dataset.metadata.get(qem_metadata.BRIGHT_FIELD_DISK_KEY) or {}).get(name)
+        elif name in Calibration.FIELDS:
+            value = self._dataset.metadata.get(name)
+        else:
             raise AttributeError(_unknown_calibration(name))
-        value = self._dataset.metadata.get(name)
         return tuple(value) if isinstance(value, (list, tuple)) else value
 
     def __setattr__(self, name: str, value) -> None:
+        if name in Calibration.FITTED:
+            raise AttributeError(
+                f"{name} is fitted by data.calibration.fit_detector_sampling(); to use another value, give "
+                f"{name.replace('_edge', '')}= to SSB(...) or Show4DSTEM(...)."
+            )
         if name not in Calibration.FIELDS:
             raise AttributeError(_unknown_calibration(name))
         self._dataset._record_calibration(**{name: value})
 
     def __dir__(self):
-        return [*Calibration.FIELDS, "table"]
+        return [*Calibration.FIELDS, *Calibration.FITTED, "fit_detector_sampling", "table"]
+
+    def fit_detector_sampling(self) -> "BrightFieldDiskFit":
+        """Calibrate the detector from the bright-field disk and the recorded convergence semiangle, and record it.
+
+        The bright-field disk is the image of the probe-forming aperture, so its edge sits at the convergence
+        semiangle: ``detector_sampling_mrad = semiangle_mrad / bright_field_edge_radius_px`` on both axes
+        (``detector.fit_bright_field_disk``). The mean pattern is computed on the encoded acquisition, with no dense
+        copy. The fit records the detector sampling (source ``Fitted (bright-field disk)``), the disk centre and its
+        edge radius here; SSB, the viewers and ``io.save`` then use them instead of fitting again. A detector sampling
+        you set by hand is kept, and one line says so. Fit again after changing ``semiangle_mrad``.
+
+        Returns
+        -------
+        BrightFieldDiskFit
+            ``bright_field_center_px`` (row, col), ``bright_field_edge_radius_px``, ``detector_sampling_mrad``
+            (row, col) mrad per pixel, ``method``, and ``show()`` for the mean pattern with the fitted edge.
+
+        Raises
+        ------
+        ValueError
+            When no convergence semiangle is recorded, or the mean pattern has no bright-field disk.
+
+        Examples
+        --------
+        >>> data.calibration.semiangle_mrad = 30  # doctest: +SKIP
+        >>> fit = data.calibration.fit_detector_sampling()  # doctest: +SKIP
+        >>> fit.show()  # doctest: +SKIP
+        """
+        from quantem.gpu import detector
+
+        semiangle_mrad = self.semiangle_mrad
+        if semiangle_mrad is None:
+            raise ValueError(
+                "Fitting the detector sampling needs the convergence semiangle, which this acquisition does not "
+                "record: set data.calibration.semiangle_mrad = ... (mrad) first."
+            )
+        fit = detector.fit_bright_field_disk(self._dataset, semiangle_mrad)
+        self._dataset._record_bright_field_disk(fit)
+        return fit
 
     def table(self) -> "pd.DataFrame":
         """Value, unit and source (recorded, overridden or not recorded) of each calibration.
@@ -87,9 +144,10 @@ def _unknown_calibration(name: str) -> str:
     """The error for a calibration field that does not exist, naming the closest one."""
     import difflib
 
-    close = difflib.get_close_matches(name, Calibration.FIELDS, n=1, cutoff=0.6)
+    fields = [*Calibration.FIELDS, *Calibration.FITTED]
+    close = difflib.get_close_matches(name, fields, n=1, cutoff=0.6)
     hint = f" Did you mean {close[0]!r}?" if close else ""
-    return f"Calibration has no field {name!r}.{hint} Fields: {', '.join(Calibration.FIELDS)}."
+    return f"Calibration has no field {name!r}.{hint} Fields: {', '.join(fields)}."
 
 
 @dataclass(eq=False, frozen=True, slots=True)
@@ -310,10 +368,13 @@ class Dataset4dstemGPU:
         detector_sampling_mrad: float | tuple[float, float] | None = None,
         detector_sampling_inv_A: float | tuple[float, float] | None = None,
         evidence: str = "Stated by the user",
+        provenance: str = qem_metadata.USER_OVERRIDE,
     ) -> None:
         """Record user calibration beside, never in place of, the acquisition's own record.
 
-        A single number for a sampling applies to both (row, col) axes.
+        A single number for a sampling applies to both (row, col) axes. ``provenance`` is
+        ``qem_metadata.USER_OVERRIDE`` for a value set by hand, ``qem_metadata.BRIGHT_FIELD_DISK_FIT``
+        for the detector sampling ``fit_detector_sampling`` records.
         """
         scan_sampling_A, detector_sampling_mrad, detector_sampling_inv_A = (
             None if value is None else (value, value) if np.ndim(value) == 0 else value
@@ -332,7 +393,7 @@ class Dataset4dstemGPU:
 
         def record(path, value, unit):
             overrides[path] = _microscopy_quantity(dict(
-                value=value, unit=unit, provenance="user_override", evidence=evidence.strip()
+                value=value, unit=unit, provenance=provenance, evidence=evidence.strip()
             ), path)
 
         for path, value, unit in (
@@ -359,6 +420,27 @@ class Dataset4dstemGPU:
             self.metadata.pop(key, None)
         self.metadata.pop("calibration_overrides", None)
         self.metadata.update(updated)
+
+    def _record_bright_field_disk(self, fit: "BrightFieldDiskFit") -> None:
+        """Record a bright-field disk fit: its centre and edge radius, and its detector sampling unless set by hand."""
+        overrides = self.metadata.get("scientific_metadata", {}).get("calibration_overrides", {})
+        by_hand = overrides.get(qem_metadata.DETECTOR_PIXEL_SIZE[0], {}).get("provenance") == qem_metadata.USER_OVERRIDE
+        if by_hand:
+            key = next(key for key in qem_metadata.DETECTOR_SAMPLING_KEYS.values() if self.metadata.get(key) is not None)
+            unit = "mrad" if key == "detector_sampling_mrad" else "1/angstrom"
+            print(f"Calibration: kept the detector sampling set by hand, {tuple(self.metadata[key])} {unit} per pixel; "
+                  f"the bright-field disk gives {fit.detector_sampling_mrad[0]:.6g} mrad per pixel.")
+        else:
+            self._record_calibration(
+                detector_sampling_mrad=fit.detector_sampling_mrad, provenance=qem_metadata.BRIGHT_FIELD_DISK_FIT,
+                evidence=(f"semiangle {fit.semiangle_mrad:g} mrad / bright-field edge radius "
+                          f"{fit.bright_field_edge_radius_px:.6g} px ({fit.method})"),
+            )
+        self.metadata[qem_metadata.BRIGHT_FIELD_DISK_KEY] = {
+            "schema": qem_metadata.BRIGHT_FIELD_DISK_SCHEMA, "method": fit.method,
+            "bright_field_center_px": list(fit.bright_field_center_px),
+            "bright_field_edge_radius_px": fit.bright_field_edge_radius_px,
+        }
 
     @property
     def ndim(self) -> int:

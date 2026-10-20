@@ -9,7 +9,12 @@ import math
 import numbers
 from typing import TYPE_CHECKING
 
-from quantem.gpu.formats.qem.metadata import DETECTOR_PIXEL_SIZE, SCAN_PIXEL_SIZE
+from quantem.gpu.formats.qem.metadata import (
+    BRIGHT_FIELD_DISK_FIT,
+    BRIGHT_FIELD_DISK_KEY,
+    DETECTOR_PIXEL_SIZE,
+    SCAN_PIXEL_SIZE,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -23,6 +28,8 @@ CALIBRATION_LABELS = {
     "detector_sampling_inv_A": "Detector step (row, col)",
     "scan_detector_rotation_deg": "Scan-detector rotation",
     "scan_detector_rotation_flipped": "Rotation flipped",
+    "bright_field_center_px": "Bright-field centre (row, col)",
+    "bright_field_edge_radius_px": "Bright-field edge radius",
 }
 # Unit of each calibration as tables print it.
 CALIBRATION_UNITS = {
@@ -33,12 +40,15 @@ CALIBRATION_UNITS = {
     "detector_sampling_inv_A": "1/angstrom per pixel",
     "scan_detector_rotation_deg": "deg",
     "scan_detector_rotation_flipped": "",
+    "bright_field_center_px": "px",
+    "bright_field_edge_radius_px": "px",
 }
 # Where a value comes from. The file's own states:
 RECORDED = "Recorded"
 OVERRIDDEN = "Overridden"  # set on data.calibration and saved beside the file's record
 PARTLY_OVERRIDDEN = "Recorded + overridden"
 NOT_RECORDED = "Not recorded"
+FITTED_BRIGHT_FIELD_DISK = "Fitted (bright-field disk)"  # data.calibration.fit_detector_sampling()
 # and the states only a session's launch table states, for the value it uses:
 EXPLICIT_OVERRIDE = "Explicit override"  # a keyword given to SSB(...) or SSB.open(...)
 ESTIMATED = "Estimated"
@@ -83,6 +93,9 @@ def calibration_rows(metadata: dict) -> dict:
         origin = RECORDED
         if any(overridden):
             origin = OVERRIDDEN if all(overridden) else PARTLY_OVERRIDDEN
+        if paths and all(isinstance(overrides.get(path), dict)
+                         and overrides[path].get("provenance") == BRIGHT_FIELD_DISK_FIT for path in paths):
+            origin = FITTED_BRIGHT_FIELD_DISK
         return {"Value": value, "Unit": unit, "Metadata": origin}
 
     detector_key = (
@@ -117,6 +130,13 @@ def calibration_rows(metadata: dict) -> dict:
             ("scan_controller/regular_scan/dwell_time",),
         ),
     }
+    disk = metadata.get(BRIGHT_FIELD_DISK_KEY)
+    if isinstance(disk, dict):
+        for name in ("bright_field_center_px", "bright_field_edge_radius_px"):
+            if disk.get(name) is not None:
+                value = disk[name]
+                rows[CALIBRATION_LABELS[name]] = {"Value": tuple(value) if isinstance(value, list) else value,
+                                                  "Unit": CALIBRATION_UNITS[name], "Metadata": FITTED_BRIGHT_FIELD_DISK}
     if metadata.get("camera_length_mm") is not None:
         rows["Camera length"] = row(
             metadata["camera_length_mm"], "mm", ("imaging_system/camera_length",)
@@ -159,7 +179,9 @@ def calibration_table(metadata: dict) -> "pd.DataFrame":
 
     rows = calibration_rows(metadata)
     labels = dict.fromkeys(CALIBRATION_LABELS[name] for name in
-                           ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad"))
+                           ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad",
+                            "bright_field_center_px", "bright_field_edge_radius_px")
+                           if CALIBRATION_LABELS[name] in rows)
     table = {label: {"Value": display_value(rows[label]["Value"]), "Unit": rows[label]["Unit"], "Source": rows[label]["Metadata"]}
              for label in labels}
     return pd.DataFrame.from_dict(table, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")

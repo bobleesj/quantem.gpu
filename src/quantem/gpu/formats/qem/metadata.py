@@ -57,6 +57,15 @@ MAPED_RECORDS = {"maped_merge": "quantem_maped_merge_v1", "maped_summary": "quan
 # value, or none, is the same as no record.
 # 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
 HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/2"
+# The provenance of a calibration override: a value set by hand, or the detector sampling
+# ``data.calibration.fit_detector_sampling()`` fitted on the bright-field disk.
+USER_OVERRIDE = "user_override"
+BRIGHT_FIELD_DISK_FIT = "bright_field_disk_fit"
+OVERRIDE_PROVENANCES = (USER_OVERRIDE, BRIGHT_FIELD_DISK_FIT)
+# The retained record of that fit's bright-field disk: centre (row, col) and edge radius in detector
+# pixels. A record with another schema, or none, is the same as no record.
+BRIGHT_FIELD_DISK_KEY = "bright_field_disk"
+BRIGHT_FIELD_DISK_SCHEMA = "quantem.bright-field-disk/1"
 
 # Conversion factors are source unit -> public scientific-metadata unit.
 _LENGTH = ("angstrom", {"m": 1e10, "nm": 10, "angstrom": 1, "Å": 1})
@@ -723,11 +732,12 @@ def retained_metadata(metadata: dict) -> dict:
         key: value for key, value in metadata.items()
         if key not in NOT_RETAINED and not (isinstance(key, str) and key.startswith("entry/"))
         and not (key == "hot_pixel_correction" and isinstance(value, dict) and value.get("schema") != HOT_PIXEL_SCHEMA)
+        and not (key == BRIGHT_FIELD_DISK_KEY and not (isinstance(value, dict) and value.get("schema") == BRIGHT_FIELD_DISK_SCHEMA))
     }
 
 
 def _validate_overrides(overrides: dict) -> None:
-    """Accept only positive, evidenced user calibration in calculation units.
+    """Accept only positive, evidenced user or bright-field-disk calibration in calculation units.
 
     Overrides take precedence over recorded values, so a wrong unit or a
     missing row or column partner would silently miscalibrate every reader.
@@ -750,7 +760,8 @@ def _validate_overrides(overrides: dict) -> None:
         if (isinstance(value, bool) or not isinstance(value, (int, float))
                 or not math.isfinite(value) or value <= 0
                 or quantity.get("unit") not in units.get(path, set())
-                or quantity.get("provenance") != "user_override"
+                or quantity.get("provenance") not in OVERRIDE_PROVENANCES
+                or (quantity["provenance"] == BRIGHT_FIELD_DISK_FIT and path not in DETECTOR_PIXEL_SIZE)
                 or not isinstance(quantity.get("evidence"), str)
                 or not quantity["evidence"]):
             raise ValueError(f"Invalid QEM calibration override at {path}; check value, units and evidence.")
