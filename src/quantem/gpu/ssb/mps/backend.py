@@ -340,7 +340,8 @@ class MpsSSBBackend:
         result = fit_sample(self._prepared, **options)
         result.setdefault("timings", {})["fft_preparation_s"] = preparation_s
         # Reuse allocator buffers for the following phase diagnostic and for
-        # repeated fits. close() releases the session and clears the cache.
+        # repeated fits (both 180-degree branches); SSB.find_aberrations calls
+        # release_cache() when the fit is done, and close() clears it too.
         return result
 
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
@@ -359,6 +360,10 @@ class MpsSSBBackend:
                 self._prepared, parameters[start:start + 4], band_inv_A,
             )
         return agreement
+
+    def release_cache(self) -> None:
+        """Return MLX's cached, unused Metal buffers to the system; the prepared G(q, k) stays."""
+        require_mlx().clear_cache()
 
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""

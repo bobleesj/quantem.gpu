@@ -1749,6 +1749,10 @@ class SSB:
             result = self._fit_both_branches(fit, keep_first=branches == "keep")
             if verbose:
                 _announce_rotation_branches(result)
+        if isinstance(self._compute, MpsSSBBackend):
+            # the fits reuse their batch buffers through MLX's allocator cache, across both branches and the phase
+            # diagnostic (up to ~20 GB on a 512 x 512 scan); once the fit is done the session keeps only G(q, k)
+            self._compute.release_cache()
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
