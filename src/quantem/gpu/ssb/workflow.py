@@ -2022,6 +2022,10 @@ class SSB:
             sample_tilt_mrad=tilt or (0.0, 0.0), depth_spread_nm=depth or 0.0,
             compute_loss=compute_loss,
         )
+        if isinstance(self._compute, MpsSSBBackend):
+            # slider previews reuse their chunk buffers through MLX's cache (the loss's row IFFT is 8.6 GB at 4096
+            # bright-field pixels); a finished reconstruction keeps only G(q, k)
+            self._compute.release_cache()
         result = SSBResult(
             object_wave=self._unit_wave(phase), backend=self.backend, aberrations=dict(coefs),
             sample_tilt_mrad=tilt, depth_spread_nm=depth,
