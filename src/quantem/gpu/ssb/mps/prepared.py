@@ -235,7 +235,7 @@ def prepare_selection(
 
 
 # bright-field pixels per in-place FFT along the scan rows of an encoded crop's G(q, k)
-ENCODED_BF_PER_FFT = 512
+ENCODED_BF_PER_FFT = 256
 
 
 def _storage_ranges(stored: np.ndarray, chunk_bf: int) -> list[tuple[int, int]]:
