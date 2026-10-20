@@ -59,7 +59,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator
         results = {}
         for factor in (1, 2, 3, 4, 1):
             result = ssb.reconstruct(correction, upsampling_factor=factor, phase_estimator=estimator,
-                                     save_to=tmp_path / f'x{factor}')
+                                     save_dir=tmp_path / f'x{factor}')
             assert result.phase.shape == (128 * factor, 128 * factor)
             assert result.object_sampling_A == (.3 / factor, .3 / factor)
             assert result.loss == loss
@@ -77,7 +77,7 @@ def test_saved_sampling_preserves_correction_and_native_loss(tmp_path, estimator
         monkeypatch.setattr(ssb, 'find_aberrations', forbidden)
         for factor in (4, 3, 2, 1):
             saved = ssb.reconstruct(correction, upsampling_factor=factor, phase_estimator=estimator,
-                                    save_to=tmp_path / f'x{factor}')
+                                    save_dir=tmp_path / f'x{factor}')
             # A source path cannot identify the direct array's crop or edits.
             # The saved image is refreshed; immutable SSB.open sources have
             # separate cache-reuse checks in test_ssb_persistence.

@@ -110,13 +110,13 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     first = _session(monkeypatch, source, backend).find_aberrations(
         num_trials=200,
         refinement="nelder-mead",
-        save_to=saved,
+        save_dir=saved,
         verbose=False,
     )
     second = _session(monkeypatch, source, backend).find_aberrations(
         num_trials=200,
         refinement="nelder-mead",
-        save_to=saved,
+        save_dir=saved,
         verbose=False,
     )
 
@@ -154,14 +154,14 @@ def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None
     backend = _Backend()
 
     _session(monkeypatch, source, backend).find_aberrations(
-        num_trials=200, save_to=saved, verbose=False
+        num_trials=200, save_dir=saved, verbose=False
     )
     _session(monkeypatch, source, backend).find_aberrations(
-        num_trials=201, save_to=saved, verbose=False
+        num_trials=201, save_dir=saved, verbose=False
     )
     source.write_bytes(b"different detector counts")
     _session(monkeypatch, source, backend).find_aberrations(
-        num_trials=201, save_to=saved, verbose=False
+        num_trials=201, save_dir=saved, verbose=False
     )
 
     assert backend.fit_calls == 3
@@ -179,16 +179,16 @@ def test_changed_calibration_recomputes(tmp_path, monkeypatch) -> None:
 
     first = _session(monkeypatch, source, backend)
     first.calibration_path = str(calibration)
-    first.find_aberrations(save_to=saved, verbose=False)
+    first.find_aberrations(save_dir=saved, verbose=False)
 
     same = _session(monkeypatch, source, backend)
     same.calibration_path = str(calibration)
-    reused = same.find_aberrations(save_to=saved, verbose=False)
+    reused = same.find_aberrations(save_dir=saved, verbose=False)
 
     calibration.write_text('{"rotation": 2}', encoding="utf-8")
     changed = _session(monkeypatch, source, backend)
     changed.calibration_path = str(calibration)
-    recomputed = changed.find_aberrations(save_to=saved, verbose=False)
+    recomputed = changed.find_aberrations(save_dir=saved, verbose=False)
 
     assert reused.reused
     assert not recomputed.reused
@@ -203,9 +203,9 @@ def test_force_recomputes_matching_fit(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).find_aberrations(save_to=saved, verbose=False)
+    _session(monkeypatch, source, backend).find_aberrations(save_dir=saved, verbose=False)
     forced = _session(monkeypatch, source, backend).find_aberrations(
-        save_to=saved, force=True, verbose=False
+        save_dir=saved, force=True, verbose=False
     )
 
     assert backend.fit_calls == 2
@@ -226,13 +226,13 @@ def test_fixed_reconstruction_reuses_only_matching_aberrations(
     changed_coefs = {"C10_nm": -99.0, "C12_nm": 5.0, "phi12_deg": math.degrees(0.2)}
 
     first = _session(monkeypatch, source, backend).reconstruct(
-        aberrations=first_coefs, save_to=saved
+        aberrations=first_coefs, save_dir=saved
     )
     second = _session(monkeypatch, source, backend).reconstruct(
-        aberrations=first_coefs, save_to=saved
+        aberrations=first_coefs, save_dir=saved
     )
     changed = _session(monkeypatch, source, backend).reconstruct(
-        aberrations=changed_coefs, save_to=saved
+        aberrations=changed_coefs, save_dir=saved
     )
 
     assert backend.reconstruct_calls == 2
@@ -262,7 +262,7 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
     import pytest
 
     with pytest.raises(ValueError, match="requires source_path"):
-        session.find_aberrations(save_to=tmp_path / "result", verbose=False)
+        session.find_aberrations(save_dir=tmp_path / "result", verbose=False)
 
 
 def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeypatch):
@@ -274,8 +274,8 @@ def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeyp
         session = _session(monkeypatch, source, backend)
         session.source_kind = "array"
         session._data[...] = offset
-        search = session.find_aberrations(save_to=tmp_path / "search", verbose=False)
-        result = session.reconstruct(save_to=tmp_path / "fixed")
+        search = session.find_aberrations(save_dir=tmp_path / "search", verbose=False)
+        result = session.reconstruct(save_dir=tmp_path / "fixed")
         assert not search.reused
         assert not result.reused
         assert search.saved_path.is_file()
@@ -291,7 +291,7 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     backend = _Backend()
     session = _session(monkeypatch, source, backend)
     settings = dict(num_trials=0, refinement=None, check_rotation=False,
-                    save_to=tmp_path / "search", verbose=False)
+                    save_dir=tmp_path / "search", verbose=False)
     first = session.find_aberrations(**settings)
     session.reconstruct(aberrations={"C10_nm": 12.0})
     second = session.find_aberrations(**settings)
@@ -313,10 +313,10 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
     backend = _Backend("cuda")
 
     _session(monkeypatch, source, backend, device="cuda").find_aberrations(
-        save_to=saved, verbose=False
+        save_dir=saved, verbose=False
     )
     reused = _session(monkeypatch, source, backend, device="cuda").find_aberrations(
-        save_to=saved, verbose=False
+        save_dir=saved, verbose=False
     )
 
     assert reused.reused
@@ -601,7 +601,7 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
 
     backend.fit_sample = fit_sample
     backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
-    settings = dict(tilt=tilt, save_to=saved, check_rotation=False, verbose=False)
+    settings = dict(tilt=tilt, save_dir=saved, check_rotation=False, verbose=False)
     first = _session(monkeypatch, source, backend).find_aberrations(**settings)
     explicit = _session(monkeypatch, source, backend).find_aberrations(
         refinement=method, **settings,
@@ -647,7 +647,7 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
     backend.fit_sample = fit_sample
     backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
     optics = {"C10_nm": -10.1, "C12_nm": .4, "phi12_deg": 15.0}
-    settings = dict(tilt=True, fixed_aberrations=optics, save_to=tmp_path / "result",
+    settings = dict(tilt=True, fixed_aberrations=optics, save_dir=tmp_path / "result",
                     check_rotation=False, compare_standard=False, verbose=False)
     first = _session(monkeypatch, source, backend).find_aberrations(**settings)
     second = _session(monkeypatch, source, backend).find_aberrations(**settings)
@@ -658,3 +658,17 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
     settings["fixed_aberrations"] = {**optics, "C10_nm": -9.0}
     changed = _session(monkeypatch, source, backend).find_aberrations(**settings)
     assert not changed.reused and len(calls) == 2
+
+
+def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
+    """save_dir names a folder; a path ending in .npz or .json is a file, not a folder of that name."""
+    from quantem.gpu.ssb.persistence import result_paths
+
+    assert result_paths(tmp_path / "results", "reconstruct") == (
+        (tmp_path / "results" / "ssb-reconstruct.npz").resolve(),
+        (tmp_path / "results" / "ssb-reconstruct.json").resolve(),
+    )
+    assert result_paths(tmp_path / "scan.v2", "find_aberrations")[0].name == "ssb-find_aberrations.npz"
+    for name in ("fit.npz", "fit.JSON"):
+        with pytest.raises(ValueError, match="save_dir names a results directory.*save_dir='fit'"):
+            result_paths(tmp_path / name, "find_aberrations")

@@ -142,7 +142,7 @@ def reconstruct_series(
                 reference_result = ssb.find_aberrations(
                     num_trials=num_trials,
                     refinement=refinement,
-                    save_to=reference_path / "ssb-fit",
+                    save_dir=reference_path / "ssb-fit",
                     verbose=False,
                 )
                 detector_sampling_mrad = ssb.detector_sampling_mrad
@@ -182,14 +182,14 @@ def reconstruct_series(
             if fixed_probe:
                 result = ssb.reconstruct(
                     aberrations=reference_aberrations,
-                    save_to=screen_path / "ssb-locked",
+                    save_dir=screen_path / "ssb-locked",
                     verbose=False,
                 )
             else:
                 result = ssb.find_aberrations(
                     num_trials=num_trials,
                     refinement=refinement,
-                    save_to=screen_path / "ssb-fit",
+                    save_dir=screen_path / "ssb-fit",
                     verbose=False,
                 )
             detector_sampling_mrad = ssb.detector_sampling_mrad

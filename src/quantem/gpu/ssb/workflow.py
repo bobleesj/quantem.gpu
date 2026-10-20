@@ -273,7 +273,7 @@ class SSB:
         The whole scan's mean pattern (``detector.mean(data)``) when the caller has it already, so an encoded dataset
         does not compute it a second time.
 
-    An encoded dataset stays open and the caller's. A result saved from it with ``find_aberrations(save_to=...)`` is
+    An encoded dataset stays open and the caller's. A result saved from it with ``find_aberrations(save_dir=...)`` is
     identified by the data (shape, dtype, the mean pattern's hash, two integer sums of the decoded counts and the scan
     region), with no file to inspect, and reused by a later session on the same data.
 
@@ -1195,7 +1195,7 @@ class SSB:
         tilt_limit_mrad: float = 25.0,
         check_rotation: bool = True,
         seed: int = 42,
-        save_to: str | Path | None = None,
+        save_dir: str | Path | None = None,
         force: bool = False,
         verbose: bool = True,
         compare_standard: bool = True,
@@ -1255,7 +1255,8 @@ class SSB:
         streams detector columns and requires ``compute_loss=False``; the fit's
         diagnostic loss describes the region, not the full field of view.
 
-        Set ``save_to`` to reuse an exact prior result from ``SSB.open`` or from an encoded dataset when the detector
+        ``save_dir`` is a results directory; the fit is written there as ``ssb-find_aberrations.npz`` and ``.json``.
+        Set it to reuse an exact prior result from ``SSB.open`` or from an encoded dataset when the detector
         source, calibration, backend, physical parameters, and fit settings all match.
         Changed settings recompute automatically. Set ``force=True`` to recompute
         an otherwise matching result. Direct array inputs are saved but always
@@ -1287,8 +1288,8 @@ class SSB:
             raise ValueError("refinement='newton' polishes the tilt fit; the standard fit refines with 'nelder-mead'.")
         paths = None
         signature = None
-        if save_to is not None:
-            paths = result_paths(save_to, "find_aberrations")
+        if save_dir is not None:
+            paths = result_paths(save_dir, "find_aberrations")
             signature = self._result_signature(
                 "find_aberrations",
                 {
@@ -1527,7 +1528,7 @@ class SSB:
         upsampling_factor: int | Literal["auto"] = 1,
         phase_estimator: Literal["mean_phase", "phase_of_mean", "complex_wave"] | None = None,
         compute_loss: bool = True,
-        save_to: str | Path | None = None,
+        save_dir: str | Path | None = None,
         force: bool = False,
         verbose: bool = False,
     ) -> SSBResult:
@@ -1569,8 +1570,9 @@ class SSB:
         compute_loss
             Evaluate diagnostic loss on the native grid, regardless of output
             factor. False skips this diagnostic without changing the image.
-        save_to
-            Directory or .npz file for the result and correction metadata.
+        save_dir
+            Results directory: the result and its correction metadata are written there as
+            ``ssb-reconstruct.npz`` and ``ssb-reconstruct.json``.
             Exact saved matches from ``SSB.open`` reload without reconstruction.
             Direct array inputs always recompute because their crop or values
             can change without changing the source path.
@@ -1590,7 +1592,7 @@ class SSB:
         --------
         >>> result = ssb.reconstruct()  # fits the aberrations once, then reconstructs
         >>> aberrations = ssb.find_aberrations(tilt=True)
-        >>> result = ssb.reconstruct(aberrations, upsampling_factor=4, save_to="results/4x")
+        >>> result = ssb.reconstruct(aberrations, upsampling_factor=4, save_dir="results/4x")
         """
         if upsampling_factor == "auto":
             from quantem.gpu.optics.physics import ssb_upsampling_factor
@@ -1609,8 +1611,8 @@ class SSB:
         if trials is not None:
             if phase_estimator == "complex_wave":
                 raise ValueError("Trial inspection returns phase images; choose mean_phase or phase_of_mean.")
-            if aberrations is not None or save_to is not None:
-                raise ValueError("Replay trials without coefficient overrides or save_to; save the returned result separately.")
+            if aberrations is not None or save_dir is not None:
+                raise ValueError("Replay trials without coefficient overrides or save_dir; save the returned result separately.")
             return self._reconstruct_trials(parameters, trials, upsampling_factor=upsampling_factor, phase_estimator=phase_estimator)
         if parameters is None and aberrations is None and not self._aberrations_explicit:
             print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations() first.")
@@ -1639,8 +1641,8 @@ class SSB:
             "sample_tilt_mrad": tilt, "depth_spread_nm": depth,
         }
         paths = signature = None
-        if save_to is not None:
-            paths = result_paths(save_to, "reconstruct")
+        if save_dir is not None:
+            paths = result_paths(save_dir, "reconstruct")
             signature = self._result_signature("reconstruct", settings)
             if not force and self.source_kind != "array":
                 reused = load_result(paths=paths, signature=signature, backend=self.backend)
@@ -1655,7 +1657,7 @@ class SSB:
                   f"{estimator}; tilt {tilt or (0.0, 0.0)} mrad; "
                   f"depth spread {depth or 0.0:.3f} nm; loss at native 1x")
         cached = self._reconstruction
-        if (not force and save_to is None and parameters is None and aberrations is None
+        if (not force and save_dir is None and parameters is None and aberrations is None
                 and cached is not None and cached.upsampling_factor == upsampling_factor
                 and cached.phase_estimator == estimator
                 and cached.scan_detector_rotation_deg == self.scan_detector_rotation_deg

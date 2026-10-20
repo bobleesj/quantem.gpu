@@ -27,7 +27,7 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
     search = dict(num_trials=0, refinement=None, check_rotation=False, verbose=False)
     with SSB(data, **options) as full, SSB(data[64:192, 64:192], **options) as cropped:
         regional = full.find_aberrations(
-            scan_region=(64, 192, 64, 192), save_to=tmp_path / "region", **search,
+            scan_region=(64, 192, 64, 192), save_dir=tmp_path / "region", **search,
         )
         explicit = cropped.find_aberrations(**search)
         np.testing.assert_array_equal(regional.phase.get(), explicit.phase.get())

@@ -18,7 +18,7 @@ with SSB.open(
     scan_sampling_A=(0.5, 0.5),
     scan_detector_rotation_deg=351.8,
 ) as ssb:
-    result = ssb.find_aberrations(save_to="results/ssb")
+    result = ssb.find_aberrations(save_dir="results/ssb")
 ```
 
 The public units are fixed: kV, mrad, angstrom, nanometres for `C10_nm` and
@@ -39,7 +39,7 @@ Nelder-Mead refinement, float32 real values, and complex64 object values. A
 backend may reject a job it cannot execute, but may not switch to CPU, crop or
 subsample the BF evidence, quantize values, or change the objective silently.
 
-`find_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_to`
+`find_aberrations()` and `reconstruct()` own saved-result reuse through the same `save_dir`
 and `force` controls. Reuse requires an exact scientific signature and restores
 one `SSBResult`; there is no cache manager, persistence session, or second
 workflow API. The NPZ owns the complex object wave, and its JSON companion owns

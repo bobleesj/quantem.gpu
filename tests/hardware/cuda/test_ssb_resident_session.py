@@ -69,7 +69,7 @@ def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp
     from quantem.gpu import SSB
 
     settings = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, check_rotation=False,
-                    save_to=tmp_path / "fit", verbose=False)
+                    save_dir=tmp_path / "fit", verbose=False)
     with SSB(acquisition, **SETTINGS) as first:
         fitted = first.find_aberrations(**settings)
         assert first.source_path is None and first.source_kind == "resident"
@@ -165,7 +165,7 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
     def counting(self, name, *args, **kwargs):
         opened_by_h5py.append(str(name))
         return original(self, name, *args, **kwargs)
-    fit = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, save_to=tmp_path / "fit", verbose=False)
+    fit = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, save_dir=tmp_path / "fit", verbose=False)
     with load(str(source), verbose=False) as data:
         sys.addaudithook(_note_open)
         _WATCH["folder"] = str(source.resolve().parent)

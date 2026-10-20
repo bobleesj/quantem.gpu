@@ -31,14 +31,14 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
     ) as session:
         fitted = session.find_aberrations(
             num_trials=0, refinement=None, check_rotation=False,
-            save_to=tmp_path / "fit.npz",
+            save_dir=tmp_path / "fit",
         )
         expected = {
             factor: session.preview(fitted.aberrations, upsampling_factor=factor, compute_loss=False)[0]
             for factor in (1, 3)
         }
         pixels = session.num_bright_field_pixels
-    saved = json.loads((tmp_path / "fit.json").read_text())["result"]
+    saved = json.loads((tmp_path / "fit" / "ssb-find_aberrations.json").read_text())["result"]
     assert saved["bright_field_radius_px"] == radius
     with SSB(
         data, **settings, bright_field_center_px=saved["bright_field_center_px"],

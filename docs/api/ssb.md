@@ -187,10 +187,10 @@ ssb = SSB.open(
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, col)
 )
-aberrations = ssb.find_aberrations(tilt=True, save_to="results/aberrations")
+aberrations = ssb.find_aberrations(tilt=True, save_dir="results/aberrations")
 aberrations.report()
 ssb.show_trials(best=5)
-result = ssb.reconstruct(aberrations, save_to="results/native")
+result = ssb.reconstruct(aberrations, save_dir="results/native")
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
@@ -472,7 +472,10 @@ Rerun the aberration search for older records; the loader does not guess their u
 
 ## Provenance and exact reuse
 
-`save_to` writes the complex object and a readable signature containing source
+`save_dir` names a results directory. `find_aberrations` writes
+`ssb-find_aberrations.npz` and `.json` there, `reconstruct` writes
+`ssb-reconstruct.npz` and `.json`; a path ending in `.npz` or `.json` is
+refused. It writes the complex object and a readable signature containing source
 identity, source and output shapes/dtypes, calibration, physical parameters,
 optimizer settings/history, bright-field geometry, loss, timings, backend,
 package source identity, and Git revision. An exact signature match reopens the
@@ -497,8 +500,8 @@ with SSB.open(
     semiangle_mrad=30,
     scan_sampling_A=(0.264, 0.264),
 ) as batch_ssb:
-    batch_aberrations = batch_ssb.find_aberrations(save_to="results/aberrations")
-    result = batch_ssb.reconstruct(batch_aberrations, save_to="results/native")
+    batch_aberrations = batch_ssb.find_aberrations(save_dir="results/aberrations")
+    result = batch_ssb.reconstruct(batch_aberrations, save_dir="results/native")
 ```
 
 The context manager closes the session after the block. In a still-open
@@ -508,7 +511,7 @@ optimizer should run:
 ```python
 result = ssb.reconstruct(
     aberrations={"C10_nm": 12.5, "C12_nm": 3.0, "phi12_deg": 15.0},
-    save_to="results/fixed-ssb",
+    save_dir="results/fixed-ssb",
 )
 ```
 

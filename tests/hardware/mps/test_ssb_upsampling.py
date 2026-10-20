@@ -320,7 +320,7 @@ def test_automatic_sampling_rotation_and_saved_result(tmp_path):
         assert not np.array_equal(original, opposite.phase)
         ssb.set_rotation(0.0)
         restored = ssb.reconstruct(
-            aberrations=coefs, upsampling_factor="auto", save_to=tmp_path / "fine"
+            aberrations=coefs, upsampling_factor="auto", save_dir=tmp_path / "fine"
         )
         np.testing.assert_array_equal(restored.phase, original)
         assert (tmp_path / "fine" / "ssb-reconstruct.npz").is_file()

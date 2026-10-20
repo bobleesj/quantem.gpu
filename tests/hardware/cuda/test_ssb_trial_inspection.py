@@ -21,7 +21,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
     ssb.source_path = str(source)
     settings = dict(num_trials=8, refinement=None, check_rotation=False, verbose=False,
                     search_ranges={'C10_nm': (-10., 10.), 'C12_nm': 4., 'phi12_deg': 30.},
-                    save_to=tmp_path / 'search')
+                    save_dir=tmp_path / 'search')
     try:
         aberrations = ssb.find_aberrations(**settings)
         assert not hasattr(ssb, 'fit')
@@ -54,7 +54,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
         assert image_axes[0].get_position().x0 == pytest.approx(image_axes[2].get_position().x0)
         assert image_axes[0].get_position().y0 > image_axes[2].get_position().y0
         assert ssb._reconstruction is native
-        loaded = load_result(paths=result_paths(settings['save_to'], 'find_aberrations'),
+        loaded = load_result(paths=result_paths(settings['save_dir'], 'find_aberrations'),
                              signature=aberrations.metadata['signature'], backend='cuda')
         assert loaded.reused
         assert loaded.trial_records == records

@@ -36,6 +36,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- `save_to` is renamed `save_dir` on `SSB.find_aberrations`,
+  `SSB.reconstruct` and `SSB.reconstruct_series`, matching
+  `ssb.show(save_dir=...)`. It names a results directory; an `.npz` or
+  `.json` file path is refused (pass its folder). The saved files are
+  unchanged: `ssb-find_aberrations.npz/.json`, `ssb-reconstruct.npz/.json`.
+
 - The scan-detector rotation fitted from the centre-of-mass curl
   (`dpc.run`, `SSB(data)` and `SSB.open` without a rotation, and
   `screening.prepare`) is the exact minimum of the mean squared curl, in
@@ -71,7 +77,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `SSB(dataset, scan_region=..., mean_pattern=...)` holds the scan positions
   of `scan_region` of an encoded dataset alone, with the bright-field disk of
   the whole scan; `mean_pattern` reuses the caller's `detector.mean`. A fit
-  saved from an encoded dataset with `save_to` is identified by the data
+  saved from an encoded dataset with `save_dir` is identified by the data
   (shape, dtype, mean-pattern hash, scan region) and reused by a later session
   on the same data.
 - `SSB.preview(..., output="native")` returns the CuPy phase on CUDA without a

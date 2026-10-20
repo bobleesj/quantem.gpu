@@ -46,7 +46,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend):
             compare_standard=False,
             check_rotation=False,
             verbose=False,
-            save_to=tmp_path,
+            save_dir=tmp_path,
         )
         phase = host_array(fit.phase).copy()
         aberrations = dict(fit.aberrations)
