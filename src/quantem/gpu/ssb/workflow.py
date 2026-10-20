@@ -1848,7 +1848,7 @@ class SSB:
                     coefs, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                     scan_sampling_A=self.scan_sampling_A, rotation_deg=self.scan_detector_rotation_deg,
                     upsampling_factor=upsampling_factor, sample_tilt_mrad=sample_tilt_mrad,
-                    thickness=float(depth_spread_nm) * ENGINE_PER_NM,
+                    depth_spread_A=float(depth_spread_nm) * ENGINE_PER_NM,
                 )
         if (upsampling_factor != 1 or phase_estimator == "phase_of_mean"
                 or (higher_order_magnitudes is not None and (depth_spread_nm > 0 or self.backend == "mps"))):
@@ -1861,13 +1861,13 @@ class SSB:
                 return backend.preview_upsampled(
                     coefs, upsampling_factor=upsampling_factor, compute_loss=compute_loss,
                     sample_tilt_mrad=tuple(float(value) for value in sample_tilt_mrad),
-                    thickness=float(depth_spread_nm) * ENGINE_PER_NM,
+                    depth_spread_A=float(depth_spread_nm) * ENGINE_PER_NM,
                     phase_estimator=phase_estimator,
                     **higher,
                 )
         if float(depth_spread_nm) > 0.0:
             sample = {"tilt_row_mrad": float(sample_tilt_mrad[0]), "tilt_col_mrad": float(sample_tilt_mrad[1]),
-                      "thickness": float(depth_spread_nm) * ENGINE_PER_NM}
+                      "depth_spread_A": float(depth_spread_nm) * ENGINE_PER_NM}
             if higher_order_magnitudes is not None:
                 raise ValueError("The thick-sample preview does not combine with higher-order aberrations yet.")
             backend = self._backend()
@@ -1909,7 +1909,7 @@ class SSB:
                                  compare_standard=self._compare_standard, start=start, **fixed)
         aberrations = aberrations_from_engine(fit)
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
-        depth_spread_nm = float(fit["thickness"]) / ENGINE_PER_NM
+        depth_spread_nm = float(fit["depth_spread_A"]) / ENGINE_PER_NM
         diagnostic_started = time.perf_counter()
         phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
                                    phase_estimator="mean_phase")
@@ -1927,7 +1927,7 @@ class SSB:
                 "params": {"C10_nm": values["C10"] / ENGINE_PER_NM, "C12_nm": values["C12"] / ENGINE_PER_NM,
                            "phi12_deg": math.degrees(values["phi12"])},
                 "sample_tilt_mrad": [values["tilt_row_mrad"], values["tilt_col_mrad"]],
-                "depth_spread_nm": values["thickness"] / ENGINE_PER_NM,
+                "depth_spread_nm": values["depth_spread_A"] / ENGINE_PER_NM,
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
                          timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),

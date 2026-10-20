@@ -597,7 +597,7 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
         joint_calls.append(settings)
         return {"C10": -101.0, "C12": 4.0, "phi12": 0.25,
                 "tilt_row_mrad": 3.0, "tilt_col_mrad": -4.0,
-                "thickness": 150.0, "fit": 9.0, "gain": 1.5, "trial_records": []}
+                "depth_spread_A": 150.0, "fit": 9.0, "gain": 1.5, "trial_records": []}
 
     backend.fit_sample = fit_sample
     backend.preview_sample = lambda coefs, sample, **kwargs: backend.preview(coefs, **kwargs)
@@ -641,7 +641,7 @@ def test_fixed_optics_cache_tracks_calibration_and_retains_sample_agreement(tmp_
     def fit_sample(**settings):
         calls.append(settings)
         return {**settings["fixed_aberrations"], "tilt_row_mrad": 3.0,
-                "tilt_col_mrad": -4.0, "thickness": 150.0, "fit": 9.0,
+                "tilt_col_mrad": -4.0, "depth_spread_A": 150.0, "fit": 9.0,
                 "gain": None, "trial_records": []}
 
     backend.fit_sample = fit_sample

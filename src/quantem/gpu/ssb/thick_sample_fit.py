@@ -1,4 +1,4 @@
-"""Backend-neutral search for the thick-sample SSB fit (defocus, astigmatism, sample tilt, thickness).
+"""Backend-neutral search for the thick-sample SSB fit (defocus, astigmatism, sample tilt, depth spread).
 
 Every backend (CUDA engine, MPS, torch reference) supplies the same objective - the least-squares agreement of the
 thick-sample SSB model with G(Q, K), larger is better (see ``ThickSample.fit``) - and this module owns the search, so the
@@ -9,8 +9,8 @@ finite-difference models whose evaluations share passes over G). C10 is searched
 the thick model's C10 is the defocus at mid-depth, not the standard-SSB optimum; freeing only the tilt from the standard
 optimum misses the answer (simulated BaTiO3 15 nm tilted (3, -4) mrad: joint search (3.0, -4.1); tilt-only (8.6, -6.3)).
 300 trials give the same answer as 1500 on the simulation and on the logic device (Nelder-Mead polishes the rest). A
-standard-SSB fit (thickness 0, 200 trials, the production budget) is run on the same objective so the reported gain compares
-like with like. Units: C10, C12, thickness in the engine's C10 unit (Angstrom); phi12 rad; tilt mrad, scan frame (row, col).
+standard-SSB fit (depth spread 0, 200 trials, the production budget) is run on the same objective so the reported gain compares
+like with like. Units: C10, C12, depth_spread_A in the engine's C10 unit (Angstrom); phi12 rad; tilt mrad, scan frame (row, col).
 """
 
 import math
@@ -21,10 +21,17 @@ from collections.abc import Callable
 import numpy as np
 
 Objective = Callable[[float, float, float, tuple[float, float], float], float]
-# (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, thickness) -> (B,) values; lets a backend evaluate a batch
+# (B, 6) rows of (C10, C12, phi12, tilt_row_mrad, tilt_col_mrad, depth_spread_A) -> (B,) values; lets a backend evaluate a batch
 # of trials in one pass over G (CUDA: ThickSample.fit_batch)
 BatchObjective = Callable[[np.ndarray], np.ndarray]
-PARAMETERS = ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "thickness")
+PARAMETERS = ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "depth_spread_A")
+# Optuna's label for depth_spread_A. Multivariate TPE orders its search space by label, so another label would change
+# the proposals of every seed; the search keeps it, and every record and result uses depth_spread_A.
+_DEPTH_SEARCH_LABEL = "thickness"
+
+
+def _search_label(name: str) -> str:
+    return _DEPTH_SEARCH_LABEL if name == "depth_spread_A" else name
 
 
 def _make_sampler(**options):
@@ -72,7 +79,7 @@ def fit_sample_search(
     batch_size: int = 8,
     trials: int = 300,
     tilt_limit_mrad: float = 25.0,
-    thickness_range: tuple[float, float] = (20.0, 600.0),
+    depth_spread_range_A: tuple[float, float] = (20.0, 600.0),
     c10_range: tuple[float, float] = (-300.0, 300.0),
     c12_max: float = 200.0,
     seed: int = 0,
@@ -86,7 +93,7 @@ def fit_sample_search(
     start=None,
     fixed_aberrations: dict[str, float] | None = None,
 ) -> dict[str, object]:
-    """Maximise ``objective(C10, C12, phi12, (tilt_row, tilt_col), thickness)``; returns the fitted parameters and the gain.
+    """Maximise ``objective(C10, C12, phi12, (tilt_row, tilt_col), depth_spread_A)``; returns the fitted parameters and the gain.
 
     ``batch_polish`` evaluates independent Nelder-Mead starts together.
     ``refinement_objective_batch`` can preserve a backend's singleton numerical
@@ -97,7 +104,7 @@ def fit_sample_search(
     ``objective_batch``). ``compare_standard=False`` skips the standard-SSB search that only feeds the gain, which is then
     None.
 
-    ``start`` is a point (C10, C12, phi12, tilt_row, tilt_col, thickness) to polish from, the first of the starts: the fit
+    ``start`` is a point (C10, C12, phi12, tilt_row, tilt_col, depth_spread_A) to polish from, the first of the starts: the fit
     of the previous scan of a session. With ``trials=0`` there is no search and the polish from ``start`` is the fit: the
     next scan differs from the last by a drift of focus and tilt, not by a new specimen, so the blind search (200 trials
     and two more starts) buys nothing there.
@@ -126,7 +133,7 @@ def fit_sample_search(
                [trial.suggest_float("C10", *c10_range), trial.suggest_float("C12", 0.0, c12_max), trial.suggest_float("phi12", -half_pi, half_pi)])
         if with_sample:
             row += [trial.suggest_float("tilt_row_mrad", -tilt_limit_mrad, tilt_limit_mrad),
-                    trial.suggest_float("tilt_col_mrad", -tilt_limit_mrad, tilt_limit_mrad), trial.suggest_float("thickness", *thickness_range)]
+                    trial.suggest_float("tilt_col_mrad", -tilt_limit_mrad, tilt_limit_mrad), trial.suggest_float(_DEPTH_SEARCH_LABEL, *depth_spread_range_A)]
         else:
             row += [0.0, 0.0, 0.0]
         return row
@@ -195,18 +202,18 @@ def fit_sample_search(
             starts[-1][:3] = fixed
     # Nelder-Mead on the objective scaled to ~1 by the best trial: its function-change test (fatol) is absolute, and at the
     # raw scale (~1e12) it never passes, so the polish ran to maxiter (641 of 704 evaluations on the full logic field).
-    best_point = np.array([ranked[0].params[name] for name in PARAMETERS]) if ranked else starts[0]
+    best_point = np.array([ranked[0].params[_search_label(name)] for name in PARAMETERS]) if ranked else starts[0]
     best_value = -float(ranked[0].value) if ranked else single(starts[0])
     scale = max(abs(best_value), 1e-30)
-    # The polish keeps the search box (unbounded it walked thickness below the 20 A floor) except phi12, which wraps.
+    # The polish keeps the search box (unbounded it walked the depth spread below the 20 A floor) except phi12, which wraps.
     bounds = [c10_range, (0.0, c12_max), (None, None), (-tilt_limit_mrad, tilt_limit_mrad), (-tilt_limit_mrad, tilt_limit_mrad),
-              thickness_range]
+              depth_spread_range_A]
     # Polish from the best few distinct trials and keep the best: one start is fragile - a float-level difference between
     # backends sent the MPS search on the logic crop to a worse local optimum (fit 4.0e12 vs 5.9e12 at the CUDA answer).
     for trial in ranked:
         if len(starts) >= polish_starts:
             break
-        point = np.array([trial.params[name] for name in PARAMETERS])
+        point = np.array([trial.params[_search_label(name)] for name in PARAMETERS])
         if all(np.max(np.abs(point - kept) / np.array([50.0, 20.0, 0.3, 2.0, 2.0, 50.0])) > 1.0 for kept in starts):
             starts.append(point)
     if polish_starts == 0:      # refinement=None: the best trial (or the start) as is
@@ -216,8 +223,8 @@ def fit_sample_search(
         if polish == "newton":
             if objective_batch is None:
                 raise ValueError("polish='newton' evaluates its finite-difference designs in batches: it needs objective_batch.")
-            lower = np.array([c10_range[0], -c12_max, -c12_max, -tilt_limit_mrad, -tilt_limit_mrad, thickness_range[0]])
-            upper = np.array([c10_range[1], c12_max, c12_max, tilt_limit_mrad, tilt_limit_mrad, thickness_range[1]])
+            lower = np.array([c10_range[0], -c12_max, -c12_max, -tilt_limit_mrad, -tilt_limit_mrad, depth_spread_range_A[0]])
+            upper = np.array([c10_range[1], c12_max, c12_max, tilt_limit_mrad, tilt_limit_mrad, depth_spread_range_A[1]])
             polished = newton_polish(starts, lambda rows: np.asarray(objective_batch(rows), dtype=np.float64) / scale,
                                      lower, upper, c12_max, fixed_aberrations=fixed)
         elif batch_polish and objective_batch is not None and len(starts) > 1:
@@ -248,10 +255,11 @@ def fit_sample_search(
             "Check scan sampling and signal in the fitting band; use ordinary "
             "SSB (tilt=False) when tilt cannot be estimated."
         )
-    best["C12"], best["thickness"], best["phi12"] = abs(best["C12"]), abs(best["thickness"]), wrap_phi(best["phi12"])
+    best["C12"], best["depth_spread_A"], best["phi12"] = abs(best["C12"]), abs(best["depth_spread_A"]), wrap_phi(best["phi12"])
     if fixed is not None:
         best.update(zip(PARAMETERS[:3], map(float, fixed), strict=True))
-    records = [{"number": trial.number, "params": dict(trial.params), "loss": float(trial.value)}
+    records = [{"number": trial.number, "loss": float(trial.value),
+                "params": {name: trial.params[_search_label(name)] for name in PARAMETERS if _search_label(name) in trial.params}}
                for trial in ranked if math.isfinite(trial.value)]
     records.sort(key=lambda record: record["number"])
     common = {"band_inv_A": list(band_inv_A), "trials": int(trials), "trial_records": records, "timings": timings}
@@ -264,7 +272,7 @@ def fit_sample_search(
 
 # ---
 
-# Newton polish, in the coordinates z = (C10, C12 cos 2 phi12, C12 sin 2 phi12, tilt_row, tilt_col, thickness): the
+# Newton polish, in the coordinates z = (C10, C12 cos 2 phi12, C12 sin 2 phi12, tilt_row, tilt_col, depth_spread_A): the
 # astigmatism as a vector is smooth through C12 = 0, where (C12, phi12) is singular and phi12 undefined.
 # Finite-difference steps (engine units: A, A, A, mrad, mrad, A) and the step below which the polish has converged.
 NEWTON_STEP = np.array([2.0, 2.0, 2.0, 0.25, 0.25, 5.0])
@@ -371,13 +379,13 @@ def newton_polish(starts, objective_rows, lower, upper, c12_max, max_iterations=
 
 
 def to_newton(point) -> np.ndarray:
-    """(C10, C12, phi12, tilt_row, tilt_col, thickness) -> z, astigmatism as the vector C12 (cos 2 phi12, sin 2 phi12)."""
+    """(C10, C12, phi12, tilt_row, tilt_col, depth_spread_A) -> z, astigmatism as the vector C12 (cos 2 phi12, sin 2 phi12)."""
     return np.array([point[0], point[1] * math.cos(2 * point[2]), point[1] * math.sin(2 * point[2]), point[3], point[4], point[5]],
                     dtype=np.float64)
 
 
 def from_newton(z) -> np.ndarray:
-    """z -> the objective's row: C12 = |(a, b)|, phi12 = atan2(b, a) / 2 in (-pi/2, pi/2], thickness |t|."""
+    """z -> the objective's row: C12 = |(a, b)|, phi12 = atan2(b, a) / 2 in (-pi/2, pi/2], depth spread |t|."""
     return np.array([z[0], math.hypot(z[1], z[2]), 0.5 * math.atan2(z[2], z[1]), z[3], z[4], abs(z[5])], dtype=np.float64)
 
 
@@ -460,7 +468,7 @@ def _bounded_step(center, gradient, hessian, step, radius, lower, upper) -> np.n
 
     A coordinate the step pushes past a bound is held on the bound (displacement p), and the others are solved again on
     that face, where the model's gradient is g_f + H_fp p: clipping the free step instead would leave the other
-    coordinates at the maximum of the unbounded model, which is not the maximum on the face (a thickness on its floor
+    coordinates at the maximum of the unbounded model, which is not the maximum on the face (a depth spread on its floor
     left C10 1 A and the tilt 0.02 mrad short). Held coordinates are chosen afresh at every call, so one leaves its
     bound as soon as the model says so.
     """

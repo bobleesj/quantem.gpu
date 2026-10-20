@@ -417,7 +417,7 @@ class CudaSSBBackend:
         upsampling_factor: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
-        thickness: float = 0.0,
+        depth_spread_A: float = 0.0,
         phase_estimator: str = "mean_phase",
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
@@ -426,7 +426,7 @@ class CudaSSBBackend:
         accel = self._get_accelerator()
         coefficients = tuple(aberrations[key] for key in ("C10", "C12", "phi12"))
         phase, _ = accel.thick.reconstruct(
-            *coefficients, sample_tilt_mrad, thickness, compute_loss=False,
+            *coefficients, sample_tilt_mrad, depth_spread_A, compute_loss=False,
             upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
             higher_order_magnitudes=higher_order_magnitudes,
@@ -434,9 +434,9 @@ class CudaSSBBackend:
         )
         loss = None
         if compute_loss:
-            if thickness > 0 or higher_order_magnitudes is not None:
+            if depth_spread_A > 0 or higher_order_magnitudes is not None:
                 _, loss = accel.thick.reconstruct(
-                    *coefficients, sample_tilt_mrad, thickness, compute_loss=True,
+                    *coefficients, sample_tilt_mrad, depth_spread_A, compute_loss=True,
                     higher_order_magnitudes=higher_order_magnitudes,
                     higher_order_angles=higher_order_angles,
                 )
@@ -453,11 +453,12 @@ class CudaSSBBackend:
     ) -> tuple[cp.ndarray, float | None]:
         """Phase (and phase-variance loss) for a thick, tilted sample: ``ThickSample.reconstruct``.
 
-        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit; 0 = standard SSB exactly)."""
+        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "depth_spread_A"} (depth spread in the C10 unit, Angstrom; 0 = standard
+        SSB exactly)."""
         phase, loss = self._get_accelerator().thick.reconstruct(
             aberrations["C10"], aberrations["C12"], aberrations["phi12"],
             (float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
-            float(sample.get("thickness", 0.0)), compute_loss=compute_loss,
+            float(sample.get("depth_spread_A", 0.0)), compute_loss=compute_loss,
         )
         return phase, loss
 

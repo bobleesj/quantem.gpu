@@ -667,7 +667,7 @@ def fit_resident(
     backend: str,
     trials: int = 300,
     tilt_limit_mrad: float = 25.0,
-    thickness_range: tuple[float, float] = (20.0, 600.0),
+    depth_spread_range_A: tuple[float, float] = (20.0, 600.0),
     c10_range: tuple[float, float] = (-300.0, 300.0),
     c12_max: float = 200.0,
     seed: int = 0,
@@ -704,7 +704,7 @@ def fit_resident(
         -math.pi / 2,
         -tilt_limit_mrad,
         -tilt_limit_mrad,
-        thickness_range[0],
+        depth_spread_range_A[0],
     ]
     upper = [
         c10_range[1],
@@ -712,7 +712,7 @@ def fit_resident(
         math.pi / 2,
         tilt_limit_mrad,
         tilt_limit_mrad,
-        thickness_range[1],
+        depth_spread_range_A[1],
     ]
     if fixed_aberrations is not None:
         for d, name in enumerate(PARAMETERS[:3]):
