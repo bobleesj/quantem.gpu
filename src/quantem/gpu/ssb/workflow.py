@@ -20,6 +20,7 @@ import torch
 from quantem.gpu import detector, io
 from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.geometry.frames import opposite_rotation_deg
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.metadata_display import calibration_rows
@@ -970,8 +971,7 @@ class SSB:
                 print(f"SSB: polarity score {sign:+.2f} is inconclusive; keeping the suggested rotation {input_rotation:.2f}°.")
             return result
         limit = draw_column_histogram(result.phase, f"Suggested rotation {input_rotation:.2f}° · polarity score {sign:+.2f}") if show else None
-        # the other branch; the subtraction is exact where adding 180 and wrapping at 360 would round
-        opposite_rotation = input_rotation - 180.0 if input_rotation >= 180.0 else input_rotation + 180.0
+        opposite_rotation = opposite_rotation_deg(input_rotation)
         # The conjugate's -C12 at phi12 is C12 at phi12 + 90 degrees (wrapped to [-90, 90)); the fits bound C12 at zero,
         # so a negative magnitude would start, and stay, at no astigmatism.
         start = {"C10_nm": -result.aberrations["C10_nm"], "C12_nm": result.aberrations["C12_nm"],
