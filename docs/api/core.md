@@ -126,6 +126,39 @@ interpolated, so other angles need `interpolation="nearest"`. Dense NumPy, CuPy
 and Torch arrays also rotate with bilinear interpolation at other angles. An
 encoded acquisition on an Apple GPU (MPS) raises `NotImplementedError`.
 
+## Scan-detector frames
+
+SSB states the sample tilt along the scan axes (`sample_tilt_mrad`); a
+ptychographic object and its propagator live along the detector axes
+(`propagator_tilt_mrad`). `quantem.gpu.geometry` converts between them with the
+convention SSB, DPC and screening apply to the centre of mass,
+`scan = R(θ) · D · detector`, where `R(θ)` is the scan-detector rotation and `D`
+swaps the detector's row and column axes when `scan_detector_rotation_flipped`
+is true:
+
+```python
+from quantem.gpu.geometry import propagator_to_sample_tilt, sample_to_propagator_tilt
+
+propagator_tilt_mrad = sample_to_propagator_tilt(
+    result.sample_tilt_mrad,
+    scan_detector_rotation_deg=result.scan_detector_rotation_deg,
+    scan_detector_rotation_flipped=result.scan_detector_rotation_flipped,
+)
+sample_tilt_mrad = propagator_to_sample_tilt(
+    propagator_tilt_mrad,
+    scan_detector_rotation_deg=result.scan_detector_rotation_deg,
+    scan_detector_rotation_flipped=result.scan_detector_rotation_flipped,
+)
+```
+
+The centre-of-mass curl measures the rotation only modulo 180 degrees.
+`opposite_rotation_deg(angle)` gives the other branch in [0, 360);
+`rotation_gap_deg(a, b, period_deg=180.0)` and
+`mean_rotation_deg(angles, period_deg=180.0)` compare and average such
+estimates on the right circle, so 179° and 1° are 2° apart and average to 0°.
+Use `period_deg=360.0` (the default) for physical rotations whose branch is
+settled.
+
 ## Integration boundary
 
 QuantEM.GPU owns these typed calculations, validation, backend selection, and

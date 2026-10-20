@@ -26,6 +26,14 @@ new `rcN` heading when that rc is published to TestPyPI.
   bright-field disk edge, the rule SSB, parallax and screening apply when no
   sampling is recorded.
 
+- `quantem.gpu.geometry.sample_to_propagator_tilt` and
+  `propagator_to_sample_tilt` convert a tilt between the SSB scan frame
+  (`sample_tilt_mrad`) and the detector frame of a ptychographic propagator
+  (`propagator_tilt_mrad`), honouring `scan_detector_rotation_flipped`.
+  `opposite_rotation_deg`, `rotation_gap_deg` and `mean_rotation_deg` state
+  the other 180-degree branch and compare or average rotations modulo 180 or
+  360 degrees.
+
 ### Changed (breaking, no aliases)
 
 - `disk_edge_radius` moves from `quantem.gpu.ssb.brightfield` to
