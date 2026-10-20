@@ -46,16 +46,22 @@ class BoundedDetectorCompute(DetectorQueries):
         return self.reduce_frames(range(self.n_frames), "mean")
 
     def masked_sum(self, mask):
-        mask_t = torch.as_tensor(mask, device=self.device, dtype=torch.bool)
-        if self.data.valid is not None:
-            mask_t = mask_t & self.data.valid
+        """Float32 host image of the view's scan region: the native session's sum, cropped.
+
+        The mask and the image stay on the host: the session already returns
+        the reduced image there, and a round trip through the device cost a
+        copy each way on every detector drag.
+        """
+        selected = np.asarray(mask.detach().cpu() if torch.is_tensor(mask) else mask).astype(bool)
+        if self.valid_pixels is not None:
+            selected = selected & self.valid_pixels
         # No decoded measurement cube is constructed; the native kernels reduce on the device.
-        image = self._native.masked_sum(mask_t.cpu().numpy())
+        image = self._native.masked_sum(selected)
         row_start, row_stop, col_start, col_stop = self.data._detector_region
-        return torch.as_tensor(image[row_start:row_stop, col_start:col_stop], device=self.device)
+        return image[row_start:row_stop, col_start:col_stop]
 
     def masked_sum_native(self, mask, *, out=None):
-        image_t = self.masked_sum(mask)
+        image_t = torch.as_tensor(np.ascontiguousarray(self.masked_sum(mask)), device=self.device)
         if out is not None:
             out.copy_(image_t)
             return out

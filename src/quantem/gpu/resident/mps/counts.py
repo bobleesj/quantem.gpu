@@ -590,6 +590,25 @@ class MPSStreamedCounts:
             output.release()
             raise
 
+    def detector_sum_update_device(self, previous, pixels, signs):
+        """Exact uint64 image of a mask that differs from an earlier one in a few pixels.
+
+        ``previous`` is the exact image of the earlier mask (from
+        ``detector_sum_device``), ``pixels`` the flat indices of the valid
+        detector pixels whose selection changed and ``signs`` +1 where a pixel
+        joined the mask and -1 where it left. Only those pixels' streams are
+        decoded, so the image is exact and costs a fraction of a full sum.
+        """
+        self.check_readable(0, math.prod(self.shape[:2]))
+        pixels = np.asarray(pixels, dtype=np.int64).reshape(-1)
+        signs = np.asarray(signs, dtype=np.int64).reshape(-1)
+        if pixels.shape != signs.shape or not np.all(np.abs(signs) == 1):
+            raise ValueError("Give one +1 or -1 sign per changed detector pixel.")
+        if pixels.size and (pixels.min() < 0 or pixels.max() >= math.prod(self.shape[2:])
+                            or not self.valid_pixels.ravel()[pixels].all()):
+            raise ValueError("Changed pixels must be valid detector pixels.")
+        return spatial.detector_sum_update(self, previous, pixels, signs)
+
     def detector_mean_device(self):
         """Return the complete-detector mean per scan as float32 Metal storage.
 
