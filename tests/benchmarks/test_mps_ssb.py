@@ -41,12 +41,17 @@ def test_mps_ssb_paths_are_no_slower_than_this_chips_baseline(request):
         pytest.skip("the gold scan is not in the Hugging Face cache (mps_ssb.py run --download fetches it)")
 
     report = harness.measure(master)
-    rows, failed = harness.regressions(report, json.loads(baseline_path.read_text()))
+    baseline = json.loads(baseline_path.read_text())
+    rows, failed = harness.regressions(report, baseline)
+    memory_rows, memory_failed = harness.memory_regressions(report, baseline)
 
     table = "\n".join(f"{name}: {old:.2f} -> {'-' if new is None else f'{new:.2f}'} ms {verdict}"
                       for name, old, new, _change, _tolerance, verdict in rows)
     assert report["values"]["detector_update_equals_full_sum"], "the incremental detector sum is no longer exact"
     assert not failed, f"slower than the committed baseline:\n{table}"
+    memory_table = "\n".join(f"{name}: {old:.2f} -> {'-' if new is None else f'{new:.2f}'} GiB {verdict}"
+                             for name, old, new, _change, verdict in memory_rows)
+    assert not memory_failed, f"more memory than the committed baseline:\n{memory_table}"
 
 
 def test_compare_flags_only_slowdowns_beyond_tolerance_and_delta():
@@ -67,3 +72,16 @@ def test_compare_flags_only_slowdowns_beyond_tolerance_and_delta():
     assert verdicts["find_aberrations"].startswith("faster")
     assert harness.regressions(report(preview_native=30.0), baseline)[1] == [
         "detector_update", "io_load", "find_aberrations"]
+
+
+def test_compare_flags_only_memory_growth_beyond_tolerance_and_delta():
+    harness = _harness()
+    baseline = {"memory_GiB": {"prepare_peak": 12.4, "session_steady": 0.0, "fit_steady": 8.8, "encoded": 5.6}}
+    current = {"memory_GiB": {"prepare_peak": 14.0, "session_steady": 0.2, "fit_steady": 7.0, "encoded": 5.8}}
+    rows, failed = harness.memory_regressions(current, baseline)
+    verdicts = {name: verdict for name, _old, _new, _change, verdict in rows}
+    # 12.9 % and 1.6 GiB larger fails; +0.2 GiB from 0 is below the 0.25 GiB floor; a 0.2 GiB (3.6 %) change is noise
+    assert failed == ["memory prepare_peak"]
+    assert verdicts["session_steady"] == "ok" and verdicts["encoded"] == "ok"
+    assert verdicts["fit_steady"].startswith("smaller")
+    assert harness.memory_regressions(current, {})[0] == []
