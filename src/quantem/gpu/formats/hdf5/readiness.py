@@ -240,7 +240,8 @@ def inspect_master_readiness(
     detector_shape: tuple[int, int] | None = None
     common_dtype: str | None = None
 
-    def result(ready: bool, reason: str, action: str) -> MasterReadiness:
+    def result(ready: bool, reason: str, action: str, signature: dict | None = None) -> MasterReadiness:
+        """The readiness so far; ``signature`` defaults to the sources' signature now."""
         return MasterReadiness(
             ready=ready,
             reason=reason,
@@ -250,7 +251,7 @@ def inspect_master_readiness(
             expected_frames=expected_frames,
             detector_shape=detector_shape,
             dtype=common_dtype,
-            source_signature=_master_source_signature(
+            source_signature=signature or _master_source_signature(
                 master_path,
                 source_paths,
                 datasets,
@@ -546,14 +547,4 @@ def inspect_master_readiness(
             "consistent"
         )
         action = "Ready to open with Show4DSTEM."
-    return MasterReadiness(
-        ready=not changed,
-        reason=reason,
-        action=action,
-        source_kind=source_kind,
-        actual_frames=actual_frames,
-        expected_frames=expected_frames,
-        detector_shape=detector_shape,
-        dtype=common_dtype,
-        source_signature=final_signature,
-    )
+    return result(not changed, reason, action, final_signature)
