@@ -110,3 +110,32 @@ def test_reconstruct_replays_trials_by_trial_ids():
         assert replay.metadata["trial_ids"] == [2, 0]
         with pytest.raises(TypeError, match="trials"):
             ssb.reconstruct(fitted, trials=[0])
+
+
+def test_assigned_aberrations_are_known_and_reconstruct_does_not_refit(capsys):
+    """ssb.aberrations = {...} states a known (restored) calibration; reconstruct() applies it without a fit.
+
+    Before 2026-10-20 the assignment left the session's aberrations "unknown", so reconstruct() fitted again and
+    replaced a restored calibration with a new fit.
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    known = {"C10_nm": 1.5, "C12_nm": 0.4, "phi12_deg": 12.0}
+    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
+        ssb.find_aberrations = lambda **options: pytest.fail("reconstruct() refitted known aberrations")
+        ssb.aberrations = known
+        result = ssb.reconstruct()
+        assert result.aberrations == known
+        given = SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options())
+        with given:
+            np.testing.assert_array_equal(result.phase, given.reconstruct().phase)
+        with pytest.raises(ValueError, match="C10_nm"):
+            ssb.aberrations = {"C10": 1.0}
+        assert ssb.aberrations == known
+    assert "fitting them with find_aberrations() first" not in capsys.readouterr().out
+    with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options()) as ssb:
+        ssb.aberrations = None  # forget them: the next reconstruct() fits
+        fits = []
+        ssb.find_aberrations = lambda **options: fits.append(options) or pytest.skip("fit requested, as intended")
+        ssb.reconstruct()

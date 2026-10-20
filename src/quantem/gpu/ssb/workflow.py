@@ -419,7 +419,7 @@ class SSB:
         self.scan_sampling_A = sampling_pair("scan_sampling_A", scan_sampling_A)
         self.detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
-        self.aberrations = validate_aberrations(aberrations)
+        self._aberrations = validate_aberrations(aberrations, higher_order=True)
         self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
         self.scan_detector_rotation_flipped = bool(scan_detector_rotation_flipped)
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
@@ -452,6 +452,28 @@ class SSB:
         self._calibration_file = calibration_rows(metadata)
         self._calibration_supplied = {name for name, value in supplied.items() if value is not None}
         self._calibration_initial = {name: getattr(self, name) for name in supplied}
+
+    @property
+    def aberrations(self) -> dict[str, float]:
+        """The session's aberrations: ``C10_nm`` / ``C12_nm`` in nm, ``phi12_deg`` in degrees (higher orders by name).
+
+        They are known once given to ``SSB(aberrations=...)``, fitted by ``find_aberrations``, or assigned here, and
+        ``reconstruct()`` then applies them instead of fitting. Assign a whole mapping to state a known or restored
+        calibration (``ssb.aberrations = {"C10_nm": 15.8, "C12_nm": 4.3, "phi12_deg": 17.4}``); assign None to forget
+        them, so the next ``reconstruct()`` fits again. ``find_aberrations`` starts its refinement from known
+        aberrations.
+
+        Examples
+        --------
+        >>> ssb.aberrations = saved["aberrations"]  # doctest: +SKIP
+        >>> result = ssb.reconstruct()  # applies them; no fit  # doctest: +SKIP
+        """
+        return self._aberrations
+
+    @aberrations.setter
+    def aberrations(self, aberrations: dict[str, float] | None) -> None:
+        self._aberrations = validate_aberrations(aberrations, higher_order=True)
+        self._aberrations_explicit = aberrations is not None
 
     def calibration_table(self) -> "pd.DataFrame":
         """Compare loaded file calibration with the settings this session uses.
@@ -931,7 +953,6 @@ class SSB:
             self.set_rotation(result.scan_detector_rotation_deg)
         self.aberrations = dict(result.aberrations)
         self.sample_tilt_mrad, self.depth_spread_nm = result.sample_tilt_mrad, result.depth_spread_nm
-        self._aberrations_explicit = True
         self.scan_detector_rotation_deg = result.scan_detector_rotation_deg
         self.best_loss = (
             float(result.loss) if result.loss is not None else float("inf")
