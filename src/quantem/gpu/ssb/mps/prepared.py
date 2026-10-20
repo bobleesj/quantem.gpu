@@ -17,6 +17,7 @@ from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.mps.frames import (
     ArrayFrames,
+    EncodedBrightFieldFrames,
     MpsBfColumnFrames,
     MpsTensorFrames,
     TensorChunkedFrames,
@@ -156,67 +157,16 @@ def prepare_selection(
                 "Check the BF center, detector sampling, and semiangle."
             )
 
-    g_chunks = []
-    dc_chunks = []
     chunk_bf = max(1, int(chunk_bf))
-    for start in range(0, int(bf_row.size), chunk_bf):
-        stop = min(start + chunk_bf, int(bf_row.size))
-        rows = bf_row[start:stop]
-        cols = bf_col[start:stop]
-        if compact_inactive and dc_value_override is not None:
-            chunk_active = active_mask_np[start:stop]
-            rows = rows[chunk_active]
-            cols = cols[chunk_active]
-            if rows.size == 0:
-                continue
-        if isinstance(frames, ArrayFrames):
-            stack_mx = None
-            stack_np = frames.columns(rows, cols).reshape(int(rows.size), *scan_shape).astype(np.float32, copy=False)
-        else:
-            # Gather into MLX-owned storage: a resident gather without an output allocates a Metal buffer that
-            # nothing releases, so every preparation would strand one chunk of driver memory.
-            stack_mx = mx.empty(
-                (int(rows.size), *scan_shape),
-                dtype=mx.float32,
-            )
-            mx.eval(stack_mx)
-            stack_np = np.asarray(stack_mx)
-            frames.columns_float32_into(
-                rows,
-                cols,
-                out=stack_np.reshape(int(rows.size), -1),
-            )
-        if compact_inactive and dc_value_override is None:
-            dc_chunks.append(
-                stack_np.reshape(stop - start, -1).sum(
-                    axis=1,
-                    dtype=np.float32,
-                )
-            )
-            # The compacted stack is a host copy and enters the FFT as a new array.
-            stack_np = stack_np[active_mask_np[start:stop]]
-            stack_mx = None
-            if stack_np.shape[0] == 0:
-                continue
-        if stack_mx is not None and isinstance(frames, (MpsTensorFrames, TensorChunkedFrames)):
-            # Preserve the previous array-input FFT layout and rounding. The
-            # selected columns were scan-major; materialize that layout on GPU.
-            stack_mx = mx.moveaxis(
-                mx.contiguous(mx.moveaxis(stack_mx, 0, -1)), -1, 0,
-            )
-        g_chunk = _fft2_hermitian(
-            mx,
-            stack_mx if stack_mx is not None else mx.array(stack_np),
+    if isinstance(frames, EncodedBrightFieldFrames) and dc_value_override is not None:
+        stored = active_mask_np if compact_inactive else np.ones(bf_row.size, bool)
+        g_qk = _encoded_g_qk(mx, frames, bf_row[stored], bf_col[stored], _storage_ranges(stored, chunk_bf), scan_shape)
+        dc_chunks = None
+    else:
+        g_qk, dc_chunks = _gathered_g_qk(
+            mx, frames, bf_row, bf_col, scan_shape, chunk_bf, compact_inactive=compact_inactive,
+            active_mask_np=active_mask_np, dc_value_override=dc_value_override,
         )
-        mx.eval(g_chunk)
-        g_chunks.append(g_chunk)
-    g_qk = g_chunks[0] if len(g_chunks) == 1 else mx.concatenate(g_chunks, axis=0)
-    mx.eval(g_qk)
-    # MLX's RFFT result is physically column-major. Materialize it once in
-    # BF-major order so every repeated exact row kernel reads contiguous
-    # evidence instead of paying an implicit slice-layout conversion.
-    g_qk = mx.contiguous(g_qk)
-    mx.eval(g_qk)
     if compact_inactive:
         if dc_value_override is None:
             dc_values = np.concatenate(dc_chunks).astype(np.complex64)
@@ -282,6 +232,138 @@ def prepare_selection(
         aperture_k_1d=aperture_k_1d,
         bf_storage_indices_np=bf_storage_indices_np,
     )
+
+
+# bright-field pixels per in-place FFT along the scan rows of an encoded crop's G(q, k)
+ENCODED_BF_PER_FFT = 256
+
+
+def _storage_ranges(stored: np.ndarray, chunk_bf: int) -> list[tuple[int, int]]:
+    """The G(q, k) rows each ``chunk_bf`` chunk of the BF selection fills when only its ``stored`` pixels are kept."""
+    ranges, offset = [], 0
+    for start in range(0, int(stored.size), chunk_bf):
+        count = int(stored[start:start + chunk_bf].sum())
+        if count:
+            ranges.append((offset, offset + count))
+            offset += count
+    return ranges
+
+
+def _encoded_g_qk(mx, frames: EncodedBrightFieldFrames, rows: np.ndarray, cols: np.ndarray,
+                  storage_ranges: list[tuple[int, int]], scan_shape: tuple[int, int]):
+    """G(q, k) of encoded bright-field columns, transformed into its own storage a few scan rows at a time.
+
+    ``rfft2`` of one chunk of a decoded crop's columns is a real FFT along the scan columns of each ``(scan_row,
+    pixel)`` row, in that order, then a complex FFT along the scan rows. MLX's real FFT packs neighbouring rows in
+    pairs into one complex FFT, so the row order decides the rounding. Every block of scan rows here runs the first FFT
+    on its rows in that order, starting on an even scan row (``rows_per_block`` is even), so it pairs the same rows and
+    computes every bit ``rfft2`` of the whole chunk does; the second FFT then runs in place, ``ENCODED_BF_PER_FFT``
+    pixels at a time. Only one block of decoded counts exists at a time.
+    """
+    import torch
+
+    from quantem.gpu.ssb.mps.frames import staged_tensor
+
+    count = int(rows.size)
+    scan_rows, scan_cols = scan_shape
+    half = scan_cols // 2 + 1
+    g_qk = mx.zeros((count, scan_rows, half), dtype=mx.complex64)
+    mx.eval(g_qk)
+    stored = {1: mx.uint8, 2: mx.uint16, 4: mx.uint32}[frames.dtype.itemsize]
+    for row_start, row_stop, counts in frames.scan_row_blocks(rows, cols):
+        block_rows = row_stop - row_start
+        staged = staged_tensor(mx, counts, stored)
+        del counts
+        values = staged.astype(mx.float32).reshape(block_rows, scan_cols, count)
+        for start, stop in storage_ranges:
+            width = stop - start
+            pixel_rows = mx.contiguous(mx.swapaxes(values[:, :, start:stop], 1, 2)).reshape(block_rows * width, scan_cols)
+            spectra = mx.fft.rfft(pixel_rows, axis=-1).reshape(block_rows, width, half)
+            g_qk[start:stop, row_start:row_stop, :] = mx.swapaxes(spectra, 0, 1)
+        mx.eval(g_qk)
+        del staged, values
+    for start in range(0, count, ENCODED_BF_PER_FFT):
+        stop = min(count, start + ENCODED_BF_PER_FFT)
+        # evaluated first, so the update owns G(q, k) alone and writes it in place
+        spectra = mx.fft.fft(g_qk[start:stop], axis=-2)
+        mx.eval(spectra)
+        g_qk[start:stop] = spectra
+        mx.eval(g_qk)
+        del spectra
+    # the decoded blocks sit in Torch's allocator cache; G(q, k) is all the build keeps
+    torch.mps.empty_cache()
+    return g_qk
+
+
+def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_inactive, active_mask_np,
+                   dc_value_override):
+    """G(q, k) of columns gathered a chunk at a time from an array, a tensor or exact columns, and the chunks' DC
+    sums when ``compact_inactive`` has no ``dc_value_override``.
+
+    Each chunk's transform is written into the one preallocated stack: concatenating the chunks at the end held
+    every chunk and the stack at once, twice G(q, k).
+    """
+    stored_bf = int(active_mask_np.sum()) if compact_inactive else int(bf_row.size)
+    g_qk = mx.zeros((stored_bf, scan_shape[0], scan_shape[1] // 2 + 1), dtype=mx.complex64)
+    mx.eval(g_qk)
+    offset = 0
+    dc_chunks = []
+    for start in range(0, int(bf_row.size), chunk_bf):
+        stop = min(start + chunk_bf, int(bf_row.size))
+        rows = bf_row[start:stop]
+        cols = bf_col[start:stop]
+        if compact_inactive and dc_value_override is not None:
+            chunk_active = active_mask_np[start:stop]
+            rows = rows[chunk_active]
+            cols = cols[chunk_active]
+            if rows.size == 0:
+                continue
+        if isinstance(frames, ArrayFrames):
+            stack_mx = None
+            stack_np = frames.columns(rows, cols).reshape(int(rows.size), *scan_shape).astype(np.float32, copy=False)
+        else:
+            # Gather into MLX-owned storage: a resident gather without an output allocates a Metal buffer that
+            # nothing releases, so every preparation would strand one chunk of driver memory.
+            stack_mx = mx.empty(
+                (int(rows.size), *scan_shape),
+                dtype=mx.float32,
+            )
+            mx.eval(stack_mx)
+            stack_np = np.asarray(stack_mx)
+            frames.columns_float32_into(
+                rows,
+                cols,
+                out=stack_np.reshape(int(rows.size), -1),
+            )
+        if compact_inactive and dc_value_override is None:
+            dc_chunks.append(
+                stack_np.reshape(stop - start, -1).sum(
+                    axis=1,
+                    dtype=np.float32,
+                )
+            )
+            # The compacted stack is a host copy and enters the FFT as a new array.
+            stack_np = stack_np[active_mask_np[start:stop]]
+            stack_mx = None
+            if stack_np.shape[0] == 0:
+                continue
+        if stack_mx is not None and isinstance(frames, (MpsTensorFrames, TensorChunkedFrames)):
+            # Preserve the previous array-input FFT layout and rounding. The
+            # selected columns were scan-major; materialize that layout on GPU.
+            stack_mx = mx.moveaxis(
+                mx.contiguous(mx.moveaxis(stack_mx, 0, -1)), -1, 0,
+            )
+        g_chunk = _fft2_hermitian(
+            mx,
+            stack_mx if stack_mx is not None else mx.array(stack_np),
+        )
+        mx.eval(g_chunk)
+        del stack_mx, stack_np
+        g_qk[offset:offset + int(g_chunk.shape[0])] = g_chunk
+        mx.eval(g_qk)
+        offset += int(g_chunk.shape[0])
+        del g_chunk
+    return g_qk, dc_chunks
 
 
 def retarget_prepared_rotation(

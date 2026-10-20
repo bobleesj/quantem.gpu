@@ -31,10 +31,10 @@ from quantem.gpu.optics.physics import wavelength_A_from_kV, wrap_degrees
 from quantem.gpu.ssb import series
 from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
-from quantem.gpu.ssb.brightfield import crop_bright_field
+from quantem.gpu.ssb.brightfield import bright_field_crop_region, crop_bright_field
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
-from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames, find_bf_columns
+from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop, MpsBfColumnFrames, find_bf_columns
 from quantem.gpu.ssb.persistence import (
     RESULT_SCHEMA,
     json_value,
@@ -302,6 +302,17 @@ def _on_scan_gpu(method):
 if TYPE_CHECKING:
     import pandas as pd
 
+def _keeps_crop_encoded(data: Dataset4dstemGPU, backend: str) -> bool:
+    """Whether an MPS session keeps this acquisition's bright-field crop encoded (``EncodedBrightFieldCrop``).
+
+    Integer counts are read exactly from the encoded source while G(q, k) is built; float sources keep the decoded
+    float32 crop their FFT input needs.
+    """
+    from quantem.gpu.formats.float8 import is_float8
+
+    return backend == "mps" and not is_float8(data.dtype) and np.dtype(data.dtype).kind == "u"
+
+
 def _streams_scan(data: Dataset4dstemGPU, backend: str) -> bool:
     """Select large integer ANS scans without changing smaller/float workflows."""
     if backend != "cuda":
@@ -331,8 +342,11 @@ class SSB:
     Parameters
     ----------
     data
-        The dataset ``io.load`` returns (only its bright-field crop is decoded), or a NumPy, CuPy or Torch array of
-        counts, 4D ``(scan_row, scan_col, det_row, det_col)`` or 3D ``(scan, det_row, det_col)`` with ``scan_shape``.
+        The dataset ``io.load`` returns, or a NumPy, CuPy or Torch array of counts, 4D ``(scan_row, scan_col,
+        det_row, det_col)`` or 3D ``(scan, det_row, det_col)`` with ``scan_shape``. Of a dataset only the
+        bright-field crop is read: CUDA decodes it; MPS keeps integer counts encoded and decodes their bright-field
+        columns a few scan rows at a time while it builds the transform, so keep the dataset open while the session
+        is in use.
     backend : {"auto", "cuda", "mps"}
         Accelerator; there is no CPU fallback.
     voltage_kV : float, optional
@@ -500,7 +514,7 @@ class SSB:
             raise ValueError("scan_region selects scan positions of a dataset io.load returns; slice an array before passing it.")
         # The backends read dense arrays, exact BF columns, or a borrowed large
         # ANS source whose detector columns are decoded during reconstruction.
-        backend_array = cp.ndarray if self.backend == "cuda" else MpsBfColumnFrames
+        backend_array = cp.ndarray if self.backend == "cuda" else MpsBfColumnFrames | EncodedBrightFieldCrop
         if self._streamed is None and not isinstance(data, np.ndarray | backend_array | torch.Tensor):
             raise TypeError(
                 f"SSB reads the dataset io.load returns or a NumPy, CuPy or Torch array; got "
@@ -671,24 +685,42 @@ class SSB:
 
     def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
                          detector_sampling_mrad, threshold, semiangle_mrad, mean_pattern, *, identify=True):
-        """Decode one fit-sized crop and identify its exact resident evidence."""
+        """Take one fit-sized bright-field crop and identify its exact resident evidence.
+
+        MPS keeps an integer crop encoded (``EncodedBrightFieldCrop``): its columns are decoded only while G(q, k) is
+        built, and its identity sums come from exact masked sums of the encoded counts. CUDA, and float sources on
+        MPS, decode the crop.
+        """
         shape, dtype = tuple(int(value) for value in data.shape), str(data.dtype)
-        data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
-            data, self.backend, threshold, bright_field_radius_px,
-            calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
-            scan_region=self.scan_region, mean_pattern=mean_pattern,
-        )
+        if _keeps_crop_encoded(data, self.backend):
+            bright_field_center_px, bright_field_radius_px, calibration_radius, region, mean_pattern = bright_field_crop_region(
+                data, threshold, bright_field_radius_px, calibrate_detector=detector_sampling_mrad is None,
+                bright_field_center_px=bright_field_center_px, mean_pattern=mean_pattern,
+            )
+            self._crop_origin = (region[0], region[2])
+            data = EncodedBrightFieldCrop(data, region, scan_region=self.scan_region)
+        else:
+            data, bright_field_center_px, bright_field_radius_px, calibration_radius, self._crop_origin, mean_pattern = crop_bright_field(
+                data, self.backend, threshold, bright_field_radius_px,
+                calibrate_detector=detector_sampling_mrad is None, bright_field_center_px=bright_field_center_px,
+                scan_region=self.scan_region, mean_pattern=mean_pattern,
+            )
         if detector_sampling_mrad is None:
             detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
         # File-backed sessions use source_signature, including the recorded
         # preprocessing. Their saved identity never uses resident checksums.
         if not identify:
             return data, bright_field_center_px, bright_field_radius_px, detector_sampling_mrad, mean_pattern
-        frames = data.reshape(data.shape[0] * data.shape[1], -1)
-        if self.backend == "cuda":
+        if isinstance(data, EncodedBrightFieldCrop):
+            # the same two sums of the per-pattern totals, modulo 2**64, without decoding the crop
+            per_frame = data.scan_sums().reshape(-1)
+            positions = np.arange(1, per_frame.size + 1, dtype=np.uint64)
+        elif self.backend == "cuda":
+            frames = data.reshape(data.shape[0] * data.shape[1], -1)
             per_frame = frames.sum(axis=1, dtype=cp.uint64)
             positions = cp.arange(1, per_frame.size + 1, dtype=cp.uint64)
         else:
+            frames = data.reshape(data.shape[0] * data.shape[1], -1)
             per_frame = frames.sum(dim=1, dtype=torch.int64)
             positions = torch.arange(1, per_frame.numel() + 1, dtype=torch.int64, device=per_frame.device)
         self.resident_identity = {
@@ -836,11 +868,22 @@ class SSB:
                     owned = loaded
                     data = loaded
                 else:
-                    data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin, _ = crop_bright_field(
-                        loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
-                        calibrate_detector=detector_sampling_mrad is None,
-                        bright_field_center_px=bright_field_center_px,
-                    )
+                    if _keeps_crop_encoded(loaded, selected):
+                        # the session owns the encoded acquisition and decodes its bright-field columns from it
+                        bright_field_center_px, bright_field_radius_px, calibration_radius, region, _ = bright_field_crop_region(
+                            loaded, bright_field_intensity_threshold, bright_field_radius_px,
+                            calibrate_detector=detector_sampling_mrad is None,
+                            bright_field_center_px=bright_field_center_px,
+                        )
+                        crop_origin = (region[0], region[2])
+                        data = EncodedBrightFieldCrop(loaded, region)
+                        owned = loaded
+                    else:
+                        data, bright_field_center_px, bright_field_radius_px, calibration_radius, crop_origin, _ = crop_bright_field(
+                            loaded, selected, bright_field_intensity_threshold, bright_field_radius_px,
+                            calibrate_detector=detector_sampling_mrad is None,
+                            bright_field_center_px=bright_field_center_px,
+                        )
                     if rotation_estimated:
                         # the 180-degree branch test locates atomic columns on the dark field, which the
                         # bright-field crop does not keep
@@ -852,7 +895,7 @@ class SSB:
             finally:
                 if owned is None:
                     loaded.close()
-            if detector_sampling_mrad is None and owned is None:
+            if detector_sampling_mrad is None and (owned is None or isinstance(data, EncodedBrightFieldCrop)):
                 detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
                 _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad, recordable=False)
             source_provenance = None if correction is None else {"hot_pixel_correction": correction}
@@ -884,6 +927,9 @@ class SSB:
             # exported bright-field columns and a bright-field crop keep no dark field: the file is read again for it
             # when a branch comparison needs it (an estimated rotation computed it before the crop)
             session._dark_field_source = Path(source)
+        elif isinstance(data, EncodedBrightFieldCrop):
+            # an encoded crop's session owns the whole acquisition
+            session._dark_field_source = owned
         session._dark_field = dark_field
         if rotation_recorded:
             session.scan_detector_rotation_source = "metadata"
@@ -2356,8 +2402,9 @@ class SSB:
 
         The session owns only what it made: the bright-field crop decoded from a
         loaded dataset, backends' Fourier data, and the encoded acquisition
-        retained by a large ``SSB.open`` session. A borrowed array or dataset
-        is never released here.
+        retained by an ``SSB.open`` session that reads it encoded (a large CUDA
+        scan, or integer counts on MPS). A borrowed array or dataset is never
+        released here.
         """
 
         self._data = None
