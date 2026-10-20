@@ -8,6 +8,13 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- The detector calibration is an explicit step: `fit = data.calibration.fit_detector_sampling()` fits the
+  bright-field disk of the mean pattern on the encoded data (`detector.fit_bright_field_disk`: centre, and the
+  edge radius where the disk falls to half its plateau, at the convergence semiangle), records the detector step
+  with the source "Fitted (bright-field disk)" together with `bright_field_center_px` and
+  `bright_field_edge_radius_px`, and `fit.show()` draws the mean pattern with the fitted edge in mrad. `io.save`
+  keeps the fit; a detector step set by hand wins.
+
 - SSB is tilt-corrected by default: `find_aberrations()` (and the automatic fit
   of `reconstruct()`) fits the aberrations jointly with the sample tilt and
   depth spread (`tilt=True`); `tilt=False` is the explicit opt-out for

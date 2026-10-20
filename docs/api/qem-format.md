@@ -388,7 +388,11 @@ not accepted as float32 merely because an XML label says float32.
 
 `scientific_metadata.calibration_overrides` stores explicit user edits separately
 from recorded quantities and axis sampling. Each entry uses the same microscope
-path with `value`, `unit`, `provenance: "user_override"`, and nonempty `evidence`.
+path with `value`, `unit`, `provenance`, and nonempty `evidence`. `provenance` is `"user_override"` for a
+value set by hand, or `"bright_field_disk_fit"` for a detector sampling `data.calibration.fit_detector_sampling()`
+fitted on the bright-field disk (detector sampling only). That fit also keeps its disk in the retained `metadata`
+block as `bright_field_disk`: `schema` `"quantem.bright-field-disk/1"`, `method`, `bright_field_center_px`
+(row, col) and `bright_field_edge_radius_px`, in detector pixels. A record of another schema is ignored.
 In schema 2, scan sampling uses `angstrom`; beam voltage uses `kV`; dwell time
 uses `us`; camera length uses `mm`; semi-angle uses `mrad`. Detector row/column
 sampling uses a shared unit of `mrad` or `1/angstrom`. Both members of each sampling pair are

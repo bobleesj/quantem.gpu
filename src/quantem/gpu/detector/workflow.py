@@ -21,6 +21,7 @@ radius affects only that call. No detector binning is applied on any backend.
 """
 
 import math
+from dataclasses import dataclass, field
 from weakref import WeakKeyDictionary
 
 import numpy as np
@@ -147,23 +148,166 @@ def disk_edge_radius(mean_pattern: np.ndarray) -> float:
     >>> radius_px = detector.disk_edge_radius(detector.mean(data))
     """
     pattern = np.asarray(mean_pattern, dtype=np.float64)
+    return _edge_radius(pattern, _bright_disk(pattern))
+
+
+def _bright_disk(pattern: np.ndarray) -> np.ndarray:
+    """The pixels of a float64 mean pattern above mean + std: the bright-field disk every fit starts from."""
     disk = pattern > pattern.mean() + pattern.std()
     if not disk.any():
         raise ValueError(
             "The mean diffraction pattern has no bright-field disk to calibrate the detector on; "
             "pass detector_sampling_mrad (mrad per detector pixel)."
         )
+    return disk
+
+
+def _edge_radius(pattern: np.ndarray, disk: np.ndarray) -> float:
+    """Equivalent-area radius of the pixels above half the disk's median plateau (``disk_edge_radius``)."""
     half_plateau = 0.5 * float(np.median(pattern[disk]))
     return math.sqrt(np.count_nonzero(pattern > half_plateau) / math.pi)
+
+
+BRIGHT_FIELD_DISK_METHOD = "half-plateau disk edge"
+
+
+@dataclass(frozen=True, eq=False)
+class BrightFieldDiskFit:
+    """The bright-field disk of a mean diffraction pattern, and the detector sampling its edge implies.
+
+    The disk is the image of the probe-forming aperture, so its edge sits at the convergence semiangle and
+    ``detector_sampling_mrad = semiangle_mrad / bright_field_edge_radius_px`` on both axes. Returned by
+    :func:`fit_bright_field_disk` and ``data.calibration.fit_detector_sampling()``.
+
+    Attributes
+    ----------
+    bright_field_center_px : tuple[float, float]
+        Disk centre in detector pixels, (row, col): the centroid of the pixels above mean + std.
+    bright_field_edge_radius_px : float
+        Radius in detector pixels at which the disk falls to half its plateau (:func:`disk_edge_radius`).
+    detector_sampling_mrad : tuple[float, float] or None
+        Detector sampling in mrad per pixel, (row, col); None when no semiangle was given.
+    semiangle_mrad : float or None
+        The convergence semiangle the sampling was computed with.
+    method : str
+        The radius rule, ``"half-plateau disk edge"``.
+    mean_pattern : numpy.ndarray
+        The float64 mean pattern the disk was fitted on, (row, col).
+    """
+
+    bright_field_center_px: tuple[float, float]
+    bright_field_edge_radius_px: float
+    detector_sampling_mrad: tuple[float, float] | None
+    semiangle_mrad: float | None
+    method: str
+    mean_pattern: np.ndarray = field(repr=False)
+
+    def show(self, *, figsize: tuple[float, float] = (5.0, 4.6)):
+        """The mean pattern on a log scale with the fitted disk edge and centre drawn on it.
+
+        Axes are in mrad from the disk centre when the detector sampling is known, else in detector pixels. Plotting
+        only: the log scale is a display choice.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Closed, so a bare notebook expression renders it once.
+
+        Examples
+        --------
+        >>> data.calibration.fit_detector_sampling().show()  # doctest: +SKIP
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Ellipse
+
+        rows, cols = self.mean_pattern.shape
+        center_row, center_col = self.bright_field_center_px
+        if self.detector_sampling_mrad is None:
+            step_row = step_col = 1.0
+            origin_row, origin_col, unit = 0.0, 0.0, "px"
+        else:
+            step_row, step_col = self.detector_sampling_mrad
+            origin_row, origin_col, unit = center_row, center_col, "mrad"
+        extent = (-(origin_col + 0.5) * step_col, (cols - 0.5 - origin_col) * step_col,
+                  (rows - 0.5 - origin_row) * step_row, -(origin_row + 0.5) * step_row)
+        positive = self.mean_pattern[self.mean_pattern > 0]
+        floor = float(positive.min()) if positive.size else 1.0
+        figure, axis = plt.subplots(figsize=figsize)
+        image = axis.imshow(np.log10(np.maximum(self.mean_pattern, floor)), cmap="gray", extent=extent,
+                            interpolation="nearest")
+        centre = ((center_col - origin_col) * step_col, (center_row - origin_row) * step_row)
+        radius = self.bright_field_edge_radius_px
+        axis.add_patch(Ellipse(centre, 2 * radius * step_col, 2 * radius * step_row, fill=False, color="#00e5ff",
+                               linewidth=1.4))
+        axis.plot(*centre, marker="+", color="#00e5ff", markersize=10)
+        label = f"edge radius {radius:.2f} px"
+        if self.detector_sampling_mrad is not None:
+            label = (f"edge {self.semiangle_mrad:g} mrad = {radius:.2f} px\n"
+                     f"detector step {self.detector_sampling_mrad[0]:.4f} mrad per pixel")
+        axis.text(0.03, 0.97, label, transform=axis.transAxes, va="top", ha="left", color="white", fontsize=9)
+        axis.set(xlabel=f"detector column ({unit})", ylabel=f"detector row ({unit})",
+                 title=f"Bright-field disk, centre ({center_row:.2f}, {center_col:.2f}) px")
+        figure.colorbar(image, ax=axis, label="log10 mean counts", shrink=0.85)
+        figure.tight_layout()
+        plt.close(figure)
+        return figure
+
+
+def fit_bright_field_disk(data, semiangle_mrad: float | None = None) -> BrightFieldDiskFit:
+    """Fit the bright-field disk of a mean pattern: its centre, its edge radius and the detector sampling they imply.
+
+    The one rule every tool uses for the disk (SSB, viewer detector presets, ``data.calibration.fit_detector_sampling``).
+    The centre is the centroid of the pixels above mean + std, the edge radius the half-plateau radius of
+    :func:`disk_edge_radius`, and with a semiangle the detector sampling is ``semiangle_mrad / edge radius`` on both
+    axes. Computed in float64, as SSB selects its bright-field pixels.
+
+    Parameters
+    ----------
+    data
+        A 2D mean diffraction pattern, typically from :func:`mean`, or an acquisition that :func:`prepare` accepts,
+        whose mean pattern is computed on its own backend without a dense copy.
+    semiangle_mrad : float, optional
+        Probe convergence semiangle in mrad, finite and positive; without it the sampling is None.
+
+    Returns
+    -------
+    BrightFieldDiskFit
+        Centre, edge radius, detector sampling and the mean pattern, with ``show()``.
+
+    Raises
+    ------
+    ValueError
+        When no pixel stands above mean + std (no disk), or the semiangle is not finite and positive.
+
+    Examples
+    --------
+    >>> fit = detector.fit_bright_field_disk(detector.mean(data), semiangle_mrad=30)
+    >>> fit.detector_sampling_mrad
+    (0.556..., 0.556...)
+    """
+    if semiangle_mrad is not None:
+        semiangle = float(semiangle_mrad)
+        if not (math.isfinite(semiangle) and semiangle > 0):
+            raise ValueError(f"semiangle_mrad must be finite and positive; got {semiangle_mrad!r}.")
+    pattern = np.asarray(mean(data) if np.ndim(data) > 2 else data, dtype=np.float64)
+    disk = _bright_disk(pattern)
+    rows, cols = np.nonzero(disk)
+    radius = _edge_radius(pattern, disk)
+    sampling = None if semiangle_mrad is None else (float(semiangle_mrad) / radius,) * 2
+    return BrightFieldDiskFit(
+        bright_field_center_px=(float(rows.mean()), float(cols.mean())), bright_field_edge_radius_px=radius,
+        detector_sampling_mrad=sampling, semiangle_mrad=None if semiangle_mrad is None else float(semiangle_mrad),
+        method=BRIGHT_FIELD_DISK_METHOD, mean_pattern=pattern,
+    )
 
 
 def detector_sampling_mrad(mean_pattern: np.ndarray, semiangle_mrad: float) -> tuple[float, float]:
     """Detector sampling in mrad per pixel, (row, col), from the bright-field disk and the convergence semiangle.
 
     The bright-field disk is the image of the probe-forming aperture, so its edge sits at the convergence semiangle:
-    ``semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel on both axes. This is the rule SSB, parallax and
-    screening apply when no detector sampling is recorded or given; call it rather than another radius rule, which
-    can differ by several percent.
+    ``semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel on both axes (:func:`fit_bright_field_disk`).
+    This is the rule SSB, parallax and screening apply when no detector sampling is recorded or given; call it rather
+    than another radius rule, which can differ by several percent.
 
     Parameters
     ----------
@@ -182,11 +326,9 @@ def detector_sampling_mrad(mean_pattern: np.ndarray, semiangle_mrad: float) -> t
     >>> detector.detector_sampling_mrad(detector.mean(data), semiangle_mrad=30)
     (0.552..., 0.552...)
     """
-    semiangle = float(semiangle_mrad)
-    if not (math.isfinite(semiangle) and semiangle > 0):
-        raise ValueError(f"semiangle_mrad must be finite and positive; got {semiangle_mrad!r}.")
-    sampling = semiangle / disk_edge_radius(mean_pattern)
-    return (sampling, sampling)
+    if semiangle_mrad is None:
+        raise ValueError("semiangle_mrad must be finite and positive; got None.")
+    return fit_bright_field_disk(mean_pattern, semiangle_mrad).detector_sampling_mrad
 
 
 def detector_mask(center_px, inner_radius_px, outer_radius_px, detector_shape, *, dtype=np.float32) -> np.ndarray:
