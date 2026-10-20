@@ -47,7 +47,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     counts[..., pixel_mask != 0] = 0xFFFF
     master = write_master(tmp_path, counts, pixel_mask)
 
-    result = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache", rotation_steps=30)
+    result = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
 
     working = np.where(pixel_mask != 0, 0, counts).astype(np.uint64)
     # One mean rule everywhere: the exact total divided in float64, rounded once to float32.
@@ -70,7 +70,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     com_col = com_col.astype(np.float32)
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
-    _, _, rotation_deg, transposed = find_optimal_rotation(com_row, com_col, rotation_steps=30)
+    _, _, rotation_deg, transposed = find_optimal_rotation(com_row, com_col)
     expected = {
         "mean_diffraction_pattern": mean_diffraction_pattern,
         "total_intensity": total,
@@ -84,7 +84,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
     }
     reopened = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
     with io.load(master, backend=backend, hot_pixel_correction="median", verbose=False) as loaded:
-        borrowed = screening.prepare(loaded, rotation_steps=30)
+        borrowed = screening.prepare(loaded)
         assert borrowed.cache_path is None and not borrowed.from_cache
         # Screening leaves the median-corrected source alive for SSB.
         frame = loaded[0, 0]
@@ -121,7 +121,7 @@ def test_screening_mean_pattern_divides_the_exact_total_once(tmp_path):
     # 900 positions: dividing by a power of two would round the same either way.
     counts = np.random.default_rng(9).integers(19_000, 23_000, (30, 30, 24, 28)).astype(np.uint16)
     master = write_master(tmp_path, counts, np.zeros((24, 28), dtype=np.uint32))
-    result = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache", rotation_steps=30)
+    result = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
     total = counts.sum(axis=(0, 1), dtype=np.uint64)
     expected = (total / 900).astype(np.float32)
     assert np.any(total.astype(np.float32) / np.float32(900) != expected)

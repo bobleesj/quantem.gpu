@@ -174,7 +174,7 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
             mean = detector.mean(data)
             detector.bf(data)
             detector.adf(data)
-            dpc.run(data, rotation_steps=180)
+            dpc.run(data)
             detector.fit_probe(mean)
             session = SSB(data, **settings)
             fitted = session.find_aberrations(**fit)

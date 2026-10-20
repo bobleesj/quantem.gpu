@@ -17,36 +17,48 @@ def _curl_batch(v_row, v_col):
     return (curl ** 2).mean(axis=(1, 2))
 
 
-def test_find_optimal_rotation_matches_batch_reference() -> None:
-    """The curl-score search should match the old full-stack search."""
+@pytest.mark.parametrize("seed", [41, 7, 2026])
+def test_find_optimal_rotation_is_the_minimum_of_the_full_stack_search(seed) -> None:
+    """The closed-form angle is the minimizer of the curl score a fine full-stack search approaches.
+
+    Before 2026-10-20 the angle was the best of 180 grid angles 1.0056 degrees apart, so an estimate could sit half a
+    step from the minimum (a 512 x 512 scan read 158.88 degrees where 1800 steps gave 159.39).
+    """
     from quantem.gpu.dpc.workflow import find_optimal_rotation
 
-    rng = np.random.default_rng(41)
+    rng = np.random.default_rng(seed)
     com_row = rng.normal(size=(32, 40)).astype(np.float32)
     com_col = rng.normal(size=(32, 40)).astype(np.float32)
-    rotation_steps = 91
-    angles = np.linspace(0, np.pi, rotation_steps, dtype=np.float32)
+    rotation_steps = 3601  # 0.05-degree grid
+    angles = np.linspace(0, np.pi, rotation_steps)
 
-    r, c = _rotate_vector_batch(com_row, com_col, angles)
-    rt, ct = _rotate_vector_batch(com_col, com_row, angles)
+    r, c = _rotate_vector_batch(com_row.astype(np.float64), com_col.astype(np.float64), angles)
+    rt, ct = _rotate_vector_batch(com_col.astype(np.float64), com_row.astype(np.float64), angles)
     scores = np.concatenate([_curl_batch(r, c), _curl_batch(rt, ct)])
     idx = int(scores.argmin())
-    scan_detector_rotation_flipped = idx >= rotation_steps
-    ai = idx % rotation_steps
-    expected_angle = float(angles[ai]) * 180.0 / np.pi
-    expected_row = rt[ai] if scan_detector_rotation_flipped else r[ai]
-    expected_col = ct[ai] if scan_detector_rotation_flipped else c[ai]
+    grid_flipped = idx >= rotation_steps
+    grid_angle = float(angles[idx % rotation_steps]) * 180.0 / np.pi
 
-    got_row, got_col, got_angle, got_transpose = find_optimal_rotation(
-        com_row,
-        com_col,
-        rotation_steps=rotation_steps,
-    )
+    got_row, got_col, got_angle, got_flipped = find_optimal_rotation(com_row, com_col)
 
-    assert got_transpose == scan_detector_rotation_flipped
-    assert got_angle == pytest.approx(expected_angle, abs=1e-6)
-    np.testing.assert_allclose(got_row, expected_row, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(got_col, expected_col, rtol=1e-6, atol=1e-6)
+    assert got_flipped == grid_flipped
+    assert 0.0 <= got_angle < 180.0
+    gap = abs(got_angle - grid_angle) % 180.0
+    assert min(gap, 180.0 - gap) <= 0.05
+    exact = np.radians(got_angle)
+    source = (com_col, com_row) if got_flipped else (com_row, com_col)
+    expected_row, expected_col = _rotate_vector_batch(*(np.asarray(v, np.float64) for v in source), np.array([exact]))
+    # the exact angle scores no worse than any grid angle
+    assert float(_curl_batch(expected_row, expected_col)[0]) <= float(scores.min()) * (1 + 1e-9)
+    np.testing.assert_allclose(got_row, expected_row[0], rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(got_col, expected_col[0], rtol=1e-5, atol=1e-5)
+    # a given flip keeps that convention and fits the angle alone
+    _, _, kept_angle, kept = find_optimal_rotation(com_row, com_col, scan_detector_rotation_flipped=not got_flipped)
+    assert kept is (not got_flipped)
+    other = (rt, ct) if not got_flipped else (r, c)
+    kept_grid = float(angles[int(_curl_batch(*other).argmin())]) * 180.0 / np.pi
+    gap = abs(kept_angle - kept_grid) % 180.0
+    assert min(gap, 180.0 - gap) <= 0.05
 
 
 @pytest.mark.parametrize("exchange_detector_axes", [False, True])
@@ -66,14 +78,13 @@ def test_run_hands_its_fitted_geometry_back_without_losing_the_transposition(exc
     if exchange_detector_axes:
         data = np.ascontiguousarray(data.transpose(0, 1, 3, 2))
 
-    fitted = dpc.run(data, rotation_steps=30)
+    fitted = dpc.run(data)
     assert fitted.scan_detector_rotation_flipped == exchange_detector_axes
     assert fitted.scan_detector_rotation_deg is None
-    # The estimate lies in [0, 180]. This unrotated field fits the end point of the search grid, which is pi in
-    # float32 and reads 180.000005 degrees, so the bound allows for that rounding; 0 and 180 are the same estimate.
-    assert 0.0 <= fitted.scan_detector_rotation_mod180_deg <= 180.0 + 1e-5
-    # the fit is returned as it was applied, not wrapped: its phase belongs to this angle and not to the one at 0
-    assert fitted.scan_detector_rotation_mod180_deg == float(np.float32(np.pi)) * 180.0 / np.pi
+    # the exact estimate lies in [0, 180); this unrotated field fits 0, which modulo 180 may read just below 180
+    angle = fitted.scan_detector_rotation_mod180_deg
+    assert 0.0 <= angle < 180.0
+    assert min(angle, 180.0 - angle) < 2.0
     given = dpc.run(data, scan_detector_rotation_deg=fitted.scan_detector_rotation_mod180_deg,
                     scan_detector_rotation_flipped=fitted.scan_detector_rotation_flipped)
     assert given.scan_detector_rotation_mod180_deg is None

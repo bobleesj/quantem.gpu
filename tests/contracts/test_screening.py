@@ -147,8 +147,8 @@ def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
 
     path = workflow._cache_path(master, tmp_path / "cache")
 
-    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/5"
-    assert path.name == "scan_master.screening-v5.npz"
+    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/6"
+    assert path.name == "scan_master.screening-v6.npz"
 
 
 def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:
@@ -473,7 +473,7 @@ def test_screening_forced_rotation_describes_one_geometry(tmp_path) -> None:
     potential = 40 * np.exp(-((rows - 9) ** 2 + (cols - 15) ** 2) / 60)
     # a detector whose axes are exchanged reports the row gradient along its columns
     com_col, com_row = (gradient.astype(np.float32) for gradient in np.gradient(potential))
-    _, _, fitted_deg, fitted_transposed = find_optimal_rotation(com_row, com_col, rotation_steps=30)
+    _, _, fitted_deg, fitted_transposed = find_optimal_rotation(com_row, com_col)
     assert fitted_transposed
     fitted = _result(master, workflow)
     fitted.com_row, fitted.com_col = com_row, com_col

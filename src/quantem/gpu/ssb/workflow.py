@@ -105,11 +105,12 @@ def _browser_qem_source(data: object) -> dict[str, object] | None:
 def _estimate_rotation(data, scan_shape, flipped: bool | None) -> tuple[float, bool]:
     """Scan-detector rotation, known modulo 180 degrees, and whether it is flipped, from the centre-of-mass curl.
 
-    A thin phase object has a curl-free centre-of-mass field once the scan and detector axes agree. The curl cannot
-    tell an angle from the angle plus 180 degrees; ``find_aberrations`` settles that from the sign of the atom columns.
-    A given ``flipped`` is kept and only the angle is searched.
+    A thin phase object has a curl-free centre-of-mass field once the scan and detector axes agree; the angle is the
+    exact minimum of the mean squared curl (``dpc.workflow.find_optimal_rotation``, the search DPC and screening use).
+    The curl cannot tell an angle from the angle plus 180 degrees; ``find_aberrations`` settles that from the sign of
+    the atom columns. A given ``flipped`` is kept and only the angle is fitted.
     """
-    from quantem.gpu.dpc.workflow import _rotation_curl_scores, center_of_mass, find_optimal_rotation
+    from quantem.gpu.dpc.workflow import center_of_mass, find_optimal_rotation
 
     try:
         if isinstance(data, MpsBfColumnFrames):
@@ -121,13 +122,8 @@ def _estimate_rotation(data, scan_shape, flipped: bool | None) -> tuple[float, b
             "SSB could not estimate the scan-detector rotation from this input; pass "
             "scan_detector_rotation_deg (and scan_detector_rotation_flipped) explicitly."
         ) from exc
-    if flipped is None:
-        _, _, angle, flipped = find_optimal_rotation(com_row, com_col)
-    else:
-        angles = np.linspace(0, np.pi, 180, dtype=np.float32)
-        source = (com_col, com_row) if flipped else (com_row, com_col)
-        angle = float(angles[int(_rotation_curl_scores(*source, angles).argmin())]) * 180.0 / np.pi
-    return float(angle) % 180.0, bool(flipped)
+    _, _, angle, flipped = find_optimal_rotation(com_row, com_col, scan_detector_rotation_flipped=flipped)
+    return float(angle), bool(flipped)
 
 
 def _bright_field_center_of_mass(frames: "MpsBfColumnFrames") -> tuple[np.ndarray, np.ndarray]:

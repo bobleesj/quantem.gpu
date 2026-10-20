@@ -30,7 +30,7 @@ def test_uint32_screening_preserves_measured_counts(tmp_path):
         path = tmp_path / f"counts-{np.dtype(dtype).name}.h5"
         write_counts(path, counts.astype(dtype))
         outputs.append(screening.prepare(
-            path, backend="cuda", cache=False, rotation_steps=4,
+            path, backend="cuda", cache=False,
         ))
     for field in (
         "mean_diffraction_pattern", "total_intensity", "bright_field", "annular_bright_field",
