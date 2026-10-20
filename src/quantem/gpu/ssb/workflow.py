@@ -163,7 +163,8 @@ def _source_calibration(
     if missing:
         raise ValueError(
             f"SSB acquisition metadata is missing {', '.join(missing)}. "
-            "Pass those calibrated values to SSB(data, ...) or SSB.open(...); scan_sampling_A is (row, col) in Angstrom. "
+            "Pass those calibrated values to SSB(data, ...) or SSB.open(...); scan_sampling_A is in Angstrom, one "
+            "number for both axes or (row, col). "
             "A diffraction disk fit cannot determine the real-space scan step."
         )
     return (float(values["voltage_kV"]), float(values["semiangle_mrad"]),
@@ -233,13 +234,14 @@ class SSB:
         Accelerating voltage in kV; defaults to the loaded dataset's metadata.
     semiangle_mrad : float, optional
         Probe convergence semiangle in mrad; defaults to the loaded dataset's metadata.
-    scan_sampling_A : (float, float), optional
-        Scan step in Angstrom, (row, col); defaults to the loaded dataset's metadata.
+    scan_sampling_A : float or (float, float), optional
+        Scan step in Angstrom, (row, col), or one number for both axes; defaults to the loaded dataset's metadata.
+        The session stores and reports it as the (row, col) pair.
         These three values remain required for an array without metadata.
     scan_shape : (int, int), optional
         Scan shape of a 3D frame stack.
-    detector_sampling_mrad : (float, float), optional
-        Detector sampling in mrad per pixel, (row, col). When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
+    detector_sampling_mrad : float or (float, float), optional
+        Detector sampling in mrad per pixel, (row, col), or one number for both axes. When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
         A loaded dataset's recorded detector sampling takes priority over that
         estimate; explicit keyword values take priority over metadata.
@@ -299,9 +301,9 @@ class SSB:
         backend: Literal["auto", "cuda", "mps"] = "auto",
         voltage_kV: float | None = None,
         semiangle_mrad: float | None = None,
-        scan_sampling_A: tuple[float, float] | None = None,
+        scan_sampling_A: float | tuple[float, float] | None = None,
         scan_shape: tuple[int, int] | None = None,
-        detector_sampling_mrad: tuple[float, float] | None = None,
+        detector_sampling_mrad: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
         scan_detector_rotation_flipped: bool | None = None,
@@ -576,9 +578,9 @@ class SSB:
         dtype: str | None = None,
         voltage_kV: float | None = None,
         semiangle_mrad: float | None = None,
-        scan_sampling_A: tuple[float, float] | None = None,
+        scan_sampling_A: float | tuple[float, float] | None = None,
         scan_shape: tuple[int, int] | None = None,
-        detector_sampling_mrad: tuple[float, float] | None = None,
+        detector_sampling_mrad: float | tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
         scan_detector_rotation_flipped: bool | None = None,

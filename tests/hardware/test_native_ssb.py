@@ -191,3 +191,26 @@ def test_open_retains_detector_correction_and_matches_saved_counts(tmp_path, bac
             assert actual.source_provenance["hot_pixel_correction"]["method"] == "median"
     with h5py.File(master) as handle:
         np.testing.assert_array_equal(handle["entry/data/data"][0], counts[0, 0])
+
+
+def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path, backend):
+    """SSB(data), a loaded dataset and SSB.open take scan_sampling_A=0.99 as (0.99, 0.99) and report the pair."""
+    counts = _counts(3)
+    master = _arina_master(tmp_path / "scan_master.h5", counts)
+    scalar = {"backend": backend, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.99,
+              "detector_sampling_mrad": 0.6}
+    paired = {**scalar, "scan_sampling_A": (0.99, 0.99), "detector_sampling_mrad": (0.6, 0.6)}
+    with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
+        pairs = [
+            (SSB(counts, **scalar), SSB(counts, **paired)),
+            (SSB(loaded, **scalar), SSB(loaded, **paired)),
+            (SSB.open(master, scan_shape=(128, 128), **scalar), SSB.open(master, scan_shape=(128, 128), **paired)),
+        ]
+        for one, two in pairs:
+            with one, two:
+                assert one.scan_sampling_A == two.scan_sampling_A == (0.99, 0.99)
+                assert one.detector_sampling_mrad == two.detector_sampling_mrad == (0.6, 0.6)
+                assert one.calibration_table().loc["Scan step (row, col)", "Value used"] == (0.99, 0.99)
+                np.testing.assert_array_equal(one.preview(ABERRATIONS)[0], two.preview(ABERRATIONS)[0])
+    with pytest.raises(ValueError, match="one number for both axes or a \\(row, col\\) pair"):
+        SSB(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})

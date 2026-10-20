@@ -24,7 +24,13 @@ def test_float32_voltage_gives_the_double_precision_wavelength():
     assert wavelength_A_from_kV(np.float32(250)) == wavelength_A_from_kV(250) == 0.021986349996165905
 
 
-@pytest.mark.parametrize("step", [0.37, 0, -1, float("nan"), float("inf"), [], [1, 2, 3], None])
+def test_one_number_is_the_step_on_both_axes():
+    assert (ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=0.264)
+            == ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=(0.264, 0.264)))
+    assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=30, scan_sampling_A=np.float32(0.264)) == 2
+
+
+@pytest.mark.parametrize("step", [0, -1, float("nan"), float("inf"), [], [1, 2, 3], None, True])
 def test_missing_or_invalid_calibration_is_not_guessed(step):
     with pytest.raises(ValueError):
         ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=20, scan_sampling_A=step)
