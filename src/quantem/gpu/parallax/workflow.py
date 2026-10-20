@@ -28,7 +28,6 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.parallax.cuda.alignment import align_vbf_stack_multiscale_cp
 from quantem.gpu.parallax.results import ParallaxResult
-from quantem.gpu.ssb.brightfield import disk_edge_radius
 from quantem.gpu.ssb.units import sampling_pair
 
 # GPU bytes one batch holds: decoded detector values while reading the
@@ -187,7 +186,7 @@ def run(
             # SSB's detector calibration: the disk edge of the full mean pattern is the convergence semiangle.
             if detector_sampling_mrad is None:
                 mean_pattern = detector.mean(data) if mean_pattern is None else mean_pattern
-                detector_sampling_mrad = (semiangle_mrad / disk_edge_radius(mean_pattern),) * 2
+                detector_sampling_mrad = detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)
             # The shifts are measured against the mean image, which is seen at the mean beam angle of the
             # selected pixels, so each pixel's beam angle is taken from their centroid.
             pixels = np.stack([cp.asnumpy(pixel_rows), cp.asnumpy(pixel_cols)], axis=1).astype(np.float64)

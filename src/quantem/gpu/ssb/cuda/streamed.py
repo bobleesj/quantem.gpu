@@ -16,7 +16,7 @@ from cupy.cuda import cufft
 from quantem.gpu import detector
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.resident.cuda.counts import StreamedCounts
-from quantem.gpu.ssb.brightfield import disk_edge_radius
+from quantem.gpu.detector import detector_sampling_mrad
 from quantem.gpu.ssb.cuda.brightfield import select_bright_field
 from quantem.gpu.ssb.cuda.kernels.engine import thick_wave_sum_kernel
 
@@ -79,7 +79,7 @@ class StreamedSSB:
         self.radius = float(radius)
         self.detector_sampling_mrad = detector_sampling_mrad
         if self.detector_sampling_mrad is None:
-            self.detector_sampling_mrad = (semiangle_mrad / disk_edge_radius(self.mean_pattern),) * 2
+            self.detector_sampling_mrad = detector_sampling_mrad(self.mean_pattern, semiangle_mrad)
         self.transposed = bool(scan_detector_rotation_flipped)
         mean = self.mean_pattern.T if self.transposed else self.mean_pattern
         compute_center = self.center[::-1] if self.transposed else self.center

@@ -185,7 +185,7 @@ def _add_calibration(products: ScreeningResult) -> None:
     area gives its equivalent circular semiangle. This is an estimate using
     the recorded detector calibration, not an independent calibration of it.
     """
-    from quantem.gpu.ssb.brightfield import disk_edge_radius
+    from quantem.gpu.detector import disk_edge_radius
 
     metadata = products.metadata
     products.metadata.pop("semiangle_mrad_source", None)

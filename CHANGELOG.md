@@ -21,7 +21,15 @@ new `rcN` heading when that rc is published to TestPyPI.
   relativistic interaction parameter σ in rad/(V·Å), computed with the same
   wavelength as `wavelength_A_from_kV`.
 
+- `quantem.gpu.detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)`
+  returns the `(row, col)` detector sampling in mrad per pixel from the
+  bright-field disk edge, the rule SSB, parallax and screening apply when no
+  sampling is recorded.
+
 ### Changed (breaking, no aliases)
+
+- `disk_edge_radius` moves from `quantem.gpu.ssb.brightfield` to
+  `quantem.gpu.detector.disk_edge_radius`.
 
 - `detector_transposed` is renamed `scan_detector_rotation_flipped`
   everywhere: `SSB`, `SSB.open`, `dpc.run`, results, screening products,

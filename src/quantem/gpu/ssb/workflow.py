@@ -27,7 +27,7 @@ from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb import series
 from quantem.gpu.ssb._execution import cancellation_scope
-from quantem.gpu.ssb.brightfield import crop_bright_field, disk_edge_radius
+from quantem.gpu.ssb.brightfield import crop_bright_field
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
 from quantem.gpu.ssb.mps.frames import MpsBfColumnFrames, find_bf_columns
@@ -817,7 +817,7 @@ class SSB:
                 if options["bright_field_radius_px"] is None:
                     options["bright_field_radius_px"] = radius
                 if options["detector_sampling_mrad"] is None:
-                    options["detector_sampling_mrad"] = (self.semiangle_mrad / disk_edge_radius(pattern),) * 2
+                    options["detector_sampling_mrad"] = detector.detector_sampling_mrad(pattern, self.semiangle_mrad)
             counts = self._data[row_start:row_stop, col_start:col_stop]
             # __init__ applies the detector convention once. The parent's
             # resident array has already had it applied.
@@ -1363,7 +1363,7 @@ class SSB:
                 center = detected_center if center is None else center
                 radius = detected_radius if radius is None else radius
                 if detector_sampling_mrad is None:
-                    detector_sampling_mrad = (self.semiangle_mrad / disk_edge_radius(mean_pattern),) * 2
+                    detector_sampling_mrad = detector.detector_sampling_mrad(mean_pattern, self.semiangle_mrad)
             with SSB(
                 self._data if self._streamed is not None else self._data[row_start:row_stop, col_start:col_stop],
                 backend=self.backend, voltage_kV=self.voltage_kV,

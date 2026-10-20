@@ -12,6 +12,7 @@ import numpy as np
 import torch
 
 from quantem.gpu import detector
+from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 
@@ -183,36 +184,3 @@ def crop_bright_field(
             else:
                 counts = torch.where(mask, counts, 0)
     return counts, center, radius, calibration_radius, (row0, col0), mean_pattern
-
-
-def disk_edge_radius(mean_pattern: np.ndarray) -> float:
-    """Return the radius in detector pixels at which the bright-field disk falls to half its plateau intensity.
-
-    The disk is the image of the probe-forming aperture, so this radius corresponds to the convergence semiangle and
-    calibrates the detector: ``detector_sampling_mrad = semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel. A
-    symmetric blur of the aperture edge (detector point spread, partial coherence) leaves the half-intensity contour
-    at the geometric edge, while a higher threshold moves it inward. The plateau is the median of the pixels above
-    mean + std (the disk ``detector.fit_probe`` finds), and the radius is that of a disk with the area of the pixels
-    above half of it, which resolves the edge below one pixel. On abTEM 4D-STEM with a known detector sampling this is
-    within 0.4 % of the truth; on a 300 kV, 30 mrad Arina acquisition it gives 0.552 mrad per pixel, the measured
-    calibration of that camera length (docs/maintainer/2026-10-05-ssb-detector-sampling.md).
-
-    Parameters
-    ----------
-    mean_pattern : numpy.ndarray
-        Mean diffraction pattern of the full detector, (row, col).
-
-    Raises
-    ------
-    ValueError
-        When no pixel stands above mean + std, so the pattern has no disk to calibrate on.
-    """
-    pattern = np.asarray(mean_pattern, dtype=np.float64)
-    disk = pattern > pattern.mean() + pattern.std()
-    if not disk.any():
-        raise ValueError(
-            "The mean diffraction pattern has no bright-field disk to calibrate the detector on; "
-            "pass detector_sampling_mrad (mrad per detector pixel)."
-        )
-    half_plateau = 0.5 * float(np.median(pattern[disk]))
-    return math.sqrt(np.count_nonzero(pattern > half_plateau) / math.pi)

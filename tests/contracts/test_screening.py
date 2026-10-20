@@ -3,7 +3,7 @@ import numpy as np
 
 def test_missing_convergence_uses_recorded_angular_pixel_area(tmp_path):
     from quantem.gpu.screening import workflow
-    from quantem.gpu.ssb.brightfield import disk_edge_radius
+    from quantem.gpu.detector import disk_edge_radius
 
     master = tmp_path / "scan_master.h5"
     master.write_bytes(b"placeholder")
