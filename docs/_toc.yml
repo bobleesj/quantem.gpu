@@ -136,6 +136,10 @@ parts:
       - file: maintainer/backend-4dstem-load-checklist
         title: Load acceptance evidence
       - file: maintainer/ssb-performance
+      - file: maintainer/2026-10-20-mps-performance
+        title: MPS performance and regression harness (2026-10-20)
+      - file: maintainer/2026-10-20-mps-ssb-separable-coherent
+        title: Separable C10/C12 coherent SSB on Metal (2026-10-20)
       - file: maintainer/2026-10-15-cuda-batched-refinement
         title: CUDA refinement batching (2026-10-15)
       - file: maintainer/2026-09-11-ssb-performance-checkpoints
