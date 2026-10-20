@@ -1,7 +1,9 @@
-"""ARINA uint32 input stays uint32, including flagged markers and large valid counts.
+"""ARINA uint32 input keeps every value, including flagged markers and large valid counts.
 
 Optional corrections run on the GPU and are recorded as changed measurements.
 The uncorrected route preserves all original counts; product masks remain separate.
+On MPS a master whose stored values all fit 16 bits after any requested
+correction is held as uint16 counts; every value reads back unchanged.
 """
 
 import os
@@ -80,7 +82,8 @@ def test_flagged_uint32_master_preserves_dtype_with_explicit_correction(tmp_path
     expected = _corrected(counts, pixel_mask, method)
 
     with io.load(master, backend=backend, scan_shape=scan_shape, hot_pixel_correction=method, verbose=False) as loaded:
-        assert loaded.dtype == np.uint32
+        # The corrected counts fit 16 bits; the CUDA loader keeps uint32 storage.
+        assert loaded.dtype == (np.uint16 if backend == "mps" else np.uint32)
         assert loaded.metadata["source_dtype"] == "uint32"
         assert loaded.metadata["hot_pixel_correction"]["applied"] is True
         assert loaded.metadata["file_counts_exact"] is False
@@ -128,6 +131,7 @@ def test_failed_uint32_load_releases_the_partial_resident(tmp_path, monkeypatch)
 
     backend = _backend()
     counts = np.random.default_rng(3).integers(0, 50, (1700, 8, 8), dtype=np.uint32)
+    counts[0, 0, 0] = 70000  # above 16 bits: the scan stays in uint32 bit lanes on every backend
     master = _write_master(tmp_path, counts, np.zeros((8, 8), np.uint32))
     append = BitANSResident.append_device
     partial = []

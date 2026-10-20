@@ -8,6 +8,8 @@ import pytest
 
 import quantem.gpu
 from quantem.gpu import io
+from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
+from quantem.gpu.resident.mps.counts import MPSStreamedCounts
 from tests.hardware.mps.test_mps_buffer_release import _write_bslz4_master
 
 
@@ -50,6 +52,94 @@ def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
         np.testing.assert_array_equal(_decoded(loaded.data), counts.reshape(32, 32, 4, 8))
     finally:
         loaded.close()
+
+
+def _read_back(loaded) -> np.ndarray:
+    output = loaded.read(output="native")
+    try:
+        return output.get()
+    finally:
+        output.release()
+
+
+def _uint32_counts(seed: int) -> np.ndarray:
+    """5120 uint32 patterns (two load batches) whose counts span the uint16 range."""
+    counts = np.random.default_rng(seed).integers(0, 40, size=(5120, 4, 8), dtype=np.uint32)
+    counts[0, 0, 0] = counts[4500, 3, 7] = 65535
+    return counts
+
+
+def test_uint32_counts_that_fit_load_as_exact_uint16(tmp_path, capsys):
+    """uint32 counts that all fit 16 bits are stored as uint16 count ANS and read back equal to the file."""
+    pytest.importorskip("Metal")
+    import h5py
+    import hdf5plugin  # noqa: F401
+
+    counts = _uint32_counts(20261020)
+    master = _write_bslz4_master(tmp_path, "uint32-fits", counts)
+    with io.load(master, backend="mps", scan_shape=(64, 80)) as loaded:
+        assert loaded.dtype == np.dtype("uint16")
+        assert loaded.metadata["source_dtype"] == "uint32"
+        assert loaded.metadata["resident_profile"] == INTEGER_CODEC
+        assert isinstance(loaded.data, MPSStreamedCounts)
+        assert len(loaded.data.spatial_chunks) == len(loaded.data.chunks) == 2
+        values = _read_back(loaded)
+    with h5py.File(master) as handle:
+        stored = handle["entry/data/data_000001"][:]
+    assert stored.dtype == np.uint32
+    np.testing.assert_array_equal(values.astype(np.uint32), stored.reshape(64, 80, 4, 8))
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Stored as")]
+    assert lines == ["Stored as uint16: every uint32 value fits in 16 bits, so every count reads back unchanged."]
+
+
+def test_uint32_values_above_uint16_keep_uint32_storage(tmp_path, capsys):
+    """A count above 65535 in the second batch, or a kept 0xffffffff marker, keeps every value as uint32."""
+    pytest.importorskip("Metal")
+    import h5py
+    import hdf5plugin  # noqa: F401
+
+    late = _uint32_counts(7)
+    late[4600, 1, 2] = 70000
+    marker = _uint32_counts(8)
+    marker[:, 2, 5] = 0xFFFFFFFF
+    pixel_mask = np.zeros((4, 8), np.uint8)
+    pixel_mask[2, 5] = 1
+    for name, counts, mask in (("late", late, None), ("marker", marker, pixel_mask)):
+        master = _write_bslz4_master(tmp_path, f"uint32-{name}", counts, pixel_mask=mask)
+        with io.load(master, backend="mps", scan_shape=(64, 80)) as loaded:
+            assert loaded.dtype == np.dtype("uint32")
+            values = _read_back(loaded)
+        with h5py.File(master) as handle:
+            np.testing.assert_array_equal(values, handle["entry/data/data_000001"][:].reshape(64, 80, 4, 8))
+        assert "Stored as" not in capsys.readouterr().out
+
+
+def test_uint32_counts_narrowed_after_correction_match_uint32_storage(tmp_path):
+    """With the flagged marker replaced by the neighbour median, uint16 storage holds what uint32 storage holds."""
+    pytest.importorskip("Metal")
+    from quantem.gpu.io import encoded
+    from quantem.gpu.io.inspect import inspect
+
+    counts = _uint32_counts(9)
+    counts[:, 2, 5] = 0xFFFFFFFF
+    pixel_mask = np.zeros((4, 8), np.uint8)
+    pixel_mask[2, 5] = 1
+    master = _write_bslz4_master(tmp_path, "uint32-median", counts, pixel_mask=pixel_mask)
+    with io.load(master, backend="mps", scan_shape=(64, 80), hot_pixel_correction="median",
+                 verbose=False) as narrowed:
+        assert narrowed.dtype == np.dtype("uint16")
+        values = _read_back(narrowed)
+        sums = narrowed.data.masked_code_sums(np.ones((4, 8), bool))
+    info = inspect(master, scan_shape=(64, 80))
+    wide = encoded._load_h5_counts_mps(master, info, "median", False, np.dtype("uint32"))
+    try:
+        assert wide.dtype == np.dtype("uint32")
+        np.testing.assert_array_equal(values.astype(np.uint32), _read_back(wide))
+        np.testing.assert_array_equal(sums, wide.data.detector_sum_device(np.ones((4, 8), bool)).cpu().numpy().reshape(-1))
+    finally:
+        wide.close()
+    valid = pixel_mask == 0
+    np.testing.assert_array_equal(values[..., valid], counts.reshape(64, 80, 4, 8)[..., valid])
 
 
 def test_original_h5_series_stays_independent_and_batches_diffraction(tmp_path):

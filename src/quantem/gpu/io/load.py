@@ -121,7 +121,9 @@ def load(
     detector products exclude recorded invalid pixels without changing storage.
     Explicit ``"median"`` or ``"zero"`` correction changes flagged counts on
     GPU and records that change in the saved copy. ``auto_narrow`` applies only
-    to an explicitly selected dense CPU reader; encoded loading retains dtype.
+    to an explicitly selected dense CPU reader; encoded loading retains dtype,
+    except that on MPS a bitshuffle master whose uint32 values all fit 16 bits
+    is held as uint16 counts that read back unchanged (one printed line).
 
     Parameters
     ----------

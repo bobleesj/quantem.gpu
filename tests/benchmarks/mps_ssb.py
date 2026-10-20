@@ -37,14 +37,16 @@ p90 of its repeats. The metrics, all in milliseconds:
   branches and keeps one;
 - ``find_aberrations_standard``: one standard (``tilt=False``) 200-trial
   search and Nelder-Mead at the kept rotation, single shot;
-- ``detector_full_uint32``: Show4DSTEM's exact masked sum on the gold scan as
-  ``io.load`` keeps it. Its masters store uint32, so the counts sit in the
-  generic bit-lane resident and every sum decodes the whole scan;
-- ``detector_update`` / ``detector_full``: the same sum on the counts
-  re-encoded as the uint16 count resident that a uint16 master loads into,
-  when the bright-field disk moves by about half a pixel (the incremental
-  exact update) and when the mask alternates between the disk and an annulus
-  (a full re-sum). The update must equal the uint32 full sum exactly.
+- ``detector_update`` / ``detector_full``: Show4DSTEM's exact masked sum on
+  the gold scan as loaded (its uint32 counts fit 16 bits once the flagged
+  pixels are replaced, so ``io.load`` stores them as the uint16 count
+  resident), when the bright-field disk moves by about half a pixel (the
+  incremental exact update) and when the mask alternates between the disk
+  and an annulus (a full re-sum). The update must equal a full sum exactly;
+- ``detector_full_uint32``: the alternating full sum on the scan loaded with
+  ``hot_pixel_correction="none"``, whose kept 0xffffffff bad-pixel markers do
+  not fit 16 bits: the counts stay in the generic uint32 bit-lane resident and
+  every sum decodes the whole scan.
 
 Run it on a quiet GPU. The report lists every other process that used the
 GPU in the two seconds before and after the run (from the IOAccelerator
@@ -248,30 +250,6 @@ def alternating(session, first, second):
     return call
 
 
-def uint16_counts(data):
-    """The loaded counts as a uint16 count resident, the layout a uint16 master (most Arina scans) loads into.
-
-    The gold masters store uint32, so ``io.load`` keeps them in the generic bit-lane resident, whose masked sum
-    decodes the whole scan; Show4DSTEM's incremental exact sum runs on the count resident. Every count fits in
-    uint16 once the flagged pixels are replaced, which this checks block by block.
-    """
-    import torch
-
-    from quantem.gpu.io.arrays import load_array_resident
-
-    source = data.data
-
-    def read_frames(first, stop):
-        parts = [source._tensor(start, min(start + 200, stop), corrected=False).to(torch.int32).cpu().numpy()
-                 for start in range(first, stop, 200)]
-        frames = np.concatenate(parts)
-        if frames.min() < 0 or frames.max() > 65535:
-            raise ValueError("a count does not fit in uint16; load with hot_pixel_correction='median'")
-        return frames.astype(np.uint16)
-
-    return load_array_resident(tuple(data.shape), np.uint16, read_frames, dict(data.metadata), backend="mps")
-
-
 def measure(master, reps=20, load_reps=3, log=print):
     """One report of every stage on ``master`` (the gold scan)."""
     from quantem.gpu import SSB, detector, io
@@ -375,17 +353,10 @@ def measure(master, reps=20, load_reps=3, log=print):
     log(f"find_aberrations_standard {metrics['find_aberrations_standard']} -> {report['values']['fit_standard']}")
     ssb.close()
 
-    # Show4DSTEM on the gold scan as io.load keeps it: every masked sum decodes the whole uint32 scan.
+    # Show4DSTEM on the gold scan as loaded: the uint16 count resident and its incremental exact sum.
     session = detector.prepare(data)
     center, radius = detector.fit_probe(session.mean_dp())
     moved, annulus = disk_masks(session.detector_shape, center, radius, steps=reps + 4)
-    metrics["detector_full_uint32"] = timed(alternating(session, annulus, moved[0]), 3, warmup=1)
-    reference = session.masked_sum_exact(moved[reps + 1])
-    session.close()
-    log(f"detector_full_uint32 {metrics['detector_full_uint32']}")
-
-    counts = uint16_counts(data)
-    session = detector.prepare(counts)
     images = {}
 
     def update(index):
@@ -393,17 +364,27 @@ def measure(master, reps=20, load_reps=3, log=print):
 
     session.masked_sum_exact(moved[0])
     metrics["detector_update"] = timed(update, reps, warmup=2)
-    exact = bool(np.array_equal(images["update"], reference))
-
     metrics["detector_full"] = timed(alternating(session, annulus, moved[0]), reps, warmup=2)
+    session.close()
+    session = detector.prepare(data)
+    exact = bool(np.array_equal(images["update"], session.masked_sum_exact(moved[reps + 1])))
+    session.close()
     report["values"]["detector_update_equals_full_sum"] = exact
     report["values"]["bright_field_disk_px"] = [round(float(center[0]), 2), round(float(center[1]), 2),
                                                 round(float(radius), 2)]
-    log(f"detector_update {metrics['detector_update']} (equals the full uint32 sum: {exact})")
+    report["values"]["loaded_dtype"] = str(data.dtype)
+    log(f"detector_update {metrics['detector_update']} (equals the full sum: {exact})")
     log(f"detector_full {metrics['detector_full']}")
-    session.close()
-    counts.close()
     data.close()
+
+    # The same scan with its bad-pixel markers kept stays uint32: every masked sum decodes the whole scan.
+    raw = io.load(str(master), hot_pixel_correction="none", verbose=False)
+    session = detector.prepare(raw)
+    metrics["detector_full_uint32"] = timed(alternating(session, annulus, moved[0]), 3, warmup=1)
+    report["values"]["uint32_dtype"] = str(raw.dtype)
+    session.close()
+    raw.close()
+    log(f"detector_full_uint32 {metrics['detector_full_uint32']}")
     report["other_gpu_clients_after"] = other_gpu_clients()
     return report
 

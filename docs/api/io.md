@@ -316,9 +316,13 @@ error before allocating a resident cube.
 NumPy simulations stored as `int32`, such as those in
 [the SrTiO3 dislocation dataset](https://doi.org/10.5281/zenodo.7464234),
 retain int32, including negative values and counts above 65,535. GPU encoded
-loading retains the original dtype and every measurement bit; it does not
-narrow after a range audit. `auto_narrow` applies only to the explicit dense
-reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
+loading of arrays retains the original dtype and every measurement bit; it does
+not narrow after a range audit. On MPS, an Arina bitshuffle master whose
+uint32 values all fit 16 bits after any requested bad-pixel correction is held
+as uint16 counts, which read back unchanged and use the fast detector sums;
+`io.load` says so in one line. One value above 65,535, such as a kept
+0xffffffff bad-pixel marker, keeps the whole scan uint32. `auto_narrow`
+applies only to the explicit dense reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
 names the RAW file, retaining its scan dimensions, instrument fields, and
 independently indexed virtual-detector regions. If multiple XML files name the
 same RAW, open the intended XML explicitly. The archive's separate `para.txt`

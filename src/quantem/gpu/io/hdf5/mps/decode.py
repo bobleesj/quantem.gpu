@@ -4,8 +4,9 @@ Bounded encoded and precision loads read a block of compressed HDF5 chunks on
 the host (``formats.hdf5.reads.FrameReader.prepare``) and decode it here, with
 Metal compute shaders writing straight into a unified-memory buffer that the
 ANS encoder or the precision converter then consumes. Decoded values keep
-their stored dtype, including uint32 detector markers. Kernels compile on first use, so this module
-imports on Linux.
+their stored dtype, including uint32 detector markers; ``exact_uint16`` copies
+uint32 counts into uint16 only when every value fits. Kernels compile on first
+use, so this module imports on Linux.
 """
 
 from functools import cache
@@ -16,6 +17,7 @@ import numpy as np
 from quantem.gpu.device.metal_runtime import (
     SharedArray,
     allocate_shared,
+    complete_command,
     metal_module,
     metal_pipelines,
     metal_queue,
@@ -24,7 +26,7 @@ from quantem.gpu.device.metal_runtime import (
     shared_array,
 )
 
-__all__ = ["MPSDecompressor", "load_prepared_frames"]
+__all__ = ["MPSDecompressor", "exact_uint16", "load_prepared_frames"]
 
 _KERNELS = Path(__file__).parent / "kernels"
 # LZ4 occupancy: compressed 8 KB bitshuffle blocks packed per threadgroup (more
@@ -43,6 +45,7 @@ _NAMES = (
     "shuf_tail_16_batched",
     "shuf_tail_32_batched",
     "shuf_8_batched",
+    "narrow_u32_u16",
 )
 
 
@@ -66,6 +69,45 @@ def load_prepared_frames(prepared: dict) -> SharedArray:
         return decoder.load_prepared_frames(prepared)
     finally:
         decoder.free()
+
+
+def exact_uint16(frames: SharedArray) -> SharedArray | None:
+    """Copy decoded uint32 counts into a new uint16 array when every value fits 16 bits.
+
+    Returns None, holding no new buffer, when any value is above 65535 (a
+    count or a detector's 0xffffffff bad-pixel marker): the caller then keeps
+    uint32. Nothing is clipped. The caller releases ``frames`` and the
+    returned array.
+    """
+    count = int(frames.size)
+    if count >= 1 << 32:
+        raise ValueError("Narrow at most 2^32 - 1 values per call.")
+    flag = allocate_shared(4, "uint16 range flag")
+    output = allocate_shared(count * 2, "uint16 counts")
+    try:
+        numpy_view(flag, np.uint32, 1)[:] = 0
+        command = metal_queue().commandBuffer()
+        encoder = command.computeCommandEncoder()
+        encoder.setComputePipelineState_(metal_pipelines(_SOURCE, _NAMES)["narrow_u32_u16"])
+        encoder.setBuffer_offset_atIndex_(frames._mtl, 0, 0)
+        encoder.setBuffer_offset_atIndex_(output, 0, 1)
+        encoder.setBuffer_offset_atIndex_(flag, 0, 2)
+        _set_u32(encoder, 3, count)
+        encoder.dispatchThreads_threadsPerThreadgroup_(
+            metal_module().MTLSizeMake(count, 1, 1), metal_module().MTLSizeMake(256, 1, 1)
+        )
+        encoder.endEncoding()
+        complete_command(command, "uint32 to uint16 copy")
+        fits = int(numpy_view(flag, np.uint32, 1)[0]) == 0
+    except BaseException:
+        release_buffer(output)
+        raise
+    finally:
+        release_buffer(flag)
+    if not fits:
+        release_buffer(output)
+        return None
+    return shared_array(output, np.dtype("uint16"), frames.shape)
 
 
 class MPSDecompressor:

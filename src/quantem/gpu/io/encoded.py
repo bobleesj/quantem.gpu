@@ -170,19 +170,40 @@ def load_h5_ans(
         return Dataset4dstemGPU(source, metadata)
 
 
+class _ExceedsUint16(Exception):
+    """A decoded uint32 value does not fit 16 bits, so the scan keeps uint32 storage."""
+
+
 def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
-    """Decode bounded HDF5 blocks and encode native-count ANS with Metal."""
+    """Decode bounded HDF5 blocks and encode native-count ANS with Metal.
+
+    uint32 counts that all fit 16 bits (Arina masters, once any requested
+    bad-pixel correction has replaced the flagged pixels) are stored as uint16
+    count ANS, whose detector sums use the spatial index; every value reads
+    back unchanged. A single value above 65535, such as a kept 0xffffffff
+    bad-pixel marker, keeps the whole scan in uint32 bit lanes.
+    """
+    if np.dtype(info.dtype) == np.dtype("uint32"):
+        try:
+            return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype("uint16"))
+        except _ExceedsUint16:
+            pass
+    return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype(info.dtype))
+
+
+def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
+    """Load the master into a resident of ``dtype``: the stored dtype, or uint16 for uint32 counts."""
     # Metal decoding is imported only on the MPS path, like every platform decoder.
-    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor
+    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor, exact_uint16
 
     started = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
         raise ValueError(f"{info.reason}: {info.action}")
     shape = (*info.scan_shape, *info.detector_shape)
     stored_dtype = np.dtype(info.dtype)
-    dtype = stored_dtype
     bit_lanes = dtype == np.dtype("uint32")
-    if dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32")):
+    narrowed = dtype != stored_dtype
+    if stored_dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32")):
         raise TypeError(
             "Direct HDF5 decoding supports uint8/uint16/uint32."
         )
@@ -235,6 +256,13 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
                 raw = decoder.load_prepared_frames(prepared)
                 try:
                     corrector.apply(raw)
+                    if narrowed:
+                        counts = exact_uint16(raw)
+                        if counts is None:
+                            raise _ExceedsUint16
+                        buffer, raw._mtl = raw._mtl, None
+                        release_buffer(buffer)
+                        raw = counts
                     (source.append_device if bit_lanes else source.append)(raw)
                     if not bit_lanes:
                         index_started = time.perf_counter()
@@ -278,6 +306,8 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     )
     if verbose:
         print(_loaded_report(source.shape, "Apple GPU", metadata))
+        if narrowed:
+            print(f"Stored as {dtype.name}: every {stored_dtype.name} value fits in 16 bits, so every count reads back unchanged.")
     return Dataset4dstemGPU(source, metadata)
 
 
