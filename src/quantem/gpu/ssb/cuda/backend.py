@@ -536,8 +536,8 @@ class CudaSSBBackend:
             Print the progress bar and the memory header.
         """
         started = time.perf_counter()
-        if search_ranges is None:
-            search_ranges = dict(self._DEFAULT_OPTIMIZE_RANGES)
+        # a coefficient search_ranges leaves out is searched over its default range, as when no ranges are given
+        search_ranges = {**self._DEFAULT_OPTIMIZE_RANGES, **(search_ranges or {})}
         accel = self._get_accelerator()
         accel.reconstruct_with_loss(0, 50, 0)
         cp.cuda.Device().synchronize()

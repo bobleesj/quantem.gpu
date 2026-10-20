@@ -41,6 +41,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `find_aberrations(search_ranges=...)` searches every coefficient the ranges
+  leave out over its default range on CUDA and MPS (it was held at the start).
+  On MPS, pinning C12 at 0 no longer returns C10 = C12 = phi12 = 0: the start
+  is no candidate once a coefficient is pinned. A fit that holds C12 at 0
+  reports phi12 as 0.
 - Calibration tables round values to six significant figures for reading
   (`0.603545`, not `0.6035446045631986`); sessions and records keep the full
   values. A calibration set on `data.calibration` equal to the file's record
