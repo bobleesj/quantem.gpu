@@ -91,12 +91,9 @@ def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, scan_detector
         aligned_row = np.cos(radians) * source_row - np.sin(radians) * source_col
         aligned_col = np.sin(radians) * source_row + np.cos(radians) * source_col
         angle, transposed = float(scan_detector_rotation_deg), bool(scan_detector_rotation_flipped)
-    # A transposed fit swapped the detector axes before aligning them; swap
-    # them back so the gradients integrate along scan rows and columns.
-    gradient_row, gradient_col = (
-        (aligned_col, aligned_row) if transposed else (aligned_row, aligned_col)
-    )
-    phase = integrate(gradient_row, gradient_col)
+    # The aligned field is the scan-frame gradient, (row, col) along the scan, whether or not the detector axes were
+    # swapped to get it (scan = R(theta) D detector): it integrates as it is.
+    phase = integrate(aligned_row, aligned_col)
     elapsed_s = time.perf_counter() - started
     if verbose:
         print(f"DPC: rotation {angle:.1f}° (rotation flipped: {'yes' if transposed else 'no'}), "

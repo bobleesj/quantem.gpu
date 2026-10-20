@@ -91,3 +91,29 @@ def test_run_hands_its_fitted_geometry_back_without_losing_the_transposition(exc
     assert given.scan_detector_rotation_deg == fitted.scan_detector_rotation_mod180_deg % 360.0
     assert given.scan_detector_rotation_flipped == fitted.scan_detector_rotation_flipped
     np.testing.assert_allclose(given.phase, fitted.phase, atol=1e-4 * np.abs(fitted.phase).max())
+
+
+def test_a_flipped_detector_integrates_to_the_same_phase() -> None:
+    """With the detector axes swapped, dpc.run fits the flip and returns the phase of the unswapped scan.
+
+    Before 2026-10-20 the aligned field, already the scan-frame gradient, was swapped back before integration: the
+    flipped scan's phase correlated 0.10 with the unflipped one.
+    """
+    from quantem.gpu import dpc
+
+    rows, cols = np.mgrid[:32, :40]
+    # unequal widths and two sites: a swapped gradient of this potential is not curl-free, so the flip is identifiable
+    potential = (30 * np.exp(-((rows - 10) ** 2 / 30 + (cols - 14) ** 2 / 90))
+                 + 18 * np.exp(-((rows - 22) ** 2 / 60 + (cols - 30) ** 2 / 20)))
+    gradient_row, gradient_col = np.gradient(potential)
+    detector_row, detector_col = np.mgrid[:25, :25]
+    data = np.exp(-((detector_row - 12 - gradient_row[..., None, None]) ** 2
+                    + (detector_col - 12 - gradient_col[..., None, None]) ** 2) / 4.0).astype(np.float32)
+    plain = dpc.run(data)
+    flipped = dpc.run(np.ascontiguousarray(data.transpose(0, 1, 3, 2)))
+    assert (plain.scan_detector_rotation_flipped, flipped.scan_detector_rotation_flipped) == (False, True)
+    assert flipped.scan_detector_rotation_mod180_deg == pytest.approx(plain.scan_detector_rotation_mod180_deg, abs=1e-6)
+    np.testing.assert_allclose(flipped.phase, plain.phase, atol=1e-4 * float(np.abs(plain.phase).max()))
+    reference = potential - potential.mean()
+    phase = plain.phase - plain.phase.mean()
+    assert abs(float((phase * reference).sum() / np.sqrt((phase ** 2).sum() * (reference ** 2).sum()))) > 0.99

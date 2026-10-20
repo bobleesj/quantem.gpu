@@ -147,8 +147,8 @@ def test_screening_cache_path_tracks_exact_cache_version(tmp_path) -> None:
 
     path = workflow._cache_path(master, tmp_path / "cache")
 
-    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/6"
-    assert path.name == "scan_master.screening-v6.npz"
+    assert workflow._CACHE_SCHEMA == "quantem.screening-cache/7"
+    assert path.name == "scan_master.screening-v7.npz"
 
 
 def test_screening_cache_rejects_legacy_first_chunk_version(tmp_path) -> None:
