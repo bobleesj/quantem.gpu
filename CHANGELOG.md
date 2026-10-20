@@ -20,6 +20,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   few scan rows at a time while G(q, k) is built, and G(q, k) is all the session keeps. A 512 x 512 scan with 8,939
   bright-field pixels no longer holds a 6 GB decoded crop (twice) beside it; G(q, k) and every result are
   bit-identical. Keep a dataset passed to `SSB(data)` open while the session is in use.
+- On Macs with 96 GB or more, the 512 x 512 MPS loss computes its row IFFT in tiles of 1024 bright-field pixels
+  instead of one 4096-pixel chunk, so a ShowPtycho session keeps 3.5 GiB of loss buffers instead of 9.5 to 15 GiB
+  (session peak 34.3 -> 22.2 GiB on gold) with the same loss and phase bits; loss previews take about 4 % longer.
+  `quantem.gpu.ssb.mps.reconstruct.LOSS_ROW_IFFT_TILE_BF = None` keeps the whole chunk.
 
 - SSB is tilt-corrected by default: `find_aberrations()` (and the automatic fit
   of `reconstruct()`) fits the aberrations jointly with the sample tilt and

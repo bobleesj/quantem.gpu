@@ -56,7 +56,7 @@ and MLX's buffers, sampled every few milliseconds for the peaks):
 - ``prepare_peak`` / ``prepared_steady``: during and after the first preview,
   which builds G(q, k);
 - ``loss_preview_steady``: after the loss previews (MLX keeps their row IFFT
-  chunk in its cache between slider releases);
+  tile in its cache between slider releases);
 - ``fit_peak`` / ``fit_steady``: during and after the default fit;
 - ``encoded``: the acquisition itself, absolute.
 
