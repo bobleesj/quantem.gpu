@@ -267,9 +267,8 @@ def _encoded_g_qk(mx, frames: EncodedBrightFieldFrames, rows: np.ndarray, cols: 
     count = int(rows.size)
     scan_rows, scan_cols = scan_shape
     half = scan_cols // 2 + 1
-    # every element is written below: the storage needs no fill
-    g_qk = mx.empty((count, scan_rows, half), dtype=mx.complex64)
-    mx.eval(g_qk)
+    g_qk = mx.zeros((count, scan_rows, half), dtype=mx.complex64)
+    _eval_in_place(mx, g_qk)
     stored = {1: mx.uint8, 2: mx.uint16, 4: mx.uint32}[frames.dtype.itemsize]
     for row_start, row_stop, counts in frames.scan_row_blocks(rows, cols):
         block_rows = row_stop - row_start
@@ -281,19 +280,31 @@ def _encoded_g_qk(mx, frames: EncodedBrightFieldFrames, rows: np.ndarray, cols: 
             pixel_rows = mx.contiguous(mx.swapaxes(values[:, :, start:stop], 1, 2)).reshape(block_rows * width, scan_cols)
             spectra = mx.fft.rfft(pixel_rows, axis=-1).reshape(block_rows, width, half)
             g_qk[start:stop, row_start:row_stop, :] = mx.swapaxes(spectra, 0, 1)
-        mx.eval(g_qk)
+        _eval_in_place(mx, g_qk)
         del staged, values
     for start in range(0, count, ENCODED_BF_PER_FFT):
         stop = min(count, start + ENCODED_BF_PER_FFT)
         # evaluated first, so the update owns G(q, k) alone and writes it in place
         spectra = mx.fft.fft(g_qk[start:stop], axis=-2)
-        mx.eval(spectra)
+        _eval_in_place(mx, spectra)
         g_qk[start:stop] = spectra
-        mx.eval(g_qk)
+        _eval_in_place(mx, g_qk)
         del spectra
     # the decoded blocks sit in Torch's allocator cache; G(q, k) is all the build keeps
     torch.mps.empty_cache()
     return g_qk
+
+
+def _eval_in_place(mx, array) -> None:
+    """Evaluate ``array`` and wait until the GPU has let go of every buffer the evaluation used.
+
+    A slice update of G(q, k) writes it in place only while nothing else holds its buffer. A finished command buffer
+    that read or wrote G(q, k) (the row FFT reads a slice of it) holds the buffer until its completion handler runs;
+    an update that still sees that reference copies the whole array, one more G(q, k) of peak memory (8.8 GiB on a
+    512 x 512 scan, in about one build in two before this wait).
+    """
+    mx.eval(array)
+    mx.synchronize()
 
 
 def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_inactive, active_mask_np,
@@ -305,9 +316,8 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
     every chunk and the stack at once, twice G(q, k).
     """
     stored_bf = int(active_mask_np.sum()) if compact_inactive else int(bf_row.size)
-    # every element is written below: the storage needs no fill
-    g_qk = mx.empty((stored_bf, scan_shape[0], scan_shape[1] // 2 + 1), dtype=mx.complex64)
-    mx.eval(g_qk)
+    g_qk = mx.zeros((stored_bf, scan_shape[0], scan_shape[1] // 2 + 1), dtype=mx.complex64)
+    _eval_in_place(mx, g_qk)
     offset = 0
     dc_chunks = []
     for start in range(0, int(bf_row.size), chunk_bf):
@@ -362,7 +372,7 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
         mx.eval(g_chunk)
         del stack_mx, stack_np
         g_qk[offset:offset + int(g_chunk.shape[0])] = g_chunk
-        mx.eval(g_qk)
+        _eval_in_place(mx, g_qk)
         offset += int(g_chunk.shape[0])
         del g_chunk
     return g_qk, dc_chunks
