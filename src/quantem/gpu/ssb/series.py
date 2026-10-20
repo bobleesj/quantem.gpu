@@ -512,19 +512,20 @@ def _dataset_yaml_settings(
     """Resolve one dataset's physical SSB settings from a ``quantem.dataset/2`` file (``formats.dataset_yaml``).
 
     The beam is the session's ``microscope``; the scan step ``[row, col]`` and the scan-to-detector rotation are the
-    file entry's own, else the session's, in quantem.live's order. An empty document (no file) gives no values.
+    file entry's own, else the session's, matched and ordered as quantem.live does (``dataset_yaml.file_entry``:
+    the entry naming ``<dataset>_master.h5``, else its number or a range such as ``"06-24"``;
+    ``dataset_yaml.acquisition_scan_sampling_A``: file entry, its ``mag`` row, session default). Matching only the
+    trailing number as an exact key gave a range-keyed or name-keyed file the session default instead of its own
+    step. An empty document (no file) gives no values.
     """
     microscope = document.get("microscope")
-    files = document.get("files")
     microscope = microscope if isinstance(microscope, dict) else {}
-    files = files if isinstance(files, dict) else {}
-    match = re.search(r"(\d+)$", dataset)
-    frame = None if match is None else int(match.group(1))
-    entry = files.get(frame, files.get(str(frame)))
-    entry = entry if isinstance(entry, dict) else None
+    master = f"{dataset}_master.h5"
+    entry = dataset_yaml.file_entry(document, master)
+    step = dataset_yaml.acquisition_scan_sampling_A(document, master, path="dataset.yaml")
     return {
         "voltage_kV": microscope.get("voltage_kV"),
         "semiangle_mrad": microscope.get("semiangle_mrad"),
-        "scan_sampling_A": dataset_yaml.scan_sampling_A(document, entry, "dataset.yaml"),
+        "scan_sampling_A": None if step is None else step[0],
         "scan_detector_rotation_deg": dataset_yaml.scan_detector_rotation_deg(document, entry),
     }
