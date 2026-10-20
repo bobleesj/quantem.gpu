@@ -175,3 +175,29 @@ def test_unsupported_joint_constraints_say_what_to_pass(constraints, match):
     session._device = None
     with pytest.raises(ValueError, match=match):
         SSB.find_aberrations(session, tilt=True, verbose=False, **constraints)
+
+
+@pytest.mark.parametrize("pins,lock,refinement", [
+    ({"C12_nm": 0.0, "phi12_deg": 0.0}, ["C12_nm", "phi12_deg"], "nelder-mead"),
+    ({"C12_nm": 1.5, "phi12_deg": 20.0}, ["C12_nm", "phi12_deg"], "nelder-mead"),
+    ({"C12_nm": 1.5, "phi12_deg": 20.0}, None, None),
+])
+def test_search_range_pins_hold_their_values_on_mps(pins, lock, refinement):
+    """A coefficient pinned in search_ranges keeps its value in the result, as on CUDA.
+
+    Before 2026-10-20 MPS evaluated every trial at the pins but reported (and reconstructed) the search's start for
+    them: C12 5.0 nm and phi12 0 degrees, whatever was pinned.
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal()
+    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
+    with SSB(frames, **settings) as session:
+        fitted = session.find_aberrations(num_trials=30, search_ranges=pins, refine_lock=lock, refinement=refinement,
+                                          check_rotation=False, verbose=False)
+        assert fitted.aberrations["C12_nm"] == pytest.approx(pins["C12_nm"], abs=1e-9)
+        assert fitted.aberrations["phi12_deg"] == pytest.approx(pins["phi12_deg"], abs=1e-9)
+        expected, _ = session.preview(fitted.aberrations, compute_loss=False)
+        np.testing.assert_allclose(fitted.phase, expected, atol=1e-5)
