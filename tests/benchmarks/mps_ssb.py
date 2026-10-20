@@ -48,6 +48,20 @@ p90 of its repeats. The metrics, all in milliseconds:
   not fit 16 bits: the counts stay in the generic uint32 bit-lane resident and
   every sum decodes the whole scan.
 
+Memory is measured beside the time, in GiB of Metal driver memory above the
+encoded acquisition (``torch.mps.driver_allocated_memory``, which counts Torch's
+and MLX's buffers, sampled every few milliseconds for the peaks):
+
+- ``session_steady``: after ``SSB(data)``, which on MPS keeps the crop encoded;
+- ``prepare_peak`` / ``prepared_steady``: during and after the first preview,
+  which builds G(q, k);
+- ``loss_preview_steady``: after the loss previews (MLX keeps their row IFFT
+  chunk in its cache between slider releases);
+- ``fit_peak`` / ``fit_steady``: during and after the default fit;
+- ``encoded``: the acquisition itself, absolute.
+
+``compare`` fails a memory metric that grew by more than 10 % and 0.25 GiB.
+
 Run it on a quiet GPU. The report lists every other process that used the
 GPU in the two seconds before and after the run (from the IOAccelerator
 statistics); ``compare`` warns when either side ran beside one, because
@@ -84,6 +98,9 @@ METRIC_TOLERANCES = {"io_load": 0.35, "ssb_session": 0.30, "ssb_prepare": 0.35}
 # A regression must also be this many milliseconds slower: sub-millisecond paths jitter by more than 20 %.
 MIN_DELTA_MS = 0.5
 BUSY_GPU_PERCENT = 10
+# A memory metric regresses when it grows by more than this fraction and this many GiB.
+MEMORY_TOLERANCE = 0.10
+MEMORY_MIN_DELTA_GIB = 0.25
 
 
 def synchronize():
@@ -97,6 +114,41 @@ def synchronize():
         mx.synchronize()
     except ImportError:
         pass
+
+
+def driver_gib():
+    """This process's Metal driver memory (Torch's and MLX's buffers), GiB, after the queued GPU work."""
+    import torch
+
+    synchronize()
+    return torch.mps.driver_allocated_memory() / 2**30
+
+
+class PeakMemory:
+    """The highest Metal driver memory while the ``with`` block runs, sampled every 2 ms, GiB."""
+
+    def __enter__(self):
+        import threading
+
+        import torch
+
+        self.peak = driver_gib()
+        self._stop = threading.Event()
+
+        def sample():
+            while not self._stop.is_set():
+                self.peak = max(self.peak, torch.mps.driver_allocated_memory() / 2**30)
+                time.sleep(0.002)
+
+        self._thread = threading.Thread(target=sample, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        synchronize()
+        self._stop.set()
+        self._thread.join()
+        self.peak = max(self.peak, driver_gib())
 
 
 def summary(samples_ms):
@@ -259,8 +311,9 @@ def measure(master, reps=20, load_reps=3, log=print):
     report = {"schema": "quantem.gpu.mps-benchmark/1", "dataset": {"id": DATASET, "revision": REVISION,
                                                                    "file": MASTER},
               "environment": environment(), "other_gpu_clients_before": other_gpu_clients(),
-              "metrics": {}, "values": {}}
+              "metrics": {}, "values": {}, "memory_GiB": {}}
     metrics = report["metrics"]
+    memory = report["memory_GiB"]
     log(f"chip {report['environment']['chip']}, other GPU clients before the run: "
         f"{report['other_gpu_clients_before']}")
 
@@ -276,6 +329,8 @@ def measure(master, reps=20, load_reps=3, log=print):
             data.close()
     metrics["io_load"] = summary(loads)
     calibrate(data)
+    encoded = driver_gib()
+    memory["encoded"] = round(encoded, 2)
     report["values"]["shape"] = list(data.shape)
     log(f"io_load {metrics['io_load']}")
 
@@ -289,6 +344,7 @@ def measure(master, reps=20, load_reps=3, log=print):
         if index < 2:
             ssb.close()
     metrics["ssb_session"] = summary(sessions[1:])
+    memory["session_steady"] = round(driver_gib() - encoded, 2)
     assert ssb.backend == "mps", f"this benchmark times the MPS backend, not {ssb.backend}"
     report["values"]["scan_detector_rotation_deg"] = round(float(ssb.scan_detector_rotation_deg), 4)
     log(f"ssb_session {metrics['ssb_session']}")
@@ -301,14 +357,18 @@ def measure(master, reps=20, load_reps=3, log=print):
         return call
 
     synchronize()
-    started = time.perf_counter()
-    ssb.preview(base, compute_loss=False)
-    synchronize()
-    metrics["ssb_prepare"] = summary([1e3 * (time.perf_counter() - started)])
+    with PeakMemory() as prepare_memory:
+        started = time.perf_counter()
+        ssb.preview(base, compute_loss=False)
+        synchronize()
+        metrics["ssb_prepare"] = summary([1e3 * (time.perf_counter() - started)])
+    memory["prepare_peak"] = round(prepare_memory.peak - encoded, 2)
+    memory["prepared_steady"] = round(driver_gib() - encoded, 2)
     report["values"]["num_bright_field_pixels"] = int(ssb.num_bright_field_pixels)
     metrics["preview_native"] = timed(drag(1, False), reps, warmup=3)
     metrics["preview_2x"] = timed(drag(2, False), reps, warmup=3)
     metrics["preview_native_loss"] = timed(drag(1, True), max(5, reps // 2), warmup=2)
+    memory["loss_preview_steady"] = round(driver_gib() - encoded, 2)
     for name in ("ssb_prepare", "preview_native", "preview_2x", "preview_native_loss"):
         log(f"{name} {metrics[name]}")
 
@@ -332,12 +392,16 @@ def measure(master, reps=20, load_reps=3, log=print):
                 "scan_detector_rotation_deg": round(float(fit.scan_detector_rotation_deg), 4)}
 
     synchronize()
-    started = time.perf_counter()
-    fit = ssb.find_aberrations(verbose=False)
-    synchronize()
-    metrics["find_aberrations"] = summary([1e3 * (time.perf_counter() - started)])
+    with PeakMemory() as fit_memory:
+        started = time.perf_counter()
+        fit = ssb.find_aberrations(verbose=False)
+        synchronize()
+        metrics["find_aberrations"] = summary([1e3 * (time.perf_counter() - started)])
+    memory["fit_peak"] = round(fit_memory.peak - encoded, 2)
+    memory["fit_steady"] = round(driver_gib() - encoded, 2)
     report["values"]["fit"] = fit_values(fit)
     log(f"find_aberrations {metrics['find_aberrations']} -> {report['values']['fit']}")
+    log(f"memory above the encoded data, GiB: {memory}")
     rotation = float(fit.scan_detector_rotation_deg)
     ssb.close()
 
@@ -417,6 +481,31 @@ def regressions(report, baseline, overrides=None, min_delta_ms=MIN_DELTA_MS):
     return rows, failed
 
 
+def memory_regressions(report, baseline, tolerance=MEMORY_TOLERANCE, min_delta_gib=MEMORY_MIN_DELTA_GIB):
+    """Rows of (metric, baseline GiB, current GiB, change, verdict) and the list of grown metrics.
+
+    A baseline without memory metrics (recorded before they existed) checks none.
+    """
+    rows, failed = [], []
+    current = report.get("memory_GiB", {})
+    for name, old in baseline.get("memory_GiB", {}).items():
+        new = current.get(name)
+        if new is None:
+            rows.append((name, old, None, None, "MISSING"))
+            failed.append(f"memory {name}")
+            continue
+        change = new / old - 1.0 if old else math.inf if new else 0.0
+        if change > tolerance and new - old > min_delta_gib:
+            verdict = "LARGER"
+            failed.append(f"memory {name}")
+        elif change < -tolerance and old - new > min_delta_gib:
+            verdict = "smaller (re-record the baseline?)"
+        else:
+            verdict = "ok"
+        rows.append((name, old, new, change, verdict))
+    return rows, failed
+
+
 def baseline_path(chip):
     return BASELINES / f"{chip_slug(chip)}.json"
 
@@ -442,6 +531,17 @@ def compare(arguments):
         cells = ["-" if new is None else f"{new:.2f}", "-" if change is None else f"{100 * change:+.1f} %",
                  "-" if tolerance is None else f"{100 * tolerance:.0f} %"]
         print(f"| {name} | {old:.2f} | " + " | ".join(cells) + f" | {verdict} |")
+    memory_rows, memory_failed = memory_regressions(report, baseline)
+    if memory_rows:
+        print()
+        print("| memory (GiB) | baseline | current | change | tolerance | verdict |")
+        print("|---|---:|---:|---:|---:|---|")
+        for name, old, new, change, verdict in memory_rows:
+            cells = ["-" if new is None else f"{new:.2f}", "-" if change is None else f"{100 * change:+.1f} %"]
+            print(f"| {name} | {old:.2f} | " + " | ".join(cells) + f" | {100 * MEMORY_TOLERANCE:.0f} % | {verdict} |")
+    else:
+        print("note: the baseline has no memory metrics; record them with `run --save-baseline` or `merge`.")
+    failed += memory_failed
     for side, data in (("baseline", baseline), ("current", report)):
         busiest = {}
         for entry in (data.get("other_gpu_clients_before") or []) + (data.get("other_gpu_clients_after") or []):
@@ -502,6 +602,11 @@ def merge(arguments):
         runs = sorted((report["metrics"][name] for report in reports if name in report["metrics"]),
                       key=lambda summary: summary["p50_ms"])
         merged["metrics"][name] = runs[(len(runs) - 1) // 2]
+    memory_names = [name for name in reports[0].get("memory_GiB", {})]
+    if memory_names:
+        merged["memory_GiB"] = {name: statistics.median_low([report["memory_GiB"][name] for report in reports
+                                                             if name in report.get("memory_GiB", {})])
+                                for name in memory_names}
     merged["merged_runs"] = len(reports)
     merged["other_gpu_clients_before"] = [client for report in reports
                                           for client in report.get("other_gpu_clients_before") or []]
