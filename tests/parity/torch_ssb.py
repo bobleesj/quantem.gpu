@@ -24,6 +24,9 @@ Tilt fit objective (what finds the tilt; the phase-variance loss does not): leas
 
 Units follow the engine: C10, C12, thickness in Angstrom; phi12 rad; tilt mrad in the scan frame; q, k in 1/Angstrom. The public
 ``SSB`` session converts from nm.
+
+Precision follows G: complex64 G evaluates and accumulates in float32, complex128 G (on the CPU; MPS has no float64) in
+float64, the oracle the float32 paths are measured against.
 """
 
 import math
@@ -38,9 +41,15 @@ class TorchSSB:
 
     def __init__(self, G: torch.Tensor, *, kx: torch.Tensor, ky: torch.Tensor, qx: torch.Tensor, qy: torch.Tensor, nx: int,
                  wavelength: float, semiangle_rad: float, ang_y_rad: float, ang_x_rad: float, dc_value: complex,
-                 chunk_bytes: int = 1 << 30):
+                 chunk_bytes: int = 1 << 30, num_bright_field_pixels: int | None = None):
         self.G, self.kx, self.ky, self.qx, self.qy = G, kx, ky, qx, qy
-        self.num_bright_field_pixels, self.ny = G.shape[0], G.shape[1]
+        self.num_stored, self.ny = G.shape[0], G.shape[1]
+        # Selected BF pixels outside the aperture may be left out of G (MPS compacts them): their gamma is 0 at every q,
+        # so each adds the phase angle(dc_value) = 0 (a positive real DC) and nothing to the fit; only the mean counts them.
+        self.num_bright_field_pixels = self.num_stored if num_bright_field_pixels is None else int(num_bright_field_pixels)
+        if self.num_bright_field_pixels > self.num_stored and (complex(dc_value).imag != 0 or complex(dc_value).real <= 0):
+            raise ValueError("unstored BF pixels contribute phase 0 only for a positive real dc_value")
+        self.real_dtype = G.real.dtype
         self.nx = int(nx)
         self.half = G.shape[2] == self.nx // 2 + 1
         self.wavelength, self.semiangle, self.ang_y, self.ang_x = float(wavelength), float(semiangle_rad), float(ang_y_rad), float(ang_x_rad)
@@ -65,6 +74,27 @@ class TorchSSB:
         return cls(tensor(engine.G_qk), kx=tensor(c["kx_bf"]), ky=tensor(c["ky_bf"]), qx=tensor(c["qx_1d"]), qy=tensor(c["qy_1d"]),
                    nx=int(c["nx"]), wavelength=float(engine.wavelength), semiangle_rad=float(c["semiangle_rad"]),
                    ang_y_rad=float(c["ang_y_rad"]), ang_x_rad=float(c["ang_x_rad"]), dc_value=engine._dc_value_host)
+
+    @classmethod
+    def from_mps(cls, prepared, device: str | torch.device = "mps", dtype: torch.dtype = torch.complex64) -> Self:
+        """The exact G and geometry of a prepared MPS session (``backend._prepared``, current rotation) on ``device``.
+
+        The stored float32 coordinates and complex64 G are only cast, so a complex128 copy evaluates the same inputs in
+        float64. BF pixels the compaction left out (zero aperture) still count in the mean phase.
+        """
+        mx = prepared.mx
+        real = torch.float64 if dtype == torch.complex128 else torch.float32
+
+        def tensor(array, kind):
+            return torch.from_numpy(np.ascontiguousarray(np.asarray(array))).to(device=device, dtype=kind)
+
+        ny, nx = (int(size) for size in prepared.scan_shape)
+        G = tensor(prepared.g_qk, dtype)
+        mx.clear_cache()
+        return cls(G, kx=tensor(prepared.kx, real), ky=tensor(prepared.ky, real), qx=tensor(prepared.q_row, real),
+                   qy=tensor(prepared.q_col, real), nx=nx, wavelength=prepared.wavelength,
+                   semiangle_rad=prepared.semiangle_rad, ang_y_rad=prepared.ang_y_rad, ang_x_rad=prepared.ang_x_rad,
+                   dc_value=prepared.dc_value, num_bright_field_pixels=prepared.num_bright_field_pixels)
 
     # --- the model ---------------------------------------------------------------------------------------------------------
 
@@ -123,11 +153,11 @@ class TorchSSB:
         """Mean phase over bright-field pixels and the phase-variance loss (standard SSB at thickness 0)."""
         ny, nx = self.ny, self.nx
         qx = self.qx.reshape(1, ny, 1); qy = self.qy.reshape(1, 1, nx)
-        phase_sum = torch.zeros((ny, nx), dtype=torch.float32, device=self.device)
-        phase_sumsq = torch.zeros((ny, nx), dtype=torch.float32, device=self.device)
+        phase_sum = torch.zeros((ny, nx), dtype=self.real_dtype, device=self.device)
+        phase_sumsq = torch.zeros((ny, nx), dtype=self.real_dtype, device=self.device)
         chunk = self._chunk(ny * nx * 8 * 4)
-        for start in range(0, self.num_bright_field_pixels, chunk):
-            stop = min(self.num_bright_field_pixels, start + chunk)
+        for start in range(0, self.num_stored, chunk):
+            stop = min(self.num_stored, start + chunk)
             full = self._full_plane(self.G[start:stop])
             gamma = self._gamma(qx, qy, self.kx[start:stop].reshape(-1, 1, 1), self.ky[start:stop].reshape(-1, 1, 1),
                                 C10, C12, phi12, sample_tilt_mrad, thickness)
@@ -161,12 +191,12 @@ class TorchSSB:
             weight = torch.ones(rows_idx.shape, device=self.device)
         qx_b = self.qx[rows_idx].reshape(1, -1); qy_b = self.qy[cols_idx].reshape(1, -1)
         flat = rows_idx * cols + cols_idx
-        g_flat = self.G.reshape(self.num_bright_field_pixels, -1)
-        numerator = torch.zeros(flat.shape, dtype=torch.complex64, device=self.device)
-        denominator = torch.zeros(flat.shape, dtype=torch.float32, device=self.device)
+        g_flat = self.G.reshape(self.num_stored, -1)
+        numerator = torch.zeros(flat.shape, dtype=self.G.dtype, device=self.device)
+        denominator = torch.zeros(flat.shape, dtype=self.real_dtype, device=self.device)
         chunk = self._chunk(int(flat.numel()) * 8 * 4)
-        for start in range(0, self.num_bright_field_pixels, chunk):
-            stop = min(self.num_bright_field_pixels, start + chunk)
+        for start in range(0, self.num_stored, chunk):
+            stop = min(self.num_stored, start + chunk)
             gamma = self._gamma(qx_b, qy_b, self.kx[start:stop].reshape(-1, 1), self.ky[start:stop].reshape(-1, 1),
                                 C10, C12, phi12, sample_tilt_mrad, thickness)
             numerator += (g_flat[start:stop][:, flat] * torch.conj(gamma)).sum(0)
