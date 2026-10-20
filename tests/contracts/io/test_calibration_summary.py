@@ -86,3 +86,22 @@ def test_every_calibration_table_uses_one_label_set():
         assert calibration.loc[label, "Source"] == overview.loc[label, "Metadata"] == labels.RECORDED
     assert calibration.loc["Scan step (row, col)", "Value"] == (0.264, 0.264)
     assert overview.loc["Scan-detector rotation", "Metadata"] == labels.NOT_RECORDED
+
+
+def test_tables_round_for_reading_and_a_confirmed_value_stays_recorded():
+    """Displayed values have six significant figures; setting the recorded value again is not an override."""
+    from quantem.gpu.io import metadata_display as labels
+
+    assert labels.display_value(0.6035446045631986) == 0.603545
+    assert labels.display_value((0.6035446045631986, 2)) == (0.603545, 2)
+    assert labels.display_value("Not recorded") == "Not recorded"
+    data = Dataset4dstemGPU(np.zeros((2, 3, 4, 5), np.uint16), {
+        "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
+        "detector_sampling_mrad": [0.6035446045631986, 0.6035446045631986]})
+    assert data.calibration.table().loc["Detector step (row, col)", "Value"] == (0.603545, 0.603545)
+    assert data.calibration.detector_sampling_mrad == (0.6035446045631986, 0.6035446045631986)
+    data.calibration.voltage_kV = 300.0
+    data.calibration.semiangle_mrad = 25.0
+    table = data.calibration.table()
+    assert table.loc["Accelerating voltage", "Source"] == "Recorded"
+    assert table.loc["Convergence semiangle", "Source"] == "Overridden"

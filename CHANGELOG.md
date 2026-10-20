@@ -41,6 +41,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- Calibration tables round values to six significant figures for reading
+  (`0.603545`, not `0.6035446045631986`); sessions and records keep the full
+  values. A calibration set on `data.calibration` equal to the file's record
+  reads **Recorded**, not **Overridden**.
 - `reconstruct()`'s automatic fit prints one line when its rotation check
   moves the rotation by 180° or cannot decide, although the fit itself runs
   quietly.
