@@ -130,3 +130,48 @@ def test_reconstruct_keeps_the_rotation_check_of_the_fit_it_applies():
     with SSB(frames, **settings) as fresh:
         auto = fresh.reconstruct()
         assert auto.initial_scan_detector_rotation_deg == 180.0 and auto.column_sign is not None
+
+
+def test_joint_fit_takes_a_c10_range_and_holds_c12_at_zero():
+    """The tutorial's constrained joint fit runs: a C10 range, C12 held at 0, the others fitted.
+
+    Before 2026-10-20 search_ranges was refused with tilt=True and fixed_aberrations needed all three coefficients
+    with check_rotation=False.
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal()
+    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
+    with SSB(frames, **settings) as session:
+        held = session.find_aberrations(tilt=True, num_trials=40, verbose=False,
+                                        search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})
+        assert held.aberrations["C12_nm"] == 0.0 and held.aberrations["phi12_deg"] == 0.0
+        assert -50.0 <= held.aberrations["C10_nm"] <= 50.0 and held.column_sign is not None
+        bounded = session.find_aberrations(tilt=True, num_trials=40, verbose=False,
+                                           search_ranges={"C10_nm": (-12, -4), "C12_nm": (0, 5)})
+        assert -12.0 <= bounded.aberrations["C10_nm"] <= -4.0 and 0.0 <= bounded.aberrations["C12_nm"] <= 5.0
+        assert bounded.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.1)
+        fixed_defocus = session.find_aberrations(tilt=True, num_trials=40, verbose=False,
+                                                 fixed_aberrations={"C10_nm": -8.0})
+        assert fixed_defocus.aberrations["C10_nm"] == pytest.approx(-8.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("constraints,match", [
+    (dict(search_ranges={"phi12_deg": (0, 30)}), "phi12_deg over its whole period"),
+    (dict(fixed_aberrations={"phi12_deg": 10.0}), "phi12_deg over its whole period"),
+    (dict(fixed_aberrations={"C12_nm": 2.0}), "C12_nm from 0"),
+    (dict(search_ranges={"C12_nm": (1, 5)}), "C12_nm from 0"),
+    (dict(search_ranges={"C10_nm": (5, -5)}), "low <= high"),
+    (dict(search_ranges={"C10_nm": (0, 5)}, fixed_aberrations={"C10_nm": 1.0}), "both"),
+    (dict(fixed_aberrations={"C10_nm": 1.0, "C12_nm": 2.0, "phi12_deg": 3.0}), "check_rotation=False"),
+    (dict(refine_lock=["C12_nm"]), "fixed_aberrations"),
+])
+def test_unsupported_joint_constraints_say_what_to_pass(constraints, match):
+    from quantem.gpu import SSB
+
+    session = SSB.__new__(SSB)  # validation runs before any data is touched
+    session._device = None
+    with pytest.raises(ValueError, match=match):
+        SSB.find_aberrations(session, tilt=True, verbose=False, **constraints)

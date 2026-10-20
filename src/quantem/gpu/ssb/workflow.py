@@ -172,6 +172,64 @@ def _source_calibration(
             sampling_pair("scan_sampling_A", values["scan_sampling_A"]))
 
 
+def _tilt_constraints(
+    search_ranges: dict[str, object] | None, fixed_aberrations: dict[str, float] | None,
+) -> tuple[dict[str, object], dict[str, float] | None]:
+    """The joint (tilt=True) fit's constraints as search bounds in engine units, and the fully fixed optics if any.
+
+    The joint search bounds C10 by a range and C12 from zero to a maximum, and searches phi12 over its whole period.
+    So it takes a ``C10_nm`` range or value, a ``C12_nm`` range starting at 0 (or C12_nm = 0, which leaves phi12
+    without effect), and, in ``fixed_aberrations``, ``C10_nm`` alone, ``C12_nm=0`` alone, or all three coefficients.
+    Anything else raises with what to pass instead.
+    """
+    ranges = dict(search_ranges or {})
+    held = dict(fixed_aberrations or {})
+    if set(held) == {"C10_nm", "C12_nm", "phi12_deg"}:
+        if ranges:
+            raise ValueError("fixed_aberrations holds all three coefficients; drop search_ranges, which has nothing to search.")
+        return {}, held
+    unknown = (set(ranges) | set(held)) - {"C10_nm", "C12_nm", "phi12_deg"}
+    if unknown:
+        raise ValueError(f"search_ranges and fixed_aberrations take C10_nm, C12_nm and phi12_deg; got {sorted(unknown)}.")
+    both = set(ranges) & set(held)
+    if both:
+        raise ValueError(f"{sorted(both)} is in both search_ranges and fixed_aberrations; give each coefficient once.")
+    for name, value in held.items():
+        ranges[name] = float(value)
+    bounds: dict[str, object] = {}
+    if "phi12_deg" in ranges:
+        raise ValueError(
+            "tilt=True searches phi12_deg over its whole period and cannot bound or hold it alone. Hold all three "
+            "with fixed_aberrations={'C10_nm': ..., 'C12_nm': ..., 'phi12_deg': ...} (and check_rotation=False), hold "
+            "C12_nm=0 to remove astigmatism, or bound phi12_deg in a standard fit (tilt=False).")
+    if "C10_nm" in ranges:
+        value = ranges["C10_nm"]
+        low, high = (value, value) if np.ndim(value) == 0 else value
+        if not (math.isfinite(float(low)) and math.isfinite(float(high)) and float(low) <= float(high)):
+            raise ValueError(f"C10_nm takes a finite (low, high) range in nm with low <= high, or one value; got {value!r}.")
+        bounds["c10_range"] = (float(low) * ENGINE_PER_NM, float(high) * ENGINE_PER_NM)
+    if "C12_nm" in ranges:
+        value = ranges["C12_nm"]
+        low, high = (0.0, 0.0) if np.ndim(value) == 0 and float(value) == 0.0 else (
+            (None, None) if np.ndim(value) == 0 else value)
+        if low is None or float(low) != 0.0 or not (math.isfinite(float(high)) and float(high) >= 0.0):
+            raise ValueError(
+                f"tilt=True bounds C12_nm from 0: give search_ranges={{'C12_nm': (0, maximum_nm)}} or hold it with "
+                f"fixed_aberrations={{'C12_nm': 0.0}}; got {value!r}. A nonzero held C12_nm needs phi12_deg and "
+                "C10_nm too: fixed_aberrations with all three and check_rotation=False.")
+        bounds["c12_max"] = float(high) * ENGINE_PER_NM
+    return bounds, None
+
+
+def _opposite_branch_bounds(bounds: dict[str, object]) -> dict[str, object]:
+    """Bounds of the joint fit on the other 180-degree branch, where C10 changes sign and |C12| is unchanged."""
+    opposite = dict(bounds)
+    if "c10_range" in opposite:
+        low, high = opposite["c10_range"]
+        opposite["c10_range"] = (-high, -low)
+    return opposite
+
+
 def _in_notebook() -> bool:
     """True inside a Jupyter kernel, where fit() draws its histograms."""
     try:
@@ -961,7 +1019,8 @@ class SSB:
         return result
 
     def _resolve_rotation_branch(self, result: SSBResult, *, refinement: RefineMethod, tilt: bool,
-                                 tilt_limit_mrad: float, seed: int, verbose: bool) -> SSBResult:
+                                 tilt_limit_mrad: float, seed: int, verbose: bool,
+                                 tilt_bounds: dict[str, object] | None = None) -> SSBResult:
         """Keep the CoM direction whose phase has bright atom columns (see ``find_aberrations(check_rotation=...)``).
 
         The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the angle plus 180
@@ -1013,7 +1072,8 @@ class SSB:
                 loss=reconstruction.loss, elapsed_s=reconstruction.elapsed_s,
             )
         elif tilt:
-            refit = self._fit_tilt(result.num_trials or 200, refinement, tilt_limit_mrad, seed, False)
+            refit = self._fit_tilt(result.num_trials or 200, refinement, tilt_limit_mrad, seed, False,
+                                   bounds=_opposite_branch_bounds(tilt_bounds or {}))
         else:
             refit = self._in_detector_frame(result_from_engine(backend.fit(
                 aberrations=aberrations_to_engine(start), trials=0,
@@ -1239,12 +1299,20 @@ class SSB:
         ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
         costs one polish.
 
-        ``fixed_aberrations`` holds C10_nm, C12_nm and phi12_deg common across
+        Constrain the joint fit (``tilt=True``) with ``search_ranges`` and ``fixed_aberrations``: a ``C10_nm`` range
+        or value, a ``C12_nm`` range from 0 (``(0, maximum_nm)``) or ``C12_nm=0``, which removes astigmatism
+        (``phi12_deg`` is then reported as 0). For example
+        ``find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})``.
+        The joint search covers phi12 over its whole period, so a phi12 range raises; bound it in a standard fit.
+        On the other 180-degree branch the rotation check keeps these bounds with C10 in the opposite sign.
+
+        ``fixed_aberrations`` with all three of C10_nm, C12_nm and phi12_deg holds optics common across
         local tilt fits. Supply a previously calibrated thick-sample optical
         model, ``tilt=True`` and ``check_rotation=False``. The same batched
         Newton solver optimizes only tilt and depth spread on CUDA and MPS.
         This conditional fit does not determine whether the common optics are
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
+        In a standard fit, hold a coefficient with ``search_ranges={"C12_nm": 0.0}`` and ``refine_lock=["C12_nm"]``.
 
         ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
         search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
@@ -1284,8 +1352,10 @@ class SSB:
         refines them with the session's sample tilt and depth spread.
         """
 
-        if tilt and (search_ranges is not None or refine_lock is not None):
-            raise ValueError("search_ranges and refine_lock apply to the standard fit; tilt=True searches its own ranges.")
+        if tilt and refine_lock is not None:
+            raise ValueError(
+                "refine_lock applies to the standard fit. With tilt=True hold coefficients with fixed_aberrations: "
+                "C10_nm alone, C12_nm=0 alone, or all three (with check_rotation=False).")
         if num_trials < 0:
             raise ValueError(f"num_trials must be non-negative, got {num_trials}.")
         if tilt and int(num_trials) == 0 and (self.sample_tilt_mrad is None or self.depth_spread_nm is None):
@@ -1295,12 +1365,24 @@ class SSB:
             )
         if refinement == "auto":
             refinement = "newton" if tilt else "nelder-mead"
+        tilt_bounds: dict[str, object] = {}
+        requested = {"search_ranges": search_ranges, "fixed_aberrations": fixed_aberrations}
+        if fixed_aberrations is not None and not tilt:
+            raise ValueError(
+                "fixed_aberrations holds coefficients in the joint fit (tilt=True). For a standard fit give the value "
+                "as search_ranges={'C12_nm': 0.0}, which holds it in the search, and refine_lock=['C12_nm'].")
+        if tilt:
+            tilt_bounds, fixed_aberrations = _tilt_constraints(search_ranges, fixed_aberrations)
+            search_ranges = None
         if fixed_aberrations is not None:
             fixed_aberrations = validate_aberrations(fixed_aberrations)
             if not all(math.isfinite(v) for v in fixed_aberrations.values()):
                 raise ValueError("fixed_aberrations must contain finite coefficients.")
-            if not tilt or refinement != "newton" or check_rotation:
-                raise ValueError("Use fixed_aberrations with tilt=True, refinement='newton' (or 'auto'), and check_rotation=False.")
+            if refinement != "newton" or check_rotation:
+                raise ValueError(
+                    "Holding all three coefficients with fixed_aberrations needs refinement='newton' (or 'auto') and "
+                    "check_rotation=False: with the optics fixed there is no branch to choose. Hold C10_nm alone or "
+                    "C12_nm=0 alone to keep the rotation check.")
         if refinement not in {"nelder-mead", "newton", None}:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt:
@@ -1314,7 +1396,7 @@ class SSB:
                 {
                     "num_trials": int(num_trials),
                     "refinement": refinement,
-                    "search_ranges": search_ranges,
+                    "search_ranges": requested["search_ranges"] if tilt else search_ranges,
                     "refine_lock": refine_lock,
                     "seed": int(seed),
                     "starting_aberrations": self.aberrations,
@@ -1325,7 +1407,8 @@ class SSB:
                        if tilt and int(num_trials) == 0 else {}),
                     "check_rotation": bool(check_rotation),
                     "scan_region": scan_region,
-                    **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else {}),
+                    **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else
+                       {"fixed_aberrations": requested["fixed_aberrations"]} if requested["fixed_aberrations"] else {}),
                 },
             )
             if not force and self.source_kind != "array":
@@ -1396,10 +1479,10 @@ class SSB:
                     regional.sample_tilt_mrad, regional.depth_spread_nm = self.sample_tilt_mrad, self.depth_spread_nm
                 result = regional.find_aberrations(
                     tilt=tilt, num_trials=num_trials, refinement=refinement,
-                    search_ranges=search_ranges, refine_lock=refine_lock,
+                    search_ranges=requested["search_ranges"] if tilt else search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
-                    fixed_aberrations=fixed_aberrations,
+                    fixed_aberrations=fixed_aberrations if fixed_aberrations is not None else requested["fixed_aberrations"],
                 )
             result.fit_scan_region = tuple(scan_region)
             # the regional session indexed this session's array, which starts at the crop origin
@@ -1413,7 +1496,7 @@ class SSB:
         if tilt:
             self._compare_standard = bool(compare_standard)
             result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
-                                                      fixed_aberrations=fixed_aberrations))
+                                                      fixed_aberrations=fixed_aberrations, bounds=tilt_bounds))
         else:
             result = self._backend().fit(
                 aberrations=(
@@ -1432,6 +1515,7 @@ class SSB:
         if check_rotation:
             result = self._accept_result(self._resolve_rotation_branch(
                 result, refinement=refinement, tilt=tilt, tilt_limit_mrad=float(tilt_limit_mrad), seed=int(seed),
+                tilt_bounds=tilt_bounds,
                 verbose=verbose))
         estimator = _default_phase_estimator(result.aberrations)
         reconstruction_started = time.perf_counter()
@@ -1931,7 +2015,8 @@ class SSB:
         return self.backend in ("cuda", "mps")
 
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool,
-                  *, fixed_aberrations: dict[str, float] | None = None) -> SSBResult:
+                  *, fixed_aberrations: dict[str, float] | None = None,
+                  bounds: dict[str, object] | None = None) -> SSBResult:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
         preparation_started = time.perf_counter()
         backend = self._backend()
@@ -1945,8 +2030,11 @@ class SSB:
         fixed = {} if fixed_aberrations is None else {"fixed_aberrations": aberrations_to_engine(fixed_aberrations)}
         fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
                                  polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
-                                 compare_standard=self._compare_standard, start=start, **fixed)
+                                 compare_standard=self._compare_standard, start=start, **fixed, **(bounds or {}))
         aberrations = aberrations_from_engine(fit)
+        if (bounds or {}).get("c12_max") == 0.0:
+            # C12 held at zero: the azimuth has no effect on the image, so it is stated as 0, not the search's last draw
+            aberrations["phi12_deg"] = 0.0
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["depth_spread_A"]) / ENGINE_PER_NM
         diagnostic_started = time.perf_counter()
