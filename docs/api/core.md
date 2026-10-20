@@ -119,7 +119,7 @@ aberration-fit choice, and package revision with the result.
 
 ## Scan rotation
 
-`geometry.rotate_scan(data, angle_degrees)` rotates the scan plane of a 4D-STEM
+`geometry.rotate_scan(data, display_rotation_deg)` rotates the scan plane of a 4D-STEM
 acquisition; diffraction patterns are never rotated. Multiples of 90 degrees are
 exact and keep the dtype. On the encoded acquisition `io.load` returns on CUDA,
 the result is a new encoded acquisition on the same GPU, built band by band
