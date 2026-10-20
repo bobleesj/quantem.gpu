@@ -368,35 +368,40 @@ curl-free. SSB fits both equally well, the second as the conjugate object with
 C10 of the opposite sign. For a rotation the session estimated, `reconstruct()`
 and `find_aberrations()` therefore fit twice, at the estimate and at the
 estimate plus 180°: two independent searches with the same settings (tilt,
-ranges, trials, seed), neither started from the other. Each fit's phase is
-reconstructed at the native scan sampling, and the branch is chosen in two
-steps:
+ranges, trials, seed), neither started from the other. The branch is decided on
+tilt-corrected SSB, by positive phase at the atomic columns located on the dark
+field, with the phase tail as the fallback: correcting the sample tilt and depth
+spread makes the column contrast clearer, while both branches still fit equally
+well. Each fit's phase is reconstructed at the native scan sampling, and the
+branch is chosen in two steps:
 
 1. **Atomic columns.** The columns are located on the dark field of the same
    scan, `detector.df` from 1.1 times the bright-field radius to the detector
    edge. Dark field is incoherent, so the positions are the same on both
    branches. The image is smoothed by a 1-pixel gaussian and high-passed by
-   subtracting a 2.1 Å gaussian; the columns are its local maxima over a 1.3 Å
-   window above its 80th percentile (a 5 × 5 window and an 8-pixel high pass at
-   0.264 Å). The phase minus its mean, high-passed the same way, is sampled at
-   the columns: `z = mean / (std / sqrt(n))`. Atoms push the phase forward, so
-   when either branch has `|z| >= 3` the branch with the more positive columns
-   is kept.
-2. **Phase tail.** When neither branch resolves columns, or the session has no
+   subtracting a 2.1 Å gaussian. Its local maxima at least 2 Å apart are
+   ranked by prominence (height above the window's minimum) and the top 20% are
+   the columns (an 8-pixel high pass and a 17 × 17 window at 0.264 Å). The phase
+   minus its mean, high-passed the same way, is sampled at the columns:
+   `z = mean / (std / sqrt(n))` and `effect = mean / std`. Atoms push the phase
+   forward, so when either branch has `|z| >= 3` and `|effect| >= 0.25` the
+   branch with the more positive columns is kept. The effect floor keeps a
+   negligible shift over many columns from deciding.
+2. **Phase tail.** When the column test is not decisive, or the session has no
    dark field, the branch with the larger mean-centred third-moment ratio
    `S = mean(p³) / mean(p²)^1.5`, `p = phase − mean(phase)`
    (`quantem.gpu.ssb.results.phase_skewness`) is kept: a few bright columns
    over a flatter background.
 
 One line says which branch was kept and why, for example
-`SSB: kept 339.4°: atomic columns positive (z +9.0, 62% of 2696 columns); 159.4° negative.`
+`SSB: kept 339.4°: atomic columns positive (z +10.8, effect +0.70, 75% of 241 columns); 159.4° negative.`
 The comparison costs a second full search: two joint fits took 9 to 25 s in
 all on 512 × 512 scans on an M-series Mac, two standard fits (`tilt=False`)
 about 2 × 26 s.
 
 ```python
 branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one
-branches.report()                           # aberrations, loss, column z, positive columns, S per branch
+branches.report()                           # aberrations, loss, column z and effect, positive columns, S
 branches.show()                             # phase tails and phase at the columns
 result = ssb.reconstruct()                  # the kept fit, no third search
 result.show("rotation")                     # the same figure from the result
@@ -414,8 +419,9 @@ Bright columns are a physical assumption, not proof of the absolute
 orientation. The column test assumes the dark-field image peaks on the
 columns. A dark field that collects only low angles from a strongly defocused
 probe can break that: in a noise-free 64 × 64 simulation (4 Å lattice, dark
-field 33 to 55 mrad) the column test chose the wrong branch at C10 = −5 and
-−8 nm and the right one at −3 nm, while the phase tail was right in all three.
+field 33 to 55 mrad, tilt-corrected fits) the column test chose the wrong
+branch at C10 = −5 and −8 nm and the right one at −3 nm, while the phase tail
+was right in all three.
 The figure's right panel shows the evidence for each branch.
 
 ## View the phase and model probe

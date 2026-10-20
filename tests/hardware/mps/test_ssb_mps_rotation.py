@@ -117,18 +117,18 @@ def test_an_estimate_180_degrees_off_keeps_the_branch_with_positive_columns(esti
 
 
 def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degrees_off):
-    """With a dark field that shows no columns (noise), the larger mean-centred phase skewness decides."""
+    """With a dark field that shows no columns (no contrast), the larger mean-centred phase skewness decides."""
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
     from quantem.gpu.ssb.results import phase_skewness
 
     frames, detector_mrad = _astigmatic_crystal()
     with SSB(frames, **_settings(detector_mrad)) as session:
-        session._dark_field = np.random.default_rng(3).normal(size=frames.shape[:2]).astype(np.float32)
+        session._dark_field = np.ones(frames.shape[:2], np.float32)
         checked = session.find_aberrations(num_trials=40, verbose=False)
     branches = checked.rotation_branches
     assert branches.decided_by == "phase_tail" and checked.scan_detector_rotation_deg == 0.0
-    assert all(abs(branch.column_z) < 3.0 for branch in branches.branches)
+    assert branches.num_columns == 0 and "no atomic columns located" in branches.summary
     assert branches.branches[1].phase_skewness == pytest.approx(phase_skewness(checked.phase), abs=1e-6)
     assert branches.branches[0].phase_skewness < 0.0 < 1.0 < branches.branches[1].phase_skewness
     assert checked.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)

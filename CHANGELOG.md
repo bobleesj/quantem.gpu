@@ -14,9 +14,11 @@ new `rcN` heading when that rc is published to TestPyPI.
   standard SSB, and `refine_lock` belongs to it.
 - The 180° branch of an estimated scan-detector rotation is settled by two
   independent fits, at the estimate and at the estimate plus 180°, with the
-  same settings. The kept branch has positive phase at the atomic columns
-  located on the scan's dark field (`|z| >= 3`); when no columns are resolved,
-  the larger mean-centred phase skewness decides. One line says which and why.
+  same settings (tilt-corrected joint fits by default). The kept branch has
+  positive phase at the atomic columns located on the scan's dark field
+  (lattice-scale maxima at least 2 Å apart, top 20% by prominence; decisive
+  when `|z| >= 3` and the effect mean/std `>= 0.25`); otherwise the larger
+  mean-centred phase skewness decides. One line says which and why.
   A rotation given to `SSB(...)` or recorded with the acquisition is never
   moved. The fit now costs two searches.
 - `SSBResult.rotation_branches` (a `RotationBranches`) records both fits and
