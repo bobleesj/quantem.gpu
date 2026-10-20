@@ -242,9 +242,7 @@ def prepare_selection(
         )
     else:
         dc_value = complex(np.asarray(g_qk[:, 0, 0]).mean())
-    alpha_k2 = cos2_k = sin2_k = aperture_k = None
-    alpha_m2 = cos2_m = sin2_m = ap_m = None
-    alpha_p2 = cos2_p = sin2_p = ap_p = None
+    geometry = (None,) * len(_PAIR_GEOMETRY_FIELDS)
     # Cache static geometry when the selected BF set is small enough.  For the
     # held-out dataset bright_field_radius_px=5 path this is ~650 MB of float32 geometry and removes
     # repeated sqrt/aperture work from every optimizer batch.
@@ -252,20 +250,8 @@ def prepare_selection(
     if geometry_values <= 32_000_000:
         kx = mx.array(kx_np, dtype=mx.float32)[:, None, None]
         ky = mx.array(ky_np, dtype=mx.float32)[:, None, None]
-        alpha_k2, cos2_k, sin2_k, aperture_k = compute_geometry(
-            mx, kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        )
-        alpha_m2, cos2_m, sin2_m, ap_m = compute_geometry(
-            mx, qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        )
-        alpha_p2, cos2_p, sin2_p, ap_p = compute_geometry(
-            mx, qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
-        )
-        mx.eval(
-            alpha_k2, cos2_k, sin2_k, aperture_k,
-            alpha_m2, cos2_m, sin2_m, ap_m,
-            alpha_p2, cos2_p, sin2_p, ap_p,
-        )
+        geometry = _pair_geometry(mx, kx, ky, qx, qy, wavelength, semiangle_rad, ang_y_rad, ang_x_rad)
+        mx.eval(*geometry)
 
     dc_mask_np = np.zeros(scan_shape, dtype=bool)
     dc_mask_np[0, 0] = True
@@ -289,18 +275,7 @@ def prepare_selection(
         factor=math.pi / wavelength,
         dc_mask=mx.array(dc_mask_np),
         num_bright_field_pixels=selection.size,
-        alpha_k2=alpha_k2,
-        cos2_k=cos2_k,
-        sin2_k=sin2_k,
-        aperture_k=aperture_k,
-        alpha_m2=alpha_m2,
-        cos2_m=cos2_m,
-        sin2_m=sin2_m,
-        ap_m=ap_m,
-        alpha_p2=alpha_p2,
-        cos2_p=cos2_p,
-        sin2_p=sin2_p,
-        ap_p=ap_p,
+        **dict(zip(_PAIR_GEOMETRY_FIELDS, geometry)),
         alpha_k2_1d=alpha_k2_1d,
         cos2_k_1d=cos2_k_1d,
         sin2_k_1d=sin2_k_1d,
@@ -354,55 +329,13 @@ def retarget_prepared_rotation(
     )
     arrays = [kx, ky, alpha_k2_1d, cos2_k_1d, sin2_k_1d, aperture_k_1d]
 
-    alpha_k2 = cos2_k = sin2_k = aperture_k = None
-    alpha_m2 = cos2_m = sin2_m = ap_m = None
-    alpha_p2 = cos2_p = sin2_p = ap_p = None
+    geometry = (None,) * len(_PAIR_GEOMETRY_FIELDS)
     if prepared.alpha_k2 is not None:
-        kx_grid = kx[:, None, None]
-        ky_grid = ky[:, None, None]
-        alpha_k2, cos2_k, sin2_k, aperture_k = compute_geometry(
-            mx,
-            kx_grid,
-            ky_grid,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
+        geometry = _pair_geometry(
+            mx, kx[:, None, None], ky[:, None, None], prepared.qx, prepared.qy,
+            prepared.wavelength, prepared.semiangle_rad, prepared.ang_y_rad, prepared.ang_x_rad,
         )
-        alpha_m2, cos2_m, sin2_m, ap_m = compute_geometry(
-            mx,
-            prepared.qx - kx_grid,
-            prepared.qy - ky_grid,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
-        alpha_p2, cos2_p, sin2_p, ap_p = compute_geometry(
-            mx,
-            prepared.qx + kx_grid,
-            prepared.qy + ky_grid,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
-        arrays.extend(
-            [
-                alpha_k2,
-                cos2_k,
-                sin2_k,
-                aperture_k,
-                alpha_m2,
-                cos2_m,
-                sin2_m,
-                ap_m,
-                alpha_p2,
-                cos2_p,
-                sin2_p,
-                ap_p,
-            ]
-        )
+        arrays.extend(geometry)
     mx.eval(*arrays)
 
     prepared.kx = kx
@@ -416,18 +349,8 @@ def retarget_prepared_rotation(
     prepared.cos2_k_1d = cos2_k_1d
     prepared.sin2_k_1d = sin2_k_1d
     prepared.aperture_k_1d = aperture_k_1d
-    prepared.alpha_k2 = alpha_k2
-    prepared.cos2_k = cos2_k
-    prepared.sin2_k = sin2_k
-    prepared.aperture_k = aperture_k
-    prepared.alpha_m2 = alpha_m2
-    prepared.cos2_m = cos2_m
-    prepared.sin2_m = sin2_m
-    prepared.ap_m = ap_m
-    prepared.alpha_p2 = alpha_p2
-    prepared.cos2_p = cos2_p
-    prepared.sin2_p = sin2_p
-    prepared.ap_p = ap_p
+    for name, value in zip(_PAIR_GEOMETRY_FIELDS, geometry):
+        setattr(prepared, name, value)
 
 
 def resolve_bf_selection(
@@ -514,20 +437,7 @@ def pk_from_prepared(
 ):
     """Probe term ``p(k)`` for each selected BF pixel."""
     mx = prepared.mx
-    alpha_k2 = prepared.alpha_k2_1d
-    cos2_k = prepared.cos2_k_1d
-    sin2_k = prepared.sin2_k_1d
-    aperture_k = prepared.aperture_k_1d
-    if alpha_k2 is None or cos2_k is None or sin2_k is None or aperture_k is None:
-        alpha_k2, cos2_k, sin2_k, aperture_k = compute_geometry(
-            mx,
-            prepared.kx,
-            prepared.ky,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
+    alpha_k2, cos2_k, sin2_k, aperture_k = _bf_geometry(prepared)
     chi_k = prepared.factor * alpha_k2 * (
         float(C12)
         * (
@@ -553,20 +463,7 @@ def pk_batch_from_prepared(
 ):
     """Batched probe terms ``p(k)`` for a BF slice."""
     mx = prepared.mx
-    alpha_k2 = prepared.alpha_k2_1d
-    cos2_k = prepared.cos2_k_1d
-    sin2_k = prepared.sin2_k_1d
-    aperture_k = prepared.aperture_k_1d
-    if alpha_k2 is None or cos2_k is None or sin2_k is None or aperture_k is None:
-        alpha_k2, cos2_k, sin2_k, aperture_k = compute_geometry(
-            mx,
-            prepared.kx,
-            prepared.ky,
-            prepared.wavelength,
-            prepared.semiangle_rad,
-            prepared.ang_y_rad,
-            prepared.ang_x_rad,
-        )
+    alpha_k2, cos2_k, sin2_k, aperture_k = _bf_geometry(prepared)
     bf_slice = slice(int(start), int(stop))
     alpha = alpha_k2[bf_slice][None, :]
     cos2 = cos2_k[bf_slice][None, :]
@@ -628,6 +525,34 @@ def bf_storage_chunk_packs(
     if current:
         packs.append(current)
     return packs
+
+
+# The cached k, q - k and q + k probe geometry of a PreparedMpsSSB, in the order _pair_geometry computes it.
+_PAIR_GEOMETRY_FIELDS = (
+    "alpha_k2", "cos2_k", "sin2_k", "aperture_k",
+    "alpha_m2", "cos2_m", "sin2_m", "ap_m",
+    "alpha_p2", "cos2_p", "sin2_p", "ap_p",
+)
+
+
+def _pair_geometry(mx, kx, ky, qx, qy, wavelength, semiangle_rad, ang_y_rad, ang_x_rad):
+    """Probe geometry at k, q - k and q + k: the twelve arrays of ``_PAIR_GEOMETRY_FIELDS``."""
+    return (
+        *compute_geometry(mx, kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad),
+        *compute_geometry(mx, qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad),
+        *compute_geometry(mx, qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad),
+    )
+
+
+def _bf_geometry(prepared):
+    """The selected BF pixels' 1-D probe geometry, recomputed when the session did not keep it."""
+    geometry = (prepared.alpha_k2_1d, prepared.cos2_k_1d, prepared.sin2_k_1d, prepared.aperture_k_1d)
+    if any(value is None for value in geometry):
+        geometry = compute_geometry(
+            prepared.mx, prepared.kx, prepared.ky,
+            prepared.wavelength, prepared.semiangle_rad, prepared.ang_y_rad, prepared.ang_x_rad,
+        )
+    return geometry
 
 
 def compute_geometry(mx, dx, dy, wavelength, semiangle_rad, ang_y_rad, ang_x_rad):
