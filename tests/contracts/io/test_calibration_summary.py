@@ -48,7 +48,7 @@ def test_calibration_summary_and_atomic_override():
         stored["electron_microscope"]["electron_source/accelerating_voltage"]["value"]
         == 300
     )
-    assert "Saved override" in data._repr_html_()
+    assert "Overridden" in data._repr_html_()
 
 
 def test_unknown_calibration_does_not_prevent_raw_inspection():

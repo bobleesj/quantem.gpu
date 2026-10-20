@@ -72,6 +72,7 @@ def _disk_session(n=128, source_path=None, detector_sampling=(10.0, 10.0)):
         semiangle_mrad=30,
         scan_sampling_A=(0.3, 0.3),
         detector_sampling_mrad=detector_sampling,
+        scan_detector_rotation_deg=0.0,  # the simulated scan has no rotation
         source_path=None if source_path is None else str(source_path),
     )
 

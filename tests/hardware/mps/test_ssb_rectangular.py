@@ -25,7 +25,7 @@ def test_rectangular_scan_matches_explicit_mean_padding(shape, dtype):
     options = dict(backend="mps", voltage_kV=200, semiangle_mrad=20,
                    scan_sampling_A=(.3, .3), detector_sampling_mrad=(5, 5),
                    bright_field_center_px=(5.5, 5.5), bright_field_radius_px=4,
-                   aberrations=optics)
+                   scan_detector_rotation_deg=0.0, aberrations=optics)
     with SSB(torch.as_tensor(counts, device="mps"), **options) as regional:
         phase, _ = regional.preview(optics, compute_loss=False)
         assert regional.scan_shape == (size, size)

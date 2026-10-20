@@ -8,6 +8,29 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- The beginner SSB path is load, state the beam, reconstruct:
+  `data.calibration.semiangle_mrad = 30`, `ssb = SSB(data)`,
+  `ssb.reconstruct()`, `ssb.show()`. `SSB` uses the recorded scan-detector
+  rotation, else estimates it (modulo 180 degrees) from the centre-of-mass
+  curl and prints one line; `reconstruct()` fits the aberrations once when
+  none are known and settles the 180-degree choice; `ssb.show()` opens
+  ShowPtycho when that package is installed. The launch table names each
+  rotation's source and adds a **Rotation flipped** row.
+
+### Changed (breaking, no aliases)
+
+- `detector_transposed` is renamed `scan_detector_rotation_flipped`
+  everywhere: `SSB`, `SSB.open`, `dpc.run`, results, screening products,
+  saved records, browser state, WebGPU and Swift. Records saved with the old
+  key no longer carry the flag.
+- `data.set_calibration(...)` is replaced by setting fields on
+  `data.calibration` (`voltage_kV`, `semiangle_mrad`, `scan_sampling_A`,
+  `detector_sampling_mrad`, `detector_sampling_inv_A`); `data.calibration`
+  displays the table, and `data.calibration.table()` returns it. The source
+  label "Saved override" is now "Overridden".
+- An omitted `scan_detector_rotation_deg` is no longer 0 degrees; pass `0.0`
+  for a scan known to have no rotation.
+
 - `SSB.find_aberrations(tilt=True, refinement="newton")` polishes the joint
   tilt fit with Newton steps on finite-difference models whose evaluations
   share passes over G: a few batched passes instead of hundreds of
