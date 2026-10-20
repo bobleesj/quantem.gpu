@@ -1422,13 +1422,16 @@ class SSB:
         the other. Each fit's phase is reconstructed at the native scan sampling, and the branch is chosen:
 
         1. **Atomic columns.** The columns are located on the same scan's dark field (``detector.df`` from 1.1 times
-           the bright-field radius to the detector edge). Dark field is incoherent, so the positions are the same on
-           both branches. Atoms push the phase forward, so on the right branch the high-passed phase at the columns
-           is positive. The test is decisive when the mean column phase is at least 3 standard errors from zero on
-           either branch; the branch with the more positive columns is kept.
-        2. **Phase tail.** When neither branch resolves columns, or the session has no dark field (exported
-           bright-field columns), the branch with the larger mean-centred third-moment ratio (``phase_skewness``)
-           is kept.
+           the bright-field radius to the detector edge): its local maxima at least 2 Å apart, the 20% with the
+           largest prominence. Dark field is incoherent, so the positions are the same on both branches. Atoms push
+           the phase forward, so on the right branch the high-passed phase at the columns is positive. The test is
+           decisive when, on either branch, the mean column phase is at least 3 standard errors from zero and at
+           least 0.25 of its spread; the branch with the more positive columns is kept.
+        2. **Phase tail.** Otherwise, or when the session has no dark field, the branch with the larger mean-centred
+           third-moment ratio (``phase_skewness``) is kept.
+
+        The branch is decided on these tilt-corrected fits (the default ``tilt=True``): correcting the sample tilt
+        and depth spread makes the column contrast clearer, while both branches still fit equally well.
 
         Both fits cost a full search each: two joint fits (the default) took 9 to 25 s in all on 512 x 512 scans on
         an M-series Mac, two standard fits (``tilt=False``) about 2 x 26 s.

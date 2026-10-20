@@ -7,10 +7,14 @@ other, so one decision chooses the branch:
 
 1. Atomic columns are located on the dark-field image of the same scan. Dark field is incoherent, so the column
    positions are the same on both branches. Atoms push the electron phase forward, so on the right branch the phase
-   at the columns is positive. The test is decisive when the mean column phase is at least ``COLUMN_Z_MIN`` standard
-   errors from zero on either branch, and the branch with the more positive columns is kept.
-2. When neither branch resolves columns, the phase tail decides: the branch with the larger mean-centred third-moment
-   ratio ``phase_skewness`` (a few bright columns over a flatter background) is kept.
+   at the columns is positive. The test is decisive when, on either branch, the mean column phase is at least
+   ``COLUMN_Z_MIN`` standard errors from zero and at least ``COLUMN_EFFECT_MIN`` of its spread (so many columns cannot
+   make a negligible shift decisive); the branch with the more positive columns is kept.
+2. Otherwise the phase tail decides: the branch with the larger mean-centred third-moment ratio ``phase_skewness``
+   (a few bright columns over a flatter background) is kept.
+
+The fits are the session's default tilt-corrected joint fits: correcting the sample tilt and depth spread makes the
+atomic-column contrast clearer, while the two branches still fit equally well.
 """
 
 import math
@@ -24,27 +28,33 @@ from quantem.gpu.ssb.results import host_array, phase_skewness
 # Dark field from just outside the bright-field disk to the detector edge, in units of the bright-field radius.
 DARK_FIELD_INNER_RADIUS = 1.1
 # Column detection on the dark-field image: a 1-pixel gaussian against shot noise, a high pass that subtracts a
-# gaussian of COLUMN_HIGH_PASS_A (thickness and support-film variations are slower than a column spacing), local maxima
-# over a COLUMN_NEIGHBOURHOOD_A window (about one column width) above the COLUMN_PERCENTILE of the high-passed image.
-# The window and the high pass are physical lengths, converted with the scan step: at 0.264 Å a 5 x 5 window and an
-# 8-pixel high pass.
+# gaussian of COLUMN_HIGH_PASS_A (thickness and support-film variations are slower than a column spacing), then the
+# local maxima at least COLUMN_SEPARATION_A apart (a lattice-scale window, so noise does not give thousands of maxima
+# at a coarse scan step), keeping the COLUMN_TOP_FRACTION with the largest prominence (height above the window's
+# minimum). The lengths are converted with the scan step: an 8-pixel high pass and a 17 x 17 window at 0.264 Å.
 COLUMN_SMOOTHING_PX = 1.0
 COLUMN_HIGH_PASS_A = 2.1
-COLUMN_NEIGHBOURHOOD_A = 1.3
-COLUMN_PERCENTILE = 80.0
-# Standard errors of the mean column phase from zero that make the column test decisive.
+COLUMN_SEPARATION_A = 2.0
+COLUMN_TOP_FRACTION = 0.2
+# The column test decides only when the mean column phase is COLUMN_Z_MIN standard errors from zero and its effect,
+# mean / std, reaches COLUMN_EFFECT_MIN. With tilt-corrected fits a 512 x 512 scan at 0.264 Å with resolved columns
+# gave an effect of 0.70 (z 10.8), and scans at 0.5 Å without resolved columns 0.08 and 0.002.
 COLUMN_Z_MIN = 3.0
+COLUMN_EFFECT_MIN = 0.25
 
 KEPT_COLOR = "#29243e"
 OTHER_COLOR = "#cc4b42"
 
 
 def column_filter_px(scan_sampling_A) -> tuple[tuple[float, float], tuple[int, int]]:
-    """The high-pass gaussian sigma and the local-maximum window, (row, col) in scan pixels, for one scan step."""
+    """The high-pass gaussian sigma and the peak window, (row, col) in scan pixels, for one scan step.
+
+    The window is ``2 r + 1`` pixels with ``r = round(COLUMN_SEPARATION_A / step)``, at least 1: two maxima of one
+    window are at least ``r`` pixels apart.
+    """
     rows, cols = (float(value) for value in np.broadcast_to(np.asarray(scan_sampling_A, dtype=float), (2,)))
     sigma = (COLUMN_HIGH_PASS_A / rows, COLUMN_HIGH_PASS_A / cols)
-    # the odd window nearest to the physical length, at least 3 pixels
-    window = tuple(max(3, 2 * round((COLUMN_NEIGHBOURHOOD_A / step - 1.0) / 2.0) + 1) for step in (rows, cols))
+    window = tuple(2 * max(1, round(COLUMN_SEPARATION_A / step)) + 1 for step in (rows, cols))
     return sigma, window
 
 
@@ -57,9 +67,9 @@ def _high_pass(image: np.ndarray, sigma_px) -> np.ndarray:
 def locate_atomic_columns(dark_field, *, scan_sampling_A) -> np.ndarray:
     """Positions of atomic columns on a dark-field image, as an ``(n, 2)`` array of (row, col) scan pixels.
 
-    The image is smoothed by a 1-pixel gaussian, high-passed by subtracting a gaussian of ``COLUMN_HIGH_PASS_A``
-    (2.1 Å), and the columns are the local maxima over a ``COLUMN_NEIGHBOURHOOD_A`` (1.3 Å) window above the 80th
-    percentile of the high-passed image. A featureless image has no columns.
+    The image is smoothed by a 1-pixel gaussian and high-passed by subtracting a gaussian of ``COLUMN_HIGH_PASS_A``
+    (2.1 Å). Its local maxima at least ``COLUMN_SEPARATION_A`` (2 Å) apart are ranked by prominence, the height above
+    the window's minimum, and the top ``COLUMN_TOP_FRACTION`` (20%) are the columns. A featureless image has none.
 
     Examples
     --------
@@ -70,12 +80,17 @@ def locate_atomic_columns(dark_field, *, scan_sampling_A) -> np.ndarray:
     image = host_array(dark_field).astype(np.float64)
     if image.ndim != 2 or not np.isfinite(image).all():
         raise ValueError("The dark-field image must be one finite 2D scan image.")
+    from scipy.ndimage import minimum_filter
+
     sigma, window = column_filter_px(scan_sampling_A)
     smoothed = gaussian_filter(image, COLUMN_SMOOTHING_PX)
     filtered = _high_pass(smoothed, sigma)
-    threshold = np.percentile(filtered, COLUMN_PERCENTILE)
-    peaks = (filtered == maximum_filter(filtered, size=window)) & (filtered > threshold)
-    return np.argwhere(peaks).astype(np.int32)
+    prominence = filtered - minimum_filter(filtered, size=window)
+    peaks = np.argwhere((filtered == maximum_filter(filtered, size=window)) & (prominence > 0))
+    if not len(peaks):
+        return peaks.astype(np.int32)
+    heights = prominence[peaks[:, 0], peaks[:, 1]]
+    return peaks[heights >= np.quantile(heights, 1.0 - COLUMN_TOP_FRACTION)].astype(np.int32)
 
 
 def column_phase_test(phase, columns, *, scan_sampling_A) -> tuple[np.ndarray, float | None, float | None]:
@@ -119,6 +134,8 @@ class RotationBranch:
         Mean-centred third-moment ratio of the native phase (``phase_skewness``): positive for bright columns.
     column_z : float | None
         Mean high-passed phase at the dark-field columns in standard errors (None when no columns were located).
+    column_effect : float | None
+        Mean high-passed phase at the columns over its standard deviation, ``column_z / sqrt(n)``.
     column_positive_fraction : float | None
         Fraction of the columns with positive high-passed phase.
     phase : numpy.ndarray
@@ -138,6 +155,7 @@ class RotationBranch:
     column_phases: np.ndarray | None = field(default=None, repr=False)
     sample_tilt_mrad: tuple[float, float] | None = None
     depth_spread_nm: float | None = None
+    column_effect: float | None = None
 
 
 @dataclass
@@ -157,7 +175,8 @@ class RotationBranches:
     kept : int
         Index of the branch the session holds; the chosen one unless a given rotation was kept.
     decided_by : {"columns", "phase_tail"}
-        ``"columns"`` when the column test was decisive on either branch, else ``"phase_tail"`` (``phase_skewness``).
+        ``"columns"`` when the column test was decisive on either branch (``|z| >= COLUMN_Z_MIN`` and
+        ``|effect| >= COLUMN_EFFECT_MIN``), else ``"phase_tail"`` (``phase_skewness``).
     """
     branches: tuple[RotationBranch, RotationBranch]
     columns: np.ndarray | None
@@ -185,13 +204,15 @@ class RotationBranches:
         """One line: the branch kept and the test that decided it."""
         chosen, other = self.branches[self.chosen], self.branches[1 - self.chosen]
         if self.decided_by == "columns":
-            evidence = (f"atomic columns positive (z {_signed(chosen.column_z, 1)}, "
-                        f"{chosen.column_positive_fraction:.0%} of {self.num_columns} columns); "
+            evidence = (f"atomic columns positive (z {_signed(chosen.column_z, 1)}, effect "
+                        f"{_signed(chosen.column_effect, 2)}, {chosen.column_positive_fraction:.0%} of "
+                        f"{self.num_columns} columns); "
                         f"{other.scan_detector_rotation_deg:.1f}° "
                         + ("negative" if (other.column_z or 0.0) < 0 else f"z {_signed(other.column_z, 1)}"))
             choice = f"{chosen.scan_detector_rotation_deg:.1f}°: {evidence}"
         else:
-            reason = (f"columns not resolved (z {_signed(chosen.column_z, 1)})" if self.num_columns else
+            reason = (f"columns not decisive (z {_signed(chosen.column_z, 1)}, effect "
+                      f"{_signed(chosen.column_effect, 2)})" if self.num_columns else
                       "no atomic columns located on a dark-field image")
             choice = (f"{chosen.scan_detector_rotation_deg:.1f}° by the phase tail "
                       f"(S {_signed(chosen.phase_skewness, 2)} over {_signed(other.phase_skewness, 2)}); {reason}")
@@ -219,6 +240,7 @@ class RotationBranches:
             row.update({
                 "loss": branch.loss,
                 "column z": branch.column_z,
+                "column effect": branch.column_effect,
                 "positive columns (%)": None if branch.column_positive_fraction is None
                 else 100.0 * branch.column_positive_fraction,
                 "phase tail S": branch.phase_skewness,
@@ -277,6 +299,7 @@ class RotationBranches:
                 fractions = np.histogram(sampled[index], bins=edges)[0] / sampled[index].size
                 column_axis.plot(centres, fractions, linewidth=1.4, drawstyle="steps-mid", **styles[index],
                                  label=f"{branch.scan_detector_rotation_deg:.1f}° · z = {_signed(branch.column_z, 1)} · "
+                                       f"effect {_signed(branch.column_effect, 2)} · "
                                        f"{branch.column_positive_fraction:.0%} > 0")
             column_axis.axvline(0.0, color="0.5", linewidth=0.6)
             column_axis.set(xlim=(-1e3 * limit, 1e3 * limit), ylim=(0, None),
@@ -300,6 +323,7 @@ class RotationBranches:
             "branches": [{
                 "scan_detector_rotation_deg": branch.scan_detector_rotation_deg, "aberrations": branch.aberrations,
                 "loss": branch.loss, "phase_skewness": branch.phase_skewness, "column_z": branch.column_z,
+                "column_effect": branch.column_effect,
                 "column_positive_fraction": branch.column_positive_fraction,
                 "sample_tilt_mrad": branch.sample_tilt_mrad, "depth_spread_nm": branch.depth_spread_nm,
             } for branch in self.branches],
@@ -325,6 +349,7 @@ class RotationBranches:
                 phase=np.asarray(arrays["rotation_branch_phases"][index]),
                 column_phases=None if columns is None else np.asarray(arrays["rotation_branch_column_phases"][index]),
                 sample_tilt_mrad=None if tilt is None else tuple(tilt), depth_spread_nm=saved.get("depth_spread_nm"),
+                column_effect=saved.get("column_effect"),
             ))
         return cls(branches=tuple(branches), columns=columns, chosen=int(record["chosen"]), kept=int(record["kept"]),
                    decided_by=record["decided_by"])
@@ -335,7 +360,7 @@ def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> 
 
     ``fits`` are SSB results whose phase is the native-sampling reconstruction. ``dark_field`` is the same scan's
     dark-field image, or None when the session has none; then, or when the column test is not decisive on either
-    branch, the larger ``phase_skewness`` decides. ``keep_first`` keeps the first branch whatever the evidence says
+    branch (``|z| >= COLUMN_Z_MIN`` and ``|effect| >= COLUMN_EFFECT_MIN``), the larger ``phase_skewness`` decides. ``keep_first`` keeps the first branch whatever the evidence says
     (a rotation the user gave), and the result still says which branch the evidence selects.
     """
     phases = [host_array(fit.phase).astype(np.float32) for fit in fits]
@@ -352,9 +377,11 @@ def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> 
             column_z=z, column_positive_fraction=positive, phase=phase,
             column_phases=None if sampled is None else sampled.astype(np.float32),
             sample_tilt_mrad=fit.sample_tilt_mrad, depth_spread_nm=fit.depth_spread_nm,
+            column_effect=None if z is None else z / math.sqrt(sampled.size),
         ))
     scores = [branch.column_z for branch in branches]
-    if any(z is not None and abs(z) >= COLUMN_Z_MIN for z in scores):
+    if any(branch.column_z is not None and abs(branch.column_z) >= COLUMN_Z_MIN
+           and abs(branch.column_effect) >= COLUMN_EFFECT_MIN for branch in branches):
         decided_by = "columns"
         chosen = int(np.argmax([-math.inf if z is None else z for z in scores]))
     else:

@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("scipy")
 
 from quantem.gpu.ssb.branches import (
+    COLUMN_EFFECT_MIN,
     COLUMN_Z_MIN,
     RotationBranches,
     column_filter_px,
@@ -18,14 +19,13 @@ from quantem.gpu.ssb.branches import (
 from quantem.gpu.ssb.results import column_sign, phase_skewness
 
 
-def _lattice(n=96, period_px=8, width_px=1.2, shift=0):
-    """Gaussian columns on a square lattice of ``period_px`` pixels, offset by ``shift`` pixels."""
-    rows, cols = np.indices((n, n))
-    image = np.zeros((n, n))
-    for row in range(period_px // 2 + shift, n, period_px):
-        for col in range(period_px // 2 + shift, n, period_px):
-            image += np.exp(-((rows - row) ** 2 + (cols - col) ** 2) / (2 * width_px**2))
-    return image
+def _lattice(n=96, period_px=12, width_px=1.5):
+    """Gaussian columns of unit height on a square lattice of ``period_px`` pixels, sites at period / 2."""
+    from scipy.ndimage import gaussian_filter
+
+    sites = np.zeros((n, n))
+    sites[period_px // 2::period_px, period_px // 2::period_px] = 2 * np.pi * width_px**2
+    return gaussian_filter(sites, width_px, mode="wrap")
 
 
 def test_phase_skewness_is_the_mean_centred_third_moment_ratio():
@@ -42,19 +42,22 @@ def test_phase_skewness_is_the_mean_centred_third_moment_ratio():
 
 
 def test_filters_follow_the_scan_step():
-    """1.3 Å window and 2.1 Å high pass: 5 x 5 and 8 pixels at 0.264 Å, 3 x 3 and 4.2 pixels at 0.5 Å."""
+    """2 Å peak separation and 2.1 Å high pass: 17 x 17 and 8 pixels at 0.264 Å, 9 x 9 and 4.2 pixels at 0.5 Å."""
     sigma, window = column_filter_px(0.264)
-    assert window == (5, 5) and sigma[0] == pytest.approx(7.95, abs=0.01)
+    assert window == (17, 17) and sigma[0] == pytest.approx(7.95, abs=0.01)
     sigma, window = column_filter_px((0.5, 0.25))
-    assert window == (3, 5) and sigma == pytest.approx((4.2, 8.4))
+    assert window == (9, 17) and sigma == pytest.approx((4.2, 8.4))
 
 
-def test_columns_are_the_dark_field_maxima():
+def test_columns_are_the_most_prominent_lattice_maxima():
+    """The top 20% of the maxima at least 2 Å apart: lattice sites only, and noise between them never counts."""
     dark_field = _lattice() + np.random.default_rng(0).normal(scale=0.02, size=(96, 96))
     columns = locate_atomic_columns(dark_field, scan_sampling_A=0.264)
-    assert len(columns) == 12 * 12
-    assert set(np.unique(columns % 8)) == {4}
+    assert 0.15 * 64 <= len(columns) <= 0.3 * 64
+    assert set(np.unique(columns % 12)) == {6}
     assert len(locate_atomic_columns(np.ones((32, 32)), scan_sampling_A=0.264)) == 0
+    # noise alone at a coarse step gives tens of columns, not thousands
+    assert len(locate_atomic_columns(np.random.default_rng(1).normal(size=(512, 512)), scan_sampling_A=0.5)) < 1000
 
 
 def test_column_z_is_the_mean_over_its_standard_error():
@@ -62,7 +65,7 @@ def test_column_z_is_the_mean_over_its_standard_error():
     columns = locate_atomic_columns(_lattice(), scan_sampling_A=0.264)
     sampled, z, positive = column_phase_test(phase, columns, scan_sampling_A=0.264)
     assert z == pytest.approx(sampled.mean() / (sampled.std() / np.sqrt(sampled.size)))
-    assert z > 20 and positive == 1.0
+    assert z > 10 and positive == 1.0
     _, negative_z, negative = column_phase_test(-phase, columns, scan_sampling_A=0.264)
     assert negative_z == pytest.approx(-z) and negative == 0.0
     assert column_phase_test(phase, columns[:2], scan_sampling_A=0.264)[1] is None
@@ -86,7 +89,27 @@ def test_columns_decide_before_the_phase_tail():
     assert branches.decided_by == "columns" and branches.kept == branches.chosen == 1
     assert branches.branches[1].column_z >= COLUMN_Z_MIN
     assert branches.summary.startswith("kept 339.4°: atomic columns positive (z +")
+    assert branches.branches[1].column_effect >= COLUMN_EFFECT_MIN
     assert branches.summary.endswith("; 159.4° negative.")
+
+
+def test_a_small_effect_over_many_columns_is_not_decisive():
+    """z >= 3 from thousands of columns with a shift of a tenth of their spread leaves the choice to the phase tail."""
+    rng = np.random.default_rng(7)
+    columns_image = _lattice(n=1200)
+    columns = locate_atomic_columns(columns_image, scan_sampling_A=0.264)
+    noise = rng.normal(size=columns_image.shape)
+    sampled, _, _ = column_phase_test(noise, columns, scan_sampling_A=0.264)
+    shift = np.zeros_like(noise)
+    shift[columns[:, 0], columns[:, 1]] = 0.1 * sampled.std() - sampled.mean()
+    phase = noise + shift
+    _, z, _ = column_phase_test(phase, columns, scan_sampling_A=0.264)
+    assert z >= COLUMN_Z_MIN
+    branches = compare_branches([_fit(0.0, phase), _fit(180.0, -phase)], dark_field=columns_image,
+                                scan_sampling_A=0.264, keep_first=False)
+    assert abs(branches.branches[0].column_effect) < COLUMN_EFFECT_MIN
+    assert branches.decided_by == "phase_tail"
+    assert "columns not decisive" in branches.summary
 
 
 def test_unresolved_columns_fall_back_to_the_phase_tail():
@@ -96,7 +119,7 @@ def test_unresolved_columns_fall_back_to_the_phase_tail():
     branches = compare_branches([_fit(170.7, -phase), _fit(350.7, phase)], dark_field=dark_field,
                                 scan_sampling_A=0.5, keep_first=False)
     assert branches.decided_by == "phase_tail" and branches.chosen == 1
-    assert "kept 350.7° by the phase tail (S +" in branches.summary and "columns not resolved" in branches.summary
+    assert "kept 350.7° by the phase tail (S +" in branches.summary
     without = compare_branches([_fit(170.7, -phase), _fit(350.7, phase)], dark_field=None,
                                scan_sampling_A=0.5, keep_first=False)
     assert without.decided_by == "phase_tail" and without.columns is None and without.chosen == 1
