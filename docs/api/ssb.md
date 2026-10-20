@@ -46,8 +46,8 @@ rotation can produce; it is estimated with the angle, or False when an angle is
 given. Reported centers stay in the original detector axes. Give a calibrated
 angle to skip the estimate: `SSB(data, scan_detector_rotation_deg=12.3)`.
 
-`reconstruct()` fits the aberrations with `find_aberrations()` defaults when the
-session has none, then reuses them. Call `find_aberrations(...)` first to
+`reconstruct()` fits the aberrations with `find_aberrations()` defaults (the
+tilt-corrected joint fit) when the session has none, then reuses them. Call `find_aberrations(...)` first to
 constrain the fit: `search_ranges`, `fixed_aberrations`, `tilt=True`, `seed`.
 The joint fit takes a `C10_nm` range or value and a `C12_nm` range from 0, or
 holds `C12_nm=0`:
@@ -212,8 +212,10 @@ result = ssb.reconstruct(aberrations, save_dir="results/native")
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
-`tilt=True` jointly estimates specimen tilt and model depth spread as well as
-aberrations. Omit it for the standard aberration search.
+SSB here is tilt-corrected: `find_aberrations()` (`tilt=True`, the default)
+jointly estimates specimen tilt and model depth spread as well as aberrations,
+and so does the automatic fit of `reconstruct()`. Pass `tilt=False` for the
+standard aberration search of ordinary SSB.
 Keep `ssb` open for the examples below and call `ssb.close()` when finished.
 
 Measure conditional focus–depth and tilt objective slices while the same SSB
@@ -387,9 +389,10 @@ steps:
    over a flatter background.
 
 One line says which branch was kept and why, for example
-`SSB: kept 339.4°: atomic columns positive (z +26.6, 70% of 2696 columns); 159.4° negative.`
-The comparison costs a second full search: about 2 × 26 s for a 512 × 512
-scan on an M-series Mac.
+`SSB: kept 339.4°: atomic columns positive (z +9.0, 62% of 2696 columns); 159.4° negative.`
+The comparison costs a second full search: two joint fits took 9 to 25 s in
+all on 512 × 512 scans on an M-series Mac, two standard fits (`tilt=False`)
+about 2 × 26 s.
 
 ```python
 branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one
@@ -628,14 +631,14 @@ implementation, not absolute phase accuracy.
 Standard SSB treats the sample as one thin plane. In a crystal a few nanometres
 thick that leans by a few milliradians, each atomic column walks sideways with
 depth (5 mrad over 10 nm is 0.5 A), which blurs the lattice along the tilt.
-`find_aberrations(tilt=True)` fits the aberrations together with the sample tilt and a depth
-spread, in one search with the same trial budget as the standard fit:
+`find_aberrations()` (`tilt=True`, the default) fits the aberrations together with the sample tilt and a depth
+spread, in one search with the same trial budget as the standard fit (`tilt=False`):
 
 ```python
 import pandas as pd
 
-standard = ssb.find_aberrations()         # C10_nm, C12_nm, phi12_deg
-tilted = ssb.find_aberrations(tilt=True)   # + specimen tilt and depth spread, jointly
+standard = ssb.find_aberrations(tilt=False)  # C10_nm, C12_nm, phi12_deg
+tilted = ssb.find_aberrations()              # + specimen tilt and depth spread, jointly
 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness

@@ -100,7 +100,7 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         assert isinstance(native, cp.ndarray)
         np.testing.assert_array_equal(cp.asnumpy(native).astype(np.float32), host)
     with SSB(acquisition, **SETTINGS) as standard, pytest.raises(ValueError, match="newton"):
-        standard.find_aberrations(refinement="newton", verbose=False)
+        standard.find_aberrations(tilt=False, refinement="newton", verbose=False)
 
 
 
