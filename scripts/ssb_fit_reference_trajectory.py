@@ -50,12 +50,12 @@ def _reference_input(root: Path):
             else meta["rotation_angle_deg"]
         ),
     }
-    if calibration.get("schema") == "quantem.ssb-browser-calibration/2":
+    if calibration.get("schema") == "quantem.ssb-browser-calibration/3":
         yield source, meta, options
         return
     # Only the known frozen archive layout is mapped; no calibration is fitted.
     current = {
-        "schema": "quantem.ssb-browser-calibration/2",
+        "schema": "quantem.ssb-browser-calibration/3",
         "bright_field_rows": calibration["bf_rows"],
         "bright_field_cols": calibration["bf_cols"],
         "bright_field_center_px": calibration["bf_center"],

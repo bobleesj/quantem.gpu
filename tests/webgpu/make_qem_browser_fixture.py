@@ -146,7 +146,7 @@ def generate_ssb(directory: Path) -> None:
     save_array(directory / "ssb-full.qem", full_counts,
                metadata={"valid_pixels": valid}, chunk_scans=1024)
     calibration = {
-        "schema": "quantem.ssb-browser-calibration/2",
+        "schema": "quantem.ssb-browser-calibration/3",
         "num_bright_field_pixels": len(rows), "g_shape": [len(rows), size, size],
         "wavelength_A": wavelength, "semiangle_mrad": (radius + 0.25) * angular_sampling * 1e3,
         "detector_sampling_mrad": [angular_sampling * 1e3] * 2,

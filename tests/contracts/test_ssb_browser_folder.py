@@ -1,7 +1,7 @@
 """MPS SSB reads the bright-field columns of a ShowPtycho folder exactly as quantem.widget writes it.
 
 ``ShowPtycho.export`` (quantem.widget ``showptycho/export.py``) writes ``snapshots/cal.json`` as
-``quantem.ssb-browser-calibration/2``, ``snapshots/manifest.json`` as ``quantem.ssb-browser-folder/3`` and the
+``quantem.ssb-browser-calibration/3``, ``snapshots/manifest.json`` as ``quantem.ssb-browser-folder/3`` and the
 counts under ``source/``. The fixture below is that layout written by hand, every key the widget writes included.
 """
 
@@ -15,7 +15,7 @@ from quantem.gpu.ssb.mps.frames import load_bf_columns_mps
 COLUMNS = np.arange(3 * 16, dtype=np.uint8).reshape(3, 16)
 
 
-def write_widget_folder(folder, *, schema="quantem.ssb-browser-calibration/2", scan_region=(2, 6, 1, 5)):
+def write_widget_folder(folder, *, schema="quantem.ssb-browser-calibration/3", scan_region=(2, 6, 1, 5)):
     """A ShowPtycho folder of a 4 x 4 crop at rows 2:6, cols 1:5 of a 8 x 8 scan, three bright-field pixels."""
     (folder / "source").mkdir(parents=True)
     (folder / "snapshots").mkdir()
@@ -53,7 +53,7 @@ def write_widget_folder(folder, *, schema="quantem.ssb-browser-calibration/2", s
         "scan_detector_rotation_deg": 197.0,
         "scan_detector_rotation_flipped": False,
         "aberrations": {"C10_nm": -10.0, "C12_nm": 0.4, "phi12_deg": 30.0},
-        "flip_phase": False,
+        "display_negate_phase": False,
         "dc_value": [376.0, 0.0],
         "gpu_memory_gb": 4.5,
         "source_transport": "bf_columns",
@@ -109,10 +109,10 @@ def test_transposing_exact_columns_preserves_counts_and_original_coordinates(tmp
     np.testing.assert_array_equal(restored.columns([1, 0], [2, 1]), COLUMNS[[2, 0]])
 
 
-@pytest.mark.parametrize("schema", ["quantem.ssb-calibration/2", "quantem.ssb-browser-calibration/1", None])
+@pytest.mark.parametrize("schema", ["quantem.ssb-calibration/2", "quantem.ssb-browser-calibration/2", None])
 def test_another_calibration_layout_is_refused_by_name(tmp_path, schema):
     write_widget_folder(tmp_path / "showptycho", schema=schema)
-    with pytest.raises(ValueError, match="quantem.ssb-browser-calibration/2"):
+    with pytest.raises(ValueError, match="quantem.ssb-browser-calibration/3"):
         load_bf_columns_mps(tmp_path / "showptycho")
 
 

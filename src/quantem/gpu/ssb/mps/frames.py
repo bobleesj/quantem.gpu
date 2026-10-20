@@ -31,7 +31,9 @@ from quantem.gpu.ssb.mps.hardware import require_mlx
 # 2: keys follow the shared vocabulary (bright_field_rows, bright_field_cols, bright_field_center_px,
 #    bright_field_radius_px, detector_sampling_mrad), scan_region is [row_start, row_stop, col_start, col_stop]
 #    and scan_shape is [rows, cols]; earlier exports wrote bf_* keys and a scan_region object.
-BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/2"
+# 3: the display-only phase negation is display_negate_phase (flip_phase before), and scan_detector_rotation_flipped
+#    is part of the layout.
+BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/3"
 
 
 def find_bf_columns(
