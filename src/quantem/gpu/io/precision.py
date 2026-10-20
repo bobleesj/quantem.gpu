@@ -30,7 +30,6 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.hdf5.cuda.decode import decompress_prepared
 from quantem.gpu.io.hdf5.write import H5Writer, wait_for_saves
 from quantem.gpu.io.inspect import inspect
-from quantem.gpu.resident import precision as conversion
 from quantem.gpu.resident.cuda import precision as cuda
 from quantem.gpu.resident.float_ans import MAX_DECODE_BYTES, FloatANSResident
 from quantem.gpu.resident.mps import precision as metal
@@ -453,43 +452,21 @@ class _Source:
             self.decoder = None
 
 
-def _range(source):
-    """Measure the entire source range with bounded accelerator reductions."""
-    if source.backend == "mps":
-        return metal.source_range(source.blocks(), source.saved)
-    low, high = math.inf, -math.inf
-    for block in source.blocks():
-        values = conversion.restore(block, source.saved, source.backend)
-        if bool(cp.any(~cp.isfinite(values)).get()):
-            raise ValueError(
-                "Precision conversion requires finite intensities; preserve this source as float32."
-            )
-        low = min(low, float(values.min().get()))
-        high = max(high, float(values.max().get()))
-    return low, high
-
-
-def _new_report(source, storage, limits=None):
-    """Start a conversion report: storage, intensity range, calibration and zeroed error counters.
-
-    ``source`` is a ``_Source``, or a Torch MPS tensor saved directly, whose
-    ``limits`` the caller measures.
-    """
-    low, high = _range(source) if limits is None else limits
-    saved = source.saved if isinstance(source, _Source) else None
+def _new_report(source, limits):
+    """Start a scaled-uint16 conversion report: intensity range, calibration and zeroed error counters."""
+    low, high = limits
+    saved = source.saved
     report = {
         "version": 1,
-        "storage": storage,
+        "storage": "scaled_uint16",
         "source_dtype": "float32"
         if saved and saved["storage"] == "scaled_uint16"
         else str(np.dtype(str(source.dtype).removeprefix("torch."))),
         "source_shape": list(source.shape),
         "intensity_min": low,
         "intensity_max": high,
-        "scale": (high - low) / 65535
-        if storage == "scaled_uint16" and high != low
-        else 1.0,
-        "offset": low if storage == "scaled_uint16" else 0.0,
+        "scale": (high - low) / 65535 if high != low else 1.0,
+        "offset": low,
         "values": 0,
         "squared_error": 0.0,
         "max_abs_error": 0.0,
@@ -504,7 +481,7 @@ def _new_report(source, storage, limits=None):
     }
     # A generated source may describe what its values are, such as a merge;
     # report_context is an optional field of the generated-source contract.
-    if isinstance(source, _Source) and source.generated:
+    if source.generated:
         context = getattr(source.array, "report_context", None)
         if context is not None:
             report.update(dict(context))
@@ -636,10 +613,12 @@ def _load_regional(source, scan_region, detector_region, verbose, pack, resident
 
 def _convert_region(source, block):
     """Measure and encode one region on its source accelerator."""
-    original = conversion.restore(block, None, source.backend)
     if source.backend == "mps":
-        limits = metal.source_range([original], None)
+        original = metal.restore(block, None) if isinstance(block, MetalArray) else metal.tensor_restore(block, None)
+        limits = metal.source_range([original])
     else:
+        original = block if isinstance(block, cp.ndarray) else cp.from_dlpack(block.detach())
+        original = original.astype(cp.float32, copy=False)
         # One host copy for both limits; a region's calibration needs them
         # before its codes can be produced, so this sync cannot be deferred.
         low, high = (float(value) for value in cp.stack([original.min(), original.max()]).get())
@@ -648,7 +627,7 @@ def _convert_region(source, block):
                 "Precision conversion requires finite intensities; preserve float32."
             )
         limits = low, high
-    report = _new_report(source, "scaled_uint16", limits)
+    report = _new_report(source, limits)
     report.update(version=2, range_scope="region")
     if source.backend == "mps":
         encoded = metal.encode_measure(original, report)
