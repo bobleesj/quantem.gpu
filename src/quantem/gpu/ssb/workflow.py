@@ -26,7 +26,7 @@ from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io import metadata_display as labels
 from quantem.gpu.io.metadata_display import calibration_rows
 from quantem.gpu.io.representation import DataRepresentation
-from quantem.gpu.optics.physics import wrap_degrees
+from quantem.gpu.optics.physics import wavelength_A_from_kV, wrap_degrees
 from quantem.gpu.ssb import series
 from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.brightfield import crop_bright_field
@@ -230,6 +230,22 @@ def _opposite_branch_bounds(bounds: dict[str, object]) -> dict[str, object]:
     return opposite
 
 
+def _recorded_detector_sampling_mrad(metadata: dict[str, object], voltage_kV: float) -> tuple[float, float] | None:
+    """The acquisition's recorded detector sampling in mrad per pixel, (row, col), or None.
+
+    ``detector_sampling_mrad`` as recorded, else ``detector_sampling_inv_A`` (1/Angstrom per pixel, what
+    ``data.calibration.detector_sampling_inv_A = ...`` sets) times the electron wavelength at ``voltage_kV``:
+    an angle is ``lambda k``, so mrad per pixel = 1000 * lambda[A] * k[1/A].
+    """
+    if metadata.get("detector_sampling_mrad") is not None:
+        return sampling_pair("detector_sampling_mrad", metadata["detector_sampling_mrad"])
+    if metadata.get("detector_sampling_inv_A") is None:
+        return None
+    wavelength_A = wavelength_A_from_kV(voltage_kV)
+    row, col = sampling_pair("detector_sampling_inv_A", metadata["detector_sampling_inv_A"])
+    return (1e3 * wavelength_A * row, 1e3 * wavelength_A * col)
+
+
 def _announce_pixel_correction(provenance: dict[str, object] | None) -> None:
     """The one line ``SSB.open`` prints when it replaced flagged detector pixels before fitting."""
     correction = (provenance or {}).get("hot_pixel_correction")
@@ -314,7 +330,8 @@ class SSB:
         Detector sampling in mrad per pixel, (row, col), or one number for both axes. When omitted, ``semiangle_mrad`` divided by the radius in pixels at which
         the bright-field disk of the full-detector mean pattern falls to half its plateau (``disk_edge_radius``).
         A loaded dataset's recorded detector sampling takes priority over that
-        estimate; explicit keyword values take priority over metadata.
+        estimate (``detector_sampling_inv_A``, 1/Angstrom per pixel, is converted with the electron wavelength);
+        explicit keyword values take priority over metadata.
     aberrations : dict, optional
         Starting ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
     scan_detector_rotation_deg : float, optional
@@ -395,9 +412,11 @@ class SSB:
         metadata = {} if source_dataset is None else source_dataset.metadata
         voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
             metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
+        self._detector_sampling_recorded = False
         if source_dataset is not None:
             if detector_sampling_mrad is None:
-                detector_sampling_mrad = metadata.get("detector_sampling_mrad")
+                detector_sampling_mrad = _recorded_detector_sampling_mrad(metadata, voltage_kV)
+                self._detector_sampling_recorded = detector_sampling_mrad is not None
             if source_path is None:
                 source_path = metadata.get("source_path")
         self.scan_detector_rotation_source = "given"
@@ -582,6 +601,7 @@ class SSB:
                           "metadata": recorded["Metadata"]}.get(self.scan_detector_rotation_source, labels.DEFAULT)
             elif source == labels.NOT_RECORDED or (
                 name == "detector_sampling_mrad" and recorded["Unit"] != labels.CALIBRATION_UNITS[name]
+                and not self._detector_sampling_recorded
             ):
                 source = labels.ESTIMATED
             initial = self._calibration_initial[name]
@@ -711,7 +731,7 @@ class SSB:
             "scan_detector_rotation_deg": scan_detector_rotation_deg,
         }
         selected = resolve(backend)
-        rotation_estimated = rotation_recorded = False
+        rotation_estimated = rotation_recorded = detector_sampling_recorded = False
         crop_origin = (0, 0)
         owned = None
         source_detector_bin = 1
@@ -755,7 +775,8 @@ class SSB:
                 voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
                     loaded.metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
                 if detector_sampling_mrad is None:
-                    detector_sampling_mrad = loaded.metadata.get("detector_sampling_mrad")
+                    detector_sampling_mrad = _recorded_detector_sampling_mrad(loaded.metadata, voltage_kV)
+                    detector_sampling_recorded = detector_sampling_mrad is not None
                 if scan_detector_rotation_deg is None and loaded.metadata.get("scan_detector_rotation_deg") is not None:
                     scan_detector_rotation_deg = float(loaded.metadata["scan_detector_rotation_deg"])
                     if scan_detector_rotation_flipped is None:
@@ -815,6 +836,7 @@ class SSB:
             _announce_rotation(scan_detector_rotation_deg, scan_detector_rotation_flipped)
         _announce_pixel_correction(source_provenance)
         session._calibration_file = file_calibration
+        session._detector_sampling_recorded = detector_sampling_recorded
         session._calibration_supplied = {name for name, value in supplied.items() if value is not None}
         session._owned_dataset = owned
         session._crop_origin = crop_origin

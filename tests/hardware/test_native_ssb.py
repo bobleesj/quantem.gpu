@@ -214,3 +214,24 @@ def test_one_number_is_the_scan_step_on_both_axes_at_every_entry_point(tmp_path,
                 np.testing.assert_array_equal(one.preview(ABERRATIONS)[0], two.preview(ABERRATIONS)[0])
     with pytest.raises(ValueError, match="one number for both axes or a \\(row, col\\) pair"):
         SSB(counts, **{**scalar, "scan_sampling_A": (0.99, 0.99, 0.99)})
+
+
+def test_a_recorded_inverse_angstrom_detector_sampling_is_used(tmp_path, backend):
+    """data.calibration.detector_sampling_inv_A is converted with the wavelength, not replaced by the disk estimate.
+
+    Before 2026-10-20 SSB read only detector_sampling_mrad and fell back to the bright-field disk without a word.
+    """
+    from quantem.gpu.optics import wavelength_A_from_kV
+
+    counts = _counts(4)
+    master = _arina_master(tmp_path / "scan_master.h5", counts)
+    expected = 1e3 * wavelength_A_from_kV(300) * 0.028
+    settings = {"backend": backend, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": 0.99,
+                "scan_detector_rotation_deg": 0.0}
+    with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
+        loaded.calibration.detector_sampling_inv_A = 0.028
+        with SSB(loaded, **settings) as recorded, SSB(loaded, **settings, detector_sampling_mrad=expected) as given:
+            assert recorded.detector_sampling_mrad == pytest.approx((expected, expected), rel=1e-12)
+            row = recorded.calibration_table().loc["Detector step (row, col)"]
+            assert (row["File unit"], row["Unit used"], row["Source"]) == ("1/angstrom per pixel", "mrad per pixel", "Overridden")
+            np.testing.assert_array_equal(recorded.preview(ABERRATIONS)[0], given.preview(ABERRATIONS)[0])

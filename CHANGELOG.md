@@ -36,6 +36,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `SSB(data)` and `SSB.open` use a recorded `detector_sampling_inv_A`
+  (`data.calibration.detector_sampling_inv_A = ...`), converted to mrad per
+  pixel with the electron wavelength; it was ignored and the bright-field
+  disk estimate used instead, without a word.
 - Flagged detector pixels are announced: `io.load`'s load line names the
   setting that does the other thing (`4 bad pixels left as recorded
   (hot_pixel_correction="median" replaces them ...)`), and `SSB.open`, which
