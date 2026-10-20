@@ -48,7 +48,8 @@ def test_mps_tensor_matches_existing_array_input_without_download(dtype, monkeyp
     assert bool(torch.all(tensor.to(torch.float32) >= 0))
 
 
-def test_open_encoded_source_retains_mps_crop(tmp_path, monkeypatch):
+def test_open_encoded_source_keeps_mps_crop_encoded(tmp_path, monkeypatch):
+    """SSB.open keeps an integer MPS acquisition encoded and reads its bright-field columns without a volume download."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("mlx.core")
     if not torch.backends.mps.is_available():
@@ -56,6 +57,7 @@ def test_open_encoded_source_retains_mps_crop(tmp_path, monkeypatch):
     import h5py
     import hdf5plugin
     from quantem.gpu import SSB
+    from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop
 
     counts = _counts()
     source = tmp_path / "counts.h5"
@@ -72,8 +74,8 @@ def test_open_encoded_source_retains_mps_crop(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.Tensor, "cpu", no_volume_download)
     with SSB.open(str(source), backend="mps", voltage_kV=300, semiangle_mrad=30,
                   scan_sampling_A=(.99, .99), detector_sampling_mrad=(6., 6.), scan_shape=(128, 128)) as session:
-        assert torch.is_tensor(session._data)
-        assert session._data.device.type == "mps"
+        assert isinstance(session._data, EncodedBrightFieldCrop)
+        assert session._data.source is session._owned_dataset
         phase, loss = session.preview({"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": math.degrees(-.5)})
         assert phase.shape == (128, 128)
         assert np.isfinite(phase).all() and np.isfinite(loss)

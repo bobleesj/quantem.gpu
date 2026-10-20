@@ -119,28 +119,10 @@ def crop_bright_field(
     ``detector.fit_probe`` evaluated in float64; ``fit_probe``'s float32 would move the centre in its last bits and
     with it the pixels the session reads.
     """
-    mean_pattern = np.asarray(detector.mean(loaded) if mean_pattern is None else mean_pattern, dtype=np.float64)
-    # The calibration reads the full detector: the crop below cuts the disk edge off.
-    calibration_radius = disk_edge_radius(mean_pattern) if calibrate_detector else None
-    if bright_field_radius_px is None:
-        disk = mean_pattern > mean_pattern.mean() + mean_pattern.std()
-        total = int(disk.sum())
-        if total == 0:
-            raise ValueError("No bright-field disk found in the mean diffraction pattern.")
-        rows, cols = np.nonzero(disk)
-        center = (float(rows.mean()), float(cols.mean()))
-        radius = math.sqrt(total / math.pi)
-    else:
-        rows, cols = np.nonzero(mean_pattern > mean_pattern.max() * float(threshold))
-        weights = mean_pattern[rows, cols]
-        center = (float((rows * weights).sum() / weights.sum()), float((cols * weights).sum() / weights.sum()))
-        radius = float(bright_field_radius_px)
-    if bright_field_center_px is not None:
-        center = tuple(float(value) for value in bright_field_center_px)
-    det_rows, det_cols = mean_pattern.shape
-    # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
-    row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
-    row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)
+    center, radius, calibration_radius, (row0, row1, col0, col1), mean_pattern = bright_field_crop_region(
+        loaded, threshold, bright_field_radius_px, calibrate_detector=calibrate_detector,
+        bright_field_center_px=bright_field_center_px, mean_pattern=mean_pattern,
+    )
     if backend == "mps" and loaded.dtype == np.dtype("float64"):
         from quantem.gpu.resident.mps.float64_display import float32_view
 
@@ -184,3 +166,42 @@ def crop_bright_field(
             else:
                 counts = torch.where(mask, counts, 0)
     return counts, center, radius, calibration_radius, (row0, col0), mean_pattern
+
+
+def bright_field_crop_region(
+    loaded: Dataset4dstemGPU,
+    threshold: float,
+    bright_field_radius_px: float | None,
+    *,
+    calibrate_detector: bool = False,
+    bright_field_center_px: tuple[float, float] | None = None,
+    mean_pattern=None,
+):
+    """The bright-field disk ``crop_bright_field`` finds and the detector rectangle it decodes, without decoding it.
+
+    Returns the disk centre and radius in full-detector pixels, the calibration radius (None unless
+    ``calibrate_detector``), the crop ``(row_start, row_stop, col_start, col_stop)`` and the float64 mean pattern.
+    """
+    mean_pattern = np.asarray(detector.mean(loaded) if mean_pattern is None else mean_pattern, dtype=np.float64)
+    # The calibration reads the full detector: the crop below cuts the disk edge off.
+    calibration_radius = disk_edge_radius(mean_pattern) if calibrate_detector else None
+    if bright_field_radius_px is None:
+        disk = mean_pattern > mean_pattern.mean() + mean_pattern.std()
+        total = int(disk.sum())
+        if total == 0:
+            raise ValueError("No bright-field disk found in the mean diffraction pattern.")
+        rows, cols = np.nonzero(disk)
+        center = (float(rows.mean()), float(cols.mean()))
+        radius = math.sqrt(total / math.pi)
+    else:
+        rows, cols = np.nonzero(mean_pattern > mean_pattern.max() * float(threshold))
+        weights = mean_pattern[rows, cols]
+        center = (float((rows * weights).sum() / weights.sum()), float((cols * weights).sum() / weights.sum()))
+        radius = float(bright_field_radius_px)
+    if bright_field_center_px is not None:
+        center = tuple(float(value) for value in bright_field_center_px)
+    det_rows, det_cols = mean_pattern.shape
+    # one pixel of margin beyond the disk so float rounding of the centre never drops an edge pixel
+    row0, col0 = max(0, math.floor(center[0] - radius) - 1), max(0, math.floor(center[1] - radius) - 1)
+    row1, col1 = min(det_rows, math.ceil(center[0] + radius) + 2), min(det_cols, math.ceil(center[1] + radius) + 2)
+    return center, radius, calibration_radius, (row0, row1, col0, col1), mean_pattern

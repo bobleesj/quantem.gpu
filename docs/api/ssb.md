@@ -78,11 +78,16 @@ bright-field crop.
 `SSB.open` uses the canonical `io.load` path, including its ANS-only GPU
 acquisition policy.
 
-`SSB.open` owns the acquisition it loads. For fit-sized scans it decodes the
-bright-field crop and releases the acquisition; large CUDA integer sources stay
-encoded until `close()` or context-manager exit. `SSB(data, ...)` borrows the caller-owned dataset or array and never
-releases it; `close()` frees only the session's own crop and Fourier data.
-Encoded inputs decode only the bright-field evidence needed by the session.
+`SSB.open` owns the acquisition it loads. On CUDA, for fit-sized scans, it
+decodes the bright-field crop and releases the acquisition; large CUDA integer
+sources stay encoded until `close()` or context-manager exit. On MPS, integer
+acquisitions stay encoded until `close()`: the session decodes their
+bright-field columns a few scan rows at a time while it builds G(q, k) and
+keeps only G(q, k), so a 512 x 512 scan holds no decoded copy of its crop.
+`SSB(data, ...)` borrows the caller-owned dataset or array and never releases
+it; on MPS keep the dataset open while the session is in use. `close()` frees
+only the session's own crop and Fourier data. Encoded inputs decode only the
+bright-field evidence needed by the session.
 Treat detector values as fixed for the lifetime of a session: SSB retains their
 prepared Fourier data. After editing the array, construct a new `SSB` session.
 SSB Fourier-stack preparation and reconstruction are additional work; they

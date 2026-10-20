@@ -445,14 +445,288 @@ class MpsBfColumnFrames:
         return out
 
 
+class EncodedBrightFieldCrop:
+    """The bright-field crop of an encoded acquisition, left encoded: what ``crop_bright_field`` decodes, never decoded whole.
+
+    It stands in an SSB session where the decoded crop stood, with the same 4D shape (scan rows, scan columns, crop
+    rows, crop columns), dtype and counts (invalid detector pixels read 0). MPS SSB reads its bright-field columns from
+    the encoded source a few scan rows at a time, only while it builds G(q, k) (``EncodedBrightFieldFrames``), so a
+    512 x 512 scan holds no 6 GB decoded copy. Slicing the scan axes (``crop[r0:r1, c0:c1]``) or swapping the
+    detector axes returns another view of the same source. The source must stay open while a session reads it.
+    """
+
+    ndim = 4
+
+    def __init__(self, source, detector_region, *, scan_region=None, flipped=False):
+        import torch
+
+        self.source = source
+        self.detector_region = tuple(int(value) for value in detector_region)
+        rows, cols = (int(size) for size in source.shape[:2])
+        self.scan_region = (0, rows, 0, cols) if scan_region is None else tuple(int(value) for value in scan_region)
+        self.flipped = bool(flipped)
+        row0, row1, col0, col1 = self.detector_region
+        valid = getattr(source.data, "valid_pixels", None)
+        # read() returns stored values at invalid pixels; the decoded crop held 0 there, and so does every column here
+        self.valid = (np.ones((row1 - row0, col1 - col0), bool) if valid is None
+                      else np.asarray(valid, bool)[row0:row1, col0:col1].copy())
+        # the dtype the decoded crop tensor had, so a session records the same source
+        self.dtype = getattr(torch, np.dtype(source.dtype).name)
+        self.device = torch.device("mps")
+
+    @property
+    def shape(self) -> tuple[int, int, int, int]:
+        row0, row1, col0, col1 = self.detector_region
+        detector = (row1 - row0, col1 - col0)
+        return (self.scan_region[1] - self.scan_region[0], self.scan_region[3] - self.scan_region[2],
+                *(detector[::-1] if self.flipped else detector))
+
+    @property
+    def nbytes(self) -> int:
+        """Bytes the crop would take decoded (it is not)."""
+        return int(np.prod(self.shape)) * np.dtype(self.source.dtype).itemsize
+
+    def __getitem__(self, key):
+        """The scan positions ``crop[row_start:row_stop, col_start:col_stop]``, still encoded."""
+        if not isinstance(key, tuple) or len(key) != 2 or not all(isinstance(part, slice) for part in key):
+            raise TypeError("An encoded bright-field crop selects scan positions only: crop[row_start:row_stop, col_start:col_stop].")
+        rows, cols = self.shape[:2]
+        (row_start, row_stop, row_step), (col_start, col_stop, col_step) = key[0].indices(rows), key[1].indices(cols)
+        if row_step != 1 or col_step != 1 or row_start >= row_stop or col_start >= col_stop:
+            raise ValueError("Select a nonempty, contiguous scan region.")
+        first_row, _, first_col, _ = self.scan_region
+        region = (first_row + row_start, first_row + row_stop, first_col + col_start, first_col + col_stop)
+        return EncodedBrightFieldCrop(self.source, self.detector_region, scan_region=region, flipped=self.flipped)
+
+    def swapaxes(self, first: int, second: int):
+        """The crop with its detector axes swapped (``swapaxes(-1, -2)``), as a flipped scan-detector convention reads it."""
+        if {int(first) % 4, int(second) % 4} != {2, 3}:
+            raise ValueError("An encoded bright-field crop swaps its two detector axes only.")
+        return EncodedBrightFieldCrop(self.source, self.detector_region, scan_region=self.scan_region,
+                                      flipped=not self.flipped)
+
+    def read_rows(self, row_start: int, row_stop: int, detector_region: tuple[int, int, int, int]):
+        """Counts of scan rows ``[row_start, row_stop)`` of the crop over ``detector_region`` (crop pixels, the
+        source's orientation), a ``(rows, cols, region_rows, region_cols)`` Torch MPS tensor with stored values at
+        invalid pixels."""
+        if getattr(self.source.data, "is_released", False):
+            raise RuntimeError(
+                "This SSB session reads its bright-field columns from the dataset it was given, which is closed. "
+                "Keep the dataset open while the session is in use."
+            )
+        first_row, _, first_col, last_col = self.scan_region
+        row0, _, col0, _ = self.detector_region
+        region_row0, region_row1, region_col0, region_col1 = detector_region
+        return self.source.read(
+            scan_region=(first_row + row_start, first_row + row_stop, first_col, last_col),
+            detector_region=(row0 + region_row0, row0 + region_row1, col0 + region_col0, col0 + region_col1),
+        )
+
+    def detector_total(self) -> np.ndarray:
+        """Exact uint64 sum of the crop's counts over its scan positions, invalid pixels 0, session orientation."""
+        from quantem.gpu import detector
+
+        row0, row1, col0, col1 = self.detector_region
+        session = detector.prepare(self.source)
+        try:
+            rows, cols = (int(size) for size in self.source.shape[:2])
+            if self.scan_region == (0, rows, 0, cols):
+                total = session.detector_total()
+            else:
+                first_row, last_row, first_col, last_col = self.scan_region
+                scans = np.arange(first_row, last_row)[:, None] * cols + np.arange(first_col, last_col)[None, :]
+                total = session.reduce_frames_exact(scans.reshape(-1))
+        finally:
+            session.close()
+        total = np.asarray(total)[row0:row1, col0:col1].astype(np.uint64)
+        total[~self.valid] = 0
+        return total.T.copy() if self.flipped else total
+
+    def scan_sums(self) -> np.ndarray:
+        """Exact uint64 sum of every pattern over the whole crop (invalid pixels 0), ``(rows, cols)``."""
+        from quantem.gpu import detector
+
+        row0, row1, col0, col1 = self.detector_region
+        mask = np.zeros(self.source.shape[2:], bool)
+        mask[row0:row1, col0:col1] = self.valid
+        session = detector.prepare(self.source)
+        try:
+            sums = np.asarray(session.masked_sum_exact(mask)).astype(np.uint64, copy=False)
+        finally:
+            session.close()
+        first_row, last_row, first_col, last_col = self.scan_region
+        return sums[first_row:last_row, first_col:last_col]
+
+
+class EncodedBrightFieldFrames:
+    """MPS SSB's column source over an ``EncodedBrightFieldCrop``: ``(positions, crop_row, crop_col)`` frames.
+
+    ``scan_row_blocks`` decodes a few scan rows of the requested pixels at a time, which is all the G(q, k) build
+    reads. A rectangular or too large scan is centred on the next supported square grid with its mean pattern, as
+    ``pad_scan`` pads decoded counts; the padded positions are never stored.
+    """
+
+    det_bin = 1
+    ndim = 3
+    # detector.mean recognizes chunk-backed MPS sources; the mean pattern divides the exact detector_sum
+    chunks = ()
+    # decoded counts per block of scan rows
+    block_bytes = 256 * 1024**2
+
+    def __init__(self, crop: EncodedBrightFieldCrop) -> None:
+        from quantem.gpu.ssb.mps.kernels import MPS_FFT_CONFIGS
+
+        self.crop = crop
+        rows, cols, *detector_shape = crop.shape
+        self.detector_shape = tuple(int(size) for size in detector_shape)
+        self.dtype = np.dtype(crop.source.dtype)
+        self._measured_total = crop.detector_total()
+        self.offset = (0, 0)
+        self._pattern = None
+        if rows == cols and rows <= max(MPS_FFT_CONFIGS):
+            self.scan_shape = (rows, cols)
+        else:
+            target = next((size for size in sorted(MPS_FFT_CONFIGS) if size >= max(rows, cols)), None)
+            if target is None:
+                raise ValueError(
+                    f"MPS SSB supports scans up to 1024x1024; got {rows}x{cols}. "
+                    "Select a region with at most 1024 positions per side."
+                )
+            self.scan_shape = (target, target)
+            self.offset = ((target - rows) // 2, (target - cols) // 2)
+            # pad_scan's integer mean: the exact total divided in float64, truncated to the counts' dtype
+            self._pattern = (self._measured_total.astype(np.float64) / (rows * cols)).astype(self.dtype)
+            print(
+                f"MPS SSB: padded the {rows}x{cols} scan to {target}x{target} with its "
+                "mean pattern for the Metal FFT. Every measured position is retained; "
+                "the phase covers the padded grid."
+            )
+        self.measured_shape = (rows, cols)
+        self.metadata = {"scan_shape": self.scan_shape}
+        self.shape = (int(np.prod(self.scan_shape)), *self.detector_shape)
+
+    @property
+    def nbytes(self) -> int:
+        return self.crop.nbytes
+
+    @property
+    def detector_sum(self) -> np.ndarray:
+        """Exact uint64 detector total over the (padded) scan grid."""
+        if self._pattern is None:
+            return self._measured_total
+        padded = int(np.prod(self.scan_shape)) - int(np.prod(self.measured_shape))
+        return self._measured_total + np.uint64(padded) * self._pattern.astype(np.uint64)
+
+    def rows_per_block(self, num_pixels: int, detector_pixels: int) -> int:
+        """Scan rows per decoded block: an even count, so every block starts on an even row (see ``prepare_selection``)."""
+        row_bytes = self.scan_shape[1] * max(int(num_pixels), int(detector_pixels)) * self.dtype.itemsize
+        return max(2, 2 * (int(self.block_bytes) // max(1, row_bytes) // 2))
+
+    def scan_row_blocks(self, rows, cols):
+        """Yield ``(row_start, row_stop, counts)`` over the scan grid: the counts of session-orientation pixels
+        ``(rows, cols)`` as a contiguous Torch MPS ``(block_rows x scan_cols, pixel)`` tensor, scan-major, holding the
+        source dtype's bits in a signed view (Torch lacks unsigned kernels), invalid pixels 0, padding filled.
+
+        Each block decodes its scan rows over the requested pixels' bounding detector rectangle only and is freed
+        before the next.
+        """
+        import torch
+
+        rows = np.asarray(rows, dtype=np.int64).reshape(-1)
+        cols = np.asarray(cols, dtype=np.int64).reshape(-1)
+        source_rows, source_cols = (cols, rows) if self.crop.flipped else (rows, cols)
+        region = (int(source_rows.min()), int(source_rows.max()) + 1, int(source_cols.min()), int(source_cols.max()) + 1)
+        region_width = region[3] - region[2]
+        flat = (source_rows - region[0]) * region_width + (source_cols - region[2])
+        index = torch.as_tensor(flat, dtype=torch.int64, device="mps")
+        invalid = np.flatnonzero(~self.crop.valid[source_rows, source_cols])
+        invalid = None if invalid.size == 0 else torch.as_tensor(invalid, dtype=torch.int64, device="mps")
+        signed = {1: torch.uint8, 2: torch.int16, 4: torch.int32}[self.dtype.itemsize]
+        pattern = None
+        if self._pattern is not None:
+            source_pattern = self._pattern.T if self.crop.flipped else self._pattern
+            pattern = torch.as_tensor(np.ascontiguousarray(source_pattern[source_rows, source_cols]).view(
+                {1: np.uint8, 2: np.int16, 4: np.int32}[self.dtype.itemsize]), device="mps")
+        measured_rows, measured_cols = self.measured_shape
+        top, left = self.offset
+        grid_cols = self.scan_shape[1]
+        step = self.rows_per_block(rows.size, (region[1] - region[0]) * region_width)
+        for row_start in range(0, self.scan_shape[0], step):
+            row_stop = min(self.scan_shape[0], row_start + step)
+            first, last = max(row_start, top), min(row_stop, top + measured_rows)
+            measured = None
+            if first < last:
+                counts = self.crop.read_rows(first - top, last - top, region)
+                counts = counts.reshape(-1, counts.shape[-2] * counts.shape[-1]).view(signed)
+                measured = counts.index_select(1, index)
+                del counts
+                if invalid is not None:
+                    measured[:, invalid] = 0
+            if pattern is None:
+                yield row_start, row_stop, measured
+                continue
+            block = pattern.expand(row_stop - row_start, grid_cols, rows.size).clone()
+            if measured is not None:
+                block[first - row_start:last - row_start, left:left + measured_cols] = measured.reshape(
+                    last - first, measured_cols, rows.size)
+            del measured
+            yield row_start, row_stop, block.reshape(-1, rows.size)
+
+    def columns_float32_into(self, rows, cols, out: np.ndarray) -> np.ndarray:
+        """Copy the requested columns as ``(BF, scan)`` float32 into ``out``, the column contract of every MPS source."""
+        out = np.asarray(out)
+        for row_start, row_stop, block in self.scan_row_blocks(rows, cols):
+            start, stop = row_start * self.scan_shape[1], row_stop * self.scan_shape[1]
+            out[:, start:stop] = block.cpu().numpy().view(self.dtype).T
+        return out
+
+
+def staged_tensor(mx, tensor, dtype):
+    """``tensor`` (Torch MPS) as an MLX array of ``dtype`` with the same bytes, copied on the GPU.
+
+    The MLX storage is a whole number of pages, which Metal needs to wrap it without a copy.
+    """
+    count = int(tensor.numel())
+    itemsize = np.dtype(str(dtype).removeprefix("mlx.core.")).itemsize
+    page = 16384 // itemsize
+    staged = mx.zeros((-(-count // page) * page,), dtype=dtype)
+    mx.eval(staged)
+    copy_tensor_into(tensor, np.asarray(staged))
+    return staged[:count].reshape(tuple(int(size) for size in tensor.shape))
+
+
+def copy_tensor_into(tensor, out: np.ndarray) -> np.ndarray:
+    """Copy a Torch MPS tensor's bytes into the start of ``out``, the host view of an MLX array, on the GPU."""
+    view = _mps_tensor_view(tensor)
+    if view.nbytes > out.nbytes:
+        raise ValueError(f"The tensor has {view.nbytes} bytes, more than the output's {out.nbytes}.")
+    target = metal_device().newBufferWithBytesNoCopy_length_options_deallocator_(
+        out, out.nbytes, metal_module().MTLResourceStorageModeShared, None,
+    )
+    if target is None:
+        raise RuntimeError("Metal could not wrap the MLX output; use a contiguous MLX array.")
+    try:
+        command = metal_queue().commandBuffer()
+        encoder = command.blitCommandEncoder()
+        encoder.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size_(view._mtl, 0, target, 0, view.nbytes)
+        encoder.endEncoding()
+        complete_command(command, "SSB MPS column transfer")
+    finally:
+        target.release()
+    return out
+
+
 def as_chunked_frames(data):
     """Return the column source MPS SSB reads for ``data``: BF-column frames as given, arrays and tensors wrapped.
 
     Integer MPS tensors are read in place through their Metal storage (``TensorChunkedFrames``); float tensors are
-    gathered with Torch (``MpsTensorFrames``); NumPy arrays through ``ArrayFrames``.
+    gathered with Torch (``MpsTensorFrames``); NumPy arrays through ``ArrayFrames``; an encoded bright-field crop
+    through ``EncodedBrightFieldFrames``.
     """
-    if isinstance(data, (MpsBfColumnFrames, ChunkedFrames, ArrayFrames, MpsTensorFrames)):
+    if isinstance(data, (MpsBfColumnFrames, ChunkedFrames, ArrayFrames, MpsTensorFrames, EncodedBrightFieldFrames)):
         return data
+    if isinstance(data, EncodedBrightFieldCrop):
+        return EncodedBrightFieldFrames(data)
     if isinstance(data, np.ndarray) and data.ndim in (3, 4):
         return ArrayFrames(data)
     import torch
@@ -463,7 +737,7 @@ def as_chunked_frames(data):
         return TensorChunkedFrames(data)
     raise TypeError(
         "MPS SSB reads a 3D/4D NumPy array or MPS tensor, or exact BF columns; "
-        "pass a loaded dataset to quantem.gpu.SSB, which decodes its bright-field crop."
+        "pass a loaded dataset to quantem.gpu.SSB, which reads its bright-field crop."
     )
 
 
@@ -586,7 +860,7 @@ def frames_scan_shape(frames) -> tuple[int, int]:
     A source that does not record one (3D frames) must hold a square scan, the
     only shape its frame count alone determines.
     """
-    if isinstance(frames, (MpsBfColumnFrames, ArrayFrames, MpsTensorFrames)):
+    if isinstance(frames, (MpsBfColumnFrames, ArrayFrames, MpsTensorFrames, EncodedBrightFieldFrames)):
         shape = frames.scan_shape
     elif isinstance(frames, ChunkedFrames):
         shape = frames.metadata.get("scan_shape")

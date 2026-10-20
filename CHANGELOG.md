@@ -16,6 +16,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   keeps the fit; a detector step set by hand wins.
 - `SSB(data)` and `SSB.open` read the recorded bright-field centre and detector step. With none recorded they
   estimate the step with the same rule and print one line naming it, instead of a silent "Pending probe fit".
+- On MPS, `SSB(data)` and `SSB.open` keep an integer acquisition encoded: the bright-field columns are decoded a
+  few scan rows at a time while G(q, k) is built, and G(q, k) is all the session keeps. A 512 x 512 scan with 8,939
+  bright-field pixels no longer holds a 6 GB decoded crop (twice) beside it; G(q, k) and every result are
+  bit-identical. Keep a dataset passed to `SSB(data)` open while the session is in use.
 
 - SSB is tilt-corrected by default: `find_aberrations()` (and the automatic fit
   of `reconstruct()`) fits the aberrations jointly with the sample tilt and
