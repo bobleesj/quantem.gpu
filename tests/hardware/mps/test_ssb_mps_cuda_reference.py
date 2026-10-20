@@ -326,7 +326,8 @@ def test_mps_numpy_session_exports_exact_columns_and_keeps_its_reconstruction(tm
     rows, cols = np.mgrid[:12, :12]
     counts[:, :, (rows - 5.5) ** 2 + (cols - 5.5) ** 2 <= 16] += 300   # counts above 255 keep the uint16 file
     aberrations = {"C10_nm": 5.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
-    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5)) as session:
+    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(0.5, 0.5),
+             scan_detector_rotation_deg=0.0) as session:
         before, before_loss = session.preview(aberrations)
         path, _seconds = session.export_brightfield(tmp_path / "bf")
         backend = session._backend()

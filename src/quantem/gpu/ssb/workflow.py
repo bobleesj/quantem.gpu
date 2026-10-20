@@ -101,6 +101,58 @@ def _browser_qem_source(data: object) -> dict[str, object] | None:
     }
 
 
+def _estimate_rotation(data, scan_shape, flipped: bool | None) -> tuple[float, bool]:
+    """Scan-detector rotation, known modulo 180 degrees, and whether it is flipped, from the centre-of-mass curl.
+
+    A thin phase object has a curl-free centre-of-mass field once the scan and detector axes agree. The curl cannot
+    tell an angle from the angle plus 180 degrees; ``find_aberrations`` settles that from the sign of the atom columns.
+    A given ``flipped`` is kept and only the angle is searched.
+    """
+    from quantem.gpu.dpc.workflow import _rotation_curl_scores, center_of_mass, find_optimal_rotation
+
+    try:
+        if isinstance(data, MpsBfColumnFrames):
+            com_row, com_col = _bright_field_center_of_mass(data)
+        else:
+            com_row, com_col = center_of_mass(data, scan_shape=scan_shape)
+    except (TypeError, ValueError, NotImplementedError) as exc:
+        raise ValueError(
+            "SSB could not estimate the scan-detector rotation from this input; pass "
+            "scan_detector_rotation_deg (and scan_detector_rotation_flipped) explicitly."
+        ) from exc
+    if flipped is None:
+        _, _, angle, flipped = find_optimal_rotation(com_row, com_col)
+    else:
+        angles = np.linspace(0, np.pi, 180, dtype=np.float32)
+        source = (com_col, com_row) if flipped else (com_row, com_col)
+        angle = float(angles[int(_rotation_curl_scores(*source, angles).argmin())]) * 180.0 / np.pi
+    return float(angle) % 180.0, bool(flipped)
+
+
+def _bright_field_center_of_mass(frames: "MpsBfColumnFrames") -> tuple[np.ndarray, np.ndarray]:
+    """Centre of mass of each pattern over its bright-field pixels, the only ones exact column storage keeps.
+
+    The bright-field disk carries the DPC shift, so its centre of mass fixes the rotation as the full pattern's does.
+    """
+    columns = frames._columns  # (bright-field pixels, scan positions)
+    rows = np.asarray(frames.selection.rows, np.float64)
+    cols = np.asarray(frames.selection.cols, np.float64)
+    weights = np.stack([np.ones_like(rows), rows, cols]).astype(np.float32)
+    moments = np.empty((3, columns.shape[1]), np.float64)
+    for start in range(0, columns.shape[1], 8192):
+        moments[:, start:start + 8192] = weights @ np.asarray(columns[:, start:start + 8192], np.float32)
+    total = np.where(moments[0] > 0, moments[0], 1.0)
+    shape = frames.scan_shape
+    return ((moments[1] / total).reshape(shape).astype(np.float32),
+            (moments[2] / total).reshape(shape).astype(np.float32))
+
+
+def _announce_rotation(angle_deg: float, flipped: bool) -> None:
+    """The one line a session prints when it estimated the rotation itself."""
+    print(f"SSB: scan-detector rotation {angle_deg:.1f} deg, rotation flipped: {'yes' if flipped else 'no'} "
+          "(estimated from the centre-of-mass curl; find_aberrations settles the 180 deg choice).")
+
+
 def _source_calibration(
     metadata: dict[str, object], voltage_kV: float | None,
     semiangle_mrad: float | None, scan_sampling_A: tuple[float, float] | None,
@@ -197,14 +249,14 @@ class SSB:
     aberrations : dict, optional
         Starting ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
     scan_detector_rotation_deg : float, optional
-        Physical scan-to-detector rotation in degrees; kept in [0, 360).
-        Pass the recorded ``data.metadata["scan_detector_rotation_deg"]`` or
-        your calibrated angle explicitly. Omission keeps a 0-degree starting
-        default, labeled as such in ``calibration_table()``.
-        An estimate known only modulo 180 degrees
-        (``dpc.run``, ``screening.prepare``) may be given: ``find_aberrations(check_rotation=True)`` settles the branch.
-    scan_detector_rotation_flipped : bool
-        Exchange the two detector axes before applying the rotation. Detector
+        Physical scan-to-detector rotation in degrees; kept in [0, 360). Omitted, the acquisition's recorded rotation
+        is used, else it is estimated from the curl of the centre-of-mass field, which knows it modulo 180 degrees,
+        and one line says so;
+        ``find_aberrations(check_rotation=True)`` then settles the 180-degree choice from the sign of the atom
+        columns. Give your calibrated angle to skip the estimate.
+    scan_detector_rotation_flipped : bool, optional
+        True when the detector's row and column axes are swapped relative to the scan, which no rotation can
+        produce. Omitted, it is estimated with the rotation, or False when the rotation is given. Detector
         calibration and reported centres remain in the original (row, col) frame.
     bright_field_intensity_threshold : float
         Fraction of the mean-pattern maximum a bright-field pixel must exceed.
@@ -255,7 +307,7 @@ class SSB:
         detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
-        scan_detector_rotation_flipped: bool = False,
+        scan_detector_rotation_flipped: bool | None = None,
         bright_field_intensity_threshold: float = 0.0,
         bright_field_radius_px: float | None = None,
         source_path: str | None = None,
@@ -279,6 +331,19 @@ class SSB:
                 detector_sampling_mrad = metadata.get("detector_sampling_mrad")
             if source_path is None:
                 source_path = metadata.get("source_path")
+        self.scan_detector_rotation_source = "given"
+        if scan_detector_rotation_deg is None and metadata.get("scan_detector_rotation_deg") is not None:
+            scan_detector_rotation_deg = float(metadata["scan_detector_rotation_deg"])
+            if scan_detector_rotation_flipped is None:
+                scan_detector_rotation_flipped = bool(metadata.get("scan_detector_rotation_flipped", False))
+            self.scan_detector_rotation_source = "metadata"
+        if scan_detector_rotation_deg is None:
+            scan_detector_rotation_deg, scan_detector_rotation_flipped = _estimate_rotation(
+                data, scan_shape, scan_detector_rotation_flipped)
+            self.scan_detector_rotation_source = "estimated"
+            _announce_rotation(scan_detector_rotation_deg, scan_detector_rotation_flipped)
+        elif scan_detector_rotation_flipped is None:
+            scan_detector_rotation_flipped = False
         self._streamed = None
         self._owned_dataset = None
         # first detector (row, col) of the data the session holds: nonzero when only the bright-field crop was decoded
@@ -355,8 +420,7 @@ class SSB:
         self.detector_sampling_mrad = None if detector_sampling_mrad is None else sampling_pair("detector_sampling_mrad", detector_sampling_mrad)
         self._aberrations_explicit = aberrations is not None
         self.aberrations = validate_aberrations(aberrations)
-        self.scan_detector_rotation_deg = wrap_degrees(
-            0.0 if scan_detector_rotation_deg is None else scan_detector_rotation_deg, 360.0)
+        self.scan_detector_rotation_deg = wrap_degrees(scan_detector_rotation_deg, 360.0)
         self.scan_detector_rotation_flipped = bool(scan_detector_rotation_flipped)
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
@@ -393,7 +457,7 @@ class SSB:
         """Compare loaded file calibration with the settings this session uses.
 
         The table retains the metadata seen at construction and distinguishes
-        explicit keywords (even equal values), saved overrides, defaults and
+        explicit keywords (even equal values), overridden values, defaults and
         probe estimates. It never changes the acquisition or starts a fit.
         A detector estimate is pending until the first backend preparation.
         ShowPtycho displays this table automatically when first shown.
@@ -428,7 +492,8 @@ class SSB:
             if name in self._calibration_supplied:
                 source = "Explicit override"
             elif name == "scan_detector_rotation_deg":
-                source = "Default"
+                source = {"estimated": "Estimated (centre-of-mass curl)",
+                          "metadata": recorded["Metadata"]}.get(self.scan_detector_rotation_source, "Default")
             elif source == "Not recorded" or (
                 name == "detector_sampling_mrad" and recorded["Unit"] != "mrad per pixel"
             ):
@@ -452,6 +517,13 @@ class SSB:
                 "Unit used": "mrad per pixel" if name == "detector_sampling_mrad" else recorded["Unit"],
                 "Source": source,
             }
+        rotation = rows["Scan-detector rotation"]
+        rows["Rotation flipped"] = {
+            "File value": "Not recorded", "File unit": "",
+            "Value used": "yes" if self.scan_detector_rotation_flipped else "no", "Unit used": "",
+            "Source": rotation["Source"] if rotation["Source"] != "Modified in session" else (
+                "Explicit override" if "scan_detector_rotation_deg" in self._calibration_supplied else "Default"),
+        }
         return pd.DataFrame.from_dict(rows, orient="index").rename_axis("SSB launch calibration")
 
     def _decode_resident(self, data, bright_field_center_px, bright_field_radius_px,
@@ -512,7 +584,7 @@ class SSB:
         detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
-        scan_detector_rotation_flipped: bool = False,
+        scan_detector_rotation_flipped: bool | None = None,
         bright_field_intensity_threshold: float = 0.0,
         bright_field_radius_px: float | None = None,
         bright_field_center_px: tuple[float, float] | None = None,
@@ -553,6 +625,7 @@ class SSB:
             "scan_detector_rotation_deg": scan_detector_rotation_deg,
         }
         selected = resolve(backend)
+        rotation_estimated = rotation_recorded = False
         crop_origin = (0, 0)
         owned = None
         source_detector_bin = 1
@@ -562,6 +635,10 @@ class SSB:
         if frames is not None:
             file_calibration = calibration_rows(frames.metadata)
             data = frames
+            if scan_detector_rotation_deg is None:
+                scan_detector_rotation_deg, scan_detector_rotation_flipped = _estimate_rotation(
+                    frames, scan_shape, scan_detector_rotation_flipped)
+                rotation_estimated = True
             voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
                 frames.metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
             source_kind = "bf_columns"
@@ -593,6 +670,16 @@ class SSB:
                     loaded.metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = loaded.metadata.get("detector_sampling_mrad")
+                if scan_detector_rotation_deg is None and loaded.metadata.get("scan_detector_rotation_deg") is not None:
+                    scan_detector_rotation_deg = float(loaded.metadata["scan_detector_rotation_deg"])
+                    if scan_detector_rotation_flipped is None:
+                        scan_detector_rotation_flipped = bool(loaded.metadata.get("scan_detector_rotation_flipped", False))
+                    rotation_recorded = True
+                if scan_detector_rotation_deg is None:
+                    # the whole detector, before the bright-field crop below
+                    scan_detector_rotation_deg, scan_detector_rotation_flipped = _estimate_rotation(
+                        loaded, scan_shape, scan_detector_rotation_flipped)
+                    rotation_estimated = True
                 if _streams_scan(loaded, selected):
                     owned = loaded
                     data = loaded
@@ -635,6 +722,11 @@ class SSB:
             if owned is not None:
                 owned.close()
             raise
+        if rotation_recorded:
+            session.scan_detector_rotation_source = "metadata"
+        if rotation_estimated:
+            session.scan_detector_rotation_source = "estimated"
+            _announce_rotation(scan_detector_rotation_deg, scan_detector_rotation_flipped)
         session._calibration_file = file_calibration
         session._calibration_supplied = {name for name, value in supplied.items() if value is not None}
         session._owned_dataset = owned
@@ -1033,6 +1125,24 @@ class SSB:
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
 
+    def show(self, **options):
+        """Open ShowPtycho on this session: the live phase and its FFT, aberration sliders, Save.
+
+        ``options`` go to ``quantem.widget.ShowPtycho``: ``show_fft``, ``save_dir``, ``local_tilt``, ... The widget
+        drives this session while it is open. Needs ``quantem.widget``.
+
+        Examples
+        --------
+        >>> ssb = SSB(data)  # doctest: +SKIP
+        >>> ssb.reconstruct()  # doctest: +SKIP
+        >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
+        """
+        try:
+            from quantem.widget import ShowPtycho
+        except ImportError as exc:
+            raise ImportError("ssb.show() opens ShowPtycho from quantem.widget: pip install quantem.widget") from exc
+        return ShowPtycho(self, **options)
+
     def show_trials(self, *, best: int | None = None, last: int | None = None,
                     first: int | None = None, upsampling_factor: int = 1,
                     axsize: tuple[float, float] = (6, 6)):
@@ -1421,7 +1531,11 @@ class SSB:
         force: bool = False,
         verbose: bool = False,
     ) -> SSBResult:
-        """Reconstruct with fixed correction parameters, without refitting.
+        """Reconstruct the phase with the session's aberrations, fitting them first when none are known.
+
+        A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so;
+        later calls reuse that fit. To constrain the fit (search ranges, fixed terms, tilt, seed), call
+        ``find_aberrations(...)`` yourself first. Given ``parameters`` or ``aberrations`` are used as they are.
 
         Parameters
         ----------
@@ -1474,6 +1588,7 @@ class SSB:
 
         Examples
         --------
+        >>> result = ssb.reconstruct()  # fits the aberrations once, then reconstructs
         >>> aberrations = ssb.find_aberrations(tilt=True)
         >>> result = ssb.reconstruct(aberrations, upsampling_factor=4, save_to="results/4x")
         """
@@ -1497,6 +1612,9 @@ class SSB:
             if aberrations is not None or save_to is not None:
                 raise ValueError("Replay trials without coefficient overrides or save_to; save the returned result separately.")
             return self._reconstruct_trials(parameters, trials, upsampling_factor=upsampling_factor, phase_estimator=phase_estimator)
+        if parameters is None and aberrations is None and not self._aberrations_explicit:
+            print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations() first.")
+            parameters = self.find_aberrations(verbose=verbose)
         correction = parameters
         if correction is not None:
             coefs = dict(correction.aberrations)

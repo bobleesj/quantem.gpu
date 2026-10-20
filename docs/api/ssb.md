@@ -16,13 +16,15 @@ and inspecting the acquisition before constructing the algorithm:
 from quantem.gpu import SSB, io
 
 data = io.load("acquisition.qem")
-data  # The notebook displays geometry, calibration, units, and saved overrides.
+data.calibration.semiangle_mrad = 30   # set what the file does not record
+data  # The notebook displays geometry, calibration, units, and overridden values.
 ```
 
-In the next cell, pass that same dataset to SSB:
+In the next cell, pass that same dataset to SSB and reconstruct:
 
 ```python
-ssb = SSB(data, scan_detector_rotation_deg=12.3)  # Use your calibrated angle.
+ssb = SSB(data)
+result = ssb.reconstruct()   # fits the aberrations once when none are known
 ```
 
 Both file-backed entry points use the loaded `voltage_kV`, `semiangle_mrad`,
@@ -30,13 +32,21 @@ Both file-backed entry points use the loaded `voltage_kV`, `semiangle_mrad`,
 overridden. The first three remain required when supplying an array without
 metadata. Missing physical calibration raises an error. Explicit keyword
 overrides affect the session without rewriting `data.metadata`.
-`scan_detector_rotation_deg` defaults to zero; it is the physical
-scan-to-detector rotation, kept in [0, 360). SSB does not call DPC automatically;
-provide a verified rotation or use a DPC estimate:
-`SSB(..., scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg, scan_detector_rotation_flipped=dpc_result.scan_detector_rotation_flipped)`.
-DPC knows the angle only modulo 180 degrees; `find_aberrations(check_rotation=True)`
-settles the 180-degree branch. `scan_detector_rotation_flipped=True` applies the saved
-detector-axis convention while keeping reported centers in the original detector axes.
+
+`scan_detector_rotation_deg` is the physical scan-to-detector rotation, kept in
+[0, 360). Omitted, SSB uses the acquisition's recorded rotation, else estimates
+it from the curl of the centre-of-mass field and prints one line. The curl knows
+the angle only modulo 180 degrees; `reconstruct()` and
+`find_aberrations(check_rotation=True)` settle the 180-degree choice from the
+sign of the atom columns. `scan_detector_rotation_flipped=True` means the
+detector's row and column axes are swapped relative to the scan, which no
+rotation can produce; it is estimated with the angle, or False when an angle is
+given. Reported centers stay in the original detector axes. Give a calibrated
+angle to skip the estimate: `SSB(data, scan_detector_rotation_deg=12.3)`.
+
+`reconstruct()` fits the aberrations with `find_aberrations()` defaults when the
+session has none, then reuses them. Call `find_aberrations(...)` first to
+constrain the fit: `search_ranges`, `fixed_aberrations`, `tilt=True`, `seed`.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`
 divided by the radius in detector pixels at which the bright-field disk of the
@@ -702,7 +712,7 @@ not a measured calibration.
 `ssb.calibration_table()` returns a DataFrame with **File value**, **File unit**,
 **Value used**, **Unit used**, and **Source**, using the session's current values.
 File values include saved calibration overrides. Source labels are **Recorded**,
-**Saved override**, **Explicit override**, **Estimated**, and **Default**. Later
+**Overridden** (set on `data.calibration`), **Explicit override**, **Estimated**, and **Default**. Later
 session changes are labeled **Modified in session**. Explicit keywords remain
 overrides even when they equal stored values. Labels describe provenance,
 not validation or confidence. Reading the table does not reconstruct or alter

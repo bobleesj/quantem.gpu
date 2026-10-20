@@ -4,7 +4,7 @@ from quantem.gpu.formats.qem.metadata import DETECTOR_PIXEL_SIZE, SCAN_PIXEL_SIZ
 
 
 def calibration_rows(metadata: dict) -> dict:
-    """Describe effective recorded values and their saved override provenance."""
+    """Describe effective recorded values and the values the user overrode."""
     scientific = metadata.get("scientific_metadata", {})
     overrides = scientific.get("calibration_overrides", {})
 
@@ -17,7 +17,7 @@ def calibration_rows(metadata: dict) -> dict:
         origin = "Recorded"
         if any(overridden):
             origin = (
-                "Saved override" if all(overridden) else "Recorded + saved override"
+                "Overridden" if all(overridden) else "Recorded + overridden"
             )
         return {"Value": value, "Unit": unit, "Metadata": origin}
 

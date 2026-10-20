@@ -162,11 +162,11 @@ def test_metadata_table_preserves_saved_overrides_and_missing_rotation():
     data = Dataset4dstemGPU(None, metadata)
     table = data.metadata_table()
     assert table.loc["Accelerating voltage", "Value"] == 300.0
-    assert table.loc["Accelerating voltage", "Metadata"] == "Saved override"
+    assert table.loc["Accelerating voltage", "Metadata"] == "Overridden"
     assert table.loc["Detector step (row, col)", "Value"] == "Not recorded"
     assert table.loc["Scan-detector rotation", "Value"] == "Not recorded"
     assert "<script>" not in data._repr_html_()
-    assert "Saved override" in repr(data)
+    assert "Overridden" in repr(data)
     assert metadata == original
     metadata["scan_detector_rotation_deg"] = 0.0
     assert data.metadata_table().loc["Scan-detector rotation", "Value"] == 0.0

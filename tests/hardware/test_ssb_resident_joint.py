@@ -392,10 +392,11 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
     with SSB(data, **geometry) as ssb:
         table = ssb.calibration_table()
         assert table.loc["Accelerating voltage", "File value"] == 300.0
-        assert table.loc["Accelerating voltage", "Source"] == "Saved override"
+        assert table.loc["Accelerating voltage", "Source"] == "Overridden"
         assert table.loc["Scan-detector rotation", "File value"] == 12.0
-        assert table.loc["Scan-detector rotation", "Value used"] == 0.0
-        assert table.loc["Scan-detector rotation", "Source"] == "Default"
+        assert table.loc["Scan-detector rotation", "Value used"] == 12.0
+        assert table.loc["Scan-detector rotation", "Source"] == "Recorded"
+        assert table.loc["Rotation flipped", "Value used"] == "no"
         assert table.loc["Detector step (row, col)", "Value used"] == "Pending probe fit"
         assert ssb._compute is None
         ssb.preview({"C10_nm": 8., "C12_nm": 0., "phi12_deg": 0.}, compute_loss=False)
