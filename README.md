@@ -429,10 +429,11 @@ ssb.show_trials(last=5)     # five most recent search trials
 ssb.show_trials(first=5)    # five earliest search trials
 ```
 
-The calibration above is an example; use your acquisition's values. For the
-joint aberration, sample-tilt and depth-spread model, use
-`aberrations = ssb.find_aberrations(tilt=True)`. Its search objective differs
-from standard SSB. A fitted depth spread is not a thickness measurement.
+The calibration above is an example; use your acquisition's values.
+`find_aberrations()` fits the joint aberration, sample-tilt and depth-spread
+model by default (`tilt=True`); `find_aberrations(tilt=False)` is standard SSB,
+whose search objective differs. A fitted depth spread is not a thickness
+measurement.
 
 ```python
 aberrations.report()  # parameter table with units

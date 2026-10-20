@@ -8,6 +8,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- SSB is tilt-corrected by default: `find_aberrations()` (and the automatic fit
+  of `reconstruct()`) fits the aberrations jointly with the sample tilt and
+  depth spread (`tilt=True`); `tilt=False` is the explicit opt-out for
+  standard SSB, and `refine_lock` belongs to it.
 - The 180° branch of an estimated scan-detector rotation is settled by two
   independent fits, at the estimate and at the estimate plus 180°, with the
   same settings. The kept branch has positive phase at the atomic columns

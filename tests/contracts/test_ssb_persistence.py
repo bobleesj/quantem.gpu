@@ -109,13 +109,13 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     saved = tmp_path / "result"
     backend = _Backend()
 
-    first = _session(monkeypatch, source, backend).find_aberrations(
+    first = _session(monkeypatch, source, backend).find_aberrations(tilt=False, 
         num_trials=200,
         refinement="nelder-mead",
         save_dir=saved,
         verbose=False,
     )
-    second = _session(monkeypatch, source, backend).find_aberrations(
+    second = _session(monkeypatch, source, backend).find_aberrations(tilt=False, 
         num_trials=200,
         refinement="nelder-mead",
         save_dir=saved,
@@ -155,14 +155,14 @@ def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).find_aberrations(
+    _session(monkeypatch, source, backend).find_aberrations(tilt=False, 
         num_trials=200, save_dir=saved, verbose=False
     )
-    _session(monkeypatch, source, backend).find_aberrations(
+    _session(monkeypatch, source, backend).find_aberrations(tilt=False, 
         num_trials=201, save_dir=saved, verbose=False
     )
     source.write_bytes(b"different detector counts")
-    _session(monkeypatch, source, backend).find_aberrations(
+    _session(monkeypatch, source, backend).find_aberrations(tilt=False, 
         num_trials=201, save_dir=saved, verbose=False
     )
 
@@ -181,16 +181,16 @@ def test_changed_calibration_recomputes(tmp_path, monkeypatch) -> None:
 
     first = _session(monkeypatch, source, backend)
     first.calibration_path = str(calibration)
-    first.find_aberrations(save_dir=saved, verbose=False)
+    first.find_aberrations(tilt=False, save_dir=saved, verbose=False)
 
     same = _session(monkeypatch, source, backend)
     same.calibration_path = str(calibration)
-    reused = same.find_aberrations(save_dir=saved, verbose=False)
+    reused = same.find_aberrations(tilt=False, save_dir=saved, verbose=False)
 
     calibration.write_text('{"rotation": 2}', encoding="utf-8")
     changed = _session(monkeypatch, source, backend)
     changed.calibration_path = str(calibration)
-    recomputed = changed.find_aberrations(save_dir=saved, verbose=False)
+    recomputed = changed.find_aberrations(tilt=False, save_dir=saved, verbose=False)
 
     assert reused.reused
     assert not recomputed.reused
@@ -205,8 +205,8 @@ def test_force_recomputes_matching_fit(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend()
 
-    _session(monkeypatch, source, backend).find_aberrations(save_dir=saved, verbose=False)
-    forced = _session(monkeypatch, source, backend).find_aberrations(
+    _session(monkeypatch, source, backend).find_aberrations(tilt=False, save_dir=saved, verbose=False)
+    forced = _session(monkeypatch, source, backend).find_aberrations(tilt=False, 
         save_dir=saved, force=True, verbose=False
     )
 
@@ -264,7 +264,7 @@ def test_saved_result_requires_source_identity(tmp_path, monkeypatch) -> None:
     import pytest
 
     with pytest.raises(ValueError, match="requires source_path"):
-        session.find_aberrations(save_dir=tmp_path / "result", verbose=False)
+        session.find_aberrations(tilt=False, save_dir=tmp_path / "result", verbose=False)
 
 
 def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeypatch):
@@ -276,7 +276,7 @@ def test_array_inputs_never_reuse_saved_results_by_source_path(tmp_path, monkeyp
         session = _session(monkeypatch, source, backend)
         session.source_kind = "array"
         session._data[...] = offset
-        search = session.find_aberrations(save_dir=tmp_path / "search", verbose=False)
+        search = session.find_aberrations(tilt=False, save_dir=tmp_path / "search", verbose=False)
         result = session.reconstruct(save_dir=tmp_path / "fixed")
         assert not search.reused
         assert not result.reused
@@ -292,7 +292,7 @@ def test_changed_refinement_start_invalidates_saved_search(tmp_path, monkeypatch
     source.write_bytes(b"detector counts")
     backend = _Backend()
     session = _session(monkeypatch, source, backend)
-    settings = dict(num_trials=0, refinement=None, check_rotation=False,
+    settings = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False,
                     save_dir=tmp_path / "search", verbose=False)
     first = session.find_aberrations(**settings)
     session.reconstruct(aberrations={"C10_nm": 12.0})
@@ -314,10 +314,10 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
     saved = tmp_path / "result"
     backend = _Backend("cuda")
 
-    _session(monkeypatch, source, backend, device="cuda").find_aberrations(
+    _session(monkeypatch, source, backend, device="cuda").find_aberrations(tilt=False, 
         save_dir=saved, verbose=False
     )
-    reused = _session(monkeypatch, source, backend, device="cuda").find_aberrations(
+    reused = _session(monkeypatch, source, backend, device="cuda").find_aberrations(tilt=False, 
         save_dir=saved, verbose=False
     )
 

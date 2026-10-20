@@ -1319,7 +1319,7 @@ class SSB:
     def find_aberrations(
         self,
         *,
-        tilt: bool = False,
+        tilt: bool = True,
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
         refinement: RefineMethod | Literal["auto"] = "auto",
@@ -1334,10 +1334,12 @@ class SSB:
         compare_standard: bool = True,
         fixed_aberrations: dict[str, float] | None = None,
     ) -> SSBResult:
-        """Optimize C10_nm/C12_nm/phi12_deg and return the final reconstruction.
+        """Optimize C10_nm/C12_nm/phi12_deg with the sample tilt and depth spread, and return the final reconstruction.
 
-        ``tilt=True`` also fits the sample tilt and a depth spread for a thick, tilted crystal, jointly with the
-        aberrations in one search of ``num_trials`` trials plus local refinement (fitting the tilt after a standard fit gets stuck:
+        SSB here is tilt-corrected: ``tilt=True`` (default) fits the sample tilt and a depth spread for a thick, tilted
+        crystal jointly with the aberrations, and ``tilt=False`` is the explicit opt-out for ordinary SSB (C10, C12
+        and phi12 alone, minimising the phase variance). The joint fit runs one search of ``num_trials`` trials plus
+        local refinement (fitting the tilt after a standard fit gets stuck:
         C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
         not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
         result's ``sample_tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
@@ -1367,15 +1369,17 @@ class SSB:
         Newton solver optimizes only tilt and depth spread on CUDA and MPS.
         This conditional fit does not determine whether the common optics are
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
-        In a standard fit, hold a coefficient with ``search_ranges={"C12_nm": 0.0}`` and ``refine_lock=["C12_nm"]``.
+        In a standard fit (``tilt=False``), hold a coefficient with ``search_ranges={"C12_nm": 0.0}`` and
+        ``refine_lock=["C12_nm"]``.
 
         ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
         centre-of-mass curl cannot tell omega from omega + 180 degrees and both fit equally well (the second is the
         conjugate object with C10 of the opposite sign). So the fit runs twice, at the estimate and at the estimate
         plus 180 degrees, two independent searches with the same settings, and keeps the branch whose atomic columns,
         located on the scan's dark field, have positive phase; when no columns are resolved, the branch with the
-        larger phase tail (``compare_rotation_branches`` explains both tests). The fit then costs two searches: about
-        2 x 26 s for a 512 x 512 scan on an M-series Mac. ``result.rotation_branches`` records both fits and the
+        larger phase tail (``compare_rotation_branches`` explains both tests). The fit then costs two searches: two
+        joint fits took 9 to 25 s in all on 512 x 512 scans on an M-series Mac, two standard fits (``tilt=False``)
+        about 2 x 26 s. ``result.rotation_branches`` records both fits and the
         evidence, ``result.show("rotation")`` draws it, and one line (with ``verbose``) says which branch was kept.
         A rotation given to ``SSB(...)`` or recorded with the acquisition is the user's calibration: it is fitted
         once and never moved. ``ssb.compare_rotation_branches()`` still fits both branches of it and reports.
@@ -1426,7 +1430,8 @@ class SSB:
            bright-field columns), the branch with the larger mean-centred third-moment ratio (``phase_skewness``)
            is kept.
 
-        Both fits cost a full search each: about 2 x 26 s for a 512 x 512 scan on an M-series Mac.
+        Both fits cost a full search each: two joint fits (the default) took 9 to 25 s in all on 512 x 512 scans on
+        an M-series Mac, two standard fits (``tilt=False``) about 2 x 26 s.
 
         Parameters
         ----------
@@ -1464,7 +1469,7 @@ class SSB:
         self,
         branches: Literal["auto", "off", "apply", "keep"],
         *,
-        tilt: bool = False,
+        tilt: bool = True,
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
         refinement: RefineMethod | Literal["auto"] = "auto",
@@ -1486,8 +1491,9 @@ class SSB:
         """
         if tilt and refine_lock is not None:
             raise ValueError(
-                "refine_lock applies to the standard fit. With tilt=True hold coefficients with fixed_aberrations: "
-                "C10_nm alone, C12_nm=0 alone, or all three (with check_rotation=False).")
+                "refine_lock applies to the standard fit (tilt=False). In the joint fit (tilt=True, the default) hold "
+                "coefficients with fixed_aberrations: C10_nm alone, C12_nm=0 alone, or all three (with "
+                "check_rotation=False).")
         if num_trials < 0:
             raise ValueError(f"num_trials must be non-negative, got {num_trials}.")
         if tilt and int(num_trials) == 0 and (self.sample_tilt_mrad is None or self.depth_spread_nm is None):
@@ -1501,7 +1507,8 @@ class SSB:
         requested = {"search_ranges": search_ranges, "fixed_aberrations": fixed_aberrations}
         if fixed_aberrations is not None and not tilt:
             raise ValueError(
-                "fixed_aberrations holds coefficients in the joint fit (tilt=True). For a standard fit give the value "
+                "fixed_aberrations holds coefficients in the joint fit (tilt=True, the default). For a standard fit "
+                "(tilt=False) give the value "
                 "as search_ranges={'C12_nm': 0.0}, which holds it in the search, and refine_lock=['C12_nm'].")
         if tilt:
             tilt_bounds, fixed_aberrations = _tilt_constraints(search_ranges, fixed_aberrations)
@@ -1518,7 +1525,8 @@ class SSB:
         if refinement not in {"nelder-mead", "newton", None}:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt:
-            raise ValueError("refinement='newton' polishes the tilt fit; the standard fit refines with 'nelder-mead'.")
+            raise ValueError("refinement='newton' polishes the tilt fit; the standard fit (tilt=False) refines with "
+                             "'nelder-mead'.")
         if branches == "auto":
             # a rotation given to SSB(...) or recorded with the acquisition is the user's calibration and is kept
             branches = "apply" if self.scan_detector_rotation_source == "estimated" else "off"
@@ -1771,7 +1779,7 @@ class SSB:
 
         A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so;
         later calls reuse that fit. On an estimated rotation that fit compares both 180-degree branches with two
-        independent searches (about 2 x 26 s for a 512 x 512 scan on an M-series Mac) and prints one line naming the
+        independent joint fits (9 to 25 s in all for a 512 x 512 scan on an M-series Mac) and prints one line naming the
         branch kept; a given or recorded rotation is fitted once and kept. To constrain the fit (search ranges, fixed
         terms, tilt, seed), call ``find_aberrations(...)`` or ``compare_rotation_branches(...)`` yourself first.
         Given ``parameters`` or ``aberrations`` are used as they are.

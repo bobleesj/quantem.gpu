@@ -130,7 +130,7 @@ def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degr
     assert branches.decided_by == "phase_tail" and checked.scan_detector_rotation_deg == 0.0
     assert all(abs(branch.column_z) < 3.0 for branch in branches.branches)
     assert branches.branches[1].phase_skewness == pytest.approx(phase_skewness(checked.phase), abs=1e-6)
-    assert branches.branches[1].phase_skewness > 1.0 > -1.0 > branches.branches[0].phase_skewness
+    assert branches.branches[0].phase_skewness < 0.0 < 1.0 < branches.branches[1].phase_skewness
     assert checked.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
     assert checked.aberrations["C12_nm"] == pytest.approx(2.5, abs=0.1)
 
@@ -150,7 +150,7 @@ def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_
         assert session.reconstruct() is fitted
         for result in (session.reconstruct(), session.reconstruct(fitted, upsampling_factor=2)):
             assert result.rotation_branches is fitted.rotation_branches
-            report = result.report().loc["standard SSB"]
+            report = result.report().iloc[0]
             assert report["Suggested rotation (deg)"] == 180.0 and report["SSB-selected rotation (deg)"] == 0.0
             assert report["180° branch by"] == "atomic columns"
             assert isinstance(result.show("rotation"), Figure)
