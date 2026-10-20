@@ -1,10 +1,16 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// One thread corrects one flagged pixel of one frame. Its neighbors are the
+// planned valid pixels (quantem.gpu.resident.hot_pixels.median_plan): flat
+// detector indices neighbors[offsets[slot]:offsets[slot + 1]], at least one.
+// The two middle values are selected by counting ranks, so any window size
+// needs no local array; their mean rounds half to even, as the CPU reference.
 template <typename T>
 inline void correct_one(
     device T *frames,
-    device const uchar *valid,
+    device const int *offsets,
+    device const int *neighbors,
     device const int *bad,
     constant ulong *p,
     ulong item,
@@ -13,71 +19,67 @@ inline void correct_one(
     int bad_count = int(p[0]);
     int height = int(p[1]);
     int width = int(p[2]);
-    int bad_slot = int(item % ulong(bad_count));
-    ulong frame = item / ulong(bad_count);
-    int pixel = bad[bad_slot];
+    int slot = int(item % ulong(bad_count));
+    ulong base = (item / ulong(bad_count)) * ulong(height * width);
+    int pixel = bad[slot];
     if (!use_median) {
-        frames[frame * ulong(height * width) + ulong(pixel)] = T(0);
+        frames[base + ulong(pixel)] = T(0);
         return;
     }
-    int row = pixel / width;
-    int column = pixel % width;
-    uint values[8];
-    int count = 0;
-    for (int dr = -1; dr <= 1; ++dr) {
-        for (int dc = -1; dc <= 1; ++dc) {
-            int rr = row + dr;
-            int cc = column + dc;
-            if ((dr == 0 && dc == 0) || rr < 0 || rr >= height ||
-                cc < 0 || cc >= width) continue;
-            int neighbor = rr * width + cc;
-            if (!valid[neighbor]) continue;
-            values[count++] = uint(frames[frame * ulong(height * width) + ulong(neighbor)]);
+    int start = offsets[slot];
+    int stop = offsets[slot + 1];
+    int count = stop - start;
+    int low_rank = (count - 1) / 2;
+    int high_rank = count / 2;
+    uint low = 0;
+    uint high = 0;
+    for (int i = start; i < stop; ++i) {
+        uint value = uint(frames[base + ulong(neighbors[i])]);
+        int less = 0;
+        int equal = 0;
+        for (int j = start; j < stop; ++j) {
+            uint other = uint(frames[base + ulong(neighbors[j])]);
+            less += other < value ? 1 : 0;
+            equal += other == value ? 1 : 0;
         }
+        if (less <= low_rank && low_rank < less + equal) low = value;
+        if (less <= high_rank && high_rank < less + equal) high = value;
     }
-    for (int i = 1; i < count; ++i) {
-        uint value = values[i];
-        int j = i - 1;
-        while (j >= 0 && values[j] > value) {
-            values[j + 1] = values[j];
-            --j;
-        }
-        values[j + 1] = value;
-    }
-    uint result = 0;
-    if (count & 1) result = values[count / 2];
-    else if (count) result = uint((ulong(values[count / 2 - 1]) + ulong(values[count / 2])) / 2);
-    frames[frame * ulong(height * width) + ulong(pixel)] = T(result);
+    ulong total = ulong(low) + ulong(high);
+    ulong lower_half = total >> 1;
+    frames[base + ulong(pixel)] = T(lower_half + (total & lower_half & 1ul));
 }
 
 kernel void hot_median(
     device uchar *frames [[buffer(0)]],
-    device const uchar *valid [[buffer(1)]],
-    device const int *bad [[buffer(2)]],
-    constant ulong *p [[buffer(3)]],
+    device const int *offsets [[buffer(1)]],
+    device const int *neighbors [[buffer(2)]],
+    device const int *bad [[buffer(3)]],
+    constant ulong *p [[buffer(4)]],
     uint item [[thread_position_in_grid]]
 ) {
     if (item >= p[3]) return;
     if (p[4] == 1)
-        correct_one(frames, valid, bad, p, item, true);
+        correct_one(frames, offsets, neighbors, bad, p, item, true);
     else if (p[4] == 2)
-        correct_one(reinterpret_cast<device ushort *>(frames), valid, bad, p, item, true);
+        correct_one(reinterpret_cast<device ushort *>(frames), offsets, neighbors, bad, p, item, true);
     else
-        correct_one(reinterpret_cast<device uint *>(frames), valid, bad, p, item, true);
+        correct_one(reinterpret_cast<device uint *>(frames), offsets, neighbors, bad, p, item, true);
 }
 
 kernel void hot_zero(
     device uchar *frames [[buffer(0)]],
-    device const uchar *valid [[buffer(1)]],
-    device const int *bad [[buffer(2)]],
-    constant ulong *p [[buffer(3)]],
+    device const int *offsets [[buffer(1)]],
+    device const int *neighbors [[buffer(2)]],
+    device const int *bad [[buffer(3)]],
+    constant ulong *p [[buffer(4)]],
     uint item [[thread_position_in_grid]]
 ) {
     if (item >= p[3]) return;
     if (p[4] == 1)
-        correct_one(frames, valid, bad, p, item, false);
+        correct_one(frames, offsets, neighbors, bad, p, item, false);
     else if (p[4] == 2)
-        correct_one(reinterpret_cast<device ushort *>(frames), valid, bad, p, item, false);
+        correct_one(reinterpret_cast<device ushort *>(frames), offsets, neighbors, bad, p, item, false);
     else
-        correct_one(reinterpret_cast<device uint *>(frames), valid, bad, p, item, false);
+        correct_one(reinterpret_cast<device uint *>(frames), offsets, neighbors, bad, p, item, false);
 }

@@ -191,7 +191,8 @@ def test_command_calibrates_and_repairs_one_acquisition(tmp_path, backend, capsy
     assert "1,024 replacements checked" in printed
     expected = original.copy()
     neighbors = [(r, c) for r in range(1, 4) for c in range(2, 5) if (r, c) != (2, 3)]
-    expected[:, 2, 3] = np.floor(np.median(np.stack([original[:, r, c] for r, c in neighbors], axis=1), axis=1))
+    # np.round rounds a .5 median half to even, as the fill does
+    expected[:, 2, 3] = np.round(np.median(np.stack([original[:, r, c] for r, c in neighbors], axis=1), axis=1))
     with io.load(out / "scan.qem", backend=backend, verbose=False) as data:
         assert data.sampling == pytest.approx((0.5, 0.5, 0.8, 0.9))
         assert data.metadata["voltage_kV"] == 300 and data.metadata["semiangle_mrad"] == 30
@@ -247,8 +248,9 @@ def test_requested_mask_correction_keeps_wide_valid_counts(tmp_path, backend, me
         if method == "median" and neighbors:
             selected = np.sort(np.stack([values[:, r, c] for r, c in neighbors], axis=1), axis=1)
             n = selected.shape[1]
-            replacement = (selected[:, (n - 1) // 2].astype(np.uint64)
-                           + selected[:, n // 2].astype(np.uint64)) // 2
+            total = selected[:, (n - 1) // 2].astype(np.uint64) + selected[:, n // 2].astype(np.uint64)
+            lower = total // 2
+            replacement = lower + (total & lower & np.uint64(1))  # a .5 median rounds half to even
         expected[:, row, col] = replacement
     destination = tmp_path / "corrected.qem"
     result = convert.convert(master, destination, backend=backend,

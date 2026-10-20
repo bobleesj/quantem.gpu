@@ -56,7 +56,7 @@ def _flagged_counts(scans, detector_shape):
 
 
 def _corrected(counts, pixel_mask, method):
-    """Replace each flagged pixel by the median of its valid 3x3 neighbors (rounded down), or by zero."""
+    """Replace each flagged pixel by the median of its valid 3x3 neighbors (half to even), or by zero."""
     expected = counts.copy()
     height, width = pixel_mask.shape
     for row, col in np.argwhere(pixel_mask != 0):
@@ -67,7 +67,8 @@ def _corrected(counts, pixel_mask, method):
             if 0 <= neighbor_row < height and 0 <= neighbor_col < width
             and pixel_mask[neighbor_row, neighbor_col] == 0
         ]
-        expected[:, row, col] = 0 if method == "zero" else np.median(np.stack(neighbors, axis=-1), axis=-1)
+        # np.round rounds half to even, as the fill does
+        expected[:, row, col] = 0 if method == "zero" else np.round(np.median(np.stack(neighbors, axis=-1), axis=-1))
     return expected
 
 

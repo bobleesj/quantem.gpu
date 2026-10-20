@@ -90,7 +90,7 @@ def test_h5_explicit_gpu_median_hot_pixel_correction(
         correction = loaded.metadata["hot_pixel_correction"]
         assert correction["method"] == "median"
         assert correction["pixel_count"] == 2
-        assert correction["schema"] == "quantem.hot-pixel-correction/2"
+        assert correction["schema"] == "quantem.hot-pixel-correction/3"
         assert correction["coordinates_row_col"] == [[0, 0], [2, 3]]
         assert correction["applied"] is True
         session = detector.prepare(loaded)

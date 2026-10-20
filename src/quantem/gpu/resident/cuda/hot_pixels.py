@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cuda_module
-from quantem.gpu.resident.hot_pixels import hot_pixel_record
+from quantem.gpu.resident.hot_pixels import hot_pixel_record, median_plan
 
 _SOURCE = (Path(__file__).with_name("kernels") / "hot_pixels.cu").read_text()
 _NAMES = ("hot_median_u8", "hot_median_u16", "hot_zero_u8", "hot_zero_u16", "hot_median_u32", "hot_zero_u32")
@@ -21,11 +21,12 @@ class CUDAHotPixelCorrector:
         self.method = method
         self.record = hot_pixel_record(self.mask, method, backend="cuda")
         self.device = cp.cuda.Device().id
-        self.valid = self.bad = None
+        self.offsets = self.neighbors = self.bad = None
         if self.record["applied"]:
-            valid = self.mask == 0
-            self.valid = cp.asarray(valid.reshape(-1), dtype=cp.uint8)
-            self.bad = cp.asarray(np.flatnonzero(~valid), dtype=cp.int32)
+            plan = median_plan(self.mask)
+            self.offsets = cp.asarray(plan.offsets)
+            self.neighbors = cp.asarray(plan.neighbors)
+            self.bad = cp.asarray(plan.bad)
 
     def apply(self, values) -> None:
         """Correct one contiguous ``(scan, detector_row, detector_col)`` batch."""
@@ -55,7 +56,8 @@ class CUDAHotPixelCorrector:
                 (256,),
                 (
                     values,
-                    self.valid,
+                    self.offsets,
+                    self.neighbors,
                     self.bad,
                     np.int32(self.bad.size),
                     np.int32(values.shape[-2]),
@@ -66,4 +68,4 @@ class CUDAHotPixelCorrector:
 
     def close(self) -> None:
         """Drop the device copies of the mask between acquisitions."""
-        self.valid = self.bad = None
+        self.offsets = self.neighbors = self.bad = None

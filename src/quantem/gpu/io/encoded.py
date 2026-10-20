@@ -27,6 +27,7 @@ from quantem.gpu.io.inspect import inspect
 from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.cuda.hot_pixels import CUDAHotPixelCorrector
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
+from quantem.gpu.resident.hot_pixels import hot_pixel_outcome
 from quantem.gpu.resident.mps.hot_pixels import MPSHotPixelCorrector
 from quantem.gpu.resident.mps.spatial import build_index
 
@@ -316,17 +317,7 @@ def _loaded_report(shape, device_name: str, metadata: dict) -> str:
 
     Report whether flagged values stayed original or were explicitly replaced, and the setting that does the other.
     """
-    correction = metadata["hot_pixel_correction"]
-    count = int(correction["pixel_count"])
-    flagged = f"{count} bad pixel{'s' if count != 1 else ''}"
-    if count == 0:
-        outcome = "no bad pixels flagged"
-    elif correction["method"] == "median":
-        outcome = f'{flagged} replaced by neighbor median (hot_pixel_correction="none" keeps the recorded values)'
-    elif correction["method"] == "zero":
-        outcome = f'{flagged} set to zero (hot_pixel_correction="none" keeps the recorded values)'
-    else:
-        outcome = f'{flagged} left as recorded (hot_pixel_correction="median" replaces them with the neighbor median)'
+    outcome = hot_pixel_outcome(metadata["hot_pixel_correction"])
     seconds = metadata["load_timings"]["resident_ready_seconds"]
     return (
         f"Loaded {shape[0]} x {shape[1]} scan, {shape[2]} x {shape[3]} detector, "

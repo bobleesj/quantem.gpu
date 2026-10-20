@@ -99,10 +99,14 @@ scaled codec the stored values are codes, never counts: its readers report
 `file_counts_exact: false` whatever the block holds.
 
 `hot_pixel_correction` is a record with `schema`
-(`"quantem.hot-pixel-correction/2"`), `method` (`median`, `zero`, `none`),
-`kernel_size`, `source`, `pixel_count`, `coordinates_row_col`, `source_flags`,
-`applied`, `stage` and `backend`. A record with another `schema`, or none, is
-read as absent; `processing` still declares a replacement.
+(`"quantem.hot-pixel-correction/3"`), `method` (`median`, `zero`, `none`),
+`largest_window_px`, `source`, `pixel_count`, `coordinates_row_col`,
+`source_flags`, `applied`, `stage` and `backend`. A median fill takes the
+valid pixels of the 3 x 3 window around a flagged pixel, or of the smallest
+larger window (5 x 5, 7 x 7, ...) that holds one; `largest_window_px` is the
+largest side used. An even number of neighbors averages the two middle values,
+rounded half to even. A record with another `schema`, or none, is read as
+absent; `processing` still declares a replacement.
 
 ### Schema 1 is refused
 

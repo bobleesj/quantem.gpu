@@ -40,7 +40,7 @@ from quantem.gpu.formats.qem.snapshot import BIT_DTYPES, read_header
 from quantem.gpu.io import load, save
 from quantem.gpu.io.read import torch_value
 from quantem.gpu.resident.mps.counts import MPSStreamedCounts
-from quantem.gpu.resident.hot_pixels import normalize_hot_pixel_correction
+from quantem.gpu.resident.hot_pixels import fill_flagged, median_plan, normalize_hot_pixel_correction
 
 _MASTER_SUFFIX = "_master.h5"
 _STORED_DTYPES = BIT_DTYPES
@@ -595,6 +595,7 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
     method = correction.get("method", "none") if correction.get("applied") else "none"
     method = normalize_hot_pixel_correction(method)
     pixels = detector_rows * detector_columns
+    plan = median_plan(~valid)
     with ExitStack() as stack:
         handles = [stack.enter_context(h5py.File(path, "r")) for path in detector_files(master)]
         datasets = [handle["entry/data/data"] for handle in handles]
@@ -626,22 +627,8 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                 if np.dtype(header["dtype"]) != raw.dtype:
                     raise ValueError("The QEM dtype differs from the source dtype.")
                 if method != "none":
-                    expected = raw.copy()
-                    for row, column in np.argwhere(~valid):
-                        neighbors = [
-                            (r, c)
-                            for r in range(max(0, row - 1), min(detector_rows, row + 2))
-                            for c in range(max(0, column - 1), min(detector_columns, column + 2))
-                            if valid[r, c]
-                        ]
-                        replacement = 0
-                        if method == "median" and neighbors:
-                            # Correction supports uint8/16/32. Their pairwise
-                            # median is exactly representable in float64.
-                            local = np.stack([raw[:, r, c] for r, c in neighbors], axis=1)
-                            replacement = np.floor(np.median(local, axis=1)).astype(raw.dtype)
-                        expected[:, row, column] = replacement
-                    raw = expected
+                    # the CPU reference of the GPU correction, bit for bit
+                    raw = fill_flagged(raw.copy(), plan, method)
                 if hasattr(decoded, "_mtl"):
                     decoded.dtype = np.dtype("uint8")
                     decoded.shape = (raw.nbytes,)
@@ -698,8 +685,9 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         pixel. One value applies to both axes; a pair is (row, column).
     hot_pixel_correction : {"none", "median", "zero"}, default "none"
         Optional correction for uint8/uint16/uint32 acquisitions only.
-        Corrects stored-mask pixels before encoding. Median uses valid
-        3x3 neighbors, with fractional medians rounded down. Verification
+        Corrects stored-mask pixels before encoding. Median uses the valid
+        pixels of the 3x3 window (or the smallest larger window that holds
+        one), rounded half to even. Verification
         compares against the declared correction, not against unchanged raw data.
 
     Returns
