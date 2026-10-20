@@ -130,11 +130,11 @@ def test_auto_sampling_preserves_higher_orders_when_saving_and_reloading(tmp_pat
                   scan_sampling_A=(.5, .5), detector_sampling_mrad=(10., 10.)) as ssb:
         ssb.sample_tilt_mrad = (-9., 5.)
         ssb.depth_spread_nm = 18.
-        saved = ssb.reconstruct(aberrations=COEFS, upsampling_factor="auto", save_to=tmp_path / "result")
+        saved = ssb.reconstruct(aberrations=COEFS, upsampling_factor="auto", save_dir=tmp_path / "result")
         assert saved.phase_estimator == "phase_of_mean"
         assert saved.upsampling_factor == 4
         assert saved.aberrations == COEFS
-        loaded = ssb.reconstruct(aberrations=COEFS, upsampling_factor="auto", save_to=tmp_path / "result")
+        loaded = ssb.reconstruct(aberrations=COEFS, upsampling_factor="auto", save_dir=tmp_path / "result")
         assert loaded.reused
         before = saved.phase.get() if backend == "cuda" else saved.phase
         after = loaded.phase.get() if backend == "cuda" else loaded.phase

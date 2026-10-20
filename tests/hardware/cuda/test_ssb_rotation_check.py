@@ -201,7 +201,7 @@ def test_joint_rotation_check_reuses_one_search(rotation, monkeypatch, tmp_path)
     monkeypatch.setattr(session, "reconstruct", measured_reconstruct)
     try:
         result = session.find_aberrations(
-            tilt=True, save_to=tmp_path / "joint", verbose=False,
+            tilt=True, save_dir=tmp_path / "joint", verbose=False,
         )
         assert len(fit_calls) == 1
         assert len(reconstruction_calls) == (2 if rotation == 180 else 1)

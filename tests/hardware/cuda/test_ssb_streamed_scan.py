@@ -181,9 +181,9 @@ def test_open_large_file_keeps_encoded_source_and_closes_only_its_owner(tmp_path
             owner = session._owned_dataset
             assert owner is session._data and not owner.data.is_released
             first = session.reconstruct(aberrations=ABERRATIONS, compute_loss=False,
-                                        save_to=tmp_path / "result")
+                                        save_dir=tmp_path / "result")
             second = session.reconstruct(aberrations=ABERRATIONS, compute_loss=False,
-                                         save_to=tmp_path / "result")
+                                         save_dir=tmp_path / "result")
             assert second.reused
             cp.testing.assert_array_equal(first.phase, second.phase)
         assert owner.data.is_released

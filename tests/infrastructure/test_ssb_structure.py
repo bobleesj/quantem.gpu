@@ -38,7 +38,7 @@ def test_ssb_operations_share_saved_result_controls() -> None:
 
     for operation in (SSB.find_aberrations, SSB.reconstruct):
         signature = inspect.signature(operation)
-        assert signature.parameters["save_to"].default is None
+        assert signature.parameters["save_dir"].default is None
         assert signature.parameters["force"].default is False
 
 
@@ -146,12 +146,12 @@ def test_reconstruct_series_reuses_only_exact_results(
             )
 
         def find_aberrations(self, **kwargs):
-            assert kwargs["save_to"].name == "ssb-fit"
+            assert kwargs["save_dir"].name == "ssb-fit"
             return self._result(0.1 * self.index)
 
         def reconstruct(self, **kwargs):
             assert kwargs["aberrations"] == aberrations
-            assert kwargs["save_to"].name == "ssb-locked"
+            assert kwargs["save_dir"].name == "ssb-locked"
             return self._result(0.3 + 0.1 * self.index)
 
     monkeypatch.setattr(

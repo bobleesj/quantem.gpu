@@ -122,19 +122,22 @@ def load_result(
 
 
 def result_paths(
-    save_to: str | Path,
+    save_dir: str | Path,
     operation: Literal["find_aberrations", "reconstruct"],
 ) -> tuple[Path, Path]:
-    """Resolve the array and readable metadata paths for one saved result."""
+    """Resolve the array and readable metadata paths of one saved result in the results directory ``save_dir``.
 
-    destination = Path(save_to).expanduser().resolve()
-    if destination.suffix:
-        if destination.suffix.lower() != ".npz":
-            raise ValueError(
-                "save_to must be a directory or an .npz file, for example "
-                "save_to='results/ssb' or save_to='results/ssb-fit.npz'."
-            )
-        return destination, destination.with_suffix(".json")
+    The result is ``ssb-<operation>.npz`` beside its readable ``ssb-<operation>.json``. A path ending in ``.npz`` or
+    ``.json`` names a file, not a directory, and is refused rather than read as a folder of that name.
+    """
+
+    destination = Path(save_dir).expanduser().resolve()
+    if destination.suffix.lower() in (".npz", ".json"):
+        raise ValueError(
+            f"save_dir names a results directory; got the file {destination.name!r}. Pass its folder, for example "
+            f"save_dir={str(destination.with_suffix('').name)!r}: the result is written there as "
+            f"ssb-{operation}.npz and ssb-{operation}.json."
+        )
     return (
         destination / f"ssb-{operation}.npz",
         destination / f"ssb-{operation}.json",
@@ -157,7 +160,7 @@ def source_signature(
     """
     if source_path is None:
         raise ValueError(
-            "save_to requires source_path when constructing SSB from an array. "
+            "save_dir requires source_path when constructing SSB from an array. "
             "Pass the detector source path to record the array's provenance. "
             "Array inputs are saved but never reused from disk automatically."
         )

@@ -73,7 +73,7 @@ class SSBResult(Mapping[str, float]):
     reused : bool
         Whether the result was restored from an exact saved-result match.
     saved_path : pathlib.Path | None
-        Array artifact used for persistence, when ``save_to`` was provided.
+        Array artifact used for persistence, when ``save_dir`` was provided.
     metadata : dict[str, object]
         Complete saved scientific signature, provenance, and result metadata.
     parameter_slices : dict[str, object] or None
