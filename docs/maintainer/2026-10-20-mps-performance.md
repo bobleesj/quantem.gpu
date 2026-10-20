@@ -89,12 +89,20 @@ including the phasor tables, the output writes and the inverse FFT
 with hoisted loads, and reordering alias rows for cache reuse gave no
 repeatable gain. Further speed needs fewer bytes, not fewer instructions.
 
-On gold the 2× preview costs 2.6 times the native one (72 versus 28 ms; on
-the 512² × 192² scan 2× was only 1.2 times). Gold's 0.5 Å scan step puts the
-bright-field support beyond the 2× Nyquist frequency, and the half-spectrum
-shortcut applies only when both Nyquist edges lie outside the complete
-soft-aperture support (`_coherent_columns`), so the 2× preview computes the
-full plane. This is the likely cause; it was not profiled separately.
+On gold the 2× preview cost 2.6 times the native one (74 versus 29 ms; on
+the 512² × 192² scan 2× was only 1.2 times). The half spectrum was not the
+cause: the separable kernel always computes the anti-Hermitian half
+(`_coherent_columns` gates only the per-term kernel). At gold's 0.5 Å step the
+transfer support, max |k| plus the aperture radius (2.69 Å⁻¹), covers nearly
+the whole 2× grid (Nyquist 2 Å⁻¹), so its four times more output frequencies
+read 3.1 times the native G values (3.15e9 against 1.01e9 terms, counted by
+replaying the kernel's group culling on the CPU). The two fine rows of each
+source row read the same G values, in different threads. Since the same day
+one thread computes both rows at 2×: 39 % fewer G reads, 73.9 → 53.5 ms
+interleaved in one process, and a bit-identical phase. Sharing the mirrored
+columns too would bring the reads down to the native count (48 % fewer
+again); that is not written yet. Loading G only for the pixels of a mixed
+group that reach the output was bit-identical but slower (84 versus 79 ms).
 
 ### The search is bound by one intermediate
 
@@ -116,25 +124,32 @@ from about 25 s to about 15 s. MLX's `irfft2` (19.1 µs per 512² plane versus
 the loss path is a custom kernel at about 10.3 µs per plane and candidate, so
 it needs its own real-output kernels.
 
-### uint32 sources take the generic bit-lane resident
+### uint32 masters whose counts fit 16 bits
 
-The gold masters store uint32 counts. `io.load` keeps them as uint32 (no
-narrowing to uint16, even when every count fits), so they live in the generic
-bit-lane ANS resident rather than the count resident, and nothing above
-applies to them:
+The gold masters store uint32 counts. From 76bb2a76 (2026-10-17), which
+removed a narrowing that stored kept bad-pixel markers as 0, `io.load` kept
+every uint32 master in the generic bit-lane resident (16-bit words in
+227-scan chunks, no spatial index). A Show4DSTEM detector sum decoded the
+whole scan in 1,155 batches with a GPU wait after each (2.4 s on gold), and
+`SSB(data)`'s centre-of-mass rotation estimate took 6.7 s.
 
-- a Show4DSTEM detector sum decodes the whole scan in 1,155 bounded batches
-  with a GPU wait after each (of 2.5 s per sum, 1.6 s are
-  `torch.mps.synchronize` and 1.0 s Metal command completion): 2.3 s per
-  detector change on gold, against 6 ms incremental and 12 ms full on the
-  same counts re-encoded as uint16;
-- `SSB(data)`, which estimates the rotation from the centre-of-mass curl,
-  takes 6.5 to 7.8 s on gold, against 0.6 s on the uint16 512² × 192² scan;
-  `io.load` takes 4.3 s against 1.7 s.
+The MPS loader now stores such a master as uint16 count ANS when every
+value fits 16 bits after the requested bad-pixel correction: a Metal copy
+flags any value above 65,535, and a flag restarts the load as uint32. No
+value is clipped; reads return the file's values. Narrowed and uint32 copies
+of the median-corrected gold scan give bit-identical reads, mean pattern,
+detector totals, masked sums, bright-field selection, and native and 2×
+phases and loss. Only the estimated rotation moves, by 3.3e-6°: the count
+resident sums the centre-of-mass moments exactly in integers, the bit-lane
+resident summed them in float32. That is enough to send the standard fit's
+200 TPE trials elsewhere in the same minimum (C10 −23.22 → −23.26 nm, loss
+0.0449884 → 0.0449885); the default fit is unchanged.
 
-Narrowing uint32 counts that fit into the uint16 count resident at load, or
-batching the bit-lane decode without a wait per batch, would bring gold to
-the count-resident numbers.
+With `hot_pixel_correction="median"` on gold: `io.load` 4.36 → 3.1 s,
+`SSB(data)` 6.68 → 0.48 s, a detector sum 2.39 s → 7 ms full and 2 ms
+incremental. With `"none"` the four 0xffffffff markers do not fit, so the
+scan stays uint32 and keeps the 2.4 s sums (`detector_full_uint32`). The
+CUDA loader and the generic array reader still keep uint32.
 
 ### Scan-ROI mean pattern
 
@@ -201,8 +216,8 @@ checkout had local edits, and no file paths.
 | `search_candidate` | half of one TPE pair of the exact loss |
 | `find_aberrations` | the default fit, once (joint tilt fit on both branches of the estimated rotation) |
 | `find_aberrations_standard` | one standard `tilt=False` fit at the kept rotation, once |
-| `detector_full_uint32` | a Show4DSTEM detector sum on gold as loaded |
-| `detector_update`, `detector_full` | the same on the counts as a uint16 count resident: a half-pixel disk move (incremental) and an alternating disk / annulus (full) |
+| `detector_update`, `detector_full` | a Show4DSTEM detector sum on gold as loaded (uint16 counts): a half-pixel disk move (incremental) and an alternating disk / annulus (full) |
+| `detector_full_uint32` | the alternating sum on gold loaded with `hot_pixel_correction="none"`, which keeps uint32 |
 
 `compare` exits 1 when any p50 is slower than the baseline by more than its
 tolerance and by more than 0.5 ms. The default tolerance is 20 %; `io_load`
