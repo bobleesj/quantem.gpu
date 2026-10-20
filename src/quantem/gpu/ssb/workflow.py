@@ -265,7 +265,7 @@ def _dark_field_of(source, semiangle_mrad: float, detector_sampling_mrad, center
     if detector_sampling_mrad is None:
         radius_px = detector.disk_edge_radius(detector.mean(source))
     else:
-        radius_px = float(semiangle_mrad) / float(min(detector_sampling_mrad))
+        radius_px = float(semiangle_mrad) / float(min(sampling_pair("detector_sampling_mrad", detector_sampling_mrad)))
     geometry = {} if center_px is None else {"bright_field_center_px": center_px, "bright_field_edge_radius_px": radius_px}
     return np.asarray(detector.df(source, inner_radius_px=DARK_FIELD_INNER_RADIUS * radius_px, **geometry),
                       dtype=np.float32)
