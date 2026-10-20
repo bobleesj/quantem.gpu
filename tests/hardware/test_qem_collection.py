@@ -136,6 +136,37 @@ def test_uint32_flagged_markers_and_wide_counts_survive_conversion(tmp_path, bac
         assert int(loaded[0, 0, 1, 1]) == 70000
 
 
+def test_archive_keeps_uint32_and_a_narrowed_load_round_trips(tmp_path, backend):
+    """convert keeps uint32 counts that fit 16 bits as uint32; a uint16-stored load saves and reloads exactly."""
+    from quantem.gpu import io
+
+    master = _master(tmp_path, np.uint32)
+    with h5py.File(tmp_path / "detector.h5", "r") as handle:
+        source = handle["entry/data/data"][()]
+    result = convert.convert(master, tmp_path / "archive.qem", backend=backend)
+    assert result.verified is True and result.verification["differing_values"] == 0
+    header, _ = read_header(tmp_path / "archive.qem")
+    assert header["dtype"] == "uint32"
+    with io.load(tmp_path / "archive.qem", backend=backend, apply_mask=False, verbose=False) as loaded:
+        assert loaded.dtype == np.uint32
+        np.testing.assert_array_equal(loaded.read().cpu().numpy().reshape(source.shape), source)
+
+    with io.load(master, backend=backend, scan_shape=(32, 32), hot_pixel_correction="none", dtype="native",
+                 verbose=False) as native:
+        assert native.dtype == np.uint32
+    with io.load(master, backend=backend, scan_shape=(32, 32), hot_pixel_correction="none",
+                 verbose=False) as loaded:
+        # MPS holds counts that all fit 16 bits as uint16; CUDA keeps uint32.
+        assert loaded.dtype == (np.uint16 if backend == "mps" else np.uint32)
+        assert loaded.metadata["source_dtype"] == "uint32"
+        io.save(tmp_path / "analysis.qem", loaded)
+    with io.load(tmp_path / "analysis.qem", backend=backend, apply_mask=False, verbose=False) as reloaded:
+        assert reloaded.dtype == (np.uint16 if backend == "mps" else np.uint32)
+        assert reloaded.metadata["source_dtype"] == "uint32"
+        counts = reloaded.read().cpu().numpy().reshape(source.shape)
+    np.testing.assert_array_equal(counts.astype(np.uint32), source)
+
+
 def test_failed_verification_does_not_publish_a_copy(tmp_path, backend, monkeypatch):
     master = _master(tmp_path, np.uint16)
     monkeypatch.setattr(convert, "verify_against_source",

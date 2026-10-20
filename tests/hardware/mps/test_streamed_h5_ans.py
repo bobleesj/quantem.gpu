@@ -92,7 +92,8 @@ def test_uint32_counts_that_fit_load_as_exact_uint16(tmp_path, capsys):
     assert stored.dtype == np.uint32
     np.testing.assert_array_equal(values.astype(np.uint32), stored.reshape(64, 80, 4, 8))
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Stored as")]
-    assert lines == ["Stored as uint16: every uint32 value fits in 16 bits, so every count reads back unchanged."]
+    assert lines == ['Stored as uint16: every uint32 value fits in 16 bits, so every count reads back unchanged '
+                     '(dtype="native" keeps uint32).']
 
 
 def test_uint32_values_above_uint16_keep_uint32_storage(tmp_path, capsys):

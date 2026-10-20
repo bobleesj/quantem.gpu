@@ -736,7 +736,8 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
     try:
         paths = [master, *files]
         signatures = [(path.stat().st_size, path.stat().st_mtime_ns) for path in paths]
-        with load(master, backend=backend, representation="encoded", verbose=False,
+        # An archive keeps the source dtype: dtype="native" stops MPS storing uint32 counts as uint16.
+        with load(master, backend=backend, representation="encoded", verbose=False, dtype="native",
                   hot_pixel_correction=hot_pixel_correction) as acquisition:
             result.hot_pixel_correction = dict(acquisition.metadata.get("hot_pixel_correction", {}))
             result.qem_bytes = int(acquisition.resident_bytes)
