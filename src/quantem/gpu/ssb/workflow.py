@@ -596,6 +596,9 @@ class SSB:
             File value, value used, units and the source of each value used.
             File values are the loader's effective metadata, including saved
             calibration overrides; original source records stay in the dataset.
+            Numbers are rounded to six significant figures for reading; the
+            session's attributes (``ssb.detector_sampling_mrad``, ...) keep the
+            full values.
 
         Examples
         --------
@@ -636,8 +639,8 @@ class SSB:
             if isinstance(value, (list, tuple)):
                 value = tuple(value)
             rows[label] = {
-                "File value": recorded["Value"], "File unit": recorded["Unit"],
-                "Value used": value,
+                "File value": labels.display_value(recorded["Value"]), "File unit": recorded["Unit"],
+                "Value used": labels.display_value(value),
                 "Unit used": labels.CALIBRATION_UNITS[name] if name == "detector_sampling_mrad" else recorded["Unit"],
                 "Source": source,
             }

@@ -55,6 +55,21 @@ def calibration_rows(metadata: dict) -> dict:
     """
     scientific = metadata.get("scientific_metadata", {})
     overrides = scientific.get("calibration_overrides", {})
+    recorded_quantities = scientific.get("electron_microscope", {})
+
+    def overridden_path(path) -> bool:
+        # a value set equal to the file's record confirms it: the source stays Recorded
+        override, recorded = overrides.get(path), recorded_quantities.get(path)
+        if override is None:
+            return False
+        if not isinstance(override, dict) or not isinstance(recorded, dict):
+            return True
+        try:
+            same = (override.get("unit") == recorded.get("unit")
+                    and math.isclose(float(override["value"]), float(recorded["value"]), rel_tol=1e-12, abs_tol=0.0))
+        except (KeyError, TypeError, ValueError):
+            same = False
+        return not same
 
     def row(value, unit="", paths=(), *, positive=False):
         # a physical calibration of zero or less (a placeholder some detectors write) is no calibration
@@ -64,7 +79,7 @@ def calibration_rows(metadata: dict) -> dict:
             return {"Value": NOT_RECORDED, "Unit": unit, "Metadata": NOT_RECORDED}
         if isinstance(value, (list, tuple)):
             value = tuple(value)
-        overridden = [path in overrides for path in paths]
+        overridden = [overridden_path(path) for path in paths]
         origin = RECORDED
         if any(overridden):
             origin = OVERRIDDEN if all(overridden) else PARTLY_OVERRIDDEN
@@ -124,6 +139,20 @@ def calibration_rows(metadata: dict) -> dict:
     return rows
 
 
+def display_value(value, digits: int = 6):
+    """A calibration value as a table shows it: floats to ``digits`` significant figures, pairs element by element.
+
+    Tables round for reading; sessions and records keep the full value.
+    """
+    if isinstance(value, bool) or not isinstance(value, (numbers.Real, tuple, list)):
+        return value
+    if isinstance(value, (tuple, list)):
+        return tuple(display_value(item, digits) for item in value)
+    if isinstance(value, numbers.Integral):
+        return value
+    return float(f"{float(value):.{digits}g}")
+
+
 def calibration_table(metadata: dict) -> "pd.DataFrame":
     """The microscope calibration rows of :func:`calibration_rows` as ``Value``, ``Unit`` and ``Source`` columns."""
     import pandas as pd
@@ -131,6 +160,6 @@ def calibration_table(metadata: dict) -> "pd.DataFrame":
     rows = calibration_rows(metadata)
     labels = dict.fromkeys(CALIBRATION_LABELS[name] for name in
                            ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad"))
-    table = {label: {"Value": rows[label]["Value"], "Unit": rows[label]["Unit"], "Source": rows[label]["Metadata"]}
+    table = {label: {"Value": display_value(rows[label]["Value"]), "Unit": rows[label]["Unit"], "Source": rows[label]["Metadata"]}
              for label in labels}
     return pd.DataFrame.from_dict(table, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")

@@ -373,6 +373,7 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
         acquisition_metadata,
         effective_metadata,
     )
+    from quantem.gpu.io.metadata_display import display_value
 
     counts = np.random.default_rng(3).poisson(4, (128, 128, 24, 24)).astype(np.uint16)
     metadata = {"voltage_kV": 200.0, "semiangle_mrad": 25.0,
@@ -402,11 +403,12 @@ def test_launch_calibration_keeps_saved_defaults_estimates_and_equal_overrides(d
         ssb.preview({"C10_nm": 8., "C12_nm": 0., "phi12_deg": 0.}, compute_loss=False)
         table = ssb.calibration_table()
         assert table.loc["Detector step (row, col)", "Source"] == "Estimated"
-        assert ssb.detector_sampling_mrad == table.loc["Detector step (row, col)", "Value used"]
+        # the table rounds for reading (six significant figures); the session keeps the full value
+        assert display_value(ssb.detector_sampling_mrad) == table.loc["Detector step (row, col)", "Value used"]
         prepared = ssb._compute
         ssb.preview({"C10_nm": 9., "C12_nm": 0., "phi12_deg": 0.}, compute_loss=False)
         assert ssb._compute is prepared
-        assert ssb.detector_sampling_mrad == table.loc["Detector step (row, col)", "Value used"]
+        assert display_value(ssb.detector_sampling_mrad) == table.loc["Detector step (row, col)", "Value used"]
         assert all(value > 0 for value in table.loc["Detector step (row, col)", "Value used"])
         ssb.set_rotation(9.0)
         assert ssb.calibration_table().loc["Scan-detector rotation", "Source"] == "Modified in session"
