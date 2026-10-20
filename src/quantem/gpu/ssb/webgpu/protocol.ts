@@ -1,5 +1,6 @@
 export interface WebGPUOptimizationOptions {
-  readonly trials: number;
+  /** Number of search trials, as Python's `num_trials`. */
+  readonly numTrials: number;
   readonly refinement: "nelder-mead" | null;
   readonly seed: number;
 }
@@ -12,7 +13,7 @@ export interface SSBPrecision {
 export interface SSBOptimizationResult {
   readonly aberrations: Readonly<Record<string, number>>;
   readonly loss: number;
-  readonly trials: number;
+  readonly numTrials: number;
 }
 
 export interface WebGPUReconstructionOptions {

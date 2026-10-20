@@ -53,7 +53,7 @@ def test_trial_replay_and_tilt_stay_on_device(monkeypatch):
         with monkeypatch.context() as patch:
             patch.setattr(cp, "asnumpy", no_host)
             result = ssb.reconstruct(upsampling_factor=2, force=True)
-            replay = ssb.reconstruct(fitted, trials=[0, 2])
+            replay = ssb.reconstruct(fitted, trial_ids=[0, 2])
         assert isinstance(result.object_wave, cp.ndarray)
         assert isinstance(replay.object_wave, cp.ndarray)
         assert replay.object_wave.shape == (2, 128, 128)
@@ -77,7 +77,7 @@ def test_mean_phase_trial_replay_owns_each_trial_wave():
             }, phase_estimator="mean_phase", compute_loss=False)
             expected.append(result.object_wave.copy())
         assert any(not cp.array_equal(expected[0], frame) for frame in expected[1:])
-        replay = ssb.reconstruct(fitted, trials=[0, 1, 2], phase_estimator="mean_phase")
+        replay = ssb.reconstruct(fitted, trial_ids=[0, 1, 2], phase_estimator="mean_phase")
         cp.testing.assert_array_equal(replay.object_wave, cp.stack(expected))
     finally:
         ssb.close()

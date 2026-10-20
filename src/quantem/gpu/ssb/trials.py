@@ -13,7 +13,7 @@ def label_trials(result: SSBResult, *, search: int) -> None:
     """Give every trial record its index, search pass and physical rotation.
 
     Backends record only the optimized parameters. Without these keys
-    ``show_trials`` and ``reconstruct(trials=...)`` cannot replay a trial
+    ``show_trials`` and ``reconstruct(trial_ids=...)`` cannot replay a trial
     at its own rotation and sample geometry.
     """
     for index, record in enumerate(result.trial_records or ()):

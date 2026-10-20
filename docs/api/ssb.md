@@ -260,7 +260,7 @@ The trial table explicitly names the objective. Local refinement is separate
 from the search trials and its final result appears in `report()`.
 
 ```python
-attempts = ssb.reconstruct(aberrations, trials=aberrations.trials.tail(5).index)
+attempts = ssb.reconstruct(aberrations, trial_ids=aberrations.trials.tail(5).index)
 attempts.phase  # radians; axes (trial, row, column)
 adjusted = ssb.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
 ```
