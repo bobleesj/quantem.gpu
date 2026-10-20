@@ -222,6 +222,70 @@ def test_reconstruct_series_reuses_only_exact_results(
     assert metadata["Results reused"] == 3
 
 
+def test_series_writes_to_save_dir_and_forwards_flip_radius_and_unknown_rotation(tmp_path, monkeypatch) -> None:
+    """``save_dir`` names the results folder; the flip, the fitted (unrounded) radius and a missing rotation reach SSB.open.
+
+    The series always read and created ``<source>/live/screen`` (missing a Live output elsewhere), never forwarded a
+    flip, rounded a saved 53.4 px radius to 53, and refused an acquisition without a recorded rotation.
+    """
+    import numpy as np
+
+    from quantem.gpu import SSB, SSBResult, screening
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    out = tmp_path / "out" / "live" / "screen"
+    for frame in (1, 2):
+        (raw / f"scan_{frame}_master.h5").write_bytes(b"raw")
+    saved = out / "scan_1"
+    saved.mkdir(parents=True)
+    (saved / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {
+        "schema": FIT_SCHEMA, "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
+        "scan_detector_rotation_deg": 159.0, "scan_detector_rotation_flipped": True, "bright_field_radius_px": 53.4}}}))
+    opened = []
+
+    class FakeSession:
+        detector_sampling_mrad = (0.55, 0.55)
+
+        def __init__(self, kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def find_aberrations(self, **kwargs):
+            rotation = self.kwargs["scan_detector_rotation_deg"]
+            return SSBResult(object_wave=np.ones((4, 4), np.complex64), backend="mps",
+                             aberrations={"C10_nm": 15.8, "C12_nm": 6.7, "phi12_deg": 17.5},
+                             scan_detector_rotation_deg=158.9 if rotation is None else rotation,
+                             scan_detector_rotation_flipped=False if rotation is None else self.kwargs["scan_detector_rotation_flipped"],
+                             loss=0.1)
+
+    def fake_open(cls, source, **kwargs):
+        opened.append((Path(source).name, kwargs))
+        return FakeSession(kwargs)
+
+    prepared = []
+    monkeypatch.setattr(SSB, "open", classmethod(fake_open))
+    monkeypatch.setattr(screening, "prepare", lambda source, **kwargs: prepared.append(kwargs) or type("P", (), {
+        name: np.zeros((4, 4), np.float32) for name in ("mean_diffraction_pattern", "bright_field", "dark_field",
+                                                       "com_row", "com_col", "dpc_phase")})())
+    (raw / "dataset.yaml").write_text("schema: quantem.dataset/2\nmicroscope: {voltage_kV: 300, semiangle_mrad: 30}\n"
+                                      "calibrations: {default: {scan_sampling_A: [0.264, 0.264]}}\n")
+    result = SSB.reconstruct_series(raw, first_frame=1, last_frame=2, save_dir=out, progress=False)
+
+    assert result.results_directory == out.resolve() and not (raw / "live").exists()
+    first, second = (kwargs for _, kwargs in opened)
+    assert (first["scan_detector_rotation_deg"], first["scan_detector_rotation_flipped"], first["bright_field_radius_px"]) == (159.0, True, 53.4)
+    assert second["scan_detector_rotation_deg"] is None and second["scan_detector_rotation_flipped"] is None
+    assert [(p["scan_detector_rotation_deg"], p["scan_detector_rotation_flipped"]) for p in prepared] == [(159.0, True), (158.9, False)]
+    assert (out / "scan_2" / "config.json").is_file()
+
+
 def test_reconstruct_series_rejects_reversed_frame_bounds(tmp_path) -> None:
     """Inclusive frame bounds should fail clearly when reversed."""
     import pytest
@@ -256,7 +320,7 @@ def test_series_discovery_keeps_raw_acquisitions_after_partial_screening(
     screened.mkdir(parents=True)
     (screened / "config.json").write_text("{}", encoding="utf-8")
 
-    _, paths = screen_paths(raw)
+    paths = screen_paths(raw, raw / "live" / "screen")
 
     assert tuple(path.name for path in paths) == ("scan_52", "scan_53", "scan_54")
 
@@ -438,7 +502,8 @@ def test_series_takes_no_setting_from_a_fit_of_another_schema(tmp_path) -> None:
         "aberrations": {"C10": 5.0, "C12": -0.3, "phi12": 0.18}, "aberration_unit": "nm", "rotation_angle_deg": 0.0,
         "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5)}}}))
     before = (folder / "config.json").read_bytes()
-    with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A, scan_detector_rotation_deg"):
+    # the rotation is not missing: an acquisition without one has it estimated by SSB.open
+    with pytest.raises(ValueError, match="missing voltage_kV, semiangle_mrad, scan_sampling_A\\. Run"):
         SSB.reconstruct_series(raw, first_frame=1, last_frame=1, progress=False)
     assert (folder / "config.json").read_bytes() == before
 
