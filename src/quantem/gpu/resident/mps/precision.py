@@ -96,34 +96,6 @@ def tensor_restore(values, report):
     return values.to(torch.float32)
 
 
-def tensor_encode(values, report):
-    """Encode a float tensor as scaled uint16 codes."""
-    return torch.round((values.to(torch.float32) - report["offset"]) / report["scale"]).clamp(0, 65535).to(torch.uint16)
-
-
-def tensor_measure(original, restored, report):
-    """Add one tensor block's restoration error statistics to ``report``."""
-    difference = restored.to(torch.float32) - original.to(torch.float32)
-    errors = torch.stack(
-        (torch.sum(difference * difference), torch.max(torch.abs(difference)))
-    )
-    counts = torch.stack(
-        (
-            torch.count_nonzero((original > 0) & (restored == 0)),
-            torch.count_nonzero(original != restored),
-            torch.count_nonzero(~torch.isfinite(restored)),
-        )
-    )
-    squared_error, maximum = errors.cpu().tolist()
-    positive_to_zero, changed, overflow = counts.cpu().tolist()
-    report["values"] += original.numel()
-    report["squared_error"] += squared_error
-    report["max_abs_error"] = max(report["max_abs_error"], maximum)
-    report["positive_to_zero"] += positive_to_zero
-    report["changed"] += changed
-    report["overflow"] += overflow
-
-
 def _parameters(values=None, report=None):
     """Build the 16 uint64 parameters and 4 float scalars every kernel reads.
 
@@ -207,22 +179,15 @@ def restore(values, report):
     return result
 
 
-def source_range(blocks, saved):
-    """Return the finite intensity range of ``blocks``, restored with the ``saved`` calibration."""
+def source_range(blocks):
+    """Return the finite intensity range of float32 ``blocks``."""
     low, high = math.inf, -math.inf
     for block in blocks:
-        calibration = saved
-        if calibration and calibration.get("regions"):
-            if str(block.dtype).removeprefix("torch.") != "float32":
-                raise ValueError("Restore regional calibration before measuring intensity range.")
-            calibration = None
         if is_mps_tensor(block):
-            block_low, block_high = tensor_range(
-                tensor_restore(block, calibration)
-            )
+            block_low, block_high = tensor_range(tensor_restore(block, None))
             low, high = min(low, block_low), max(high, block_high)
             continue
-        values = restore(block, calibration)
+        values = restore(block, None)
         params, scalars = _parameters(values)
         params[14] = params[15] = min(params[0], 8192)
         stats = MetalArray((params[14], 4), np.float32)

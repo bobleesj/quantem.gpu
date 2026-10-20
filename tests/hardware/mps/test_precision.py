@@ -312,7 +312,7 @@ def test_mps_precision_releases_its_metal_temporaries(tmp_path, monkeypatch):
     session.frame(5)
     session.reduce_frames([0, 3, 9], "mean")
     session.reduce_frames([0, 3, 9], "max")
-    assert metal.source_range([block], None) == (float(values[0, 0].min()), float(values[0, 0].max()))
+    assert metal.source_range([block]) == (float(values[0, 0].min()), float(values[0, 0].max()))
     assert created and all(array.is_released for array in created)
     assert not block.is_released
     block.release()

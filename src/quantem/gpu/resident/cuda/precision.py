@@ -14,12 +14,7 @@ from quantem.gpu.resident.cuda.counts import StreamedCounts
 from quantem.gpu.resident.queries import DetectorQueries
 
 _SOURCE = (Path(__file__).with_name("kernels") / "precision.cu").read_text()
-_NAMES = (
-    "precision_encode",
-    "precision_encode_regional",
-    "precision_encode_measure_regional",
-    "precision_measure",
-)
+_NAMES = ("precision_encode_measure_regional",)
 
 
 def _kernel(name: str):
@@ -44,75 +39,6 @@ def _regional_calibration(report):
         high = struct.unpack("f", struct.pack("f", scaled))[0]
         pairs += [np.float32(high), np.float32(scaled - high)]
     return *pairs, np.int32(exponent)
-
-
-def encode_scaled_uint16(values, report):
-    """Encode float32 values with one CUDA kernel and reference rounding."""
-    if not isinstance(values, cp.ndarray):
-        raise TypeError("CUDA scaled-uint16 encoding requires a CuPy array.")
-    values = cp.ascontiguousarray(values, dtype=cp.float32)
-    output = cp.empty(values.shape, dtype=cp.uint16)
-    count = int(values.size)
-    if count:
-        regional = report.get("version") == 2
-        kernel = _kernel("precision_encode_regional" if regional else "precision_encode")
-        if regional:
-            calibration = _regional_calibration(report)
-        else:
-            calibration = (np.float32(report["scale"]), np.float32(report["offset"]))
-        threads = 256
-        blocks = min(4096, max(1, (count + threads - 1) // threads))
-        kernel(
-            (blocks,),
-            (threads,),
-            (values, output, np.uint64(count), *calibration),
-        )
-    return output
-
-
-def measure_scaled_uint16(values, codes, report):
-    """Measure a scaled-uint16 conversion with one GPU reduction pass."""
-    if not isinstance(values, cp.ndarray) or not isinstance(codes, cp.ndarray):
-        raise TypeError("CUDA precision measurement requires CuPy arrays.")
-    values = cp.ascontiguousarray(values, dtype=cp.float32)
-    codes = cp.ascontiguousarray(codes, dtype=cp.uint16)
-    if values.shape != codes.shape:
-        raise ValueError("Precision measurement arrays must have matching shapes.")
-    count = int(values.size)
-    stats = [
-        cp.zeros((), dtype=cp.float64),
-        cp.zeros((), dtype=cp.float64),
-        cp.zeros((), dtype=cp.uint64),
-        cp.zeros((), dtype=cp.uint64),
-        cp.zeros((), dtype=cp.uint64),
-    ]
-    if count:
-        kernel = _kernel("precision_measure")
-        threads = 256
-        blocks = min(4096, max(1, (count + threads - 1) // threads))
-        shared = threads * (8 + 8 + 8 + 8 + 8)
-        kernel(
-            (blocks,),
-            (threads,),
-            (
-                values,
-                codes,
-                np.uint64(count),
-                np.float64(report["scale"]),
-                np.float64(report["offset"]),
-                *stats,
-            ),
-            shared_mem=shared,
-        )
-    squared_error, max_error, positive_to_zero, changed, overflow = stats
-    report["values"] += count
-    report["squared_error"] += float(squared_error.get())
-    report["max_abs_error"] = max(
-        report["max_abs_error"], float(max_error.get())
-    )
-    report["positive_to_zero"] += int(positive_to_zero.get())
-    report["changed"] += int(changed.get())
-    report["overflow"] += int(overflow.get())
 
 
 def encode_measure_regional(values, report):
