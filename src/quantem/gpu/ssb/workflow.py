@@ -230,6 +230,17 @@ def _opposite_branch_bounds(bounds: dict[str, object]) -> dict[str, object]:
     return opposite
 
 
+def _announce_pixel_correction(provenance: dict[str, object] | None) -> None:
+    """The one line ``SSB.open`` prints when it replaced flagged detector pixels before fitting."""
+    correction = (provenance or {}).get("hot_pixel_correction")
+    if not isinstance(correction, dict) or not correction.get("applied") or not correction.get("pixel_count"):
+        return
+    count = int(correction["pixel_count"])
+    method = {"median": "their 3 x 3 neighbor median", "zero": "zero"}.get(correction.get("method"), correction.get("method"))
+    print(f"SSB: {count} flagged detector pixel{'s' if count != 1 else ''} replaced by {method} "
+          "(recorded in source_provenance); to keep the recorded values, load with io.load(path) and use SSB(data).")
+
+
 def _in_notebook() -> bool:
     """True inside a Jupyter kernel, where fit() draws its histograms."""
     try:
@@ -677,10 +688,10 @@ class SSB:
         GPU acquisitions use ANS-encoded storage.
 
         File-based SSB retains its detector preprocessing: recorded invalid
-        pixels receive the local median on the GPU. The original file is
-        unchanged, and the correction is recorded in ``source_provenance``.
-        To choose another policy, load with ``io.load`` and pass that dataset
-        to ``SSB(data)``.
+        pixels receive the local median on the GPU, and one line says how many.
+        The original file is unchanged, and the correction is recorded in
+        ``source_provenance``. To choose another policy, load with ``io.load``
+        and pass that dataset to ``SSB(data)``.
 
         Omitted voltage, convergence semiangle and scan step come from the
         acquisition's calibrated metadata. Missing physical values raise an
@@ -802,6 +813,7 @@ class SSB:
         if rotation_estimated:
             session.scan_detector_rotation_source = "estimated"
             _announce_rotation(scan_detector_rotation_deg, scan_detector_rotation_flipped)
+        _announce_pixel_correction(source_provenance)
         session._calibration_file = file_calibration
         session._calibration_supplied = {name for name, value in supplied.items() if value is not None}
         session._owned_dataset = owned

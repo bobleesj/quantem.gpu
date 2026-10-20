@@ -36,6 +36,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- Flagged detector pixels are announced: `io.load`'s load line names the
+  setting that does the other thing (`4 bad pixels left as recorded
+  (hot_pixel_correction="median" replaces them ...)`), and `SSB.open`, which
+  replaces them with the neighbor median, prints one line with the count and
+  how to keep the recorded values. The default stays `"none"`.
 - `find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)},
   fixed_aberrations={"C12_nm": 0.0})` runs: the joint fit takes a `C10_nm`
   range or value and a `C12_nm` range from 0 or `C12_nm=0`, keeps the
