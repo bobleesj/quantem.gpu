@@ -42,7 +42,7 @@ def run(
     bright_field_radius_px: float | None = None,
     upsampling_factor: int = 2,
     fit_aberrations: bool = False,
-    scan_sampling_A: tuple[float, float] | None = None,
+    scan_sampling_A: float | tuple[float, float] | None = None,
     semiangle_mrad: float | None = None,
     detector_sampling_mrad: tuple[float, float] | None = None,
     verbose: bool = False,
@@ -85,13 +85,14 @@ def run(
         the shifts. Needs ``scan_sampling_A`` and the detector calibration,
         ``semiangle_mrad`` or ``detector_sampling_mrad``.
     scan_sampling_A
-        Scan step in Angstrom per pixel, ``(row, col)``; converts the measured shifts to length.
+        Scan step in Angstrom per pixel, ``(row, col)``, or one number for both axes; converts the measured shifts
+        to length.
     semiangle_mrad
         Probe convergence semiangle in mrad. Calibrates the detector as ``SSB``
         does: ``semiangle_mrad`` over the radius at which the bright-field disk
         of the mean pattern falls to half its plateau.
     detector_sampling_mrad
-        Detector sampling in mrad per pixel, ``(row, col)``;
+        Detector sampling in mrad per pixel, ``(row, col)`` or one number for both axes;
         replaces the calibration from ``semiangle_mrad``.
     verbose
         Print the detected disk and the alignment progress.
@@ -115,8 +116,8 @@ def run(
     ValueError
         If the acquisition is not on a CUDA GPU, ``fit_aberrations`` is
         requested without the scan or detector calibration, or
-        ``scan_sampling_A`` or ``detector_sampling_mrad`` is one number
-        instead of a ``(row, col)`` pair.
+        ``scan_sampling_A`` or ``detector_sampling_mrad`` is neither one
+        number nor a ``(row, col)`` pair.
 
     Examples
     --------

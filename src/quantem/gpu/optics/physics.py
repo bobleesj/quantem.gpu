@@ -3,6 +3,8 @@
 import math
 from collections.abc import Sequence
 
+import numpy as np
+
 PLANCK_H = 6.62607015e-34  # Planck constant (J·s)
 ELECTRON_MASS = 9.1093837015e-31  # Electron rest mass (kg)
 ELECTRON_CHARGE = 1.602176634e-19  # Elementary charge (C)
@@ -125,7 +127,7 @@ def ssb_upsampling_factor(
     *,
     voltage_kV: float,
     semiangle_mrad: float,
-    scan_sampling_A: Sequence[float],
+    scan_sampling_A: float | Sequence[float],
 ) -> int:
     """Choose the smallest output grid covering nominal circular-aperture SSB support.
 
@@ -135,8 +137,8 @@ def ssb_upsampling_factor(
         Positive accelerating voltage in kilovolts.
     semiangle_mrad : float
         Positive probe convergence semi-angle in milliradians.
-    scan_sampling_A : sequence of float
-        Native scan step in Angstroms, ``(row, col)``.
+    scan_sampling_A : float or sequence of float
+        Native scan step in Angstroms, ``(row, col)``; one number means both axes.
 
     Returns
     -------
@@ -154,7 +156,10 @@ def ssb_upsampling_factor(
     try:
         voltage = float(voltage_kV)
         angle = float(semiangle_mrad)
-        spacing = tuple(float(value) for value in scan_sampling_A)
+        if isinstance(scan_sampling_A, bool) or scan_sampling_A is None:
+            raise TypeError("scan_sampling_A is a number")
+        spacing = ((float(scan_sampling_A),) * 2 if np.ndim(scan_sampling_A) == 0
+                   else tuple(float(value) for value in scan_sampling_A))
     except (TypeError, ValueError) as exc:
         raise ValueError(
             "Provide calibrated voltage, convergence semi-angle, and scan step."
@@ -164,7 +169,7 @@ def ssb_upsampling_factor(
     ):
         raise ValueError(
             "Voltage, semi-angle, and scan step must be finite and positive; "
-            "use a (row, col) step."
+            "give the step as one number or a (row, col) pair."
         )
     target_spacing = wavelength_A_from_kV(voltage) / (4 * angle * 1e-3)
     required = max(spacing) / target_spacing

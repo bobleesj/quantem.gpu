@@ -81,7 +81,9 @@ bright-field geometry, timings, reuse state, and provenance metadata.
 - detector input: `I[scan_row, scan_column, detector_row, detector_column]`;
 - complex result: `object_wave[scan_row, scan_column]`, complex64, on the session's output grid;
 - `bright_field_center_px`: `(detector_row, detector_column)`;
-- `scan_sampling_A` and `object_sampling_A`: `(row, col)` pairs, in Å;
+- `scan_sampling_A` and `object_sampling_A`: `(row, col)` pairs, in Å; every
+  entry point (`SSB`, `SSB.open`, `reconstruct_series`, `parallax.run`) also
+  takes one number for both axes and stores and reports the pair;
 - `C10_nm` and `C12_nm`: nm; and
 - `phi12_deg`: degrees.
 

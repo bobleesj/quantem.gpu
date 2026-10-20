@@ -24,7 +24,7 @@ from quantem.gpu.ssb.results import (
     SSBSeriesResult,
     host_array,
 )
-from quantem.gpu.ssb.units import validate_aberrations
+from quantem.gpu.ssb.units import sampling_pair, validate_aberrations
 
 
 def reconstruct_series(
@@ -36,7 +36,7 @@ def reconstruct_series(
     probe_reference_frame: int | None = None,
     voltage_kV: float | None = None,
     semiangle_mrad: float | None = None,
-    scan_sampling_A: tuple[float, float] | None = None,
+    scan_sampling_A: float | tuple[float, float] | None = None,
     scan_detector_rotation_deg: float | None = None,
     scan_detector_rotation_flipped: bool | None = None,
     num_trials: int = 200,
@@ -78,8 +78,8 @@ def reconstruct_series(
         Whether the detector row and column axes are exchanged with the
         rotation. None takes the saved fit's flag, else unflipped for a
         recorded rotation; an estimated rotation brings its own.
-    scan_sampling_A : tuple[float, float], optional
-        Scan step as one ``[row, col]`` pair, used on the same terms.
+    scan_sampling_A : float or tuple[float, float], optional
+        Scan step in Angstrom, ``[row, col]`` or one number for both axes, used on the same terms.
     num_trials : int, default 200
         Independent SSB fit trials per missing acquisition.
     refinement : {"nelder-mead", None}, default "nelder-mead"
@@ -111,7 +111,8 @@ def reconstruct_series(
     frame_numbers = tuple(frame_number(path) for path in selected_paths)
     document = read_dataset_yaml(source_root)
     physical = {"voltage_kV": voltage_kV, "semiangle_mrad": semiangle_mrad,
-                "scan_sampling_A": scan_sampling_A, "scan_detector_rotation_deg": scan_detector_rotation_deg,
+                "scan_sampling_A": None if scan_sampling_A is None else sampling_pair("scan_sampling_A", scan_sampling_A),
+                "scan_detector_rotation_deg": scan_detector_rotation_deg,
                 "scan_detector_rotation_flipped": scan_detector_rotation_flipped}
 
     reference_dataset = None

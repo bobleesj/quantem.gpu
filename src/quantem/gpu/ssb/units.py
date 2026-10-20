@@ -25,15 +25,23 @@ HIGHER_ORDER = tuple(f"{name}_nm" for name in HIGHER_ORDER_SLOTS) + tuple(
 
 
 def sampling_pair(name: str, value) -> tuple[float, float]:
-    """A sampling as the (row, col) Python floats the backends read.
+    """A sampling as the (row, col) Python floats the backends read; one number means both axes.
 
-    One number for both axes is refused: the scan step of an acquisition is a [row, col] pair everywhere it is
-    stored, and a scalar read back from a record cannot be told from a pair that lost an axis. NumPy values
-    (``np.float32``) become Python floats, which the backends index safely. SSB and parallax both read their
-    samplings through here, so one rule and one message cover both.
+    ``scan_sampling_A=0.264`` and ``scan_sampling_A=(0.264, 0.264)`` describe the same scan, as
+    ``data.calibration.scan_sampling_A = 0.264`` does. The value is always stored and reported as the pair, so a
+    record never holds a scalar that could be read as a pair that lost an axis. NumPy values (``np.float32``) become
+    Python floats, which the backends index safely. SSB and parallax read their samplings through here, so one rule
+    and one message cover both.
     """
-    if np.ndim(value) != 1 or len(value) != 2:
-        raise ValueError(f"{name} is a [row, col] pair; got {value!r}. Pass ({value!r}, {value!r}) for equal axes.")
+    if np.ndim(value) == 0 and value is not None and not isinstance(value, (str, bytes, bool)):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = None
+        if number is not None:
+            return (number, number)
+    if np.ndim(value) != 1 or len(value) != 2 or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} is one number for both axes or a (row, col) pair; got {value!r}.")
     return (float(value[0]), float(value[1]))
 
 

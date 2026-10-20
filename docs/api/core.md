@@ -105,8 +105,9 @@ are read, in bounded bands of scan rows, as exact counts. The bright-field
 center `bright_field_center_px` `(row, column)` and radius
 `bright_field_radius_px` are fitted from the mean diffraction pattern
 unless given. `fit_aberrations=True` needs `scan_sampling_A` (Å per scan
-pixel, `(row, col)`) and the detector calibration, `semiangle_mrad` or
-`detector_sampling_mrad` (mrad per detector pixel, `(row, col)`). The fit is
+pixel, `(row, col)` or one number for both axes) and the detector calibration,
+`semiangle_mrad` or `detector_sampling_mrad` (mrad per detector pixel,
+`(row, col)` or one number). The fit is
 returned as `ParallaxResult.aberrations` (`C10_nm`
 and `C12_nm` in nm, `phi12_deg` in degrees, scan frame) and
 `ParallaxResult.scan_detector_rotation_deg` (degrees, in [0, 360)), in the
