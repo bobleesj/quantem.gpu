@@ -200,6 +200,17 @@ class MPSStreamedCounts:
     def logical_nbytes(self) -> int:
         return math.prod(self.shape) * self.dtype.itemsize
 
+    def store_as_uint8(self) -> None:
+        """Decode the same streams as uint8 counts.
+
+        The codec and the spatial index store count values, not their bytes, so
+        uint16 streams whose every value the caller has proven to be at most 255
+        decode exactly as uint8.
+        """
+        if self.dtype != np.dtype("uint16"):
+            raise ValueError("Only uint16 counts can be stored as uint8.")
+        self.dtype = np.dtype("uint8")
+
     def _check_resident(self):
         if self.is_released:
             raise RuntimeError("The ANS source was released; load it again.")

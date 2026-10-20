@@ -92,7 +92,7 @@ def read(data, *, scan_region=None, detector_region=None, output="torch"):
             counts = decode(
                 row0 * shape[1], row1 * shape[1], detector_region=selected_region
             )
-            result = torch_value(counts).reshape(output_shape)
+            result = _as_dtype(torch_value(counts).reshape(output_shape), data.dtype)
             return _native_result(result, data.dtype) if output == "native" else result
     frame_shape = output_shape[2:] if selected_region else shape[2:]
     frame_bytes = math.prod(frame_shape) * np.dtype(data.dtype).itemsize
@@ -133,9 +133,25 @@ def read(data, *, scan_region=None, detector_region=None, output="torch"):
             )
             # Free this block before the next decode, so one block of scratch is live.
             del block
+    tensor = _as_dtype(tensor, data.dtype)
     if output == "native":
         return _native_result(tensor, data.dtype)
     return tensor.view(torch_dtype(data.dtype)) if float8 else tensor
+
+
+def _as_dtype(tensor, dtype):
+    """Cast counts held in a narrower unsigned type to the dtype the dataset reports; values are unchanged.
+
+    A load with ``dtype="native"`` reports the source file's dtype for counts
+    stored narrower. Torch casts through int32, which every device supports.
+    """
+    target = np.dtype(dtype)
+    if target.kind != "u" or str(tensor.dtype).removeprefix("torch.") == target.name:
+        return tensor
+    wide = tensor.to(torch.int32)
+    if target.itemsize == 4:
+        return wide.view(torch.uint32)
+    return wide.to(torch.int16).view(torch.uint16) if target.itemsize == 2 else wide.to(torch.uint8)
 
 
 def _native_result(tensor, dtype):

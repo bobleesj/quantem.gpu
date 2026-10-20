@@ -5,8 +5,9 @@ the host (``formats.hdf5.reads.FrameReader.prepare``) and decode it here, with
 Metal compute shaders writing straight into a unified-memory buffer that the
 ANS encoder or the precision converter then consumes. Decoded values keep
 their stored dtype, including uint32 detector markers; ``exact_uint16`` copies
-uint32 counts into uint16 only when every value fits. Kernels compile on first
-use, so this module imports on Linux.
+uint32 counts into uint16 only when every value fits, and both it and
+``exceeds_uint8`` report whether every value fits uint8. Kernels compile on
+first use, so this module imports on Linux.
 """
 
 from functools import cache
@@ -26,7 +27,7 @@ from quantem.gpu.device.metal_runtime import (
     shared_array,
 )
 
-__all__ = ["MPSDecompressor", "exact_uint16", "load_prepared_frames"]
+__all__ = ["MPSDecompressor", "exact_uint16", "exceeds_uint8", "load_prepared_frames"]
 
 _KERNELS = Path(__file__).parent / "kernels"
 # LZ4 occupancy: compressed 8 KB bitshuffle blocks packed per threadgroup (more
@@ -46,6 +47,7 @@ _NAMES = (
     "shuf_tail_32_batched",
     "shuf_8_batched",
     "narrow_u32_u16",
+    "above_u8_u16",
 )
 
 
@@ -71,43 +73,54 @@ def load_prepared_frames(prepared: dict) -> SharedArray:
         decoder.free()
 
 
-def exact_uint16(frames: SharedArray) -> SharedArray | None:
-    """Copy decoded uint32 counts into a new uint16 array when every value fits 16 bits.
-
-    Returns None, holding no new buffer, when any value is above 65535 (a
-    count or a detector's 0xffffffff bad-pixel marker): the caller then keeps
-    uint32. Nothing is clipped. The caller releases ``frames`` and the
-    returned array.
-    """
-    count = int(frames.size)
+def _range_flags(name: str, buffers: tuple, count: int) -> tuple[bool, bool]:
+    """Run one range kernel over ``count`` values; return (any above 65535, any above 255)."""
     if count >= 1 << 32:
-        raise ValueError("Narrow at most 2^32 - 1 values per call.")
-    flag = allocate_shared(4, "uint16 range flag")
-    output = allocate_shared(count * 2, "uint16 counts")
+        raise ValueError("Check at most 2^32 - 1 values per call.")
+    flags = allocate_shared(8, "count range flags")
     try:
-        numpy_view(flag, np.uint32, 1)[:] = 0
+        numpy_view(flags, np.uint32, 2)[:] = 0
         command = metal_queue().commandBuffer()
         encoder = command.computeCommandEncoder()
-        encoder.setComputePipelineState_(metal_pipelines(_SOURCE, _NAMES)["narrow_u32_u16"])
-        encoder.setBuffer_offset_atIndex_(frames._mtl, 0, 0)
-        encoder.setBuffer_offset_atIndex_(output, 0, 1)
-        encoder.setBuffer_offset_atIndex_(flag, 0, 2)
-        _set_u32(encoder, 3, count)
+        encoder.setComputePipelineState_(metal_pipelines(_SOURCE, _NAMES)[name])
+        for index, buffer in enumerate((*buffers, flags)):
+            encoder.setBuffer_offset_atIndex_(buffer, 0, index)
+        _set_u32(encoder, len(buffers) + 1, count)
         encoder.dispatchThreads_threadsPerThreadgroup_(
             metal_module().MTLSizeMake(count, 1, 1), metal_module().MTLSizeMake(256, 1, 1)
         )
         encoder.endEncoding()
-        complete_command(command, "uint32 to uint16 copy")
-        fits = int(numpy_view(flag, np.uint32, 1)[0]) == 0
+        complete_command(command, "count range check")
+        wide, byte = (bool(value) for value in numpy_view(flags, np.uint32, 2))
+    finally:
+        release_buffer(flags)
+    return wide, byte
+
+
+def exact_uint16(frames: SharedArray) -> tuple[SharedArray | None, bool]:
+    """Copy decoded uint32 counts into a new uint16 array when every value fits 16 bits.
+
+    Returns the uint16 array, or None (holding no new buffer) when any value
+    is above 65535 (a count or a detector's 0xffffffff bad-pixel marker): the
+    caller then keeps uint32. Nothing is clipped. The second value is True
+    when any value is above 255. The caller releases ``frames`` and the
+    returned array.
+    """
+    output = allocate_shared(int(frames.size) * 2, "uint16 counts")
+    try:
+        wide, byte = _range_flags("narrow_u32_u16", (frames._mtl, output), int(frames.size))
     except BaseException:
         release_buffer(output)
         raise
-    finally:
-        release_buffer(flag)
-    if not fits:
+    if wide:
         release_buffer(output)
-        return None
-    return shared_array(output, np.dtype("uint16"), frames.shape)
+        return None, True
+    return shared_array(output, np.dtype("uint16"), frames.shape), byte
+
+
+def exceeds_uint8(frames: SharedArray) -> bool:
+    """Whether any decoded uint16 count is above 255."""
+    return _range_flags("above_u8_u16", (frames._mtl,), int(frames.size))[1]
 
 
 class MPSDecompressor:

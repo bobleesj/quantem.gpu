@@ -13,6 +13,7 @@ Examples
 ...     pattern = acquisition[0, 0]
 """
 
+import math
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -126,10 +127,10 @@ def load(
     metadata and any saved copy. ``"none"`` keeps every stored value, markers
     included: detector products then exclude the flagged pixels without
     changing storage. ``"zero"`` writes 0. ``auto_narrow`` applies only to an
-    explicitly selected dense CPU reader; encoded loading retains dtype,
-    except that on MPS a bitshuffle master whose uint32 values all fit 16 bits
-    is held as uint16 counts that read back unchanged (one printed line;
-    ``dtype="native"`` keeps uint32).
+    explicitly selected dense CPU reader. On MPS a bitshuffle master's uint16
+    or uint32 counts are held as uint8 or uint16 when every value fits; they
+    read back unchanged, one printed line names the stored type, and
+    ``dtype="native"`` reads them in the file's dtype.
 
     Parameters
     ----------
@@ -137,10 +138,11 @@ def load(
         One master/data HDF5 path, a folder, a list of master paths, or a
         standalone QuantEM encoded file.
     dtype
-        Omit (or ``"native"``) to keep stored values. ``"native"`` also keeps
-        the stored dtype where MPS would hold uint32 counts that fit 16 bits as
-        uint16. ``"scaled_uint16"`` selects calibrated precision storage for
-        float32 sources.
+        Omit (or ``"native"``) to keep stored values. Integer counts are held
+        in the narrowest unsigned type that holds every value (on MPS and in
+        ``.qem`` files); ``"native"`` reads them in the source file's recorded
+        dtype, a cast on read with identical values. ``"scaled_uint16"``
+        selects calibrated precision storage for float32 sources.
     representation
         ``"dense"``, ``"encoded"`` or ``"paired"``. The authenticated storage
         schema selects the exact decoder within each representation.
@@ -316,6 +318,7 @@ def load(
             for item in loaded:
                 item.close()
             raise
+        loaded = [_reads_in_source_dtype(item) if dtype == "native" else item for item in loaded]
         return loaded[0] if single else loaded
 
     # Scaled precision: explicit conversion, or a saved precision export.
@@ -407,13 +410,13 @@ def load(
                         verbose=verbose,
                         backend=ans_backend,
                         hot_pixel_correction=hot_pixel_correction,
-                        keep_dtype=dtype == "native",
                     )
                 )
         except BaseException:
             for result in results:
                 result.close()
             raise
+        results = [_reads_in_source_dtype(item) if dtype == "native" else item for item in results]
         return drop_unread_calibration(results[0] if single else results, sources)
 
     # The explicit CPU reference.
@@ -442,6 +445,18 @@ def load(
         stack=True if stack is None else stack,
         verbose=verbose,
     ), sources)
+
+
+def _reads_in_source_dtype(dataset):
+    """Expose counts held in a narrower unsigned type in their recorded source dtype; reads cast, values unchanged."""
+    metadata = dataset.metadata
+    source, stored = metadata.get("source_dtype"), metadata.get("dtype")
+    if source and stored:
+        source, stored = np.dtype(source), np.dtype(stored)
+        if source != stored and source.kind == stored.kind == "u" and source.itemsize > stored.itemsize:
+            metadata["working_dtype"] = source.name
+            metadata["working_logical_tensor_bytes"] = math.prod(dataset.shape) * source.itemsize
+    return dataset
 
 
 def bin(data, factor: int = 2, axes: str = "detector", dtype=None, reduction: str = "sum", edge: str = "crop"):
