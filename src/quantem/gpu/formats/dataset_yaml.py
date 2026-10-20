@@ -82,8 +82,8 @@ def master_names(master: str) -> set[str]:
 
     Examples
     --------
-    >>> sorted(master_names("scan_018.qem"))
-    ['scan_018.qem', 'scan_018_master.h5']
+    >>> sorted(master_names("scan_18.qem"))
+    ['scan_18.qem', 'scan_18_master.h5']
     """
     name = str(master).rsplit("/", 1)[-1]
     names = {name}
