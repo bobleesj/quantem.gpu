@@ -36,6 +36,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- The **Rotation flipped** row of `SSB.calibration_table()` shows the file's
+  recorded flip (it always read **Not recorded**), and `data.metadata_table()`
+  gains the row.
 - `SSB(data)` and `SSB.open` use a recorded `detector_sampling_inv_A`
   (`data.calibration.detector_sampling_inv_A = ...`), converted to mrad per
   pixel with the electron wavelength; it was ignored and the bright-field

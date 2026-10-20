@@ -624,8 +624,9 @@ class SSB:
                 "Source": source,
             }
         rotation = rows[labels.CALIBRATION_LABELS["scan_detector_rotation_deg"]]
+        flipped = self._calibration_file.get(labels.CALIBRATION_LABELS["scan_detector_rotation_flipped"], {})
         rows[labels.CALIBRATION_LABELS["scan_detector_rotation_flipped"]] = {
-            "File value": labels.NOT_RECORDED, "File unit": "",
+            "File value": flipped.get("Value", labels.NOT_RECORDED), "File unit": "",
             "Value used": "yes" if self.scan_detector_rotation_flipped else "no", "Unit used": "",
             "Source": rotation["Source"] if rotation["Source"] != labels.MODIFIED_IN_SESSION else (
                 labels.EXPLICIT_OVERRIDE if "scan_detector_rotation_deg" in self._calibration_supplied else labels.DEFAULT),
