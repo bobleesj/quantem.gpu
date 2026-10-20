@@ -454,3 +454,53 @@ def test_zero_depth_specialization_preserves_all_phase_bits(
             )
             expected, _ = ssb.preview(coefs, **settings)
         np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+
+@pytest.mark.parametrize("factor", [1, 2, 3])
+@pytest.mark.parametrize("detector_sampling", [(10.0, 10.0), (10.0, 7.0)])
+def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detector_sampling):
+    """The separable C10/C12 phasors reproduce the per-term transfer to float32 rounding."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling as up
+
+    cases = [
+        {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0},
+        {"C10_nm": 35.0, "C12_nm": 9.0, "phi12_deg": 75.0},
+        {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
+        {"C10_nm": 0.3, "C12_nm": 2.0, "phi12_deg": 10.0},
+    ]
+    with _disk_session(detector_sampling=detector_sampling) as ssb:
+        ssb.set_rotation(165.8)
+        for coefs in cases:
+            actual, _ = ssb.preview(coefs, upsampling_factor=factor, compute_loss=False)
+            with monkeypatch.context() as reference:
+                reference.setattr(up, "_SEPARABLE", False)
+                expected, _ = ssb.preview(coefs, upsampling_factor=factor, compute_loss=False)
+            difference = np.angle(np.exp(1j * (actual.astype(np.float64) - expected)))
+            assert np.abs(difference).max() < 2e-6, (coefs, np.abs(difference).max())
+        prepared = ssb._backend()._prepared
+        # At native sampling the Nyquist row has support and its upper half is computed, not mirrored.
+        blocks = prepared.separable_geometry[1]["blocks"]
+        assert len(blocks) == (2 if factor == 1 else 1)
+
+
+def test_separable_phasor_tables_reduce_exactly():
+    """Each table phasor equals the float64 phase m * P reduced modulo 2 pi."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling as up
+    from quantem.gpu.ssb.mps.hardware import require_mlx
+
+    mx = require_mlx()
+    rng = np.random.default_rng(3)
+    values = rng.uniform(-40.0, 40.0, size=257)
+    values[:3] = (0.0, np.pi, -2.0 * np.pi + 1e-9)
+    frequencies = (np.fft.fftfreq(1024) * 1024)[::3]
+    parts = mx.array(up._split_mod(values))
+    t_row, _ = up._separable_table_kernel()(
+        inputs=[parts, parts, mx.array(frequencies.astype(np.float32)), mx.array(frequencies.astype(np.float32))],
+        template=[("K", values.size), ("ROWS", frequencies.size), ("COLS", frequencies.size)],
+        grid=(frequencies.size, values.size, 1), threadgroup=(256, 1, 1),
+        output_shapes=[(values.size, frequencies.size)] * 2, output_dtypes=[mx.complex64] * 2,
+    )
+    expected = np.exp(-1j * np.remainder(values[:, None] * frequencies[None, :], 2.0 * np.pi))
+    assert np.abs(np.asarray(t_row) - expected).max() < 1e-6
