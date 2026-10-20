@@ -345,7 +345,8 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
         record.write_text(json.dumps({"schema": marker, "result": block}))
         assert saved_fit(tmp_path) is None
     record.write_text(json.dumps({"schema": RESULT_SCHEMA, "result": block}))
-    assert saved_fit(tmp_path) == {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0}
+    assert saved_fit(tmp_path) == {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0,
+                                   "scan_detector_rotation_flipped": False}
 
 
 def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):

@@ -1,7 +1,7 @@
 """SSB reconstruction of an acquisition series (``SSB.reconstruct_series``) and the Live layout it reads and writes.
 
-A series directory holds raw ``*_master.h5`` acquisitions and, under ``live/screen/<dataset>``, the products QuantEM
-Live already made: ``config.json`` with the fitted SSB settings, bright- and dark-field images, and saved SSB results.
+A series directory holds raw ``*_master.h5`` acquisitions and, under ``live/screen/<dataset>`` (or the ``save_dir``
+a caller names, such as Live's ``<output>/live/screen``), the products QuantEM Live already made: ``config.json`` with the fitted SSB settings, bright- and dark-field images, and saved SSB results.
 These functions find the acquisitions in natural order, resolve each acquisition's physical settings (Live result,
 then ``dataset.yaml``, then the caller), and keep fresh fits discoverable in the same layout, so a series run reuses
 Live's work and Live reuses the series run's work.
@@ -38,18 +38,21 @@ def reconstruct_series(
     semiangle_mrad: float | None = None,
     scan_sampling_A: tuple[float, float] | None = None,
     scan_detector_rotation_deg: float | None = None,
+    scan_detector_rotation_flipped: bool | None = None,
     num_trials: int = 200,
     refinement: RefineMethod = "nelder-mead",
     backend: Literal["auto", "cuda", "mps"] = "auto",
+    save_dir: str | Path | None = None,
     progress: bool = True,
 ) -> SSBSeriesResult:
     """Reconstruct an SSB series with independent or fixed-probe fitting (``SSB.reconstruct_series``; ``cls`` is ``SSB``).
 
-    Existing QuantEM Live products under ``<source>/live/screen`` are
-    discovered and reused automatically. Missing products run through
-    :class:`SSB` and are saved to the same standard location. When no Live
-    screening exists, physical settings are read from ``dataset.yaml`` or
-    from explicit keyword arguments. A stored fit counts only when it carries
+    Existing QuantEM Live products under ``save_dir`` (default
+    ``<source>/live/screen``) are discovered and reused automatically. Missing
+    products run through :class:`SSB` and are saved to the same location. When
+    no Live screening exists, physical settings are read from ``dataset.yaml``
+    or from explicit keyword arguments; an acquisition with no recorded
+    rotation has it estimated by ``SSB.open``. A stored fit counts only when it carries
     the current fit schema (``stored_fit``); any other is treated as absent, so
     a probe reference stored by an earlier version is fitted again.
 
@@ -68,8 +71,13 @@ def reconstruct_series(
         Acquisition identifier whose fitted aberrations and rotation define
         the fixed probe. When omitted, fit each acquisition independently.
     voltage_kV, semiangle_mrad, scan_detector_rotation_deg : float, optional
-        Physical microscope settings used only when prior Live metadata or
-        ``dataset.yaml`` does not already provide them.
+        Physical microscope settings; each wins over prior Live metadata and
+        ``dataset.yaml``. A rotation none of them records is estimated per
+        acquisition (``SSB.open``).
+    scan_detector_rotation_flipped : bool, optional
+        Whether the detector row and column axes are exchanged with the
+        rotation. None takes the saved fit's flag, else unflipped for a
+        recorded rotation; an estimated rotation brings its own.
     scan_sampling_A : tuple[float, float], optional
         Scan step as one ``[row, col]`` pair, used on the same terms.
     num_trials : int, default 200
@@ -78,6 +86,10 @@ def reconstruct_series(
         Independent-fit refinement method.
     backend : {"auto", "cuda", "mps"}, default "auto"
         Accelerated SSB backend. CPU is never used.
+    save_dir : str or Path, optional
+        Directory holding one folder per acquisition (``<dataset>/config.json``
+        and its saved fits), the layout ``live screen --output OUT`` writes as
+        ``OUT/live/screen``. Default ``<source_directory>/live/screen``.
     progress : bool, default True
         Show one acquisition-level progress bar.
 
@@ -91,13 +103,16 @@ def reconstruct_series(
     if not source_root.is_dir():
         raise FileNotFoundError(f"SSB source directory not found: {source_root}")
     fixed_probe = probe_reference_frame is not None
-    results_root, selected_paths, paths_by_frame = select_acquisitions(
-        source_root, int(first_frame), int(last_frame),
+    results_root = (source_root / "live" / "screen" if save_dir is None
+                    else Path(save_dir).expanduser().resolve())
+    selected_paths, paths_by_frame = select_acquisitions(
+        source_root, int(first_frame), int(last_frame), results_root,
     )
     frame_numbers = tuple(frame_number(path) for path in selected_paths)
     document = read_dataset_yaml(source_root)
     physical = {"voltage_kV": voltage_kV, "semiangle_mrad": semiangle_mrad,
-                "scan_sampling_A": scan_sampling_A, "scan_detector_rotation_deg": scan_detector_rotation_deg}
+                "scan_sampling_A": scan_sampling_A, "scan_detector_rotation_deg": scan_detector_rotation_deg,
+                "scan_detector_rotation_flipped": scan_detector_rotation_flipped}
 
     reference_dataset = None
     if fixed_probe:
@@ -123,8 +138,7 @@ def reconstruct_series(
                 raise FileNotFoundError(
                     f"Raw probe-reference acquisition not found: {source}"
                 )
-            with cls.open(str(source), backend=backend,
-                          **open_settings(settings, float(settings["scan_detector_rotation_deg"]))) as ssb:
+            with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
                 reference_result = ssb.find_aberrations(
                     num_trials=num_trials,
                     refinement=refinement,
@@ -136,9 +150,11 @@ def reconstruct_series(
             reference_fit = {
                 "aberrations": reference_result.aberrations,
                 "scan_detector_rotation_deg": reference_result.scan_detector_rotation_deg,
+                "scan_detector_rotation_flipped": reference_result.scan_detector_rotation_flipped,
             }
         reference_aberrations = dict(reference_fit["aberrations"])
         reference_rotation = float(reference_fit["scan_detector_rotation_deg"])
+        reference_flipped = bool(reference_fit.get("scan_detector_rotation_flipped", False))
 
     iterator = selected_paths
     if progress:
@@ -159,8 +175,10 @@ def reconstruct_series(
         source = source_root / f"{screen_path.name}_master.h5"
         if not source.is_file():
             raise FileNotFoundError(f"Raw SSB acquisition not found: {source}")
-        rotation = reference_rotation if fixed_probe else float(settings["scan_detector_rotation_deg"])
-        with cls.open(str(source), backend=backend, **open_settings(settings, rotation)) as ssb:
+        if fixed_probe:
+            settings = {**settings, "scan_detector_rotation_deg": reference_rotation,
+                        "scan_detector_rotation_flipped": reference_flipped}
+        with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
             if fixed_probe:
                 result = ssb.reconstruct(
                     aberrations=reference_aberrations,
@@ -183,7 +201,9 @@ def reconstruct_series(
             screen_path,
             source,
             backend=backend,
-            scan_detector_rotation_deg=float(settings["scan_detector_rotation_deg"]),
+            # the rotation the reconstruction used, estimated or recorded, with its detector axes
+            scan_detector_rotation_deg=float(result.scan_detector_rotation_deg),
+            scan_detector_rotation_flipped=bool(result.scan_detector_rotation_flipped),
         )
         bright_fields.append(bright_field)
         dark_fields.append(dark_field)
@@ -225,8 +245,9 @@ def select_acquisitions(
     source_root: Path,
     first_frame: int,
     last_frame: int,
-) -> tuple[Path, tuple[Path, ...], dict[int, Path]]:
-    """Return the screening root, the screening paths from ``first_frame`` to ``last_frame``, and every path by frame.
+    results_root: Path,
+) -> tuple[tuple[Path, ...], dict[int, Path]]:
+    """Return the screening paths (under ``results_root``) from ``first_frame`` to ``last_frame``, and every path by frame.
 
     Frame numbers are the trailing integers of the dataset names; the selection runs in natural acquisition order and
     includes both ends, even when the numbers between them are not consecutive.
@@ -236,7 +257,7 @@ def select_acquisitions(
             f"first_frame must be at most last_frame; got "
             f"{first_frame} > {last_frame}."
         )
-    results_root, paths = screen_paths(source_root)
+    paths = screen_paths(source_root, results_root)
     by_frame = paths_by_frame(paths)
     if first_frame not in by_frame:
         raise IndexError(
@@ -255,12 +276,15 @@ def select_acquisitions(
             "first_frame must precede last_frame in acquisition order; "
             f"got {first_frame} after {last_frame}."
         )
-    return results_root, paths[first_index : last_index + 1], by_frame
+    return paths[first_index : last_index + 1], by_frame
 
 
-def screen_paths(source_root: Path) -> tuple[Path, tuple[Path, ...]]:
-    """Return the screening root and one screening path per raw or screened acquisition, in natural order."""
-    results_root = source_root / "live" / "screen"
+def screen_paths(source_root: Path, results_root: Path) -> tuple[Path, ...]:
+    """One screening path under ``results_root`` per raw or screened acquisition, in natural order.
+
+    ``results_root`` is the directory of per-acquisition folders (``<source>/live/screen`` by default, or Live's
+    ``<output>/live/screen``); it is created only when it is used to store a result.
+    """
     masters = tuple(sorted(source_root.glob("*_master.h5"), key=acquisition_order))
     datasets = {master.name.removesuffix("_master.h5") for master in masters}
     if results_root.is_dir():
@@ -274,8 +298,7 @@ def screen_paths(source_root: Path) -> tuple[Path, tuple[Path, ...]]:
             f"No prior QuantEM screening results or *_master.h5 acquisitions "
             f"were found in {source_root}."
         )
-    results_root.mkdir(parents=True, exist_ok=True)
-    return results_root, tuple(
+    return tuple(
         results_root / dataset
         for dataset in sorted(datasets, key=lambda name: acquisition_order(Path(name)))
     )
@@ -333,11 +356,14 @@ def acquisition_settings(
     semiangle_mrad: float | None,
     scan_sampling_A: tuple[float, float] | None,
     scan_detector_rotation_deg: float | None,
+    scan_detector_rotation_flipped: bool | None = None,
 ) -> dict[str, object]:
-    """Return complete physical settings for one acquisition.
+    """Return the physical settings for one acquisition.
 
-    Each value comes from the caller, else the saved Live SSB fit, else ``dataset.yaml``; a value none of them gives
-    is an error that names the three places to fix it.
+    Each value comes from the caller, else the saved Live SSB fit, else ``dataset.yaml``; a beam or scan step none of
+    them gives is an error that names the three places to fix it. A rotation none of them gives stays None, and
+    ``SSB.open`` estimates it with its detector axes. The flip is the caller's, else the saved fit's when the
+    rotation is the saved one, else unflipped for a recorded rotation.
     """
     config_path = screen_path / "config.json"
     saved = stored_fit(json.loads(config_path.read_text())) if config_path.is_file() else {}
@@ -351,7 +377,7 @@ def acquisition_settings(
     for name, value in values.items():
         if value is None:
             values[name] = saved.get(name, session.get(name))
-    missing = [name for name, value in values.items() if value is None]
+    missing = [name for name, value in values.items() if value is None and name != "scan_detector_rotation_deg"]
     if missing:
         joined = ", ".join(missing)
         raise ValueError(
@@ -360,20 +386,31 @@ def acquisition_settings(
             "pass the missing physical parameters to reconstruct_series()."
         )
     values["bright_field_radius_px"] = saved.get("bright_field_radius_px")
-    # a stored fit says whether its detector axes were exchanged; SSB.open refuses a True instead of ignoring it
-    values["scan_detector_rotation_flipped"] = bool(saved.get("scan_detector_rotation_flipped", False))
+    if values["scan_detector_rotation_deg"] is None:
+        values["scan_detector_rotation_flipped"] = scan_detector_rotation_flipped    # estimated with the rotation
+    elif scan_detector_rotation_flipped is not None:
+        values["scan_detector_rotation_flipped"] = bool(scan_detector_rotation_flipped)
+    elif scan_detector_rotation_deg is None and saved.get("scan_detector_rotation_deg") is not None:
+        values["scan_detector_rotation_flipped"] = bool(saved.get("scan_detector_rotation_flipped", False))
+    else:
+        values["scan_detector_rotation_flipped"] = False
     return values
 
 
-def open_settings(settings: dict[str, object], scan_detector_rotation_deg: float) -> dict[str, object]:
-    """``SSB.open`` keywords for one acquisition's resolved settings (a saved BF radius is rounded to whole pixels)."""
+def open_settings(settings: dict[str, object]) -> dict[str, object]:
+    """``SSB.open`` keywords for one acquisition's resolved settings.
+
+    A saved bright-field radius is passed as it was fitted: rounding it to whole pixels (53.4 to 53) reconstructed with
+    a different disk than the stored fit. A rotation of None is estimated by ``SSB.open``.
+    """
+    rotation = settings["scan_detector_rotation_deg"]
     return {
         "voltage_kV": float(settings["voltage_kV"]),
         "semiangle_mrad": float(settings["semiangle_mrad"]),
         "scan_sampling_A": tuple(settings["scan_sampling_A"]),
-        "scan_detector_rotation_deg": scan_detector_rotation_deg,
+        "scan_detector_rotation_deg": None if rotation is None else float(rotation),
         "scan_detector_rotation_flipped": settings["scan_detector_rotation_flipped"],
-        "bright_field_radius_px": None if settings["bright_field_radius_px"] is None else round(float(settings["bright_field_radius_px"])),
+        "bright_field_radius_px": None if settings["bright_field_radius_px"] is None else float(settings["bright_field_radius_px"]),
     }
 
 
@@ -460,6 +497,7 @@ def saved_fit(screen_path: Path) -> dict[str, object] | None:
             return {
                 "aberrations": validate_aberrations(aberrations),
                 "scan_detector_rotation_deg": float(rotation),
+                "scan_detector_rotation_flipped": bool(result.get("scan_detector_rotation_flipped", False)),
             }
     return None
 
@@ -470,6 +508,7 @@ def virtual_images(
     *,
     backend: str,
     scan_detector_rotation_deg: float,
+    scan_detector_rotation_flipped: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return the acquisition's bright- and dark-field images, from Live's screening or a fresh screening run.
 
@@ -486,6 +525,7 @@ def virtual_images(
         source,
         backend=backend,
         scan_detector_rotation_deg=scan_detector_rotation_deg,
+        scan_detector_rotation_flipped=scan_detector_rotation_flipped,
         cache=False,
     )
     screen_path.mkdir(parents=True, exist_ok=True)
