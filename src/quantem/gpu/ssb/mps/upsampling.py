@@ -373,11 +373,19 @@ def _separable_table_kernel():
 
 
 _SEPARABLE_SOURCE = """
-        uint ci = thread_position_in_grid.x;
-        uint ri = thread_position_in_grid.y;
-        if (ci >= COLS || ri >= ROWS) return;
+        // ri and ci index the row and column tables. One grid row past ROWS computes the upper half of the
+        // Nyquist row (EXTRA columns stored after the COLS main columns), whose partner is itself.
+        uint gx = thread_position_in_grid.x, gy = thread_position_in_grid.y;
+        uint ri, ci;
+        size_t out;
+        if (gy < ROWS) {
+            if (gx >= COLS) return;
+            ri = gy; ci = gx; out = (size_t)gy * COLS + gx;
+        } else {
+            if (gy > ROWS || gx >= EXTRA) return;
+            ri = NYQUIST_RI; ci = COLS + gx; out = (size_t)ROWS * COLS + gx;
+        }
         uint row = row_indices[ri], col = col_indices[ci];
-        size_t out = (size_t)ri * COLS + ci;
         float2 result = float2(previous[out].real, previous[out].imag);
         float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
         float qr = q_row[row], qc = q_col[col];
@@ -456,7 +464,7 @@ _SEPARABLE_SOURCE = """
                                 : size_t(k + j) * SOURCE_N * G_COLS + source_offset];
                             gv[j] = float2(value.real, mirror ? -value.imag : value.imag);
                             tr[j] = float2(t_row[(k + j) * ROWS + ri].real, t_row[(k + j) * ROWS + ri].imag);
-                            tc[j] = float2(t_col[(k + j) * COLS + ci].real, t_col[(k + j) * COLS + ci].imag);
+                            tc[j] = float2(t_col[(k + j) * COLS_ALL + ci].real, t_col[(k + j) * COLS_ALL + ci].imag);
                         }
                         for (uint j = 0; j < PURE_UNROLL; ++j) acc += sep_cmul(gv[j], sep_cmul(tr[j], tc[j]));
                     }
@@ -466,7 +474,7 @@ _SEPARABLE_SOURCE = """
                             : size_t(k) * SOURCE_N * G_COLS + source_offset];
                         float2 gv = float2(value.real, mirror ? -value.imag : value.imag);
                         float2 tr = float2(t_row[k * ROWS + ri].real, t_row[k * ROWS + ri].imag);
-                        float2 tc = float2(t_col[k * COLS + ci].real, t_col[k * COLS + ci].imag);
+                        float2 tc = float2(t_col[k * COLS_ALL + ci].real, t_col[k * COLS_ALL + ci].imag);
                         acc += sep_cmul(gv, sep_cmul(tr, tc));
                     }
                     if (pure_m) sum_a += acc; else if (pure_p) sum_b += acc; else sum_i += acc;
@@ -485,7 +493,7 @@ _SEPARABLE_SOURCE = """
                             : size_t(k) * SOURCE_N * G_COLS + source_offset];
                         gv[j] = float2(value.real, mirror ? -value.imag : value.imag);
                         tr[j] = float2(t_row[k * ROWS + ri].real, t_row[k * ROWS + ri].imag);
-                        tc[j] = float2(t_col[k * COLS + ci].real, t_col[k * COLS + ci].imag);
+                        tc[j] = float2(t_col[k * COLS_ALL + ci].real, t_col[k * COLS_ALL + ci].imag);
                     }
                     for (uint j = 0; j < UNROLL; ++j) {
                         float mr = qr - kd[j].x, mc = qc - kd[j].y, pr = qr + kd[j].x, pc = qc + kd[j].y;
@@ -568,16 +576,18 @@ def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
     columns = n // 2 + 1
     row_indices, col_indices = _coherent_support(prepared, n, columns)
     frequencies = np.fft.fftfreq(n) * n
-    blocks = [(row_indices, col_indices)]
-    # The Nyquist row's anti-Hermitian partner is itself, so its upper half is computed, not mirrored.
+    # The Nyquist row's anti-Hermitian partner is itself, so its upper half is computed, not mirrored,
+    # by one extra grid row of the same launch (a separate small launch would add a serial tail).
     nyquist = n // 2
+    upper = np.zeros(0, dtype=np.uint32)
     if nyquist in set(row_indices.tolist()):
         upper = np.arange(columns, n, dtype=np.uint32)
         upper = upper[np.abs(frequencies[upper]) <= np.abs(frequencies[col_indices]).max()]
         if upper.size and upper[-1] != n - 1 or np.any(np.diff(upper) != 1):
             raise RuntimeError("The Nyquist row support is expected to be one run ending at the last column.")
-        if upper.size:
-            blocks.append((np.asarray([nyquist], dtype=np.uint32), upper))
+        if upper.size > col_indices.size:
+            raise RuntimeError("The Nyquist row's upper half is expected to fit one grid row.")
+    all_cols = np.concatenate((col_indices, upper)).astype(np.uint32)
     # The probe aperture at k depends only on the geometry; its chi(k) cancels in the separable form.
     probe = _alias_probe_kernel()(
         inputs=[prepared.kx, prepared.ky, params, mx.array(np.zeros((14, 2), np.float32))],
@@ -601,12 +611,12 @@ def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
         "columns": columns, "bounds": bounds, "k_data": k_data,
         "kx": prepared.kx_np.astype(np.float64), "ky": prepared.ky_np.astype(np.float64),
         "steps": (float(prepared.q_row[1].item()), float(prepared.q_col[1].item())),
-        "blocks": [{
-            "rows": rows, "cols": cols, "rows_m": mx.array(rows), "cols_m": mx.array(cols),
-            "row_f": frequencies[rows], "col_f": frequencies[cols],
-            "row_f_m": mx.array(frequencies[rows].astype(np.float32)),
-            "col_f_m": mx.array(frequencies[cols].astype(np.float32)),
-        } for rows, cols in blocks],
+        "rows": row_indices, "cols": col_indices, "upper": upper,
+        "nyquist_ri": int(np.flatnonzero(row_indices == nyquist)[0]) if upper.size else 0,
+        "rows_m": mx.array(row_indices), "cols_m": mx.array(all_cols),
+        "row_f": frequencies[row_indices], "col_f": frequencies[all_cols],
+        "row_f_m": mx.array(frequencies[row_indices].astype(np.float32)),
+        "col_f_m": mx.array(frequencies[all_cols].astype(np.float32)),
     }
     prepared.separable_geometry = (n, geometry)
     return geometry
@@ -627,46 +637,45 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
     p_row = mx.array(_split_mod(2.0 * step_r * (m00 * kx + m01 * ky)))
     p_col = mx.array(_split_mod(2.0 * step_c * (m01 * kx + m11 * ky)))
     psi_a, psi_b, psi_c = m00 * step_r ** 2, 2.0 * m01 * step_r * step_c, m11 * step_c ** 2
-    outputs = []
-    for block in geometry["blocks"]:
-        rows, cols = len(block["rows"]), len(block["cols"])
-        row_f, col_f = block["row_f"], block["col_f"]
-        psi_row = mx.array(np.exp(1j * np.remainder(psi_a * row_f ** 2, 2.0 * np.pi)).astype(np.complex64))
-        psi_col = mx.array(np.exp(1j * np.remainder(psi_c * col_f ** 2, 2.0 * np.pi)).astype(np.complex64))
-        psi_cross = mx.array(_split_mod(psi_b * row_f))
-        t_row, t_col = _separable_table_kernel()(
-            inputs=[p_row, p_col, block["row_f_m"], block["col_f_m"]],
-            template=[("K", stored), ("ROWS", rows), ("COLS", cols)],
-            grid=(max(rows, cols), stored, 1), threadgroup=(256, 1, 1),
-            output_shapes=[(stored, rows), (stored, cols)], output_dtypes=[mx.complex64, mx.complex64],
-        )
-        total = mx.zeros((rows, cols), dtype=mx.complex64)
-        launches = -(-stored // _SEPARABLE_LAUNCH_BF)
-        per_launch = -(-stored // launches)
-        per_launch = -(-per_launch // _SEPARABLE_CHUNK) * _SEPARABLE_CHUNK
-        for start in range(0, stored, per_launch):
-            checkpoint()
-            stop = min(start + per_launch, stored)
-            groups = -(-(stop - start) // _SEPARABLE_CHUNK)
-            first = start // _SEPARABLE_CHUNK
-            total = _separable_coherent_kernel()(
-                inputs=[prepared.g_qk[start:stop], qr, qc, geometry["k_data"][start:stop],
-                        params, dc, geometry["bounds"][first:first + groups].reshape(-1),
-                        block["rows_m"], block["cols_m"], t_row[start:stop], t_col[start:stop],
-                        psi_row, psi_col, psi_cross, block["col_f_m"], total],
-                template=[("ROWS", rows), ("COLS", cols), ("SOURCE_N", source_n),
-                          ("G_COLS", int(prepared.g_qk.shape[-1])),
-                          ("K", stop - start), ("CHUNK", _SEPARABLE_CHUNK), ("GROUPS", groups),
-                          ("UNROLL", _SEPARABLE_UNROLL), ("PURE_UNROLL", _SEPARABLE_PURE_UNROLL)],
-                grid=(cols, rows, 1), threadgroup=_SEPARABLE_THREADGROUP,
-                output_shapes=[(rows, cols)], output_dtypes=[mx.complex64],
-            )[0]
-        outputs.append(total)
-    total = outputs[0]
+    rows, cols, extra = len(geometry["rows"]), len(geometry["cols"]), len(geometry["upper"])
+    row_f, col_f = geometry["row_f"], geometry["col_f"]
+    psi_row = mx.array(np.exp(1j * np.remainder(psi_a * row_f ** 2, 2.0 * np.pi)).astype(np.complex64))
+    psi_col = mx.array(np.exp(1j * np.remainder(psi_c * col_f ** 2, 2.0 * np.pi)).astype(np.complex64))
+    psi_cross = mx.array(_split_mod(psi_b * row_f))
+    t_row, t_col = _separable_table_kernel()(
+        inputs=[p_row, p_col, geometry["row_f_m"], geometry["col_f_m"]],
+        template=[("K", stored), ("ROWS", rows), ("COLS", cols + extra)],
+        grid=(max(rows, cols + extra), stored, 1), threadgroup=(256, 1, 1),
+        output_shapes=[(stored, rows), (stored, cols + extra)], output_dtypes=[mx.complex64, mx.complex64],
+    )
+    grid_rows = rows + (1 if extra else 0)
+    total = mx.zeros((grid_rows, cols), dtype=mx.complex64)
+    launches = -(-stored // _SEPARABLE_LAUNCH_BF)
+    per_launch = -(-stored // launches)
+    per_launch = -(-per_launch // _SEPARABLE_CHUNK) * _SEPARABLE_CHUNK
+    for start in range(0, stored, per_launch):
+        checkpoint()
+        stop = min(start + per_launch, stored)
+        groups = -(-(stop - start) // _SEPARABLE_CHUNK)
+        first = start // _SEPARABLE_CHUNK
+        total = _separable_coherent_kernel()(
+            inputs=[prepared.g_qk[start:stop], qr, qc, geometry["k_data"][start:stop],
+                    params, dc, geometry["bounds"][first:first + groups].reshape(-1),
+                    geometry["rows_m"], geometry["cols_m"], t_row[start:stop], t_col[start:stop],
+                    psi_row, psi_col, psi_cross, geometry["col_f_m"], total],
+            template=[("ROWS", rows), ("COLS", cols), ("COLS_ALL", cols + extra), ("EXTRA", extra),
+                      ("NYQUIST_RI", geometry["nyquist_ri"]), ("SOURCE_N", source_n),
+                      ("G_COLS", int(prepared.g_qk.shape[-1])),
+                      ("K", stop - start), ("CHUNK", _SEPARABLE_CHUNK), ("GROUPS", groups),
+                      ("UNROLL", _SEPARABLE_UNROLL), ("PURE_UNROLL", _SEPARABLE_PURE_UNROLL)],
+            grid=(cols, grid_rows, 1), threadgroup=_SEPARABLE_THREADGROUP,
+            output_shapes=[(grid_rows, cols)], output_dtypes=[mx.complex64],
+        )[0]
+    upper = total[rows:, :extra] if extra else None
+    total = total[:rows] if extra else total
     # Restore the zero rows and columns outside the aperture support.
     columns = geometry["columns"]
-    main = geometry["blocks"][0]
-    for axis, indices, count in ((0, main["rows"], n), (1, main["cols"], columns)):
+    for axis, indices, count in ((0, geometry["rows"], n), (1, geometry["cols"], columns)):
         if len(indices) == count:
             continue
         gaps = np.flatnonzero(np.diff(indices) > 1)
@@ -681,10 +690,9 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
     # except the Nyquist row, whose partner is itself and was computed above.
     mirror_rows = mx.array((-np.arange(n)) % n)
     negative = -mx.conj(total[mirror_rows, 1:n // 2][:, ::-1])
-    if len(outputs) > 1:
+    if upper is not None:
         # The supported upper columns of the Nyquist row are one contiguous run ending at column n - 1.
-        first = int(geometry["blocks"][1]["cols"][0])
-        upper = outputs[1]
+        first = int(geometry["upper"][0])
         if first > columns:
             upper = mx.concatenate((mx.zeros((1, first - columns), dtype=mx.complex64), upper), axis=1)
         negative = mx.concatenate((negative[:n // 2], upper, negative[n // 2 + 1:]), axis=0)

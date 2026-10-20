@@ -480,8 +480,7 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
             assert np.abs(difference).max() < 2e-6, (coefs, np.abs(difference).max())
         prepared = ssb._backend()._prepared
         # At native sampling the Nyquist row has support and its upper half is computed, not mirrored.
-        blocks = prepared.separable_geometry[1]["blocks"]
-        assert len(blocks) == (2 if factor == 1 else 1)
+        assert (prepared.separable_geometry[1]["upper"].size > 0) == (factor == 1)
 
 
 def test_separable_phasor_tables_reduce_exactly():
