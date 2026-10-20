@@ -1,0 +1,178 @@
+{
+ "schema": "quantem.gpu.mps-benchmark/1",
+ "dataset": {
+  "id": "bobleesj/quantem-data",
+  "revision": "5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
+  "file": "4dstem/gold_512/gold_004_master.h5"
+ },
+ "environment": {
+  "chip": "Apple M5 Max",
+  "memory_GB": 128,
+  "macos": "26.4",
+  "python": "3.13.13",
+  "torch": "2.13.0",
+  "mlx": "0.32.0",
+  "metal_architecture": "applegpu_g17s",
+  "quantem_gpu": "0.0.1rc8",
+  "quantem_gpu_commit": "5e9689da04dd",
+  "quantem_gpu_local_edits": true
+ },
+ "other_gpu_clients_before": [
+  {
+   "command": "WindowServer",
+   "gpu_percent": 49.8
+  },
+  {
+   "command": "Claude Helper",
+   "gpu_percent": 2.5
+  },
+  {
+   "command": "WindowServer",
+   "gpu_percent": 28.2
+  },
+  {
+   "command": "Claude Helper",
+   "gpu_percent": 5.6
+  },
+  {
+   "command": "WindowServer",
+   "gpu_percent": 27.8
+  },
+  {
+   "command": "Claude Helper",
+   "gpu_percent": 5.5
+  }
+ ],
+ "metrics": {
+  "io_load": {
+   "n": 3,
+   "p50_ms": 4334.488,
+   "p90_ms": 4389.807,
+   "min_ms": 4290.101
+  },
+  "ssb_session": {
+   "n": 2,
+   "p50_ms": 6663.47,
+   "p90_ms": 6758.115,
+   "min_ms": 6568.825
+  },
+  "ssb_prepare": {
+   "n": 1,
+   "p50_ms": 867.885,
+   "p90_ms": 867.885,
+   "min_ms": 867.885
+  },
+  "preview_native": {
+   "n": 20,
+   "p50_ms": 27.688,
+   "p90_ms": 29.02,
+   "min_ms": 25.592
+  },
+  "preview_2x": {
+   "n": 20,
+   "p50_ms": 71.868,
+   "p90_ms": 73.557,
+   "min_ms": 69.548
+  },
+  "preview_native_loss": {
+   "n": 10,
+   "p50_ms": 123.301,
+   "p90_ms": 126.086,
+   "min_ms": 120.61
+  },
+  "search_candidate": {
+   "n": 10,
+   "p50_ms": 80.904,
+   "p90_ms": 83.347,
+   "min_ms": 79.098,
+   "timed_as": "half of one TPE pair"
+  },
+  "find_aberrations": {
+   "n": 1,
+   "p50_ms": 24369.524,
+   "p90_ms": 24369.524,
+   "min_ms": 24369.524
+  },
+  "find_aberrations_standard": {
+   "n": 1,
+   "p50_ms": 23856.196,
+   "p90_ms": 23856.196,
+   "min_ms": 23856.196
+  },
+  "detector_full_uint32": {
+   "n": 3,
+   "p50_ms": 2278.503,
+   "p90_ms": 2327.991,
+   "min_ms": 2259.186
+  },
+  "detector_update": {
+   "n": 20,
+   "p50_ms": 5.938,
+   "p90_ms": 6.212,
+   "min_ms": 5.05
+  },
+  "detector_full": {
+   "n": 20,
+   "p50_ms": 12.152,
+   "p90_ms": 13.703,
+   "min_ms": 10.043
+  }
+ },
+ "values": {
+  "shape": [
+   512,
+   512,
+   192,
+   192
+  ],
+  "scan_detector_rotation_deg": 178.3108,
+  "num_bright_field_pixels": 7644,
+  "fit": {
+   "C10_nm": -24.475,
+   "C12_nm": 3.3715,
+   "phi12_deg": -38.2338,
+   "loss": 0.0451987,
+   "scan_detector_rotation_deg": 358.3108
+  },
+  "fit_standard": {
+   "C10_nm": -23.2213,
+   "C12_nm": 3.4025,
+   "phi12_deg": -40.0945,
+   "loss": 0.0449884,
+   "scan_detector_rotation_deg": 358.3108
+  },
+  "detector_update_equals_full_sum": true,
+  "bright_field_disk_px": [
+   93.57,
+   95.21,
+   49.34
+  ]
+ },
+ "other_gpu_clients_after": [
+  {
+   "command": "WindowServer",
+   "gpu_percent": 27.3
+  },
+  {
+   "command": "Claude Helper",
+   "gpu_percent": 6.2
+  },
+  {
+   "command": "WindowServer",
+   "gpu_percent": 25.2
+  },
+  {
+   "command": "Claude Helper",
+   "gpu_percent": 4.2
+  },
+  {
+   "command": "WindowServer",
+   "gpu_percent": 23.7
+  },
+  {
+   "command": "Claude Helper",
+   "gpu_percent": 6.2
+  }
+ ],
+ "merged_runs": 3
+}
