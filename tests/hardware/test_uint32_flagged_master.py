@@ -109,7 +109,7 @@ def test_flagged_uint32_master_retains_all_original_counts(tmp_path, capsys):
     master = _write_master(tmp_path, counts, pixel_mask)
     with io.load(master, backend=backend, scan_shape=(32, 32), hot_pixel_correction="none",
                  apply_mask=False, verbose=True) as loaded:
-        assert "4 bad pixels left as recorded" in capsys.readouterr().out
+        assert '4 bad pixels left as recorded (hot_pixel_correction="median" replaces them' in capsys.readouterr().out
         assert loaded.dtype == np.uint32
         assert loaded.metadata["file_counts_exact"] is True
         assert loaded.metadata["flagged_markers_stored_as_zero"] == 0
@@ -162,3 +162,19 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), expected.reshape(6, 8, 48, 48))
         if method == "none":
             assert loaded.metadata["flagged_markers_stored_as_zero"] == 0
+
+
+def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsys):
+    """SSB.open applies the median replacement (decision D4) and prints one line naming how to keep raw values."""
+    from quantem.gpu import SSB
+
+    backend = _backend()
+    counts, pixel_mask = _flagged_counts(1024, (48, 48))
+    master = _write_master(tmp_path, counts, pixel_mask)
+    with SSB.open(master, backend=backend, scan_shape=(32, 32), voltage_kV=300, semiangle_mrad=30,
+                  scan_sampling_A=0.5, scan_detector_rotation_deg=0.0) as session:
+        correction = session.source_provenance["hot_pixel_correction"]
+        assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("median", 4, True)
+    out = capsys.readouterr().out
+    assert "SSB: 4 flagged detector pixels replaced by their 3 x 3 neighbor median" in out
+    assert "io.load(path) and use SSB(data)" in out
