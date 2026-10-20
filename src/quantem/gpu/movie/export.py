@@ -232,15 +232,8 @@ def save_gif(
 ) -> Path:
     """Save one or more grayscale movie stacks as an animated GIF."""
     frames = _movie_frames(
-        data,
-        labels=labels,
-        gap=gap,
-        label_height=label_height,
-        max_width=max_width,
-        cols=cols,
-        shared_contrast=shared_contrast,
-        ref_stacks=ref_stacks,
-        percentile=percentile,
+        data, labels=labels, gap=gap, label_height=label_height, max_width=max_width, cols=cols,
+        shared_contrast=shared_contrast, ref_stacks=ref_stacks, percentile=percentile,
     )
     return _write_gif(frames, path, float(fps))
 
@@ -287,6 +280,9 @@ def save_mp4(
             f"backend={backend!r} requires array movie data; rendered PIL frames "
             "must use backend='cpu'"
         )
+    # the grid and contrast options every writer takes
+    grid = dict(labels=labels, gap=gap, label_height=label_height, max_width=max_width, cols=cols)
+    contrast = dict(percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks)
     # why "auto" did not reach a GPU writer, announced before the CPU writer runs
     fallback = "no CUDA/NVENC or Apple Metal movie writer is available"
     if backend in {"auto", "cuda"} and not _is_pil_frame_sequence(data):
@@ -295,13 +291,7 @@ def save_mp4(
             stacks = _as_stack_list(data)
             _, height, width = _validate_stacks(stacks)
             layout = grid_layout(
-                len(stacks),
-                height,
-                width,
-                cols=cols,
-                gap=gap,
-                label_height=label_height,
-                max_width=max_width,
+                len(stacks), height, width, cols=cols, gap=gap, label_height=label_height, max_width=max_width
             )
             # PyNvVideoCodec may import successfully while NVENC rejects
             # small H.264 surfaces at encoder initialization time.
@@ -311,22 +301,10 @@ def save_mp4(
                 try_cuda = False
                 fallback = f"NVENC needs frames of at least {_CUDA_NVENC_MIN_EDGE_PX} pixels per side"
         if try_cuda:
-            stacks, limits = _stacks_with_limits(
-                data, percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks
-            )
+            stacks, limits = _stacks_with_limits(data, **contrast)
             try:
                 return cuda.save_mp4(
-                    stacks,
-                    path,
-                    labels=labels,
-                    fps=float(fps),
-                    gap=gap,
-                    label_height=label_height,
-                    max_width=max_width,
-                    cols=cols,
-                    limits=limits,
-                    qp=int(crf),
-                    gpu_id=int(gpu_id),
+                    stacks, path, fps=float(fps), limits=limits, qp=int(crf), gpu_id=int(gpu_id), **grid
                 )
             except (RuntimeError, MemoryError) as error:
                 # the writer reports NVENC, CUDA and ffmpeg failures as RuntimeError
@@ -336,22 +314,9 @@ def save_mp4(
     if backend in {"auto", "mps"} and not _is_pil_frame_sequence(data):
         try_mps = backend == "mps" or (backend == "auto" and mps.is_available())
         if try_mps:
-            stacks, limits = _stacks_with_limits(
-                data, percentile=percentile, shared_contrast=shared_contrast, ref_stacks=ref_stacks
-            )
+            stacks, limits = _stacks_with_limits(data, **contrast)
             try:
-                return mps.save_mp4(
-                    stacks,
-                    path,
-                    labels=labels,
-                    fps=float(fps),
-                    gap=gap,
-                    label_height=label_height,
-                    max_width=max_width,
-                    cols=cols,
-                    limits=limits,
-                    crf=int(crf),
-                )
+                return mps.save_mp4(stacks, path, fps=float(fps), limits=limits, crf=int(crf), **grid)
             except (RuntimeError, MemoryError) as error:
                 if backend == "mps":
                     raise
@@ -359,18 +324,7 @@ def save_mp4(
     if backend == "auto" and not _is_pil_frame_sequence(data):
         print(f"save_mp4: {fallback}; writing with the CPU writer, which resizes with Lanczos and draws "
               "unoutlined labels. Pass backend='cuda' or 'mps' to get an error instead.")
-    frames = _movie_frames(
-        data,
-        labels=labels,
-        gap=gap,
-        label_height=label_height,
-        max_width=max_width,
-        cols=cols,
-        shared_contrast=shared_contrast,
-        ref_stacks=ref_stacks,
-        percentile=percentile,
-    )
-    return _write_mp4(frames, path, float(fps), crf=int(crf))
+    return _write_mp4(_movie_frames(data, **grid, **contrast), path, float(fps), crf=int(crf))
 
 
 def save_movie(
