@@ -235,7 +235,7 @@ def prepare_selection(
 
 
 # bright-field pixels per in-place FFT along the scan rows of an encoded crop's G(q, k)
-ENCODED_BF_PER_FFT = 256
+ENCODED_BF_PER_FFT = 512
 
 
 def _storage_ranges(stored: np.ndarray, chunk_bf: int) -> list[tuple[int, int]]:
@@ -267,7 +267,8 @@ def _encoded_g_qk(mx, frames: EncodedBrightFieldFrames, rows: np.ndarray, cols: 
     count = int(rows.size)
     scan_rows, scan_cols = scan_shape
     half = scan_cols // 2 + 1
-    g_qk = mx.zeros((count, scan_rows, half), dtype=mx.complex64)
+    # every element is written below: the storage needs no fill
+    g_qk = mx.empty((count, scan_rows, half), dtype=mx.complex64)
     mx.eval(g_qk)
     stored = {1: mx.uint8, 2: mx.uint16, 4: mx.uint32}[frames.dtype.itemsize]
     for row_start, row_stop, counts in frames.scan_row_blocks(rows, cols):
@@ -304,7 +305,8 @@ def _gathered_g_qk(mx, frames, bf_row, bf_col, scan_shape, chunk_bf, *, compact_
     every chunk and the stack at once, twice G(q, k).
     """
     stored_bf = int(active_mask_np.sum()) if compact_inactive else int(bf_row.size)
-    g_qk = mx.zeros((stored_bf, scan_shape[0], scan_shape[1] // 2 + 1), dtype=mx.complex64)
+    # every element is written below: the storage needs no fill
+    g_qk = mx.empty((stored_bf, scan_shape[0], scan_shape[1] // 2 + 1), dtype=mx.complex64)
     mx.eval(g_qk)
     offset = 0
     dc_chunks = []
