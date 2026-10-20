@@ -291,7 +291,7 @@ def _build_products(
     if verbose:
         print(
             f"Screening products in {elapsed_s:.2f} s: probe radius {radius:.1f} px, "
-            f"rotation {rotation_mod180_deg:.1f} deg{', flipped' if transposed else ''}."
+            f"rotation {rotation_mod180_deg:.1f}°{', flipped' if transposed else ''}."
         )
 
     parameters = {
