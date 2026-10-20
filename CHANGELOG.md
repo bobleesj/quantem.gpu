@@ -36,6 +36,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `SSB.open` on MPS prints one line when it reads exported bright-field
+  columns that were binned on the detector, naming the export and how to fit
+  native detector pixels; it used them silently.
 - The **Rotation flipped** row of `SSB.calibration_table()` shows the file's
   recorded flip (it always read **Not recorded**), and `data.metadata_table()`
   gains the row.

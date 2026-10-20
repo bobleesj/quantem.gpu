@@ -740,6 +740,11 @@ class SSB:
         # on MPS an exact BF-column export beside the source replaces decoding the detector
         frames = find_bf_columns(source, calibration, verbose=verbose) if selected == "mps" else None
         if frames is not None:
+            if frames.det_bin > 1:
+                # exact columns are the native counts; a binned export is a reduction and says so
+                print(f"SSB: reading exported bright-field columns binned {frames.det_bin} x {frames.det_bin} on the "
+                      f"detector ({frames.source_path}) instead of {Path(source).name}; move the export aside to fit "
+                      "native detector pixels.")
             file_calibration = calibration_rows(frames.metadata)
             data = frames
             if scan_detector_rotation_deg is None:
