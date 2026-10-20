@@ -142,8 +142,12 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Plain `pytest` is the interactive tier (about a minute). `pytest -m ""` adds the
-# slow SSB fits and long hardware checks; releases and CI run that.
-addopts = "-m 'not slow'"
-markers = ["slow: takes several seconds or more; skipped by plain pytest, run with -m ''"]
+# slow SSB fits and long hardware checks; releases and CI run that. Timing checks against a
+# committed per-chip baseline run only when selected: `pytest -m benchmark tests/benchmarks`.
+addopts = "-m 'not slow and not benchmark'"
+markers = [
+    "slow: takes several seconds or more; skipped by plain pytest, run with -m ''",
+    "benchmark: times a hot path against this chip's committed baseline; run alone on a quiet GPU with -m benchmark",
+]
 tmp_path_retention_count = 0
 tmp_path_retention_policy = "none"
