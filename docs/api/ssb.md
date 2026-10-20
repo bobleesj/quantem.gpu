@@ -58,12 +58,20 @@ coefficients needs `check_rotation=False`. The joint fit searches depth
 spreads in `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ssb.aberrations = {...}` to
 state a known calibration, which `reconstruct()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
-mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`
-divided by the radius in detector pixels at which the bright-field disk of the
-full-detector mean pattern falls to half its plateau
-(`quantem.gpu.detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)`,
-which divides by `detector.disk_edge_radius`): the disk edge is the image of
-the aperture at the convergence semiangle. In `SSB(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
+mrad per pixel, `(row, col)`. Calibrate it as its own step before SSB:
+
+```python
+fit = data.calibration.fit_detector_sampling()   # semiangle / bright-field edge radius, recorded on data
+fit.show()                                       # the mean pattern with the fitted disk edge, axes in mrad
+```
+
+The bright-field disk is the image of the aperture, so its edge sits at the convergence semiangle. The fit
+records the detector step with the source **Fitted (bright-field disk)**, together with the disk centre and its
+edge radius, and `SSB(data)` reads all of them. When nothing is recorded, CUDA and MPS estimate the step with the
+same rule (`quantem.gpu.detector.fit_bright_field_disk`: `semiangle_mrad` divided by the radius in detector
+pixels at which the bright-field disk of the full-detector mean pattern falls to half its plateau) and print one
+line saying so. A detector step set by hand, on `data.calibration` or as a keyword, always wins. In
+`SSB(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
 the input detector grid. The session adjusts the center if it takes a
 bright-field crop.
 
@@ -772,7 +780,8 @@ rotation estimates it from the centre-of-mass curl, labelled **Estimated
 `ssb.calibration_table()` returns a DataFrame with **File value**, **File unit**,
 **Value used**, **Unit used**, and **Source**, using the session's current values.
 File values include saved calibration overrides. Source labels are **Recorded**,
-**Overridden** (set on `data.calibration`), **Explicit override**, **Estimated**,
+**Overridden** (set on `data.calibration`), **Fitted (bright-field disk)** (`data.calibration.fit_detector_sampling()`),
+**Explicit override**, **Estimated**,
 **Estimated (centre-of-mass curl)** and **Default**, from the one label set of
 `quantem.gpu.io.metadata_display`. Later
 session changes are labeled **Modified in session**. Explicit keywords remain

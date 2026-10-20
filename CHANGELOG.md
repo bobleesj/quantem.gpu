@@ -14,6 +14,8 @@ new `rcN` heading when that rc is published to TestPyPI.
   with the source "Fitted (bright-field disk)" together with `bright_field_center_px` and
   `bright_field_edge_radius_px`, and `fit.show()` draws the mean pattern with the fitted edge in mrad. `io.save`
   keeps the fit; a detector step set by hand wins.
+- `SSB(data)` and `SSB.open` read the recorded bright-field centre and detector step. With none recorded they
+  estimate the step with the same rule and print one line naming it, instead of a silent "Pending probe fit".
 
 - SSB is tilt-corrected by default: `find_aberrations()` (and the automatic fit
   of `reconstruct()`) fits the aberrations jointly with the sample tilt and
