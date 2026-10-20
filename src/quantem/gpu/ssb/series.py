@@ -414,6 +414,10 @@ def open_settings(settings: dict[str, object]) -> dict[str, object]:
     }
 
 
+# Keys quantem.live's session rotation vote (settle_session_rotation) and branch move (reverse_com) add to a fit block.
+LIVE_BRANCH_DECISION = ("column_sign", "session_moved_180", "session_rotation", "rotation_disagrees")
+
+
 def write_fit_metadata(
     screen_path: Path,
     settings: dict[str, object],
@@ -425,7 +429,8 @@ def write_fit_metadata(
     The block holds every calibration the fit used, including the detector sampling, so an exported phase states the
     numbers that made it rather than ones derived again from another radius. It carries ``"schema": FIT_SCHEMA``,
     without which no reader accepts it. Fields Live added to a block of the
-    current schema are kept; a block of any other schema is replaced whole, so none of its values pass as current.
+    current schema are kept, except quantem.live's 180-degree decision on the earlier fit (``LIVE_BRANCH_DECISION``),
+    which a new fit invalidates; a block of any other schema is replaced whole, so none of its values pass as current.
     ``detector_sampling_mrad`` is the session's after ``SSB.open``, which holds one on every backend; a block
     without it cannot be exported.
 
@@ -448,8 +453,11 @@ def write_fit_metadata(
     else:
         config = {"schema": SCREEN_ACQUISITION_SCHEMA}
     computed = config.setdefault("computed", {})
+    # quantem.live's per-session 180-degree decision describes the fit it was made on: kept beside a new rotation it
+    # would say this fit was moved, voted or flagged when it was not
+    kept = {key: value for key, value in stored_fit(config).items() if key not in LIVE_BRANCH_DECISION}
     computed["ssb"] = {
-        **stored_fit(config),
+        **kept,
         **settings,
         "schema": FIT_SCHEMA,
         "aberrations": dict(result.aberrations),
