@@ -102,8 +102,8 @@ def file_entry(document: dict, master: str) -> dict | None:
 
     Examples
     --------
-    >>> doc = {"files": {2: {"master": "zone110_02_master.h5", "mag": "a"}, "27-29": {"mag": "b"}}}
-    >>> file_entry(doc, "zone110_02_master.h5")["mag"], file_entry(doc, "series_28_master.h5")["mag"]
+    >>> doc = {"files": {2: {"master": "series_a_02_master.h5", "mag": "a"}, "27-29": {"mag": "b"}}}
+    >>> file_entry(doc, "series_a_02_master.h5")["mag"], file_entry(doc, "series_28_master.h5")["mag"]
     ('a', 'b')
     >>> file_entry(doc, "other_02_master.h5") is None
     True
