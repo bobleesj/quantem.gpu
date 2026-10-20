@@ -34,6 +34,14 @@ new `rcN` heading when that rc is published to TestPyPI.
   the other 180-degree branch and compare or average rotations modulo 180 or
   360 degrees.
 
+### Fixed
+
+- `SSB.reconstruct()` keeps the rotation check of the fit it applies:
+  `column_sign`, `initial_scan_detector_rotation_deg`, `initial_column_sign`
+  and the compared phases, so `report()` shows **Suggested rotation** and
+  `result.show("rotation")` works. Changed coefficients describe another
+  image and carry no check.
+
 ### Changed (breaking, no aliases)
 
 - One calibration label set, defined in `quantem.gpu.io.metadata_display`
