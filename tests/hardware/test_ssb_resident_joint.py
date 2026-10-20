@@ -153,7 +153,7 @@ store_real(out0,b,Real(100)-sum);
     )
     assert abs(result["C10"] - 100) < 0.01
     assert abs(result["C12"] - 60) < 0.02
-    assert abs(result["thickness"] - 150) < 0.01
+    assert abs(result["depth_spread_A"] - 150) < 0.01
     assert result["optimizer"]["device"] == device.backend
     assert result["optimizer"]["host_numerical_search"] is False
     assert result["optimizer"]["newton_starts"]

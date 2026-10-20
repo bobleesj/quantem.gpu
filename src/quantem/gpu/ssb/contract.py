@@ -116,7 +116,7 @@ class SSBProtocol(Protocol):
         upsampling_factor: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float],
-        thickness: float,
+        depth_spread_A: float,
         phase_estimator: str,
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,

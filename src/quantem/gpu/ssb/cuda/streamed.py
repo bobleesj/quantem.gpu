@@ -97,7 +97,7 @@ class StreamedSSB:
         self.timings = {}
 
     def phase(self, aberrations, *, voltage_kV, semiangle_mrad, scan_sampling_A,
-              rotation_deg, upsampling_factor, sample_tilt_mrad, thickness):
+              rotation_deg, upsampling_factor, sample_tilt_mrad, depth_spread_A):
         """Decode, transform and correct every selected count on the source GPU."""
         started = time.perf_counter()
         rows, cols = self.scan_shape
@@ -138,7 +138,7 @@ class StreamedSSB:
                         math.cos(2 * aberrations["phi12"]), math.sin(2 * aberrations["phi12"]))
         parameters = tuple(np.float32(value) for value in (
             wavelength, semiangle_mrad * 1e-3, angular[0] * 1e-3, angular[1] * 1e-3,
-            *coefficients, math.pi / wavelength, thickness,
+            *coefficients, math.pi / wavelength, depth_spread_A,
             sample_tilt_mrad[0] * 1e-3, sample_tilt_mrad[1] * 1e-3,
         ))
         buffer = cp.empty((batch_size, rows, cols + 2), cp.float32)

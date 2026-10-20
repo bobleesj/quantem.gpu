@@ -88,7 +88,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
                 upsampling_factor=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
             phase, loss = streamed.phase(aberrations_to_engine(ABERRATIONS), voltage_kV=300., semiangle_mrad=30.,
                 scan_sampling_A=SETTINGS["scan_sampling_A"], rotation_deg=27., upsampling_factor=factor,
-                sample_tilt_mrad=(1., -2.), thickness=depth * 10)
+                sample_tilt_mrad=(1., -2.), depth_spread_A=depth * 10)
             assert streamed.num_bright_field_pixels == dense.num_bright_field_pixels
             assert loss is None and phase.dtype == cp.float32
             # R2C and C2C forward transforms have different float32 rounding.

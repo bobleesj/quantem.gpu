@@ -266,7 +266,7 @@ class MpsSSBBackend:
         upsampling_factor: int,
         compute_loss: bool,
         sample_tilt_mrad: tuple[float, float] = (0.0, 0.0),
-        thickness: float = 0.0,
+        depth_spread_A: float = 0.0,
         phase_estimator: str = "mean_phase",
         higher_order_magnitudes: np.ndarray | None = None,
         higher_order_angles: np.ndarray | None = None,
@@ -282,19 +282,19 @@ class MpsSSBBackend:
             if higher_order_magnitudes is not None:
                 return _reconstruct_upsampled(
                     self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                    thickness=thickness, upsampling_factor=1,
+                    thickness=depth_spread_A, upsampling_factor=1,
                     phase_estimator="mean_phase", compute_loss=True, **higher,
                 )
-            if thickness > 0.0:
+            if depth_spread_A > 0.0:
                 return self.preview_sample(
                     aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
                                   "tilt_col_mrad": sample_tilt_mrad[1],
-                                  "thickness": thickness}, compute_loss=True,
+                                  "depth_spread_A": depth_spread_A}, compute_loss=True,
                 )
             return self.preview(aberrations, compute_loss=True, **higher)
         phase, _ = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-            thickness=thickness, upsampling_factor=upsampling_factor,
+            thickness=depth_spread_A, upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
             **higher,
         )
@@ -303,14 +303,14 @@ class MpsSSBBackend:
             if higher_order_magnitudes is not None:
                 _, loss = _reconstruct_upsampled(
                     self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                    thickness=thickness, upsampling_factor=1,
+                    thickness=depth_spread_A, upsampling_factor=1,
                     phase_estimator="mean_phase", compute_loss=True, **higher,
                 )
-            elif thickness > 0.0:
+            elif depth_spread_A > 0.0:
                 _, loss = self.preview_sample(
                     aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
                                   "tilt_col_mrad": sample_tilt_mrad[1],
-                                  "thickness": thickness}, compute_loss=True,
+                                  "depth_spread_A": depth_spread_A}, compute_loss=True,
                 )
             else:
                 _, loss = self.preview(
@@ -328,7 +328,7 @@ class MpsSSBBackend:
     ) -> tuple[np.ndarray, float | None]:
         """Phase (and phase-variance loss) for a thick, tilted sample: ``thick_sample.reconstruct_thick``.
 
-        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "thickness"} (thickness in the C10 unit, Angstrom; 0 = standard SSB).
+        ``sample`` = {"tilt_row_mrad", "tilt_col_mrad", "depth_spread_A"} (depth spread in the C10 unit, Angstrom; 0 = standard SSB).
         Same contract as ``CudaSSBBackend.preview_sample``.
         """
         if self._prepared is None:
@@ -339,7 +339,7 @@ class MpsSSBBackend:
             C12=float(aberrations["C12"]),
             phi12=float(aberrations["phi12"]),
             sample_tilt_mrad=(float(sample.get("tilt_row_mrad", 0.0)), float(sample.get("tilt_col_mrad", 0.0))),
-            thickness=float(sample.get("thickness", 0.0)),
+            thickness=float(sample.get("depth_spread_A", 0.0)),
             compute_loss=compute_loss,
             chunk_bf=self._phase_chunk_bf,
         )
