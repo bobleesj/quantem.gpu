@@ -246,6 +246,24 @@ def _recorded_detector_sampling_mrad(metadata: dict[str, object], voltage_kV: fl
     return (1e3 * wavelength_A * row, 1e3 * wavelength_A * col)
 
 
+def _announce_rotation_check(result: SSBResult) -> None:
+    """The one line an automatic fit prints when its rotation check moved the branch or could not decide.
+
+    ``reconstruct()`` fits quietly; a 180-degree move or an inconclusive polarity score is still a calibration
+    decision the user needs to see.
+    """
+    initial, sign = result.initial_scan_detector_rotation_deg, result.column_sign
+    if initial is None or sign is None:
+        return
+    if result.scan_detector_rotation_deg != initial:
+        print(f"SSB: the rotation check moved the scan-detector rotation from {initial:.1f}° to "
+              f"{result.scan_detector_rotation_deg:.1f}° (atom columns read dark at {initial:.1f}°: polarity score "
+              f"{result.initial_column_sign:+.2f}, now {sign:+.2f}). find_aberrations(check_rotation=False) keeps it.")
+    elif not math.isfinite(sign) or abs(sign) < COLUMN_SIGN_MIN:
+        print(f"SSB: the rotation check was inconclusive (polarity score {sign:+.2f}); kept {initial:.1f}°, which is "
+              "known only modulo 180°. Give scan_detector_rotation_deg if the phase reads inverted.")
+
+
 def _announce_pixel_correction(provenance: dict[str, object] | None) -> None:
     """The one line ``SSB.open`` prints when it replaced flagged detector pixels before fitting."""
     correction = (provenance or {}).get("hot_pixel_correction")
@@ -1760,6 +1778,8 @@ class SSB:
         if parameters is None and aberrations is None and not self._aberrations_explicit:
             print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations() first.")
             parameters = self.find_aberrations(verbose=verbose)
+            if not verbose:
+                _announce_rotation_check(parameters)
         correction = parameters
         if correction is not None:
             coefs = dict(correction.aberrations)

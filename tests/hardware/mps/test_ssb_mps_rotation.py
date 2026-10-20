@@ -201,3 +201,18 @@ def test_search_range_pins_hold_their_values_on_mps(pins, lock, refinement):
         assert fitted.aberrations["phi12_deg"] == pytest.approx(pins["phi12_deg"], abs=1e-9)
         expected, _ = session.preview(fitted.aberrations, compute_loss=False)
         np.testing.assert_allclose(fitted.phase, expected, atol=1e-5)
+
+
+def test_the_automatic_fit_says_when_the_rotation_check_moves_the_branch(capsys):
+    """reconstruct()'s quiet automatic fit still prints the 180-degree move it made."""
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal()
+    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=180.0)
+    with SSB(frames, **settings) as session:
+        result = session.reconstruct()
+    assert result.scan_detector_rotation_deg == 0.0
+    out = capsys.readouterr().out
+    assert "the rotation check moved the scan-detector rotation from 180.0° to 0.0°" in out

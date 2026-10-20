@@ -41,6 +41,9 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `reconstruct()`'s automatic fit prints one line when its rotation check
+  moves the rotation by 180° or cannot decide, although the fit itself runs
+  quietly.
 - `dpc.run` and `screening.prepare` integrate the aligned centre-of-mass
   field as it is when the detector axes are flipped. They swapped its
   components back first, so a flipped scan's iDPC phase was the integral of
