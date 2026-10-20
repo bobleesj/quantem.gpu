@@ -814,6 +814,10 @@ def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> 
         ky_np=np.asarray(prepared.ky_np)[slots],
         num_bright_field_pixels=int(logical.size),
         bf_storage_indices_np=storage_indices,
+        # Per-BF preview caches of the full evidence (probe, group bounds, phasor geometry) do not index the subset.
+        upsampled_geometry=None,
+        upsampled_probe=None,
+        separable_geometry=None,
         **fields,
     )
     mx.eval(subset.g_qk, subset.kx, subset.ky, *fields.values())

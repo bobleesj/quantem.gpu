@@ -283,6 +283,422 @@ def _coherent_alias_kernel(has_depth: bool = True):
     )
 
 
+# --- Separable phasors for the two-term (C10, C12) coherent reconstruction ---------------------------
+#
+# chi(v) = v^T M v is quadratic, so the transfer phases split exactly:
+#     chi(q - k) - chi(k) = Psi(q) - u(q).k,   chi(q + k) - chi(k) = Psi(q) + u(q).k,
+# with Psi = q^T M q and u = 2 M q. With E = exp(-i u.k) the corrected term is
+#     G conj(gamma) / |gamma| = G E w,   w = (a e^{i Psi} - b e^{-i Psi}) / |a e^{i Psi} - b e^{-i Psi}|,
+# where a and b are the aperture products of the two sidebands. One open sideband reduces w to the pure
+# phase e^{i Psi} or -e^{-i Psi}. On the q grid u.k = rf P_row(k) + cf P_col(k) for integer frequencies
+# rf and cf, so E is the product of a row and a column phasor of each BF pixel. Those tables and Psi are
+# reduced modulo 2 pi from exact float32 products of 12-bit splits of float64 coefficients, so every
+# phasor carries about 1e-7 rad of error, below the float32 rounding of the per-term chi difference it
+# replaces. Aperture weights and their soft edge, the BF selection and the normalisation are unchanged.
+
+def _split_mod(values) -> np.ndarray:
+    """Float64 values reduced modulo 2 pi as three float32 parts, the first two with 12 significant bits."""
+    rest = np.remainder(np.asarray(values, dtype=np.float64) + np.pi, 2.0 * np.pi) - np.pi
+    parts = []
+    for _ in range(2):
+        scale = np.ldexp(1.0, 12 - np.frexp(rest)[1])
+        part = np.round(rest * scale) / scale
+        parts.append(part)
+        rest = rest - part
+    parts.append(rest)
+    return np.stack(parts, axis=-1).astype(np.float32)
+
+
+def _two_pi_parts() -> tuple[float, float, float]:
+    """2 pi as two 14-bit parts and a float32 remainder: n times either part is exact for |n| < 512."""
+    two_pi = 2.0 * np.pi
+    c1 = np.round(two_pi * 2.0 ** 11) / 2.0 ** 11
+    c2 = np.round((two_pi - c1) * 2.0 ** 25) / 2.0 ** 25
+    return float(c1), float(c2), float(np.float32(two_pi - c1 - c2))
+
+
+def _metal_float(value: float) -> str:
+    return float(np.float32(value)).hex() + "f"
+
+
+_TWO_PI_PARTS = _two_pi_parts()
+_SEPARABLE_HEADER = f"""
+// x is an exact float32 product; remove the nearest multiple of 2 pi (the first step is exact).
+inline float sep_reduce_one(float x) {{
+    float n = metal::rint(x * {_metal_float(1.0 / (2.0 * np.pi))});
+    float r = x - n * {_metal_float(_TWO_PI_PARTS[0])};
+    r = r - n * {_metal_float(_TWO_PI_PARTS[1])};
+    return r - n * {_metal_float(_TWO_PI_PARTS[2])};
+}}
+// m (p1 + p2 + p3) modulo 2 pi for an integer |m| <= 1024 and 12-bit p1, p2, whose products are exact.
+inline float sep_reduce(float m, float p1, float p2, float p3) {{
+    return sep_reduce_one(m * p1) + sep_reduce_one(m * p2) + m * p3;
+}}
+inline float2 sep_cmul(float2 x, float2 y) {{
+    return float2(x.x * y.x - x.y * y.y, x.x * y.y + x.y * y.x);
+}}
+"""
+
+
+@lru_cache(maxsize=1)
+def _separable_table_kernel():
+    """Row and column phasors exp(-i rf P_row(k)) and exp(-i cf P_col(k)) of every stored BF pixel."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_separable_tables",
+        input_names=["p_row", "p_col", "row_f", "col_f"],
+        output_names=["t_row", "t_col"],
+        header=_SEPARABLE_HEADER,
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint i = thread_position_in_grid.x;
+        uint k = thread_position_in_grid.y;
+        if (k >= K) return;
+        if (i < ROWS) {
+            float x = sep_reduce(row_f[i], p_row[k * 3], p_row[k * 3 + 1], p_row[k * 3 + 2]);
+            float c;
+            float s = metal::precise::sincos(x, c);
+            t_row[k * ROWS + i].real = c;
+            t_row[k * ROWS + i].imag = -s;
+        }
+        if (i < COLS) {
+            float x = sep_reduce(col_f[i], p_col[k * 3], p_col[k * 3 + 1], p_col[k * 3 + 2]);
+            float c;
+            float s = metal::precise::sincos(x, c);
+            t_col[k * COLS + i].real = c;
+            t_col[k * COLS + i].imag = -s;
+        }
+        """,
+    )
+
+
+_SEPARABLE_SOURCE = """
+        // ri and ci index the row and column tables. One grid row past ROWS computes the upper half of the
+        // Nyquist row (EXTRA columns stored after the COLS main columns), whose partner is itself.
+        uint gx = thread_position_in_grid.x, gy = thread_position_in_grid.y;
+        uint ri, ci;
+        size_t out;
+        if (gy < ROWS) {
+            if (gx >= COLS) return;
+            ri = gy; ci = gx; out = (size_t)gy * COLS + gx;
+        } else {
+            if (gy > ROWS || gx >= EXTRA) return;
+            ri = NYQUIST_RI; ci = COLS + gx; out = (size_t)ROWS * COLS + gx;
+        }
+        uint row = row_indices[ri], col = col_indices[ci];
+        float2 result = float2(previous[out].real, previous[out].imag);
+        float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
+        float qr = q_row[row], qc = q_col[col];
+        float radius = (semi + 0.5f * metal::max(ay, ax)) / wl;
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+        float r2_out = radius * radius;
+        // Weights 0 and 1 where a margin proves the unchanged soft-edge geometry returns them; else evaluate it.
+        float r2_zero = r2_out * (1.0f + 32.0f * 1.1920928955078125e-7f);
+        float inner = (semi - 0.5f * metal::max(ay, ax)) * (1.0f - 8.0f * 1.1920928955078125e-7f);
+        float inner_q = inner / wl;
+        float r2_one = inner > 0.0f ? inner_q * inner_q * (1.0f - 64.0f * 1.1920928955078125e-7f) : -1.0f;
+        // Inside this radius the soft edge (semi - alpha) / denom + 1/2 is positive for any edge direction,
+        // with a margin far above its float32 rounding.
+        float positive_q = (semi + 0.5f * metal::min(ay, ax)) / wl;
+        float r2_pos = positive_q * positive_q * (1.0f - 64.0f * 1.1920928955078125e-7f);
+        // Only the source G has Hermitian symmetry. Corrected aliases do not.
+        uint source_row = row % SOURCE_N, source_col = col % SOURCE_N;
+        bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
+        if (mirror) {
+            source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
+            source_col = SOURCE_N - source_col;
+        }
+        size_t source_offset = size_t(source_row) * G_COLS + source_col;
+        constexpr bool INDEX32 = size_t(K) * SOURCE_N * G_COLS <= (size_t(1) << 32);
+        if (row == 0u && col == 0u) {
+            for (uint group = 0; group < GROUPS; ++group) {
+                uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+                float2 sum = float2(0.0f);
+                for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
+                result += sum;
+            }
+        } else if (row % SOURCE_N != 0u || col % SOURCE_N != 0u) {
+            // The scan mean is background, not measured nonzero-q structure: its aliases stay zero.
+            float2 psi_r = float2(psi_row[ri].real, psi_row[ri].imag);
+            float2 psi_c = float2(psi_col[ci].real, psi_col[ci].imag);
+            float xb = sep_reduce(col_f[ci], psi_cross[ri * 3], psi_cross[ri * 3 + 1], psi_cross[ri * 3 + 2]);
+            float cb;
+            float sb = metal::precise::sincos(xb, cb);
+            float2 epsi = sep_cmul(sep_cmul(psi_r, psi_c), float2(cb, sb));
+            float2 sum_a = float2(0.0f), sum_b = float2(0.0f), sum_ab = float2(0.0f), sum_i = float2(0.0f);
+            // With a = b = A(k) >= 1e-3 and |sin Psi| >= 1e-4, |w| never reaches the 1e-8 floor.
+            bool both_ok = metal::abs(epsi.y) >= 1e-4f;
+            // Group-level margins cover the float32 rounding of box distances against per-pixel distances.
+            float r2_pos_g = r2_pos * (1.0f - 64.0f * 1.1920928955078125e-7f);
+            float r2_one_g = r2_one * (1.0f - 64.0f * 1.1920928955078125e-7f);
+            float r2_zero_g = r2_zero * (1.0f + 64.0f * 1.1920928955078125e-7f);
+            for (uint group = 0; group < GROUPS; ++group) {
+                uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+                float4 box = ((const device float4*)bounds)[2 * group];  // row min/max, col min/max
+                float min_aperture = bounds[8 * group + 4];
+                float rm = max(max(box.x - qr, qr - box.y), 0.0f);
+                float cm = max(max(box.z - qc, qc - box.w), 0.0f);
+                float rp = max(max(box.x + qr, -qr - box.y), 0.0f);
+                float cp = max(max(box.z + qc, -qc - box.w), 0.0f);
+                float near_m = rm * rm + cm * cm, near_p = rp * rp + cp * cp;
+                if (min(near_m, near_p) > r2_out) continue;
+                float rmf = max(metal::abs(qr - box.x), metal::abs(qr - box.y));
+                float cmf = max(metal::abs(qc - box.z), metal::abs(qc - box.w));
+                float rpf = max(metal::abs(qr + box.x), metal::abs(qr + box.y));
+                float cpf = max(metal::abs(qc + box.z), metal::abs(qc + box.w));
+                float far_m = rmf * rmf + cmf * cmf, far_p = rpf * rpf + cpf * cpf;
+                // Every pixel of the group in the same single-sideband or flat double-sideband class:
+                // the per-pixel classification below would give each the same accumulator and no weight.
+                bool pure_m = far_m < r2_pos_g && near_p > r2_zero_g;
+                bool pure_p = far_p < r2_pos_g && near_m > r2_zero_g;
+                bool pure_i = far_m < r2_one_g && far_p < r2_one_g && both_ok;
+                if ((pure_m || pure_p || pure_i) && min_aperture >= 1e-3f) {
+                    // Independent loads of PURE_UNROLL pixels per step keep several requests in flight.
+                    float2 acc = float2(0.0f);
+                    uint k = start;
+                    for (; k + PURE_UNROLL <= stop; k += PURE_UNROLL) {
+                        float2 gv[PURE_UNROLL], tr[PURE_UNROLL], tc[PURE_UNROLL];
+                        for (uint j = 0; j < PURE_UNROLL; ++j) {
+                            auto value = g[INDEX32
+                                ? size_t((k + j) * (SOURCE_N * G_COLS) + uint(source_offset))
+                                : size_t(k + j) * SOURCE_N * G_COLS + source_offset];
+                            gv[j] = float2(value.real, mirror ? -value.imag : value.imag);
+                            tr[j] = float2(t_row[(k + j) * ROWS + ri].real, t_row[(k + j) * ROWS + ri].imag);
+                            tc[j] = float2(t_col[(k + j) * COLS_ALL + ci].real, t_col[(k + j) * COLS_ALL + ci].imag);
+                        }
+                        for (uint j = 0; j < PURE_UNROLL; ++j) acc += sep_cmul(gv[j], sep_cmul(tr[j], tc[j]));
+                    }
+                    for (; k < stop; ++k) {
+                        auto value = g[INDEX32
+                            ? size_t(k * (SOURCE_N * G_COLS) + uint(source_offset))
+                            : size_t(k) * SOURCE_N * G_COLS + source_offset];
+                        float2 gv = float2(value.real, mirror ? -value.imag : value.imag);
+                        float2 tr = float2(t_row[k * ROWS + ri].real, t_row[k * ROWS + ri].imag);
+                        float2 tc = float2(t_col[k * COLS_ALL + ci].real, t_col[k * COLS_ALL + ci].imag);
+                        acc += sep_cmul(gv, sep_cmul(tr, tc));
+                    }
+                    if (pure_m) sum_a += acc; else if (pure_p) sum_b += acc; else sum_i += acc;
+                    continue;
+                }
+                float2 ga = float2(0.0f), gb = float2(0.0f), gab = float2(0.0f), gi = float2(0.0f);
+                // Issue the loads of UNROLL pixels before using them (indices clamped inside the group).
+                for (uint k0 = start; k0 < stop; k0 += UNROLL) {
+                    float4 kd[UNROLL];
+                    float2 gv[UNROLL], tr[UNROLL], tc[UNROLL];
+                    for (uint j = 0; j < UNROLL; ++j) {
+                        uint k = metal::min(k0 + j, stop - 1u);
+                        kd[j] = ((const device float4*)k_data)[k];  // (k_row, k_col, aperture at k, 0)
+                        auto value = g[INDEX32
+                            ? size_t(k * (SOURCE_N * G_COLS) + uint(source_offset))
+                            : size_t(k) * SOURCE_N * G_COLS + source_offset];
+                        gv[j] = float2(value.real, mirror ? -value.imag : value.imag);
+                        tr[j] = float2(t_row[k * ROWS + ri].real, t_row[k * ROWS + ri].imag);
+                        tc[j] = float2(t_col[k * COLS_ALL + ci].real, t_col[k * COLS_ALL + ci].imag);
+                    }
+                    for (uint j = 0; j < UNROLL; ++j) {
+                        float mr = qr - kd[j].x, mc = qc - kd[j].y, pr = qr + kd[j].x, pc = qc + kd[j].y;
+                        float rm2 = mr * mr + mc * mc, rp2 = pr * pr + pc * pc;
+                        if (k0 + j >= stop || metal::min(rm2, rp2) > r2_out) continue;
+                        float2 term = sep_cmul(gv[j], sep_cmul(tr[j], tc[j]));
+                        // One open sideband with a weight proven positive: its weight cancels in the normalisation.
+                        // Both sidebands inside the flat aperture: a = b, so w is the per-q constant i sign(sin Psi).
+                        bool closed_m = rm2 > r2_zero, closed_p = rp2 > r2_zero;
+                        bool single_m = rm2 < r2_pos && closed_p, single_p = rp2 < r2_pos && closed_m;
+                        bool both_one = rm2 < r2_one && rp2 < r2_one && both_ok;
+                        if ((single_m || single_p || both_one) && kd[j].z >= 1e-3f) {
+                            ga += single_m ? term : float2(0.0f);
+                            gb += single_p ? term : float2(0.0f);
+                            gi += both_one ? term : float2(0.0f);
+                            continue;
+                        }
+                        float wa = closed_m ? 0.0f
+                            : (rm2 < r2_one ? 1.0f : alias_geometry(mr, mc, wl, semi, ay, ax).w);
+                        float wb = closed_p ? 0.0f
+                            : (rp2 < r2_one ? 1.0f : alias_geometry(pr, pc, wl, semi, ay, ax).w);
+                        float gkw = kd[j].z;
+                        if (gkw == 0.0f || (wa == 0.0f && wb == 0.0f)) continue;
+                        float a = wa * gkw, b = wb * gkw;
+                        if (b == 0.0f) {
+                            ga += a >= 1e-8f ? term : term * (a / 1e-8f);
+                        } else if (a == 0.0f) {
+                            gb += b >= 1e-8f ? term : term * (b / 1e-8f);
+                        } else {
+                            float wr = (a - b) * epsi.x, wi = (a + b) * epsi.y;
+                            float inv = 1.0f / metal::max(metal::precise::sqrt(wr * wr + wi * wi), 1e-8f);
+                            gab += sep_cmul(term, float2(wr * inv, wi * inv));
+                        }
+                    }
+                }
+                sum_a += ga; sum_b += gb; sum_ab += gab; sum_i += gi;
+            }
+            float2 w_one = float2(0.0f, epsi.y > 0.0f ? 1.0f : -1.0f);
+            result += sep_cmul(epsi, sum_a) - sep_cmul(float2(epsi.x, -epsi.y), sum_b) + sum_ab
+                      + sep_cmul(w_one, sum_i);
+        }
+        total[out].real = result.x;
+        total[out].imag = result.y;
+"""
+
+
+@lru_cache(maxsize=1)
+def _separable_coherent_kernel():
+    """Accumulate every BF contribution of the C10/C12 transfer in separable form."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_separable_coherent",
+        input_names=["g", "q_row", "q_col", "k_data", "params", "dc",
+                     "bounds", "row_indices", "col_indices", "t_row", "t_col",
+                     "psi_row", "psi_col", "psi_cross", "col_f", "previous"],
+        output_names=["total"],
+        header=_HEADER + _ALIAS_GEOMETRY + _SEPARABLE_HEADER,
+        compile_options={"math_mode": "safe"},
+        source=_SEPARABLE_SOURCE,
+    )
+
+
+# The two-term coherent reconstruction uses the separable kernel; False selects the per-term reference.
+_SEPARABLE = True
+# BF pixels per culling group and per launch, and the threadgroup of the separable kernel.
+_SEPARABLE_CHUNK = 16
+_SEPARABLE_LAUNCH_BF = 8192
+_SEPARABLE_THREADGROUP = (32, 4, 1)
+_SEPARABLE_UNROLL = 1
+_SEPARABLE_PURE_UNROLL = 4
+
+
+def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
+    """Aberration-independent state of the separable path for one output grid, cached on ``prepared``."""
+    mx = prepared.mx
+    cached = prepared.separable_geometry
+    if cached is not None and cached[0] == n:
+        return cached[1]
+    stored = int(prepared.g_qk.shape[0])
+    columns = n // 2 + 1
+    row_indices, col_indices = _coherent_support(prepared, n, columns)
+    frequencies = np.fft.fftfreq(n) * n
+    # The Nyquist row's anti-Hermitian partner is itself, so its upper half is computed, not mirrored,
+    # by one extra grid row of the same launch (a separate small launch would add a serial tail).
+    nyquist = n // 2
+    upper = np.zeros(0, dtype=np.uint32)
+    if nyquist in set(row_indices.tolist()):
+        upper = np.arange(columns, n, dtype=np.uint32)
+        upper = upper[np.abs(frequencies[upper]) <= np.abs(frequencies[col_indices]).max()]
+        if upper.size and upper[-1] != n - 1 or np.any(np.diff(upper) != 1):
+            raise RuntimeError("The Nyquist row support is expected to be one run ending at the last column.")
+        if upper.size > col_indices.size:
+            raise RuntimeError("The Nyquist row's upper half is expected to fit one grid row.")
+    all_cols = np.concatenate((col_indices, upper)).astype(np.uint32)
+    # The probe aperture at k depends only on the geometry; its chi(k) cancels in the separable form.
+    probe = _alias_probe_kernel()(
+        inputs=[prepared.kx, prepared.ky, params, mx.array(np.zeros((14, 2), np.float32))],
+        template=[("K", stored), ("HIGHER", False)],
+        grid=(stored, 1, 1), threadgroup=(256, 1, 1),
+        output_shapes=[(stored, 5)], output_dtypes=[mx.float32],
+    )[0]
+    k_data = mx.contiguous(mx.stack((prepared.kx, prepared.ky, probe[:, 3], mx.zeros_like(prepared.kx)), axis=1))
+    mx.eval(k_data)
+    # Per group of BF pixels: row min/max, col min/max of k, and the smallest aperture at k.
+    group_count = -(-stored // _SEPARABLE_CHUNK)
+    padded = group_count * _SEPARABLE_CHUNK - stored
+    values = np.asarray(k_data)
+    edge = np.concatenate((values, np.repeat(values[-1:], padded, axis=0))).reshape(group_count, _SEPARABLE_CHUNK, 4)
+    bounds_np = np.zeros((group_count, 8), np.float32)
+    bounds_np[:, 0], bounds_np[:, 1] = edge[..., 0].min(axis=1), edge[..., 0].max(axis=1)
+    bounds_np[:, 2], bounds_np[:, 3] = edge[..., 1].min(axis=1), edge[..., 1].max(axis=1)
+    bounds_np[:, 4] = edge[..., 2].min(axis=1)
+    bounds = mx.array(bounds_np)
+    geometry = {
+        "columns": columns, "bounds": bounds, "k_data": k_data,
+        "kx": prepared.kx_np.astype(np.float64), "ky": prepared.ky_np.astype(np.float64),
+        "steps": (float(prepared.q_row[1].item()), float(prepared.q_col[1].item())),
+        "rows": row_indices, "cols": col_indices, "upper": upper,
+        "nyquist_ri": int(np.flatnonzero(row_indices == nyquist)[0]) if upper.size else 0,
+        "rows_m": mx.array(row_indices), "cols_m": mx.array(all_cols),
+        "row_f": frequencies[row_indices], "col_f": frequencies[all_cols],
+        "row_f_m": mx.array(frequencies[row_indices].astype(np.float32)),
+        "col_f_m": mx.array(frequencies[all_cols].astype(np.float32)),
+    }
+    prepared.separable_geometry = (n, geometry)
+    return geometry
+
+
+def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.ndarray, dc, n: int):
+    """The complete corrected C10/C12 spectrum (n x n), with every selected BF contribution."""
+    mx = prepared.mx
+    geometry = _separable_geometry(prepared, n, params)
+    stored = int(prepared.g_qk.shape[0])
+    source_n = int(prepared.scan_shape[0])
+    # chi(v) = factor (|v| wl)^2 (c10 + c12 cos 2(theta - phi12)) = v^T M v, from the kernel's float32 inputs
+    wl, c10, c12, c2, s2, factor = (float(params_np[i]) for i in (0, 4, 5, 6, 7, 8))
+    scale = factor * wl * wl
+    m00, m01, m11 = scale * (c10 + c12 * c2), scale * c12 * s2, scale * (c10 - c12 * c2)
+    step_r, step_c = geometry["steps"]
+    kx, ky = geometry["kx"], geometry["ky"]
+    p_row = mx.array(_split_mod(2.0 * step_r * (m00 * kx + m01 * ky)))
+    p_col = mx.array(_split_mod(2.0 * step_c * (m01 * kx + m11 * ky)))
+    psi_a, psi_b, psi_c = m00 * step_r ** 2, 2.0 * m01 * step_r * step_c, m11 * step_c ** 2
+    rows, cols, extra = len(geometry["rows"]), len(geometry["cols"]), len(geometry["upper"])
+    row_f, col_f = geometry["row_f"], geometry["col_f"]
+    psi_row = mx.array(np.exp(1j * np.remainder(psi_a * row_f ** 2, 2.0 * np.pi)).astype(np.complex64))
+    psi_col = mx.array(np.exp(1j * np.remainder(psi_c * col_f ** 2, 2.0 * np.pi)).astype(np.complex64))
+    psi_cross = mx.array(_split_mod(psi_b * row_f))
+    t_row, t_col = _separable_table_kernel()(
+        inputs=[p_row, p_col, geometry["row_f_m"], geometry["col_f_m"]],
+        template=[("K", stored), ("ROWS", rows), ("COLS", cols + extra)],
+        grid=(max(rows, cols + extra), stored, 1), threadgroup=(256, 1, 1),
+        output_shapes=[(stored, rows), (stored, cols + extra)], output_dtypes=[mx.complex64, mx.complex64],
+    )
+    grid_rows = rows + (1 if extra else 0)
+    total = mx.zeros((grid_rows, cols), dtype=mx.complex64)
+    launches = -(-stored // _SEPARABLE_LAUNCH_BF)
+    per_launch = -(-stored // launches)
+    per_launch = -(-per_launch // _SEPARABLE_CHUNK) * _SEPARABLE_CHUNK
+    for start in range(0, stored, per_launch):
+        checkpoint()
+        stop = min(start + per_launch, stored)
+        groups = -(-(stop - start) // _SEPARABLE_CHUNK)
+        first = start // _SEPARABLE_CHUNK
+        total = _separable_coherent_kernel()(
+            inputs=[prepared.g_qk[start:stop], qr, qc, geometry["k_data"][start:stop],
+                    params, dc, geometry["bounds"][first:first + groups].reshape(-1),
+                    geometry["rows_m"], geometry["cols_m"], t_row[start:stop], t_col[start:stop],
+                    psi_row, psi_col, psi_cross, geometry["col_f_m"], total],
+            template=[("ROWS", rows), ("COLS", cols), ("COLS_ALL", cols + extra), ("EXTRA", extra),
+                      ("NYQUIST_RI", geometry["nyquist_ri"]), ("SOURCE_N", source_n),
+                      ("G_COLS", int(prepared.g_qk.shape[-1])),
+                      ("K", stop - start), ("CHUNK", _SEPARABLE_CHUNK), ("GROUPS", groups),
+                      ("UNROLL", _SEPARABLE_UNROLL), ("PURE_UNROLL", _SEPARABLE_PURE_UNROLL)],
+            grid=(cols, grid_rows, 1), threadgroup=_SEPARABLE_THREADGROUP,
+            output_shapes=[(grid_rows, cols)], output_dtypes=[mx.complex64],
+        )[0]
+    upper = total[rows:, :extra] if extra else None
+    total = total[:rows] if extra else total
+    # Restore the zero rows and columns outside the aperture support.
+    columns = geometry["columns"]
+    for axis, indices, count in ((0, geometry["rows"], n), (1, geometry["cols"], columns)):
+        if len(indices) == count:
+            continue
+        gaps = np.flatnonzero(np.diff(indices) > 1)
+        split = int(gaps[0] + 1) if len(gaps) else len(indices)
+        shape = list(total.shape)
+        shape[axis] = count - len(indices)
+        before, after = mx.split(total, [split], axis=axis)
+        total = mx.concatenate((before, mx.zeros(shape, dtype=mx.complex64), after), axis=axis)
+    # Compacted inactive BF columns still carry the common real DC term.
+    total[0, 0] = total[0, 0] + (prepared.num_bright_field_pixels - stored) * dc[0]
+    # Paired corrected frequencies of the even C10/C12 probe are anti-Hermitian, O(-q) = -conj(O(q)),
+    # except the Nyquist row, whose partner is itself and was computed above.
+    mirror_rows = mx.array((-np.arange(n)) % n)
+    negative = -mx.conj(total[mirror_rows, 1:n // 2][:, ::-1])
+    if upper is not None:
+        # The supported upper columns of the Nyquist row are one contiguous run ending at column n - 1.
+        first = int(geometry["upper"][0])
+        if first > columns:
+            upper = mx.concatenate((mx.zeros((1, first - columns), dtype=mx.complex64), upper), axis=1)
+        negative = mx.concatenate((negative[:n // 2], upper, negative[n // 2 + 1:]), axis=0)
+    return mx.concatenate((total, negative), axis=1)
+
+
 def _coherent_support(
     prepared: PreparedMpsSSB, n: int, columns: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -434,6 +850,13 @@ def _reconstruct_upsampled(
     coefficients = mx.array(packed)
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
+    if wave_mean and not higher and thickness == 0.0 and _SEPARABLE:
+        total = _separable_spectrum(prepared, qr, qc, params, np.array(params), dc, n)
+        wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
+        phase = mx.arctan2(mx.imag(wave), mx.real(wave))
+        mx.eval(phase)
+        checkpoint()
+        return np.asarray(phase, dtype=np.float32), None
     chunk = max(1, _WORK_BYTES // (n * n * 8 * 3))
     stored = int(prepared.g_qk.shape[0])
     probe_key = (float(C10), float(C12), float(phi12), higher, packed.tobytes())
