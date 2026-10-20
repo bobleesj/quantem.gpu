@@ -1571,7 +1571,11 @@ class SSB:
                 seed=int(seed),
                 verbose=verbose,
             )
-            result = self._accept_result(self._in_detector_frame(result_from_engine(result)))
+            result = result_from_engine(result)
+            if result.aberrations["C12_nm"] == 0.0:
+                # no astigmatism (C12 held at 0): its azimuth has no effect on the image and is stated as 0
+                result.aberrations["phi12_deg"] = 0.0
+            result = self._accept_result(self._in_detector_frame(result))
         label_trials(result, search=0)
         if check_rotation:
             result = self._accept_result(self._resolve_rotation_branch(

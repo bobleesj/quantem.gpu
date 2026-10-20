@@ -59,9 +59,10 @@ def optimize(
     if aberrations:
         start.update({name: float(value) for name, value in aberrations.items() if name in start})
     ranges = _ranges_from_start(start, search_ranges)
-    # a pinned coefficient (one number, or a range of zero width) is the start, every trial and the result's value,
-    # as on CUDA; without this the result kept the start (C12 5 nm, phi12 0) for a coefficient the search never moved
-    start.update(_pinned(ranges))
+    # A pinned coefficient (one number, or a range of zero width) is every trial's and the result's value, as on CUDA.
+    # It is not put into the start: the start is a candidate the trials must beat, and pinning it there could make it
+    # a degenerate point (C10 = C12 = 0, no correction at all) whose loss no corrected trial reaches.
+    pinned = _pinned(ranges)
     trials: list[dict] = []
 
     def evaluate(C10: float, C12: float, phi12: float) -> float:
@@ -133,14 +134,20 @@ def optimize(
             progress.update(current)
         progress.close()
 
-        if study.best_trial is not None and float(study.best_value) < best_loss:
+        # with pins the start, which ignores them, is no candidate: the best trial is the fit
+        if study.best_trial is not None and (pinned or float(study.best_value) < best_loss):
             params = study.best_trial.params
             best = {
-                "C10": float(params.get("C10_A", best["C10"])),
-                "C12": float(params.get("C12_A", best["C12"])),
-                "phi12": math.radians(float(params.get("phi12_deg", math.degrees(best["phi12"])))),
+                "C10": float(params.get("C10_A", pinned.get("C10", best["C10"]))),
+                "C12": float(params.get("C12_A", pinned.get("C12", best["C12"]))),
+                "phi12": math.radians(float(params.get(
+                    "phi12_deg", math.degrees(pinned.get("phi12", best["phi12"]))))),
             }
             best_loss = float(study.best_value)
+    elif pinned:
+        # no search: refine from the start with the pinned coefficients in place
+        best = {**best, **pinned}
+        best_loss = evaluate(best["C10"], best["C12"], best["phi12"])
     timings["optuna_seconds"] = time.perf_counter() - optuna_started
 
     refine_started = time.perf_counter()
@@ -277,13 +284,13 @@ def _ranges_from_start(
     start: dict[str, float],
     search_ranges: dict | None,
 ) -> dict[str, tuple[float, float] | float]:
-    if search_ranges is not None:
-        return dict(search_ranges)
-    return {
+    # a coefficient search_ranges leaves out is searched over its default range, as when no ranges are given
+    defaults = {
         "C10_A": (-400.0, 400.0),
         "C12_A": (0.0, 100.0),
         "phi12_deg": (-90.0, 90.0),
     }
+    return defaults if search_ranges is None else {**defaults, **search_ranges}
 
 
 def _pinned(ranges: dict) -> dict[str, float]:

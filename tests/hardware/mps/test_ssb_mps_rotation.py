@@ -216,3 +216,24 @@ def test_the_automatic_fit_says_when_the_rotation_check_moves_the_branch(capsys)
     assert result.scan_detector_rotation_deg == 0.0
     out = capsys.readouterr().out
     assert "the rotation check moved the scan-detector rotation from 180.0° to 0.0°" in out
+
+
+@pytest.mark.parametrize("lock", [["C12_nm"], None])
+def test_holding_c12_at_zero_still_fits_the_defocus(lock):
+    """search_ranges={"C12_nm": 0.0} holds the astigmatism and still fits C10 over its default range.
+
+    Before this fix MPS returned C10 = C12 = phi12 = 0 exactly: the omitted C10 was held at the start, and the pinned
+    start (no correction at all) was a degenerate candidate no trial could beat (on the public gold scan loss 0.0201,
+    below the real optimum 0.0445, with the wrong 180-degree branch kept).
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal(C12_A=0.0)  # truth C10 -8 nm, no astigmatism
+    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
+    with SSB(frames, **settings) as session:
+        fitted = session.find_aberrations(num_trials=40, search_ranges={"C12_nm": 0.0}, refine_lock=lock,
+                                          check_rotation=False, verbose=False)
+    assert fitted.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.5)
+    assert fitted.aberrations["C12_nm"] == 0.0 and fitted.aberrations["phi12_deg"] == 0.0
