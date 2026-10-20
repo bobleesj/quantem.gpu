@@ -48,7 +48,7 @@ relativistic electron wavelength in Å for an accelerating voltage in kV, and
 `interaction_parameter(voltage_kV)`, the relativistic interaction parameter
 σ = 2π m e λ / h² in rad/(V·Å) (6.526 × 10⁻⁴ at 300 kV) computed with that
 same wavelength: a projected potential of V_p V·Å shifts the phase by σ V_p.
-`quantem.gpu.optics.physics.ssb_upsampling_factor` chooses the SSB output grid
+`quantem.gpu.optics.ssb_upsampling_factor` chooses the SSB output grid
 from voltage (kV), convergence semi-angle (mrad), and scan step (Å, a
 `(row, col)` pair).
 
