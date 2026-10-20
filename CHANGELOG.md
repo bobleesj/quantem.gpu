@@ -36,6 +36,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- `SSB.reconstruct(trials=[...])` is renamed `trial_ids=[...]`, so `trials`
+  never means a list of ids in one place and a count in another. The WebGPU
+  protocol's trial count (`WebGPUOptimizationOptions.trials`,
+  `SSBOptimizationResult.trials`) is `numTrials`.
+
 - `save_to` is renamed `save_dir` on `SSB.find_aberrations`,
   `SSB.reconstruct` and `SSB.reconstruct_series`, matching
   `ssb.show(save_dir=...)`. It names a results directory; an `.npz` or

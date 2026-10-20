@@ -32,7 +32,7 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
         expected, _ = ssb.preview(dict(aberrations))
         np.testing.assert_allclose(cp.asnumpy(native.phase), expected, atol=1e-7)
         records = deepcopy(aberrations.trial_records)
-        replay = ssb.reconstruct(aberrations, trials=[7, 0])
+        replay = ssb.reconstruct(aberrations, trial_ids=[7, 0])
         assert replay.phase.shape == (2, 128, 128)
         for frame, trial_id in enumerate((7, 0)):
             record = records[trial_id]
@@ -81,7 +81,7 @@ def test_rotation_check_keeps_original_trial_geometry(monkeypatch):
         assert ssb.scan_detector_rotation_deg >= 180.0
         assert all(record['scan_detector_rotation_deg'] < 180.0 for record in aberrations.trial_records)
         original = ssb.scan_detector_rotation_deg
-        replay = ssb.reconstruct(aberrations, trials=[0])
+        replay = ssb.reconstruct(aberrations, trial_ids=[0])
         assert ssb.scan_detector_rotation_deg == original
         assert ssb._reconstruction is aberrations
         record = aberrations.trial_records[0]
@@ -111,13 +111,13 @@ def test_joint_history_carries_tilt_depth_and_objective():
                                   'phi12_deg': values['phi12_deg']},
                                  sample_tilt_mrad=tuple(record['sample_tilt_mrad']),
                                  depth_spread_nm=record['depth_spread_nm'])
-        replay = ssb.reconstruct(aberrations, trials=[3])
+        replay = ssb.reconstruct(aberrations, trial_ids=[3])
         np.testing.assert_allclose(cp.asnumpy(replay.phase[0]), expected, atol=1e-7)
         for invalid in ({}, {'best': 0}, {'first': -1}, {'best': 2, 'last': 2}):
             with pytest.raises(ValueError, match='one positive count'):
                 ssb.show_trials(**invalid)
         with pytest.raises(ValueError, match='Unknown trial IDs'):
-            ssb.reconstruct(aberrations, trials=[1000])
+            ssb.reconstruct(aberrations, trial_ids=[1000])
     finally:
         ssb.close()
 

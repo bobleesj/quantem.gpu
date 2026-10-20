@@ -1095,12 +1095,12 @@ class SSB:
                 self._calibration_initial["detector_sampling_mrad"] = self.detector_sampling_mrad
         return self._compute
 
-    def _reconstruct_trials(self, parameters, trials, *, upsampling_factor, phase_estimator):
+    def _reconstruct_trials(self, parameters, trial_ids, *, upsampling_factor, phase_estimator):
         """Replay selected records without replacing the current search or correction."""
         parameters = self._aberration_search if parameters is None else parameters
         if parameters is None:
             raise ValueError("Run ssb.find_aberrations() before reconstructing trials.")
-        records = select_records(parameters.trial_records, trials)
+        records = select_records(parameters.trial_records, trial_ids)
         estimator = phase_estimator or _default_phase_estimator(records[0]["params"])
         saved_rotation = self.scan_detector_rotation_deg
         waves = []
@@ -1178,7 +1178,7 @@ class SSB:
             raise ValueError("Run ssb.find_aberrations() before showing trials.")
         records = choose_trials(self._aberration_search.trial_records, best=best, last=last, first=first)
         result = self.reconstruct(self._aberration_search,
-                                  trials=[record["trial"] for record in records], upsampling_factor=upsampling_factor)
+                                  trial_ids=[record["trial"] for record in records], upsampling_factor=upsampling_factor)
         kind = "Best" if best is not None else "Last" if last is not None else "First"
         return plot_trials(result, kind, axsize=axsize)
 
@@ -1524,7 +1524,7 @@ class SSB:
         parameters: SSBResult | None = None,
         *,
         aberrations: dict[str, float] | None = None,
-        trials: object = None,
+        trial_ids: object = None,
         upsampling_factor: int | Literal["auto"] = 1,
         phase_estimator: Literal["mean_phase", "phase_of_mean", "complex_wave"] | None = None,
         compute_loss: bool = True,
@@ -1546,7 +1546,7 @@ class SSB:
         aberrations
             Partial coefficient overrides: ``C10_nm``/``C12_nm`` in nm, ``phi12_deg`` in degrees.
             Unspecified coefficients and sample geometry are preserved.
-        trials
+        trial_ids
             Trial IDs from ``parameters.trials.index``. Reconstruct these
             attempts using their original rotation and sample geometry;
             return a phase stack without changing the active session.
@@ -1608,12 +1608,12 @@ class SSB:
             raise ValueError("phase_estimator must be 'mean_phase', 'phase_of_mean', or 'complex_wave'.")
         if parameters is not None and not isinstance(parameters, SSBResult):
             raise TypeError("Pass the result of find_aberrations(), or supply coefficients with aberrations={...}.")
-        if trials is not None:
+        if trial_ids is not None:
             if phase_estimator == "complex_wave":
                 raise ValueError("Trial inspection returns phase images; choose mean_phase or phase_of_mean.")
             if aberrations is not None or save_dir is not None:
                 raise ValueError("Replay trials without coefficient overrides or save_dir; save the returned result separately.")
-            return self._reconstruct_trials(parameters, trials, upsampling_factor=upsampling_factor, phase_estimator=phase_estimator)
+            return self._reconstruct_trials(parameters, trial_ids, upsampling_factor=upsampling_factor, phase_estimator=phase_estimator)
         if parameters is None and aberrations is None and not self._aberrations_explicit:
             print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations() first.")
             parameters = self.find_aberrations(verbose=verbose)
