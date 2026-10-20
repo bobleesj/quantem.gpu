@@ -578,20 +578,20 @@ calibrations:
   default: {scan_sampling_A: [0.5, 0.5]}
 files:
   "06-24": {mag: mag_7p2}
-  first: {master: sample_01_master.h5, mag: mag_5p1}
-  2: {master: zone_02_master.h5, mag: mag_5p1}
+  first: {master: scan_01_master.h5, mag: mag_5p1}
+  2: {master: series_a_02_master.h5, mag: mag_5p1}
 """.strip()
     )
     document = read_dataset_yaml(raw)
     steps = {
         name: acquisition_settings(raw / "live" / "screen" / name, document, voltage_kV=None, semiangle_mrad=None,
                                    scan_sampling_A=None, scan_detector_rotation_deg=0.0)["scan_sampling_A"]
-        for name in ("sample_10", "sample_01", "sample_30", "sample_02")
+        for name in ("scan_10", "scan_01", "scan_30", "scan_02")
     }
-    # sample_02 shares number 2 with an entry naming another master: it takes the session default, not zone_02's step
-    assert steps == {"sample_10": (0.264, 0.264), "sample_01": (0.373, 0.373), "sample_30": (0.5, 0.5), "sample_02": (0.5, 0.5)}
-    assert dataset_yaml.acquisition_scan_sampling_A(document, "sample_10.qem") == ((0.264, 0.264), "dataset.yaml mag_7p2")
-    scaled, source = dataset_yaml.acquisition_scan_sampling_A(document, "sample_40_master.h5", magnification_MX=3.6)
+    # scan_02 shares number 2 with an entry naming another master: it takes the session default, not series_a_02's step
+    assert steps == {"scan_10": (0.264, 0.264), "scan_01": (0.373, 0.373), "scan_30": (0.5, 0.5), "scan_02": (0.5, 0.5)}
+    assert dataset_yaml.acquisition_scan_sampling_A(document, "scan_10.qem") == ((0.264, 0.264), "dataset.yaml mag_7p2")
+    scaled, source = dataset_yaml.acquisition_scan_sampling_A(document, "scan_40_master.h5", magnification_MX=3.6)
     assert scaled[0] == scaled[1] == 0.373 * 5.1 / 3.6 and source == "scaled from dataset.yaml mag_5p1 to 3.6 MX"
 
 
