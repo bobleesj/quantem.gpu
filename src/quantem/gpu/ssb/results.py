@@ -3,13 +3,16 @@
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.probe import model_probe, probe_grid
+
+if TYPE_CHECKING:
+    from quantem.gpu.ssb.branches import RotationBranches
 
 # A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
 # 180-degree branch the scan-detector rotation is on, so the branch is left as given.
@@ -46,12 +49,12 @@ class SSBResult(Mapping[str, float]):
         Least-squares agreement with the data of the tilt fit relative to standard SSB (> 1: the tilt explains more).
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
-        ``find_aberrations(check_rotation=True)`` settles the branch from the atom columns (see ``column_sign``).
+        for an estimated rotation ``find_aberrations`` fits both branches and keeps one (``rotation_branches``).
     scan_detector_rotation_flipped : bool
         Whether the detector axes were exchanged before applying the rotation.
-    initial_scan_detector_rotation_deg : float | None
-        The rotation before the polarity check, in [0, 360); the check changed the branch when it differs from
-        ``scan_detector_rotation_deg``. None when no check ran.
+    rotation_branches : RotationBranches | None
+        Both 180-degree branches, fitted independently, with the atomic-column and phase-tail evidence and the branch
+        kept; ``show("rotation")`` draws it. None when no comparison ran (a given or recorded rotation).
     upsampling_factor : int
         Output factor relative to the native scan grid. ``object_sampling_A``
         records output pixel spacing, preserving the physical field of view.
@@ -114,11 +117,8 @@ class SSBResult(Mapping[str, float]):
     # Every evaluated search trial in order, ``{"trial", "number", "search", "stage", "params": {"C10_nm", "C12_nm",
     # "phi12_deg"}, "loss"}`` (a tilt fit adds the objective, band, tilt and depth spread); ``trials`` tabulates them.
     trial_records: list[dict] | None = None
-    # Phase skewness (+ = bright atom columns) and the selected 180-degree branch.
-    column_sign: float | None = None
-    initial_scan_detector_rotation_deg: float | None = None
-    initial_column_sign: float | None = None
-    rotation_check_phases: object | None = None
+    # Both 180-degree branches of an estimated rotation, fitted independently, and the one kept (branches.py).
+    rotation_branches: "RotationBranches | None" = None
     phase_clim: tuple[float, float] | None = None
     fit_scan_region: tuple[int, int, int, int] | None = None
     reused: bool = False
@@ -161,15 +161,9 @@ class SSBResult(Mapping[str, float]):
             lines.append(f"  BF pixels      {self.num_bright_field_pixels}")
         if self.num_trials is not None:
             lines.append(f"  Trials         {self.num_trials}")
-        if self.initial_scan_detector_rotation_deg is not None:
-            lines.append(f"  Input rotation {self.initial_scan_detector_rotation_deg:.2f}°")
         lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
-        if self.column_sign is not None:
-            changed = self.initial_scan_detector_rotation_deg not in (None, self.scan_detector_rotation_deg)
-            lines.append(
-                f"  Column sign    {self.column_sign:+.2f}"
-                + ("  (SSB selected the other 180° branch)" if changed else "")
-            )
+        if self.rotation_branches is not None:
+            lines.append(f"  180° branch    {self.rotation_branches.summary}")
         if self.aberrations:
             lines.append(_format_aberrations(self.aberrations))
         if self.sample_tilt_mrad is not None:
@@ -219,9 +213,11 @@ class SSBResult(Mapping[str, float]):
             "C12 (nm)": aberrations.get("C12_nm"),
             "phi12 (deg)": aberrations.get("phi12_deg", 0.0),
         }
-        if self.initial_scan_detector_rotation_deg is not None:
-            row["Suggested rotation (deg)"] = self.initial_scan_detector_rotation_deg
+        if self.rotation_branches is not None:
+            row["Suggested rotation (deg)"] = self.rotation_branches.branches[0].scan_detector_rotation_deg
         row["SSB-selected rotation (deg)"] = self.scan_detector_rotation_deg
+        if self.rotation_branches is not None:
+            row["180° branch by"] = {"columns": "atomic columns", "phase_tail": "phase tail"}[self.rotation_branches.decided_by]
         if self.sample_tilt_mrad is not None:
             row.update({"tilt row (mrad)": self.sample_tilt_mrad[0],
                         "tilt col (mrad)": self.sample_tilt_mrad[1],
@@ -246,10 +242,7 @@ class SSBResult(Mapping[str, float]):
         """
         if self.phase_clim is not None:
             return tuple(self.phase_clim)
-        limit = float(abs(self.phase).max())
-        if self.rotation_check_phases is not None:
-            limit = max(limit, float(np.max(np.abs(self.rotation_check_phases))))
-        limit = limit or 1.0
+        limit = float(abs(self.phase).max()) or 1.0
         return (-limit, limit)
 
     @property
@@ -322,7 +315,7 @@ class SSBResult(Mapping[str, float]):
 
     def show(self, view: Literal["phase", "probe", "rotation", "parameters"] = "phase", *,
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
-             histogram: bool = False, show_parameters: bool = True):
+             show_parameters: bool = True):
         """Show a large phase image or the real-space and Fourier-space probes.
 
         Phase views reuse symmetric linear limits from their fitted result.
@@ -335,24 +328,19 @@ class SSBResult(Mapping[str, float]):
             Show the reconstructed phase alone, or two model-probe intensity
             panels side by side. Fourier intensity shows the aperture;
             aberrations are encoded in the complex Fourier probe's phase.
-            ``rotation`` shows the exact phase images used in the polarity
-            check, before and after branch selection. Call on the result of
-            ``find_aberrations()``, not a subsequent reconstruction.
-            It explains the decision and displays only when SSB selected a
-            different physical rotation. Agreement returns None with no plot.
+            ``rotation`` draws the 180-degree branch evidence of an estimated
+            rotation (``rotation_branches.show()``): both branches' phase
+            tails and their phase at the dark-field atomic columns.
         axsize : tuple[float, float] or None, optional
             Width and height of each panel in inches. Defaults to (12, 12) for
-            phase and (6, 6) for each probe or comparison panel.
+            phase, (6, 6) for each probe or comparison panel and (5, 3.4) for
+            each rotation panel.
         compare : SSBResult or None, optional
             A second phase reconstruction of the same field of view. Shows
             both full images above matching central crops, with rectangles
             marking the crop locations. The crop is the central quarter of
             each dimension, selected on this result's grid. All four panels
             share this result's phase_limits; no alignment is performed.
-        histogram : bool, optional
-            Add median-centered phase histograms to the rotation view, with
-            the recorded decision scores and shared horizontal and vertical
-            limits. The comparison is omitted when the rotation is unchanged.
         show_parameters : bool, optional
             Include saved objective slices beside a single phase image by
             default. This only displays recorded values; it runs no fitting
@@ -361,12 +349,11 @@ class SSBResult(Mapping[str, float]):
 
         Returns
         -------
-        matplotlib.figure.Figure or None
+        matplotlib.figure.Figure
             A calibrated figure, closed so a bare notebook expression renders
             once. Phase is in radians; real-space and Fourier-space probe
             scale bars use Å and mrad, respectively. Each probe has unit summed
             intensity and its own linear display range.
-            Returns None for an unchanged rotation in the rotation view.
 
         Examples
         --------
@@ -375,21 +362,23 @@ class SSBResult(Mapping[str, float]):
         >>> result.show("probe")
         >>> result.show(axsize=(14, 14))  # width and height in inches
         >>> result.show(compare=result_4x, axsize=(7, 7))
-        >>> aberrations.show("rotation", histogram=True, axsize=(7, 7))
+        >>> result.show("rotation")
         >>> ssb.measure_parameters(aberrations)
         >>> aberrations.show("parameters")
         """
         import matplotlib.pyplot as plt
         from quantem.core.visualization import show_2d
 
-        if histogram and view != "rotation":
-            raise ValueError("Use aberrations.show('rotation', histogram=True) for the polarity histograms.")
         if compare is not None:
             if view != "phase":
                 raise ValueError("Use result.show(compare=other) to compare phase images.")
             return _phase_comparison(self, compare, axsize=(6, 6) if axsize is None else axsize)
         if view == "rotation":
-            return _rotation_comparison(self, axsize=(6, 6) if axsize is None else axsize, histogram=histogram)
+            if self.rotation_branches is None:
+                raise ValueError(
+                    "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
+                    "check_rotation=False. Run ssb.compare_rotation_branches() to fit and compare both branches.")
+            return self.rotation_branches.show(**({} if axsize is None else {"axsize": axsize}))
         if view == "parameters" or (view == "phase" and show_parameters and self.parameter_slices):
             from quantem.gpu.ssb.parameters import plot_parameters
 
@@ -495,6 +484,26 @@ def column_sign(phase: object) -> float:
     return float(np.mean(values ** 3) / variance ** 1.5)
 
 
+def phase_skewness(phase: object) -> float:
+    """Mean-centred third-moment ratio of the phase, ``mean(p**3) / mean(p**2)**1.5`` with ``p = phase - mean(phase)``.
+
+    The phase-tail test of the 180-degree branch choice (``SSB.compare_rotation_branches``): positive when a few bright
+    atomic columns sit over a flatter background. Unlike ``column_sign`` it centres on the mean, not the median.
+
+    Examples
+    --------
+    >>> phase_skewness(np.array([0.0, 0.0, 0.0, 1.0]))
+    1.1547005383792515
+    """
+    # float64 so the third moment of a large image is not rounded away
+    values = host_array(phase).astype(np.float64).ravel()
+    values = values - values.mean()
+    variance = float(np.mean(values * values))
+    if variance <= 0.0:
+        return 0.0
+    return float(np.mean(values ** 3) / variance ** 1.5)
+
+
 def column_histogram(
     phase: object, *, limit: float | None = None, bins: int = 100,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -539,36 +548,6 @@ def column_histogram(
     return np.histogram(values, edges)[0] / values.size, edges
 
 
-def draw_column_histogram(phase: object, title: str, *, limit: float | None = None, bins: int = 101) -> float:
-    """Draw the phase histogram about its median with its mirror image (dashed); return the axis half-width used.
-
-    Bars beyond the dashed line are the tail: on the right when atom columns are bright (correct rotation), on the left
-    when the scan-detector rotation is 180 degrees off. Pass the returned ``limit`` to the next call so two histograms
-    share one axis. Displays in a notebook only.
-    """
-    import matplotlib.pyplot as plt
-    from IPython.display import display
-
-    # Retain the notebook's established edge-count argument and exact bins.
-    counts, edges = column_histogram(phase, limit=limit, bins=bins - 1)
-    limit = float(edges[-1])
-    centres = (edges[1:] + edges[:-1]) / 2.0
-    figure, axis = plt.subplots(figsize=(6, 2.6))
-    axis.bar(centres, counts, width=edges[1] - edges[0], color="#e6873c")
-    axis.plot(centres, counts[::-1], "k--", linewidth=1, label="mirrored")
-    axis.axvline(0.0, color="0.5", linewidth=0.8)
-    axis.set_yscale("log")
-    axis.set_xlim(-limit, limit)
-    axis.set_xlabel("phase - median (rad)")
-    axis.set_ylabel("fraction of pixels")
-    axis.set_title(title, fontsize=10)
-    axis.legend(loc="upper left", frameon=False, fontsize=8)
-    figure.tight_layout()
-    display(figure)
-    plt.close(figure)
-    return limit
-
-
 def host_array(value: object) -> np.ndarray:
     """Return a CuPy or NumPy array as a NumPy array.
 
@@ -594,65 +573,6 @@ def _format_aberrations(aberrations: dict) -> str:
     if "phi12_deg" in aberrations:
         lines.append(f"  Astig. angle   {aberrations['phi12_deg']:.1f}°")
     return "\n".join(lines)
-
-
-def _rotation_comparison(result, *, axsize: tuple[float, float], histogram: bool):
-    """Explain a changed rotation using the recorded phases and their histograms."""
-    if result.rotation_check_phases is None:
-        raise ValueError("No rotation-check images are saved. Run ssb.find_aberrations(check_rotation=True, force=True).")
-    difference = (result.scan_detector_rotation_deg - result.initial_scan_detector_rotation_deg + 180) % 360 - 180
-    if np.isclose(difference, 0, rtol=0, atol=1e-8):
-        return None
-
-    import matplotlib.pyplot as plt
-    from quantem.core.visualization import show_2d
-
-    phases = result.rotation_check_phases
-    titles = [f"Suggested rotation · {result.initial_scan_detector_rotation_deg:.2f}°",
-              f"SSB-selected rotation · {result.scan_detector_rotation_deg:.2f}°"]
-    width, height = axsize
-    figure_height = height + (3.2 if histogram else 0) + 1.0
-    figure = plt.figure(figsize=(2 * width, figure_height))
-    figure.text(
-        .04, 1 - .15 / figure_height,
-        f"Suggested rotation: {result.initial_scan_detector_rotation_deg:.2f}°. "
-        f"SSB selected {result.scan_detector_rotation_deg:.2f}° after testing the opposite branch and refitting.\n"
-        "Negative phase asymmetry prompted the check. "
-        + ("Positive asymmetry after refitting supports the bright-column assumption."
-           if result.column_sign >= COLUMN_SIGN_MIN else
-           "The refitted phase does not clearly support the bright-column assumption."),
-        va="top", fontsize=12, linespacing=1.5,
-    )
-    grid = figure.add_gridspec(2 if histogram else 1, 2,
-                              height_ratios=[height, 2.5] if histogram else [height],
-                              left=.04, right=.97, bottom=.06,
-                              top=1 - 1.05 / figure_height, wspace=.16, hspace=.15)
-    axes = np.array([figure.add_subplot(grid[0, col]) for col in range(2)])
-    sampling = result.object_sampling_A
-    show_2d(list(phases), title=titles, figax=(figure, axes),
-            norm={"interval_type": "manual", "vmin": result.phase_limits[0],
-                  "vmax": result.phase_limits[1]}, cmap="inferno", cbar=True, title_fontsize=15,
-            scalebar={"sampling": float(sampling[1]), "units": "Å", "fontsize": 13},
-            tight_layout=False)
-    if histogram:
-        values = phases.astype(np.float64)
-        values -= np.median(values, axis=(-2, -1), keepdims=True)
-        limit = float(np.max(np.abs(values))) or 1.0
-        edges = np.linspace(-limit, limit, 102)
-        fractions = [np.histogram(phase, bins=edges)[0] / phase.size for phase in values]
-        positive = np.concatenate([counts[counts > 0] for counts in fractions])
-        histogram_axes = []
-        for col, score in enumerate((result.initial_column_sign, result.column_sign)):
-            axis = figure.add_subplot(grid[1, col])
-            histogram_axes.append(axis)
-            axis.stairs(fractions[col], edges, color="#8C1515", fill=True)
-            axis.set(yscale="log", xlabel="Phase − median (rad)", ylabel="Fraction of pixels",
-                     xlim=(-limit, limit), ylim=(positive.min() / 2, positive.max() * 2),
-                     title=f"{'Before' if col == 0 else 'After'} · phase asymmetry {score:+.3f}")
-            axis.axvline(0, color="black", linewidth=.7)
-        histogram_axes[1].sharey(histogram_axes[0])
-    plt.close(figure)
-    return figure
 
 
 def _phase_comparison(first, second, *, axsize: tuple[float, float]):

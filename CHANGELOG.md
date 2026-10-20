@@ -6,7 +6,29 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ## Unreleased
 
+### Changed
+
+- The 180° branch of an estimated scan-detector rotation is settled by two
+  independent fits, at the estimate and at the estimate plus 180°, with the
+  same settings. The kept branch has positive phase at the atomic columns
+  located on the scan's dark field (`|z| >= 3`); when no columns are resolved,
+  the larger mean-centred phase skewness decides. One line says which and why.
+  A rotation given to `SSB(...)` or recorded with the acquisition is never
+  moved. The fit now costs two searches.
+- `SSBResult.rotation_branches` (a `RotationBranches`) records both fits and
+  the evidence, replacing `column_sign`, `initial_column_sign`,
+  `initial_scan_detector_rotation_deg` and `rotation_check_phases`; saved
+  results are `quantem.ssb-result/9`. `result.show("rotation")` draws the
+  evidence (the `histogram` keyword is gone).
+
 ### Added
+
+- `SSB.compare_rotation_branches(**find_aberrations_options)` fits both 180°
+  branches and returns a `RotationBranches` with `show()` and `report()`; on a
+  given rotation it reports without moving it unless `apply=True`.
+- `quantem.gpu.ssb.results.phase_skewness`, the mean-centred third-moment
+  ratio, next to `column_sign`; `quantem.gpu.ssb.branches` holds the column
+  test (`locate_atomic_columns`, `column_phase_test`).
 
 - The beginner SSB path is load, state the beam, reconstruct:
   `data.calibration.semiangle_mrad = 30`, `ssb = SSB(data)`,
