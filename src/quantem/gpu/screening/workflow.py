@@ -21,7 +21,7 @@ from quantem.gpu.optics.physics import wrap_degrees
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
 # 5: retain normalized microscope calibration and the calibrated aperture estimate.
-# 4: the fitted rotation and transposition are scan_detector_rotation_mod180_deg and detector_transposed; the
+# 4: the fitted rotation and its flip are scan_detector_rotation_mod180_deg and scan_detector_rotation_flipped; the
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
 _CACHE_VERSION = 5
@@ -47,7 +47,7 @@ class ScreeningResult:
     180 describe the same estimate. ``scan_detector_rotation_deg`` is the
     physical rotation a caller gave ``prepare`` and is None otherwise. The
     phase uses the caller's rotation when there is one. The pair
-    ``scan_detector_rotation_mod180_deg`` and ``detector_transposed`` always
+    ``scan_detector_rotation_mod180_deg`` and ``scan_detector_rotation_flipped`` always
     describes the one geometry of the phase: with a caller's rotation it is
     that angle modulo 180 and the caller's flag, and the fit stays in
     ``metadata["parameters"]``.
@@ -62,7 +62,7 @@ class ScreeningResult:
     bright_field_center_px: tuple[float, float]
     bright_field_edge_radius_px: float
     scan_detector_rotation_mod180_deg: float
-    detector_transposed: bool
+    scan_detector_rotation_flipped: bool
     metadata: dict[str, object]
     total_intensity: np.ndarray
     annular_bright_field: np.ndarray
@@ -79,7 +79,7 @@ def prepare(
     backend: str = "auto",
     scan_shape: tuple[int, int] | None = None,
     scan_detector_rotation_deg: float | None = None,
-    detector_transposed: bool = False,
+    scan_detector_rotation_flipped: bool = False,
     cache: bool = True,
     cache_dir: str | Path | None = None,
     refresh: bool = False,
@@ -112,8 +112,8 @@ def prepare(
     scan_detector_rotation_deg : float, optional
         Physical scan-to-detector rotation in degrees for the DPC phase.
         ``None`` fits it from ``rotation_steps`` angles from 0 to 180 degrees,
-        testing transposed detector axes too; that fit is known modulo 180.
-    detector_transposed : bool
+        testing swapped detector row and column axes too (a flipped rotation); that fit is known modulo 180.
+    scan_detector_rotation_flipped : bool
         Whether the detector axes are exchanged before the given rotation;
         used only with ``scan_detector_rotation_deg``.
     cache, cache_dir, refresh : bool, str or Path, bool
@@ -155,7 +155,7 @@ def prepare(
     if cache and not refresh:
         products = _prepare_cache(cache_path, master_path)
         if products is not None:
-            return _with_rotation(products, scan_detector_rotation_deg, detector_transposed)
+            return _with_rotation(products, scan_detector_rotation_deg, scan_detector_rotation_flipped)
 
     # A cache hit stays cheap: device, raw I/O and detector modules are
     # imported only by a cache miss.
@@ -174,7 +174,7 @@ def prepare(
     _add_calibration(products)
     if cache:
         _save_cache(products, cache_path)
-    return _with_rotation(products, scan_detector_rotation_deg, detector_transposed)
+    return _with_rotation(products, scan_detector_rotation_deg, scan_detector_rotation_flipped)
 
 
 def _add_calibration(products: ScreeningResult) -> None:
@@ -298,7 +298,7 @@ def _build_products(
     if verbose:
         print(
             f"Screening products in {elapsed_s:.2f} s: probe radius {radius:.1f} px, "
-            f"rotation {rotation_mod180_deg:.1f} deg{' (transposed)' if transposed else ''}."
+            f"rotation {rotation_mod180_deg:.1f} deg{', flipped' if transposed else ''}."
         )
 
     parameters = {
@@ -310,7 +310,7 @@ def _build_products(
         "bright_field_center_px": [float(center[0]), float(center[1])],
         "bright_field_edge_radius_px": float(radius),
         "scan_detector_rotation_mod180_deg": float(rotation_mod180_deg),
-        "detector_transposed": bool(transposed),
+        "scan_detector_rotation_flipped": bool(transposed),
         "backend": backend,
     }
     timing = {
@@ -330,7 +330,7 @@ def _build_products(
         bright_field_center_px=(float(center[0]), float(center[1])),
         bright_field_edge_radius_px=float(radius),
         scan_detector_rotation_mod180_deg=float(rotation_mod180_deg),
-        detector_transposed=bool(transposed),
+        scan_detector_rotation_flipped=bool(transposed),
         metadata={
             **acquisition_metadata,
             "schema": _CACHE_SCHEMA,
@@ -366,7 +366,7 @@ def _build_products(
 def _with_rotation(
     result: ScreeningResult,
     scan_detector_rotation_deg: float | None,
-    detector_transposed: bool,
+    scan_detector_rotation_flipped: bool,
 ) -> ScreeningResult:
     """Apply an explicit DPC rotation without touching the raw evidence.
 
@@ -382,12 +382,12 @@ def _with_rotation(
     rotation = float(scan_detector_rotation_deg)
     result.scan_detector_rotation_deg = wrap_degrees(rotation, 360.0)
     result.scan_detector_rotation_mod180_deg = wrap_degrees(rotation, 180.0)
-    result.detector_transposed = bool(detector_transposed)
+    result.scan_detector_rotation_flipped = bool(scan_detector_rotation_flipped)
     result.dpc_phase = _dpc_phase(
         result.com_row,
         result.com_col,
         rotation,
-        result.detector_transposed,
+        result.scan_detector_rotation_flipped,
     )
     return result
 
@@ -396,7 +396,7 @@ def _dpc_phase(
     com_row: np.ndarray,
     com_col: np.ndarray,
     scan_detector_rotation_deg: float,
-    detector_transposed: bool,
+    scan_detector_rotation_flipped: bool,
 ) -> np.ndarray:
     """Rotate the CoM field into scan axes and integrate it to the float32 iDPC phase.
 
@@ -407,15 +407,15 @@ def _dpc_phase(
     """
     from quantem.gpu.dpc import integrate
 
-    source_row = com_col if detector_transposed else com_row
-    source_col = com_row if detector_transposed else com_col
+    source_row = com_col if scan_detector_rotation_flipped else com_row
+    source_col = com_row if scan_detector_rotation_flipped else com_col
     angle = np.radians(scan_detector_rotation_deg)
     cosine = float(np.cos(angle))
     sine = float(np.sin(angle))
     aligned_row = (cosine * source_row - sine * source_col).astype(np.float32)
     aligned_col = (sine * source_row + cosine * source_col).astype(np.float32)
     gradient_row, gradient_col = (
-        (aligned_col, aligned_row) if detector_transposed else (aligned_row, aligned_col)
+        (aligned_col, aligned_row) if scan_detector_rotation_flipped else (aligned_row, aligned_col)
     )
     return integrate(gradient_row, gradient_col)
 
@@ -619,7 +619,7 @@ def _prepare_cache(path: Path, master: Path) -> ScreeningResult | None:
             bright_field_center_px=tuple(float(value) for value in parameters["bright_field_center_px"]),
             bright_field_edge_radius_px=float(parameters["bright_field_edge_radius_px"]),
             scan_detector_rotation_mod180_deg=float(parameters["scan_detector_rotation_mod180_deg"]),
-            detector_transposed=bool(parameters["detector_transposed"]),
+            scan_detector_rotation_flipped=bool(parameters["scan_detector_rotation_flipped"]),
             metadata=metadata,
             cache_path=path,
             from_cache=True,

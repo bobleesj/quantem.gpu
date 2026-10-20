@@ -30,7 +30,7 @@ def test_result_holds_one_physical_rotation(angle, expected):
     result = SSBResult(object_wave=np.ones((4, 4), np.complex64), backend="mps", scan_detector_rotation_deg=angle)
     assert result.scan_detector_rotation_deg == pytest.approx(expected)
     assert 0.0 <= result.scan_detector_rotation_deg < 360.0
-    assert result.detector_transposed is False
+    assert result.scan_detector_rotation_flipped is False
     assert f"{expected:.2f}°" in repr(result)
 
 
@@ -47,7 +47,7 @@ def test_transposition_preserves_original_detector_coordinates(monkeypatch):
     patterns = np.arange(2 * 3 * 4 * 5, dtype=np.uint16).reshape(2, 3, 4, 5)
     session = SSB(patterns, backend="mps", voltage_kV=300, semiangle_mrad=20,
                   scan_sampling_A=(.5, .6), detector_sampling_mrad=(2., 3.),
-                  bright_field_center_px=(11.5, 22.), detector_transposed=True)
+                  bright_field_center_px=(11.5, 22.), scan_detector_rotation_flipped=True)
     session._crop_origin = (10, 20)
     np.testing.assert_array_equal(session._data, patterns.swapaxes(-1, -2))
     assert np.shares_memory(session._data, patterns)
@@ -57,4 +57,4 @@ def test_transposition_preserves_original_detector_coordinates(monkeypatch):
                        bright_field_center_px=(2., 1.5))
     session._in_detector_frame(result)
     assert result.bright_field_center_px == (11.5, 22.)
-    assert result.detector_transposed is True
+    assert result.scan_detector_rotation_flipped is True

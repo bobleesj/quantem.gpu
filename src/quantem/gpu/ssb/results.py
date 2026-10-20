@@ -47,7 +47,7 @@ class SSBResult(Mapping[str, float]):
     scan_detector_rotation_deg : float
         Physical scan-to-detector rotation in degrees, in [0, 360). The CoM curl fixes it only modulo 180 degrees;
         ``find_aberrations(check_rotation=True)`` settles the branch from the atom columns (see ``column_sign``).
-    detector_transposed : bool
+    scan_detector_rotation_flipped : bool
         Whether the detector axes were exchanged before applying the rotation.
     initial_scan_detector_rotation_deg : float | None
         The rotation before the polarity check, in [0, 360); the check changed the branch when it differs from
@@ -88,7 +88,7 @@ class SSBResult(Mapping[str, float]):
     depth_spread_nm: float | None = None
     tilt_fit_gain: float | None = None
     scan_detector_rotation_deg: float = 0.0
-    detector_transposed: bool = False
+    scan_detector_rotation_flipped: bool = False
     loss: float | None = None
     elapsed_s: float | None = None
     timings: dict[str, float] = field(default_factory=dict)

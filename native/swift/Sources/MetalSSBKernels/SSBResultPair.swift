@@ -122,7 +122,7 @@ extension MetalSSBSavedRun {
   ///
   /// The record states the engine's Angstrom and radians as `C10_nm`, `C12_nm` and
   /// `phi12_deg`, and the rotation as the physical angle in [0, 360). The native engine has no
-  /// detector transposition, so `detector_transposed` is false.
+  /// detector transposition, so `scan_detector_rotation_flipped` is false.
   public func savePhasePair(to url: URL, phase: Data) throws {
     guard let calibration else { throw PairError.invalid("Cannot export SSB without calibration.") }
     let padded = calibrationProvenance?["scanPadding"] == "zero-bottom-right-v1"
@@ -145,7 +145,7 @@ extension MetalSSBSavedRun {
         c12Nanometers: Double(aberrations.c12Angstroms) / 10,
         phi12Degrees: Double(aberrations.phi12Radians) * 180 / .pi),
       scanDetectorRotationDegrees: rotation < 0 ? rotation + 360 : rotation,
-      detectorTransposed: false,
+      scanDetectorRotationFlipped: false,
       provenance: ["producer": "Live4DSTEM", "backend_revision": backendRevision],
       runMetadata: try portableRunMetadata())
     try artifact.savePair(to: url)

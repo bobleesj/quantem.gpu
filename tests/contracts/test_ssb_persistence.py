@@ -329,7 +329,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     from quantem.gpu.ssb.series import saved_fit, stored_fit
 
     aberrations = {"C10_nm": 10.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
-    block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "detector_transposed": False}
+    block = {"aberrations": aberrations, "scan_detector_rotation_deg": 210.0, "scan_detector_rotation_flipped": False}
     config = tmp_path / "config.json"
     for marker in ({}, {"schema": f"quantem.ssb-fit/{SCHEMA - 1}"}, {"schema": SCHEMA}):
         config.write_text(json.dumps({"computed": {"ssb": {**block, **marker}}}))
@@ -367,7 +367,7 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
     written = json.loads(config.read_text())
     block = {"voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.5, 0.5], "schema": FIT_SCHEMA, "aberrations": aberrations,
-             "scan_detector_rotation_deg": 200.0, "detector_transposed": False, "loss": 0.125, "bright_field_radius_px": 48.0,
+             "scan_detector_rotation_deg": 200.0, "scan_detector_rotation_flipped": False, "loss": 0.125, "bright_field_radius_px": 48.0,
              "bright_field_center_px": None, "detector_sampling_mrad": [0.55, 0.56]}
     assert written == {"schema": SCREEN_ACQUISITION_SCHEMA, "human": {"notes": "kept"},
                        "computed": {"bright_field_radius_px": 55.0, "ssb": block}}
@@ -511,7 +511,7 @@ def test_parameter_slices_reject_mismatched_saved_fit_without_writes(tmp_path, m
     elif change == "sampling":
         session.scan_sampling_A = (0.4, 0.3)
     elif change == "detector":
-        session.detector_transposed = True
+        session.scan_detector_rotation_flipped = True
     elif change == "shape":
         session._data = np.zeros((4, 2, 3, 3), dtype=np.uint16)
     else:

@@ -211,7 +211,7 @@ final class MetalSSBKernelsTests: XCTestCase {
       Set(record.keys),
       [
         "schema", "source_identity", "shape", "phase_encoding", "phase_unit", "phase_sha256",
-        "calibration", "aberrations", "scan_detector_rotation_deg", "detector_transposed",
+        "calibration", "aberrations", "scan_detector_rotation_deg", "scan_detector_rotation_flipped",
         "provenance", "run_metadata", "phase_file",
       ])
     XCTAssertEqual(record["schema"] as? String, "quantem.ssb-phase/2")
@@ -223,7 +223,7 @@ final class MetalSSBKernelsTests: XCTestCase {
     XCTAssertEqual(stated["C12_nm"], 2)
     XCTAssertEqual(try XCTUnwrap(stated["phi12_deg"]), 0.5 * 180 / .pi, accuracy: 1e-12)
     XCTAssertEqual(record["scan_detector_rotation_deg"] as? Double, 330)
-    XCTAssertEqual(record["detector_transposed"] as? Bool, false)
+    XCTAssertEqual(record["scan_detector_rotation_flipped"] as? Bool, false)
     let stored = try XCTUnwrap(record["calibration"] as? [String: Any])
     XCTAssertEqual(stored["voltage_kV"] as? Double, 300)
     XCTAssertEqual(stored["semiangle_mrad"] as? Double, 30)

@@ -203,7 +203,7 @@ class SSB:
         default, labeled as such in ``calibration_table()``.
         An estimate known only modulo 180 degrees
         (``dpc.run``, ``screening.prepare``) may be given: ``find_aberrations(check_rotation=True)`` settles the branch.
-    detector_transposed : bool
+    scan_detector_rotation_flipped : bool
         Exchange the two detector axes before applying the rotation. Detector
         calibration and reported centres remain in the original (row, col) frame.
     bright_field_intensity_threshold : float
@@ -255,7 +255,7 @@ class SSB:
         detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
-        detector_transposed: bool = False,
+        scan_detector_rotation_flipped: bool = False,
         bright_field_intensity_threshold: float = 0.0,
         bright_field_radius_px: float | None = None,
         source_path: str | None = None,
@@ -300,7 +300,7 @@ class SSB:
                             data, mean_pattern=mean_pattern, center=bright_field_center_px,
                             radius=bright_field_radius_px, threshold=bright_field_intensity_threshold,
                             semiangle_mrad=semiangle_mrad, detector_sampling_mrad=detector_sampling_mrad,
-                            detector_transposed=detector_transposed,
+                            scan_detector_rotation_flipped=scan_detector_rotation_flipped,
                         )
                     bright_field_center_px = self._streamed.center
                     bright_field_radius_px = self._streamed.radius
@@ -337,7 +337,7 @@ class SSB:
             data = data.reshape(rows, cols, data.shape[1], data.shape[2])
         self._data = (
             data.transpose_detector() if isinstance(data, MpsBfColumnFrames) else data.swapaxes(-1, -2)
-        ) if detector_transposed and self._streamed is None else data
+        ) if scan_detector_rotation_flipped and self._streamed is None else data
         self._device = None
         if self.backend == "cuda":
             if self._streamed is not None:
@@ -357,7 +357,7 @@ class SSB:
         self.aberrations = validate_aberrations(aberrations)
         self.scan_detector_rotation_deg = wrap_degrees(
             0.0 if scan_detector_rotation_deg is None else scan_detector_rotation_deg, 360.0)
-        self.detector_transposed = bool(detector_transposed)
+        self.scan_detector_rotation_flipped = bool(scan_detector_rotation_flipped)
         self.bright_field_intensity_threshold = float(bright_field_intensity_threshold)
         self.bright_field_radius_px = bright_field_radius_px
         self.bright_field_center_px = None if bright_field_center_px is None else (float(bright_field_center_px[0]), float(bright_field_center_px[1]))
@@ -440,7 +440,7 @@ class SSB:
                 if self._compute is not None:
                     value = (self._compute._det_sampling if self.backend == "mps"
                              else self._compute.angular_sampling)
-                    if self.detector_transposed:
+                    if self.scan_detector_rotation_flipped:
                         value = value[::-1]
                 else:
                     value = "Pending probe fit"
@@ -493,7 +493,7 @@ class SSB:
             bright_field_center_px=self.bright_field_center_px,
             mean_pattern=self._streamed.mean_pattern,
         )
-        return data.swapaxes(-1, -2) if self.detector_transposed else data
+        return data.swapaxes(-1, -2) if self.scan_detector_rotation_flipped else data
 
     # one implementation in ``series``, bound here so the public spelling is ``SSB.reconstruct_series``
     reconstruct_series = classmethod(series.reconstruct_series)
@@ -512,7 +512,7 @@ class SSB:
         detector_sampling_mrad: tuple[float, float] | None = None,
         aberrations: dict[str, float] | None = None,
         scan_detector_rotation_deg: float | None = None,
-        detector_transposed: bool = False,
+        scan_detector_rotation_flipped: bool = False,
         bright_field_intensity_threshold: float = 0.0,
         bright_field_radius_px: float | None = None,
         bright_field_center_px: tuple[float, float] | None = None,
@@ -544,7 +544,7 @@ class SSB:
         Pass a saved ``bright_field_center_px``, ``bright_field_radius_px``
         and ``detector_sampling_mrad`` together when replaying a fit. The
         centre remains in the original full-detector ``(row, col)`` axes,
-        including when ``detector_transposed=True``.
+        including when ``scan_detector_rotation_flipped=True``.
         """
 
         supplied = {
@@ -625,7 +625,7 @@ class SSB:
                 detector_sampling_mrad=detector_sampling_mrad,
                 aberrations=aberrations,
                 scan_detector_rotation_deg=scan_detector_rotation_deg,
-                detector_transposed=detector_transposed,
+                scan_detector_rotation_flipped=scan_detector_rotation_flipped,
                 bright_field_intensity_threshold=bright_field_intensity_threshold,
                 bright_field_radius_px=bright_field_radius_px,
                 source_path=str(source),
@@ -706,7 +706,7 @@ class SSB:
             "bright_field_center_px": self.bright_field_center_px,
             "bright_field_radius_px": self.bright_field_radius_px,
             "bright_field_intensity_threshold": self.bright_field_intensity_threshold,
-            "detector_transposed": self.detector_transposed, "source_path": self.source_path,
+            "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped, "source_path": self.source_path,
             "aberrations": self.aberrations if aberrations is None else aberrations,
             "scan_detector_rotation_deg": self.scan_detector_rotation_deg
             if scan_detector_rotation_deg is None else scan_detector_rotation_deg,
@@ -720,7 +720,7 @@ class SSB:
                 pattern = detector.mean(self._data)
                 center, radius = detector.fit_probe(pattern)
                 if options["bright_field_center_px"] is None:
-                    center = center[::-1] if self.detector_transposed else center
+                    center = center[::-1] if self.scan_detector_rotation_flipped else center
                     options["bright_field_center_px"] = tuple(float(value) + origin for value, origin in zip(center, self._crop_origin))
                 if options["bright_field_radius_px"] is None:
                     options["bright_field_radius_px"] = radius
@@ -729,7 +729,7 @@ class SSB:
             counts = self._data[row_start:row_stop, col_start:col_stop]
             # __init__ applies the detector convention once. The parent's
             # resident array has already had it applied.
-            if self.detector_transposed:
+            if self.scan_detector_rotation_flipped:
                 counts = counts.swapaxes(-1, -2)
             regional = type(self)(counts, **options)
             regional._crop_origin = self._crop_origin
@@ -795,7 +795,7 @@ class SSB:
                 "ssb": {
                     "backend": self.backend,
                     "scan_detector_rotation_deg": self.scan_detector_rotation_deg,
-                    "detector_transposed": self.detector_transposed,
+                    "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped,
                     "bright_field_intensity_threshold": self.bright_field_intensity_threshold,
                     "bright_field_radius_px": self.bright_field_radius_px,
                     "bright_field_center_px": self.bright_field_center_px,
@@ -835,7 +835,7 @@ class SSB:
         """Update session state from a computed or reused result."""
 
         result.source_path = self.source_path
-        result.detector_transposed = self.detector_transposed
+        result.scan_detector_rotation_flipped = self.scan_detector_rotation_flipped
         if result.bright_field_center_px is None:
             result.bright_field_center_px = self.bright_field_center_px
         # Only a backend that already holds prepared data is re-rotated; otherwise the change would trigger a load.
@@ -939,12 +939,12 @@ class SSB:
             return None
         center = (self.bright_field_center_px[0] - self._crop_origin[0],
                   self.bright_field_center_px[1] - self._crop_origin[1])
-        return center[::-1] if self.detector_transposed else center
+        return center[::-1] if self.scan_detector_rotation_flipped else center
 
     def _sampling_in_data(self) -> tuple[float, float] | None:
         """Detector sampling in the axes passed to the numerical backend."""
         sampling = self.detector_sampling_mrad
-        return sampling[::-1] if sampling is not None and self.detector_transposed else sampling
+        return sampling[::-1] if sampling is not None and self.scan_detector_rotation_flipped else sampling
 
     def _in_detector_frame(self, result: SSBResult) -> SSBResult:
         """Move a result's bright-field centre from the array the session holds to full-detector pixels, in place.
@@ -953,11 +953,11 @@ class SSB:
         reports a centre inside its crop, a different point from the one a dense session reports.
         """
         if result.bright_field_center_px is not None:
-            if self.detector_transposed:
+            if self.scan_detector_rotation_flipped:
                 result.bright_field_center_px = result.bright_field_center_px[::-1]
             result.bright_field_center_px = (result.bright_field_center_px[0] + self._crop_origin[0],
                                              result.bright_field_center_px[1] + self._crop_origin[1])
-        result.detector_transposed = self.detector_transposed
+        result.scan_detector_rotation_flipped = self.scan_detector_rotation_flipped
         return result
 
     def _backend(self) -> SSBProtocol:
@@ -999,7 +999,7 @@ class SSB:
                 # so region sessions and Save use the value actually computed.
                 sampling = (self._compute._det_sampling if self.backend == "mps"
                             else self._compute.angular_sampling)
-                self.detector_sampling_mrad = tuple(sampling[::-1] if self.detector_transposed else sampling)
+                self.detector_sampling_mrad = tuple(sampling[::-1] if self.scan_detector_rotation_flipped else sampling)
                 self._calibration_initial["detector_sampling_mrad"] = self.detector_sampling_mrad
         return self._compute
 
@@ -1026,7 +1026,7 @@ class SSB:
         self.set_rotation(saved_rotation)
         return SSBResult(
             object_wave=(cp if self.backend == "cuda" else np).stack(waves), backend=self.backend, trial_records=records,
-            detector_transposed=self.detector_transposed,
+            scan_detector_rotation_flipped=self.scan_detector_rotation_flipped,
             voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
             object_sampling_A=self._output_sampling(upsampling_factor), upsampling_factor=upsampling_factor, phase_estimator=estimator,
             amplitude_estimated=False, source_path=self.source_path,
@@ -1242,7 +1242,7 @@ class SSB:
             if self._streamed is not None:
                 center, detector_sampling_mrad = self.bright_field_center_px, self.detector_sampling_mrad
                 region_options = {"scan_region": scan_region, "mean_pattern": self._streamed.mean_pattern,
-                                  "detector_transposed": self.detector_transposed}
+                                  "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped}
             if center is None or radius is None or detector_sampling_mrad is None:
                 mean_pattern = detector.mean(self._data)
                 detected_center, detected_radius = detector.fit_probe(mean_pattern)
@@ -1848,7 +1848,7 @@ class SSB:
         if (stat.st_size, stat.st_mtime_ns) != source["signature"]:
             return state
         rows, cols = state.brightfield.rows, state.brightfield.cols
-        if self.detector_transposed:
+        if self.scan_detector_rotation_flipped:
             rows, cols = cols, rows
         rows, cols = rows + self._crop_origin[0], cols + self._crop_origin[1]
         if (np.any(rows < 0) or np.any(cols < 0)
@@ -1861,7 +1861,7 @@ class SSB:
         return replace(state, qem_source={
             name: source[name] for name in ("path", "scan_shape", "detector_shape", "dtype", "header_sha256")
         } | {"detector_origin_px": self._crop_origin,
-             "detector_transposed": self.detector_transposed})
+             "scan_detector_rotation_flipped": self.scan_detector_rotation_flipped})
 
     @_on_scan_gpu
     def export_brightfield(

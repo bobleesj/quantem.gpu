@@ -263,7 +263,7 @@ type FullDetectorSsbSource = Omit<BfColumnSsbSource, "kind" | "encoding" | "scan
   scan_shape: [number, number];
   detector_shape: [number, number];
   detector_origin_px: [number, number];
-  detector_transposed: boolean;
+  scan_detector_rotation_flipped: boolean;
   header_sha256: string;
 };
 type DetectorSsbSource = BfColumnSsbSource | FullDetectorSsbSource;
@@ -280,13 +280,13 @@ function fullDetectorColumns(cal: SsbCal, source: FullDetectorSsbSource): Uint32
       || !shape || shape.length !== 2 || shape.some(value => !Number.isSafeInteger(value) || value <= 0)
       || shape[0] * shape[1] > 0xffffffff
       || !origin || origin.length !== 2 || origin.some(value => !Number.isSafeInteger(value) || value < 0)
-      || typeof source.detector_transposed !== "boolean"
+      || typeof source.scan_detector_rotation_flipped !== "boolean"
       || !/^[0-9a-f]{64}$/.test(source.header_sha256 ?? "")
       || !crop || crop.length !== 2 || crop.some(value => !Number.isSafeInteger(value) || value <= 0)
       || rows?.length !== count || cols?.length !== count) {
     throw new Error("Full-detector QEM needs matching scan geometry, native count dtype and complete BF coordinates; export the review again.");
   }
-  const sourceCrop = source.detector_transposed ? [crop[1], crop[0]] : crop;
+  const sourceCrop = source.scan_detector_rotation_flipped ? [crop[1], crop[0]] : crop;
   if (sourceCrop.some((value, axis) => value + origin[axis] > shape[axis])) {
     throw new Error("The calibrated detector crop is outside the full QEM; export the review again.");
   }
@@ -297,8 +297,8 @@ function fullDetectorColumns(cal: SsbCal, source: FullDetectorSsbSource): Uint32
         || row < 0 || row >= crop[0] || col < 0 || col >= crop[1]) {
       throw new Error("SSB BF coordinates must lie inside the calibrated detector crop.");
     }
-    const sourceRow = origin[0] + (source.detector_transposed ? col : row);
-    const sourceCol = origin[1] + (source.detector_transposed ? row : col);
+    const sourceRow = origin[0] + (source.scan_detector_rotation_flipped ? col : row);
+    const sourceCol = origin[1] + (source.scan_detector_rotation_flipped ? row : col);
     columns[index] = sourceRow * shape[1] + sourceCol;
   }
   if (new Set(columns).size !== count) {

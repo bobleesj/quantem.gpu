@@ -33,9 +33,9 @@ overrides affect the session without rewriting `data.metadata`.
 `scan_detector_rotation_deg` defaults to zero; it is the physical
 scan-to-detector rotation, kept in [0, 360). SSB does not call DPC automatically;
 provide a verified rotation or use a DPC estimate:
-`SSB(..., scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg, detector_transposed=dpc_result.detector_transposed)`.
+`SSB(..., scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg, scan_detector_rotation_flipped=dpc_result.scan_detector_rotation_flipped)`.
 DPC knows the angle only modulo 180 degrees; `find_aberrations(check_rotation=True)`
-settles the 180-degree branch. `detector_transposed=True` applies the saved
+settles the 180-degree branch. `scan_detector_rotation_flipped=True` applies the saved
 detector-axis convention while keeping reported centers in the original detector axes.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`

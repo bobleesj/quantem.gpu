@@ -839,7 +839,7 @@ export class DetectorCompute {
     scanRows: number,
     scanCols: number,
     scanDetectorRotationDeg = 0,
-    detectorTransposed = false,
+    scanDetectorRotationFlipped = false,
   ): Promise<{ buffer: GPUBuffer; n: number }> {
     if (scanRows * scanCols !== this.scanCount) {
       throw new Error(`WebGPU iDPC scan shape ${scanRows}x${scanCols} does not match scanCount=${this.scanCount}.`);
@@ -860,7 +860,7 @@ export class DetectorCompute {
     const colFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const phaseFft = this.device.createBuffer({ size: complexBytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const theta = scanDetectorRotationDeg * Math.PI / 180.0;
-    const packParams = this.idpcPackParams(Math.cos(theta), Math.sin(theta), detectorTransposed);
+    const packParams = this.idpcPackParams(Math.cos(theta), Math.sin(theta), scanDetectorRotationFlipped);
     const packBind = this.device.createBindGroup({ layout: this.idpcPackPipe.getBindGroupLayout(0), entries: [
       { binding: 0, resource: { buffer: dpc.row } },
       { binding: 1, resource: { buffer: dpc.col } },
@@ -897,9 +897,9 @@ export class DetectorCompute {
     scanRows: number,
     scanCols: number,
     scanDetectorRotationDeg = 0,
-    detectorTransposed = false,
+    scanDetectorRotationFlipped = false,
   ): Promise<Float32Array> {
-    const { buffer, n } = await this.maskedIDpcBuffer(mask, detCols, scanRows, scanCols, scanDetectorRotationDeg, detectorTransposed);
+    const { buffer, n } = await this.maskedIDpcBuffer(mask, detCols, scanRows, scanCols, scanDetectorRotationDeg, scanDetectorRotationFlipped);
     const out = await this.readF32(buffer, this.scanCount);
     buffer.destroy();
     if (n === 0) out.fill(0);
@@ -1526,12 +1526,12 @@ export class DetectorCompute {
     const buffer = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const words = new Uint32Array(values); this.device.queue.writeBuffer(buffer, 0, words.buffer as ArrayBuffer, words.byteOffset, words.byteLength); return buffer;
   }
-  private idpcPackParams(cosTheta: number, sinTheta: number, detectorTransposed: boolean): GPUBuffer {
+  private idpcPackParams(cosTheta: number, sinTheta: number, scanDetectorRotationFlipped: boolean): GPUBuffer {
     const params = new ArrayBuffer(32);
     const u32 = new Uint32Array(params);
     const f32 = new Float32Array(params);
     u32[0] = this.scanCount;
-    u32[1] = detectorTransposed ? 1 : 0;
+    u32[1] = scanDetectorRotationFlipped ? 1 : 0;
     f32[4] = cosTheta;
     f32[5] = sinTheta;
     const buffer = this.device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });

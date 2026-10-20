@@ -70,7 +70,7 @@ show_2d(
     norm=["power_sqrt", "power_sqrt", "minmax"], cmap="inferno", axsize=(3, 3),
     scalebar={"sampling": metadata["sampling"][0], "units": "Å"},
 )
-dpc_result.scan_detector_rotation_mod180_deg, dpc_result.detector_transposed  # degrees, modulo 180; detector-axis swap flag
+dpc_result.scan_detector_rotation_mod180_deg, dpc_result.scan_detector_rotation_flipped  # degrees, modulo 180; detector-axis swap flag
 ```
 
 ![Gold bright-field, annular dark-field and integrated DPC images before SSB](_static/gold-workflow-bf-adf-dpc.png)
@@ -82,9 +82,9 @@ center-of-mass shifts. Its displayed contrast is not calibrated in radians.
 Each panel uses independent contrast: square-root for BF/ADF and linear for DPC.
 
 DPC estimates the scan–detector rotation, known only modulo 180 degrees. This
-Gold acquisition reports `detector_transposed=False`, so pass the angle and the
+Gold acquisition reports `scan_detector_rotation_flipped=False`, so pass the angle and the
 flag directly to SSB; `find_aberrations(check_rotation=True)` settles the
-180-degree branch. SSB raises if `detector_transposed` is True. For other data,
+180-degree branch. SSB raises if `scan_detector_rotation_flipped` is True. For other data,
 check that value first: a detector-axis swap must be resolved before reusing
 the angle. SSB does not run DPC automatically.
 
@@ -101,7 +101,7 @@ ssb = SSB(
     scan_sampling_A=metadata["sampling"][:2],  # Å per scan pixel, (row, col)
     detector_sampling_mrad=metadata["sampling"][2:],  # mrad per detector pixel, (row, col)
     scan_detector_rotation_deg=dpc_result.scan_detector_rotation_mod180_deg,  # degrees
-    detector_transposed=dpc_result.detector_transposed,
+    scan_detector_rotation_flipped=dpc_result.scan_detector_rotation_flipped,
 )
 aberrations = ssb.find_aberrations()
 result = ssb.reconstruct(aberrations, upsampling_factor=1)

@@ -58,9 +58,9 @@ in `scientific_metadata`, which remains the stored authority.
   one, else `frame_time`, whatever the detector. A loader reports the same
   value the saved copy records.
 
-The scan-to-detector rotation and the detector transposition are not stored in
+The scan-to-detector rotation and whether it is flipped are not stored in
 a `.qem` file. They are flat keys of result and configuration records
-(`scan_detector_rotation_deg`, `detector_transposed`).
+(`scan_detector_rotation_deg`, `scan_detector_rotation_flipped`).
 
 ### Retained `metadata` block
 

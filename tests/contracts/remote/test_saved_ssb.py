@@ -38,7 +38,7 @@ def test_saved_phase_transfer_reuse_rename_and_source_change(tmp_path, monkeypat
                          detector_sampling_mrad=[1.0, 1.0], bright_field_center_px=[1.0, 1.0]),
         aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
         scan_detector_rotation_deg=0.0,
-        detector_transposed=False,
+        scan_detector_rotation_flipped=False,
         provenance={"producer": "test fixture"},
         run_metadata={"notes": "Exact phase"},
     )

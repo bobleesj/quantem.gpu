@@ -33,7 +33,7 @@ phase is 1,048,704 bytes as NumPy v1, plus its small JSON record.
   (`[row, col]`, full detector); optional `bright_field_radius_px` and
   `excluded_detector_pixels`. The detector sampling is the one the fit used.
 - `aberrations`: `C10_nm`, `C12_nm`, `phi12_deg` (scan frame);
-  `scan_detector_rotation_deg` in [0, 360) and `detector_transposed`: saved
+  `scan_detector_rotation_deg` in [0, 360) and `scan_detector_rotation_flipped`: saved
   physical settings, independent of display contrast and colormap.
 - `provenance`: nonempty string-valued object identifying producer, phase
   variant, recorded revision and calibration/identity limitations.
@@ -79,7 +79,7 @@ Python reader. `MetalSSBSavedRun.savePhasePair(to:phase:)` exports native saved
 runs without reconstruction buffers: the native engine works in Angstrom and
 radians (`MetalSSBAberrations.c10Angstroms`, `c12Angstroms`, `phi12Radians`), and
 the record states them once, as `C10_nm`, `C12_nm` and `phi12_deg`, with the
-rotation in [0, 360) and `detector_transposed` false. Swift does not invoke
+rotation in [0, 360) and `scan_detector_rotation_flipped` false. Swift does not invoke
 Python. Single-file `.ssbresult` copies and version-1 pairs are refused; export
 them again.
 
