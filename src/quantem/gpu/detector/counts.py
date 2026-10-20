@@ -1,9 +1,17 @@
 """Exact detector operations over Metal streamed count residents."""
 
+import threading
+
 import numpy as np
 
 from quantem.gpu.io.read import torch_value
 from quantem.gpu.resident.queries import DetectorQueries
+
+# Most changed pixels a masked sum decodes as an update of the previous image.
+# The update costs ~0.8 ms plus ~4 us per pixel on a 512 x 512 scan (Apple
+# silicon); a full sum of a 192 x 192 bright-field or annular mask costs 4-8 ms.
+# A one-pixel move of a 53-pixel-radius disk changes ~110 pixels.
+UPDATE_PIXEL_LIMIT = 768
 
 
 class CountDetectorCompute(DetectorQueries):
@@ -19,6 +27,10 @@ class CountDetectorCompute(DetectorQueries):
         self.detector_shape = tuple(source.shape[2:])
         self.n_frames = self.scan_shape[0] * self.scan_shape[1]
         self.valid_pixels = source.valid_pixels
+        # The selected valid pixels and exact image of the last masked sum, which the
+        # next mask of a drag updates in place of a full sum.
+        self._last_sum = None
+        self._last_sum_lock = threading.Lock()
 
     def frame(self, index):
         if not 0 <= index < self.n_frames:
@@ -45,8 +57,31 @@ class CountDetectorCompute(DetectorQueries):
         return result
 
     def masked_sum_exact(self, mask):
-        """Exact uint64 image of one binary mask; the source rejects other masks."""
-        return _copy_output(self.source.detector_sum_device(mask))
+        """Exact uint64 image of one binary mask; the source rejects other masks.
+
+        A mask that differs from the previous query in at most
+        ``UPDATE_PIXEL_LIMIT`` valid pixels (a dragged or resized detector)
+        updates the previous exact image by the counts of the pixels that
+        joined and left it, which equals the full sum exactly. Any other mask,
+        and a source whose scans are still arriving, takes the full sum.
+        """
+        values = np.asarray(mask)
+        if values.shape != self.detector_shape or not np.all((values == 0) | (values == 1)):
+            raise ValueError(f"mask must have detector shape {self.detector_shape} and be binary.")
+        selected = values.astype(bool) & self.valid_pixels
+        source = self.source
+        complete = (source.ready_scans, source.released_scans) == (self.n_frames, 0)
+        with self._last_sum_lock:
+            last = self._last_sum if complete else None
+            changed = None if last is None else np.flatnonzero(selected != last[0])
+            if changed is not None and changed.size <= UPDATE_PIXEL_LIMIT:
+                signs = np.where(selected.ravel()[changed], 1, -1)
+                image = _copy_output(source.detector_sum_update_device(last[1], changed, signs))
+            else:
+                image = _copy_output(source.detector_sum_device(values))
+            self._last_sum = (selected, image) if complete else None
+            # the caller owns its copy; the kept image is never handed out
+            return image.copy()
 
     def masked_sum(self, mask):
         return self.masked_sum_exact(mask).astype(np.float32)
