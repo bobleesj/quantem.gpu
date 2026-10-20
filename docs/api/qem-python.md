@@ -113,11 +113,12 @@ acquisition retains that storage without expanding the full array.
 | Integrity checks | Detect damaged or incomplete stored data |
 
 Lossless storage preserves the values being saved. Loading defaults to
-`hot_pixel_correction="none"`: original measurements, dtype and detector flags
-survive encoding and saving. This includes uint32 flag markers. Scientific
-detector products exclude invalid pixels using the separate validity mask.
-Requesting `hot_pixel_correction="median"` or `"zero"` explicitly replaces
-flagged pixels and records that change. Saving cannot undo acquisition-time
+`hot_pixel_correction="median"`: each flagged detector pixel holds the median
+of its valid neighbors, and the record says so; every other value keeps its
+original bits and dtype. With `hot_pixel_correction="none"` the original
+measurements and detector flags, uint32 flag markers included, survive encoding
+and saving, and scientific detector products exclude invalid pixels using the
+separate validity mask. Saving cannot undo acquisition-time
 processing or an explicitly requested replacement.
 Missing calibration stays unknown. Retaining vendor tags does not mean that
 every tag has been interpreted or that every proprietary object is archived.

@@ -184,7 +184,8 @@ def test_float_original_to_qem_and_native_patterns(
         assert loaded.metadata["load_timings"]["peak_ingest_bytes"] <= limit
         if format_name in ("dm3", "dm4"):
             correction = loaded.metadata["hot_pixel_correction"]
-            assert correction["method"] == "none"
+            # io.load's default policy is recorded; DM stores no mask, so nothing is flagged or changed
+            assert correction["method"] == "median"
             assert correction["pixel_count"] == 0
             assert correction["applied"] is False
         session = detector.prepare(loaded)

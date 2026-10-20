@@ -170,7 +170,7 @@ def test_flagged_uint32_dataset_outside_the_arina_layout_loads_on_every_backend(
 
 
 def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsys):
-    """SSB.open applies the median replacement (decision D4) and prints one line naming how to keep raw values."""
+    """SSB.open takes io.load's default median fill and prints one line naming how to keep raw values."""
     from quantem.gpu import SSB
 
     backend = _backend()
@@ -182,4 +182,4 @@ def test_ssb_open_replaces_flagged_pixels_says_so_and_records_it(tmp_path, capsy
         assert (correction["method"], correction["pixel_count"], correction["applied"]) == ("median", 4, True)
     out = capsys.readouterr().out
     assert "SSB: 4 flagged detector pixels replaced by their 3 x 3 neighbor median" in out
-    assert "io.load(path) and use SSB(data)" in out
+    assert 'io.load(path, hot_pixel_correction="none") and use SSB(data)' in out

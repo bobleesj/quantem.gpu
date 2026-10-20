@@ -66,8 +66,8 @@ class PairedLoader:
         Two small buffers (``rolling_scans=512, rings=2``) admit the last
         acquisitions of a series when little device memory remains.
     hot_pixel_correction
-        Replace stored-mask pixels before encoding. ``"none"`` preserves raw
-        counts; the public ``io.load`` entry point defaults to ``"none"``.
+        Replace stored-mask pixels before encoding, by default with their
+        neighbor median as ``io.load`` does. ``"none"`` preserves raw counts.
 
     Examples
     --------
@@ -76,7 +76,7 @@ class PairedLoader:
     ...         resident.append(source)
     """
 
-    def __init__(self, *, readers: int = 6, slots: int = 10, capacity: int = 128 * 1024**2, rolling_scans: int = _ROLLING_SCANS, rings: int = 3, hot_pixel_correction: str = "none"):
+    def __init__(self, *, readers: int = 6, slots: int = 10, capacity: int = 128 * 1024**2, rolling_scans: int = _ROLLING_SCANS, rings: int = 3, hot_pixel_correction: str = "median"):
         import cupy as cp
 
         self.hot_pixel_correction = normalize_hot_pixel_correction(hot_pixel_correction)
@@ -579,7 +579,7 @@ def _read_direct(path: str, staging: np.ndarray) -> tuple[int, float]:
 # --- io.load entry points -------------------------------------------------------
 
 
-def load_h5_paired(paths, *, scan_shape, device, verbose, hot_pixel_correction="median"):
+def load_h5_paired(paths, *, scan_shape, device, verbose, hot_pixel_correction):
     """Load original H5 acquisitions into the paired resident layout, one source each."""
     results = []
     # One acquisition does not benefit from the deeper series read queue.

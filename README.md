@@ -108,9 +108,9 @@ pattern.cpu().numpy()       # explicit host copy of this one pattern
 
 No full acquisition is decoded by these selections.
 
-The gold source flags four detector pixels. Loading retains the original
-measurements by default and excludes flagged pixels from detector products.
-Use `hot_pixel_correction="median"` in `io.load` to request replacement.
+The gold source flags four detector pixels. Loading replaces each by the
+median of its valid neighbors by default, and the load line says so; pass
+`hot_pixel_correction="none"` to `io.load` to keep the recorded values.
 
 ### Bright-field and annular dark-field images
 

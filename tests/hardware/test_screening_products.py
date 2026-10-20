@@ -31,7 +31,13 @@ def write_master(root, counts, pixel_mask):
 
 
 def test_screening_products_equal_exact_count_reference(tmp_path):
-    """A cache miss builds every product from exact sums, flagged pixels counted as zero."""
+    """A cache miss builds every product from exact sums of io.load's counts, flagged pixels median-filled.
+
+    Screening counted flagged pixels as zero; it now holds them as every load path does (cache /8), so its
+    rotation is SSB's. The reference fills them with the CPU reference of the GPU fill.
+    """
+    from quantem.gpu.resident.hot_pixels import fill_flagged, median_plan
+
     backend = os.environ.get("QEM_TEST_BACKEND")
     if backend not in {"cuda", "mps"}:
         pytest.skip("Set QEM_TEST_BACKEND=cuda or mps on physical hardware.")
@@ -49,7 +55,8 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
 
     result = screening.prepare(master, backend=backend, cache_dir=tmp_path / "cache")
 
-    working = np.where(pixel_mask != 0, 0, counts).astype(np.uint64)
+    working = fill_flagged(counts.reshape(-1, 24, 28).copy(), median_plan(pixel_mask), "median").reshape(
+        counts.shape).astype(np.uint64)
     # One mean rule everywhere: the exact total divided in float64, rounded once to float32.
     # These totals stay below 2^24, where the earlier float32(total) / n gave the same values.
     mean_diffraction_pattern = (working.sum(axis=(0, 1)) / (32 * 32)).astype(np.float32)

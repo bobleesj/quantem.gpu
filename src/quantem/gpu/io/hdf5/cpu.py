@@ -20,7 +20,7 @@ from quantem.gpu.formats.hdf5.frames import detector_sources
 from quantem.gpu.formats.hdf5.master import get_metadata, read_pixel_mask
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
-from quantem.gpu.resident.hot_pixels import hot_pixel_record
+from quantem.gpu.resident.hot_pixels import fill_flagged, hot_pixel_outcome, hot_pixel_record, median_plan
 
 
 def load_reference(
@@ -29,13 +29,16 @@ def load_reference(
     single: bool,
     scan_shape: tuple[int, int] | None,
     apply_mask: bool,
+    hot_pixel_correction: str,
     auto_narrow: bool,
     stack: bool,
     verbose: bool,
 ) -> Dataset4dstemGPU | list[Dataset4dstemGPU]:
     """Decode complete HDF5 acquisitions on the CPU as the explicit reference.
 
-    Stored dead pixels are zeroed when ``apply_mask`` is set, uint32 counts
+    With ``apply_mask`` the pixels the stored mask flags receive
+    ``hot_pixel_correction`` through the CPU reference of the GPU kernels, so a
+    reference load stores the counts an encoded load does; uint32 counts
     narrow to uint16 only when every count fits, and the returned NumPy array
     keeps the stored detector geometry. Several paths stack along a leading
     file axis unless ``stack`` is False; ``single`` returns one result for one
@@ -46,9 +49,10 @@ def load_reference(
         meta = get_metadata(str(path))
         meta["source_path"] = str(path)
         mask = read_pixel_mask(str(path)) if apply_mask else None
-        data = load_master(str(path), pixel_mask=mask, verbose=verbose)
+        correction = hot_pixel_record(mask, hot_pixel_correction if apply_mask else "none", backend="cpu")
+        data = load_master(str(path), pixel_mask=mask if correction["applied"] else None,
+                           method=correction["method"], verbose=verbose)
         source_dtype = np.dtype(data.dtype)
-        correction = hot_pixel_record(mask, "zero" if apply_mask else "none", backend="cpu")
         if correction["applied"]:
             correction["stage"] = "cpu_load_before_dense_storage"
         meta["hot_pixel_correction"] = correction
@@ -88,7 +92,8 @@ def load_reference(
             data, meta = load_one(path)
             if verbose:
                 print(f"  Loaded {tuple(data.shape)} ({data.nbytes / 1e9:.1f} GB) in "
-                      f"{time.perf_counter() - started:.2f}s (cpu backend)")
+                      f"{time.perf_counter() - started:.2f}s (cpu backend). "
+                      f"{hot_pixel_outcome(meta['hot_pixel_correction'])}.")
             results.append(record_dense_representation(Dataset4dstemGPU(data, meta)))
         return results[0] if single else results
     first, meta = load_one(paths[0])
@@ -132,15 +137,17 @@ def load_master(
     filepath: str,
     *,
     pixel_mask: np.ndarray | None = None,
+    method: str = "median",
     verbose: bool = True,
 ) -> np.ndarray:
     """Decompress a master's detector datasets to one ``(n_frames, det_row, det_col)`` array.
 
     Frames keep the stored dtype; :func:`load_reference` owns the scan-shape
     unflatten, narrowing and metadata. ``pixel_mask`` (the raw detector mask,
-    nonzero = dead) zeroes dead pixels, whose stored value is an Arina sentinel
-    such as 65535 rather than a count. A mask of another shape raises
-    ``ValueError`` rather than being skipped.
+    nonzero = dead) marks pixels whose stored value is an Arina sentinel such
+    as 65535 rather than a count; ``method`` (``"median"`` or ``"zero"``)
+    replaces them as ``quantem.gpu.resident.hot_pixels.fill_flagged`` does. A
+    mask of another shape raises ``ValueError`` rather than being skipped.
     """
     with h5py.File(filepath, "r") as master:
         sources = detector_sources(master)
@@ -167,6 +174,12 @@ def load_master(
                 f"{det_row} x {det_col}; load with apply_mask=False to read the stored values without it."
             )
 
+    plan = None if dead_pixels is None else median_plan(dead_pixels)
+    if plan is not None and method == "median" and np.dtype(dtype).name not in ("uint8", "uint16", "uint32"):
+        raise ValueError(
+            f"{filepath}: a median fill of flagged pixels needs uint8/uint16/uint32 counts, not {np.dtype(dtype)}; "
+            "load with hot_pixel_correction='none' to keep the stored values."
+        )
     offset = 0
     source_iter = sources
     if verbose and len(sources) > 1:
@@ -174,8 +187,8 @@ def load_master(
     for source in source_iter:
         with h5py.File(source.path, "r") as handle:
             raw = handle[source.dataset_path][:]  # hdf5plugin decompresses here
-        if dead_pixels is not None:
-            raw[:, dead_pixels] = 0
+        if plan is not None:
+            raw = fill_flagged(np.ascontiguousarray(raw), plan, method)
         frame_count = raw.shape[0]
         output[offset : offset + frame_count] = raw
         offset += frame_count
