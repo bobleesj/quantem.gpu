@@ -69,6 +69,7 @@ class PreparedMpsSSB:
     # One latest reconstruction grid/probe, invalidated with rotated geometry.
     upsampled_geometry: tuple | None = None
     upsampled_probe: tuple | None = None
+    separable_geometry: tuple | None = None
 
 
 def prepare_selection(
@@ -408,6 +409,7 @@ def retarget_prepared_rotation(
     prepared.ky = ky
     prepared.upsampled_geometry = None
     prepared.upsampled_probe = None
+    prepared.separable_geometry = None
     prepared.kx_np = kx_np
     prepared.ky_np = ky_np
     prepared.alpha_k2_1d = alpha_k2_1d
