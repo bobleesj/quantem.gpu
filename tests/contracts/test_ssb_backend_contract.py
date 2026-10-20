@@ -341,11 +341,12 @@ def test_backend_specific_fit_entry_points_are_not_public() -> None:
 
 
 def test_public_ssb_exports_are_backend_neutral() -> None:
-    """C6: root SSB exports contain no transport or implementation types."""
+    """C6: root SSB exports contain no transport or implementation types; the one constant is a physical range."""
 
     from quantem.gpu import ssb
 
     assert set(ssb.__all__) == {
+        "DEPTH_SPREAD_RANGE_NM",
         "SSB",
         "SSBResult",
     }
