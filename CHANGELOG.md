@@ -36,6 +36,16 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- The scan-detector rotation fitted from the centre-of-mass curl
+  (`dpc.run`, `SSB(data)` and `SSB.open` without a rotation, and
+  `screening.prepare`) is the exact minimum of the mean squared curl, in
+  closed form, instead of the best of a grid of angles 1.0056° apart, which
+  could leave an estimate up to 0.5° off. `dpc.workflow.find_optimal_rotation` and `dpc.run` no
+  longer take `rotation_steps`, nor does `screening.prepare`; the screening
+  cache is `quantem.screening-cache/6`, so earlier caches are rebuilt.
+  `find_optimal_rotation(..., scan_detector_rotation_flipped=...)` keeps a
+  given flip and fits the angle alone, the one search SSB uses.
+
 - `disk_edge_radius` moves from `quantem.gpu.ssb.brightfield` to
   `quantem.gpu.detector.disk_edge_radius`.
 

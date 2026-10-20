@@ -19,6 +19,7 @@ Usage::
     Show2D(result.phase)                      # the iDPC phase image
     Show2D(result.com_col)                    # raw DPC field (col)
 """
+import math
 import time
 
 import numpy as np
@@ -65,7 +66,7 @@ def center_of_mass(data, scan_shape=None, mask=None):
 
 
 def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, scan_detector_rotation_flipped=False,
-        rotation_steps=180, mask=None, verbose=False) -> DPCResult:
+        mask=None, verbose=False) -> DPCResult:
     """Center-of-mass -> optimal scan/detector rotation -> iDPC phase.
 
     ``data`` is ``io.load`` output or a 4D array. The centre of mass is the one
@@ -74,16 +75,16 @@ def run(data, scan_shape=None, *, scan_detector_rotation_deg=None, scan_detector
     raw DPC field).
 
     Without ``scan_detector_rotation_deg`` the rotation and whether it is
-    flipped (detector row and column axes swapped) are fitted from the curl; the result then holds
-    ``scan_detector_rotation_mod180_deg``. With it, the given physical rotation
-    and ``scan_detector_rotation_flipped`` are applied and nothing is fitted.
+    flipped (detector row and column axes swapped) are fitted from the curl, at
+    the exact minimum of the mean squared curl (``find_optimal_rotation``); the
+    result then holds ``scan_detector_rotation_mod180_deg``. With it, the given
+    physical rotation and ``scan_detector_rotation_flipped`` are applied and
+    nothing is fitted.
     """
     started = time.perf_counter()
     com_row, com_col = center_of_mass(data, scan_shape=scan_shape, mask=mask)
     if scan_detector_rotation_deg is None:
-        aligned_row, aligned_col, angle, transposed = find_optimal_rotation(
-            com_row, com_col, rotation_steps
-        )
+        aligned_row, aligned_col, angle, transposed = find_optimal_rotation(com_row, com_col)
     else:
         source_row, source_col = (com_col, com_row) if scan_detector_rotation_flipped else (com_row, com_col)
         radians = np.radians(scan_detector_rotation_deg)
@@ -132,46 +133,50 @@ def integrate(com_row, com_col) -> np.ndarray:
     return -(phase - phase.mean())
 
 
-def find_optimal_rotation(com_row, com_col, rotation_steps=180):
-    """Find the scan-detector rotation that minimizes the curl of the CoM field.
+def find_optimal_rotation(com_row, com_col, *, scan_detector_rotation_flipped=None):
+    """Find the scan-detector rotation that minimizes the curl of the CoM field, exactly.
 
-    A pure phase object has a curl-free centre-of-mass field once the scan
-    and detector axes agree. Tries ``rotation_steps`` angles in ``[0, 180]``
-    degrees, with the detector axes as given and with rows and columns swapped.
+    A pure phase object has a curl-free centre-of-mass field once the scan and detector axes agree. Rotating the
+    field by ``a`` mixes its curl and divergence, ``curl_a = cos(a) curl + sin(a) div``, so the mean squared curl is
+    ``S(a) = M + R cos(2a - psi)`` with ``M``, ``R`` and ``psi`` set by three moments of the unrotated curl and
+    divergence. Its minimum, ``a = (psi + pi) / 2`` modulo 180 degrees, is computed in closed form, with no angle
+    grid: the estimate is the objective's own minimizer rather than the nearest of a few hundred trial angles.
+
+    Parameters
+    ----------
+    com_row, com_col : numpy.ndarray
+        Mean-subtracted centre of mass in detector pixels, ``(scan_row, scan_col)``.
+    scan_detector_rotation_flipped : bool, optional
+        None (default) also tries the detector row and column axes swapped and keeps the lower curl. A bool keeps
+        that convention and fits the angle alone.
 
     Returns
     -------
     tuple
-        The rotated ``(row, col)`` field as float32, the rotation in degrees
-        known modulo 180 (``scan_detector_rotation_mod180_deg``; the grid
-        includes its end point 180) and whether the rotation is flipped, the detector row
-        and column axes swapped (``scan_detector_rotation_flipped``). The angle lies in [0, 180]: an
-        unrotated scan fits the grid's end point, float32 pi, which reads
-        180.000005 degrees; 0 and 180 describe the same estimate.
+        The rotated ``(row, col)`` field as float32, the rotation in degrees known modulo 180
+        (``scan_detector_rotation_mod180_deg``, in [0, 180)) and whether the rotation is flipped, the detector row
+        and column axes swapped (``scan_detector_rotation_flipped``).
     """
-    angles = np.linspace(0, np.pi, rotation_steps, dtype=np.float32)
     if min(com_row.shape) < 3:
-        rotated_row, rotated_col = _rotate_vector(com_row, com_col, angles[0])
-        return rotated_row, rotated_col, 0.0, False
-    scores = np.concatenate([
-        _rotation_curl_scores(com_row, com_col, angles),
-        _rotation_curl_scores(com_col, com_row, angles),
-    ])
-    best = int(scores.argmin())
-    transposed = best >= rotation_steps
-    angle = angles[best % rotation_steps]
-    source_row, source_col = (com_col, com_row) if transposed else (com_row, com_col)
-    rotated_row, rotated_col = _rotate_vector(source_row, source_col, angle)
-    return rotated_row, rotated_col, float(angle) * 180.0 / np.pi, transposed
+        rotated_row, rotated_col = _rotate_vector(com_row, com_col, 0.0)
+        return rotated_row, rotated_col, 0.0, bool(scan_detector_rotation_flipped)
+    candidates = (False, True) if scan_detector_rotation_flipped is None else (bool(scan_detector_rotation_flipped),)
+    best = None
+    for flipped in candidates:
+        source = (com_col, com_row) if flipped else (com_row, com_col)
+        angle_rad, score = _curl_minimum(*source)
+        # the axes as given win a tie, as the first candidate
+        if best is None or score < best[2]:
+            best = (flipped, angle_rad, score)
+    flipped, angle_rad, _ = best
+    source_row, source_col = (com_col, com_row) if flipped else (com_row, com_col)
+    rotated_row, rotated_col = _rotate_vector(source_row, source_col, angle_rad)
+    angle_deg = math.degrees(angle_rad) % 180.0
+    return rotated_row, rotated_col, 0.0 if angle_deg == 180.0 else angle_deg, flipped
 
 
-def _rotation_curl_scores(v_row, v_col, angles_rad):
-    """Mean squared curl of the rotated field for many angles without rotated copies.
-
-    For the field rotated by ``a``, ``curl = cos(a) curl(r, c) + sin(a) div(r, c)``,
-    so the mean squared curl at every angle follows from three scalar moments of
-    the unrotated curl and divergence instead of one full map per angle.
-    """
+def _curl_moments(v_row, v_col) -> tuple[float, float, float]:
+    """Mean squared curl, mean squared divergence and their mean product of a ``(row, col)`` field (central differences)."""
     curl = (
         0.5 * (v_col[2:, 1:-1] - v_col[:-2, 1:-1])
         - 0.5 * (v_row[1:-1, 2:] - v_row[1:-1, :-2])
@@ -180,16 +185,23 @@ def _rotation_curl_scores(v_row, v_col, angles_rad):
         0.5 * (v_row[2:, 1:-1] - v_row[:-2, 1:-1])
         + 0.5 * (v_col[1:-1, 2:] - v_col[1:-1, :-2])
     ).astype(np.float64, copy=False)
-    curl_power = float(np.mean(curl * curl))
-    divergence_power = float(np.mean(divergence * divergence))
-    cross_power = float(np.mean(curl * divergence))
-    cosine = np.cos(angles_rad, dtype=np.float64)
-    sine = np.sin(angles_rad, dtype=np.float64)
-    return (
-        cosine * cosine * curl_power
-        + sine * sine * divergence_power
-        + 2.0 * cosine * sine * cross_power
-    )
+    return float(np.mean(curl * curl)), float(np.mean(divergence * divergence)), float(np.mean(curl * divergence))
+
+
+def _curl_minimum(v_row, v_col) -> tuple[float, float]:
+    """The rotation in radians, in [0, pi), that minimizes the mean squared curl of the rotated field, and that minimum.
+
+    ``S(a) = P_c cos^2 a + P_d sin^2 a + 2 P_x sin a cos a = M + A cos 2a + B sin 2a`` with ``M = (P_c + P_d) / 2``,
+    ``A = (P_c - P_d) / 2`` and ``B = P_x``; its minimum ``M - hypot(A, B)`` lies at ``2a = atan2(B, A) + pi``.
+    A field with no preferred angle (``A = B = 0``) reports 0.
+    """
+    curl_power, divergence_power, cross_power = _curl_moments(v_row, v_col)
+    half_difference = 0.5 * (curl_power - divergence_power)
+    amplitude = math.hypot(half_difference, cross_power)
+    minimum = 0.5 * (curl_power + divergence_power) - amplitude
+    if amplitude == 0.0:
+        return 0.0, minimum
+    return (0.5 * (math.atan2(cross_power, half_difference) + math.pi)) % math.pi, minimum
 
 
 def _rotate_vector(v_row, v_col, angle_rad):

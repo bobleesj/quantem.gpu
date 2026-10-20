@@ -264,9 +264,15 @@ def select_dpc_rotation_reference(
     return selected_row_R, selected_column_R, selected_angle_deg, selected_transpose
 ```
 
-The production search evaluates this objective from precomputed
-curl/divergence moments instead of materializing every rotated candidate. The
-selected angle and component order remain identical to the readable reference.
+The production search (`dpc.workflow.find_optimal_rotation`, used by
+`dpc.run`, `SSB` and `screening.prepare`) evaluates this objective from three
+precomputed curl/divergence moments instead of materializing every rotated
+candidate. Rotating by $a$ gives $\mathrm{curl}_a = \cos a\,\mathrm{curl} + \sin a\,\mathrm{div}$,
+so the score is $S(a) = M + A\cos 2a + B\sin 2a$ and its minimum lies at
+$2a = \operatorname{atan2}(B, A) + \pi$: the production angle is that exact
+minimizer, in $[0, 180)$ degrees, for each component order, and the order with
+the lower minimum wins. The readable grid reference above approaches it as
+`rotation_steps` grows; a 180-step grid is up to 0.5 degrees off.
 
 ### Step 7 — Fourier-integrate the aligned field
 

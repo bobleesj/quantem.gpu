@@ -20,11 +20,13 @@ from quantem.gpu.optics.physics import wrap_degrees
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
+# 6: the fitted rotation is the exact minimum of the mean squared curl, no longer the nearest grid angle (the
+#    rotation-step count is gone).
 # 5: retain normalized microscope calibration and the calibrated aperture estimate.
 # 4: the fitted rotation and its flip are scan_detector_rotation_mod180_deg and scan_detector_rotation_flipped; the
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
-_CACHE_VERSION = 5
+_CACHE_VERSION = 6
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
@@ -83,7 +85,6 @@ def prepare(
     cache: bool = True,
     cache_dir: str | Path | None = None,
     refresh: bool = False,
-    rotation_steps: int = 90,
     verbose: bool = False,
 ) -> ScreeningResult:
     """Load or build the screening products of one 4D-STEM acquisition.
@@ -111,17 +112,15 @@ def prepare(
         ``(rows, cols)`` scan positions when the file does not record them.
     scan_detector_rotation_deg : float, optional
         Physical scan-to-detector rotation in degrees for the DPC phase.
-        ``None`` fits it from ``rotation_steps`` angles from 0 to 180 degrees,
+        ``None`` fits it at the exact minimum of the centre-of-mass curl,
         testing swapped detector row and column axes too (a flipped rotation); that fit is known modulo 180.
     scan_detector_rotation_flipped : bool
         Whether the detector axes are exchanged before the given rotation;
         used only with ``scan_detector_rotation_deg``.
     cache, cache_dir, refresh : bool, str or Path, bool
-        Reuse and save ``<master stem>.screening-v5.npz``, by default in
+        Reuse and save ``<master stem>.screening-v6.npz``, by default in
         ``.quantem_gpu_cache`` beside the master. ``refresh`` rebuilds it.
         A cache is reused only while every source file is unchanged.
-    rotation_steps : int
-        Number of rotation angles tried when fitting the rotation.
     verbose : bool
         Print the load report and the product timing.
 
@@ -166,7 +165,6 @@ def prepare(
         master_path,
         backend=resolved_backend,
         scan_shape=scan_shape,
-        rotation_steps=int(rotation_steps),
         verbose=verbose,
         loaded=loaded,
     )
@@ -212,7 +210,6 @@ def _build_products(
     *,
     backend: str,
     scan_shape: tuple[int, int] | None,
-    rotation_steps: int,
     verbose: bool,
     loaded: Dataset4dstemGPU | None = None,
 ) -> ScreeningResult:
@@ -287,11 +284,7 @@ def _build_products(
     com_row -= float(com_row.mean())
     com_col -= float(com_col.mean())
     rotation_started = time.perf_counter()
-    _, _, rotation_mod180_deg, transposed = find_optimal_rotation(
-        com_row,
-        com_col,
-        rotation_steps=rotation_steps,
-    )
+    _, _, rotation_mod180_deg, transposed = find_optimal_rotation(com_row, com_col)
     phase_started = time.perf_counter()
     phase = _dpc_phase(com_row, com_col, float(rotation_mod180_deg), bool(transposed))
     elapsed_s = time.perf_counter() - started
@@ -306,7 +299,6 @@ def _build_products(
         "detector_shape": [int(value) for value in detector_shape],
         "dtype": working_dtype,
         "hot_pixel_correction": "zero",
-        "rotation_steps": int(rotation_steps),
         "bright_field_center_px": [float(center[0]), float(center[1])],
         "bright_field_edge_radius_px": float(radius),
         "scan_detector_rotation_mod180_deg": float(rotation_mod180_deg),

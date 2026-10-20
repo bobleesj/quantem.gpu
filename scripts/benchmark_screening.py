@@ -59,7 +59,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-state", default="unspecified")
     parser.add_argument("--fixture-id", default="anonymous-fixture")
     parser.add_argument("--source-sha256")
-    parser.add_argument("--rotation-steps", type=int, default=90)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--reps", type=int, default=7)
     parser.add_argument("--reopen-reps", type=int, default=7)
@@ -184,7 +183,6 @@ def _run_once(args: argparse.Namespace, *, refresh: bool) -> tuple[Any, dict[str
         cache=True,
         cache_dir=args.cache_dir,
         refresh=refresh,
-        rotation_steps=args.rotation_steps,
         verbose=False,
     )
     _sync_backend(args.backend)
@@ -293,9 +291,7 @@ def main() -> None:
         "fixture_id": args.fixture_id,
         "source_sha256": args.source_sha256,
         "source_path_included": False,
-        "parameters": {
-            "rotation_steps": args.rotation_steps,
-        },
+        "parameters": {},
         "build": {
             "summary": _nearest_rank_summary(
                 [record["wall_seconds"] for record in build_records]
