@@ -277,9 +277,12 @@ def _announce_pixel_correction(provenance: dict[str, object] | None) -> None:
     if not isinstance(correction, dict) or not correction.get("applied") or not correction.get("pixel_count"):
         return
     count = int(correction["pixel_count"])
-    method = {"median": "their 3 x 3 neighbor median", "zero": "zero"}.get(correction.get("method"), correction.get("method"))
+    window = correction.get("largest_window_px") or 3
+    median = "their 3 x 3 neighbor median" + (f" (windows up to {window} x {window} inside clusters)" if window > 3 else "")
+    method = {"median": median, "zero": "zero"}.get(correction.get("method"), correction.get("method"))
     print(f"SSB: {count} flagged detector pixel{'s' if count != 1 else ''} replaced by {method} "
-          "(recorded in source_provenance); to keep the recorded values, load with io.load(path) and use SSB(data).")
+          "(recorded in source_provenance); to keep the recorded values, load with "
+          'io.load(path, hot_pixel_correction="none") and use SSB(data).')
 
 
 def _on_scan_gpu(method):
@@ -740,8 +743,9 @@ class SSB:
 
         GPU acquisitions use ANS-encoded storage.
 
-        File-based SSB retains its detector preprocessing: recorded invalid
-        pixels receive the local median on the GPU, and one line says how many.
+        File-based SSB loads with ``io.load``'s default detector preprocessing:
+        recorded invalid pixels receive the median of their valid neighbors on
+        the GPU, and one line says how many.
         The original file is unchanged, and the correction is recorded in
         ``source_provenance``. To choose another policy, load with ``io.load``
         and pass that dataset to ``SSB(data)``.
@@ -805,7 +809,6 @@ class SSB:
                 backend=selected,
                 scan_shape=scan_shape,
                 dtype=dtype,
-                hot_pixel_correction="median",
                 verbose=verbose,
             )
             file_calibration = calibration_rows(loaded.metadata)
@@ -1126,8 +1129,7 @@ class SSB:
             elif getattr(getattr(source, "data", None), "is_released", False):
                 image = None
             elif isinstance(source, Path):
-                with io.load(source, backend=self.backend, scan_shape=self._scan_shape,
-                             hot_pixel_correction="median", verbose=False) as acquisition:
+                with io.load(source, backend=self.backend, scan_shape=self._scan_shape, verbose=False) as acquisition:
                     image = _dark_field_of(acquisition, self.semiangle_mrad, self.detector_sampling_mrad,
                                            self.bright_field_center_px)
             else:

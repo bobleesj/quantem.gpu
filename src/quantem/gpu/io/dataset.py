@@ -266,7 +266,7 @@ class Dataset4dstemGPU:
         save(save_to, source, dtype=dtype, backend=device.split(":")[0], verbose=False)
         return load(
             save_to, dtype="native" if dtype == "float32" else dtype,
-            device=device, verbose=False, hot_pixel_correction="none",
+            device=device, verbose=False,
         )
 
     def mean(self, dim: tuple[int, int]) -> torch.Tensor:

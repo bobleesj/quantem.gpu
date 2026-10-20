@@ -6,7 +6,11 @@ from quantem.gpu.device import cuda_runtime as memory_module
 
 @pytest.mark.parametrize("apply_mask", [False, True])
 def test_cpu_reference_records_source_and_actual_mask_policy(tmp_path, apply_mask):
-    """Reference loading reports zero masking accurately without changing other counts."""
+    """Reference loading reports the default median fill accurately without changing other counts.
+
+    The mask once meant zeroing; it now applies io.load's default ``hot_pixel_correction="median"``, as
+    every GPU load does. Every neighbor holds 17, so the fill is 17.
+    """
     import h5py
 
     from quantem.gpu import io
@@ -23,11 +27,10 @@ def test_cpu_reference_records_source_and_actual_mask_policy(tmp_path, apply_mas
         correction = loaded.metadata["hot_pixel_correction"]
         assert correction["backend"] == "cpu"
         assert correction["applied"] is apply_mask
-        assert correction["method"] == ("zero" if apply_mask else "none")
+        assert correction["method"] == ("median" if apply_mask else "none")
         assert correction["stage"] == ("cpu_load_before_dense_storage" if apply_mask else "none")
         expected = counts.copy()
         if apply_mask:
-            expected[..., 2, 4] = 0
             assert correction["coordinates_row_col"] == [[2, 4]]
         np.testing.assert_array_equal(loaded.read(), expected)
 

@@ -90,12 +90,14 @@ def load_array_resident(
             f"ANS supports real integer and floating dtypes through 64 bits; got {dtype}. "
             "Keep the original source; no cast or upload occurred."
         )
-    if is_float8(dtype) and hot_pixel_correction != "none":
-        raise ValueError(
-            "FP8 ingestion preserves original bits; use hot_pixel_correction='none'. "
-            "Recorded bad pixels are excluded from detector products."
-        )
     correction = hot_pixel_record(pixel_mask, hot_pixel_correction, backend=backend)
+    if correction["applied"] and dtype.name not in ("uint8", "uint16", "uint32"):
+        raise ValueError(
+            f"The source flags {correction['pixel_count']} detector pixels; hot_pixel_correction="
+            f"{hot_pixel_correction!r} fills them in uint8/uint16/uint32 counts only, and this acquisition is "
+            f"{dtype}. Load it with hot_pixel_correction='none' to keep the stored values; flagged pixels "
+            "stay excluded from detector products."
+        )
     floating = dtype == np.dtype("float32")
     bit_lanes = dtype not in (np.dtype("uint8"), np.dtype("uint16"))
     # The word codec uses two bytes even for signed 8-bit measurements.

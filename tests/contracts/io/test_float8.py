@@ -26,10 +26,14 @@ def test_untagged_bytes_remain_integer_counts(tmp_path):
     assert io.inspect(path).dtype == "uint8"
 
 
-def test_fp8_hot_pixel_replacement_is_explicitly_unsupported():
+def test_fp8_selection_is_refused_and_the_default_fill_has_nothing_to_change():
+    """An FP8 array carries no detector mask, so io.load's default median fill leaves every bit; selection is refused.
+
+    A file whose mask flags pixels in a non-count dtype is refused by the fill itself (``io.arrays``).
+    """
     data = np.zeros((2, 2, 4, 4), np.uint8).view(FLOAT8_DTYPES["float8_e4m3fn"])
     with pytest.raises(ValueError, match="without conversion"):
-        io.load(data, hot_pixel_correction="median", backend="cuda")
+        io.load(data, scan_region=(0, 1, 0, 1), backend="cuda")
 
 
 def test_unknown_array_variant_is_rejected_before_upload():

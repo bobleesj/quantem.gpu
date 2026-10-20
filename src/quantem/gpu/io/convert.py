@@ -684,8 +684,11 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         Positive scan spacing in angstrom and detector spacing in mrad per
         pixel. One value applies to both axes; a pair is (row, column).
     hot_pixel_correction : {"none", "median", "zero"}, default "none"
-        Optional correction for uint8/uint16/uint32 acquisitions only.
-        Corrects stored-mask pixels before encoding. Median uses the valid
+        Optional correction for uint8/uint16/uint32 acquisitions only. The
+        copy is an archive of the acquisition (``restore_master`` rebuilds the
+        master), so it keeps every stored value unless a correction is
+        requested; ``io.load``'s median default applies when data are loaded
+        for analysis. Corrects stored-mask pixels before encoding. Median uses the valid
         pixels of the 3x3 window (or the smallest larger window that holds
         one), rounded half to even. Verification
         compares against the declared correction, not against unchanged raw data.

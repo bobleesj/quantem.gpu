@@ -45,7 +45,7 @@ def load(
     scan_region: tuple[int, int, int, int] | None = None,
     detector_region: tuple[int, int, int, int] | None = None,
     apply_mask: bool | None = None,
-    hot_pixel_correction: str = "none",
+    hot_pixel_correction: str = "median",
     auto_narrow: bool = False,
     stack: bool | None = None,
     device: int | str | None = None,
@@ -89,8 +89,8 @@ def load(
     Complete native HDF5 acquisitions can be loaded together into compact
     encoded accelerator storage with ``stack=False``. Encoded is the default
     on CUDA and MPS. Each result remains an independent encoded owner, not a
-    dense stacked array. Stored detector-mask values are preserved by default;
-    request GPU median or zero replacement explicitly when needed.
+    dense stacked array. Pixels the detector mask flags are replaced by the
+    median of their valid neighbors by default (see ``hot_pixel_correction``).
 
     All spatial arguments use ``(row, col)`` order. ``representation`` selects
     how the complete logical data is retained. Ordinary HDF5 selects
@@ -109,19 +109,24 @@ def load(
     form reopens under the same name without decoding. CPU reference expansion
     requires ``backend="cpu", representation="dense"``. Unsupported conversions
     raise instead of silently loading HDF5, expanding densely, or using CPU.
-    ``apply_mask=None`` zeroes stored dead pixels in the CPU reference.
-    Compact HDF5 loads use ``hot_pixel_correction``; saved compact sources
-    retain the correction already recorded in their metadata.
+    The CPU reference reads the stored detector mask unless ``apply_mask=False``
+    and treats its pixels with ``hot_pixel_correction``, bit for bit as the GPU
+    loads do. Saved compact sources retain the correction already recorded in
+    their metadata.
     File format and compression are detected from contents, independently of
     resident representation.
     ``backend="auto"`` selects CUDA or MPS and never selects CPU silently.
 
-    The default ``hot_pixel_correction="none"`` preserves every original
-    measurement and its dtype, including flagged-pixel markers. Scientific
-    detector products exclude recorded invalid pixels without changing storage.
-    Explicit ``"median"`` or ``"zero"`` correction changes flagged counts on
-    GPU and records that change in the saved copy. ``auto_narrow`` applies only
-    to an explicitly selected dense CPU reader; encoded loading retains dtype,
+    A flagged pixel's stored value (dead, hot, or a marker such as 65535) is not
+    a measurement and biases anything summed over the detector. The default
+    ``hot_pixel_correction="median"`` replaces each one by the median of the
+    valid pixels of its 3 x 3 window (the smallest larger window when a flagged
+    cluster hides all of them), rounded half to even, on the GPU, changing no
+    other value; the load line says how many, and the change is recorded in the
+    metadata and any saved copy. ``"none"`` keeps every stored value, markers
+    included: detector products then exclude the flagged pixels without
+    changing storage. ``"zero"`` writes 0. ``auto_narrow`` applies only to an
+    explicitly selected dense CPU reader; encoded loading retains dtype,
     except that on MPS a bitshuffle master whose uint32 values all fit 16 bits
     is held as uint16 counts that read back unchanged (one printed line).
 
@@ -196,8 +201,7 @@ def load(
     if single and is_float8(getattr(source, "dtype", "")):
         if (len(source.shape) != 4 or min(source.shape) <= 0
                 or any(value is not None for value in (dataset_path, scan_shape, scan_region, detector_region))
-                or dtype not in (None, "native") or apply_mask
-                or hot_pixel_correction != "none"):
+                or dtype not in (None, "native") or apply_mask):
             raise ValueError("Load the original 4D FP8 array without conversion or selection options; use read() for a region.")
         if representation not in (None, "encoded"):
             raise ValueError("FP8 acquisitions require encoded residency; omit representation.")
@@ -428,6 +432,7 @@ def load(
         single=single,
         scan_shape=scan_shape,
         apply_mask=True if apply_mask is None else apply_mask,
+        hot_pixel_correction=hot_pixel_correction,
         auto_narrow=auto_narrow,
         # Unlike compressed acquisitions, CPU reference arrays stack by default.
         stack=True if stack is None else stack,

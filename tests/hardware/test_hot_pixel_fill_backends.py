@@ -7,9 +7,12 @@ filled from its 5 x 5 ring.
 
 import os
 
+import h5py
+import hdf5plugin
 import numpy as np
 import pytest
 
+from quantem.gpu import io
 from quantem.gpu.resident.hot_pixels import fill_flagged, median_plan
 
 
@@ -26,6 +29,19 @@ def _mask(shape):
     mask[12, 20] = 1
     mask[20:23, 30:33] = 2
     return mask
+
+
+def _write_master(folder, counts, mask):
+    master = folder / "fill_master.h5"
+    data = folder / "fill_data_000001.h5"
+    with h5py.File(data, "w") as handle:
+        handle.create_dataset("entry/data/data", data=counts, chunks=(1, *counts.shape[1:]),
+                              **hdf5plugin.Bitshuffle(nelems=0, cname="lz4"))
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink(str(data), "/entry/data/data")
+        handle["entry/instrument/detector/detectorSpecific/ntrigger"] = np.uint32(len(counts))
+        handle["entry/instrument/detector/detectorSpecific/pixel_mask"] = mask
+    return master
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.uint16, np.uint32])
@@ -58,3 +74,18 @@ def test_gpu_corrector_matches_the_cpu_reference(dtype):
     np.testing.assert_array_equal(stored, expected)
     assert (stored[:, 21, 31] == expected[:, 21, 31]).all()
 
+
+def test_encoded_load_matches_the_cpu_reference_load(tmp_path):
+    backend = _backend()
+    shape = (40, 48)
+    mask = _mask(shape)
+    counts = np.random.default_rng(9).integers(0, 8, (8 * 9, *shape), dtype=np.uint16)
+    counts[:, mask != 0] = 65535
+    master = _write_master(tmp_path, counts, mask)
+    reference = io.load(master, backend="cpu", representation="dense", scan_shape=(8, 9), verbose=False)
+    with io.load(master, backend=backend, scan_shape=(8, 9), verbose=False) as loaded:
+        record = loaded.metadata["hot_pixel_correction"]
+        assert (record["method"], record["applied"], record["largest_window_px"]) == ("median", True, 5)
+        np.testing.assert_array_equal(loaded.read().cpu().numpy(), np.asarray(reference.data))
+    np.testing.assert_array_equal(np.asarray(reference.data).reshape(counts.shape),
+                                  fill_flagged(counts.copy(), median_plan(mask), "median"))

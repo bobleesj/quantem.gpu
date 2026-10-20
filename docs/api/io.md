@@ -83,7 +83,7 @@ folder = download(
     revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
 )
 master = folder / "truth-events-dose-1.0_master.h5"
-data = io.load(master, hot_pixel_correction="none")
+data = io.load(master)
 ```
 
 With released packages, `huggingface_hub` fetches the same folder; `master`
@@ -103,9 +103,13 @@ folder = Path(root) / "denoise/simulated_au_nanobeam_pg_dose1"
 ```
 
 Keep `data` open while analyzing it or using a viewer, then call `data.close()`.
-The default `hot_pixel_correction="none"` retains pixels flagged in the
-stored detector mask. Request `"median"` explicitly to replace them with a local 3 × 3 median.
-This master flags no pixels, so both settings return the same values here.
+A pixel the stored detector mask flags holds no measurement, and its value
+would bias every sum over the detector. The default `hot_pixel_correction="median"`
+replaces it by the median of the valid pixels of its 3 × 3 window (or of the
+smallest larger window that holds one, inside a flagged cluster), rounded half
+to even, and the load line says how many. `hot_pixel_correction="none"` keeps
+the stored values. This master flags no pixels, so both settings return the
+same values here.
 Neither setting fits a detector noise model. Use `io.inspect(master)` for an
 optional header-only check before loading.
 
@@ -403,9 +407,10 @@ For a three-dimensional frame stack, also pass `dataset_path` and the complete
 is not interpreted as FP8. Use `io.load` followed by optional `io.save` for
 this workflow. Tagged external detector chunks also use the existing collection
 converter, including its GPU comparison of every original measurement byte.
-Original input files remain unchanged. FP8 requires
-`hot_pixel_correction="none"`; recorded bad pixels are excluded from products
-while their stored bytes remain intact. QEM preserves calibration, overrides,
+Original input files remain unchanged. A fill is defined for uint8, uint16
+and uint32 counts: a source of another dtype whose mask flags pixels is
+refused until it is loaded with `hot_pixel_correction="none"`, which excludes
+the recorded bad pixels from products while their stored bytes remain intact. QEM preserves calibration, overrides,
 and the exact variant on reopen. Additional `io.save(..., metadata={...})`
 fields augment a loaded acquisition's metadata.
 

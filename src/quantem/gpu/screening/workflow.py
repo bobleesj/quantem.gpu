@@ -20,6 +20,8 @@ from quantem.gpu.optics.physics import wrap_degrees
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
+# 8: flagged detector pixels hold the median of their valid neighbors (io.load's default), as every other load
+#    path holds them; they counted as zero.
 # 7: the iDPC phase of a flipped detector integrates the aligned scan-frame gradient as it is; it swapped it back,
 #    integrating the transposed field.
 # 6: the fitted rotation is the exact minimum of the mean squared curl, no longer the nearest grid angle (the
@@ -28,7 +30,7 @@ from quantem.gpu.optics.physics import wrap_degrees
 # 4: the fitted rotation and its flip are scan_detector_rotation_mod180_deg and scan_detector_rotation_flipped; the
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
-_CACHE_VERSION = 7
+_CACHE_VERSION = 8
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
@@ -97,7 +99,8 @@ def prepare(
     BF, ABF, ADF and DF counts, and the centre of mass from exact detector
     moments. The rotation that minimizes the curl of the centre-of-mass field
     and the integrated DPC phase follow on the host. Integer products are
-    identical on CUDA and MPS. Flagged detector pixels count as zero. The raw
+    identical on CUDA and MPS. Flagged detector pixels hold the median of
+    their valid neighbors, ``io.load``'s default, as in SSB. The raw
     acquisition remains the evidence source for reconstruction.
 
     Parameters
@@ -105,8 +108,9 @@ def prepare(
     source : str, Path or Dataset4dstemGPU
         HDF5 master (for example an Arina ``*_master.h5``) or another
         acquisition that ``io.load`` reads into integer counts. A loaded
-        acquisition is borrowed and stays open. Its stored flagged pixels
-        are excluded from screening, even if loading replaced them by a median.
+        acquisition is borrowed and stays open. Its flagged pixels count with
+        the values loading gave them: the median fill when it was applied,
+        and excluded when it was loaded with ``hot_pixel_correction="none"``.
         File-cache reuse is disabled for borrowed data.
     backend : str
         ``"auto"``, ``"cuda"`` or ``"mps"``; only a cache miss needs a GPU.
@@ -120,7 +124,7 @@ def prepare(
         Whether the detector axes are exchanged before the given rotation;
         used only with ``scan_detector_rotation_deg``.
     cache, cache_dir, refresh : bool, str or Path, bool
-        Reuse and save ``<master stem>.screening-v7.npz``, by default in
+        Reuse and save ``<master stem>.screening-v8.npz``, by default in
         ``.quantem_gpu_cache`` beside the master. ``refresh`` rebuilds it.
         A cache is reused only while every source file is unchanged.
     verbose : bool
@@ -221,9 +225,8 @@ def _build_products(
     serves CUDA and MPS. The exact detector total gives the mean pattern and
     the probe fit; one batch of exact binary-mask sums then gives, per scan
     position, the total and the four bands, and the session's centre of mass
-    divides exact detector moments by the exact total. Flagged pixels are
-    explicitly zeroed at load (``io.load`` itself preserves raw values), as screening
-    products have always counted them.
+    divides exact detector moments by the exact total. Flagged pixels hold
+    ``io.load``'s default median fill, the values SSB fits.
     """
     from quantem.gpu import detector
     from quantem.gpu.dpc.workflow import find_optimal_rotation
@@ -236,7 +239,6 @@ def _build_products(
         str(master),
         backend=backend,
         scan_shape=scan_shape,
-        hot_pixel_correction="zero",
         verbose=verbose,
     )
     with owner as loaded:
@@ -261,7 +263,10 @@ def _build_products(
         # The exact total divided in float64 and rounded once, like every mean pattern.
         mean_diffraction_pattern = (session.detector_total() / frame_count).astype(np.float32)
         valid = np.ones(detector_shape, dtype=bool)
-        if borrowed and loaded.metadata.get("pixel_mask") is not None:
+        correction = loaded.metadata.get("hot_pixel_correction") or {}
+        # pixels still holding their stored values (loaded with hot_pixel_correction="none") are not measurements
+        unfilled = not correction.get("applied")
+        if unfilled and loaded.metadata.get("pixel_mask") is not None:
             valid &= np.asarray(loaded.metadata["pixel_mask"]) == 0
             mean_diffraction_pattern[~valid] = 0
         center, radius = detector.fit_probe(mean_diffraction_pattern)
@@ -271,7 +276,7 @@ def _build_products(
             for inner, outer in _BAND_RADII
         ]
         sums = session.masked_sums_exact(np.stack(masks) & valid)
-        com_row, com_col = session.center_of_mass(valid if borrowed else None)
+        com_row, com_col = session.center_of_mass(valid if unfilled else None)
         working_dtype = loaded.dtype.name
         acquisition_metadata = {
             name: loaded.metadata[name] for name in (
@@ -300,7 +305,7 @@ def _build_products(
         "scan_shape": [int(value) for value in scan_shape],
         "detector_shape": [int(value) for value in detector_shape],
         "dtype": working_dtype,
-        "hot_pixel_correction": "zero",
+        "hot_pixel_correction": correction.get("method", "none"),
         "bright_field_center_px": [float(center[0]), float(center[1])],
         "bright_field_edge_radius_px": float(radius),
         "scan_detector_rotation_mod180_deg": float(rotation_mod180_deg),

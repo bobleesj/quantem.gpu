@@ -25,7 +25,10 @@ def _decoded(source) -> np.ndarray:
 
 
 def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
-    """Metal opens without hot-pixel correction preserve all native counts and validity metadata."""
+    """Metal opens with hot_pixel_correction="none" preserve all native counts and validity metadata.
+
+    The io.load default now fills flagged pixels; this test asks for the stored values explicitly.
+    """
     pytest.importorskip("Metal")
     rng = np.random.default_rng(20260912)
     dtype = np.uint16
@@ -38,8 +41,8 @@ def test_original_h5_auto_selects_lossless_runtime_ans(tmp_path):
         tmp_path, "runtime-ans", counts, pixel_mask=pixel_mask
     )
 
-    # The default keeps every file count; detector queries apply validity separately.
-    loaded = io.load(master, backend="mps", apply_mask=False)
+    # "none" keeps every file count; detector queries apply validity separately.
+    loaded = io.load(master, backend="mps", apply_mask=False, hot_pixel_correction="none")
     try:
         assert loaded.representation is io.DataRepresentation.ENCODED
         assert loaded.shape == (32, 32, 4, 8)
@@ -106,7 +109,8 @@ def test_uint32_values_above_uint16_keep_uint32_storage(tmp_path, capsys):
     pixel_mask[2, 5] = 1
     for name, counts, mask in (("late", late, None), ("marker", marker, pixel_mask)):
         master = _write_bslz4_master(tmp_path, f"uint32-{name}", counts, pixel_mask=mask)
-        with io.load(master, backend="mps", scan_shape=(64, 80)) as loaded:
+        # "none" keeps the 0xffffffff marker; io.load's default median fill would replace it and narrow to uint16
+        with io.load(master, backend="mps", scan_shape=(64, 80), hot_pixel_correction="none") as loaded:
             assert loaded.dtype == np.dtype("uint32")
             values = _read_back(loaded)
         with h5py.File(master) as handle:
