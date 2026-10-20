@@ -153,7 +153,7 @@ def test_zero_trial_search_does_not_relabel_previous_search():
         assert second.num_trials == 0
         assert second.trials.empty
         assert second.refine_nfev is None
-        assert second.refine_method is None
+        assert second.refinement is None
         assert first.trial_records == history
         assert all(record['scan_detector_rotation_deg'] == 0. for record in history)
         with pytest.raises(ValueError, match='No completed trials'):

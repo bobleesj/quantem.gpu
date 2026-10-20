@@ -36,6 +36,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- `SSBResult.refine_method` is renamed `refinement`, the name of the
+  `find_aberrations(refinement=...)` keyword it records. Saved result records
+  are `quantem.ssb-result/8`; a `/7` record is refused with one printed line
+  and computed again. Live's fit block (`quantem.ssb-fit/7`) does not carry
+  the field and is unchanged.
+
 - `SSB.reconstruct(trials=[...])` is renamed `trial_ids=[...]`, so `trials`
   never means a list of ids in one place and a count in another. The WebGPU
   protocol's trial count (`WebGPUOptimizationOptions.trials`,

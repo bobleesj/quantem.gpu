@@ -70,6 +70,9 @@ class SSBResult(Mapping[str, float]):
         Backend stage timings in seconds when the operation records them.
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
+    refinement : str | None
+        Local refinement the fit applied after its search: ``"nelder-mead"``, ``"newton"``, or None for none (the
+        resolved method, never ``"auto"``); None for a result that was not fitted.
     reused : bool
         Whether the result was restored from an exact saved-result match.
     saved_path : pathlib.Path | None
@@ -95,7 +98,7 @@ class SSBResult(Mapping[str, float]):
     optimizer: dict[str, object] = field(default_factory=dict)
     num_trials: int | None = None
     num_bright_field_pixels: int | None = None
-    refine_method: str | None = None
+    refinement: str | None = None
     refine_nfev: int | None = None
     refine_elapsed_s: float | None = None
     voltage_kV: float | None = None
