@@ -175,3 +175,29 @@ def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
         ssb.close()
     finally:
         loaded.close()
+
+
+def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit():
+    """A region session frees the full field's G(q, k); the next full-field preview rebuilds the same bits, also after
+    a rotation change retargeted the geometry."""
+    from quantem.gpu import SSB
+
+    counts, valid = _counts()
+    loaded = _resident(counts, valid)
+    try:
+        ssb = SSB(loaded, backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
+                  detector_sampling_mrad=4.0, scan_detector_rotation_deg=17.0)
+        aberrations = {"C10_nm": -4.0, "C12_nm": 1.2, "phi12_deg": 23.0}
+        ssb.preview(aberrations, compute_loss=False)
+        ssb.set_rotation(197.0)
+        before = ssb.preview(aberrations, compute_loss=True)
+        g_before = np.asarray(ssb._compute._prepared.g_qk).copy()
+        with ssb.select_region((0, 128, 0, 128)) as region:
+            assert ssb._compute._prepared is None
+            region.preview(aberrations, compute_loss=False)
+        after = ssb.preview(aberrations, compute_loss=True)
+        assert np.array_equal(np.asarray(ssb._compute._prepared.g_qk), g_before)
+        assert np.array_equal(after[0], before[0]) and after[1] == before[1]
+        ssb.close()
+    finally:
+        loaded.close()

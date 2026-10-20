@@ -119,11 +119,13 @@ def exact_pair_row_policy_512(batch: int = 2) -> tuple[int, tuple[int, ...]]:
     total, chip = _apple_hardware_profile()
     if chip == "Apple M5 Max" and int(batch) == 2:
         if total >= 120 * 1024**3:
-            # The measured 128 GB M5 Max is fastest when one 2,496-plane allocation
-            # can hold the fixture's 2,476 compact planes. Every original
+            # On the 128 GB M5 Max a pair of candidates takes the same time in
+            # 1,024-plane packs as in one 2,476-plane pack (217.5 against 218.1 ms
+            # per pair, interleaved medians, 8,939 bright-field pixels), with a
+            # 4.0 GiB row intermediate instead of 9.8 GiB. Every original
             # 512-logical-BF reduction range remains separate in the column
-            # output, so launch consolidation does not alter summation order.
-            return 2476, (2496,)
+            # output, so the pack size does not alter summation order.
+            return 1024, (1024,)
         if total >= 96 * 1024**3:
             # Lower-memory M5 Max systems retain the measured four-pack policy.
             # A 716-plane greedy limit uses one stable 720-plane class.
