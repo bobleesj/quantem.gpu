@@ -40,3 +40,24 @@ def test_numpy_values_and_limit():
 def test_invalid_voltage_or_aperture(voltage, angle):
     with pytest.raises(ValueError):
         ssb_upsampling_factor(voltage_kV=voltage, semiangle_mrad=angle, scan_sampling_A=(0.37, 0.37))
+
+
+@pytest.mark.parametrize("voltage_kV", [60, 80, 120, 200, 300, 400, 123.4])
+def test_interaction_parameter_is_two_pi_m_e_lambda_over_h_squared(voltage_kV):
+    """sigma = 2 pi gamma m_e e lambda / h^2 with the same relativistic wavelength, in rad / (V Angstrom)."""
+    from quantem.gpu.optics import interaction_parameter
+    from quantem.gpu.optics.physics import ELECTRON_CHARGE, ELECTRON_MASS, PLANCK_H, SPEED_OF_LIGHT
+
+    gamma = 1 + ELECTRON_CHARGE * voltage_kV * 1e3 / (ELECTRON_MASS * SPEED_OF_LIGHT**2)
+    expected = (2 * np.pi * gamma * ELECTRON_MASS * ELECTRON_CHARGE * wavelength_A_from_kV(voltage_kV) * 1e-10
+                / PLANCK_H**2 * 1e-10)
+    assert interaction_parameter(voltage_kV) == pytest.approx(expected, rel=1e-12)
+
+
+def test_interaction_parameter_at_300_kV_and_invalid_voltages():
+    from quantem.gpu.optics import interaction_parameter
+
+    assert interaction_parameter(300) == pytest.approx(6.526161e-4, rel=1e-6)
+    for voltage_kV in (0, -300, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="voltage_kV"):
+            interaction_parameter(voltage_kV)

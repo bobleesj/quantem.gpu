@@ -17,6 +17,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   ShowPtycho when that package is installed. The launch table names each
   rotation's source and adds a **Rotation flipped** row.
 
+- `quantem.gpu.optics.interaction_parameter(voltage_kV)` returns the
+  relativistic interaction parameter σ in rad/(V·Å), computed with the same
+  wavelength as `wavelength_A_from_kV`.
+
 ### Changed (breaking, no aliases)
 
 - `detector_transposed` is renamed `scan_detector_rotation_flipped`

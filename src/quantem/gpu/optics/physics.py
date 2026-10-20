@@ -62,6 +62,45 @@ def wavelength_A_from_kV(voltage_kV: float) -> float:
     return wavelength_m * 1e10
 
 
+def interaction_parameter(voltage_kV: float) -> float:
+    """Relativistic interaction parameter sigma, in rad / (V Angstrom): the phase a projected potential imparts.
+
+    A thin specimen with projected potential ``V_p`` (V Angstrom) shifts the electron wave's phase by
+    ``sigma * V_p`` radians. With the relativistic electron mass ``m = gamma m_e``,
+
+    .. math::
+        \\sigma = \\frac{2 \\pi m e \\lambda}{h^2}
+                = \\frac{2 \\pi}{\\lambda V} \\frac{m_e c^2 + e V}{2 m_e c^2 + e V},
+
+    with the relativistic wavelength ``lambda`` of :func:`wavelength_A_from_kV`, so both functions agree at every
+    voltage.
+
+    Parameters
+    ----------
+    voltage_kV : float
+        Accelerating voltage in kilovolts; finite and positive.
+
+    Returns
+    -------
+    float
+        Interaction parameter in radians per volt-Angstrom.
+
+    Examples
+    --------
+    >>> round(interaction_parameter(300), 8)
+    0.00065262
+    >>> round(interaction_parameter(200), 8)
+    0.00072884
+    """
+    voltage = float(voltage_kV)
+    if not (math.isfinite(voltage) and voltage > 0):
+        raise ValueError(f"voltage_kV must be finite and positive; got {voltage_kV!r}.")
+    voltage_V = voltage * 1000
+    rest_energy_eV = ELECTRON_MASS * SPEED_OF_LIGHT**2 / ELECTRON_CHARGE
+    return (2 * math.pi / (wavelength_A_from_kV(voltage) * voltage_V)
+            * (rest_energy_eV + voltage_V) / (2 * rest_energy_eV + voltage_V))
+
+
 def wrap_degrees(angle_deg: float, period_deg: float) -> float:
     """Return an angle in ``[0, period_deg)``, wrapped once in double precision.
 
