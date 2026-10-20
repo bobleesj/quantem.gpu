@@ -406,15 +406,20 @@ For a different size, use `result.show(axsize=(14, 14))` or
 `result.show("probe", axsize=(7, 7))`. Plotting and scale bars are handled
 internally; these settings do not change the scientific sampling.
 
-Check the input and SSB-selected rotation in a separate cell:
+The rotation is opened with the file's or the given angle, else estimated
+modulo 180° from the centre-of-mass curl. For an estimated angle,
+`find_aberrations()` fits both 180° branches independently and keeps the one
+whose dark-field atomic columns have positive phase (the larger phase tail
+when no columns are resolved); a given or recorded angle is fitted once and
+kept. See the evidence in a separate cell:
 
 ```python
-aberrations.show("rotation", axsize=(7, 7))
+aberrations.show("rotation")  # phase tails and phase at the atomic columns, both branches
 ```
 
 For a native/upsampled comparison, use `result.show(compare=result_4x,
 axsize=(7, 7))`. The library marks matching central crops on the full images.
-The [SSB API](docs/api/ssb.md) includes the optional polarity histogram.
+The [SSB API](docs/api/ssb.md#settle-the-180-branch) explains the branch test.
 
 Advanced users can inspect search trials with shared phase contrast:
 

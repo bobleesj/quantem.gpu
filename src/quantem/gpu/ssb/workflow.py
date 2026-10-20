@@ -29,6 +29,7 @@ from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.optics.physics import wavelength_A_from_kV, wrap_degrees
 from quantem.gpu.ssb import series
 from quantem.gpu.ssb._execution import cancellation_scope
+from quantem.gpu.ssb.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
 from quantem.gpu.ssb.brightfield import crop_bright_field
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
@@ -42,13 +43,7 @@ from quantem.gpu.ssb.persistence import (
     software_signature,
     source_signature,
 )
-from quantem.gpu.ssb.results import (
-    COLUMN_SIGN_MIN,
-    SSBResult,
-    column_sign,
-    draw_column_histogram,
-    host_array,
-)
+from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.ssb.trials import (
     choose_trials,
     label_trials,
@@ -221,15 +216,6 @@ def _tilt_constraints(
     return bounds, None
 
 
-def _opposite_branch_bounds(bounds: dict[str, object]) -> dict[str, object]:
-    """Bounds of the joint fit on the other 180-degree branch, where C10 changes sign and |C12| is unchanged."""
-    opposite = dict(bounds)
-    if "c10_range" in opposite:
-        low, high = opposite["c10_range"]
-        opposite["c10_range"] = (-high, -low)
-    return opposite
-
-
 def _recorded_detector_sampling_mrad(metadata: dict[str, object], voltage_kV: float) -> tuple[float, float] | None:
     """The acquisition's recorded detector sampling in mrad per pixel, (row, col), or None.
 
@@ -246,22 +232,26 @@ def _recorded_detector_sampling_mrad(metadata: dict[str, object], voltage_kV: fl
     return (1e3 * wavelength_A * row, 1e3 * wavelength_A * col)
 
 
-def _announce_rotation_check(result: SSBResult) -> None:
-    """The one line an automatic fit prints when its rotation check moved the branch or could not decide.
+def _announce_rotation_branches(result: SSBResult) -> None:
+    """The one line a fit prints when it compared both 180-degree branches of an estimated rotation."""
+    if result.rotation_branches is not None:
+        print(f"SSB: {result.rotation_branches.summary}")
 
-    ``reconstruct()`` fits quietly; a 180-degree move or an inconclusive polarity score is still a calibration
-    decision the user needs to see.
+
+def _dark_field_of(source, semiangle_mrad: float, detector_sampling_mrad, center_px=None) -> np.ndarray:
+    """Dark field of a full-detector source from just outside the bright-field disk to the detector edge.
+
+    The inner radius is ``DARK_FIELD_INNER_RADIUS`` times the bright-field radius, the semiangle over the detector
+    step (the larger of the two axes' radii); without a detector step, the disk edge of the mean pattern. The disk
+    centre is ``center_px`` (full-detector pixels) when known, else fitted.
     """
-    initial, sign = result.initial_scan_detector_rotation_deg, result.column_sign
-    if initial is None or sign is None:
-        return
-    if result.scan_detector_rotation_deg != initial:
-        print(f"SSB: the rotation check moved the scan-detector rotation from {initial:.1f}° to "
-              f"{result.scan_detector_rotation_deg:.1f}° (atom columns read dark at {initial:.1f}°: polarity score "
-              f"{result.initial_column_sign:+.2f}, now {sign:+.2f}). find_aberrations(check_rotation=False) keeps it.")
-    elif not math.isfinite(sign) or abs(sign) < COLUMN_SIGN_MIN:
-        print(f"SSB: the rotation check was inconclusive (polarity score {sign:+.2f}); kept {initial:.1f}°, which is "
-              "known only modulo 180°. Give scan_detector_rotation_deg if the phase reads inverted.")
+    if detector_sampling_mrad is None:
+        radius_px = detector.disk_edge_radius(detector.mean(source))
+    else:
+        radius_px = float(semiangle_mrad) / float(min(detector_sampling_mrad))
+    geometry = {} if center_px is None else {"bright_field_center_px": center_px, "bright_field_edge_radius_px": radius_px}
+    return np.asarray(detector.df(source, inner_radius_px=DARK_FIELD_INNER_RADIUS * radius_px, **geometry),
+                      dtype=np.float32)
 
 
 def _announce_pixel_correction(provenance: dict[str, object] | None) -> None:
@@ -273,16 +263,6 @@ def _announce_pixel_correction(provenance: dict[str, object] | None) -> None:
     method = {"median": "their 3 x 3 neighbor median", "zero": "zero"}.get(correction.get("method"), correction.get("method"))
     print(f"SSB: {count} flagged detector pixel{'s' if count != 1 else ''} replaced by {method} "
           "(recorded in source_provenance); to keep the recorded values, load with io.load(path) and use SSB(data).")
-
-
-def _in_notebook() -> bool:
-    """True inside a Jupyter kernel, where fit() draws its histograms."""
-    try:
-        from IPython import get_ipython
-    except ImportError:
-        return False
-    shell = get_ipython()
-    return shell is not None and "IPKernelApp" in shell.config
 
 
 def _on_scan_gpu(method):
@@ -355,9 +335,10 @@ class SSB:
     scan_detector_rotation_deg : float, optional
         Physical scan-to-detector rotation in degrees; kept in [0, 360). Omitted, the acquisition's recorded rotation
         is used, else it is estimated from the curl of the centre-of-mass field, which knows it modulo 180 degrees,
-        and one line says so;
-        ``find_aberrations(check_rotation=True)`` then settles the 180-degree choice from the sign of the atom
-        columns. Give your calibrated angle to skip the estimate.
+        and one line says so; ``find_aberrations`` (and the automatic fit of ``reconstruct()``) then fits both
+        180-degree branches and keeps the one with positive phase at the atomic columns
+        (``compare_rotation_branches``). A given or recorded rotation is never moved. Give your calibrated angle
+        to skip the estimate and the second fit.
     scan_detector_rotation_flipped : bool, optional
         True when the detector's row and column axes are swapped relative to the scan, which no rotation can
         produce. Omitted, it is estimated with the rotation, or False when the rotation is given. Detector
@@ -506,6 +487,12 @@ class SSB:
                     f"contains {data.shape[0]}."
                 )
             data = data.reshape(rows, cols, data.shape[1], data.shape[2])
+        # the full-detector source whose dark field locates the atomic columns of the 180-degree branch test: the
+        # caller's dataset, or a 4D array; SSB.open and region sessions set their own
+        self._dark_field: np.ndarray | None = None
+        self._dark_field_source: object = source_dataset if source_dataset is not None else (
+            data if self._streamed is None and not isinstance(data, MpsBfColumnFrames) and data.ndim == 4 else None)
+        self._dark_field_region: tuple[int, int, int, int] | None = None
         self._data = (
             data.transpose_detector() if isinstance(data, MpsBfColumnFrames) else data.swapaxes(-1, -2)
         ) if scan_detector_rotation_flipped and self._streamed is None else data
@@ -754,6 +741,7 @@ class SSB:
         }
         selected = resolve(backend)
         rotation_estimated = rotation_recorded = detector_sampling_recorded = False
+        dark_field = None
         crop_origin = (0, 0)
         owned = None
         source_detector_bin = 1
@@ -823,6 +811,11 @@ class SSB:
                         calibrate_detector=detector_sampling_mrad is None,
                         bright_field_center_px=bright_field_center_px,
                     )
+                    if rotation_estimated:
+                        # the 180-degree branch test locates atomic columns on the dark field, which the
+                        # bright-field crop does not keep
+                        dark_field = _dark_field_of(loaded, semiangle_mrad, detector_sampling_mrad or (
+                            semiangle_mrad / calibration_radius,) * 2, bright_field_center_px)
                 source_dtype = str(loaded.dtype)
                 source_bytes = loaded.logical_bytes
                 correction = loaded.metadata.get("hot_pixel_correction")
@@ -856,6 +849,11 @@ class SSB:
             if owned is not None:
                 owned.close()
             raise
+        if source_kind != "detector" or owned is None:
+            # exported bright-field columns and a bright-field crop keep no dark field: the file is read again for it
+            # when a branch comparison needs it (an estimated rotation computed it before the crop)
+            session._dark_field_source = Path(source)
+        session._dark_field = dark_field
         if rotation_recorded:
             session.scan_detector_rotation_source = "metadata"
         if rotation_estimated:
@@ -972,6 +970,11 @@ class SSB:
         origin = self.scan_region or (0, 0, 0, 0)
         regional.scan_region = (row_start + origin[0], row_stop + origin[0],
                                 col_start + origin[2], col_stop + origin[2])
+        if scan_detector_rotation_deg is None:
+            # an estimated rotation stays estimated: the region's fit settles its 180-degree branch
+            regional.scan_detector_rotation_source = self.scan_detector_rotation_source
+        regional._dark_field, regional._dark_field_source = None, self
+        regional._dark_field_region = tuple(scan_region)
         for name in ("source_kind", "source_storage_path", "source_dtype", "source_bytes",
                      "source_detector_bin", "source_provenance", "calibration_path",
                      "source_manifest_path", "resident_identity"):
@@ -1079,87 +1082,77 @@ class SSB:
         self._reconstruction = result
         return result
 
-    def _resolve_rotation_branch(self, result: SSBResult, *, refinement: RefineMethod, tilt: bool,
-                                 tilt_limit_mrad: float, seed: int, verbose: bool,
-                                 tilt_bounds: dict[str, object] | None = None) -> SSBResult:
-        """Keep the CoM direction whose phase has bright atom columns (see ``find_aberrations(check_rotation=...)``).
+    def _dark_field_image(self) -> np.ndarray | None:
+        """The scan's dark-field image that locates atomic columns for the 180-degree branch test, or None.
 
-        The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the angle plus 180
-        degrees, every CoM vector reversed. When fitted atom columns are dark, the
-        rotation moves to that branch, with C10 and tilt flipped in sign and C12
-        flipped in sign at the same angle, stated as the same magnitude at phi12 + 90
-        degrees. The other branch is the conjugate object.
-        The joint model's objective is invariant under this transformation.
-        CUDA reuses the fitted parameters and reconstructs the other branch;
-        the other fitting paths retain their existing refinement behavior.
+        Computed once from the full-detector source (``_dark_field_of``): the caller's dataset or array, or the file
+        a ``SSB.open`` session read; a region session slices its parent's. A released dataset has none, and the
+        phase tail alone then decides.
         """
-        sign = column_sign(result.phase)
-        result.column_sign = sign
-        result.initial_scan_detector_rotation_deg = result.scan_detector_rotation_deg
-        result.initial_column_sign = sign
-        initial_phase = host_array(result.phase).copy()
-        result.rotation_check_phases = np.stack((initial_phase, initial_phase))
-        show = verbose and _in_notebook()
-        input_rotation = result.initial_scan_detector_rotation_deg
-        if not math.isfinite(sign) or sign >= -COLUMN_SIGN_MIN:
-            if verbose and (not math.isfinite(sign) or sign < COLUMN_SIGN_MIN):
-                print(f"SSB: polarity score {sign:+.2f} is inconclusive; keeping the suggested rotation {input_rotation:.2f}°.")
-            return result
-        limit = draw_column_histogram(result.phase, f"Suggested rotation {input_rotation:.2f}° · polarity score {sign:+.2f}") if show else None
-        opposite_rotation = opposite_rotation_deg(input_rotation)
-        # The conjugate's -C12 at phi12 is C12 at phi12 + 90 degrees (wrapped to [-90, 90)); the fits bound C12 at zero,
-        # so a negative magnitude would start, and stay, at no astigmatism.
-        start = {"C10_nm": -result.aberrations["C10_nm"], "C12_nm": result.aberrations["C12_nm"],
-                 "phi12_deg": wrap_degrees(result.aberrations["phi12_deg"] + 180.0, 180.0) - 90.0}
-        reuse_joint_fit = tilt and self.backend == "cuda"
-        if verbose:
-            print(f"SSB: negative phase polarity at the suggested rotation {input_rotation:.2f}° (score {sign:+.2f}).\n"
-                  f"     Testing {opposite_rotation:.2f}° under the bright-column assumption."
-                  + (" Reusing the joint fit; no second search." if reuse_joint_fit else " Refining the opposite branch."))
-        self.set_rotation(opposite_rotation)
-        backend = self._backend()
-        if reuse_joint_fit:
-            opposite = replace(
-                result, aberrations=start, scan_detector_rotation_deg=opposite_rotation,
-                sample_tilt_mrad=tuple(-value for value in result.sample_tilt_mrad),
-            )
-            # Recompute the native phase and diagnostic at the selected branch.
-            # Simply negating stored pixels would miss discrete Nyquist effects.
-            reconstruction = self.reconstruct(
-                opposite, phase_estimator=result.phase_estimator, force=True,
-            )
-            refit = replace(
-                opposite, object_wave=reconstruction.object_wave,
-                loss=reconstruction.loss, elapsed_s=reconstruction.elapsed_s,
-            )
-        elif tilt:
-            refit = self._fit_tilt(result.num_trials or 200, refinement, tilt_limit_mrad, seed, False,
-                                   bounds=_opposite_branch_bounds(tilt_bounds or {}))
-        else:
-            refit = self._in_detector_frame(result_from_engine(backend.fit(
-                aberrations=aberrations_to_engine(start), trials=0,
-                refinement=refinement or "nelder-mead", search_ranges=None,
-                refine_lock=None, seed=seed, verbose=False,
-            )))
-            refit.num_trials = result.num_trials
-            refit.trial_records = []
-        if not reuse_joint_fit:
-            label_trials(refit, search=1)
-            refit.trial_records = list(result.trial_records or ()) + list(refit.trial_records or ())
-        for index, trial in enumerate(refit.trial_records):
+        if self._dark_field is None and self._dark_field_source is not None:
+            source = self._dark_field_source
+            if isinstance(source, SSB):
+                image = source._dark_field_image()
+                region = self._dark_field_region
+                if image is not None and region is not None:
+                    image = image[region[0]:region[1], region[2]:region[3]]
+            elif getattr(getattr(source, "data", None), "is_released", False):
+                image = None
+            elif isinstance(source, Path):
+                with io.load(source, backend=self.backend, scan_shape=self._scan_shape,
+                             hot_pixel_correction="median", verbose=False) as acquisition:
+                    image = _dark_field_of(acquisition, self.semiangle_mrad, self.detector_sampling_mrad,
+                                           self.bright_field_center_px)
+            else:
+                image = _dark_field_of(source, self.semiangle_mrad, self.detector_sampling_mrad,
+                                       self.bright_field_center_px)
+                if self.scan_region is not None and isinstance(source, Dataset4dstemGPU):
+                    row_start, row_stop, col_start, col_stop = self.scan_region
+                    image = image[row_start:row_stop, col_start:col_stop]
+            self._dark_field = image
+        return self._dark_field
+
+    def _finish_fit(self, result: SSBResult) -> SSBResult:
+        """Reconstruct a fit's phase at the native scan sampling with the default estimator and keep it on the result."""
+        estimator = _default_phase_estimator(result.aberrations)
+        started = time.perf_counter()
+        displayed = self.reconstruct(result, phase_estimator=estimator, compute_loss=False, force=True)
+        result.timings["final_native_reconstruction_s"] = time.perf_counter() - started
+        result.object_wave = displayed.object_wave
+        result.phase_clim = result.phase_limits
+        result.phase_estimator = displayed.phase_estimator
+        result.amplitude_estimated = False
+        return self._accept_result(result)
+
+    def _fit_both_branches(self, fit: Callable[[], SSBResult], *, keep_first: bool) -> SSBResult:
+        """Fit the session's rotation and that rotation plus 180 degrees independently, then keep one branch.
+
+        Each branch runs ``fit`` from the same start (the session's aberrations, tilt and depth spread before the
+        first fit) with the same settings, and its phase is reconstructed at the native scan sampling. The branch
+        is chosen by ``branches.compare_branches``: positive phase at the dark-field atomic columns, else the larger
+        phase tail. ``keep_first`` keeps the session's rotation (a given one) and records what the evidence selects.
+        The kept fit carries the comparison as ``rotation_branches`` and both searches' trials.
+        """
+        start = (self._aberrations, self._aberrations_explicit, self.sample_tilt_mrad, self.depth_spread_nm)
+        first_rotation = self.scan_detector_rotation_deg
+        fits = []
+        for search, rotation in enumerate((first_rotation, opposite_rotation_deg(first_rotation))):
+            self._aberrations, self._aberrations_explicit, self.sample_tilt_mrad, self.depth_spread_nm = start
+            self.set_rotation(rotation)
+            result = fit()
+            label_trials(result, search=search)
+            fits.append(self._finish_fit(result))
+        branches = compare_branches(fits, dark_field=self._dark_field_image(), scan_sampling_A=self.scan_sampling_A,
+                                    keep_first=keep_first)
+        kept = fits[branches.kept]
+        kept.trial_records = list(fits[0].trial_records or ()) + list(fits[1].trial_records or ())
+        for index, trial in enumerate(kept.trial_records):
             trial["trial"] = index
-        refit.column_sign = column_sign(refit.phase)
-        refit.initial_scan_detector_rotation_deg = input_rotation
-        refit.initial_column_sign = sign
-        refit.rotation_check_phases = np.stack((initial_phase, host_array(refit.phase)))
-        if refit.elapsed_s is not None and result.elapsed_s is not None:
-            refit.elapsed_s += result.elapsed_s   # First pass plus branch selection.
-        if show:
-            draw_column_histogram(refit.phase, f"SSB-selected rotation {refit.scan_detector_rotation_deg:.2f}° · polarity score {refit.column_sign:+.2f}", limit=limit)
-        if verbose:
-            print(f"SSB: selected rotation {refit.scan_detector_rotation_deg:.2f}°; C10 {refit.aberrations['C10_nm']:+.2f} nm, "
-                  f"polarity score {refit.column_sign:+.2f}. find_aberrations(check_rotation=False) keeps the input rotation.")
-        return refit
+        if all(fit.elapsed_s is not None for fit in fits):
+            kept.elapsed_s = sum(fit.elapsed_s for fit in fits)
+        kept.rotation_branches = branches
+        self.set_rotation(kept.scan_detector_rotation_deg)
+        return self._accept_result(kept)
 
     def _center_in_data(self) -> tuple[float, float] | None:
         """The bright-field centre in pixels of the array the session holds, which the backends index.
@@ -1365,7 +1358,8 @@ class SSB:
         (``phi12_deg`` is then reported as 0). For example
         ``find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})``.
         The joint search covers phi12 over its whole period, so a phi12 range raises; bound it in a standard fit.
-        On the other 180-degree branch the rotation check keeps these bounds with C10 in the opposite sign.
+        Both 180-degree branches are fitted with these same bounds. C10 changes sign between the branches, so a C10
+        range that excludes one sign also favours one branch.
 
         ``fixed_aberrations`` with all three of C10_nm, C12_nm and phi12_deg holds optics common across
         local tilt fits. Supply a previously calibrated thick-sample optical
@@ -1375,22 +1369,17 @@ class SSB:
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
         In a standard fit, hold a coefficient with ``search_ranges={"C12_nm": 0.0}`` and ``refine_lock=["C12_nm"]``.
 
-        ``check_rotation=True`` (default) also settles the 180-degree ambiguity of the scan-detector rotation: the rotation
-        search cannot tell omega from omega + 180 degrees and both fit equally well (the second is the conjugate object with
-        the opposite aberration phase). Atom columns carry positive phase, so when the fitted phase has a negative column
-        sign (``result.column_sign`` < -0.2) the session's rotation moves by 180 degrees (``scan_detector_rotation_deg``;
-        ``initial_scan_detector_rotation_deg`` keeps the angle before the check), with C10, C12, and tilt reversed in sign. A CUDA joint fit
-        reuses those fitted parameters and reconstructs the opposite branch
-        without a second search. Other fitting paths retain their refinement.
-        The inexpensive sign check always runs; extra reconstruction/refinement
-        runs only for a finite score below -0.2. Bright-column polarity is a
-        physical assumption, not a guarantee of absolute rotation: unresolved
-        structure and contrast inversion in thick specimens can be ambiguous.
-        With verbose notebook output, before/after histograms are drawn only
-        when the rotation changes. The saved result also supports
-        ``show("rotation", histogram=True)`` for an explained comparison.
-        Near zero (no resolved columns) the rotation is kept.
-        ``check_rotation=False`` keeps the rotation as given.
+        ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
+        centre-of-mass curl cannot tell omega from omega + 180 degrees and both fit equally well (the second is the
+        conjugate object with C10 of the opposite sign). So the fit runs twice, at the estimate and at the estimate
+        plus 180 degrees, two independent searches with the same settings, and keeps the branch whose atomic columns,
+        located on the scan's dark field, have positive phase; when no columns are resolved, the branch with the
+        larger phase tail (``compare_rotation_branches`` explains both tests). The fit then costs two searches: about
+        2 x 26 s for a 512 x 512 scan on an M-series Mac. ``result.rotation_branches`` records both fits and the
+        evidence, ``result.show("rotation")`` draws it, and one line (with ``verbose``) says which branch was kept.
+        A rotation given to ``SSB(...)`` or recorded with the acquisition is the user's calibration: it is fitted
+        once and never moved. ``ssb.compare_rotation_branches()`` still fits both branches of it and reports.
+        ``check_rotation=False`` fits once at the session's rotation, estimated or not.
 
         ``scan_region=(row_start, row_stop, col_start, col_stop)``
         restricts fitting to that scan region, with exclusive stops. Detector
@@ -1413,6 +1402,88 @@ class SSB:
         refines them with the session's sample tilt and depth spread.
         """
 
+        return self._find_aberrations(
+            "auto" if check_rotation else "off", tilt=tilt, scan_region=scan_region, num_trials=num_trials,
+            refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
+            tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
+            compare_standard=compare_standard, fixed_aberrations=fixed_aberrations)
+
+    @_on_scan_gpu
+    def compare_rotation_branches(self, *, apply: bool | None = None, **find_aberrations_options) -> RotationBranches:
+        """Fit both 180-degree branches of the rotation independently and say which one the phase supports.
+
+        The centre-of-mass curl knows the scan-detector rotation only modulo 180 degrees. This runs
+        ``find_aberrations(**find_aberrations_options)`` twice, at the session's rotation and at that rotation plus
+        180 degrees: two fresh searches with the same settings (tilt, ranges, trials, seed), neither started from
+        the other. Each fit's phase is reconstructed at the native scan sampling, and the branch is chosen:
+
+        1. **Atomic columns.** The columns are located on the same scan's dark field (``detector.df`` from 1.1 times
+           the bright-field radius to the detector edge). Dark field is incoherent, so the positions are the same on
+           both branches. Atoms push the phase forward, so on the right branch the high-passed phase at the columns
+           is positive. The test is decisive when the mean column phase is at least 3 standard errors from zero on
+           either branch; the branch with the more positive columns is kept.
+        2. **Phase tail.** When neither branch resolves columns, or the session has no dark field (exported
+           bright-field columns), the branch with the larger mean-centred third-moment ratio (``phase_skewness``)
+           is kept.
+
+        Both fits cost a full search each: about 2 x 26 s for a 512 x 512 scan on an M-series Mac.
+
+        Parameters
+        ----------
+        apply : bool, optional
+            Move the session to the selected branch. Omitted, the selected branch is applied when the session
+            estimated its rotation, and a rotation given to ``SSB(...)`` or recorded with the acquisition is kept:
+            the comparison then only reports. Either way the session ends settled, holding the kept branch's fit,
+            so ``reconstruct()`` applies it without fitting again.
+        **find_aberrations_options
+            Any ``find_aberrations`` keyword except ``check_rotation``: ``tilt``, ``num_trials``, ``search_ranges``,
+            ``fixed_aberrations``, ``seed``, ``scan_region``, ``save_dir``, ``verbose``, ...
+
+        Returns
+        -------
+        RotationBranches
+            Both fits (aberrations, loss, column test, phase tail, native phase), the atomic columns, the selected
+            and the kept branch and the test that decided. ``show()`` draws the evidence, ``report()`` tabulates it.
+            The kept fit, with the same comparison as ``rotation_branches``, is the session's latest fit.
+
+        Examples
+        --------
+        >>> branches = ssb.compare_rotation_branches()  # doctest: +SKIP
+        >>> branches.show()  # doctest: +SKIP
+        >>> branches.report()  # doctest: +SKIP
+        >>> result = ssb.reconstruct()  # the kept fit, no third search  # doctest: +SKIP
+        """
+        if "check_rotation" in find_aberrations_options:
+            raise TypeError("compare_rotation_branches always compares both branches; call "
+                            "find_aberrations(check_rotation=False) for one fit at the session's rotation.")
+        if apply is None:
+            apply = self.scan_detector_rotation_source == "estimated"
+        return self._find_aberrations("apply" if apply else "keep", **find_aberrations_options).rotation_branches
+
+    def _find_aberrations(
+        self,
+        branches: Literal["auto", "off", "apply", "keep"],
+        *,
+        tilt: bool = False,
+        scan_region: tuple[int, int, int, int] | None = None,
+        num_trials: int = 200,
+        refinement: RefineMethod | Literal["auto"] = "auto",
+        search_ranges: dict[str, tuple[float, float] | float] | None = None,
+        refine_lock: list[str] | None = None,
+        tilt_limit_mrad: float = 25.0,
+        seed: int = 42,
+        save_dir: str | Path | None = None,
+        force: bool = False,
+        verbose: bool = True,
+        compare_standard: bool = True,
+        fixed_aberrations: dict[str, float] | None = None,
+    ) -> SSBResult:
+        """``find_aberrations`` with the 180-degree branch handling explicit.
+
+        ``branches``: ``"auto"`` compares both branches when the session estimated its rotation and applies the
+        selected one, and fits once otherwise; ``"off"`` fits once; ``"apply"`` compares and applies; ``"keep"``
+        compares and keeps the session's rotation.
+        """
         if tilt and refine_lock is not None:
             raise ValueError(
                 "refine_lock applies to the standard fit. With tilt=True hold coefficients with fixed_aberrations: "
@@ -1439,7 +1510,7 @@ class SSB:
             fixed_aberrations = validate_aberrations(fixed_aberrations)
             if not all(math.isfinite(v) for v in fixed_aberrations.values()):
                 raise ValueError("fixed_aberrations must contain finite coefficients.")
-            if refinement != "newton" or check_rotation:
+            if refinement != "newton" or branches != "off":
                 raise ValueError(
                     "Holding all three coefficients with fixed_aberrations needs refinement='newton' (or 'auto') and "
                     "check_rotation=False: with the optics fixed there is no branch to choose. Hold C10_nm alone or "
@@ -1448,6 +1519,9 @@ class SSB:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt:
             raise ValueError("refinement='newton' polishes the tilt fit; the standard fit refines with 'nelder-mead'.")
+        if branches == "auto":
+            # a rotation given to SSB(...) or recorded with the acquisition is the user's calibration and is kept
+            branches = "apply" if self.scan_detector_rotation_source == "estimated" else "off"
         paths = None
         signature = None
         if save_dir is not None:
@@ -1466,7 +1540,7 @@ class SSB:
                     **({"compare_standard": False} if tilt and not compare_standard else {}),
                     **({"refined_from": {"sample_tilt_mrad": self.sample_tilt_mrad, "depth_spread_nm": self.depth_spread_nm}}
                        if tilt and int(num_trials) == 0 else {}),
-                    "check_rotation": bool(check_rotation),
+                    "rotation_branches": branches,
                     "scan_region": scan_region,
                     **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else
                        {"fixed_aberrations": requested["fixed_aberrations"]} if requested["fixed_aberrations"] else {}),
@@ -1538,10 +1612,12 @@ class SSB:
             ) as regional:
                 if tilt and int(num_trials) == 0:
                     regional.sample_tilt_mrad, regional.depth_spread_nm = self.sample_tilt_mrad, self.depth_spread_nm
-                result = regional.find_aberrations(
-                    tilt=tilt, num_trials=num_trials, refinement=refinement,
+                regional._dark_field, regional._dark_field_source = None, self
+                regional._dark_field_region = tuple(scan_region)
+                result = regional._find_aberrations(
+                    branches, tilt=tilt, num_trials=num_trials, refinement=refinement,
                     search_ranges=requested["search_ranges"] if tilt else search_ranges, refine_lock=refine_lock,
-                    tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
+                    tilt_limit_mrad=tilt_limit_mrad,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
                     fixed_aberrations=fixed_aberrations if fixed_aberrations is not None else requested["fixed_aberrations"],
                 )
@@ -1556,41 +1632,32 @@ class SSB:
             return result
         if tilt:
             self._compare_standard = bool(compare_standard)
-            result = self._accept_result(self._fit_tilt(int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
-                                                      fixed_aberrations=fixed_aberrations, bounds=tilt_bounds))
-        else:
-            result = self._backend().fit(
-                aberrations=(
-                    aberrations_to_engine(self.aberrations)
-                    if self._aberrations_explicit else None
-                ),
-                trials=int(num_trials),
-                refinement=refinement,
-                search_ranges=search_ranges_to_engine(search_ranges),
-                refine_lock=refine_lock_to_engine(refine_lock),
-                seed=int(seed),
-                verbose=verbose,
-            )
-            result = result_from_engine(result)
+
+        def fit() -> SSBResult:
+            """One fit at the session's rotation, from the session's aberrations (searched when none are known)."""
+            if tilt:
+                return self._accept_result(self._fit_tilt(
+                    int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
+                    fixed_aberrations=fixed_aberrations, bounds=tilt_bounds))
+            result = result_from_engine(self._backend().fit(
+                aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
+                trials=int(num_trials), refinement=refinement,
+                search_ranges=search_ranges_to_engine(search_ranges), refine_lock=refine_lock_to_engine(refine_lock),
+                seed=int(seed), verbose=verbose,
+            ))
             if result.aberrations["C12_nm"] == 0.0:
                 # no astigmatism (C12 held at 0): its azimuth has no effect on the image and is stated as 0
                 result.aberrations["phi12_deg"] = 0.0
-            result = self._accept_result(self._in_detector_frame(result))
-        label_trials(result, search=0)
-        if check_rotation:
-            result = self._accept_result(self._resolve_rotation_branch(
-                result, refinement=refinement, tilt=tilt, tilt_limit_mrad=float(tilt_limit_mrad), seed=int(seed),
-                tilt_bounds=tilt_bounds,
-                verbose=verbose))
-        estimator = _default_phase_estimator(result.aberrations)
-        reconstruction_started = time.perf_counter()
-        displayed = self.reconstruct(result, phase_estimator=estimator, compute_loss=False, force=True)
-        result.timings["final_native_reconstruction_s"] = time.perf_counter() - reconstruction_started
-        result.object_wave = displayed.object_wave
-        result.phase_clim = result.phase_limits
-        result.phase_estimator = displayed.phase_estimator
-        result.amplitude_estimated = False
-        self._accept_result(result)
+            return self._accept_result(self._in_detector_frame(result))
+
+        if branches == "off":
+            result = fit()
+            label_trials(result, search=0)
+            result = self._finish_fit(result)
+        else:
+            result = self._fit_both_branches(fit, keep_first=branches == "keep")
+            if verbose:
+                _announce_rotation_branches(result)
         if paths is not None and signature is not None:
             result = self._save_result(result, paths=paths, signature=signature)
             if verbose:
@@ -1703,8 +1770,11 @@ class SSB:
         """Reconstruct the phase with the session's aberrations, fitting them first when none are known.
 
         A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so;
-        later calls reuse that fit. To constrain the fit (search ranges, fixed terms, tilt, seed), call
-        ``find_aberrations(...)`` yourself first. Given ``parameters`` or ``aberrations`` are used as they are.
+        later calls reuse that fit. On an estimated rotation that fit compares both 180-degree branches with two
+        independent searches (about 2 x 26 s for a 512 x 512 scan on an M-series Mac) and prints one line naming the
+        branch kept; a given or recorded rotation is fitted once and kept. To constrain the fit (search ranges, fixed
+        terms, tilt, seed), call ``find_aberrations(...)`` or ``compare_rotation_branches(...)`` yourself first.
+        Given ``parameters`` or ``aberrations`` are used as they are.
 
         Parameters
         ----------
@@ -1786,7 +1856,7 @@ class SSB:
             print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations() first.")
             parameters = self.find_aberrations(verbose=verbose)
             if not verbose:
-                _announce_rotation_check(parameters)
+                _announce_rotation_branches(parameters)
         correction = parameters
         if correction is not None:
             coefs = dict(correction.aberrations)
@@ -1877,22 +1947,20 @@ class SSB:
         return result
 
     def _rotation_evidence(self, correction: SSBResult | None, coefs: dict[str, float], tilt, depth) -> dict[str, object]:
-        """The rotation check of the fit a reconstruction applies, for its result: column signs, the suggested rotation
-        and the two phases compared.
+        """The 180-degree branch comparison of the fit a reconstruction applies, for its result.
 
-        The fit is ``correction``, else the session's latest ``find_aberrations``. Its evidence describes its own
+        The fit is ``correction``, else the session's latest ``find_aberrations``. Its comparison describes its own
         aberrations, sample geometry and rotation, so it is carried only when the reconstruction uses exactly those;
-        changed coefficients reconstruct another image, and the result then states no check.
+        changed coefficients reconstruct another image, and the result then states no comparison.
         """
         fit = self._aberration_search if correction is None else correction
-        if fit is None or fit.column_sign is None:
+        if fit is None or fit.rotation_branches is None:
             return {}
         if (fit.scan_detector_rotation_deg != self.scan_detector_rotation_deg
                 or validate_aberrations(dict(fit.aberrations), higher_order=True) != coefs
                 or fit.sample_tilt_mrad != tilt or fit.depth_spread_nm != depth):
             return {}
-        return {name: getattr(fit, name) for name in
-                ("column_sign", "initial_scan_detector_rotation_deg", "initial_column_sign", "rotation_check_phases")}
+        return {"rotation_branches": fit.rotation_branches}
 
     @_on_scan_gpu
     def preview(

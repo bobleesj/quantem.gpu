@@ -16,6 +16,7 @@ import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.io.inspect import inspect as inspect_source
+from quantem.gpu.ssb.branches import RotationBranches
 from quantem.gpu.ssb.results import SSBResult, host_array
 
 # One number versions everything a saved SSB fit means: the layout of its record and the convention its values follow.
@@ -40,12 +41,15 @@ FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
+# 9: the rotation check is rotation_branches, both 180-degree branches fitted independently (their aberrations, loss,
+#    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
+#    initial_scan_detector_rotation_deg and rotation_check_phases.
 # 8: the result field refine_method is refinement, the name of the find_aberrations keyword it records.
-RESULT_VERSION = 8
+RESULT_VERSION = 9
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 
 
-_ARTIFACT_FIELDS = {"object_wave", "rotation_check_phases", "reused", "saved_path", "metadata", "parameter_slices"}
+_ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", "metadata", "parameter_slices"}
 
 
 def save_result(
@@ -76,8 +80,10 @@ def save_result(
     if result.parameter_slices is not None:
         metadata["parameter_slices"] = json_value(result.parameter_slices)
     arrays = {"object_wave": host_array(result.object_wave)}
-    if result.rotation_check_phases is not None:
-        arrays["rotation_check_phases"] = result.rotation_check_phases
+    if result.rotation_branches is not None:
+        metadata["rotation_branches"], branch_arrays = result.rotation_branches.to_record()
+        metadata["rotation_branches"] = json_value(metadata["rotation_branches"])
+        arrays.update(branch_arrays)
     _write_atomically(array_path, "wb", lambda file: np.savez(file, **arrays))
     _write_atomically(metadata_path, "w", lambda file: file.write(json.dumps(metadata, indent=2) + "\n"), encoding="utf-8")
     result.reused = False
@@ -110,7 +116,8 @@ def load_result(
         saved.setdefault("parameter_slices", metadata.get("parameter_slices"))
         with np.load(array_path, allow_pickle=False) as arrays:
             object_wave = arrays["object_wave"]
-            rotation_check_phases = arrays["rotation_check_phases"] if saved.get("initial_scan_detector_rotation_deg") is not None else None
+            rotation_branches = (None if metadata.get("rotation_branches") is None
+                                 else RotationBranches.from_record(metadata["rotation_branches"], arrays))
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return None
 
@@ -121,7 +128,7 @@ def load_result(
             saved[name] = tuple(saved[name])
     return SSBResult(
         object_wave=object_wave,
-        rotation_check_phases=rotation_check_phases,
+        rotation_branches=rotation_branches,
         reused=True,
         saved_path=array_path,
         metadata=metadata,

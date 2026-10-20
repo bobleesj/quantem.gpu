@@ -89,6 +89,8 @@ def _session(monkeypatch, source, backend, device="mps"):
         scan_sampling_A=(0.2, 0.3),
         detector_sampling_mrad=(0.01, 0.01),
         source_path=str(source),
+        # a given rotation is fitted once; an estimated one would fit both 180-degree branches
+        scan_detector_rotation_deg=3.0,
     )
     # This double represents the immutable source opened by SSB.open. Direct
     # arrays have a separate no-reuse contract below.
@@ -675,14 +677,14 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
 
 
 def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
-    """quantem.ssb-result/7 named refinement refine_method; /8 reads only its own layout and says so."""
+    """quantem.ssb-result/8 recorded the polarity check as column_sign; /9 reads only its own layout and says so."""
     from quantem.gpu.ssb.persistence import RESULT_SCHEMA, load_result, result_paths
 
-    assert RESULT_SCHEMA == "quantem.ssb-result/8"
+    assert RESULT_SCHEMA == "quantem.ssb-result/9"
     paths = result_paths(tmp_path / "fit", "find_aberrations")
     paths[0].parent.mkdir()
     np.savez(paths[0], object_wave=np.ones((2, 2), np.complex64))
-    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/7", "signature": {}, "result": {"refine_method": None}}))
+    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/8", "signature": {}, "result": {"column_sign": None}}))
     assert load_result(paths=paths, signature={}, backend="mps") is None
     out = capsys.readouterr().out
-    assert "'quantem.ssb-result/7' record" in out and "'quantem.ssb-result/8' only" in out
+    assert "'quantem.ssb-result/8' record" in out and "'quantem.ssb-result/9' only" in out

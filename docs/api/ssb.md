@@ -36,9 +36,11 @@ overrides affect the session without rewriting `data.metadata`.
 `scan_detector_rotation_deg` is the physical scan-to-detector rotation, kept in
 [0, 360). Omitted, SSB uses the acquisition's recorded rotation, else estimates
 it from the curl of the centre-of-mass field and prints one line. The curl knows
-the angle only modulo 180 degrees; `reconstruct()` and
-`find_aberrations(check_rotation=True)` settle the 180-degree choice from the
-sign of the atom columns. `scan_detector_rotation_flipped=True` means the
+the angle only modulo 180 degrees; for an estimated angle `reconstruct()` and
+`find_aberrations(check_rotation=True)` fit both 180-degree branches and keep
+the one whose atomic columns have positive phase (see
+[Settle the 180° branch](#settle-the-180-branch)). A given or recorded angle is
+fitted once and never moved. `scan_detector_rotation_flipped=True` means the
 detector's row and column axes are swapped relative to the scan, which no
 rotation can produce; it is estimated with the angle, or False when an angle is
 given. Reported centers stay in the original detector axes. Give a calibrated
@@ -83,13 +85,12 @@ are not included in a detector-viewer loading-time claim.
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
 the backend, fitted aberrations, rotation, loss, trial counts, the local
 `refinement` applied (`"nelder-mead"`, `"newton"` or None), bright-field
-geometry, timings, reuse state, and provenance metadata. The rotation check
-is `column_sign`, `initial_scan_detector_rotation_deg` (the angle before the
-check) and `initial_column_sign`; `reconstruct()` keeps them on its result
-whenever it applies that fit's coefficients, so `report()` shows the
-suggested rotation and `result.show("rotation")` compares both branches.
-Saved results (`save_dir`) are `quantem.ssb-result/8` records; a `/7` record
-is computed again.
+geometry, timings, reuse state, and provenance metadata. A fit that compared
+the two 180-degree branches records them as `rotation_branches` (a
+`RotationBranches`); `reconstruct()` keeps it on its result whenever it applies
+that fit's coefficients, so `report()` shows the suggested rotation and
+`result.show("rotation")` draws the evidence. Saved results (`save_dir`) are
+`quantem.ssb-result/9` records; a `/8` record is computed again.
 
 ## Shapes, coordinates, dtypes, and units
 
@@ -284,8 +285,9 @@ adjusted = ssb.reconstruct(aberrations, aberrations={"C10_nm": 12.5})  # nm
 
 Overrides preserve unspecified coefficients, tilt, depth spread and rotation.
 They leave the supplied result unchanged. Replay uses each trial's original
-rotation branch, even if the subsequent polarity check changed the session's
-rotation. Saved search results retain this history.
+rotation branch: after a branch comparison the trials of both searches are kept,
+`search` 0 at the first angle and 1 at the angle plus 180 degrees. Saved search
+results retain this history.
 
 ## Finer preview sampling
 
@@ -351,58 +353,67 @@ fits the full scan. The detector calibration remains tied to the full input.
 Regional fitting currently requires a dense 4D scan source and a square region
 of 128, 256, 512 or 1024 pixels per side, without implicit padding or cropping.
 The result records `fit_scan_region`, and saved-result matching includes it.
-Its saved search phase and rotation histograms describe that region. Applying
+Its saved search phase and branch comparison describe that region (the
+dark-field columns are located on the region of the full scan's dark field). Applying
 those parameters elsewhere assumes the optics and specimen tilt are shared;
 a locally good fit does not establish that the whole specimen is uniform.
 
-## Check the suggested and selected rotations
+## Settle the 180° branch
+
+The centre-of-mass curl fixes the scan-detector rotation only modulo 180°: the
+angle and the angle plus 180° reverse every CoM vector and both leave the field
+curl-free. SSB fits both equally well, the second as the conjugate object with
+C10 of the opposite sign. For a rotation the session estimated, `reconstruct()`
+and `find_aberrations()` therefore fit twice, at the estimate and at the
+estimate plus 180°: two independent searches with the same settings (tilt,
+ranges, trials, seed), neither started from the other. Each fit's phase is
+reconstructed at the native scan sampling, and the branch is chosen in two
+steps:
+
+1. **Atomic columns.** The columns are located on the dark field of the same
+   scan, `detector.df` from 1.1 times the bright-field radius to the detector
+   edge. Dark field is incoherent, so the positions are the same on both
+   branches. The image is smoothed by a 1-pixel gaussian and high-passed by
+   subtracting a 2.1 Å gaussian; the columns are its local maxima over a 1.3 Å
+   window above its 80th percentile (a 5 × 5 window and an 8-pixel high pass at
+   0.264 Å). The phase minus its mean, high-passed the same way, is sampled at
+   the columns: `z = mean / (std / sqrt(n))`. Atoms push the phase forward, so
+   when either branch has `|z| >= 3` the branch with the more positive columns
+   is kept.
+2. **Phase tail.** When neither branch resolves columns, or the session has no
+   dark field, the branch with the larger mean-centred third-moment ratio
+   `S = mean(p³) / mean(p²)^1.5`, `p = phase − mean(phase)`
+   (`quantem.gpu.ssb.results.phase_skewness`) is kept: a few bright columns
+   over a flatter background.
+
+One line says which branch was kept and why, for example
+`SSB: kept 339.4°: atomic columns positive (z +26.6, 70% of 2696 columns); 159.4° negative.`
+The comparison costs a second full search: about 2 × 26 s for a 512 × 512
+scan on an M-series Mac.
 
 ```python
-dpc_result.report()  # the DPC-suggested scan-detector rotation
-aberrations.report()  # input and SSB-selected angles, plus fitted coefficients
+branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one
+branches.report()                           # aberrations, loss, column z, positive columns, S per branch
+branches.show()                             # phase tails and phase at the columns
+result = ssb.reconstruct()                  # the kept fit, no third search
+result.show("rotation")                     # the same figure from the result
 ```
 
-In a separate cell, show the phase images and histograms when SSB selects a
-different rotation:
+`compare_rotation_branches(**find_aberrations_options)` takes every
+`find_aberrations` keyword except `check_rotation`. A rotation given to
+`SSB(...)` or recorded with the acquisition is the user's calibration:
+`reconstruct()` and `find_aberrations()` fit it once and never move it, and
+`compare_rotation_branches()` on it reports the evidence and keeps the given
+angle unless called with `apply=True`. `find_aberrations(check_rotation=False)`
+fits once at the session's rotation, estimated or not.
 
-```python
-aberrations.show("rotation", histogram=True, axsize=(7, 7))
-```
-
-DPC's curl minimum leaves a 180° ambiguity. SSB tests phase polarity under a
-bright-atom-column assumption; this is a model-based choice, not independent
-proof of the absolute orientation. The report uses explicit angles in degrees.
-These saved diagnostic images are captured before conversion to the final
-reconstruction display estimator, so their contrast may differ from `result.phase`.
-
-The figure explains which angle was suggested, which angle SSB selected, and
-how the phase asymmetry changed after selecting the branch. Each histogram measures phase
-relative to its own median; both share the same bin edges and axis limits.
-Negative asymmetry motivates testing the opposite branch. Positive asymmetry
-on the selected branch supports the bright-column assumption.
-
-When the input and selected rotations agree, this call returns `None` and the
-cell produces no figure. Agreement alone does not establish orientation: an
-inconclusive phase distribution also leaves the input unchanged. Inspect
-`aberrations.column_sign` when that distinction matters. Omit `histogram=True`
-to show only the phase images for a changed rotation.
-
-A finite polarity score below −0.2 triggers the other branch. For CUDA joint
-calibration (`tilt=True`), this reuses the fitted solution: C10, C12 and both
-tilt components change sign; the astigmatism angle and depth spread stay fixed.
-The joint objective is invariant under this transformation. Native phase and
-diagnostic loss are recomputed on the selected branch because discrete Nyquist
-terms prevent simply negating every stored pixel. No second search is run.
-Other calibration paths retain their existing refinement behavior.
-
-The inexpensive polarity measurement uses the already reconstructed phase.
-It adds no extra reconstruction when the branch is acceptable or inconclusive.
-A score between −0.2 and +0.2, or a non-finite score, is inconclusive and keeps
-the input branch; non-finite phase data still require investigation. The score is
-the median-centered third moment divided by the second moment to the power
-3/2. The images, input angle and scores persist with a saved search result.
-Earlier saved results without these arrays must be recomputed with `force=True`
-before this diagnostic can be shown.
+Bright columns are a physical assumption, not proof of the absolute
+orientation. The column test assumes the dark-field image peaks on the
+columns. A dark field that collects only low angles from a strongly defocused
+probe can break that: in a noise-free 64 × 64 simulation (4 Å lattice, dark
+field 33 to 55 mrad) the column test chose the wrong branch at C10 = −5 and
+−8 nm and the right one at −3 nm, while the phase tail was right in all three.
+The figure's right panel shows the evidence for each branch.
 
 ## View the phase and model probe
 

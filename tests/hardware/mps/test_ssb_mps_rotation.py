@@ -73,63 +73,123 @@ def _astigmatic_crystal(n=64, scan_A=0.25, C10_A=-80.0, C12_A=25.0, phi12_deg=20
     return frames, wavelength_A / (n * scan_A) * 1e3
 
 
-def test_rotation_check_keeps_astigmatism_on_the_opposite_branch():
-    """Starting 180 degrees off, the polarity check lands where a direct fit at the right rotation does.
+def _settings(detector_mrad, **extra):
+    return dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+                detector_sampling_mrad=(detector_mrad, detector_mrad), **extra)
 
-    The other branch has the opposite C12 at the same angle, which is the same magnitude at phi12 + 90 degrees. Before
-    2026-10-19 the refit started from a negative C12, the fit clamped it to 0, and the check returned C12 = 0.0 nm with
-    a loss 9x the direct fit's (simulated truth C10 -8 nm, C12 2.5 nm at 20 degrees).
+
+@pytest.fixture
+def estimate_180_degrees_off(monkeypatch):
+    """The centre-of-mass estimate lands on the wrong 180-degree branch: 180 degrees for a crystal simulated at 0."""
+    from quantem.gpu.ssb import workflow
+
+    monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (180.0, False))
+
+
+def test_an_estimate_180_degrees_off_keeps_the_branch_with_positive_columns(estimate_180_degrees_off):
+    """Both branches are fitted independently; the dark-field columns have positive phase only on the true one.
+
+    Replaces the polarity check that moved the branch only for a negative median-centred skew and refitted from
+    the mapped twin. Here the probe is near focus (C10 -3 nm), so the low-angle dark field peaks on the columns.
     """
     pytest.importorskip("mlx.core")
     from quantem.gpu import SSB
 
-    frames, detector_mrad = _astigmatic_crystal()
-    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
-                    detector_sampling_mrad=(detector_mrad, detector_mrad))
-    with SSB(frames, scan_detector_rotation_deg=0.0, **settings) as session:
-        direct = session.find_aberrations(check_rotation=False, verbose=False)
-    with SSB(frames, scan_detector_rotation_deg=180.0, **settings) as session:
-        checked = session.find_aberrations(check_rotation=True, verbose=False)
+    frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
+    with SSB(frames, scan_detector_rotation_deg=0.0, **_settings(detector_mrad)) as session:
+        direct = session.find_aberrations(num_trials=40, check_rotation=False, verbose=False)
+    with SSB(frames, **_settings(detector_mrad)) as session:
+        assert session.scan_detector_rotation_source == "estimated"
+        checked = session.find_aberrations(num_trials=40, verbose=False)
+        assert session.scan_detector_rotation_deg == 0.0
 
-    assert checked.initial_scan_detector_rotation_deg == 180.0
+    branches = checked.rotation_branches
+    assert [branch.scan_detector_rotation_deg for branch in branches.branches] == [180.0, 0.0]
+    assert branches.decided_by == "columns" and branches.chosen == branches.kept == 1
+    assert branches.branches[1].column_z >= 3.0 and branches.branches[0].column_z <= -3.0
+    assert branches.branches[1].column_positive_fraction > 0.9
     assert checked.scan_detector_rotation_deg == 0.0
-    assert direct.aberrations["C12_nm"] == pytest.approx(2.5, abs=0.1)
-    assert checked.aberrations["C12_nm"] == pytest.approx(direct.aberrations["C12_nm"], abs=0.05)
-    assert checked.aberrations["phi12_deg"] == pytest.approx(direct.aberrations["phi12_deg"], abs=1.0)
-    assert checked.aberrations["C10_nm"] == pytest.approx(direct.aberrations["C10_nm"], abs=0.05)
-    assert checked.loss <= direct.loss * (1.0 + 1e-3)
+    for name in ("C10_nm", "C12_nm"):
+        assert checked.aberrations[name] == pytest.approx(direct.aberrations[name], abs=0.05)
+    assert checked.aberrations["C10_nm"] == pytest.approx(-3.0, abs=0.1)
+    assert checked.loss == pytest.approx(direct.loss, rel=1e-3)
+    assert {record["search"] for record in checked.trial_records} == {0, 1}
 
 
-def test_reconstruct_keeps_the_rotation_check_of_the_fit_it_applies():
-    """reconstruct() after a fit that moved the branch reports the check, as the fit does.
+def test_unresolved_columns_leave_the_choice_to_the_phase_tail(estimate_180_degrees_off):
+    """With a dark field that shows no columns (noise), the larger mean-centred phase skewness decides."""
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+    from quantem.gpu.ssb.results import phase_skewness
 
-    Before 2026-10-20 reconstruct() built a new result with no column sign, no suggested rotation and no checked
-    phases: report() had no "Suggested rotation" column and show("rotation") raised.
-    """
+    frames, detector_mrad = _astigmatic_crystal()
+    with SSB(frames, **_settings(detector_mrad)) as session:
+        session._dark_field = np.random.default_rng(3).normal(size=frames.shape[:2]).astype(np.float32)
+        checked = session.find_aberrations(num_trials=40, verbose=False)
+    branches = checked.rotation_branches
+    assert branches.decided_by == "phase_tail" and checked.scan_detector_rotation_deg == 0.0
+    assert all(abs(branch.column_z) < 3.0 for branch in branches.branches)
+    assert branches.branches[1].phase_skewness == pytest.approx(phase_skewness(checked.phase), abs=1e-6)
+    assert branches.branches[1].phase_skewness > 1.0 > -1.0 > branches.branches[0].phase_skewness
+    assert checked.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
+    assert checked.aberrations["C12_nm"] == pytest.approx(2.5, abs=0.1)
+
+
+def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_180_degrees_off, capsys):
+    """reconstruct() after a branch comparison reuses the kept fit and carries its evidence; no third search."""
     pytest.importorskip("mlx.core")
     import matplotlib
 
     matplotlib.use("Agg")
+    from matplotlib.figure import Figure
     from quantem.gpu import SSB
 
-    frames, detector_mrad = _astigmatic_crystal()
-    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
-                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=180.0)
-    with SSB(frames, **settings) as session:
+    frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
+    with SSB(frames, **_settings(detector_mrad)) as session:
         fitted = session.find_aberrations(num_trials=40, verbose=False)
-        assert fitted.initial_scan_detector_rotation_deg == 180.0 and fitted.scan_detector_rotation_deg == 0.0
+        assert session.reconstruct() is fitted
         for result in (session.reconstruct(), session.reconstruct(fitted, upsampling_factor=2)):
-            assert result.column_sign == fitted.column_sign
-            assert result.initial_scan_detector_rotation_deg == 180.0
-            assert result.initial_column_sign == fitted.initial_column_sign
-            np.testing.assert_array_equal(result.rotation_check_phases, fitted.rotation_check_phases)
-            assert result.report().loc["standard SSB", "Suggested rotation (deg)"] == 180.0
-            result.show("rotation")
+            assert result.rotation_branches is fitted.rotation_branches
+            report = result.report().loc["standard SSB"]
+            assert report["Suggested rotation (deg)"] == 180.0 and report["SSB-selected rotation (deg)"] == 0.0
+            assert report["180° branch by"] == "atomic columns"
+            assert isinstance(result.show("rotation"), Figure)
         changed = session.reconstruct(aberrations={"C10_nm": fitted.aberrations["C10_nm"] + 1.0})
-        assert changed.column_sign is None and changed.initial_scan_detector_rotation_deg is None
-    with SSB(frames, **settings) as fresh:
+        assert changed.rotation_branches is None
+        with pytest.raises(ValueError, match="compare_rotation_branches"):
+            changed.show("rotation")
+    capsys.readouterr()
+    with SSB(frames, **_settings(detector_mrad)) as fresh:
         auto = fresh.reconstruct()
-        assert auto.initial_scan_detector_rotation_deg == 180.0 and auto.column_sign is not None
+    assert auto.rotation_branches is not None and auto.scan_detector_rotation_deg == 0.0
+    out = capsys.readouterr().out
+    assert "SSB: kept 0.0°: atomic columns positive" in out and out.count("SSB: kept") == 1
+
+
+def test_a_given_rotation_is_never_flipped(capsys):
+    """A rotation the user gives is fitted once and kept, even 180 degrees off; the comparison only reports.
+
+    Before 2026-10-20 reconstruct() moved a given 180 degrees to 0 here (and a given 169.888 to 349.888 on data).
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
+    with SSB(frames, scan_detector_rotation_deg=180.0, **_settings(detector_mrad)) as session:
+        assert session.scan_detector_rotation_source == "given"
+        result = session.reconstruct()
+        assert result.scan_detector_rotation_deg == 180.0 and result.rotation_branches is None
+        assert "SSB: kept" not in capsys.readouterr().out
+        branches = session.compare_rotation_branches(num_trials=40, verbose=False)
+        assert branches.kept_rotation_deg == 180.0 and branches.chosen_rotation_deg == 0.0
+        assert branches.summary.startswith("kept the given 180.0°; the evidence selects 0.0°")
+        assert session.scan_detector_rotation_deg == 180.0
+        kept = session.reconstruct()
+        assert kept.scan_detector_rotation_deg == 180.0 and kept.rotation_branches is branches
+        assert session.compare_rotation_branches(num_trials=40, verbose=False, apply=True).kept_rotation_deg == 0.0
+        assert session.scan_detector_rotation_deg == 0.0
+        with pytest.raises(TypeError, match="check_rotation"):
+            session.compare_rotation_branches(check_rotation=False)
 
 
 def test_joint_fit_takes_a_c10_range_and_holds_c12_at_zero():
@@ -148,7 +208,8 @@ def test_joint_fit_takes_a_c10_range_and_holds_c12_at_zero():
         held = session.find_aberrations(tilt=True, num_trials=40, verbose=False,
                                         search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})
         assert held.aberrations["C12_nm"] == 0.0 and held.aberrations["phi12_deg"] == 0.0
-        assert -50.0 <= held.aberrations["C10_nm"] <= 50.0 and held.column_sign is not None
+        # a given rotation is fitted once: no branch comparison
+        assert -50.0 <= held.aberrations["C10_nm"] <= 50.0 and held.rotation_branches is None
         bounded = session.find_aberrations(tilt=True, num_trials=40, verbose=False,
                                            search_ranges={"C10_nm": (-12, -4), "C12_nm": (0, 5)})
         assert -12.0 <= bounded.aberrations["C10_nm"] <= -4.0 and 0.0 <= bounded.aberrations["C12_nm"] <= 5.0
@@ -195,27 +256,13 @@ def test_search_range_pins_hold_their_values_on_mps(pins, lock, refinement):
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                     detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
     with SSB(frames, **settings) as session:
-        fitted = session.find_aberrations(num_trials=30, search_ranges=pins, refine_lock=lock, refinement=refinement,
+        fitted = session.find_aberrations(tilt=False, num_trials=30, search_ranges=pins, refine_lock=lock,
+                                          refinement=refinement,
                                           check_rotation=False, verbose=False)
         assert fitted.aberrations["C12_nm"] == pytest.approx(pins["C12_nm"], abs=1e-9)
         assert fitted.aberrations["phi12_deg"] == pytest.approx(pins["phi12_deg"], abs=1e-9)
         expected, _ = session.preview(fitted.aberrations, compute_loss=False)
         np.testing.assert_allclose(fitted.phase, expected, atol=1e-5)
-
-
-def test_the_automatic_fit_says_when_the_rotation_check_moves_the_branch(capsys):
-    """reconstruct()'s quiet automatic fit still prints the 180-degree move it made."""
-    pytest.importorskip("mlx.core")
-    from quantem.gpu import SSB
-
-    frames, detector_mrad = _astigmatic_crystal()
-    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
-                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=180.0)
-    with SSB(frames, **settings) as session:
-        result = session.reconstruct()
-    assert result.scan_detector_rotation_deg == 0.0
-    out = capsys.readouterr().out
-    assert "the rotation check moved the scan-detector rotation from 180.0° to 0.0°" in out
 
 
 @pytest.mark.parametrize("lock", [["C12_nm"], None])
@@ -233,7 +280,7 @@ def test_holding_c12_at_zero_still_fits_the_defocus(lock):
     settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
                     detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=0.0)
     with SSB(frames, **settings) as session:
-        fitted = session.find_aberrations(num_trials=40, search_ranges={"C12_nm": 0.0}, refine_lock=lock,
+        fitted = session.find_aberrations(tilt=False, num_trials=40, search_ranges={"C12_nm": 0.0}, refine_lock=lock,
                                           check_rotation=False, verbose=False)
     assert fitted.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.5)
     assert fitted.aberrations["C12_nm"] == 0.0 and fitted.aberrations["phi12_deg"] == 0.0

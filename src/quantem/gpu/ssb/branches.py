@@ -1,0 +1,364 @@
+"""Settle the 180-degree branch of an estimated scan-detector rotation from two independent SSB fits.
+
+The centre-of-mass curl fixes the scan-detector rotation only modulo 180 degrees: the angle and the angle plus 180
+degrees reverse every CoM vector and both leave the field curl-free. SSB fits both angles independently, with the same
+settings, and reconstructs each fit's phase at the native scan sampling. The two phases are close to negatives of each
+other, so one decision chooses the branch:
+
+1. Atomic columns are located on the dark-field image of the same scan. Dark field is incoherent, so the column
+   positions are the same on both branches. Atoms push the electron phase forward, so on the right branch the phase
+   at the columns is positive. The test is decisive when the mean column phase is at least ``COLUMN_Z_MIN`` standard
+   errors from zero on either branch, and the branch with the more positive columns is kept.
+2. When neither branch resolves columns, the phase tail decides: the branch with the larger mean-centred third-moment
+   ratio ``phase_skewness`` (a few bright columns over a flatter background) is kept.
+"""
+
+import math
+from dataclasses import dataclass, field
+from typing import Literal
+
+import numpy as np
+
+from quantem.gpu.ssb.results import host_array, phase_skewness
+
+# Dark field from just outside the bright-field disk to the detector edge, in units of the bright-field radius.
+DARK_FIELD_INNER_RADIUS = 1.1
+# Column detection on the dark-field image: a 1-pixel gaussian against shot noise, a high pass that subtracts a
+# gaussian of COLUMN_HIGH_PASS_A (thickness and support-film variations are slower than a column spacing), local maxima
+# over a COLUMN_NEIGHBOURHOOD_A window (about one column width) above the COLUMN_PERCENTILE of the high-passed image.
+# The window and the high pass are physical lengths, converted with the scan step: at 0.264 Å a 5 x 5 window and an
+# 8-pixel high pass.
+COLUMN_SMOOTHING_PX = 1.0
+COLUMN_HIGH_PASS_A = 2.1
+COLUMN_NEIGHBOURHOOD_A = 1.3
+COLUMN_PERCENTILE = 80.0
+# Standard errors of the mean column phase from zero that make the column test decisive.
+COLUMN_Z_MIN = 3.0
+
+KEPT_COLOR = "#29243e"
+OTHER_COLOR = "#cc4b42"
+
+
+def column_filter_px(scan_sampling_A) -> tuple[tuple[float, float], tuple[int, int]]:
+    """The high-pass gaussian sigma and the local-maximum window, (row, col) in scan pixels, for one scan step."""
+    rows, cols = (float(value) for value in np.broadcast_to(np.asarray(scan_sampling_A, dtype=float), (2,)))
+    sigma = (COLUMN_HIGH_PASS_A / rows, COLUMN_HIGH_PASS_A / cols)
+    # the odd window nearest to the physical length, at least 3 pixels
+    window = tuple(max(3, 2 * round((COLUMN_NEIGHBOURHOOD_A / step - 1.0) / 2.0) + 1) for step in (rows, cols))
+    return sigma, window
+
+
+def _high_pass(image: np.ndarray, sigma_px) -> np.ndarray:
+    from scipy.ndimage import gaussian_filter
+
+    return image - gaussian_filter(image, sigma_px)
+
+
+def locate_atomic_columns(dark_field, *, scan_sampling_A) -> np.ndarray:
+    """Positions of atomic columns on a dark-field image, as an ``(n, 2)`` array of (row, col) scan pixels.
+
+    The image is smoothed by a 1-pixel gaussian, high-passed by subtracting a gaussian of ``COLUMN_HIGH_PASS_A``
+    (2.1 Å), and the columns are the local maxima over a ``COLUMN_NEIGHBOURHOOD_A`` (1.3 Å) window above the 80th
+    percentile of the high-passed image. A featureless image has no columns.
+
+    Examples
+    --------
+    >>> columns = locate_atomic_columns(detector.df(data), scan_sampling_A=0.264)  # doctest: +SKIP
+    """
+    from scipy.ndimage import gaussian_filter, maximum_filter
+
+    image = host_array(dark_field).astype(np.float64)
+    if image.ndim != 2 or not np.isfinite(image).all():
+        raise ValueError("The dark-field image must be one finite 2D scan image.")
+    sigma, window = column_filter_px(scan_sampling_A)
+    smoothed = gaussian_filter(image, COLUMN_SMOOTHING_PX)
+    filtered = _high_pass(smoothed, sigma)
+    threshold = np.percentile(filtered, COLUMN_PERCENTILE)
+    peaks = (filtered == maximum_filter(filtered, size=window)) & (filtered > threshold)
+    return np.argwhere(peaks).astype(np.int32)
+
+
+def column_phase_test(phase, columns, *, scan_sampling_A) -> tuple[np.ndarray, float | None, float | None]:
+    """The high-passed phase at atomic columns, its z score and the fraction of positive columns.
+
+    ``p = phase - mean(phase)``, high-passed by subtracting a gaussian of ``COLUMN_HIGH_PASS_A``, is sampled at
+    ``columns``; ``z = mean(p) / (std(p) / sqrt(n))``. Fewer than three columns, or no spread among them, give
+    ``z = None``.
+    """
+    values = host_array(phase).astype(np.float64)
+    sigma, _ = column_filter_px(scan_sampling_A)
+    filtered = _high_pass(values - values.mean(), sigma)
+    columns = np.asarray(columns, dtype=np.int64).reshape(-1, 2)
+    sampled = filtered[columns[:, 0], columns[:, 1]]
+    if sampled.size < 3:
+        return sampled, None, None
+    spread = float(np.std(sampled))
+    if not spread > 0.0:
+        return sampled, None, float(np.mean(sampled > 0))
+    return sampled, float(np.mean(sampled) / (spread / math.sqrt(sampled.size))), float(np.mean(sampled > 0))
+
+
+def _signed(value: float | None, digits: int) -> str:
+    """A signed number with a typographic minus, as the announcements and figures print it."""
+    return "n/a" if value is None else f"{value:+.{digits}f}".replace("-", "−")
+
+
+@dataclass
+class RotationBranch:
+    """One independent fit on one 180-degree branch of the scan-detector rotation.
+
+    Attributes
+    ----------
+    scan_detector_rotation_deg : float
+        The rotation of this fit, in [0, 360).
+    aberrations : dict[str, float]
+        Fitted ``C10_nm``, ``C12_nm`` (nm) and ``phi12_deg`` (degrees).
+    loss : float | None
+        The fit's loss.
+    phase_skewness : float
+        Mean-centred third-moment ratio of the native phase (``phase_skewness``): positive for bright columns.
+    column_z : float | None
+        Mean high-passed phase at the dark-field columns in standard errors (None when no columns were located).
+    column_positive_fraction : float | None
+        Fraction of the columns with positive high-passed phase.
+    phase : numpy.ndarray
+        The fit's native-sampling phase in radians.
+    column_phases : numpy.ndarray | None
+        The high-passed phase at each column, in radians.
+    sample_tilt_mrad, depth_spread_nm
+        The joint fit's tilt and depth spread; None for a standard fit.
+    """
+    scan_detector_rotation_deg: float
+    aberrations: dict[str, float]
+    loss: float | None
+    phase_skewness: float
+    column_z: float | None
+    column_positive_fraction: float | None
+    phase: np.ndarray = field(repr=False)
+    column_phases: np.ndarray | None = field(default=None, repr=False)
+    sample_tilt_mrad: tuple[float, float] | None = None
+    depth_spread_nm: float | None = None
+
+
+@dataclass
+class RotationBranches:
+    """Both 180-degree branches of an estimated rotation, fitted independently, and the branch kept.
+
+    Returned by ``SSB.compare_rotation_branches`` and recorded on the fit as ``result.rotation_branches``.
+
+    Attributes
+    ----------
+    branches : tuple[RotationBranch, RotationBranch]
+        The session's rotation first, then that rotation plus 180 degrees.
+    columns : numpy.ndarray | None
+        (row, col) scan pixels of the atomic columns located on the dark-field image, or None without one.
+    chosen : int
+        Index of the branch the evidence selects.
+    kept : int
+        Index of the branch the session holds; the chosen one unless a given rotation was kept.
+    decided_by : {"columns", "phase_tail"}
+        ``"columns"`` when the column test was decisive on either branch, else ``"phase_tail"`` (``phase_skewness``).
+    """
+    branches: tuple[RotationBranch, RotationBranch]
+    columns: np.ndarray | None
+    chosen: int
+    kept: int
+    decided_by: Literal["columns", "phase_tail"]
+
+    @property
+    def chosen_rotation_deg(self) -> float:
+        """The rotation the evidence selects, in degrees."""
+        return self.branches[self.chosen].scan_detector_rotation_deg
+
+    @property
+    def kept_rotation_deg(self) -> float:
+        """The rotation the session holds after the comparison, in degrees."""
+        return self.branches[self.kept].scan_detector_rotation_deg
+
+    @property
+    def num_columns(self) -> int:
+        """Number of atomic columns located on the dark-field image."""
+        return 0 if self.columns is None else len(self.columns)
+
+    @property
+    def summary(self) -> str:
+        """One line: the branch kept and the test that decided it."""
+        chosen, other = self.branches[self.chosen], self.branches[1 - self.chosen]
+        if self.decided_by == "columns":
+            evidence = (f"atomic columns positive (z {_signed(chosen.column_z, 1)}, "
+                        f"{chosen.column_positive_fraction:.0%} of {self.num_columns} columns); "
+                        f"{other.scan_detector_rotation_deg:.1f}° "
+                        + ("negative" if (other.column_z or 0.0) < 0 else f"z {_signed(other.column_z, 1)}"))
+            choice = f"{chosen.scan_detector_rotation_deg:.1f}°: {evidence}"
+        else:
+            reason = (f"columns not resolved (z {_signed(chosen.column_z, 1)})" if self.num_columns else
+                      "no atomic columns located on a dark-field image")
+            choice = (f"{chosen.scan_detector_rotation_deg:.1f}° by the phase tail "
+                      f"(S {_signed(chosen.phase_skewness, 2)} over {_signed(other.phase_skewness, 2)}); {reason}")
+        if self.kept == self.chosen:
+            return f"kept {choice}."
+        return f"kept the given {self.kept_rotation_deg:.1f}°; the evidence selects {choice}."
+
+    def __repr__(self) -> str:
+        return f"RotationBranches({self.summary})"
+
+    def report(self):
+        """Both branches as a table: fitted aberrations, loss, column test and phase tail, and the branch kept."""
+        import pandas as pd
+
+        rows = []
+        for index, branch in enumerate(self.branches):
+            row = {
+                "C10 (nm)": branch.aberrations.get("C10_nm"),
+                "C12 (nm)": branch.aberrations.get("C12_nm"),
+                "phi12 (deg)": branch.aberrations.get("phi12_deg", 0.0),
+            }
+            if branch.sample_tilt_mrad is not None:
+                row.update({"tilt row (mrad)": branch.sample_tilt_mrad[0], "tilt col (mrad)": branch.sample_tilt_mrad[1],
+                            "depth spread (nm)": branch.depth_spread_nm})
+            row.update({
+                "loss": branch.loss,
+                "column z": branch.column_z,
+                "positive columns (%)": None if branch.column_positive_fraction is None
+                else 100.0 * branch.column_positive_fraction,
+                "phase tail S": branch.phase_skewness,
+                "kept": "yes" if index == self.kept else "",
+            })
+            rows.append(row)
+        index = pd.Index([f"{branch.scan_detector_rotation_deg:.2f}°" for branch in self.branches],
+                         name=f"Rotation (decided by {'atomic columns' if self.decided_by == 'columns' else 'phase tail'}"
+                              f"{f', {self.num_columns} columns' if self.num_columns else ''})")
+        table = pd.DataFrame(rows, index=index)
+        return table.round({name: 3 for name in table.columns if name not in ("loss", "kept")}).round({"loss": 7})
+
+    def show(self, *, axsize: tuple[float, float] = (5.0, 3.4)):
+        """The evidence as two panels: the phase tails (left) and the phase at the atomic columns (right).
+
+        Left: each branch's mean-subtracted phase as the fraction of pixels per bin, on identical symmetric bins and a
+        log axis; bins with no pixels are left out. Right: the high-passed phase at the dark-field columns, as the
+        fraction of columns per bin. The kept branch is solid, the other dashed; phase in mrad. Plotting only.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            Closed, so a bare notebook expression renders it once.
+
+        Examples
+        --------
+        >>> ssb.compare_rotation_branches().show()  # doctest: +SKIP
+        """
+        import matplotlib.pyplot as plt
+
+        figure, (tail_axis, column_axis) = plt.subplots(1, 2, figsize=(2 * axsize[0], axsize[1]))
+        order = (self.kept, 1 - self.kept)
+        styles = {self.kept: {"color": KEPT_COLOR, "linestyle": "-"}, 1 - self.kept: {"color": OTHER_COLOR, "linestyle": "--"}}
+
+        centred = [branch.phase.astype(np.float64) - branch.phase.astype(np.float64).mean() for branch in self.branches]
+        limit = max(float(np.max(np.abs(values))) for values in centred) or 1.0
+        edges = np.linspace(-limit, limit, 102)
+        centres = 1e3 * (edges[1:] + edges[:-1]) / 2.0
+        for index in order:
+            fractions = np.histogram(centred[index], bins=edges)[0] / centred[index].size
+            branch = self.branches[index]
+            tail_axis.plot(centres, np.where(fractions > 0, fractions, np.nan), linewidth=1.4, **styles[index],
+                           label=f"{branch.scan_detector_rotation_deg:.1f}° · S = {_signed(branch.phase_skewness, 3)}")
+        tail_axis.axvline(0.0, color="0.5", linewidth=0.6)
+        tail_axis.set(yscale="log", xlim=(-1e3 * limit, 1e3 * limit), xlabel="phase − mean (mrad)",
+                      ylabel="fraction of pixels")
+        tail_axis.legend(frameon=False, fontsize=9, loc="lower left", bbox_to_anchor=(0.0, 1.0))
+
+        sampled = [branch.column_phases for branch in self.branches]
+        if self.num_columns and all(values is not None and values.size for values in sampled):
+            limit = max(float(np.max(np.abs(values))) for values in sampled) or 1.0
+            edges = np.linspace(-limit, limit, 42)
+            centres = 1e3 * (edges[1:] + edges[:-1]) / 2.0
+            for index in order:
+                branch = self.branches[index]
+                fractions = np.histogram(sampled[index], bins=edges)[0] / sampled[index].size
+                column_axis.plot(centres, fractions, linewidth=1.4, drawstyle="steps-mid", **styles[index],
+                                 label=f"{branch.scan_detector_rotation_deg:.1f}° · z = {_signed(branch.column_z, 1)} · "
+                                       f"{branch.column_positive_fraction:.0%} > 0")
+            column_axis.axvline(0.0, color="0.5", linewidth=0.6)
+            column_axis.set(xlim=(-1e3 * limit, 1e3 * limit), ylim=(0, None),
+                            xlabel=f"high-passed phase at {self.num_columns} dark-field columns (mrad)",
+                            ylabel="fraction of columns")
+            column_axis.legend(frameon=False, fontsize=9, loc="lower left", bbox_to_anchor=(0.0, 1.0))
+        else:
+            column_axis.set_axis_off()
+            column_axis.text(0.5, 0.5, "No atomic columns located\non a dark-field image", ha="center", va="center",
+                             transform=column_axis.transAxes, fontsize=10, color="0.3")
+        for axis in (tail_axis, column_axis):
+            axis.spines[["top", "right"]].set_visible(False)
+        figure.tight_layout()
+        plt.close(figure)
+        return figure
+
+    def to_record(self) -> tuple[dict[str, object], dict[str, np.ndarray]]:
+        """The JSON part and the arrays of a saved comparison (``persistence.save_result``)."""
+        record = {
+            "chosen": self.chosen, "kept": self.kept, "decided_by": self.decided_by,
+            "branches": [{
+                "scan_detector_rotation_deg": branch.scan_detector_rotation_deg, "aberrations": branch.aberrations,
+                "loss": branch.loss, "phase_skewness": branch.phase_skewness, "column_z": branch.column_z,
+                "column_positive_fraction": branch.column_positive_fraction,
+                "sample_tilt_mrad": branch.sample_tilt_mrad, "depth_spread_nm": branch.depth_spread_nm,
+            } for branch in self.branches],
+        }
+        arrays = {"rotation_branch_phases": np.stack([branch.phase for branch in self.branches])}
+        if self.columns is not None:
+            arrays["rotation_branch_columns"] = self.columns
+            arrays["rotation_branch_column_phases"] = np.stack([branch.column_phases for branch in self.branches])
+        return record, arrays
+
+    @classmethod
+    def from_record(cls, record: dict[str, object], arrays) -> "RotationBranches":
+        """Rebuild a saved comparison from ``to_record``'s two parts."""
+        columns = np.asarray(arrays["rotation_branch_columns"]) if "rotation_branch_columns" in arrays else None
+        branches = []
+        for index, saved in enumerate(record["branches"]):
+            tilt = saved.get("sample_tilt_mrad")
+            branches.append(RotationBranch(
+                scan_detector_rotation_deg=float(saved["scan_detector_rotation_deg"]),
+                aberrations=dict(saved["aberrations"]), loss=saved["loss"],
+                phase_skewness=float(saved["phase_skewness"]), column_z=saved["column_z"],
+                column_positive_fraction=saved["column_positive_fraction"],
+                phase=np.asarray(arrays["rotation_branch_phases"][index]),
+                column_phases=None if columns is None else np.asarray(arrays["rotation_branch_column_phases"][index]),
+                sample_tilt_mrad=None if tilt is None else tuple(tilt), depth_spread_nm=saved.get("depth_spread_nm"),
+            ))
+        return cls(branches=tuple(branches), columns=columns, chosen=int(record["chosen"]), kept=int(record["kept"]),
+                   decided_by=record["decided_by"])
+
+
+def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> RotationBranches:
+    """Score two fits (the session's rotation first, then plus 180 degrees) and choose the branch.
+
+    ``fits`` are SSB results whose phase is the native-sampling reconstruction. ``dark_field`` is the same scan's
+    dark-field image, or None when the session has none; then, or when the column test is not decisive on either
+    branch, the larger ``phase_skewness`` decides. ``keep_first`` keeps the first branch whatever the evidence says
+    (a rotation the user gave), and the result still says which branch the evidence selects.
+    """
+    phases = [host_array(fit.phase).astype(np.float32) for fit in fits]
+    columns = None
+    if dark_field is not None and np.shape(dark_field) == phases[0].shape:
+        columns = locate_atomic_columns(dark_field, scan_sampling_A=scan_sampling_A)
+    branches = []
+    for fit, phase in zip(fits, phases, strict=True):
+        sampled, z, positive = (None, None, None) if columns is None else column_phase_test(
+            phase, columns, scan_sampling_A=scan_sampling_A)
+        branches.append(RotationBranch(
+            scan_detector_rotation_deg=float(fit.scan_detector_rotation_deg), aberrations=dict(fit.aberrations),
+            loss=None if fit.loss is None else float(fit.loss), phase_skewness=phase_skewness(phase),
+            column_z=z, column_positive_fraction=positive, phase=phase,
+            column_phases=None if sampled is None else sampled.astype(np.float32),
+            sample_tilt_mrad=fit.sample_tilt_mrad, depth_spread_nm=fit.depth_spread_nm,
+        ))
+    scores = [branch.column_z for branch in branches]
+    if any(z is not None and abs(z) >= COLUMN_Z_MIN for z in scores):
+        decided_by = "columns"
+        chosen = int(np.argmax([-math.inf if z is None else z for z in scores]))
+    else:
+        decided_by = "phase_tail"
+        chosen = 0 if branches[0].phase_skewness >= branches[1].phase_skewness else 1
+    return RotationBranches(branches=tuple(branches), columns=columns, chosen=chosen,
+                            kept=0 if keep_first else chosen, decided_by=decided_by)
