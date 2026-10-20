@@ -38,6 +38,6 @@ class ParallaxResult:
         if self.aberrations:
             lines.append(f"  C10:          {self.aberrations['C10_nm']:.3f} nm")
             lines.append(f"  C12:          {self.aberrations['C12_nm']:.3f} nm")
-            lines.append(f"  phi12:        {self.aberrations['phi12_deg']:.2f} deg")
-            lines.append(f"  Rotation:     {self.scan_detector_rotation_deg:.2f} deg")
+            lines.append(f"  phi12:        {self.aberrations['phi12_deg']:.2f}°")
+            lines.append(f"  Rotation:     {self.scan_detector_rotation_deg:.2f}°")
         return "\n".join(lines)

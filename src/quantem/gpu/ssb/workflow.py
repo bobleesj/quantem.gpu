@@ -147,8 +147,8 @@ def _bright_field_center_of_mass(frames: "MpsBfColumnFrames") -> tuple[np.ndarra
 
 def _announce_rotation(angle_deg: float, flipped: bool) -> None:
     """The one line a session prints when it estimated the rotation itself."""
-    print(f"SSB: scan-detector rotation {angle_deg:.1f} deg, rotation flipped: {'yes' if flipped else 'no'} "
-          "(estimated from the centre-of-mass curl; find_aberrations settles the 180 deg choice).")
+    print(f"SSB: scan-detector rotation {angle_deg:.1f}°, rotation flipped: {'yes' if flipped else 'no'} "
+          "(estimated from the centre-of-mass curl; find_aberrations settles the 180° choice).")
 
 
 def _source_calibration(
