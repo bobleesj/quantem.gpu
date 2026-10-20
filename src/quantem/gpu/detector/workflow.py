@@ -20,6 +20,7 @@ are refitted on every call, and an explicit ``bright_field_center_px`` or
 radius affects only that call. No detector binning is applied on any backend.
 """
 
+import math
 from weakref import WeakKeyDictionary
 
 import numpy as np
@@ -112,6 +113,80 @@ def fit_probe(data) -> tuple[tuple[float, float], float]:
     center_row = float((rows * disk).sum() / area)
     center_col = float((cols * disk).sum() / area)
     return (center_row, center_col), float(np.sqrt(area / np.pi))
+
+
+def disk_edge_radius(mean_pattern: np.ndarray) -> float:
+    """Return the radius in detector pixels at which the bright-field disk falls to half its plateau intensity.
+
+    The disk is the image of the probe-forming aperture, so this radius corresponds to the convergence semiangle and
+    calibrates the detector: ``detector_sampling_mrad = semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel. A
+    symmetric blur of the aperture edge (detector point spread, partial coherence) leaves the half-intensity contour
+    at the geometric edge, while a higher threshold moves it inward. The plateau is the median of the pixels above
+    mean + std (the disk ``detector.fit_probe`` finds), and the radius is that of a disk with the area of the pixels
+    above half of it, which resolves the edge below one pixel. On abTEM 4D-STEM with a known detector sampling this is
+    within 0.4 % of the truth; on a 300 kV, 30 mrad Arina acquisition it gives 0.552 mrad per pixel, the measured
+    calibration of that camera length (docs/maintainer/2026-10-05-ssb-detector-sampling.md).
+
+    Parameters
+    ----------
+    mean_pattern : numpy.ndarray
+        Mean diffraction pattern of the full detector, (row, col).
+
+    Returns
+    -------
+    float
+        Equivalent-area radius of the half-plateau disk, in detector pixels.
+
+    Raises
+    ------
+    ValueError
+        When no pixel stands above mean + std, so the pattern has no disk to calibrate on.
+
+    Examples
+    --------
+    >>> radius_px = detector.disk_edge_radius(detector.mean(data))
+    """
+    pattern = np.asarray(mean_pattern, dtype=np.float64)
+    disk = pattern > pattern.mean() + pattern.std()
+    if not disk.any():
+        raise ValueError(
+            "The mean diffraction pattern has no bright-field disk to calibrate the detector on; "
+            "pass detector_sampling_mrad (mrad per detector pixel)."
+        )
+    half_plateau = 0.5 * float(np.median(pattern[disk]))
+    return math.sqrt(np.count_nonzero(pattern > half_plateau) / math.pi)
+
+
+def detector_sampling_mrad(mean_pattern: np.ndarray, semiangle_mrad: float) -> tuple[float, float]:
+    """Detector sampling in mrad per pixel, (row, col), from the bright-field disk and the convergence semiangle.
+
+    The bright-field disk is the image of the probe-forming aperture, so its edge sits at the convergence semiangle:
+    ``semiangle_mrad / disk_edge_radius(mean_pattern)`` mrad per pixel on both axes. This is the rule SSB, parallax and
+    screening apply when no detector sampling is recorded or given; call it rather than another radius rule, which
+    can differ by several percent.
+
+    Parameters
+    ----------
+    mean_pattern : numpy.ndarray
+        Mean diffraction pattern of the full detector, (row, col), for example ``detector.mean(data)``.
+    semiangle_mrad : float
+        Probe convergence semiangle in mrad; finite and positive.
+
+    Returns
+    -------
+    tuple[float, float]
+        Detector sampling in mrad per pixel, (row, col); equal axes.
+
+    Examples
+    --------
+    >>> detector.detector_sampling_mrad(detector.mean(data), semiangle_mrad=30)
+    (0.552..., 0.552...)
+    """
+    semiangle = float(semiangle_mrad)
+    if not (math.isfinite(semiangle) and semiangle > 0):
+        raise ValueError(f"semiangle_mrad must be finite and positive; got {semiangle_mrad!r}.")
+    sampling = semiangle / disk_edge_radius(mean_pattern)
+    return (sampling, sampling)
 
 
 def detector_mask(center_px, inner_radius_px, outer_radius_px, detector_shape, *, dtype=np.float32) -> np.ndarray:

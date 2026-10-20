@@ -51,7 +51,8 @@ constrain the fit: `search_ranges`, `fixed_aberrations`, `tilt=True`, `seed`.
 mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`
 divided by the radius in detector pixels at which the bright-field disk of the
 full-detector mean pattern falls to half its plateau
-(`quantem.gpu.ssb.brightfield.disk_edge_radius`): the disk edge is the image of
+(`quantem.gpu.detector.detector_sampling_mrad(mean_pattern, semiangle_mrad)`,
+which divides by `detector.disk_edge_radius`): the disk edge is the image of
 the aperture at the convergence semiangle. In `SSB(data, bright_field_center_px=..., bright_field_radius_px=...)`, disk geometry uses
 the input detector grid. The session adjusts the center if it takes a
 bright-field crop.

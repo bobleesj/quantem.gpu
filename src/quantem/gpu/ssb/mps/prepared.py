@@ -13,7 +13,8 @@ import numpy as np
 from quantem.gpu.detector import fit_probe
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.ssb.brightfield import BrightfieldDisk, disk_edge_radius
+from quantem.gpu.detector import disk_edge_radius
+from quantem.gpu.ssb.brightfield import BrightfieldDisk
 from quantem.gpu.ssb.mps.frames import (
     ArrayFrames,
     MpsBfColumnFrames,
