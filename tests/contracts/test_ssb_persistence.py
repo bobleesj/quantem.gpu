@@ -378,6 +378,14 @@ def test_engine_written_fit_reads_back_and_replaces_an_earlier_block(tmp_path):
     config.write_text(json.dumps(written))
     write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
     assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
+    # quantem.live's 180-degree decision on the earlier fit does not survive a new one: beside a new rotation it said
+    # this fit had been moved to the other branch
+    written = json.loads(config.read_text())
+    written["computed"]["ssb"].update(column_sign=-0.4, session_moved_180=True, rotation_disagrees=False,
+                                      session_rotation={"scan_detector_rotation_deg": 20.0})
+    config.write_text(json.dumps(written))
+    write_fit_metadata(tmp_path, settings, result, (0.55, 0.56))
+    assert json.loads(config.read_text())["computed"]["ssb"] == {**block, "ran_at": "2026-10-11T12:00:00"}
 
 
 def test_session_opened_on_exact_columns_holds_the_detector_sampling_its_fit_block_needs(tmp_path, monkeypatch):
