@@ -36,6 +36,11 @@ from quantem.gpu.ssb.mps.prepared import (
 )
 
 _DIAGNOSTIC_BF_TILE = 256
+# Bright-field pixels per row IFFT of a 512 x 512 loss chunk outside a cancellable preview. None keeps the whole
+# chunk (4096 pixels and 8.6 GB on Macs with 96 GB or more), which MLX's cache then keeps between slider releases.
+# A size routes the chunk through the tiled path of a cancellable preview: the same reduction boundaries and float32
+# order, so the same loss and phase bits, with one tile of row IFFT at a time (1024: 2.1 GB, about 4 % slower).
+LOSS_ROW_IFFT_TILE_BF: int | None = None
 
 
 def reconstruct_prepared(
@@ -103,12 +108,13 @@ def reconstruct_prepared(
             and not compute_object
             and (prepared.alpha_k2 is None or thick is not None)
         )
-        if (use_fused_row and prepared.scan_shape == (512, 512)
-                and compute_loss and is_cancellable()):
+        tiled = is_cancellable() or (LOSS_ROW_IFFT_TILE_BF is not None and stop - start > LOSS_ROW_IFFT_TILE_BF)
+        if use_fused_row and prepared.scan_shape == (512, 512) and compute_loss and tiled:
             chunk_sum, chunk_sumsq = _cancellable_512_loss_chunk(
                 prepared, start=start, stop=stop, c10=c10_values, c12=c12_values,
                 cos2phi12=cos2phi12_values, sin2phi12=sin2phi12_values,
                 phase_col_k_bf=phase_col_k_bf, thick=thick,
+                tile_bf=_DIAGNOSTIC_BF_TILE if is_cancellable() else LOSS_ROW_IFFT_TILE_BF,
             )
         elif use_fused_row:
             if prepared.scan_shape == (512, 512):
@@ -260,12 +266,16 @@ def reconstruct_prepared(
 
 def _cancellable_512_loss_chunk(
     prepared, *, start, stop, c10, c12, cos2phi12, sin2phi12, phase_col_k_bf, thick,
+    tile_bf=_DIAGNOSTIC_BF_TILE,
 ):
     """Tile independent BF groups without changing any reduction boundary.
 
     A diagnostic can yield between completed row/column FFT batches. Partial
     groups retain their original order and are joined before the unchanged
     reduction, so neither BF coverage nor float32 accumulation changes.
+    ``tile_bf`` pixels go through one row IFFT, and each tile is evaluated
+    before the next is built: left lazy, MLX holds every tile's row IFFT at
+    once, as much memory as the whole chunk.
     """
     mx = prepared.mx
     sums, squares = [], []
@@ -273,9 +283,9 @@ def _cancellable_512_loss_chunk(
         group_stop = min(group + phase_col_k_bf, stop)
         partial = mx.zeros((1, 1, 512, 512), dtype=mx.float32)
         partial_sq = mx.zeros_like(partial)
-        for first in range(group, group_stop, _DIAGNOSTIC_BF_TILE):
+        for first in range(group, group_stop, tile_bf):
             checkpoint()
-            last = min(first + _DIAGNOSTIC_BF_TILE, group_stop)
+            last = min(first + tile_bf, group_stop)
             row_ifft, active_bf = row_ifft512_from_dynamic_geometry(
                 prepared, start=first, stop=last,
                 c10=c10, c12=c12, cos2phi12=cos2phi12, sin2phi12=sin2phi12,

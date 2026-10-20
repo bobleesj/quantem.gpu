@@ -148,3 +148,28 @@ def test_resident_session_keeps_the_crop_encoded_and_its_identity():
         ssb.close()
     finally:
         loaded.close()
+
+
+def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
+    """LOSS_ROW_IFFT_TILE_BF sends a 512 x 512 loss chunk through the tiled route: the same loss and phase bits."""
+    from quantem.gpu import SSB
+    from quantem.gpu.ssb.mps import reconstruct
+
+    rng = np.random.default_rng(3)
+    rows, cols = np.mgrid[:16, :16]
+    disk = np.hypot(rows - 7.6, cols - 8.2) <= 5.4
+    counts = (rng.integers(0, 4, (512, 512, 16, 16)) + disk * rng.integers(100, 400, (512, 512, 16, 16))).astype(np.uint16)
+    loaded = _resident(counts, np.ones((16, 16), bool))
+    try:
+        ssb = SSB(loaded, backend="mps", voltage_kV=300, semiangle_mrad=24, scan_sampling_A=0.5,
+                  detector_sampling_mrad=4.0, scan_detector_rotation_deg=17.0)
+        aberrations = {"C10_nm": -4.0, "C12_nm": 1.2, "phi12_deg": 23.0}
+        tilted = dict(sample_tilt_mrad=(0.4, -1.1), depth_spread_nm=6.0)
+        whole = [ssb.preview(aberrations, compute_loss=True), ssb.preview(aberrations, compute_loss=True, **tilted)]
+        monkeypatch.setattr(reconstruct, "LOSS_ROW_IFFT_TILE_BF", 16)
+        tiles = [ssb.preview(aberrations, compute_loss=True), ssb.preview(aberrations, compute_loss=True, **tilted)]
+        for (phase_whole, loss_whole), (phase_tiles, loss_tiles) in zip(whole, tiles):
+            assert np.array_equal(phase_tiles, phase_whole) and loss_tiles == loss_whole
+        ssb.close()
+    finally:
+        loaded.close()
