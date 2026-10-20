@@ -80,7 +80,7 @@ def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
         },
     )
 
-    oriented = geometry.rotate_scan(loaded, angle_degrees=case["angle_degrees"])
+    oriented = geometry.rotate_scan(loaded, display_rotation_deg=case["angle_degrees"])
 
     np.testing.assert_array_equal(oriented.data, _gold_expected(case))
     assert oriented.shape == oriented.data.shape
@@ -91,7 +91,7 @@ def test_rotate_scan_orients_a_loaded_90_degree_acquisition() -> None:
     assert oriented.metadata["scan_shape"] == tuple(case["output_shape"][:2])
     assert oriented.metadata["scan_sampling_A"] == (0.5, 0.25)
     assert oriented.metadata["scan_rotation_history"][-1] == {
-        "angle_degrees": -90.0,
+        "display_rotation_deg": -90.0,
         "interpolation": "exact",
         "output_shape": "full",
         "source_scan_shape": (3, 5),
@@ -105,7 +105,7 @@ def test_rotate_scan_arbitrary_angle_matches_bilinear_reference() -> None:
 
     rotated, valid = geometry.rotate_scan(
         raw,
-        angle_degrees=angle_degrees,
+        display_rotation_deg=angle_degrees,
         output_shape="same",
         return_valid_mask=True,
     )
@@ -124,7 +124,7 @@ def test_rotate_scan_preserves_torch_residency_and_counts() -> None:
     case = cases[1]
     raw = torch.as_tensor(raw_np)
 
-    rotated = geometry.rotate_scan(raw, angle_degrees=case["angle_degrees"])
+    rotated = geometry.rotate_scan(raw, display_rotation_deg=case["angle_degrees"])
 
     torch.testing.assert_close(rotated, torch.as_tensor(_gold_expected(case)))
     assert rotated.device == raw.device
@@ -140,7 +140,7 @@ def test_rotate_scan_mps_matches_shared_gold() -> None:
     raw = torch.as_tensor(raw_np, device="mps")
 
     for case in cases:
-        rotated = geometry.rotate_scan(raw, angle_degrees=case["angle_degrees"])
+        rotated = geometry.rotate_scan(raw, display_rotation_deg=case["angle_degrees"])
         expected = torch.as_tensor(_gold_expected(case), device="mps")
         torch.testing.assert_close(rotated, expected)
         assert rotated.device.type == "mps"
@@ -155,7 +155,7 @@ def test_rotate_scan_torch_cuda_matches_shared_gold() -> None:
     raw = torch.as_tensor(raw_np, device="cuda")
 
     for case in cases:
-        rotated = geometry.rotate_scan(raw, angle_degrees=case["angle_degrees"])
+        rotated = geometry.rotate_scan(raw, display_rotation_deg=case["angle_degrees"])
         expected = torch.as_tensor(_gold_expected(case), device="cuda")
         torch.testing.assert_close(rotated, expected)
         assert rotated.device.type == "cuda"
@@ -177,14 +177,14 @@ def test_rotate_scan_cuda_matches_reference() -> None:
     raw = cp.asarray(raw_np)
 
     for case in cases:
-        exact = geometry.rotate_scan(raw, angle_degrees=case["angle_degrees"])
+        exact = geometry.rotate_scan(raw, display_rotation_deg=case["angle_degrees"])
         np.testing.assert_array_equal(cp.asnumpy(exact), _gold_expected(case))
 
     arbitrary_np = _indexed_4dstem(scan_shape=(6, 7), detector_shape=(3, 4))
     arbitrary_source = cp.asarray(arbitrary_np)
     arbitrary = geometry.rotate_scan(
         arbitrary_source,
-        angle_degrees=17.0,
+        display_rotation_deg=17.0,
         output_shape="same",
     )
 
@@ -252,7 +252,7 @@ def test_rotate_scan_rotates_an_encoded_acquisition_exactly(tmp_path) -> None:
         rotated.close()
         with io.load(tmp_path / "rotated.qem", backend="cuda", verbose=False) as reopened:
             np.testing.assert_array_equal(reopened.read().cpu().numpy(), oriented)
-            assert reopened.metadata["scan_rotation_history"][-1]["angle_degrees"] == -90.0
+            assert reopened.metadata["scan_rotation_history"][-1]["display_rotation_deg"] == -90.0
         np.testing.assert_array_equal(loaded.read().cpu().numpy(), counts)
 
 

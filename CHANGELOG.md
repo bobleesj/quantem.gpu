@@ -36,6 +36,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- `geometry.rotate_scan(data, angle_degrees)` takes `display_rotation_deg`,
+  the name of a display-only rotation, and records it under that key in
+  `metadata["scan_rotation_history"]`.
+
 - `scan_sampling_A` (and `detector_sampling_mrad`) may be one number for
   both axes at every entry point: `SSB(...)`, `SSB.open(...)`,
   `SSB.reconstruct_series(...)`, `parallax.run(...)` and

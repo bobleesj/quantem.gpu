@@ -18,7 +18,7 @@ OutputShape = Literal["full", "same"]
 
 def rotate_scan(
     data,
-    angle_degrees: float,
+    display_rotation_deg: float,
     *,
     output_shape: OutputShape = "full",
     interpolation: Interpolation = "auto",
@@ -43,7 +43,7 @@ def rotate_scan(
         A 4D NumPy, CuPy, or Torch array ordered as ``(scan_row, scan_col,
         detector_row, detector_col)``, or a ``Dataset4dstemGPU`` returned by
         :func:`quantem.gpu.io.load`.
-    angle_degrees
+    display_rotation_deg
         Counterclockwise rotation in the displayed scan plane.
     output_shape
         ``"full"`` preserves the rotated field. ``"same"`` keeps the input
@@ -89,19 +89,19 @@ def rotate_scan(
 
     >>> from quantem.gpu import geometry, io
     >>> raw_90 = io.load("scan_90_master.h5")
-    >>> oriented_90 = geometry.rotate_scan(raw_90, angle_degrees=-90)
+    >>> oriented_90 = geometry.rotate_scan(raw_90, display_rotation_deg=-90)
     """
-    if isinstance(angle_degrees, (bool, np.bool_)):
-        raise TypeError("angle_degrees must be a finite number, not bool.")
+    if isinstance(display_rotation_deg, (bool, np.bool_)):
+        raise TypeError("display_rotation_deg must be a finite number, not bool.")
     try:
-        angle = float(angle_degrees)
+        angle = float(display_rotation_deg)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"angle_degrees must be a finite number; got {angle_degrees!r}."
+            f"display_rotation_deg must be a finite number; got {display_rotation_deg!r}."
         ) from exc
     if not math.isfinite(angle):
         raise ValueError(
-            f"angle_degrees must be a finite number; got {angle_degrees!r}."
+            f"display_rotation_deg must be a finite number; got {display_rotation_deg!r}."
         )
     if output_shape not in {"full", "same"}:
         raise ValueError(
@@ -162,7 +162,7 @@ def rotate_scan(
         history = list(metadata.get("scan_rotation_history", ()))
         history.append(
             {
-                "angle_degrees": angle,
+                "display_rotation_deg": angle,
                 "interpolation": resolved_interpolation,
                 "output_shape": output_shape,
                 "source_scan_shape": tuple(int(value) for value in array.shape[:2]),
