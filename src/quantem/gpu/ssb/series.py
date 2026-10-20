@@ -569,3 +569,84 @@ def _dataset_yaml_settings(
         "scan_sampling_A": None if step is None else step[0],
         "scan_detector_rotation_deg": dataset_yaml.scan_detector_rotation_deg(document, entry),
     }
+
+
+def screen_record_settings(record: str | Path) -> dict[str, object]:
+    """The ``SSB.open`` keywords a QuantEM Live screening record holds for its acquisition's stored SSB fit.
+
+    ``record`` is one acquisition's screening folder (``<output>/live/screen/<dataset>``) or its ``config.json``.
+    The keywords are everything the fit used: the beam (``voltage_kV``, ``semiangle_mrad``), ``scan_sampling_A`` and
+    ``detector_sampling_mrad`` as ``(row, col)`` pairs, the physical ``scan_detector_rotation_deg`` with
+    ``scan_detector_rotation_flipped``, the bright-field centre and radius, and the fitted ``aberrations``
+    (``C10_nm``, ``C12_nm``, ``phi12_deg``). Opening with all of them reproduces the fit's geometry; opening with
+    the rotation alone (``series.open_settings``) let the session derive another detector sampling and disk.
+
+    Raises
+    ------
+    ValueError
+        The record holds no fit of the current schema (``stored_fit``), or a value the fit needs is missing.
+
+    Examples
+    --------
+    >>> screen_record_settings("OUT/live/screen/scan_018")["scan_detector_rotation_deg"]  # doctest: +SKIP
+    159.78
+    """
+    path = Path(record).expanduser()
+    config_path = path if path.name == "config.json" else path / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    fit = stored_fit(config)
+    if not fit:
+        raise ValueError(f"{config_path} holds no SSB fit of schema {FIT_SCHEMA!r}; screen it again with QuantEM Live.")
+    required = ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad", "aberrations",
+                "scan_detector_rotation_deg")
+    missing = [name for name in required if fit.get(name) is None]
+    if missing:
+        raise ValueError(f"{config_path}: the stored SSB fit has no {', '.join(missing)}.")
+    center = fit.get("bright_field_center_px")
+    radius = fit.get("bright_field_radius_px")
+    return {
+        "voltage_kV": float(fit["voltage_kV"]),
+        "semiangle_mrad": float(fit["semiangle_mrad"]),
+        "scan_sampling_A": tuple(float(value) for value in fit["scan_sampling_A"]),
+        "detector_sampling_mrad": tuple(float(value) for value in fit["detector_sampling_mrad"]),
+        "aberrations": validate_aberrations(fit["aberrations"]),
+        "scan_detector_rotation_deg": float(fit["scan_detector_rotation_deg"]),
+        "scan_detector_rotation_flipped": bool(fit.get("scan_detector_rotation_flipped", False)),
+        "bright_field_center_px": None if center is None else tuple(float(value) for value in center),
+        "bright_field_radius_px": None if radius is None else float(radius),
+    }
+
+
+def open_screen_record(
+    record: str | Path,
+    *,
+    source: str | Path | None = None,
+    backend: Literal["auto", "cuda", "mps"] = "auto",
+    verbose: bool = False,
+):
+    """Open an ``SSB`` session on a QuantEM Live screened acquisition, at its stored fit (``screen_record_settings``).
+
+    The bridge from a microscope session to the notebook: the screening record names the raw source
+    (``source_master``) and every calibration of its fit, so the session opens with the fitted aberrations, the
+    physical rotation and its flip, the bright-field disk and the detector and scan sampling, and ``ssb.show()``
+    opens ShowPtycho there. Pass ``source`` when the raw file has moved.
+
+    Examples
+    --------
+    >>> from quantem.gpu.ssb.series import open_screen_record  # doctest: +SKIP
+    >>> ssb = open_screen_record("OUT/live/screen/scan_018")  # doctest: +SKIP
+    >>> ssb.reconstruct()  # doctest: +SKIP
+    >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
+    """
+    from quantem.gpu.ssb.workflow import SSB
+
+    path = Path(record).expanduser()
+    config_path = path if path.name == "config.json" else path / "config.json"
+    settings = screen_record_settings(config_path)
+    if source is None:
+        source = json.loads(config_path.read_text(encoding="utf-8")).get("source_master")
+        if not source:
+            raise ValueError(f"{config_path} names no source_master; pass source=.")
+    if not Path(source).exists():
+        raise FileNotFoundError(f"Raw source {source} of {config_path} not found; pass source= where it now is.")
+    return SSB.open(str(source), backend=backend, verbose=verbose, **settings)

@@ -721,3 +721,41 @@ def test_mps_fit_calibration_restores_exact_export_brightfield(tmp_path) -> None
         source.parent,
         fit_calibration,
     )
+
+
+def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypatch) -> None:
+    """A Live screening record reopens with its fit's aberrations, rotation and flip, disk and both samplings.
+
+    ``series.open_settings`` passed only the beam, step, rotation and radius, so the session derived its own detector
+    sampling and disk centre and dropped the aberrations.
+    """
+    import pytest
+
+    from quantem.gpu import SSB
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.ssb.series import open_screen_record, screen_record_settings
+
+    source = tmp_path / "scan_018_master.h5"
+    source.write_bytes(b"raw")
+    record = tmp_path / "out" / "live" / "screen" / "scan_018"
+    record.mkdir(parents=True)
+    fit = {"schema": FIT_SCHEMA, "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
+           "detector_sampling_mrad": [0.552, 0.552], "aberrations": {"C10_nm": 15.77, "C12_nm": 6.7, "phi12_deg": 17.5},
+           "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": True,
+           "bright_field_center_px": [95.5, 96.25], "bright_field_radius_px": 53.4}
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "source_master": str(source),
+                                                     "computed": {"ssb": fit}}))
+    opened = []
+    monkeypatch.setattr(SSB, "open", classmethod(lambda cls, path, **kwargs: opened.append((path, kwargs)) or "session"))
+
+    assert open_screen_record(record) == "session"
+    path, kwargs = opened[0]
+    assert path == str(source)
+    assert kwargs == {"backend": "auto", "verbose": False, **screen_record_settings(record)}
+    assert (kwargs["scan_detector_rotation_deg"], kwargs["scan_detector_rotation_flipped"]) == (339.78, True)
+    assert (kwargs["detector_sampling_mrad"], kwargs["bright_field_center_px"], kwargs["bright_field_radius_px"]) == (
+        (0.552, 0.552), (95.5, 96.25), 53.4)
+    assert kwargs["aberrations"]["C10_nm"] == 15.77
+    (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {}}}))
+    with pytest.raises(ValueError, match="holds no SSB fit"):
+        open_screen_record(record)
