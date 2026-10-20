@@ -38,6 +38,10 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- On MPS, a coefficient pinned in `search_ranges` (one number, such as
+  `{"C12_nm": 0.0, "phi12_deg": 0.0}`) keeps that value in the result and its
+  reconstruction, as on CUDA; the result reported the search's start
+  (C12 5 nm, phi12 0°) instead.
 - `SSB.open` on MPS prints one line when it reads exported bright-field
   columns that were binned on the detector, naming the export and how to fit
   native detector pixels; it used them silently.

@@ -59,6 +59,9 @@ def optimize(
     if aberrations:
         start.update({name: float(value) for name, value in aberrations.items() if name in start})
     ranges = _ranges_from_start(start, search_ranges)
+    # a pinned coefficient (one number, or a range of zero width) is the start, every trial and the result's value,
+    # as on CUDA; without this the result kept the start (C12 5 nm, phi12 0) for a coefficient the search never moved
+    start.update(_pinned(ranges))
     trials: list[dict] = []
 
     def evaluate(C10: float, C12: float, phi12: float) -> float:
@@ -281,6 +284,18 @@ def _ranges_from_start(
         "C12_A": (0.0, 100.0),
         "phi12_deg": (-90.0, 90.0),
     }
+
+
+def _pinned(ranges: dict) -> dict[str, float]:
+    """The coefficients ``ranges`` holds at one value, in the engine's keys and units (Angstrom, radians)."""
+    pinned = {}
+    for key, name in (("C10_A", "C10"), ("C12_A", "C12"), ("phi12_deg", "phi12")):
+        value = ranges.get(key)
+        if isinstance(value, (tuple, list)) and len(value) == 2 and float(value[0]) == float(value[1]):
+            value = value[0]
+        if value is not None and not isinstance(value, (tuple, list)):
+            pinned[name] = math.radians(float(value)) if key == "phi12_deg" else float(value)
+    return pinned
 
 
 def _suggest_or_fixed(trial, ranges: dict, key: str, default: float) -> float:
