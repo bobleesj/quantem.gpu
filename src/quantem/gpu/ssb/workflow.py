@@ -1664,6 +1664,7 @@ class SSB:
                 and cached.depth_spread_nm == depth
                 and (not compute_loss or cached.loss is not None)):
             return cached
+        evidence = self._rotation_evidence(correction, coefs, tilt, depth)
         if estimator == "complex_wave":
             result = self._in_detector_frame(result_from_engine(self._backend().reconstruct_result(
                 aberrations_to_engine(coefs), compute_loss=compute_loss,
@@ -1672,6 +1673,8 @@ class SSB:
             result.amplitude_estimated = True
             result.phase_clim = correction.phase_limits if correction is not None else None
             result.fit_scan_region = correction.fit_scan_region if correction is not None else None
+            for name, value in evidence.items():
+                setattr(result, name, value)
             result = self._accept_result(result)
             if paths is not None and signature is not None:
                 result = self._save_result(result, paths=paths, signature=signature)
@@ -1692,6 +1695,7 @@ class SSB:
             phase_estimator=estimator, amplitude_estimated=False,
             phase_clim=correction.phase_limits if correction is not None else None,
             fit_scan_region=correction.fit_scan_region if correction is not None else None,
+            **evidence,
         )
         result = self._accept_result(result)
         if paths is not None and signature is not None:
@@ -1699,6 +1703,24 @@ class SSB:
             if verbose:
                 print(f"SSB result saved to {paths[0]}")
         return result
+
+    def _rotation_evidence(self, correction: SSBResult | None, coefs: dict[str, float], tilt, depth) -> dict[str, object]:
+        """The rotation check of the fit a reconstruction applies, for its result: column signs, the suggested rotation
+        and the two phases compared.
+
+        The fit is ``correction``, else the session's latest ``find_aberrations``. Its evidence describes its own
+        aberrations, sample geometry and rotation, so it is carried only when the reconstruction uses exactly those;
+        changed coefficients reconstruct another image, and the result then states no check.
+        """
+        fit = self._aberration_search if correction is None else correction
+        if fit is None or fit.column_sign is None:
+            return {}
+        if (fit.scan_detector_rotation_deg != self.scan_detector_rotation_deg
+                or validate_aberrations(dict(fit.aberrations), higher_order=True) != coefs
+                or fit.sample_tilt_mrad != tilt or fit.depth_spread_nm != depth):
+            return {}
+        return {name: getattr(fit, name) for name in
+                ("column_sign", "initial_scan_detector_rotation_deg", "initial_column_sign", "rotation_check_phases")}
 
     @_on_scan_gpu
     def preview(

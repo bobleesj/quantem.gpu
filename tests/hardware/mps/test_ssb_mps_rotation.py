@@ -98,3 +98,35 @@ def test_rotation_check_keeps_astigmatism_on_the_opposite_branch():
     assert checked.aberrations["phi12_deg"] == pytest.approx(direct.aberrations["phi12_deg"], abs=1.0)
     assert checked.aberrations["C10_nm"] == pytest.approx(direct.aberrations["C10_nm"], abs=0.05)
     assert checked.loss <= direct.loss * (1.0 + 1e-3)
+
+
+def test_reconstruct_keeps_the_rotation_check_of_the_fit_it_applies():
+    """reconstruct() after a fit that moved the branch reports the check, as the fit does.
+
+    Before 2026-10-20 reconstruct() built a new result with no column sign, no suggested rotation and no checked
+    phases: report() had no "Suggested rotation" column and show("rotation") raised.
+    """
+    pytest.importorskip("mlx.core")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal()
+    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(0.25, 0.25),
+                    detector_sampling_mrad=(detector_mrad, detector_mrad), scan_detector_rotation_deg=180.0)
+    with SSB(frames, **settings) as session:
+        fitted = session.find_aberrations(num_trials=40, verbose=False)
+        assert fitted.initial_scan_detector_rotation_deg == 180.0 and fitted.scan_detector_rotation_deg == 0.0
+        for result in (session.reconstruct(), session.reconstruct(fitted, upsampling_factor=2)):
+            assert result.column_sign == fitted.column_sign
+            assert result.initial_scan_detector_rotation_deg == 180.0
+            assert result.initial_column_sign == fitted.initial_column_sign
+            np.testing.assert_array_equal(result.rotation_check_phases, fitted.rotation_check_phases)
+            assert result.report().loc["standard SSB", "Suggested rotation (deg)"] == 180.0
+            result.show("rotation")
+        changed = session.reconstruct(aberrations={"C10_nm": fitted.aberrations["C10_nm"] + 1.0})
+        assert changed.column_sign is None and changed.initial_scan_detector_rotation_deg is None
+    with SSB(frames, **settings) as fresh:
+        auto = fresh.reconstruct()
+        assert auto.initial_scan_detector_rotation_deg == 180.0 and auto.column_sign is not None
