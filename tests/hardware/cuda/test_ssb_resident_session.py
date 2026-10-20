@@ -77,7 +77,7 @@ def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp
         again = second.find_aberrations(**settings)
     assert not fitted.reused and again.reused
     assert again.aberrations == fitted.aberrations and again.sample_tilt_mrad == fitted.sample_tilt_mrad
-    assert fitted.tilt_fit_gain is None and fitted.refine_method == "newton"
+    assert fitted.tilt_fit_gain is None and fitted.refinement == "newton"
     with SSB(acquisition, scan_region=(0, 64, 0, 64), **SETTINGS) as region:
         assert not region.find_aberrations(**settings).reused      # a region is other data
 

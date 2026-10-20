@@ -38,8 +38,11 @@ FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 # record belongs to quantem.live: this is the schema of the record its reader accepts, and it takes no other. It
 # is written here only when SSB.reconstruct_series creates the record, and required of a record that exists.
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
-# The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature.
-RESULT_SCHEMA = f"quantem.ssb-result/{SCHEMA}"
+# The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
+# SCHEMA and adds the result record's own layout changes:
+# 8: the result field refine_method is refinement, the name of the find_aberrations keyword it records.
+RESULT_VERSION = 8
+RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 
 
 _ARTIFACT_FIELDS = {"object_wave", "rotation_check_phases", "reused", "saved_path", "metadata", "parameter_slices"}
@@ -96,7 +99,12 @@ def load_result(
         return None
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if metadata.get("schema") != RESULT_SCHEMA or metadata.get("signature") != signature:
+        found = metadata.get("schema")
+        if found != RESULT_SCHEMA:
+            print(f"SSB: {metadata_path.name} in {metadata_path.parent} is a {found!r} record; this version reads "
+                  f"{RESULT_SCHEMA!r} only, so the result is computed again and replaces it.")
+            return None
+        if metadata.get("signature") != signature:
             return None
         saved = dict(metadata["result"])
         saved.setdefault("parameter_slices", metadata.get("parameter_slices"))

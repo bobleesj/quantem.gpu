@@ -1933,7 +1933,7 @@ class SSB:
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
                          elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
-                         refine_method=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                         refinement=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          object_sampling_A=self.scan_sampling_A)
 
     def _unit_wave(self, phase):

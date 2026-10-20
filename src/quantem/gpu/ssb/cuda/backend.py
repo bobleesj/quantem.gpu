@@ -328,7 +328,7 @@ class CudaSSBBackend:
             elapsed_s=elapsed_s if elapsed_s > 0 else None,
             num_trials=self._num_trials,
             num_bright_field_pixels=len(self.bf_inds_row),
-            refine_method=self._refine_method,
+            refinement=self._refine_method,
             refine_nfev=self._refine_nfev,
             refine_elapsed_s=self._elapsed_refine if self._elapsed_refine > 0 else None,
             voltage_kV=self.voltage_kV,

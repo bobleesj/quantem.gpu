@@ -30,7 +30,7 @@ class _Backend:
             timings={"fit": 2.0, "reconstruct": 0.5},
             num_trials=trials,
             num_bright_field_pixels=17,
-            refine_method=settings["refinement"],
+            refinement=settings["refinement"],
             refine_nfev=23,
             refine_elapsed_s=0.4,
             voltage_kV=300.0,
@@ -325,7 +325,7 @@ def test_cuda_reuse_restores_object_wave_to_cuda(tmp_path, monkeypatch) -> None:
 
 def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     """A stored fit counts only with the current schema marker; any other block reads as no fit, without an error."""
-    from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA, SCHEMA
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA, RESULT_SCHEMA, RESULT_VERSION, SCHEMA
     from quantem.gpu.ssb.series import saved_fit, stored_fit
 
     aberrations = {"C10_nm": 10.0, "C12_nm": 2.0, "phi12_deg": math.degrees(0.3)}
@@ -341,7 +341,7 @@ def test_stored_fit_without_the_current_schema_is_no_fit(tmp_path):
     record = tmp_path / "ssb-fit" / "ssb-find_aberrations.json"
     record.parent.mkdir()
     # the saved result carries a schema string too; the earlier bare number, old or current, is no longer a match
-    for marker in (SCHEMA - 1, SCHEMA, f"quantem.ssb-result/{SCHEMA - 1}"):
+    for marker in (SCHEMA - 1, SCHEMA, f"quantem.ssb-result/{RESULT_VERSION - 1}"):
         record.write_text(json.dumps({"schema": marker, "result": block}))
         assert saved_fit(tmp_path) is None
     record.write_text(json.dumps({"schema": RESULT_SCHEMA, "result": block}))
@@ -606,7 +606,7 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
     explicit = _session(monkeypatch, source, backend).find_aberrations(
         refinement=method, **settings,
     )
-    assert first.refine_method == method
+    assert first.refinement == method
     assert first.num_trials == 200
     assert explicit.reused
     assert explicit.metadata["signature"]["settings"]["refinement"] == method
@@ -618,7 +618,7 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
             refinement="nelder-mead", **settings,
         )
         assert not changed.reused
-        assert changed.refine_method == "nelder-mead"
+        assert changed.refinement == "nelder-mead"
         assert joint_calls[-1]["polish"] == "nelder-mead"
     else:
         assert backend.fit_calls == 1
@@ -626,7 +626,7 @@ def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypat
         refinement=None, **settings,
     )
     assert not unrefined.reused
-    assert unrefined.refine_method is None
+    assert unrefined.refinement is None
     if tilt:
         assert joint_calls[-1]["polish_starts"] == 0
 
@@ -672,3 +672,17 @@ def test_save_dir_is_a_results_directory_and_refuses_a_file_name(tmp_path):
     for name in ("fit.npz", "fit.JSON"):
         with pytest.raises(ValueError, match="save_dir names a results directory.*save_dir='fit'"):
             result_paths(tmp_path / name, "find_aberrations")
+
+
+def test_a_result_record_of_an_earlier_schema_is_refused_with_one_line(tmp_path, capsys):
+    """quantem.ssb-result/7 named refinement refine_method; /8 reads only its own layout and says so."""
+    from quantem.gpu.ssb.persistence import RESULT_SCHEMA, load_result, result_paths
+
+    assert RESULT_SCHEMA == "quantem.ssb-result/8"
+    paths = result_paths(tmp_path / "fit", "find_aberrations")
+    paths[0].parent.mkdir()
+    np.savez(paths[0], object_wave=np.ones((2, 2), np.complex64))
+    paths[1].write_text(json.dumps({"schema": "quantem.ssb-result/7", "signature": {}, "result": {"refine_method": None}}))
+    assert load_result(paths=paths, signature={}, backend="mps") is None
+    out = capsys.readouterr().out
+    assert "'quantem.ssb-result/7' record" in out and "'quantem.ssb-result/8' only" in out

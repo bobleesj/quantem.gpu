@@ -225,7 +225,7 @@ def optimize(
         timings=timings,
         num_trials=int(num_trials),
         num_bright_field_pixels=selection.size,
-        refine_method=refine,
+        refinement=refine,
         refine_nfev=refine_nfev,
         refine_elapsed_s=timings["refinement_seconds"],
         voltage_kV=float(voltage_kV),
