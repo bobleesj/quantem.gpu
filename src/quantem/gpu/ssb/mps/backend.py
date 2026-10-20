@@ -276,9 +276,9 @@ class MpsSSBBackend:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
         higher = dict(higher_order_magnitudes=higher_order_magnitudes,
                       higher_order_angles=higher_order_angles)
-        if compute_loss and phase_estimator == "mean_phase" and upsampling_factor == 1:
-            # The returned native per-BF phase already belongs to this loss;
-            # do not reconstruct it once more before computing the variance.
+
+        def native():
+            """The native mean-phase reconstruction and its search loss; preview reads angles only with magnitudes."""
             if higher_order_magnitudes is not None:
                 return _reconstruct_upsampled(
                     self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
@@ -292,32 +292,18 @@ class MpsSSBBackend:
                                   "depth_spread_A": depth_spread_A}, compute_loss=True,
                 )
             return self.preview(aberrations, compute_loss=True, **higher)
+
+        if compute_loss and phase_estimator == "mean_phase" and upsampling_factor == 1:
+            # The returned native per-BF phase already belongs to this loss;
+            # do not reconstruct it once more before computing the variance.
+            return native()
         phase, _ = _reconstruct_upsampled(
             self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
             thickness=depth_spread_A, upsampling_factor=upsampling_factor,
             phase_estimator=phase_estimator,
             **higher,
         )
-        loss = None
-        if compute_loss:
-            if higher_order_magnitudes is not None:
-                _, loss = _reconstruct_upsampled(
-                    self._prepared, **aberrations, sample_tilt_mrad=sample_tilt_mrad,
-                    thickness=depth_spread_A, upsampling_factor=1,
-                    phase_estimator="mean_phase", compute_loss=True, **higher,
-                )
-            elif depth_spread_A > 0.0:
-                _, loss = self.preview_sample(
-                    aberrations, {"tilt_row_mrad": sample_tilt_mrad[0],
-                                  "tilt_col_mrad": sample_tilt_mrad[1],
-                                  "depth_spread_A": depth_spread_A}, compute_loss=True,
-                )
-            else:
-                _, loss = self.preview(
-                    aberrations, higher_order_magnitudes=None,
-                    higher_order_angles=None, compute_loss=True,
-                )
-        return phase, loss
+        return phase, native()[1] if compute_loss else None
 
     def preview_sample(
         self,
