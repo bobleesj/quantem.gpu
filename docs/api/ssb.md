@@ -98,7 +98,14 @@ the two 180-degree branches records them as `rotation_branches` (a
 `RotationBranches`); `reconstruct()` keeps it on its result whenever it applies
 that fit's coefficients, so `report()` shows the suggested rotation and
 `result.show("rotation")` draws the evidence. Saved results (`save_dir`) are
-`quantem.ssb-result/9` records; a `/8` record is computed again.
+`quantem.ssb-result/10` records; a `/9` record is computed again. A record
+holds no absolute path: it names its source by file name (and its path
+relative to the results folder when the data lives under it), and it is reused
+when the acquisition's portable identity matches
+(`quantem.gpu.ssb.persistence.acquisition_identity`: file name, size and the
+SHA-256 of the first MiB of the master and of each data file, the scan and
+detector shapes, and how flagged pixels were filled). A results folder moved or
+copied with its data is therefore reused; another acquisition is fitted again.
 
 ## Shapes, coordinates, dtypes, and units
 

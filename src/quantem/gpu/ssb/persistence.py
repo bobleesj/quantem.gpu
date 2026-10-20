@@ -41,15 +41,20 @@ FIT_SCHEMA = f"quantem.ssb-fit/{SCHEMA}"
 SCREEN_ACQUISITION_SCHEMA = "quantem.screen-acquisition/2"
 # The same for a saved result record (ssb-find_aberrations.json, ssb-reconstruct.json) and its signature. It follows
 # SCHEMA and adds the result record's own layout changes:
+# 10: the record holds no absolute path, inode, device or time: the source is its portable acquisition_identity, and
+#     input names files relative to the results folder (portable_source), so a moved or copied folder is reused.
 # 9: the rotation check is rotation_branches, both 180-degree branches fitted independently (their aberrations, loss,
 #    column test, phase tail and native phases), replacing column_sign, initial_column_sign,
 #    initial_scan_detector_rotation_deg and rotation_check_phases.
 # 8: the result field refine_method is refinement, the name of the find_aberrations keyword it records.
-RESULT_VERSION = 9
+RESULT_VERSION = 10
 RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 
 
-_ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", "metadata", "parameter_slices"}
+# Not saved in "result": arrays and branches have their own entries, and the session's paths (saved_path, source_path)
+# are its own, not the result's; a reused result takes them from the session that reads it.
+_ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", "source_path", "metadata",
+                    "parameter_slices"}
 
 
 def save_result(
@@ -159,19 +164,105 @@ def result_paths(
     )
 
 
-def source_signature(
+# The "schema" of acquisition_identity(); a saved record whose identity carries another is not matched.
+ACQUISITION_IDENTITY_SCHEMA = "quantem.acquisition-identity/1"
+# Bytes of a file's start that its identity hashes: an HDF5 master's superblock, header and metadata, a .qem
+# header, and enough of any other file to tell two acquisitions apart without reading the whole scan.
+IDENTITY_HEADER_BYTES = 1 << 20
+
+
+def file_identity(path: str | os.PathLike[str]) -> dict[str, object]:
+    """Identify one file by its content, wherever it lives: its name, size and the SHA-256 of its first MiB.
+
+    No path, inode, device or time enters it, so a copied or moved file keeps its identity and a different file
+    of the same name does not share it.
+    """
+    path = Path(path).expanduser()
+    with path.open("rb") as handle:
+        header = handle.read(IDENTITY_HEADER_BYTES)
+    return {
+        "file_name": path.name,
+        "size": path.stat().st_size,
+        "header_sha256": hashlib.sha256(header).hexdigest(),
+        "header_bytes": len(header),
+    }
+
+
+def acquisition_identity(
+    source_path: str | os.PathLike[str],
+    *,
+    scan_shape: tuple[int, int] | None = None,
+    hot_pixel_correction: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """A portable content signature of one acquisition, what a saved, shareable record matches on.
+
+    It is the file's ``file_identity`` (name, size, SHA-256 of its first MiB), the ``file_identity`` of each data file
+    an HDF5 master links (named relative to the master's folder), the scan and detector shapes, and how its flagged
+    detector pixels were held (``hot_pixel_correction``: method, count, whether applied, largest median window).
+    A record saved with it is restored after the data folder is moved or copied, and refused for another
+    acquisition (another size or header) or for the same file with its flagged pixels held differently. It never
+    holds an absolute path, inode, device or modification time.
+
+    Examples
+    --------
+    >>> identity = acquisition_identity("scan_master.h5", hot_pixel_correction=loaded.metadata["hot_pixel_correction"])
+    """
+    path = Path(source_path).expanduser()
+    identity: dict[str, object] = {"schema": ACQUISITION_IDENTITY_SCHEMA, **file_identity(path)}
+    linked, detector_shape = [], None
+    try:
+        inspected = inspect_source(path, scan_shape=scan_shape)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        inspected = None  # a format io.inspect cannot read is still identified by its own bytes
+    if inspected is not None:
+        scan_shape = scan_shape if scan_shape is not None else inspected.scan_shape
+        detector_shape = inspected.detector_shape
+        folder = path.resolve().parent
+        for record in (inspected.source_signature or {}).get("files", ()):
+            other = Path(str(record.get("path", "")))
+            if other.resolve() != path.resolve() and other.is_file():
+                # the start of each data file holds its first compressed frames: two scans with equal metadata differ here
+                linked.append({**file_identity(other), "file_name": Path(os.path.relpath(other.resolve(), folder)).as_posix()})
+    record = hot_pixel_correction or {}
+    identity.update(
+        linked_files=sorted(linked, key=lambda item: item["file_name"]),
+        scan_shape=None if scan_shape is None else [int(value) for value in scan_shape],
+        detector_shape=None if detector_shape is None else [int(value) for value in detector_shape],
+        hot_pixel_correction=None if not record else {
+            name: json_value(record.get(name)) for name in ("method", "pixel_count", "applied", "largest_window_px")},
+    )
+    return identity
+
+
+def portable_source(source_path: str | os.PathLike[str] | None, record_folder: str | os.PathLike[str]) -> dict | None:
+    """Where a shareable record's data is, without an absolute path: its file name, and its path relative to the
+    record's folder when the data lives under that folder (``relative_path``, else None).
+
+    A reader finds the data from the record's own location, so the folder can be moved, copied or shared whole.
+    """
+    if source_path is None:
+        return None
+    source = Path(source_path).expanduser().resolve()
+    folder = Path(record_folder).expanduser().resolve()
+    return {
+        "file_name": source.name,
+        "relative_path": source.relative_to(folder).as_posix() if source.is_relative_to(folder) else None,
+    }
+
+
+def source_identity(
     source_path: str | None,
     *,
     scan_shape: tuple[int, int] | None,
+    hot_pixel_correction: dict[str, object] | None,
     storage_path: str | None,
     calibration_path: str | None,
     manifest_path: str | None,
 ) -> dict[str, object]:
-    """Return the complete identity of an SSB source, so a saved result is reused only for the same source.
+    """Return the complete portable identity of an SSB source, so a saved result is reused only for the same source.
 
-    The detector source is identified by its inspected signature (file size and times when ``io.inspect`` cannot
-    read the format); the storage actually read (exact BF columns), the calibration and the manifest are identified
-    by their paths, sizes and times.
+    The detector source is its ``acquisition_identity``; the storage actually read (exact BF columns), the
+    calibration and the manifest are each their ``file_identity``. No entry holds a path, inode, device or time.
     """
     if source_path is None:
         raise ValueError(
@@ -184,50 +275,31 @@ def source_signature(
             f"Cannot save an SSB result because source_path does not exist: "
             f"{Path(source_path).expanduser()}"
         )
-    try:
-        signature = json_value(inspect_source(source_path, scan_shape=scan_shape).source_signature)
-    except (OSError, RuntimeError, TypeError, ValueError):
-        # formats inspect cannot read are still identified by their file size and times
-        signature = path_signature(source_path)
     storage = None
     if (
         storage_path is not None
         and Path(storage_path).expanduser().resolve()
         != Path(source_path).expanduser().resolve()
     ):
-        storage = path_signature(storage_path)
-    return {
-        "detector": signature,
+        storage = _optional_file_identity(storage_path)
+    return json_value({
+        "detector": acquisition_identity(source_path, scan_shape=scan_shape, hot_pixel_correction=hot_pixel_correction),
         "storage": storage,
-        "calibration": None if calibration_path is None else path_signature(calibration_path),
-        "manifest": None if manifest_path is None else path_signature(manifest_path),
-    }
+        "calibration": None if calibration_path is None else _optional_file_identity(calibration_path),
+        "manifest": None if manifest_path is None else _optional_file_identity(manifest_path),
+    })
 
 
-def path_signature(path: str | Path) -> dict[str, object]:
-    """Describe a source path without reading detector payloads."""
-
-    resolved = Path(path).expanduser().resolve()
-    if not resolved.exists():
-        return {"path": str(resolved), "missing": True}
-
-    paths = [resolved]
-    if resolved.is_dir():
-        paths.extend(sorted(item for item in resolved.rglob("*") if item.is_file()))
-    files = []
-    for item in paths:
-        stat = item.stat()
-        files.append(
-            {
-                "path": str(item),
-                "size": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-                "ctime_ns": stat.st_ctime_ns,
-                "device": stat.st_dev,
-                "inode": stat.st_ino,
-            }
-        )
-    return {"path": str(resolved), "files": files}
+def _optional_file_identity(path: str | Path) -> dict[str, object]:
+    """``file_identity`` of a companion file, or its name marked missing; a folder is identified by its files."""
+    path = Path(path).expanduser()
+    if path.is_file():
+        return file_identity(path)
+    if path.is_dir():
+        return {"file_name": path.name, "files": [
+            {"name": item.relative_to(path).as_posix(), **file_identity(item)}
+            for item in sorted(path.rglob("*")) if item.is_file()]}
+    return {"file_name": path.name, "missing": True}
 
 
 def software_signature() -> dict[str, object]:

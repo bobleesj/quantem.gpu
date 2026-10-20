@@ -41,8 +41,9 @@ from quantem.gpu.ssb.persistence import (
     load_result,
     result_paths,
     save_result,
+    portable_source,
     software_signature,
-    source_signature,
+    source_identity,
 )
 from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.ssb.trials import (
@@ -1031,8 +1032,10 @@ class SSB:
                 "source": (
                     {"detector": self.resident_identity, "storage": None, "calibration": None, "manifest": None}
                     if self.source_path is None and self.resident_identity is not None else
-                    source_signature(
-                        self.source_path, scan_shape=self._scan_shape, storage_path=self.source_storage_path,
+                    source_identity(
+                        self.source_path, scan_shape=self._scan_shape,
+                        hot_pixel_correction=(self.source_provenance or {}).get("hot_pixel_correction"),
+                        storage_path=self.source_storage_path,
                         calibration_path=self.calibration_path, manifest_path=self.source_manifest_path,
                     )
                 ),
@@ -1043,7 +1046,6 @@ class SSB:
                     "shape": tuple(int(value) for value in self._data.shape),
                     "scan_shape": self._scan_shape,
                     "detector_bin": self.source_detector_bin,
-                    "source_provenance": self.source_provenance,
                     **({"scan_region": self.scan_region} if self.scan_region is not None else {}),
                     **({"resident": self.resident_identity} if self.resident_identity is not None else {}),
                 },
@@ -1074,21 +1076,23 @@ class SSB:
     ) -> SSBResult:
         """Persist one result and attach its complete provenance."""
 
+        # a results folder is shared or moved whole: files are named relative to it, never by absolute path
+        folder = paths[0].parent
         return save_result(
             result,
             paths=paths,
             signature=signature,
             input_metadata={
-                "source_path": self.source_path,
-                "source_storage_path": self.source_storage_path,
+                "source": portable_source(self.source_path, folder),
+                "source_storage": portable_source(self.source_storage_path, folder),
                 "source_kind": self.source_kind,
                 "source_dtype": self.source_dtype,
                 "source_bytes": self.source_bytes,
                 "source_detector_bin": self.source_detector_bin,
-                "source_provenance": self.source_provenance,
+                "source_hot_pixel_correction": (self.source_provenance or {}).get("hot_pixel_correction"),
                 "source_load_seconds": self.source_load_seconds,
-                "calibration_path": self.calibration_path,
-                "source_manifest_path": self.source_manifest_path,
+                "calibration": portable_source(self.calibration_path, folder),
+                "source_manifest": portable_source(self.source_manifest_path, folder),
             },
         )
 
