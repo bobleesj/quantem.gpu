@@ -31,9 +31,10 @@ def _median_corrected(raw, pixel_mask):
                     and pixel_mask[rr, cc] == 0
                 ):
                     neighbors.append(raw[..., rr, cc])
-        expected[..., row, column] = np.median(
+        # np.round rounds a .5 median half to even, as the fill does
+        expected[..., row, column] = np.round(np.median(
             np.stack(neighbors, axis=-1), axis=-1
-        ).astype(raw.dtype)
+        )).astype(raw.dtype)
     return expected
 
 

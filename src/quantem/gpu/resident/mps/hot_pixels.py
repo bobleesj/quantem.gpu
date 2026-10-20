@@ -12,7 +12,7 @@ from quantem.gpu.device.metal_runtime import (
     release_buffer,
     upload_shared,
 )
-from quantem.gpu.resident.hot_pixels import hot_pixel_record
+from quantem.gpu.resident.hot_pixels import hot_pixel_record, median_plan
 
 _SOURCE = (Path(__file__).with_name("kernels") / "hot_pixels.msl").read_text()
 
@@ -24,18 +24,19 @@ class MPSHotPixelCorrector:
         self.mask = None if pixel_mask is None else np.asarray(pixel_mask)
         self.method = method
         self.record = hot_pixel_record(self.mask, method, backend="mps")
-        self.valid = self.bad = None
+        self.offsets = self.neighbors = self.bad = None
         if self.record["applied"]:
-            valid = self.mask == 0
-            self.valid = upload_shared(valid.astype(np.uint8).reshape(-1), "hot-pixel valid mask")
-            self.bad = upload_shared(np.flatnonzero(~valid).astype(np.int32), "hot-pixel coordinates")
+            plan = median_plan(self.mask)
+            self.offsets = upload_shared(plan.offsets, "hot-pixel neighbor offsets")
+            self.neighbors = upload_shared(plan.neighbors, "hot-pixel neighbors")
+            self.bad = upload_shared(plan.bad, "hot-pixel coordinates")
 
     def apply(self, values) -> None:
         """Correct one Metal ``(scan, detector_row, detector_col)`` batch.
 
-        Explicit correction retains the native count dtype. The median reads
-        only valid neighbors, so a 0xFFFFFFFF flagged uint32 pixel never enters
-        a replacement value.
+        Correction retains the native count dtype. The median reads only the
+        planned valid neighbors (``median_plan``), so a 0xFFFFFFFF flagged
+        uint32 pixel never enters a replacement value.
         """
         if not self.record["applied"]:
             return
@@ -60,9 +61,9 @@ class MPSHotPixelCorrector:
         command = metal_queue().commandBuffer()
         encoder = command.computeCommandEncoder()
         encoder.setComputePipelineState_(pipeline)
-        for index, buffer in enumerate((values._mtl, self.valid, self.bad)):
+        for index, buffer in enumerate((values._mtl, self.offsets, self.neighbors, self.bad)):
             encoder.setBuffer_offset_atIndex_(buffer, 0, index)
-        encoder.setBytes_length_atIndex_(parameters.tobytes(), parameters.nbytes, 3)
+        encoder.setBytes_length_atIndex_(parameters.tobytes(), parameters.nbytes, 4)
         encoder.dispatchThreads_threadsPerThreadgroup_(
             metal.MTLSizeMake(total, 1, 1),
             metal.MTLSizeMake(128, 1, 1),
@@ -72,6 +73,6 @@ class MPSHotPixelCorrector:
 
     def close(self) -> None:
         """Release the mask buffers; PyObjC never frees them on collection."""
-        release_buffer(self.valid)
-        release_buffer(self.bad)
-        self.valid = self.bad = None
+        for buffer in (self.offsets, self.neighbors, self.bad):
+            release_buffer(buffer)
+        self.offsets = self.neighbors = self.bad = None

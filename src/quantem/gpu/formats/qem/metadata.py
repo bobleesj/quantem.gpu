@@ -55,8 +55,10 @@ NOT_RETAINED = frozenset((
 MAPED_RECORDS = {"maped_merge": "quantem_maped_merge_v1", "maped_summary": "quantem_maped_summary_v1"}
 # The retained hot_pixel_correction record carries this under "schema"; a record with another
 # value, or none, is the same as no record.
+# 3: a median fill rounds half to even (it rounded down) and grows its window past 3 x 3 until a valid
+#    neighbor exists (it wrote 0); largest_window_px replaces kernel_size.
 # 2: the pixel list is coordinates_row_col (coordinates_row_column in the unnamed version 1).
-HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/2"
+HOT_PIXEL_SCHEMA = "quantem.hot-pixel-correction/3"
 # The provenance of a calibration override: a value set by hand, or the detector sampling
 # ``data.calibration.fit_detector_sampling()`` fitted on the bright-field disk.
 USER_OVERRIDE = "user_override"
