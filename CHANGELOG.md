@@ -109,7 +109,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 - `scan_sampling_A` (and `detector_sampling_mrad`) may be one number for
   both axes at every entry point: `SSB(...)`, `SSB.open(...)`,
   `SSB.reconstruct_series(...)`, `parallax.run(...)` and
-  `optics.physics.ssb_upsampling_factor(...)`, as `data.calibration` already
+  `optics.ssb_upsampling_factor(...)`, as `data.calibration` already
   allowed. Sessions and records still store and report the `(row, col)` pair.
 
 - `SSBResult.refine_method` is renamed `refinement`, the name of the

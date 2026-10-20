@@ -25,9 +25,9 @@ limitations before interpreting a result.
 | `io` | Discovery, loading, indexing, inspection, saving | [I/O](io.md) |
 | `detector`, `dpc` | Detector geometry, images, and phase gradients | [Detectors and DPC](images_dpc.md) |
 | `device` | Detect or explicitly select an accelerator | [Device APIs](core.md) |
-| `optics` | Relativistic electron wavelength | [Optics APIs](core.md) |
+| `optics` | Relativistic electron wavelength, interaction parameter, SSB output sampling | [Optics APIs](core.md) |
 | `parallax` | Parallax reconstruction | [Parallax](core.md) |
-| `geometry` | Scan-plane rotation of an acquisition | [Scan rotation](core.md) |
+| `geometry` | Scan-plane rotation of an acquisition; scan/detector tilt frames and rotations modulo 180° | [Scan rotation](core.md) |
 | `screening` | Reuse derived products for application integration | [Screening](core.md) |
 | `display`, `movie` | Display math and export | [Movies](movie.md), [display operations](../kernels/display-export.md) |
 

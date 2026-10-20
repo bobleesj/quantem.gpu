@@ -52,7 +52,8 @@ holds `C12_nm=0`:
 `ssb.find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
 It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
-coefficients needs `check_rotation=False`. Assign `ssb.aberrations = {...}` to
+coefficients needs `check_rotation=False`. The joint fit searches depth
+spreads in `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM` (2 to 60 nm). Assign `ssb.aberrations = {...}` to
 state a known calibration, which `reconstruct()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`
@@ -80,8 +81,15 @@ are not included in a detector-viewer loading-time claim.
 `find_aberrations()` returns one `SSBResult`. Its primary field is the complex64
 `object_wave` with shape `(scan_row, scan_column)`. `phase` and `amplitude` are
 derived as `angle(object_wave)` and `abs(object_wave)`. The result also records
-the backend, fitted aberrations, rotation, loss, trial/refinement counts,
-bright-field geometry, timings, reuse state, and provenance metadata.
+the backend, fitted aberrations, rotation, loss, trial counts, the local
+`refinement` applied (`"nelder-mead"`, `"newton"` or None), bright-field
+geometry, timings, reuse state, and provenance metadata. The rotation check
+is `column_sign`, `initial_scan_detector_rotation_deg` (the angle before the
+check) and `initial_column_sign`; `reconstruct()` keeps them on its result
+whenever it applies that fit's coefficients, so `report()` shows the
+suggested rotation and `result.show("rotation")` compares both branches.
+Saved results (`save_dir`) are `quantem.ssb-result/8` records; a `/7` record
+is computed again.
 
 ## Shapes, coordinates, dtypes, and units
 
@@ -472,9 +480,11 @@ Rerun the aberration search for older records; the loader does not guess their u
 - `SSB(data.data, ...)` raises `TypeError`: the encoded storage inside a loaded
   dataset has no bounded read of its own. Pass the dataset, `SSB(data, ...)`, or
   open the file with `SSB.open(path, ...)`.
-- `trials` must be non-negative and `refinement` is `"nelder-mead"` or `None`.
-  With `tilt=True`, at least one trial is required. Use `reconstruct()` to
-  apply known parameters without a search.
+- `num_trials` must be non-negative and `refinement` is `"auto"`,
+  `"nelder-mead"`, `"newton"` (tilt fits) or `None`. With `tilt=True` and
+  `num_trials=0` the session's previous joint fit is refined. Use
+  `reconstruct()`, or assign `ssb.aberrations = {...}`, to apply known
+  parameters without a search.
 - To save results from an in-memory array, provide `source_path` for provenance.
   Direct arrays never reuse results from disk automatically: a path cannot
   identify which crop or edited array the scientist supplied.
@@ -658,6 +668,23 @@ values select acquisition identifiers, not positional array indices. Set
 acquisition independently. The result retains the phase, bright-field and
 dark-field stacks, frame/dataset identifiers, source/results directories,
 backend request, optimizer settings, and per-acquisition records.
+`save_dir` names the folder of per-acquisition records (QuantEM Live's
+`<output>/live/screen`; default `<source>/live/screen`),
+`scan_detector_rotation_flipped` gives the flip (None: the saved fit's, else
+unflipped for a recorded rotation), and an acquisition with no recorded
+rotation is estimated by `SSB.open`. `scan_sampling_A` may be one number.
+
+`quantem.gpu.ssb.series.screen_record_settings(record)` returns the
+`SSB.open` keywords a QuantEM Live screening record's stored fit used (beam,
+`(row, col)` scan and detector sampling, physical rotation and flip,
+bright-field centre and radius, aberrations), and
+`series.open_screen_record(record, source=None, backend="auto")` opens the
+session at that fit, so `ssb.show()` opens ShowPtycho there.
+`quantem.gpu.formats.dataset_yaml.file_entry(document, master)` finds an
+acquisition's `files` entry by QuantEM Live's rules (its master name, a
+`.qem` copy's master, then the trailing number or a range key such as
+`"06-24"` that names no other master), and
+`acquisition_scan_sampling_A(document, master, ...)` resolves its step.
 
 A fit stored in `live/screen/<dataset>/config.json` is read only when its
 `computed.ssb` block carries `"schema": "quantem.ssb-fit/7"`
