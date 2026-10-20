@@ -35,6 +35,7 @@ from quantem.gpu.ssb.brightfield import bright_field_crop_region, crop_bright_fi
 from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
 from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop, MpsBfColumnFrames, find_bf_columns
+from quantem.gpu.ssb.mps.reconstruct import fit_loss_tiles
 from quantem.gpu.ssb.persistence import (
     RESULT_SCHEMA,
     json_value,
@@ -1002,6 +1003,7 @@ class SSB:
         row_start, row_stop, col_start, col_stop = scan_region
         if not (0 <= row_start < row_stop <= shape[0] and 0 <= col_start < col_stop <= shape[1]):
             raise ValueError(f"scan_region={scan_region} is outside the {shape[0]} x {shape[1]} scan.")
+        self._release_cached_buffers()
         options = {
             "backend": self.backend, "voltage_kV": self.voltage_kV,
             "semiangle_mrad": self.semiangle_mrad, "scan_sampling_A": self.scan_sampling_A,
@@ -1232,6 +1234,16 @@ class SSB:
         kept.rotation_branches = branches
         self.set_rotation(kept.scan_detector_rotation_deg)
         return self._accept_result(kept)
+
+    def _release_cached_buffers(self) -> None:
+        """Free this session's G(q, k) and MLX's cache before a region session builds its own G(q, k) and fit.
+
+        On a 512 x 512 scan that is 8.8 GiB of G(q, k) and the loss tile (3.5 GiB) slider previews keep; the region
+        refit then runs beside the encoded data alone. This session's next preview or fit rebuilds G(q, k) with the
+        same bits (``MpsSSBBackend.release_prepared``), about a second on an encoded crop.
+        """
+        if isinstance(self._compute, MpsSSBBackend):
+            self._compute.release_prepared()
 
     def _center_in_data(self) -> tuple[float, float] | None:
         """The bright-field centre in pixels of the array the session holds, which the backends index.
@@ -1689,6 +1701,7 @@ class SSB:
                 radius = detected_radius if radius is None else radius
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = detector.detector_sampling_mrad(mean_pattern, self.semiangle_mrad)
+            self._release_cached_buffers()
             with SSB(
                 self._data if self._streamed is not None else self._data[row_start:row_stop, col_start:col_stop],
                 backend=self.backend, voltage_kV=self.voltage_kV,
@@ -1741,14 +1754,16 @@ class SSB:
                 result.aberrations["phi12_deg"] = 0.0
             return self._accept_result(self._in_detector_frame(result))
 
-        if branches == "off":
-            result = fit()
-            label_trials(result, search=0)
-            result = self._finish_fit(result)
-        else:
-            result = self._fit_both_branches(fit, keep_first=branches == "keep")
-            if verbose:
-                _announce_rotation_branches(result)
+        # the fit's loss and phase evaluations use small row IFFT tiles on MPS (reconstruct.fit_loss_tiles)
+        with fit_loss_tiles() if self.backend == "mps" else nullcontext():
+            if branches == "off":
+                result = fit()
+                label_trials(result, search=0)
+                result = self._finish_fit(result)
+            else:
+                result = self._fit_both_branches(fit, keep_first=branches == "keep")
+                if verbose:
+                    _announce_rotation_branches(result)
         if isinstance(self._compute, MpsSSBBackend):
             # the fits reuse their batch buffers through MLX's allocator cache, across both branches and the phase
             # diagnostic (up to ~20 GB on a 512 x 512 scan); once the fit is done the session keeps only G(q, k)

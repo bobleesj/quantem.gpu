@@ -120,6 +120,10 @@ class MpsSSBBackend:
         self._det_sampling = calibration
         self._scan_detector_rotation_deg = float(scan_detector_rotation_deg)
         self._prepared = None
+        # the rotation G(q, k) was first built at, and whether its geometry was retargeted since: a rebuild after
+        # release_prepared() repeats both, so its stored pixels and geometry are the same bits
+        self._built_rotation_deg = None
+        self._retargeted = False
         self._fit_preview_phase = None
         self._fit_preview_loss = None
         self._fit_preview_aberrations = None
@@ -365,6 +369,17 @@ class MpsSSBBackend:
         """Return MLX's cached, unused Metal buffers to the system; the prepared G(q, k) stays."""
         require_mlx().clear_cache()
 
+    def release_prepared(self) -> None:
+        """Free G(q, k) and MLX's cached buffers; the next preview or fit rebuilds G(q, k) from the source.
+
+        The rebuild reads the same columns in the same chunks at the rotation of the first build and retargets the
+        geometry as the session had, and the fit's final phase stays, so every later result has the same bits. On
+        an encoded MPS crop it decodes the bright-field columns again (about 1 s for 8,939 pixels of a 512 x 512
+        scan).
+        """
+        self._prepared = None
+        require_mlx().clear_cache()
+
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""
 
@@ -397,16 +412,19 @@ class MpsSSBBackend:
         """Prepare the exact selected evidence for one scan rotation."""
 
         scan_detector_rotation_deg = math.degrees(float(scan_detector_rotation_rad))
-        if (
-            self._prepared is not None
-            and abs(scan_detector_rotation_deg - self._scan_detector_rotation_deg) < 1e-9
-        ):
+        unchanged = abs(scan_detector_rotation_deg - self._scan_detector_rotation_deg) < 1e-9
+        if self._prepared is not None and unchanged:
             return
         self._scan_detector_rotation_deg = scan_detector_rotation_deg
-        self._fit_preview_phase = None
-        self._fit_preview_loss = None
-        self._fit_preview_aberrations = None
+        if not unchanged:
+            # the fit's final phase answers the first preview only at the rotation it was fitted at (a rebuild after
+            # release_prepared keeps it)
+            self._fit_preview_phase = None
+            self._fit_preview_loss = None
+            self._fit_preview_aberrations = None
         if self._prepared is None:
+            if self._built_rotation_deg is None:
+                self._built_rotation_deg = self._scan_detector_rotation_deg
             self._prepared = prepare_selection(
                 self._frames,
                 scan_shape=self._scan_shape,
@@ -415,12 +433,20 @@ class MpsSSBBackend:
                 semiangle_mrad=self._semiangle_mrad,
                 scan_sampling=self._scan_sampling,
                 detector_sampling_mrad=self._det_sampling,
-                scan_detector_rotation_deg=self._scan_detector_rotation_deg,
+                scan_detector_rotation_deg=self._built_rotation_deg,
                 chunk_bf=self._setup_chunk_bf,
                 compact_inactive=True,
                 dc_value_override=self._dc_value_override,
             )
+            if self._retargeted or self._built_rotation_deg != self._scan_detector_rotation_deg:
+                self._retargeted = True
+                retarget_prepared_rotation(
+                    self._prepared,
+                    selection=self._selection,
+                    scan_detector_rotation_deg=self._scan_detector_rotation_deg,
+                )
         else:
+            self._retargeted = True
             retarget_prepared_rotation(
                 self._prepared,
                 selection=self._selection,
@@ -619,6 +645,8 @@ class MpsSSBBackend:
         self._bf_source_dtype = dtype
         self._bf_source_max_value = maximum
         self._prepared = None
+        self._built_rotation_deg = None
+        self._retargeted = False
         self._fit_preview_phase = None
         self._fit_preview_loss = None
         self._fit_preview_aberrations = None

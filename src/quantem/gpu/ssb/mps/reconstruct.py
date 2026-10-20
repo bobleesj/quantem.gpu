@@ -1,6 +1,8 @@
 """Phase, loss and object reconstruction on MPS from the prepared state."""
 
 import math
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import numpy as np
 
@@ -43,6 +45,21 @@ _DIAGNOSTIC_BF_TILE = 256
 # 4 % faster loss previews for 6 to 12 GB more resident memory, an opt-in for big Macs. Chunks of 1024 or fewer
 # pixels (Macs below 96 GB) are not split either way.
 LOSS_ROW_IFFT_TILE_BF: int | None = 1024
+# The tile inside find_aberrations: its few loss and phase evaluations (the fit's final loss, both branches' phases)
+# take a negligible share of the fit's time, so they run in quarter-size tiles and the fit keeps 0.5 GB of row IFFT
+# instead of 2.1 GB. The same bits either way.
+FIT_LOSS_ROW_IFFT_TILE_BF: int | None = 256
+_loss_tile_override: ContextVar[int | None] = ContextVar("loss_row_ifft_tile_bf", default=None)
+
+
+@contextmanager
+def fit_loss_tiles():
+    """Run the enclosed loss evaluations with ``FIT_LOSS_ROW_IFFT_TILE_BF`` tiles (``SSB.find_aberrations``)."""
+    token = _loss_tile_override.set(FIT_LOSS_ROW_IFFT_TILE_BF)
+    try:
+        yield
+    finally:
+        _loss_tile_override.reset(token)
 
 
 def reconstruct_prepared(
@@ -110,13 +127,14 @@ def reconstruct_prepared(
             and not compute_object
             and (prepared.alpha_k2 is None or thick is not None)
         )
-        tiled = is_cancellable() or (LOSS_ROW_IFFT_TILE_BF is not None and stop - start > LOSS_ROW_IFFT_TILE_BF)
+        loss_tile = _loss_tile_override.get() or LOSS_ROW_IFFT_TILE_BF
+        tiled = is_cancellable() or (loss_tile is not None and stop - start > loss_tile)
         if use_fused_row and prepared.scan_shape == (512, 512) and compute_loss and tiled:
             chunk_sum, chunk_sumsq = _cancellable_512_loss_chunk(
                 prepared, start=start, stop=stop, c10=c10_values, c12=c12_values,
                 cos2phi12=cos2phi12_values, sin2phi12=sin2phi12_values,
                 phase_col_k_bf=phase_col_k_bf, thick=thick,
-                tile_bf=_DIAGNOSTIC_BF_TILE if is_cancellable() else LOSS_ROW_IFFT_TILE_BF,
+                tile_bf=_DIAGNOSTIC_BF_TILE if is_cancellable() else loss_tile,
             )
         elif use_fused_row:
             if prepared.scan_shape == (512, 512):

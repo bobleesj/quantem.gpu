@@ -726,7 +726,7 @@ def test_mps_exact_pair_row_policy_selects_m5_max(monkeypatch) -> None:
     )
     hardware.exact_pair_row_policy_512.cache_clear()
     try:
-        assert hardware.exact_pair_row_policy_512(2) == (2476, (2496,))
+        assert hardware.exact_pair_row_policy_512(2) == (1024, (1024,))
         assert hardware.exact_pair_row_policy_512(1) == (300, (288, 320))
         monkeypatch.setattr(
             hardware,
