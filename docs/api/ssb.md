@@ -712,13 +712,15 @@ ssb.calibration_table()
 
 The metadata lookup intentionally raises if rotation is missing. Replace it
 with your known calibrated angle; do not silently substitute zero. Omitting
-rotation retains the API's 0-degree starting default, labeled **Default**,
-not a measured calibration.
+rotation estimates it from the centre-of-mass curl, labelled **Estimated
+(centre-of-mass curl)**, not a measured calibration.
 
 `ssb.calibration_table()` returns a DataFrame with **File value**, **File unit**,
 **Value used**, **Unit used**, and **Source**, using the session's current values.
 File values include saved calibration overrides. Source labels are **Recorded**,
-**Overridden** (set on `data.calibration`), **Explicit override**, **Estimated**, and **Default**. Later
+**Overridden** (set on `data.calibration`), **Explicit override**, **Estimated**,
+**Estimated (centre-of-mass curl)** and **Default**, from the one label set of
+`quantem.gpu.io.metadata_display`. Later
 session changes are labeled **Modified in session**. Explicit keywords remain
 overrides even when they equal stored values. Labels describe provenance,
 not validation or confidence. Reading the table does not reconstruct or alter

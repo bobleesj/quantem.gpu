@@ -23,6 +23,7 @@ from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.geometry.frames import opposite_rotation_deg
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io.dataset import Dataset4dstemGPU
+from quantem.gpu.io import metadata_display as labels
 from quantem.gpu.io.metadata_display import calibration_rows
 from quantem.gpu.io.representation import DataRepresentation
 from quantem.gpu.optics.physics import wrap_degrees
@@ -476,30 +477,25 @@ class SSB:
         """
         import pandas as pd
 
-        fields = {
-            "voltage_kV": "Accelerating voltage",
-            "semiangle_mrad": "Convergence semiangle",
-            "scan_sampling_A": "Scan step (row, col)",
-            "detector_sampling_mrad": "Detector step (row, col)",
-            "scan_detector_rotation_deg": "Scan-detector rotation",
-        }
         rows = {}
-        for name, label in fields.items():
+        for name in ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad",
+                     "scan_detector_rotation_deg"):
+            label = labels.CALIBRATION_LABELS[name]
             recorded = self._calibration_file[label]
             value = getattr(self, name)
             source = recorded["Metadata"]
             if name in self._calibration_supplied:
-                source = "Explicit override"
+                source = labels.EXPLICIT_OVERRIDE
             elif name == "scan_detector_rotation_deg":
-                source = {"estimated": "Estimated (centre-of-mass curl)",
-                          "metadata": recorded["Metadata"]}.get(self.scan_detector_rotation_source, "Default")
-            elif source == "Not recorded" or (
-                name == "detector_sampling_mrad" and recorded["Unit"] != "mrad per pixel"
+                source = {"estimated": labels.ESTIMATED_ROTATION,
+                          "metadata": recorded["Metadata"]}.get(self.scan_detector_rotation_source, labels.DEFAULT)
+            elif source == labels.NOT_RECORDED or (
+                name == "detector_sampling_mrad" and recorded["Unit"] != labels.CALIBRATION_UNITS[name]
             ):
-                source = "Estimated"
+                source = labels.ESTIMATED
             initial = self._calibration_initial[name]
             if initial is not None and not np.array_equal(value, initial):
-                source = "Modified in session"
+                source = labels.MODIFIED_IN_SESSION
             if name == "detector_sampling_mrad" and value is None:
                 if self._compute is not None:
                     value = (self._compute._det_sampling if self.backend == "mps"
@@ -507,21 +503,21 @@ class SSB:
                     if self.scan_detector_rotation_flipped:
                         value = value[::-1]
                 else:
-                    value = "Pending probe fit"
+                    value = labels.PENDING_PROBE_FIT
             if isinstance(value, (list, tuple)):
                 value = tuple(value)
             rows[label] = {
                 "File value": recorded["Value"], "File unit": recorded["Unit"],
                 "Value used": value,
-                "Unit used": "mrad per pixel" if name == "detector_sampling_mrad" else recorded["Unit"],
+                "Unit used": labels.CALIBRATION_UNITS[name] if name == "detector_sampling_mrad" else recorded["Unit"],
                 "Source": source,
             }
-        rotation = rows["Scan-detector rotation"]
-        rows["Rotation flipped"] = {
-            "File value": "Not recorded", "File unit": "",
+        rotation = rows[labels.CALIBRATION_LABELS["scan_detector_rotation_deg"]]
+        rows[labels.CALIBRATION_LABELS["scan_detector_rotation_flipped"]] = {
+            "File value": labels.NOT_RECORDED, "File unit": "",
             "Value used": "yes" if self.scan_detector_rotation_flipped else "no", "Unit used": "",
-            "Source": rotation["Source"] if rotation["Source"] != "Modified in session" else (
-                "Explicit override" if "scan_detector_rotation_deg" in self._calibration_supplied else "Default"),
+            "Source": rotation["Source"] if rotation["Source"] != labels.MODIFIED_IN_SESSION else (
+                labels.EXPLICIT_OVERRIDE if "scan_detector_rotation_deg" in self._calibration_supplied else labels.DEFAULT),
         }
         return pd.DataFrame.from_dict(rows, orient="index").rename_axis("SSB launch calibration")
 

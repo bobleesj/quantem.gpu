@@ -22,34 +22,6 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
-def calibration_summary(shape, metadata):
-    """Format recorded, overridden or missing calibration for existing IO views."""
-    import pandas as pd
-
-    scientific = qem_metadata.acquisition_metadata(shape, metadata)
-    recorded = scientific.get("electron_microscope", {})
-    overrides = scientific.get("calibration_overrides", {})
-    axes = scientific["axes"]
-    rows = {}
-    for label, paths, axis_ids in (
-        ("Voltage", ("electron_source/accelerating_voltage",), ()),
-        ("Convergence semiangle", ("illumination_system/semi_convergence_angle",), ()),
-        ("Scan sampling (row, col)", qem_metadata.SCAN_PIXEL_SIZE, (0, 1)),
-        ("Detector sampling (row, col)", qem_metadata.DETECTOR_PIXEL_SIZE, (2, 3)),
-    ):
-        quantities = [overrides.get(path) or recorded.get(path) or (
-            axes[axis_ids[index]].get("sampling") if axis_ids else None
-        ) for index, path in enumerate(paths)]
-        if any(quantity is None for quantity in quantities):
-            rows[label] = ("Missing", "", "Missing")
-            continue
-        values = ", ".join(f"{quantity['value']:.6g}" for quantity in quantities)
-        units = ", ".join(dict.fromkeys(quantity["unit"] for quantity in quantities))
-        state = "Overridden" if any(path in overrides for path in paths) else "Recorded"
-        rows[label] = (values, units, state)
-    return pd.DataFrame.from_dict(rows, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")
-
-
 class Calibration:
     """Microscope calibration of a loaded acquisition, read and set by name.
 
@@ -95,8 +67,14 @@ class Calibration:
         return [*Calibration.FIELDS, "table"]
 
     def table(self) -> "pd.DataFrame":
-        """Value, unit and source (recorded, overridden or missing) of each calibration."""
-        return calibration_summary(self._dataset.shape, self._dataset.metadata)
+        """Value, unit and source (recorded, overridden or not recorded) of each calibration.
+
+        Rows, units and sources are the one label set of ``io.metadata_display`` that ``metadata_table()`` and
+        ``SSB.calibration_table()`` use too.
+        """
+        from quantem.gpu.io.metadata_display import calibration_table
+
+        return calibration_table(self._dataset.metadata)
 
     def __repr__(self) -> str:
         return self.table().to_string()

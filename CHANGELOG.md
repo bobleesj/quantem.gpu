@@ -36,6 +36,17 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- One calibration label set, defined in `quantem.gpu.io.metadata_display`
+  (`CALIBRATION_LABELS`, `CALIBRATION_UNITS` and the source states), names
+  the rows of `data.calibration.table()`, `data.metadata_table()`,
+  `io.inspect` and `SSB.calibration_table()`. `data.calibration.table()`
+  changes: **Voltage** is **Accelerating voltage**, **Scan sampling
+  (row, col)** is **Scan step (row, col)**, **Detector sampling (row, col)**
+  is **Detector step (row, col)**, units read `mrad per pixel` and
+  `1/angstrom per pixel`, values are `(row, col)` tuples and **Missing** is
+  **Not recorded**. A zero or negative physical calibration reads **Not
+  recorded** in every table.
+
 - `geometry.rotate_scan(data, angle_degrees)` takes `display_rotation_deg`,
   the name of a display-only rotation, and records it under that key in
   `metadata["scan_rotation_history"]`.
