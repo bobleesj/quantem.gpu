@@ -483,6 +483,27 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
         assert (prepared.separable_geometry[1]["upper"].size > 0) == (factor == 1)
 
 
+def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
+    """At 2x one thread computes both fine rows of a source row; each output keeps its own arithmetic."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling as up
+
+    rows = np.array([0, 1, 2, 126, 127, 128, 129, 254, 255], np.uint32)
+    pairs = up._alias_row_pairs(rows, 128)
+    assert sorted(pairs[pairs != 0xFFFFFFFF].tolist()) == list(range(len(rows)))
+    assert sorted(tuple(pair) for pair in pairs.tolist()) == [(0, 5), (1, 6), (2, 0xFFFFFFFF), (3, 7), (4, 8)]
+    cases = [({"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}, (0.0, 0.0)),
+             ({"C10_nm": 35.0, "C12_nm": 9.0, "phi12_deg": 75.0}, (-3.0, 2.0))]
+    with _disk_session(detector_sampling=(10.0, 7.0)) as ssb:
+        ssb.set_rotation(165.8)
+        for coefs, tilt in cases:
+            paired, _ = ssb.preview(coefs, upsampling_factor=2, compute_loss=False, sample_tilt_mrad=tilt)
+            with monkeypatch.context() as single:
+                single.setattr(up, "_PAIRED", False)
+                expected, _ = ssb.preview(coefs, upsampling_factor=2, compute_loss=False, sample_tilt_mrad=tilt)
+            np.testing.assert_array_equal(paired.view(np.uint32), expected.view(np.uint32))
+
+
 def test_separable_phasor_tables_reduce_exactly():
     """Each table phasor equals the float64 phase m * P reduced modulo 2 pi."""
     _require_mps()
