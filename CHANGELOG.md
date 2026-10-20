@@ -17,6 +17,9 @@ new `rcN` heading when that rc is published to TestPyPI.
   ShowPtycho when that package is installed. The launch table names each
   rotation's source and adds a **Rotation flipped** row.
 
+- `quantem.gpu.ssb.DEPTH_SPREAD_RANGE_NM = (2.0, 60.0)` is the depth-spread
+  range the joint fit searches and its parameter slices span, for
+  applications that offer the same range.
 - `quantem.gpu.optics` exports `ssb_upsampling_factor`, which other packages
   imported from the private-looking `optics.physics` path.
 - `quantem.gpu.optics.interaction_parameter(voltage_kV)` returns the

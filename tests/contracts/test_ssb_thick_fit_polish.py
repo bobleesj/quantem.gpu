@@ -186,3 +186,16 @@ def test_fixed_optics_coarse_search_and_warm_refinement_keep_same_calibration():
         )
         assert {key: result[key] for key in fixed} == fixed
         assert result['fit'] > .99999
+
+
+def test_the_depth_spread_search_range_is_one_public_constant():
+    """The joint fit, the resident search and the parameter slices search the depth spread over one range."""
+    import inspect
+
+    from quantem.gpu.ssb import DEPTH_SPREAD_RANGE_NM, _resident_search
+    from quantem.gpu.ssb.units import ENGINE_PER_NM
+
+    assert DEPTH_SPREAD_RANGE_NM == (2.0, 60.0)
+    assert thick_sample_fit.DEPTH_SPREAD_RANGE_A == tuple(value * ENGINE_PER_NM for value in DEPTH_SPREAD_RANGE_NM)
+    for function in (thick_sample_fit.fit_sample_search, _resident_search.fit_resident):
+        assert inspect.signature(function).parameters["depth_spread_range_A"].default == thick_sample_fit.DEPTH_SPREAD_RANGE_A
