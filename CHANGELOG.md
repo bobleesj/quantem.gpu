@@ -36,6 +36,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)},
+  fixed_aberrations={"C12_nm": 0.0})` runs: the joint fit takes a `C10_nm`
+  range or value and a `C12_nm` range from 0 or `C12_nm=0`, keeps the
+  rotation check (bounds follow C10's sign onto the other branch), and
+  reports `phi12_deg = 0` when C12 is held at 0. A `phi12_deg` constraint, a
+  nonzero `C12_nm` alone, or `refine_lock` raise with what to pass instead.
 - Assigning `ssb.aberrations = {...}` states known aberrations: the next
   `reconstruct()` applies them instead of fitting again, so a restored or
   calibrated correction is no longer overwritten. `ssb.aberrations = None`

@@ -47,6 +47,13 @@ angle to skip the estimate: `SSB(data, scan_detector_rotation_deg=12.3)`.
 `reconstruct()` fits the aberrations with `find_aberrations()` defaults when the
 session has none, then reuses them. Call `find_aberrations(...)` first to
 constrain the fit: `search_ranges`, `fixed_aberrations`, `tilt=True`, `seed`.
+The joint fit takes a `C10_nm` range or value and a `C12_nm` range from 0, or
+holds `C12_nm=0`:
+`ssb.find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
+It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
+nonzero held `C12_nm` alone raises and names what to pass; holding all three
+coefficients needs `check_rotation=False`. Assign `ssb.aberrations = {...}` to
+state a known calibration, which `reconstruct()` then applies without fitting.
 `detector_sampling_mrad` is detector angular sampling in
 mrad per pixel, `(row, col)`. When it is omitted and absent from metadata, CUDA and MPS both use `semiangle_mrad`
 divided by the radius in detector pixels at which the bright-field disk of the
