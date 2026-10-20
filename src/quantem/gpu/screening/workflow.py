@@ -20,13 +20,15 @@ from quantem.gpu.optics.physics import wrap_degrees
 
 # Carried by the cache metadata under "schema" and, as its number, in the file name; a cache
 # with another value is rebuilt.
+# 7: the iDPC phase of a flipped detector integrates the aligned scan-frame gradient as it is; it swapped it back,
+#    integrating the transposed field.
 # 6: the fitted rotation is the exact minimum of the mean squared curl, no longer the nearest grid angle (the
 #    rotation-step count is gone).
 # 5: retain normalized microscope calibration and the calibrated aperture estimate.
 # 4: the fitted rotation and its flip are scan_detector_rotation_mod180_deg and scan_detector_rotation_flipped; the
 #    fitted disk is bright_field_center_px and bright_field_edge_radius_px (center and radius_px before); the mean
 #    pattern is mean_diffraction_pattern (mean_dp before).
-_CACHE_VERSION = 6
+_CACHE_VERSION = 7
 _CACHE_SCHEMA = f"quantem.screening-cache/{_CACHE_VERSION}"
 _EXACT_COUNT_PRODUCT_FIELDS = (
     "total_intensity",
@@ -118,7 +120,7 @@ def prepare(
         Whether the detector axes are exchanged before the given rotation;
         used only with ``scan_detector_rotation_deg``.
     cache, cache_dir, refresh : bool, str or Path, bool
-        Reuse and save ``<master stem>.screening-v6.npz``, by default in
+        Reuse and save ``<master stem>.screening-v7.npz``, by default in
         ``.quantem_gpu_cache`` beside the master. ``refresh`` rebuilds it.
         A cache is reused only while every source file is unchanged.
     verbose : bool
@@ -406,10 +408,8 @@ def _dpc_phase(
     sine = float(np.sin(angle))
     aligned_row = (cosine * source_row - sine * source_col).astype(np.float32)
     aligned_col = (sine * source_row + cosine * source_col).astype(np.float32)
-    gradient_row, gradient_col = (
-        (aligned_col, aligned_row) if scan_detector_rotation_flipped else (aligned_row, aligned_col)
-    )
-    return integrate(gradient_row, gradient_col)
+    # the aligned field is already the scan-frame gradient, flipped detector or not
+    return integrate(aligned_row, aligned_col)
 
 
 # --- the product cache beside the master ---

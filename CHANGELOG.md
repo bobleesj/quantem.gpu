@@ -38,6 +38,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- `dpc.run` and `screening.prepare` integrate the aligned centre-of-mass
+  field as it is when the detector axes are flipped. They swapped its
+  components back first, so a flipped scan's iDPC phase was the integral of
+  the transposed gradient (correlation 0.10 with the unflipped phase on a
+  synthetic scan; now identical). The screening cache is
+  `quantem.screening-cache/7`.
 - On MPS, a coefficient pinned in `search_ranges` (one number, such as
   `{"C12_nm": 0.0, "phi12_deg": 0.0}`) keeps that value in the result and its
   reconstruction, as on CUDA; the result reported the search's start

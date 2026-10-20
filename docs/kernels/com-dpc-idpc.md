@@ -331,10 +331,9 @@ aligned_row_R, aligned_column_R, angle_deg, scan_detector_rotation_flipped = (
     select_dpc_rotation_reference(com_row_R, com_column_R)
 )
 
-# The production contract swaps the selected components back before integration.
-gradient_row_R = aligned_column_R if scan_detector_rotation_flipped else aligned_row_R
-gradient_column_R = aligned_row_R if scan_detector_rotation_flipped else aligned_column_R
-phase_R = integrate_idpc_reference(gradient_row_R, gradient_column_R)
+# The aligned field is the scan-frame gradient whether or not the detector axes were swapped to get it
+# (scan = R(theta) D detector), so it integrates as it is.
+phase_R = integrate_idpc_reference(aligned_row_R, aligned_column_R)
 ```
 
 These functions are explanatory reference code, not a promise that PyTorch is
