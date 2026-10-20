@@ -950,8 +950,9 @@ class SSB:
 
         The CoM curl fixes the scan-detector rotation only up to 180 degrees; the other branch is the angle plus 180
         degrees, every CoM vector reversed. When fitted atom columns are dark, the
-        rotation moves to that branch, with C10, C12 and tilt flipped in sign at
-        the same astigmatism angle. The other branch is the conjugate object.
+        rotation moves to that branch, with C10 and tilt flipped in sign and C12
+        flipped in sign at the same angle, stated as the same magnitude at phi12 + 90
+        degrees. The other branch is the conjugate object.
         The joint model's objective is invariant under this transformation.
         CUDA reuses the fitted parameters and reconstructs the other branch;
         the other fitting paths retain their existing refinement behavior.
@@ -971,7 +972,10 @@ class SSB:
         limit = draw_column_histogram(result.phase, f"Suggested rotation {input_rotation:.2f}° · polarity score {sign:+.2f}") if show else None
         # the other branch; the subtraction is exact where adding 180 and wrapping at 360 would round
         opposite_rotation = input_rotation - 180.0 if input_rotation >= 180.0 else input_rotation + 180.0
-        start = {"C10_nm": -result.aberrations["C10_nm"], "C12_nm": -result.aberrations["C12_nm"], "phi12_deg": result.aberrations["phi12_deg"]}
+        # The conjugate's -C12 at phi12 is C12 at phi12 + 90 degrees (wrapped to [-90, 90)); the fits bound C12 at zero,
+        # so a negative magnitude would start, and stay, at no astigmatism.
+        start = {"C10_nm": -result.aberrations["C10_nm"], "C12_nm": result.aberrations["C12_nm"],
+                 "phi12_deg": wrap_degrees(result.aberrations["phi12_deg"] + 180.0, 180.0) - 90.0}
         reuse_joint_fit = tilt and self.backend == "cuda"
         if verbose:
             print(f"SSB: negative phase polarity at the suggested rotation {input_rotation:.2f}° (score {sign:+.2f}).\n"
