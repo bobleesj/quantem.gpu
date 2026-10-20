@@ -91,7 +91,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
   const fullSource = {
     ...JSON.parse(source(base + "ssb-full.qem", "qem").json),
     kind: "full_detector", detector_shape: [12, 13],
-    detector_origin_px: [1, 2], detector_transposed: false,
+    detector_origin_px: [1, 2], scan_detector_rotation_flipped: false,
     header_sha256: [...new Uint8Array(fullBytes, 24, 32)].map(value => value.toString(16).padStart(2, "0")).join(""),
   };
   for (const localFile of [false, true]) {
@@ -109,7 +109,7 @@ export async function runSsbQemParity(base: string): Promise<Record<string, numb
         bright_field_rows: cal.bright_field_cols, bright_field_cols: cal.bright_field_rows } : cal;
       const engine = new WebGPUSSBBackend(JSON.stringify(mappedCal), { json: JSON.stringify({
         ...fullSource, url: localFile ? "ssb-full.qem" : base + "ssb-full.qem",
-        detector_transposed: transposed,
+        scan_detector_rotation_flipped: transposed,
       }) });
       try { await compare(engine, `full_${localFile ? "local" : "http"}_${transposed ? "transposed" : "native"}`); }
       finally { engine.close(); }

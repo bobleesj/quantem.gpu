@@ -80,10 +80,10 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
         streamed = StreamedSSB(
             data, mean_pattern=None, center=SETTINGS["bright_field_center_px"],
             radius=SETTINGS["bright_field_radius_px"], threshold=0., semiangle_mrad=30.,
-            detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], detector_transposed=transposed,
+            detector_sampling_mrad=SETTINGS["detector_sampling_mrad"], scan_detector_rotation_flipped=transposed,
         )
         values[..., 2, 3] = 0  # independent dense reference's scientific validity mask
-        with SSB(values, **SETTINGS, detector_transposed=transposed) as dense:
+        with SSB(values, **SETTINGS, scan_detector_rotation_flipped=transposed) as dense:
             expected, _ = dense.preview(ABERRATIONS, compute_loss=False,
                 upsampling_factor=factor, sample_tilt_mrad=(1., -2.), depth_spread_nm=depth, output="native")
             phase, loss = streamed.phase(aberrations_to_engine(ABERRATIONS), voltage_kV=300., semiangle_mrad=30.,
@@ -99,7 +99,7 @@ def test_streamed_phase_matches_stored_spectra(transposed, factor, depth):
 def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
     values = _counts((1024, 1024, 8, 8))
     with _encoded(values, chunk_scans=65536) as data:
-        with SSB(data, **SETTINGS, aberrations=ABERRATIONS, detector_transposed=True) as session:
+        with SSB(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
             assert session._data is data and session._compute is None
             region = (173, 301, 251, 379)
             fitted = session.find_aberrations(scan_region=region, num_trials=0,
@@ -107,7 +107,7 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             assert fitted.phase.shape == (128, 128)
             assert fitted.fit_scan_region == region
             assert fitted.bright_field_center_px == SETTINGS["bright_field_center_px"]
-            with SSB(data, **SETTINGS, aberrations=ABERRATIONS, detector_transposed=True,
+            with SSB(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
                      scan_region=region) as explicit:
                 expected_fit = explicit.find_aberrations(num_trials=0, refinement=None,
                     check_rotation=False, verbose=False)
@@ -139,7 +139,7 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
             assert coherent.amplitude_estimated and coherent.phase.shape == (1024, 1024)
             # Dense reference is limited to 1024; the public large path matches it.
             values[..., 2, 3] = 0
-            with SSB(values, **SETTINGS, detector_transposed=True) as dense:
+            with SSB(values, **SETTINGS, scan_detector_rotation_flipped=True) as dense:
                 expected = dense.reconstruct(fitted, compute_loss=False)
                 cp.testing.assert_allclose(result.phase, expected.phase, atol=1e-6, rtol=1e-5)
         assert not data.data.is_released

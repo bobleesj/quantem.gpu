@@ -6,7 +6,7 @@ import Foundation
 /// The record is `quantem.ssb-phase/2`, the JSON that sits beside its `.npy` phase and that
 /// the Python reader `quantem.gpu.formats.ssb_phase.read_result` checks: snake_case keys,
 /// aberrations as `C10_nm`, `C12_nm` and `phi12_deg`, and the physical
-/// `scan_detector_rotation_deg` in [0, 360) with `detector_transposed`. Every other schema,
+/// `scan_detector_rotation_deg` in [0, 360) with `scan_detector_rotation_flipped`. Every other schema,
 /// including the version-1 `live.ssb` record, is refused, not converted.
 /// Example: `let result = try SSBPhaseArtifact.load(from: downloadedURL)`.
 /// Importing is not a new reconstruction or proof of cross-backend solver parity.
@@ -38,7 +38,7 @@ public struct SSBPhaseArtifact: Codable, Sendable {
   public let calibration: MetalSSBCalibration
   public let aberrations: Aberrations
   public let scanDetectorRotationDegrees: Double
-  public let detectorTransposed: Bool
+  public let scanDetectorRotationFlipped: Bool
   public let provenance: [String: String]
   /// Original run metadata, retained rather than inferred from display settings.
   public let runMetadata: Data
@@ -54,7 +54,7 @@ public struct SSBPhaseArtifact: Codable, Sendable {
     case calibration
     case aberrations
     case scanDetectorRotationDegrees = "scan_detector_rotation_deg"
-    case detectorTransposed = "detector_transposed"
+    case scanDetectorRotationFlipped = "scan_detector_rotation_flipped"
     case provenance
     case runMetadata = "run_metadata"
   }

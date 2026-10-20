@@ -14,7 +14,7 @@ def _fit(**changes):
     """A stored fit block of the current schema, as SSB.reconstruct_series writes it."""
     return {"schema": FIT_SCHEMA, "voltage_kV": 300, "semiangle_mrad": 30, "scan_sampling_A": [.25, .25],
             "detector_sampling_mrad": [0.55, 0.56], "bright_field_center_px": [3, 4], "bright_field_radius_px": 5,
-            "scan_detector_rotation_deg": 192.0, "detector_transposed": False,
+            "scan_detector_rotation_deg": 192.0, "scan_detector_rotation_flipped": False,
             "aberrations": {"C10_nm": 7, "C12_nm": 2, "phi12_deg": math.degrees(.1)}, **changes}
 
 
@@ -58,7 +58,7 @@ def test_real_pair_validation(tmp_path):
                   calibration=dict(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=[0.25, 0.25],
                                    detector_sampling_mrad=[0.55, 0.56], bright_field_center_px=[3.0, 4.0]),
                   aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
-                  scan_detector_rotation_deg=192.0, detector_transposed=False,
+                  scan_detector_rotation_deg=192.0, scan_detector_rotation_flipped=False,
                   provenance={"producer": "test fixture"},
                   run_metadata={"notes": "Exact phase, not a preview"})
     manifest = tmp_path / "sample-01.json"
@@ -70,7 +70,7 @@ def test_real_pair_validation(tmp_path):
     for key, value in [("phase_file", "../phase.npy"), ("phase_file", "/phase.npy"),
                        ("phase_sha256", "0" * 64), ("phase_unit", "unknown"),
                        ("shape", [3, 2]), ("shape", [2.0, 2]), ("schema", "quantem.ssb-phase/1"),
-                       ("provenance", {}), ("calibration", {}), ("detector_transposed", None),
+                       ("provenance", {}), ("calibration", {}), ("scan_detector_rotation_flipped", None),
                        ("aberrations", {"C10_nm": 0.0, "C12_nm": 0.0, "phi12": 0.0})]:
         changed = copy.deepcopy(record)
         changed[key] = value
@@ -108,7 +108,7 @@ def test_export_takes_only_a_current_fit_and_its_physical_rotation(tmp_path):
         export_result(run, master, tmp_path / "out.json")
     (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit()}}))
     record, _ = read_result(export_result(run, master, tmp_path / "out.json"))
-    assert record["scan_detector_rotation_deg"] == 192.0 and record["detector_transposed"] is False
+    assert record["scan_detector_rotation_deg"] == 192.0 and record["scan_detector_rotation_flipped"] is False
     assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]
     assert record["aberrations"] == {"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": math.degrees(.1)}
 

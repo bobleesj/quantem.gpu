@@ -119,11 +119,11 @@ def test_transposed_detector_matches_explicit_swap_on_mps(tmp_path):
                     scan_sampling_A=(.99, 1.1), scan_detector_rotation_deg=31.,
                     bright_field_radius_px=4.)
     coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
-    with SSB(tensor, detector_transposed=True, detector_sampling_mrad=(6., 7.),
+    with SSB(tensor, scan_detector_rotation_flipped=True, detector_sampling_mrad=(6., 7.),
              bright_field_center_px=(5., 5.5), **settings) as candidate:
         actual = candidate.reconstruct(aberrations=coefficients)
         state = candidate.browser_state()
-        assert actual.detector_transposed is True
+        assert actual.scan_detector_rotation_flipped is True
         assert actual.bright_field_center_px == (5., 5.5)
     with SSB(tensor.swapaxes(-1, -2).contiguous(), detector_sampling_mrad=(7., 6.),
              bright_field_center_px=(5.5, 5.), **settings) as reference:
@@ -148,7 +148,7 @@ def test_saved_geometry_reopens_the_same_encoded_brightfield(tmp_path):
                               chunks=(1, 12, 12), **hdf5plugin.Bitshuffle(cname="lz4"))
     settings = dict(backend="mps", voltage_kV=300, semiangle_mrad=30,
                     scan_sampling_A=(.99, 1.1), scan_shape=(128, 128),
-                    scan_detector_rotation_deg=31., detector_transposed=True,
+                    scan_detector_rotation_deg=31., scan_detector_rotation_flipped=True,
                     detector_sampling_mrad=(6., 7.))
     coefficients = {"C10_nm": -11.52, "C12_nm": 4.88, "phi12_deg": -32.8}
     with SSB.open(str(source), **settings) as initial:

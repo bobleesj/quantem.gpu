@@ -51,7 +51,7 @@ def write_widget_folder(folder, *, schema="quantem.ssb-browser-calibration/2", s
         "scan_sampling_A": [0.5, 0.5],
         "detector_sampling_mrad": [0.7, 0.8],
         "scan_detector_rotation_deg": 197.0,
-        "detector_transposed": False,
+        "scan_detector_rotation_flipped": False,
         "aberrations": {"C10_nm": -10.0, "C12_nm": 0.4, "phi12_deg": 30.0},
         "flip_phase": False,
         "dc_value": [376.0, 0.0],

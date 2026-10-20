@@ -361,7 +361,7 @@ def acquisition_settings(
         )
     values["bright_field_radius_px"] = saved.get("bright_field_radius_px")
     # a stored fit says whether its detector axes were exchanged; SSB.open refuses a True instead of ignoring it
-    values["detector_transposed"] = bool(saved.get("detector_transposed", False))
+    values["scan_detector_rotation_flipped"] = bool(saved.get("scan_detector_rotation_flipped", False))
     return values
 
 
@@ -372,7 +372,7 @@ def open_settings(settings: dict[str, object], scan_detector_rotation_deg: float
         "semiangle_mrad": float(settings["semiangle_mrad"]),
         "scan_sampling_A": tuple(settings["scan_sampling_A"]),
         "scan_detector_rotation_deg": scan_detector_rotation_deg,
-        "detector_transposed": settings["detector_transposed"],
+        "scan_detector_rotation_flipped": settings["scan_detector_rotation_flipped"],
         "bright_field_radius_px": None if settings["bright_field_radius_px"] is None else round(float(settings["bright_field_radius_px"])),
     }
 
@@ -417,7 +417,7 @@ def write_fit_metadata(
         "schema": FIT_SCHEMA,
         "aberrations": dict(result.aberrations),
         "scan_detector_rotation_deg": float(result.scan_detector_rotation_deg),
-        "detector_transposed": bool(result.detector_transposed),
+        "scan_detector_rotation_flipped": bool(result.scan_detector_rotation_flipped),
         "loss": None if result.loss is None else float(result.loss),
         "bright_field_radius_px": result.bright_field_radius_px,
         "bright_field_center_px": None if result.bright_field_center_px is None else list(result.bright_field_center_px),

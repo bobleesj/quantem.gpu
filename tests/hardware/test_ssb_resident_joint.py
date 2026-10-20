@@ -263,7 +263,7 @@ def test_resident_region_matches_reopened_counts_and_keeps_parent(
         "detector_sampling_mrad": (3.0, 3.5),
         "bright_field_center_px": (12.2, 10.8),
         "bright_field_radius_px": 6.5,
-        "detector_transposed": transposed,
+        "scan_detector_rotation_flipped": transposed,
         "scan_detector_rotation_deg": 17.0,
         "aberrations": {"C10_nm": 8.0, "C12_nm": 3.0, "phi12_deg": 20.0},
     }

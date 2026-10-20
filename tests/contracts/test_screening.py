@@ -25,7 +25,7 @@ def _result(master, workflow):
             "bright_field_center_px": [3.5, 4.5],
             "bright_field_edge_radius_px": 2.0,
             "scan_detector_rotation_mod180_deg": 17.0,
-            "detector_transposed": False,
+            "scan_detector_rotation_flipped": False,
         },
     }
     zeros = np.zeros((4, 4), dtype=np.float32)
@@ -40,7 +40,7 @@ def _result(master, workflow):
         bright_field_center_px=(3.5, 4.5),
         bright_field_edge_radius_px=2.0,
         scan_detector_rotation_mod180_deg=17.0,
-        detector_transposed=False,
+        scan_detector_rotation_flipped=False,
         metadata=metadata,
         total_intensity=counts,
         annular_bright_field=counts,
@@ -452,7 +452,7 @@ def test_screening_forced_rotation_recomputes_phase(tmp_path) -> None:
     assert rotated.scan_detector_rotation_deg == 35.0
     assert rotated.scan_detector_rotation_mod180_deg == 35.0
     assert rotated.metadata["parameters"]["scan_detector_rotation_mod180_deg"] == 17.0
-    assert rotated.detector_transposed is False
+    assert rotated.scan_detector_rotation_flipped is False
     assert rotated.dpc_phase.dtype == np.float32
     assert rotated.dpc_phase.shape == (4, 4)
 
@@ -478,21 +478,21 @@ def test_screening_forced_rotation_describes_one_geometry(tmp_path) -> None:
     fitted = _result(master, workflow)
     fitted.com_row, fitted.com_col = com_row, com_col
     fitted.scan_detector_rotation_mod180_deg = fitted.metadata["parameters"]["scan_detector_rotation_mod180_deg"] = float(fitted_deg)
-    fitted.detector_transposed = fitted.metadata["parameters"]["detector_transposed"] = True
+    fitted.scan_detector_rotation_flipped = fitted.metadata["parameters"]["scan_detector_rotation_flipped"] = True
     cache_dir = tmp_path / "cache"
     workflow._save_cache(fitted, workflow._cache_path(master, cache_dir))
 
     reopened = workflow.prepare(master, cache_dir=cache_dir)
     forced = workflow.prepare(master, cache_dir=cache_dir, scan_detector_rotation_deg=190.0)
 
-    assert (reopened.scan_detector_rotation_mod180_deg, reopened.detector_transposed) == (float(fitted_deg), True)
+    assert (reopened.scan_detector_rotation_mod180_deg, reopened.scan_detector_rotation_flipped) == (float(fitted_deg), True)
     assert reopened.scan_detector_rotation_deg is None
-    assert (forced.scan_detector_rotation_mod180_deg, forced.detector_transposed) == (10.0, False)
+    assert (forced.scan_detector_rotation_mod180_deg, forced.scan_detector_rotation_flipped) == (10.0, False)
     assert forced.scan_detector_rotation_deg == 190.0
     np.testing.assert_array_equal(forced.dpc_phase, workflow._dpc_phase(com_row, com_col, 190.0, False))
     # the fit is still on record, as a pair
     assert (forced.metadata["parameters"]["scan_detector_rotation_mod180_deg"],
-            forced.metadata["parameters"]["detector_transposed"]) == (float(fitted_deg), True)
+            forced.metadata["parameters"]["scan_detector_rotation_flipped"]) == (float(fitted_deg), True)
 
 
 def test_screening_load_calls_use_public_api() -> None:

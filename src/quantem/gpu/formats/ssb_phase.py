@@ -21,7 +21,7 @@ from quantem.gpu.ssb.series import stored_fit
 
 # Carried by every portable phase record under "schema"; another value is refused.
 # 2: the shared vocabulary (scan_sampling_A, detector_sampling_mrad, bright_field_center_px, aberrations in
-#    C10_nm / C12_nm / phi12_deg, scan_detector_rotation_deg with detector_transposed, snake_case keys). Version 1
+#    C10_nm / C12_nm / phi12_deg, scan_detector_rotation_deg with scan_detector_rotation_flipped, snake_case keys). Version 1
 #    was format "live.ssb" with schemaVersion 1 and camelCase keys; its rotationDegrees was the angle below 180.
 SCHEMA = "quantem.ssb-phase/2"
 
@@ -168,8 +168,8 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
     aberrations = record["aberrations"]
     if set(aberrations) != {"C10_nm", "C12_nm", "phi12_deg"} or not all(np.isfinite(value) for value in aberrations.values()):
         raise ValueError("SSB aberrations are finite C10_nm, C12_nm and phi12_deg.")
-    if not np.isfinite(record["scan_detector_rotation_deg"]) or type(record["detector_transposed"]) is not bool:
-        raise ValueError("SSB geometry needs a finite scan_detector_rotation_deg and a detector_transposed flag.")
+    if not np.isfinite(record["scan_detector_rotation_deg"]) or type(record["scan_detector_rotation_flipped"]) is not bool:
+        raise ValueError("SSB geometry needs a finite scan_detector_rotation_deg and a scan_detector_rotation_flipped flag.")
     center = calibration["bright_field_center_px"]
     if len(center) != 2 or not all(np.isfinite(value) for value in center):
         raise ValueError("Non-finite detector center.")
@@ -262,7 +262,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         calibration=calibration,
         aberrations={key: float(ssb["aberrations"][key]) for key in ("C10_nm", "C12_nm", "phi12_deg")},
         scan_detector_rotation_deg=float(ssb["scan_detector_rotation_deg"]),
-        detector_transposed=bool(ssb.get("detector_transposed", False)),
+        scan_detector_rotation_flipped=bool(ssb.get("scan_detector_rotation_flipped", False)),
         provenance={
             "producer": "quantem.live original screen result",
             "run": str(ssb.get("ran_at", config.get("timestamp", "unrecorded"))),

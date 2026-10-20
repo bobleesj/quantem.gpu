@@ -205,7 +205,7 @@ def _run_once(args: argparse.Namespace, *, refresh: bool) -> tuple[Any, dict[str
         "bright_field_center_px": [float(value) for value in result.bright_field_center_px],
         "bright_field_edge_radius_px": float(result.bright_field_edge_radius_px),
         "scan_detector_rotation_mod180_deg": float(result.scan_detector_rotation_mod180_deg),
-        "detector_transposed": bool(result.detector_transposed),
+        "scan_detector_rotation_flipped": bool(result.scan_detector_rotation_flipped),
         "parameters": metadata.get("parameters"),
         "stage_timing": metadata.get("timing"),
         "memory_plan": metadata.get("memory"),

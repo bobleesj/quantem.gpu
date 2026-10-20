@@ -14,7 +14,7 @@ class DPCResult:
     lies in [0, 180]: an unrotated scan fits the grid's end point, float32 pi,
     which reads 180.000005; 0 and 180 describe the same estimate.
     ``scan_detector_rotation_deg`` is the physical rotation the caller gave
-    ``dpc.run``, in [0, 360). ``detector_transposed`` says whether the detector
+    ``dpc.run``, in [0, 360). ``scan_detector_rotation_flipped`` says whether the detector
     axes are exchanged before the rotation.
     """
 
@@ -25,7 +25,7 @@ class DPCResult:
     com_col_aligned: np.ndarray
     scan_detector_rotation_mod180_deg: float | None
     scan_detector_rotation_deg: float | None
-    detector_transposed: bool
+    scan_detector_rotation_flipped: bool
     elapsed_s: float
 
     def report(self):
@@ -51,6 +51,6 @@ class DPCResult:
         return pd.DataFrame({
             "Scan-detector rotation (deg)": [self.scan_detector_rotation_mod180_deg if fitted else self.scan_detector_rotation_deg],
             "Known modulo 180": [fitted],
-            "Detector transposed": [self.detector_transposed],
+            "Rotation flipped": [self.scan_detector_rotation_flipped],
             "Time (s)": [self.elapsed_s],
         }, index=pd.Index(["DPC"], name="method")).round(3)

@@ -25,7 +25,7 @@ class StreamedSSB:
     """Borrow a complete exact-count resident and retain its immutable chunks."""
 
     def __init__(self, data, *, mean_pattern, center, radius, threshold,
-                 semiangle_mrad, detector_sampling_mrad, detector_transposed):
+                 semiangle_mrad, detector_sampling_mrad, scan_detector_rotation_flipped):
         source = data.data
         if type(source) is not StreamedCounts:
             raise NotImplementedError(
@@ -80,7 +80,7 @@ class StreamedSSB:
         self.detector_sampling_mrad = detector_sampling_mrad
         if self.detector_sampling_mrad is None:
             self.detector_sampling_mrad = (semiangle_mrad / disk_edge_radius(self.mean_pattern),) * 2
-        self.transposed = bool(detector_transposed)
+        self.transposed = bool(scan_detector_rotation_flipped)
         mean = self.mean_pattern.T if self.transposed else self.mean_pattern
         compute_center = self.center[::-1] if self.transposed else self.center
         self.rows, self.cols, _, _ = select_bright_field(

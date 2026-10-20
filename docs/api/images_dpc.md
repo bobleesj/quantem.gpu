@@ -109,7 +109,7 @@ DPC moments and phase products are float32.
 An application records the source identity, original and loaded shapes,
 detector bin/crop, source and accumulation dtypes, detector mask or
 center/radius, calibration and units, selected backend/device, DPC rotation,
-transpose choice, and package revision. A binned input produces a binned-source
+rotation flip, and package revision. A binned input produces a binned-source
 product and must not be labeled native detector resolution.
 
 ## Inspect the fitted disk
@@ -135,7 +135,7 @@ result = dpc.run(data)
 show_2d(result.phase, title="Integrated DPC phase", cmap="inferno")
 ```
 
-Supply `scan_detector_rotation_deg` (with `detector_transposed`) to hold the
+Supply `scan_detector_rotation_deg` (with `scan_detector_rotation_flipped`) to hold the
 scan-detector rotation fixed, or omit it for the DPC rotation search. Inspect
 `result` for the rotation and CoM components: a fitted rotation is
 `scan_detector_rotation_mod180_deg`, known only modulo 180 degrees, and a given

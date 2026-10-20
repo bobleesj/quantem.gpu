@@ -25,7 +25,7 @@ from quantem.gpu.ssb.results import SSBResult, host_array
 # A reconstruction-only policy belongs in the result signature instead. This invalidates exact image reuse
 # without declaring unchanged fitted coefficients unreadable or rescheduling a historical acquisition.
 # 7: the record follows the shared vocabulary. The rotation is one physical angle, scan_detector_rotation_deg in
-#    [0, 360), with detector_transposed; it was an angle below 180 with com_reversed. The saved result's own "schema"
+#    [0, 360), with scan_detector_rotation_flipped; it was an angle below 180 with com_reversed. The saved result's own "schema"
 #    is a string like the fit block's.
 # 6: schema 5 covered two automatic detector samplings, 2 x semiangle / half-maximum radius and then
 #    semiangle / disk-edge radius; C10 and C12 fitted under the first reconstruct a different image under the second.

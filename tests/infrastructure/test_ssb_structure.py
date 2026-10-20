@@ -415,12 +415,12 @@ def test_fixed_probe_series_fits_a_reference_stored_by_an_earlier_version(
     assert reconstructions == [("scan_1_master.h5", fitted), ("scan_2_master.h5", fitted)]
     # every session opens with the settings of dataset.yaml: nothing comes from the earlier block
     assert opened == [{"backend": "auto", "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": (0.5, 0.5),
-                       "scan_detector_rotation_deg": 12.0, "detector_transposed": False, "bright_field_radius_px": None}] * 3
+                       "scan_detector_rotation_deg": 12.0, "scan_detector_rotation_flipped": False, "bright_field_radius_px": None}] * 3
     assert [record["C10 (nm)"] for record in result.records] == [-10.5, -10.5]
     stored = json.loads((reference / "config.json").read_text())["computed"]["ssb"]
     assert stored["schema"] == FIT_SCHEMA
     assert stored["aberrations"] == fitted
-    assert (stored["scan_detector_rotation_deg"], stored["detector_transposed"], stored["loss"]) == (12.0, False, 0.25)
+    assert (stored["scan_detector_rotation_deg"], stored["scan_detector_rotation_flipped"], stored["loss"]) == (12.0, False, 0.25)
     assert "com_reversed" not in stored and "rotation_angle_deg" not in stored
 
 

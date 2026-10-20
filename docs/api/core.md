@@ -66,7 +66,7 @@ print(products.metadata["timing"])
 
 `screening.prepare` builds or reopens derived detector and DPC products and
 returns `ScreeningResult`. Its public controls are `backend`, `scan_shape`, an
-optional fixed `scan_detector_rotation_deg` with `detector_transposed`, the cache policy (`cache`, `cache_dir`,
+optional fixed `scan_detector_rotation_deg` with `scan_detector_rotation_flipped`, the cache policy (`cache`, `cache_dir`,
 `refresh`), and the number of rotation search steps. A cache miss loads the
 acquisition once into encoded CUDA or MPS storage; a cache hit needs no GPU. A
 cache reopen is not a raw HDF5 load. The raw source remains the scientific

@@ -105,7 +105,7 @@ def test_screening_products_equal_exact_count_reference(tmp_path):
         assert loss == reference_loss
     assert (result.from_cache, reopened.from_cache) == (False, True)
     assert result.bright_field_center_px == center and result.bright_field_edge_radius_px == radius
-    assert (result.scan_detector_rotation_mod180_deg, result.detector_transposed) == (rotation_deg, transposed)
+    assert (result.scan_detector_rotation_mod180_deg, result.scan_detector_rotation_flipped) == (rotation_deg, transposed)
     assert result.scan_detector_rotation_deg is None
     for name, values in expected.items():
         for products in (result, reopened, borrowed):
