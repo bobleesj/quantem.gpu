@@ -164,21 +164,19 @@ float32 on the GPU without modifying the saved float64 measurements.
 ## Review calibration once
 
 `data.calibration` shows voltage, convergence angle, scan sampling and detector
-sampling, with units and Recorded / Overridden / Missing status. The notebook
+sampling, with units and Recorded / Overridden / Missing status. Set a value
+by name; a single number for a sampling applies to both (row, col) axes. The notebook
 summary and `io.inspect(path)` expose these quantities without decoding counts.
 Unknown calibration does not prevent raw inspection or saving.
 
 ```python
 data.calibration
-data.set_calibration(
-    semiangle_mrad=30,
-    scan_sampling_A=(0.4, 0.4),
-    evidence="Session calibration, measured scan step and aperture",
-)
+data.calibration.semiangle_mrad = 30
+data.calibration.scan_sampling_A = (0.4, 0.4)
 io.save("calibrated.qem", data)
 ```
 
-Use measured values for your acquisition. Edits are separate from recorded
+Use measured values for your acquisition. Values you set are kept beside the recorded
 metadata and survive save, move, reopen and resave. Nothing saves automatically.
 Recreate an existing reconstruction session after editing its calibration.
 SSB needs voltage and scan sampling, plus detector sampling or a calibrated

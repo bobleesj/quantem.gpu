@@ -50,6 +50,70 @@ def calibration_summary(shape, metadata):
     return pd.DataFrame.from_dict(rows, orient="index", columns=["Value", "Unit", "Source"]).rename_axis("Calibration")
 
 
+class Calibration:
+    """Microscope calibration of a loaded acquisition, read and set by name.
+
+    Reading a field returns the value the analysis uses: a recorded value, or
+    one you set, else None. Setting a field records your value beside the
+    file's record, which stays unchanged in ``metadata['scientific_metadata']``;
+    ``io.save`` keeps both. Recreate a reconstruction session after a change.
+
+    Examples
+    --------
+    >>> data = io.load("scan_master.h5")  # doctest: +SKIP
+    >>> data.calibration.voltage_kV = 300  # doctest: +SKIP
+    >>> data.calibration.semiangle_mrad = 30  # doctest: +SKIP
+    >>> data.calibration.scan_sampling_A = (0.264, 0.264)  # doctest: +SKIP
+    >>> data.calibration  # doctest: +SKIP
+    """
+
+    __slots__ = ("_dataset",)
+    # each field, the unit its value is in, and whether it is a (row, col) pair
+    FIELDS = {
+        "voltage_kV": ("kV", False),
+        "semiangle_mrad": ("mrad", False),
+        "scan_sampling_A": ("angstrom", True),
+        "detector_sampling_mrad": ("mrad", True),
+        "detector_sampling_inv_A": ("1/angstrom", True),
+    }
+
+    def __init__(self, dataset: "Dataset4dstemGPU") -> None:
+        object.__setattr__(self, "_dataset", dataset)
+
+    def __getattr__(self, name: str):
+        if name not in Calibration.FIELDS:
+            raise AttributeError(_unknown_calibration(name))
+        value = self._dataset.metadata.get(name)
+        return tuple(value) if isinstance(value, (list, tuple)) else value
+
+    def __setattr__(self, name: str, value) -> None:
+        if name not in Calibration.FIELDS:
+            raise AttributeError(_unknown_calibration(name))
+        self._dataset._record_calibration(**{name: value})
+
+    def __dir__(self):
+        return [*Calibration.FIELDS, "table"]
+
+    def table(self) -> "pd.DataFrame":
+        """Value, unit and source (recorded, overridden or missing) of each calibration."""
+        return calibration_summary(self._dataset.shape, self._dataset.metadata)
+
+    def __repr__(self) -> str:
+        return self.table().to_string()
+
+    def _repr_html_(self) -> str:
+        return self.table().to_html(escape=True)
+
+
+def _unknown_calibration(name: str) -> str:
+    """The error for a calibration field that does not exist, naming the closest one."""
+    import difflib
+
+    close = difflib.get_close_matches(name, Calibration.FIELDS, n=1, cutoff=0.6)
+    hint = f" Did you mean {close[0]!r}?" if close else ""
+    return f"Calibration has no field {name!r}.{hint} Fields: {', '.join(Calibration.FIELDS)}."
+
+
 @dataclass(eq=False, frozen=True, slots=True)
 class Dataset4dstemGPU:
     """Loaded acquisition with metadata and GPU tensor indexing.
@@ -249,51 +313,34 @@ class Dataset4dstemGPU:
         return self.metadata_table().to_string()
 
     @property
-    def calibration(self):
-        """Return values, units and provenance without reading detector data.
+    def calibration(self) -> Calibration:
+        """Microscope calibration: read or set ``voltage_kV``, ``semiangle_mrad``, ``scan_sampling_A``, ...
 
-        Missing calibration stays missing. Explicit overrides take precedence
-        while the recorded values remain in ``metadata['scientific_metadata']``.
+        Displays as a table of value, unit and source. See ``Calibration``.
 
         Examples
         --------
-        >>> data = io.load("acquisition.h5")  # doctest: +SKIP
+        >>> data = io.load("scan_master.h5")  # doctest: +SKIP
+        >>> data.calibration.voltage_kV = 300  # doctest: +SKIP
         >>> data.calibration  # doctest: +SKIP
         """
-        return calibration_summary(self.shape, self.metadata)
+        return Calibration(self)
 
-
-    def set_calibration(
+    def _record_calibration(
         self, *, voltage_kV: float | None = None, semiangle_mrad: float | None = None,
-        scan_sampling_A: tuple[float, float] | None = None,
-        detector_sampling_mrad: tuple[float, float] | None = None,
-        detector_sampling_inv_A: tuple[float, float] | None = None,
-        evidence: str,
+        scan_sampling_A: float | tuple[float, float] | None = None,
+        detector_sampling_mrad: float | tuple[float, float] | None = None,
+        detector_sampling_inv_A: float | tuple[float, float] | None = None,
+        evidence: str = "Stated by the user",
     ) -> None:
-        """Record user calibration without replacing acquisition metadata or counts.
+        """Record user calibration beside, never in place of, the acquisition's own record.
 
-        Parameters
-        ----------
-        voltage_kV, semiangle_mrad : float, optional
-            Accelerating voltage in kV and convergence semiangle in mrad.
-        scan_sampling_A : tuple[float, float], optional
-            Scan pixel sizes in angstrom, in ``(row, col)`` order.
-        detector_sampling_mrad, detector_sampling_inv_A : tuple[float, float], optional
-            Detector pixel sizes, angular or reciprocal. Provide only one unit.
-        evidence : str
-            Nonempty explanation of the calibration, retained in a QEM copy.
-
-        Notes
-        -----
-        Omitted quantities remain unchanged. Recreate existing reconstruction
-        sessions after changing calibration. Nothing is saved automatically;
-        ``io.save(path, data)`` retains the recorded values and these overrides.
-
-        Examples
-        --------
-        >>> data.set_calibration(semiangle_mrad=30, evidence="Measured aperture")  # doctest: +SKIP
-        >>> io.save("calibrated.qem", data)  # doctest: +SKIP
+        A single number for a sampling applies to both (row, col) axes.
         """
+        scan_sampling_A, detector_sampling_mrad, detector_sampling_inv_A = (
+            None if value is None else (value, value) if np.ndim(value) == 0 else value
+            for value in (scan_sampling_A, detector_sampling_mrad, detector_sampling_inv_A)
+        )
         if not isinstance(evidence, str) or not evidence.strip():
             raise ValueError("Provide nonempty evidence describing the calibration.")
         if detector_sampling_mrad is not None and detector_sampling_inv_A is not None:

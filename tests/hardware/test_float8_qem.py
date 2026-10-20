@@ -162,11 +162,8 @@ def test_float8_original_bits_survive_save_move_and_reopen(
                 rtol=1e-6,
                 atol=0,
             )
-        loaded.set_calibration(
-            voltage_kV=300,
-            scan_sampling_A=(0.4, 0.5),
-            evidence="FP8 fixture calibration",
-        )
+        loaded.calibration.voltage_kV = 300
+        loaded.calibration.scan_sampling_A = (0.4, 0.5)
         io.save(saved, loaded, metadata={"source_note": "Original FP8 bytes"})
         assert loaded.data.peak_decode_bytes <= 32 << 20
     assert validate_qem(saved)["dtype"] == kind

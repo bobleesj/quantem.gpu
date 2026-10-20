@@ -154,22 +154,19 @@ def test_calibration_override_survives_save_move_and_resave(tmp_path, backend):
     np.save(original, np.arange(24, dtype=np.uint32).reshape(2, 3, 2, 2))
     saved = tmp_path / "calibrated.qem"
     with io.load(original, backend=backend, verbose=False) as data:
-        data.set_calibration(
-            voltage_kV=300,
-            semiangle_mrad=30,
-            scan_sampling_A=(0.4, 0.5),
-            detector_sampling_mrad=(0.2, 0.3),
-            evidence="Fixture calibration",
-        )
-        summary = data.calibration.copy()
+        data.calibration.voltage_kV = 300
+        data.calibration.semiangle_mrad = 30
+        data.calibration.scan_sampling_A = (0.4, 0.5)
+        data.calibration.detector_sampling_mrad = (0.2, 0.3)
+        summary = data.calibration.table()
         io.save(saved, data, metadata={"source_note": "Calibrated acquisition"}, verbose=False)
     original.unlink()
     moved = tmp_path / "moved.qem"
     saved.rename(moved)
     with io.load(moved, backend=backend, verbose=False) as data:
-        assert data.calibration.equals(summary)
+        assert data.calibration.table().equals(summary)
         assert data.sampling == (0.4, 0.5, 0.2, 0.3)
-        data.set_calibration(semiangle_mrad=25, evidence="Updated calibration")
+        data.calibration.semiangle_mrad = 25
         io.save(tmp_path / "updated.qem", data, verbose=False)
     with io.load(tmp_path / "updated.qem", backend=backend, verbose=False) as data:
         assert data.metadata["semiangle_mrad"] == 25
