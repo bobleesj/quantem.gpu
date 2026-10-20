@@ -105,8 +105,8 @@ private struct CaseReport: Encodable {
     var detectorSum = [UInt64](repeating: 0, count: payload.detector_shape[0] * payload.detector_shape[1])
     let calData = try Data(contentsOf: caseDirectory.appendingPathComponent("source/snapshots/cal.json"))
     let cal = try JSONDecoder().decode(CalibrationFile.self, from: calData)
-    guard cal.schema == "quantem.ssb-browser-calibration/2" else {
-      fail("cal.json is not a quantem.ssb-browser-calibration/2 calibration (schema \(cal.schema ?? "none"))")
+    guard cal.schema == "quantem.ssb-browser-calibration/3" else {
+      fail("cal.json is not a quantem.ssb-browser-calibration/3 calibration (schema \(cal.schema ?? "none"))")
     }
     guard cal.bright_field_rows.count == payload.bf_count,
       cal.bright_field_cols.count == payload.bf_count

@@ -16,7 +16,7 @@ function syntheticFolder(n: number, radius: number) {
   const numBf = kx.length, plane = n * n;
   const frequency = Array.from({ length: n }, (_, i) => (i < n / 2 ? i : i - n) / n);
   const cal = {
-    schema: "quantem.ssb-browser-calibration/2", num_bright_field_pixels: numBf, g_shape: [numBf, n, n], wavelength_A: wavelength,
+    schema: "quantem.ssb-browser-calibration/3", num_bright_field_pixels: numBf, g_shape: [numBf, n, n], wavelength_A: wavelength,
     semiangle_mrad: (radius + 0.25) * angularSampling * 1e3, detector_sampling_mrad: [angularSampling * 1e3, angularSampling * 1e3],
     dc_value: [plane * 3.0, 0], bright_field_k_row: kx, bright_field_k_col: ky,
     scan_q_row: frequency, scan_q_col: frequency, aperture_k: kx.map(() => 1), alpha_k2: kx.map(() => 0), cos2phi_k: kx.map(() => 1),

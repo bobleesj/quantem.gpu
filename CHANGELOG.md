@@ -82,6 +82,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed (breaking, no aliases)
 
+- A ShowPtycho folder's `snapshots/cal.json` is
+  `quantem.ssb-browser-calibration/3`: the display-only phase negation is
+  `display_negate_phase` (was `flip_phase`) and `scan_detector_rotation_flipped`
+  is part of the layout (the WebGPU `BrowserCalibration` type now lists both).
+  MPS and WebGPU readers refuse `/2`; export the folder again.
+
 - One calibration label set, defined in `quantem.gpu.io.metadata_display`
   (`CALIBRATION_LABELS`, `CALIBRATION_UNITS` and the source states), names
   the rows of `data.calibration.table()`, `data.metadata_table()`,

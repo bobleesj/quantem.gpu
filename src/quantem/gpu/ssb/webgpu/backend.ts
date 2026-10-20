@@ -207,7 +207,7 @@ export async function readSSBFolderBytes(path: string): Promise<Uint8Array> {
 }
 
 /** The layout of a ShowPtycho folder's `snapshots/cal.json`, which this engine reads as written. */
-export const BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/2";
+export const BROWSER_CALIBRATION_SCHEMA = "quantem.ssb-browser-calibration/3";
 
 /** `snapshots/cal.json`: optics in kV, mrad and Angstrom; the bright-field reciprocal coordinates in the scan frame. */
 type BrowserCalibration = {
@@ -231,6 +231,10 @@ type BrowserCalibration = {
   cos2phi_k: number[];
   sin2phi_k: number[];
   scan_detector_rotation_deg?: number;
+  /** Detector row and column axes swapped relative to the scan. */
+  scan_detector_rotation_flipped?: boolean;
+  /** Display-only phase negation; never part of the reconstruction. */
+  display_negate_phase?: boolean;
   precision: {
     real_dtype: "float32";
     complex_dtype: "complex64";
