@@ -128,7 +128,8 @@ def load(
     changing storage. ``"zero"`` writes 0. ``auto_narrow`` applies only to an
     explicitly selected dense CPU reader; encoded loading retains dtype,
     except that on MPS a bitshuffle master whose uint32 values all fit 16 bits
-    is held as uint16 counts that read back unchanged (one printed line).
+    is held as uint16 counts that read back unchanged (one printed line;
+    ``dtype="native"`` keeps uint32).
 
     Parameters
     ----------
@@ -136,8 +137,10 @@ def load(
         One master/data HDF5 path, a folder, a list of master paths, or a
         standalone QuantEM encoded file.
     dtype
-        Omit (or ``"native"``) to keep stored values. ``"scaled_uint16"``
-        selects calibrated precision storage for float32 sources.
+        Omit (or ``"native"``) to keep stored values. ``"native"`` also keeps
+        the stored dtype where MPS would hold uint32 counts that fit 16 bits as
+        uint16. ``"scaled_uint16"`` selects calibrated precision storage for
+        float32 sources.
     representation
         ``"dense"``, ``"encoded"`` or ``"paired"``. The authenticated storage
         schema selects the exact decoder within each representation.
@@ -404,6 +407,7 @@ def load(
                         verbose=verbose,
                         backend=ans_backend,
                         hot_pixel_correction=hot_pixel_correction,
+                        keep_dtype=dtype == "native",
                     )
                 )
         except BaseException:

@@ -43,8 +43,13 @@ def load_h5_ans(
     verbose,
     backend,
     hot_pixel_correction,
+    keep_dtype=False,
 ):
-    """Load bounded native chunks into a backend-owned runtime encoded resident."""
+    """Load bounded native chunks into a backend-owned runtime encoded resident.
+
+    ``keep_dtype`` stores the file's dtype even where MPS could hold uint32
+    counts as uint16 (an archive copy keeps the source dtype).
+    """
     started = time.perf_counter()
     info = inspect(path, scan_shape=scan_shape, dataset_path=dataset_path)
     # workflows over several acquisitions (MAPED tilts, focal series) label each
@@ -58,7 +63,7 @@ def load_h5_ans(
     if generic is not None:
         return generic
     if backend == "mps":
-        return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose)
+        return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, keep_dtype)
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
 
@@ -175,16 +180,17 @@ class _ExceedsUint16(Exception):
     """A decoded uint32 value does not fit 16 bits, so the scan keeps uint32 storage."""
 
 
-def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
+def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, keep_dtype=False):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal.
 
     uint32 counts that all fit 16 bits (Arina masters, once any requested
     bad-pixel correction has replaced the flagged pixels) are stored as uint16
     count ANS, whose detector sums use the spatial index; every value reads
     back unchanged. A single value above 65535, such as a kept 0xffffffff
-    bad-pixel marker, keeps the whole scan in uint32 bit lanes.
+    bad-pixel marker, keeps the whole scan in uint32 bit lanes, as does
+    ``keep_dtype``.
     """
-    if np.dtype(info.dtype) == np.dtype("uint32"):
+    if np.dtype(info.dtype) == np.dtype("uint32") and not keep_dtype:
         try:
             return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype("uint16"))
         except _ExceedsUint16:
@@ -308,7 +314,8 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
     if verbose:
         print(_loaded_report(source.shape, "Apple GPU", metadata))
         if narrowed:
-            print(f"Stored as {dtype.name}: every {stored_dtype.name} value fits in 16 bits, so every count reads back unchanged.")
+            print(f"Stored as {dtype.name}: every {stored_dtype.name} value fits in 16 bits, so every count reads back "
+                  f'unchanged (dtype="native" keeps {stored_dtype.name}).')
     return Dataset4dstemGPU(source, metadata)
 
 

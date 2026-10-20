@@ -324,8 +324,9 @@ loading of arrays retains the original dtype and every measurement bit; it does
 not narrow after a range audit. On MPS, an Arina bitshuffle master whose
 uint32 values all fit 16 bits after any requested bad-pixel correction is held
 as uint16 counts, which read back unchanged and use the fast detector sums;
-`io.load` says so in one line. One value above 65,535, such as a kept
-0xffffffff bad-pixel marker, keeps the whole scan uint32. `auto_narrow`
+`io.load` says so in one line, and `dtype="native"` keeps uint32. One value
+above 65,535, such as a kept 0xffffffff bad-pixel marker, keeps the whole
+scan uint32. `convert` archives keep the source dtype. `auto_narrow`
 applies only to the explicit dense reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
 names the RAW file, retaining its scan dimensions, instrument fields, and
 independently indexed virtual-detector regions. If multiple XML files name the
