@@ -25,6 +25,10 @@ Objective = Callable[[float, float, float, tuple[float, float], float], float]
 # of trials in one pass over G (CUDA: ThickSample.fit_batch)
 BatchObjective = Callable[[np.ndarray], np.ndarray]
 PARAMETERS = ("C10", "C12", "phi12", "tilt_row_mrad", "tilt_col_mrad", "depth_spread_A")
+# The depth spreads the joint fit searches, in nm (public) and in the engine's Angstrom: SSB.find_aberrations(tilt=True)
+# returns a depth_spread_nm inside it, and its parameter slices span it.
+DEPTH_SPREAD_RANGE_NM = (2.0, 60.0)
+DEPTH_SPREAD_RANGE_A = (20.0, 600.0)
 # Optuna's label for depth_spread_A. Multivariate TPE orders its search space by label, so another label would change
 # the proposals of every seed; the search keeps it, and every record and result uses depth_spread_A.
 _DEPTH_SEARCH_LABEL = "thickness"
@@ -79,7 +83,7 @@ def fit_sample_search(
     batch_size: int = 8,
     trials: int = 300,
     tilt_limit_mrad: float = 25.0,
-    depth_spread_range_A: tuple[float, float] = (20.0, 600.0),
+    depth_spread_range_A: tuple[float, float] = DEPTH_SPREAD_RANGE_A,
     c10_range: tuple[float, float] = (-300.0, 300.0),
     c12_max: float = 200.0,
     seed: int = 0,

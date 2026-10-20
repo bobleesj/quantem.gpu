@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from quantem.gpu.ssb.thick_sample_fit import DEPTH_SPREAD_RANGE_A
+
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
@@ -28,7 +30,7 @@ def measure_slices(
     # Include the fitted point exactly. All other parameters stay at this point;
     # these are conditional cuts, not projections of the optimizer's trials.
     designs = (
-        ("focus_depth", 0, 5, (-300.0, 300.0), (20.0, 600.0), 10.0, 10.0),
+        ("focus_depth", 0, 5, (-300.0, 300.0), DEPTH_SPREAD_RANGE_A, 10.0, 10.0),
         ("tilt", 3, 4, (-25.0, 25.0), (-25.0, 25.0), 1.0, 1.0),
     )
     slices = {}

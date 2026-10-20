@@ -14,6 +14,7 @@ from functools import lru_cache
 
 import numpy as np
 
+from quantem.gpu.ssb.thick_sample_fit import DEPTH_SPREAD_RANGE_A
 from quantem.gpu.ssb._execution import checkpoint
 from quantem.gpu.ssb._resident_precision import HEADER
 
@@ -667,7 +668,7 @@ def fit_resident(
     backend: str,
     trials: int = 300,
     tilt_limit_mrad: float = 25.0,
-    depth_spread_range_A: tuple[float, float] = (20.0, 600.0),
+    depth_spread_range_A: tuple[float, float] = DEPTH_SPREAD_RANGE_A,
     c10_range: tuple[float, float] = (-300.0, 300.0),
     c12_max: float = 200.0,
     seed: int = 0,
