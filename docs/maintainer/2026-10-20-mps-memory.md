@@ -18,8 +18,9 @@ upsampling, 20 slider drags at that factor, 3 slider releases (with the loss),
 one 256 × 256 region refit (20 trials) and `save_calibration()`. "Before" is
 the integration branch just before the memory work; "after" is the default
 now, with the loss row IFFT in tiles of 1024 pixels; "whole chunk" is the
-opt-in loss route that keeps the whole 4096-pixel chunk (below). Peak during
-the stage / memory after it, GiB.
+opt-in loss route that keeps the whole 4096-pixel chunk (below), measured
+before region refits released the full field. Peak during the stage / memory
+after it, GiB.
 
 512 × 512 scan, 192 × 192 detector:
 
@@ -30,9 +31,10 @@ the stage / memory after it, GiB.
 | `reconstruct()`, two branches | 34.3 / 26.9 | 16.8 / 10.8 | 20.9 / 10.8 |
 | `ssb.show(show_fft=True)` | 27.0 / 27.0 | 14.4 / 14.4 | 20.4 / 20.4 |
 | 20 drags (2×), 3 releases | 27.0 / 27.0 | 14.4 / 14.4 | 20.4 / 20.4 |
-| region refit | 33.6 / 16.9 | 22.8 / 10.9 | 28.6 / 10.9 |
+| region refit | 33.6 / 16.9 | 14.4 / 2.1 | 28.6 / 10.9 |
+| next full-field preview (rebuilds G) | 27.0 / 27.0 | 16.8 / 14.4 | – |
 | `save_calibration()` | 26.4 / 26.4 | 14.4 / 14.4 | 20.4 / 20.4 |
-| session peak (footprint) | 34.3 (34.9) | 22.8 (24.0) | 28.6 (30.0) |
+| session peak (footprint) | 34.3 (34.9) | 16.8 (18.1) | 28.6 (30.0) |
 
 Gold:
 
@@ -43,9 +45,10 @@ Gold:
 | `reconstruct()`, two branches | 40.2 / 40.2 | 17.9 / 13.1 | 29.9 / 13.1 |
 | `ssb.show(show_fft=True)` | 40.5 / 40.5 | 16.4 / 16.4 | 28.4 / 28.4 |
 | 20 drags (4×), 3 releases | 40.5 / 40.5 | 16.5 / 16.5 | 28.5 / 28.5 |
-| region refit | 46.1 / 23.4 | 22.2 / 13.2 | 34.3 / 13.2 |
-| `save_calibration()` | 38.7 / 38.7 | 16.4 / 16.4 | 28.4 / 28.4 |
-| session peak (footprint) | 46.1 (47.4) | 22.2 (23.5) | 34.3 (35.5) |
+| region refit | 46.1 / 23.4 | 16.5 / 5.7 | 34.3 / 13.2 |
+| next full-field preview (rebuilds G) | 40.5 / 40.5 | 17.4 / 16.5 | – |
+| `save_calibration()` | 38.7 / 38.7 | 16.5 / 16.5 | 28.4 / 28.4 |
+| session peak (footprint) | 46.1 (47.4) | 17.4 (18.6) | 34.3 (35.5) |
 
 Every fit, image and loss is unchanged: G(q, k) hashes, previews (1× and 2×),
 losses and reconstructions are bit-identical before and after on both scans,
@@ -55,6 +58,68 @@ digit. `reconstruct()` took 8.98 → 7.82 s (512² scan) and 20.1 → 18.6 s
 run-to-run spread on a GPU shared with the window server. `SSB(data)` is 0.39 →
 0.14 s and 0.78 → 0.43 s; the first preview, which now decodes the
 bright-field columns, 0.99 → 1.04 s and 0.88 → 0.96 s.
+
+A region refit (`select_region`, `find_aberrations(scan_region=...)`, ShowPtycho's
+Fit Regions and Crop and Refit) first frees the full field's G(q, k) and MLX's
+cache, so the region's own G(q, k) and fit run beside the encoded data alone;
+the next full-field preview or fit rebuilds G(q, k) from the encoded data in
+about 0.8 s, with the same bits (the preview after the rebuild equals the one
+before the refit, and the region's fit is unchanged). A region session frees
+its own G(q, k) when it closes; Crop and Refit keeps the session it displays.
+
+## Live arrays and MLX's cache, stage by stage
+
+The driver figure above is MLX's live arrays (active), the buffers MLX keeps
+after they are freed (its cache, reused by the next allocation of the same
+size), the encoded data and Torch's few decode blocks. After each stage, GiB;
+"active peak" is the highest live total during the stage:
+
+| Stage (512² scan) | Driver after | Active after | Cache after | Active peak |
+| --- | ---: | ---: | ---: | ---: |
+| `SSB(data)` | 2.1 | 0.0 | 0.0 | 0.0 |
+| `reconstruct()`, two branches | 10.8 | 8.8 | 0.0 | 11.1 |
+| show, drags, releases | 14.4 | 8.8 | 3.6 | 10.8 |
+| region refit | 2.1 | 0.0 | 0.0 | 6.7 |
+| next full-field preview | 14.4 | 8.8 | 3.6 | 11.2 |
+
+| Stage (gold) | Driver after | Active after | Cache after | Active peak |
+| --- | ---: | ---: | ---: | ---: |
+| `SSB(data)` | 5.6 | 0.0 | 0.0 | 0.0 |
+| `reconstruct()`, two branches | 13.1 | 7.5 | 0.0 | 9.5 |
+| show, drags, releases | 16.5 | 7.5 | 3.3 | 9.5 |
+| region refit | 5.7 | 0.0 | 0.0 | 5.7 |
+| next full-field preview | 16.5 | 7.5 | 3.3 | 9.6 |
+
+The session peak is the G(q, k) build, which `reconstruct()` runs first (and
+the preview after a refit runs again): 8.8 GiB of G(q, k), 2.4 GiB of build
+blocks and FFT batches, and about 3.6 GiB of MLX cache that the build's blocks
+of different widths leave (16.8 GiB with the encoded data). Capping MLX's cache
+at 0.5 or 1 GiB during the build cuts its peak by 2.5 GiB but makes the build
+37 to 47 % slower (1.25 to 1.35 s against 0.92 s), so the cache is not capped.
+Inside `reconstruct()` the fused tilt search (`thick_sample.thick_fit_batch`,
+band partial sums of G with no per-pixel row IFFT) adds 0.5 GiB of live
+arrays; the branches' loss and phase evaluations run in 256-pixel tiles
+(`reconstruct.FIT_LOSS_ROW_IFFT_TILE_BF`), 1.5 GiB less than 1024-pixel tiles
+at the same fit time (8.9 s either way). The 3.6 GiB cache after a slider
+release is the 1024-pixel loss tile, kept for the next release.
+
+The standard search (`find_aberrations(tilt=False)`) evaluates pairs of
+candidates with the exact loss in packs of bright-field pixels. On the 128 GB
+M5 Max a pack of 1,024 pixels takes the same time per pair as one of 2,476
+(217.5 against 218.1 ms, interleaved medians, the WindowServer using 43 % of
+the GPU) and holds 4.0 GiB of row IFFT instead of 9.8 GiB, so the packs are
+1,024 pixels; 512 was 2.9 % slower. The interactive loss tile sweep:
+
+| Loss tile (pixels) | Loss preview | Live above G | Cache kept |
+| ---: | ---: | ---: | ---: |
+| 64 | +22.8 % | 0.14 GiB | 0.23 GiB |
+| 128 | +11.8 % | 0.26 GiB | 0.48 GiB |
+| 256 | +3.1 % | 0.51 GiB | 0.98 GiB |
+| 512 | +3.7 % | 1.01 GiB | 1.48 GiB |
+| 1024 (default) | 0 | 2.01 GiB | 3.48 GiB |
+
+Every tile and pack size gives the same bits. Slider releases keep the 1024
+tile: smaller tiles cost 3 % or more of a release.
 
 ## What the big arrays are
 
@@ -137,16 +202,17 @@ path, which halves the intermediate.
 macOS grants the GPU a working set below the RAM size (this Mac reports
 107.5 of 128 GiB in `mx.device_info()["max_recommended_working_set_size"]`;
 smaller Macs and older macOS grant less, about two thirds). The session needs
-the encoded data plus G(q, k) resident, then one transient at a time: a loss
-tile (2.1 GB, 1.1 GB below 64 GB), a fit's batches (about 6 GiB above G(q, k)
-with tiles) or a region refit (about 12 GiB with its fit). A whole session
-peaks at 22.8 GiB (512² scan) and 22.2 GiB (gold) on this Mac.
+the encoded data plus G(q, k) resident, then one transient at a time: the
+G(q, k) build (about 6 GiB with MLX's cache), a loss tile (2.1 GB, 1.1 GB below
+64 GB) or a fit (0.5 to 2 GiB); a region refit runs with the full field's
+G(q, k) freed. A whole session peaks at 16.8 GiB (512² scan) and 17.4 GiB
+(gold) on this Mac, while G(q, k) is built.
 
-| Mac | 512² scan: steady 10.8 GiB, session 22.8 GiB | gold: steady 13.1 GiB, session 22.2 GiB |
+| Mac | 512² scan: steady 10.8 GiB, session 16.8 GiB | gold: steady 13.1 GiB, session 17.4 GiB |
 | --- | --- | --- |
 | 16 GB | does not fit: G(q, k) alone is 8.8 GiB | does not fit |
-| 24 GB | previews fit (about 14 GiB); fits and refits page | at the limit; fits page |
-| 32 GB | fits; a refit is close to the limit | fits; a refit is close to the limit |
+| 24 GB | previews fit (about 14 GiB); the G(q, k) build pages | at the limit; the build pages |
+| 32 GB | fits | fits, close to the limit while G(q, k) is built |
 | 64 GB and up | fits | fits |
 
 These rows are estimates from the steady states and transients measured on the

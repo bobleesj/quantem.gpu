@@ -24,6 +24,10 @@ new `rcN` heading when that rc is published to TestPyPI.
   instead of one 4096-pixel chunk, so a ShowPtycho session keeps 3.5 GiB of loss buffers instead of 9.5 to 15 GiB
   (session peak 34.3 -> 22.2 GiB on gold) with the same loss and phase bits; loss previews take about 4 % longer.
   `quantem.gpu.ssb.mps.reconstruct.LOSS_ROW_IFFT_TILE_BF = None` keeps the whole chunk.
+- An MPS region refit (`select_region`, `find_aberrations(scan_region=...)`, ShowPtycho's Fit Regions and Crop and
+  Refit) frees the full field's G(q, k) first and the next full-field preview rebuilds it (about 0.8 s, the same
+  bits); fits evaluate their loss in 256-pixel tiles and the standard search in 1,024-pixel packs. A ShowPtycho
+  session on gold peaks at 17.4 GiB (46.1 before the memory work, 22.2 before this change).
 
 - SSB is tilt-corrected by default: `find_aberrations()` (and the automatic fit
   of `reconstruct()`) fits the aberrations jointly with the sample tilt and
