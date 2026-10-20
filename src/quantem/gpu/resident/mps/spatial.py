@@ -200,6 +200,41 @@ def detector_sum(resident, mask):
             release_buffer(buffer)
 
 
+def detector_sum_update(resident, previous, pixels, signs):
+    """Return ``previous`` plus ``sign * counts`` of each listed pixel at every scan, as uint64 Metal storage.
+
+    ``previous`` is an exact uint64 image of one mask, ``pixels`` the flat
+    detector indices whose selection changed and ``signs`` +1 for a pixel that
+    joined the mask and -1 for one that left it. The listed pixels' streams are
+    decoded once and added in place, so the result equals the exact sum of the
+    new mask (integer arithmetic) while a drag that moves the mask by a pixel
+    decodes a few hundred columns instead of the whole boundary.
+    """
+    output = MetalArray(resident.shape[:2], np.uint64)
+    ids = coefficients = None
+    try:
+        values = np.ascontiguousarray(previous, np.uint64)
+        if values.shape != tuple(resident.shape[:2]):
+            raise ValueError(f"previous must have the scan shape {tuple(resident.shape[:2])}.")
+        buffer_view(output._mtl)[: values.nbytes] = memoryview(values).cast("B")
+        count = len(pixels)
+        if count:
+            ids = upload_shared(np.ascontiguousarray(pixels, np.uint32), "changed detector pixels")
+            coefficients = upload_shared(np.ascontiguousarray(signs, np.int32), "changed pixel signs")
+            resident._clear_errors()
+            command = metal_queue().commandBuffer()
+            _encode_delta(resident, command, ids, coefficients, output._mtl, count)
+            complete_command(command, "camera detector update")
+            resident._check_errors()
+        return output
+    except BaseException:
+        output.release()
+        raise
+    finally:
+        release_buffer(ids)
+        release_buffer(coefficients)
+
+
 def weighted_sum(resident, weights) -> np.ndarray:
     """Return exact uint64 per-scan sums of nonnegative integer pixel weights times counts.
 
