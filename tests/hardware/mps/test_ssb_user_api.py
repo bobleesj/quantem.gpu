@@ -69,6 +69,10 @@ def test_a_recorded_rotation_wins_over_the_estimate():
     with SSB(data, backend="mps") as ssb:
         assert (ssb.scan_detector_rotation_deg, ssb.scan_detector_rotation_flipped) == (12.0, True)
         assert ssb.scan_detector_rotation_source == "metadata"
+        # the launch table states the recorded flip; it read "Not recorded" before 2026-10-20
+        flipped = ssb.calibration_table().loc["Rotation flipped"]
+        assert (flipped["File value"], flipped["Value used"], flipped["Source"]) == ("yes", "yes", "Recorded")
+    assert data.metadata_table().loc["Rotation flipped", "Value"] == "yes"
 
 
 def test_reconstruct_fits_once_when_no_aberrations_are_known(capsys):

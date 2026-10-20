@@ -92,6 +92,10 @@ def calibration_rows(metadata: dict) -> dict:
         CALIBRATION_LABELS["scan_detector_rotation_deg"]: row(
             metadata.get("scan_detector_rotation_deg"), CALIBRATION_UNITS["scan_detector_rotation_deg"]
         ),
+        CALIBRATION_LABELS["scan_detector_rotation_flipped"]: row(
+            None if metadata.get("scan_detector_rotation_flipped") is None
+            else ("yes" if metadata["scan_detector_rotation_flipped"] else "no")
+        ),
         "Dwell time": row(
             metadata.get("dwell_time_us"),
             "us",
