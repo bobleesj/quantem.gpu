@@ -151,7 +151,8 @@ def test_resident_session_keeps_the_crop_encoded_and_its_identity():
 
 
 def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
-    """LOSS_ROW_IFFT_TILE_BF sends a 512 x 512 loss chunk through the tiled route: the same loss and phase bits."""
+    """LOSS_ROW_IFFT_TILE_BF sends a 512 x 512 loss chunk through the tiled route (the default), None keeps the whole
+    chunk: the same loss and phase bits."""
     from quantem.gpu import SSB
     from quantem.gpu.ssb.mps import reconstruct
 
@@ -165,6 +166,7 @@ def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
                   detector_sampling_mrad=4.0, scan_detector_rotation_deg=17.0)
         aberrations = {"C10_nm": -4.0, "C12_nm": 1.2, "phi12_deg": 23.0}
         tilted = dict(sample_tilt_mrad=(0.4, -1.1), depth_spread_nm=6.0)
+        monkeypatch.setattr(reconstruct, "LOSS_ROW_IFFT_TILE_BF", None)
         whole = [ssb.preview(aberrations, compute_loss=True), ssb.preview(aberrations, compute_loss=True, **tilted)]
         monkeypatch.setattr(reconstruct, "LOSS_ROW_IFFT_TILE_BF", 16)
         tiles = [ssb.preview(aberrations, compute_loss=True), ssb.preview(aberrations, compute_loss=True, **tilted)]

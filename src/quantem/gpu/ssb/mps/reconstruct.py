@@ -36,11 +36,13 @@ from quantem.gpu.ssb.mps.prepared import (
 )
 
 _DIAGNOSTIC_BF_TILE = 256
-# Bright-field pixels per row IFFT of a 512 x 512 loss chunk outside a cancellable preview. None keeps the whole
-# chunk (4096 pixels and 8.6 GB on Macs with 96 GB or more), which MLX's cache then keeps between slider releases.
-# A size routes the chunk through the tiled path of a cancellable preview: the same reduction boundaries and float32
-# order, so the same loss and phase bits, with one tile of row IFFT at a time (1024: 2.1 GB, about 4 % slower).
-LOSS_ROW_IFFT_TILE_BF: int | None = None
+# Bright-field pixels per row IFFT of a 512 x 512 loss chunk outside a cancellable preview. A chunk larger than the
+# tile goes through the tiled path of a cancellable preview: the same reduction boundaries and float32 order, so the
+# same loss and phase bits, with one tile of row IFFT (2.1 GB at 1024) alive at a time. None keeps the whole chunk
+# (4096 pixels and 8.6 GB on Macs with 96 GB or more), which MLX's cache then keeps between slider releases: about
+# 4 % faster loss previews for 6 to 12 GB more resident memory, an opt-in for big Macs. Chunks of 1024 or fewer
+# pixels (Macs below 96 GB) are not split either way.
+LOSS_ROW_IFFT_TILE_BF: int | None = 1024
 
 
 def reconstruct_prepared(
