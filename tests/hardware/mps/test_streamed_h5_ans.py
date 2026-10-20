@@ -93,7 +93,39 @@ def test_uint32_counts_that_fit_load_as_exact_uint16(tmp_path, capsys):
     np.testing.assert_array_equal(values.astype(np.uint32), stored.reshape(64, 80, 4, 8))
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("Stored as")]
     assert lines == ['Stored as uint16: every uint32 value fits in 16 bits, so every count reads back unchanged '
-                     '(dtype="native" keeps uint32).']
+                     '(dtype="native" reads uint32).']
+
+
+@pytest.mark.parametrize("source", [np.uint16, np.uint32])
+def test_counts_that_fit_a_byte_load_as_exact_uint8(tmp_path, capsys, source):
+    """uint16 and uint32 counts whose every value is at most 255 are stored as uint8; dtype="native" reads the source dtype."""
+    pytest.importorskip("Metal")
+    import h5py
+    import hdf5plugin  # noqa: F401
+
+    counts = np.random.default_rng(5).integers(0, 40, size=(5120, 4, 8)).astype(source)
+    counts[4999, 2, 2] = 255
+    master = _write_bslz4_master(tmp_path, f"byte-{np.dtype(source).name}", counts)
+    with h5py.File(master) as handle:
+        stored = handle["entry/data/data_000001"][:].reshape(64, 80, 4, 8)
+    with io.load(master, backend="mps", scan_shape=(64, 80)) as loaded:
+        assert loaded.dtype == np.dtype("uint8") and loaded.data.dtype == np.dtype("uint8")
+        assert loaded.metadata["source_dtype"] == np.dtype(source).name
+        values = _read_back(loaded)
+        assert values.dtype == np.uint8
+        np.testing.assert_array_equal(values.astype(source), stored)
+    name = np.dtype(source).name
+    assert f'Stored as uint8: every {name} value fits in 8 bits, so every count reads back unchanged (dtype="native" reads {name}).' in capsys.readouterr().out
+    with io.load(master, backend="mps", scan_shape=(64, 80), dtype="native", verbose=False) as native:
+        assert native.dtype == np.dtype(source) and native.data.dtype == np.dtype("uint8")
+        values = _read_back(native)
+        assert values.dtype == np.dtype(source)
+        np.testing.assert_array_equal(values, stored)
+        np.testing.assert_array_equal(native.read(scan_region=(3, 5, 7, 9)).cpu().numpy(), stored[3:5, 7:9])
+    counts[0, 0, 0] = 256
+    master = _write_bslz4_master(tmp_path, f"word-{np.dtype(source).name}", counts)
+    with io.load(master, backend="mps", scan_shape=(64, 80), verbose=False) as loaded:
+        assert loaded.dtype == np.dtype("uint16")
 
 
 def test_uint32_values_above_uint16_keep_uint32_storage(tmp_path, capsys):

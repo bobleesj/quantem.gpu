@@ -43,13 +43,8 @@ def load_h5_ans(
     verbose,
     backend,
     hot_pixel_correction,
-    keep_dtype=False,
 ):
-    """Load bounded native chunks into a backend-owned runtime encoded resident.
-
-    ``keep_dtype`` stores the file's dtype even where MPS could hold uint32
-    counts as uint16 (an archive copy keeps the source dtype).
-    """
+    """Load bounded native chunks into a backend-owned runtime encoded resident."""
     started = time.perf_counter()
     info = inspect(path, scan_shape=scan_shape, dataset_path=dataset_path)
     # workflows over several acquisitions (MAPED tilts, focal series) label each
@@ -63,7 +58,7 @@ def load_h5_ans(
     if generic is not None:
         return generic
     if backend == "mps":
-        return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, keep_dtype)
+        return _load_h5_ans_mps(path, info, hot_pixel_correction, verbose)
     if backend != "cuda":
         raise NotImplementedError("Runtime HDF5-to-encoded needs CUDA or MPS.")
 
@@ -180,17 +175,17 @@ class _ExceedsUint16(Exception):
     """A decoded uint32 value does not fit 16 bits, so the scan keeps uint32 storage."""
 
 
-def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, keep_dtype=False):
+def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose):
     """Decode bounded HDF5 blocks and encode native-count ANS with Metal.
 
-    uint32 counts that all fit 16 bits (Arina masters, once any requested
-    bad-pixel correction has replaced the flagged pixels) are stored as uint16
-    count ANS, whose detector sums use the spatial index; every value reads
-    back unchanged. A single value above 65535, such as a kept 0xffffffff
-    bad-pixel marker, keeps the whole scan in uint32 bit lanes, as does
-    ``keep_dtype``.
+    Counts are stored in the narrowest unsigned type that holds every value
+    after any requested bad-pixel correction: uint8 when every value is at
+    most 255, else uint16, else uint32 bit lanes (a single value above 65535,
+    such as a kept 0xffffffff bad-pixel marker, keeps the whole scan uint32).
+    Every value reads back unchanged; the uint8 and uint16 count residents use
+    the spatial index for detector sums.
     """
-    if np.dtype(info.dtype) == np.dtype("uint32") and not keep_dtype:
+    if np.dtype(info.dtype) == np.dtype("uint32"):
         try:
             return _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, np.dtype("uint16"))
         except _ExceedsUint16:
@@ -199,9 +194,12 @@ def _load_h5_ans_mps(path, info, hot_pixel_correction, verbose, keep_dtype=False
 
 
 def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
-    """Load the master into a resident of ``dtype``: the stored dtype, or uint16 for uint32 counts."""
+    """Load the master into a resident of ``dtype`` (the stored dtype, or uint16 for uint32 counts).
+
+    uint16 counts whose every value is at most 255 end as a uint8 resident.
+    """
     # Metal decoding is imported only on the MPS path, like every platform decoder.
-    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor, exact_uint16
+    from quantem.gpu.io.hdf5.mps.decode import MPSDecompressor, exact_uint16, exceeds_uint8
 
     started = time.perf_counter()
     if not info.ready or info.scan_shape is None or info.detector_shape is None:
@@ -210,6 +208,8 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
     stored_dtype = np.dtype(info.dtype)
     bit_lanes = dtype == np.dtype("uint32")
     narrowed = dtype != stored_dtype
+    # uint16 counts whose every value fits a byte are stored as uint8 once every batch is checked.
+    byte_check, above_byte = dtype == np.dtype("uint16"), False
     if stored_dtype not in (np.dtype("uint8"), np.dtype("uint16"), np.dtype("uint32")):
         raise TypeError(
             "Direct HDF5 decoding supports uint8/uint16/uint32."
@@ -264,12 +264,15 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
                 try:
                     corrector.apply(raw)
                     if narrowed:
-                        counts = exact_uint16(raw)
+                        counts, byte = exact_uint16(raw)
                         if counts is None:
                             raise _ExceedsUint16
                         buffer, raw._mtl = raw._mtl, None
                         release_buffer(buffer)
                         raw = counts
+                        above_byte |= byte
+                    elif byte_check and not above_byte:
+                        above_byte = exceeds_uint8(raw)
                     (source.append_device if bit_lanes else source.append)(raw)
                     if not bit_lanes:
                         index_started = time.perf_counter()
@@ -292,6 +295,9 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
         if decoder is not None:
             decoder.free()
         corrector.close()
+    if byte_check and not above_byte:
+        source.store_as_uint8()
+        dtype = source.dtype
     metadata = dict(info.metadata)
     metadata.update(
         resident_metadata(shape, dtype, source.nbytes, backend="mps"),
@@ -313,9 +319,9 @@ def _load_h5_counts_mps(path, info, hot_pixel_correction, verbose, dtype):
     )
     if verbose:
         print(_loaded_report(source.shape, "Apple GPU", metadata))
-        if narrowed:
-            print(f"Stored as {dtype.name}: every {stored_dtype.name} value fits in 16 bits, so every count reads back "
-                  f'unchanged (dtype="native" keeps {stored_dtype.name}).')
+        if dtype != stored_dtype:
+            print(f"Stored as {dtype.name}: every {stored_dtype.name} value fits in {8 * dtype.itemsize} bits, so every "
+                  f'count reads back unchanged (dtype="native" reads {stored_dtype.name}).')
     return Dataset4dstemGPU(source, metadata)
 
 

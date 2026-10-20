@@ -321,12 +321,15 @@ NumPy simulations stored as `int32`, such as those in
 [the SrTiO3 dislocation dataset](https://doi.org/10.5281/zenodo.7464234),
 retain int32, including negative values and counts above 65,535. GPU encoded
 loading of arrays retains the original dtype and every measurement bit; it does
-not narrow after a range audit. On MPS, an Arina bitshuffle master whose
-uint32 values all fit 16 bits after any requested bad-pixel correction is held
-as uint16 counts, which read back unchanged and use the fast detector sums;
-`io.load` says so in one line, and `dtype="native"` keeps uint32. One value
-above 65,535, such as a kept 0xffffffff bad-pixel marker, keeps the whole
-scan uint32. `convert` archives keep the source dtype. `auto_narrow`
+not narrow after a range audit. On MPS, an Arina bitshuffle master's uint16
+or uint32 counts are held in the narrowest unsigned type that holds every
+value after any requested bad-pixel correction: uint8 when every value is at
+most 255, else uint16, else uint32 (one value above 65,535, such as a kept
+0xffffffff bad-pixel marker, keeps the whole scan uint32). The counts read back
+unchanged and use the fast detector sums; `io.load` names the stored type in
+one line, and `dtype="native"` reads them in the file's dtype, a cast on read.
+`.qem` copies (`convert`, `io.save`) store that narrow type and record the
+source dtype; `convert` verifies every value against the source. `auto_narrow`
 applies only to the explicit dense reader, and defaults to false. EMPAD RAW loading finds a sibling XML that
 names the RAW file, retaining its scan dimensions, instrument fields, and
 independently indexed virtual-detector regions. If multiple XML files name the

@@ -581,7 +581,8 @@ def restore_master(qem: Path, destination: Path) -> Path:
 def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> dict:
     """Compare every original measurement bit, including flagged detector pixels.
 
-    Without an explicit correction, no marker substitution is accepted as raw
+    Counts stored in a narrower unsigned type than the source are compared by
+    value. Without an explicit correction, no marker substitution is accepted as raw
     preservation. Declared mask corrections are checked against bounded source
     neighborhoods; all other values retain their original bits. Bit comparisons
     run on the requested GPU in bounded windows, including for float64 on
@@ -624,11 +625,21 @@ def verify_against_source(qem: Path, master: Path, *, backend: str = "auto") -> 
                 stop = min(rows * columns, first + step)
                 decoded = decode(first, stop)
                 raw = np.ascontiguousarray(frames(first, stop))
-                if np.dtype(header["dtype"]) != raw.dtype:
-                    raise ValueError("The QEM dtype differs from the source dtype.")
                 if method != "none":
                     # the CPU reference of the GPU correction, bit for bit
                     raw = fill_flagged(raw.copy(), plan, method)
+                stored = np.dtype(header["dtype"])
+                if stored != raw.dtype:
+                    # Counts stored in a narrower unsigned type: compare every value exactly.
+                    if not (stored.kind == raw.dtype.kind == "u" and stored.itemsize < raw.dtype.itemsize):
+                        raise ValueError(f"The QEM stores {stored.name} values of a {raw.dtype.name} source; "
+                                         "only exact narrower unsigned counts are supported.")
+                    copy = torch_value(decoded).to(torch.int32).to(torch.int64).reshape(stop - first, -1)
+                    source = torch.from_numpy(raw.astype(np.int64).reshape(stop - first, -1)).to(copy.device)
+                    differing += int((copy != source).sum())
+                    compared += pixels * (stop - first)
+                    del decoded, copy, source, raw
+                    continue
                 if hasattr(decoded, "_mtl"):
                     decoded.dtype = np.dtype("uint8")
                     decoded.shape = (raw.nbytes,)
@@ -687,7 +698,8 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
         Optional correction for uint8/uint16/uint32 acquisitions only. The
         copy is an archive of the acquisition (``restore_master`` rebuilds the
         master), so it keeps every stored value unless a correction is
-        requested; ``io.load``'s median default applies when data are loaded
+        requested. Integer counts are stored in the narrowest unsigned type
+        that holds every value, and the copy records the source dtype; ``io.load``'s median default applies when data are loaded
         for analysis. Corrects stored-mask pixels before encoding. Median uses the valid
         pixels of the 3x3 window (or the smallest larger window that holds
         one), rounded half to even. Verification
@@ -736,8 +748,9 @@ def convert(master: Path, destination: Path, *, write: bool = True, verify: bool
     try:
         paths = [master, *files]
         signatures = [(path.stat().st_size, path.stat().st_mtime_ns) for path in paths]
-        # An archive keeps the source dtype: dtype="native" stops MPS storing uint32 counts as uint16.
-        with load(master, backend=backend, representation="encoded", verbose=False, dtype="native",
+        # Integer counts are stored in the narrowest unsigned type that holds every value (after the
+        # requested correction); the copy records the source dtype, and verification compares values.
+        with load(master, backend=backend, representation="encoded", verbose=False,
                   hot_pixel_correction=hot_pixel_correction) as acquisition:
             result.hot_pixel_correction = dict(acquisition.metadata.get("hot_pixel_correction", {}))
             result.qem_bytes = int(acquisition.resident_bytes)
