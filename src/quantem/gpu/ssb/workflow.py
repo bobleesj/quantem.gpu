@@ -21,6 +21,7 @@ from quantem.gpu import detector, io
 from quantem.gpu.device import resolve
 from quantem.gpu.device.cuda_runtime import cp
 from quantem.gpu.geometry.frames import opposite_rotation_deg
+from quantem.gpu.formats.qem.metadata import BRIGHT_FIELD_DISK_KEY
 from quantem.gpu.formats.qem.snapshot import INTEGER_CODEC
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io import metadata_display as labels
@@ -144,6 +145,22 @@ def _announce_rotation(angle_deg: float, flipped: bool) -> None:
     """The one line a session prints when it estimated the rotation itself."""
     print(f"SSB: scan-detector rotation {angle_deg:.1f}°, rotation flipped: {'yes' if flipped else 'no'} "
           "(estimated from the centre-of-mass curl; find_aberrations settles the 180° choice).")
+
+
+def _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad: float, *, recordable: bool) -> None:
+    """The one line a session prints when it estimated the detector sampling itself, and how to state it instead."""
+    explicit = ("data.calibration.fit_detector_sampling() records it and shows the fit"
+                if recordable else "give detector_sampling_mrad= to state it")
+    print(f"SSB: detector step {float(detector_sampling_mrad[0]):.4f} mrad per pixel, estimated from the bright-field "
+          f"disk edge at the {float(semiangle_mrad):g} mrad semiangle (detector.fit_bright_field_disk); {explicit}.")
+
+
+def _recorded_bright_field_center_px(metadata: dict[str, object]) -> tuple[float, float] | None:
+    """The bright-field centre (row, col) ``data.calibration.fit_detector_sampling()`` recorded, or None."""
+    disk = metadata.get(BRIGHT_FIELD_DISK_KEY)
+    if not isinstance(disk, dict) or disk.get("bright_field_center_px") is None:
+        return None
+    return tuple(float(value) for value in disk["bright_field_center_px"])
 
 
 def _source_calibration(
@@ -412,10 +429,15 @@ class SSB:
         voltage_kV, semiangle_mrad, scan_sampling_A = _source_calibration(
             metadata, voltage_kV, semiangle_mrad, scan_sampling_A)
         self._detector_sampling_recorded = False
+        detector_sampling_estimated = False
         if source_dataset is not None:
             if detector_sampling_mrad is None:
                 detector_sampling_mrad = _recorded_detector_sampling_mrad(metadata, voltage_kV)
                 self._detector_sampling_recorded = detector_sampling_mrad is not None
+                detector_sampling_estimated = detector_sampling_mrad is None
+            if bright_field_center_px is None:
+                # the centre data.calibration.fit_detector_sampling() recorded: the one SSB's own rule finds
+                bright_field_center_px = _recorded_bright_field_center_px(metadata)
             if source_path is None:
                 source_path = metadata.get("source_path")
         self.scan_detector_rotation_source = "given"
@@ -463,6 +485,8 @@ class SSB:
                         bright_field_intensity_threshold, semiangle_mrad, mean_pattern,
                         identify=source_path is None,
                     )
+                if detector_sampling_estimated:
+                    _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad, recordable=True)
             elif self.scan_region is not None:
                 row_start, row_stop, col_start, col_stop = self.scan_region
                 data = data.data[row_start:row_stop, col_start:col_stop]
@@ -792,6 +816,8 @@ class SSB:
                 if detector_sampling_mrad is None:
                     detector_sampling_mrad = _recorded_detector_sampling_mrad(loaded.metadata, voltage_kV)
                     detector_sampling_recorded = detector_sampling_mrad is not None
+                if bright_field_center_px is None:
+                    bright_field_center_px = _recorded_bright_field_center_px(loaded.metadata)
                 if scan_detector_rotation_deg is None and loaded.metadata.get("scan_detector_rotation_deg") is not None:
                     scan_detector_rotation_deg = float(loaded.metadata["scan_detector_rotation_deg"])
                     if scan_detector_rotation_flipped is None:
@@ -824,6 +850,7 @@ class SSB:
                     loaded.close()
             if detector_sampling_mrad is None and owned is None:
                 detector_sampling_mrad = (semiangle_mrad / calibration_radius,) * 2
+                _announce_detector_sampling(detector_sampling_mrad, semiangle_mrad, recordable=False)
             source_provenance = None if correction is None else {"hot_pixel_correction": correction}
             source_kind = "detector"
             source_storage_path = str(source)
@@ -1226,6 +1253,7 @@ class SSB:
                             else self._compute.angular_sampling)
                 self.detector_sampling_mrad = tuple(sampling[::-1] if self.scan_detector_rotation_flipped else sampling)
                 self._calibration_initial["detector_sampling_mrad"] = self.detector_sampling_mrad
+                _announce_detector_sampling(self.detector_sampling_mrad, self.semiangle_mrad, recordable=False)
         return self._compute
 
     def _reconstruct_trials(self, parameters, trial_ids, *, upsampling_factor, phase_estimator):

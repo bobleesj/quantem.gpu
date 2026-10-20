@@ -235,3 +235,46 @@ def test_a_recorded_inverse_angstrom_detector_sampling_is_used(tmp_path, backend
             row = recorded.calibration_table().loc["Detector step (row, col)"]
             assert (row["File unit"], row["Unit used"], row["Source"]) == ("1/angstrom per pixel", "mrad per pixel", "Overridden")
             np.testing.assert_array_equal(recorded.preview(ABERRATIONS)[0], given.preview(ABERRATIONS)[0])
+
+
+def test_ssb_reads_the_recorded_bright_field_fit_and_announces_an_estimate(tmp_path, backend, capsys):
+    """data.calibration.fit_detector_sampling() is the step SSB otherwise takes silently: same numbers, now visible.
+
+    Without a recorded detector step SSB estimates it with the same disk-edge rule and says so in one line; after the
+    fit it reads the recorded step and centre, prints nothing about them, and selects the same bright-field pixels.
+    A saved copy keeps the fit.
+    """
+    from quantem.gpu import detector
+
+    counts = _counts(5)
+    master = _arina_master(tmp_path / "scan_master.h5", counts)
+    settings = {"backend": backend, "scan_detector_rotation_deg": 0.0}
+    with io.load(master, backend=backend, scan_shape=(128, 128), verbose=False) as loaded:
+        loaded.calibration.voltage_kV = 300
+        loaded.calibration.semiangle_mrad = 30
+        loaded.calibration.scan_sampling_A = 0.99
+        capsys.readouterr()
+        with SSB(loaded, **settings) as estimated:
+            announced = capsys.readouterr().out
+            assert "estimated from the bright-field disk edge" in announced
+            assert "data.calibration.fit_detector_sampling()" in announced
+            estimated_state = (estimated.detector_sampling_mrad, estimated.bright_field_center_px,
+                               estimated.bright_field_radius_px)
+            estimated_phase = estimated.preview(ABERRATIONS)[0]
+        fit = loaded.calibration.fit_detector_sampling()
+        assert fit.detector_sampling_mrad == detector.detector_sampling_mrad(detector.mean(loaded), 30)
+        with SSB(loaded, **settings) as recorded:
+            assert "bright-field disk edge" not in capsys.readouterr().out
+            assert (recorded.detector_sampling_mrad, recorded.bright_field_center_px,
+                    recorded.bright_field_radius_px) == estimated_state
+            assert recorded.bright_field_center_px == fit.bright_field_center_px
+            row = recorded.calibration_table().loc["Detector step (row, col)"]
+            assert row["Source"] == "Fitted (bright-field disk)"
+            np.testing.assert_array_equal(recorded.preview(ABERRATIONS)[0], estimated_phase)
+        saved = tmp_path / "fitted.qem"
+        io.save(saved, loaded, verbose=False)
+    with io.load(saved, backend=backend, verbose=False) as reopened:
+        assert reopened.calibration.detector_sampling_mrad == fit.detector_sampling_mrad
+        assert reopened.calibration.bright_field_center_px == fit.bright_field_center_px
+        assert reopened.calibration.bright_field_edge_radius_px == fit.bright_field_edge_radius_px
+        assert reopened.calibration.table().loc["Detector step (row, col)", "Source"] == "Fitted (bright-field disk)"
