@@ -36,6 +36,11 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Fixed
 
+- Assigning `ssb.aberrations = {...}` states known aberrations: the next
+  `reconstruct()` applies them instead of fitting again, so a restored or
+  calibrated correction is no longer overwritten. `ssb.aberrations = None`
+  forgets them. `SSB(aberrations=...)` and the assignment accept the
+  higher-order coefficients `reconstruct` applies.
 - `SSB.reconstruct()` keeps the rotation check of the fit it applies:
   `column_sign`, `initial_scan_detector_rotation_deg`, `initial_column_sign`
   and the compared phases, so `report()` shows **Suggested rotation** and
