@@ -447,3 +447,19 @@ kernel void shuf_8_batched(
     }
     out[ulong(frame) * ulong(frame_bytes) + byte_in_frame] = value;
 }
+
+// Copy decoded uint32 counts into uint16 storage. Any value above 65535 sets
+// above[0] and the caller keeps the scan as uint32, so no value is ever
+// clipped or replaced. One thread per value.
+kernel void narrow_u32_u16(
+    const device uint* in       [[buffer(0)]],
+    device ushort*     out      [[buffer(1)]],
+    device atomic_uint* above   [[buffer(2)]],
+    constant uint&     count    [[buffer(3)]],
+    uint index                  [[thread_position_in_grid]]
+) {
+    if (index >= count) return;
+    uint value = in[index];
+    if (value > 0xFFFFu) atomic_fetch_or_explicit(&above[0], 1u, memory_order_relaxed);
+    out[index] = ushort(value);
+}
