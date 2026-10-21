@@ -27,9 +27,10 @@ def _median_corrected(raw, pixel_mask):
                     and pixel_mask[rr, cc] == 0
                 ):
                     neighbors.append(raw[..., rr, cc])
-        expected[..., row, column] = np.median(
+        # the median of an even number of neighbors rounds half to even (resident.hot_pixels), as np.round does
+        expected[..., row, column] = np.round(np.median(
             np.stack(neighbors, axis=-1), axis=-1
-        ).astype(raw.dtype)
+        )).astype(raw.dtype)
     return expected
 
 
