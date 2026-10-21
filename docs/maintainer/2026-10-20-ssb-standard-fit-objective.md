@@ -22,8 +22,33 @@ The phase variance is computed once, at the fit, as `result.loss`. The fused
 objective kernel skips the depth weights when the depth spread is 0. The
 joint fit is unchanged bit for bit (default fits on the public gold scan and
 on another 512 × 512 acquisition: every coefficient, tilt, depth spread, loss,
-agreement, gain and branch). CUDA's standard fit still minimizes the phase
-variance.
+agreement, gain and branch).
+
+**Phase variance kept as an explicit option** (same day). The phase-variance
+search is not deleted: `find_aberrations(tilt=False, objective="phase_variance")`
+runs it (Optuna TPE in candidate pairs on the exact loss, then Nelder–Mead), and
+`objective="agreement"` is the default everywhere:
+
+| Call | Method |
+| --- | --- |
+| `find_aberrations()` | default: model agreement, tilt-corrected |
+| `find_aberrations(tilt=False)` | model agreement, tilt and depth spread held at 0 |
+| `find_aberrations(tilt=False, objective="phase_variance")` | the older SSB search, minimum phase variance |
+
+With `tilt=True` the phase variance raises: it cannot see the tilt. On MPS its
+files (`ssb/mps/loss.py`, the pair kernels, the 512 × 512 pair-pack policy,
+`bf_storage_chunk_packs`, the search in `mps/optimizer.py` and
+`scripts/benchmark_ssb_mps_scaling.py`) are restored unchanged, so the
+restored search reproduces the removed one bit for bit: on gold (both branches,
+358.31° kept) C10 −17.7557 nm, C12 2.6289 nm, phi12 −40.312°, and on the other
+512 × 512 acquisition C10 10.0741 nm, C12 2.0805 nm, phi12 80.138° at 345.828°,
+with identical losses, branch records, phases and trial records, and the same
+peak memory (18.56 GiB above the encoded data on gold, MLX's live peak 12.50 GiB,
+both versions measured back to back). The default
+and `tilt=False` fits are unchanged bit for bit. On CUDA,
+`objective="phase_variance"` is the standard fit CUDA ran before, and
+`tilt=False` raises `NotImplementedError` naming it until the agreement fit is
+ported.
 
 ## Evidence
 
@@ -76,9 +101,10 @@ value bit for bit.
 
 The agreement objective lands about three times nearer the synthetic truth,
 repeats as well or better on real data, keeps the same branch, and fits in a
-tenth of the time and half the memory. MPS now has one aberration search. The
-standard fit's coefficients move: on gold C10 −17.756 → −18.467 nm.
+tenth of the time and half the memory, so it is the default of every fit. The
+standard fit's coefficients move: on gold C10 −17.756 → −18.467 nm. The
+phase-variance search stays as `objective="phase_variance"`, for comparison
+with earlier results.
 
-CUDA follow-up: the depth-0 branch in `thick_fit_batch_kernel`, the standard
-fit on `fit_standard_resident`, and deleting `cuda/optimizer.py`'s
-phase-variance search.
+CUDA follow-up: the `tilt=False` agreement fit on `fit_standard_resident` and
+the depth-0 branch in `thick_fit_batch_kernel`.

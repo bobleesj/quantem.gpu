@@ -1,8 +1,8 @@
 # Single-sideband ptychography
 
 Single-sideband (SSB) ptychography uses scan-frequency interference from a
-4D-STEM acquisition to reconstruct a complex transmission function. The full
-default fit is:
+4D-STEM acquisition to reconstruct a complex transmission function. This page
+derives the older SSB fit, `find_aberrations(tilt=False, objective="phase_variance")`:
 
 ```text
 4D counts → bright-field selection → scan FFT → aberration correction
@@ -16,11 +16,11 @@ is scored with the same full active-bright-field phase-variance objective. The
 best candidate then seeds a local Nelder-Mead refinement. The workflow selects
 the minimum recorded loss; it does not average the 200 parameter sets.
 
-This page derives the phase-variance objective, which CUDA's standard fit
-(`tilt=False`) still minimizes and every backend reports as `result.loss`. On
-MPS the standard fit maximizes the least-squares agreement of the SSB model
-with G instead (the joint fit's objective at depth spread 0); see
-`docs/maintainer/2026-10-20-ssb-standard-fit-objective.md`.
+The default fit, `find_aberrations()`, maximizes the least-squares agreement
+of the SSB model with G instead and fits the sample tilt and depth spread;
+`tilt=False` holds them at 0 ({ref}`fit methods <ssb-fit-methods>`,
+`docs/maintainer/2026-10-20-ssb-standard-fit-objective.md`). The phase variance
+derived here is what every backend reports as `result.loss`.
 
 The PyTorch blocks below form one progressive reference: run them from top to
 bottom. Each equation introduces an operation, and the code immediately below

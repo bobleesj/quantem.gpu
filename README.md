@@ -378,6 +378,24 @@ data.close()
 
 ## Reconstruct phase with SSB
 
+### SSB in quantem.gpu
+
+`find_aberrations()` is model-based and tilt-corrected by default, and that is
+the fit to use: it maximizes the least-squares agreement of the SSB model with
+the data and fits the sample tilt and depth spread with the aberrations.
+
+| Call | Method |
+|---|---|
+| `find_aberrations()` | **Default.** Model agreement, tilt-corrected (sample tilt and depth spread fitted) |
+| `find_aberrations(tilt=False)` | Model agreement, tilt and depth spread held at 0 |
+| `find_aberrations(tilt=False, objective="phase_variance")` | The older SSB search: minimum phase variance over bright-field pixels |
+
+The phase variance cannot see the tilt, so it runs with `tilt=False` only.
+`result.objective` and `result.report()` name the method. Backend support:
+[SSB fit methods](docs/api/ssb.md#fit-methods).
+
+### Find the aberrations, then reconstruct
+
 Using the `show_2d` setup above, supply your microscope calibration, find the
 aberrations once, and reuse them:
 
@@ -430,11 +448,8 @@ ssb.show_trials(last=5)     # five most recent search trials
 ssb.show_trials(first=5)    # five earliest search trials
 ```
 
-The calibration above is an example; use your acquisition's values.
-`find_aberrations()` fits the joint aberration, sample-tilt and depth-spread
-model by default (`tilt=True`); `find_aberrations(tilt=False)` is standard SSB,
-whose search objective differs. A fitted depth spread is not a thickness
-measurement.
+The calibration above is an example; use your acquisition's values. A fitted
+depth spread is not a thickness measurement.
 
 ```python
 aberrations.report()  # parameter table with units
