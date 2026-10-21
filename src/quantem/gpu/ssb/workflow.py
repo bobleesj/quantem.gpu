@@ -8,7 +8,7 @@ import hashlib
 import math
 import time
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import replace
 from functools import wraps
 from pathlib import Path
@@ -46,7 +46,7 @@ from quantem.gpu.ssb.persistence import (
     software_signature,
     source_identity,
 )
-from quantem.gpu.ssb.results import SSBResult
+from quantem.gpu.ssb.results import SSBResult, host_array
 from quantem.gpu.ssb.trials import (
     choose_trials,
     label_trials,
@@ -1162,6 +1162,11 @@ class SSB:
             float(result.loss) if result.loss is not None else float("inf")
         )
         self._reconstruction = result
+        branches = result.rotation_branches
+        if (branches is not None and result.fit_scan_region is None
+                and (branches._panel_source is None or branches._panel_source() is None)):
+            # this session reconstructs the branch panels on demand (a region fit's region session made its own)
+            branches.bind_session(self._rotation_branch_panels)
         return result
 
     def _dark_field_image(self) -> np.ndarray | None:
@@ -1320,6 +1325,48 @@ class SSB:
                 _announce_detector_sampling(self.detector_sampling_mrad, self.semiangle_mrad, recordable=False)
         return self._compute
 
+    def _resolve_upsampling_factor(self, upsampling_factor: int | Literal["auto"]) -> int:
+        """``upsampling_factor`` as an output factor: ``"auto"`` is ``ssb_upsampling_factor`` for this calibration."""
+        if upsampling_factor == "auto":
+            from quantem.gpu.optics.physics import ssb_upsampling_factor
+
+            upsampling_factor = ssb_upsampling_factor(
+                voltage_kV=self.voltage_kV,
+                semiangle_mrad=self.semiangle_mrad,
+                scan_sampling_A=self.scan_sampling_A,
+            )
+        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
+            raise ValueError("upsampling_factor must be 'auto', 1, 2, 3, 4, or 8.")
+        return upsampling_factor
+
+    @_on_scan_gpu
+    def _rotation_branch_panels(self, branches: RotationBranches, upsampling_factor) -> tuple[int, tuple] | None:
+        """Both branches' fits at ``upsampling_factor``, for ``RotationBranches.upsampled_phases``; None once closed.
+
+        Each branch is reconstructed at its own rotation, aberrations, sample tilt and depth spread, with the default
+        estimator, from the G(q, k) the session holds (``reconstruct(trial_ids=...)`` replays a trial the same way);
+        the session's rotation is restored and its fit is unchanged.
+        """
+        if self._data is None:
+            return None
+        factor = self._resolve_upsampling_factor(upsampling_factor)
+        saved_rotation = self.scan_detector_rotation_deg
+        phases = []
+        try:
+            for branch in branches.branches:
+                self.set_rotation(branch.scan_detector_rotation_deg)
+                phase, _ = self._phase(
+                    branch.aberrations, upsampling_factor=factor, compute_loss=False,
+                    sample_tilt_mrad=branch.sample_tilt_mrad or (0.0, 0.0), depth_spread_nm=branch.depth_spread_nm or 0.0,
+                    phase_estimator=_default_phase_estimator(branch.aberrations),
+                )
+                phases.append(np.array(host_array(phase), dtype=np.float32))
+        finally:
+            self.set_rotation(saved_rotation)
+        if isinstance(self._compute, MpsSSBBackend):
+            self._compute.release_cache()
+        return factor, tuple(phases)
+
     def _reconstruct_trials(self, parameters, trial_ids, *, upsampling_factor, phase_estimator):
         """Replay selected records without replacing the current search or correction."""
         parameters = self._aberration_search if parameters is None else parameters
@@ -1369,7 +1416,7 @@ class SSB:
         return ShowPtycho(self, **options)
 
     def show_trials(self, *, best: int | None = None, last: int | None = None,
-                    first: int | None = None, upsampling_factor: int = 1,
+                    first: int | None = None, upsampling_factor: int | Literal["auto"] = "auto",
                     axsize: tuple[float, float] = (6, 6)):
         """Show selected attempts as phase images with a compact parameter table.
 
@@ -1381,7 +1428,8 @@ class SSB:
             select completed attempts in time order. Local refinement is not
             an Optuna trial and is displayed separately in the final report.
         upsampling_factor
-            Output sampling factor; never reruns the parameter search.
+            Output factor of the shown phases, ``"auto"`` by default (``reconstruct``'s rule; the title names it).
+            The trials were searched, and their losses measured, on the native grid; this never reruns the search.
         axsize
             Width and height of each phase panel in inches. At most two
             columns are shown; additional trials continue on the next row.
@@ -1405,7 +1453,8 @@ class SSB:
         result = self.reconstruct(self._aberration_search,
                                   trial_ids=[record["trial"] for record in records], upsampling_factor=upsampling_factor)
         kind = "Best" if best is not None else "Last" if last is not None else "First"
-        return plot_trials(result, kind, axsize=axsize)
+        sampling = f"{result.upsampling_factor}×" + (" auto" if upsampling_factor == "auto" else "")
+        return plot_trials(result, kind, axsize=axsize, sampling=sampling)
 
     @_on_scan_gpu
     def find_aberrations(
@@ -1543,7 +1592,8 @@ class SSB:
         -------
         RotationBranches
             Both fits (aberrations, loss, column test, phase tail, native phase), the atomic columns, the selected
-            and the kept branch and the test that decided. ``show()`` draws the evidence, ``report()`` tabulates it.
+            and the kept branch and the test that decided. ``show()`` draws both fits reconstructed at
+            ``upsampling_factor="auto"`` by this session above the evidence, ``report()`` tabulates it.
             The kept fit, with the same comparison as ``rotation_branches``, is the session's latest fit.
 
         Examples
@@ -1725,6 +1775,10 @@ class SSB:
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
                     fixed_aberrations=fixed_aberrations if fixed_aberrations is not None else requested["fixed_aberrations"],
                 )
+                if result.rotation_branches is not None:
+                    # the branch panels need the region's G(q, k), which closes with the region session
+                    with suppress(ValueError):
+                        result.rotation_branches.upsampled_phases()
             result.fit_scan_region = tuple(scan_region)
             # the regional session indexed this session's array, which starts at the crop origin
             self._accept_result(result if self._streamed is not None else self._in_detector_frame(result))
@@ -1942,16 +1996,7 @@ class SSB:
         >>> aberrations = ssb.find_aberrations(tilt=True)
         >>> result = ssb.reconstruct(aberrations, upsampling_factor=4, save_dir="results/4x")
         """
-        if upsampling_factor == "auto":
-            from quantem.gpu.optics.physics import ssb_upsampling_factor
-
-            upsampling_factor = ssb_upsampling_factor(
-                voltage_kV=self.voltage_kV,
-                semiangle_mrad=self.semiangle_mrad,
-                scan_sampling_A=self.scan_sampling_A,
-            )
-        if type(upsampling_factor) is not int or upsampling_factor not in (1, 2, 3, 4, 8):
-            raise ValueError("upsampling_factor must be 'auto', 1, 2, 3, 4, or 8.")
+        upsampling_factor = self._resolve_upsampling_factor(upsampling_factor)
         if phase_estimator not in (None, "mean_phase", "phase_of_mean", "complex_wave"):
             raise ValueError("phase_estimator must be 'mean_phase', 'phase_of_mean', or 'complex_wave'.")
         if parameters is not None and not isinstance(parameters, SSBResult):

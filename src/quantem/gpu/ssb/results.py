@@ -329,12 +329,15 @@ class SSBResult(Mapping[str, float]):
             panels side by side. Fourier intensity shows the aperture;
             aberrations are encoded in the complex Fourier probe's phase.
             ``rotation`` draws the 180-degree branch evidence of an estimated
-            rotation (``rotation_branches.show()``): both branches' phase
-            tails and their phase at the dark-field atomic columns.
+            rotation (``rotation_branches.show()``): both branches' fits at
+            ``upsampling_factor="auto"`` above their native phase tails and
+            phase at the dark-field atomic columns. A phase view coarser than
+            ``"auto"`` (a native fit) is shown as reconstructed, and one line
+            names the auto factor.
         axsize : tuple[float, float] or None, optional
             Width and height of each panel in inches. Defaults to (12, 12) for
             phase, (6, 6) for each probe or comparison panel and (5, 3.4) for
-            each rotation panel.
+            each rotation evidence panel (its phase panels are 5 x 5).
         compare : SSBResult or None, optional
             A second phase reconstruction of the same field of view. Shows
             both full images above matching central crops, with rectangles
@@ -357,7 +360,7 @@ class SSBResult(Mapping[str, float]):
 
         Examples
         --------
-        >>> result = ssb.reconstruct(aberrations)
+        >>> result = ssb.reconstruct(aberrations, upsampling_factor="auto")
         >>> result.show()
         >>> result.show("probe")
         >>> result.show(axsize=(14, 14))  # width and height in inches
@@ -379,6 +382,8 @@ class SSBResult(Mapping[str, float]):
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
                     "check_rotation=False. Run ssb.compare_rotation_branches() to fit and compare both branches.")
             return self.rotation_branches.show(**({} if axsize is None else {"axsize": axsize}))
+        if view == "phase" and self.object_wave.ndim == 2:
+            _announce_below_auto(self)
         if view == "parameters" or (view == "phase" and show_parameters and self.parameter_slices):
             from quantem.gpu.ssb.parameters import plot_parameters
 
@@ -561,6 +566,23 @@ def _is_cupy_array(value: object) -> bool:
     """Return whether *value* is a CuPy array without requiring CUDA."""
 
     return cp is not None and isinstance(value, cp.ndarray)
+
+
+def _announce_below_auto(result: SSBResult) -> None:
+    """Say in one line when a shown phase is coarser than ``upsampling_factor="auto"`` and how to get the auto one."""
+    from quantem.gpu.optics.physics import ssb_upsampling_factor
+
+    if None in (result.voltage_kV, result.semiangle_mrad, result.object_sampling_A):
+        return
+    try:
+        auto = ssb_upsampling_factor(
+            voltage_kV=result.voltage_kV, semiangle_mrad=result.semiangle_mrad,
+            scan_sampling_A=tuple(float(step) * result.upsampling_factor for step in result.object_sampling_A))
+    except ValueError:
+        return
+    if result.upsampling_factor < auto:
+        print(f"SSB: showing this phase at {result.upsampling_factor}x, the grid it was reconstructed on; "
+              f"ssb.reconstruct(result, upsampling_factor='auto') shows it at {auto}x.")
 
 
 def _format_aberrations(aberrations: dict) -> str:
