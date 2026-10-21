@@ -43,19 +43,24 @@ contains the same short workflow and additional static image examples.
 
 ## SSB in quantem.gpu
 
-`find_aberrations()` is model-based and tilt-corrected by default, and that is
-the fit to use: it maximizes the least-squares agreement of the SSB model with
-the data and fits the sample tilt and depth spread with the aberrations.
+quantem fits SSB aberrations with a physical model of the measurement, not an
+image-quality score: for each trial set of aberrations, sample tilt and depth
+spread it predicts the bright-field data the detector should have recorded and
+keeps the parameters whose prediction agrees best (least squares). This
+model-based, tilt-corrected fit is the default everywhere, and it is where SSB
+in quantem is heading.
 
-| Call | Method |
-|---|---|
-| `find_aberrations()` | **Default.** Model agreement, tilt-corrected (sample tilt and depth spread fitted) |
-| `find_aberrations(tilt=False)` | Model agreement, tilt and depth spread held at 0 |
-| `find_aberrations(tilt=False, objective="phase_variance")` | The older SSB search: minimum phase variance over bright-field pixels |
+| Call | Method | Use it for |
+|---|---|---|
+| `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
+| `find_aberrations(tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
 
-The phase variance cannot see the tilt, so it runs with `tilt=False` only.
-`result.objective` and `result.report()` name the method; the
-{ref}`SSB fit methods <ssb-fit-methods>` section lists backend support.
+Phase variance stays as a backup, not an equal alternative: it scores how well
+the bright-field pixels' phase images agree instead of predicting the data, it
+cannot see sample tilt or depth spread, and it is about 10x slower. On
+simulated crystals with known aberrations the model-based fit lands about 3x
+closer to the true C10. Backend support and evidence: {ref}`SSB fit methods <ssb-fit-methods>`.
 
 ## What stays consistent
 

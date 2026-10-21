@@ -7,23 +7,32 @@ For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-recon
 This page covers parameters, calibration, ownership, and backend limits.
 
 (ssb-fit-methods)=
-## Fit methods
+## Fit methods: model-based by default
 
-`find_aberrations()` is model-based and tilt-corrected by default, and that is
-the fit to use: it maximizes the least-squares agreement of the SSB model with
-the data and fits the sample tilt and a depth spread with the aberrations.
-`reconstruct()` runs this fit when the session has no aberrations. `tilt` and
-`objective` select one of three methods:
+quantem fits SSB aberrations with a physical model of the measurement, not an
+image-quality score. For each trial set of aberrations, sample tilt and depth
+spread, it predicts the bright-field data G(q, k) the detector should have
+recorded, then keeps the parameters whose prediction agrees best with the
+measurement (least squares). This model-based, tilt-corrected fit is the
+default everywhere, and it is where SSB in quantem is heading.
 
-| Call | Method |
-|---|---|
-| `find_aberrations()` | **Default.** Model agreement, tilt-corrected: sample tilt and depth spread fitted with C10, C12 and phi12 |
-| `find_aberrations(tilt=False)` | Model agreement with the tilt and depth spread held at 0, where the model is ordinary SSB exactly |
-| `find_aberrations(tilt=False, objective="phase_variance")` | The older SSB search: the aberrations that minimize the phase variance over bright-field pixels |
+| Call | Method | Use it for |
+|---|---|---|
+| `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
+| `find_aberrations(tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
 
-`objective` is `"agreement"` (default) or `"phase_variance"`. The phase
-variance cannot see the sample tilt, so `objective="phase_variance"` with
-`tilt=True` raises. Each method searches 200 seeded trials and then refines:
+Phase variance chooses the aberrations under which the corrected phase images
+of all bright-field pixels agree best (the least phase variance across them).
+It stays as a backup, not an equal alternative: it scores images instead of
+predicting the data, it cannot see sample tilt or depth spread, and it is about
+10x slower (gold, both 180° branches: about 75 s against 7.8 s). On simulated
+crystals with known aberrations the model-based fit lands about 3x closer to
+the true C10. Evidence: [the standard-fit objective](../maintainer/2026-10-20-ssb-standard-fit-objective.md).
+
+`objective` is `"agreement"` (default) or `"phase_variance"`, kept for
+reproducing older results and cross-checks; with `tilt=True` the phase
+variance raises. Each method searches 200 seeded trials and then refines:
 `refinement="auto"` is Newton for the agreement fits and Nelder–Mead for the
 phase variance, and for an agreement fit that locks a coefficient, bounds
 phi12 or holds a nonzero C12. `result.objective` records the objective and
@@ -41,7 +50,6 @@ answers an agreement call.
 On CUDA, `tilt=False` was the phase-variance search until 2026-10-20; that
 search is now `objective="phase_variance"`, and the agreement fit is being
 ported. The browser engine has no aberration search.
-Evidence for the default: [the standard-fit objective](../maintainer/2026-10-20-ssb-standard-fit-objective.md).
 
 ## Inputs and outputs
 

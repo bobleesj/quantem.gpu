@@ -1523,26 +1523,32 @@ class SSB:
     ) -> SSBResult:
         """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
 
-        The default is the method to use: model-based and tilt-corrected. It maximizes the least-squares agreement
-        of the SSB model with the data and fits the sample tilt and a depth spread of a thick, tilted crystal with
-        the aberrations. ``tilt`` and ``objective`` select one of three methods:
+        SSB in quantem is model-based by default. For each trial set of aberrations, sample tilt and depth spread the
+        fit predicts the bright-field data G(q, k) the detector should have recorded and keeps the parameters whose
+        prediction agrees best with the measurement (least squares). This model-based, tilt-corrected fit is the
+        default everywhere and the one to use; ``tilt`` and ``objective`` select one of three methods:
 
-        ============================================================  ==============================================
-        Call                                                          Method
-        ============================================================  ==============================================
-        ``find_aberrations()``                                        **default**: model agreement, tilt-corrected
-                                                                      (sample tilt and depth spread fitted)
-        ``find_aberrations(tilt=False)``                              model agreement, tilt and depth spread held at
-                                                                      0, where the model is ordinary SSB exactly
-        ``find_aberrations(tilt=False, objective="phase_variance")``  the older SSB search: the aberrations that
-                                                                      minimize the phase variance over bright-field
-                                                                      pixels
-        ============================================================  ==============================================
+        ============================================================  =====================  ==============================
+        Call                                                          Method                 Use it for
+        ============================================================  =====================  ==============================
+        ``find_aberrations()``                                        model-based,           **the default**: every fit
+                                                                      tilt-corrected
+        ``find_aberrations(tilt=False)``                              model-based, tilt and  thin, untilted samples, or to
+                                                                      depth spread at 0      see what tilt correction changes
+        ``find_aberrations(tilt=False, objective="phase_variance")``  phase variance, the    a backup: reproducing older
+                                                                      earlier SSB search     results, cross-checking a fit
+        ============================================================  =====================  ==============================
 
-        The phase variance cannot see the sample tilt, so ``objective="phase_variance"`` with ``tilt=True`` raises.
-        Each runs one search of ``num_trials`` trials plus local refinement: ``refinement="auto"`` (default) selects
-        Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that locks a
-        coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
+        ``objective`` is ``"agreement"`` (default, the model) or ``"phase_variance"``, which is kept for reproducing
+        older results and cross-checks: a backup, not an equal alternative. It chooses the aberrations under which the
+        bright-field pixels' corrected phase images agree best (the least phase variance across them), so it scores
+        images rather than predicting the data, cannot see the sample tilt or depth spread (with ``tilt=True`` it
+        raises) and is about 10x slower; on simulated crystals with known aberrations the model-based fit lands about
+        3x closer to the true C10 (docs/maintainer/2026-10-20-ssb-standard-fit-objective.md).
+
+        Each method runs one search of ``num_trials`` trials plus local refinement: ``refinement="auto"`` (default)
+        selects Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that
+        locks a coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
         simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
         not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
         whatever the objective. CUDA does not run the ``tilt=False`` agreement fit yet: it raises NotImplementedError,
@@ -1625,19 +1631,19 @@ class SSB:
         """Fit both 180-degree branches of the rotation independently and say which one the phase supports.
 
         Each branch is one ``find_aberrations(**find_aberrations_options)`` fit. The default, and the fit to decide the
-        branch on, is the model-based, tilt-corrected fit; ``tilt`` and ``objective`` pass through:
+        branch on, is the model-based, tilt-corrected fit; ``tilt`` and ``objective`` pass through, and the phase
+        variance is a backup:
 
-        ============================================================  ==============================================
-        Call                                                          Method
-        ============================================================  ==============================================
-        ``find_aberrations()``                                        **default**: model agreement, tilt-corrected
-                                                                      (sample tilt and depth spread fitted)
-        ``find_aberrations(tilt=False)``                              model agreement, tilt and depth spread held at
-                                                                      0, where the model is ordinary SSB exactly
-        ``find_aberrations(tilt=False, objective="phase_variance")``  the older SSB search: the aberrations that
-                                                                      minimize the phase variance over bright-field
-                                                                      pixels
-        ============================================================  ==============================================
+        ============================================================  =====================  ==============================
+        Call                                                          Method                 Use it for
+        ============================================================  =====================  ==============================
+        ``find_aberrations()``                                        model-based,           **the default**: every fit
+                                                                      tilt-corrected
+        ``find_aberrations(tilt=False)``                              model-based, tilt and  thin, untilted samples, or to
+                                                                      depth spread at 0      see what tilt correction changes
+        ``find_aberrations(tilt=False, objective="phase_variance")``  phase variance, the    a backup: reproducing older
+                                                                      earlier SSB search     results, cross-checking a fit
+        ============================================================  =====================  ==============================
 
         The centre-of-mass curl knows the scan-detector rotation only modulo 180 degrees. This runs
         ``find_aberrations(**find_aberrations_options)`` twice, at the session's rotation and at that rotation plus
@@ -2053,19 +2059,18 @@ class SSB:
         """Reconstruct the phase with the session's aberrations, fitting them first when none are known.
 
         A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so:
-        the model-based, tilt-corrected fit, the default of the three methods:
+        the model-based, tilt-corrected fit, the default of the three methods (the phase variance is a backup):
 
-        ============================================================  ==============================================
-        Call                                                          Method
-        ============================================================  ==============================================
-        ``find_aberrations()``                                        **default**: model agreement, tilt-corrected
-                                                                      (sample tilt and depth spread fitted)
-        ``find_aberrations(tilt=False)``                              model agreement, tilt and depth spread held at
-                                                                      0, where the model is ordinary SSB exactly
-        ``find_aberrations(tilt=False, objective="phase_variance")``  the older SSB search: the aberrations that
-                                                                      minimize the phase variance over bright-field
-                                                                      pixels
-        ============================================================  ==============================================
+        ============================================================  =====================  ==============================
+        Call                                                          Method                 Use it for
+        ============================================================  =====================  ==============================
+        ``find_aberrations()``                                        model-based,           **the default**: every fit
+                                                                      tilt-corrected
+        ``find_aberrations(tilt=False)``                              model-based, tilt and  thin, untilted samples, or to
+                                                                      depth spread at 0      see what tilt correction changes
+        ``find_aberrations(tilt=False, objective="phase_variance")``  phase variance, the    a backup: reproducing older
+                                                                      earlier SSB search     results, cross-checking a fit
+        ============================================================  =====================  ==============================
 
         Later calls reuse that fit. On an estimated rotation that fit compares both 180-degree branches with two
         independent joint fits (9 to 25 s in all for a 512 x 512 scan on an M-series Mac) and prints one line naming the
