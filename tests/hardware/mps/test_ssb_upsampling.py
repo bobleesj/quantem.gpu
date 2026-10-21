@@ -251,6 +251,8 @@ def test_coherent_preview_cancels_after_queued_batches_and_recovers(monkeypatch)
 
     from .test_ssb_thick_sample_mps import _poisson_disk_session
 
+    # the per-term coherent kernel (higher orders; the two-term transfer has the separable kernel, depth or not)
+    monkeypatch.setattr(upsampling, "_SEPARABLE", False)
     monkeypatch.setattr(upsampling, "_WORK_BYTES", (128 * 3) ** 2 * 8 * 3)
     coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
     settings = dict(sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=18.0,
@@ -481,6 +483,37 @@ def test_separable_two_term_matches_per_term_transfer(monkeypatch, factor, detec
         prepared = ssb._backend()._prepared
         # At native sampling the Nyquist row has support and its upper half is computed, not mirrored.
         assert (prepared.separable_geometry[1]["upper"].size > 0) == (factor == 1)
+
+
+@pytest.mark.parametrize("factor", [1, 2, 3])
+@pytest.mark.parametrize("detector_sampling", [(10.0, 10.0), (10.0, 7.0)])
+def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, detector_sampling):
+    """With sample tilt and depth spread the separable kernel reproduces the per-term transfer to float32 rounding."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling as up
+
+    cases = [
+        ({"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}, (-9.0, 5.0), 18.0),
+        ({"C10_nm": 35.0, "C12_nm": 9.0, "phi12_deg": 75.0}, (3.0, -4.0), 60.0),
+        ({"C10_nm": 0.3, "C12_nm": 0.0, "phi12_deg": 0.0}, (0.0, 0.0), 2.0),
+    ]
+    with _disk_session(detector_sampling=detector_sampling) as ssb:
+        ssb.set_rotation(165.8)
+        for coefs, tilt, depth in cases:
+            sample = dict(sample_tilt_mrad=tilt, depth_spread_nm=depth, upsampling_factor=factor, compute_loss=False)
+            actual, _ = ssb.preview(coefs, **sample)
+            for aliases in (1, 3):
+                # one fine row per thread, or every fine row of a source row: the same arithmetic per output
+                with monkeypatch.context() as single:
+                    single.setattr(up, "_DEPTH_ALIASES", aliases)
+                    ssb._backend()._prepared.separable_geometry = None
+                    rows, _ = ssb.preview(coefs, **sample)
+                np.testing.assert_array_equal(rows.view(np.uint32), actual.view(np.uint32))
+            with monkeypatch.context() as reference:
+                reference.setattr(up, "_SEPARABLE", False)
+                expected, _ = ssb.preview(coefs, **sample)
+            difference = np.angle(np.exp(1j * (actual.astype(np.float64) - expected)))
+            assert np.abs(difference).max() < 2e-6, (coefs, tilt, depth, np.abs(difference).max())
 
 
 def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
