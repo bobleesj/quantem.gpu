@@ -15,7 +15,8 @@ new `rcN` heading when that rc is published to TestPyPI.
   `objective="phase_variance"` raises. `result.objective` records the objective, `report()` shows it, and it is a
   saved setting. The MPS phase-variance search (`ssb/mps/loss.py`, its pair kernels, the 512 x 512 pair-pack
   policy and `scripts/benchmark_ssb_mps_scaling.py`) is restored unchanged for that option and reproduces the
-  removed search bit for bit on gold. On CUDA, `tilt=False` (the agreement) raises
+  removed search bit for bit on gold; the M5 Max benchmark baseline times both searches
+  (`search_candidate_phase_variance`, `find_aberrations_phase_variance`). On CUDA, `tilt=False` (the agreement) raises
   `NotImplementedError` until it is ported; pass `objective="phase_variance"` for CUDA's previous standard fit.
 - On MPS, `find_aberrations(tilt=False)` fits on the joint fit's objective, the least-squares agreement of the SSB
   model with G(q, k), with the sample tilt and depth spread held at 0: the same resident 200-trial search, then

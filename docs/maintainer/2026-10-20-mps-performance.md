@@ -214,8 +214,10 @@ checkout had local edits, and no file paths.
 | `preview_native`, `preview_2x` | a ShowPtycho slider drag step (no loss) |
 | `preview_native_loss` | the slider release (with the variance loss) |
 | `search_candidate` | an eighth of one search batch of eight agreement trials at depth spread 0 |
+| `search_candidate_phase_variance` | half of one TPE pair of the exact phase-variance loss |
 | `find_aberrations` | the default fit, once (joint tilt fit on both branches of the estimated rotation) |
 | `find_aberrations_standard` | one standard `tilt=False` fit (200 trials and Newton) at the kept rotation, once |
+| `find_aberrations_phase_variance` | one `tilt=False, objective="phase_variance"` fit (200 trials and Nelder-Mead) at the kept rotation, once |
 | `detector_update`, `detector_full` | a Show4DSTEM detector sum on gold as loaded (uint16 counts): a half-pixel disk move (incremental) and an alternating disk / annulus (full) |
 | `detector_full_uint32` | the alternating sum on gold loaded with `hot_pixel_correction="none"`, which keeps uint32 |
 
@@ -236,8 +238,10 @@ detector update no longer equals the full sum.
 | `preview_2x` | 71.9 ms | 73.6 ms |
 | `preview_native_loss` | 123 ms | 126 ms |
 | `search_candidate` | 19.3 ms | 23.0 ms |
+| `search_candidate_phase_variance` | 80.9 ms | 83.3 ms |
 | `find_aberrations` | 24.4 s | – |
 | `find_aberrations_standard` | 4.97 s | – |
+| `find_aberrations_phase_variance` | 23.9 s | – |
 | `detector_full_uint32` | 2.28 s | 2.33 s |
 | `detector_update` | 5.9 ms | 6.2 ms |
 | `detector_full` | 12.2 ms | 13.7 ms |
@@ -246,8 +250,18 @@ The median of three runs (`merge`) on 2026-10-20 with this harness's commit (mac
 torch 2.13.0, MLX 0.32.0), each under the shared GPU lock, while WindowServer used 24 to 50 % of the GPU
 (the screen was shared). 7,644 bright-field pixels; the uint16 update equalled the uint32 full sum in every run.
 `search_candidate` and `find_aberrations_standard` were re-recorded from one run on 2026-10-20 when the MPS
-standard fit moved to the agreement objective (phase-variance pair 80.9 ms, standard fit 23.9 s before);
-`2026-10-20-ssb-standard-fit-objective.md`.
+standard fit moved to the agreement objective (`2026-10-20-ssb-standard-fit-objective.md`). The two
+`*_phase_variance` rows keep the overnight figures of the phase-variance search, which is
+`find_aberrations(tilt=False, objective="phase_variance")` since the same day: its restored loss kernels are byte
+for byte the ones those figures timed. That evening the GPU was busy (Spotlight indexing, the window server at 37
+to 41 %): three harness runs of the restored search gave 187, 129 and 106 ms per candidate and 48.8, 39.1 and
+31.2 s per fit, and the commit before its removal, run back to back with the first, 192 ms and 45.3 s, with the
+same fitted values. `phase_variance_fit_peak` (26.05 GiB above the encoded data, the same in all three runs)
+includes MLX's cache from the two fits before it. Measured alone on gold (both branches), both versions peak at
+12.50 GiB of live MLX arrays and, in most runs, 18.56 GiB of driver memory above the encoded data, the overnight
+18.6 GiB. In one measurement script the restored search read 22.5 GiB (three runs) and the old one 18.56; with the
+coherent preview kernels of before 56877bf4 the restored search read 18.56 there too, so the extra 4 GiB is MLX
+cache that the newer preview kernels leave, not the search.
 
 ### Reading a failure
 
@@ -256,8 +270,8 @@ standard fit moved to the agreement objective (phase-variance pair 80.9 ms, stan
 2. Rerun the one failing metric's stage two or three times. A real
    regression repeats; contention does not.
 3. A slower `preview_*` points at `ssb/mps/upsampling.py`; a slower
-   `search_candidate` or `find_aberrations` at `ssb/mps/thick_sample.py` (the agreement kernel), `ssb/_resident_search.py` and the row and
-   column kernels; `detector_*` at `detector/counts.py` and
+   `search_candidate` or `find_aberrations` at `ssb/mps/thick_sample.py` (the agreement kernel) and
+   `ssb/_resident_search.py`; a slower `*_phase_variance` at `ssb/mps/loss.py` and the row and column kernels; `detector_*` at `detector/counts.py` and
    `resident/mps/spatial.py`; `ssb_session` at the rotation estimate and the
    source decode.
 4. Bisect with the harness: it runs on any checkout that has the paths.
