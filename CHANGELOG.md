@@ -68,6 +68,15 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Added
 
+- `find_aberrations(refine_rotation=True)` (also through `compare_rotation_branches`) refines an estimated
+  scan-detector rotation after the 180-degree branch decision: 1-degree steps from the estimate until the agreement
+  falls on both sides (at most 10 degrees), then bounded Brent to 0.05 degrees, each angle one polish of the fit from
+  the nearest angle's fit with `set_rotation` (G(q, k) is not rebuilt). `result.rotation_estimate_deg`,
+  `rotation_refined` and `rotation_refinement` (the agreement at both angles, the angles evaluated, the time) record
+  it, are saved, and `report()` shows both angles; one line reports the change. A given or recorded rotation is never
+  refined; the default fit is unchanged bit for bit. On gold: 358.31 -> 1.24 degrees, agreement +9.8%, 11 polishes in
+  12.5 s on an M5 Max, the phase image nearly unchanged (correlation 0.98).
+
 - `SSB.compare_rotation_branches(**find_aberrations_options)` fits both 180°
   branches and returns a `RotationBranches` with `show()` and `report()`; on a
   given rotation it reports without moving it unless `apply=True`.

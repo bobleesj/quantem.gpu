@@ -55,6 +55,14 @@ class SSBResult(Mapping[str, float]):
     rotation_branches : RotationBranches | None
         Both 180-degree branches, fitted independently, with the atomic-column and phase-tail evidence and the branch
         kept; ``show("rotation")`` draws it. None when no comparison ran (a given or recorded rotation).
+    rotation_refined : bool
+        Whether ``find_aberrations(refine_rotation=True)`` refined the estimated rotation; ``scan_detector_rotation_deg``
+        is then the refined angle.
+    rotation_estimate_deg : float | None
+        The estimated rotation (on the kept 180-degree branch) the refinement started from; None when not refined.
+    rotation_refinement : dict | None
+        The refinement's record: ``estimate_deg``, ``refined_deg``, the agreement (``estimate_agreement``,
+        ``refined_agreement``) and loss at both, the angles evaluated, ``evaluations`` and ``seconds``.
     upsampling_factor : int
         Output factor relative to the native scan grid. ``object_sampling_A``
         records output pixel spacing, preserving the physical field of view.
@@ -131,6 +139,10 @@ class SSBResult(Mapping[str, float]):
     parameter_slices: dict[str, object] | None = None
     sample_agreement: float | None = None
     objective: Literal["agreement", "phase_variance"] | None = None
+    # find_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
+    rotation_refined: bool = False
+    rotation_estimate_deg: float | None = None
+    rotation_refinement: dict[str, object] | None = None
 
     def __post_init__(self) -> None:
         # one representation of the physical angle, whatever turn count a caller or an engine gives
@@ -169,6 +181,8 @@ class SSBResult(Mapping[str, float]):
         if self.num_trials is not None:
             lines.append(f"  Trials         {self.num_trials}")
         lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
+        if self.rotation_refined:
+            lines.append(f"  Refined from   {self.rotation_estimate_deg:.2f}° (estimate)")
         if self.rotation_branches is not None:
             lines.append(f"  180° branch    {self.rotation_branches.summary}")
         if self.aberrations:
@@ -223,6 +237,8 @@ class SSBResult(Mapping[str, float]):
         }
         if self.rotation_branches is not None:
             row["Suggested rotation (deg)"] = self.rotation_branches.branches[0].scan_detector_rotation_deg
+        if self.rotation_refined:
+            row["Estimated rotation (deg)"] = self.rotation_estimate_deg
         row["SSB-selected rotation (deg)"] = self.scan_detector_rotation_deg
         if self.rotation_branches is not None:
             row["180° branch by"] = {"columns": "atomic columns", "phase_tail": "phase tail"}[self.rotation_branches.decided_by]

@@ -360,3 +360,77 @@ def test_holding_c12_at_zero_still_fits_the_defocus(lock):
                                           check_rotation=False, verbose=False)
     assert fitted.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.5)
     assert fitted.aberrations["C12_nm"] == 0.0 and fitted.aberrations["phi12_deg"] == 0.0
+
+
+@pytest.mark.parametrize("estimate_deg", [2.0, 357.8])
+def test_refine_rotation_recovers_a_two_degree_offset(monkeypatch, estimate_deg):
+    """The centre-of-mass estimate is about 2 degrees off a crystal simulated at 0 degrees; the refinement finds 0.
+
+    The branch test keeps the estimate's branch, then the 1-D search polishes the fit at each angle from the nearest
+    angle's fit (no new search) and keeps the angle of the highest agreement.
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+    from quantem.gpu.ssb import workflow
+
+    monkeypatch.setattr(workflow, "_estimate_rotation", lambda *args: (estimate_deg, False))
+    frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
+    with SSB(frames, **_settings(detector_mrad)) as session:
+        fit = session.find_aberrations(num_trials=40, refine_rotation=True, verbose=False)
+        assert session.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
+        assert session.reconstruct() is fit
+    assert fit.rotation_branches.kept == 0 and fit.rotation_branches.decided_by == "columns"
+    assert fit.rotation_refined and fit.rotation_estimate_deg == estimate_deg
+    assert abs((fit.scan_detector_rotation_deg + 180.0) % 360.0 - 180.0) < 0.1
+    record = fit.rotation_refinement
+    assert record["refined_agreement"] == fit.sample_agreement > record["estimate_agreement"]
+    assert record["evaluations"] <= 12
+    assert fit.aberrations["C10_nm"] == pytest.approx(-3.0, abs=0.1)
+    assert len([trial for trial in fit.trial_records if trial["stage"] == "search"]) == 80
+
+
+def test_a_given_rotation_is_fitted_once_and_not_refined():
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
+    with SSB(frames, scan_detector_rotation_deg=2.0, **_settings(detector_mrad)) as session:
+        fit = session.find_aberrations(num_trials=40, refine_rotation=True, verbose=False)
+    assert fit.scan_detector_rotation_deg == 2.0 and fit.rotation_branches is None
+    assert (fit.rotation_refined, fit.rotation_estimate_deg, fit.rotation_refinement) == (False, None, None)
+
+
+@pytest.mark.slow
+def test_gold_refined_rotation(capsys):
+    """Gold, estimated rotation, the default tilt-corrected fit of both branches, then the refinement on the kept one.
+
+    On an M5 Max: kept 358.31 (phase tail), refined to 1.24 degrees, agreement +9.8%, 11 polishes in 12.5 s.
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB, io
+    from tests.hardware.mps.test_ssb_thick_torch_reference import _gold_harness
+
+    harness = _gold_harness()
+    master = harness.gold_master()
+    if master is None:
+        pytest.skip("the gold scan is not in the Hugging Face cache (tests/benchmarks/mps_ssb.py run --download fetches it)")
+    with io.load(str(master), hot_pixel_correction=harness.HOT_PIXELS, verbose=False) as data:
+        harness.calibrate(data)
+        with SSB(data) as ssb:
+            fit = ssb.find_aberrations(refine_rotation=True)
+            assert ssb.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
+    record = fit.rotation_refinement
+    kept = fit.rotation_branches.branches[fit.rotation_branches.kept]
+    assert fit.rotation_refined and fit.rotation_estimate_deg == kept.scan_detector_rotation_deg == record["estimate_deg"]
+    change = (fit.scan_detector_rotation_deg - fit.rotation_estimate_deg + 180.0) % 360.0 - 180.0
+    assert 0.05 < abs(change) < 10.0
+    assert fit.rotation_estimate_deg == pytest.approx(358.3108, abs=1e-3)
+    assert fit.scan_detector_rotation_deg == pytest.approx(1.24, abs=0.05)
+    assert record["refined_agreement"] == fit.sample_agreement > record["estimate_agreement"]
+    assert 3 <= record["evaluations"] <= 15
+    assert fit.timings["rotation_refinement_s"] == record["seconds"]
+    out = capsys.readouterr().out
+    assert out.count("SSB: refined rotation ") == 1 and out.index("SSB: kept ") < out.index("SSB: refined rotation ")
+    report = fit.report().iloc[0]
+    assert report["Estimated rotation (deg)"] == round(fit.rotation_estimate_deg, 3)
+    assert report["SSB-selected rotation (deg)"] == round(fit.scan_detector_rotation_deg, 3)
