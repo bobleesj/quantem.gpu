@@ -109,10 +109,40 @@ _THICK_GEOMETRY_SOURCE = r"""
         return make_float4(alpha2, cos2phi, sin2phi, fminf(fmaxf(edge, 0.0f), 1.0f));
     }
     __device__ float thick_sinc(float x) { return (fabsf(x) < 1e-6f) ? 1.0f : sinf(x) / x; }
+    // thick_geometry with the soft aperture's denominator taken as the constant ang on square detector pixels
+    // (ang_y == ang_x, where |(cos phi ang_y, sin phi ang_x)| = ang), which saves a square root and two divisions per
+    // probe tilt; alpha^2, cos 2 phi and sin 2 phi are thick_geometry's expressions, so chi rounds the same. The
+    // corrections evaluate it per (q, k) pair.
+    __device__ __forceinline__ float4 thick_probe_geometry(float dx, float dy, float wavelength, float semiangle_rad,
+                                                           float ang_y_rad, float ang_x_rad) {
+        if (ang_y_rad != ang_x_rad) return thick_geometry(dx, dy, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float r2 = dx * dx + dy * dy;
+        float alpha2 = r2 * wavelength * wavelength;
+        float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+        float cos2phi = (dx * dx - dy * dy) * inv_r2;
+        float sin2phi = 2.0f * dx * dy * inv_r2;
+        float edge = (r2 > 1e-30f) ? fmaf(semiangle_rad - sqrtf(r2) * wavelength, 1.0f / ang_x_rad, 0.5f) : 1.0f;
+        return make_float4(alpha2, cos2phi, sin2phi, fminf(fmaxf(edge, 0.0f), 1.0f));
+    }
 """
 
 _THICK_CORRECTION_SOURCE = _THICK_GEOMETRY_SOURCE + r"""
-__device__ float2 thick_correct(float2 G, float qx, float qy, float kx, float ky,
+// The BF pixel's own probe geometry and chi(k), which depend on k only: the wave sum computes them once per BF pixel
+// and block (thick_probe_k) and passes them to thick_correct_k for every frequency.
+__device__ float4 thick_probe_k(float kx, float ky, float wavelength, float semiangle_rad, float ang_y_rad,
+    float ang_x_rad, float C10, float C12, float cos2phi12, float sin2phi12, float factor, float *chi_k
+#ifdef SSB_HIGHER_ORDER
+    , const float* coefficients
+#endif
+    ) {
+        float4 g_k = thick_probe_geometry(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        *chi_k = factor * g_k.x * fmaf(C12, fmaf(g_k.y, cos2phi12, g_k.z * sin2phi12), C10);
+#ifdef SSB_HIGHER_ORDER
+        *chi_k = ssb_chi_full(kx, ky, wavelength, coefficients);
+#endif
+        return g_k;
+}
+__device__ float2 thick_correct_k(float2 G, float qx, float qy, float kx, float ky, float4 g_k, float chi_k,
     float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
     float C10, float C12, float cos2phi12, float sin2phi12, float factor,
     float thickness, float theta_r, float theta_c
@@ -121,19 +151,16 @@ __device__ float2 thick_correct(float2 G, float qx, float qy, float kx, float ky
 #endif
     ) {
 
-        float4 g_k = thick_geometry(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
-        float4 g_m = thick_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
-        float4 g_p = thick_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float4 g_m = thick_probe_geometry(qx - kx, qy - ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
+        float4 g_p = thick_probe_geometry(qx + kx, qy + ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad);
 #ifdef SSB_WAVE
         // Closed apertures have exactly zero weight. Keep every BF pixel and
         // the soft aperture edge, but omit phases and depth weights at zero.
         if (g_k.w == 0.0f || (g_m.w == 0.0f && g_p.w == 0.0f)) return make_float2(0.0f, 0.0f);
 #endif
-        float chi_k = factor * g_k.x * fmaf(C12, fmaf(g_k.y, cos2phi12, g_k.z * sin2phi12), C10);
         float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
         float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
 #ifdef SSB_HIGHER_ORDER
-        chi_k = ssb_chi_full(kx, ky, wavelength, coefficients);
         chi_m = ssb_chi_full(qx - kx, qy - ky, wavelength, coefficients);
         chi_p = ssb_chi_full(qx + kx, qy + ky, wavelength, coefficients);
 #endif
@@ -159,6 +186,28 @@ __device__ float2 thick_correct(float2 G, float qx, float qy, float kx, float ky
         return make_float2(Gr * g_re + Gi * g_im, Gi * g_re - Gr * g_im);
 
 }
+__device__ float2 thick_correct(float2 G, float qx, float qy, float kx, float ky,
+    float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
+    float C10, float C12, float cos2phi12, float sin2phi12, float factor,
+    float thickness, float theta_r, float theta_c
+#ifdef SSB_HIGHER_ORDER
+    , const float* coefficients
+#endif
+    ) {
+        float chi_k;
+        float4 g_k = thick_probe_k(kx, ky, wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10, C12, cos2phi12,
+                                   sin2phi12, factor, &chi_k
+#ifdef SSB_HIGHER_ORDER
+                                   , coefficients
+#endif
+                                   );
+        return thick_correct_k(G, qx, qy, kx, ky, g_k, chi_k, wavelength, semiangle_rad, ang_y_rad, ang_x_rad,
+                               C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c
+#ifdef SSB_HIGHER_ORDER
+                               , coefficients
+#endif
+                               );
+}
 """
 
 thick_correct_kernel = cp.ElementwiseKernel(
@@ -180,7 +229,17 @@ thick_correct_kernel = cp.ElementwiseKernel(
 
 # Sum corrected spectra in bounded BF groups. Read aliases from the native
 # spectrum directly, avoiding an expanded (detector, row, col) output volume.
+# The float32 corrections are summed with an error-free float32 two-sum (a high word and its rounding error), close to
+# float64 accuracy, and written as float64 once per thread: a float64 add per term ran on the FP64 pipe, which these
+# GPUs execute at 1/64 of the float32 rate, and bounded the kernel.
 _THICK_WAVE_SUM_SOURCE = r"""
+#define WAVE_TILE 128   // BF pixels whose own geometry and chi(k) a block holds at a time
+__device__ __forceinline__ void two_sum_add(float &high, float &low, float value) {
+    float sum = high + value;
+    float rounded = sum - high;
+    low += (high - (sum - rounded)) + (value - rounded);
+    high = sum;
+}
 extern "C" __global__ void thick_wave_sum(
     const float2* source, const float* qrow, const float* qcol,
     const float* krow, const float* kcol, double2* partial,
@@ -196,15 +255,19 @@ extern "C" __global__ void thick_wave_sum(
     ) {
     int q = blockIdx.x * blockDim.x + threadIdx.x;
     int plane = rows * output_cols;
-    if (q >= plane) return;
     int start = first_bf + blockIdx.y * group_size;
     int stop = min(start + group_size, num_bf);
     double2 sum = make_double2(0.0, 0.0);
+    float high_re = 0.0f, low_re = 0.0f, high_im = 0.0f, low_im = 0.0f;
+    bool contributes = false;
+    float qr = 0.0f, qc = 0.0f;
+    size_t offset = 0, stride = (size_t)native_rows * stored_cols;
+    bool conjugate = false;
     if (q == 0) {
         sum = make_double2((double)dc.x * (stop-start), (double)dc.y * (stop-start));
-    } else {
+    } else if (q < plane) {
         int row = q / output_cols, col = q % output_cols;
-        float qr = qrow[row], qc = qcol[col];
+        qr = qrow[row]; qc = qcol[col];
         // No overlap of soft probe apertures beyond this radius.
         float support = 2.0f * (semiangle_rad + 0.5f * fmaxf(ang_y_rad, ang_x_rad)) / wavelength;
         // Replicas of the scan mean contain no spatial contrast. The
@@ -226,25 +289,44 @@ extern "C" __global__ void thick_wave_sum(
         overlap = fminf(minus_row*minus_row + minus_col*minus_col,
                         plus_row*plus_row + plus_col*plus_col) <= radius*radius;
 #endif
-        if (!dc_alias && qr*qr + qc*qc <= support*support && overlap) {
-            int sr = row % native_rows, sc = col % native_cols;
-            bool conjugate = stored_cols != native_cols && sc >= stored_cols;
-            if (conjugate) { sr = (native_rows-sr) % native_rows; sc = native_cols-sc; }
-            size_t offset = (size_t)sr * stored_cols + sc;
-            size_t stride = (size_t)native_rows * stored_cols;
-            for (int b=start; b<stop; ++b) {
-                float2 g = source[(size_t)b * stride + offset];
-                if (conjugate) g.y = -g.y;
-                float2 v = thick_correct(g, qr, qc, krow[b], kcol[b],
-                    wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c
+        contributes = !dc_alias && qr*qr + qc*qc <= support*support && overlap;
+        int sr = row % native_rows, sc = col % native_cols;
+        conjugate = stored_cols != native_cols && sc >= stored_cols;
+        if (conjugate) { sr = (native_rows-sr) % native_rows; sc = native_cols-sc; }
+        offset = (size_t)sr * stored_cols + sc;
+    }
+    // The BF pixel's own geometry and chi(k) are the same for every frequency: computed once per block and tile.
+    __shared__ float4 probe_k[WAVE_TILE];
+    __shared__ float chi_k[WAVE_TILE];
+    for (int tile = start; tile < stop; tile += WAVE_TILE) {
+        int tile_stop = min(tile + WAVE_TILE, stop);
+        __syncthreads();
+        for (int b = tile + threadIdx.x; b < tile_stop; b += blockDim.x) {
+            probe_k[b - tile] = thick_probe_k(krow[b], kcol[b], wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10,
+                                              C12, cos2phi12, sin2phi12, factor, &chi_k[b - tile]
 #ifdef SSB_HIGHER_ORDER
-                    , coefficients
+                                              , coefficients
 #endif
-                    );
-                sum.x += v.x; sum.y += v.y;
-            }
+                                              );
+        }
+        __syncthreads();
+        if (!contributes) continue;
+        for (int b = tile; b < tile_stop; ++b) {
+            float2 g = source[(size_t)b * stride + offset];
+            if (conjugate) g.y = -g.y;
+            float2 v = thick_correct_k(g, qr, qc, krow[b], kcol[b], probe_k[b - tile], chi_k[b - tile],
+                wavelength, semiangle_rad, ang_y_rad, ang_x_rad, C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c
+#ifdef SSB_HIGHER_ORDER
+                , coefficients
+#endif
+                );
+            two_sum_add(high_re, low_re, v.x);
+            two_sum_add(high_im, low_im, v.y);
         }
     }
+    if (q >= plane) return;
+    sum.x += (double)high_re + (double)low_re;
+    sum.y += (double)high_im + (double)low_im;
     partial[(size_t)blockIdx.y * plane + q] = sum;
 }
 """
@@ -253,6 +335,57 @@ thick_wave_sum_bounded_kernel = cp.RawKernel(
     "#define SSB_WAVE\n#define SSB_WAVE_BOUNDS\n" + _THICK_CORRECTION_SOURCE + _THICK_WAVE_SUM_SOURCE,
     "thick_wave_sum",
 )
+
+# Corrected full-plane spectra of a group of BF pixels for ThickSample.reconstruct (mean_phase, native grid): the
+# element-wise thick_correct of each stored value, with the half plane's mirror read in place, G(-q) = conj G(q), and the
+# DC replaced by the session's dc value. One launch replaces the full-plane copy (two gathers, a conjugate and a copy)
+# and the element-wise correction; the values are the same.
+thick_correct_planes_kernel = cp.RawKernel(_THICK_CORRECTION_SOURCE + r"""
+extern "C" __global__ void thick_correct_planes(
+    const float2* __restrict__ source, const float* __restrict__ qrow, const float* __restrict__ qcol,
+    const float* __restrict__ krow, const float* __restrict__ kcol, float2* __restrict__ corrected,
+    int rows, int cols, int stored_cols, int first_bf, float2 dc,
+    float wavelength, float semiangle_rad, float ang_y_rad, float ang_x_rad,
+    float C10, float C12, float cos2phi12, float sin2phi12, float factor,
+    float thickness, float theta_r, float theta_c)
+{
+    int q = blockIdx.x * blockDim.x + threadIdx.x;
+    int plane = rows * cols;
+    if (q >= plane) return;
+    int b = first_bf + blockIdx.y;
+    size_t out = (size_t)blockIdx.y * plane + q;
+    if (q == 0) { corrected[out] = dc; return; }
+    int row = q / cols, col = q - row * cols;
+    int sr = row, sc = col;
+    bool conjugate = stored_cols != cols && col >= stored_cols;
+    if (conjugate) { sr = (rows - row) % rows; sc = cols - col; }
+    float2 g = source[(size_t)b * rows * stored_cols + (size_t)sr * stored_cols + sc];
+    if (conjugate) g.y = -g.y;
+    corrected[out] = thick_correct(g, qrow[row], qcol[col], krow[b], kcol[b], wavelength, semiangle_rad, ang_y_rad,
+                                   ang_x_rad, C10, C12, cos2phi12, sin2phi12, factor, thickness, theta_r, theta_c);
+}
+""", "thick_correct_planes")
+
+# Per-pixel sum (and sum of squares) of the phase of a group of BF images, added to the running totals in BF order:
+# the angle images are never stored.
+thick_phase_moments_kernel = cp.RawKernel(r"""
+extern "C" __global__ void thick_phase_moments(const float2* __restrict__ images, float* __restrict__ phase_sum,
+                                                float* __restrict__ phase_sumsq, int count, int plane, int squares)
+{
+    int q = blockIdx.x * blockDim.x + threadIdx.x;
+    if (q >= plane) return;
+    float total = 0.0f, total_sq = 0.0f;
+    for (int b = 0; b < count; ++b) {
+        float2 v = images[(size_t)b * plane + q];
+        float angle = atan2f(v.y, v.x);
+        total += angle;
+        total_sq += angle * angle;
+    }
+    phase_sum[q] += total;
+    if (squares) phase_sumsq[q] += total_sq;
+}
+""", "thick_phase_moments")
+
 
 # The same polynomial as Metal. No higher-order coefficients enter fitting.
 _HIGHER_CORRECTION_SOURCE = (
@@ -329,23 +462,33 @@ thick_fit_kernel = cp.ElementwiseKernel(
 # bright-field pixels k, up to THICK_FIT_MAX_BATCH parameter sets per pass so G is read once per batch. Geometry of q-k, q+k, k
 # (apertures, alpha^2, 2phi) is computed once per (k, q) and shared by every parameter set; pairs with no overlap are skipped.
 # Same model as thick_fit_kernel (and tests/parity/torch_ssb.py): gamma = w1 P(q-k) conj P(k) - w2 conj P(q+k) P(k).
+# The kernel is arithmetic-bound (its time grows with the number of parameter sets, not with the G reads), so the work per
+# (k, q, parameter set) is kept small: chi is linear in (C10, C12 cos 2 phi12, C12 sin 2 phi12), so chi(q -+ k) - chi(k) is
+# a three-term dot product of per-(k, q) geometry differences with per-set coefficients, and the tilt shift 2 pi q.theta
+# depends on q and the set only, so it is computed once per thread instead of once per pixel.
 THICK_FIT_MAX_BATCH = 8
 thick_fit_batch_kernel = cp.RawKernel(r"""
 #define MAXB 8
-__device__ __forceinline__ float4 tf_geometry(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x) {
+// The chi coefficients of a probe tilt v = (dx, dy): alpha^2 (1, cos 2 phi_v, sin 2 phi_v) = lambda^2 (|v|^2, dx^2 - dy^2,
+// 2 dx dy), which needs no angle and no division, and the soft aperture clip((semiangle - alpha) / denom + 0.5, 0, 1),
+// denom = |(cos phi_v ang_y, sin phi_v ang_x)| (ang_y, ang_x: detector sampling in rad), which is the constant ang on
+// square detector pixels. Same model as thick_geometry; only the rounding differs.
+__device__ __forceinline__ float4 tf_geometry(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x,
+                                              float inv_ang) {
     float r2 = dx * dx + dy * dy;
-    float alpha2 = r2 * wl * wl;
-    float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
-    float cos2 = (dx * dx - dy * dy) * inv_r2;
-    float sin2 = 2.0f * dx * dy * inv_r2;
-    float r = sqrtf(r2);
-    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
-    float denom = sqrtf(dx * ang_y * dx * ang_y + dy * ang_x * dy * ang_x) * inv_r;
-    float edge = (denom > 1e-15f) ? ((semiangle - r * wl) / denom + 0.5f) : 1.0f;
-    return make_float4(alpha2, cos2, sin2, fminf(fmaxf(edge, 0.0f), 1.0f));
+    float wl2 = wl * wl;
+    float edge = 1.0f;
+    if (r2 > 1e-30f) {
+        // a correctly rounded |v| (rsqrt's error, times lambda / ang, moves the soft edge)
+        float r = sqrtf(r2);
+        float excess = semiangle - r * wl;
+        edge = inv_ang > 0.0f ? fmaf(excess, inv_ang, 0.5f)
+                              : excess * r / sqrtf(dx * ang_y * dx * ang_y + dy * ang_x * dy * ang_x) + 0.5f;
+    }
+    return make_float4(r2 * wl2, (dx * dx - dy * dy) * wl2, 2.0f * dx * dy * wl2, fminf(fmaxf(edge, 0.0f), 1.0f));
 }
-__device__ __forceinline__ float tf_sinc(float x) { return (fabsf(x) < 1e-6f) ? 1.0f : __sinf(x) / x; }
-extern "C" __global__ void thick_fit_batch(
+__device__ __forceinline__ float tf_sinc(float x) { return (fabsf(x) < 1e-6f) ? 1.0f : __fdividef(__sinf(x), x); }
+extern "C" __global__ void __launch_bounds__(256, 4) thick_fit_batch(
     const float2* __restrict__ G, const long long* __restrict__ flat, const float* __restrict__ qxb, const float* __restrict__ qyb,
     const float* __restrict__ kx, const float* __restrict__ ky, const float* __restrict__ trial,
     float2* __restrict__ partial_numer, float* __restrict__ partial_denom, unsigned int* __restrict__ arrivals,
@@ -353,16 +496,26 @@ extern "C" __global__ void thick_fit_batch(
     int num_bf, long long plane, int n_band, int B, float wl, float semiangle, float ang_y, float ang_x, float factor,
     int k_chunk)
 {
-    __shared__ float tp[MAXB * 7];   // C10, C12, cos2phi12, sin2phi12, thickness, theta_r, theta_c (rad)
-    for (int i = threadIdx.x; i < B * 7; i += blockDim.x) tp[i] = trial[i];
+    // per parameter set: C10, C12 cos 2 phi12, C12 sin 2 phi12 (the chi coefficients), thickness / 2, theta_r, theta_c
+    __shared__ float tp[MAXB * 6];
+    for (int b = threadIdx.x; b < B; b += blockDim.x) {
+        float C12 = trial[b * 7 + 1];
+        tp[b * 6 + 0] = trial[b * 7 + 0];
+        tp[b * 6 + 1] = C12 * trial[b * 7 + 2];
+        tp[b * 6 + 2] = C12 * trial[b * 7 + 3];
+        tp[b * 6 + 3] = 0.5f * trial[b * 7 + 4];
+        tp[b * 6 + 4] = trial[b * 7 + 5];
+        tp[b * 6 + 5] = trial[b * 7 + 6];
+    }
     // Probe geometry depends only on k. Share it across all q threads in
     // this block, keeping the arithmetic and per-thread accumulation order.
     __shared__ float4 geometry_k[256];  // matches thick_fit_batch's k_chunk
+    float inv_ang = ang_y == ang_x ? 1.0f / ang_x : 0.0f;   // 0: rectangular detector pixels, the general aperture
     int first_k = blockIdx.y * k_chunk;
     for (int offset = threadIdx.x; offset < k_chunk; offset += blockDim.x) {
         int k = first_k + offset;
         if (k < num_bf) {
-            geometry_k[offset] = tf_geometry(kx[k], ky[k], wl, semiangle, ang_y, ang_x);
+            geometry_k[offset] = tf_geometry(kx[k], ky[k], wl, semiangle, ang_y, ang_x, inv_ang);
         }
     }
     __syncthreads();
@@ -370,8 +523,18 @@ extern "C" __global__ void thick_fit_batch(
     bool active = q < n_band;
     float qx = active ? qxb[q] : 0.0f, qy = active ? qyb[q] : 0.0f;
     long long off = active ? flat[q] : 0;
-    float nr[MAXB], ni[MAXB], dd[MAXB];
-    for (int b = 0; b < MAXB; ++b) { nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f; }
+    // Every per-set array is indexed only inside loops unrolled over the compile-time MAXB (B is uniform across the
+    // grid, so the b < B guards never diverge): the arrays stay in registers. A loop to the runtime B indexed them
+    // dynamically, which put them in local memory and made the kernel bound by local-memory traffic.
+    float nr[MAXB], ni[MAXB], dd[MAXB], shift[MAXB], c10[MAXB], c12c[MAXB], c12s[MAXB], half_t[MAXB];
+#pragma unroll
+    for (int b = 0; b < MAXB; ++b) {
+        nr[b] = 0.0f; ni[b] = 0.0f; dd[b] = 0.0f;
+        bool used = b < B;
+        c10[b] = used ? tp[b * 6 + 0] : 0.0f; c12c[b] = used ? tp[b * 6 + 1] : 0.0f;
+        c12s[b] = used ? tp[b * 6 + 2] : 0.0f; half_t[b] = used ? tp[b * 6 + 3] : 0.0f;
+        shift[b] = used ? 6.283185307f * (qx * tp[b * 6 + 4] + qy * tp[b * 6 + 5]) : 0.0f;
+    }
     // grid.y splits the bright-field pixels: each block sums its slice into its own partial, and the last block of a q
     // group to finish adds the slices in slice order (atomic additions made the sum, and the tilt fit, change from run
     // to run)
@@ -379,27 +542,25 @@ extern "C" __global__ void thick_fit_batch(
     for (int k = k0; k < k1; ++k) {
         float kxv = __ldg(kx + k), kyv = __ldg(ky + k);
         float4 gk = geometry_k[k - k0];
-        float4 gm = tf_geometry(qx - kxv, qy - kyv, wl, semiangle, ang_y, ang_x);
-        float4 gp = tf_geometry(qx + kxv, qy + kyv, wl, semiangle, ang_y, ang_x);
+        float4 gm = tf_geometry(qx - kxv, qy - kyv, wl, semiangle, ang_y, ang_x, inv_ang);
+        float4 gp = tf_geometry(qx + kxv, qy + kyv, wl, semiangle, ang_y, ang_x, inv_ang);
         float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
         if (a1 == 0.0f && a2 == 0.0f) continue;             // no double overlap for this (k, q)
         float2 g = G[(long long)k * plane + off];
-        for (int b = 0; b < B; ++b) {
-            float C10 = tp[b * 7 + 0], C12 = tp[b * 7 + 1], c2 = tp[b * 7 + 2], s2 = tp[b * 7 + 3];
-            float t = tp[b * 7 + 4], thr = tp[b * 7 + 5], thc = tp[b * 7 + 6];
-            float chi_k = factor * gk.x * fmaf(C12, fmaf(gk.y, c2, gk.z * s2), C10);
-            float chi_m = factor * gm.x * fmaf(C12, fmaf(gm.y, c2, gm.z * s2), C10);
-            float chi_p = factor * gp.x * fmaf(C12, fmaf(gp.y, c2, gp.z * s2), C10);
-            float w1 = 1.0f, w2 = 1.0f;
-            if (t > 0.0f) {
-                float shift = 6.283185307f * (qx * thr + qy * thc);
-                w1 = tf_sinc(0.5f * (-factor * (gm.x - gk.x) - shift) * t);
-                w2 = tf_sinc(0.5f * (factor * (gp.x - gk.x) - shift) * t);
-            }
+        // chi(v) - chi(k) = factor (d0 C10 + d1 C12 cos 2 phi12 + d2 C12 sin 2 phi12), d = alpha^2 (1, cos 2 phi, sin 2 phi)
+        float m0 = factor * (gm.x - gk.x), m1 = factor * (gm.y - gk.y), m2 = factor * (gm.z - gk.z);
+        float p0 = factor * (gp.x - gk.x), p1 = factor * (gp.y - gk.y), p2 = factor * (gp.z - gk.z);
+#pragma unroll
+        for (int b = 0; b < MAXB; ++b) {
+            if (b >= B) break;
             float s1, c1, sp, cp_;
-            __sincosf(chi_m - chi_k, &s1, &c1);
-            __sincosf(chi_p - chi_k, &sp, &cp_);
-            float b1 = w1 * a1, b2 = w2 * a2;
+            __sincosf(fmaf(m2, c12s[b], fmaf(m1, c12c[b], m0 * c10[b])), &s1, &c1);
+            __sincosf(fmaf(p2, c12s[b], fmaf(p1, c12c[b], p0 * c10[b])), &sp, &cp_);
+            float b1 = a1, b2 = a2;
+            if (half_t[b] > 0.0f) {
+                b1 *= tf_sinc((-m0 - shift[b]) * half_t[b]);
+                b2 *= tf_sinc((p0 - shift[b]) * half_t[b]);
+            }
             float gr = b1 * c1 - b2 * cp_;          // gamma = b1 exp(-i(chi_m - chi_k)) - b2 exp(i(chi_p - chi_k))
             float gi = -b1 * s1 - b2 * sp;
             nr[b] += g.x * gr + g.y * gi;          // G conj(gamma)
@@ -408,7 +569,9 @@ extern "C" __global__ void thick_fit_batch(
         }
     }
     if (active) {
-        for (int b = 0; b < B; ++b) {
+#pragma unroll
+        for (int b = 0; b < MAXB; ++b) {
+            if (b >= B) break;
             long long slot = ((long long)blockIdx.y * B + b) * n_band + q;
             partial_numer[slot] = make_float2(nr[b], ni[b]);
             partial_denom[slot] = dd[b];
