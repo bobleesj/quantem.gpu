@@ -9,6 +9,12 @@ new `rcN` heading when that rc is published to TestPyPI.
 ### Changed
 
 - QuantEM Live screening records export and reopen at their tilt-corrected fit, the default SSB result: `formats.ssb_phase.export_result` takes `computed.ssb_tilt` and `ssb_phase_tilt.npy` when a record also holds an ordinary fit (`--ssb-mode both`), and the pair states the fit's `sample_tilt_mrad` and `depth_spread_nm` (both or neither; schema unchanged, earlier pairs read as before). `series.screen_record_settings` and `open_screen_record` take the same fit, and `open_screen_record` sets the session's sample tilt and depth spread (`series.screen_record_fit`, `series.screen_record_sample`).
+- CUDA tilt-corrected SSB is faster with the same fits (within the cross-backend tolerances): the fused agreement
+  kernel keeps its per-set sums in registers and drops three divisions per probe tilt (10.9 ms instead of 25.4 ms
+  per pass of eight parameter sets, 7.2 ms instead of 24.5 ms at depth spread 0), the mean-phase loss corrects
+  straight from the stored half plane (97 ms instead of 223 ms on a 512 x 512 scan) and the drag preview computes
+  each bright-field pixel's geometry once per block. On a 512 x 512 scan one tilt fit takes 0.67 s instead
+  of 1.62 s, and both branches 1.5 s instead of 3.6 s; `docs/maintainer/2026-10-20-ssb-cuda-tilt-speed.md`.
 - SSB fit methods have one vocabulary, `find_aberrations(tilt=..., objective=...)`. The default,
   `find_aberrations()`, is the model-based, tilt-corrected fit (least-squares model agreement, sample tilt and depth
   spread fitted); `tilt=False` holds the tilt and depth spread at 0; `tilt=False, objective="phase_variance"` is the
