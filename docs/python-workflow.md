@@ -161,3 +161,26 @@ When finished, close the session before its acquisition:
 ssb.close()
 data.close()
 ```
+
+
+## Review rotation and defocus together
+
+For a calibrated SSB session, compare the two 180-degree rotation candidates
+with negative and positive C10 search intervals:
+
+```python
+comparison = ssb.compare_rotation_focus()
+comparison.show()
+```
+
+This runs four independent 200-trial joint fits with automatic refinement,
+retaining all valid BF pixels and the current field of view. It preserves the
+session's scientific parameters. The figure pairs Auto-sampled phases with
+native-pixel histograms, sharing contrast and the displayed region. Use
+`comparison.show(view_fraction=1)` for the full field without refitting.
+
+The result remains **unresolved** without an independent constraint. Similar
+losses or phase polarity alone do not establish the physical rotation. Both
+sign intervals include zero, so a zero-boundary fit does not determine a sign.
+Compare an independently known focus only at the same reference plane and
+with the convention `f = -C10`. Depth spread is a fitted model parameter.
