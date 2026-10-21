@@ -174,11 +174,13 @@ class StreamedSSB:
                 previous_count = count
             plan.fft(buffer[:count], spectra[:count], cufft.CUFFT_FORWARD)
             dc[first:stop] = spectra[:count, 0, 0]
+            # the kernel's arguments in its order: bounds (read only by the bounded variant, so any float array),
+            # then num_bf, native rows, cols and stored cols, output rows, cols and stored cols, first BF, group size
             thick_wave_sum_kernel(
                 (math.ceil(output_pixels / 128), 1), (128,),
-                (spectra, *frequencies, k_row[first:stop], k_col[first:stop], partial,
+                (spectra, *frequencies, k_row[first:stop], k_col[first:stop], partial, k_row,
                  *(np.int32(value) for value in (count, rows, cols, cols // 2 + 1,
-                                               *output_shape, 0, count)),
+                                               *output_shape, output_shape[1], 0, count)),
                  np.complex64(0), *parameters),
             )
             spectrum += partial[0]
