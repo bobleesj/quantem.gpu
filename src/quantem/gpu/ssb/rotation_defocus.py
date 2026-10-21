@@ -9,12 +9,13 @@ from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.ssb.contract import RefineMethod
 
 if TYPE_CHECKING:
+    import pandas as pd
     from matplotlib.figure import Figure
     from quantem.gpu.ssb.workflow import SSB
 
 
 @dataclass
-class RotationFocusComparison:
+class RotationDefocusComparison:
     """Four constrained fits without an automatically selected rotation.
 
     Attributes
@@ -28,7 +29,7 @@ class RotationFocusComparison:
 
     Examples
     --------
-    >>> comparison = ssb.compare_rotation_focus()  # doctest: +SKIP
+    >>> comparison = ssb.compare_rotation_defocus()  # doctest: +SKIP
     >>> comparison.show()  # doctest: +SKIP
     """
 
@@ -40,6 +41,44 @@ class RotationFocusComparison:
     def status(self) -> str:
         """No branch is certified by phase appearance or fit loss alone."""
         return "Unresolved without an independent focus or rotation constraint."
+
+    def report(self) -> "pd.DataFrame":
+        """Return fitted parameters and search bounds as a pandas DataFrame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per constrained fit, including the unresolved status.
+
+        Examples
+        --------
+        >>> comparison.report()  # doctest: +SKIP
+        """
+        import pandas as pd
+
+        records = []
+        for index, fit in enumerate(self.fits):
+            lower, upper = self.focus_ranges[index % 2]
+            c10 = fit.aberrations["C10_nm"]
+            tilt_row, tilt_col = fit.sample_tilt_mrad or (0.0, 0.0)
+            records.append({
+                "Rotation (deg)": fit.scan_detector_rotation_deg,
+                "C10 range (nm)": (lower, upper),
+                "C10 (nm)": c10, "f = -C10 (nm)": -c10,
+                "Tilt row (mrad)": tilt_row, "Tilt col (mrad)": tilt_col,
+                "Depth spread (nm)": fit.depth_spread_nm,
+                "Loss": fit.loss,
+                "At zero boundary": abs(c10) < 1e-6,
+            })
+        table = pd.DataFrame(records)
+        table.index.name = self.status
+        return table
+
+    def __repr__(self) -> str:
+        return self.report().to_string()
+
+    def _repr_html_(self) -> str:
+        return self.report()._repr_html_()
 
     def show(self, *, view_fraction: float = 0.25) -> "Figure":
         """Show matched phase images above native-pixel histograms.
@@ -128,16 +167,16 @@ class RotationFocusComparison:
             axes[2, col].legend(frameon=False)
         fig.colorbar(image, ax=axes[:2, :], shrink=0.65, label="Phase − median (rad)")
         fig.suptitle("Four-case review · unresolved without an independent constraint\n"
-                     "Two rotations × two C₁₀ signs · joint tilt/depth SSB", fontsize=14)
+                     "Two rotations × two C₁₀ signs · SSB", fontsize=14)
         plt.close(fig)
         return fig
 
 
-def compare_rotation_focus(
+def compare_rotation_defocus(
     session: "SSB", *, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
     search_ranges: dict[str, tuple[float, float] | float] | None = None,
     seed: int = 42, tilt: bool = True,
-) -> RotationFocusComparison:
+) -> RotationDefocusComparison:
     """Run four independent searches, preserving the session's scientific state."""
     ranges = {"C10_nm": (-30.0, 30.0), "C12_nm": (0.0, 20.0)}
     ranges.update(search_ranges or {})
@@ -164,4 +203,4 @@ def compare_rotation_focus(
                 reconstructed = candidate.reconstruct(upsampling_factor="auto")
                 fits.append(fitted)
                 reconstructions.append(reconstructed)
-    return RotationFocusComparison(tuple(fits), tuple(reconstructions), focus_ranges)
+    return RotationDefocusComparison(tuple(fits), tuple(reconstructions), focus_ranges)

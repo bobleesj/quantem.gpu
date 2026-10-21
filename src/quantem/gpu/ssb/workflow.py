@@ -323,7 +323,7 @@ def _on_scan_gpu(method):
 
 
 if TYPE_CHECKING:
-    from quantem.gpu.ssb.rotation_focus import RotationFocusComparison
+    from quantem.gpu.ssb.rotation_defocus import RotationDefocusComparison
     import pandas as pd
 
 def _keeps_crop_encoded(data: Dataset4dstemGPU, backend: str) -> bool:
@@ -1686,11 +1686,11 @@ class SSB:
             compare_standard=compare_standard, fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation)
 
     @_on_scan_gpu
-    def compare_rotation_focus(
-        self, *, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
+    def compare_rotation_defocus(
+        self, *, show: bool = False, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         seed: int = 42, tilt: bool = True,
-    ) -> "RotationFocusComparison":
+    ) -> "RotationDefocusComparison":
         """Compare two rotations and both defocus signs without selecting a winner.
 
         Four independent fits use the session's full field, calibration, valid
@@ -1699,6 +1699,10 @@ class SSB:
 
         Parameters
         ----------
+        show : bool, optional
+            Display the phase images and histograms immediately in a notebook.
+            Default False returns the comparison with a pandas-style table
+            representation. ``report()`` returns the pandas DataFrame.
         num_trials : int, optional
             Coarse-search budget per case, before local refinement.
         refinement : str, optional
@@ -1713,7 +1717,7 @@ class SSB:
 
         Returns
         -------
-        RotationFocusComparison
+        RotationDefocusComparison
             Native fits and Auto reconstructions. ``show()`` displays matched
             phase images and histograms. Status stays unresolved: appearance
             and loss alone do not establish the physical rotation. Defocus
@@ -1721,15 +1725,20 @@ class SSB:
 
         Examples
         --------
-        >>> comparison = ssb.compare_rotation_focus()  # doctest: +SKIP
-        >>> comparison.show()  # doctest: +SKIP
+        >>> comparison = ssb.compare_rotation_defocus(show=True)  # doctest: +SKIP
+        >>> comparison.report()  # doctest: +SKIP
         """
-        from quantem.gpu.ssb.rotation_focus import compare_rotation_focus
+        from quantem.gpu.ssb.rotation_defocus import compare_rotation_defocus
 
-        return compare_rotation_focus(
+        comparison = compare_rotation_defocus(
             self, num_trials=num_trials, refinement=refinement,
             search_ranges=search_ranges, seed=seed, tilt=tilt,
         )
+        if show:
+            from IPython.display import display
+
+            display(comparison.show())
+        return comparison
 
     def compare_rotation_branches(self, *, apply: bool | None = None, **find_aberrations_options) -> RotationBranches:
         """Fit both 180-degree branches of the rotation independently and say which one the phase supports.
