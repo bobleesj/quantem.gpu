@@ -387,7 +387,7 @@ INIT_NEWTON_BODY = r"""
 if(index>0)return;
 Real chosen[18];int kept=0;
 Real distinct[6]={Real(50),Real(20),Real(0.3f),Real(2),Real(2),Real(50)};
-if(HAS_START){for(int d=0;d<6;d++)chosen[d]=load_real(start,d);kept=1;}
+for(int e=0;e<EXPLICIT;e++){for(int d=0;d<6;d++)chosen[kept*6+d]=load_real(start,e*6+d);kept++;}
 for(int rank=0;rank<COUNT && kept<STARTS;rank++){
     int idx=0;for(int i=0;i<COUNT;i++)if(int(ranks[i])==rank)idx=i;
     Real p[6];for(int d=0;d<6;d++)p[d]=load_real(points,idx*6+d);
@@ -476,7 +476,7 @@ for(int k=0;k<STARTS;k++)if(all[k*68+57]>Real(0.5f))for(int j=0;j<STARTS;j++){
     bool worse=all[k*68+12]<all[j*68+12] || (!(all[k*68+12]>all[j*68+12])&&k>j);
     if((near||heading)&&worse){all[k*68+57]=Real(0);break;}
 }
-if(ITERATION==1){
+if(PRUNE && ITERATION==1){
     int best=-1;for(int k=0;k<STARTS;k++)if(all[k*68+57]>Real(0.5f))if(best<0||all[k*68+12]>all[best*68+12])best=k;
     for(int k=0;k<STARTS;k++)if(k!=best)all[k*68+57]=Real(0);
 }
@@ -492,6 +492,39 @@ int best=0;for(int k=1;k<STARTS;k++)if(load_real(state,k*68+58)>Real(0.5f)&&load
 Real z[6],p[6];for(int d=0;d<6;d++)z[d]=load_real(state,best*68+6+d);decode_point(z,p);
 for(int d=0;d<6;d++)store_real(out0,d,p[d]);
 store_real(out1,0,load_real(state,best*68+12)*load_real(scale,0));
+"""
+
+
+# Starts in other basins of the joint objective for a second polish (``fit_resident``): the best trial with phi12
+# mirrored (C12 cos 2 phi12 kept, C12 sin 2 phi12 negated), and the best trial whose (phi12, tilt, depth spread)
+# differs from both the polished point and that mirror. Distances use the Newton starts' scales (0.3 rad, 2 mrad,
+# 2 mrad, 50 A) with phi12 periodic in pi; a candidate within one scale of a kept start is not a new basin.
+ALTERNATE_STARTS_BODY = r"""
+if(index>0)return;
+Real scale[6]={Real(50),Real(20),Real(0.3f),Real(2),Real(2),Real(50)};
+Real best[6],mirror[6],polished[6],chosen[12];int kept=0;
+int idx=0;for(int i=0;i<COUNT;i++)if(int(ranks[i])==0)idx=i;
+for(int d=0;d<6;d++){best[d]=load_real(points,idx*6+d);mirror[d]=best[d];polished[d]=load_real(point,d);}
+mirror[2]=-best[2];
+Real half_pi=pi_r()*Real(0.5f);
+for(int pass=0;pass<2;pass++){
+    for(int rank=0;rank<COUNT && kept<2;rank++){
+        Real p[6];
+        if(pass==0){if(rank>0)break;for(int d=0;d<6;d++)p[d]=mirror[d];}
+        else{int j=0;for(int i=0;i<COUNT;i++)if(int(ranks[i])==rank)j=i;for(int d=0;d<6;d++)p[d]=load_real(points,j*6+d);}
+        bool different=true;
+        for(int other=0;other<kept+1 && different;other++){
+            Real q[6];for(int d=0;d<6;d++)q[d]=other==0?polished[d]:chosen[(other-1)*6+d];
+            Real phi=abs_r(p[2]-q[2]);if(phi>half_pi)phi=pi_r()-phi;
+            Real dist=phi/scale[2];
+            for(int d=3;d<6;d++)dist=max_r(dist,abs_r(p[d]-q[d])/scale[d]);
+            if(dist<=Real(1))different=false;
+        }
+        if(different){for(int d=0;d<6;d++)chosen[kept*6+d]=p[d];kept++;if(pass==0)break;}
+    }
+}
+for(int k=0;k<2;k++)for(int d=0;d<6;d++)store_real(out0,k*6+d,k<kept?chosen[k*6+d]:Real(0));
+out1[0]=float(kept);
 """
 
 
@@ -626,7 +659,11 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
     return _decode(device, history, bounds), scores
 
 
-def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=False, standard=False):
+def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=False, standard=False,
+            explicit=None, prune=True):
+    """Polish ``starts`` points by Newton steps: ``start`` (a point, or with ``explicit`` that many resident
+    points) and then the best distinct trials. ``prune`` keeps only the highest start after the second step;
+    without it every start climbs until it converges or meets a higher one."""
     starts = min(3, int(starts))
     header = STANDARD_NEWTON_HEADER if standard else NEWTON_HEADER
     design_body = STANDARD_DESIGN_BODY if standard else DESIGN_BODY
@@ -634,8 +671,9 @@ def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=Fa
     prefix = "ssb_standard" if standard else "ssb_joint"
     ranks = _rank(device, scores)
     count = len(points)
-    flags = f"\n#define STARTS {starts}\n#define COUNT {count}\n#define FIXED {int(fixed)}\n#define HAS_START {int(start is not None)}\n"
-    initial = device.pack([0.0] * 6 if start is None else start)
+    given = int(explicit) if explicit is not None else int(start is not None)
+    flags = f"\n#define STARTS {starts}\n#define COUNT {count}\n#define FIXED {int(fixed)}\n#define EXPLICIT {given}\n"
+    initial = start if explicit is not None else device.pack([0.0] * 6 if start is None else start)
     state, plan = device.run(
         f"{prefix}_newton_init",
         {"points": points, "scores": scores, "ranks": ranks, "start": initial},
@@ -667,7 +705,7 @@ def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=Fa
         dispatch = device.xp.array(active + sizes, dtype=device.xp.float32)
         total = sum(sizes)
         constants = (
-            f"\n#define FIXED {int(fixed)}\n#define STARTS {starts}\n#define ACTIVE {len(active)}\n#define COUNT {total}\n#define ITERATION {iteration}\n"
+            f"\n#define FIXED {int(fixed)}\n#define STARTS {starts}\n#define ACTIVE {len(active)}\n#define COUNT {total}\n#define ITERATION {iteration}\n#define PRUNE {int(prune)}\n"
             + header
         )
         design = device.run(
@@ -701,6 +739,45 @@ def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=Fa
     )
     device.sync(point, value, state)
     return point, value, state
+
+
+# Polish once more from starts in other basins (``ALTERNATE_STARTS_BODY``) and keep the higher agreement.
+BASIN_CHECK = True
+# The second polish replaces the first only when its agreement is higher by this relative margin: a start that
+# climbs back to the same maximum leaves the first polish, and its bits, in place.
+BASIN_MARGIN = 1e-6
+
+
+def _other_basins(device, evaluate, points, scores, bounds, point, value, state):
+    """The Newton result from the other basins' starts if its agreement is clearly higher, else the first one.
+
+    The search's best trials can all sit in one basin of the joint objective (phi12 mirrored, with its own tilt and
+    depth spread), and the polish of its top three then stays there. Two more starts, the phi12 mirror of the best
+    trial and the best trial in another (phi12, tilt, depth spread) cluster, are polished together, each to its own
+    maximum. Only the start count crosses to the host; points and scores stay resident.
+    """
+    ranks = _rank(device, scores)
+    alternates, count = device.run(
+        "ssb_joint_alternate_starts",
+        {"points": points, "ranks": ranks, "point": point},
+        [(2, 6, 3), (1,)],
+        ALTERNATE_STARTS_BODY,
+        constants=f"\n#define COUNT {len(points)}\n",
+    )
+    device.sync(alternates, count)
+    count = int((np.asarray(count) if device.backend == "mps" else count.get())[0])
+    if count == 0:
+        return point, value, state
+    # each alternate climbs its own basin: none is dropped for being lower after two steps
+    other_point, other_value, other_state = _newton(
+        device, evaluate, points, scores, bounds, start=alternates, starts=count, explicit=count, prune=False,
+    )
+    first, second = device.host(value)[0], device.host(other_value)[0]
+    # the fit record lists every polished start, the first polish's then these
+    states = device.xp.concatenate((state, other_state), axis=0)
+    if second > first * (1.0 + BASIN_MARGIN):
+        return other_point, other_value, states
+    return point, value, states
 
 
 def fit_resident(
@@ -822,6 +899,8 @@ def fit_resident(
             starts=polish_starts,
             fixed=fixed_aberrations is not None,
         )
+        if trials and fixed_aberrations is None and BASIN_CHECK:
+            point, value, state = _other_basins(device, evaluate, points, scores, bounds, point, value, state)
     else:
         ranks = _rank(device, scores)
         point, value = device.run(
