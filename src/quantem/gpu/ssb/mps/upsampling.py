@@ -747,6 +747,314 @@ _PAIRED_SOURCE = """
 """
 
 
+# --- Depth weights in the separable form --------------------------------------------------------------
+#
+# The thick-sample weights are sinc(x) of the depth-phase rates, x1 = 0.5 t (-factor (alpha_m^2 - alpha_k^2) - shift)
+# and x2 = 0.5 t (factor (alpha_p^2 - alpha_k^2) - shift). With factor alpha^2 = f |v|^2 (f = factor wl^2) they are
+#     x1 = C(q) - P(q) + B(q, k),   x2 = C(q) + P(q) + B(q, k),
+# P = t f |q|^2 / 2, C = -pi t q.theta, B = t f q.k. So sin x1 = Im(exp(i (C - P)) exp(i B)) and exp(i B) is again a row
+# phasor times a column phasor of each BF pixel, reduced like the transfer tables. x itself is a few float32 products,
+# sinc(x) = sin x / x for |x| >= 1 and its Taylor series to x^10 below (truncation 2e-10). The weights enter the
+# unchanged normalised mixture (a e^{i Psi} - b e^{-i Psi}) / |...| with a = sinc(x1) A(q - k) A(k) and b likewise.
+# The flat classes of the two-term kernel carry over: a lone sideband with a weight proven positive keeps only the
+# sign of its sinc, and both sidebands inside the flat aperture share A(k), which cancels; soft edges evaluate the
+# unchanged geometry and keep the 1e-8 floor of |gamma|. Against float64 the spectrum error is below the per-term
+# kernel's (docs/maintainer/2026-10-20-mps-tilt-speed.md).
+_DEPTH_HEADER = """
+// sinc(x) as (numerator, denominator): its Taylor series to x^10 over 1 below |x| = 1, sin x over x above.
+inline float2 sep_sinc_parts(float x, float s) {
+    float x2 = x * x;
+    float series = 1.0f - x2 * (1.0f / 6.0f) * (1.0f - x2 * (1.0f / 20.0f) * (1.0f - x2 * (1.0f / 42.0f)
+                 * (1.0f - x2 * (1.0f / 72.0f) * (1.0f - x2 * (1.0f / 110.0f)))));
+    return metal::abs(x) < 1.0f ? float2(series, 1.0f) : float2(s, x);
+}
+inline float sep_sinc(float x, float s) {
+    float2 parts = sep_sinc_parts(x, s);
+    return parts.x / parts.y;
+}
+// a / max(|a|, 1e-8): the normalised weight of a lone sideband.
+inline float sep_side(float a) {
+    return metal::abs(a) >= 1e-8f ? metal::sign(a) : a * 1e8f;
+}
+// (a e^{i Psi} - b e^{-i Psi}) / |...| for a = n1 / d1 and b = n2 / d2 (the common factor d1 d2 cancels up to its sign).
+inline float2 sep_both(float2 p1, float2 p2, float2 epsi) {
+    float a = p1.x * p2.y, b = p2.x * p1.y;
+    float wr = (a - b) * epsi.x, wi = (a + b) * epsi.y;
+    float m2 = wr * wr + wi * wi;
+    float inv = m2 > 0.0f ? metal::sign(p1.y * p2.y) * metal::precise::rsqrt(m2) : 0.0f;
+    return float2(wr * inv, wi * inv);
+}
+// One term of a group in one flat class: kind 0 lone sideband q - k, 1 lone q + k, 2 both inside the flat aperture.
+inline float2 sep_depth_pure(int kind, float2 gv, float4 tr, float4 tc, float2 kk, float bq_r, float bq_c,
+                             float xm0, float xp0, float2 em, float2 ep, float2 epsi) {
+    float2 term = sep_cmul(gv, sep_cmul(tr.xy, tc.xy));
+    float2 eb = sep_cmul(tr.zw, tc.zw);
+    float bk = metal::fma(bq_r, kk.x, bq_c * kk.y);
+    if (kind == 0) {
+        float2 p1 = sep_sinc_parts(xm0 + bk, em.x * eb.y + em.y * eb.x);
+        return term * (metal::sign(p1.x) * metal::sign(p1.y));
+    }
+    if (kind == 1) {
+        float2 p2 = sep_sinc_parts(xp0 + bk, ep.x * eb.y + ep.y * eb.x);
+        return term * (metal::sign(p2.x) * metal::sign(p2.y));
+    }
+    float2 p1 = sep_sinc_parts(xm0 + bk, em.x * eb.y + em.y * eb.x);
+    float2 p2 = sep_sinc_parts(xp0 + bk, ep.x * eb.y + ep.y * eb.x);
+    return sep_cmul(term, sep_both(p1, p2, epsi));
+}
+// One term of a mixed group, classified per pixel like the two-term kernel: a lone sideband with a weight proven
+// positive and both sidebands inside the flat aperture take the flat forms above; soft edges evaluate the unchanged
+// aperture geometry and the normalised mixture with its 1e-8 floor. Accumulates into ga (q - k), gb (q + k), gab.
+inline void sep_depth_pixel(float qr, float qc, float4 kd, float2 gv, float4 tr, float4 tc, float bq_r, float bq_c,
+                            float xm0, float xp0, float2 em, float2 ep, float2 epsi,
+                            float r2_out, float r2_zero, float r2_pos, float r2_one,
+                            float wl, float semi, float ay, float ax,
+                            thread float2 &ga, thread float2 &gb, thread float2 &gab) {
+    float mr = qr - kd.x, mc = qc - kd.y, pr = qr + kd.x, pc = qc + kd.y;
+    float rm2 = mr * mr + mc * mc, rp2 = pr * pr + pc * pc;
+    float gkw = kd.z;
+    if (metal::min(rm2, rp2) > r2_out || gkw == 0.0f) return;
+    bool closed_m = rm2 > r2_zero, closed_p = rp2 > r2_zero;
+    float2 term = sep_cmul(gv, sep_cmul(tr.xy, tc.xy));
+    float2 eb = sep_cmul(tr.zw, tc.zw);
+    float bk = metal::fma(bq_r, kd.x, bq_c * kd.y);
+    if (gkw >= 1e-3f) {
+        if (rm2 < r2_pos && closed_p) {
+            float2 p1 = sep_sinc_parts(xm0 + bk, em.x * eb.y + em.y * eb.x);
+            ga += term * (metal::sign(p1.x) * metal::sign(p1.y));
+            return;
+        }
+        if (rp2 < r2_pos && closed_m) {
+            float2 p2 = sep_sinc_parts(xp0 + bk, ep.x * eb.y + ep.y * eb.x);
+            gb += term * (metal::sign(p2.x) * metal::sign(p2.y));
+            return;
+        }
+        if (rm2 < r2_one && rp2 < r2_one) {
+            float2 p1 = sep_sinc_parts(xm0 + bk, em.x * eb.y + em.y * eb.x);
+            float2 p2 = sep_sinc_parts(xp0 + bk, ep.x * eb.y + ep.y * eb.x);
+            gab += sep_cmul(term, sep_both(p1, p2, epsi));
+            return;
+        }
+    }
+    float wa = closed_m ? 0.0f : (rm2 < r2_one ? 1.0f : alias_geometry(mr, mc, wl, semi, ay, ax).w);
+    float wb = closed_p ? 0.0f : (rp2 < r2_one ? 1.0f : alias_geometry(pr, pc, wl, semi, ay, ax).w);
+    if (wa == 0.0f && wb == 0.0f) return;
+    float a = wa != 0.0f ? sep_sinc(xm0 + bk, em.x * eb.y + em.y * eb.x) * wa * gkw : 0.0f;
+    float b = wb != 0.0f ? sep_sinc(xp0 + bk, ep.x * eb.y + ep.y * eb.x) * wb * gkw : 0.0f;
+    if (b == 0.0f) {
+        ga += term * sep_side(a);
+    } else if (a == 0.0f) {
+        gb += term * sep_side(b);
+    } else {
+        float wr = (a - b) * epsi.x, wi = (a + b) * epsi.y;
+        float inv = 1.0f / metal::max(metal::precise::sqrt(wr * wr + wi * wi), 1e-8f);
+        gab += sep_cmul(term, float2(wr * inv, wi * inv));
+    }
+}
+"""
+
+_SEPARABLE_DEPTH_SOURCE = """
+        // Each thread computes the ALIASES fine-grid rows of one column that share a source row (tuples[gy]), from
+        // one read of each G value and column table; every output keeps its own arithmetic. One grid row past
+        // TUPLES computes the upper half of the Nyquist row, whose partner is itself.
+        uint gx = thread_position_in_grid.x, gy = thread_position_in_grid.y;
+        uint ci;
+        uint ris[ALIASES];
+        size_t outs[ALIASES];
+        bool has[ALIASES];
+        if (gy < TUPLES) {
+            if (gx >= COLS) return;
+            ci = gx;
+            for (uint j = 0; j < ALIASES; ++j) {
+                ris[j] = tuples[gy * ALIASES + j];
+                has[j] = ris[j] != 0xFFFFFFFFu;
+                outs[j] = has[j] ? (size_t)ris[j] * COLS + gx : 0;
+            }
+        } else {
+            if (gy > TUPLES || gx >= EXTRA) return;
+            ci = COLS + gx;
+            for (uint j = 0; j < ALIASES; ++j) { ris[j] = NYQUIST_RI; has[j] = j == 0; outs[j] = 0; }
+            outs[0] = (size_t)ROWS * COLS + gx;
+        }
+        uint col = col_indices[ci];
+        float wl = params[0], semi = params[1], ay = params[2], ax = params[3];
+        float qc = q_col[col];
+        float radius = (semi + 0.5f * metal::max(ay, ax)) / wl;
+        radius *= 1.0f + 8.0f * 1.1920928955078125e-7f;
+        float r2_out = radius * radius;
+        float r2_zero = r2_out * (1.0f + 32.0f * 1.1920928955078125e-7f);
+        float inner = (semi - 0.5f * metal::max(ay, ax)) * (1.0f - 8.0f * 1.1920928955078125e-7f);
+        float inner_q = inner / wl;
+        float r2_one = inner > 0.0f ? inner_q * inner_q * (1.0f - 64.0f * 1.1920928955078125e-7f) : -1.0f;
+        float positive_q = (semi + 0.5f * metal::min(ay, ax)) / wl;
+        float r2_pos = positive_q * positive_q * (1.0f - 64.0f * 1.1920928955078125e-7f);
+        float r2_pos_g = r2_pos * (1.0f - 64.0f * 1.1920928955078125e-7f);
+        float r2_one_g = r2_one * (1.0f - 64.0f * 1.1920928955078125e-7f);
+        float r2_zero_g = r2_zero * (1.0f + 64.0f * 1.1920928955078125e-7f);
+        // The rows of a tuple share the source row, so the G offset and its Hermitian mirror are common.
+        uint source_row = row_indices[ris[0]] % SOURCE_N, source_col = col % SOURCE_N;
+        bool mirror = G_COLS != SOURCE_N && source_col > SOURCE_N / 2u;
+        if (mirror) {
+            source_row = source_row == 0u ? 0u : SOURCE_N - source_row;
+            source_col = SOURCE_N - source_col;
+        }
+        size_t source_offset = size_t(source_row) * G_COLS + source_col;
+        constexpr bool INDEX32 = size_t(K) * SOURCE_N * G_COLS <= (size_t(1) << 32);
+        const device float4 *rows4 = (const device float4*)row_tables;
+        const device float4 *cols4 = (const device float4*)col_tables;
+        float2 psi_c = float2(psi_col[ci].real, psi_col[ci].imag);
+        float2 dm_c = float2(dm_col[ci].real, dm_col[ci].imag), dp_c = float2(dp_col[ci].real, dp_col[ci].imag);
+        float bq_c = depth_scale[0] * qc;
+        float qrs[ALIASES], xm0[ALIASES], xp0[ALIASES], bq_r[ALIASES];
+        float2 epsi[ALIASES], em[ALIASES], ep[ALIASES], result[ALIASES];
+        float2 sum_a[ALIASES], sum_b[ALIASES], sum_ab[ALIASES];
+        bool active[ALIASES];
+        bool any_active = false;
+        for (uint j = 0; j < ALIASES; ++j) {
+            uint ri = has[j] ? ris[j] : ris[0];
+            uint row = row_indices[ri];
+            qrs[j] = q_row[row];
+            result[j] = has[j] ? float2(previous[outs[j]].real, previous[outs[j]].imag) : float2(0.0f);
+            sum_a[j] = sum_b[j] = sum_ab[j] = float2(0.0f);
+            active[j] = has[j] && (row % SOURCE_N != 0u || col % SOURCE_N != 0u);
+            any_active = any_active || active[j];
+            if (has[j] && row == 0u && col == 0u) {
+                for (uint group = 0; group < GROUPS; ++group) {
+                    uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+                    float2 sum = float2(0.0f);
+                    for (uint k = start; k < stop; ++k) sum += float2(dc[0].real, dc[0].imag);
+                    result[j] += sum;
+                }
+            }
+            float2 psi_r = float2(psi_row[ri].real, psi_row[ri].imag);
+            float xb = sep_reduce(col_f[ci], psi_cross[ri * 3], psi_cross[ri * 3 + 1], psi_cross[ri * 3 + 2]);
+            float cb;
+            float sb = metal::precise::sincos(xb, cb);
+            epsi[j] = sep_cmul(sep_cmul(psi_r, psi_c), float2(cb, sb));
+            // exp(i (C -/+ P)) and C -/+ P at this output frequency, and t f q for B = t f q.k
+            em[j] = sep_cmul(float2(dm_row[ri].real, dm_row[ri].imag), dm_c);
+            ep[j] = sep_cmul(float2(dp_row[ri].real, dp_row[ri].imag), dp_c);
+            float c_q = x_row[2 * ri + 1] + x_col[2 * ci + 1], p_q = x_row[2 * ri] + x_col[2 * ci];
+            xm0[j] = c_q - p_q;
+            xp0[j] = c_q + p_q;
+            bq_r[j] = depth_scale[0] * qrs[j];
+        }
+        if (any_active) {
+            for (uint group = 0; group < GROUPS; ++group) {
+                uint start = group * CHUNK, stop = metal::min(start + CHUNK, uint(K));
+                float4 box = ((const device float4*)bounds)[2 * group];  // row min/max, col min/max
+                float min_aperture = bounds[8 * group + 4];
+                int classes[ALIASES], kinds[ALIASES];
+                bool any = false;
+                for (uint j = 0; j < ALIASES; ++j) {
+                    kinds[j] = 0;
+                    classes[j] = active[j] ? sep_group_class(qrs[j], qc, box, min_aperture, r2_out, r2_pos_g,
+                                                             r2_one_g, r2_zero_g, true, kinds[j]) : 0;
+                    any = any || classes[j] != 0;
+                }
+                if (!any) continue;
+                float2 ga[ALIASES], gb[ALIASES], gab[ALIASES];
+                for (uint j = 0; j < ALIASES; ++j) ga[j] = gb[j] = gab[j] = float2(0.0f);
+                for (uint k0 = start; k0 < stop; k0 += UNROLL) {
+                    // Independent loads of UNROLL pixels per step keep several requests in flight.
+                    float2 gv[UNROLL];
+                    float4 kd[UNROLL], tc[UNROLL];
+                    for (uint u = 0; u < UNROLL; ++u) {
+                        uint k = metal::min(k0 + u, stop - 1u);
+                        auto value = g[INDEX32
+                            ? size_t(k * (SOURCE_N * G_COLS) + uint(source_offset))
+                            : size_t(k) * SOURCE_N * G_COLS + source_offset];
+                        gv[u] = float2(value.real, mirror ? -value.imag : value.imag);
+                        kd[u] = ((const device float4*)k_data)[k];  // (k_row, k_col, aperture at k, 0)
+                        tc[u] = cols4[k * COLS_ALL + ci];          // transfer and depth column phasors
+                    }
+                    for (uint j = 0; j < ALIASES; ++j) {
+                        if (classes[j] == 0) continue;
+                        float qr = qrs[j];
+                        for (uint u = 0; u < UNROLL; ++u) {
+                            uint k = k0 + u;
+                            if (k >= stop) break;
+                            float4 tr = rows4[k * ROWS + ris[j]];
+                            if (classes[j] == 1) {
+                                float2 value = sep_depth_pure(kinds[j], gv[u], tr, tc[u], kd[u].xy, bq_r[j], bq_c,
+                                                              xm0[j], xp0[j], em[j], ep[j], epsi[j]);
+                                if (kinds[j] == 0) ga[j] += value; else if (kinds[j] == 1) gb[j] += value;
+                                else gab[j] += value;
+                                continue;
+                            }
+                            sep_depth_pixel(qr, qc, kd[u], gv[u], tr, tc[u], bq_r[j], bq_c, xm0[j], xp0[j], em[j],
+                                            ep[j], epsi[j], r2_out, r2_zero, r2_pos, r2_one, wl, semi, ay, ax,
+                                            ga[j], gb[j], gab[j]);
+                        }
+                    }
+                }
+                for (uint j = 0; j < ALIASES; ++j) { sum_a[j] += ga[j]; sum_b[j] += gb[j]; sum_ab[j] += gab[j]; }
+            }
+        }
+        for (uint j = 0; j < ALIASES; ++j) {
+            if (!has[j]) continue;
+            if (active[j]) {
+                result[j] += sep_cmul(epsi[j], sum_a[j]) - sep_cmul(float2(epsi[j].x, -epsi[j].y), sum_b[j])
+                             + sum_ab[j];
+            }
+            total[outs[j]].real = result[j].x;
+            total[outs[j]].imag = result[j].y;
+        }
+"""
+
+
+@lru_cache(maxsize=1)
+def _depth_table_kernel():
+    """Row and column float4 tables (transfer phasor, depth phasor) of every stored BF pixel."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_separable_depth_tables",
+        input_names=["p_row", "p_col", "d_row", "d_col", "row_f", "col_f"],
+        output_names=["t_row", "t_col"],
+        header=_SEPARABLE_HEADER,
+        compile_options={"math_mode": "safe"},
+        source="""
+        uint i = thread_position_in_grid.x;
+        uint k = thread_position_in_grid.y;
+        if (k >= K) return;
+        if (i < ROWS) {
+            float x = sep_reduce(row_f[i], p_row[k * 3], p_row[k * 3 + 1], p_row[k * 3 + 2]);
+            float y = sep_reduce(row_f[i], d_row[k * 3], d_row[k * 3 + 1], d_row[k * 3 + 2]);
+            float c, d;
+            float s = metal::precise::sincos(x, c);
+            float e = metal::precise::sincos(y, d);
+            ((device float4*)t_row)[k * ROWS + i] = float4(c, -s, d, -e);
+        }
+        if (i < COLS) {
+            float x = sep_reduce(col_f[i], p_col[k * 3], p_col[k * 3 + 1], p_col[k * 3 + 2]);
+            float y = sep_reduce(col_f[i], d_col[k * 3], d_col[k * 3 + 1], d_col[k * 3 + 2]);
+            float c, d;
+            float s = metal::precise::sincos(x, c);
+            float e = metal::precise::sincos(y, d);
+            ((device float4*)t_col)[k * COLS + i] = float4(c, -s, d, -e);
+        }
+        """,
+    )
+
+
+@lru_cache(maxsize=1)
+def _separable_depth_kernel():
+    """The separable C10/C12 kernel with the thick-sample depth weights of every term."""
+    mx = require_mlx()
+    return mx.fast.metal_kernel(
+        name="ssb_separable_coherent_depth",
+        input_names=["g", "q_row", "q_col", "k_data", "params", "dc",
+                     "bounds", "row_indices", "col_indices",
+                     "psi_row", "psi_col", "psi_cross", "col_f",
+                     "row_tables", "col_tables", "dm_row", "dm_col", "dp_row", "dp_col", "x_row", "x_col", "depth_scale",
+                     "tuples", "previous"],
+        output_names=["total"],
+        header=_HEADER + _ALIAS_GEOMETRY + _SEPARABLE_HEADER + _PAIRED_HEADER + _DEPTH_HEADER,
+        compile_options={"math_mode": "safe"},
+        source=_SEPARABLE_DEPTH_SOURCE,
+    )
+
+
 @lru_cache(maxsize=1)
 def _paired_coherent_kernel():
     """The separable kernel computing the two fine-grid rows of one source row per thread, from one G read."""
@@ -789,6 +1097,10 @@ _SEPARABLE_LAUNCH_BF = 8192
 _SEPARABLE_THREADGROUP = (32, 4, 1)
 _SEPARABLE_UNROLL = 1
 _SEPARABLE_PURE_UNROLL = 4
+# Fine rows per thread of the depth-weighted separable kernel (those sharing one source row).
+_DEPTH_ALIASES = 3
+# BF pixels whose loads the depth-weighted kernel issues together (1: none hoisted; 2 and 4 measured no faster).
+_DEPTH_UNROLL = 1
 
 
 def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
@@ -848,17 +1160,18 @@ def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
     return geometry
 
 
-def _alias_row_pairs(row_indices: np.ndarray, source_n: int) -> np.ndarray:
-    """Row-table indices in pairs that share a source row (index mod ``source_n``); 0xffffffff marks no partner."""
+def _alias_row_pairs(row_indices: np.ndarray, source_n: int, size: int = 2) -> np.ndarray:
+    """Row-table indices in groups of ``size`` that share a source row (index mod ``source_n``); 0xffffffff marks
+    no partner."""
     by_source: dict[int, list[int]] = {}
     for index, row in enumerate(row_indices.tolist()):
         by_source.setdefault(row % source_n, []).append(index)
     pairs = []
     for members in by_source.values():
-        for first in range(0, len(members), 2):
-            pair = members[first:first + 2]
-            pairs.append(pair + [0xFFFFFFFF] * (2 - len(pair)))
-    return np.asarray(pairs, dtype=np.uint32).reshape(-1, 2)
+        for first in range(0, len(members), size):
+            pair = members[first:first + size]
+            pairs.append(pair + [0xFFFFFFFF] * (size - len(pair)))
+    return np.asarray(pairs, dtype=np.uint32).reshape(-1, size)
 
 
 def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.ndarray, dc, n: int):
@@ -881,12 +1194,43 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
     psi_row = mx.array(np.exp(1j * np.remainder(psi_a * row_f ** 2, 2.0 * np.pi)).astype(np.complex64))
     psi_col = mx.array(np.exp(1j * np.remainder(psi_c * col_f ** 2, 2.0 * np.pi)).astype(np.complex64))
     psi_cross = mx.array(_split_mod(psi_b * row_f))
-    t_row, t_col = _separable_table_kernel()(
-        inputs=[p_row, p_col, geometry["row_f_m"], geometry["col_f_m"]],
-        template=[("K", stored), ("ROWS", rows), ("COLS", cols + extra)],
-        grid=(max(rows, cols + extra), stored, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(stored, rows), (stored, cols + extra)], output_dtypes=[mx.complex64, mx.complex64],
-    )
+    depth = float(params_np[9])
+    if depth != 0.0:
+        # sinc weights of the thick sample (see _SEPARABLE_DEPTH_SOURCE): exp(i B) beside each transfer phasor in one
+        # float4 table, and the per-row/column parts of C -/+ P, from the kernel's float32 depth, tilt, factor and
+        # wavelength
+        theta_r, theta_c = float(params_np[10]), float(params_np[11])
+        depth_f = depth * scale
+        row_tables, col_tables = _depth_table_kernel()(
+            inputs=[p_row, p_col, mx.array(_split_mod(-depth_f * step_r * kx)),
+                    mx.array(_split_mod(-depth_f * step_c * ky)), geometry["row_f_m"], geometry["col_f_m"]],
+            template=[("K", stored), ("ROWS", rows), ("COLS", cols + extra)],
+            grid=(max(rows, cols + extra), stored, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(stored, rows, 4), (stored, cols + extra, 4)], output_dtypes=[mx.float32, mx.float32],
+        )
+        depth_parts = []
+        for frequency, step, theta in ((row_f, step_r, theta_r), (col_f, step_c, theta_c)):
+            q = frequency * step
+            p_part, c_part = 0.5 * depth_f * q * q, -np.pi * depth * theta * q
+            depth_parts.append(np.exp(1j * np.remainder(c_part - p_part, 2.0 * np.pi)).astype(np.complex64))
+            depth_parts.append(np.exp(1j * np.remainder(c_part + p_part, 2.0 * np.pi)).astype(np.complex64))
+            depth_parts.append(np.stack((p_part, c_part), axis=-1).astype(np.float32))
+        dm_row, dp_row, x_row, dm_col, dp_col, x_col = (mx.array(value) for value in depth_parts)
+        depth_tables = [dm_row, dm_col, dp_row, dp_col, x_row, x_col, mx.array([depth_f], dtype=mx.float32)]
+        # The fine rows of one source row read the same G values and column tables: one thread computes all of
+        # them (up to _DEPTH_ALIASES) from one read.
+        aliases = max(1, min(_DEPTH_ALIASES, n // source_n))
+        key = ("tuples", aliases)
+        if key not in geometry:
+            geometry[key] = mx.array(_alias_row_pairs(geometry["rows"], source_n, aliases))
+        tuples = geometry[key]
+    else:
+        t_row, t_col = _separable_table_kernel()(
+            inputs=[p_row, p_col, geometry["row_f_m"], geometry["col_f_m"]],
+            template=[("K", stored), ("ROWS", rows), ("COLS", cols + extra)],
+            grid=(max(rows, cols + extra), stored, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(stored, rows), (stored, cols + extra)], output_dtypes=[mx.complex64, mx.complex64],
+        )
     grid_rows = rows + (1 if extra else 0)
     total = mx.zeros((grid_rows, cols), dtype=mx.complex64)
     launches = -(-stored // _SEPARABLE_LAUNCH_BF)
@@ -894,21 +1238,31 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
     per_launch = -(-per_launch // _SEPARABLE_CHUNK) * _SEPARABLE_CHUNK
     # The two fine rows of one source row read the same G values; at 2x one thread computes both and reads
     # each G value once for the BF pixels that reach either row.
-    paired = _PAIRED and n == 2 * source_n
+    paired = _PAIRED and n == 2 * source_n and depth == 0.0
     pairs = int(geometry["pairs_m"].shape[0])
     for start in range(0, stored, per_launch):
         checkpoint()
         stop = min(start + per_launch, stored)
         groups = -(-(stop - start) // _SEPARABLE_CHUNK)
         first = start // _SEPARABLE_CHUNK
-        inputs = [prepared.g_qk[start:stop], qr, qc, geometry["k_data"][start:stop],
+        common = [prepared.g_qk[start:stop], qr, qc, geometry["k_data"][start:stop],
                   params, dc, geometry["bounds"][first:first + groups].reshape(-1),
-                  geometry["rows_m"], geometry["cols_m"], t_row[start:stop], t_col[start:stop],
-                  psi_row, psi_col, psi_cross, geometry["col_f_m"]]
+                  geometry["rows_m"], geometry["cols_m"]]
+        phases = [psi_row, psi_col, psi_cross, geometry["col_f_m"]]
         template = [("ROWS", rows), ("COLS", cols), ("COLS_ALL", cols + extra), ("EXTRA", extra),
                     ("NYQUIST_RI", geometry["nyquist_ri"]), ("SOURCE_N", source_n),
                     ("G_COLS", int(prepared.g_qk.shape[-1])),
                     ("K", stop - start), ("CHUNK", _SEPARABLE_CHUNK), ("GROUPS", groups)]
+        if depth != 0.0:
+            total = _separable_depth_kernel()(
+                inputs=[*common, *phases, row_tables[start:stop], col_tables[start:stop], *depth_tables, tuples, total],
+                template=[*template, ("UNROLL", _DEPTH_UNROLL), ("ALIASES", aliases),
+                          ("TUPLES", int(tuples.shape[0]))],
+                grid=(cols, int(tuples.shape[0]) + (1 if extra else 0), 1), threadgroup=_SEPARABLE_THREADGROUP,
+                output_shapes=[(grid_rows, cols)], output_dtypes=[mx.complex64],
+            )[0]
+            continue
+        inputs = [*common, t_row[start:stop], t_col[start:stop], *phases]
         if paired:
             total = _paired_coherent_kernel()(
                 inputs=[*inputs, geometry["pairs_m"], total], template=[*template, ("PAIRS", pairs)],
@@ -1101,7 +1455,7 @@ def _reconstruct_upsampled(
     coefficients = mx.array(packed)
     dc = mx.array([complex(prepared.dc_value)], dtype=mx.complex64)
     wave_mean = phase_estimator == "phase_of_mean"
-    if wave_mean and not higher and thickness == 0.0 and _SEPARABLE:
+    if wave_mean and not higher and _SEPARABLE:
         total = _separable_spectrum(prepared, qr, qc, params, np.array(params), dc, n)
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         phase = mx.arctan2(mx.imag(wave), mx.real(wave))
