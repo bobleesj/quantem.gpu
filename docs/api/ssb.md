@@ -788,7 +788,11 @@ rotation is estimated by `SSB.open`. `scan_sampling_A` may be one number.
 `(row, col)` scan and detector sampling, physical rotation and flip,
 bright-field centre and radius, aberrations), and
 `series.open_screen_record(record, source=None, backend="auto")` opens the
-session at that fit, so `ssb.show()` opens ShowPtycho there.
+session at that fit, so `ssb.show()` opens ShowPtycho there. The fit is the
+record's tilt-corrected fit when it has one (`series.screen_record_fit`:
+`computed.ssb_tilt` beside an ordinary fit, else `computed.ssb`), and the
+session also takes its sample tilt and depth spread
+(`series.screen_record_sample`).
 `quantem.gpu.formats.dataset_yaml.file_entry(document, master)` finds an
 acquisition's `files` entry by QuantEM Live's rules (its master name, a
 `.qem` copy's master, then the trailing number or a range key such as

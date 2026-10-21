@@ -113,6 +113,52 @@ def test_export_takes_only_a_current_fit_and_its_physical_rotation(tmp_path):
     assert record["aberrations"] == {"C10_nm": 7.0, "C12_nm": 2.0, "phi12_deg": math.degrees(.1)}
 
 
+def test_export_takes_the_tilt_corrected_fit_with_its_tilt_and_depth(tmp_path):
+    """The model-based, tilt-corrected fit is the default SSB result, so the portable pair is that fit.
+
+    A record of Live's default mode holds it in computed.ssb; a --ssb-mode both record holds the ordinary fit there
+    and the tilt-corrected one, with its own phase, in computed.ssb_tilt. The pair states the fit's sample tilt and
+    depth spread, which C10 (at mid-depth) needs; a tilt-0 fit adds neither key, and the reader refuses half of them.
+    """
+    import h5py
+    from quantem.gpu.formats.ssb_phase import export_result
+
+    master = tmp_path / "scan_master.h5"
+    with h5py.File(tmp_path / "scan_data.h5", "w") as handle:
+        handle["data"] = np.ones((2, 2, 2), dtype=np.uint16)
+    with h5py.File(master, "w") as handle:
+        handle["entry/data/data_000001"] = h5py.ExternalLink("scan_data.h5", "/data")
+    run = tmp_path / "run"
+    run.mkdir()
+    np.save(run / "ssb_phase.npy", np.zeros((2, 2), np.float32))
+    np.save(run / "ssb_phase_tilt.npy", np.full((2, 2), 2.0, np.float32))
+    joint = {"schema": FIT_SCHEMA, "state": "complete", "aberrations": {"C10_nm": 4.0, "C12_nm": 0.5, "phi12_deg": 10.0},
+             "scan_detector_rotation_deg": 192.0, "scan_detector_rotation_flipped": False,
+             "sample_tilt_mrad": [-0.1, -5.07], "depth_spread_nm": 10.7}
+    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit(), "ssb_tilt": joint}}))
+    record, phase = read_result(export_result(run, master, tmp_path / "both.json"))
+    assert record["aberrations"] == joint["aberrations"] and float(phase[0, 0]) == 2.0
+    assert (record["sample_tilt_mrad"], record["depth_spread_nm"]) == ([-0.1, -5.07], 10.7)
+    assert record["calibration"]["detector_sampling_mrad"] == [0.55, 0.56]  # the session's, kept in computed.ssb
+    assert record["provenance"]["phase_variant"].startswith("original ssb_phase_tilt.npy")
+    # the default mode: computed.ssb is the tilt-corrected fit and ssb_phase.npy its phase
+    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit(sample_tilt_mrad=[1.0, 2.0], depth_spread_nm=5.0)}}))
+    record, phase = read_result(export_result(run, master, tmp_path / "default.json"))
+    assert (record["sample_tilt_mrad"], record["depth_spread_nm"], float(phase[0, 0])) == ([1.0, 2.0], 5.0, 0.0)
+    # a failed tilt fit beside an ordinary one is no result; a tilt-0 fit carries no sample keys
+    (run / "config.json").write_text(json.dumps({"computed": {"ssb": _fit(), "ssb_tilt": {**joint, "state": "failed"}}}))
+    record, _ = read_result(export_result(run, master, tmp_path / "ordinary.json"))
+    assert record["aberrations"]["C10_nm"] == 7.0 and "sample_tilt_mrad" not in record
+    half = tmp_path / "half.json"
+    half.write_text(json.dumps({**json.loads((tmp_path / "both.json").read_text()), "depth_spread_nm": None}))
+    (tmp_path / "half.npy").write_bytes((tmp_path / "both.npy").read_bytes())
+    changed = json.loads(half.read_text())
+    changed["phase_file"] = "half.npy"
+    half.write_text(json.dumps(changed))
+    with pytest.raises(ValueError, match="sample_tilt_mrad .row, col. and a nonnegative depth_spread_nm, or neither"):
+        read_result(half)
+
+
 def test_numbered_exports_respect_selected_output_folder(tmp_path):
     """Repeated screening stays in its chosen output tree and preserves counts."""
     import h5py

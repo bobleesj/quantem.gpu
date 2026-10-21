@@ -1,8 +1,11 @@
 """Portable SSB phase: ordinary NumPy arrays and readable JSON calibration.
 
 Agent-side utility only: NumPy/h5py are not app dependencies. This exporter
-selects the original ssb_phase.npy and its computed.ssb record, never a separately
-calibrated, locked, picked or denoised phase with different provenance.
+selects a record's tilt-corrected fit, the default SSB result, with its original
+phase: ssb_phase_tilt.npy with computed.ssb_tilt when the record also holds an
+ordinary fit (QuantEM Live's --ssb-mode both), else ssb_phase.npy with
+computed.ssb. It never takes a separately calibrated, locked, picked or denoised
+phase with different provenance.
 """
 
 import argparse
@@ -17,7 +20,7 @@ import h5py
 import numpy as np
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
-from quantem.gpu.ssb.series import stored_fit
+from quantem.gpu.ssb.series import screen_record_fit, stored_fit
 
 # Carried by every portable phase record under "schema"; another value is refused.
 # 2: the shared vocabulary (scan_sampling_A, detector_sampling_mrad, bright_field_center_px, aberrations in
@@ -170,6 +173,11 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
         raise ValueError("SSB aberrations are finite C10_nm, C12_nm and phi12_deg.")
     if not np.isfinite(record["scan_detector_rotation_deg"]) or type(record["scan_detector_rotation_flipped"]) is not bool:
         raise ValueError("SSB geometry needs a finite scan_detector_rotation_deg and a scan_detector_rotation_flipped flag.")
+    tilt, depth = record.get("sample_tilt_mrad"), record.get("depth_spread_nm")
+    if (tilt is None) != (depth is None) or (tilt is not None and (
+            len(tilt) != 2 or not all(np.isfinite(value) for value in tilt) or not np.isfinite(depth) or depth < 0)):
+        raise ValueError("A tilt-corrected SSB result holds a finite sample_tilt_mrad [row, col] and a "
+                         "nonnegative depth_spread_nm, or neither.")
     center = calibration["bright_field_center_px"]
     if len(center) != 2 or not all(np.isfinite(value) for value in center):
         raise ValueError("Non-finite detector center.")
@@ -239,7 +247,11 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
                                "bright_field_center_px", "aberrations", "scan_detector_rotation_deg") if key not in ssb]
     if missing:
         raise ValueError(f"{run_folder / 'config.json'} holds no current SSB fit with {missing}; fit it again.")
-    phase = np.load(run_folder / "ssb_phase.npy", allow_pickle=False)
+    # the record's result: computed.ssb itself, or the tilt-corrected fit Live keeps beside an ordinary one in
+    # computed.ssb_tilt, whose phase is ssb_phase_tilt.npy
+    fit = screen_record_fit(config)
+    phase_name = "ssb_phase.npy" if fit is ssb else "ssb_phase_tilt.npy"
+    phase = np.load(run_folder / phase_name, allow_pickle=False)
     if (phase.dtype != np.dtype("float32") or phase.ndim != 2
             or any(size < 1 or size > 4096 for size in phase.shape)
             or not np.isfinite(phase).all()):
@@ -260,19 +272,24 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         phase_encoding="float32-le-row-major", phase_unit="rad",
         phase_sha256=hashlib.sha256(phase_bytes).hexdigest(),
         calibration=calibration,
-        aberrations={key: float(ssb["aberrations"][key]) for key in ("C10_nm", "C12_nm", "phi12_deg")},
-        scan_detector_rotation_deg=float(ssb["scan_detector_rotation_deg"]),
-        scan_detector_rotation_flipped=bool(ssb.get("scan_detector_rotation_flipped", False)),
+        aberrations={key: float(fit["aberrations"][key]) for key in ("C10_nm", "C12_nm", "phi12_deg")},
+        scan_detector_rotation_deg=float(fit["scan_detector_rotation_deg"]),
+        scan_detector_rotation_flipped=bool(fit.get("scan_detector_rotation_flipped", False)),
         provenance={
             "producer": "quantem.live original screen result",
             "run": str(ssb.get("ran_at", config.get("timestamp", "unrecorded"))),
             "source_binding": "Current acquisition bytes hashed and verified unchanged at export; this does not establish an unrecorded historical run digest",
             "detector_sampling": "The detector sampling the fit used, from the stored fit",
-            "phase_variant": "original ssb_phase.npy; not picked, calibrated or denoised",
+            "phase_variant": f"original {phase_name}; not picked, calibrated or denoised",
             "backend_revision": str(ssb.get("backend_revision", "not recorded by original run")),
         },
         run_metadata=config,
     )
+    if fit.get("sample_tilt_mrad") is not None:
+        # the tilt-corrected fit: C10 is the defocus at mid-depth, with the tilt (scan frame) and depth spread it was
+        # fitted with; a tilt-0 fit adds neither key, as before
+        result.update(sample_tilt_mrad=[float(value) for value in fit["sample_tilt_mrad"]],
+                      depth_spread_nm=float(fit["depth_spread_nm"]))
     if output is None:
         stem = master.stem
         folder = Path(output_folder) if output_folder is not None else master.parent / "live" / "screen"
