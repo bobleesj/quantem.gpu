@@ -16,6 +16,22 @@ def _parser() -> argparse.ArgumentParser:
         description="Accelerated 4D-STEM compute services.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    benchmark = commands.add_parser(
+        "benchmark-ssb", help="measure full-field and regional SSB joint fits on CUDA or MPS",
+    )
+    benchmark.add_argument("source", type=Path, help="local H5 or QEM acquisition")
+    benchmark.add_argument("--out", type=Path, required=True, help="write the timing report outside the repository")
+    benchmark.add_argument("--backend", choices=("auto", "cuda", "mps"), default="auto")
+    benchmark.add_argument("--runs", type=int, default=6, help="one first observation plus five warm measurements")
+    benchmark.add_argument("--region-sizes", type=int, nargs="+", default=[256, 128])
+    benchmark.add_argument("--trials", type=int, default=200)
+    benchmark.add_argument("--seed", type=int, default=42)
+    benchmark.add_argument("--require-installed", action="store_true", help="reject editable source installs for release qualification")
+    benchmark.add_argument("--reference-phase", type=Path, help="compare with a frozen Auto phase .npy from the same backend and acquisition")
+    benchmark.add_argument("--voltage-kv", type=float)
+    benchmark.add_argument("--semiangle-mrad", type=float)
+    benchmark.add_argument("--scan-sampling-a", type=float, nargs="+")
+    benchmark.add_argument("--detector-sampling-mrad", type=float, nargs="+")
     convert_command = commands.add_parser(
         "convert",
         help="convert Arina HDF5 acquisitions into verified .qem copies",
@@ -84,6 +100,34 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested QuantEM GPU command."""
     args = _parser().parse_args(argv)
+    if args.command == "benchmark-ssb":
+        import json
+        from quantem.gpu.benchmark import run_ssb
+
+        calibration = {
+            "voltage_kV": args.voltage_kv, "semiangle_mrad": args.semiangle_mrad,
+            "scan_sampling_A": args.scan_sampling_a,
+            "detector_sampling_mrad": args.detector_sampling_mrad,
+        }
+        calibration = {name: value for name, value in calibration.items() if value is not None}
+        for name in ("scan_sampling_A", "detector_sampling_mrad"):
+            value = calibration.get(name)
+            if value is not None and len(value) == 1:
+                calibration[name] = value[0]
+        report = run_ssb(
+            args.source, backend=args.backend, runs=args.runs,
+            region_sizes=tuple(args.region_sizes), num_trials=args.trials,
+            seed=args.seed, calibration=calibration, progress=print,
+            require_installed=args.require_installed,
+            reference_phase=args.reference_phase,
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+        print("Fit                              first (s)   warm median (s)   warm p90 (s)")
+        for name, result in report["measurements"].items():
+            print(f"{name:32} {result['first_s']:9.3f} {result['warm_p50_s']:17.3f} {result['warm_p90_s']:14.3f}")
+        print("Each measurement uses one seed, the full trial budget and Newton. Browser paint is excluded.")
+        return 0
     if args.command == "convert":
         try:
             convert._explicit_calibration(args.voltage_kv, args.semiangle_mrad,

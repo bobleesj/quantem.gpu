@@ -127,6 +127,9 @@ parts:
       - file: backends
         title: Backend coverage
       - file: performance/methodology
+      - file: performance/ssb-joint-fit
+      - file: maintainer/2026-10-21-ssb-joint-benchmark
+        title: SSB joint-fit benchmark (2026-10-21)
       - file: performance/cuda-count-codecs
         title: CUDA codec speed and peak memory
       - file: performance/parity
