@@ -213,9 +213,9 @@ checkout had local edits, and no file paths.
 | `ssb_prepare` | the first preview: BF evidence read and transformed |
 | `preview_native`, `preview_2x` | a ShowPtycho slider drag step (no loss) |
 | `preview_native_loss` | the slider release (with the variance loss) |
-| `search_candidate` | half of one TPE pair of the exact loss |
+| `search_candidate` | an eighth of one search batch of eight agreement trials at depth spread 0 |
 | `find_aberrations` | the default fit, once (joint tilt fit on both branches of the estimated rotation) |
-| `find_aberrations_standard` | one standard `tilt=False` fit at the kept rotation, once |
+| `find_aberrations_standard` | one standard `tilt=False` fit (200 trials and Newton) at the kept rotation, once |
 | `detector_update`, `detector_full` | a Show4DSTEM detector sum on gold as loaded (uint16 counts): a half-pixel disk move (incremental) and an alternating disk / annulus (full) |
 | `detector_full_uint32` | the alternating sum on gold loaded with `hot_pixel_correction="none"`, which keeps uint32 |
 
@@ -235,9 +235,9 @@ detector update no longer equals the full sum.
 | `preview_native` | 27.7 ms | 29.0 ms |
 | `preview_2x` | 71.9 ms | 73.6 ms |
 | `preview_native_loss` | 123 ms | 126 ms |
-| `search_candidate` | 80.9 ms | 83.3 ms |
+| `search_candidate` | 19.3 ms | 23.0 ms |
 | `find_aberrations` | 24.4 s | – |
-| `find_aberrations_standard` | 23.9 s | – |
+| `find_aberrations_standard` | 4.97 s | – |
 | `detector_full_uint32` | 2.28 s | 2.33 s |
 | `detector_update` | 5.9 ms | 6.2 ms |
 | `detector_full` | 12.2 ms | 13.7 ms |
@@ -245,6 +245,9 @@ detector update no longer equals the full sum.
 The median of three runs (`merge`) on 2026-10-20 with this harness's commit (macOS 26.4, Python 3.13.13,
 torch 2.13.0, MLX 0.32.0), each under the shared GPU lock, while WindowServer used 24 to 50 % of the GPU
 (the screen was shared). 7,644 bright-field pixels; the uint16 update equalled the uint32 full sum in every run.
+`search_candidate` and `find_aberrations_standard` were re-recorded from one run on 2026-10-20 when the MPS
+standard fit moved to the agreement objective (phase-variance pair 80.9 ms, standard fit 23.9 s before);
+`2026-10-20-ssb-standard-fit-objective.md`.
 
 ### Reading a failure
 
@@ -253,7 +256,7 @@ torch 2.13.0, MLX 0.32.0), each under the shared GPU lock, while WindowServer us
 2. Rerun the one failing metric's stage two or three times. A real
    regression repeats; contention does not.
 3. A slower `preview_*` points at `ssb/mps/upsampling.py`; a slower
-   `search_candidate` or `find_aberrations` at `ssb/mps/loss.py` and the row and
+   `search_candidate` or `find_aberrations` at `ssb/mps/thick_sample.py` (the agreement kernel), `ssb/_resident_search.py` and the row and
    column kernels; `detector_*` at `detector/counts.py` and
    `resident/mps/spatial.py`; `ssb_session` at the rotation estimate and the
    source decode.

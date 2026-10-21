@@ -30,13 +30,14 @@ p90 of its repeats. The metrics, all in milliseconds:
 - ``preview_native`` / ``preview_2x``: ``ssb.preview`` without the loss, as a
   ShowPtycho slider drag, at upsampling 1 and 2, C10 changing every call;
 - ``preview_native_loss``: the same with the variance loss (slider release);
-- ``search_candidate``: one candidate of the standard aberration search,
-  timed as a TPE pair of the exact phase-variance loss and halved;
+- ``search_candidate``: one candidate of the aberration search, timed as a
+  batch of eight agreement trials at depth spread 0 (the standard fit's
+  objective, ``thick_fit_batch``) and divided by eight;
 - ``find_aberrations``: the default fit, single shot. The rotation is
   estimated, so it runs the tilt-corrected joint fit on both 180-degree
   branches and keeps one;
 - ``find_aberrations_standard``: one standard (``tilt=False``) 200-trial
-  search and Nelder-Mead at the kept rotation, single shot;
+  search and Newton at the kept rotation, single shot;
 - ``detector_update`` / ``detector_full``: Show4DSTEM's exact masked sum on
   the gold scan as loaded (its uint32 counts fit 16 bits once the flagged
   pixels are replaced, so ``io.load`` stores them as the uint16 count
@@ -305,8 +306,7 @@ def alternating(session, first, second):
 def measure(master, reps=20, load_reps=3, log=print):
     """One report of every stage on ``master`` (the gold scan)."""
     from quantem.gpu import SSB, detector, io
-    from quantem.gpu.ssb.mps.hardware import effective_phase_loss_chunk_bf
-    from quantem.gpu.ssb.mps.loss import reconstruct_prepared_batch_exact_loss
+    from quantem.gpu.ssb.mps.thick_sample import thick_fit_batch
 
     report = {"schema": "quantem.gpu.mps-benchmark/1", "dataset": {"id": DATASET, "revision": REVISION,
                                                                    "file": MASTER},
@@ -373,17 +373,17 @@ def measure(master, reps=20, load_reps=3, log=print):
         log(f"{name} {metrics[name]}")
 
     prepared = ssb._backend()._prepared
-    chunk_bf = effective_phase_loss_chunk_bf(16, prepared.scan_shape)
 
-    def pair(index):
+    def batch(index):
         offset = 0.1 * index
-        reconstruct_prepared_batch_exact_loss(
-            prepared, C10=np.asarray([5.0 + offset, -5.0 - offset], np.float32),
-            C12=np.asarray([10.0, 20.0], np.float32), phi12=np.asarray([0.3, 1.1], np.float32), chunk_bf=chunk_bf)
+        rows = np.zeros((8, 6))
+        rows[:, 0] = np.linspace(-50.0, 50.0, 8) + offset
+        rows[:, 1], rows[:, 2] = 20.0, np.linspace(-1.2, 1.2, 8)
+        thick_fit_batch(prepared, rows)
 
-    pairs = timed(pair, max(5, reps // 2), warmup=2)
-    metrics["search_candidate"] = {**{key: round(value / 2, 3) if key.endswith("_ms") else value
-                                      for key, value in pairs.items()}, "timed_as": "half of one TPE pair"}
+    batches = timed(batch, max(5, reps // 2), warmup=2)
+    metrics["search_candidate"] = {**{key: round(value / 8, 3) if key.endswith("_ms") else value
+                                      for key, value in batches.items()}, "timed_as": "an eighth of one search batch"}
     log(f"search_candidate {metrics['search_candidate']}")
 
     def fit_values(fit):

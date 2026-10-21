@@ -8,6 +8,14 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- On MPS, `find_aberrations(tilt=False)` fits on the joint fit's objective, the least-squares agreement of the SSB
+  model with G(q, k), with the sample tilt and depth spread held at 0: the same resident 200-trial search, then
+  Newton (`refinement="auto"`) or Nelder-Mead. The search box is unchanged (C10 +-40 nm, C12 0 to 10 nm);
+  `search_ranges`, `refine_lock` and now `fixed_aberrations` constrain it. On synthetic crystals it lands 3x nearer
+  the true C10 than the phase-variance search, and a gold fit takes 7.8 s instead of about 75 s (both branches)
+  with half the peak memory. Standard-fit coefficients move (gold C10 -17.756 -> -18.467 nm). The phase variance
+  stays the reported `loss`. The phase-variance search (`ssb/mps/loss.py`, its batch kernels and
+  `scripts/benchmark_ssb_mps_scaling.py`) is removed. CUDA's standard fit is unchanged.
 - The detector calibration is an explicit step: `fit = data.calibration.fit_detector_sampling()` fits the
   bright-field disk of the mean pattern on the encoded data (`detector.fit_bright_field_disk`: centre, and the
   edge radius where the disk falls to half its plateau, at the convergence semiangle), records the detector step
