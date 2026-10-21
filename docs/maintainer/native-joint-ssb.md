@@ -40,14 +40,14 @@ joint models; `retarget` moves a model to another rotation without gathering its
 | Tilt | `sampleTiltMrad` (row, column) in mrad, scan frame |
 | Depth spread | Nonnegative Angstrom; a model depth spread, not a measured thickness |
 | Objective | `agreements`: per band frequency `|sum_k G conj(gamma)|^2 / sum_k |gamma|^2`, 0.2 < q < 0.9 1/A, half-plane weights; float32 per term as the MPS kernel, double band sum |
-| Search | `SSBAgreementSearch`: the resident multivariate TPE (MT19937, 200 trials, seed 42) and trust-region Newton of `ssb._resident_search`, in double precision |
-| Final phase | `phase_of_mean` (corrected waves summed, one phase; scan-mean replicas zero); `meanPhase` on request |
+| Search | `SSBAgreementSearch`: the resident multivariate TPE (MT19937, 200 trials, seed 42) and trust-region Newton of `ssb._resident_search`, in double precision; a joint fit is polished once more from the phi12-mirrored best trial and the best trial in another (phi12, tilt, depth) cluster, kept only when its agreement is higher by more than 1e-6 relative |
+| Final phase | `phase_of_mean` (corrected waves summed, one phase; scan-mean replicas zero) with the separable C10/C12 kernels of the MPS preview (row and column phasors, depth phasors, the Nyquist row in the main launch, two fine rows per thread at 2x, fine rows of one source row per thread with depth); the per-term kernel serves uncached spectra; `meanPhase` on request |
 | Output sampling | Fourier-alias reconstruction at 1, 2, 3, 4 or 8x; not interpolation |
 | Rotation | Double precision; the angle is converted in double, the BF coordinates rotated in float32 as MPS |
 | Wavelength | Python's table at 80-400 kV, else the same formula |
 
 The search port is checked trial by trial: on a synthetic float32 objective that both sides evaluate from the same
-float32 trial rows, all 407 tilt-fit and 244 standard-fit rows equal Python's (`SSBAgreementSearchTests`, which
+float32 trial rows, all 573 tilt-fit rows (the second polish from other basins included) and 244 standard-fit rows equal Python's (`SSBAgreementSearchTests`, which
 `scripts/ssb_agreement_gate.py` also feeds with the current Python records). Python keeps its Newton state in
 a three-float expansion, so fitted points agree to about 1e-8 there. Measured parity
 (`MetalSSBMeasuredParityTests`, given an exported acquisition in `SSB_PARITY_FIXTURE`) covers the BF disk and

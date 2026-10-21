@@ -348,6 +348,20 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
             to: URL(fileURLWithPath: output).appendingPathComponent("native_\(name)_\(factor)x.f32"))
         }
         XCTAssertGreaterThanOrEqual(comparison.correlation, 0.99999, "\(name) \(factor)x")
+        // The separable kernels against the per-term reference kernel on the same session.
+        model.separableReconstruction = false
+        let reference = try model.reconstruct(parameters, upsamplingFactor: factor)
+        model.separableReconstruction = true
+        let a = phase.phase.contents().assumingMemoryBound(to: Float.self)
+        let b = reference.phase.contents().assumingMemoryBound(to: Float.self)
+        var largest: Float = 0
+        for i in 0..<(phase.rows * phase.columns) { largest = max(largest, abs(a[i] - b[i])) }
+        var times: [Double] = []
+        for _ in 0..<5 { times.append(try model.reconstruct(parameters, upsamplingFactor: factor).wallSeconds) }
+        times.sort()
+        print(String(format: "MEASURED_SEPARABLE %@ %dx max |separable - per-term| %.3e rad · median %.1f ms (per-term %.1f ms)",
+          name, factor, largest, times[2] * 1000, reference.wallSeconds * 1000))
+        report["\(name)_\(factor)x_separable"] = ["max_vs_per_term_rad": Double(largest), "median_ms": times[2] * 1000]
       }
     }
     if let output = ProcessInfo.processInfo.environment["SSB_PARITY_OUTPUT"] {
@@ -400,6 +414,82 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
       try encoder.encode(result).write(
         to: URL(fileURLWithPath: output).appendingPathComponent("native_default.json"))
+    }
+  }
+
+  /// BENCHMARK.md steps 2-7 and 9 on the exported acquisition: medians of three fits and twenty previews,
+  /// written to `SSB_PARITY_OUTPUT/benchmark_native.json`. Runs only with SSB_BENCHMARK=1.
+  func testBenchmarkSteps() throws {
+    guard ProcessInfo.processInfo.environment["SSB_BENCHMARK"] == "1" else {
+      throw XCTSkip("Set SSB_BENCHMARK=1 to time the BENCHMARK.md steps.")
+    }
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let fixture = try MeasuredSSBFixture.load(device: device)
+    var peak = device.currentAllocatedSize
+    func sample() { peak = max(peak, device.currentAllocatedSize) }
+    func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
+    var prepare: [Double] = []
+    var session: (engine: MetalSSBEngine, geometry: MetalSSBGeometry)?
+    for _ in 0..<3 {
+      let started = Date()
+      session = try fixture.engine(device: device)
+      prepare.append(Date().timeIntervalSince(started))
+      sample()
+    }
+    let engine = try XCTUnwrap(session).engine
+    let rotation = fixture.expected.default.rotation_deg
+    let model = try engine.jointModel(scanDetectorRotationDegrees: rotation)
+    let sampling = (fixture.fixture.calibration.scan_sampling_A[0], fixture.fixture.calibration.scan_sampling_A[1])
+    func time(_ body: () throws -> Void) rethrows -> Double {
+      let started = Date()
+      try body()
+      sample()
+      return Date().timeIntervalSince(started)
+    }
+    var results: [String: Any] = ["gpu": device.name]
+    var step3: [Double] = [], step3b: [Double] = [], step4: [Double] = [], step5: [Double] = []
+    var split: [String: Double] = [:]
+    for _ in 0..<3 {
+      step3.append(try time {
+        let fit = try SSBModelFit.findAberrations(
+          model: model, engine: engine, rotationDegrees: rotation, darkField: nil, scanSampling: sampling,
+          checkRotation: false)
+        split = fit.fit.timings
+      })
+      step3b.append(try time {
+        _ = try SSBModelFit.findAberrations(
+          model: model, engine: engine, rotationDegrees: rotation, darkField: nil, scanSampling: sampling,
+          options: SSBFitOptions(compareStandard: false), checkRotation: false)
+      })
+      step4.append(try time {
+        _ = try SSBModelFit.findAberrations(
+          model: model, engine: engine, rotationDegrees: fixture.expected.rotation_estimate_deg,
+          darkField: try fixture.darkField(), scanSampling: sampling)
+      })
+      step5.append(try time {
+        try model.retarget(scanDetectorRotationDegrees: rotation)
+        _ = try SSBModelFit.fit(model: model, engine: engine, options: SSBFitOptions(tilt: false))
+      })
+    }
+    try model.retarget(scanDetectorRotationDegrees: rotation)
+    let (_, point) = try fixture.point("tilt_corrected")
+    var previews: [Int: [Double]] = [1: [], 3: []]
+    for factor in [1, 3] {
+      _ = try model.reconstruct(point, upsamplingFactor: factor)
+      for _ in 0..<20 { previews[factor]!.append(try time { _ = try model.reconstruct(point, upsamplingFactor: factor) }) }
+    }
+    results["2"] = ["s": median(prepare), "runs": prepare]
+    results["3"] = ["s": median(step3), "runs": step3, "split_s": split]
+    results["3b"] = ["s": median(step3b), "runs": step3b]
+    results["4"] = ["s": median(step4), "runs": step4]
+    results["5"] = ["s": median(step5), "runs": step5]
+    results["6"] = ["ms": median(previews[1]!) * 1000]
+    results["7"] = ["ms": median(previews[3]!) * 1000]
+    results["9"] = ["GiB_sampled_peak": Double(peak) / Double(1 << 30)]
+    let data = try JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys])
+    print("MEASURED_BENCHMARK " + String(decoding: data, as: UTF8.self))
+    if let output = ProcessInfo.processInfo.environment["SSB_PARITY_OUTPUT"] {
+      try data.write(to: URL(fileURLWithPath: output).appendingPathComponent("benchmark_native.json"))
     }
   }
 }
