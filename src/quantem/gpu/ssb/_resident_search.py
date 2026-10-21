@@ -6,11 +6,12 @@ trust-region decisions remain on the selected GPU. Results are downloaded
 once for the public fit record. The search retains groups of eight, 24 TPE
 candidates, the startup budget, and three distinct Newton starts.
 
-Objective per backend: ``fit_resident`` (tilt=True) maximizes the
-least-squares agreement of the thick-sample SSB model with G(q, k) on CUDA and
-MPS. ``fit_standard_resident`` (tilt=False) is the same search and objective
-with the sample tilt and depth spread held at 0; MPS uses it, while CUDA's
-tilt=False still minimizes the phase variance (``cuda/optimizer.py``).
+Objective: ``fit_resident`` (tilt=True) maximizes the least-squares
+agreement of the thick-sample SSB model with G(q, k) on CUDA and MPS.
+``fit_standard_resident`` (tilt=False) is the same search and objective with
+the sample tilt and depth spread held at 0; MPS uses it, and CUDA's port is
+pending. The phase-variance search (``objective="phase_variance"``) is
+``mps/optimizer.optimize_phase_variance`` and ``cuda/optimizer.py``.
 """
 
 import math
@@ -836,7 +837,7 @@ def fit_resident(
     fit = float(device.host(value)[0])
     if not math.isfinite(fit) or fit <= 0:
         raise ValueError(
-            "Joint tilt fitting found no positive finite agreement. Check scan sampling and signal in the fitting band, or use tilt=False."
+            "Joint tilt fitting found no positive finite agreement. Check scan sampling and signal in the fitting band, or use tilt=False, objective='phase_variance'."
         )
     record_points = device.host(points)
     record_scores = device.host(scores)

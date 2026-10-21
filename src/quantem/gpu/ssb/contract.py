@@ -12,6 +12,9 @@ from quantem.gpu.ssb.results import SSBResult
 
 # Effective local refinement after the public workflow resolves "auto".
 RefineMethod = Literal["nelder-mead", "newton"] | None
+# What find_aberrations maximizes or minimizes: the least-squares agreement of the SSB model with the data (the
+# default, with or without tilt) or the phase variance over bright-field pixels (the older SSB search, tilt=False only).
+FitObjective = Literal["agreement", "phase_variance"]
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,7 @@ class SSBProtocol(Protocol):
         refine_lock: list[str] | None,
         seed: int,
         verbose: bool,
+        objective: FitObjective,
     ) -> SSBResult: ...
 
     def reconstruct_result(
@@ -148,6 +152,7 @@ class SSBProtocol(Protocol):
 
 
 __all__ = [
+    "FitObjective",
     "SSBPrecision",
     "SSBProtocol",
 ]

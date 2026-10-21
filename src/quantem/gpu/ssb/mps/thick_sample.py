@@ -478,9 +478,9 @@ def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     rows, columns = np.nonzero((q > key[0]) & (q < key[1]))
     if rows.size == 0:
         raise ValueError(
-            f"Joint tilt fitting needs spatial frequencies in {key[0]:g}–{key[1]:g} 1/A, "
+            f"The model-agreement fit needs spatial frequencies in {key[0]:g}–{key[1]:g} 1/A, "
             f"but this scan reaches only {float(q.max()):.3g} 1/A. "
-            "Use ordinary SSB (tilt=False), or acquire a finer scan. "
+            "Use the phase-variance search (tilt=False, objective='phase_variance'), or acquire a finer scan. "
             "Reconstruction upsampling does not add measured frequencies."
         )
     if half:

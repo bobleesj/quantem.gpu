@@ -5,8 +5,8 @@ the first (cold, includes kernel compilation) and the median warm wall time, and
 so two checkouts compared back to back show both. Each fit starts from a fresh session with a fixed seed.
 
 Stages: ``session`` (SSB construction, bright-field crop and Fourier preparation), ``reconstruct`` (fixed probe,
-without and with the loss), ``fit`` (``find_aberrations``, 200 trials + Nelder-Mead), ``tilt``
-(``find_aberrations(tilt=True)``), ``dpc`` (``dpc.run``) and ``parallax`` (``parallax.run`` with the aberration fit).
+without and with the loss), ``fit`` (``find_aberrations(tilt=False, objective="phase_variance")``, 200 trials +
+Nelder-Mead), ``tilt`` (``find_aberrations(tilt=True)``), ``dpc`` (``dpc.run``) and ``parallax`` (``parallax.run`` with the aberration fit).
 
 Compiled kernels are cached per process tree: give every checkout its own empty ``CUPY_CACHE_DIR`` (the script
 makes a temporary one when it is unset), or one tree's cached binaries time the other.
@@ -140,7 +140,8 @@ def run(arguments, stages) -> None:
             for _ in range(arguments.fit_repeats):
                 with prepared(data) as ssb:
                     result, seconds = timed(lambda: ssb.find_aberrations(
-                        tilt=tilt, num_trials=arguments.trials, seed=arguments.seed, verbose=False))
+                        tilt=tilt, num_trials=arguments.trials, seed=arguments.seed, verbose=False,
+                        **({} if tilt else {"objective": "phase_variance"})))
                 times.append(seconds)
                 aberrations = {key: float(value) for key, value in result.aberrations.items()}
                 hashes.append(f"phase {digest(result.phase)} loss {result.loss!r} aberrations "

@@ -36,6 +36,7 @@ both the timings and the output hashes the script prints.
 | CUDA SSB, DPC and parallax | `scripts/benchmark_ssb.py` | First and median warm wall time per stage (session, reconstruct, fit, tilt fit, DPC, parallax) and the SHA-256 of every output array |
 | Python CUDA/MPS/CPU HDF5 load | `scripts/benchmark_hdf5_load.py` | Run-level p50/p95/max, full-volume hash/dtype/shape parity, logical resident bytes, sampled accelerator/process peak, and release snapshots |
 | CUDA/MPS screening | `scripts/benchmark_screening.py` | Separate build and prepared-reopen distributions, product hashes, stages, cache bytes, and memory |
+| Python MPS SSB | `scripts/benchmark_ssb_mps_scaling.py` | Reconstruction, parity-pair, and complete phase-variance fit (`objective="phase_variance"`) JSONL |
 | Native Swift/Metal indexed load | `metal-4dstem-indexed-load-benchmark` | Exact resident volume/products, stage timing, hashes, and Metal/process memory |
 | Native Swift/Metal SSB | `metal-ssb-benchmark` | Reconstruction, phase/loss, calibration, and cache-policy report |
 

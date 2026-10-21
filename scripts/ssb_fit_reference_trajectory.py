@@ -1,8 +1,8 @@
 """Record the Python/QuantEM SSB fit trajectory on an exported exact artifact.
 
 The native ``SSBOptimizer`` is a reimplementation of the QuantEM TPE contract.
-This script records what the *reference* (the public ``quantem.gpu`` MPS fit)
-actually draws, so a native trajectory can be compared against the reference on
+This script records what the *reference* (the public ``quantem.gpu`` MPS
+phase-variance fit, ``find_aberrations(tilt=False, objective="phase_variance")``) actually draws, so a native trajectory can be compared against the reference on
 identical inputs and one seed instead of against prose.
 
 It patches nothing scientific: the only change is ``optuna_batch_size``, which
@@ -94,19 +94,20 @@ def record(session, *, trials: int, seed: int, batch: int) -> dict:
         recorded.append(entry)
         return original_tell(study, trial, values, *args, **kwargs)
 
-    original_optimize = mps_backend.optimize_mps
+    original_optimize = mps_backend.optimize_phase_variance
 
     def optimize_with_batch(*args, **kwargs):
         kwargs["optuna_batch_size"] = int(batch)
         return original_optimize(*args, **kwargs)
 
     Study.tell = recording_tell
-    mps_backend.optimize_mps = optimize_with_batch
+    mps_backend.optimize_phase_variance = optimize_with_batch
     try:
-        result = session.find_aberrations(num_trials=int(trials), seed=int(seed), verbose=False)
+        result = session.find_aberrations(tilt=False, objective="phase_variance", num_trials=int(trials),
+                                          seed=int(seed), verbose=False)
     finally:
         Study.tell = original_tell
-        mps_backend.optimize_mps = original_optimize
+        mps_backend.optimize_phase_variance = original_optimize
         del optuna  # keep the import local to this call
     best = min(
         (entry for entry in recorded if entry["loss"] is not None),
