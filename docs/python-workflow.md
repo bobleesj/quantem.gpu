@@ -111,10 +111,21 @@ show_2d(
 )
 ```
 
-SSB finds the bright-field disk automatically. `find_aberrations()` fits
-defocus and twofold astigmatism on the native grid; `reconstruct()` uses those
-parameters without repeating the search. Voltage, sampling, and convergence
-angle stay fixed. Specimen tilt and model depth spread are zero in this example.
+SSB finds the bright-field disk automatically. `find_aberrations()` is the
+default model-based, tilt-corrected fit: on the native grid it fits defocus and
+twofold astigmatism together with the sample tilt and a depth spread, keeping
+the parameters whose predicted bright-field data agree best with the
+measurement. `reconstruct()` uses those parameters without repeating the
+search. Voltage, sampling, and convergence angle stay fixed.
+
+| Call | Method | Use it for |
+|---|---|---|
+| `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
+| `find_aberrations(tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
+
+The phase variance is a backup, not an equal alternative
+({ref}`SSB fit methods <ssb-fit-methods>`).
 
 ![Gold native SSB phase](_static/gold-ssb-native.png)
 
