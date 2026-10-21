@@ -67,3 +67,36 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend):
         np.testing.assert_array_equal(host_array(restored.phase), phase)
         assert len(restored.show("parameters").axes) == 3
         assert len(restored.show(show_parameters=False).axes) == 2
+        # Review one diagnostic at a time without another GPU evaluation.
+        ssb.measure_parameters = lambda *args: pytest.fail("Recorded slices must be reused")
+        depth = ssb.show("depth", size="small")
+        tilt = restored.show("tilt", size="large")
+        assert np.all(depth.get_size_inches() < tilt.get_size_inches())
+        assert len(depth.axes) == len(tilt.axes) == 2
+        for figure, key in ((depth, "focus_depth"), (tilt, "tilt")):
+            np.testing.assert_array_equal(
+                figure.axes[0].collections[0].get_array(), evidence["slices"][key]["relative_agreement"])
+            np.testing.assert_array_equal(
+                figure.axes[0].lines[0].get_xydata()[0], evidence["slices"][key]["fitted_point"])
+            assert figure.number not in plt.get_fignums()
+
+
+def test_show_selected_region_preserves_full_field_joint_fit():
+    """Inspect a region with shared rotation without replacing the full-field solution."""
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        pytest.skip("Requires an Apple silicon GPU")
+    from quantem.gpu import SSB
+
+    counts = np.random.default_rng(7).poisson(40, size=(128, 128, 32, 32)).astype(np.uint16)
+    rows, columns = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
+    counts[:, :, np.hypot(rows, columns) < 10] += 200
+    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
+             scan_sampling_A=0.3, detector_sampling_mrad=3.0, scan_detector_rotation_deg=17.0) as ssb:
+        fit = ssb.find_aberrations(compare_standard=False, compute_loss=False, verbose=False)
+        phase = fit.phase.copy()
+        figure = ssb.show("tilt", region=(16, 80, 32, 96), size="small")
+        assert "Rows 16:80, columns 32:96" in figure.get_suptitle()
+        assert ssb.aberrations == fit.aberrations
+        assert ssb.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
+        np.testing.assert_array_equal(fit.phase, phase)
+        assert not fit.parameter_slices  # regional evidence was not attached to the full field

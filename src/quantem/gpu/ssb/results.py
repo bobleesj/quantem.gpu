@@ -339,9 +339,10 @@ class SSBResult(Mapping[str, float]):
             raise ValueError("A trial stack has several probes. Reconstruct one trial's parameters first.")
         return model_probe(self, space=space)
 
-    def show(self, view: Literal["phase", "probe", "rotation", "parameters"] = "phase", *,
+    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt"] = "phase", *,
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
-             show_parameters: bool = True):
+             show_parameters: bool = True,
+             size: Literal["small", "medium", "large"] | None = None):
         """Show a large phase image or the real-space and Fourier-space probes.
 
         Phase views reuse symmetric linear limits from their fitted result.
@@ -350,7 +351,7 @@ class SSBResult(Mapping[str, float]):
 
         Parameters
         ----------
-        view : {"phase", "probe", "rotation", "parameters"}, optional
+        view : {"phase", "probe", "rotation", "parameters", "depth", "tilt"}, optional
             Show the reconstructed phase alone, or two model-probe intensity
             panels side by side. Fourier intensity shows the aperture;
             aberrations are encoded in the complex Fourier probe's phase.
@@ -360,6 +361,10 @@ class SSBResult(Mapping[str, float]):
             phase at the dark-field atomic columns. A phase view coarser than
             ``"auto"`` (a native fit) is shown as reconstructed, and one line
             names the auto factor.
+            ``depth`` shows the conditional focus-depth agreement slice;
+            ``tilt`` shows its row-column tilt slice. The marker is the
+            fitted point. Neither is a spatial parameter map or an uncertainty
+            estimate; other parameters are held at their jointly fitted values.
         axsize : tuple[float, float] or None, optional
             Width and height of each panel in inches. Defaults to (12, 12) for
             phase, (6, 6) for each probe or comparison panel and (5, 3.4) for
@@ -375,6 +380,10 @@ class SSBResult(Mapping[str, float]):
             default. This only displays recorded values; it runs no fitting
             or GPU evaluations. Use ``view="parameters"`` for the plots alone.
             Measure them first with ``ssb.measure_parameters(result)``.
+        size : {"small", "medium", "large"} or None, optional
+            Scale the default panel dimensions by 0.75, 1 or 1.5. This changes
+            only figure size, never sampling or fitted values. Use either
+            ``size`` or an explicit ``axsize``.
 
         Returns
         -------
@@ -394,10 +403,25 @@ class SSBResult(Mapping[str, float]):
         >>> result.show("rotation")
         >>> ssb.measure_parameters(aberrations)
         >>> aberrations.show("parameters")
+        >>> aberrations.show("depth", size="large")
+        >>> aberrations.show("tilt", size="small")
         """
         import matplotlib.pyplot as plt
         from quantem.core.visualization import show_2d
 
+        if size is not None:
+            scales = {"small": 0.75, "medium": 1.0, "large": 1.5}
+            if size not in scales or axsize is not None:
+                raise ValueError("Use size='small', 'medium' or 'large', or axsize=(width, height), not both.")
+            if compare is not None or view == "probe":
+                panel_size = (6, 6)
+            elif view == "rotation":
+                panel_size = (5, 3.4)
+            elif view in ("parameters", "depth", "tilt") or (show_parameters and self.parameter_slices):
+                panel_size = (5.2, 4.5)
+            else:
+                panel_size = (12, 12)
+            axsize = tuple(length * scales[size] for length in panel_size)
         if compare is not None:
             if view != "phase":
                 raise ValueError("Use result.show(compare=other) to compare phase images.")
@@ -410,10 +434,11 @@ class SSBResult(Mapping[str, float]):
             return self.rotation_branches.show(**({} if axsize is None else {"axsize": axsize}))
         if view == "phase" and self.object_wave.ndim == 2:
             _announce_below_auto(self)
-        if view == "parameters" or (view == "phase" and show_parameters and self.parameter_slices):
+        if view in ("parameters", "depth", "tilt") or (view == "phase" and show_parameters and self.parameter_slices):
             from quantem.gpu.ssb.parameters import plot_parameters
 
-            return plot_parameters(self, include_phase=view == "phase", axsize=axsize)
+            return plot_parameters(self, view="parameters" if view == "phase" else view,
+                                   include_phase=view == "phase", axsize=axsize)
         if view == "phase":
             column_sampling = float(self.object_sampling_A[1])
             arrays = self.phase
@@ -429,7 +454,7 @@ class SSBResult(Mapping[str, float]):
             ]
             panel_size = (6, 6)
         else:
-            raise ValueError(f"Choose view='phase', 'probe', 'rotation' or 'parameters'; got {view!r}.")
+            raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth' or 'tilt'; got {view!r}.")
         figure, _ = show_2d(
             arrays, title=titles,
             norm=({"interval_type": "manual", "vmin": self.phase_limits[0],
