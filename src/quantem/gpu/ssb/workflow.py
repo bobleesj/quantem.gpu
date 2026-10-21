@@ -1501,9 +1501,10 @@ class SSB:
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
 
-    def show(self, view: Literal["interactive", "depth", "tilt", "parameters"] = "interactive", *,
+    def show(self, view: Literal["interactive", "depth", "tilt", "parameters", "focus"] = "interactive", *,
              size: Literal["small", "medium", "large"] | None = None,
-             region: tuple[int, int, int, int] | None = None, **options):
+             region: tuple[int, int, int, int] | None = None,
+             mode: Literal["interactive", "static"] | None = None, **options):
         """Open ShowPtycho on this session: the live phase and its FFT, aberration sliders, Save.
 
         ``options`` go to ``quantem.widget.ShowPtycho``: ``show_fft``, ``save_dir``, ``local_tilt``, ... The widget
@@ -1515,13 +1516,19 @@ class SSB:
         If no fit exists, the ordinary joint fit runs first. All unplotted
         parameters remain fixed; these are not spatial maps or uncertainties.
 
+        ``show("focus")`` displays actual reconstructed phase images in Show2D,
+        varying focus and model depth spread around the joint fit. Use
+        ``mode="static"`` for the same images through ``show_2d``. The saved
+        astigmatism, specimen tilt and rotation are retained. These are
+        conditional image comparisons, not independent depth slices or refits.
+
         Parameters
         ----------
-        view : {"interactive", "depth", "tilt", "parameters"}, optional
+        view : {"interactive", "depth", "tilt", "parameters", "focus"}, optional
             The existing ShowPtycho widget, the focus-depth landscape, the
-            row-column tilt landscape, or both landscapes.
+            row-column tilt landscape, both landscapes, or reconstructed images.
         size : {"small", "medium", "large"} or None, optional
-            Static figure size only. Does not change any data or sampling.
+            Plot or focus-gallery panel size only. Does not change data or sampling.
         region : tuple of int or None, optional
             Static diagnostic region in original scan pixels, as
             ``(row_start, row_stop, col_start, col_stop)`` with exclusive stops.
@@ -1529,13 +1536,20 @@ class SSB:
             calibration and full-field rotation; it leaves the full-field fit
             unchanged. To reuse a regional fit for several views, retain the
             session returned by ``select_region`` and call its ``show`` method.
+            Focus images always reconstruct the full parent field before cropping.
+        mode : {"interactive", "static"} or None, optional
+            For ``view="focus"``, Show2D by default, or a static ``show_2d``
+            figure. Landscape views remain static.
         **options
             ShowPtycho options for the interactive view, or SSBResult.show
             options such as ``axsize`` for a static diagnostic.
+            Focus images accept ``focus_offsets_nm=(-5, 0, 5)`` relative to
+            fitted C10 and ``depth_spread_nm`` as an absolute scalar or sequence.
+            The default depths are the fitted value and ±5 nm, bounded at zero.
 
         Returns
         -------
-        quantem.widget.ShowPtycho or matplotlib.figure.Figure
+        quantem.widget.ShowPtycho, quantem.widget.Show2D or matplotlib.figure.Figure
             A live widget, or a closed figure that renders once in a notebook.
             The static figure can be saved with ``figure.savefig(...)``.
 
@@ -1546,9 +1560,13 @@ class SSB:
         >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
         >>> ssb.show("depth", size="large")  # doctest: +SKIP
         >>> ssb.show("tilt", region=(64, 192, 64, 192))  # doctest: +SKIP
+        >>> ssb.show("focus")  # doctest: +SKIP
+        >>> ssb.show("focus", mode="static", depth_spread_nm=15)  # doctest: +SKIP
         """
-        if view not in ("interactive", "depth", "tilt", "parameters"):
-            raise ValueError(f"Choose 'interactive', 'depth', 'tilt' or 'parameters'; got {view!r}.")
+        if view not in ("interactive", "depth", "tilt", "parameters", "focus"):
+            raise ValueError(f"Choose 'interactive', 'depth', 'tilt', 'parameters' or 'focus'; got {view!r}.")
+        if mode is not None and view != "focus":
+            raise ValueError("Use mode with ssb.show('focus'); depth and tilt landscapes are already static.")
         if view != "interactive":
             if size is not None and (size not in ("small", "medium", "large") or options.get("axsize") is not None):
                 raise ValueError("Use size='small', 'medium' or 'large', or axsize=(width, height), not both.")
@@ -1556,6 +1574,24 @@ class SSB:
             if result is None:
                 result = self.find_aberrations(compare_standard=False,
                                               check_rotation=self._dark_field_region is None)
+            if view == "focus":
+                from quantem.gpu.ssb.focus import show_focus
+
+                source, crop = self, region
+                if region is not None:
+                    with self.select_region(region, aberrations=result.aberrations,
+                                            scan_detector_rotation_deg=result.scan_detector_rotation_deg) as selected:
+                        result = selected.find_aberrations(
+                            check_rotation=False, compare_standard=False, compute_loss=False)
+                while isinstance(source._dark_field_source, SSB) and source._dark_field_region is not None:
+                    parent_bounds = source._dark_field_region
+                    if crop is None:
+                        crop = parent_bounds
+                    else:
+                        crop = (crop[0] + parent_bounds[0], crop[1] + parent_bounds[0],
+                                crop[2] + parent_bounds[2], crop[3] + parent_bounds[2])
+                    source = source._dark_field_source
+                return show_focus(source, result, region=crop, mode=mode or "interactive", size=size, **options)
             if region is not None:
                 with self.select_region(region, aberrations=result.aberrations,
                                         scan_detector_rotation_deg=result.scan_detector_rotation_deg) as selected:
