@@ -45,6 +45,36 @@ final class SSBAgreementSearchTests: XCTestCase {
     }
   }
 
+  /// `scripts/ssb_agreement_gate.py` runs the current Python search and passes its records here, so a change on
+  /// either side fails without editing the pins below.
+  struct Reference: Decodable {
+    struct Fit: Decodable {
+      let point: [Double]
+      let agreement: Double
+      let rows: Int
+      let sha256: String
+    }
+    let tilt: Fit
+    let standard: Fit
+  }
+
+  func testCurrentPythonSearchWhenGiven() throws {
+    guard let path = ProcessInfo.processInfo.environment["SSB_AGREEMENT_REFERENCE"] else {
+      throw XCTSkip("scripts/ssb_agreement_gate.py sets SSB_AGREEMENT_REFERENCE to the current Python records.")
+    }
+    let reference = try JSONDecoder().decode(Reference.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+    for (name, expected) in [("tilt", reference.tilt), ("standard", reference.standard)] {
+      let recorder = Recorder()
+      let fit =
+        name == "tilt"
+        ? try SSBAgreementSearch.fitTilt(recorder.evaluate) : try SSBAgreementSearch.fitStandard(recorder.evaluate)
+      XCTAssertEqual(recorder.rows.count, expected.rows, name)
+      XCTAssertEqual(recorder.digest, expected.sha256, "\(name): a trial row differs from the Python search")
+      for (actual, value) in zip(fit.point, expected.point) { XCTAssertEqual(actual, value, accuracy: 1e-6, name) }
+      XCTAssertEqual(fit.agreement, expected.agreement, name)
+    }
+  }
+
   func testTiltFitMatchesPythonTrialByTrial() throws {
     let recorder = Recorder()
     let fit = try SSBAgreementSearch.fitTilt(recorder.evaluate)

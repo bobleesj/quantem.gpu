@@ -54,6 +54,14 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public let provenance: MetalSSBProvenance
 }
 
+/// How the agreement objective evaluates its phases.
+public enum SSBAgreementKernel: String, Codable, Sendable {
+  /// Angle sums advanced along detector rows (the Python MPS fit's kernel), the default.
+  case angleSums = "angle_sums"
+  /// Two precise sincos and two sines per (band frequency, BF pixel, candidate): the reference definition.
+  case perTerm = "per_term"
+}
+
 /// Serial native Metal implementation of QuantEM's joint tilt/depth SSB model.
 /// Search uses the original scan grid and all selected BF pixels. The band is
 /// an explicit part of the least-squares objective, in inverse Angstrom.
@@ -84,7 +92,11 @@ public final class MetalSSBJointModel {
   private let fusedColumn, fusedRow: MTLComputePipelineState
   private let fusedTwiddle: MTLBuffer
   private(set) var supportsFused1536: Bool
-  private let objectiveBatch, reduceBatch: MTLComputePipelineState
+  private let objectiveBatch, reduceBatch, objectiveAngleSums: MTLComputePipelineState
+  /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
+  public var agreementKernel: SSBAgreementKernel = .angleSums
+  private var neighbourBuffer: MTLBuffer
+  private var rowStep = SIMD2<Float>(0, 0)
   private let makeProbeGeometry, trialProbe: MTLComputePipelineState
   private let probeGeometry, probeChi: MTLBuffer
   private var batchPartial: MTLBuffer?
@@ -126,6 +138,7 @@ public final class MetalSSBJointModel {
     gather = try pipeline("joint_gather")
     objectiveBatch = try pipeline("joint_objective_batch")
     reduceBatch = try pipeline("joint_power_batch")
+    objectiveAngleSums = try pipeline("joint_objective_angle_sums")
     makeProbeGeometry = try pipeline("joint_probe_geometry")
     trialProbe = try pipeline("joint_trial_probe")
     fusedColumn = try pipeline("joint_ifft1536_half_columns")
@@ -166,6 +179,9 @@ public final class MetalSSBJointModel {
     let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
     supportsFused1536 = Self.fused1536(geometry: geometry, k: ks)
     kBuffer = try Self.buffer(device, ks)
+    let steps = Self.rowSteps(ks)
+    neighbourBuffer = try Self.buffer(device, steps.neighbour)
+    rowStep = steps.step
     coherent = try SSBCoherentReconstruction(
       device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
     probeGeometry = try Self.allocate(device, activeIndices.count * 16)
@@ -233,6 +249,35 @@ public final class MetalSSBJointModel {
       && geometry.dcValue.x > 0
   }
 
+  /// 1 for a stored BF pixel whose predecessor is its left neighbour in the detector row, and the row step
+  /// (Python MPS `resident_fit._row_steps`, from the rotated float32 coordinates in double precision).
+  static func rowSteps(_ k: [SIMD2<Float>]) -> (neighbour: [Float], step: SIMD2<Float>) {
+    var neighbour = [Float](repeating: 0, count: k.count)
+    guard k.count > 1 else { return (neighbour, .zero) }
+    let differences = (1..<k.count).map { (Double(k[$0].x) - Double(k[$0 - 1].x), Double(k[$0].y) - Double(k[$0 - 1].y)) }
+    let lengths = differences.map { hypot($0.0, $0.1) }
+    let shortest = lengths.min()!
+    let short = zip(differences, lengths).filter { $0.1 <= 1.5 * shortest }.map(\.0)
+    func median(_ values: [Double]) -> Double {
+      let sorted = values.sorted()
+      let middle = sorted.count / 2
+      return sorted.count % 2 == 1 ? sorted[middle] : 0.5 * (sorted[middle - 1] + sorted[middle])
+    }
+    let guess = (median(short.map(\.0)), median(short.map(\.1)))
+    let scale = hypot(guess.0, guess.1)
+    var sum = (0.0, 0.0)
+    var count = 0
+    for (index, difference) in differences.enumerated()
+    where hypot(difference.0 - guess.0, difference.1 - guess.1) <= 1e-3 * scale {
+      neighbour[index + 1] = 1
+      sum.0 += difference.0
+      sum.1 += difference.1
+      count += 1
+    }
+    guard count > 0 else { return (neighbour, .zero) }
+    return (neighbour, SIMD2(Float(sum.0 / Double(count)), Float(sum.1 / Double(count))))
+  }
+
   private func encodeProbeGeometry() throws {
     let commands = try command()
     let encoder = try encoder(commands, makeProbeGeometry)
@@ -252,6 +297,9 @@ public final class MetalSSBJointModel {
     if rotation == scanDetectorRotationDegrees { return }
     let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
     kBuffer = try Self.buffer(device, ks)
+    let steps = Self.rowSteps(ks)
+    neighbourBuffer = try Self.buffer(device, steps.neighbour)
+    rowStep = steps.step
     supportsFused1536 = Self.fused1536(geometry: geometry, k: ks)
     coherent = try SSBCoherentReconstruction(
       device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
@@ -288,55 +336,79 @@ public final class MetalSSBJointModel {
   func agreements(rows: [[Float]], isCancelled: () -> Bool) throws -> [Double] {
     try validatePreparation()
     if rows.isEmpty { return [] }
+    if isCancelled() { throw CancellationError() }
+    let group = 8
     if batchPartial == nil {
-      batchPartial = try Self.allocate(device, Int(grid.chunks) * bandCount * 16 * 8)
-      batchPower = try Self.allocate(device, bandCount * 16 * 8, shared: true)
+      batchPartial = try Self.allocate(device, Int(grid.chunks) * bandCount * 16 * group)
     }
-    guard let batchPartial, let batchPower else { throw MetalSSBError.commandQueue }
-    var result: [Double] = []
-    result.reserveCapacity(rows.count)
-    for first in stride(from: 0, to: rows.count, by: 8) {
-      if isCancelled() { throw CancellationError() }
-      let candidates = rows[first..<min(first + 8, rows.count)]
+    guard let batchPartial else { throw MetalSSBError.commandQueue }
+    if (batchPower?.length ?? 0) < rows.count * bandCount * 16 {
+      batchPower = try Self.allocate(device, rows.count * bandCount * 16, shared: true)
+    }
+    guard let batchPower else { throw MetalSSBError.commandQueue }
+    // Every candidate's partial sums and band sums in one command buffer, one wait.
+    let commands = try command()
+    for first in stride(from: 0, to: rows.count, by: group) {
+      let candidates = rows[first..<min(first + group, rows.count)]
       let packed = candidates.flatMap { $0 }
       var p = grid
       var batch = UInt32(candidates.count)
-      let commands = try command()
-      try encodeProbe(commands, parameters: packed, batch: batch)
-      let compute = try encoder(commands, objectiveBatch)
-      for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
-        compute.setBuffer(buffer, offset: 0, index: index)
+      if agreementKernel == .angleSums {
+        let trials = try Self.buffer(device, packed)
+        var step = rowStep
+        let compute = try encoder(commands, objectiveAngleSums)
+        for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
+          compute.setBuffer(buffer, offset: 0, index: index)
+        }
+        compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
+        compute.setBuffer(trials, offset: 0, index: 5)
+        compute.setBytes(&batch, length: 4, index: 6)
+        compute.setBuffer(probeGeometry, offset: 0, index: 7)
+        compute.setBuffer(neighbourBuffer, offset: 0, index: 8)
+        compute.setBytes(&step, length: 8, index: 9)
+        compute.dispatchThreads(
+          MTLSize(width: bandCount, height: Int(p.chunks), depth: (candidates.count + 3) / 4),
+          threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+        compute.endEncoding()
+      } else {
+        try encodeProbe(commands, parameters: packed, batch: batch)
+        let compute = try encoder(commands, objectiveBatch)
+        for (index, buffer) in [bandG, kBuffer, qBuffer, batchPartial].enumerated() {
+          compute.setBuffer(buffer, offset: 0, index: index)
+        }
+        compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
+        compute.setBytes(packed, length: packed.count * 4, index: 5)
+        compute.setBytes(&batch, length: 4, index: 6)
+        compute.setBuffer(probeGeometry, offset: 0, index: 7)
+        compute.setBuffer(probeChi, offset: 0, index: 8)
+        dispatch(compute, width: bandCount, height: Int(p.chunks))
       }
-      compute.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
-      compute.setBytes(packed, length: packed.count * 4, index: 5)
-      compute.setBytes(&batch, length: 4, index: 6)
-      compute.setBuffer(probeGeometry, offset: 0, index: 7)
-      compute.setBuffer(probeChi, offset: 0, index: 8)
-      dispatch(compute, width: bandCount, height: Int(p.chunks))
       let reduction = try encoder(commands, reduceBatch)
       reduction.setBuffer(batchPartial, offset: 0, index: 0)
-      reduction.setBuffer(batchPower, offset: 0, index: 1)
+      reduction.setBuffer(batchPower, offset: first * bandCount * 16, index: 1)
       reduction.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 2)
       reduction.setBytes(&batch, length: 4, index: 3)
       dispatch(reduction, width: bandCount, height: Int(batch))
-      try finish(commands)
-      // The band power in double precision from the float32 BF sums, as the MPS band reduction.
-      let sums = batchPower.contents().assumingMemoryBound(to: SIMD4<Float>.self)
-      let weight = weights.contents().assumingMemoryBound(to: Float.self)
-      for candidate in 0..<Int(batch) {
-        var total = 0.0
-        for i in 0..<bandCount {
-          let value = sums[candidate * bandCount + i]
-          let denominator = Double(value.z)
-          if denominator > 0 {
-            let re = Double(value.x)
-            let im = Double(value.y)
-            total += Double(weight[i]) * (re * re + im * im) / denominator
-          }
+    }
+    try finish(commands)
+    // The band power in double precision from the float32 BF sums, as the MPS band reduction.
+    let sums = batchPower.contents().assumingMemoryBound(to: SIMD4<Float>.self)
+    let weight = weights.contents().assumingMemoryBound(to: Float.self)
+    var result: [Double] = []
+    result.reserveCapacity(rows.count)
+    for candidate in rows.indices {
+      var total = 0.0
+      for i in 0..<bandCount {
+        let value = sums[candidate * bandCount + i]
+        let denominator = Double(value.z)
+        if denominator > 0 {
+          let re = Double(value.x)
+          let im = Double(value.y)
+          total += Double(weight[i]) * (re * re + im * im) / denominator
         }
-        guard total.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
-        result.append(total)
       }
+      guard total.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+      result.append(total)
     }
     return result
   }

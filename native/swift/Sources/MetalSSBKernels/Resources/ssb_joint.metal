@@ -126,6 +126,108 @@ kernel void joint_objective_batch(device const float2* g [[buffer(0)]],device co
     for(uint b=0;b<batch;b++)
         partial[((size_t)tid.y*batch+b)*p.bandCount+tid.x]=float4(nr[b],ni[b],dd[b],0);
 }
+// The same objective with angle-sum phases (Python MPS `resident_fit._ANGLE_SUM_SOURCE`). The two-term chi is a
+// quadratic form, so chi(q -/+ k) - chi(k) = Psi -/+ u.k, and the depth rates are y -/+ P with y = C + t f q.k:
+// one phasor of u.k and one of y give both sidebands, Psi and P once per (q, trial). Stored BF pixels follow
+// detector rows, so both phasors advance by one row step per pixel and are evaluated exactly at a chunk's first
+// pixel, after a row break and every eight pixels. Four candidates per thread; grid z tiles the candidates.
+inline float joint_depth_sinc(float x, float s) {
+    float x2 = x * x;
+    float series = 1.0f - x2 * (1.0f / 6.0f) * (1.0f - x2 * (1.0f / 20.0f) * (1.0f - x2 * (1.0f / 42.0f)
+                 * (1.0f - x2 * (1.0f / 72.0f) * (1.0f - x2 * (1.0f / 110.0f)))));
+    return metal::abs(x) < 1.0f ? series : s / x;
+}
+kernel void joint_objective_angle_sums(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
+    device const float2* q [[buffer(2)]],device float4* partial [[buffer(3)]],
+    constant JointGrid& p [[buffer(4)]],device const float* trial [[buffer(5)]],
+    constant uint& TOTAL [[buffer(6)]],device const float4* probe_geometry [[buffer(7)]],
+    device const float* neighbour [[buffer(8)]],constant float2& step_k [[buffer(9)]],
+    uint3 tid [[thread_position_in_grid]]) {
+    constexpr int B = 4;
+    constexpr uint ANCHOR = 8;
+    uint qi = tid.x, chunk = tid.y, base = tid.z * B;
+    if (qi >= p.bandCount || chunk >= p.chunks || base >= TOTAL) return;
+    float wl = p.wl, semi = p.semiangle, ang_y = p.angularRow, ang_x = p.angularColumn, factor = p.factor;
+    float f = factor * wl * wl;
+    float qx = q[qi].x, qy = q[qi].y;
+    float ux[B], uy[B], cos_psi[B], sin_psi[B], c_q[B], cos_p[B], sin_p[B], p_q[B], bx[B], by[B];
+    float2 n_minus[B], n_plus[B];
+    float s_minus[B], s_plus[B];
+    for (int b = 0; b < B; ++b) {
+        uint i = metal::min(base + b, TOTAL - 1u);
+        float c10 = trial[i * 7], c12 = trial[i * 7 + 1], c2 = trial[i * 7 + 2], s2 = trial[i * 7 + 3];
+        float t = trial[i * 7 + 4], thr = trial[i * 7 + 5], thc = trial[i * 7 + 6];
+        float m00 = f * (c10 + c12 * c2), m01 = f * (c12 * s2), m11 = f * (c10 - c12 * c2);
+        ux[b] = 2.0f * (m00 * qx + m01 * qy);
+        uy[b] = 2.0f * (m01 * qx + m11 * qy);
+        float psi = qx * (m00 * qx + m01 * qy) + qy * (m01 * qx + m11 * qy);
+        sin_psi[b] = metal::precise::sincos(psi, cos_psi[b]);
+        c_q[b] = -3.141592653589793f * t * (qx * thr + qy * thc);
+        p_q[b] = 0.5f * t * f * (qx * qx + qy * qy);
+        sin_p[b] = metal::precise::sincos(p_q[b], cos_p[b]);
+        bx[b] = t * f * qx;
+        by[b] = t * f * qy;
+        n_minus[b] = n_plus[b] = float2(0.0f);
+        s_minus[b] = s_plus[b] = 0.0f;
+    }
+    uint k0 = chunk * 256;
+    uint k1 = metal::min(p.totalBF, k0 + 256u);
+    float2 eu[B], ey[B], su_step[B], sy_step[B];
+    for (int b = 0; b < B; ++b) {
+        float c, sn = metal::precise::sincos(ux[b] * step_k[0] + uy[b] * step_k[1], c);
+        su_step[b] = float2(c, sn);
+        sn = metal::precise::sincos(bx[b] * step_k[0] + by[b] * step_k[1], c);
+        sy_step[b] = float2(c, sn);
+        eu[b] = ey[b] = float2(1.0f, 0.0f);
+    }
+    for (uint kk = k0; kk < k1; ++kk) {
+        float kxv = k[kk].x, kyv = k[kk].y;
+        bool anchor = kk == k0 || neighbour[kk] == 0.0f || (kk - k0) % ANCHOR == 0;
+        for (int b = 0; b < B; ++b) {
+            if (anchor) {
+                float c, sn = metal::precise::sincos(ux[b] * kxv + uy[b] * kyv, c);
+                eu[b] = float2(c, sn);
+                sn = metal::precise::sincos(c_q[b] + (bx[b] * kxv + by[b] * kyv), c);
+                ey[b] = float2(c, sn);
+            } else {
+                eu[b] = float2(eu[b].x * su_step[b].x - eu[b].y * su_step[b].y,
+                               eu[b].x * su_step[b].y + eu[b].y * su_step[b].x);
+                ey[b] = float2(ey[b].x * sy_step[b].x - ey[b].y * sy_step[b].y,
+                               ey[b].x * sy_step[b].y + ey[b].y * sy_step[b].x);
+            }
+        }
+        float4 gk = probe_geometry[kk];
+        float4 gm = joint_geometry_xy(qx - kxv, qy - kyv, wl, semi, ang_y, ang_x);
+        float4 gp = joint_geometry_xy(qx + kxv, qy + kyv, wl, semi, ang_y, ang_x);
+        float a1 = gm.w * gk.w, a2 = gp.w * gk.w;
+        if (a1 == 0.0f && a2 == 0.0f) continue;
+        float2 value = g[(size_t)kk * p.bandCount + qi];
+        float gre = value.x, gim = value.y;
+        for (int b = 0; b < B; ++b) {
+            float cu = eu[b].x, su = eu[b].y;
+            float hr = gre * cu + gim * su, hi = gim * cu - gre * su;
+            float wa = a1, wb = a2;
+            if (p_q[b] != 0.0f || c_q[b] != 0.0f || bx[b] != 0.0f || by[b] != 0.0f) {
+                float y = c_q[b] + (bx[b] * kxv + by[b] * kyv);
+                float cy = ey[b].x, sy = ey[b].y;
+                if (a1 != 0.0f) wa = joint_depth_sinc(y - p_q[b], sy * cos_p[b] - cy * sin_p[b]) * a1;
+                if (a2 != 0.0f) wb = joint_depth_sinc(y + p_q[b], sy * cos_p[b] + cy * sin_p[b]) * a2;
+            }
+            float d = wa - wb, sm = wa + wb;
+            n_minus[b] += d * float2(hr, hi);
+            n_plus[b] += sm * float2(hr, hi);
+            s_minus[b] += d * d;
+            s_plus[b] += sm * sm;
+        }
+    }
+    for (int b = 0; b < B; ++b) {
+        if (base + b >= TOTAL) break;
+        partial[((size_t)chunk * TOTAL + base + b) * p.bandCount + qi] = float4(
+            cos_psi[b] * n_minus[b].x - sin_psi[b] * n_plus[b].y,
+            cos_psi[b] * n_minus[b].y + sin_psi[b] * n_plus[b].x,
+            cos_psi[b] * cos_psi[b] * s_minus[b] + sin_psi[b] * sin_psi[b] * s_plus[b], 0);
+    }
+}
 // Sum the chunk partials of each band and candidate in chunk order; the host forms the power.
 kernel void joint_power_batch(device const float4* partial [[buffer(0)]],device float4* sums [[buffer(1)]],
     constant JointGrid& p [[buffer(2)]],constant uint& batch [[buffer(3)]],uint2 tid [[thread_position_in_grid]]) {

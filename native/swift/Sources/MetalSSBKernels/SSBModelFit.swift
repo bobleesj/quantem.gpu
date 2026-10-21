@@ -75,6 +75,7 @@ public struct SSBFit: Codable, Sendable {
 
 /// Both 180-degree branches fitted independently and the branch kept (Python `RotationBranches`).
 public struct SSBBranchedFit: Codable, Sendable {
+  /// One fit (the rotation as given), or the given rotation then the opposite branch.
   public let fits: [SSBFit]
   public let branches: [SSBRotationBranches.Branch]
   public let chosen: Int
@@ -82,6 +83,8 @@ public struct SSBBranchedFit: Codable, Sendable {
   public let decidedBy: SSBRotationBranches.Decision
   public let columnCount: Int
   public var fit: SSBFit { fits[kept] }
+  /// Whether the 180-degree branches were compared.
+  public var comparedBranches: Bool { fits.count == 2 }
 }
 
 /// Python `SSB.find_aberrations` on a prepared native session: the default fit, optionally on both
@@ -171,11 +174,22 @@ public enum SSBModelFit {
   /// selects. The model is left at the kept rotation. The standard comparison, which only measures
   /// `tiltFitGain` and depends on the rotation and seed alone, runs once, for the kept branch, after the
   /// decision (Python `_measure_tilt_fit_gain`).
+  ///
+  /// `checkRotation: false` fits `rotation` alone (Python `check_rotation=False`), the standard comparison
+  /// included.
   public static func findAberrations(
     model: MetalSSBJointModel, engine: MetalSSBEngine, rotationDegrees: Double,
     darkField: [Float]?, scanSampling: (Double, Double), options: SSBFitOptions = SSBFitOptions(),
-    keepFirst: Bool = false, progress: Progress = { _, _, _ in }, isCancelled: () -> Bool = { false }
+    checkRotation: Bool = true, keepFirst: Bool = false, progress: Progress = { _, _, _ in },
+    isCancelled: () -> Bool = { false }
   ) throws -> SSBBranchedFit {
+    if !checkRotation {
+      try model.retarget(scanDetectorRotationDegrees: rotationDegrees)
+      let fitted = try fit(
+        model: model, engine: engine, options: options, progress: progress, isCancelled: isCancelled)
+      return SSBBranchedFit(
+        fits: [fitted], branches: [], chosen: 0, kept: 0, decidedBy: .phaseTail, columnCount: 0)
+    }
     let rotations = [rotationDegrees, SSBRotationBranches.opposite(rotationDegrees)]
     var fits: [SSBFit] = []
     var phases: [[Float]] = []
