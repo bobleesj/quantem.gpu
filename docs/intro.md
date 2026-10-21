@@ -41,6 +41,22 @@ with your file; the acquisition is not bundled. Keep `data` open while working,
 then call `data.close()`. The [README](https://github.com/bobleesj/quantem.gpu#load-diffraction-patterns)
 contains the same short workflow and additional static image examples.
 
+## SSB in quantem.gpu
+
+`find_aberrations()` is model-based and tilt-corrected by default, and that is
+the fit to use: it maximizes the least-squares agreement of the SSB model with
+the data and fits the sample tilt and depth spread with the aberrations.
+
+| Call | Method |
+|---|---|
+| `find_aberrations()` | **Default.** Model agreement, tilt-corrected (sample tilt and depth spread fitted) |
+| `find_aberrations(tilt=False)` | Model agreement, tilt and depth spread held at 0 |
+| `find_aberrations(tilt=False, objective="phase_variance")` | The older SSB search: minimum phase variance over bright-field pixels |
+
+The phase variance cannot see the tilt, so it runs with `tilt=False` only.
+`result.objective` and `result.report()` name the method; the
+{ref}`SSB fit methods <ssb-fit-methods>` section lists backend support.
+
 ## What stays consistent
 
 Python is the interface; MPS and CUDA are execution backends. Supported options

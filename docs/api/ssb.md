@@ -6,6 +6,43 @@ and reuse those parameters for reconstruction. Start with the
 For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-reconstruction>`.
 This page covers parameters, calibration, ownership, and backend limits.
 
+(ssb-fit-methods)=
+## Fit methods
+
+`find_aberrations()` is model-based and tilt-corrected by default, and that is
+the fit to use: it maximizes the least-squares agreement of the SSB model with
+the data and fits the sample tilt and a depth spread with the aberrations.
+`reconstruct()` runs this fit when the session has no aberrations. `tilt` and
+`objective` select one of three methods:
+
+| Call | Method |
+|---|---|
+| `find_aberrations()` | **Default.** Model agreement, tilt-corrected: sample tilt and depth spread fitted with C10, C12 and phi12 |
+| `find_aberrations(tilt=False)` | Model agreement with the tilt and depth spread held at 0, where the model is ordinary SSB exactly |
+| `find_aberrations(tilt=False, objective="phase_variance")` | The older SSB search: the aberrations that minimize the phase variance over bright-field pixels |
+
+`objective` is `"agreement"` (default) or `"phase_variance"`. The phase
+variance cannot see the sample tilt, so `objective="phase_variance"` with
+`tilt=True` raises. Each method searches 200 seeded trials and then refines:
+`refinement="auto"` is Newton for the agreement fits and Nelder–Mead for the
+phase variance, and for an agreement fit that locks a coefficient, bounds
+phi12 or holds a nonzero C12. `result.objective` records the objective and
+`report()` shows it; `result.loss` is the phase variance at the fit whatever
+the objective. The same names pass through `compare_rotation_branches(...)`
+and are part of a saved fit's settings, so a saved phase-variance fit never
+answers an agreement call.
+
+| Method | MPS | CUDA | Browser |
+|---|---|---|---|
+| `find_aberrations()` | yes | yes | no fit |
+| `find_aberrations(tilt=False)` | yes | not yet: raises `NotImplementedError` | no fit |
+| `find_aberrations(tilt=False, objective="phase_variance")` | yes | yes | no fit |
+
+On CUDA, `tilt=False` was the phase-variance search until 2026-10-20; that
+search is now `objective="phase_variance"`, and the agreement fit is being
+ported. The browser engine has no aberration search.
+Evidence for the default: [the standard-fit objective](../maintainer/2026-10-20-ssb-standard-fit-objective.md).
+
 ## Inputs and outputs
 
 `SSB.open(path, ...)` loads a supported detector source. `SSB(data, ...)`
@@ -135,9 +172,10 @@ Computational padding is separate from `reconstruct(..., upsampling_factor=2)`.
 
 The default fit evaluates 200 seeded TPE candidates of the least-squares
 agreement of the SSB model with the full active bright field, keeps the best,
-and refines it with Newton steps. On MPS the standard fit (`tilt=False`) runs
-the same search with the sample tilt and depth spread held at 0; on CUDA it
-minimizes the phase variance with Nelder–Mead. It does not average optimizer
+and refines it with Newton steps. The standard fit (`tilt=False`) runs the
+same search with the sample tilt and depth spread held at 0;
+`objective="phase_variance"` minimizes the phase variance with Optuna TPE and
+Nelder–Mead ({ref}`Fit methods <ssb-fit-methods>`). No fit averages optimizer
 candidates.
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
@@ -237,10 +275,11 @@ shown.show()
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
-SSB here is tilt-corrected: `find_aberrations()` (`tilt=True`, the default)
-jointly estimates specimen tilt and model depth spread as well as aberrations,
-and so does the automatic fit of `reconstruct()`. Pass `tilt=False` for the
-standard aberration search of ordinary SSB.
+SSB here is model-based and tilt-corrected: `find_aberrations()` (`tilt=True`,
+the default) jointly estimates specimen tilt and model depth spread as well as
+aberrations, and so does the automatic fit of `reconstruct()`. `tilt=False`
+holds the tilt at 0, and `tilt=False, objective="phase_variance"` is the older
+SSB search ({ref}`Fit methods <ssb-fit-methods>`).
 Fits stay on the native scan grid; what you look at is reconstructed at
 `upsampling_factor="auto"`, the factor the scan sampling allows (at 300 kV
 and 30 mrad: 2× for the 0.264 Å step above, 3× at 0.373 Å, 4× for the 0.5 Å
@@ -309,10 +348,10 @@ scale bars and a parameter table. They are reconstructed at
 losses in the table are native-grid values. Trials are replayed from their
 recorded settings rather than stored as a large image stack. Browsing preserves the
 active reconstruction. `best` ranks the latest search only; losses from
-different objectives (CUDA's standard phase-variance search and the agreement
-searches) are not mixed.
-The trial table explicitly names the objective. Local refinement is separate
-from the search trials and its final result appears in `report()`.
+different objectives (the phase variance and the agreement) are not mixed.
+`result.objective` names the fit's objective, and an agreement trial table its
+`objective` column. Local refinement is separate from the search trials and
+its final result appears in `report()`.
 
 ```python
 attempts = ssb.reconstruct(aberrations, trial_ids=aberrations.trials.tail(5).index)
@@ -432,7 +471,7 @@ One line says which branch was kept and why, for example
 `SSB: kept 339.4°: atomic columns positive (z +10.8, effect +0.70, 75% of 241 columns); 159.4° negative.`
 The comparison costs a second full search: two joint fits took 9 to 25 s in
 all on 512 × 512 scans on an M-series Mac, two MPS standard fits
-(`tilt=False`) 3 to 10 s.
+(`tilt=False`) 3 to 10 s, two phase-variance fits about 90 s.
 
 ```python
 branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one
@@ -613,8 +652,8 @@ Taking a phase is nonlinear: `angle(mean(waves))` is not
 `mean(angle(waves))`. Taking each angle first discards amplitude information
 and can compress reconstructed contrast. Combining the corrected spectra
 before one inverse FFT gives the same wave sum as summing separate inverse
-FFTs, because both operations are linear. The calibration objective remains
-the native-grid per-detector phase variance. Stronger contrast alone does not
+FFTs, because both operations are linear. The diagnostic loss remains the
+native-grid per-detector phase variance. Stronger contrast alone does not
 establish quantitative phase accuracy.
 
 QuantEM's `DirectPtychography` SSB implementation uses a related but distinct
@@ -685,7 +724,7 @@ spread, in one search with the same trial budget as the standard fit (`tilt=Fals
 ```python
 import pandas as pd
 
-standard = ssb.find_aberrations(tilt=False)  # C10_nm, C12_nm, phi12_deg
+standard = ssb.find_aberrations(tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
 tilted = ssb.find_aberrations()              # + specimen tilt and depth spread, jointly
 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame

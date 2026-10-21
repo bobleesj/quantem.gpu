@@ -35,12 +35,21 @@ Backend geometry and browser transport use private typed records such as
 not exported from `quantem.gpu` or `quantem.gpu.ssb`.
 
 The scientific defaults are 200 trials, the least-squares agreement of the SSB
-model with the full-BF evidence (the joint tilt fit by default; the MPS
-standard fit, `tilt=False`, holds the sample tilt and depth spread at 0), Newton
-refinement, float32 real values, and complex64 object values. CUDA's standard
-fit still minimizes the full-BF phase variance with Nelder-Mead. The phase
+model with the full-BF evidence fitted with the sample tilt and depth spread
+(`find_aberrations()`), Newton refinement, float32 real values, and complex64
+object values. One vocabulary names the three fit methods, on every backend
+that fits:
+
+| Call | Objective | Search and refinement | Code |
+| --- | --- | --- | --- |
+| `find_aberrations()` (default) | agreement, tilt and depth spread fitted | resident TPE, Newton | `_resident_search.fit_resident` |
+| `find_aberrations(tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, Newton (Nelder-Mead when constrained) | `_resident_search.fit_standard_resident` (MPS) |
+| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance over BF pixels | Optuna TPE, Nelder-Mead | `mps/optimizer.optimize_phase_variance`, `cuda/optimizer.py` |
+
+`objective` is a saved setting and `SSBResult.objective` records it. The phase
 variance is the reported diagnostic `result.loss` everywhere
-(`2026-10-20-ssb-standard-fit-objective.md`). A
+(`2026-10-20-ssb-standard-fit-objective.md`). CUDA's `tilt=False` agreement fit
+is not ported yet and raises `NotImplementedError`. A
 backend may reject a job it cannot execute, but may not switch to CPU, crop or
 subsample the BF evidence, quantize values, or change the objective silently.
 
@@ -60,9 +69,8 @@ The same call does not return the same phase image on CUDA and MPS:
 - `reconstruct(..., upsampling_factor=...)` above 1 is CUDA only;
 - the bright-field disk is selected by the same rule with different rounding
   (CUDA device float32, MPS host float32), so edge pixels can differ; and
-- the standard fit's objective differs: agreement at depth 0 on MPS, phase
-  variance on CUDA; and the Nelder-Mead tolerances and the loss reduction order
-  differ.
+- the Nelder-Mead tolerances of the phase-variance search and the loss
+  reduction order differ.
 
 Each result records its backend, estimator and output factor
 (`result.phase_estimator`, `result.upsampling_factor`).
