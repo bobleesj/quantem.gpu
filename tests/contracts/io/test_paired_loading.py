@@ -106,7 +106,8 @@ def test_corrected_series_and_scan_selection_match_stored_counts(tmp_path, metho
         corrected = raw.copy()
         if method == "median":
             neighbors = np.delete(raw[..., 4:7, 4:7].reshape(32, 32, 9), 4, axis=-1)
-            corrected[..., 5, 5] = np.median(neighbors, axis=-1).astype(np.uint16)
+            # eight neighbors: their median rounds half to even (resident.hot_pixels), as np.round does
+            corrected[..., 5, 5] = np.round(np.median(neighbors, axis=-1)).astype(np.uint16)
         elif method == "zero":
             corrected[..., 5, 5] = 0
         masters.append(master)
