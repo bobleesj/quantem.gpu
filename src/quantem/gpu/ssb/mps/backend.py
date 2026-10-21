@@ -146,6 +146,7 @@ class MpsSSBBackend:
         seed: int,
         verbose: bool,
         objective: FitObjective,
+        compute_loss: bool = True,
     ):
         """Run the standard fit (tilt=False) on MPS/Metal, on this session's prepared evidence.
 
@@ -170,10 +171,13 @@ class MpsSSBBackend:
             scan_detector_rotation_deg=self._scan_detector_rotation_deg,
             seed=int(seed),
             verbose=verbose,
+            **({"compute_loss": compute_loss} if objective == "agreement" else {}),
         )
+        if not compute_loss and objective == "agreement":
+            result.loss = None
         # The fit's final phase answers the first preview at the fitted aberrations without a second reconstruction.
         self._fit_preview_phase = phase
-        self._fit_preview_loss = float(result.loss)
+        self._fit_preview_loss = None if result.loss is None else float(result.loss)
         self._fit_preview_aberrations = dict(result.aberrations)
         # Fit leaves large candidate-batch temporaries in MLX's allocator
         # cache. The retained prepared FFT remains active; release only unused
@@ -385,6 +389,59 @@ class MpsSSBBackend:
         """
         self._prepared = None
         require_mlx().clear_cache()
+
+    def release_for_region(self, scan_shape: tuple[int, int]) -> None:
+        """Keep the overview FFT only when a region fit has ample memory headroom.
+
+        A local correction reconstructs the full field again after fitting.
+        Rebuilding its unchanged Fourier data on every drag is unnecessary on
+        large-memory devices. Reserve four regional Fourier stacks for the
+        region and its fitting temporaries, plus 2 GiB for source/decoder work,
+        within half the recommended working set. The other half remains free
+        for Torch, the browser and other applications. Unknown limits retain
+        the existing release policy.
+        """
+        mx = require_mlx()
+        mx.clear_cache()
+        if self._prepared is None:
+            return
+        recommended = mx.device_info().get("max_recommended_working_set_size", 0)
+        # Rectangular regions use the ordinary square mean-pattern padding.
+        side = max(scan_shape)
+        if scan_shape[0] != scan_shape[1]:
+            from quantem.gpu.ssb.mps.kernels import MPS_FFT_CONFIGS
+
+            side = next((size for size in sorted(MPS_FFT_CONFIGS)
+                         if size >= side), side)
+        parent_pixels = math.prod(self._prepared.scan_shape)
+        region_bytes = self._prepared.g_qk.nbytes * side * side // parent_pixels
+        reserve_bytes = 4 * region_bytes + (2 << 30)
+        if mx.get_active_memory() + reserve_bytes > recommended // 2:
+            self.release_prepared()
+
+    def inherit_full_field_preparation(self, source: "MpsSSBBackend") -> None:
+        """Share unchanged full-field evidence with an independent fit session.
+
+        The caller establishes that both sessions cover the same source
+        positions. Geometry must match a fresh preparation too: retargeted
+        geometry can carry different rounding, so it keeps its ordinary path.
+        The prepared record is copied; fitting, rotating or closing this
+        session cannot replace the source session's arrays or caches.
+        """
+        if source._prepared is None or source._retargeted:
+            return
+        attributes = (
+            "_scan_shape", "_voltage_kV", "_semiangle_mrad", "_scan_sampling",
+            "_det_sampling", "_scan_detector_rotation_deg",
+        )
+        if any(getattr(self, name) != getattr(source, name) for name in attributes):
+            return
+        if not (np.array_equal(self._selection.rows, source._selection.rows)
+                and np.array_equal(self._selection.cols, source._selection.cols)):
+            return
+        self._prepared = dataclasses.replace(source._prepared)
+        self._built_rotation_deg = source._built_rotation_deg
+        self._retargeted = source._retargeted
 
     def close(self) -> None:
         """Release MPS preparation and cached Metal buffers; the source data stays its owner's."""
@@ -844,6 +901,7 @@ def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> 
         upsampled_probe=None,
         separable_geometry=None,
         row_steps=None,
+        fit_probe_geometry=None,
         **fields,
     )
     mx.eval(subset.g_qk, subset.kx, subset.ky, *fields.values())

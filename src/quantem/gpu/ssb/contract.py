@@ -93,6 +93,7 @@ class SSBProtocol(Protocol):
         seed: int,
         verbose: bool,
         objective: FitObjective,
+        compute_loss: bool = True,
     ) -> SSBResult: ...
 
     def reconstruct_result(

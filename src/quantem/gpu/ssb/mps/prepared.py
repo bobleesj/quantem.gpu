@@ -73,6 +73,8 @@ class PreparedMpsSSB:
     separable_geometry: tuple | None = None
     # the resident fit's detector-row neighbours and row step (``resident_fit._row_steps``), keyed by k
     row_steps: tuple | None = None
+    # Trial-independent detector geometry used by the resident joint objective.
+    fit_probe_geometry: object | None = None
 
 
 def prepare_selection(
@@ -440,6 +442,7 @@ def retarget_prepared_rotation(
     prepared.upsampled_probe = None
     prepared.separable_geometry = None
     prepared.row_steps = None
+    prepared.fit_probe_geometry = None
     prepared.kx_np = kx_np
     prepared.ky_np = ky_np
     prepared.alpha_k2_1d = alpha_k2_1d

@@ -1028,7 +1028,9 @@ class SSB:
         row_start, row_stop, col_start, col_stop = scan_region
         if not (0 <= row_start < row_stop <= shape[0] and 0 <= col_start < col_stop <= shape[1]):
             raise ValueError(f"scan_region={scan_region} is outside the {shape[0]} x {shape[1]} scan.")
-        self._release_cached_buffers()
+        full_field = tuple(scan_region) == (0, shape[0], 0, shape[1])
+        if not full_field:
+            self._release_cached_buffers((row_stop - row_start, col_stop - col_start))
         options = {
             "backend": self.backend, "voltage_kV": self.voltage_kV,
             "semiangle_mrad": self.semiangle_mrad, "scan_sampling_A": self.scan_sampling_A,
@@ -1079,6 +1081,13 @@ class SSB:
             regional.scan_detector_rotation_source = self.scan_detector_rotation_source
         regional._dark_field, regional._dark_field_source = None, self
         regional._dark_field_region = tuple(scan_region)
+        if full_field and isinstance(self._compute, MpsSSBBackend):
+            compute = regional._backend()
+            compute.inherit_full_field_preparation(self._compute)
+            if compute._prepared is None:
+                # Changed geometry needs its own preparation. Avoid holding
+                # two full Fourier stacks when sharing is not applicable.
+                self._release_cached_buffers()
         for name in ("source_kind", "source_storage_path", "source_dtype", "source_bytes",
                      "source_detector_bin", "source_provenance", "calibration_path",
                      "source_manifest_path", "resident_identity"):
@@ -1226,6 +1235,9 @@ class SSB:
     def _finish_fit(self, result: SSBResult) -> SSBResult:
         """Reconstruct a fit's phase at the native scan sampling with the default estimator and keep it on the result."""
         estimator = _default_phase_estimator(result.aberrations)
+        if result.phase_estimator == estimator and result.upsampling_factor == 1:
+            result.phase_clim = result.phase_limits
+            return self._accept_result(result)
         started = time.perf_counter()
         displayed = self.reconstruct(result, phase_estimator=estimator, compute_loss=False, force=True)
         result.timings["final_native_reconstruction_s"] = time.perf_counter() - started
@@ -1329,15 +1341,18 @@ class SSB:
             print(f"SSB: {refinement_summary(record)}")
         return self._accept_result(refined)
 
-    def _release_cached_buffers(self) -> None:
-        """Free this session's G(q, k) and MLX's cache before a region session builds its own G(q, k) and fit.
+    def _release_cached_buffers(self, region_shape: tuple[int, int] | None = None) -> None:
+        """Release scratch buffers and budget the overview FFT against a region fit.
 
-        On a 512 x 512 scan that is 8.8 GiB of G(q, k) and the loss tile (3.5 GiB) slider previews keep; the region
-        refit then runs beside the encoded data alone. This session's next preview or fit rebuilds G(q, k) with the
-        same bits (``MpsSSBBackend.release_prepared``), about a second on an encoded crop.
+        Without a region shape, release the prepared stack as before. With a
+        shape, the backend keeps it only when sufficient fitting headroom is
+        available; a later full-field correction can then reuse the same bits.
         """
         if isinstance(self._compute, MpsSSBBackend):
-            self._compute.release_prepared()
+            if region_shape is None:
+                self._compute.release_prepared()
+            else:
+                self._compute.release_for_region(region_shape)
 
     def _center_in_data(self) -> tuple[float, float] | None:
         """The bright-field centre in pixels of the array the session holds, which the backends index.
@@ -1565,6 +1580,7 @@ class SSB:
         compare_standard: bool = True,
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
+        compute_loss: bool = True,
     ) -> SSBResult:
         """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
 
@@ -1596,7 +1612,13 @@ class SSB:
         locks a coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
         simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
         not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
-        whatever the objective. CUDA and MPS run all three.
+        whatever the objective, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run all three.
+
+        ``compute_loss=False`` keeps the same search, refinement, fitted parameters and reconstructed phase,
+        without evaluating the separate phase-variance diagnostic after an agreement fit. ``result.loss`` is then
+        None; ``sample_agreement`` and every trial remain available. For example, repeated regional fits can use
+        ``fit = ssb.find_aberrations(compute_loss=False)`` and reconstruct with ``ssb.reconstruct(fit)`` later when
+        the diagnostic is wanted. This option does not reduce data or change the fitted objective.
 
         The joint fit searches all six parameters at once (fitting the tilt after a standard fit gets stuck: C10
         has to move to the defocus at mid-depth at the same time). The result's ``sample_tilt_mrad`` (row, col;
@@ -1682,7 +1704,8 @@ class SSB:
             num_trials=num_trials,
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
-            compare_standard=compare_standard, fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation)
+            compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
+            refine_rotation=refine_rotation, compute_loss=compute_loss)
 
     @_on_scan_gpu
     def compare_rotation_branches(self, *, apply: bool | None = None, **find_aberrations_options) -> RotationBranches:
@@ -1776,6 +1799,7 @@ class SSB:
         compare_standard: bool = True,
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
+        compute_loss: bool = True,
     ) -> SSBResult:
         """``find_aberrations`` with the 180-degree branch handling explicit.
 
@@ -1855,6 +1879,7 @@ class SSB:
                     "starting_aberrations_explicit": self._aberrations_explicit,
                     **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
                     "objective": objective,
+                    **({"compute_loss": False} if not compute_loss else {}),
                     **({"compare_standard": False} if tilt and not compare_standard else {}),
                     **({"refined_from": {"sample_tilt_mrad": self.sample_tilt_mrad, "depth_spread_nm": self.depth_spread_nm}}
                        if tilt and int(num_trials) == 0 else {}),
@@ -1943,7 +1968,7 @@ class SSB:
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
                     fixed_aberrations=(fixed_aberrations if fixed_aberrations is not None else
                                        requested["fixed_aberrations"] if tilt else None),
-                    refine_rotation=refine_rotation,
+                    refine_rotation=refine_rotation, compute_loss=compute_loss,
                 )
                 if result.rotation_branches is not None:
                     # the branch panels need the region's G(q, k), which closes with the region session
@@ -1971,14 +1996,14 @@ class SSB:
             if tilt:
                 result = self._fit_tilt(
                     trials, refinement, float(tilt_limit_mrad), int(seed), verbose,
-                    fixed_aberrations=fixed_aberrations, bounds=tilt_bounds)
+                    fixed_aberrations=fixed_aberrations, bounds=tilt_bounds, compute_loss=compute_loss)
                 result.objective = objective
                 return self._accept_result(result)
             result = result_from_engine(self._backend().fit(
                 aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
                 trials=trials, refinement=refinement,
                 search_ranges=search_ranges_to_engine(search_ranges), refine_lock=refine_lock_to_engine(refine_lock),
-                seed=int(seed), verbose=verbose, objective=objective,
+                seed=int(seed), verbose=verbose, objective=objective, compute_loss=compute_loss,
             ))
             result.objective = objective
             if result.aberrations["C12_nm"] == 0.0:
@@ -2003,6 +2028,9 @@ class SSB:
             if refine_rotation:
                 result = self._refine_rotation(result, fit, keep=branches == "keep",
                                                measure_gain=tilt and refinement == "newton", verbose=verbose)
+        if not compute_loss:
+            result.loss = None
+            self.best_loss = float("inf")
         if isinstance(self._compute, MpsSSBBackend):
             # the fits reuse their batch buffers through MLX's allocator cache, across both branches and the phase
             # diagnostic (up to ~20 GB on a 512 x 512 scan); once the fit is done the session keeps only G(q, k)
@@ -2512,7 +2540,8 @@ class SSB:
 
     def _fit_tilt(self, trials: int, refinement: RefineMethod, tilt_limit_mrad: float, seed: int, verbose: bool,
                   *, fixed_aberrations: dict[str, float] | None = None,
-                  bounds: dict[str, object] | None = None) -> SSBResult:
+                  bounds: dict[str, object] | None = None,
+                  compute_loss: bool = True) -> SSBResult:
         """Joint thick-sample fit (backend ``fit_sample``, engine units) -> an nm SSBResult at the fitted parameters."""
         preparation_started = time.perf_counter()
         backend = self._backend()
@@ -2537,11 +2566,13 @@ class SSB:
         sample_tilt_mrad = (float(fit["tilt_row_mrad"]), float(fit["tilt_col_mrad"]))
         depth_spread_nm = float(fit["depth_spread_A"]) / ENGINE_PER_NM
         diagnostic_started = time.perf_counter()
+        estimator = "mean_phase" if compute_loss else _default_phase_estimator(aberrations)
         phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad, depth_spread_nm=depth_spread_nm,
-                                   phase_estimator="mean_phase")
+                                 phase_estimator=estimator, compute_loss=compute_loss)
         timings = dict(fit.get("timings", {}))
         timings["backend_preparation_s"] = backend_preparation_s
-        timings["native_phase_diagnostic_s"] = time.perf_counter() - diagnostic_started
+        timing = "native_phase_diagnostic_s" if compute_loss else "final_native_reconstruction_s"
+        timings[timing] = time.perf_counter() - diagnostic_started
         # the thick-sample path recovers the phase only; the transmission amplitude is not estimated
         object_wave = self._unit_wave(phase)
         records = []
@@ -2557,7 +2588,7 @@ class SSB:
             })
         return SSBResult(object_wave=object_wave, trial_records=records, backend=self.backend, aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
                          timings=timings, optimizer=dict(fit.get("optimizer", {})), depth_spread_nm=depth_spread_nm, sample_agreement=float(fit["fit"]), tilt_fit_gain=None if fit["gain"] is None else float(fit["gain"]),
-                         amplitude_estimated=False, phase_estimator="mean_phase",
+                         amplitude_estimated=False, phase_estimator=estimator,
                          scan_detector_rotation_deg=self.scan_detector_rotation_deg,
                          loss=None if loss is None else float(loss),
                          elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,

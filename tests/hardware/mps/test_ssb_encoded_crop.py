@@ -61,7 +61,8 @@ def _backend(data, center, flipped):
 @pytest.mark.parametrize("flipped", [False, True])
 @pytest.mark.parametrize("scan_region", [None, (8, 72, 4, 100)])
 @pytest.mark.parametrize("chunk_bf", [37, 64])
-def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region, chunk_bf, monkeypatch):
+@pytest.mark.parametrize("block_rows", [6, 18])
+def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region, chunk_bf, block_rows, monkeypatch):
     """G(q, k), the selection, the DC value and a preview equal the decoded crop's: odd chunks pair FFT rows across
     scan rows, a rectangular region is padded with its mean pattern, a flipped session swaps the detector axes."""
     from quantem.gpu.ssb import mps
@@ -71,8 +72,9 @@ def test_encoded_crop_prepares_the_decoded_crop_bit_for_bit(flipped, scan_region
     from quantem.gpu.ssb.mps.frames import EncodedBrightFieldFrames
 
     monkeypatch.setattr(mps.backend, "default_object_setup_chunk_bf", lambda: chunk_bf)
-    # several blocks of scan rows (6 rows) and of in-place row FFTs
-    monkeypatch.setattr(EncodedBrightFieldFrames, "block_bytes", 6 * 128 * 26 * 26 * 2)
+    # Vary scan-row blocks independently of BF chunks: reducing temporary
+    # memory must preserve every Fourier value, including padded regions.
+    monkeypatch.setattr(EncodedBrightFieldFrames, "block_bytes", block_rows * 128 * 26 * 26 * 2)
     monkeypatch.setattr(mps.prepared, "ENCODED_BF_PER_FFT", 16)
     counts, valid = _counts()
     loaded = _resident(counts, valid)
@@ -132,7 +134,9 @@ def test_resident_session_keeps_the_crop_encoded_and_its_identity():
         dense, *_ = crop_bright_field(loaded, "mps", 0.0, ssb.bright_field_radius_px,
                                       bright_field_center_px=ssb.bright_field_center_px)
         frames = dense.reshape(dense.shape[0] * dense.shape[1], -1)
-        per_frame = frames.sum(dim=1, dtype=torch.int64)
+        # Some Torch MPS builds lack the fused uint16-to-int64 reduction.
+        # Cast on the GPU first; integer counts and their sums remain exact.
+        per_frame = frames.to(torch.int64).sum(dim=1)
         positions = torch.arange(1, per_frame.numel() + 1, dtype=torch.int64, device=per_frame.device)
         assert ssb.resident_identity["bright_field_sums"] == [
             int(per_frame.sum()) % 2**64, int((per_frame * positions).sum()) % 2**64]
@@ -177,10 +181,17 @@ def test_tiled_512_loss_route_matches_the_whole_chunk(monkeypatch):
         loaded.close()
 
 
-def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit():
+def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit(monkeypatch):
     """A region session frees the full field's G(q, k); the next full-field preview rebuilds the same bits, also after
     a rotation change retargeted the geometry."""
     from quantem.gpu import SSB
+    from quantem.gpu.ssb.mps.hardware import require_mlx
+
+    mx = require_mlx()
+    info = mx.device_info()
+    monkeypatch.setattr(mx, "device_info", lambda: {
+        **info, "max_recommended_working_set_size": 0,
+    })
 
     counts, valid = _counts()
     loaded = _resident(counts, valid)
@@ -192,7 +203,7 @@ def test_region_session_frees_and_rebuilds_the_full_field_bit_for_bit():
         ssb.set_rotation(197.0)
         before = ssb.preview(aberrations, compute_loss=True)
         g_before = np.asarray(ssb._compute._prepared.g_qk).copy()
-        with ssb.select_region((0, 128, 0, 128)) as region:
+        with ssb.select_region((8, 72, 4, 100)) as region:
             assert ssb._compute._prepared is None
             region.preview(aberrations, compute_loss=False)
         after = ssb.preview(aberrations, compute_loss=True)

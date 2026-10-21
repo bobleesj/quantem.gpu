@@ -570,8 +570,10 @@ class EncodedBrightFieldFrames:
     ndim = 3
     # detector.mean recognizes chunk-backed MPS sources; the mean pattern divides the exact detector_sum
     chunks = ()
-    # decoded counts per block of scan rows
-    block_bytes = 256 * 1024**2
+    # Decoded counts are staged, converted to float32 and transformed while
+    # G(q, k) remains resident. Bound these overlapping temporaries; even-row
+    # blocks below preserve the real FFT's row pairing and exact result.
+    block_bytes = 64 * 1024**2
 
     def __init__(self, crop: EncodedBrightFieldCrop) -> None:
         from quantem.gpu.ssb.mps.kernels import MPS_FFT_CONFIGS

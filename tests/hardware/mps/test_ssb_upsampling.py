@@ -516,6 +516,38 @@ def test_separable_depth_weights_match_per_term_transfer(monkeypatch, factor, de
             assert np.abs(difference).max() < 2e-6, (coefs, tilt, depth, np.abs(difference).max())
 
 
+@pytest.mark.parametrize("factor", [1, 2, 3])
+@pytest.mark.parametrize("depth_nm", [0.0, 18.0])
+def test_odd_region_spectrum_matches_full_gpu_transfer(monkeypatch, factor, depth_nm):
+    """Odd-sized regions retain every frequency at native and automatic sampling."""
+    _require_mps()
+    from quantem.gpu.ssb.mps import upsampling as up
+
+    with _disk_session(n=165) as ssb:
+        ssb.set_rotation(165.8)
+        coefs = {"C10_nm": -8.0, "C12_nm": 4.0, "phi12_deg": -40.0}
+        settings = dict(
+            sample_tilt_mrad=(-9.0, 5.0), depth_spread_nm=depth_nm,
+            upsampling_factor=factor, compute_loss=False,
+        )
+        with monkeypatch.context() as reference:
+            reference.setattr(up, "_SEPARABLE", False)
+            reference.setattr(up, "_coherent_columns", lambda prepared, n: n)
+            expected, _ = ssb.preview(coefs, **settings)
+        actual, _ = ssb.preview(coefs, **settings)
+        assert actual.shape == expected.shape == (165 * factor, 165 * factor)
+        assert np.isfinite(actual).all()
+        difference = np.angle(np.exp(1j * (actual.astype(np.float64) - expected)))
+        assert np.abs(difference).max() < 2e-6
+        if factor % 2:
+            assert ssb._backend()._prepared.separable_geometry[1]["upper"].size == 0
+        # The nonseparable half-spectrum optimization must obey the same rule.
+        with monkeypatch.context() as half:
+            half.setattr(up, "_SEPARABLE", False)
+            mirrored, _ = ssb.preview(coefs, **settings)
+        np.testing.assert_allclose(mirrored, expected, rtol=0, atol=2e-6)
+
+
 def test_paired_rows_at_2x_keep_every_phase_bit(monkeypatch):
     """At 2x one thread computes both fine rows of a source row; each output keeps its own arithmetic."""
     _require_mps()

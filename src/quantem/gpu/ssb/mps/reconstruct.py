@@ -13,6 +13,7 @@ from quantem.gpu.ssb.mps.kernels.corrected import (
     corrected_from_dynamic_geometry,
 )
 from quantem.gpu.ssb.mps.kernels.phase_columns import (
+    phase_cols_small_loss_partials,
     phase_cols_small_scalar_loss_from_row_ifft,
     phase_cols_small_sum_from_row_ifft,
 )
@@ -128,9 +129,22 @@ def reconstruct_prepared(
             and (prepared.alpha_k2 is None or thick is not None)
         )
         loss_tile = _loss_tile_override.get() or LOSS_ROW_IFFT_TILE_BF
+        if _loss_tile_override.get() is not None and prepared.scan_shape != (512, 512):
+            # Keep the fit's same row-FFT byte budget across scan sizes.
+            # Up to 1,024 small planes avoid dozens of tiny dispatches.
+            loss_tile = max(phase_col_k_bf, min(
+                1024, loss_tile * 512 * 512 // math.prod(prepared.scan_shape),
+            ))
         tiled = is_cancellable() or (loss_tile is not None and stop - start > loss_tile)
         if use_fused_row and prepared.scan_shape == (512, 512) and compute_loss and tiled:
             chunk_sum, chunk_sumsq = _cancellable_512_loss_chunk(
+                prepared, start=start, stop=stop, c10=c10_values, c12=c12_values,
+                cos2phi12=cos2phi12_values, sin2phi12=sin2phi12_values,
+                phase_col_k_bf=phase_col_k_bf, thick=thick,
+                tile_bf=_DIAGNOSTIC_BF_TILE if is_cancellable() else loss_tile,
+            )
+        elif use_fused_row and compute_loss and tiled:
+            chunk_sum, chunk_sumsq = _tiled_small_loss_chunk(
                 prepared, start=start, stop=stop, c10=c10_values, c12=c12_values,
                 cos2phi12=cos2phi12_values, sin2phi12=sin2phi12_values,
                 phase_col_k_bf=phase_col_k_bf, thick=thick,
@@ -282,6 +296,35 @@ def reconstruct_prepared(
         mx.eval(mean_phase_mx)
         mean_phase = np.asarray(mean_phase_mx).astype(np.float32, copy=False)
     return object_wave, loss, mean_phase
+
+
+def _tiled_small_loss_chunk(
+    prepared, *, start, stop, c10, c12, cos2phi12, sin2phi12,
+    phase_col_k_bf, thick, tile_bf,
+):
+    """Bound the row FFT stack while retaining every original BF reduction group."""
+    mx = prepared.mx
+    # Never split a column kernel's sequential BF sum. Concatenate its group
+    # outputs before the unchanged whole-chunk reduction, including the tail.
+    tile_bf = max(phase_col_k_bf, tile_bf // phase_col_k_bf * phase_col_k_bf)
+    sums, squares = [], []
+    for first in range(start, stop, tile_bf):
+        checkpoint()
+        row_ifft = row_ifft_small_from_dynamic_geometry(
+            prepared, start=first, stop=min(first + tile_bf, stop),
+            c10=c10, c12=c12, cos2phi12=cos2phi12, sin2phi12=sin2phi12,
+            thick=thick,
+        )
+        partial, partial_sq = phase_cols_small_loss_partials(
+            mx, row_ifft, k_bf=phase_col_k_bf,
+        )
+        mx.eval(partial, partial_sq)
+        sums.append(partial)
+        squares.append(partial_sq)
+    partial = sums[0] if len(sums) == 1 else mx.concatenate(sums, axis=0)
+    partial_sq = squares[0] if len(squares) == 1 else mx.concatenate(squares, axis=0)
+    total = partial[0] if partial.shape[0] == 1 else mx.sum(partial, axis=0)
+    return total, mx.sum(partial_sq)
 
 
 def _cancellable_512_loss_chunk(

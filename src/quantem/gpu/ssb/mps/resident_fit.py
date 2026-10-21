@@ -163,9 +163,12 @@ def _angle_sum_kernel():
     return require_mlx().fast.metal_kernel(
         name="ssb_thick_fit_angle_sums",
         input_names=["G", "band_flat", "band_qx", "band_qy", "kx", "ky", "trial", "scalars", "probe_geometry",
-                     "neighbour", "step_k"],
+                     "neighbour", "step_k", "batch_count"],
         output_names=["numer_real", "numer_imag", "denom"],
-        source=_ANGLE_SUM_SOURCE,
+        # Newton changes the number of active candidates at every step. This
+        # is dispatch metadata, not a shader specialization: retain the fixed
+        # four-candidate tile without compiling a shader for every batch size.
+        source="const uint TOTAL = batch_count[0];\n" + _ANGLE_SUM_SOURCE,
         header=_THICK_FIT_BATCH_HEADER + _SINC_HEADER,
     )
 
@@ -192,6 +195,38 @@ def _row_steps(prepared):
     values = (mx.array(neighbour), mx.array(step.astype(np.float32)))
     prepared.row_steps = (prepared.kx, *values)
     return values
+
+
+@lru_cache(maxsize=1)
+def _probe_geometry_kernel():
+    """The same probe geometry as the trial kernel, without unused trial phases."""
+    from quantem.gpu.ssb.mps.hardware import require_mlx
+
+    return require_mlx().fast.metal_kernel(
+        name="ssb_joint_probe_geometry",
+        input_names=["kx", "ky", "scalars"],
+        output_names=["geometry"],
+        header=_THICK_FIT_BATCH_HEADER,
+        source="""
+        uint k = thread_position_in_grid.x;
+        if (k >= NUM_BF) return;
+        float4 gk = tf_geometry(kx[k], ky[k], scalars[0], scalars[1], scalars[2], scalars[3]);
+        for (uint i = 0; i < 4; ++i) geometry[k * 4 + i] = gk[i];
+        """,
+    )
+
+
+def _probe_geometry(prepared, scalars):
+    """Reuse detector geometry across trials and repeats at the same rotation."""
+    if prepared.fit_probe_geometry is None:
+        count = int(prepared.kx.size)
+        prepared.fit_probe_geometry = _probe_geometry_kernel()(
+            inputs=[prepared.kx, prepared.ky, scalars],
+            template=[("NUM_BF", count)],
+            grid=(count, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(count, 4)], output_dtypes=[prepared.mx.float32],
+        )[0]
+    return prepared.fit_probe_geometry
 
 
 def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
@@ -231,16 +266,19 @@ def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
         rows = trial[start : start + execution]
         batch = len(rows)
         tile = min(_FIT_DISPATCH_BATCH, batch)
-        probe_geometry, probe_chi = _trial_probe_kernel()(
-            inputs=[prepared.kx, prepared.ky, scalars, rows.reshape(-1)],
-            template=[("NUM_BF", storage_bf), ("B", batch)],
-            grid=(storage_bf, 1, 1),
-            threadgroup=(256, 1, 1),
-            output_shapes=[(storage_bf, 4), (storage_bf, batch)],
-            output_dtypes=[mx.float32] * 2,
-        )
-        kernel, extra = ((_angle_sum_kernel(), list(_row_steps(prepared))) if ANGLE_SUMS
-                         else (_thick_fit_batch_kernel(), [probe_chi]))
+        if ANGLE_SUMS:
+            probe_geometry = _probe_geometry(prepared, scalars)
+            kernel = _angle_sum_kernel()
+            extra = [*_row_steps(prepared), mx.array([batch], dtype=mx.uint32)]
+        else:
+            probe_geometry, probe_chi = _trial_probe_kernel()(
+                inputs=[prepared.kx, prepared.ky, scalars, rows.reshape(-1)],
+                template=[("NUM_BF", storage_bf), ("B", batch)],
+                grid=(storage_bf, 1, 1), threadgroup=(256, 1, 1),
+                output_shapes=[(storage_bf, 4), (storage_bf, batch)],
+                output_dtypes=[mx.float32] * 2,
+            )
+            kernel, extra = _thick_fit_batch_kernel(), [probe_chi]
         parts = kernel(
             inputs=[
                 g,
@@ -257,7 +295,7 @@ def evaluate(prepared, trial, band_inv_A=(0.2, 0.9)):
             template=[
                 *([("ANCHOR", ANCHOR)] if ANGLE_SUMS else []),
                 ("B", tile),
-                ("TOTAL", batch),
+                *([] if ANGLE_SUMS else [("TOTAL", batch)]),
                 ("N_BAND", n_band),
                 ("NUM_BF", storage_bf),
                 ("PLANE", plane),

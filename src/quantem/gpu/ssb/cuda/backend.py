@@ -344,6 +344,7 @@ class CudaSSBBackend:
         seed: int,
         verbose: bool,
         objective: FitObjective,
+        compute_loss: bool = True,
     ) -> SSBResult:
         """Standard fit (tilt=False) of C10, C12 and phi12, then the complex object and the phase-variance loss there.
 
@@ -395,7 +396,7 @@ class CudaSSBBackend:
         self._refine_nfev = nfev if refinement else None
         self._elapsed_optimize = search_s
         self._elapsed_refine = refine_s
-        result = self.result()
+        result = self.result(compute_loss=compute_loss or objective == "phase_variance")
         result.sample_agreement = agreement
         result.optimizer = optimizer
         result.timings = {"search_seconds": search_s, "refinement_seconds": refine_s}
