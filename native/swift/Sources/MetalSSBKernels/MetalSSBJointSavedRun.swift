@@ -15,8 +15,10 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
   public let upsamplingFactor: Int
   public let calibration: MetalSSBCalibration
   public let parameters: SSBJointParameters
-  public let rotationDegrees: Float
+  public let rotationDegrees: Double
   public let optimization: SSBJointOptimizationResult?
+  /// The fit that produced `parameters` (both rotation branches when they were compared).
+  public let fit: SSBBranchedFit?
   public let provenance: [String: String]
   public let phase: Data
   public let phaseSHA256: String
@@ -25,7 +27,7 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
     result: MetalSSBJointPhase, sourceIdentity: String, backendRevision: String,
     sourceRows: Int, sourceColumns: Int, region: SSBScanRegion?,
     calibration: MetalSSBCalibration, optimization: SSBJointOptimizationResult?,
-    provenance: [String: String]
+    fit: SSBBranchedFit? = nil, provenance: [String: String]
   ) throws {
     guard result.phase.storageMode == .shared else {
       throw MetalSSBError.invalidGeometry("Complete the phase readback before saving.")
@@ -43,6 +45,7 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
     parameters = result.parameters
     rotationDegrees = result.scanDetectorRotationDegrees
     self.optimization = optimization
+    self.fit = fit
     self.provenance = provenance
     phase = Data(bytes: result.phase.contents(), count: rows * columns * 4)
     phaseSHA256 = SSBPhaseArtifact.digest(phase)

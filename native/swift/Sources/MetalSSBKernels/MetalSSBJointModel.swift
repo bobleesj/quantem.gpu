@@ -50,7 +50,7 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public let upsamplingFactor: Int
   public let wallSeconds: Double
   public let parameters: SSBJointParameters
-  public let scanDetectorRotationDegrees: Float
+  public let scanDetectorRotationDegrees: Double
   public let provenance: MetalSSBProvenance
 }
 
@@ -71,23 +71,28 @@ public final class MetalSSBJointModel {
   private let validatePreparation: () throws -> Void
   private let geometry: MetalSSBGeometry
   private let provenance: MetalSSBProvenance
-  public let scanDetectorRotationDegrees: Float
+  /// The scan-detector rotation the model's BF coordinates are rotated to; `retarget` changes it.
+  public private(set) var scanDetectorRotationDegrees: Double
   public let bandInverseAngstroms: ClosedRange<Float>
   public let bandCount: Int
   private var grid: Grid
-  private let kBuffer, qBuffer, indexBuffer, weights, bandG, partial, power: MTLBuffer
-  private let gather, objective, reduce, correct, addPhase, normalize: MTLComputePipelineState
+  private let qBuffer, indexBuffer, weights, bandG: MTLBuffer
+  private var kBuffer: MTLBuffer
+  private let activeIndices: [Int]
+  private let library: MTLLibrary
+  private let gather, correct, addPhase, normalize: MTLComputePipelineState
   private let fusedColumn, fusedRow: MTLComputePipelineState
   private let fusedTwiddle: MTLBuffer
-  let supportsFused1536: Bool
+  private(set) var supportsFused1536: Bool
   private let objectiveBatch, reduceBatch: MTLComputePipelineState
   private let makeProbeGeometry, trialProbe: MTLComputePipelineState
   private let probeGeometry, probeChi: MTLBuffer
   private var batchPartial: MTLBuffer?
   private var batchPower: MTLBuffer?
+  private var coherent: SSBCoherentReconstruction
 
   init(
-    device: MTLDevice, geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Float,
+    device: MTLDevice, geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Double,
     band: ClosedRange<Float>, provenance: MetalSSBProvenance,
     visit: @escaping VisitSpectra, validatePreparation: @escaping () throws -> Void,
     isCancelled: () -> Bool
@@ -101,6 +106,7 @@ public final class MetalSSBJointModel {
     self.provenance = provenance
     self.visit = visit
     self.validatePreparation = validatePreparation
+    self.activeIndices = activeIndices
     scanDetectorRotationDegrees = rotation
     bandInverseAngstroms = band
     guard let queue = device.makeCommandQueue() else { throw MetalSSBError.commandQueue }
@@ -108,8 +114,9 @@ public final class MetalSSBJointModel {
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
     let library = try device.makeLibrary(
-      source: MetalSSBShaderSource.load(["ssb_fft", "ssb_joint", "ssb_joint_fft"]),
+      source: MetalSSBShaderSource.load(["ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model"]),
       options: options)
+    self.library = library
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
       guard let function = library.makeFunction(name: name) else {
         throw MetalSSBError.missingFunction(name)
@@ -117,8 +124,6 @@ public final class MetalSSBJointModel {
       return try device.makeComputePipelineState(function: function)
     }
     gather = try pipeline("joint_gather")
-    objective = try pipeline("joint_objective")
-    reduce = try pipeline("joint_power")
     objectiveBatch = try pipeline("joint_objective_batch")
     reduceBatch = try pipeline("joint_power_batch")
     makeProbeGeometry = try pipeline("joint_probe_geometry")
@@ -143,7 +148,8 @@ public final class MetalSSBJointModel {
     for r in 0..<n {
       for c in 0...(n / 2) {
         let q = SIMD2(geometry.qxByRow[r], geometry.qyByColumn[c])
-        let radius = sqrt(q.x * q.x + q.y * q.y)
+        // NumPy's float32 hypot, as the MPS band.
+        let radius = hypotf(q.x, q.y)
         if radius > band.lowerBound && radius < band.upperBound {
           indices.append(SIMD2(UInt32(r), UInt32(c)))
           qs.append(q)
@@ -157,30 +163,11 @@ public final class MetalSSBJointModel {
       )
     }
     bandCount = indices.count
-    // Match the reference's scalar angle conversion before Float32 vector math.
-    let delta = -(Double(rotation) - Double(geometry.referenceRotationDegrees)) * Double.pi / 180
-    let cosine = Float(cos(delta))
-    let sine = Float(sin(delta))
-    let ks = activeIndices.map { i -> SIMD2<Float> in
-      let x = geometry.brightfieldKX[i]
-      let y = geometry.brightfieldKY[i]
-      return SIMD2(x * cosine + y * sine, -x * sine + y * cosine)
-    }
-    // The real-field path needs no Nyquist correction when the calibrated
-    // aperture support ends strictly before both unfolded-grid boundaries.
-    // A conservative margin also covers Float32 coordinate roundoff.
-    let radius =
-      (geometry.semiangleRadians
-        + 0.5 * max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
-      / geometry.wavelengthAngstroms
-    let rowSupport = ((ks.map { abs($0.x) }.max() ?? 0) + radius) * 1.00001
-    let columnSupport = ((ks.map { abs($0.y) }.max() ?? 0) + radius) * 1.00001
-    supportsFused1536 =
-      n == 512
-      && 768 * abs(geometry.qxByRow[1]) > rowSupport
-      && 768 * abs(geometry.qyByColumn[1]) > columnSupport
-      && geometry.dcValue.x > 0
+    let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
+    supportsFused1536 = Self.fused1536(geometry: geometry, k: ks)
     kBuffer = try Self.buffer(device, ks)
+    coherent = try SSBCoherentReconstruction(
+      device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
     probeGeometry = try Self.allocate(device, activeIndices.count * 16)
     probeChi = try Self.allocate(device, activeIndices.count * 8 * 4)
     qBuffer = try Self.buffer(device, qs)
@@ -188,8 +175,6 @@ public final class MetalSSBJointModel {
     weights = try Self.buffer(device, ws)
     bandG = try Self.allocate(device, activeIndices.count * bandCount * 8)
     let chunks = (activeIndices.count + 255) / 256
-    partial = try Self.allocate(device, chunks * bandCount * 16)
-    power = try Self.allocate(device, bandCount * 4, shared: true)
     grid = Grid(
       n: UInt32(n), outputN: UInt32(n), count: 0, bfOffset: 0,
       totalBF: UInt32(activeIndices.count), bandCount: UInt32(bandCount), sourceHalf: 1,
@@ -199,14 +184,7 @@ public final class MetalSSBJointModel {
       dqRow: geometry.qxByRow[1], dqColumn: geometry.qyByColumn[1],
       dcReal: geometry.dcValue.x, dcImag: geometry.dcValue.y,
       factor: geometry.phaseFactor ?? Float.pi / geometry.wavelengthAngstroms)
-    let probeCommands = try command()
-    let probeEncoder = try encoder(probeCommands, makeProbeGeometry)
-    probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
-    probeEncoder.setBuffer(probeGeometry, offset: 0, index: 1)
-    var probeGrid = grid
-    probeEncoder.setBytes(&probeGrid, length: MemoryLayout<Grid>.stride, index: 2)
-    dispatch(probeEncoder, width: activeIndices.count)
-    try finish(probeCommands)
+    try encodeProbeGeometry()
     try withoutActuallyEscaping(isCancelled) { cancelled in
       try visit(8) { [self] source, offset, half, bfOffset, count in
         if cancelled() { throw CancellationError() }
@@ -226,37 +204,65 @@ public final class MetalSSBJointModel {
     }
   }
 
+  /// BF coordinates rotated by `rotation`, as the MPS preparation: the angle in double precision, the
+  /// rotation in float32 (`kx cos + ky sin`, `-kx sin + ky cos`).
+  static func rotated(geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Double) -> [SIMD2<Float>]
+  {
+    let delta = (-(rotation - Double(geometry.referenceRotationDegrees))) * (Double.pi / 180)
+    let cosine = Float(cos(delta))
+    let sine = Float(sin(delta))
+    return activeIndices.map { i -> SIMD2<Float> in
+      let x = geometry.brightfieldKX[i]
+      let y = geometry.brightfieldKY[i]
+      return SIMD2(x * cosine + y * sine, -x * sine + y * cosine)
+    }
+  }
+
+  /// The real-field 1536 path needs no Nyquist correction when the calibrated aperture support ends
+  /// strictly before both unfolded-grid boundaries; a margin covers float32 coordinate roundoff.
+  static func fused1536(geometry: MetalSSBGeometry, k ks: [SIMD2<Float>]) -> Bool {
+    let radius =
+      (geometry.semiangleRadians
+        + 0.5 * max(geometry.angularSamplingYRadians, geometry.angularSamplingXRadians))
+      / geometry.wavelengthAngstroms
+    let rowSupport = ((ks.map { abs($0.x) }.max() ?? 0) + radius) * 1.00001
+    let columnSupport = ((ks.map { abs($0.y) }.max() ?? 0) + radius) * 1.00001
+    return geometry.qxByRow.count == 512
+      && 768 * abs(geometry.qxByRow[1]) > rowSupport
+      && 768 * abs(geometry.qyByColumn[1]) > columnSupport
+      && geometry.dcValue.x > 0
+  }
+
+  private func encodeProbeGeometry() throws {
+    let commands = try command()
+    let encoder = try encoder(commands, makeProbeGeometry)
+    encoder.setBuffer(kBuffer, offset: 0, index: 0)
+    encoder.setBuffer(probeGeometry, offset: 0, index: 1)
+    var probeGrid = grid
+    encoder.setBytes(&probeGrid, length: MemoryLayout<Grid>.stride, index: 2)
+    dispatch(encoder, width: activeIndices.count)
+    try finish(commands)
+  }
+
+  /// Rotate the model to another scan-detector rotation (the other 180-degree branch, or a rotation
+  /// scan) without gathering the measured band evidence again.
+  public func retarget(scanDetectorRotationDegrees rotation: Double) throws {
+    try validatePreparation()
+    guard rotation.isFinite else { throw MetalSSBError.invalidGeometry("Choose a finite rotation.") }
+    if rotation == scanDetectorRotationDegrees { return }
+    let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
+    kBuffer = try Self.buffer(device, ks)
+    supportsFused1536 = Self.fused1536(geometry: geometry, k: ks)
+    coherent = try SSBCoherentReconstruction(
+      device: device, queue: queue, library: library, geometry: geometry, kBuffer: kBuffer, k: ks)
+    try encodeProbeGeometry()
+    scanDetectorRotationDegrees = rotation
+  }
+
   /// Negative explained Fourier power. Lower is better; it is not a confidence
   /// score or a certificate of the physical scan-rotation branch.
   public func loss(_ parameters: SSBJointParameters) throws -> Double {
-    try validatePreparation()
-    try parameters.validate()
-    var p = grid
-    let t = parameters.packed
-    let commands = try command()
-    try encodeProbe(commands, parameters: t, batch: 1)
-    let encoder = try self.encoder(commands, objective)
-    for (index, buffer) in [bandG, kBuffer, qBuffer, partial].enumerated() {
-      encoder.setBuffer(buffer, offset: 0, index: index)
-    }
-    encoder.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 4)
-    encoder.setBytes(t, length: t.count * 4, index: 5)
-    encoder.setBuffer(probeGeometry, offset: 0, index: 6)
-    encoder.setBuffer(probeChi, offset: 0, index: 7)
-    dispatch(encoder, width: bandCount, height: Int(p.chunks))
-    let reduction = try self.encoder(commands, reduce)
-    for (index, buffer) in [partial, weights, power].enumerated() {
-      reduction.setBuffer(buffer, offset: 0, index: index)
-    }
-    reduction.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
-    dispatch(reduction, width: bandCount)
-    try finish(commands)
-    // Match the reference's Float64 final accumulation of GPU Float32 powers.
-    let values = power.contents().assumingMemoryBound(to: Float.self)
-    var sum = 0.0
-    for i in 0..<bandCount { sum += Double(values[i]) }
-    guard sum.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
-    return -sum
+    try losses([parameters])[0]
   }
 
   /// Evaluate independent candidates together on the same measured BF evidence.
@@ -265,20 +271,34 @@ public final class MetalSSBJointModel {
   public func losses(
     _ parameters: [SSBJointParameters], isCancelled: () -> Bool = { false }
   ) throws -> [Double] {
-    try validatePreparation()
-    if parameters.isEmpty { return [] }
     for value in parameters { try value.validate() }
+    return try agreements(rows: parameters.map(\.packed), isCancelled: isCancelled).map { -$0 }
+  }
+
+  /// The least-squares agreement of the transfer model with the measured double-overlap data, larger is
+  /// better: per band frequency |sum_k G conj(gamma)|^2 / sum_k |gamma|^2, summed with the half-plane weights
+  /// (Python `thick_fit_batch`, `resident_fit.evaluate`).
+  public func agreements(_ points: [SSBModelPoint], isCancelled: () -> Bool = { false }) throws
+    -> [Double]
+  {
+    for point in points { try point.validate() }
+    return try agreements(rows: points.map(\.trialRow), isCancelled: isCancelled)
+  }
+
+  func agreements(rows: [[Float]], isCancelled: () -> Bool) throws -> [Double] {
+    try validatePreparation()
+    if rows.isEmpty { return [] }
     if batchPartial == nil {
-      batchPartial = try Self.allocate(device, partial.length * 8)
-      batchPower = try Self.allocate(device, power.length * 8, shared: true)
+      batchPartial = try Self.allocate(device, Int(grid.chunks) * bandCount * 16 * 8)
+      batchPower = try Self.allocate(device, bandCount * 16 * 8, shared: true)
     }
     guard let batchPartial, let batchPower else { throw MetalSSBError.commandQueue }
     var result: [Double] = []
-    result.reserveCapacity(parameters.count)
-    for first in stride(from: 0, to: parameters.count, by: 8) {
+    result.reserveCapacity(rows.count)
+    for first in stride(from: 0, to: rows.count, by: 8) {
       if isCancelled() { throw CancellationError() }
-      let candidates = parameters[first..<min(first + 8, parameters.count)]
-      let packed = candidates.flatMap(\.packed)
+      let candidates = rows[first..<min(first + 8, rows.count)]
+      let packed = candidates.flatMap { $0 }
       var p = grid
       var batch = UInt32(candidates.count)
       let commands = try command()
@@ -294,21 +314,28 @@ public final class MetalSSBJointModel {
       compute.setBuffer(probeChi, offset: 0, index: 8)
       dispatch(compute, width: bandCount, height: Int(p.chunks))
       let reduction = try encoder(commands, reduceBatch)
-      for (index, buffer) in [batchPartial, weights, batchPower].enumerated() {
-        reduction.setBuffer(buffer, offset: 0, index: index)
-      }
-      reduction.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 3)
-      reduction.setBytes(&batch, length: 4, index: 4)
+      reduction.setBuffer(batchPartial, offset: 0, index: 0)
+      reduction.setBuffer(batchPower, offset: 0, index: 1)
+      reduction.setBytes(&p, length: MemoryLayout<Grid>.stride, index: 2)
+      reduction.setBytes(&batch, length: 4, index: 3)
       dispatch(reduction, width: bandCount, height: Int(batch))
       try finish(commands)
-      // Preserve the existing Float64 scalar reduction; no scientific image
-      // or Fourier array is copied to the host by this operation.
-      let values = batchPower.contents().assumingMemoryBound(to: Float.self)
+      // The band power in double precision from the float32 BF sums, as the MPS band reduction.
+      let sums = batchPower.contents().assumingMemoryBound(to: SIMD4<Float>.self)
+      let weight = weights.contents().assumingMemoryBound(to: Float.self)
       for candidate in 0..<Int(batch) {
-        var sum = 0.0
-        for i in 0..<bandCount { sum += Double(values[candidate * bandCount + i]) }
-        guard sum.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
-        result.append(-sum)
+        var total = 0.0
+        for i in 0..<bandCount {
+          let value = sums[candidate * bandCount + i]
+          let denominator = Double(value.z)
+          if denominator > 0 {
+            let re = Double(value.x)
+            let im = Double(value.y)
+            total += Double(weight[i]) * (re * re + im * im) / denominator
+          }
+        }
+        guard total.isFinite else { throw SSBOptimizationError.nonFiniteLoss }
+        result.append(total)
       }
     }
     return result
@@ -328,16 +355,42 @@ public final class MetalSSBJointModel {
   }
 
   /// Reconstruct with all BF pixels. Cancellation is checked between GPU batches.
+  ///
+  /// `phaseOfMean` (the default) sums the corrected waves before one phase, as Python's `SSB.reconstruct`
+  /// and `SSB.preview`; `meanPhase` averages the per-pixel phases.
   public func reconstruct(
     _ parameters: SSBJointParameters, upsamplingFactor: Int = 1,
+    estimator: SSBPhaseEstimator = .phaseOfMean,
+    isCancelled: () -> Bool = { false }
+  ) throws -> MetalSSBJointPhase {
+    try reconstruct(
+      SSBModelPoint(parameters), upsamplingFactor: upsamplingFactor, estimator: estimator,
+      isCancelled: isCancelled)
+  }
+
+  /// Reconstruct a double-precision model point (a fit's result) with all BF pixels.
+  public func reconstruct(
+    _ point: SSBModelPoint, upsamplingFactor: Int = 1,
+    estimator: SSBPhaseEstimator = .phaseOfMean,
     isCancelled: () -> Bool = { false }
   ) throws -> MetalSSBJointPhase {
     try validatePreparation()
+    try point.validate()
+    let parameters = point.jointParameters
     try parameters.validate()
     guard [1, 2, 3, 4, 8].contains(upsamplingFactor) else {
       throw MetalSSBError.invalidGeometry("Use an SSB sampling factor of 1, 2, 3, 4 or 8.")
     }
     if isCancelled() { throw CancellationError() }
+    if estimator == .phaseOfMean {
+      let started = Date()
+      let (phase, n) = try coherent.reconstruct(
+        point, factor: upsamplingFactor, visit: visit, isCancelled: isCancelled)
+      return MetalSSBJointPhase(
+        phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
+        wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
+        scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance)
+    }
     if upsamplingFactor == 3 && supportsFused1536 {
       return try reconstructFused1536(parameters, isCancelled: isCancelled)
     }

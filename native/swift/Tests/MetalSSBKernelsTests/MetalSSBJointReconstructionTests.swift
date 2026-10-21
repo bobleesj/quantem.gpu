@@ -34,7 +34,7 @@ final class MetalSSBJointReconstructionTests: XCTestCase {
       XCTAssertTrue(model.supportsFused1536)
       for point in points {
         let expected = try model.reconstructGeneral(point, upsamplingFactor: 3)
-        let actual = try model.reconstruct(point, upsamplingFactor: 3)
+        let actual = try model.reconstruct(point, upsamplingFactor: 3, estimator: .meanPhase)
         XCTAssertEqual(actual.rows, 1536)
         XCTAssertEqual(actual.columns, 1536)
         XCTAssertEqual(actual.provenance.logicalBrightfieldCount, count)
@@ -44,12 +44,12 @@ final class MetalSSBJointReconstructionTests: XCTestCase {
         var polls = 0
         XCTAssertThrowsError(
           try model.reconstruct(
-            point, upsamplingFactor: 3,
+            point, upsamplingFactor: 3, estimator: .meanPhase,
             isCancelled: {
               polls += 1
               return polls >= 3
             }))
-        let afterCancellation = try model.reconstruct(point, upsamplingFactor: 3)
+        let afterCancellation = try model.reconstruct(point, upsamplingFactor: 3, estimator: .meanPhase)
         assertPhase(afterCancellation, equals: expected)
         XCTAssertEqual(before, Data(bytes: actual.phase.contents(), count: before.count))
       }
@@ -77,7 +77,7 @@ final class MetalSSBJointReconstructionTests: XCTestCase {
       aberrations: .init(c10Angstroms: 33, c12Angstroms: 7, phi12Radians: 0.2),
       depthAngstroms: 120, tiltRowMrad: 1, tiltColumnMrad: -2)
     let expected = try model.reconstructGeneral(point, upsamplingFactor: 3)
-    let actual = try model.reconstruct(point, upsamplingFactor: 3)
+    let actual = try model.reconstruct(point, upsamplingFactor: 3, estimator: .meanPhase)
     XCTAssertEqual(
       Data(bytes: actual.phase.contents(), count: 1536 * 1536 * 4),
       Data(bytes: expected.phase.contents(), count: 1536 * 1536 * 4))

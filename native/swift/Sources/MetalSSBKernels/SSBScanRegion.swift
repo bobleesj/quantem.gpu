@@ -58,12 +58,7 @@ extension MetalSSBCalibration {
       throw MetalSSBError.invalidGeometry(
         "Automatic output sampling needs positive energy, convergence angle and scan spacing.")
     }
-    let h = 6.62607015e-34
-    let mass = 9.1093837015e-31
-    let charge = 1.602176634e-19
-    let c = 299792458.0
-    let energy = voltageKV * 1000 * charge
-    let wavelength = h / sqrt(2 * mass * energy * (1 + energy / (2 * mass * c * c))) * 1e10
+    let wavelength = Self.wavelengthAngstroms(voltageKV: voltageKV)
     let required =
       max(scanSamplingRowAngstroms, scanSamplingColumnAngstroms) * 4 * semiangleMrad * 1e-3
       / wavelength

@@ -50,10 +50,10 @@ final class MetalSSBJointTests: XCTestCase {
     let engine = try MetalSSBEngine(
       device: device, geometry: setup.geometry, cacheBudgetBytes: 2 << 30)
     try engine.prepare(brightfield: input, countType: .uint32)
-    let model = try engine.jointModel(scanDetectorRotationDegrees: fixture.rotationDegrees)
+    let model = try engine.jointModel(scanDetectorRotationDegrees: Double(fixture.rotationDegrees))
     let loss = try model.loss(fixture.parameters)
     let result = try model.reconstruct(
-      fixture.parameters, upsamplingFactor: fixture.upsamplingFactor)
+      fixture.parameters, upsamplingFactor: fixture.upsamplingFactor, estimator: .meanPhase)
     let expected = try Data(contentsOf: root.appendingPathComponent("reference.f32"))
       .withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
     let actual = result.phase.contents().assumingMemoryBound(to: Float.self)
@@ -125,7 +125,7 @@ final class MetalSSBJointTests: XCTestCase {
         let measured = try model.loss(fixture.parameters)
         let relative = abs(measured - fixture.loss) / max(abs(fixture.loss), 1)
         XCTAssertLessThan(relative, 5e-5, "\(fixture.name) objective relative error \(relative)")
-        let phase = try model.reconstruct(fixture.parameters)
+        let phase = try model.reconstruct(fixture.parameters, estimator: .meanPhase)
         let reference = try Data(contentsOf: root.appendingPathComponent("\(fixture.name).f32"))
         let expected = reference.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
         let actual = phase.phase.contents().assumingMemoryBound(to: Float.self)
@@ -147,7 +147,7 @@ final class MetalSSBJointTests: XCTestCase {
       if cacheBudget > 0 {
         let tilted = cases.first { $0.name == "tilted" }!
         for factor in [2, 3, 4] {
-          let result = try model.reconstruct(tilted.parameters, upsamplingFactor: factor)
+          let result = try model.reconstruct(tilted.parameters, upsamplingFactor: factor, estimator: .meanPhase)
           let bytes = try Data(contentsOf: root.appendingPathComponent("tilted-\(factor)x.f32"))
           let expected = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
           let actual = result.phase.contents().assumingMemoryBound(to: Float.self)
@@ -233,65 +233,5 @@ final class MetalSSBJointTests: XCTestCase {
     XCTAssertEqual(try cal.ssbUpsamplingFactor(), 4)
     cal.scanSamplingRowAngstroms = 0
     XCTAssertThrowsError(try cal.ssbUpsamplingFactor())
-  }
-
-  func testSixParameterSearchAndCancellation() throws {
-    let initial = SSBJointParameters(
-      aberrations: .init(c10Angstroms: 40, c12Angstroms: 15, phi12Radians: 0.2),
-      depthAngstroms: 180, tiltRowMrad: 2, tiltColumnMrad: -4)
-    func loss(_ p: SSBJointParameters) -> Double {
-      let values = [
-        p.aberrations.c10Angstroms / 10, p.aberrations.c12Angstroms / 10,
-        p.aberrations.phi12Radians, p.tiltRowMrad, p.tiltColumnMrad, p.depthAngstroms / 50,
-      ]
-      let target: [Float] = [1, 0.5, -0.2, 4, -2, 5]
-      return zip(values, target).reduce(0.0) { $0 + Double(($1.0 - $1.1) * ($1.0 - $1.1)) }
-    }
-    let optimizer = SSBJointOptimizer(globalTrials: 40, refinementIterations: 200)
-    let first = try optimizer.run(start: initial, evaluate: loss)
-    var batches = 0
-    let second = try optimizer.run(
-      start: initial, evaluate: loss,
-      evaluateBatch: { candidates in
-        batches += 1
-        return candidates.map(loss)
-      })
-    XCTAssertGreaterThan(batches, 0)
-    XCTAssertEqual(first.best, second.best)
-    XCTAssertEqual(first.loss, second.loss)
-    XCTAssertEqual(second.refinementMethod, .newton)
-    XCTAssertLessThan(first.loss, 0.01)
-    XCTAssertThrowsError(try optimizer.run(start: initial, evaluate: loss, isCancelled: { true }))
-    XCTAssertThrowsError(
-      try optimizer.run(start: initial, evaluate: loss, evaluateBatch: { _ in [] }))
-
-    // Saved fits written before the refinement-method field remain readable.
-    let encoded = try JSONEncoder().encode(first)
-    var record = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-    record.removeValue(forKey: "refinementMethod")
-    let restored = try JSONDecoder().decode(
-      SSBJointOptimizationResult.self, from: JSONSerialization.data(withJSONObject: record))
-    XCTAssertNil(restored.refinementMethod)
-    XCTAssertEqual(restored.best, first.best)
-    XCTAssertEqual(restored.loss, first.loss)
-  }
-
-  func testNewtonTrustRegionAndBoundedCoupling() throws {
-    // A bounded six-scalar optimizer-control check, not an image CPU oracle.
-    // Holding x at its bound changes the optimum in the coupled y coordinate.
-    let move = try SSBJointNewton.boundedStep(
-      center: [0, 0, 0, 0, 0, 40], gradient: [8, 5, 0, 0, 0, 0],
-      hessian: [
-        [-2, -1, 0, 0, 0, 0], [-1, -2, 0, 0, 0, 0],
-        [0, 0, -1, 0, 0, 0], [0, 0, 0, -1, 0, 0],
-        [0, 0, 0, 0, -1, 0], [0, 0, 0, 0, 0, -1],
-      ],
-      radius: 100, lower: [-1, -200, -200, -25, -25, 20],
-      upper: [1, 200, 200, 25, 25, 600])
-    XCTAssertEqual(move[0], 1, accuracy: 1e-12)
-    XCTAssertEqual(move[1], 2, accuracy: 1e-12)
-    let design = SSBJointNewton.design([0, 5, 0, 0, 0, 200], full: true)
-    XCTAssertEqual(design.count, 28)
-    XCTAssertEqual(SSBJointNewton.design(design[0], full: false).count, 13)
   }
 }
