@@ -311,6 +311,21 @@ and `"large"` only change figure dimensions. For explicit dimensions use
 `axsize=(6, 5)` instead. Returned figures support `savefig(...)` and render
 directly as a notebook cell's final expression.
 
+| Argument | Choices | Meaning |
+| --- | --- | --- |
+| `view` | `"depth"`, `"tilt"`, `"parameters"` | Focus versus depth, row versus column tilt, or both landscapes. With no view, `ssb.show()` opens ShowPtycho. |
+| `size` | `"small"`, `"medium"`, `"large"` | Display size only; the default dimensions match `"medium"`. |
+| `region` | `None` or four scan-pixel bounds | Full field, or an independently fitted selected region. |
+| `axsize` | `(width, height)` in inches | Exact panel dimensions instead of `size`. |
+
+To see both landscapes in one figure and read the numerical joint-fit values,
+use these expressions in separate notebook cells:
+
+```python
+ssb.show("parameters", size="medium")
+aberrations.report().T
+```
+
 Select a region in original scan pixels with exclusive stops:
 
 ```python
@@ -333,6 +348,13 @@ cell. Call `region.close()` when finished.
 `depth` means fitted **depth spread**, not measured specimen thickness. The
 plots are conditional objective landscapes, not spatial depth/tilt maps.
 Their marker identifies the joint fit; all unplotted parameters stay fixed.
+Each colored tile is a measured parameter evaluation, not a specimen pixel.
+The color scale is agreement divided by agreement at the fit: 1 at the fitted
+point, with higher values better. A broad bright area means similar scores
+along this conditional slice. It is not an uncertainty estimate. Each region
+is normalized to its own fit, so colors do not compare absolute data quality
+between regions. Use `shown.show(show_parameters=False)` for the specimen's
+reconstructed phase instead.
 
 The explicit measurement API remains available, including plotting from a
 saved result without an open GPU session:
