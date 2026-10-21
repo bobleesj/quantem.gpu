@@ -390,9 +390,9 @@ ssb = SSB.open(
     semiangle_mrad=30,  # mrad
     scan_sampling_A=(0.264, 0.264),  # Å per scan pixel, (row, column)
 )
-aberrations = ssb.find_aberrations()
-result = ssb.reconstruct(aberrations)
-result.show()  # large reconstructed phase image
+aberrations = ssb.find_aberrations()  # on the native scan grid
+result = ssb.reconstruct(aberrations, upsampling_factor="auto")
+result.show()  # large phase image at the factor the sampling allows (2x here)
 ```
 
 In the next notebook cell, view the model probes:
@@ -414,14 +414,15 @@ when no columns are resolved); a given or recorded angle is fitted once and
 kept. See the evidence in a separate cell:
 
 ```python
-aberrations.show("rotation")  # phase tails and phase at the atomic columns, both branches
+aberrations.show("rotation")  # both branches at the auto factor, then their phase tails and column phases
 ```
 
 For a native/upsampled comparison, use `result.show(compare=result_4x,
 axsize=(7, 7))`. The library marks matching central crops on the full images.
 The [SSB API](docs/api/ssb.md#settle-the-180-branch) explains the branch test.
 
-Advanced users can inspect search trials with shared phase contrast:
+Advanced users can inspect search trials with shared phase contrast, shown at
+`upsampling_factor="auto"`:
 
 ```python
 ssb.show_trials(best=5)     # five lowest-loss search trials
