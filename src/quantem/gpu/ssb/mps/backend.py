@@ -843,6 +843,7 @@ def _subset_prepared(prepared: PreparedMpsSSB, num_bright_field_pixels: int) -> 
         upsampled_geometry=None,
         upsampled_probe=None,
         separable_geometry=None,
+        row_steps=None,
         **fields,
     )
     mx.eval(subset.g_qk, subset.kx, subset.ky, *fields.values())
