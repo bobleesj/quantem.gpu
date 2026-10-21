@@ -67,7 +67,8 @@ def reference(ssb, coefs, factor, tilt, depth, estimator="phase_of_mean"):
 
     for k, source in enumerate(g):
         ak, pk = geometry(float(kr[k]), float(kc[k]))
-        am, pm = geometry(qr - float(kr[k]), qc - float(kc[k]))
+        # P(k - q): the odd orders change sign under k - q -> q - k (aperture and alpha^2 do not)
+        am, pm = geometry(float(kr[k]) - qr, float(kc[k]) - qc)
         ap, pp = geometry(qr + float(kr[k]), qc + float(kc[k]))
         w1 = np.sinc(.5 * depth * 10 * (-np.pi / wl * (am-ak) - shift) / np.pi)
         w2 = np.sinc(.5 * depth * 10 * (np.pi / wl * (ap-ak) - shift) / np.pi)

@@ -139,6 +139,8 @@ parts:
       - file: maintainer/backend-4dstem-load-checklist
         title: Load acceptance evidence
       - file: maintainer/ssb-performance
+      - file: maintainer/2026-10-21-ssb-odd-aberration-sign
+        title: Sign of the odd aberrations in SSB reconstruction (2026-10-21)
       - file: maintainer/2026-10-20-mps-performance
         title: MPS performance and regression harness (2026-10-20)
       - file: maintainer/2026-10-20-mps-memory
