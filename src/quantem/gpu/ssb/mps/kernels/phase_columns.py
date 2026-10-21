@@ -422,6 +422,15 @@ def phase_cols_small_sum_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
 
 def phase_cols_small_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
     """Fuse 128/256/1024-column IFFT, phase sum, and scalar phase-squared loss."""
+    partial_sum, partial_sumsq_tile = phase_cols_small_loss_partials(
+        mx, row_ifft, k_bf=k_bf,
+    )
+    phase_sum = partial_sum[0] if partial_sum.shape[0] == 1 else mx.sum(partial_sum, axis=0)
+    return phase_sum, mx.sum(partial_sumsq_tile)
+
+
+def phase_cols_small_loss_partials(mx, row_ifft, *, k_bf: int = 32):
+    """Keep independent BF groups separate until every row-FFT tile is ready."""
     shape = tuple(int(size) for size in row_ifft.shape)
     if (
         len(shape) != 3
@@ -453,8 +462,7 @@ def phase_cols_small_scalar_loss_from_row_ifft(mx, row_ifft, *, k_bf: int = 32):
         output_shapes=[(groups, n, n), (groups, n, t)],
         output_dtypes=[mx.float32, mx.float32],
     )
-    phase_sum = partial_sum[0] if groups == 1 else mx.sum(partial_sum, axis=0)
-    return phase_sum, mx.sum(partial_sumsq_tile)
+    return partial_sum, partial_sumsq_tile
 
 
 def phase_cols_small_scalar_loss_batch_from_row_ifft(

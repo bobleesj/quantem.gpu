@@ -77,7 +77,8 @@ def optimize(
     seed: int = 42,
     verbose: bool = False,
     band_inv_A: tuple[float, float] = (0.2, 0.9),
-) -> tuple[SSBResult, np.ndarray]:
+    compute_loss: bool = True,
+) -> tuple[SSBResult, np.ndarray | None]:
     """Standard SSB fit of C10/C12/phi12 on Apple GPU, then the complex object and the phase at the fit.
 
     ``num_trials`` trials of the resident search maximize the agreement with the sample tilt and depth spread at 0,
@@ -85,6 +86,7 @@ def optimize(
     "nelder-mead" or None) polishes from the best distinct trials, and from the session's ``aberrations`` when
     given. ``refine_lock`` (engine names) holds coefficients at the search's value through Nelder-Mead. Returns the
     result (phase-variance ``loss`` at the fit) and the float32 mean phase the session keeps for its first preview.
+    ``compute_loss=False`` omits that diagnostic and its mean-phase image; the object and fit are unchanged.
     """
     from quantem.gpu.ssb._resident_search import fit_standard_resident
     from quantem.gpu.ssb.mps.resident_fit import evaluate
@@ -115,12 +117,14 @@ def optimize(
     object_wave = np.asarray(object_wave_mx).astype(np.complex64, copy=False)
     timings["final_object_seconds"] = time.perf_counter() - final_object_started
     final_loss_started = time.perf_counter()
-    _object_wave, loss, phase = reconstruct_prepared(
-        prepared, C10=best["C10"], C12=best["C12"], phi12=best["phi12"],
-        chunk_bf=effective_phase_loss_chunk_bf(16, prepared.scan_shape), compute_loss=True, compute_object=False,
-    )
+    loss, phase = None, None
+    if compute_loss:
+        _object_wave, loss, phase = reconstruct_prepared(
+            prepared, C10=best["C10"], C12=best["C12"], phi12=best["phi12"],
+            chunk_bf=effective_phase_loss_chunk_bf(16, prepared.scan_shape), compute_loss=True, compute_object=False,
+        )
     timings["final_phase_loss_seconds"] = time.perf_counter() - final_loss_started
-    if phase is None or loss is None:
+    if compute_loss and (phase is None or loss is None):
         raise RuntimeError("MPS optimizer did not produce its final phase and loss.")
     records = [{"stage": "search", "number": record["number"], "objective": "negative_thick_agreement",
                 "band_inv_A": list(band_inv_A),
@@ -132,7 +136,7 @@ def optimize(
         backend="mps",
         aberrations=dict(best),
         scan_detector_rotation_deg=float(scan_detector_rotation_deg),
-        loss=float(loss),
+        loss=None if loss is None else float(loss),
         sample_agreement=float(fit["fit"]),
         elapsed_s=time.perf_counter() - started,
         timings=timings,
@@ -150,7 +154,7 @@ def optimize(
         bright_field_edge_radius_px=selection.bright_field_edge_radius_px,
         trial_records=records,
     )
-    return result, np.asarray(phase, dtype=np.float32)
+    return result, None if phase is None else np.asarray(phase, dtype=np.float32)
 
 
 def optimize_phase_variance(

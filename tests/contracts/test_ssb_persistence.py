@@ -148,6 +148,27 @@ def test_fit_reuses_exact_saved_result_with_complete_metadata(
     assert readable["result"]["bright_field_center_px"] == [31.5, 32.5]
 
 
+def test_saved_fit_without_diagnostic_does_not_satisfy_a_loss_request(tmp_path, monkeypatch):
+    """Reuse the fast saved fit, but compute the diagnostic when requested."""
+    source = tmp_path / "scan.bin"
+    source.write_bytes(b"detector counts")
+    backend = _Backend()
+    options = dict(tilt=False, num_trials=200, save_dir=tmp_path / "result",
+                   verbose=False)
+    first = _session(monkeypatch, source, backend).find_aberrations(
+        **options, compute_loss=False,
+    )
+    reopened = _session(monkeypatch, source, backend).find_aberrations(
+        **options, compute_loss=False,
+    )
+    assert reopened.reused and reopened.loss is None and first.loss is None
+    assert backend.fit_calls == 1
+    np.testing.assert_array_equal(reopened.phase, first.phase)
+    diagnostic = _session(monkeypatch, source, backend).find_aberrations(**options)
+    assert not diagnostic.reused and diagnostic.loss == 0.125
+    assert backend.fit_calls == 2
+
+
 def test_changed_fit_settings_or_source_recompute(tmp_path, monkeypatch) -> None:
     """Scientific input changes invalidate a prior fit automatically."""
 

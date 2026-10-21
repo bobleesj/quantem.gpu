@@ -1117,7 +1117,7 @@ def _separable_geometry(prepared: PreparedMpsSSB, n: int, params) -> dict:
     # by one extra grid row of the same launch (a separate small launch would add a serial tail).
     nyquist = n // 2
     upper = np.zeros(0, dtype=np.uint32)
-    if nyquist in set(row_indices.tolist()):
+    if n % 2 == 0 and nyquist in set(row_indices.tolist()):
         upper = np.arange(columns, n, dtype=np.uint32)
         upper = upper[np.abs(frequencies[upper]) <= np.abs(frequencies[col_indices]).max()]
         if upper.size and upper[-1] != n - 1 or np.any(np.diff(upper) != 1):
@@ -1294,7 +1294,8 @@ def _separable_spectrum(prepared: PreparedMpsSSB, qr, qc, params, params_np: np.
     # Paired corrected frequencies of the even C10/C12 probe are anti-Hermitian, O(-q) = -conj(O(q)),
     # except the Nyquist row, whose partner is itself and was computed above.
     mirror_rows = mx.array((-np.arange(n)) % n)
-    negative = -mx.conj(total[mirror_rows, 1:n // 2][:, ::-1])
+    # Odd grids have no Nyquist column: their last positive frequency is paired too.
+    negative = -mx.conj(total[mirror_rows, 1:(n + 1) // 2][:, ::-1])
     if upper is not None:
         # The supported upper columns of the Nyquist row are one contiguous run ending at column n - 1.
         first = int(geometry["upper"][0])
@@ -1488,7 +1489,7 @@ def _reconstruct_upsampled(
             # For the even C10/C12 probe, paired corrected frequencies are
             # anti-Hermitian. The guard excludes unpaired Nyquist support.
             mirror_rows = mx.array((-np.arange(n)) % n)
-            negative = -mx.conj(total[mirror_rows, 1:n // 2][:, ::-1])
+            negative = -mx.conj(total[mirror_rows, 1:(n + 1) // 2][:, ::-1])
             total = mx.concatenate((total, negative), axis=1)
         wave = mx.fft.ifft2(total / prepared.num_bright_field_pixels)
         phase = mx.arctan2(mx.imag(wave), mx.real(wave))
