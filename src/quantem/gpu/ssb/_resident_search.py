@@ -718,12 +718,17 @@ def fit_resident(
     compare_standard: bool = True,
     start=None,
     fixed_aberrations: dict[str, float] | None = None,
+    standard_only: bool = False,
 ) -> dict[str, object]:
     """Fit the joint model with resident adaptive search and Newton refinement.
 
     Parameters use the existing engine units. ``evaluate`` accepts resident
     encoded model trials and returns resident extended scores. Public callers
     use ``SSB.find_aberrations(tilt=True)``; no solver setting is needed.
+    ``standard_only=True`` runs only the standard comparison (the 200-trial
+    search at depth spread 0 that ``compare_standard`` adds) and returns its
+    ``standard_fit``, ``standard`` and timing: the same values a full fit with
+    the same seed and bounds reports.
     """
     from quantem.gpu.ssb.thick_sample_fit import PARAMETERS
 
@@ -733,8 +738,10 @@ def fit_resident(
         raise ValueError(
             "trials must be non-negative; use 200 for a complete joint search."
         )
-    if trials == 0 and start is None:
+    if trials == 0 and start is None and not standard_only:
         raise ValueError("Zero-trial refinement needs a previous joint fit as start.")
+    if standard_only and not compare_standard:
+        raise ValueError("standard_only runs the standard comparison: leave compare_standard=True.")
     if not 0 <= polish_starts <= 3:
         raise ValueError("Resident Newton supports zero to three distinct starts.")
     device = _Device(backend)
@@ -782,6 +789,8 @@ def fit_resident(
         )
         standard_fit = float(device.host(thin_value)[0])
     timings["standard_comparison_s"] = time.perf_counter() - begin
+    if standard_only:
+        return {"standard_fit": standard_fit, "standard": standard, "timings": timings}
     begin = time.perf_counter()
     if trials:
         points, scores = _search(

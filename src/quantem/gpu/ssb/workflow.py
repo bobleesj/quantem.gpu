@@ -1233,7 +1233,8 @@ class SSB:
         result.amplitude_estimated = False
         return self._accept_result(result)
 
-    def _fit_both_branches(self, fit: Callable[[], SSBResult], *, keep_first: bool) -> SSBResult:
+    def _fit_both_branches(self, fit: Callable[[], SSBResult], *, keep_first: bool,
+                           measure_gain: bool = False) -> SSBResult:
         """Fit the session's rotation and that rotation plus 180 degrees independently, then keep one branch.
 
         Each branch runs ``fit`` from the same start (the session's aberrations, tilt and depth spread before the
@@ -1241,6 +1242,8 @@ class SSB:
         is chosen by ``branches.compare_branches``: positive phase at the dark-field atomic columns, else the larger
         phase tail. ``keep_first`` keeps the session's rotation (a given one) and records what the evidence selects.
         The kept fit carries the comparison as ``rotation_branches`` and both searches' trials.
+        ``measure_gain`` (joint fits whose branches skipped the standard comparison) measures the kept fit's
+        ``tilt_fit_gain`` once, at its rotation, after the decision.
         """
         start = (self._aberrations, self._aberrations_explicit, self.sample_tilt_mrad, self.depth_spread_nm)
         first_rotation = self.scan_detector_rotation_deg
@@ -1261,7 +1264,24 @@ class SSB:
             kept.elapsed_s = sum(fit.elapsed_s for fit in fits)
         kept.rotation_branches = branches
         self.set_rotation(kept.scan_detector_rotation_deg)
+        if measure_gain:
+            self._measure_tilt_fit_gain(kept)
         return self._accept_result(kept)
+
+    def _measure_tilt_fit_gain(self, result: SSBResult) -> None:
+        """Set a joint fit's ``tilt_fit_gain``: its agreement over the best standard-SSB agreement.
+
+        The standard comparison (200 trials at depth spread 0) depends only on the rotation, the seed and the
+        search bounds, not on the joint search, so run after the branch decision at the kept fit's rotation it
+        gives the gain the kept branch's own fit would have reported, at the cost of one comparison instead of two.
+        """
+        started = time.perf_counter()
+        standard = self._backend().fit_sample(verbose=False, compare_standard=True, standard_only=True,
+                                              **self._tilt_fit_options)
+        standard_fit = float(standard["standard_fit"])
+        result.tilt_fit_gain = (float(result.sample_agreement) / standard_fit if standard_fit > 0
+                                else float("nan"))
+        result.timings["standard_comparison_s"] = time.perf_counter() - started
 
     def _release_cached_buffers(self) -> None:
         """Free this session's G(q, k) and MLX's cache before a region session builds its own G(q, k) and fit.
@@ -1830,6 +1850,11 @@ class SSB:
             return result
         if tilt:
             self._compare_standard = bool(compare_standard)
+        # The standard comparison only measures tilt_fit_gain. With two branch fits it runs once, for the kept
+        # branch after the decision, instead of in both fits (resident Newton fits; the same gain).
+        gain_once = tilt and branches != "off" and bool(compare_standard) and refinement == "newton"
+        if gain_once:
+            self._compare_standard = False
 
         def fit() -> SSBResult:
             """One fit at the session's rotation, from the session's aberrations (searched when none are known)."""
@@ -1855,7 +1880,11 @@ class SSB:
                 label_trials(result, search=0)
                 result = self._finish_fit(result)
             else:
-                result = self._fit_both_branches(fit, keep_first=branches == "keep")
+                try:
+                    result = self._fit_both_branches(fit, keep_first=branches == "keep", measure_gain=gain_once)
+                finally:
+                    if gain_once:
+                        self._compare_standard = True
                 if verbose:
                     _announce_rotation_branches(result)
         if isinstance(self._compute, MpsSSBBackend):
@@ -2363,9 +2392,12 @@ class SSB:
             engine = aberrations_to_engine(self.aberrations)
             start = (engine["C10"], engine["C12"], engine["phi12"], *self.sample_tilt_mrad, self.depth_spread_nm * ENGINE_PER_NM)
         fixed = {} if fixed_aberrations is None else {"fixed_aberrations": aberrations_to_engine(fixed_aberrations)}
-        fit = backend.fit_sample(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed, verbose=verbose,
-                                 polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
-                                 compare_standard=self._compare_standard, start=start, **fixed, **(bounds or {}))
+        options = dict(trials=trials, tilt_limit_mrad=tilt_limit_mrad, seed=seed,
+                       polish_starts=0 if refinement is None else 3, polish=refinement or "nelder-mead",
+                       start=start, **fixed, **(bounds or {}))
+        # the standard comparison of a later _measure_tilt_fit_gain uses this fit's seed and search bounds
+        self._tilt_fit_options = options
+        fit = backend.fit_sample(verbose=verbose, compare_standard=self._compare_standard, **options)
         aberrations = aberrations_from_engine(fit)
         if (bounds or {}).get("c12_max") == 0.0:
             # C12 held at zero: the azimuth has no effect on the image, so it is stated as 0, not the search's last draw
