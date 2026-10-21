@@ -82,10 +82,10 @@
   },
   "search_candidate": {
    "n": 10,
-   "p50_ms": 80.904,
-   "p90_ms": 83.347,
-   "min_ms": 79.098,
-   "timed_as": "half of one TPE pair"
+   "p50_ms": 19.326,
+   "p90_ms": 23.018,
+   "min_ms": 17.556,
+   "timed_as": "an eighth of one search batch"
   },
   "find_aberrations": {
    "n": 1,
@@ -95,9 +95,9 @@
   },
   "find_aberrations_standard": {
    "n": 1,
-   "p50_ms": 23856.196,
-   "p90_ms": 23856.196,
-   "min_ms": 23856.196
+   "p50_ms": 4973.638,
+   "p90_ms": 4973.638,
+   "min_ms": 4973.638
   },
   "detector_full_uint32": {
    "n": 3,
@@ -135,10 +135,10 @@
    "scan_detector_rotation_deg": 358.3108
   },
   "fit_standard": {
-   "C10_nm": -23.2213,
-   "C12_nm": 3.4025,
-   "phi12_deg": -40.0945,
-   "loss": 0.0449884,
+   "C10_nm": -25.3026,
+   "C12_nm": 3.5165,
+   "phi12_deg": -40.2562,
+   "loss": 0.0450218,
    "scan_detector_rotation_deg": 358.3108
   },
   "detector_update_equals_full_sum": true,

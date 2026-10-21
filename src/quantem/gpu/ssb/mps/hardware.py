@@ -9,10 +9,6 @@ last bits of a phase or loss.
 import subprocess
 from functools import lru_cache
 
-# the 512 pair-pack policy where no machine-specific measurement applies
-_EXACT_ROW_PACK_STORAGE_BF_512 = 300
-_EXACT_ROW_STORAGE_CLASSES_BF_512 = (288, 320)
-
 
 def require_mlx():
     """Return ``mlx.core``, imported on first use so the package imports on machines without MLX."""
@@ -110,63 +106,6 @@ def default_phase_col_k_bf(
         # the exact BF evidence.
         return 4096
     return 32
-
-
-@lru_cache(maxsize=2)
-def exact_pair_row_policy_512(batch: int = 2) -> tuple[int, tuple[int, ...]]:
-    """Return the measured 512 pair-pack policy for this hardware class."""
-
-    total, chip = _apple_hardware_profile()
-    if chip == "Apple M5 Max" and int(batch) == 2:
-        if total >= 120 * 1024**3:
-            # On the 128 GB M5 Max a pair of candidates takes the same time in
-            # 1,024-plane packs as in one 2,476-plane pack (217.5 against 218.1 ms
-            # per pair, interleaved medians, 8,939 bright-field pixels), with a
-            # 4.0 GiB row intermediate instead of 9.8 GiB. Every original
-            # 512-logical-BF reduction range remains separate in the column
-            # output, so the pack size does not alter summation order.
-            return 1024, (1024,)
-        if total >= 96 * 1024**3:
-            # Lower-memory M5 Max systems retain the measured four-pack policy.
-            # A 716-plane greedy limit uses one stable 720-plane class.
-            return 716, (720,)
-    return _EXACT_ROW_PACK_STORAGE_BF_512, _EXACT_ROW_STORAGE_CLASSES_BF_512
-
-
-def exact_pair_row_allocation_bf_512(
-    pack_bf: int,
-    storage_classes: tuple[int, ...] | None = None,
-) -> int:
-    """Return one exact pair pack's row allocation in BF planes.
-
-    The retained storage classes only exist so repeated packs reuse one
-    allocation shape. A single logical pair boundary is never split, so a
-    pack can legitimately be wider than every retained class on hardware
-    whose measured policy was tuned for narrower boundaries. In that case the
-    pack still runs at its own width: the row kernel allocates
-    ``max(pack, class)`` and only the written prefix is consumed, so falling
-    back to the pack width changes allocation size alone, never the BF
-    boundaries, the reduction order, or the arithmetic.
-
-    Parameters
-    ----------
-    pack_bf : int
-        BF planes actually written by one packed pair slice.
-    storage_classes : tuple of int, optional
-        Retained allocation classes; defaults to the measured 512 policy.
-
-    Returns
-    -------
-    int
-        BF planes to allocate for the packed row intermediate.
-    """
-    pack_bf = int(pack_bf)
-    if storage_classes is None:
-        _pack_limit, storage_classes = exact_pair_row_policy_512()
-    for storage_class in storage_classes:
-        if pack_bf <= storage_class:
-            return storage_class
-    return pack_bf
 
 
 def use_simd_radix8_col_stage_512() -> bool:
