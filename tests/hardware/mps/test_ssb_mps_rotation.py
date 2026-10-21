@@ -207,6 +207,41 @@ def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_nativ
         assert {axis.images[0].get_array().shape[:2] for axis in trials.axes if axis.images} == {(128, 128)}
 
 
+def test_a_region_fit_keeps_its_branch_panels_after_its_region_session_closes(tmp_path):
+    """find_aberrations(scan_region=...) fits in a region session that closes: the panels come with the fit and record.
+
+    A bright-field disk shifted by a smooth phase object, 128 x 128 positions at 0.25 Å (2x auto); fit quality is not
+    the point, only that the panels are the region's, reconstructed before its G(q, k) is gone, and saved.
+    """
+    pytest.importorskip("mlx.core")
+    from quantem.gpu import SSB
+    from quantem.gpu.ssb.persistence import load_result
+
+    rows, cols = np.indices((32, 32))
+    counts = np.zeros((128, 128, 32, 32), np.uint16)
+    counts[..., (rows - 15.5) ** 2 + (cols - 15.5) ** 2 <= 8.0**2] = 40
+    shift = np.round(3 * np.sin(np.linspace(0, 6 * np.pi, 128))[:, None] * np.cos(np.linspace(0, 4 * np.pi, 128))[None, :])
+    for row in range(128):
+        for col in range(128):
+            counts[row, col] = np.roll(counts[row, col], int(shift[row, col]), axis=1)
+    counts += np.random.default_rng(0).integers(0, 3, counts.shape, dtype=np.uint16)
+    master = tmp_path / "scan_master.h5"
+    master.write_bytes(b"master")   # an array session names its source to be saved
+    settings = dict(backend="mps", voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=0.25,
+                    detector_sampling_mrad=(3.75, 3.75), scan_detector_rotation_flipped=False, source_path=str(master))
+    with SSB(counts, **settings) as session:
+        fitted = session.find_aberrations(scan_region=(0, 128, 0, 128), tilt=False, num_trials=8, refinement=None,
+                                          save_dir=tmp_path / "results", verbose=False)
+    branches = fitted.rotation_branches
+    assert fitted.fit_scan_region == (0, 128, 0, 128) and branches.upsampling_factor == 2
+    assert [panel.shape for panel in branches.upsampled_phases()] == [(256, 256)] * 2
+    paths = (fitted.saved_path, fitted.saved_path.with_suffix(".json"))
+    reloaded = load_result(paths=paths, signature=fitted.metadata["signature"], backend="mps").rotation_branches
+    assert reloaded.upsampling_factor == 2
+    for saved, panel in zip(reloaded.upsampled_phases(), branches.upsampled_phases(), strict=True):
+        np.testing.assert_array_equal(saved, panel)
+
+
 def test_a_given_rotation_is_never_flipped(capsys):
     """A rotation the user gives is fitted once and kept, even 180 degrees off; the comparison only reports.
 

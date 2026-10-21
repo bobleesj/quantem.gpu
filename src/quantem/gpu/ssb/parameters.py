@@ -103,7 +103,7 @@ def plot_parameters(
             vmax=result.phase_limits[1],
             extent=(0, phase.shape[1] * sampling_nm[1], phase.shape[0] * sampling_nm[0], 0),
         )
-        axes[0].set(title="SSB phase (rad)", xlabel="Scan column (nm)", ylabel="Scan row (nm)")
+        axes[0].set(title=f"SSB phase · {result.upsampling_factor}× (rad)", xlabel="Scan column (nm)", ylabel="Scan row (nm)")
         figure.colorbar(phase_image, ax=axes[0], label="Phase (rad)", shrink=0.78)
     descriptions = (
         ("focus_depth", "Focus and depth", "C₁₀ at mid-depth (nm)", "Depth spread (nm)"),
