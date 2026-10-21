@@ -229,6 +229,8 @@ aberrations = ssb.find_aberrations(tilt=True, save_dir="results/aberrations")
 aberrations.report()
 ssb.show_trials(best=5)
 result = ssb.reconstruct(aberrations, save_dir="results/native")
+shown = ssb.reconstruct(aberrations, upsampling_factor="auto")
+shown.show()
 ```
 
 The numbers above illustrate the units; use your acquisition's calibration.
@@ -236,6 +238,13 @@ SSB here is tilt-corrected: `find_aberrations()` (`tilt=True`, the default)
 jointly estimates specimen tilt and model depth spread as well as aberrations,
 and so does the automatic fit of `reconstruct()`. Pass `tilt=False` for the
 standard aberration search of ordinary SSB.
+Fits stay on the native scan grid; what you look at is reconstructed at
+`upsampling_factor="auto"`, the factor the scan sampling allows (at 300 kV
+and 30 mrad: 2× for the 0.264 Å step above, 3× at 0.373 Å, 4× for the 0.5 Å
+gold scan), and its title names the factor. `show_trials` and the branch
+panels of `compare_rotation_branches` use the same factor. `result.show()`
+draws the phase a result holds; for a native fit one line names the auto
+factor and the call that shows it.
 Keep `ssb` open for the examples below and call `ssb.close()` when finished.
 
 Measure conditional focus–depth and tilt objective slices while the same SSB
@@ -292,8 +301,10 @@ tilt, rotation and trial history remain properties of the fitted result.
 The report table labels its angle column `phi12 (deg)`.
 
 Supply exactly one positive selector. Images share phase contrast and include
-scale bars and a parameter table. Trials are replayed from their recorded
-settings rather than stored as a large image stack. Browsing preserves the
+scale bars and a parameter table. They are reconstructed at
+`upsampling_factor="auto"` by default (the title names the factor); the search
+losses in the table are native-grid values. Trials are replayed from their
+recorded settings rather than stored as a large image stack. Browsing preserves the
 active reconstruction. `best` ranks the latest search only; losses from the
 standard phase-variance objective and the joint tilt objective are not mixed.
 The trial table explicitly names the objective. Local refinement is separate
@@ -422,7 +433,7 @@ about 2 × 26 s.
 ```python
 branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one
 branches.report()                           # aberrations, loss, column z and effect, positive columns, S
-branches.show()                             # phase tails and phase at the columns
+branches.show()                             # both fits at the auto factor, then the evidence
 result = ssb.reconstruct()                  # the kept fit, no third search
 result.show("rotation")                     # the same figure from the result
 ```
@@ -442,11 +453,18 @@ probe can break that: in a noise-free 64 × 64 simulation (4 Å lattice, dark
 field 33 to 55 mrad, tilt-corrected fits) the column test chose the wrong
 branch at C10 = −5 and −8 nm and the right one at −3 nm, while the phase tail
 was right in all three.
-The figure's right panel shows the evidence for each branch.
+In the figure, the top row is each branch's fit reconstructed at
+`upsampling_factor="auto"` by the session (its own rotation, aberrations,
+tilt and depth spread; 0.4 s for both 4× panels of the 512 × 512 gold scan),
+with the dark-field columns marked at scan pixels times the factor. The
+bottom row is the evidence, from the native phases the decision used: the
+phase tails (left) and the high-passed phase at the columns (right).
+`branches.show(panels=False)` draws the evidence alone, without the GPU.
 
 ## View the phase and model probe
 
 ```python
+result = ssb.reconstruct(aberrations, upsampling_factor="auto")
 result.show()  # one large phase image
 ```
 
