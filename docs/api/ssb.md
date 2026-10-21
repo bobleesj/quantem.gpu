@@ -462,18 +462,25 @@ These are conditional reconstructions, not independently fitted models or
 physical depth sections. All panels share contrast and automatic output sampling.
 
 Use `mode="static"` for a figure made by core QuantEM's `show_2d`. Both
-interactive layouts become the same grid containing every reconstructed frame:
+interactive layouts become the same compact grid containing every reconstructed
+frame, with at most two columns by default:
 
 ```python
 ssb.show("focus", mode="static", size="small")
 ```
 
+Static figures keep the image aspect ratio and use enough pixels to retain the
+native reconstruction resolution. `size` changes the panel dimensions, not the
+data. Save the returned figure with `figure.savefig("focus.png", dpi="figure",
+bbox_inches="tight")`; a lower explicit DPI may reduce the saved image resolution.
+
 | Focus-image option | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `"interactive"` | An interactive widget, or `"static"` for the complete `show_2d` grid. |
 | `layout` | `"grid"` | Show2D grid or `"stack"` for Show3D with focus frames and depth panels. Static mode shows all frames. |
+| `max_cols` | `2` | Maximum columns in the static focus grid; use `1` for a vertical comparison. |
 | `focus_offsets_nm` | `(-5, 0, 5)` | Defocus offsets from fitted C10, in nm. |
-| `depth_spread_nm` | `None` | Fitted depth spread and ±5 nm; supply an absolute value or sequence to choose the rows. |
+| `depth_spread_nm` | `None` | Fitted depth spread and ±5 nm; supply an absolute value or sequence to choose the compared depths. |
 | `region` | `None` | Full field, or scan-pixel bounds to fit independently and display. |
 | `size` | `"medium"` dimensions | Display size only. `axsize` supplies exact panel dimensions in static mode. |
 

@@ -1551,12 +1551,15 @@ class SSB:
             The default depths are the fitted value and ±5 nm, bounded at zero.
             ``layout="grid"`` uses Show2D; ``layout="stack"`` uses Show3D
             with focus frames and depth panels in interactive mode.
+            Static focus comparisons use ``max_cols=2`` with compact spacing
+            and native image resolution. Change ``max_cols`` to reflow the grid.
 
         Returns
         -------
         quantem.widget.ShowPtycho, Show2D, Show3D or matplotlib.figure.Figure
             A live widget, or a closed figure that renders once in a notebook.
-            The static figure can be saved with ``figure.savefig(...)``.
+            Save static focus images at their native resolution with
+            ``figure.savefig("focus.png", dpi="figure", bbox_inches="tight")``.
 
         Examples
         --------

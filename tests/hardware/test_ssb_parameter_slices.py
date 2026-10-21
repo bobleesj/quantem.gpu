@@ -175,8 +175,17 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
         expected = np.concatenate([grid._data[:3], grid._data[3:]], axis=2)
         np.testing.assert_array_equal(stack._data, expected)
         captured = _record_static_arrays(monkeypatch)
-        ssb.show("focus", mode="static", layout="stack", **options)
+        figure = ssb.show("focus", mode="static", layout="stack", **options)
         np.testing.assert_array_equal(np.concatenate(captured[-1]), grid._data)
+        assert all(len(row) == 2 for row in captured[-1])
+        figure.draw_without_rendering()
+        for ax in figure.axes:
+            image = ax.images[0]
+            assert ax.get_aspect() == 1
+            assert np.all(ax.get_window_extent().size[::-1] >= image.get_array().shape[:2])
+        single_column = ssb.show("focus", mode="static", max_cols=1,
+                                 focus_offsets_nm=(0,), depth_spread_nm=fit.depth_spread_nm)
+        assert len(single_column.axes) == 1
         assert ssb._aberration_search is fit
         assert ssb.aberrations == fit.aberrations
         assert ssb.sample_tilt_mrad == fit.sample_tilt_mrad
