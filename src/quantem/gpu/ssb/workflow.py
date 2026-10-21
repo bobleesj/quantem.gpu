@@ -32,7 +32,7 @@ from quantem.gpu.ssb import series
 from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
 from quantem.gpu.ssb.brightfield import bright_field_crop_region, crop_bright_field
-from quantem.gpu.ssb.contract import RefineMethod, SSBProtocol
+from quantem.gpu.ssb.contract import FitObjective, RefineMethod, SSBProtocol
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
 from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop, MpsBfColumnFrames, find_bf_columns
 from quantem.gpu.ssb.mps.optimizer import newton_supported
@@ -353,8 +353,10 @@ class SSB:
     SSB recovers the object phase from the bright-field disk: each bright-field detector pixel sees the sample through
     a slightly different probe tilt, and once the probe aberrations are corrected for every pixel their phase images
     agree. ``find_aberrations`` fits C10_nm, C12_nm and phi12_deg (with the sample tilt and a depth spread by default) by
-    maximising the least-squares agreement of that model with the data; ``reconstruct`` and ``preview`` apply known
-    aberrations and report the phase variance over bright-field pixels as the diagnostic ``loss``. The full
+    maximising the least-squares agreement of that model with the data; ``tilt=False`` holds the tilt and depth spread
+    at 0, and ``tilt=False, objective="phase_variance"`` is the older search that minimizes the phase variance over
+    bright-field pixels instead. ``reconstruct`` and ``preview`` apply known aberrations and report that phase
+    variance as the diagnostic ``loss``. The full
     automatically detected bright-field disk, float32 real and complex64 object storage are fixed.
 
     C10/C12 reconstruction averages corrected complex waves before taking the
@@ -1504,6 +1506,7 @@ class SSB:
         self,
         *,
         tilt: bool = True,
+        objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
         refinement: RefineMethod | Literal["auto"] = "auto",
@@ -1518,23 +1521,38 @@ class SSB:
         compare_standard: bool = True,
         fixed_aberrations: dict[str, float] | None = None,
     ) -> SSBResult:
-        """Optimize C10_nm/C12_nm/phi12_deg with the sample tilt and depth spread, and return the final reconstruction.
+        """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
 
-        SSB here is tilt-corrected: ``tilt=True`` (default) fits the sample tilt and a depth spread for a thick, tilted
-        crystal jointly with the aberrations, and ``tilt=False`` is the explicit opt-out for ordinary SSB (C10, C12
-        and phi12 alone). On MPS both maximise the same least-squares agreement of the SSB model with the data, the
-        standard fit with the sample tilt and depth spread held at 0 (the model is then ordinary SSB exactly); on
-        CUDA the standard fit still minimises the phase variance. The joint fit runs one search of ``num_trials`` trials plus
-        local refinement (fitting the tilt after a standard fit gets stuck:
-        C10 has to move to the defocus at mid-depth at the same time). The phase-variance loss of the standard fit does
-        not see tilt, so this search maximises the least-squares agreement of the thick-sample model with the data. The
-        result's ``sample_tilt_mrad`` (row, col; scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit; CUDA and
-        MPS. On two full 512 x 512 acquisitions 100 trials already converged every seed and 200-400 gave the same tilt
-        to 0.02 mrad (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
-        ``refinement="auto"`` (default) selects Newton for tilt fits and for MPS standard fits, and Nelder-Mead for an MPS
-        standard fit that locks a coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot) and for CUDA
-        standard fits. Explicit ``"nelder-mead"`` retains the previous optimizer; None skips local refinement.
-        The 200-trial coarse search is unchanged. Saved settings record the selected optimizer, not ``"auto"``.
+        The default is the method to use: model-based and tilt-corrected. It maximizes the least-squares agreement
+        of the SSB model with the data and fits the sample tilt and a depth spread of a thick, tilted crystal with
+        the aberrations. ``tilt`` and ``objective`` select one of three methods:
+
+        ============================================================  ==============================================
+        Call                                                          Method
+        ============================================================  ==============================================
+        ``find_aberrations()``                                        **default**: model agreement, tilt-corrected
+                                                                      (sample tilt and depth spread fitted)
+        ``find_aberrations(tilt=False)``                              model agreement, tilt and depth spread held at
+                                                                      0, where the model is ordinary SSB exactly
+        ``find_aberrations(tilt=False, objective="phase_variance")``  the older SSB search: the aberrations that
+                                                                      minimize the phase variance over bright-field
+                                                                      pixels
+        ============================================================  ==============================================
+
+        The phase variance cannot see the sample tilt, so ``objective="phase_variance"`` with ``tilt=True`` raises.
+        Each runs one search of ``num_trials`` trials plus local refinement: ``refinement="auto"`` (default) selects
+        Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that locks a
+        coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
+        simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
+        not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
+        whatever the objective. CUDA does not run the ``tilt=False`` agreement fit yet: it raises NotImplementedError,
+        and ``objective="phase_variance"`` is the interim there (docs/api/ssb.md).
+
+        The joint fit searches all six parameters at once (fitting the tilt after a standard fit gets stuck: C10
+        has to move to the defocus at mid-depth at the same time). The result's ``sample_tilt_mrad`` (row, col;
+        scan frame, within ``tilt_limit_mrad``) and ``depth_spread_nm`` hold the fit. On two full 512 x 512
+        acquisitions 100 trials already converged every seed and 200-400 gave the same tilt to 0.02 mrad
+        (docs/maintainer/2026-09-24-ssb-units-and-thick-sample.md).
         ``refinement="newton"`` polishes with Newton steps on finite-difference models whose evaluations share
         passes over the data, a few passes instead of hundreds (both backends evaluate the trials of a pass in one batch).
         ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None).
@@ -1558,8 +1576,8 @@ class SSB:
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
         A standard fit (``tilt=False``) searches C10_nm over (-40, 40), C12_nm over (0, 10) and phi12_deg over its
         period unless ``search_ranges`` bounds them; a value holds that coefficient in every trial, ``refine_lock``
-        holds it through Nelder-Mead at the search's value, and ``fixed_aberrations`` (MPS) does both:
-        ``find_aberrations(tilt=False, fixed_aberrations={"C12_nm": 0.0})``.
+        holds it through Nelder-Mead at the search's value, and ``fixed_aberrations`` does both (except in CUDA's
+        phase-variance fit): ``find_aberrations(tilt=False, fixed_aberrations={"C12_nm": 0.0})``.
 
         ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
         centre-of-mass curl cannot tell omega from omega + 180 degrees and both fit equally well (the second is the
@@ -1568,7 +1586,7 @@ class SSB:
         located on the scan's dark field, have positive phase; when no columns are resolved, the branch with the
         larger phase tail (``compare_rotation_branches`` explains both tests). The fit then costs two searches: two
         joint fits took 9 to 25 s in all on 512 x 512 scans on an M-series Mac, two MPS standard fits (``tilt=False``)
-        3 to 10 s. ``result.rotation_branches`` records both fits and the
+        3 to 10 s, two phase-variance fits about 90 s. ``result.rotation_branches`` records both fits and the
         evidence, ``result.show("rotation")`` draws it, and one line (with ``verbose``) says which branch was kept.
         A rotation given to ``SSB(...)`` or recorded with the acquisition is the user's calibration: it is fitted
         once and never moved. ``ssb.compare_rotation_branches()`` still fits both branches of it and reports.
@@ -1596,7 +1614,8 @@ class SSB:
         """
 
         return self._find_aberrations(
-            "auto" if check_rotation else "off", tilt=tilt, scan_region=scan_region, num_trials=num_trials,
+            "auto" if check_rotation else "off", tilt=tilt, objective=objective, scan_region=scan_region,
+            num_trials=num_trials,
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
             compare_standard=compare_standard, fixed_aberrations=fixed_aberrations)
@@ -1604,6 +1623,21 @@ class SSB:
     @_on_scan_gpu
     def compare_rotation_branches(self, *, apply: bool | None = None, **find_aberrations_options) -> RotationBranches:
         """Fit both 180-degree branches of the rotation independently and say which one the phase supports.
+
+        Each branch is one ``find_aberrations(**find_aberrations_options)`` fit. The default, and the fit to decide the
+        branch on, is the model-based, tilt-corrected fit; ``tilt`` and ``objective`` pass through:
+
+        ============================================================  ==============================================
+        Call                                                          Method
+        ============================================================  ==============================================
+        ``find_aberrations()``                                        **default**: model agreement, tilt-corrected
+                                                                      (sample tilt and depth spread fitted)
+        ``find_aberrations(tilt=False)``                              model agreement, tilt and depth spread held at
+                                                                      0, where the model is ordinary SSB exactly
+        ``find_aberrations(tilt=False, objective="phase_variance")``  the older SSB search: the aberrations that
+                                                                      minimize the phase variance over bright-field
+                                                                      pixels
+        ============================================================  ==============================================
 
         The centre-of-mass curl knows the scan-detector rotation only modulo 180 degrees. This runs
         ``find_aberrations(**find_aberrations_options)`` twice, at the session's rotation and at that rotation plus
@@ -1623,7 +1657,7 @@ class SSB:
         and depth spread makes the column contrast clearer, while both branches still fit equally well.
 
         Both fits cost a full search each: two joint fits (the default) took 9 to 25 s in all on 512 x 512 scans on
-        an M-series Mac, two MPS standard fits (``tilt=False``) 3 to 10 s.
+        an M-series Mac, two MPS standard fits (``tilt=False``) 3 to 10 s, two phase-variance fits about 90 s.
 
         Parameters
         ----------
@@ -1633,8 +1667,8 @@ class SSB:
             the comparison then only reports. Either way the session ends settled, holding the kept branch's fit,
             so ``reconstruct()`` applies it without fitting again.
         **find_aberrations_options
-            Any ``find_aberrations`` keyword except ``check_rotation``: ``tilt``, ``num_trials``, ``search_ranges``,
-            ``fixed_aberrations``, ``seed``, ``scan_region``, ``save_dir``, ``verbose``, ...
+            Any ``find_aberrations`` keyword except ``check_rotation``: ``tilt``, ``objective``, ``num_trials``,
+            ``search_ranges``, ``fixed_aberrations``, ``seed``, ``scan_region``, ``save_dir``, ``verbose``, ...
 
         Returns
         -------
@@ -1663,6 +1697,7 @@ class SSB:
         branches: Literal["auto", "off", "apply", "keep"],
         *,
         tilt: bool = True,
+        objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
         num_trials: int = 200,
         refinement: RefineMethod | Literal["auto"] = "auto",
@@ -1682,6 +1717,19 @@ class SSB:
         selected one, and fits once otherwise; ``"off"`` fits once; ``"apply"`` compares and applies; ``"keep"``
         compares and keeps the session's rotation.
         """
+        if objective not in ("agreement", "phase_variance"):
+            raise ValueError(f"objective is 'agreement' (the default, the least-squares agreement of the SSB model with "
+                             f"the data) or 'phase_variance' (the older SSB search, tilt=False only); got {objective!r}.")
+        if tilt and objective == "phase_variance":
+            raise ValueError(
+                "objective='phase_variance' cannot fit the sample tilt: the phase variance over bright-field pixels "
+                "does not see it. Use find_aberrations(tilt=False, objective='phase_variance') for the older SSB "
+                "search, or the default find_aberrations() for the tilt-corrected model agreement.")
+        if not tilt and objective == "agreement" and self.backend == "cuda":
+            raise NotImplementedError(
+                "find_aberrations(tilt=False) on CUDA fits the model agreement, which is not ported to CUDA yet. For "
+                "now use find_aberrations(tilt=False, objective='phase_variance'), the older SSB search CUDA ran "
+                "before, or the default tilt-corrected find_aberrations().")
         if tilt and refine_lock is not None:
             raise ValueError(
                 "refine_lock applies to the standard fit (tilt=False). In the joint fit (tilt=True, the default) hold "
@@ -1696,18 +1744,17 @@ class SSB:
             )
         tilt_bounds: dict[str, object] = {}
         requested = {"search_ranges": search_ranges, "fixed_aberrations": fixed_aberrations}
-        # MPS fits tilt=False on the joint fit's objective at depth spread 0 (Newton or Nelder-Mead); CUDA's standard
-        # fit still minimizes the phase variance with Nelder-Mead
-        standard_on_mps = not tilt and self.backend == "mps"
         if not tilt:
-            if fixed_aberrations is not None and not standard_on_mps:
+            if fixed_aberrations is not None and objective == "phase_variance" and self.backend == "cuda":
                 raise ValueError(
-                    "fixed_aberrations holds coefficients in the joint fit (tilt=True, the default) and in the MPS "
-                    "standard fit. For a CUDA standard fit (tilt=False) give the value as "
-                    "search_ranges={'C12_nm': 0.0}, which holds it in the search, and refine_lock=['C12_nm'].")
+                    "fixed_aberrations holds coefficients in the agreement fits and the MPS phase-variance fit. For "
+                    "CUDA's phase-variance fit give the value as search_ranges={'C12_nm': 0.0}, which holds it in the "
+                    "search, with refinement=None: its GPU Nelder-Mead cannot lock a coefficient.")
             search_ranges, refine_lock = _standard_constraints(search_ranges, refine_lock, fixed_aberrations)
             fixed_aberrations = None
-        newton_standard = standard_on_mps and newton_supported(search_ranges_to_engine(search_ranges), refine_lock)
+        # Newton polishes the agreement; the phase variance and a locked or bounded agreement fit use Nelder-Mead
+        newton_standard = (not tilt and objective == "agreement"
+                           and newton_supported(search_ranges_to_engine(search_ranges), refine_lock))
         if refinement == "auto":
             refinement = "newton" if tilt or newton_standard else "nelder-mead"
         if tilt:
@@ -1726,9 +1773,10 @@ class SSB:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
         if refinement == "newton" and not tilt and not newton_standard:
             raise ValueError(
-                "refinement='newton' in a standard fit (tilt=False) runs on MPS and bounds C10 and the C12 maximum only; "
-                "use 'nelder-mead' to lock a coefficient, bound phi12 or hold a nonzero C12_nm (CUDA's standard fit "
-                "always refines with 'nelder-mead').")
+                "refinement='newton' polishes the agreement objective; the phase-variance search refines with "
+                "'nelder-mead'." if objective == "phase_variance" else
+                "refinement='newton' in a standard fit (tilt=False) bounds C10 and the C12 maximum only; use "
+                "'nelder-mead' to lock a coefficient, bound phi12 or hold a nonzero C12_nm.")
         if branches == "auto":
             # a rotation given to SSB(...) or recorded with the acquisition is the user's calibration and is kept
             branches = "apply" if self.scan_detector_rotation_source == "estimated" else "off"
@@ -1747,8 +1795,7 @@ class SSB:
                     "starting_aberrations": self.aberrations,
                     "starting_aberrations_explicit": self._aberrations_explicit,
                     **({"tilt": True, "tilt_limit_mrad": float(tilt_limit_mrad)} if tilt else {}),
-                    # a saved phase-variance standard fit is not this objective's result
-                    **({"standard_objective": "agreement"} if standard_on_mps else {}),
+                    "objective": objective,
                     **({"compare_standard": False} if tilt and not compare_standard else {}),
                     **({"refined_from": {"sample_tilt_mrad": self.sample_tilt_mrad, "depth_spread_nm": self.depth_spread_nm}}
                        if tilt and int(num_trials) == 0 else {}),
@@ -1828,7 +1875,7 @@ class SSB:
                 regional._dark_field, regional._dark_field_source = None, self
                 regional._dark_field_region = tuple(scan_region)
                 result = regional._find_aberrations(
-                    branches, tilt=tilt, num_trials=num_trials, refinement=refinement,
+                    branches, tilt=tilt, objective=objective, num_trials=num_trials, refinement=refinement,
                     search_ranges=requested["search_ranges"] if tilt else search_ranges, refine_lock=refine_lock,
                     tilt_limit_mrad=tilt_limit_mrad,
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
@@ -1859,15 +1906,18 @@ class SSB:
         def fit() -> SSBResult:
             """One fit at the session's rotation, from the session's aberrations (searched when none are known)."""
             if tilt:
-                return self._accept_result(self._fit_tilt(
+                result = self._fit_tilt(
                     int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
-                    fixed_aberrations=fixed_aberrations, bounds=tilt_bounds))
+                    fixed_aberrations=fixed_aberrations, bounds=tilt_bounds)
+                result.objective = objective
+                return self._accept_result(result)
             result = result_from_engine(self._backend().fit(
                 aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
                 trials=int(num_trials), refinement=refinement,
                 search_ranges=search_ranges_to_engine(search_ranges), refine_lock=refine_lock_to_engine(refine_lock),
-                seed=int(seed), verbose=verbose,
+                seed=int(seed), verbose=verbose, objective=objective,
             ))
+            result.objective = objective
             if result.aberrations["C12_nm"] == 0.0:
                 # no astigmatism (C12 held at 0): its azimuth has no effect on the image and is stated as 0
                 result.aberrations["phi12_deg"] = 0.0
@@ -2002,11 +2052,26 @@ class SSB:
     ) -> SSBResult:
         """Reconstruct the phase with the session's aberrations, fitting them first when none are known.
 
-        A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so;
-        later calls reuse that fit. On an estimated rotation that fit compares both 180-degree branches with two
+        A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so:
+        the model-based, tilt-corrected fit, the default of the three methods:
+
+        ============================================================  ==============================================
+        Call                                                          Method
+        ============================================================  ==============================================
+        ``find_aberrations()``                                        **default**: model agreement, tilt-corrected
+                                                                      (sample tilt and depth spread fitted)
+        ``find_aberrations(tilt=False)``                              model agreement, tilt and depth spread held at
+                                                                      0, where the model is ordinary SSB exactly
+        ``find_aberrations(tilt=False, objective="phase_variance")``  the older SSB search: the aberrations that
+                                                                      minimize the phase variance over bright-field
+                                                                      pixels
+        ============================================================  ==============================================
+
+        Later calls reuse that fit. On an estimated rotation that fit compares both 180-degree branches with two
         independent joint fits (9 to 25 s in all for a 512 x 512 scan on an M-series Mac) and prints one line naming the
-        branch kept; a given or recorded rotation is fitted once and kept. To constrain the fit (search ranges, fixed
-        terms, tilt, seed), call ``find_aberrations(...)`` or ``compare_rotation_branches(...)`` yourself first.
+        branch kept; a given or recorded rotation is fitted once and kept. To choose another method or constrain the fit
+        (``tilt``, ``objective``, search ranges, fixed terms, seed), call ``find_aberrations(...)`` or
+        ``compare_rotation_branches(...)`` yourself first.
         Given ``parameters`` or ``aberrations`` are used as they are.
 
         Parameters
@@ -2035,8 +2100,8 @@ class SSB:
             Defaults to ``phase_of_mean`` on CUDA and MPS at every output
             factor, including higher-order aberrations.
             The loss is the native-grid phase variance over bright-field
-            pixels, a diagnostic (the MPS fits maximise the model agreement
-            instead), not a score computed from the displayed phase.
+            pixels, a diagnostic (the default fits maximise the model
+            agreement instead), not a score computed from the displayed phase.
             ``complex_wave`` explicitly retains amplitude for native, thin-sample
             reconstruction, including coherent temporal averaging.
         compute_loss
@@ -2131,7 +2196,7 @@ class SSB:
                 and cached.depth_spread_nm == depth
                 and (not compute_loss or cached.loss is not None)):
             return cached
-        evidence = self._rotation_evidence(correction, coefs, tilt, depth)
+        evidence = self._fit_evidence(correction, coefs, tilt, depth)
         if estimator == "complex_wave":
             result = self._in_detector_frame(result_from_engine(self._backend().reconstruct_result(
                 aberrations_to_engine(coefs), compute_loss=compute_loss,
@@ -2175,21 +2240,21 @@ class SSB:
                 print(f"SSB result saved to {paths[0]}")
         return result
 
-    def _rotation_evidence(self, correction: SSBResult | None, coefs: dict[str, float], tilt, depth) -> dict[str, object]:
-        """The 180-degree branch comparison of the fit a reconstruction applies, for its result.
+    def _fit_evidence(self, correction: SSBResult | None, coefs: dict[str, float], tilt, depth) -> dict[str, object]:
+        """The objective and the 180-degree branch comparison of the fit a reconstruction applies, for its result.
 
-        The fit is ``correction``, else the session's latest ``find_aberrations``. Its comparison describes its own
-        aberrations, sample geometry and rotation, so it is carried only when the reconstruction uses exactly those;
-        changed coefficients reconstruct another image, and the result then states no comparison.
+        The fit is ``correction``, else the session's latest ``find_aberrations``. Both describe its own
+        aberrations, sample geometry and rotation, so they are carried only when the reconstruction uses exactly
+        those; changed coefficients reconstruct another image, and the result then states neither.
         """
         fit = self._aberration_search if correction is None else correction
-        if fit is None or fit.rotation_branches is None:
+        if fit is None or (fit.objective is None and fit.rotation_branches is None):
             return {}
         if (fit.scan_detector_rotation_deg != self.scan_detector_rotation_deg
                 or validate_aberrations(dict(fit.aberrations), higher_order=True) != coefs
                 or fit.sample_tilt_mrad != tilt or fit.depth_spread_nm != depth):
             return {}
-        return {"rotation_branches": fit.rotation_branches}
+        return {"objective": fit.objective, "rotation_branches": fit.rotation_branches}
 
     @_on_scan_gpu
     def preview(

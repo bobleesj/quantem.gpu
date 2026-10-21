@@ -595,6 +595,32 @@ def bf_storage_chunks(
             yield storage_start, storage_stop
 
 
+def bf_storage_chunk_packs(
+    prepared: PreparedMpsSSB,
+    logical_chunk_bf: int,
+    max_storage_bf: int,
+) -> list[list[tuple[int, int]]]:
+    """Pack adjacent sparse boundaries without exceeding row scratch limits."""
+    boundaries = list(bf_storage_chunks(prepared, logical_chunk_bf))
+    if not boundaries:
+        return []
+    max_storage_bf = max(1, int(max_storage_bf))
+    packs: list[list[tuple[int, int]]] = []
+    current: list[tuple[int, int]] = []
+    current_size = 0
+    for start, stop in boundaries:
+        boundary_size = int(stop) - int(start)
+        if current and current_size + boundary_size > max_storage_bf:
+            packs.append(current)
+            current = []
+            current_size = 0
+        current.append((int(start), int(stop)))
+        current_size += boundary_size
+    if current:
+        packs.append(current)
+    return packs
+
+
 # The cached k, q - k and q + k probe geometry of a PreparedMpsSSB, in the order _pair_geometry computes it.
 _PAIR_GEOMETRY_FIELDS = (
     "alpha_k2", "cos2_k", "sin2_k", "aperture_k",

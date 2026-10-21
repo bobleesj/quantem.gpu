@@ -8,14 +8,22 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- SSB fit methods have one vocabulary, `find_aberrations(tilt=..., objective=...)`. The default,
+  `find_aberrations()`, is the model-based, tilt-corrected fit (least-squares model agreement, sample tilt and depth
+  spread fitted); `tilt=False` holds the tilt and depth spread at 0; `tilt=False, objective="phase_variance"` is the
+  older SSB search (minimum phase variance over bright-field pixels, Optuna TPE and Nelder-Mead). `tilt=True` with
+  `objective="phase_variance"` raises. `result.objective` records the objective, `report()` shows it, and it is a
+  saved setting. The MPS phase-variance search (`ssb/mps/loss.py`, its pair kernels, the 512 x 512 pair-pack
+  policy and `scripts/benchmark_ssb_mps_scaling.py`) is restored unchanged for that option and reproduces the
+  removed search bit for bit on gold. On CUDA, `tilt=False` (the agreement) raises
+  `NotImplementedError` until it is ported; pass `objective="phase_variance"` for CUDA's previous standard fit.
 - On MPS, `find_aberrations(tilt=False)` fits on the joint fit's objective, the least-squares agreement of the SSB
   model with G(q, k), with the sample tilt and depth spread held at 0: the same resident 200-trial search, then
   Newton (`refinement="auto"`) or Nelder-Mead. The search box is unchanged (C10 +-40 nm, C12 0 to 10 nm);
   `search_ranges`, `refine_lock` and now `fixed_aberrations` constrain it. On synthetic crystals it lands 3x nearer
   the true C10 than the phase-variance search, and a gold fit takes 7.8 s instead of about 75 s (both branches)
   with half the peak memory. Standard-fit coefficients move (gold C10 -17.756 -> -18.467 nm). The phase variance
-  stays the reported `loss`. The phase-variance search (`ssb/mps/loss.py`, its batch kernels and
-  `scripts/benchmark_ssb_mps_scaling.py`) is removed. CUDA's standard fit is unchanged.
+  stays the reported `loss`.
 - The detector calibration is an explicit step: `fit = data.calibration.fit_detector_sampling()` fits the
   bright-field disk of the mean pattern on the encoded data (`detector.fit_bright_field_disk`: centre, and the
   edge radius where the disk falls to half its plateau, at the convergence semiangle), records the detector step

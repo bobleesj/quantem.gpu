@@ -391,9 +391,10 @@ No native reference acquisitions exist for the other sizes on this host, so thos
 rows deterministically Fourier-crop or zero-pad the frozen prepared
 evidence. They are native-size kernel microscopes, not acquisition benchmarks.
 
-The harness was `scripts/benchmark_ssb_mps_scaling.py`, removed on 2026-10-20
-with the MPS phase-variance search it timed
-(`2026-10-20-ssb-standard-fit-objective.md`); the compact machine-readable signoff is
+The reproducible harness is
+[`scripts/benchmark_ssb_mps_scaling.py`](../../scripts/benchmark_ssb_mps_scaling.py)
+(the phase-variance search, `find_aberrations(tilt=False, objective="phase_variance")`),
+and the compact machine-readable signoff is
 [`ssb-mps-scaling-2026-08-01.json`](ssb-mps-scaling-2026-08-01.json).
 The harness records the full fit before repeated pair/parity probes. The
 production-engine thermal diagnostic ran 512 immediately after the long 1024

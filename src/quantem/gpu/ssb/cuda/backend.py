@@ -11,7 +11,7 @@ import numpy as np
 from quantem.gpu.detector.cuda.probe import mean_dp
 from quantem.gpu.optics.physics import wavelength_A_from_kV
 from quantem.gpu.detector import disk_edge_radius
-from quantem.gpu.ssb.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.contract import FitObjective, SSBExportState, SSBPrecision
 from quantem.gpu.ssb.cuda.brightfield import bright_field_spectra, select_bright_field
 from quantem.gpu.ssb.cuda.engine import SSBEngine
 from quantem.gpu.ssb.cuda.optimizer import batch_nelder_mead, batch_optimize, fit_sample
@@ -350,9 +350,12 @@ class CudaSSBBackend:
         refine_lock: list[str] | None,
         seed: int,
         verbose: bool,
+        objective: FitObjective,
     ) -> SSBResult:
-        """Run the shared exact optimization contract on CUDA."""
+        """Run the shared exact optimization contract on CUDA: the phase-variance standard fit, for now its only one."""
 
+        if objective != "phase_variance":
+            raise NotImplementedError("CUDA's standard fit (tilt=False) runs objective='phase_variance' only.")
         if aberrations is not None:
             self.aberrations = dict(aberrations)
         # Each call owns a new search record, including a zero-trial refinement.

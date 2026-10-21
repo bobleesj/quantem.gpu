@@ -256,8 +256,8 @@ def fit_sample_search(
     if not math.isfinite(fit) or fit <= 0:
         raise ValueError(
             "Joint tilt fitting found no positive finite model agreement. "
-            "Check scan sampling and signal in the fitting band; use ordinary "
-            "SSB (tilt=False) when tilt cannot be estimated."
+            "Check scan sampling and signal in the fitting band; use the "
+            "phase-variance search (tilt=False, objective='phase_variance') when it has none."
         )
     best["C12"], best["depth_spread_A"], best["phi12"] = abs(best["C12"]), abs(best["depth_spread_A"]), wrap_phi(best["phi12"])
     if fixed is not None:

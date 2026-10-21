@@ -73,6 +73,10 @@ class SSBResult(Mapping[str, float]):
         Backend stage timings in seconds when the operation records them.
     optimizer : dict[str, object]
         Numerical search/refinement device, precision, and Newton diagnostics.
+    objective : str | None
+        What ``find_aberrations`` optimized: ``"agreement"`` (the least-squares agreement of the SSB model with the
+        data, the default, with or without tilt) or ``"phase_variance"`` (the older SSB search); None for a result
+        that was not fitted.
     refinement : str | None
         Local refinement the fit applied after its search: ``"nelder-mead"``, ``"newton"``, or None for none (the
         resolved method, never ``"auto"``); None for a result that was not fitted.
@@ -126,6 +130,7 @@ class SSBResult(Mapping[str, float]):
     metadata: dict[str, object] = field(default_factory=dict)
     parameter_slices: dict[str, object] | None = None
     sample_agreement: float | None = None
+    objective: Literal["agreement", "phase_variance"] | None = None
 
     def __post_init__(self) -> None:
         # one representation of the physical angle, whatever turn count a caller or an engine gives
@@ -159,6 +164,8 @@ class SSBResult(Mapping[str, float]):
             lines.append(f"  Loss           {self.loss:.6f}")
         if self.num_bright_field_pixels is not None:
             lines.append(f"  BF pixels      {self.num_bright_field_pixels}")
+        if self.objective is not None:
+            lines.append(f"  Objective      {self.objective}")
         if self.num_trials is not None:
             lines.append(f"  Trials         {self.num_trials}")
         lines.append(f"  SSB rotation   {self.scan_detector_rotation_deg:.2f}°")
@@ -202,7 +209,8 @@ class SSBResult(Mapping[str, float]):
         return pd.DataFrame.from_records(rows).set_index("trial")
 
     def report(self):
-        """One-row table of the fitted parameters; ``pd.concat([a.report(), b.report()])`` compares fits side by side."""
+        """One-row table of the fitted parameters and the fit's ``objective``; ``pd.concat([a.report(), b.report()])``
+        compares fits side by side."""
         import pandas as pd
 
         if self.object_wave.ndim == 3:
@@ -222,6 +230,8 @@ class SSBResult(Mapping[str, float]):
             row.update({"tilt row (mrad)": self.sample_tilt_mrad[0],
                         "tilt col (mrad)": self.sample_tilt_mrad[1],
                         "depth spread (nm)": self.depth_spread_nm})
+        if self.objective is not None:
+            row["objective"] = self.objective
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         return pd.DataFrame([row], index=pd.Index([model], name="model")).round(3)
 

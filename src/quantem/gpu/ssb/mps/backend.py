@@ -10,7 +10,7 @@ import numpy as np
 
 from quantem.gpu.detector import mean as detector_mean
 from quantem.gpu.optics.physics import wavelength_A_from_kV
-from quantem.gpu.ssb.contract import SSBExportState, SSBPrecision
+from quantem.gpu.ssb.contract import FitObjective, SSBExportState, SSBPrecision
 from quantem.gpu.ssb.mps.frames import (
     MpsBfColumnFrames,
     MpsTensorFrames,
@@ -24,7 +24,7 @@ from quantem.gpu.ssb.mps.hardware import (
     require_mlx,
 )
 from quantem.gpu.ssb.mps.kernels.object_sum import object_fourier_sum_dynamic
-from quantem.gpu.ssb.mps.optimizer import fit_sample
+from quantem.gpu.ssb.mps.optimizer import fit_sample, optimize_phase_variance
 from quantem.gpu.ssb.mps.optimizer import optimize as optimize_mps
 from quantem.gpu.ssb.mps.padding import pad_scan
 from quantem.gpu.ssb.mps.prepared import (
@@ -145,12 +145,18 @@ class MpsSSBBackend:
         refine_lock: list[str] | None,
         seed: int,
         verbose: bool,
+        objective: FitObjective,
     ):
-        """Run the shared exact optimization contract on MPS/Metal, on this session's prepared evidence."""
+        """Run the standard fit (tilt=False) on MPS/Metal, on this session's prepared evidence.
+
+        ``objective="agreement"`` is the resident model-agreement search (``optimizer.optimize``),
+        ``"phase_variance"`` the older phase-variance search (``optimizer.optimize_phase_variance``).
+        """
 
         if self._prepared is None:
             self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
-        result, phase = optimize_mps(
+        search = {"agreement": optimize_mps, "phase_variance": optimize_phase_variance}[objective]
+        result, phase = search(
             self._prepared,
             self._selection,
             voltage_kV=self._voltage_kV,
