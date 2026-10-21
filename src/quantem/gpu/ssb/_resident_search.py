@@ -5,6 +5,12 @@ points, model scores, density ranking, finite differences, eigensolves and
 trust-region decisions remain on the selected GPU. Results are downloaded
 once for the public fit record. The search retains groups of eight, 24 TPE
 candidates, the startup budget, and three distinct Newton starts.
+
+Objective per backend: ``fit_resident`` (tilt=True) maximizes the
+least-squares agreement of the thick-sample SSB model with G(q, k) on CUDA and
+MPS. ``fit_standard_resident`` (tilt=False) is the same search and objective
+with the sample tilt and depth spread held at 0; MPS uses it, while CUDA's
+tilt=False still minimizes the phase variance (``cuda/optimizer.py``).
 """
 
 import math
@@ -487,6 +493,35 @@ store_real(out1,0,load_real(state,best*68+12)*load_real(scale,0));
 """
 
 
+# The standard fit (tilt=False) holds coordinates 3-5 (sample tilt and depth spread) at 0, as FIXED holds 0-2 in a
+# fixed-optics fit. Its kernels are derived from the joint fit's by these exact edits, not parameterized by another
+# flag, so the joint fit's generated source (MPS and CUDA) is unchanged; every edit must match exactly once.
+_STANDARD_EDITS = {
+    "header": [("free[d]=!(FIXED&&d<3);", "free[d]=d<3;")],
+    "design": [("int first=FIXED?3:0,n=6-first;", "int first=0,n=3;"),
+               ("for(int i=first;i<6;i++)for(int j=i+1;j<6;j++)", "for(int i=0;i<3;i++)for(int j=i+1;j<3;j++)")],
+    "update": [("int offset=0,first=FIXED?3:0,n=6-first;", "int offset=0,first=0,n=3;"),
+               ("for(int d=first;d<6;d++){\n            plus[d]", "for(int d=0;d<3;d++){\n            plus[d]"),
+               ("for(int i=first;i<6;i++)for(int j=i+1;j<6;j++){", "for(int i=0;i<3;i++)for(int j=i+1;j<3;j++){"),
+               ("proposal[d]=FIXED&&d<3?center[d]:", "proposal[d]=d>=3?center[d]:"),
+               ("bool converged=true;for(int d=first;d<6;d++)", "bool converged=true;for(int d=0;d<3;d++)"),
+               ("for(int d=first;d<6;d++){\n        if(abs_r(all[k*68+6+d]", "for(int d=0;d<3;d++){\n        if(abs_r(all[k*68+6+d]")],
+}
+
+
+def _standard_source(source: str, part: str) -> str:
+    for old, new in _STANDARD_EDITS[part]:
+        if source.count(old) != 1:
+            raise RuntimeError(f"The standard-fit Newton edit {old!r} no longer matches the joint kernel once.")
+        source = source.replace(old, new)
+    return source
+
+
+STANDARD_NEWTON_HEADER = _standard_source(NEWTON_HEADER, "header")
+STANDARD_DESIGN_BODY = _standard_source(DESIGN_BODY, "design")
+STANDARD_UPDATE_NEWTON_BODY = _standard_source(UPDATE_NEWTON_BODY, "update")
+
+
 def _rank(device, scores):
     return device.run(
         "ssb_joint_rank",
@@ -589,18 +624,22 @@ def _search(device, evaluate, bounds, trials, seed, *, fixed=False, thin=False):
     return _decode(device, history, bounds), scores
 
 
-def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=False):
+def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=False, standard=False):
     starts = min(3, int(starts))
+    header = STANDARD_NEWTON_HEADER if standard else NEWTON_HEADER
+    design_body = STANDARD_DESIGN_BODY if standard else DESIGN_BODY
+    update_body = STANDARD_UPDATE_NEWTON_BODY if standard else UPDATE_NEWTON_BODY
+    prefix = "ssb_standard" if standard else "ssb_joint"
     ranks = _rank(device, scores)
     count = len(points)
     flags = f"\n#define STARTS {starts}\n#define COUNT {count}\n#define FIXED {int(fixed)}\n#define HAS_START {int(start is not None)}\n"
     initial = device.pack([0.0] * 6 if start is None else start)
     state, plan = device.run(
-        "ssb_joint_newton_init",
+        f"{prefix}_newton_init",
         {"points": points, "scores": scores, "ranks": ranks, "start": initial},
         [(starts, 68, 3), (starts * 2,)],
         INIT_NEWTON_BODY,
-        constants=flags + NEWTON_HEADER,
+        constants=flags + header,
     )
     scale = device.run(
         "ssb_joint_scale",
@@ -618,7 +657,7 @@ def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=Fa
         active = [i for i in range(starts) if metadata[i] > 0]
         if not active:
             break
-        n = 3 if fixed else 6
+        n = 3 if fixed or standard else 6
         sizes = [
             1 + 2 * n + (n * (n - 1) // 2 if metadata[starts + i] > 0 else 0)
             for i in active
@@ -627,19 +666,19 @@ def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=Fa
         total = sum(sizes)
         constants = (
             f"\n#define FIXED {int(fixed)}\n#define STARTS {starts}\n#define ACTIVE {len(active)}\n#define COUNT {total}\n#define ITERATION {iteration}\n"
-            + NEWTON_HEADER
+            + header
         )
         design = device.run(
-            "ssb_joint_newton_design",
+            f"{prefix}_newton_design",
             {"state": state, "plan": dispatch},
             [(total, 6, 3)],
-            DESIGN_BODY,
+            design_body,
             count=total,
             constants=constants,
         )[0]
         values = evaluate(_trial(device, design))
         state, plan = device.run(
-            "ssb_joint_newton_update",
+            f"{prefix}_newton_update",
             {
                 "state": state,
                 "plan": dispatch,
@@ -648,15 +687,15 @@ def _newton(device, evaluate, points, scores, bounds, *, start, starts, fixed=Fa
                 "bounds": bounds,
             },
             [(starts, 68, 3), (starts * 2,)],
-            UPDATE_NEWTON_BODY,
+            update_body,
             constants=constants,
         )
     point, value = device.run(
-        "ssb_joint_newton_result",
+        f"{prefix}_newton_result",
         {"state": state, "scale": scale},
         [(1, 6, 3), (1, 3)],
         FINAL_NEWTON_BODY,
-        constants=flags + NEWTON_HEADER,
+        constants=flags + header,
     )
     device.sync(point, value, state)
     return point, value, state
@@ -841,6 +880,123 @@ def fit_resident(
         },
     }
 
+
+def fit_standard_resident(
+    evaluate,
+    *,
+    backend: str,
+    lower: tuple[float, float, float],
+    upper: tuple[float, float, float],
+    trials: int = 200,
+    seed: int = 42,
+    polish: str | None = "newton",
+    lock: tuple[int, ...] = (),
+    start=None,
+    polish_starts: int = 3,
+) -> dict[str, object]:
+    """Standard SSB fit (tilt=False): the joint fit's search and objective with sample tilt and depth spread at 0.
+
+    ``lower`` and ``upper`` bound (C10, C12, phi12) in engine units (Angstrom, Angstrom, rad); a coefficient with
+    ``lower == upper`` is held at that value in every trial. The search is the resident multivariate TPE of the
+    joint fit's standard comparison (``_search(thin=True)``, 10 startup trials). ``polish``:
+
+    - ``"newton"``: the resident trust-region Newton from the best ``polish_starts`` distinct trials (and ``start``),
+      on (C10, C12 cos 2 phi12, C12 sin 2 phi12). It keeps C10 in its range and C12 below its maximum, so it needs
+      a C12 range from 0 and the full phi12 period, and no ``lock``;
+    - ``"nelder-mead"``: bounded SciPy Nelder-Mead from the same starts, the starts' simplices evaluated together.
+      ``lock`` (indices into (C10, C12, phi12)) holds those coefficients at the best trial's values; phi12 wraps
+      when its range is the whole period;
+    - ``None``: the best trial (or ``start``) as is.
+
+    ``trials=0`` polishes from ``start`` alone. Returns the fitted point, its agreement and the trial records.
+    """
+    from quantem.gpu.ssb.batch_refinement import _minimize_batch
+
+    if trials < 0:
+        raise ValueError("trials must be non-negative; use 200 for a complete standard search.")
+    if trials == 0 and start is None:
+        raise ValueError("Zero-trial refinement needs a start point.")
+    if polish not in ("newton", "nelder-mead", None):
+        raise ValueError("A standard fit polishes with 'newton', 'nelder-mead' or None.")
+    full_period = lower[2] <= -math.pi / 2 + 1e-9 and upper[2] >= math.pi / 2 - 1e-9
+    if polish == "newton" and (lock or lower[1] != 0.0 or not full_period):
+        raise ValueError("Newton refinement bounds C10 and the C12 maximum only; use 'nelder-mead' to lock a "
+                         "coefficient, bound phi12 or hold a nonzero C12.")
+    device = _Device(backend)
+    bounds = device.pack(list(lower) + [0.0, 0.0, 0.0] + list(upper) + [0.0, 0.0, 0.0])
+    timings = {}
+    begin = time.perf_counter()
+    if trials:
+        points, scores = _search(device, evaluate, bounds, int(trials), int(seed), thin=True)
+    else:
+        points = device.pack([[*start[:3], 0.0, 0.0, 0.0]])
+        scores = evaluate(_trial(device, points))
+        device.sync(scores)
+    timings["coarse_search_s"] = time.perf_counter() - begin
+    begin = time.perf_counter()
+    host_points = device.host(points)[:, :3]
+    host_scores = device.host(scores)
+    order = np.argsort(-host_scores, kind="stable")
+    nfev = 0
+    if polish == "newton" and polish_starts:
+        point, value, state = _newton(device, evaluate, points, scores, bounds,
+                                      start=None if start is None or not trials else [*start[:3], 0.0, 0.0, 0.0],
+                                      starts=polish_starts, standard=True)
+        best = device.host(point)[0, :3]
+        fit = float(device.host(value)[0])
+        nfev = int(sum(row[60] for row in device.host(state) if row[58] > 0))
+    elif polish == "nelder-mead" and polish_starts:
+        candidates = ([np.asarray(start[:3], dtype=np.float64)] if start is not None and trials else []) + [
+            host_points[index] for index in order]
+        starts: list[np.ndarray] = []
+        for candidate in candidates:
+            if len(starts) >= polish_starts:
+                break
+            if all(np.max(np.abs(candidate - kept) / np.array([50.0, 20.0, 0.3])) > 1.0 for kept in starts):
+                starts.append(np.array(candidate, dtype=np.float64))
+        held = host_points[order[0]] if trials else np.asarray(start[:3], dtype=np.float64)
+        free = [index for index in range(3) if index not in lock]
+        for kept in starts:
+            kept[list(lock)] = held[list(lock)]
+        scale = max(abs(float(host_scores[order[0]])), 1e-30)
+        if not free:
+            best, fit = starts[0], float(host_scores[order[0]])
+        else:
+            def rows(free_points):
+                full = np.tile(starts[0], (len(free_points), 1))
+                full[:, free] = free_points
+                full[:, 1] = np.abs(full[:, 1])
+                if full_period:
+                    full[:, 2] = (full[:, 2] + math.pi / 2) % math.pi - math.pi / 2
+                return full
+
+            def objective(free_points):
+                full = rows(np.asarray(free_points, dtype=np.float64))
+                packed = device.pack(np.concatenate((full, np.zeros((len(full), 3))), axis=1))
+                return -device.host(evaluate(_trial(device, packed))) / scale
+
+            box = [(lower[0], upper[0]), (lower[1], upper[1]), (None, None) if full_period else (lower[2], upper[2])]
+            polished = _minimize_batch(objective, [kept[free] for kept in starts], bounds=[box[i] for i in free],
+                                       options={"xatol": 0.05, "fatol": 1e-6, "maxiter": 400})
+            outcome = min(polished, key=lambda result: result.fun)
+            best, fit = rows(outcome.x[None])[0], float(-outcome.fun) * scale
+            nfev = int(sum(result.nfev for result in polished))
+    else:
+        best, fit = host_points[order[0]], float(host_scores[order[0]])
+    timings["refinement_s"] = time.perf_counter() - begin
+    if not math.isfinite(fit) or fit <= 0:
+        raise ValueError("The standard SSB fit found no positive finite model agreement. Check the scan sampling and "
+                         "the signal in the fitting band.")
+    best = np.asarray(best, dtype=np.float64)
+    best[1] = abs(best[1])
+    best[2] = (best[2] + math.pi / 2) % math.pi - math.pi / 2
+    records = [{"number": i, "params": {"C10": float(row[0]), "C12": float(row[1]), "phi12": float(row[2])},
+                "loss": -float(score)} for i, (row, score) in enumerate(zip(host_points, host_scores, strict=True))
+               ] if trials else []
+    return {"C10": float(best[0]), "C12": float(best[1]), "phi12": float(best[2]), "fit": fit, "trials": int(trials),
+            "trial_records": records, "timings": timings, "nfev": nfev,
+            "optimizer": {"search": "resident multivariate TPE", "refinement": polish if polish_starts else None,
+                          "device": backend, "objective": "agreement, depth spread 0"}}
 
 # Probability components are independent work. Expose them as GPU threads
 # instead of serially evaluating every mixture component within a candidate.

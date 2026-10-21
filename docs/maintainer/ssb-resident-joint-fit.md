@@ -35,8 +35,11 @@ configuration and dispatches kernels; active-start/design-size flags may return
 for scheduling. Completed fit records return for display and persistence.
 `SSBResult.optimizer` records the execution device, numerical precision, and
 per-start iteration/evaluation counts; `timings` records search and refinement
-separately. Explicit legacy Nelder–Mead and standard phase-variance fitting are
-separate paths; this residency contract applies to joint Newton fitting.
+separately. Explicit legacy Nelder–Mead and CUDA's standard phase-variance
+fitting are separate paths. The MPS standard fit (`fit_standard_resident`) is
+this search and Newton with the sample tilt and depth spread held at 0; its
+Newton kernels are derived from the joint ones by fixed text edits, so the
+joint fit's generated source is unchanged on both backends.
 
 ## Numerical policy
 

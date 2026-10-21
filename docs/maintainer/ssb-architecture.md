@@ -34,8 +34,13 @@ Backend geometry and browser transport use private typed records such as
 `BrightfieldDisk` and `SSBExportState`. They are integration details and are
 not exported from `quantem.gpu` or `quantem.gpu.ssb`.
 
-The scientific defaults are 200 trials, exact full-BF phase-variance loss,
-Nelder-Mead refinement, float32 real values, and complex64 object values. A
+The scientific defaults are 200 trials, the least-squares agreement of the SSB
+model with the full-BF evidence (the joint tilt fit by default; the MPS
+standard fit, `tilt=False`, holds the sample tilt and depth spread at 0), Newton
+refinement, float32 real values, and complex64 object values. CUDA's standard
+fit still minimizes the full-BF phase variance with Nelder-Mead. The phase
+variance is the reported diagnostic `result.loss` everywhere
+(`2026-10-20-ssb-standard-fit-objective.md`). A
 backend may reject a job it cannot execute, but may not switch to CPU, crop or
 subsample the BF evidence, quantize values, or change the objective silently.
 
@@ -55,7 +60,9 @@ The same call does not return the same phase image on CUDA and MPS:
 - `reconstruct(..., upsampling_factor=...)` above 1 is CUDA only;
 - the bright-field disk is selected by the same rule with different rounding
   (CUDA device float32, MPS host float32), so edge pixels can differ; and
-- the Nelder-Mead tolerances and the loss reduction order differ.
+- the standard fit's objective differs: agreement at depth 0 on MPS, phase
+  variance on CUDA; and the Nelder-Mead tolerances and the loss reduction order
+  differ.
 
 Each result records its backend, estimator and output factor
 (`result.phase_estimator`, `result.upsampling_factor`).

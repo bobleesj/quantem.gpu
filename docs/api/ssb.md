@@ -133,9 +133,12 @@ Dense CUDA arrays larger than 1024 along either axis are unsupported. Use the
 encoded acquisition for the bounded-memory large-scan workflow below.
 Computational padding is separate from `reconstruct(..., upsampling_factor=2)`.
 
-The default fit evaluates 200 seeded TPE candidates with the exact full active
-bright-field phase-variance objective, chooses the minimum loss, and performs
-Nelder–Mead refinement. It does not average optimizer candidates.
+The default fit evaluates 200 seeded TPE candidates of the least-squares
+agreement of the SSB model with the full active bright field, keeps the best,
+and refines it with Newton steps. On MPS the standard fit (`tilt=False`) runs
+the same search with the sample tilt and depth spread held at 0; on CUDA it
+minimizes the phase variance with Nelder–Mead. It does not average optimizer
+candidates.
 
 This is the implemented calibration workflow; Levenberg–Marquardt is not an
 available refinement mode. The browser SSB engine has no aberration search:
@@ -305,8 +308,9 @@ scale bars and a parameter table. They are reconstructed at
 `upsampling_factor="auto"` by default (the title names the factor); the search
 losses in the table are native-grid values. Trials are replayed from their
 recorded settings rather than stored as a large image stack. Browsing preserves the
-active reconstruction. `best` ranks the latest search only; losses from the
-standard phase-variance objective and the joint tilt objective are not mixed.
+active reconstruction. `best` ranks the latest search only; losses from
+different objectives (CUDA's standard phase-variance search and the agreement
+searches) are not mixed.
 The trial table explicitly names the objective. Local refinement is separate
 from the search trials and its final result appears in `report()`.
 
@@ -427,8 +431,8 @@ branch is chosen in two steps:
 One line says which branch was kept and why, for example
 `SSB: kept 339.4°: atomic columns positive (z +10.8, effect +0.70, 75% of 241 columns); 159.4° negative.`
 The comparison costs a second full search: two joint fits took 9 to 25 s in
-all on 512 × 512 scans on an M-series Mac, two standard fits (`tilt=False`)
-about 2 × 26 s.
+all on 512 × 512 scans on an M-series Mac, two MPS standard fits
+(`tilt=False`) 3 to 10 s.
 
 ```python
 branches = ssb.compare_rotation_branches()  # both fits; the session ends on the kept one

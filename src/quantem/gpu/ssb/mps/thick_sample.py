@@ -399,21 +399,29 @@ _THICK_FIT_BATCH_SOURCE = """
             float c2 = trial[(base + b) * 7 + 2], s2 = trial[(base + b) * 7 + 3];
             float t = trial[(base + b) * 7 + 4], thr = trial[(base + b) * 7 + 5], thc = trial[(base + b) * 7 + 6];
             float chi_k = probe_chi[k * TOTAL + base + b];
-            float shift = 6.283185307179586f * (qx * thr + qy * thc);
             // A zero aperture contributes exactly zero. Retain precise range
             // reduction for each active side, including soft aperture edges.
             float b1 = 0.0f, b2 = 0.0f, c1 = 0.0f, cp = 0.0f, s1 = 0.0f, sp = 0.0f;
+            // Depth spread 0 is standard SSB: both depth weights are exactly 1 (tf_sinc(0) = 1), so the sinc and
+            // the tilt shift, which only enters the sinc, are skipped.
+            bool thick = t != 0.0f;
             if (a1 != 0.0f) {
                 float chi_m = factor * gm.x * (C12 * (gm.y * c2 + gm.z * s2) + C10);
-                float w1 = tf_sinc(0.5f * t * (-factor * (gm.x - gk.x) - shift));
                 s1 = metal::precise::sincos(chi_m - chi_k, c1);
-                b1 = w1 * a1;
+                b1 = a1;
+                if (thick) {
+                    float shift = 6.283185307179586f * (qx * thr + qy * thc);
+                    b1 = tf_sinc(0.5f * t * (-factor * (gm.x - gk.x) - shift)) * a1;
+                }
             }
             if (a2 != 0.0f) {
                 float chi_p = factor * gp.x * (C12 * (gp.y * c2 + gp.z * s2) + C10);
-                float w2 = tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift));
                 sp = metal::precise::sincos(chi_p - chi_k, cp);
-                b2 = w2 * a2;
+                b2 = a2;
+                if (thick) {
+                    float shift = 6.283185307179586f * (qx * thr + qy * thc);
+                    b2 = tf_sinc(0.5f * t * (factor * (gp.x - gk.x) - shift)) * a2;
+                }
             }
             float gr = b1 * c1 - b2 * cp;
             float gi = -b1 * s1 - b2 * sp;

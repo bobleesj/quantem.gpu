@@ -142,6 +142,8 @@ parts:
         title: MPS memory per SSB stage (2026-10-20)
       - file: maintainer/2026-10-20-mps-ssb-separable-coherent
         title: Separable C10/C12 coherent SSB on Metal (2026-10-20)
+      - file: maintainer/2026-10-20-ssb-standard-fit-objective
+        title: MPS standard SSB fit on the agreement objective (2026-10-20)
       - file: maintainer/2026-10-15-cuda-batched-refinement
         title: CUDA refinement batching (2026-10-15)
       - file: maintainer/2026-09-11-ssb-performance-checkpoints
