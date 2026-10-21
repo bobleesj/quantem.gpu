@@ -95,7 +95,8 @@ def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp
     np.testing.assert_array_equal(_host(checked.phase), _host(direct.phase))
     assert _correlation(branches.branches[0].phase, -_host(direct.phase)) > 0.99
     figure = checked.show("rotation")
-    assert figure.axes[0].get_yscale() == "log"
+    # the phase-tail panel (log axis) sits below the two branch phases
+    assert any(axis.get_yscale() == "log" for axis in figure.axes)
 
     from quantem.gpu.ssb.persistence import load_result, result_paths, save_result
 

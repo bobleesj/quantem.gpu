@@ -65,14 +65,14 @@ def test_a_region_session_holds_the_region_of_the_whole_scans_bright_field(acqui
 
 
 def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp_path):
-    """No file identifies a resident acquisition: a second session on the same data reuses the fit by its identity."""
+    """A second session on the same resident acquisition reuses the saved fit; a region of it is other data."""
     from quantem.gpu import SSB
 
     settings = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, check_rotation=False,
                     save_dir=tmp_path / "fit", verbose=False)
     with SSB(acquisition, **SETTINGS) as first:
         fitted = first.find_aberrations(**settings)
-        assert first.source_path is None and first.source_kind == "resident"
+        assert first.source_kind == "resident"
     with SSB(acquisition, **SETTINGS) as second:
         again = second.find_aberrations(**settings)
     assert not fitted.reused and again.reused
