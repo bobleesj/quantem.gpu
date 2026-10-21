@@ -375,6 +375,22 @@ class MpsSSBBackend:
             )
         return agreement
 
+    def higher_order_agreement(self, rows: np.ndarray, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
+        """The joint objective with higher-order aberrations (``higher_order_agreement.agreement_batch``) per row."""
+        from quantem.gpu.ssb.mps.higher_order_agreement import agreement_batch
+
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        return agreement_batch(self._prepared, rows, band_inv_A)
+
+    def band_power(self, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> dict[str, float]:
+        """G's power over the agreement band and its Poisson noise variance (``higher_order_agreement.band_power``)."""
+        from quantem.gpu.ssb.mps.higher_order_agreement import band_power
+
+        if self._prepared is None:
+            self.cache_rotation(math.radians(self._scan_detector_rotation_deg))
+        return band_power(self._prepared, band_inv_A)
+
     def release_cache(self) -> None:
         """Return MLX's cached, unused Metal buffers to the system; the prepared G(q, k) stays."""
         require_mlx().clear_cache()

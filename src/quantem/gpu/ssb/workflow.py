@@ -7,7 +7,7 @@ device preparation and kernels, but they do not define a second user API.
 import hashlib
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import replace
 from functools import wraps
@@ -33,9 +33,16 @@ from quantem.gpu.ssb._execution import cancellation_scope
 from quantem.gpu.ssb.branches import DARK_FIELD_INNER_RADIUS, RotationBranches, compare_branches
 from quantem.gpu.ssb.brightfield import bright_field_crop_region, crop_bright_field
 from quantem.gpu.ssb.contract import FitObjective, RefineMethod, SSBProtocol
+from quantem.gpu.ssb.higher_order_fit import (
+    assess,
+    from_coordinates,
+    refine_higher_order,
+    to_coordinates,
+    validate_terms,
+)
 from quantem.gpu.ssb.mps.backend import MpsSSBBackend
 from quantem.gpu.ssb.mps.frames import EncodedBrightFieldCrop, MpsBfColumnFrames, find_bf_columns
-from quantem.gpu.ssb.mps.optimizer import newton_supported
+from quantem.gpu.ssb.mps.optimizer import newton_supported, standard_bounds
 from quantem.gpu.ssb.mps.reconstruct import fit_loss_tiles
 from quantem.gpu.ssb.persistence import (
     RESULT_SCHEMA,
@@ -66,6 +73,14 @@ from quantem.gpu.ssb.units import (
     search_ranges_to_engine,
     validate_aberrations,
 )
+
+
+def _counted_electrons(dtype: str | None) -> bool:
+    """Whether the session's source holds integer detector counts (electrons), whose noise is Poisson."""
+    try:
+        return dtype is not None and np.dtype(str(dtype).removeprefix("torch.")).kind in "iu"
+    except TypeError:
+        return False
 
 
 def _default_phase_estimator(aberrations: dict[str, float]) -> str:
@@ -1730,6 +1745,7 @@ class SSB:
         refine_rotation: bool = False,
         compute_loss: bool = True,
         num_trials: int | None = None,
+        higher_order: Sequence[str] | None = None,
     ) -> SSBResult:
         """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
 
@@ -1848,6 +1864,24 @@ class SSB:
         recomputed: a source path does not identify an array's crop or mutations.
         Zero trials start from the current session coefficients: the standard search refines them, and ``tilt=True``
         refines them with the session's sample tilt and depth spread.
+
+        ``higher_order=("C21", "C23", "C30")`` also fits coma (``C21_nm``, ``phi21_deg``), trefoil (``C23_nm``,
+        ``phi23_deg``) and spherical aberration (``C30_nm``), any subset, with the same model agreement: after the
+        fit above (both branches, rotation refinement), one Newton polish from it moves the higher orders together
+        with C10, C12, phi12 and, with ``tilt=True``, the sample tilt and depth spread. Coma and trefoil are not
+        confused with the sample tilt (correlations below 0.25 on simulated tilted crystals); C30 is strongly
+        correlated with C10 (about -0.9), and fitting it moves C10. The result's ``aberrations`` hold the fitted
+        terms, so ``reconstruct(result)`` applies them. They are the probe's aberrations only where the SSB model
+        holds: on simulated crystals they matched the truth to a few percent for a light-element crystal up to
+        8 nm and for SrTiO3 up to about 1 nm; thicker or heavier crystals returned terms that fit dynamical
+        scattering instead (docs/maintainer/2026-10-21-ssb-higher-order-fit.md). ``result.optimizer["higher_order"]``
+        says whether they can be read as the probe's (``trusted``, and the numbers in ``guard``): the fitted model must
+        explain at least 90 % of G's signal power over the fit band (``coherence``; simulated thick crystals without
+        these aberrations reached at most 0.80 where their fit returned spurious terms), and each term's standard
+        error, from the agreement's curvature and the Poisson noise of counted electrons, may move the probe phase at
+        the aperture edge by at most 0.1 rad. An untrusted fit prints why and keeps the terms. One Newton polish after the fit: about 0.2 s on a
+        64 x 64 scan, 5 to 7 s on a 512 x 512 scan with 8,807 bright-field pixels. MPS and CUDA; the agreement
+        objective only, and not with ``fixed_aberrations``.
         """
 
         return self._find_aberrations(
@@ -1856,7 +1890,7 @@ class SSB:
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
             compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
-            refine_rotation=refine_rotation, compute_loss=compute_loss)
+            refine_rotation=refine_rotation, compute_loss=compute_loss, higher_order=higher_order)
 
     @_on_scan_gpu
     def compare_rotation_defocus(
@@ -2017,6 +2051,7 @@ class SSB:
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
         compute_loss: bool = True,
+        higher_order: Sequence[str] | None = None,
     ) -> SSBResult:
         """``find_aberrations`` with the 180-degree branch handling explicit.
 
@@ -2039,6 +2074,14 @@ class SSB:
                 "check_rotation=False).")
         if num_trials < 0:
             raise ValueError(f"trials must be non-negative, got {num_trials}.")
+        higher_order = validate_terms(higher_order)
+        if higher_order:
+            if objective != "agreement":
+                raise ValueError("higher_order fits coma, trefoil and C30 with the model agreement; it does not combine "
+                                 "with objective='phase_variance'.")
+            if fixed_aberrations is not None or refine_lock is not None:
+                raise ValueError("higher_order refines C10, C12 and phi12 together with the higher orders; it does not "
+                                 "combine with fixed_aberrations or refine_lock.")
         if tilt and int(num_trials) == 0 and (self.sample_tilt_mrad is None or self.depth_spread_nm is None):
             raise ValueError(
                 "find_aberrations(tilt=True, trials=0) refines from the session's aberrations, sample_tilt_mrad and "
@@ -2105,6 +2148,7 @@ class SSB:
                     **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else
                        {"fixed_aberrations": requested["fixed_aberrations"]} if requested["fixed_aberrations"] else {}),
                     **({"refine_rotation": True} if refine_rotation else {}),
+                    **({"higher_order": list(higher_order)} if higher_order else {}),
                 },
             )
             if not force and self.source_kind != "array":
@@ -2185,7 +2229,7 @@ class SSB:
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
                     fixed_aberrations=(fixed_aberrations if fixed_aberrations is not None else
                                        requested["fixed_aberrations"] if tilt else None),
-                    refine_rotation=refine_rotation, compute_loss=compute_loss,
+                    refine_rotation=refine_rotation, compute_loss=compute_loss, higher_order=higher_order,
                 )
                 if result.rotation_branches is not None:
                     # the branch panels need the region's G(q, k), which closes with the region session
@@ -2245,6 +2289,15 @@ class SSB:
             if refine_rotation:
                 result = self._refine_rotation(result, fit, keep=branches == "keep",
                                                measure_gain=tilt and refinement == "newton", verbose=verbose)
+            if higher_order:
+                if tilt:
+                    limits = {key: value for key, value in tilt_bounds.items() if key in ("c10_range", "c12_max")}
+                else:
+                    # the standard search box (C10 +-40 nm, C12 0 to 10 nm unless search_ranges bounds them)
+                    low, high = standard_bounds(search_ranges_to_engine(search_ranges))
+                    limits = {"c10_range": (low[0], high[0]), "c12_max": high[1]}
+                result = self._fit_higher_order(result, higher_order, tilt=tilt, limits=limits,
+                                                tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose)
         if not compute_loss:
             result.loss = None
             self.best_loss = float("inf")
@@ -2811,6 +2864,63 @@ class SSB:
                          elapsed_s=time.perf_counter() - started, num_trials=trials, num_bright_field_pixels=self.num_bright_field_pixels,
                          refinement=refinement, voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
                          object_sampling_A=self.scan_sampling_A)
+
+    def _fit_higher_order(self, result: SSBResult, terms: tuple[str, ...], *, tilt: bool,
+                          limits: dict[str, object], tilt_limit_mrad: float, verbose: bool) -> SSBResult:
+        """Polish a finished fit with the higher-order ``terms`` free (``higher_order_fit.refine_higher_order``).
+
+        Starts from ``result`` with the terms at 0, at its rotation, inside the fit's C10 range and C12 maximum
+        (``limits``). ``tilt=False`` holds the tilt and depth spread at 0. Returns a new result at the polished point with its native phase and loss, carrying the fit's
+        rotation evidence and trials.
+        """
+        started = time.perf_counter()
+        backend = self._backend()
+        engine = aberrations_to_engine(result.aberrations)
+        sample_tilt = result.sample_tilt_mrad or (0.0, 0.0)
+        depth_A = (result.depth_spread_nm or 0.0) * ENGINE_PER_NM
+        start = to_coordinates(engine["C10"], engine["C12"], engine["phi12"], sample_tilt, depth_A, {}, terms)
+        fit = refine_higher_order(backend.higher_order_agreement, start, terms, tilt=tilt,
+                                  tilt_limit_mrad=tilt_limit_mrad, **limits)
+        guard = assess(fit, terms, backend.band_power(), counted=_counted_electrons(self.source_dtype),
+                       wavelength_A=float(wavelength_A_from_kV(self.voltage_kV)),
+                       semiangle_rad=float(self.semiangle_mrad) * 1e-3)
+        values = from_coordinates(fit["z"], terms)
+        aberrations = {"C10_nm": values["C10"] / ENGINE_PER_NM, "C12_nm": values["C12"] / ENGINE_PER_NM,
+                       "phi12_deg": math.degrees(values["phi12"])}
+        for name in terms:
+            aberrations[f"{name}_nm"] = values[name] / ENGINE_PER_NM
+            if name[2] != "0":
+                aberrations[f"phi{name[1:]}_deg"] = math.degrees(values[f"phi{name[1:]}"])
+        if tilt:
+            sample_tilt_mrad = (values["tilt_row_mrad"], values["tilt_col_mrad"])
+            depth_spread_nm = values["depth_spread_A"] / ENGINE_PER_NM
+        else:
+            sample_tilt_mrad, depth_spread_nm = result.sample_tilt_mrad, result.depth_spread_nm
+        refined_s = time.perf_counter() - started
+        phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad or (0.0, 0.0),
+                                  depth_spread_nm=depth_spread_nm or 0.0, phase_estimator="mean_phase")
+        record = {"terms": list(terms), "start_agreement": float(fit["start_agreement"]),
+                  "agreement": float(fit["agreement"]), "evaluations": int(fit["evaluations"]),
+                  "passes": int(fit["passes"]), "converged": bool(fit["converged"]), "seconds": refined_s,
+                  "trusted": guard["trusted"], "guard": guard}
+        refined = replace(
+            result, object_wave=self._unit_wave(phase), aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
+            depth_spread_nm=depth_spread_nm, loss=None if loss is None else float(loss),
+            sample_agreement=float(fit["agreement"]) if tilt else result.sample_agreement,
+            timings={**result.timings, "higher_order_s": time.perf_counter() - started},
+            optimizer={**result.optimizer, "higher_order": record},
+            elapsed_s=None if result.elapsed_s is None else result.elapsed_s + (time.perf_counter() - started),
+        )
+        if verbose:
+            gain = record["agreement"] / record["start_agreement"]
+            fitted = ", ".join(f"{name} {aberrations[f'{name}_nm']:.1f} nm" for name in terms)
+            print(f"SSB: higher orders {fitted}; agreement x{gain:.3f}, coherence {guard['coherence']:.2f}, "
+                  f"{record['evaluations']} evaluations in {refined_s:.2f} s.")
+        if not guard["trusted"]:
+            # announced whatever verbose says: the result keeps the terms, but they are fit parameters
+            print("SSB: the fitted higher orders are not the probe's aberrations here: " + "; ".join(guard["reasons"])
+                  + ". They stay in result.aberrations; optimizer['higher_order']['guard'] has the numbers.")
+        return self._finish_fit(refined)
 
     def _unit_wave(self, phase):
         """The unit-amplitude wave exp(i phase) of a phase-only reconstruction, on the session's device."""

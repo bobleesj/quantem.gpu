@@ -153,6 +153,8 @@ parts:
         title: CUDA standard SSB fit on the agreement objective (2026-10-20)
       - file: maintainer/2026-10-20-ssb-cuda-tilt-speed
         title: Tilt-corrected SSB on CUDA, fit and preview speed (2026-10-20)
+      - file: maintainer/2026-10-21-ssb-higher-order-fit
+        title: Coma, trefoil and C30 in the model-based SSB fit (2026-10-21)
       - file: maintainer/2026-10-20-mps-tilt-speed
         title: Tilt-corrected SSB on Metal, preview and fit speed (2026-10-20)
       - file: maintainer/2026-10-15-cuda-batched-refinement

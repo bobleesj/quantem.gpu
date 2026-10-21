@@ -675,6 +675,12 @@ def _format_aberrations(aberrations: dict) -> str:
         lines.append(f"  Astigmatism    {aberrations['C12_nm']:.1f} nm")
     if "phi12_deg" in aberrations:
         lines.append(f"  Astig. angle   {aberrations['phi12_deg']:.1f}°")
+    for name, label in (("C21", "Coma (C21)"), ("C23", "Trefoil (C23)")):
+        if f"{name}_nm" in aberrations:
+            lines.append(f"  {label:14s} {aberrations[f'{name}_nm']:.1f} nm at "
+                         f"{aberrations.get(f'phi{name[1:]}_deg', 0.0):.1f}°")
+    if "C30_nm" in aberrations:
+        lines.append(f"  Spherical (C30) {aberrations['C30_nm'] / 1000:.2f} µm")
     return "\n".join(lines)
 
 
