@@ -1285,6 +1285,50 @@ class SSB:
                                 else float("nan"))
         result.timings["standard_comparison_s"] = time.perf_counter() - started
 
+    def _refine_rotation(self, kept: SSBResult, fit: Callable[[int], SSBResult], *, keep: bool, measure_gain: bool,
+                         verbose: bool) -> SSBResult:
+        """``find_aberrations(refine_rotation=True)``: refine an estimated rotation around ``kept`` (rotation_refinement.py).
+
+        Each angle is one polish, ``fit(0)`` from the nearest angle's fit, after ``set_rotation`` (G(q, k) is not
+        rebuilt). The polishes skip the standard comparison; a kept ``tilt_fit_gain`` is measured again at the
+        refined angle. A given or recorded rotation (or ``apply=False``) is left as it is.
+        """
+        from quantem.gpu.ssb.rotation_refinement import refine_rotation, refinement_summary
+
+        if self.scan_detector_rotation_source != "estimated" or keep:
+            if verbose:
+                why = "kept (apply=False)" if keep else {"metadata": "recorded with the acquisition"}.get(
+                    self.scan_detector_rotation_source, self.scan_detector_rotation_source)
+                print(f"SSB: rotation {kept.scan_detector_rotation_deg:.2f}° is {why}; refine_rotation leaves it as it is.")
+            return kept
+
+        def polish(rotation_deg: float, start: SSBResult) -> SSBResult:
+            self.aberrations = dict(start.aberrations)
+            self.sample_tilt_mrad, self.depth_spread_nm = start.sample_tilt_mrad, start.depth_spread_nm
+            self.set_rotation(rotation_deg)
+            return fit(0)
+
+        compare_standard, self._compare_standard = self._compare_standard, False
+        try:
+            refined, record = refine_rotation(kept, polish)
+        finally:
+            self._compare_standard = compare_standard
+        if refined is not kept:
+            refined.trial_records, refined.rotation_branches = kept.trial_records, kept.rotation_branches
+            refined.num_trials = kept.num_trials
+            if kept.elapsed_s is not None:
+                refined.elapsed_s = kept.elapsed_s + record["seconds"]
+            self.set_rotation(refined.scan_detector_rotation_deg)
+            if measure_gain and kept.tilt_fit_gain is not None:
+                self._measure_tilt_fit_gain(refined)
+            refined = self._finish_fit(refined)
+        refined.timings["rotation_refinement_s"] = record["seconds"]
+        refined.rotation_estimate_deg, refined.rotation_refined = kept.scan_detector_rotation_deg, True
+        refined.rotation_refinement = record
+        if verbose:
+            print(f"SSB: {refinement_summary(record)}")
+        return self._accept_result(refined)
+
     def _release_cached_buffers(self) -> None:
         """Free this session's G(q, k) and MLX's cache before a region session builds its own G(q, k) and fit.
 
@@ -1520,6 +1564,7 @@ class SSB:
         verbose: bool = True,
         compare_standard: bool = True,
         fixed_aberrations: dict[str, float] | None = None,
+        refine_rotation: bool = False,
     ) -> SSBResult:
         """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
 
@@ -1598,6 +1643,20 @@ class SSB:
         once and never moved. ``ssb.compare_rotation_branches()`` still fits both branches of it and reports.
         ``check_rotation=False`` fits once at the session's rotation, estimated or not.
 
+        ``refine_rotation=True`` also refines an estimated rotation within the fit, after the 180-degree branch
+        decision: a 1-D search from the estimate (1-degree steps, at most 10 degrees, then Brent to 0.05 degrees)
+        that polishes the fit at each angle from the nearest angle's fit, with the same objective and tilt mode, and
+        keeps the angle of the highest agreement. Use it when the centre-of-mass estimate is suspect: weak curl
+        contrast, thick or tilted crystals, or before iterative ptychography, which needs the angle more than SSB
+        does. It costs 7 to 12 polishes, no new search: on the 512 x 512 gold scan 11 polishes took 12.5 s on an M5
+        Max. It finds the best angle within the fit's model, which need not improve the image: on gold it moved the
+        angle by +2.9 degrees and raised the agreement by 10%, while the phase image changed little (correlation 0.98
+        with the image at the estimate; column width, roundness and contrast unchanged); on a simulated crystal it
+        recovered a 2-degree error to within 0.01 degrees. ``result.rotation_estimate_deg`` keeps the estimate,
+        ``result.rotation_refined`` says whether the angle was refined, ``result.rotation_refinement`` records the
+        agreement at both angles and the search, and one line (with ``verbose``) reports the change. A given or
+        recorded rotation is never refined.
+
         ``scan_region=(row_start, row_stop, col_start, col_stop)``
         restricts fitting to that scan region, with exclusive stops. Detector
         geometry is estimated from the full input unless supplied explicitly.
@@ -1624,7 +1683,7 @@ class SSB:
             num_trials=num_trials,
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
-            compare_standard=compare_standard, fixed_aberrations=fixed_aberrations)
+            compare_standard=compare_standard, fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation)
 
     @_on_scan_gpu
     def compare_rotation_branches(self, *, apply: bool | None = None, **find_aberrations_options) -> RotationBranches:
@@ -1675,6 +1734,7 @@ class SSB:
         **find_aberrations_options
             Any ``find_aberrations`` keyword except ``check_rotation``: ``tilt``, ``objective``, ``num_trials``,
             ``search_ranges``, ``fixed_aberrations``, ``seed``, ``scan_region``, ``save_dir``, ``verbose``, ...
+            ``refine_rotation=True`` refines the applied branch's angle after the decision (not with ``apply=False``).
 
         Returns
         -------
@@ -1716,6 +1776,7 @@ class SSB:
         verbose: bool = True,
         compare_standard: bool = True,
         fixed_aberrations: dict[str, float] | None = None,
+        refine_rotation: bool = False,
     ) -> SSBResult:
         """``find_aberrations`` with the 180-degree branch handling explicit.
 
@@ -1777,6 +1838,9 @@ class SSB:
                     "C12_nm=0 alone to keep the rotation check.")
         if refinement not in {"nelder-mead", "newton", None}:
             raise ValueError("refinement must be 'auto', 'nelder-mead', 'newton' or None.")
+        if refine_rotation and refinement is None:
+            raise ValueError("refine_rotation polishes the fit at each angle; it needs refinement ('auto', 'newton' or "
+                             "'nelder-mead'), not None.")
         if refinement == "newton" and not tilt and not newton_standard:
             raise ValueError(
                 "refinement='newton' polishes the agreement objective; the phase-variance search refines with "
@@ -1809,6 +1873,7 @@ class SSB:
                     "scan_region": scan_region,
                     **({"fixed_aberrations": fixed_aberrations} if fixed_aberrations is not None else
                        {"fixed_aberrations": requested["fixed_aberrations"]} if requested["fixed_aberrations"] else {}),
+                    **({"refine_rotation": True} if refine_rotation else {}),
                 },
             )
             if not force and self.source_kind != "array":
@@ -1880,6 +1945,8 @@ class SSB:
                     regional.sample_tilt_mrad, regional.depth_spread_nm = self.sample_tilt_mrad, self.depth_spread_nm
                 regional._dark_field, regional._dark_field_source = None, self
                 regional._dark_field_region = tuple(scan_region)
+                # refine_rotation refines only an estimated rotation, the region's as the full scan's
+                regional.scan_detector_rotation_source = self.scan_detector_rotation_source
                 result = regional._find_aberrations(
                     branches, tilt=tilt, objective=objective, num_trials=num_trials, refinement=refinement,
                     search_ranges=requested["search_ranges"] if tilt else search_ranges, refine_lock=refine_lock,
@@ -1887,6 +1954,7 @@ class SSB:
                     seed=seed, verbose=verbose, compare_standard=compare_standard,
                     fixed_aberrations=(fixed_aberrations if fixed_aberrations is not None else
                                        requested["fixed_aberrations"] if tilt else None),
+                    refine_rotation=refine_rotation,
                 )
                 if result.rotation_branches is not None:
                     # the branch panels need the region's G(q, k), which closes with the region session
@@ -1909,17 +1977,17 @@ class SSB:
         if gain_once:
             self._compare_standard = False
 
-        def fit() -> SSBResult:
+        def fit(trials: int = int(num_trials)) -> SSBResult:
             """One fit at the session's rotation, from the session's aberrations (searched when none are known)."""
             if tilt:
                 result = self._fit_tilt(
-                    int(num_trials), refinement, float(tilt_limit_mrad), int(seed), verbose,
+                    trials, refinement, float(tilt_limit_mrad), int(seed), verbose,
                     fixed_aberrations=fixed_aberrations, bounds=tilt_bounds)
                 result.objective = objective
                 return self._accept_result(result)
             result = result_from_engine(self._backend().fit(
                 aberrations=aberrations_to_engine(self.aberrations) if self._aberrations_explicit else None,
-                trials=int(num_trials), refinement=refinement,
+                trials=trials, refinement=refinement,
                 search_ranges=search_ranges_to_engine(search_ranges), refine_lock=refine_lock_to_engine(refine_lock),
                 seed=int(seed), verbose=verbose, objective=objective,
             ))
@@ -1943,6 +2011,9 @@ class SSB:
                         self._compare_standard = True
                 if verbose:
                     _announce_rotation_branches(result)
+            if refine_rotation:
+                result = self._refine_rotation(result, fit, keep=branches == "keep",
+                                               measure_gain=tilt and refinement == "newton", verbose=verbose)
         if isinstance(self._compute, MpsSSBBackend):
             # the fits reuse their batch buffers through MLX's allocator cache, across both branches and the phase
             # diagnostic (up to ~20 GB on a 512 x 512 scan); once the fit is done the session keeps only G(q, k)
@@ -2253,13 +2324,15 @@ class SSB:
         those; changed coefficients reconstruct another image, and the result then states neither.
         """
         fit = self._aberration_search if correction is None else correction
-        if fit is None or (fit.objective is None and fit.rotation_branches is None):
+        if fit is None or (fit.objective is None and fit.rotation_branches is None and not fit.rotation_refined):
             return {}
         if (fit.scan_detector_rotation_deg != self.scan_detector_rotation_deg
                 or validate_aberrations(dict(fit.aberrations), higher_order=True) != coefs
                 or fit.sample_tilt_mrad != tilt or fit.depth_spread_nm != depth):
             return {}
-        return {"objective": fit.objective, "rotation_branches": fit.rotation_branches}
+        return {"objective": fit.objective, "rotation_branches": fit.rotation_branches,
+                "rotation_estimate_deg": fit.rotation_estimate_deg, "rotation_refined": fit.rotation_refined,
+                "rotation_refinement": fit.rotation_refinement}
 
     @_on_scan_gpu
     def preview(

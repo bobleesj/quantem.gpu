@@ -497,6 +497,26 @@ result.show("rotation")                     # the same figure from the result
 angle unless called with `apply=True`. `find_aberrations(check_rotation=False)`
 fits once at the session's rotation, estimated or not.
 
+`find_aberrations(refine_rotation=True)` (off by default) also refines an
+estimated angle after the branch decision. G(q, k) does not depend on the
+rotation, only the bright-field k vectors do, so each angle costs one polish of
+the fit from the nearest angle's fit (`set_rotation` retargets the k geometry
+without rebuilding G): 1-degree steps from the estimate until the agreement
+falls on both sides, at most 10 degrees away, then bounded Brent to 0.05
+degrees, 7 to 12 polishes in all. One line reports it, for example
+`SSB: refined rotation 358.31° → 1.24° (+2.93°, agreement +9.82%; 11 polishes, 12.5 s)`
+on the 512 × 512 gold scan (M5 Max). `result.rotation_estimate_deg` keeps the
+estimate, `result.rotation_refined` says whether the angle moved,
+`result.rotation_refinement` records the agreement at both angles and the
+angles evaluated, and `report()` shows both angles. A given or recorded angle
+is never refined. Use it when the centre-of-mass estimate is suspect (weak curl
+contrast, thick or tilted crystals) or before iterative ptychography. It finds
+the fit's best angle within its model, which need not improve the SSB image: on
+gold the phase image at the refined angle correlates 0.98 with the image at the
+estimate, with the same column width, roundness and contrast. On a simulated
+crystal (64 × 64, noise free) it recovers a 2-degree error to within
+0.01 degrees.
+
 Bright columns are a physical assumption, not proof of the absolute
 orientation. The column test assumes the dark-field image peaks on the
 columns. A dark field that collects only low angles from a strongly defocused
