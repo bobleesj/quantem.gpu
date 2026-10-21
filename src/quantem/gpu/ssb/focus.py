@@ -24,12 +24,15 @@ def show_focus(
     focus_offsets_nm: Sequence[float] = (-5.0, 0.0, 5.0),
     depth_spread_nm: float | Sequence[float] | None = None,
     axsize: tuple[float, float] | None = None,
+    max_cols: int = 2,
 ) -> "Show2D | Show3D | Figure":
     """Reconstruct full-field phase for every pair, then crop the displayed region."""
     if mode not in ("interactive", "static"):
         raise ValueError(f"Use mode='interactive' or 'static' for focus images; got {mode!r}.")
     if layout not in ("grid", "stack"):
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
+    if not isinstance(max_cols, int) or isinstance(max_cols, bool) or max_cols < 1:
+        raise ValueError("Use a positive integer for max_cols, for example max_cols=2.")
     scales = {None: 1.0, "small": 0.75, "medium": 1.0, "large": 1.5}
     if size not in scales or (axsize is not None and (size is not None or mode != "static")):
         raise ValueError("Choose size='small', 'medium' or 'large', or axsize=(width, height) with mode='static'.")
@@ -115,14 +118,31 @@ def show_focus(
     import matplotlib.pyplot as plt
     from quantem.core.visualization import show_2d
 
+    frames = [image for row in images for image in row]
+    captions = [label.replace(" · ", "\n", 1) for row in labels for label in row]
+    columns = min(max_cols, len(frames))
+    grid = [frames[index:index + columns] for index in range(0, len(frames), columns)]
+    titles = [captions[index:index + columns] for index in range(0, len(frames), columns)]
     panel_size = tuple(4 * scales[size] for _ in range(2)) if axsize is None else axsize
-    figure, _ = show_2d(
-        images, title=[[label.replace(" · ", "\n", 1) for label in row] for row in labels],
-        axsize=panel_size, cmap="inferno",
+    aspect = frames[0].shape[0] / frames[0].shape[1]
+    width = min(panel_size[0], panel_size[1] / aspect)
+    height = width * aspect
+    # Match subplot geometry to the data; leave only the two-line caption band.
+    # Set DPI at creation: closing a figure restores its original canvas DPI.
+    dpi = max(plt.rcParams["figure.dpi"], np.ceil(1.1 * frames[0].shape[1] / width))
+    figure, axes = plt.subplots(
+        len(grid), columns, squeeze=False, dpi=dpi,
+        figsize=(columns * width, len(grid) * (height + 0.5) + 0.4),
+    )
+    show_2d(
+        grid, title=titles, figax=(figure, axes), cmap="inferno",
         norm={"interval_type": "manual", "vmin": lower, "vmax": upper},
         scalebar={"sampling": sampling[1], "units": "Å"},
     )
+    title = title.replace(" · rows", "\nrows")
+    if columns == 1:
+        title = title.replace(" · phase", "\nphase")
     figure.suptitle(title)
-    figure.tight_layout()
+    figure.set_layout_engine("compressed", w_pad=0.02, h_pad=0.02, wspace=0, hspace=0)
     plt.close(figure)
     return figure
