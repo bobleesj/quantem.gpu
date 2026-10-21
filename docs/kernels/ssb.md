@@ -16,6 +16,12 @@ is scored with the same full active-bright-field phase-variance objective. The
 best candidate then seeds a local Nelder-Mead refinement. The workflow selects
 the minimum recorded loss; it does not average the 200 parameter sets.
 
+This page derives the phase-variance objective, which CUDA's standard fit
+(`tilt=False`) still minimizes and every backend reports as `result.loss`. On
+MPS the standard fit maximizes the least-squares agreement of the SSB model
+with G instead (the joint fit's objective at depth spread 0); see
+`docs/maintainer/2026-10-20-ssb-standard-fit-objective.md`.
+
 The PyTorch blocks below form one progressive reference: run them from top to
 bottom. Each equation introduces an operation, and the code immediately below
 defines that operation before a later block calls it.

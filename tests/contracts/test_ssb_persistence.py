@@ -587,7 +587,7 @@ def test_parameter_slices_preserve_rotation_and_compatible_saved_record(tmp_path
         session.measure_parameters(unsaved)
 
 
-@pytest.mark.parametrize("tilt, method", [(True, "newton"), (False, "nelder-mead")])
+@pytest.mark.parametrize("tilt, method", [(True, "newton"), (False, "newton")])
 def test_default_refinement_reuses_explicit_optimizer_result(tmp_path, monkeypatch, tilt, method):
     """Automatic selection stores the effective optimizer and shares its cache."""
     source = tmp_path / "scan.bin"

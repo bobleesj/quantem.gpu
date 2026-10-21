@@ -22,69 +22,6 @@ def test_mps_phase_loss_default_chunk_is_size_aware() -> None:
     assert default_object_redraw_threadgroup((1024, 1024)) == 64
 
 
-def test_mps_exact_nelder_mead_uses_rounded_wide_simplex_steps() -> None:
-    """Exact refinement must not collapse C12/phi steps near a good TPE seed."""
-    from quantem.gpu.ssb.mps.optimizer import _nelder_mead_refine
-
-    seed = {"C10": 68.9103129988, "C12": 10.1981172003, "phi12": 0.3873672179}
-    evaluated = []
-
-    def evaluate(params):
-        evaluated.append(dict(params))
-        return 1.0
-
-    _nelder_mead_refine(
-        seed,
-        0.0,
-        evaluate,
-        lock=set(),
-        max_iter=0,
-        initial_step_floor={"C12": 2.0, "phi12": 0.04},
-        initial_step_decimals=2,
-    )
-
-    assert len(evaluated) == 3
-    np.testing.assert_allclose(
-        [evaluated[0]["C10"], evaluated[0]["C12"], evaluated[0]["phi12"]],
-        [seed["C10"] + 3.45, seed["C12"], seed["phi12"]],
-    )
-    np.testing.assert_allclose(
-        [evaluated[1]["C10"], evaluated[1]["C12"], evaluated[1]["phi12"]],
-        [seed["C10"], seed["C12"] + 2.0, seed["phi12"]],
-    )
-    np.testing.assert_allclose(
-        [evaluated[2]["C10"], evaluated[2]["C12"], evaluated[2]["phi12"]],
-        [seed["C10"], seed["C12"], seed["phi12"] + 0.04],
-    )
-
-
-def test_mps_exact_refinement_caches_identical_float32_inputs() -> None:
-    """Distinct simplex coordinates must share an identical Metal evaluation."""
-    from quantem.gpu.ssb.mps.optimizer import _evaluate_exact_float32_cached
-
-    calls = []
-    cache = {}
-
-    def evaluate(params):
-        calls.append(dict(params))
-        return 0.125
-
-    first = {
-        "C10": 73.73451902106731,
-        "C12": 14.728482694817712,
-        "phi12": 0.47684490099801885,
-    }
-    repeated = {
-        "C10": 73.73451902106733,
-        "C12": 14.728482694817712,
-        "phi12": 0.4768449009980189,
-    }
-
-    assert _evaluate_exact_float32_cached(first, evaluate, cache) == 0.125
-    assert _evaluate_exact_float32_cached(repeated, evaluate, cache) == 0.125
-    assert len(calls) == 1
-
-
 def test_load_bf_columns_mps_keeps_exact_sparse_detector_source(tmp_path) -> None:
     """C1: exact BF companion, expect MPS sums and coordinate-only gathers."""
     pytest.importorskip("mlx.core")
