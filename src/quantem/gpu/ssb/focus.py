@@ -7,9 +7,10 @@ import numpy as np
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
+    from quantem.widget import Show2D, Show3D
+
     from quantem.gpu.ssb.results import SSBResult
     from quantem.gpu.ssb.workflow import SSB
-    from quantem.widget import Show2D
 
 
 def show_focus(
@@ -18,14 +19,17 @@ def show_focus(
     *,
     region: tuple[int, int, int, int] | None = None,
     mode: Literal["interactive", "static"] = "interactive",
+    layout: Literal["grid", "stack"] = "grid",
     size: Literal["small", "medium", "large"] | None = None,
     focus_offsets_nm: Sequence[float] = (-5.0, 0.0, 5.0),
     depth_spread_nm: float | Sequence[float] | None = None,
     axsize: tuple[float, float] | None = None,
-) -> "Show2D | Figure":
+) -> "Show2D | Show3D | Figure":
     """Reconstruct full-field phase for every pair, then crop the displayed region."""
     if mode not in ("interactive", "static"):
         raise ValueError(f"Use mode='interactive' or 'static' for focus images; got {mode!r}.")
+    if layout not in ("grid", "stack"):
+        raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
     scales = {None: 1.0, "small": 0.75, "medium": 1.0, "large": 1.5}
     if size not in scales or (axsize is not None and (size is not None or mode != "static")):
         raise ValueError("Choose size='small', 'medium' or 'large', or axsize=(width, height) with mode='static'.")
@@ -42,9 +46,9 @@ def show_focus(
         raise ValueError("Give finite, nonnegative depth_spread_nm values, for example (5, 10, 15).")
     if mode == "interactive":
         try:
-            from quantem.widget import Show2D
+            from quantem.widget import Show2D, Show3D
         except ImportError as exc:
-            raise ImportError("Focus images use Show2D: install quantem.widget, or use mode='static'.") from exc
+            raise ImportError("Interactive focus images need quantem.widget; install it, or use mode='static'.") from exc
 
     factor = session._resolve_upsampling_factor("auto")
     sampling = session._output_sampling(factor)
@@ -81,11 +85,29 @@ def show_focus(
         title += f" · rows {region[0]}:{region[1]}, columns {region[2]}:{region[3]}"
     lower, upper = fit.phase_limits
     if mode == "interactive":
+        panel_width = 200 if size == "small" else round(300 * scales[size])
+        if layout == "stack":
+            viewer = Show3D(
+                [np.stack(row) for row in images],
+                panel_titles=[
+                    f"Depth {depth:.2f} nm"
+                    + (" · fitted depth" if np.isclose(depth, fit.depth_spread_nm, rtol=0, atol=1e-12) else "")
+                    for depth in depths
+                ],
+                labels=[f"C₁₀ {fit.aberrations['C10_nm'] + offset:+.2f} nm" for offset in offsets],
+                title=title, dim_label="Defocus", cmap="inferno",
+                sampling=sampling, units="Å", max_cols=len(depths),
+                panel_width_px=panel_width, panel_gap_px=0,
+                vmin=lower, vmax=upper, auto_contrast=False,
+                link_contrast=True, display_bin=1, avg_window=1,
+            )
+            viewer.slice_idx = int(np.argmin(np.abs(offsets)))
+            return viewer
         return Show2D(
             [image for row in images for image in row],
             labels=[label for row in labels for label in row], title=title,
             sampling=sampling, units="Å", ncols=len(offsets),
-            panel_width_px=200 if size == "small" else round(300 * scales[size]),
+            panel_width_px=panel_width,
             vmin=lower, vmax=upper, auto_contrast=False,
             link_contrast=True, link_zoom=True, link_pan=True, display_bin=1,
         )

@@ -1518,6 +1518,8 @@ class SSB:
 
         ``show("focus")`` displays actual reconstructed phase images in Show2D,
         varying focus and model depth spread around the joint fit. Use
+        ``layout="stack"`` for Show3D: a depth panel per stack and a shared
+        defocus slider, initially at the requested offset nearest zero. Use
         ``mode="static"`` for the same images through ``show_2d``. The saved
         astigmatism, specimen tilt and rotation are retained. These are
         conditional image comparisons, not independent depth slices or refits.
@@ -1538,18 +1540,21 @@ class SSB:
             session returned by ``select_region`` and call its ``show`` method.
             Focus images always reconstruct the full parent field before cropping.
         mode : {"interactive", "static"} or None, optional
-            For ``view="focus"``, Show2D by default, or a static ``show_2d``
-            figure. Landscape views remain static.
+            For ``view="focus"``, an interactive Show2D/Show3D widget, or a
+            static ``show_2d`` figure containing every frame. Both interactive
+            layouts use the same static comparison. Landscape views remain static.
         **options
             ShowPtycho options for the interactive view, or SSBResult.show
             options such as ``axsize`` for a static diagnostic.
             Focus images accept ``focus_offsets_nm=(-5, 0, 5)`` relative to
             fitted C10 and ``depth_spread_nm`` as an absolute scalar or sequence.
             The default depths are the fitted value and ±5 nm, bounded at zero.
+            ``layout="grid"`` uses Show2D; ``layout="stack"`` uses Show3D
+            with focus frames and depth panels in interactive mode.
 
         Returns
         -------
-        quantem.widget.ShowPtycho, quantem.widget.Show2D or matplotlib.figure.Figure
+        quantem.widget.ShowPtycho, Show2D, Show3D or matplotlib.figure.Figure
             A live widget, or a closed figure that renders once in a notebook.
             The static figure can be saved with ``figure.savefig(...)``.
 
@@ -1561,6 +1566,7 @@ class SSB:
         >>> ssb.show("depth", size="large")  # doctest: +SKIP
         >>> ssb.show("tilt", region=(64, 192, 64, 192))  # doctest: +SKIP
         >>> ssb.show("focus")  # doctest: +SKIP
+        >>> ssb.show("focus", layout="stack")  # doctest: +SKIP
         >>> ssb.show("focus", mode="static", depth_spread_nm=15)  # doctest: +SKIP
         """
         if view not in ("interactive", "depth", "tilt", "parameters", "focus"):
