@@ -78,9 +78,9 @@ final class SSBAgreementSearchTests: XCTestCase {
   func testTiltFitMatchesPythonTrialByTrial() throws {
     let recorder = Recorder()
     let fit = try SSBAgreementSearch.fitTilt(recorder.evaluate)
-    XCTAssertEqual(recorder.rows.count, 407)
+    XCTAssertEqual(recorder.rows.count, 573)
     XCTAssertEqual(
-      recorder.digest, "7e0c2e65942aa1f48b383f12dd34db3280a57c97605f93dfb5c4afc2ad2f6b5e",
+      recorder.digest, "d78c322600a4aa4da277fdb39c3c9eee456bca3b547de85ef05fdb5f0a26312c",
       "a trial row differs from the Python resident search")
     let expected = [
       37.267501144443685, 32.30775752459612, -0.19035700659647992, 3.49993612504556,
@@ -88,8 +88,8 @@ final class SSBAgreementSearchTests: XCTestCase {
     ]
     for (actual, value) in zip(fit.point, expected) { XCTAssertEqual(actual, value, accuracy: 1e-6) }
     XCTAssertEqual(fit.agreement, 1.0e6)
-    XCTAssertEqual(fit.newtonStarts.map(\.evaluations), [125, 41, 41])
-    XCTAssertEqual(fit.newtonStarts.map(\.converged), [true, false, false])
+    XCTAssertEqual(fit.newtonStarts.map(\.evaluations), [125, 41, 41, 97, 69])
+    XCTAssertEqual(fit.newtonStarts.map(\.converged), [true, false, false, true, false])
   }
 
   func testStandardFitMatchesPythonTrialByTrial() throws {

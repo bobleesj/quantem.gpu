@@ -7,7 +7,8 @@ import Foundation
 ///
 /// Points are (C10, C12, phi12, tilt row, tilt column, depth spread) in engine units: Angstrom, Angstrom, rad,
 /// mrad, mrad, Angstrom. The search draws in the unit cube; trials, densities and Newton steps follow the
-/// Python kernels, including their float32 literals, so the same scores give the same trials.
+/// Python kernels, including their float32 literals, so the same scores give the same trials. A joint fit with
+/// a search is polished once more from starts in other basins (`_other_basins`).
 public enum SSBAgreementSearch {
   /// Evaluates trial points (engine units) and returns their agreements.
   public typealias Evaluate = ([[Double]]) throws -> [Double]
@@ -423,17 +424,18 @@ public enum SSBAgreementSearch {
     var heading: [Double]
   }
 
-  /// `_newton`: up to three distinct starts from the ranked trials (and `start`), 30 iterations.
+  /// `_newton`: up to three starts, the `explicit` points first and then the best distinct trials, 30
+  /// iterations. `prune` keeps only the highest start after the second step; without it every start climbs
+  /// until it converges or meets a higher one.
   static func newton(
     _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower boxLower: [Double],
-    upper boxUpper: [Double], start: [Double]?, starts requested: Int, fixed: Bool, standard: Bool,
-    isCancelled: () -> Bool
+    upper boxUpper: [Double], explicit: [[Double]], starts requested: Int, fixed: Bool, standard: Bool,
+    prune: Bool = true, isCancelled: () -> Bool
   ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
     let starts = min(3, requested)
     let rank = ranks(scores)
     let distinct = [50.0, 20, f(0.3), 2, 2, 50]
-    var chosen: [[Double]] = []
-    if let start { chosen.append(start) }
+    var chosen: [[Double]] = explicit
     for r in 0..<points.count where chosen.count < starts {
       guard let index = rank.firstIndex(of: r) else { continue }
       let p = points[index]
@@ -574,7 +576,7 @@ public enum SSBAgreementSearch {
           }
         }
       }
-      if iteration == 1 {
+      if prune && iteration == 1 {
         var best = -1
         for k in state.indices where state[k].active {
           if best < 0 || state[k].keptValue > state[best].keptValue { best = k }
@@ -588,6 +590,57 @@ public enum SSBAgreementSearch {
       best = k
     }
     return (decode(state[best].keptCenter), state[best].keptValue * scale, state)
+  }
+
+  /// The second polish's relative margin (`BASIN_MARGIN`): a start that climbs back to the same maximum leaves
+  /// the first polish in place.
+  static let basinMargin = 1e-6
+
+  /// Starts in other basins (`ALTERNATE_STARTS_BODY`): the best trial with phi12 mirrored, and the best trial
+  /// whose (phi12, tilt, depth spread) differs from the polished point and that mirror by more than one Newton
+  /// start scale (0.3 rad, 2 mrad, 2 mrad, 50 A; phi12 periodic in pi).
+  static func alternateStarts(points: [[Double]], scores: [Double], polished: [Double]) -> [[Double]] {
+    let scale = [50.0, 20, f(0.3), 2, 2, 50]
+    let rank = ranks(scores)
+    let best = points[rank.firstIndex(of: 0)!]
+    var mirror = best
+    mirror[2] = -best[2]
+    let halfPi = pi * f(0.5)
+    var chosen: [[Double]] = []
+    func different(_ p: [Double]) -> Bool {
+      for q in [polished] + chosen {
+        var phi = abs(p[2] - q[2])
+        if phi > halfPi { phi = pi - phi }
+        var distance = phi / scale[2]
+        for d in 3..<6 { distance = max(distance, abs(p[d] - q[d]) / scale[d]) }
+        if distance <= 1 { return false }
+      }
+      return true
+    }
+    if different(mirror) { chosen.append(mirror) }
+    for r in 0..<points.count where chosen.count < 2 {
+      let p = points[rank.firstIndex(of: r)!]
+      if different(p) { chosen.append(p) }
+    }
+    return chosen
+  }
+
+  /// `_other_basins`: polish the alternate starts, each to its own maximum, and keep that result only when its
+  /// agreement is higher by more than `basinMargin`.
+  static func otherBasins(
+    _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower: [Double], upper: [Double],
+    first: (point: [Double], agreement: Double, starts: [NewtonState]), isCancelled: () -> Bool
+  ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
+    let alternates = alternateStarts(points: points, scores: scores, polished: first.point)
+    if alternates.isEmpty { return first }
+    let second = try newton(
+      evaluate, points: points, scores: scores, lower: lower, upper: upper, explicit: alternates,
+      starts: alternates.count, fixed: false, standard: false, prune: false, isCancelled: isCancelled)
+    let starts = first.starts + second.starts
+    if second.agreement > first.agreement * (1 + basinMargin) {
+      return (second.point, second.agreement, starts)
+    }
+    return (first.point, first.agreement, starts)
   }
 
   static func wrapPhi(_ phi: Double) -> Double {
@@ -668,9 +721,15 @@ public enum SSBAgreementSearch {
     var agreement: Double
     var newtonStarts: [NewtonStart] = []
     if refine {
-      let fitted = try newton(
+      var fitted = try newton(
         evaluate, points: points, scores: scores, lower: lower, upper: upper,
-        start: thin ? nil : start, starts: 3, fixed: false, standard: thin, isCancelled: isCancelled)
+        explicit: thin ? [] : (start.map { [$0] } ?? []), starts: 3, fixed: false, standard: thin,
+        isCancelled: isCancelled)
+      if trials > 0 && !thin {
+        fitted = try otherBasins(
+          evaluate, points: points, scores: scores, lower: lower, upper: upper, first: fitted,
+          isCancelled: isCancelled)
+      }
       point = fitted.point
       agreement = fitted.agreement
       newtonStarts = fitted.starts.filter(\.hasPrevious).map {

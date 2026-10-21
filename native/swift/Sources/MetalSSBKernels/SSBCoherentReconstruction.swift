@@ -113,6 +113,16 @@ final class SSBCoherentReconstruction {
     MTLComputePipelineState
   private var plans: [Int: Plan] = [:]
   private var fft: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
+  private let separable: SSBSeparableReconstruction
+  private var workspaces: [String: MTLBuffer] = [:]
+  private func workspace(_ name: String, _ length: Int) throws -> MTLBuffer {
+    if let buffer = workspaces[name], buffer.length == length { return buffer }
+    let buffer = try Self.allocate(device, length)
+    workspaces[name] = buffer
+    return buffer
+  }
+  /// The separable kernels (default) or the per-term reference kernel.
+  var useSeparable = true
 
   init(
     device: MTLDevice, queue: MTLCommandQueue, library: MTLLibrary, geometry: MetalSSBGeometry,
@@ -145,7 +155,25 @@ final class SSBCoherentReconstruction {
       ]
     }
     bounds = try Self.buffer(device, values)
-    probe = try Self.allocate(device, k.count * 5 * 4)
+    probe = try Self.allocate(device, k.count * 5 * 4, shared: true)
+    // The aperture at each k does not depend on the aberrations: compute it once for the separable tables.
+    var params = Self.parameters(geometry, SSBModelPoint(c10Angstroms: 0, c12Angstroms: 0, phi12Radians: 0))
+    var count = UInt32(k.count)
+    guard let commands = queue.makeCommandBuffer(), let encoder = commands.makeComputeCommandEncoder() else {
+      throw MetalSSBError.commandQueue
+    }
+    encoder.setComputePipelineState(probePipeline)
+    encoder.setBuffer(kBuffer, offset: 0, index: 0)
+    encoder.setBytes(&params, length: params.count * 4, index: 1)
+    encoder.setBuffer(probe, offset: 0, index: 2)
+    encoder.setBytes(&count, length: 4, index: 3)
+    encoder.dispatchThreads(
+      MTLSize(width: k.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+    encoder.endEncoding()
+    commands.commit()
+    commands.waitUntilCompleted()
+    separable = try SSBSeparableReconstruction(device: device, library: library, geometry: geometry, k: k)
+    try separable.prepare(probe: probe)
   }
 
   /// The soft aperture's outer radius in inverse Angstrom, rounded outwards (float32, as the kernels).
@@ -220,11 +248,13 @@ final class SSBCoherentReconstruction {
     let source = geometry.qxByRow.count
     let n = source * factor
     var params = Self.parameters(geometry, point)
-    let total = try Self.allocate(device, n * n * 8)
+    let total = try workspace("total", n * n * 8)
     let commands = try command()
-    guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
-    blit.fill(buffer: total, range: 0..<total.length, value: 0)
-    blit.endEncoding()
+    if !useSeparable {
+      guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+      blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
+      blit.endEncoding()
+    }
     var count = UInt32(kHost.count)
     let probeEncoder = try encoder(commands, probePipeline)
     probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
@@ -232,7 +262,28 @@ final class SSBCoherentReconstruction {
     probeEncoder.setBuffer(probe, offset: 0, index: 2)
     probeEncoder.setBytes(&count, length: 4, index: 3)
     dispatch(probeEncoder, width: kHost.count)
-    var pending: MTLCommandBuffer? = commands
+    if useSeparable {
+      do {
+        try separable.encode(
+          params: params, factor: factor, probe: probe, full: total, commands: commands, visit: visit,
+          isCancelled: isCancelled)
+        return try finishPhase(total: total, n: n, commands: commands, mirror: false)
+      } catch is SSBSeparableReconstruction.NotCached {
+        // A streamed (uncached) spectrum: the per-term kernel handles every layout.
+      }
+    }
+    var pending: MTLCommandBuffer? = try useSeparable ? command() : commands
+    if useSeparable, let first = pending {
+      guard let blit = first.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
+      blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
+      blit.endEncoding()
+      let probeAgain = try encoder(first, probePipeline)
+      probeAgain.setBuffer(kBuffer, offset: 0, index: 0)
+      probeAgain.setBytes(&params, length: params.count * 4, index: 1)
+      probeAgain.setBuffer(probe, offset: 0, index: 2)
+      probeAgain.setBytes(&count, length: 4, index: 3)
+      dispatch(probeAgain, width: kHost.count)
+    }
     try withoutActuallyEscaping(isCancelled) { cancelled in
       try visit(512) { [self] spectra, offset, half, bfOffset, batch in
         if cancelled() { throw CancellationError() }
@@ -268,8 +319,14 @@ final class SSBCoherentReconstruction {
         }
       }
     }
-    let final = try pending ?? command()
-    if plan.half {
+    return try finishPhase(total: total, n: n, commands: pending ?? command(), mirror: plan.half)
+  }
+
+  /// Mirror (per-term half spectra), set the common origin, inverse-transform and take the phase.
+  private func finishPhase(total: MTLBuffer, n: Int, commands final: MTLCommandBuffer, mirror half: Bool) throws
+    -> (phase: MTLBuffer, rows: Int)
+  {
+    if half {
       var size = UInt32(n)
       let mirror = try encoder(final, mirrorPipeline)
       mirror.setBuffer(total, offset: 0, index: 0)
@@ -287,7 +344,7 @@ final class SSBCoherentReconstruction {
     originEncoder.setBuffer(total, offset: 0, index: 0)
     originEncoder.setBytes(&origin, length: 8, index: 1)
     dispatch(originEncoder, width: 1)
-    let wave = try Self.allocate(device, n * n * 8)
+    let wave = try workspace("wave", n * n * 8)
     let shape: [NSNumber] = [NSNumber(value: n), NSNumber(value: n)]
     if fft[n] == nil {
       let graph = MPSGraph()

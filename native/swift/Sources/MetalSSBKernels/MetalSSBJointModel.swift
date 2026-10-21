@@ -93,6 +93,11 @@ public final class MetalSSBJointModel {
   private let fusedTwiddle: MTLBuffer
   private(set) var supportsFused1536: Bool
   private let objectiveBatch, reduceBatch, objectiveAngleSums: MTLComputePipelineState
+  /// Whether reconstructions use the separable kernels (default) or the per-term reference kernel.
+  var separableReconstruction: Bool {
+    get { coherent.useSeparable }
+    set { coherent.useSeparable = newValue }
+  }
   /// The objective's phase evaluation; both give the same agreement to about 1e-6 relative.
   public var agreementKernel: SSBAgreementKernel = .angleSums
   private var neighbourBuffer: MTLBuffer
@@ -126,7 +131,7 @@ public final class MetalSSBJointModel {
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
     let library = try device.makeLibrary(
-      source: MetalSSBShaderSource.load(["ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model"]),
+      source: MetalSSBShaderSource.load(["ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable"]),
       options: options)
     self.library = library
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
