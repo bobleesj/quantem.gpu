@@ -25,7 +25,12 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         source_path=source_path,
     )
     search = dict(tilt=False, num_trials=0, refinement=None, check_rotation=False, verbose=False)
-    with SSB(data, **options) as full, SSB(data[64:192, 64:192], **options) as cropped:
+    with SSB(data, **options) as full, SSB(
+        # the region keeps the full scan's calibration, its estimated rotation included; a crop left to estimate
+        # its own (6.9 instead of 4.9 degrees here) is a different fit
+        data[64:192, 64:192], **options, scan_detector_rotation_deg=full.scan_detector_rotation_deg,
+        scan_detector_rotation_flipped=full.scan_detector_rotation_flipped,
+    ) as cropped:
         regional = full.find_aberrations(
             scan_region=(64, 192, 64, 192), save_dir=tmp_path / "region", **search,
         )

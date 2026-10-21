@@ -100,8 +100,11 @@ def test_branch_comparison_keeps_original_trial_geometry(monkeypatch):
         record = aberrations.trial_records[0]
         values = record['params']
         ssb.set_rotation(record['scan_detector_rotation_deg'])
+        # the branch comparison fits the joint model by default: the trial carries its tilt and depth spread
         expected, _ = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
-                                  'phi12_deg': values['phi12_deg']})
+                                  'phi12_deg': values['phi12_deg']},
+                                 sample_tilt_mrad=tuple(record['sample_tilt_mrad']),
+                                 depth_spread_nm=record['depth_spread_nm'])
         np.testing.assert_allclose(cp.asnumpy(replay.phase[0]), expected, atol=1e-7)
     finally:
         ssb.close()
