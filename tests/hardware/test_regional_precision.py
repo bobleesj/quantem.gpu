@@ -122,8 +122,9 @@ def test_same_float_fixture_codes_match_numpy():
             )
 
 
-def test_generated_save_is_single_pass_and_reloads(tmp_path):
+def test_generated_save_is_single_pass_and_reloads(tmp_path, capsys):
     from quantem.gpu import io
+    from quantem.gpu.io.dataset import Dataset4dstemGPU
 
     original = fixture()
     source = GeneratedScan(original)
@@ -133,6 +134,18 @@ def test_generated_save_is_single_pass_and_reloads(tmp_path):
     with io.load(path, backend=BACKEND, verbose=False) as loaded:
         expected = restore_precision_reference(original, loaded.metadata["precision"])
         np.testing.assert_array_equal(loaded.read().cpu(), expected)
+    source = GeneratedScan(original)
+    with Dataset4dstemGPU.from_blocks(
+        source, dtype="scaled_uint16", device=BACKEND,
+        save_to=tmp_path / "reported_master.h5", verbose=True,
+    ) as reported:
+        np.testing.assert_array_equal(reported.read().cpu(), expected)
+        assert reported.metadata["resident_codec"] == "ans"
+    assert source.passes == 1
+    output = capsys.readouterr()
+    assert "Finishing file writes" in output.err
+    assert "scaled uint16 (approximate)" in output.out
+    assert "No clipping." in output.out
 
 
 @pytest.mark.parametrize("magnitude", [1.0, 1e-20, 1e30])
