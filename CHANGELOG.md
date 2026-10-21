@@ -17,8 +17,17 @@ new `rcN` heading when that rc is published to TestPyPI.
   saved setting. The MPS phase-variance search (`ssb/mps/loss.py`, its pair kernels, the 512 x 512 pair-pack
   policy and `scripts/benchmark_ssb_mps_scaling.py`) is restored unchanged for that option and reproduces the
   removed search bit for bit on gold; the M5 Max benchmark baseline times both searches
-  (`search_candidate_phase_variance`, `find_aberrations_phase_variance`). On CUDA, `tilt=False` (the agreement) raises
-  `NotImplementedError` until it is ported; pass `objective="phase_variance"` for CUDA's previous standard fit.
+  (`search_candidate_phase_variance`, `find_aberrations_phase_variance`).
+- On CUDA, `find_aberrations(tilt=False)` fits on the agreement objective as on MPS (`fit_standard_resident` on the
+  fused CUDA agreement kernel at depth spread 0, Newton or Nelder-Mead, `fixed_aberrations` accepted); on a
+  512 x 512 acquisition it gives the MPS coefficients to 4e-5 nm and 1e-4 degrees in 0.7 s, and its C10 moves
+  from the phase-variance 10.05 nm to 9.90 nm. The phase-variance
+  fit, `find_aberrations(tilt=False, objective="phase_variance")`, now runs the search of MPS's
+  `optimize_phase_variance` in a backend-neutral module (`ssb/phase_variance_fit.py`: the start point, Optuna TPE
+  asked two trials at a time, Nelder-Mead with the C12 and phi12 step floors), so the same seed gives the same
+  trials and simplex on both backends; CUDA's
+  phase-variance coefficients move to that search's lower minimum (C10 by 0.03 nm on that scan) and locked
+  coefficients refine. `CudaSSBBackend.optimize`, `refine`, `batch_optimize` and `batch_nelder_mead` are removed.
 - On MPS, `find_aberrations(tilt=False)` fits on the joint fit's objective, the least-squares agreement of the SSB
   model with G(q, k), with the sample tilt and depth spread held at 0: the same resident 200-trial search, then
   Newton (`refinement="auto"`) or Nelder-Mead. The search box is unchanged (C10 +-40 nm, C12 0 to 10 nm);

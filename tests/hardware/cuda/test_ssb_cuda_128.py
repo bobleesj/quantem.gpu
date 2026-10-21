@@ -727,10 +727,12 @@ def test_ssb_default_hermitian_optimize_keeps_half_plane() -> None:
         bright_field_radius_px=3,
     )
     before_nbytes = ssb.G_qk.nbytes
-    ssb.optimize(num_trials=2, verbose=False)
+    for objective in ("agreement", "phase_variance"):
+        ssb.fit(aberrations=None, trials=2, refinement=None, search_ranges=None, refine_lock=None, seed=42,
+                verbose=False, objective=objective)
 
-    assert ssb.G_qk.shape[2] == 65
-    assert ssb.G_qk.nbytes == before_nbytes
+        assert ssb.G_qk.shape[2] == 65
+        assert ssb.G_qk.nbytes == before_nbytes
 
 
 def test_cuda_128_variance_loss_matches_reference() -> None:

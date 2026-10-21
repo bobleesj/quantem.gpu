@@ -87,7 +87,7 @@ From a checkout with the CUDA and development dependencies installed, run:
 ```bash
 PYTHONPATH=src python -m pytest -q -m "" \
   tests/contracts/test_ssb_batch_refinement.py \
-  tests/contracts/test_ssb_batch_optuna.py \
+  tests/contracts/test_ssb_phase_variance_fit.py \
   tests/hardware/cuda/test_ssb_thick_sample.py \
   tests/hardware/cuda/test_ssb_independent_refinement.py
 ```

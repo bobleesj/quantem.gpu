@@ -74,7 +74,11 @@ def test_phase_variance_cannot_fit_the_tilt_and_refines_with_nelder_mead(tmp_pat
 
 
 def test_phase_variance_holds_fixed_aberrations_on_mps(tmp_path, monkeypatch):
-    """fixed_aberrations means a held search value and a refinement lock in either standard fit on MPS."""
+    """fixed_aberrations means a held search value and a refinement lock in either standard fit on MPS.
+
+    CUDA's standard fits, both objectives, are checked on the device in tests/hardware/cuda/test_ssb_standard_agreement.py
+    (this double returns NumPy arrays, which the CUDA session's post-processing does not take).
+    """
     backend = _Recording()
     _session(monkeypatch, _source(tmp_path), backend).find_aberrations(
         tilt=False, objective="phase_variance", fixed_aberrations={"C12_nm": 0.0}, verbose=False)
@@ -95,16 +99,3 @@ def test_saved_fit_is_reused_only_for_its_objective(tmp_path, monkeypatch):
     assert not other.reused and other.objective == "agreement"
     assert other.metadata["signature"]["settings"]["objective"] == "agreement"
     assert [fit["objective"] for fit in backend.fits] == ["phase_variance", "agreement"]
-
-
-def test_cuda_standard_agreement_fit_is_not_ported_yet(tmp_path, monkeypatch):
-    """CUDA's tilt=False runs the phase variance only for now: the agreement call raises and names the interim."""
-    backend = _Recording()
-    session = _session(monkeypatch, _source(tmp_path), backend)
-    session.backend = "cuda"
-    with pytest.raises(NotImplementedError, match="objective='phase_variance'"):
-        session.find_aberrations(tilt=False, verbose=False)
-    assert not backend.fits
-    with pytest.raises(ValueError, match="refinement=None"):
-        session.find_aberrations(tilt=False, objective="phase_variance", fixed_aberrations={"C12_nm": 0.0},
-                                 verbose=False)

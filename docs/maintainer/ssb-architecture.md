@@ -43,13 +43,12 @@ that fits:
 | Call | Objective | Search and refinement | Code |
 | --- | --- | --- | --- |
 | `find_aberrations()` (default) | agreement, tilt and depth spread fitted | resident TPE, Newton | `_resident_search.fit_resident` |
-| `find_aberrations(tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, Newton (Nelder-Mead when constrained) | `_resident_search.fit_standard_resident` (MPS) |
-| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance over BF pixels | Optuna TPE, Nelder-Mead | `mps/optimizer.optimize_phase_variance`, `cuda/optimizer.py` |
+| `find_aberrations(tilt=False)` | agreement, tilt and depth spread held at 0 | resident TPE, Newton (Nelder-Mead when constrained) | `_resident_search.fit_standard_resident` (CUDA and MPS) |
+| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance over BF pixels | Optuna TPE, Nelder-Mead | `mps/optimizer.optimize_phase_variance` (MPS), `ssb/phase_variance_fit.py` (CUDA) |
 
 `objective` is a saved setting and `SSBResult.objective` records it. The phase
 variance is the reported diagnostic `result.loss` everywhere
-(`2026-10-20-ssb-standard-fit-objective.md`). CUDA's `tilt=False` agreement fit
-is not ported yet and raises `NotImplementedError`. A
+(`2026-10-20-ssb-standard-fit-objective.md`). A
 backend may reject a job it cannot execute, but may not switch to CPU, crop or
 subsample the BF evidence, quantize values, or change the objective silently.
 

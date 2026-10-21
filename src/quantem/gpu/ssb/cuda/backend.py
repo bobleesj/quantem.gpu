@@ -3,7 +3,6 @@
 import gc
 import math
 import time
-from typing import ClassVar, Self
 
 import cupy as cp
 import numpy as np
@@ -14,7 +13,7 @@ from quantem.gpu.detector import disk_edge_radius
 from quantem.gpu.ssb.contract import FitObjective, SSBExportState, SSBPrecision
 from quantem.gpu.ssb.cuda.brightfield import bright_field_spectra, select_bright_field
 from quantem.gpu.ssb.cuda.engine import SSBEngine
-from quantem.gpu.ssb.cuda.optimizer import batch_nelder_mead, batch_optimize, fit_sample
+from quantem.gpu.ssb.cuda.optimizer import fit_sample, fit_standard, fit_standard_phase_variance
 from quantem.gpu.ssb.results import SSBResult
 
 
@@ -53,12 +52,6 @@ class CudaSSBBackend:
     bright-field pixel; a smaller ``bright_field_radius_px`` reduces it.
     """
 
-    # search ranges of optimize() when none are given, in engine units
-    _DEFAULT_OPTIMIZE_RANGES: ClassVar[dict[str, tuple[int, int]]] = {
-        "C10_A": (-400, 400),
-        "C12_A": (0, 100),
-        "phi12_deg": (-90, 90),
-    }
     backend = "cuda"
     precision = SSBPrecision()
 
@@ -212,7 +205,7 @@ class CudaSSBBackend:
         - Engine buffers (correction pipeline, variance computation)
         - Batch caches (optimizer working memory)
 
-        After this call, ``result()`` and ``optimize()`` will fail - the
+        After this call, ``result()`` and ``fit()`` will fail - the
         engine is no longer usable. Previously returned ``SSBResult``
         objects remain valid (they hold independent copies of the phase).
 
@@ -302,7 +295,7 @@ class CudaSSBBackend:
     def result(self, *, compute_loss: bool = True) -> SSBResult:
         """Reconstruct the complex object at the current aberrations, with the phase-variance loss unless disabled.
 
-        Each call reconstructs from scratch (after ``optimize()`` and ``refine()`` this is the final reconstruction).
+        Each call reconstructs from scratch (after ``fit()`` this is the final reconstruction).
         """
         accel = self._get_accelerator()
         try:
@@ -352,33 +345,65 @@ class CudaSSBBackend:
         verbose: bool,
         objective: FitObjective,
     ) -> SSBResult:
-        """Run the shared exact optimization contract on CUDA: the phase-variance standard fit, for now its only one."""
+        """Standard fit (tilt=False) of C10, C12 and phi12, then the complex object and the phase-variance loss there.
 
-        if objective != "phase_variance":
-            raise NotImplementedError("CUDA's standard fit (tilt=False) runs objective='phase_variance' only.")
+        ``objective="agreement"`` maximizes the least-squares agreement of the SSB model with G(q, k) at sample tilt
+        and depth spread 0 (``optimizer.fit_standard``, the resident search shared with MPS; ``refinement`` "newton",
+        "nelder-mead" or None); ``"phase_variance"`` minimizes the phase variance (``optimizer.fit_standard_phase_variance``,
+        the search of MPS's ``optimize_phase_variance``; ``refinement`` "nelder-mead" or None). ``search_ranges`` (engine keys) bounds the
+        search, a value holding that coefficient in every trial; ``refine_lock`` holds coefficients through
+        Nelder-Mead; ``aberrations`` (engine units) is a refinement start.
+        """
         if aberrations is not None:
             self.aberrations = dict(aberrations)
+        # a failed search leaves no previous fit's records or refinement attached to the new aberrations
+        self._trial_records, self._num_trials, self._refine_method, self._refine_nfev = [], int(trials), None, None
+        self._elapsed_optimize = self._elapsed_refine = 0.0
+        accel = self._get_accelerator()
+        started = time.perf_counter()
+        try:
+            if objective == "agreement":
+                fit = fit_standard(accel, aberrations=aberrations, search_ranges=search_ranges, num_trials=int(trials),
+                                   refine=refinement, refine_lock=refine_lock, seed=int(seed))
+                best = {name: fit[name] for name in ("C10", "C12", "phi12")}
+                search_s, refine_s = fit["timings"]["coarse_search_s"], fit["timings"]["refinement_s"]
+                records = [{"stage": "search", "number": record["number"], "objective": "negative_thick_agreement",
+                            "band_inv_A": fit["band_inv_A"],
+                            "params": {"C10_A": record["params"]["C10"], "C12_A": record["params"]["C12"],
+                                       "phi12_deg": math.degrees(record["params"]["phi12"])},
+                            "loss": record["loss"]} for record in fit["trial_records"]]
+                nfev, agreement, optimizer = int(fit["nfev"]), float(fit["fit"]), dict(fit["optimizer"])
+            elif objective == "phase_variance":
+                fit = fit_standard_phase_variance(accel, aberrations=aberrations, search_ranges=search_ranges,
+                                                  num_trials=int(trials), refine=refinement, refine_lock=refine_lock,
+                                                  seed=int(seed), verbose=verbose)
+                best = fit["aberrations"]
+                search_s, refine_s = fit["timings"]["search_seconds"], fit["timings"]["refinement_seconds"]
+                records, nfev, agreement = fit["trial_records"], int(fit["refine_nfev"]), None
+                optimizer = {"search": "optuna TPE", "refinement": refinement, "device": "cuda",
+                             "objective": "phase variance"}
+            else:
+                raise ValueError(f"objective must be 'agreement' or 'phase_variance', got {objective!r}.")
+        except cp.cuda.memory.OutOfMemoryError:
+            raise self._out_of_memory("optimization") from None
+        self.aberrations.update(best)
         # Each call owns a new search record, including a zero-trial refinement.
         # Replacing the list preserves records already returned to the caller.
-        self._trial_records = []
+        self._trial_records = records
         self._num_trials = int(trials)
-        self._refine_method = None
-        self._refine_nfev = None
-        self._elapsed_optimize = 0.0
-        self._elapsed_refine = 0.0
-        if trials:
-            self.optimize(
-                search_ranges=search_ranges,
-                num_trials=int(trials),
-                seed=int(seed),
-                verbose=verbose,
-            )
-        if refinement == "nelder-mead":
-            self.refine(
-                verbose=verbose,
-                lock=refine_lock,
-            )
-        return self.result()
+        self._refine_method = refinement
+        self._refine_nfev = nfev if refinement else None
+        self._elapsed_optimize = search_s
+        self._elapsed_refine = refine_s
+        result = self.result()
+        result.sample_agreement = agreement
+        result.optimizer = optimizer
+        result.timings = {"search_seconds": search_s, "refinement_seconds": refine_s}
+        self._best_loss = result.loss
+        if verbose:
+            self._print_summary(f"Fit ({objective.replace('_', ' ')}, {refinement or 'no refinement'})",
+                                time.perf_counter() - started)
+        return result
 
     def reconstruct_result(
         self,
@@ -507,142 +532,3 @@ class CudaSSBBackend:
             f"Try: SSB(..., bright_field_radius_px=<smaller>) to reduce BF pixel count, "
             f"or restart the kernel to free stale GPU memory."
         )
-
-    # =====================================================================
-    #  Optimization
-    # =====================================================================
-
-    def optimize(
-        self,
-        search_ranges: dict[str, tuple[float, float] | float] | None = None,
-        num_trials: int = 200,
-        seed: int = 42,
-        verbose: bool = True,
-    ) -> Self:
-        """Global search of C10, C12, phi12 with Optuna TPE on the exact phase-variance objective.
-
-        Evaluates ``num_trials`` candidates in batches of 4 on the GPU (lower loss is a better correction). This finds the
-        right region of parameter space but may be ~5 nm off on C10; ``refine()`` then walks to the exact minimum.
-
-        Parameters
-        ----------
-        search_ranges : dict, optional
-            Search ranges per parameter, keys ``"C10_A"``, ``"C12_A"`` (Angstrom) and ``"phi12_deg"``: a
-            ``(low, high)`` tuple to search, or a fixed float to lock the parameter. None searches C10
-            +-400, C12 0-100 and phi12 +-90 degrees.
-        num_trials : int, default 200
-            Number of Optuna trials; below 200 the exploration of the (C10, C12, phi12) loss landscape becomes
-            unreliable.
-        seed : int, default 42
-            Seed of the TPE sampler.
-        verbose : bool, default True
-            Print the progress bar and the memory header.
-        """
-        started = time.perf_counter()
-        # a coefficient search_ranges leaves out is searched over its default range, as when no ranges are given
-        search_ranges = {**self._DEFAULT_OPTIMIZE_RANGES, **(search_ranges or {})}
-        accel = self._get_accelerator()
-        accel.reconstruct_with_loss(0, 50, 0)
-        cp.cuda.Device().synchronize()
-        if verbose:
-            vram_free, vram_total = cp.cuda.runtime.memGetInfo()
-            free_gb, total_gb = vram_free / 1e9, vram_total / 1e9
-            print(f"Optimizing aberrations ({num_trials} trials, {accel.num_bright_field_pixels} BF pixels)")
-            print(f"  VRAM: {free_gb:.1f} GB available of {total_gb:.1f} GB")
-        try:
-            best_params, best_value, trial_history = batch_optimize(
-                accel,
-                aberrations=search_ranges,
-                aberration_defaults=self.aberrations,
-                num_trials=num_trials,
-                batch_size=4,
-                seed=seed,
-                verbose=verbose,
-            )
-        except cp.cuda.memory.OutOfMemoryError:
-            raise self._out_of_memory("optimization") from None
-        # the full trial history is persisted with the result (about 5 KB for 200 trials)
-        self._trial_records = trial_history
-        self._best_loss = best_value
-        # an optimized parameter takes its best value; a locked one keeps the value it was given
-        for search_key, aberration_key, convert in [
-            ("C10_A", "C10", None),
-            ("C12_A", "C12", None),
-            ("phi12_deg", "phi12", math.radians),
-        ]:
-            if search_key in best_params:
-                value = best_params[search_key]
-            elif search_key in search_ranges and not isinstance(search_ranges[search_key], tuple):
-                value = search_ranges[search_key]
-            else:
-                continue
-            self.aberrations[aberration_key] = convert(value) if convert else value
-        self._elapsed_optimize = time.perf_counter() - started
-        self._num_trials = num_trials
-        if verbose:
-            self._print_summary("Optimize", self._elapsed_optimize)
-        return self
-
-    def refine(
-        self,
-        verbose: bool = True,
-        xatol: float = 0.25,
-        fatol: float = 2e-6,
-        max_iter: int = 160,
-        lock: list[str] | None = None,
-    ) -> Self:
-        """Local Nelder-Mead refinement from the current aberrations on the exact phase-variance objective.
-
-        Walks downhill to the nearest minimum (``optimize()`` first finds the right region). Nelder-Mead is
-        derivative-free and handles the scale mismatch between C10 and phi12 through the simplex geometry; the phi12
-        direction has weak curvature when C12 is small, where finite-difference gradients are noisy. On a 512 x 512
-        scan from a good Optuna start it converges in about 30 evaluations.
-
-        Parameters
-        ----------
-        verbose : bool, default True
-            Print the summary at the end.
-        xatol : float, default 0.25
-            Stop when the simplex spread is below this (C10, C12 in the engine unit; phi12 in radians).
-        fatol : float, default 2e-6
-            Stop when the loss spread across the simplex vertices is below this.
-        max_iter : int, default 160
-            Most simplex iterations. The exact objective is smooth enough on a 512 full-BF acquisition that tighter
-            tolerances over-solve the phase by hundreds of evaluations; these keep the phase within 1e-3 rad p99.9 in
-            the real-data signoff.
-        lock : list[str], optional
-            Aberrations to hold fixed; locked refinement is not implemented on the GPU and raises.
-        """
-        started = time.perf_counter()
-        accel = self._get_accelerator()
-        lock = set(lock or [])
-        all_keys = ["C10", "C12", "phi12"]
-        free_keys = [key for key in all_keys if key not in lock]
-        x0 = np.array([self.aberrations[key] for key in free_keys])
-        if free_keys != all_keys:
-            locked = ", ".join(sorted(lock)) or "unknown"
-            raise ValueError(
-                "GPU-only SSB Nelder-Mead does not support locked refinement yet "
-                f"(locked: {locked}). Use no locked aberrations with "
-                "refinement='nelder-mead', "
-                "locked SSB reference mode, or add a GPU-batched locked refiner."
-            )
-        best_x, best_loss, n_evals = batch_nelder_mead(
-            accel,
-            x0.astype(np.float64),  # the simplex is float64 even for integer starting coefficients
-            xatol=xatol,
-            fatol=fatol,
-            max_iter=max_iter,
-        )
-        for index, key in enumerate(free_keys):
-            self.aberrations[key] = float(best_x[index])
-        self._best_loss = float(best_loss)
-        nfev = n_evals
-        method = "nelder-mead"
-        elapsed_s = time.perf_counter() - started
-        self._elapsed_refine = elapsed_s
-        self._refine_method = method
-        self._refine_nfev = nfev
-        if verbose:
-            self._print_summary(f"Refine ({method}, {nfev} evals)", elapsed_s)
-        return self

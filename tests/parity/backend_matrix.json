@@ -420,7 +420,7 @@
         },
         "cuda": {
           "level": "required",
-          "gates": ["tests/contracts/test_ssb_batch_optuna.py", "tests/hardware/cuda/test_ssb_cuda_128.py", "tests/infrastructure/test_ssb_structure.py"]
+          "gates": ["tests/contracts/test_ssb_phase_variance_fit.py", "tests/hardware/cuda/test_ssb_cuda_128.py", "tests/infrastructure/test_ssb_structure.py"]
         },
         "mps": {
           "level": "required",

@@ -1596,8 +1596,7 @@ class SSB:
         locks a coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
         simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
         not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
-        whatever the objective. CUDA does not run the ``tilt=False`` agreement fit yet: it raises NotImplementedError,
-        and ``objective="phase_variance"`` is the interim there (docs/api/ssb.md).
+        whatever the objective. CUDA and MPS run all three.
 
         The joint fit searches all six parameters at once (fitting the tilt after a standard fit gets stuck: C10
         has to move to the defocus at mid-depth at the same time). The result's ``sample_tilt_mrad`` (row, col;
@@ -1627,8 +1626,8 @@ class SSB:
         correct. Use ``compare_standard=False`` to omit the optional thin fit.
         A standard fit (``tilt=False``) searches C10_nm over (-40, 40), C12_nm over (0, 10) and phi12_deg over its
         period unless ``search_ranges`` bounds them; a value holds that coefficient in every trial, ``refine_lock``
-        holds it through Nelder-Mead at the search's value, and ``fixed_aberrations`` does both (except in CUDA's
-        phase-variance fit): ``find_aberrations(tilt=False, fixed_aberrations={"C12_nm": 0.0})``.
+        holds it through Nelder-Mead at the search's value, and ``fixed_aberrations`` does both:
+        ``find_aberrations(tilt=False, fixed_aberrations={"C12_nm": 0.0})``.
 
         ``check_rotation=True`` (default) settles the 180-degree ambiguity of an estimated scan-detector rotation. The
         centre-of-mass curl cannot tell omega from omega + 180 degrees and both fit equally well (the second is the
@@ -1792,11 +1791,6 @@ class SSB:
                 "objective='phase_variance' cannot fit the sample tilt: the phase variance over bright-field pixels "
                 "does not see it. Use find_aberrations(tilt=False, objective='phase_variance') for the older SSB "
                 "search, or the default find_aberrations() for the tilt-corrected model agreement.")
-        if not tilt and objective == "agreement" and self.backend == "cuda":
-            raise NotImplementedError(
-                "find_aberrations(tilt=False) on CUDA fits the model agreement, which is not ported to CUDA yet. For "
-                "now use find_aberrations(tilt=False, objective='phase_variance'), the older SSB search CUDA ran "
-                "before, or the default tilt-corrected find_aberrations().")
         if tilt and refine_lock is not None:
             raise ValueError(
                 "refine_lock applies to the standard fit (tilt=False). In the joint fit (tilt=True, the default) hold "
@@ -1812,11 +1806,6 @@ class SSB:
         tilt_bounds: dict[str, object] = {}
         requested = {"search_ranges": search_ranges, "fixed_aberrations": fixed_aberrations}
         if not tilt:
-            if fixed_aberrations is not None and objective == "phase_variance" and self.backend == "cuda":
-                raise ValueError(
-                    "fixed_aberrations holds coefficients in the agreement fits and the MPS phase-variance fit. For "
-                    "CUDA's phase-variance fit give the value as search_ranges={'C12_nm': 0.0}, which holds it in the "
-                    "search, with refinement=None: its GPU Nelder-Mead cannot lock a coefficient.")
             search_ranges, refine_lock = _standard_constraints(search_ranges, refine_lock, fixed_aberrations)
             fixed_aberrations = None
         # Newton polishes the agreement; the phase variance and a locked or bounded agreement fit use Nelder-Mead
