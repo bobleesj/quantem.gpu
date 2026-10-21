@@ -1,11 +1,12 @@
-"""Aberration search on the CUDA phase-variance objective: Optuna TPE, Nelder-Mead, and the thick-sample fit.
+"""Aberration fits on CUDA: the standard fit (tilt=False) on either objective, and the joint fit (tilt=True).
 
-For candidate aberrations the loss is the mean over scan pixels of the variance, over bright-field pixels, of the
-corrected phase: the better the correction, the more every bright-field pixel agrees on the object phase. Each candidate
-is the full reconstruction with a fixed-order reduction (``SSBEngine.reconstruct_with_loss``), so seeded fits get the same
-loss bits on every evaluation and a fit, a reconstruction and a preview report the same loss for the same aberrations.
-Optuna's ask/tell API collects a batch of suggestions, evaluated one after another, and so are the Nelder-Mead simplex
-vertices.
+The default objective of both fits is the least-squares agreement of the SSB model with G(q, k) (``ThickSample``'s fused
+``thick_fit_batch_kernel``), searched with the device-resident TPE and trust-region Newton of ``ssb._resident_search``,
+the same code as on MPS; the standard fit holds the sample tilt and depth spread at 0, where the model is ordinary SSB
+exactly. ``objective="phase_variance"`` minimizes the phase variance with the backend-neutral search of
+``ssb.phase_variance_fit`` (MPS's ``optimize_phase_variance`` search), on the fixed-order full reconstruction (``SSBEngine.reconstruct_with_loss``), so seeded fits get the
+same loss bits on every evaluation and a fit, a reconstruction and a preview report the same loss for the same
+aberrations.
 """
 
 import math
@@ -13,227 +14,70 @@ import math
 import numpy as np
 
 from quantem.gpu.ssb.cuda.engine import SSBEngine
+from quantem.gpu.ssb.mps.optimizer import standard_bounds
+from quantem.gpu.ssb.phase_variance_fit import fit_phase_variance
 from quantem.gpu.ssb.thick_sample_fit import fit_sample_search
 
+# where a zero-trial refinement starts when the session has no aberrations (as on MPS)
+_DEFAULT_START = {"C10": 0.0, "C12": 50.0, "phi12": 0.0}
 
-def batch_optimize(
-    engine: SSBEngine,
-    aberrations: dict,
-    aberration_defaults: dict,
-    num_trials: int = 50,
-    batch_size: int = 16,
-    seed: int = 42,
-    verbose: bool = True,
-) -> tuple[dict, float, list[dict]]:
-    """Run Optuna TPE with one batched loss evaluation per ``batch_size`` trials.
 
-    Parameters
-    ----------
-    engine : SSBEngine
-        The rotation-cached engine whose phase-variance loss is minimised.
-    aberrations : dict
-        Parameter specs: key -> (low, high) tuple or fixed float. Keys: "C10_A", "C12_A" (Angstrom), "phi12_deg".
-    aberration_defaults : dict
-        Current aberration values {C10, C12, phi12} for parameters ``aberrations`` leaves out.
-    num_trials : int
-        Total number of Optuna trials.
-    batch_size : int
-        Number of trials to evaluate per GPU call.
-    seed : int
-        Random seed for TPE sampler reproducibility.
-    verbose : bool
-        Show the progress bar.
+def fit_standard(
+    accel: SSBEngine,
+    *,
+    aberrations: dict | None,
+    search_ranges: dict | None,
+    num_trials: int,
+    refine: str | None,
+    refine_lock: list[str] | None,
+    seed: int,
+    band_inv_A: tuple[float, float] = (0.2, 0.9),
+) -> dict[str, object]:
+    """Standard fit (tilt=False) on the agreement objective: ``fit_standard_resident`` with depth spread 0.
 
-    Returns
-    -------
-    best_params : dict
-        Best parameters found (Optuna param names).
-    best_value : float
-        Best variance loss value.
-    trials : list[dict]
-        Every evaluated trial in order, ``{"number", "params": {...}, "loss"}``; the result keeps it so the loss
-        landscape (and degenerate minima with the same loss at very different C10) can be inspected.
+    ``search_ranges`` (engine keys; a value holds that coefficient in every trial) bounds the search; ``refine``
+    ("newton", "nelder-mead" or None) polishes from the best distinct trials, and from ``aberrations`` (engine units)
+    when given; ``refine_lock`` (engine names) holds coefficients at the search's value through Nelder-Mead. The start
+    is clamped into the search box because a held coefficient must be every evaluated point's value, the start
+    included. ``band_inv_A`` is the joint fit's band: below 0.2 1/A the probe-overlap geometry dominates G, above
+    0.9 1/A the lattice signal ends. Returns ``fit_standard_resident``'s record (the fitted C10, C12, phi12, the
+    agreement ``fit`` and the trials) with the band.
     """
-    # Optuna and tqdm load only when a fit runs, not with every CUDA SSB session
-    import optuna
-    from optuna.samplers import TPESampler
-    from tqdm.auto import tqdm
+    from quantem.gpu.ssb._resident_search import fit_standard_resident
 
-    optuna.logging.set_verbosity(optuna.logging.WARNING)
-    sampler = TPESampler(seed=seed)
-    study = optuna.create_study(direction="minimize", sampler=sampler)
-    progress = tqdm(total=num_trials, desc="SSB optimize", disable=not verbose,
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
-    trial_history = []
-    n_completed = 0
-    while n_completed < num_trials:
-        current_batch = min(batch_size, num_trials - n_completed)
-        trials = [study.ask() for _ in range(current_batch)]
-        c10_arr = np.empty(current_batch, dtype=np.float32)
-        c12_arr = np.empty(current_batch, dtype=np.float32)
-        phi12_arr = np.empty(current_batch, dtype=np.float32)
-        for i, trial in enumerate(trials):
-            c10_arr[i] = _suggest(trial, "C10_A", aberrations.get("C10_A", aberration_defaults.get("C10", 0.0)))
-            c12_arr[i] = _suggest(trial, "C12_A", aberrations.get("C12_A", aberration_defaults.get("C12", 0.0)))
-            phi12_deg = _suggest(trial, "phi12_deg", aberrations.get("phi12_deg", math.degrees(aberration_defaults.get("phi12", 0.0))))
-            phi12_arr[i] = math.radians(phi12_deg)
-        host_losses = [_loss(engine, point) for point in zip(c10_arr, c12_arr, phi12_arr, strict=True)]
-        for i, trial in enumerate(trials):
-            study.tell(trial, float(host_losses[i]))
-            trial_history.append({
-                "number": trial.number,
-                "params": {"C10_A": float(c10_arr[i]), "C12_A": float(c12_arr[i]),
-                           "phi12_deg": math.degrees(float(phi12_arr[i]))},
-                "loss": float(host_losses[i]),
-            })
-        n_completed += current_batch
-        progress.update(current_batch)
-    progress.close()
-    return study.best_params, study.best_value, trial_history
+    lower, upper = standard_bounds(search_ranges)
+    start = None
+    if aberrations:
+        start = [float(aberrations[name]) for name in ("C10", "C12", "phi12")]
+    elif int(num_trials) == 0:
+        start = [_DEFAULT_START[name] for name in ("C10", "C12", "phi12")]
+    if start is not None:
+        # C12 is a magnitude and phi12 has period pi: a start outside (-90, 90] degrees (typed, or a phase-variance
+        # fit's) means the wrapped azimuth, which clamping alone would replace by the box edge
+        start[1] = abs(start[1])
+        if lower[2] <= -math.pi / 2 + 1e-9 and upper[2] >= math.pi / 2 - 1e-9:
+            start[2] = (start[2] + math.pi / 2) % math.pi - math.pi / 2
+        # the start obeys the search box: a held coefficient is every trial's and the result's value
+        start = [min(max(value, low), high) for value, low, high in zip(start, lower, upper, strict=True)]
+    lock = tuple(sorted({"C10": 0, "C12": 1, "phi12": 2}[name] for name in (refine_lock or ())))
+    fit = fit_standard_resident(
+        lambda trial: accel.thick.fit_resident(trial, band_inv_A), backend="cuda", lower=lower, upper=upper,
+        trials=int(num_trials), seed=int(seed), polish=refine, lock=lock, start=start,
+    )
+    return {**fit, "band_inv_A": list(band_inv_A)}
 
 
-def _suggest(trial, name: str, spec: tuple[float, float] | float) -> float:
-    """Suggest a value in a ``(low, high)`` range, or return a locked value unchanged."""
-    if isinstance(spec, tuple):
-        return trial.suggest_float(name, spec[0], spec[1])
-    return spec
+def fit_standard_phase_variance(accel: SSBEngine, **options) -> dict[str, object]:
+    """Standard fit (tilt=False) on the phase-variance objective: ``phase_variance_fit.fit_phase_variance`` with
+    the engine's loss. ``options`` are that function's (engine units). The search is backend-neutral so that a
+    seeded fit visits the same trials on every backend that evaluates it."""
 
+    def evaluate_batch(C10: np.ndarray, C12: np.ndarray, phi12: np.ndarray) -> np.ndarray:
+        """Losses of float32 candidates, one fixed-order full reconstruction each (the engine has no batched loss)."""
+        return np.asarray([accel.reconstruct_with_loss(float(c10), float(c12), float(phi12_rad))[1]
+                           for c10, c12, phi12_rad in zip(C10, C12, phi12, strict=True)], dtype=np.float64)
 
-# =========================================================================
-#  Batched Nelder-Mead refinement
-# =========================================================================
-
-def batch_nelder_mead(
-    engine: SSBEngine,
-    x0: np.ndarray,
-    xatol: float = 0.1,
-    fatol: float = 1e-8,
-    max_iter: int = 300,
-) -> tuple[np.ndarray, float, int]:
-    """
-    Nelder-Mead simplex optimization with batched vertex evaluations.
-
-    Standard Nelder-Mead in 3D has a simplex of 4 vertices. At each iteration
-    it evaluates 1-3 candidate points (reflect, expand, contract). This
-    implementation batches all vertex evaluations where possible.
-
-    However, Nelder-Mead is inherently sequential - each step depends on
-    the previous result. The initial simplex (4 vertices) and a shrink
-    (3 vertices) are evaluated at float32 coordinates, the single moves at
-    the float64 simplex point.
-
-    Parameters
-    ----------
-    engine : SSBEngine
-        The rotation-cached engine whose phase-variance loss is minimised.
-    x0 : np.ndarray
-        Starting point [C10, C12, phi12] (3 values).
-    xatol, fatol : float
-        Convergence tolerances.
-    max_iter : int
-        Maximum iterations.
-
-    Returns
-    -------
-    best_x : np.ndarray
-        Optimized [C10, C12, phi12].
-    best_loss : float
-        Loss at best_x.
-    n_evals : int
-        Total number of variance evaluations.
-    """
-    n = len(x0)
-    assert n == 3, "Expected 3 parameters: C10, C12, phi12"
-
-    # Build initial simplex (n+1 = 4 vertices)
-    simplex = np.empty((n + 1, n), dtype=np.float64)
-    simplex[0] = x0
-    for i in range(n):
-        simplex[i + 1] = x0.copy()
-        # Standard Nelder-Mead initial step: 5% of value or 0.00025
-        simplex[i + 1, i] += max(abs(x0[i]) * 0.05, 0.00025)
-
-    f_values = np.array([_loss(engine, vertex) for vertex in simplex.astype(np.float32)])
-    n_evals = n + 1
-
-    # Standard Nelder-Mead coefficients
-    alpha = 1.0   # reflection
-    gamma = 2.0   # expansion
-    rho = 0.5     # contraction
-    sigma = 0.5   # shrink
-
-    for _ in range(max_iter):
-        # Sort vertices by function value
-        order = np.argsort(f_values, kind="stable")
-        simplex = simplex[order]
-        f_values = f_values[order]
-
-        # Check convergence
-        x_spread = np.max(np.abs(simplex[-1] - simplex[0]))
-        f_spread = abs(f_values[-1] - f_values[0])
-        if x_spread < xatol and f_spread < fatol:
-            break
-
-        # Centroid of all vertices except worst
-        centroid = np.mean(simplex[:-1], axis=0)
-
-        # Reflection
-        x_r = centroid + alpha * (centroid - simplex[-1])
-        f_r = _loss(engine, x_r)
-        n_evals += 1
-
-        if f_values[0] <= f_r < f_values[-2]:
-            # Accept reflection
-            simplex[-1] = x_r
-            f_values[-1] = f_r
-            continue
-
-        if f_r < f_values[0]:
-            # Try expansion
-            x_e = centroid + gamma * (x_r - centroid)
-            f_e = _loss(engine, x_e)
-            n_evals += 1
-            if f_e < f_r:
-                simplex[-1] = x_e
-                f_values[-1] = f_e
-            else:
-                simplex[-1] = x_r
-                f_values[-1] = f_r
-            continue
-
-        # Contraction
-        if f_r < f_values[-1]:
-            # Outside contraction
-            x_c = centroid + rho * (x_r - centroid)
-            f_c = _loss(engine, x_c)
-            n_evals += 1
-            if f_c <= f_r:
-                simplex[-1] = x_c
-                f_values[-1] = f_c
-                continue
-        else:
-            # Inside contraction
-            x_c = centroid - rho * (centroid - simplex[-1])
-            f_c = _loss(engine, x_c)
-            n_evals += 1
-            if f_c < f_values[-1]:
-                simplex[-1] = x_c
-                f_values[-1] = f_c
-                continue
-
-        # Shrink: move all vertices toward best - batch evaluate n vertices
-        for i in range(1, n + 1):
-            simplex[i] = simplex[0] + sigma * (simplex[i] - simplex[0])
-        f_values[1:] = [_loss(engine, vertex) for vertex in simplex[1:].astype(np.float32)]
-        n_evals += 3
-
-    best_idx = np.argsort(f_values, kind="stable")[0]
-    return simplex[best_idx], float(f_values[best_idx]), n_evals
-
-
-def _loss(engine: SSBEngine, point) -> float:
-    """Phase-variance loss of one (C10, C12, phi12) candidate, the call every search step shares."""
-    return float(engine.reconstruct_with_loss(float(point[0]), float(point[1]), float(point[2]))[1])
+    return fit_phase_variance(evaluate_batch, **options)
 
 
 # =========================================================================

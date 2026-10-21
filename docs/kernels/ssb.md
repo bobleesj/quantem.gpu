@@ -303,10 +303,10 @@ $$
 =\operatorname*{arg\,min}_{\boldsymbol\theta}L(\boldsymbol\theta).
 $$
 
-## 5. Default optimization and final result
+## 5. Phase-variance optimization and final result
 
-The default fit evaluates 200 seeded TPE candidates, chooses the lowest-loss
-candidate, and refines it with Nelder-Mead. In compact form,
+The phase-variance fit evaluates 200 seeded TPE candidates, chooses the
+lowest-loss candidate, and refines it with Nelder-Mead. In compact form,
 
 $$
 \left\{\boldsymbol\theta_j,L_j\right\}_{j=1}^{200}

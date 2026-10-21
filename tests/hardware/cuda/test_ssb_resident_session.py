@@ -99,8 +99,12 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         host, _ = ssb.preview(dict(again.aberrations), **options)
         assert isinstance(native, cp.ndarray)
         np.testing.assert_array_equal(cp.asnumpy(native).astype(np.float32), host)
-    with SSB(acquisition, **SETTINGS) as standard, pytest.raises(ValueError, match="newton"):
-        standard.find_aberrations(tilt=False, refinement="newton", verbose=False)
+    with SSB(acquisition, **SETTINGS) as standard:
+        # the standard fit (tilt=False) polishes the agreement with the same resident Newton as on MPS
+        fit = standard.find_aberrations(tilt=False, refinement="newton", check_rotation=False, verbose=False)
+        assert fit.refinement == "newton" and fit.sample_agreement > 0 and fit.sample_tilt_mrad is None
+        with pytest.raises(ValueError, match="nelder-mead"):
+            standard.find_aberrations(tilt=False, refinement="newton", refine_lock=["C10_nm"], verbose=False)
 
 
 

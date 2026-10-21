@@ -46,10 +46,10 @@ with identical losses, branch records, phases and trial records, and the same
 live peak memory (12.50 GiB of MLX arrays on gold; 18.56 GiB of driver memory
 above the encoded data in most runs, the overnight 18.6 GiB;
 `2026-10-20-mps-performance.md`). The default
-and `tilt=False` fits are unchanged bit for bit. On CUDA,
-`objective="phase_variance"` is the standard fit CUDA ran before, and
-`tilt=False` raises `NotImplementedError` naming it until the agreement fit is
-ported.
+and `tilt=False` fits are unchanged bit for bit.
+CUDA runs the same standard fit since the same day
+(`2026-10-20-ssb-cuda-standard-fit.md`); its phase-variance fit is the same
+search, in `ssb/phase_variance_fit.py`.
 
 ## Evidence
 
@@ -107,5 +107,6 @@ standard fit's coefficients move: on gold C10 −17.756 → −18.467 nm. The
 phase-variance search stays as `objective="phase_variance"`, for comparison
 with earlier results.
 
-CUDA follow-up: the `tilt=False` agreement fit on `fit_standard_resident` and
-the depth-0 branch in `thick_fit_batch_kernel`.
+CUDA follow-up, done the same day (`2026-10-20-ssb-cuda-standard-fit.md`): the
+standard fit on `fit_standard_resident`, with the phase-variance search kept as
+`objective="phase_variance"`.

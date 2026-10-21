@@ -39,10 +39,15 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
             values = record['params']
             assert values['C12_nm'] == pytest.approx(4.)
             assert values['phi12_deg'] == pytest.approx(30.)
-            phase, loss = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
-                                       'phi12_deg': values['phi12_deg']})
+            phase, _ = ssb.preview({'C10_nm': values['C10_nm'], 'C12_nm': values['C12_nm'],
+                                    'phi12_deg': values['phi12_deg']})
             np.testing.assert_allclose(cp.asnumpy(replay.phase[frame]), phase, atol=1e-7)
-            assert loss == pytest.approx(record['loss'], rel=2e-5, abs=1e-7)
+            # a standard trial's loss is its negative model agreement at sample tilt and depth spread 0
+            point = np.array([[10.0 * values['C10_nm'], 10.0 * values['C12_nm'], math.radians(values['phi12_deg']),
+                               0.0, 0.0, 0.0]])
+            agreement = float(ssb._backend().sample_agreement(point, tuple(record['band_inv_A']))[0])
+            assert record['objective'] == 'negative_thick_agreement'
+            assert -agreement == pytest.approx(record['loss'], rel=1e-5)
         assert ssb._reconstruction is native
         assert aberrations.trial_records == records
         figure = ssb.show_trials(best=3)

@@ -44,12 +44,12 @@ answers an agreement call.
 | Method | MPS | CUDA | Browser |
 |---|---|---|---|
 | `find_aberrations()` | yes | yes | no fit |
-| `find_aberrations(tilt=False)` | yes | not yet: raises `NotImplementedError` | no fit |
+| `find_aberrations(tilt=False)` | yes | yes | no fit |
 | `find_aberrations(tilt=False, objective="phase_variance")` | yes | yes | no fit |
 
 On CUDA, `tilt=False` was the phase-variance search until 2026-10-20; that
-search is now `objective="phase_variance"`, and the agreement fit is being
-ported. The browser engine has no aberration search.
+search is now `objective="phase_variance"`, the same search as on MPS
+(`ssb/phase_variance_fit.py`). The browser engine has no aberration search.
 
 ## Inputs and outputs
 
@@ -181,7 +181,7 @@ Computational padding is separate from `reconstruct(..., upsampling_factor=2)`.
 The default fit evaluates 200 seeded TPE candidates of the least-squares
 agreement of the SSB model with the full active bright field, keeps the best,
 and refines it with Newton steps. The standard fit (`tilt=False`) runs the
-same search with the sample tilt and depth spread held at 0;
+same search with the sample tilt and depth spread held at 0, on CUDA and MPS;
 `objective="phase_variance"` minimizes the phase variance with Optuna TPE and
 Nelder–Mead ({ref}`Fit methods <ssb-fit-methods>`). No fit averages optimizer
 candidates.
