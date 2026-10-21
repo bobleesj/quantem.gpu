@@ -1503,7 +1503,7 @@ class SSB:
         )
 
     def show(self, view: Literal["interactive", "depth", "tilt", "parameters", "focus"] = "interactive", *,
-             size: Literal["small", "medium", "large"] | None = None,
+             size: Literal["small", "medium", "large", "xlarge"] | None = None,
              region: tuple[int, int, int, int] | None = None,
              mode: Literal["interactive", "static"] | None = None, **options):
         """Open ShowPtycho on this session: the live phase and its FFT, aberration sliders, Save.
@@ -1530,8 +1530,10 @@ class SSB:
         view : {"interactive", "depth", "tilt", "parameters", "focus"}, optional
             The existing ShowPtycho widget, the focus-depth landscape, the
             row-column tilt landscape, both landscapes, or reconstructed images.
-        size : {"small", "medium", "large"} or None, optional
-            Plot or focus-gallery panel size only. Does not change data or sampling.
+        size : {"small", "medium", "large", "xlarge"} or None, optional
+            Plot or focus-gallery panel size only; medium by default. Interactive
+            focus panels use 300, 450, 600 or 900 CSS pixels. Does not change
+            data or sampling.
         region : tuple of int or None, optional
             Static diagnostic region in original scan pixels, as
             ``(row_start, row_stop, col_start, col_stop)`` with exclusive stops.
@@ -1578,8 +1580,8 @@ class SSB:
         if mode is not None and view != "focus":
             raise ValueError("Use mode with ssb.show('focus'); depth and tilt landscapes are already static.")
         if view != "interactive":
-            if size is not None and (size not in ("small", "medium", "large") or options.get("axsize") is not None):
-                raise ValueError("Use size='small', 'medium' or 'large', or axsize=(width, height), not both.")
+            if size is not None and (size not in ("small", "medium", "large", "xlarge") or options.get("axsize") is not None):
+                raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
             result = self._aberration_search
             if result is None:
                 result = self.find_aberrations(compare_standard=False,

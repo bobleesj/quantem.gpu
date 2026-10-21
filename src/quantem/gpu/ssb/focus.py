@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
+from quantem.gpu.ssb.results import _FIGURE_SIZE_SCALES
+
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
     from quantem.widget import Show2D, Show3D
@@ -20,7 +22,7 @@ def show_focus(
     region: tuple[int, int, int, int] | None = None,
     mode: Literal["interactive", "static"] = "interactive",
     layout: Literal["grid", "stack"] = "grid",
-    size: Literal["small", "medium", "large"] | None = None,
+    size: Literal["small", "medium", "large", "xlarge"] | None = None,
     focus_offsets_nm: Sequence[float] = (-5.0, 0.0, 5.0),
     depth_spread_nm: float | Sequence[float] | None = None,
     axsize: tuple[float, float] | None = None,
@@ -33,9 +35,9 @@ def show_focus(
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
     if not isinstance(max_cols, int) or isinstance(max_cols, bool) or max_cols < 1:
         raise ValueError("Use a positive integer for max_cols, for example max_cols=2.")
-    scales = {None: 1.0, "small": 0.75, "medium": 1.0, "large": 1.5}
+    scales = {None: 1.0, **_FIGURE_SIZE_SCALES}
     if size not in scales or (axsize is not None and (size is not None or mode != "static")):
-        raise ValueError("Choose size='small', 'medium' or 'large', or axsize=(width, height) with mode='static'.")
+        raise ValueError("Choose size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height) with mode='static'.")
     offsets = np.asarray(focus_offsets_nm, dtype=float)
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
         raise ValueError("Give finite focus_offsets_nm, for example (-5, 0, 5), relative to the joint fit.")
@@ -88,7 +90,6 @@ def show_focus(
         title += f" · rows {region[0]}:{region[1]}, columns {region[2]}:{region[3]}"
     lower, upper = fit.phase_limits
     if mode == "interactive":
-        panel_width = 200 if size == "small" else round(300 * scales[size])
         if layout == "stack":
             viewer = Show3D(
                 [np.stack(row) for row in images],
@@ -100,7 +101,7 @@ def show_focus(
                 labels=[f"C₁₀ {fit.aberrations['C10_nm'] + offset:+.2f} nm" for offset in offsets],
                 title=title, dim_label="Defocus", cmap="inferno",
                 sampling=sampling, units="Å", max_cols=len(depths),
-                panel_width_px=panel_width, panel_gap_px=0,
+                size=size or "medium", panel_gap_px=0,
                 vmin=lower, vmax=upper, auto_contrast=False,
                 link_contrast=True, display_bin=1, avg_window=1,
             )
@@ -110,7 +111,7 @@ def show_focus(
             [image for row in images for image in row],
             labels=[label for row in labels for label in row], title=title,
             sampling=sampling, units="Å", ncols=len(offsets),
-            panel_width_px=panel_width,
+            size=size or "medium",
             vmin=lower, vmax=upper, auto_contrast=False,
             link_contrast=True, link_zoom=True, link_pan=True, display_bin=1,
         )

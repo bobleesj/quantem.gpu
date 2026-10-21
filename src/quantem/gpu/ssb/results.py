@@ -14,6 +14,8 @@ from quantem.gpu.ssb.probe import model_probe, probe_grid
 if TYPE_CHECKING:
     from quantem.gpu.ssb.branches import RotationBranches
 
+_FIGURE_SIZE_SCALES = {"small": 2 / 3, "medium": 1.0, "large": 4 / 3, "xlarge": 2.0}
+
 # A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
 # 180-degree branch the scan-detector rotation is on, so the branch is left as given.
 COLUMN_SIGN_MIN = 0.2
@@ -342,7 +344,7 @@ class SSBResult(Mapping[str, float]):
     def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt"] = "phase", *,
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
              show_parameters: bool = True,
-             size: Literal["small", "medium", "large"] | None = None):
+             size: Literal["small", "medium", "large", "xlarge"] | None = None):
         """Show a large phase image or the real-space and Fourier-space probes.
 
         Phase views reuse symmetric linear limits from their fitted result.
@@ -380,8 +382,8 @@ class SSBResult(Mapping[str, float]):
             default. This only displays recorded values; it runs no fitting
             or GPU evaluations. Use ``view="parameters"`` for the plots alone.
             Measure them first with ``ssb.measure_parameters(result)``.
-        size : {"small", "medium", "large"} or None, optional
-            Scale the default panel dimensions by 0.75, 1 or 1.5. This changes
+        size : {"small", "medium", "large", "xlarge"} or None, optional
+            Scale the default panel dimensions by 2/3, 1, 4/3 or 2. This changes
             only figure size, never sampling or fitted values. Use either
             ``size`` or an explicit ``axsize``.
 
@@ -410,9 +412,9 @@ class SSBResult(Mapping[str, float]):
         from quantem.core.visualization import show_2d
 
         if size is not None:
-            scales = {"small": 0.75, "medium": 1.0, "large": 1.5}
+            scales = _FIGURE_SIZE_SCALES
             if size not in scales or axsize is not None:
-                raise ValueError("Use size='small', 'medium' or 'large', or axsize=(width, height), not both.")
+                raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
             if compare is not None or view == "probe":
                 panel_size = (6, 6)
             elif view == "rotation":
