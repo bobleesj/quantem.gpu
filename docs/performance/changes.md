@@ -4,6 +4,15 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
+## 2026-10-21: reusable SSB measurement and agent workflow
+
+Added `quantem-gpu benchmark-ssb`, a repository-local `gpu-benchmark` skill,
+and installed-wheel hardware gates. The
+[dated record](../maintainer/2026-10-21-ssb-joint-benchmark.md) separates repeated
+MPS compute timings from browser interactions and earlier one-off observations.
+Raw evidence stays private. This adds reproducible measurement infrastructure;
+it does not claim a kernel speedup or completed cross-backend release signoff.
+
 ## 2026-10-10: registry retired
 
 The benchmark registry (`benchmarks/benchmark_registry.json`), the profile

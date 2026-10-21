@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  testpypi:
-    name: Build and publish quantem.gpu
+  build:
+    name: Build quantem.gpu
     runs-on: ubuntu-latest
     environment: testpypi
     defaults:
@@ -152,7 +152,86 @@ jobs:
           print(f"wheel ok: {wheel}")
           PY
 
-      - name: Publish GPU package to TestPyPI
+      - name: Keep the exact candidate wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-wheel
+          path: dist/gpu/*.whl
+          if-no-files-found: error
+
+  hardware:
+    name: SSB acceptance (${{ matrix.backend }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [cuda, mps]
+    runs-on: [self-hosted, "quantem-${{ matrix.backend }}"]
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: ""
+      PYTORCH_ENABLE_MPS_FALLBACK: "0"
+      PYTORCH_MPS_FAST_MATH: "0"
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      QUANTEM_SSB_REFERENCE_PHASE: ${{ matrix.backend == 'cuda' && vars.SSB_CUDA_REFERENCE_PHASE || vars.SSB_MPS_REFERENCE_PHASE }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-wheel
+          path: candidate
+      - name: Fresh wheel installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHECK_ENV="$RUNNER_TEMP/ssb-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.backend }}"
+          python3 -m venv "$CHECK_ENV"
+          echo "$CHECK_ENV/bin" >> "$GITHUB_PATH"
+          WHEEL=$(find "$PWD/candidate" -name '*.whl')
+          "$CHECK_ENV/bin/python" -m pip install "$WHEEL[${{ matrix.backend }}]" \
+            --extra-index-url https://test.pypi.org/simple/ \
+            huggingface_hub pytest playwright jupyterlab nbclient
+      - name: Fetch the public benchmark acquisition
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os
+          from pathlib import Path
+          from huggingface_hub import snapshot_download
+          root = snapshot_download("bobleesj/quantem-data", repo_type="dataset",
+              revision="5925e4b49b2ca28ff82d6d5a6b9a8bfea9edfb20",
+              allow_patterns="4dstem/gold_512/*")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              print("QUANTEM_SSB_RELEASE_SOURCE=" + str(Path(root) / "4dstem/gold_512/gold_004_master.h5"), file=output)
+          PYCODE
+      - name: Full-data joint fitting and repeated reconstruction
+        shell: bash
+        run: |
+          test -f "${QUANTEM_SSB_REFERENCE_PHASE:?Configure the approved public-gold Auto phase reference for this runner}"
+          quantem-gpu benchmark-ssb "$QUANTEM_SSB_RELEASE_SOURCE" \
+            --require-installed --backend "${{ matrix.backend }}" \
+            --semiangle-mrad 30 --scan-sampling-a 0.5 --detector-sampling-mrad 0.46 \
+            --reference-phase "$QUANTEM_SSB_REFERENCE_PHASE" \
+            --out "$RUNNER_TEMP/ssb-${{ matrix.backend }}.json"
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ssb-${{ matrix.backend }}
+          path: ${{ runner.temp }}/ssb-${{ matrix.backend }}.json
+          if-no-files-found: error
+
+  testpypi:
+    name: Publish qualified quantem.gpu
+    needs: [build, hardware]
+    runs-on: ubuntu-latest
+    environment: testpypi
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-wheel
+          path: dist/gpu
+      - name: Publish GPU to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/

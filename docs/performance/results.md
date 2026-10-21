@@ -9,7 +9,15 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
-Every row below was measured between 2026-08-18 and 2026-08-22, before
+## SSB joint fitting, 2026-10-21
+
+The [dated installed-wheel SSB record](../maintainer/2026-10-21-ssb-joint-benchmark.md)
+contains full-field, regional, move/resize and fresh-kernel widget evidence.
+Use [the reusable benchmark command](ssb-joint-fit.md) for new measurements.
+MPS measurements passed; CUDA qualification and release publication remain
+pending. This record does not replace the historical loader results below.
+
+The platform-profile rows below were measured between 2026-08-18 and 2026-08-22, before
 `io.load` on CUDA and MPS kept acquisitions ANS encoded (October 2026). The
 rows time the loaders and resident products of their recorded revisions; they
 are dated records, not timings of the current `io.load`.
