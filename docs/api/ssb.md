@@ -432,6 +432,49 @@ rotation branch: after a branch comparison the trials of both searches are kept,
 `search` 0 at the first angle and 1 at the angle plus 180 degrees. Saved search
 results retain this history.
 
+### Reconstructed focus/depth images
+
+To compare the actual specimen images, use the existing Show2D gallery:
+
+```python
+viewer = ssb.show("focus")
+viewer
+```
+
+The default grid varies C10 by -5, 0 and +5 nm around the joint fit, and model
+depth spread by -5, 0 and +5 nm around its fitted value (bounded at zero).
+Every panel retains the fitted astigmatism, specimen tilt and rotation. Labels
+state the applied C10 and depth spread; the fitted pair is marked `joint fit`.
+These are conditional reconstructions, not independently fitted models or
+physical depth sections. All panels share contrast and automatic output sampling.
+
+Use the same view with `mode="static"` for a figure made by `show_2d`:
+
+```python
+ssb.show("focus", mode="static", size="small")
+```
+
+| Focus-image option | Default | Meaning |
+| --- | --- | --- |
+| `mode` | `"interactive"` | Show2D, or `"static"` for `show_2d`. |
+| `focus_offsets_nm` | `(-5, 0, 5)` | Defocus offsets from fitted C10, in nm. |
+| `depth_spread_nm` | `None` | Fitted depth spread and ±5 nm; supply an absolute value or sequence to choose the rows. |
+| `region` | `None` | Full field, or scan-pixel bounds to fit independently and display. |
+| `size` | `"medium"` dimensions | Display size only. `axsize` supplies exact panel dimensions in static mode. |
+
+For a focus sweep at one model depth, or a regional comparison:
+
+```python
+ssb.show("focus", focus_offsets_nm=(-10, 0, 10), depth_spread_nm=15)
+ssb.show("focus", region=(64, 192, 64, 192))
+```
+
+Regional focus views apply the region's joint fit to the **full parent scan**,
+then crop the displayed images. A retained `region = ssb.select_region(...)`
+session also supports `region.show("focus")`; keep its parent open. This does
+not replace the full-field fitted parameters. A Show2D return value supports
+the usual zoom, FFT and `viewer.export_html(...)` methods.
+
 ## Finer preview sampling
 
 Fit at native sampling, then reuse the fitted parameters for a finer preview:

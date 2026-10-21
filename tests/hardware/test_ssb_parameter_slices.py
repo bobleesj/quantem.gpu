@@ -6,8 +6,23 @@ import numpy as np
 import pytest
 
 
+def _record_static_arrays(monkeypatch):
+    """Inspect reconstructed values before the standard plotter colormaps them."""
+    from quantem.core import visualization
+
+    arrays = []
+    original = visualization.show_2d
+
+    def show(values, **options):
+        arrays.append(values)
+        return original(values, **options)
+
+    monkeypatch.setattr(visualization, "show_2d", show)
+    return arrays
+
+
 @pytest.mark.parametrize("backend", ["cuda", "mps"])
-def test_measure_show_and_reopen_joint_parameters(tmp_path, backend):
+def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch):
     if backend == "mps":
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             pytest.skip("Requires an Apple silicon GPU")
@@ -20,7 +35,6 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend):
         except cp.cuda.runtime.CUDARuntimeError:
             pytest.skip("Requires a CUDA runtime")
     import matplotlib.pyplot as plt
-
     from quantem.gpu import SSB
     from quantem.gpu.ssb.persistence import load_result, result_paths
     from quantem.gpu.ssb.results import host_array
@@ -80,8 +94,21 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend):
                 figure.axes[0].lines[0].get_xydata()[0], evidence["slices"][key]["fitted_point"])
             assert figure.number not in plt.get_fignums()
 
+        # Image comparisons keep every fitted correction, including nonzero tilt/depth.
+        shown = ssb.reconstruct(fit, upsampling_factor="auto", compute_loss=False)
+        captured = _record_static_arrays(monkeypatch)
+        focus = ssb.show("focus", mode="static", focus_offsets_nm=(0, 5),
+                         depth_spread_nm=fit.depth_spread_nm, size="small")
+        assert focus.number not in plt.get_fignums()
+        images = captured[-1][0]
+        np.testing.assert_allclose(images[0], host_array(shown.phase), atol=1e-6, rtol=0)
+        assert not np.allclose(images[0], images[1], atol=1e-6, rtol=0)
+        assert ssb.sample_tilt_mrad == fit.sample_tilt_mrad
+        assert ssb.depth_spread_nm == fit.depth_spread_nm
+        assert ssb.aberrations == fit.aberrations
 
-def test_show_selected_region_preserves_full_field_joint_fit():
+
+def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
     """Inspect a region with shared rotation without replacing the full-field solution."""
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         pytest.skip("Requires an Apple silicon GPU")
@@ -100,3 +127,20 @@ def test_show_selected_region_preserves_full_field_joint_fit():
         assert ssb.scan_detector_rotation_deg == fit.scan_detector_rotation_deg
         np.testing.assert_array_equal(fit.phase, phase)
         assert not fit.parameter_slices  # regional evidence was not attached to the full field
+
+        # A regional image view corrects the full parent scan before cropping.
+        captured = _record_static_arrays(monkeypatch)
+        with ssb.select_region((16, 80, 32, 96)) as region:
+            regional_fit = region.find_aberrations(check_rotation=False, compare_standard=False,
+                                                   compute_loss=False, verbose=False)
+            focus = region.show("focus", mode="static", focus_offsets_nm=(0,),
+                                depth_spread_nm=regional_fit.depth_spread_nm, size="small")
+            assert "rows 16:80, columns 32:96" in focus.get_suptitle()
+            factor = ssb._resolve_upsampling_factor("auto")
+            expected, _ = ssb.preview(dict(regional_fit), sample_tilt_mrad=regional_fit.sample_tilt_mrad,
+                                      depth_spread_nm=regional_fit.depth_spread_nm,
+                                      upsampling_factor=factor, compute_loss=False)
+            actual = captured[-1][0][0]
+            np.testing.assert_array_equal(actual, expected[16 * factor:80 * factor, 32 * factor:96 * factor])
+            assert ssb.aberrations == fit.aberrations
+            assert ssb.sample_tilt_mrad == fit.sample_tilt_mrad
