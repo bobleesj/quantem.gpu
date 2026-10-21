@@ -169,9 +169,11 @@ For a calibrated SSB session, compare the two 180-degree rotation candidates
 with negative and positive C10 search intervals:
 
 ```python
-comparison = ssb.compare_rotation_focus()
-comparison.show()
+comparison = ssb.compare_rotation_defocus(show=True)
 ```
+
+Omit `show=True` to return a pandas-style table view without displaying a figure;
+`comparison.report()` gives the pandas DataFrame.
 
 This runs four independent 200-trial joint fits with automatic refinement,
 retaining all valid BF pixels and the current field of view. It preserves the
