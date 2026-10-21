@@ -5,7 +5,8 @@ tilt-corrected (thick-sample) SSB are compared with it on real data: the public 
 revision 5925e4b, ``4dstem/gold_512/gold_004_master.h5``, 512 x 512 scan, 7644 bright-field pixels), at the parameters
 the default ``reconstruct()`` fits (the tilt-corrected joint fit) and at perturbed ones:
 
-- ``thick_fit_batch``, the fit search's objective (``TorchSSB.fit_power``), for one batch of eight parameter sets;
+- ``thick_fit_batch``, the per-term objective (``TorchSSB.fit_power``), for one batch of eight parameter sets, and
+  the resident fit's objective (``resident_fit.evaluate``) for the same rows;
 - ``reconstruct_thick``, the interactive preview, against the reference mean phase (max and RMS, rad);
 - the phase-variance loss of the same call.
 
@@ -156,6 +157,20 @@ def test_fit_objective_matches_torch_reference(gold):
     assert relative.max() <= 2.0 * _objective_rtol(gold["prepared"])
     # the objective really sees the tilt: the fit is the best of these rows, by more than the tolerance
     assert np.argmax(expected) == 0 and expected[4] < expected[0] * (1.0 - 1e-3)
+
+
+def test_resident_fit_objective_matches_torch_reference(gold):
+    """The resident fit's objective (angle-sum phases advanced along detector rows) equals ``fit_power`` too."""
+    from quantem.gpu.ssb._resident_search import _Device, _trial
+    from quantem.gpu.ssb.mps import resident_fit
+
+    rows, reference = gold["rows"], gold["reference"]
+    device = _Device("mps")
+    resident = device.host(resident_fit.evaluate(gold["prepared"], _trial(device, device.pack(rows))))
+    expected = np.array([reference.fit_power(r[0], r[1], r[2], (r[3], r[4]), r[5]) for r in rows])
+    relative = np.abs(resident - expected) / np.abs(expected)
+    print(f"resident objective relative error, max {relative.max():.2e}: {np.array2string(relative, precision=2)}")
+    assert relative.max() <= 2.0 * _objective_rtol(gold["prepared"])
 
 
 @pytest.mark.parametrize("index", PHASE_ROWS)
