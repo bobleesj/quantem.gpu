@@ -18,6 +18,7 @@ inline float2 joint_value_at(device const float2* g,device const float2* k,
     if(gm.w*gk.w==0 && gp.w*gk.w==0)return 0;
     uint r=uint((qr%int(p.n)+int(p.n))%int(p.n));
     uint c=uint((qc%int(p.n)+int(p.n))%int(p.n));
+    if(r==0u && c==0u)return 0;  // replicas of the scan mean stay zero
     float2 value=joint_read(g,r,c,bf,p),gamma=joint_gamma_geometry_chi(q,gk,gm,gp,p,t,chi);
     return float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y)/max(length(gamma),1e-8f);
 }

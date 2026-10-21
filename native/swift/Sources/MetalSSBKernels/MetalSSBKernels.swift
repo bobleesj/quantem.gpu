@@ -806,7 +806,7 @@ public final class MetalSSBEngine {
   /// Build the joint tilt/depth model from this session's exact prepared spectra.
   /// Calls must be serialized with all other operations on this engine.
   public func jointModel(
-    scanDetectorRotationDegrees: Float,
+    scanDetectorRotationDegrees: Double,
     bandInverseAngstroms: ClosedRange<Float> = 0.2...0.9,
     isCancelled: () -> Bool = { false }
   ) throws -> MetalSSBJointModel {

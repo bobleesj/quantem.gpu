@@ -5,14 +5,23 @@ struct JointGrid {
     uint n, outputN, count, bfOffset, totalBF, bandCount, sourceHalf, chunks;
     float wl, semiangle, angularRow, angularColumn, dqRow, dqColumn, dcReal, dcImag, factor;
 };
-inline float4 joint_geometry(float2 k, constant JointGrid& p) {
-    float r2=dot(k,k), r=sqrt(r2), a=r*p.wl;
-    float inv=r2>1e-30f?1/r2:0;
-    float d=r>1e-15f?length(k*float2(p.angularRow,p.angularColumn))/r:0;
-    float aperture=d>1e-15f?clamp((p.semiangle-a)/d+0.5f,0.0f,1.0f):1;
-    return float4(a*a,(k.x*k.x-k.y*k.y)*inv,2*k.x*k.y*inv,aperture);
+// The float32 geometry of Python MPS `tf_geometry` (thick_sample.py), expression for expression.
+inline float4 joint_geometry_xy(float dx, float dy, float wl, float semiangle, float ang_y, float ang_x) {
+    float r2 = dx * dx + dy * dy;
+    float r = metal::sqrt(r2);
+    float alpha = r * wl;
+    float inv_r2 = (r2 > 1e-30f) ? (1.0f / r2) : 0.0f;
+    float cos2 = (dx * dx - dy * dy) * inv_r2;
+    float sin2 = 2.0f * dx * dy * inv_r2;
+    float inv_r = (r > 1e-15f) ? (1.0f / r) : 0.0f;
+    float denom = metal::sqrt(dx * ang_y * dx * ang_y + dy * ang_x * dy * ang_x) * inv_r;
+    float edge = (denom > 1e-15f) ? ((semiangle - alpha) / denom + 0.5f) : 1.0f;
+    return float4(alpha * alpha, cos2, sin2, metal::clamp(edge, 0.0f, 1.0f));
 }
-inline float joint_sinc(float x) { return abs(x)<1e-6f?1.0f:precise::sin(x)/x; }
+inline float4 joint_geometry(float2 k, constant JointGrid& p) {
+    return joint_geometry_xy(k.x, k.y, p.wl, p.semiangle, p.angularRow, p.angularColumn);
+}
+inline float joint_sinc(float x) { return (metal::abs(x) < 1e-6f) ? 1.0f : metal::precise::sin(x) / x; }
 inline float2 joint_gamma_geometry_chi(float2 q, float4 gk, float4 gm, float4 gp,
                                       constant JointGrid& p, constant float* t, float ck) {
     float f=p.factor;
@@ -56,65 +65,77 @@ kernel void joint_trial_probe(device const float4* geometry [[buffer(0)]],device
     float4 gk=geometry[i];
     for(uint b=0;b<batch;b++) {
         constant float* t=parameters+b*7;
-        chi[(size_t)i*batch+b]=p.factor*gk.x*(t[0]+t[1]*(gk.y*t[2]+gk.z*t[3]));
+        chi[(size_t)i*batch+b]=p.factor*gk.x*(t[1]*(gk.y*t[2]+gk.z*t[3])+t[0]);
     }
 }
-kernel void joint_objective(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
-    device const float2* q [[buffer(2)]],device float4* partial [[buffer(3)]],
-    constant JointGrid& p [[buffer(4)]],constant float* t [[buffer(5)]],
-    device const float4* geometry [[buffer(6)]],device const float* chi [[buffer(7)]],
-    uint2 tid [[thread_position_in_grid]]) {
-    if(tid.x>=p.bandCount||tid.y>=p.chunks)return;
-    float2 numerator=0;float denominator=0;
-    for(uint i=tid.y*256;i<min(p.totalBF,(tid.y+1)*256);i++) {
-        float2 frequency=q[tid.x],pixel=k[i];
-        float4 gk=geometry[i],gm=joint_geometry(frequency-pixel,p),gp=joint_geometry(frequency+pixel,p);
-        if(gm.w*gk.w==0 && gp.w*gk.w==0)continue;
-        float2 gamma=joint_gamma_geometry_chi(frequency,gk,gm,gp,p,t,chi[i]);
-        float2 value=g[(size_t)i*p.bandCount+tid.x];
-        numerator+=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y);
-        denominator+=dot(gamma,gamma);
-    }
-    partial[(size_t)tid.y*p.bandCount+tid.x]=float4(numerator,denominator,0);
-}
-kernel void joint_power(device const float4* partial [[buffer(0)]],device const float* weights [[buffer(1)]],
-    device float* power [[buffer(2)]],constant JointGrid& p [[buffer(3)]],uint i [[thread_position_in_grid]]) {
-    if(i>=p.bandCount)return;
-    float3 sum=0;for(uint c=0;c<p.chunks;c++)sum+=partial[(size_t)c*p.bandCount+i].xyz;
-    power[i]=sum.z>0?weights[i]*dot(sum.xy,sum.xy)/sum.z:0;
-}
-// Independent candidates share geometry and measured Fourier reads. Each
-// candidate retains the scalar kernel's BF and chunk accumulation order.
+// The agreement objective of Python MPS `_thick_fit_batch_kernel`: per band frequency (one thread) and chunk of
+// 256 BF pixels, the partial sums of G conj(gamma) and |gamma|^2 for up to eight candidates, in the same
+// float32 expressions and BF order. The chunk partials are reduced afterwards, the band sum on the host in
+// double precision.
 kernel void joint_objective_batch(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
     device const float2* q [[buffer(2)]],device float4* partial [[buffer(3)]],
     constant JointGrid& p [[buffer(4)]],constant float* parameters [[buffer(5)]],
     constant uint& batch [[buffer(6)]],device const float4* geometry [[buffer(7)]],
     device const float* chi [[buffer(8)]],uint2 tid [[thread_position_in_grid]]) {
     if(tid.x>=p.bandCount||tid.y>=p.chunks)return;
-    float2 numerator[8];float denominator[8];
-    for(uint b=0;b<batch;b++){numerator[b]=0;denominator[b]=0;}
-    float2 frequency=q[tid.x];
-    for(uint i=tid.y*256;i<min(p.totalBF,(tid.y+1)*256);i++) {
-        float2 pixel=k[i];
-        float4 gk=geometry[i],gm=joint_geometry(frequency-pixel,p),gp=joint_geometry(frequency+pixel,p);
-        if(gm.w*gk.w==0 && gp.w*gk.w==0)continue;
+    float wl=p.wl, semiangle=p.semiangle, ang_y=p.angularRow, ang_x=p.angularColumn, factor=p.factor;
+    float qx=q[tid.x].x, qy=q[tid.x].y;
+    float nr[8], ni[8], dd[8];
+    for(uint b=0;b<batch;b++){nr[b]=0.0f;ni[b]=0.0f;dd[b]=0.0f;}
+    uint k1=metal::min(p.totalBF,(tid.y+1)*256);
+    for(uint i=tid.y*256;i<k1;i++) {
+        float kxv=k[i].x, kyv=k[i].y;
+        float4 gk=geometry[i];
+        float4 gm=joint_geometry_xy(qx-kxv,qy-kyv,wl,semiangle,ang_y,ang_x);
+        float4 gp=joint_geometry_xy(qx+kxv,qy+kyv,wl,semiangle,ang_y,ang_x);
+        float a1=gm.w*gk.w, a2=gp.w*gk.w;
+        if(a1==0.0f && a2==0.0f)continue;
         float2 value=g[(size_t)i*p.bandCount+tid.x];
+        float gre=value.x, gim=value.y;
         for(uint b=0;b<batch;b++) {
-            float2 gamma=joint_gamma_geometry_chi(frequency,gk,gm,gp,p,parameters+b*7,chi[(size_t)i*batch+b]);
-            numerator[b]+=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y);
-            denominator[b]+=dot(gamma,gamma);
+            constant float* t=parameters+b*7;
+            float C10=t[0], C12=t[1], c2=t[2], s2=t[3], depth=t[4], thr=t[5], thc=t[6];
+            float chi_k=chi[(size_t)i*batch+b];
+            float b1=0.0f, b2=0.0f, c1=0.0f, cp=0.0f, s1=0.0f, sp=0.0f;
+            bool thick=depth!=0.0f;
+            if(a1!=0.0f) {
+                float chi_m=factor*gm.x*(C12*(gm.y*c2+gm.z*s2)+C10);
+                s1=metal::precise::sincos(chi_m-chi_k,c1);
+                b1=a1;
+                if(thick) {
+                    float shift=6.283185307179586f*(qx*thr+qy*thc);
+                    b1=joint_sinc(0.5f*depth*(-factor*(gm.x-gk.x)-shift))*a1;
+                }
+            }
+            if(a2!=0.0f) {
+                float chi_p=factor*gp.x*(C12*(gp.y*c2+gp.z*s2)+C10);
+                sp=metal::precise::sincos(chi_p-chi_k,cp);
+                b2=a2;
+                if(thick) {
+                    float shift=6.283185307179586f*(qx*thr+qy*thc);
+                    b2=joint_sinc(0.5f*depth*(factor*(gp.x-gk.x)-shift))*a2;
+                }
+            }
+            float gr=b1*c1-b2*cp;
+            float gi=-b1*s1-b2*sp;
+            nr[b]+=gre*gr+gim*gi;
+            ni[b]+=gim*gr-gre*gi;
+            dd[b]+=gr*gr+gi*gi;
         }
     }
     for(uint b=0;b<batch;b++)
-        partial[((size_t)tid.y*batch+b)*p.bandCount+tid.x]=float4(numerator[b],denominator[b],0);
+        partial[((size_t)tid.y*batch+b)*p.bandCount+tid.x]=float4(nr[b],ni[b],dd[b],0);
 }
-kernel void joint_power_batch(device const float4* partial [[buffer(0)]],device const float* weights [[buffer(1)]],
-    device float* power [[buffer(2)]],constant JointGrid& p [[buffer(3)]],
-    constant uint& batch [[buffer(4)]],uint2 tid [[thread_position_in_grid]]) {
+// Sum the chunk partials of each band and candidate in chunk order; the host forms the power.
+kernel void joint_power_batch(device const float4* partial [[buffer(0)]],device float4* sums [[buffer(1)]],
+    constant JointGrid& p [[buffer(2)]],constant uint& batch [[buffer(3)]],uint2 tid [[thread_position_in_grid]]) {
     if(tid.x>=p.bandCount||tid.y>=batch)return;
-    float3 sum=0;
-    for(uint c=0;c<p.chunks;c++)sum+=partial[((size_t)c*batch+tid.y)*p.bandCount+tid.x].xyz;
-    power[(size_t)tid.y*p.bandCount+tid.x]=sum.z>0?weights[tid.x]*dot(sum.xy,sum.xy)/sum.z:0;
+    float nr=0.0f, ni=0.0f, dd=0.0f;
+    for(uint c=0;c<p.chunks;c++){
+        float4 v=partial[((size_t)c*batch+tid.y)*p.bandCount+tid.x];
+        nr+=v.x; ni+=v.y; dd+=v.z;
+    }
+    sums[(size_t)tid.y*p.bandCount+tid.x]=float4(nr,ni,dd,0);
 }
 kernel void joint_correct(device const float2* g [[buffer(0)]],device const float2* k [[buffer(1)]],
     device float2* corrected [[buffer(2)]],constant JointGrid& p [[buffer(3)]],
@@ -130,7 +151,9 @@ kernel void joint_correct(device const float2* g [[buffer(0)]],device const floa
     float2 pixel=k[p.bfOffset+tid.y];
     float4 gk=joint_geometry(pixel,p),gm=joint_geometry(q-pixel,p),gp=joint_geometry(q+pixel,p);
     float2 result=0;
-    if(gm.w*gk.w!=0 || gp.w*gk.w!=0) {
+    // The scan mean is background: its replicas at nonzero output frequencies stay zero.
+    bool replica=r==0u && c==0u;
+    if(!replica && (gm.w*gk.w!=0 || gp.w*gk.w!=0)) {
         float2 value=joint_read(g,r,c,tid.y,p);
         float2 gamma=joint_gamma_geometry(q,gk,gm,gp,p,t);
         result=float2(dot(value,gamma),value.y*gamma.x-value.x*gamma.y)/max(length(gamma),1e-8f);

@@ -1,0 +1,100 @@
+import CryptoKit
+import Foundation
+import XCTest
+
+@testable import MetalSSBKernels
+
+/// The Swift port of the resident TPE + Newton fit against the Python MPS implementation
+/// (`ssb._resident_search.fit_resident` and `fit_standard_resident`, seed 42, 200 trials) on a synthetic
+/// float32 objective that both sides evaluate from the same float32 trial rows. The digests pin every trial
+/// row Python evaluated (search and Newton), in order; the points are Python's fits. Python keeps the Newton
+/// state in a three-float expansion and this port in double precision (the CUDA build's arithmetic), so the
+/// fitted points agree to about 1e-8 while every float32 trial row is identical.
+final class SSBAgreementSearchTests: XCTestCase {
+  /// A smooth float32 objective with its maximum at C10 37.25 A, C12 (cos, sin) (30, -12) A, tilt (3.5, -1.25)
+  /// mrad and depth 151 A, written as the Python generator writes it.
+  static func score(_ row: [Float]) -> Double {
+    let a = row[1] * row[2] - 30
+    let b = row[1] * row[3] + 12
+    let d10 = row[0] - 37.25
+    let dr = row[5] * 1000 - 3.5
+    let dc = row[6] * 1000 + 1.25
+    let dt = row[4] - 151
+    var s: Float = 1.0e6 - d10 * d10 * 0.25 - a * a - b * b
+    s = s - dr * dr * 400 - dc * dc * 400
+    s = s - dt * dt * 0.01
+    return Double(s)
+  }
+
+  final class Recorder {
+    var rows: [[Float]] = []
+    func evaluate(_ points: [[Double]]) -> [Double] {
+      points.map { point in
+        let row = SSBModelPoint(
+          c10Angstroms: point[0], c12Angstroms: point[1], phi12Radians: point[2],
+          sampleTiltMrad: [point[3], point[4]], depthSpreadAngstroms: point[5]
+        ).trialRow
+        rows.append(row)
+        return SSBAgreementSearchTests.score(row)
+      }
+    }
+    var digest: String {
+      var bytes = Data()
+      for row in rows { row.withUnsafeBytes { bytes.append(contentsOf: $0) } }
+      return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    }
+  }
+
+  func testTiltFitMatchesPythonTrialByTrial() throws {
+    let recorder = Recorder()
+    let fit = try SSBAgreementSearch.fitTilt(recorder.evaluate)
+    XCTAssertEqual(recorder.rows.count, 407)
+    XCTAssertEqual(
+      recorder.digest, "7e0c2e65942aa1f48b383f12dd34db3280a57c97605f93dfb5c4afc2ad2f6b5e",
+      "a trial row differs from the Python resident search")
+    let expected = [
+      37.267501144443685, 32.30775752459612, -0.19035700659647992, 3.49993612504556,
+      -1.2500771160326833, 150.91333765686667,
+    ]
+    for (actual, value) in zip(fit.point, expected) { XCTAssertEqual(actual, value, accuracy: 1e-6) }
+    XCTAssertEqual(fit.agreement, 1.0e6)
+    XCTAssertEqual(fit.newtonStarts.map(\.evaluations), [125, 41, 41])
+    XCTAssertEqual(fit.newtonStarts.map(\.converged), [true, false, false])
+  }
+
+  func testStandardFitMatchesPythonTrialByTrial() throws {
+    let recorder = Recorder()
+    let fit = try SSBAgreementSearch.fitStandard(recorder.evaluate)
+    XCTAssertEqual(recorder.rows.count, 244)
+    XCTAssertEqual(
+      recorder.digest, "a645708f9348b0c2c60eb0609f91a2c377bba8c1af084a748cd85511e8b12ca6",
+      "a trial row differs from the Python resident search")
+    let expected = [37.22132425139795, 32.306412714345484, -0.19023146368751864]
+    for (actual, value) in zip(fit.point, expected) { XCTAssertEqual(actual, value, accuracy: 1e-6) }
+    XCTAssertEqual(Array(fit.point[3...]), [0, 0, 0])
+    XCTAssertEqual(fit.agreement, 994247)
+  }
+
+  func testRandomStreamsAndRanks() {
+    // The first MT19937 outputs for seed 5489 (the reference generator's default seed).
+    var generator = SSBAgreementSearch.MersenneTwister(seed: 5489)
+    XCTAssertEqual((0..<3).map { _ in generator.next() }, [3_499_211_612, 581_869_302, 3_890_346_734])
+    // NumPy's RandomState(42).random_sample() uses the same 53-bit construction.
+    var seeded = SSBAgreementSearch.MersenneTwister(seed: 42)
+    XCTAssertEqual(seeded.uniform(), 0.3745401188473625, accuracy: 0)
+    XCTAssertEqual(SSBAgreementSearch.ranks([3, 5, 5, 1]), [2, 0, 1, 3])
+    XCTAssertEqual(SSBAgreementSearch.inverseCDF(SSBAgreementSearch.cdf(0.7)), 0.7, accuracy: 1e-12)
+    XCTAssertEqual(SSBAgreementSearch.wrapPhi(.pi / 2), -.pi / 2, accuracy: 1e-15)
+  }
+
+  func testRefinementFromAStartNeedsNoTrials() throws {
+    let recorder = Recorder()
+    let start = [37.0, 30.0, -0.2, 3.0, -1.0, 140.0]
+    let fit = try SSBAgreementSearch.fitTilt(recorder.evaluate, trials: 0, start: start)
+    XCTAssertTrue(fit.trials.isEmpty)
+    XCTAssertEqual(fit.point[0], 37.25, accuracy: 0.5)
+    XCTAssertEqual(fit.point[3], 3.5, accuracy: 0.05)
+    XCTAssertThrowsError(try SSBAgreementSearch.fitTilt(recorder.evaluate, trials: 0))
+    XCTAssertThrowsError(try SSBAgreementSearch.fitTilt(recorder.evaluate, isCancelled: { true }))
+  }
+}

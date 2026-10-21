@@ -33,6 +33,23 @@ public struct MetalSSBCalibration: Codable, Equatable, Sendable {
     case excludedDetectorPixels = "excluded_detector_pixels"
   }
 
+  /// Relativistic electron wavelength in Angstrom, as Python `optics.physics.wavelength_A_from_kV`: the
+  /// tabulated full-precision values at 80, 120, 200, 300 and 400 kV, else the formula.
+  public static func wavelengthAngstroms(voltageKV: Double) -> Double {
+    let common: [Int: Double] = [
+      80: 0.041757160772834, 120: 0.033492152726724, 200: 0.025079340450548,
+      300: 0.019687489006849, 400: 0.016439434169908,
+    ]
+    if voltageKV == voltageKV.rounded(), let value = common[Int(voltageKV)] { return value }
+    let h = 6.62607015e-34
+    let mass = 9.1093837015e-31
+    let charge = 1.602176634e-19
+    let c = 299792458.0
+    let voltage = voltageKV * 1000
+    let gamma = 1 + (charge * voltage) / (2 * mass * c * c)
+    return h / sqrt(2 * mass * charge * voltage * gamma) * 1e10
+  }
+
   /// Interpret the selected circular BF disk as the full illumination aperture.
   /// A semi-angle spans a radius, not a diameter. Explicit sampling overrides
   /// remain possible after this operation; source metadata is never changed.
@@ -145,14 +162,7 @@ public struct MetalSSBCalibration: Codable, Equatable, Sendable {
       throw MetalSSBError.invalidGeometry(
         "Excluded detector coordinates must be inside the detector image.")
     }
-    // Relativistic de Broglie wavelength using SI defining constants, then Å.
-    let voltage = voltageKV * 1000
-    let h = 6.62607015e-34
-    let mass = 9.1093837139e-31
-    let charge = 1.602176634e-19
-    let c = 299792458.0
-    let energy = charge * voltage
-    let wavelength = h / sqrt(2 * mass * energy * (1 + energy / (2 * mass * c * c))) * 1e10
+    let wavelength = Self.wavelengthAngstroms(voltageKV: voltageKV)
     let angle = semiangleMrad * 1e-3
     let stepRow = detectorSamplingRowMrad * 1e-3
     let stepColumn = detectorSamplingColumnMrad * 1e-3
