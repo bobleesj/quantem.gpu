@@ -97,6 +97,15 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
 
         # Image comparisons keep every fitted correction, including nonzero tilt/depth.
         shown = ssb.reconstruct(fit, upsampling_factor="auto", compute_loss=False)
+        # Matplotlib consumes host images even when both fitted waves stay on CUDA.
+        from quantem.gpu.ssb.rotation_defocus import RotationDefocusComparison
+
+        comparison = RotationDefocusComparison((fit,) * 4, (shown,) * 4, ((-30, 0), (0, 30)))
+        review = comparison.show(view_fraction=1)
+        expected = host_array(shown.phase)
+        np.testing.assert_array_equal(
+            review.axes[0].images[0].get_array(), expected - np.median(expected)
+        )
         captured = _record_static_arrays(monkeypatch)
         focus = ssb.show("focus", mode="static", focus_offsets_nm=(0, 5),
                          depth_spread_nm=fit.depth_spread_nm, size="small")
