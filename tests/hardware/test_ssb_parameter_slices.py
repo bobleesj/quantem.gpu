@@ -35,6 +35,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         except cp.cuda.runtime.CUDARuntimeError:
             pytest.skip("Requires a CUDA runtime")
     import matplotlib.pyplot as plt
+
     from quantem.gpu import SSB
     from quantem.gpu.ssb.persistence import load_result, result_paths
     from quantem.gpu.ssb.results import host_array
@@ -144,3 +145,41 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
             np.testing.assert_array_equal(actual, expected[16 * factor:80 * factor, 32 * factor:96 * factor])
             assert ssb.aberrations == fit.aberrations
             assert ssb.sample_tilt_mrad == fit.sample_tilt_mrad
+
+
+def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
+    """Browse identical GPU reconstructions in the existing 2D and 3D viewers."""
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        pytest.skip("Requires an Apple silicon GPU")
+    qw = pytest.importorskip("quantem.widget")
+    from quantem.gpu import SSB
+
+    counts = np.random.default_rng(7).poisson(40, size=(128, 128, 32, 32)).astype(np.uint16)
+    rows, columns = np.meshgrid(np.arange(32) - 15.5, np.arange(32) - 15.5, indexing="ij")
+    counts[:, :, np.hypot(rows, columns) < 10] += 200
+    with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
+             scan_sampling_A=0.3, detector_sampling_mrad=3.0) as ssb:
+        fit = ssb.find_aberrations(num_trials=8, refinement=None, check_rotation=False,
+                                   compare_standard=False, compute_loss=False, verbose=False)
+        options = {"focus_offsets_nm": (-3, 0, 7), "depth_spread_nm": (5, fit.depth_spread_nm)}
+        grid = ssb.show("focus", **options)
+        stack = ssb.show("focus", layout="stack", **options)
+        assert isinstance(grid, qw.Show2D) and isinstance(stack, qw.Show3D)
+        assert (stack.n_panels, stack.n_slices, stack.slice_idx) == (2, 3, 1)
+        assert stack.dim_label == "Defocus"
+        assert stack.labels[1] == f"C₁₀ {fit.aberrations['C10_nm']:+.2f} nm"
+        assert "fitted depth" in stack.panel_titles[1]
+        assert stack.display_bin == 1 and stack.avg_window == 1
+        assert stack.link_contrast and stack.link_panels
+        assert stack.vmin == grid.vmin and stack.vmax == grid.vmax
+        expected = np.concatenate([grid._data[:3], grid._data[3:]], axis=2)
+        np.testing.assert_array_equal(stack._data, expected)
+        captured = _record_static_arrays(monkeypatch)
+        ssb.show("focus", mode="static", layout="stack", **options)
+        np.testing.assert_array_equal(np.concatenate(captured[-1]), grid._data)
+        assert ssb._aberration_search is fit
+        assert ssb.aberrations == fit.aberrations
+        assert ssb.sample_tilt_mrad == fit.sample_tilt_mrad
+        assert ssb.depth_spread_nm == fit.depth_spread_nm
+        grid.close()
+        stack.close()

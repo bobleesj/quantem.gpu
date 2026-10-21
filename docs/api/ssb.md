@@ -441,6 +441,19 @@ viewer = ssb.show("focus")
 viewer
 ```
 
+Use the existing Show3D widget to scroll through defocus while comparing model
+depths side by side:
+
+```python
+viewer = ssb.show("focus", layout="stack")
+viewer
+```
+
+Each panel has one depth spread; the shared defocus slider changes C10 in every
+panel. It starts at the requested offset nearest zero. Labels show the actual
+C10 and depth values, and the fitted depth panel is marked. The default
+`layout="grid"` keeps the Show2D gallery.
+
 The default grid varies C10 by -5, 0 and +5 nm around the joint fit, and model
 depth spread by -5, 0 and +5 nm around its fitted value (bounded at zero).
 Every panel retains the fitted astigmatism, specimen tilt and rotation. Labels
@@ -448,7 +461,8 @@ state the applied C10 and depth spread; the fitted pair is marked `joint fit`.
 These are conditional reconstructions, not independently fitted models or
 physical depth sections. All panels share contrast and automatic output sampling.
 
-Use the same view with `mode="static"` for a figure made by `show_2d`:
+Use `mode="static"` for a figure made by core QuantEM's `show_2d`. Both
+interactive layouts become the same grid containing every reconstructed frame:
 
 ```python
 ssb.show("focus", mode="static", size="small")
@@ -456,7 +470,8 @@ ssb.show("focus", mode="static", size="small")
 
 | Focus-image option | Default | Meaning |
 | --- | --- | --- |
-| `mode` | `"interactive"` | Show2D, or `"static"` for `show_2d`. |
+| `mode` | `"interactive"` | An interactive widget, or `"static"` for the complete `show_2d` grid. |
+| `layout` | `"grid"` | Show2D grid or `"stack"` for Show3D with focus frames and depth panels. Static mode shows all frames. |
 | `focus_offsets_nm` | `(-5, 0, 5)` | Defocus offsets from fitted C10, in nm. |
 | `depth_spread_nm` | `None` | Fitted depth spread and ±5 nm; supply an absolute value or sequence to choose the rows. |
 | `region` | `None` | Full field, or scan-pixel bounds to fit independently and display. |
@@ -472,7 +487,7 @@ ssb.show("focus", region=(64, 192, 64, 192))
 Regional focus views apply the region's joint fit to the **full parent scan**,
 then crop the displayed images. A retained `region = ssb.select_region(...)`
 session also supports `region.show("focus")`; keep its parent open. This does
-not replace the full-field fitted parameters. A Show2D return value supports
+not replace the full-field fitted parameters. Both returned widgets support
 the usual zoom, FFT and `viewer.export_html(...)` methods.
 
 ## Finer preview sampling
