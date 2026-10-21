@@ -9,14 +9,17 @@ phase images for previews and reconstruction, and the agreement that ``find_aber
 import math
 
 import cupy as cp
+import cupyx.scipy.fft
 import numpy as np
 
 from quantem.gpu.ssb.cuda.kernels.engine import (
     THICK_FIT_MAX_BATCH,
     thick_correct_kernel,
     thick_correct_full_kernel,
+    thick_correct_planes_kernel,
     thick_fit_batch_kernel,
     thick_fit_kernel,
+    thick_phase_moments_kernel,
     thick_wave_sum_kernel,
     thick_wave_sum_full_kernel,
     thick_wave_sum_bounded_kernel,
@@ -97,6 +100,8 @@ class ThickSample:
                 higher_order_magnitudes=higher_order_magnitudes,
                 higher_order_angles=higher_order_angles,
             )
+        if upsampling_factor == 1 and higher_order_magnitudes is None:
+            return self._reconstruct_native(C10, C12, phi12, sample_tilt_mrad, thickness, compute_loss, chunk_bytes)
         half = engine.gqk_is_half_plane()
         # other half of the plane for a real bright-field image: G(-q) = conj(G(q))
         neg_rows = cp.asarray((-np.arange(native_ny)) % native_ny)
@@ -132,6 +137,44 @@ class ThickSample:
             if compute_loss:
                 phase_sumsq += (angles * angles).sum(axis=0)
             del full, corrected, angles
+        mean_phase = phase_sum / float(num_bright_field_pixels)
+        if not compute_loss:
+            return mean_phase, None
+        loss = float(cp.mean(phase_sumsq / float(num_bright_field_pixels) - mean_phase * mean_phase))
+        return mean_phase, loss
+
+    def _reconstruct_native(self, C10, C12, phi12, sample_tilt_mrad, thickness, compute_loss, chunk_bytes):
+        """``reconstruct`` at the native sampling with C10/C12 optics: the same per-pixel correction, phase and loss.
+
+        The fit's native phase diagnostic and every slider-release loss run this. Each group of BF pixels is corrected
+        straight into full-plane spectra (``thick_correct_planes_kernel`` reads the stored half plane's mirror in
+        place), inverse transformed without the 1 / (ny nx) scale, which the phase does not see (a power of two, so the
+        angles are the same bits), and reduced to per-pixel phase sums by ``thick_phase_moments_kernel`` without
+        storing the angle images. The reference loop above materialized the full plane, the angles and their squares.
+        """
+        engine = self.engine
+        cache = engine._cache
+        num_bright_field_pixels, ny, nx = engine._bf_grid()
+        plane = ny * nx
+        chunk = min(num_bright_field_pixels, max(1, int(chunk_bytes // (plane * 8 * 3))))
+        planes = cp.empty((chunk, ny, nx), dtype=cp.complex64)
+        phase_sum = cp.zeros((ny, nx), dtype=cp.float32)
+        phase_sumsq = cp.zeros((ny, nx), dtype=cp.float32) if compute_loss else phase_sum
+        params = self._kernel_scalars(C10, C12, phi12, sample_tilt_mrad, thickness)
+        qrow = cache["qx_1d"].astype(cp.float32, copy=False)
+        qcol = cache["qy_1d"].astype(cp.float32, copy=False)
+        blocks = (plane + 255) // 256
+        for start in range(0, num_bright_field_pixels, chunk):
+            count = min(chunk, num_bright_field_pixels - start)
+            group = planes[:count]
+            thick_correct_planes_kernel(
+                (blocks, count), (256,),
+                (engine.G_qk, qrow, qcol, cache["kx_bf"], cache["ky_bf"], group, np.int32(ny), np.int32(nx),
+                 np.int32(engine.G_qk.shape[-1]), np.int32(start), np.complex64(engine._dc_value_host), *params),
+            )
+            images = cupyx.scipy.fft.ifft2(group, axes=(1, 2), norm="forward", overwrite_x=True)
+            thick_phase_moments_kernel((blocks,), (256,), (images, phase_sum, phase_sumsq, np.int32(count),
+                                                           np.int32(plane), np.int32(compute_loss)))
         mean_phase = phase_sum / float(num_bright_field_pixels)
         if not compute_loss:
             return mean_phase, None
