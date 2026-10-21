@@ -2,6 +2,7 @@
 
 import time
 from collections.abc import Callable
+from textwrap import fill
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -76,6 +77,7 @@ def measure_slices(
 def plot_parameters(
     result: "SSBResult",
     *,
+    view: str = "parameters",
     include_phase: bool = False,
     axsize: tuple[float, float] | None = None,
 ) -> "Figure":
@@ -88,9 +90,17 @@ def plot_parameters(
         raise ValueError(
             "No measured parameter slices are saved. Run ssb.measure_parameters(result) while the session is open."
         )
-    panels = 3 if include_phase else 2
+    descriptions = (
+        ("focus_depth", "Focus and depth", "C₁₀ at mid-depth (nm)", "Depth spread (nm)"),
+        ("tilt", "Sample tilt", "Tilt row (mrad)", "Tilt col (mrad)"),
+    )
+    if view != "parameters":
+        key = "focus_depth" if view == "depth" else "tilt"
+        descriptions = tuple(item for item in descriptions if item[0] == key)
+    panels = len(descriptions) + int(include_phase)
     panel_size = (5.2, 4.5) if axsize is None else axsize
     figure, axes = plt.subplots(1, panels, figsize=(panel_size[0] * panels, panel_size[1]), layout="constrained")
+    axes = np.atleast_1d(axes)
     if include_phase:
         from quantem.gpu.ssb.results import host_array
 
@@ -105,12 +115,9 @@ def plot_parameters(
         )
         axes[0].set(title=f"SSB phase · {result.upsampling_factor}× (rad)", xlabel="Scan column (nm)", ylabel="Scan row (nm)")
         figure.colorbar(phase_image, ax=axes[0], label="Phase (rad)", shrink=0.78)
-    descriptions = (
-        ("focus_depth", "Focus and depth", "C₁₀ at mid-depth (nm)", "Depth spread (nm)"),
-        ("tilt", "Sample tilt", "Tilt row (mrad)", "Tilt col (mrad)"),
-    )
     maximum = max(1.0, *(np.max(item["relative_agreement"]) for item in evidence["slices"].values()))
-    for axis, (key, title, column_label, row_label) in zip(axes[-2:], descriptions, strict=True):
+    parameter_axes = axes[int(include_phase):]
+    for axis, (key, title, column_label, row_label) in zip(parameter_axes, descriptions, strict=True):
         data = evidence["slices"][key]
         mesh = axis.pcolormesh(
             data["column_values"],
@@ -136,13 +143,24 @@ def plot_parameters(
             xlim=(data["column_values"][0], data["column_values"][-1]),
             ylim=(data["row_values"][0], data["row_values"][-1]),
         )
-    figure.colorbar(mesh, ax=list(axes[-2:]), label="Agreement / fitted agreement (higher is better)", shrink=0.78)
+    figure.colorbar(mesh, ax=list(parameter_axes), label="Agreement / fitted agreement", shrink=0.78)
     tilt = result.sample_tilt_mrad
+    focus_label = f"C₁₀ {result.aberrations['C10_nm']:+.2f} nm"
+    tilt_label = f"tilt ({tilt[0]:+.2f}, {tilt[1]:+.2f}) mrad"
+    depth_label = f"depth spread {result.depth_spread_nm:.2f} nm"
+    if view == "depth":
+        summary = f"{focus_label}  ·  {depth_label}"
+    elif view == "tilt":
+        summary = tilt_label.capitalize()
+    else:
+        summary = f"{focus_label}  ·  {tilt_label}  ·  {depth_label}"
+    caption = f"Conditional slice at {evidence['scan_detector_rotation_deg']:.2f}°; other parameters fixed."
+    if view != "tilt":
+        caption += " Depth spread is a model parameter."
+    title_width = max(32, int(figure.get_figwidth() * 10))
     figure.suptitle(
-        f"C₁₀ {result.aberrations['C10_nm']:+.2f} nm  ·  tilt ({tilt[0]:+.2f}, {tilt[1]:+.2f}) mrad"
-        f"  ·  depth spread {result.depth_spread_nm:.2f} nm\n"
-        f"Conditional slices at {evidence['scan_detector_rotation_deg']:.2f}°; other parameters fixed. "
-        "Depth spread is a model parameter.",
+        fill(summary, title_width, break_long_words=False, break_on_hyphens=False)
+        + "\n" + fill(caption, title_width, break_long_words=False, break_on_hyphens=False),
         fontsize=11,
     )
     plt.close(figure)

@@ -1501,18 +1501,78 @@ class SSB:
             metadata={"trial_ids": [record["trial"] for record in records]},
         )
 
-    def show(self, **options):
+    def show(self, view: Literal["interactive", "depth", "tilt", "parameters"] = "interactive", *,
+             size: Literal["small", "medium", "large"] | None = None,
+             region: tuple[int, int, int, int] | None = None, **options):
         """Open ShowPtycho on this session: the live phase and its FFT, aberration sliders, Save.
 
         ``options`` go to ``quantem.widget.ShowPtycho``: ``show_fft``, ``save_dir``, ``local_tilt``, ... The widget
         drives this session while it is open. Needs ``quantem.widget``.
+
+        ``show("depth")`` and ``show("tilt")`` return static figures of the
+        measured agreement landscape around the latest joint fit. They reuse
+        saved parameter slices, or measure them on this session's GPU once.
+        If no fit exists, the ordinary joint fit runs first. All unplotted
+        parameters remain fixed; these are not spatial maps or uncertainties.
+
+        Parameters
+        ----------
+        view : {"interactive", "depth", "tilt", "parameters"}, optional
+            The existing ShowPtycho widget, the focus-depth landscape, the
+            row-column tilt landscape, or both landscapes.
+        size : {"small", "medium", "large"} or None, optional
+            Static figure size only. Does not change any data or sampling.
+        region : tuple of int or None, optional
+            Static diagnostic region in original scan pixels, as
+            ``(row_start, row_stop, col_start, col_stop)`` with exclusive stops.
+            This runs one independent joint regional fit with shared detector
+            calibration and full-field rotation; it leaves the full-field fit
+            unchanged. To reuse a regional fit for several views, retain the
+            session returned by ``select_region`` and call its ``show`` method.
+        **options
+            ShowPtycho options for the interactive view, or SSBResult.show
+            options such as ``axsize`` for a static diagnostic.
+
+        Returns
+        -------
+        quantem.widget.ShowPtycho or matplotlib.figure.Figure
+            A live widget, or a closed figure that renders once in a notebook.
+            The static figure can be saved with ``figure.savefig(...)``.
 
         Examples
         --------
         >>> ssb = SSB(data)  # doctest: +SKIP
         >>> ssb.reconstruct()  # doctest: +SKIP
         >>> ssb.show(show_fft=True, save_dir="ssb-results")  # doctest: +SKIP
+        >>> ssb.show("depth", size="large")  # doctest: +SKIP
+        >>> ssb.show("tilt", region=(64, 192, 64, 192))  # doctest: +SKIP
         """
+        if view not in ("interactive", "depth", "tilt", "parameters"):
+            raise ValueError(f"Choose 'interactive', 'depth', 'tilt' or 'parameters'; got {view!r}.")
+        if view != "interactive":
+            if size is not None and (size not in ("small", "medium", "large") or options.get("axsize") is not None):
+                raise ValueError("Use size='small', 'medium' or 'large', or axsize=(width, height), not both.")
+            result = self._aberration_search
+            if result is None:
+                result = self.find_aberrations(compare_standard=False,
+                                              check_rotation=self._dark_field_region is None)
+            if region is not None:
+                with self.select_region(region, aberrations=result.aberrations,
+                                        scan_detector_rotation_deg=result.scan_detector_rotation_deg) as selected:
+                    selected.find_aberrations(check_rotation=False, compare_standard=False, compute_loss=False)
+                    return selected.show(view, size=size, **options)
+            if not result.parameter_slices:
+                self.measure_parameters(result)
+            figure = result.show(view, size=size, **options)
+            if self._dark_field_region is not None:
+                row_start, row_stop, col_start, col_stop = self._dark_field_region
+                figure.suptitle(
+                    f"Rows {row_start}:{row_stop}, columns {col_start}:{col_stop}\n"
+                    + figure.get_suptitle(), fontsize=11,
+                )
+            return figure
+        if size is not None or region is not None:
+            raise ValueError("Use size and region with ssb.show('depth'), ssb.show('tilt') or ssb.show('parameters').")
         try:
             from quantem.widget import ShowPtycho
         except ImportError as exc:

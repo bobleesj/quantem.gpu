@@ -297,8 +297,45 @@ draws the phase a result holds; for a native fit one line names the auto
 factor and the call that shows it.
 Keep `ssb` open for the examples below and call `ssb.close()` when finished.
 
-Measure conditional focus–depth and tilt objective slices while the same SSB
-session is open:
+Inspect the best joint fit while the same SSB session is open:
+
+```python
+ssb.show()                             # existing interactive ShowPtycho
+ssb.show("depth", size="large")         # static focus-depth landscape
+ssb.show("tilt", size="medium")         # static row-column tilt landscape
+```
+
+The static calls reuse recorded diagnostics or measure them once on the GPU.
+If no fit exists, the usual joint fit runs first. `size="small"`, `"medium"`
+and `"large"` only change figure dimensions. For explicit dimensions use
+`axsize=(6, 5)` instead. Returned figures support `savefig(...)` and render
+directly as a notebook cell's final expression.
+
+Select a region in original scan pixels with exclusive stops:
+
+```python
+ssb.show("tilt", region=(64, 192, 64, 192), size="small")
+```
+
+This jointly fits the region's optics, tilt and depth with one seed, 200 trials
+and Newton, keeping the full-field rotation and detector calibration. It
+leaves the full-field fit unchanged. Each bounds-based call fits independently;
+to inspect multiple views of the same regional fit, retain its session:
+
+```python
+region = ssb.select_region((64, 192, 64, 192))
+region.show("depth")
+```
+
+Then `region.show("tilt")` reuses that fit and its measured slices in the next
+cell. Call `region.close()` when finished.
+
+`depth` means fitted **depth spread**, not measured specimen thickness. The
+plots are conditional objective landscapes, not spatial depth/tilt maps.
+Their marker identifies the joint fit; all unplotted parameters stay fixed.
+
+The explicit measurement API remains available, including plotting from a
+saved result without an open GPU session:
 
 ```python
 ssb.measure_parameters(aberrations)
