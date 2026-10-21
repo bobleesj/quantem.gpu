@@ -428,6 +428,13 @@ class CudaSSBBackend:
         """Return one device-resident float32 phase and optional exact loss."""
         accel = self._get_accelerator()
         coefficients = aberrations["C10"], aberrations["C12"], aberrations["phi12"]
+        if higher_order_magnitudes is not None and accel._custom_fft._size == 128:
+            # The 128 fused kernels carry C10/C12 only; the depth-aware reference path at zero depth is the same
+            # model and estimator (mean phase over BF pixels, phase-variance loss), so higher orders work there too.
+            return accel.thick.reconstruct(
+                *coefficients, (0.0, 0.0), 0.0, compute_loss=compute_loss,
+                higher_order_magnitudes=higher_order_magnitudes, higher_order_angles=higher_order_angles,
+            )
         if higher_order_magnitudes is not None:
             if compute_loss:
                 phase, loss = accel.reconstruct_full_with_loss(higher_order_magnitudes, higher_order_angles)
@@ -503,6 +510,18 @@ class CudaSSBBackend:
     def sample_agreement(self, parameters: np.ndarray, band_inv_A: tuple[float, float]) -> np.ndarray:
         """Evaluate the joint objective on the session's existing evidence."""
         return self._get_accelerator().thick.fit_batch(parameters, band_inv_A)
+
+    def higher_order_agreement(self, rows: np.ndarray, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> np.ndarray:
+        """The joint objective with higher-order aberrations (``higher_order_agreement.agreement_batch``) per row."""
+        from quantem.gpu.ssb.cuda.higher_order_agreement import agreement_batch
+
+        return agreement_batch(self._get_accelerator(), rows, band_inv_A)
+
+    def band_power(self, band_inv_A: tuple[float, float] = (0.2, 0.9)) -> dict[str, float]:
+        """G's power over the agreement band and its Poisson noise variance (``higher_order_agreement.band_power``)."""
+        from quantem.gpu.ssb.cuda.higher_order_agreement import band_power
+
+        return band_power(self._get_accelerator(), band_inv_A)
 
     def close(self) -> None:
         """Release CUDA-owned session state."""

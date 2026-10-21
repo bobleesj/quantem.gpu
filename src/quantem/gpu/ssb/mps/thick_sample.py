@@ -11,7 +11,8 @@ gives each its own real weight (sinc of the depth-phase rate times t / 2):
 
 with P = aperture exp(-i chi) at the mid-depth aberrations, chi = factor alpha^2 (C10 + C12 cos 2(phi - phi12)),
 factor = pi / lambda[A], and the soft aperture of ``prepared.compute_geometry``. Thickness 0 gives w = 1 and the standard
-correction exactly. Units: q, k in 1/A; C10, C12, thickness in Angstrom (the engine unit); tilt in mrad, scan frame (row, col).
+correction exactly. P is even in k for C10 and C12, so P(q - k) = P(k - q); the odd higher orders are not, and
+``higher_order_agreement`` evaluates the first term at k - q. Units: q, k in 1/A; C10, C12, thickness in Angstrom (the engine unit); tilt in mrad, scan frame (row, col).
 
 Two implementations of the thick preview. ``reconstruct_thick`` (the interactive path) runs the standard fused MPS
 row kernel with the depth weights added per (k, q) (``kernels.row_ifft._row_ifft_small_dynamic_kernel(thick=True)``) and the same
@@ -462,8 +463,9 @@ def _thick_fit_batch_kernel():
 def _band(prepared: PreparedMpsSSB, band_inv_A: tuple[float, float]):
     """Band q on the stored half-plane: flat index into a G plane, (qx, qy) and the mirror weight; cached on ``prepared``.
 
-    The term at -q equals the term at q (P is even, the depth weights swap under q -> -q, G(-q) = conj G(q)), so the
-    half-plane sum with weight 2 equals the full-plane sum; columns 0 and nx/2 are their own mirror column and count once.
+    The term at -q equals the term at q (gamma(k, -q) = -conj gamma(k, q) for any probe phase with the first term at
+    k - q, higher orders included, the depth weights swap under q -> -q, and G(-q) = conj G(q)), so the half-plane sum
+    with weight 2 equals the full-plane sum; columns 0 and nx/2 are their own mirror column and count once.
     """
     key = (float(band_inv_A[0]), float(band_inv_A[1]))
     if prepared.thick_band is not None and prepared.thick_band[0] == key:
