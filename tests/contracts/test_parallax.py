@@ -200,10 +200,10 @@ def test_detector_bins_around_the_disk_centre_are_whole() -> None:
 
 
 def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs(tmp_path) -> None:
-    """A fractional radius selects the pixels inside it, and a sampling is a (row, col) pair as for SSB.
+    """A fractional radius selects the pixels inside it, and a sampling is one number or a (row, col) pair as for SSB.
 
-    The radius went through ``int()``, so 4.9 selected the pixels of radius 4. One number for a sampling was
-    broadcast to both axes, although SSB refuses it and the two workflows are documented with one rule.
+    The radius went through ``int()``, so 4.9 selected the pixels of radius 4. One number for a sampling means both
+    axes in SSB and parallax alike (``units.sampling_pair``); anything else that is not a pair is refused.
     """
     _cuda()
     from quantem.gpu import io, parallax
@@ -221,12 +221,15 @@ def test_parallax_uses_a_fractional_radius_as_given_and_takes_samplings_as_pairs
         }
         assert selected == {radius: int((distance_squared <= radius**2).sum()) for radius in (4, 4.9)}
         assert selected[4.9] > selected[4]
+        options = dict(bright_field_center_px=center, bright_field_radius_px=4, fit_aberrations=True)
+        pair = parallax.run(loaded, scan_sampling_A=(0.5, 0.5), detector_sampling_mrad=(1.0, 1.0), **options)
         for samplings in (
             {"scan_sampling_A": 0.5, "detector_sampling_mrad": (1.0, 1.0)},
             {"scan_sampling_A": (0.5, 0.5), "detector_sampling_mrad": 1.0},
         ):
-            with pytest.raises(ValueError, match=r"is a \[row, col\] pair"):
-                parallax.run(loaded, bright_field_center_px=center, bright_field_radius_px=4, fit_aberrations=True, **samplings)
+            assert parallax.run(loaded, **samplings, **options).aberrations == pair.aberrations
+        with pytest.raises(ValueError, match=r"or a \(row, col\) pair"):
+            parallax.run(loaded, scan_sampling_A=(0.5, 0.5, 0.5), detector_sampling_mrad=(1.0, 1.0), **options)
 
 
 def test_parallax_rejects_data_it_cannot_reconstruct() -> None:
