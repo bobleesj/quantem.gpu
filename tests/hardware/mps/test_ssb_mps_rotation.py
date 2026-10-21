@@ -166,6 +166,47 @@ def test_reconstruct_keeps_the_branch_comparison_of_the_fit_it_applies(estimate_
     assert "SSB: kept 0.0°: atomic columns positive" in out and out.count("SSB: kept") == 1
 
 
+def test_branch_panels_are_each_fit_at_the_auto_factor_while_the_fit_stays_native(estimate_180_degrees_off):
+    """Both branch panels are reconstructed at 2x auto (0.25 Å) from the session's G(q, k); fit and tests stay 1x.
+
+    Each panel is the session's own preview at that branch's rotation, aberrations, tilt and depth spread; the session
+    is back on the kept fit afterwards. show_trials reconstructs at the same auto factor.
+    """
+    pytest.importorskip("mlx.core")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from quantem.gpu import SSB
+
+    frames, detector_mrad = _astigmatic_crystal(C10_A=-30.0, C12_A=10.0)
+    with SSB(frames, **_settings(detector_mrad)) as session:
+        fitted = session.find_aberrations(num_trials=40, verbose=False)
+        branches = fitted.rotation_branches
+        assert fitted.upsampling_factor == 1 and fitted.phase.shape == (64, 64)
+        assert all(branch.phase.shape == (64, 64) for branch in branches.branches)
+        tests = [(branch.column_z, branch.phase_skewness) for branch in branches.branches]
+        panels = branches.upsampled_phases()
+        assert branches.upsampling_factor == 2 and branches.object_sampling_A == (0.125, 0.125)
+        assert session.scan_detector_rotation_deg == 0.0 and session.reconstruct() is fitted
+        for branch, panel in zip(branches.branches, panels, strict=True):
+            assert panel.shape == (128, 128)
+            session.set_rotation(branch.scan_detector_rotation_deg)
+            expected, _ = session.preview(dict(branch.aberrations), sample_tilt_mrad=branch.sample_tilt_mrad,
+                                          depth_spread_nm=branch.depth_spread_nm, upsampling_factor=2,
+                                          compute_loss=False)
+            np.testing.assert_array_equal(panel, expected)
+            # the native samples of the 2x grid are the scan positions the columns were located at
+            native = branch.phase - branch.phase.mean()
+            assert np.corrcoef(panel[::2, ::2].ravel(), native.ravel())[0, 1] > 0.9
+        session.set_rotation(fitted.scan_detector_rotation_deg)
+        assert [(branch.column_z, branch.phase_skewness) for branch in branches.branches] == tests
+        figure = fitted.show("rotation")
+        assert [axis.images[0].get_array().shape[:2] for axis in figure.axes if axis.images] == [(128, 128)] * 2
+        trials = session.show_trials(best=2)
+        assert "2× auto" in trials._suptitle.get_text()
+        assert {axis.images[0].get_array().shape[:2] for axis in trials.axes if axis.images} == {(128, 128)}
+
+
 def test_a_given_rotation_is_never_flipped(capsys):
     """A rotation the user gives is fitted once and kept, even 180 degrees off; the comparison only reports.
 

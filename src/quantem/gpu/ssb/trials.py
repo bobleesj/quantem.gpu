@@ -54,8 +54,11 @@ def choose_trials(records: list[dict], *, best=None, last=None, first=None) -> l
     return completed[-last:] if last is not None else completed[:first]
 
 
-def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6)):
-    """Return one static figure with shared phase contrast and the recorded parameters."""
+def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6), sampling: str | None = None):
+    """Return one static figure with shared phase contrast and the recorded parameters.
+
+    ``sampling`` names the output factor in the title (``"4× auto"``); by default the result's factor.
+    """
     import matplotlib.pyplot as plt
     from quantem.core.visualization import show_2d
 
@@ -104,7 +107,8 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6))
     table.scale(1, 1.8)
     names = {"phase_variance": "native phase variance", "negative_thick_agreement": "negative thick-sample agreement"}
     objectives = ", ".join(sorted({names.get(record["objective"], record["objective"]) for record in records}))
-    figure.suptitle(f"{selection} {count} search trials · phase (rad)", fontsize=18, y=1 - .08 / height)
+    sampling = f"{result.upsampling_factor}×" if sampling is None else sampling
+    figure.suptitle(f"{selection} {count} search trials · {sampling} · phase (rad)", fontsize=18, y=1 - .08 / height)
     figure.text(.5, 1 - .5 / height,
                 f"Shared contrast: {lower:.3g} to {upper:.3g} rad (pooled 1–99%) · {objectives}",
                 ha="center", fontsize=11)

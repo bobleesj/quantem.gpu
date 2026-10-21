@@ -129,19 +129,38 @@ def test_unresolved_columns_fall_back_to_the_phase_tail():
     assert kept.summary.startswith("kept the given 170.7°; the evidence selects 350.7°")
 
 
+class _Session:
+    """Stands in for the fitting SSB session: reconstructs each branch at ``FACTOR`` (a 3x auto) by tiling its phase."""
+
+    FACTOR = 3
+
+    def __init__(self):
+        self.calls = []
+
+    def panels(self, branches, upsampling_factor):
+        self.calls.append(upsampling_factor)
+        factor = self.FACTOR if upsampling_factor == "auto" else upsampling_factor
+        return factor, tuple(np.kron(branch.phase, np.ones((factor, factor), np.float32)) for branch in branches.branches)
+
+
+def _branches():
+    phase = 0.2 * _lattice() + np.random.default_rng(6).normal(scale=0.02, size=(96, 96))
+    return compare_branches([_fit(0.0, phase), _fit(180.0, -phase)], dark_field=_lattice(),
+                            scan_sampling_A=0.264, keep_first=False)
+
+
 def test_record_round_trip_and_figure():
     import matplotlib
 
     matplotlib.use("Agg")
-    phase = 0.2 * _lattice() + np.random.default_rng(6).normal(scale=0.02, size=(96, 96))
-    branches = compare_branches([_fit(0.0, phase), _fit(180.0, -phase)], dark_field=_lattice(),
-                                scan_sampling_A=0.264, keep_first=False)
+    branches = _branches()
     record, arrays = branches.to_record()
+    assert "rotation_branch_upsampled_phases" not in arrays   # a full-scan session reconstructs them on reload
     restored = RotationBranches.from_record(record, arrays)
-    assert restored.summary == branches.summary
+    assert restored.summary == branches.summary and restored.scan_sampling_A == (0.264, 0.264)
     np.testing.assert_array_equal(restored.columns, branches.columns)
     np.testing.assert_array_equal(restored.branches[1].phase, branches.branches[1].phase)
-    figure = branches.show()
+    figure = branches.show(panels=False)
     tail_axis, column_axis = figure.axes[:2]
     assert tail_axis.get_yscale() == "log"
     solid, dashed = tail_axis.get_lines()[:2]
@@ -150,3 +169,96 @@ def test_record_round_trip_and_figure():
     assert tail_axis.get_legend().get_texts()[0].get_text().startswith("0.0° · S = +")
     assert "z = +" in column_axis.get_legend().get_texts()[0].get_text()
     assert not np.any(solid.get_ydata() == 0)
+
+
+def test_figure_shows_both_fits_upsampled_with_columns_on_the_display_grid():
+    """The panels are the session's auto reconstruction; markers sit at scan pixels x factor; the tests stay native."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    branches, session = _branches(), _Session()
+    native = [(branch.phase_skewness, branch.column_z) for branch in branches.branches]
+    branches.bind_session(session.panels)
+    figure = branches.show()
+    assert session.calls == ["auto"] and branches.upsampling_factor == 3
+    assert branches.object_sampling_A == pytest.approx((0.264 / 3, 0.264 / 3))
+    image_axes = [axis for axis in figure.axes if axis.images]
+    assert [axis.get_title() for axis in image_axes] == ["0.0° kept · 3× auto (rad)", "180.0° · 3× auto (rad)"]
+    for axis, branch in zip(image_axes, branches.branches, strict=True):
+        assert axis.images[0].get_array().shape[:2] == (3 * 96, 3 * 96)
+        markers = axis.collections[0].get_offsets()
+        np.testing.assert_array_equal(markers, branches.columns[:, ::-1] * 3)
+        assert axis.get_xlim() == pytest.approx((-0.5, 3 * 96 - 0.5))
+    # the decision and the evidence panels still read the native phases
+    assert [(branch.phase_skewness, branch.column_z) for branch in branches.branches] == native
+    tail_axis = next(axis for axis in figure.axes if axis.get_yscale() == "log")
+    assert tail_axis.get_legend().get_texts()[0].get_text() == f"0.0° · S = +{native[0][0]:.3f}"
+    branches.show()
+    assert session.calls == ["auto"]   # reconstructed once
+    branches.show(upsampling_factor=1)
+    assert session.calls == ["auto", 1] and branches.upsampling_factor == 1
+
+
+def test_auto_panels_are_saved_with_the_record_once_reconstructed():
+    branches, session = _branches(), _Session()
+    branches.bind_session(session.panels)
+    shown = branches.upsampled_phases()
+    record, arrays = branches.to_record()
+    restored = RotationBranches.from_record(record, arrays)
+    assert restored.upsampling_factor == 3
+    np.testing.assert_array_equal(restored.upsampled_phases()[1], shown[1])
+
+
+def test_panels_need_the_session_that_fitted_the_branches():
+    """Without a live session there is nothing to reconstruct from; the evidence alone needs no GPU."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    branches = _branches()
+    with pytest.raises(ValueError, match="panels=False"):
+        branches.show()
+    session = _Session()
+    branches.bind_session(session.panels)
+    del session   # held weakly: a dropped session is never kept alive by its result
+    with pytest.raises(ValueError, match="closed"):
+        branches.upsampled_phases()
+    assert len(branches.show(panels=False).axes) == 2
+
+
+def test_display_helpers_default_to_the_auto_factor():
+    """show_trials and branch panels resolve "auto" as reconstruct does: 2x at 0.264 Å, 3x at 0.373 Å, 4x at 0.5 Å."""
+    import inspect
+
+    from quantem.gpu.ssb.workflow import SSB
+
+    assert inspect.signature(SSB.show_trials).parameters["upsampling_factor"].default == "auto"
+    assert inspect.signature(RotationBranches.show).parameters["upsampling_factor"].default == "auto"
+    assert inspect.signature(SSB.reconstruct).parameters["upsampling_factor"].default == 1   # the fit grid
+    for step, factor in ((0.264, 2), (0.373, 3), (0.5, 4)):
+        calibration = SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0, scan_sampling_A=(step, step))
+        assert SSB._resolve_upsampling_factor(calibration, "auto") == factor
+    assert SSB._resolve_upsampling_factor(calibration, 2) == 2
+    with pytest.raises(ValueError, match="more than 8"):
+        SSB._resolve_upsampling_factor(SimpleNamespace(voltage_kV=300.0, semiangle_mrad=30.0,
+                                                       scan_sampling_A=(2.0, 2.0)), "auto")
+
+
+def test_a_native_phase_view_names_the_auto_factor(capsys):
+    """result.show() draws the phase it holds; below the auto factor one line says how to get the auto one."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    pytest.importorskip("quantem.core")
+    from quantem.gpu.ssb.results import SSBResult
+
+    wave = np.exp(1j * _lattice(n=32))
+    native = SSBResult(object_wave=wave, backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+                       object_sampling_A=(0.5, 0.5))
+    native.show(axsize=(2, 2))
+    assert capsys.readouterr().out.strip() == (
+        "SSB: showing this phase at 1x, the grid it was reconstructed on; "
+        "ssb.reconstruct(result, upsampling_factor='auto') shows it at 4x.")
+    auto = SSBResult(object_wave=np.exp(1j * _lattice(n=128)), backend="mps", voltage_kV=300.0, semiangle_mrad=30.0,
+                     object_sampling_A=(0.125, 0.125), upsampling_factor=4)
+    auto.show(axsize=(2, 2))
+    assert capsys.readouterr().out == ""

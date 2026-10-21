@@ -15,9 +15,14 @@ other, so one decision chooses the branch:
 
 The fits are the session's default tilt-corrected joint fits: correcting the sample tilt and depth spread makes the
 atomic-column contrast clearer, while the two branches still fit equally well.
+
+Both tests read the native phases. What ``RotationBranches.show`` draws of each branch is its fit reconstructed at
+``upsampling_factor="auto"`` (``RotationBranches.upsampled_phases``), with the columns at scan pixels times the factor.
 """
 
 import math
+import weakref
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -139,7 +144,8 @@ class RotationBranch:
     column_positive_fraction : float | None
         Fraction of the columns with positive high-passed phase.
     phase : numpy.ndarray
-        The fit's native-sampling phase in radians.
+        The fit's native-sampling phase in radians, which the tests read (``RotationBranches.upsampled_phases`` is
+        what ``show`` draws).
     column_phases : numpy.ndarray | None
         The high-passed phase at each column, in radians.
     sample_tilt_mrad, depth_spread_nm
@@ -177,12 +183,22 @@ class RotationBranches:
     decided_by : {"columns", "phase_tail"}
         ``"columns"`` when the column test was decisive on either branch (``|z| >= COLUMN_Z_MIN`` and
         ``|effect| >= COLUMN_EFFECT_MIN``), else ``"phase_tail"`` (``phase_skewness``).
+    scan_sampling_A : tuple[float, float] | None
+        The native scan step (row, col) in Å.
+    upsampling_factor : int | None
+        Output factor of ``upsampled_phases``, set when they are reconstructed (None before).
     """
     branches: tuple[RotationBranch, RotationBranch]
     columns: np.ndarray | None
     chosen: int
     kept: int
     decided_by: Literal["columns", "phase_tail"]
+    scan_sampling_A: tuple[float, float] | None = None
+    upsampling_factor: int | None = None
+    # (the requested upsampling_factor, both panels) once reconstructed
+    _upsampled: tuple[object, tuple[np.ndarray, np.ndarray]] | None = field(default=None, repr=False, compare=False)
+    # a weakref.WeakMethod to the fitting session's reconstruction of both panels: it never keeps a session alive
+    _panel_source: Callable | None = field(default=None, repr=False, compare=False)
 
     @property
     def chosen_rotation_deg(self) -> float:
@@ -198,6 +214,41 @@ class RotationBranches:
     def num_columns(self) -> int:
         """Number of atomic columns located on the dark-field image."""
         return 0 if self.columns is None else len(self.columns)
+
+    @property
+    def object_sampling_A(self) -> tuple[float, float] | None:
+        """Pixel size (row, col) in Å of ``upsampled_phases``: the scan step over ``upsampling_factor``."""
+        if self.scan_sampling_A is None or self.upsampling_factor is None:
+            return None
+        return tuple(float(step) / self.upsampling_factor for step in self.scan_sampling_A)
+
+    def upsampled_phases(self, upsampling_factor: int | Literal["auto"] = "auto") -> tuple[np.ndarray, np.ndarray]:
+        """Each branch's fit reconstructed at ``upsampling_factor`` (radians): the panels ``show`` draws.
+
+        The SSB session that fitted or reloaded the branches reconstructs each one at its own rotation, aberrations,
+        sample tilt and depth spread with the G(q, k) it already holds: no search and no second G(q, k) build (a
+        session that reloaded the fit builds its G(q, k) first, as its first reconstruction would). On
+        the 512 x 512 gold scan at 0.5 Å (4x auto, 2048 x 2048 each) both took 0.4 s on an M5 Max, 0.35 GiB above
+        the fitted session and below the fit's own peak. The result is kept for the next call. ``"auto"`` is
+        ``ssb.reconstruct(upsampling_factor="auto")``'s factor; the column test and the phase tail stay on the native
+        ``phase``.
+        """
+        cached = self._upsampled
+        if cached is None or cached[0] != upsampling_factor:
+            source = None if self._panel_source is None else self._panel_source()
+            phases = None if source is None else source(self, upsampling_factor)
+            if phases is None:
+                raise ValueError(
+                    "The branch panels are reconstructed by the SSB session that fitted or reloaded these branches, and "
+                    "it is closed. Show them before ssb.close(), or reload the fit with the same save_dir; "
+                    "show(panels=False) draws the evidence alone.")
+            factor, phases = phases
+            self._upsampled, self.upsampling_factor = (upsampling_factor, tuple(phases)), int(factor)
+        return self._upsampled[1]
+
+    def bind_session(self, reconstruct_panels: Callable) -> None:
+        """Let a session's bound method reconstruct ``upsampled_phases``, held weakly so a session is never kept alive."""
+        self._panel_source = weakref.WeakMethod(reconstruct_panels)
 
     @property
     def summary(self) -> str:
@@ -253,12 +304,17 @@ class RotationBranches:
         table = pd.DataFrame(rows, index=index)
         return table.round({name: 3 for name in table.columns if name not in ("loss", "kept")}).round({"loss": 7})
 
-    def show(self, *, axsize: tuple[float, float] = (5.0, 3.4)):
-        """The evidence as two panels: the phase tails (left) and the phase at the atomic columns (right).
+    def show(self, *, upsampling_factor: int | Literal["auto"] = "auto", panels: bool = True,
+             axsize: tuple[float, float] = (5.0, 3.4)):
+        """Both branches' phase above the evidence: the phase tails (left) and the phase at the atomic columns (right).
 
-        Left: each branch's mean-subtracted phase as the fraction of pixels per bin, on identical symmetric bins and a
-        log axis; bins with no pixels are left out. Right: the high-passed phase at the dark-field columns, as the
-        fraction of columns per bin. The kept branch is solid, the other dashed; phase in mrad. Plotting only.
+        Top: each branch's fit reconstructed at ``upsampling_factor`` (``upsampled_phases``, ``"auto"`` by default),
+        minus its mean, on shared symmetric limits (pooled 0.5-99.5%), pixel size = step / factor, with the dark-field
+        columns at scan pixels times the factor. Bottom, from the native phases the decision used: each branch's
+        mean-subtracted phase as the fraction of pixels per bin, on identical symmetric bins and a log axis (bins with
+        no pixels left out), and the high-passed phase at the columns as the fraction of columns per bin. The kept
+        branch is solid, the other dashed; phase in mrad. ``panels=False`` draws the evidence alone (no GPU).
+        ``axsize`` is one evidence panel in inches; a phase panel is ``axsize[0]`` square.
 
         Returns
         -------
@@ -271,7 +327,12 @@ class RotationBranches:
         """
         import matplotlib.pyplot as plt
 
-        figure, (tail_axis, column_axis) = plt.subplots(1, 2, figsize=(2 * axsize[0], axsize[1]))
+        heights = [axsize[0], axsize[1]] if panels else [axsize[1]]
+        figure = plt.figure(figsize=(2 * axsize[0], sum(heights) + (0.6 if panels else 0.0)))
+        grid = figure.add_gridspec(len(heights), 2, height_ratios=heights)
+        if panels:
+            self._show_panels(figure, [figure.add_subplot(grid[0, index]) for index in (0, 1)], upsampling_factor)
+        tail_axis, column_axis = (figure.add_subplot(grid[-1, index]) for index in (0, 1))
         order = (self.kept, 1 - self.kept)
         styles = {self.kept: {"color": KEPT_COLOR, "linestyle": "-"}, 1 - self.kept: {"color": OTHER_COLOR, "linestyle": "--"}}
 
@@ -316,10 +377,39 @@ class RotationBranches:
         plt.close(figure)
         return figure
 
+    def _show_panels(self, figure, axes, upsampling_factor) -> None:
+        """Draw ``upsampled_phases`` on ``axes`` (branch order), the columns at scan pixels times the factor."""
+        from quantem.core.visualization import show_2d
+
+        centred = [phase.astype(np.float64) - phase.astype(np.float64).mean()
+                   for phase in self.upsampled_phases(upsampling_factor)]
+        factor = self.upsampling_factor
+        lower, upper = np.quantile(np.concatenate([values.ravel() for values in centred]), [0.005, 0.995])
+        limit = max(abs(float(lower)), abs(float(upper))) or 1.0
+        label = f"{factor}× auto" if upsampling_factor == "auto" else f"{factor}×"
+        titles = [f"{branch.scan_detector_rotation_deg:.1f}°{' kept' if index == self.kept else ''} · {label} (rad)"
+                  for index, branch in enumerate(self.branches)]
+        sampling = self.object_sampling_A
+        show_2d(centred, figax=(figure, np.asarray(axes)), title=titles, cmap="inferno", cbar=True,
+                norm={"interval_type": "manual", "vmin": -limit, "vmax": limit}, tight_layout=False, title_fontsize=12,
+                scalebar=None if sampling is None else {"sampling": sampling[1], "units": "Å", "fontsize": 11})
+        if self.num_columns:
+            positions = self.columns.astype(np.float64) * factor
+            for axis in axes:
+                limits = axis.get_xlim(), axis.get_ylim()
+                axis.scatter(positions[:, 1], positions[:, 0], s=14, facecolors="none", edgecolors="#00D5FF",
+                             linewidths=0.6)
+                axis.set(xlim=limits[0], ylim=limits[1])
+
     def to_record(self) -> tuple[dict[str, object], dict[str, np.ndarray]]:
-        """The JSON part and the arrays of a saved comparison (``persistence.save_result``)."""
+        """The JSON part and the arrays of a saved comparison (``persistence.save_result``).
+
+        Auto-upsampled panels are saved only when they exist at save time (a ``scan_region`` fit, whose region session
+        closes after the fit); otherwise the session that reloads the record reconstructs them.
+        """
         record = {
             "chosen": self.chosen, "kept": self.kept, "decided_by": self.decided_by,
+            "scan_sampling_A": self.scan_sampling_A,
             "branches": [{
                 "scan_detector_rotation_deg": branch.scan_detector_rotation_deg, "aberrations": branch.aberrations,
                 "loss": branch.loss, "phase_skewness": branch.phase_skewness, "column_z": branch.column_z,
@@ -332,6 +422,9 @@ class RotationBranches:
         if self.columns is not None:
             arrays["rotation_branch_columns"] = self.columns
             arrays["rotation_branch_column_phases"] = np.stack([branch.column_phases for branch in self.branches])
+        if self._upsampled is not None and self._upsampled[0] == "auto":
+            record["upsampling_factor"] = self.upsampling_factor
+            arrays["rotation_branch_upsampled_phases"] = np.stack(self._upsampled[1])
         return record, arrays
 
     @classmethod
@@ -351,8 +444,13 @@ class RotationBranches:
                 sample_tilt_mrad=None if tilt is None else tuple(tilt), depth_spread_nm=saved.get("depth_spread_nm"),
                 column_effect=saved.get("column_effect"),
             ))
-        return cls(branches=tuple(branches), columns=columns, chosen=int(record["chosen"]), kept=int(record["kept"]),
-                   decided_by=record["decided_by"])
+        sampling = record.get("scan_sampling_A")
+        restored = cls(branches=tuple(branches), columns=columns, chosen=int(record["chosen"]), kept=int(record["kept"]),
+                       decided_by=record["decided_by"], scan_sampling_A=None if sampling is None else tuple(sampling))
+        if "rotation_branch_upsampled_phases" in arrays:
+            restored.upsampling_factor = int(record["upsampling_factor"])
+            restored._upsampled = ("auto", tuple(np.asarray(arrays["rotation_branch_upsampled_phases"])))
+        return restored
 
 
 def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> RotationBranches:
@@ -387,5 +485,6 @@ def compare_branches(fits, *, dark_field, scan_sampling_A, keep_first: bool) -> 
     else:
         decided_by = "phase_tail"
         chosen = 0 if branches[0].phase_skewness >= branches[1].phase_skewness else 1
+    step = tuple(float(value) for value in np.broadcast_to(np.asarray(scan_sampling_A, dtype=float), (2,)))
     return RotationBranches(branches=tuple(branches), columns=columns, chosen=chosen,
-                            kept=0 if keep_first else chosen, decided_by=decided_by)
+                            kept=0 if keep_first else chosen, decided_by=decided_by, scan_sampling_A=step)
