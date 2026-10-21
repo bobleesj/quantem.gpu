@@ -759,3 +759,45 @@ def test_open_screen_record_opens_at_every_stored_calibration(tmp_path, monkeypa
     (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2", "computed": {"ssb": {}}}))
     with pytest.raises(ValueError, match="holds no SSB fit"):
         open_screen_record(record)
+
+
+def test_open_screen_record_opens_at_the_tilt_corrected_fit(tmp_path, monkeypatch) -> None:
+    """The record's result is its tilt-corrected fit: the session opens at its optics with its tilt and depth spread.
+
+    A --ssb-mode both record keeps the ordinary fit in computed.ssb and the tilt-corrected one in computed.ssb_tilt;
+    the session opened at the ordinary fit, and a default-mode record's joint fit reopened at tilt 0.
+    """
+    from types import SimpleNamespace
+
+    from quantem.gpu import SSB
+    from quantem.gpu.ssb.persistence import FIT_SCHEMA
+    from quantem.gpu.ssb.series import open_screen_record, screen_record_sample, screen_record_settings
+
+    source = tmp_path / "scan_018_master.h5"
+    source.write_bytes(b"raw")
+    record = tmp_path / "out" / "live" / "screen" / "scan_018"
+    record.mkdir(parents=True)
+    plain = {"schema": FIT_SCHEMA, "voltage_kV": 300.0, "semiangle_mrad": 30.0, "scan_sampling_A": [0.264, 0.264],
+             "detector_sampling_mrad": [0.552, 0.552], "aberrations": {"C10_nm": 15.77, "C12_nm": 6.7, "phi12_deg": 17.5},
+             "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": False,
+             "bright_field_center_px": [95.5, 96.25], "bright_field_radius_px": 53.4}
+    joint = {"schema": FIT_SCHEMA, "state": "complete", "aberrations": {"C10_nm": 4.0, "C12_nm": 0.5, "phi12_deg": 10.0},
+             "scan_detector_rotation_deg": 339.78, "scan_detector_rotation_flipped": False,
+             "sample_tilt_mrad": [-0.1, -5.07], "depth_spread_nm": 10.7}
+    sessions = []
+    monkeypatch.setattr(SSB, "open", classmethod(
+        lambda cls, path, **kwargs: sessions.append(SimpleNamespace(kwargs=kwargs, sample_tilt_mrad=None,
+                                                                    depth_spread_nm=None)) or sessions[-1]))
+    for computed, optics, sample in (
+            ({"ssb": plain, "ssb_tilt": joint}, joint["aberrations"], ((-0.1, -5.07), 10.7)),
+            ({"ssb": {**plain, "sample_tilt_mrad": [1.0, 2.0], "depth_spread_nm": 5.0}}, plain["aberrations"],
+             ((1.0, 2.0), 5.0)),
+            ({"ssb": plain, "ssb_tilt": {**joint, "state": "failed"}}, plain["aberrations"], (None, None))):
+        (record / "config.json").write_text(json.dumps({"schema": "quantem.screen-acquisition/2",
+                                                         "source_master": str(source), "computed": computed}))
+        session = open_screen_record(record)
+        assert session.kwargs["aberrations"] == optics == screen_record_settings(record)["aberrations"]
+        assert session.kwargs["detector_sampling_mrad"] == (0.552, 0.552)  # the session's calibration, computed.ssb's
+        assert (session.sample_tilt_mrad, session.depth_spread_nm) == sample
+        assert screen_record_sample(record) == (None if sample[0] is None else
+                                                {"sample_tilt_mrad": sample[0], "depth_spread_nm": sample[1]})

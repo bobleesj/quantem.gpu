@@ -35,6 +35,9 @@ phase is 1,048,704 bytes as NumPy v1, plus its small JSON record.
 - `aberrations`: `C10_nm`, `C12_nm`, `phi12_deg` (scan frame);
   `scan_detector_rotation_deg` in [0, 360) and `scan_detector_rotation_flipped`: saved
   physical settings, independent of display contrast and colormap.
+- `sample_tilt_mrad` (`[row, col]`, scan frame) and `depth_spread_nm`: present
+  together for a tilt-corrected fit, whose C10 is the defocus at mid-depth;
+  absent for a fit at tilt 0. A record with one and not the other is refused.
 - `provenance`: nonempty string-valued object identifying producer, phase
   variant, recorded revision and calibration/identity limitations.
 - `run_metadata`: readable JSON object preserving the original scientific run,
@@ -54,9 +57,13 @@ images, although the interchange reader supports larger shapes.
 
 Python `quantem.gpu.formats.ssb_phase` owns `acquisition_identity`, `export_result`
 and `read_result`. The source-identity exporter currently supports ARINA masters
-with external data members. It exports original `ssb_phase.npy` with matching
-`computed.ssb`; it never substitutes a calibrated, picked, locked or denoised
-image with different settings.
+with external data members. It exports the record's tilt-corrected fit, the
+default SSB result, with its original phase: `ssb_phase_tilt.npy` with
+`computed.ssb_tilt` when the record also holds an ordinary fit (QuantEM Live's
+`--ssb-mode both`), else `ssb_phase.npy` with `computed.ssb`. The beam, sampling
+and bright-field calibration are `computed.ssb`'s, which both fits share. It
+never substitutes a calibrated, picked, locked or denoised image with different
+settings.
 
 ```python
 from quantem.gpu.formats.ssb_phase import export_result, read_result

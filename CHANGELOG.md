@@ -8,6 +8,7 @@ new `rcN` heading when that rc is published to TestPyPI.
 
 ### Changed
 
+- QuantEM Live screening records export and reopen at their tilt-corrected fit, the default SSB result: `formats.ssb_phase.export_result` takes `computed.ssb_tilt` and `ssb_phase_tilt.npy` when a record also holds an ordinary fit (`--ssb-mode both`), and the pair states the fit's `sample_tilt_mrad` and `depth_spread_nm` (both or neither; schema unchanged, earlier pairs read as before). `series.screen_record_settings` and `open_screen_record` take the same fit, and `open_screen_record` sets the session's sample tilt and depth spread (`series.screen_record_fit`, `series.screen_record_sample`).
 - SSB fit methods have one vocabulary, `find_aberrations(tilt=..., objective=...)`. The default,
   `find_aberrations()`, is the model-based, tilt-corrected fit (least-squares model agreement, sample tilt and depth
   spread fitted); `tilt=False` holds the tilt and depth spread at 0; `tilt=False, objective="phase_variance"` is the

@@ -486,6 +486,24 @@ def stored_fit(config: dict[str, object], block: str = "ssb") -> dict[str, objec
     return stored if stored.get("schema") == FIT_SCHEMA else {}
 
 
+def screen_record_fit(config: dict[str, object]) -> dict[str, object]:
+    """The fit a QuantEM Live screening record's result is: its tilt-corrected fit, else ``computed.ssb``.
+
+    A record of Live's default mode holds the tilt-corrected fit in ``computed.ssb`` and it is returned as it is
+    (``stored_fit(config)``, the same dict). A ``--ssb-mode both`` record holds the ordinary fit there and the
+    tilt-corrected one in ``computed.ssb_tilt``; that block's optics, rotation, sample tilt and depth spread are then
+    returned over ``computed.ssb``'s beam, sampling and bright-field calibration, which the two fits share. A failed
+    tilt fit, or one of another schema, is no result. Records are read as written.
+    """
+    plain = stored_fit(config)
+    tilt = stored_fit(config, "ssb_tilt")
+    if not plain or tilt.get("state") != "complete" or tilt.get("sample_tilt_mrad") is None:
+        return plain
+    keys = ("aberrations", "scan_detector_rotation_deg", "scan_detector_rotation_flipped", "sample_tilt_mrad",
+            "depth_spread_nm", "fit_gain", "loss", "phase_estimator", "objective")
+    return {**plain, **{key: tilt[key] for key in keys if key in tilt}}
+
+
 def saved_fit(screen_path: Path) -> dict[str, object] | None:
     """Return the fitted aberrations and physical rotation from Live or a GPU save; else None.
 
@@ -587,7 +605,9 @@ def screen_record_settings(record: str | Path) -> dict[str, object]:
     The keywords are everything the fit used: the beam (``voltage_kV``, ``semiangle_mrad``), ``scan_sampling_A`` and
     ``detector_sampling_mrad`` as ``(row, col)`` pairs, the physical ``scan_detector_rotation_deg`` with
     ``scan_detector_rotation_flipped``, the bright-field centre and radius, and the fitted ``aberrations``
-    (``C10_nm``, ``C12_nm``, ``phi12_deg``). Opening with all of them reproduces the fit's geometry; opening with
+    (``C10_nm``, ``C12_nm``, ``phi12_deg``). The fit is the record's result, its tilt-corrected fit when it has one
+    (``screen_record_fit``); its sample tilt and depth spread are not ``SSB.open`` keywords and are
+    ``screen_record_sample``'s. Opening with all of them reproduces the fit's geometry; opening with
     the rotation alone (``series.open_settings``) let the session derive another detector sampling and disk.
 
     Raises
@@ -603,7 +623,7 @@ def screen_record_settings(record: str | Path) -> dict[str, object]:
     path = Path(record).expanduser()
     config_path = path if path.name == "config.json" else path / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    fit = stored_fit(config)
+    fit = screen_record_fit(config)
     if not fit:
         raise ValueError(f"{config_path} holds no SSB fit of schema {FIT_SCHEMA!r}; screen it again with QuantEM Live.")
     required = ("voltage_kV", "semiangle_mrad", "scan_sampling_A", "detector_sampling_mrad", "aberrations",
@@ -626,6 +646,21 @@ def screen_record_settings(record: str | Path) -> dict[str, object]:
     }
 
 
+def screen_record_sample(record: str | Path) -> dict[str, object] | None:
+    """The sample tilt and depth spread of a screening record's tilt-corrected fit, or None for a tilt-0 fit.
+
+    ``{"sample_tilt_mrad": (row, col), "depth_spread_nm": float}`` (scan frame, mrad and nm), the session attributes
+    ``open_screen_record`` sets so the session reconstructs the tilt-corrected fit, not the same optics at tilt 0.
+    """
+    path = Path(record).expanduser()
+    config_path = path if path.name == "config.json" else path / "config.json"
+    fit = screen_record_fit(json.loads(config_path.read_text(encoding="utf-8")))
+    if fit.get("sample_tilt_mrad") is None or fit.get("depth_spread_nm") is None:
+        return None
+    return {"sample_tilt_mrad": tuple(float(value) for value in fit["sample_tilt_mrad"]),
+            "depth_spread_nm": float(fit["depth_spread_nm"])}
+
+
 def open_screen_record(
     record: str | Path,
     *,
@@ -637,8 +672,9 @@ def open_screen_record(
 
     The bridge from a microscope session to the notebook: the screening record names the raw source
     (``source_master``) and every calibration of its fit, so the session opens with the fitted aberrations, the
-    physical rotation and its flip, the bright-field disk and the detector and scan sampling, and ``ssb.show()``
-    opens ShowPtycho there. Pass ``source`` when the raw file has moved.
+    physical rotation and its flip, the bright-field disk and the detector and scan sampling, and the sample tilt
+    and depth spread of a tilt-corrected fit (the record's result when it has one, ``screen_record_fit``), and
+    ``ssb.show()`` opens ShowPtycho there. Pass ``source`` when the raw file has moved.
 
     Examples
     --------
@@ -658,4 +694,10 @@ def open_screen_record(
             raise ValueError(f"{config_path} names no source_master; pass source=.")
     if not Path(source).exists():
         raise FileNotFoundError(f"Raw source {source} of {config_path} not found; pass source= where it now is.")
-    return SSB.open(str(source), backend=backend, verbose=verbose, **settings)
+    ssb = SSB.open(str(source), backend=backend, verbose=verbose, **settings)
+    sample = screen_record_sample(config_path)
+    if sample is not None:
+        # the tilt-corrected fit's sample model: without it the session reconstructs its mid-depth C10 at tilt 0
+        ssb.sample_tilt_mrad = sample["sample_tilt_mrad"]
+        ssb.depth_spread_nm = sample["depth_spread_nm"]
+    return ssb
