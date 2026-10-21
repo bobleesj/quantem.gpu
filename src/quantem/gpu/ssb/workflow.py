@@ -1817,7 +1817,7 @@ class SSB:
     def compare_rotation_defocus(
         self, *, show: bool = False, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
-        seed: int = 42, tilt: bool = True,
+        seed: int = 42, tilt: bool = True, verbose: bool = True,
     ) -> "RotationDefocusComparison":
         """Compare two rotations and both defocus signs without selecting a winner.
 
@@ -1842,6 +1842,12 @@ class SSB:
             Same search seed for each independent case.
         tilt : bool, optional
             Fit tilt and depth spread, default True.
+        verbose : bool, optional
+            Show one tqdm progress bar with completed cases, current rotation,
+            C10 interval, preparation/fitting/reconstruction stage, elapsed time
+            and estimated remaining time. Default True. Updates occur between
+            stages, not within the GPU search or Newton refinement. Set False
+            for unattended runs.
 
         Returns
         -------
@@ -1860,7 +1866,7 @@ class SSB:
 
         comparison = compare_rotation_defocus(
             self, num_trials=num_trials, refinement=refinement,
-            search_ranges=search_ranges, seed=seed, tilt=tilt,
+            search_ranges=search_ranges, seed=seed, tilt=tilt, verbose=verbose,
         )
         if show:
             from IPython.display import display

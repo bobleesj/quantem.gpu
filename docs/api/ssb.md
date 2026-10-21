@@ -432,6 +432,18 @@ rotation branch: after a branch comparison the trials of both searches are kept,
 `search` 0 at the first angle and 1 at the angle plus 180 degrees. Saved search
 results retain this history.
 
+### Rotation and defocus comparison
+
+```python
+comparison = ssb.compare_rotation_defocus(show=True)
+```
+
+Four independent fits compare two rotations and both C10 signs, preserving the
+session's fitted state. One tqdm progress bar shows the current rotation, C10
+range, preparation/fitting/reconstruction stage, completed cases and elapsed
+time. Updates occur between stages; the GPU search and Newton refinement are
+not interrupted for per-trial progress. Use `verbose=False` for quiet runs.
+
 ### Reconstructed focus/depth images
 
 To compare the actual specimen images, use the existing Show2D gallery:
