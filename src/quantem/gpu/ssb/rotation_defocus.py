@@ -5,12 +5,13 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from quantem.gpu.ssb.results import SSBResult
 from quantem.gpu.ssb.contract import RefineMethod
+from quantem.gpu.ssb.results import SSBResult, host_array
 
 if TYPE_CHECKING:
     import pandas as pd
     from matplotlib.figure import Figure
+
     from quantem.gpu.ssb.workflow import SSB
 
 
@@ -124,7 +125,7 @@ class RotationDefocusComparison:
                 scale = case["upsampling"] if key == "phase" else 1
                 top = int(native_height * (1 - view_fraction) / 2) * scale
                 left = int(native_width * (1 - view_fraction) / 2) * scale
-                region = phase[top:height - top, left:width - left]
+                region = host_array(phase[top:height - top, left:width - left])
                 collection.append(region - np.median(region))
         limit = np.percentile(np.abs(np.concatenate([p.ravel() for p in images])), 99)
         bins = np.linspace(min(p.min() for p in histograms),
