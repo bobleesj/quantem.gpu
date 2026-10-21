@@ -43,8 +43,9 @@ restored search reproduces the removed one bit for bit: on gold (both branches,
 358.31° kept) C10 −17.7557 nm, C12 2.6289 nm, phi12 −40.312°, and on the other
 512 × 512 acquisition C10 10.0741 nm, C12 2.0805 nm, phi12 80.138° at 345.828°,
 with identical losses, branch records, phases and trial records, and the same
-peak memory (18.56 GiB above the encoded data on gold, MLX's live peak 12.50 GiB,
-both versions measured back to back). The default
+live peak memory (12.50 GiB of MLX arrays on gold; 18.56 GiB of driver memory
+above the encoded data in most runs, the overnight 18.6 GiB;
+`2026-10-20-mps-performance.md`). The default
 and `tilt=False` fits are unchanged bit for bit. On CUDA,
 `objective="phase_variance"` is the standard fit CUDA ran before, and
 `tilt=False` raises `NotImplementedError` naming it until the agreement fit is
