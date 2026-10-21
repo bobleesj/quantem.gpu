@@ -1110,7 +1110,8 @@ class SSB:
                 "operation": operation,
                 "reconstruction": {
                     "default_estimator": "phase_of_mean",
-                    "higher_order_model": "krivanek14",
+                    # "k-q": the probe phase of the first sideband at k - q (odd orders were at q - k before)
+                    "higher_order_model": "krivanek14 k-q",
                     "upsampling_dc_policy": "single_origin",
                 },
                 "source": (

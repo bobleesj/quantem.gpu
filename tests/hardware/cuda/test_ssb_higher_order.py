@@ -43,7 +43,8 @@ class KrivanekSSB(TorchSSB):
         *_, ap_k = self._geometry(kx, ky)
         *_, ap_m = self._geometry(qx - kx, qy - ky)
         *_, ap_p = self._geometry(qx + kx, qy + ky)
-        chi_k, chi_m, chi_p = self._chi(kx, ky), self._chi(qx - kx, qy - ky), self._chi(qx + kx, qy + ky)
+        # P(k - q) conj P(k) - conj P(k + q) P(k): chi at k - q, which differs from q - k for the odd orders
+        chi_k, chi_m, chi_p = self._chi(kx, ky), self._chi(kx - qx, ky - qy), self._chi(qx + kx, qy + ky)
         t1 = (ap_m * ap_k) * torch.exp(-1j * (chi_m - chi_k))
         t2 = (ap_p * ap_k) * torch.exp(1j * (chi_p - chi_k))
         return t1 - t2
@@ -104,8 +105,10 @@ def test_higher_order_preview_matches_float64_chi_reference():
         reference.magnitudes_A = magnitudes.astype(np.float64) * 10.0    # the engine takes Angstrom
         reference.angles_rad = angles.astype(np.float64)
         expected, expected_loss = reference.reconstruct(0.0, 0.0, 0.0)
-        # measured 2026-10-07: 2.0e-6 rad max (float32 Chebyshev chi against float64 atan2 chi), loss 2.4e-7 relative
-        np.testing.assert_allclose(phase, expected.cpu().numpy(), atol=5e-6)
+        # measured 2026-10-21 against an independent float64 oracle: this preview 3.5e-6 rad max (float32 Chebyshev chi
+        # with all 14 orders) and this reference 3.6e-6, so the two differ by up to 7.1e-6; the probe phase at q - k
+        # instead of k - q differs by 2.6e-3. (2.0e-6 before the sign fix, where the two errors partly cancelled.)
+        np.testing.assert_allclose(phase, expected.cpu().numpy(), atol=1e-5)
         assert loss == pytest.approx(expected_loss, rel=1e-6)
         np.testing.assert_array_equal(dragged, phase)
         assert no_loss is None

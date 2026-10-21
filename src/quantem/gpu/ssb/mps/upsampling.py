@@ -93,7 +93,9 @@ inline float2 alias_corrected(
     float ca = 0.0f, cb = 0.0f, sa = 0.0f, sb = 0.0f;
     if (gm.w != 0.0f) {
         float chi_m = factor * gm.x * (c12 * (gm.y * c2 + gm.z * s2) + c10);
-        if (HIGHER) chi_m = ssb_chi_full(qr - kr, qc - kc, wl, coefficients);
+        // chi(k - q), not chi(q - k): G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q), and the odd orders
+        // (coma, trefoil) change sign between the two (Pennycook et al., Ultramicroscopy 151, 2015)
+        if (HIGHER) chi_m = ssb_chi_full(kr - qr, kc - qc, wl, coefficients);
         a = gm.w * gk.w;
         if (SSB_ALIAS_DEPTH) {
             a = tf_sinc(0.5f * depth * (-factor * (gm.x - gk.x) - shift)) * gm.w * gk.w;

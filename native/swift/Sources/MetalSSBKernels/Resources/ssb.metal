@@ -397,7 +397,8 @@ inline float ssb_polar_phase(float kr, float kc, constant SSBParams &p,
 inline float2 ssb_polar_correction(float qr, float qc, float4 beam,
     constant SSBParams &p, constant float4 *higher) {
     float2 probe = exp_neg_i(ssb_polar_phase(beam.x, beam.y, p, higher), beam.w);
-    float2 minus = exp_neg_i(ssb_polar_phase(qr - beam.x, qc - beam.y, p, higher),
+    // The probe phase at k - q, not q - k: the odd orders (coma, trefoil) change sign between them.
+    float2 minus = exp_neg_i(ssb_polar_phase(beam.x - qr, beam.y - qc, p, higher),
         aperture_at(qr - beam.x, qc - beam.y, p));
     float2 plus = exp_neg_i(ssb_polar_phase(qr + beam.x, qc + beam.y, p, higher),
         aperture_at(qr + beam.x, qc + beam.y, p));

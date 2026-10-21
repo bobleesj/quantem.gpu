@@ -375,8 +375,9 @@ __device__ __forceinline__ float2 gamma_mul_pk_onthefly_full(
     float aperture_m = m.w;
     float aperture_p = p.w;
 
-    // Full-polynomial χ at both shifted vectors using the fast Chebyshev path
-    float chi_m = chi_full(dmx, dmy, wavelength, abr_mag_scaled, abr_cm, abr_sm);
+    // Full-polynomial χ at both shifted vectors using the fast Chebyshev path. The first term is P(k - q) conj P(k):
+    // chi at k - q, not q - k, which differ for the odd orders (coma, trefoil); the aperture is even.
+    float chi_m = chi_full(kx - qx, ky - qy, wavelength, abr_mag_scaled, abr_cm, abr_sm);
     float chi_p = chi_full(dpx, dpy, wavelength, abr_mag_scaled, abr_cm, abr_sm);
 
     float sin_m, cos_m, sin_p, cos_p;

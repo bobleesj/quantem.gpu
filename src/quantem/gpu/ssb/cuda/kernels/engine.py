@@ -161,7 +161,8 @@ __device__ float2 thick_correct_k(float2 G, float qx, float qy, float kx, float 
         float chi_m = factor * g_m.x * fmaf(C12, fmaf(g_m.y, cos2phi12, g_m.z * sin2phi12), C10);
         float chi_p = factor * g_p.x * fmaf(C12, fmaf(g_p.y, cos2phi12, g_p.z * sin2phi12), C10);
 #ifdef SSB_HIGHER_ORDER
-        chi_m = ssb_chi_full(qx - kx, qy - ky, wavelength, coefficients);
+        // chi(k - q): G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q); odd orders change sign under q - k
+        chi_m = ssb_chi_full(kx - qx, ky - qy, wavelength, coefficients);
         chi_p = ssb_chi_full(qx + kx, qy + ky, wavelength, coefficients);
 #endif
         float w1 = 1.0f, w2 = 1.0f;

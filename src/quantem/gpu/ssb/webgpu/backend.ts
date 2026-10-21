@@ -559,7 +559,8 @@ ${thick ? "fn thick_sinc(x: f32) -> f32 { return select(sin(x) / x, 1.0, abs(x) 
   var chi_m: f32;
   var chi_p: f32;
   if (params.full_aberration != 0u) {
-    chi_m = chi_full(qx - kx, qy - ky);
+    // chi(k - q), not chi(q - k): the odd orders (coma, trefoil) change sign between them
+    chi_m = chi_full(kx - qx, ky - qy);
     chi_p = chi_full(qx + kx, qy + ky);
   } else {
     let cos_term_m = m.y * params.cos2phi12 + m.z * params.sin2phi12;
