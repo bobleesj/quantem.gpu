@@ -228,6 +228,7 @@ class Dataset4dstemGPU:
     def from_blocks(
         cls, source, *, dtype: str = "float32",
         device: str | torch.device | None = None, save_to: str | Path | None = None,
+        verbose: bool = False,
     ) -> "Dataset4dstemGPU":
         """Store ordered scientific results without a complete decoded copy.
 
@@ -247,6 +248,8 @@ class Dataset4dstemGPU:
             Destination device. Defaults to ``source.device``.
         save_to : str or pathlib.Path, optional
             Write bounded blocks to HDF5 and reopen the saved acquisition.
+        verbose : bool
+            Show frame progress and finalization while writing.
 
         Returns
         -------
@@ -263,7 +266,7 @@ class Dataset4dstemGPU:
         device = str(source.device if device is None else device)
         if save_to is None:
             return load(source, dtype=dtype, device=device, verbose=False)
-        save(save_to, source, dtype=dtype, backend=device.split(":")[0], verbose=False)
+        save(save_to, source, dtype=dtype, backend=device.split(":")[0], verbose=verbose)
         return load(
             save_to, dtype="native" if dtype == "float32" else dtype,
             device=device, verbose=False,

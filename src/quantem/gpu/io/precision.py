@@ -19,6 +19,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import torch
+from tqdm.auto import tqdm
 
 from quantem.gpu.device import select
 from quantem.gpu.device.cuda_runtime import cp
@@ -156,6 +157,7 @@ def save_precision(
         )
     source = None
     writer = None
+    progress = None
     context = nullcontext() if backend == "mps" else cp.cuda.Device(_cuda_device(payload))
     with context:
         try:
@@ -203,11 +205,22 @@ def save_precision(
                 dtype=np.uint16,
                 frames_per_file=frames_per_file,
             )
+            progress = tqdm(
+                total=math.prod(shape[:2]), desc="Computing and saving",
+                unit="frames", disable=not verbose,
+            )
             for encoded in encoded_blocks:
                 writer.write(encoded)
+                progress.update(encoded.shape[0])
                 # The bounded writer queue applies backpressure while preserving
                 # overlap with the next region. File boundaries drain separately.
+            progress.set_description("Finishing file writes")
             wait_for_saves()
+            if report.get("clipped", 0) or report.get("overflow", 0):
+                raise ValueError(
+                    "Scaled uint16 export clipped or overflowed; preserve the "
+                    "float32 source and inspect its range."
+                )
             # A generated source may carry its own records, such as a merge summary;
             # save_metadata is an optional field of the generated-source contract.
             generated_metadata = getattr(payload, "save_metadata", None)
@@ -220,10 +233,14 @@ def save_precision(
             writer = None
             if verbose:
                 print(
-                    f"Saved {report['storage']} with conversion report: RMS error {report['rmse']:.7g}, maximum {report['max_abs_error']:.7g}"
+                    f"Saved scaled uint16 (approximate): RMS rounding error "
+                    f"{report['rmse']:#.3g} counts; maximum absolute error "
+                    f"{report['max_abs_error']:#.3g} counts. No clipping."
                 )
             return backend
         finally:
+            if progress is not None:
+                progress.close()
             if writer is not None:
                 failure = sys.exception()
                 try:

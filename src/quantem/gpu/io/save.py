@@ -321,7 +321,7 @@ def save(
     if callable(getattr(data, "blocks", None)):
         return _save_blocks(
             filepath, data, normalized_backend, dtype, metadata, scan_shape,
-            batch_size, frames_per_file, source_master,
+            batch_size, frames_per_file, source_master, verbose,
         )
 
     if normalized_backend == "auto":
@@ -394,8 +394,10 @@ def save(
 
 
 def _save_blocks(filepath, data, backend, dtype, metadata, scan_shape,
-                 batch_size, frames_per_file, source_master):
+                 batch_size, frames_per_file, source_master, verbose=False):
     """Write algorithm output without allocating the complete result."""
+    from tqdm.auto import tqdm
+
     shape = tuple(data.shape)
     if len(shape) != 4 or (scan_shape is not None and tuple(scan_shape) != shape[:2]):
         raise ValueError("A block source must have a 4D shape matching scan_shape.")
@@ -403,6 +405,10 @@ def _save_blocks(filepath, data, backend, dtype, metadata, scan_shape,
     output_metadata.update(metadata or {})
     storage_dtype = _normalize_save_dtype(data.dtype if dtype is None else dtype)
     writer = None
+    progress = tqdm(
+        total=math.prod(shape[:2]), desc="Computing and saving",
+        unit="frames", disable=not verbose,
+    )
     try:
         for block in data.blocks():
             if isinstance(block, torch.Tensor) and block.is_cuda:
@@ -422,12 +428,17 @@ def _save_blocks(filepath, data, backend, dtype, metadata, scan_shape,
                 raise ValueError("batch_size must be positive.")
             for start in range(0, len(block), count):
                 writer.write(block[start:start + count])
+                progress.update(min(count, len(block) - start))
         if writer is None:
             raise ValueError("The block source produced no frames; no complete file was saved.")
         output_metadata.update(getattr(data, "save_metadata", {}))
     finally:
-        if writer is not None:
-            writer.close(wait=True)
+        try:
+            if writer is not None:
+                progress.set_description("Finishing file writes")
+                writer.close(wait=True)
+        finally:
+            progress.close()
     return SaveResult(str(filepath), backend, complete=True)
 
 
