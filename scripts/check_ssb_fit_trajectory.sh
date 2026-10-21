@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # SSB fit-trajectory parity gate.
 #
-#   scripts/check_ssb_fit_trajectory.sh              # fast: 128x128 real crop
+#   scripts/check_ssb_fit_trajectory.sh              # agreement gate + fast phase-variance crop
 #   scripts/check_ssb_fit_trajectory.sh --full       # adds the 512x512 acquisition
 #   scripts/check_ssb_fit_trajectory.sh --build-metal
+#
+# First the agreement objective, which the default fit and tilt=False use: the native SSBAgreementSearch must
+# draw the trials of the Python resident search (scripts/ssb_agreement_gate.py; measured parity too when
+# SSB_PARITY_FIXTURE and SSB_PARITY_REFERENCE are set). Then the older phase-variance search
+# (objective="phase_variance") on its frozen fixture, which is skipped, not failed, when that fixture is absent.
 #
 # A single objective evaluation can agree with an oracle while the *fit* still
 # moves, because the search draws candidate t+1 from a history that may or may
@@ -38,6 +43,13 @@ if grep -q "func phaseVarianceBatch" \
   native/swift/Sources/MetalSSBKernels/MetalSSBKernels.swift 2>/dev/null; then
   SWIFT_FLAGS+=(-D SSB_HAS_BATCH_OBJECTIVE)
   BATCH_MODE=both
+fi
+
+PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}" ${GPURUN:+"$GPURUN"} "$PYTHON" scripts/ssb_agreement_gate.py
+
+if [ ! -f "$RUNS_ROOT/strict-parity/arina-128-full-disk/case.json" ]; then
+  echo "check_ssb_fit_trajectory: phase-variance trajectory SKIP: frozen fixture $RUNS_ROOT/strict-parity/arina-128-full-disk is absent (set QUANTEM_SSB_PARITY_RUNS)."
+  exit 0
 fi
 
 if [ "$BUILD_METAL" = 1 ]; then
