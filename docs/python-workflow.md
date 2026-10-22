@@ -186,3 +186,10 @@ losses or phase polarity alone do not establish the physical rotation. Both
 sign intervals include zero, so a zero-boundary fit does not determine a sign.
 Compare an independently known focus only at the same reference plane and
 with the convention `f = -C10`. Depth spread is a fitted model parameter.
+
+## Browse reconstructed focus images
+
+`ssb.show("focus")` uses the existing Show2D gallery. Pass `layout="stack"`
+to scroll through defocus in Show3D, or `interactive=False` for static core
+views. See the [SSB view options](api/ssb.md) for focus spacing, depth values,
+region selection and panel sizes.
