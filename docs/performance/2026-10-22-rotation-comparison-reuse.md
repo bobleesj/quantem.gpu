@@ -40,3 +40,15 @@ This change reduces redundant preparation; it does not omit any search or
 establish the physical rotation. The result remains unresolved without an
 independent focus or rotation constraint. MPS hardware acceptance remains
 separate from this CUDA study. No release or default estimator change is made.
+
+## Consuming notebook acceptance
+
+The changed API also passed in a real Jupyter/ShowPtycho workflow on acquisitions
+A and B at full 512-square scans. The notebook loaded the acquisition, ran the
+200-trial primary fit with Newton and tilt correction, displayed Auto phase and
+FFT, and responded to a pointer-driven C10 adjustment. The subsequent four-case
+comparison matched all eight frozen native/Auto phase arrays per acquisition,
+left the parent session unchanged, and rendered one comparison figure. The
+browser reported an NVIDIA Blackwell adapter; sessions were closed after testing.
+This is functional workflow acceptance, not an interactive frame-rate benchmark.
+The private evidence group is `1022-consumer-notebook-v6`.
