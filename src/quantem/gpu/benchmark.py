@@ -31,6 +31,15 @@ def _synchronize(backend: str) -> None:
         torch.mps.synchronize()
 
 
+def _host_phase(phase, backend: str) -> np.ndarray:
+    """Download a phase image explicitly for report hashes and comparisons."""
+    if backend == "cuda":
+        import cupy as cp
+
+        return cp.asnumpy(phase)
+    return np.asarray(phase)
+
+
 def _timed(call: Callable, backend: str) -> tuple[object, float]:
     _synchronize(backend)
     start = time.perf_counter()
@@ -228,7 +237,7 @@ def run_ssb(
     parity: dict[str, list[dict]] = {}
 
     def keep(name: str, seconds: float, phase, record: dict) -> None:
-        phase = np.asarray(phase)
+        phase = _host_phase(phase, selected)
         if not np.isfinite(phase).all():
             raise RuntimeError(f"{name} produced nonfinite reconstructed phase.")
         if name not in references:
@@ -319,17 +328,18 @@ def run_ssb(
                         raise ValueError(
                             "The reference phase must use the same full field and Auto sampling."
                         )
-                    difference = np.asarray(output.phase, np.float64) - reference
+                    host_phase = _host_phase(output.phase, selected)
+                    difference = host_phase.astype(np.float64) - reference
                     reference_checks.append(
                         {
                             "bitwise_equal": bool(
-                                np.array_equal(output.phase, reference)
+                                np.array_equal(host_phase, reference)
                             ),
                             "max_abs_rad": float(np.max(np.abs(difference))),
                             "rms_rad": float(np.sqrt(np.mean(difference * difference))),
                         }
                     )
-                    if not np.allclose(output.phase, reference, atol=1e-6, rtol=1e-6):
+                    if not np.allclose(host_phase, reference, atol=1e-6, rtol=1e-6):
                         raise RuntimeError(
                             "Full-field phase differs from the frozen reference. Check source, calibration and precision; do not replace the reference automatically."
                         )
@@ -389,7 +399,7 @@ def run_ssb(
                         selected,
                     )
                     row_start, row_stop, col_start, col_stop = bounds
-                    crop = np.asarray(phase)[
+                    crop = _host_phase(phase, selected)[
                         (row_start + row_offset) * factor : (row_stop + row_offset)
                         * factor,
                         (col_start + col_offset) * factor : (col_stop + col_offset)
