@@ -75,3 +75,53 @@ def test_comparison_defaults_to_table_and_show_displays_one_figure(monkeypatch):
     assert "Unresolved" in returned._repr_html_()
     SSB.compare_rotation_defocus(SimpleNamespace(_device=None), show=True)
     assert len(displayed) == 1
+
+
+
+def test_comparison_reuses_evidence_without_warm_starting_any_case():
+    """Four independent starts retain all trial budgets and leave the caller unchanged."""
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from quantem.gpu.ssb.rotation_defocus import compare_rotation_defocus
+
+    calls, selections, closed = [], [], []
+    initial = {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}
+
+    class Candidate:
+        def set_rotation(self, angle):
+            self.scan_detector_rotation_deg = angle
+
+        def find_aberrations(self, **options):
+            calls.append((self.scan_detector_rotation_deg, dict(self.aberrations),
+                          self.sample_tilt_mrad, self.depth_spread_nm, options))
+            # A completed fit changes state; none of it may seed the next case.
+            self.aberrations = {"C10_nm": 13.0, "C12_nm": 2.0, "phi12_deg": 37.0}
+            self.sample_tilt_mrad, self.depth_spread_nm = (3.0, 4.0), 9.0
+            self.latest = SimpleNamespace(case=len(calls))
+            return self.latest
+
+        def reconstruct(self, *, upsampling_factor):
+            assert upsampling_factor == "auto"
+            return self.latest
+
+    @contextmanager
+    def select_region(region, **options):
+        selections.append((region, options))
+        candidate = Candidate()
+        candidate.set_rotation(options["scan_detector_rotation_deg"])
+        try:
+            yield candidate
+        finally:
+            closed.append(True)
+
+    parent = SimpleNamespace(scan_shape=(128, 128), scan_detector_rotation_deg=340.0,
+                             select_region=select_region, aberrations={"C10_nm": 4.0})
+    comparison = compare_rotation_defocus(parent, num_trials=200, refinement="newton", verbose=False)
+    assert len(selections) == len(closed) == 1
+    assert [row[0] for row in calls] == [160.0, 160.0, 340.0, 340.0]
+    assert all(row[1] == initial and row[2:4] == (None, None) for row in calls)
+    assert [row[4]["search_ranges"]["C10_nm"] for row in calls] == [(-30, 0), (0, 30)] * 2
+    assert all(row[4]["num_trials"] == 200 and row[4]["refinement"] == "newton" for row in calls)
+    assert [result.case for result in comparison.fits] == [1, 2, 3, 4]
+    assert comparison.status.startswith("Unresolved")
+    assert parent.scan_detector_rotation_deg == 340.0 and parent.aberrations == {"C10_nm": 4.0}

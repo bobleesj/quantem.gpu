@@ -178,7 +178,7 @@ def compare_rotation_defocus(
     search_ranges: dict[str, tuple[float, float] | float] | None = None,
     seed: int = 42, tilt: bool = True, verbose: bool = True,
 ) -> RotationDefocusComparison:
-    """Run four independent searches, preserving the session's scientific state."""
+    """Run four independent searches on shared Fourier data, preserving the session state."""
     ranges = {"C10_nm": (-30.0, 30.0), "C12_nm": (0.0, 20.0)}
     ranges.update(search_ranges or {})
     bounds = ranges["C10_nm"]
@@ -192,15 +192,21 @@ def compare_rotation_defocus(
     fits, reconstructions = [], []
     from tqdm.auto import tqdm
 
+    initial = {"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0}
     with tqdm(total=4, desc="SSB comparison", unit="case", disable=not verbose) as progress:
-        for angle in angles:
-            for interval in focus_ranges:
-                case = f"{angle:.1f}°, C10 [{interval[0]:g}, {interval[1]:g}] nm"
-                progress.set_postfix_str(f"{case} | Preparing full field")
-                with session.select_region(
-                    full_field, scan_detector_rotation_deg=angle,
-                    aberrations={"C10_nm": 0.0, "C12_nm": 0.0, "phi12_deg": 0.0},
-                ) as candidate:
+        progress.set_postfix_str("Preparing shared full-field evidence")
+        with session.select_region(
+            full_field, scan_detector_rotation_deg=angles[0], aberrations=initial,
+        ) as candidate:
+            for angle in angles:
+                if candidate.scan_detector_rotation_deg != angle:
+                    candidate.set_rotation(angle)
+                for interval in focus_ranges:
+                    # Keep each numerical search independent; only source Fourier data are reused.
+                    candidate.aberrations = initial.copy()
+                    candidate.sample_tilt_mrad = None
+                    candidate.depth_spread_nm = None
+                    case = f"{angle:.1f}°, C10 [{interval[0]:g}, {interval[1]:g}] nm"
                     refinement_label = "" if refinement is None else f" + {refinement} refinement"
                     progress.set_postfix_str(f"{case} | Fitting: {num_trials} trials{refinement_label}")
                     fitted = candidate.find_aberrations(
@@ -212,6 +218,6 @@ def compare_rotation_defocus(
                     reconstructed = candidate.reconstruct(upsampling_factor="auto")
                     fits.append(fitted)
                     reconstructions.append(reconstructed)
-                progress.update(1)
+                    progress.update(1)
         progress.set_postfix_str("Complete")
     return RotationDefocusComparison(tuple(fits), tuple(reconstructions), focus_ranges)
