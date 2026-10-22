@@ -109,7 +109,7 @@ def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt, co
                               depth_spread_nm=fit.depth_spread_nm or 0.0,
                               phase_estimator="phase_of_mean", compute_loss=False)
         actual = fit.phase.get() if backend_name == "cuda" else np.asarray(fit.phase)
-        expected = phase.get() if backend_name == "cuda" else np.asarray(phase)
+        expected = np.asarray(phase)  # preview returns the display array on the host
         np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
         # a weak-phase object: the model explains its G (noise-free float input: no Poisson floor), so the guard trusts
         assert record["trusted"] and record["guard"]["coherence"] > 0.95, record["guard"]
