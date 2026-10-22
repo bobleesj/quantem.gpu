@@ -6,7 +6,7 @@ The CUDA backend now breaks its known engine/ThickSample ownership cycle
 directly before returning unused memory to the device pool. Saved phase results
 remain valid after closing the session.
 
-This changes resource cleanup only. The shared FFT source and its specialized
+This changes resource cleanup only. The FFT kernels and their specialized
 512/1024 accumulation schedules are unchanged; no new kernel framework was
 introduced.
 
@@ -83,3 +83,15 @@ CUDA_VISIBLE_DEVICES=0 python -m pytest -q -m "" \
 
 See [the reproducible SSB benchmark](ssb-joint-fit.md) for the public command
 and timing boundaries.
+
+## Separate integration check
+
+The export and cleanup fixes were also tested on `6fce2932`, without the
+shared-FFT refactor. The focused CUDA checks passed (19 tests). Two full
+512 × 512 × 192 × 192 acquisitions retained all 8,807 and 8,930 valid BF
+pixels, with Auto 3× and 4× output respectively. Each benchmark ran four
+complete full-field, regional, move and resize sequences with 200 trials per
+rotation branch and Newton refinement. All 80 complete phase arrays and all
+48 fit records were exactly equal to the frozen baseline. This separate check
+qualifies the export and cleanup changes; it does not qualify the shared-FFT
+refactor or resolve its compiler-cache discrepancy.
