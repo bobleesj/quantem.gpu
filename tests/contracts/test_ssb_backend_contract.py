@@ -349,6 +349,7 @@ def test_public_ssb_exports_are_backend_neutral() -> None:
         "DEPTH_SPREAD_RANGE_NM",
         "RotationBranch",
         "RotationBranches",
+        "RotationDefocusComparison",
         "SSB",
         "SSBResult",
     }
