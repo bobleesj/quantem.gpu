@@ -52,6 +52,7 @@ from quantem.gpu.ssb.trials import (
     choose_trials,
     label_trials,
     plot_trials,
+    resolve_trial_count,
     select_records,
 )
 from quantem.gpu.ssb.units import (
@@ -1018,7 +1019,7 @@ class SSB:
         Examples
         --------
         >>> with ssb.select_region((32, 160, 64, 192)) as region:
-        ...     fitted = region.find_aberrations(tilt=True, num_trials=200)
+        ...     fitted = region.find_aberrations(tilt=True, trials=200)
         """
         if self._data is None:
             raise RuntimeError("This SSB session is closed. Reopen the acquisition before selecting a region.")
@@ -1693,7 +1694,7 @@ class SSB:
         tilt: bool = True,
         objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
-        num_trials: int = 200,
+        trials: int | None = None,
         refinement: RefineMethod | Literal["auto"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
@@ -1707,6 +1708,7 @@ class SSB:
         fixed_aberrations: dict[str, float] | None = None,
         refine_rotation: bool = False,
         compute_loss: bool = True,
+        num_trials: int | None = None,
     ) -> SSBResult:
         """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
 
@@ -1733,12 +1735,14 @@ class SSB:
         raises) and is about 10x slower; on simulated crystals with known aberrations the model-based fit lands about
         3x closer to the true C10 (docs/maintainer/2026-10-20-ssb-standard-fit-objective.md).
 
-        Each method runs one search of ``num_trials`` trials plus local refinement: ``refinement="auto"`` (default)
-        selects Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that
+        Each method runs one search of ``trials`` candidates (default 200) per rotation branch, plus local refinement.
+        ``refinement="auto"`` (default) selects Newton for the agreement fits and Nelder-Mead for the phase variance and for an agreement fit that
         locks a coefficient, bounds phi12 or holds a nonzero C12 (Newton cannot). Explicit ``"nelder-mead"`` uses the
         simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
         not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
         whatever the objective, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run all three.
+
+        ``num_trials`` remains a compatibility alias for ``trials``; supply only one of them.
 
         ``compute_loss=False`` keeps the same search, refinement, fitted parameters and reconstructed phase,
         without evaluating the separate phase-variance diagnostic after an agreement fit. ``result.loss`` is then
@@ -1754,7 +1758,7 @@ class SSB:
         ``refinement="newton"`` polishes with Newton steps on finite-difference models whose evaluations share
         passes over the data, a few passes instead of hundreds (both backends evaluate the trials of a pass in one batch).
         ``compare_standard=False`` skips the standard-SSB search that only measures ``tilt_fit_gain`` (left None).
-        ``num_trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
+        ``trials=0`` with ``tilt=True`` searches nothing and refines from the session's ``aberrations``,
         ``sample_tilt_mrad`` and ``depth_spread_nm``: set them to the previous scan's fit and the next scan of a session
         costs one polish.
 
@@ -1827,7 +1831,7 @@ class SSB:
 
         return self._find_aberrations(
             "auto" if check_rotation else "off", tilt=tilt, objective=objective, scan_region=scan_region,
-            num_trials=num_trials,
+            num_trials=resolve_trial_count(trials, num_trials),
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
             tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
             compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
@@ -1835,9 +1839,10 @@ class SSB:
 
     @_on_scan_gpu
     def compare_rotation_defocus(
-        self, *, show: bool = False, num_trials: int = 200, refinement: RefineMethod | Literal["auto"] = "auto",
+        self, *, show: bool = False, trials: int | None = None, refinement: RefineMethod | Literal["auto"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         seed: int = 42, tilt: bool = True, verbose: bool = True,
+        num_trials: int | None = None,
     ) -> "RotationDefocusComparison":
         """Compare two rotations and both defocus signs without selecting a winner.
 
@@ -1851,8 +1856,10 @@ class SSB:
             Display the phase images and histograms immediately in a notebook.
             Default False returns the comparison with a pandas-style table
             representation. ``report()`` returns the pandas DataFrame.
+        trials : int, optional
+            Coarse-search budget per case, before local refinement. Default 200.
         num_trials : int, optional
-            Coarse-search budget per case, before local refinement.
+            Compatibility alias for ``trials``. Supply only one of them.
         refinement : str, optional
             Local refinement, as in ``find_aberrations``; default ``"auto"``.
         search_ranges : dict, optional
@@ -1885,7 +1892,7 @@ class SSB:
         from quantem.gpu.ssb.rotation_defocus import compare_rotation_defocus
 
         comparison = compare_rotation_defocus(
-            self, num_trials=num_trials, refinement=refinement,
+            self, num_trials=resolve_trial_count(trials, num_trials), refinement=refinement,
             search_ranges=search_ranges, seed=seed, tilt=tilt, verbose=verbose,
         )
         if show:
@@ -1940,7 +1947,7 @@ class SSB:
             the comparison then only reports. Either way the session ends settled, holding the kept branch's fit,
             so ``reconstruct()`` applies it without fitting again.
         **find_aberrations_options
-            Any ``find_aberrations`` keyword except ``check_rotation``: ``tilt``, ``objective``, ``num_trials``,
+            Any ``find_aberrations`` keyword except ``check_rotation``: ``tilt``, ``objective``, ``trials``,
             ``search_ranges``, ``fixed_aberrations``, ``seed``, ``scan_region``, ``save_dir``, ``verbose``, ...
             ``refine_rotation=True`` refines the applied branch's angle after the decision (not with ``apply=False``).
 
@@ -1964,6 +1971,9 @@ class SSB:
                             "find_aberrations(check_rotation=False) for one fit at the session's rotation.")
         if apply is None:
             apply = self.scan_detector_rotation_source == "estimated"
+        find_aberrations_options["num_trials"] = resolve_trial_count(
+            find_aberrations_options.pop("trials", None), find_aberrations_options.pop("num_trials", None),
+        )
         return self._find_aberrations("apply" if apply else "keep", **find_aberrations_options).rotation_branches
 
     def _find_aberrations(
@@ -2007,11 +2017,11 @@ class SSB:
                 "coefficients with fixed_aberrations: C10_nm alone, C12_nm=0 alone, or all three (with "
                 "check_rotation=False).")
         if num_trials < 0:
-            raise ValueError(f"num_trials must be non-negative, got {num_trials}.")
+            raise ValueError(f"trials must be non-negative, got {num_trials}.")
         if tilt and int(num_trials) == 0 and (self.sample_tilt_mrad is None or self.depth_spread_nm is None):
             raise ValueError(
-                "find_aberrations(tilt=True, num_trials=0) refines from the session's aberrations, sample_tilt_mrad and "
-                "depth_spread_nm: set the last two (a previous scan's fit) first, or use num_trials=200."
+                "find_aberrations(tilt=True, trials=0) refines from the session's aberrations, sample_tilt_mrad and "
+                "depth_spread_nm: set the last two (a previous scan's fit) first, or use trials=200."
             )
         tilt_bounds: dict[str, object] = {}
         requested = {"search_ranges": search_ranges, "fixed_aberrations": fixed_aberrations}

@@ -24,6 +24,7 @@ from quantem.gpu.ssb.results import (
     SSBSeriesResult,
     host_array,
 )
+from quantem.gpu.ssb.trials import resolve_trial_count
 from quantem.gpu.ssb.units import sampling_pair, validate_aberrations
 
 
@@ -39,11 +40,12 @@ def reconstruct_series(
     scan_sampling_A: float | tuple[float, float] | None = None,
     scan_detector_rotation_deg: float | None = None,
     scan_detector_rotation_flipped: bool | None = None,
-    num_trials: int = 200,
+    trials: int | None = None,
     refinement: RefineMethod = "nelder-mead",
     backend: Literal["auto", "cuda", "mps"] = "auto",
     save_dir: str | Path | None = None,
     progress: bool = True,
+    num_trials: int | None = None,
 ) -> SSBSeriesResult:
     """Reconstruct an SSB series with independent or fixed-probe fitting (``SSB.reconstruct_series``; ``cls`` is ``SSB``).
 
@@ -80,8 +82,10 @@ def reconstruct_series(
         recorded rotation; an estimated rotation brings its own.
     scan_sampling_A : float or tuple[float, float], optional
         Scan step in Angstrom, ``[row, col]`` or one number for both axes, used on the same terms.
-    num_trials : int, default 200
-        Independent SSB fit trials per missing acquisition.
+    trials : int, optional
+        Search trials per rotation branch of each missing acquisition. Default 200.
+    num_trials : int, optional
+        Compatibility alias for ``trials``. Supply only one of them.
     refinement : {"nelder-mead", None}, default "nelder-mead"
         Independent-fit refinement method.
     backend : {"auto", "cuda", "mps"}, default "auto"
@@ -99,6 +103,7 @@ def reconstruct_series(
         One independent-fit or fixed-probe phase stack, with its bright- and
         dark-field companions and a ``metadata()`` table.
     """
+    num_trials = resolve_trial_count(trials, num_trials)
     source_root = Path(source_directory).expanduser().resolve()
     if not source_root.is_dir():
         raise FileNotFoundError(f"SSB source directory not found: {source_root}")
