@@ -93,13 +93,17 @@ def test_agreement_reduces_to_the_two_term_kernel_and_matches_the_physical_model
 
 
 @pytest.mark.parametrize("tilt", [True, False])
-def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt):
+@pytest.mark.parametrize("compute_loss", [True, False])
+def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt, compute_loss):
     backend_name, data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend_name) as ssb:
-        fit = ssb.find_aberrations(tilt=tilt, higher_order=("C21", "C23", "C30"), verbose=False)
+        fit = ssb.find_aberrations(tilt=tilt, higher_order=("C21", "C23", "C30"), verbose=False,
+                                   compute_loss=compute_loss)
         record = fit.optimizer["higher_order"]
         assert record["terms"] == ["C21", "C23", "C30"]
         assert record["agreement"] > record["start_agreement"]
+        assert fit.sample_agreement == record["agreement"]
+        assert (fit.loss is None) == (not compute_loss)
         # a weak-phase object: the model explains its G (noise-free float input: no Poisson floor), so the guard trusts
         assert record["trusted"] and record["guard"]["coherence"] > 0.95, record["guard"]
         assert ssb.aberrations == fit.aberrations          # reconstruct() applies the fitted terms
