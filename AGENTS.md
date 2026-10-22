@@ -35,6 +35,16 @@ If unsure whether something is private, leave it out and ask.
 
 Test-specific rules are in `tests/AGENTS.md`.
 
+## Display API naming
+
+Follow the shared standard in quantem.widget's
+`docs/maintainer/display-api.md` when adding or changing display APIs. Use named
+`size` presets (default `"medium"`) for each image panel and plain `rows` /
+`columns` for gallery layout. Keep renderer dimensions out of beginner calls;
+reuse the visualization layer. Preserve published keywords with a documented,
+tested compatibility migration and verify signatures before changing tutorials.
+Display options must not change scientific data or reconstruction quality.
+
 ## Benchmarks
 
 For performance work, timing claims and release qualification, use the

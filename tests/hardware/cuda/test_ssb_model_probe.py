@@ -90,7 +90,10 @@ def test_phase_and_probe_views_keep_data_and_calibration():
     image_axes = [axis for axis in figure.axes if axis.images]
     assert len(image_axes) == 1
     assert image_axes[0].images[0].get_array().shape[:2] == phase.shape
-    np.testing.assert_array_equal(figure.get_size_inches(), (12, 12))
+    np.testing.assert_array_equal(figure.get_size_inches(), (4.5, 4.5))
+    large = result.show(size="large")
+    np.testing.assert_array_equal(large.get_size_inches(), (6, 6))
+    np.testing.assert_array_equal(large.axes[0].images[0].get_array(), image_axes[0].images[0].get_array())
     assert figure.number not in plt.get_fignums()
 
     figure = result.show("probe")

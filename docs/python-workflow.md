@@ -47,7 +47,7 @@ data = io.load(folder / "data.npy")
 mean_dp = detector.mean(data)
 show_2d(
     mean_dp, title="Gold mean diffraction pattern", norm="log_auto",
-    cmap="inferno", axsize=(3.5, 3.5),
+    cmap="inferno",
     scalebar={"sampling": metadata["sampling"][2], "units": "mrad"},
 )
 ```
@@ -61,13 +61,30 @@ angular: detector pixels describe scattering directions, not sample positions.
 
 ## View bright field, dark field, and DPC
 
+For an automatic static BF/DF/ADF and mean-diffraction comparison, use
+`detector.show(data)`. Medium panels and two columns are the defaults:
+
+```python
+detector.show(data, size="medium", columns=2, cmap="inferno")
+```
+
+Choose `size="small"`, `"large"` or `"xlarge"` to resize each panel; set
+`columns=1` for a column or `rows=1` for a row. Rows are calculated from columns
+unless supplied explicitly. Sizes match the Show2D/Show3D panel proportions
+without reducing array resolution.
+Set `cmap="gray"` to change colors or `save="detector-images.png"` to save it.
+The scan images use square-root contrast; mean diffraction uses logarithmic
+contrast. Override these with `norm` and `diffraction_norm`, respectively.
+Use the individual detector calls below when you need arrays or custom
+collection angles.
+
 ```python
 bf = detector.bf(data)
 adf = detector.adf(data)
 dpc_result = dpc.run(data)
 show_2d(
     [bf, adf, dpc_result.phase], title=["BF", "Annular dark field", "Integrated DPC"],
-    norm=["power_sqrt", "power_sqrt", "minmax"], cmap="inferno", axsize=(3, 3),
+    norm=["power_sqrt", "power_sqrt", "minmax"], cmap="inferno",
     scalebar={"sampling": metadata["sampling"][0], "units": "Å"},
 )
 dpc_result.scan_detector_rotation_mod180_deg, dpc_result.scan_detector_rotation_flipped  # degrees, modulo 180; detector-axis swap flag

@@ -305,7 +305,8 @@ class RotationBranches:
         return table.round({name: 3 for name in table.columns if name not in ("loss", "kept")}).round({"loss": 7})
 
     def show(self, *, upsampling_factor: int | Literal["auto"] = "auto", panels: bool = True,
-             axsize: tuple[float, float] = (5.0, 3.4)):
+             size: Literal["small", "medium", "large", "xlarge"] | None = None,
+             axsize: tuple[float, float] | None = None):
         """Both branches' phase above the evidence: the phase tails (left) and the phase at the atomic columns (right).
 
         Top: each branch's fit reconstructed at ``upsampling_factor`` (``upsampled_phases``, ``"auto"`` by default),
@@ -314,7 +315,8 @@ class RotationBranches:
         mean-subtracted phase as the fraction of pixels per bin, on identical symmetric bins and a log axis (bins with
         no pixels left out), and the high-passed phase at the columns as the fraction of columns per bin. The kept
         branch is solid, the other dashed; phase in mrad. ``panels=False`` draws the evidence alone (no GPU).
-        ``axsize`` is one evidence panel in inches; a phase panel is ``axsize[0]`` square.
+        ``size`` selects each panel's width, medium by default. ``axsize`` is
+        an advanced alternative in inches; a phase panel is ``axsize[0]`` square.
 
         Returns
         -------
@@ -324,9 +326,16 @@ class RotationBranches:
         Examples
         --------
         >>> ssb.compare_rotation_branches().show()  # doctest: +SKIP
+        >>> ssb.compare_rotation_branches().show(size="large")  # doctest: +SKIP
         """
         import matplotlib.pyplot as plt
+        from quantem.gpu.display._layout import panel_inches
 
+        if size is not None and axsize is not None:
+            raise ValueError("Use size or axsize, not both.")
+        if axsize is None:
+            width = panel_inches("medium" if size is None else size)
+            axsize = (width, width * 3.4 / 5)
         heights = [axsize[0], axsize[1]] if panels else [axsize[1]]
         figure = plt.figure(figsize=(2 * axsize[0], sum(heights) + (0.6 if panels else 0.0)))
         grid = figure.add_gridspec(len(heights), 2, height_ratios=heights)

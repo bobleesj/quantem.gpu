@@ -1548,14 +1548,16 @@ class SSB:
             layouts use the same static comparison. Landscape views remain static.
         **options
             ShowPtycho options for the interactive view, or SSBResult.show
-            options such as ``axsize`` for a static diagnostic.
+            options such as ``size="large"`` for a static diagnostic.
             Focus images accept ``focus_offsets_nm=(-5, 0, 5)`` relative to
             fitted C10 and ``depth_spread_nm`` as an absolute scalar or sequence.
             The default depths are the fitted value and ±5 nm, bounded at zero.
             ``layout="grid"`` uses Show2D; ``layout="stack"`` uses Show3D
             with focus frames and depth panels in interactive mode.
-            Static focus comparisons use ``max_cols=2`` with compact spacing
-            and native image resolution. Change ``max_cols`` to reflow the grid.
+            Focus comparisons accept ``columns`` or ``rows`` to reflow the
+            displayed panels. Static views default to two columns; interactive
+            views retain one depth row or one stack per depth. ``max_cols``
+            remains a deprecated alias. Display layout never changes sampling.
 
         Returns
         -------
@@ -1573,6 +1575,7 @@ class SSB:
         >>> ssb.show("tilt", region=(64, 192, 64, 192))  # doctest: +SKIP
         >>> ssb.show("focus")  # doctest: +SKIP
         >>> ssb.show("focus", layout="stack")  # doctest: +SKIP
+        >>> ssb.show("focus", columns=2, size="medium")  # doctest: +SKIP
         >>> ssb.show("focus", mode="static", depth_spread_nm=15)  # doctest: +SKIP
         """
         if view not in ("interactive", "depth", "tilt", "parameters", "focus"):
@@ -1629,7 +1632,9 @@ class SSB:
 
     def show_trials(self, *, best: int | None = None, last: int | None = None,
                     first: int | None = None, upsampling_factor: int | Literal["auto"] = "auto",
-                    axsize: tuple[float, float] = (6, 6)):
+                    size: Literal["small", "medium", "large", "xlarge"] | None = None,
+                    columns: int | None = None, rows: int | None = None,
+                    axsize: tuple[float, float] | None = None):
         """Show selected attempts as phase images with a compact parameter table.
 
         Parameters
@@ -1642,9 +1647,13 @@ class SSB:
         upsampling_factor
             Output factor of the shown phases, ``"auto"`` by default (``reconstruct``'s rule; the title names it).
             The trials were searched, and their losses measured, on the native grid; this never reruns the search.
+        size
+            Per-panel size: small, medium (default), large or xlarge.
+        columns, rows
+            Images across or down the grid. Default is two columns with rows
+            calculated automatically. If both are given, all images must fit.
         axsize
-            Width and height of each phase panel in inches. At most two
-            columns are shown; additional trials continue on the next row.
+            Advanced panel dimensions in inches instead of size.
 
         Returns
         -------
@@ -1658,15 +1667,24 @@ class SSB:
         >>> ssb.show_trials(best=5)
         >>> ssb.show_trials(last=5)
         >>> ssb.show_trials(first=5)
+        >>> ssb.show_trials(best=5, size="medium", columns=2)
         """
+        from quantem.gpu.display._layout import panel_inches, resolve_columns
+
+        if size is not None and axsize is not None:
+            raise ValueError("Use size or axsize, not both.")
+        if axsize is None:
+            width = panel_inches("medium" if size is None else size)
+            axsize = (width, width)
         if self._aberration_search is None:
             raise ValueError("Run ssb.find_aberrations() before showing trials.")
         records = choose_trials(self._aberration_search.trial_records, best=best, last=last, first=first)
+        columns = resolve_columns(len(records), columns=columns, rows=rows)
         result = self.reconstruct(self._aberration_search,
                                   trial_ids=[record["trial"] for record in records], upsampling_factor=upsampling_factor)
         kind = "Best" if best is not None else "Last" if last is not None else "First"
         sampling = f"{result.upsampling_factor}×" + (" auto" if upsampling_factor == "auto" else "")
-        return plot_trials(result, kind, axsize=axsize, sampling=sampling)
+        return plot_trials(result, kind, axsize=axsize, columns=columns, sampling=sampling)
 
     @_on_scan_gpu
     def find_aberrations(

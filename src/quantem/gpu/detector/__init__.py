@@ -13,6 +13,7 @@ from quantem.gpu.detector.workflow import (
     fit_probe,
     masked_sum,
     mean,
+    show,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "masked_sum",
     "mean",
     "prepare",
+    "show",
 ]

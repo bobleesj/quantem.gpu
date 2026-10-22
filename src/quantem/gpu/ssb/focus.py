@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from quantem.gpu.ssb.results import _FIGURE_SIZE_SCALES
+from quantem.gpu.display._layout import panel_inches, resolve_columns
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
@@ -26,17 +26,17 @@ def show_focus(
     focus_offsets_nm: Sequence[float] = (-5.0, 0.0, 5.0),
     depth_spread_nm: float | Sequence[float] | None = None,
     axsize: tuple[float, float] | None = None,
-    max_cols: int = 2,
+    columns: int | None = None,
+    rows: int | None = None,
+    max_cols: int | None = None,
 ) -> "Show2D | Show3D | Figure":
     """Reconstruct full-field phase for every pair, then crop the displayed region."""
     if mode not in ("interactive", "static"):
         raise ValueError(f"Use mode='interactive' or 'static' for focus images; got {mode!r}.")
     if layout not in ("grid", "stack"):
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
-    if not isinstance(max_cols, int) or isinstance(max_cols, bool) or max_cols < 1:
-        raise ValueError("Use a positive integer for max_cols, for example max_cols=2.")
-    scales = {None: 1.0, **_FIGURE_SIZE_SCALES}
-    if size not in scales or (axsize is not None and (size is not None or mode != "static")):
+    width_inches = panel_inches("medium" if size is None else size)
+    if axsize is not None and (size is not None or mode != "static"):
         raise ValueError("Choose size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height) with mode='static'.")
     offsets = np.asarray(focus_offsets_nm, dtype=float)
     if offsets.ndim != 1 or not offsets.size or not np.isfinite(offsets).all():
@@ -49,6 +49,11 @@ def show_focus(
     )
     if depths.ndim != 1 or not depths.size or not np.isfinite(depths).all() or (depths < 0).any():
         raise ValueError("Give finite, nonnegative depth_spread_nm values, for example (5, 10, 15).")
+    panel_count = len(depths) if mode == "interactive" and layout == "stack" else len(depths) * len(offsets)
+    default_columns = (len(depths) if layout == "stack" else len(offsets)) if mode == "interactive" else 2
+    columns = resolve_columns(
+        panel_count, columns=columns, rows=rows, default=default_columns, legacy_columns=max_cols,
+    )
     if mode == "interactive":
         try:
             from quantem.widget import Show2D, Show3D
@@ -100,7 +105,7 @@ def show_focus(
                 ],
                 labels=[f"C₁₀ {fit.aberrations['C10_nm'] + offset:+.2f} nm" for offset in offsets],
                 title=title, dim_label="Defocus", cmap="inferno",
-                sampling=sampling, units="Å", max_cols=len(depths),
+                sampling=sampling, units="Å", columns=columns,
                 size=size or "medium", panel_gap_px=0,
                 vmin=lower, vmax=upper, auto_contrast=False,
                 link_contrast=True, display_bin=1, avg_window=1,
@@ -110,7 +115,7 @@ def show_focus(
         return Show2D(
             [image for row in images for image in row],
             labels=[label for row in labels for label in row], title=title,
-            sampling=sampling, units="Å", ncols=len(offsets),
+            sampling=sampling, units="Å", columns=columns,
             size=size or "medium",
             vmin=lower, vmax=upper, auto_contrast=False,
             link_contrast=True, link_zoom=True, link_pan=True, display_bin=1,
@@ -121,10 +126,9 @@ def show_focus(
 
     frames = [image for row in images for image in row]
     captions = [label.replace(" · ", "\n", 1) for row in labels for label in row]
-    columns = min(max_cols, len(frames))
     grid = [frames[index:index + columns] for index in range(0, len(frames), columns)]
     titles = [captions[index:index + columns] for index in range(0, len(frames), columns)]
-    panel_size = tuple(4 * scales[size] for _ in range(2)) if axsize is None else axsize
+    panel_size = (width_inches, width_inches) if axsize is None else axsize
     aspect = frames[0].shape[0] / frames[0].shape[1]
     width = min(panel_size[0], panel_size[1] / aspect)
     height = width * aspect

@@ -71,3 +71,78 @@ def test_fit_once_for_encoded_detector_images(tmp_path, dtype, monkeypatch):
             if path == original:
                 io.save(saved, data)
     assert len(fits) == 2  # Reopening gets its own fit, not a serialized cache.
+
+
+def test_show_detector_images_and_save_without_changing_intensities(tmp_path):
+    """Display and save the same detector intensities as the explicit workflow."""
+    backend = os.environ.get("QEM_TEST_BACKEND")
+    if backend not in {"cuda", "mps"}:
+        pytest.skip("Set QEM_TEST_BACKEND=cuda or mps on physical hardware.")
+    import matplotlib.pyplot as plt
+    from quantem.core.visualization import show_2d
+
+    rows, columns = np.indices((32, 40))
+    pattern = np.where((rows - 11) ** 2 + (columns - 23) ** 2 <= 25, 100, 2)
+    counts = (np.arange(1, 21).reshape(4, 5, 1, 1) * pattern).astype(np.uint16)
+    source = tmp_path / "input.npy"
+    np.save(source, counts)
+    with io.load(source, backend=backend, verbose=False) as data:
+        expected = [detector.bf(data), detector.df(data), detector.adf(data),
+                    detector.mean(data)]
+        for cmap in ("inferno", "gray"):
+            path = tmp_path / f"detectors-{cmap}.png"
+            reference_path = tmp_path / f"explicit-{cmap}.png"
+            reference_figure, _ = show_2d(
+                [[expected[0], expected[1]], [expected[2], expected[3]]],
+                title=[["Bright field (BF)", "Dark field (DF)"],
+                       ["Annular dark field (ADF)", "Mean diffraction"]],
+                cmap=cmap,
+                norm=[["power_sqrt", "power_sqrt"], ["power_sqrt", "log_auto"]],
+                axsize=(4.5, 4.5), save=reference_path,
+            )
+            plt.close(reference_figure)
+            reference_images = [axis.images[0] for axis in reference_figure.axes
+                                if axis.images]
+            figure = detector.show(data, size="medium", columns=2, cmap=cmap, save=path)
+            images = [axis.images[0] for axis in figure.axes if axis.images]
+            assert [image.axes.get_title() for image in images] == [
+                "Bright field (BF)", "Dark field (DF)", "Annular dark field (ADF)",
+                "Mean diffraction"
+            ]
+            for image, reference in zip(images, reference_images, strict=True):
+                np.testing.assert_array_equal(image.get_array(), reference.get_array())
+            assert not plt.fignum_exists(figure.number)
+            np.testing.assert_array_equal(plt.imread(path), plt.imread(reference_path))
+        for size, inches, requested_columns in (
+            ("small", 3, 1), ("medium", 4.5, 2),
+            ("large", 6, 3), ("xlarge", 9, 8),
+        ):
+            figure = detector.show(data, size=size, columns=requested_columns,
+                                   norm="linear_auto", diffraction_norm="linear_auto")
+            axes = [axis for axis in figure.axes if axis.images]
+            rows, columns = axes[0].get_subplotspec().get_gridspec().get_geometry()
+            assert (rows, columns) == (int(np.ceil(4 / min(requested_columns, 4))), min(requested_columns, 4))
+            np.testing.assert_allclose(figure.get_size_inches(),
+                                       [columns * inches, rows * inches])
+            assert len(axes) == 4
+            for axis, array in zip(axes, expected, strict=True):
+                assert axis.images[0].get_array().shape[:2] == array.shape
+            assert not plt.fignum_exists(figure.number)
+        for actual, reference in zip(
+            (detector.bf(data), detector.df(data), detector.adf(data), detector.mean(data)),
+            expected, strict=True,
+        ):
+            np.testing.assert_array_equal(actual, reference)
+        row = detector.show(data, rows=1)
+        assert row.axes[0].get_subplotspec().get_gridspec().get_geometry() == (1, 4)
+        with pytest.raises(ValueError, match="cannot hold 4 panels"):
+            detector.show(data, rows=1, columns=2)
+
+
+@pytest.mark.parametrize("options", [
+    {"size": "huge"}, {"size": 450}, {"columns": 0},
+    {"columns": -1}, {"columns": True}, {"columns": 2.5},
+])
+def test_show_rejects_invalid_layout_before_reading_data(options):
+    with pytest.raises(ValueError, match="size=|positive integer"):
+        detector.show(None, **options)

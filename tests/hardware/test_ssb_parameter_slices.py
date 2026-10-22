@@ -192,9 +192,17 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
             image = ax.images[0]
             assert ax.get_aspect() == 1
             assert np.all(ax.get_window_extent().size[::-1] >= image.get_array().shape[:2])
-        single_column = ssb.show("focus", mode="static", max_cols=1,
+        single_column = ssb.show("focus", mode="static", columns=1,
                                  focus_offsets_nm=(0,), depth_spread_nm=fit.depth_spread_nm)
         assert len(single_column.axes) == 1
+        reflowed = ssb.show("focus", rows=2, columns=3, **options)
+        np.testing.assert_array_equal(reflowed._data, grid._data)
+        assert reflowed.columns == 3
+        with pytest.warns(DeprecationWarning, match="use columns"):
+            legacy = ssb.show("focus", mode="static", max_cols=2, **options)
+        np.testing.assert_array_equal(np.concatenate(captured[-1]), grid._data)
+        assert legacy.get_size_inches().tolist() == figure.get_size_inches().tolist()
+        reflowed.close()
         assert ssb._aberration_search is fit
         assert ssb.aberrations == fit.aberrations
         assert ssb.sample_tilt_mrad == fit.sample_tilt_mrad

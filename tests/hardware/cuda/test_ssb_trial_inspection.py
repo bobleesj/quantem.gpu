@@ -58,6 +58,12 @@ def test_fixed_parameters_survive_trial_replay_and_saved_reload(tmp_path):
         ]
         assert image_axes[0].get_position().x0 == pytest.approx(image_axes[2].get_position().x0)
         assert image_axes[0].get_position().y0 > image_axes[2].get_position().y0
+        row = ssb.show_trials(best=3, rows=1, size="small")
+        row_axes = [axis for axis in row.axes if axis.images and axis.get_visible()]
+        assert len(row_axes) == 3
+        assert len({round(axis.get_position().y0, 6) for axis in row_axes}) == 1
+        for old, new in zip(image_axes, row_axes, strict=True):
+            np.testing.assert_array_equal(old.images[0].get_array(), new.images[0].get_array())
         assert ssb._reconstruction is native
         loaded = load_result(paths=result_paths(settings['save_dir'], 'find_aberrations'),
                              signature=aberrations.metadata['signature'], backend='cuda')
