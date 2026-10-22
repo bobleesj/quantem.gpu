@@ -52,3 +52,12 @@ left the parent session unchanged, and rendered one comparison figure. The
 browser reported an NVIDIA Blackwell adapter; sessions were closed after testing.
 This is functional workflow acceptance, not an interactive frame-rate benchmark.
 The private evidence group is `1022-consumer-notebook-v6`.
+
+## Additional acquisition coverage
+
+A fourth acquisition with 9,298 valid BF pixels and Auto 3x output also
+passed complete native/Auto phase and fit-record equality at both scan sizes,
+with ordinary and tilt/depth SSB tested separately. Six matched comparison
+sessions per variant used the same Blackwell workstation GPU. These sessions
+reused one loaded acquisition and are not fresh-process loading measurements.
+The private evidence group is `1022-rotation-reuse`.
