@@ -484,7 +484,7 @@ ssb.show("focus", mode="static", size="small")
 Static figures keep the image aspect ratio and use enough pixels to retain the
 native reconstruction resolution. `size` changes the panel dimensions, not the
 data. Use `save="focus.png"` on this call to export at that native density.
-`cmap="viridis"` sets colors in static, Show2D and Show3D focus views.
+`cmap="viridis"` sets colors in static, interactive grid and stack focus views.
 `save` exports a static figure; it is separate from ShowPtycho `save_dir`,
 which stores scientific calibration.
 

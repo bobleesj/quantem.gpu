@@ -52,7 +52,8 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
     }
     if tilt && objective == .phaseVariance {
       throw MetalSSBError.invalidGeometry(
-        "The phase-variance objective does not see the sample tilt. Use tilt: false with it, or the agreement objective.")
+        "The phase-variance objective does not see the sample tilt. Use tilt: false with it, or the agreement objective."
+      )
     }
   }
 }
@@ -147,7 +148,8 @@ public enum SSBModelFit {
       return SSBFit(
         scanDetectorRotationDegrees: rotation,
         point: SSBModelPoint(c10Angstroms: p[0], c12Angstroms: p[1], phi12Radians: p[2]),
-        options: options, sampleAgreement: result.agreement, standardAgreement: nil, tiltFitGain: nil,
+        options: options, sampleAgreement: result.agreement, standardAgreement: nil,
+        tiltFitGain: nil,
         phaseVarianceLoss: nil, trialCount: options.trials, timings: timings)
     case (false, .phaseVariance):
       // The native phase-variance search (seeded TPE and Nelder-Mead); its proposals are its own.
@@ -156,7 +158,9 @@ public enum SSBModelFit {
         start: MetalSSBAberrations(c10Angstroms: 0, c12Angstroms: 50, phi12Radians: 0),
         scanDetectorRotationDegrees: Float(rotation), globalTrials: options.trials,
         seed: UInt64(options.seed),
-        progress: { progress($0.stage == "tpe" ? "Search trials" : "Refinement", $0.completed, $0.total) },
+        progress: {
+          progress($0.stage == "tpe" ? "Search trials" : "Refinement", $0.completed, $0.total)
+        },
         isCancelled: isCancelled)
       timings["fit_s"] = Date().timeIntervalSince(started)
       return SSBFit(
@@ -186,7 +190,8 @@ public enum SSBModelFit {
     if !checkRotation {
       try model.retarget(scanDetectorRotationDegrees: rotationDegrees)
       let fitted = try fit(
-        model: model, engine: engine, options: options, progress: progress, isCancelled: isCancelled)
+        model: model, engine: engine, options: options, progress: progress, isCancelled: isCancelled
+      )
       return SSBBranchedFit(
         fits: [fitted], branches: [], chosen: 0, kept: 0, decidedBy: .phaseTail, columnCount: 0)
     }
@@ -208,31 +213,39 @@ public enum SSBModelFit {
       var timings = fitted.timings
       timings["native_phase_s"] = Date().timeIntervalSince(started)
       size = phase.rows
-      phases.append(Array(UnsafeBufferPointer(
-        start: phase.phase.contents().assumingMemoryBound(to: Float.self), count: phase.rows * phase.columns)))
+      phases.append(
+        Array(
+          UnsafeBufferPointer(
+            start: phase.phase.contents().assumingMemoryBound(to: Float.self),
+            count: phase.rows * phase.columns)))
       fits.append(
         SSBFit(
           scanDetectorRotationDegrees: fitted.scanDetectorRotationDegrees, point: fitted.point,
           options: fitted.options, sampleAgreement: fitted.sampleAgreement,
           standardAgreement: fitted.standardAgreement, tiltFitGain: fitted.tiltFitGain,
-          phaseVarianceLoss: fitted.phaseVarianceLoss, trialCount: fitted.trialCount, timings: timings))
+          phaseVarianceLoss: fitted.phaseVarianceLoss, trialCount: fitted.trialCount,
+          timings: timings))
     }
     let decision = SSBRotationBranches.compare(
       phases: phases, rotations: rotations, rows: size, columns: size, darkField: darkField,
       scanSampling: scanSampling, keepFirst: keepFirst)
     try model.retarget(scanDetectorRotationDegrees: rotations[decision.kept])
-    if options.tilt && options.compareStandard, let agreement = fits[decision.kept].sampleAgreement {
+    if options.tilt && options.compareStandard, let agreement = fits[decision.kept].sampleAgreement
+    {
       let started = Date()
       let standard = try SSBAgreementSearch.standardComparison(
         { points in
           try model.agreements(
-            points.map { SSBModelPoint(c10Angstroms: $0[0], c12Angstroms: $0[1], phi12Radians: $0[2]) })
+            points.map {
+              SSBModelPoint(c10Angstroms: $0[0], c12Angstroms: $0[1], phi12Radians: $0[2])
+            })
         }, seed: options.seed, isCancelled: isCancelled)
       let kept = fits[decision.kept]
       var timings = kept.timings
       timings["standard_comparison_s"] = Date().timeIntervalSince(started)
       fits[decision.kept] = SSBFit(
-        scanDetectorRotationDegrees: kept.scanDetectorRotationDegrees, point: kept.point, options: options,
+        scanDetectorRotationDegrees: kept.scanDetectorRotationDegrees, point: kept.point,
+        options: options,
         sampleAgreement: agreement, standardAgreement: standard.agreement,
         tiltFitGain: standard.agreement > 0 ? agreement / standard.agreement : .nan,
         phaseVarianceLoss: nil, trialCount: kept.trialCount, timings: timings)

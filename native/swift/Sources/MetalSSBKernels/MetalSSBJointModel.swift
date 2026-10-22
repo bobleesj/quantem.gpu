@@ -131,7 +131,9 @@ public final class MetalSSBJointModel {
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
     let library = try device.makeLibrary(
-      source: MetalSSBShaderSource.load(["ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable"]),
+      source: MetalSSBShaderSource.load([
+        "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable",
+      ]),
       options: options)
     self.library = library
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
@@ -227,8 +229,9 @@ public final class MetalSSBJointModel {
 
   /// BF coordinates rotated by `rotation`, as the MPS preparation: the angle in double precision, the
   /// rotation in float32 (`kx cos + ky sin`, `-kx sin + ky cos`).
-  static func rotated(geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Double) -> [SIMD2<Float>]
-  {
+  static func rotated(geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Double) -> [SIMD2<
+    Float
+  >] {
     let delta = (-(rotation - Double(geometry.referenceRotationDegrees))) * (Double.pi / 180)
     let cosine = Float(cos(delta))
     let sine = Float(sin(delta))
@@ -259,7 +262,9 @@ public final class MetalSSBJointModel {
   static func rowSteps(_ k: [SIMD2<Float>]) -> (neighbour: [Float], step: SIMD2<Float>) {
     var neighbour = [Float](repeating: 0, count: k.count)
     guard k.count > 1 else { return (neighbour, .zero) }
-    let differences = (1..<k.count).map { (Double(k[$0].x) - Double(k[$0 - 1].x), Double(k[$0].y) - Double(k[$0 - 1].y)) }
+    let differences = (1..<k.count).map {
+      (Double(k[$0].x) - Double(k[$0 - 1].x), Double(k[$0].y) - Double(k[$0 - 1].y))
+    }
     let lengths = differences.map { hypot($0.0, $0.1) }
     let shortest = lengths.min()!
     let short = zip(differences, lengths).filter { $0.1 <= 1.5 * shortest }.map(\.0)
@@ -298,7 +303,9 @@ public final class MetalSSBJointModel {
   /// scan) without gathering the measured band evidence again.
   public func retarget(scanDetectorRotationDegrees rotation: Double) throws {
     try validatePreparation()
-    guard rotation.isFinite else { throw MetalSSBError.invalidGeometry("Choose a finite rotation.") }
+    guard rotation.isFinite else {
+      throw MetalSSBError.invalidGeometry("Choose a finite rotation.")
+    }
     if rotation == scanDetectorRotationDegrees { return }
     let ks = Self.rotated(geometry: geometry, activeIndices: activeIndices, rotation: rotation)
     kBuffer = try Self.buffer(device, ks)

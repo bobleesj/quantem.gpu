@@ -79,11 +79,13 @@ public struct SSBModelPoint: Codable, Equatable, Sendable {
 
   func validate() throws {
     guard sampleTiltMrad.count == 2,
-      ([c10Angstroms, c12Angstroms, phi12Radians, depthSpreadAngstroms] + sampleTiltMrad).allSatisfy(
-        \.isFinite), depthSpreadAngstroms >= 0
+      ([c10Angstroms, c12Angstroms, phi12Radians, depthSpreadAngstroms] + sampleTiltMrad)
+        .allSatisfy(
+          \.isFinite), depthSpreadAngstroms >= 0
     else {
       throw MetalSSBError.invalidGeometry(
-        "The SSB model needs finite C10, C12, phi12, a (row, column) tilt and a nonnegative depth spread.")
+        "The SSB model needs finite C10, C12, phi12, a (row, column) tilt and a nonnegative depth spread."
+      )
     }
   }
 }
@@ -109,8 +111,8 @@ final class SSBCoherentReconstruction {
   private let kHost: [SIMD2<Float>]
   private let bounds: MTLBuffer
   private let probe: MTLBuffer
-  private let probePipeline, coherentPipeline, mirrorPipeline, originPipeline, phasePipeline:
-    MTLComputePipelineState
+  private let probePipeline, coherentPipeline, mirrorPipeline, originPipeline,
+    phasePipeline: MTLComputePipelineState
   private var plans: [Int: Plan] = [:]
   private var fft: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
   private let separable: SSBSeparableReconstruction
@@ -157,9 +159,12 @@ final class SSBCoherentReconstruction {
     bounds = try Self.buffer(device, values)
     probe = try Self.allocate(device, k.count * 5 * 4, shared: true)
     // The aperture at each k does not depend on the aberrations: compute it once for the separable tables.
-    var params = Self.parameters(geometry, SSBModelPoint(c10Angstroms: 0, c12Angstroms: 0, phi12Radians: 0))
+    var params = Self.parameters(
+      geometry, SSBModelPoint(c10Angstroms: 0, c12Angstroms: 0, phi12Radians: 0))
     var count = UInt32(k.count)
-    guard let commands = queue.makeCommandBuffer(), let encoder = commands.makeComputeCommandEncoder() else {
+    guard let commands = queue.makeCommandBuffer(),
+      let encoder = commands.makeComputeCommandEncoder()
+    else {
       throw MetalSSBError.commandQueue
     }
     encoder.setComputePipelineState(probePipeline)
@@ -168,11 +173,13 @@ final class SSBCoherentReconstruction {
     encoder.setBuffer(probe, offset: 0, index: 2)
     encoder.setBytes(&count, length: 4, index: 3)
     encoder.dispatchThreads(
-      MTLSize(width: k.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
+      MTLSize(width: k.count, height: 1, depth: 1),
+      threadsPerThreadgroup: MTLSize(width: 128, height: 1, depth: 1))
     encoder.endEncoding()
     commands.commit()
     commands.waitUntilCompleted()
-    separable = try SSBSeparableReconstruction(device: device, library: library, geometry: geometry, k: k)
+    separable = try SSBSeparableReconstruction(
+      device: device, library: library, geometry: geometry, k: k)
     try separable.prepare(probe: probe)
   }
 
@@ -265,7 +272,8 @@ final class SSBCoherentReconstruction {
     if useSeparable {
       do {
         try separable.encode(
-          params: params, factor: factor, probe: probe, full: total, commands: commands, visit: visit,
+          params: params, factor: factor, probe: probe, full: total, commands: commands,
+          visit: visit,
           isCancelled: isCancelled)
         return try finishPhase(total: total, n: n, commands: commands, mirror: false)
       } catch is SSBSeparableReconstruction.NotCached {
@@ -289,11 +297,13 @@ final class SSBCoherentReconstruction {
         if cancelled() { throw CancellationError() }
         let commands = try pending ?? command()
         var grid = Grid(
-          sourceN: UInt32(source), outputN: UInt32(n), gCols: UInt32(half ? source / 2 + 1 : source),
+          sourceN: UInt32(source), outputN: UInt32(n),
+          gCols: UInt32(half ? source / 2 + 1 : source),
           count: UInt32(batch), bfOffset: UInt32(bfOffset), sourceHalf: half ? 1 : 0,
           rows: UInt32(plan.rows), cols: UInt32(plan.cols), chunk: UInt32(Self.chunk),
           groups: UInt32((batch + Self.chunk - 1) / Self.chunk),
-          groupOffset: UInt32(bfOffset / Self.chunk), depth: point.depthSpreadAngstroms != 0 ? 1 : 0)
+          groupOffset: UInt32(bfOffset / Self.chunk), depth: point.depthSpreadAngstroms != 0 ? 1 : 0
+        )
         let compute = try encoder(commands, coherentPipeline)
         compute.setBuffer(spectra, offset: offset, index: 0)
         compute.setBuffer(plan.qRow, offset: 0, index: 1)
@@ -323,7 +333,9 @@ final class SSBCoherentReconstruction {
   }
 
   /// Mirror (per-term half spectra), set the common origin, inverse-transform and take the phase.
-  private func finishPhase(total: MTLBuffer, n: Int, commands final: MTLCommandBuffer, mirror half: Bool) throws
+  private func finishPhase(
+    total: MTLBuffer, n: Int, commands final: MTLCommandBuffer, mirror half: Bool
+  ) throws
     -> (phase: MTLBuffer, rows: Int)
   {
     if half {
@@ -353,7 +365,8 @@ final class SSBCoherentReconstruction {
       let descriptor = MPSGraphFFTDescriptor()
       descriptor.inverse = true
       descriptor.scalingMode = .size
-      let output = graph.fastFourierTransform(input, axes: [0, 1], descriptor: descriptor, name: "ifft2")
+      let output = graph.fastFourierTransform(
+        input, axes: [0, 1], descriptor: descriptor, name: "ifft2")
       fft[n] = (graph, input, output)
     }
     let (graph, input, output) = fft[n]!
@@ -364,7 +377,9 @@ final class SSBCoherentReconstruction {
       to: scheduled,
       feeds: [input: MPSGraphTensorData(total, shape: shape, dataType: .complexFloat32)],
       targetOperations: nil,
-      resultsDictionary: [output: MPSGraphTensorData(wave, shape: shape, dataType: .complexFloat32)],
+      resultsDictionary: [
+        output: MPSGraphTensorData(wave, shape: shape, dataType: .complexFloat32)
+      ],
       executionDescriptor: execution)
     let phase = try Self.allocate(device, n * n * 4, shared: true)
     var planeCount = UInt32(n * n)
@@ -384,7 +399,9 @@ final class SSBCoherentReconstruction {
   private func encoder(_ command: MTLCommandBuffer, _ pipeline: MTLComputePipelineState) throws
     -> MTLComputeCommandEncoder
   {
-    guard let encoder = command.makeComputeCommandEncoder() else { throw MetalSSBError.commandQueue }
+    guard let encoder = command.makeComputeCommandEncoder() else {
+      throw MetalSSBError.commandQueue
+    }
     encoder.setComputePipelineState(pipeline)
     return encoder
   }
@@ -397,21 +414,26 @@ final class SSBCoherentReconstruction {
   private func finish(_ command: MTLCommandBuffer) throws {
     command.commit()
     command.waitUntilCompleted()
-    if let error = command.error { throw MetalSSBError.commandExecution(error.localizedDescription) }
+    if let error = command.error {
+      throw MetalSSBError.commandExecution(error.localizedDescription)
+    }
   }
-  static func allocate(_ device: MTLDevice, _ length: Int, shared: Bool = false) throws -> MTLBuffer {
+  static func allocate(_ device: MTLDevice, _ length: Int, shared: Bool = false) throws -> MTLBuffer
+  {
     guard
       let buffer = device.makeBuffer(
         length: max(4, length), options: shared ? .storageModeShared : .storageModePrivate)
     else {
-      throw MetalSSBError.allocation("SSB reconstruction workspace (\(length) bytes). Close inactive datasets and retry")
+      throw MetalSSBError.allocation(
+        "SSB reconstruction workspace (\(length) bytes). Close inactive datasets and retry")
     }
     return buffer
   }
   static func buffer<T>(_ device: MTLDevice, _ values: [T]) throws -> MTLBuffer {
     guard
       let result = values.withUnsafeBytes({ bytes in
-        device.makeBuffer(bytes: bytes.baseAddress!, length: max(4, bytes.count), options: .storageModeShared)
+        device.makeBuffer(
+          bytes: bytes.baseAddress!, length: max(4, bytes.count), options: .storageModeShared)
       })
     else { throw MetalSSBError.allocation("SSB reconstruction geometry") }
     return result

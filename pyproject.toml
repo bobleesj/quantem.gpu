@@ -87,6 +87,7 @@ plot = [
 ]
 # opencv-python-headless decodes the written MP4s in the NVENC movie tests.
 dev = [
+    "matplotlib>=3.8",
     "fastapi>=0.115",
     "httpx2",
     "opencv-python-headless",

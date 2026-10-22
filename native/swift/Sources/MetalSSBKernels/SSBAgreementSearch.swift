@@ -44,7 +44,9 @@ public enum SSBAgreementSearch {
     var position = 624
     init(seed: UInt32) {
       state[0] = seed
-      for i in 1..<624 { state[i] = 1_812_433_253 &* (state[i - 1] ^ (state[i - 1] >> 30)) &+ UInt32(i) }
+      for i in 1..<624 {
+        state[i] = 1_812_433_253 &* (state[i - 1] ^ (state[i - 1] >> 30)) &+ UInt32(i)
+      }
     }
     mutating func next() -> UInt32 {
       if position == 624 {
@@ -79,7 +81,8 @@ public enum SSBAgreementSearch {
 
   /// A float32 literal of the kernels, as CUDA's `Real(xf)` holds it.
   @inline(__always) static func f(_ value: Float) -> Double { Double(value) }
-  static let pi = Double(Float(3.1415927410125732)) + Double(Float(-8.742277657347586e-8))
+  static let pi =
+    Double(Float(3.1415927410125732)) + Double(Float(-8.742277657347586e-8))
     + Double(Float(-3.4302490200117637e-15))
   static func cdf(_ x: Double) -> Double { 0.5 * erfc(-x / sqrt(2.0)) }
   static func inverseCDF(_ probability: Double) -> Double {
@@ -103,7 +106,9 @@ public enum SSBAgreementSearch {
     if x < 0 { a += y < 0 ? -pi : pi }
     return a
   }
-  static func clip(_ x: Double, _ lower: Double, _ upper: Double) -> Double { min(max(x, lower), upper) }
+  static func clip(_ x: Double, _ lower: Double, _ upper: Double) -> Double {
+    min(max(x, lower), upper)
+  }
 
   /// Descending rank, ties to the earlier trial (`RANK_BODY`).
   static func ranks(_ scores: [Double]) -> [Int] {
@@ -172,7 +177,8 @@ public enum SSBAgreementSearch {
   }
 
   /// `DENSITY_BODY` for the `done` trials and the prior (index `done`).
-  static func densities(history: [[Double]], scores: [Double], done: Int, space: Space) -> [Density] {
+  static func densities(history: [[Double]], scores: [Double], done: Int, space: Space) -> [Density]
+  {
     let rank = ranks(scores)
     let goodCount = min(25, (done + 9) / 10)
     return (0...done).map { i in
@@ -299,7 +305,9 @@ public enum SSBAgreementSearch {
   }
 
   /// The scaled trust-region step that maximizes the quadratic model (`trust_step`, cyclic Jacobi).
-  static func trustStep(gradient g: [Double], hessian h: [[Double]], steps: [Double], radius: Double)
+  static func trustStep(
+    gradient g: [Double], hessian h: [[Double]], steps: [Double], radius: Double
+  )
     -> [Double]
   {
     let n = g.count
@@ -398,7 +406,8 @@ public enum SSBAgreementSearch {
         for (i, d) in ids.enumerated() { move[d] = fm[i] }
       }
       var any = false
-      for d in 0..<6 where free[d] && (center[d] + move[d] < lower[d] || center[d] + move[d] > upper[d]) {
+      for d in 0..<6
+      where free[d] && (center[d] + move[d] < lower[d] || center[d] + move[d] > upper[d]) {
         held[d] = clip(center[d] + move[d], lower[d], upper[d]) - center[d]
         free[d] = false
         any = true
@@ -429,7 +438,8 @@ public enum SSBAgreementSearch {
   /// until it converges or meets a higher one.
   static func newton(
     _ evaluate: Evaluate, points: [[Double]], scores: [Double], lower boxLower: [Double],
-    upper boxUpper: [Double], explicit: [[Double]], starts requested: Int, fixed: Bool, standard: Bool,
+    upper boxUpper: [Double], explicit: [[Double]], starts requested: Int, fixed: Bool,
+    standard: Bool,
     prune: Bool = true, isCancelled: () -> Bool
   ) throws -> (point: [Double], agreement: Double, starts: [NewtonState]) {
     let starts = min(3, requested)
@@ -521,7 +531,8 @@ public enum SSBAgreementSearch {
             var pair = offset + 2 * n + 1
             for i in first..<last {
               for j in (i + 1)..<max(i + 1, last) {
-                let mixed = (values[pair] / scale - plus[i] - plus[j] + value) / (steps[i] * steps[j])
+                let mixed =
+                  (values[pair] / scale - plus[i] - plus[j] + value) / (steps[i] * steps[j])
                 h[i][j] = mixed
                 h[j][i] = mixed
                 pair += 1
@@ -547,7 +558,9 @@ public enum SSBAgreementSearch {
           proposal[1] = proposal[1] * upper[1] / norm
           proposal[2] = proposal[2] * upper[1] / norm
         }
-        let converged = (first..<last).allSatisfy { abs(proposal[$0] - center[$0]) < tolerances[$0] }
+        let converged = (first..<last).allSatisfy {
+          abs(proposal[$0] - center[$0]) < tolerances[$0]
+        }
         if converged {
           s.active = false
           s.converged = true
@@ -599,7 +612,9 @@ public enum SSBAgreementSearch {
   /// Starts in other basins (`ALTERNATE_STARTS_BODY`): the best trial with phi12 mirrored, and the best trial
   /// whose (phi12, tilt, depth spread) differs from the polished point and that mirror by more than one Newton
   /// start scale (0.3 rad, 2 mrad, 2 mrad, 50 A; phi12 periodic in pi).
-  static func alternateStarts(points: [[Double]], scores: [Double], polished: [Double]) -> [[Double]] {
+  static func alternateStarts(points: [[Double]], scores: [Double], polished: [Double])
+    -> [[Double]]
+  {
     let scale = [50.0, 20, f(0.3), 2, 2, 50]
     let rank = ranks(scores)
     let best = points[rank.firstIndex(of: 0)!]
@@ -635,7 +650,8 @@ public enum SSBAgreementSearch {
     if alternates.isEmpty { return first }
     let second = try newton(
       evaluate, points: points, scores: scores, lower: lower, upper: upper, explicit: alternates,
-      starts: alternates.count, fixed: false, standard: false, prune: false, isCancelled: isCancelled)
+      starts: alternates.count, fixed: false, standard: false, prune: false,
+      isCancelled: isCancelled)
     let starts = first.starts + second.starts
     if second.agreement > first.agreement * (1 + basinMargin) {
       return (second.point, second.agreement, starts)
@@ -659,14 +675,16 @@ public enum SSBAgreementSearch {
     start: [Double]? = nil, refine: Bool = true, isCancelled: () -> Bool = { false }
   ) throws -> Result {
     guard trials >= 0, trials > 0 || start != nil else {
-      throw MetalSSBError.invalidGeometry("Use at least one trial, or refine from a previous fit's start.")
+      throw MetalSSBError.invalidGeometry(
+        "Use at least one trial, or refine from a previous fit's start.")
     }
     let lower = [
       c10RangeAngstroms.lowerBound, 0, -Double.pi / 2, -tiltLimitMrad, -tiltLimitMrad,
       depthSpreadRangeAngstroms.lowerBound,
     ]
     let upper = [
-      c10RangeAngstroms.upperBound, c12MaximumAngstroms, Double.pi / 2, tiltLimitMrad, tiltLimitMrad,
+      c10RangeAngstroms.upperBound, c12MaximumAngstroms, Double.pi / 2, tiltLimitMrad,
+      tiltLimitMrad,
       depthSpreadRangeAngstroms.upperBound,
     ]
     return try fit(
@@ -710,7 +728,8 @@ public enum SSBAgreementSearch {
     var points: [[Double]]
     var scores: [Double]
     if trials > 0 {
-      (points, scores) = try search(evaluate, space: space, trials: trials, seed: seed, isCancelled: isCancelled)
+      (points, scores) = try search(
+        evaluate, space: space, trials: trials, seed: seed, isCancelled: isCancelled)
     } else {
       points = [start!]
       scores = try evaluate(points)

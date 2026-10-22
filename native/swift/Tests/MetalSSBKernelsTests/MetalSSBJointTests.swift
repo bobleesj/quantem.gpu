@@ -147,7 +147,8 @@ final class MetalSSBJointTests: XCTestCase {
       if cacheBudget > 0 {
         let tilted = cases.first { $0.name == "tilted" }!
         for factor in [2, 3, 4] {
-          let result = try model.reconstruct(tilted.parameters, upsamplingFactor: factor, estimator: .meanPhase)
+          let result = try model.reconstruct(
+            tilted.parameters, upsamplingFactor: factor, estimator: .meanPhase)
           let bytes = try Data(contentsOf: root.appendingPathComponent("tilted-\(factor)x.f32"))
           let expected = bytes.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
           let actual = result.phase.contents().assumingMemoryBound(to: Float.self)
