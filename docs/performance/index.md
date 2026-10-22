@@ -21,6 +21,7 @@ which optimizations were accepted, rejected, or remain provisional.
 | [Cross-backend parity](parity.md) | Exact integer contracts, floating metrics, fixtures, and hardware gates |
 | [Optimization ledger](../maintainer/backend-optimization-matrix.md) | Accepted and rejected IO, kernel, display, and browser experiments |
 | [Load acceptance evidence](../maintainer/backend-4dstem-load-checklist.md) | Real-data load/decode/product gates and backend signoff |
+| [CUDA regional SSB latency](2026-10-21-ssb-region-latency.md) | Matched full-data joint fits, explicit region cleanup and exact-result checks |
 | [SSB performance evidence](../maintainer/ssb-performance.md) | Shape-by-backend SSB kernel history, memory, and exactness |
 | [Native Swift/Metal SSB migration](../maintainer/native-metal-ssb-migration.md) | Frozen historical extraction record; see native-size verification, experiment 20260915-metal-ssb-native-sizes (raw evidence in the private evidence archive), for the current 128/256/512 scan support and parity checks |
 | [Native Metal loader postmortem](../maintainer/native-metal-hdf5-postmortem.md) | Pass-graph, redundant-work failure, and prevention checklist |
