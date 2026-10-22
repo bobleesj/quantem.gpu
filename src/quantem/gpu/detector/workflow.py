@@ -22,13 +22,19 @@ radius affects only that call. No detector binning is applied on any backend.
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 from weakref import WeakKeyDictionary
 
 import numpy as np
 
 from quantem.gpu.detector.session import prepare
+from quantem.gpu.display._layout import panel_inches, resolve_columns
 from quantem.gpu.io.dataset import Dataset4dstemGPU
 from quantem.gpu.io.representation import DataRepresentation
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 # Automatic disk geometry per encoded source: (logical shape, center, radius).
 # Encoded measurements cannot change, so one fit serves the source's lifetime.
@@ -57,6 +63,88 @@ def mean(data) -> np.ndarray:
     >>> bright_field_center_px, bright_field_edge_radius_px = detector.fit_probe(mean_dp)
     """
     return prepare(data).mean_dp()
+
+
+def show(
+    data,
+    *,
+    size: Literal["small", "medium", "large", "xlarge"] = "medium",
+    columns: int | None = None,
+    rows: int | None = None,
+    cmap: str = "inferno",
+    norm: str | None = "power_sqrt",
+    diffraction_norm: str | None = "log_auto",
+    save: str | Path | None = None,
+) -> "Figure":
+    """Display BF, DF, ADF and the mean diffraction pattern in a static grid.
+
+    Uses the existing detector reductions and QuantEM's static ``show_2d``.
+    The probe is fitted automatically. BF collects the bright disk, DF collects
+    outside it, and ADF collects from the disk edge to twice its radius.
+    Use :func:`bf`, :func:`df`, :func:`adf` or :func:`mean` directly to retain
+    arrays or choose collection angles. Display options never bin the data.
+
+    Parameters
+    ----------
+    data
+        One loaded acquisition or array supported by :func:`prepare`, ordered
+        as scan row, scan column, detector row, detector column.
+    size : {"small", "medium", "large", "xlarge"}, optional
+        Per-panel size, medium by default: 3, 4.5, 6 or 9 inches. These follow
+        the Show2D/Show3D proportions (300, 450, 600 or 900 pixels at 100 dpi).
+        Notebook scaling and the space for titles can affect visible width;
+        source array resolution is unchanged.
+    columns : int, optional
+        Number of image panels per row, two by default. Rows are calculated
+        automatically. Use 1 for a column or 4 for a row; fewer images do not
+        create empty columns.
+    rows : int, optional
+        Desired rows, with columns inferred when supplied alone. If both are
+        supplied, the layout must hold all four images. Use ``rows=1`` for a row.
+    cmap : str, optional
+        Matplotlib colormap shared by all four images.
+    norm : str or None, optional
+        BF, DF and ADF normalization passed to ``show_2d``. The default
+        square-root contrast does not alter detector intensities.
+    diffraction_norm : str or None, optional
+        Mean diffraction normalization. Logarithmic contrast is the default
+        so weaker scattering remains visible; use ``"linear_auto"`` for linear
+        contrast. Contrast is calculated independently for each panel.
+    save : str or pathlib.Path or None, optional
+        Save the displayed comparison, for example ``"detector-images.png"``.
+        The saved colors are a visualization, not raw detector intensities.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Static comparison, closed so a bare notebook expression renders once;
+        still available for later saving.
+
+    Examples
+    --------
+    >>> detector.show(data)  # doctest: +SKIP
+    >>> detector.show(data, size="large", columns=2, cmap="gray",
+    ...               save="detector-images.png")  # doctest: +SKIP
+    """
+    import matplotlib.pyplot as plt
+    from quantem.core.visualization import show_2d
+
+    width = panel_inches(size)
+    columns = resolve_columns(4, columns=columns, rows=rows)
+    images = [bf(data), df(data), adf(data), mean(data)]
+    titles = ["Bright field (BF)", "Dark field (DF)",
+              "Annular dark field (ADF)", "Mean diffraction"]
+    norms = [norm, norm, norm, diffraction_norm]
+    figure, _ = show_2d(
+        [images[i:i + columns] for i in range(0, len(images), columns)],
+        title=[titles[i:i + columns] for i in range(0, len(images), columns)],
+        cmap=cmap,
+        norm=[norms[i:i + columns] for i in range(0, len(images), columns)],
+        axsize=(width, width),
+        save=save,
+    )
+    plt.close(figure)
+    return figure
 
 
 def masked_sum(data, det_mask) -> np.ndarray:

@@ -8,13 +8,12 @@ from typing import TYPE_CHECKING, Literal, Self
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
+from quantem.gpu.display._layout import panel_inches
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.probe import model_probe, probe_grid
 
 if TYPE_CHECKING:
     from quantem.gpu.ssb.branches import RotationBranches
-
-_FIGURE_SIZE_SCALES = {"small": 2 / 3, "medium": 1.0, "large": 4 / 3, "xlarge": 2.0}
 
 # A resolved crystal has sparse positive columns; below this magnitude the phase histogram is too symmetric to tell which
 # 180-degree branch the scan-detector rotation is on, so the branch is left as given.
@@ -345,7 +344,7 @@ class SSBResult(Mapping[str, float]):
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
              show_parameters: bool = True,
              size: Literal["small", "medium", "large", "xlarge"] | None = None):
-        """Show a large phase image or the real-space and Fourier-space probes.
+        """Show phase, probes or fit diagnostics at a named panel size.
 
         Phase views reuse symmetric linear limits from their fitted result.
         Probe intensities use their full linear range. Plotting does not change the
@@ -368,9 +367,7 @@ class SSBResult(Mapping[str, float]):
             fitted point. Neither is a spatial parameter map or an uncertainty
             estimate; other parameters are held at their jointly fitted values.
         axsize : tuple[float, float] or None, optional
-            Width and height of each panel in inches. Defaults to (12, 12) for
-            phase, (6, 6) for each probe or comparison panel and (5, 3.4) for
-            each rotation evidence panel (its phase panels are 5 x 5).
+            Advanced explicit panel dimensions in inches, instead of size.
         compare : SSBResult or None, optional
             A second phase reconstruction of the same field of view. Shows
             both full images above matching central crops, with rectangles
@@ -383,9 +380,10 @@ class SSBResult(Mapping[str, float]):
             or GPU evaluations. Use ``view="parameters"`` for the plots alone.
             Measure them first with ``ssb.measure_parameters(result)``.
         size : {"small", "medium", "large", "xlarge"} or None, optional
-            Scale the default panel dimensions by 2/3, 1, 4/3 or 2. This changes
-            only figure size, never sampling or fitted values. Use either
-            ``size`` or an explicit ``axsize``.
+            Per-panel width: small 3, medium 4.5, large 6 or xlarge 9 inches
+            at the static 100-DPI reference. Medium is the default. Plot aspect
+            ratios are preserved. Changes only display size, never sampling
+            or fitted values. Use either ``size`` or an explicit ``axsize``.
 
         Returns
         -------
@@ -400,8 +398,8 @@ class SSBResult(Mapping[str, float]):
         >>> result = ssb.reconstruct(aberrations, upsampling_factor="auto")
         >>> result.show()
         >>> result.show("probe")
-        >>> result.show(axsize=(14, 14))  # width and height in inches
-        >>> result.show(compare=result_4x, axsize=(7, 7))
+        >>> result.show(size="large")
+        >>> result.show(compare=result_4x, size="medium")
         >>> result.show("rotation")
         >>> ssb.measure_parameters(aberrations)
         >>> aberrations.show("parameters")
@@ -411,10 +409,10 @@ class SSBResult(Mapping[str, float]):
         import matplotlib.pyplot as plt
         from quantem.core.visualization import show_2d
 
-        if size is not None:
-            scales = _FIGURE_SIZE_SCALES
-            if size not in scales or axsize is not None:
-                raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
+        if size is not None and axsize is not None:
+            raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
+        if axsize is None:
+            width = panel_inches("medium" if size is None else size)
             if compare is not None or view == "probe":
                 panel_size = (6, 6)
             elif view == "rotation":
@@ -423,7 +421,7 @@ class SSBResult(Mapping[str, float]):
                 panel_size = (5.2, 4.5)
             else:
                 panel_size = (12, 12)
-            axsize = tuple(length * scales[size] for length in panel_size)
+            axsize = (width, width * panel_size[1] / panel_size[0])
         if compare is not None:
             if view != "phase":
                 raise ValueError("Use result.show(compare=other) to compare phase images.")

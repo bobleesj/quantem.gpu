@@ -54,7 +54,8 @@ def choose_trials(records: list[dict], *, best=None, last=None, first=None) -> l
     return completed[-last:] if last is not None else completed[:first]
 
 
-def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6), sampling: str | None = None):
+def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (4.5, 4.5),
+                columns: int = 2, sampling: str | None = None):
     """Return one static figure with shared phase contrast and the recorded parameters.
 
     ``sampling`` names the output factor in the title (``"4× auto"``); by default the result's factor.
@@ -65,7 +66,7 @@ def plot_trials(result, selection: str, *, axsize: tuple[float, float] = (6, 6),
     phase = host_array(result.phase)
     records = result.trial_records
     count = len(records)
-    columns = min(2, count)
+    columns = min(columns, count)
     rows = math.ceil(count / columns)
     table_height = .8 + .3 * count
     height = axsize[1] * rows + table_height + .9
