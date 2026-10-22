@@ -2297,7 +2297,8 @@ class SSB:
                     low, high = standard_bounds(search_ranges_to_engine(search_ranges))
                     limits = {"c10_range": (low[0], high[0]), "c12_max": high[1]}
                 result = self._fit_higher_order(result, higher_order, tilt=tilt, limits=limits,
-                                                tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose)
+                                                tilt_limit_mrad=float(tilt_limit_mrad), verbose=verbose,
+                                                compute_loss=compute_loss)
         if not compute_loss:
             result.loss = None
             self.best_loss = float("inf")
@@ -2866,7 +2867,8 @@ class SSB:
                          object_sampling_A=self.scan_sampling_A)
 
     def _fit_higher_order(self, result: SSBResult, terms: tuple[str, ...], *, tilt: bool,
-                          limits: dict[str, object], tilt_limit_mrad: float, verbose: bool) -> SSBResult:
+                          limits: dict[str, object], tilt_limit_mrad: float, verbose: bool,
+                          compute_loss: bool = True) -> SSBResult:
         """Polish a finished fit with the higher-order ``terms`` free (``higher_order_fit.refine_higher_order``).
 
         Starts from ``result`` with the terms at 0, at its rotation, inside the fit's C10 range and C12 maximum
@@ -2898,7 +2900,9 @@ class SSB:
             sample_tilt_mrad, depth_spread_nm = result.sample_tilt_mrad, result.depth_spread_nm
         refined_s = time.perf_counter() - started
         phase, loss = self._phase(aberrations, sample_tilt_mrad=sample_tilt_mrad or (0.0, 0.0),
-                                  depth_spread_nm=depth_spread_nm or 0.0, phase_estimator="mean_phase")
+                                  depth_spread_nm=depth_spread_nm or 0.0,
+                                  phase_estimator="mean_phase" if compute_loss else "phase_of_mean",
+                                  compute_loss=compute_loss)
         record = {"terms": list(terms), "start_agreement": float(fit["start_agreement"]),
                   "agreement": float(fit["agreement"]), "evaluations": int(fit["evaluations"]),
                   "passes": int(fit["passes"]), "converged": bool(fit["converged"]), "seconds": refined_s,
@@ -2906,7 +2910,7 @@ class SSB:
         refined = replace(
             result, object_wave=self._unit_wave(phase), aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
             depth_spread_nm=depth_spread_nm, loss=None if loss is None else float(loss),
-            sample_agreement=float(fit["agreement"]) if tilt else result.sample_agreement,
+            sample_agreement=float(fit["agreement"]),
             timings={**result.timings, "higher_order_s": time.perf_counter() - started},
             optimizer={**result.optimizer, "higher_order": record},
             elapsed_s=None if result.elapsed_s is None else result.elapsed_s + (time.perf_counter() - started),
