@@ -183,6 +183,7 @@ private func require(
     let reset = try engine.reconstruct(aberrations: aberrations)
     require(error(read(reset.object), reference) == 0,
       "Resetting higher orders must restore the original reconstruction exactly")
+    try checkOddAberrationSign(device: device)
     // Fitting needs physical positive DC; zero DC above isolates linear count scaling.
     let fittingGeometry = makeGeometry(dc: SIMD2<Float>(37, 0))
     let fittingEngine = try MetalSSBEngine(device: device, geometry: fittingGeometry)
@@ -231,5 +232,146 @@ private func require(
       "PASS 200-trial fit and saved-run exact round trip; refinement_evaluations=\(fit.refinementEvaluations)"
     )
     print("PASS native Metal SSB uint8/uint16/uint32 count parity; device=\(device.name)")
+  }
+
+  /// Coma and trefoil must be corrected with the probe phase of the first sideband at k - q.
+  ///
+  /// For a thin object G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q). ssb.metal once evaluated the
+  /// first term at q - k, which equals k - q for C10, C12 and C30 but reverses the odd orders on that
+  /// sideband. Three weak phase gratings eps cos(2 pi q.r + theta) under a probe with C21, C23 and C30
+  /// give counts |Psi(k)|^2 of the exit wave p(r - r0) (1 + i phi), from the shift theorem alone. With
+  /// the probe's own coefficients every BF pixel's corrected G at a grating's q has the phase
+  /// pi / 2 + theta, so their mean is e^{i (pi/2 + theta)} mean_k |G_k(q)|. With the probe phase at q - k
+  /// the BF pixels disagree: the mean misses by 0.14 to 0.18 of its size. Reversing the odd orders, or
+  /// leaving out every term above C12, must miss by more than 0.1: the gratings sit where they matter.
+  static func checkOddAberrationSign(device: MTLDevice) throws {
+    let n = 128, step = 0.25                                       // scan pixels and Angstrom
+    let volts = 300e3
+    let wavelength = 12.2643 / (volts * (1 + 0.978476e-6 * volts)).squareRoot()
+    let semiangle = 0.030, sampling = 0.003                        // rad, and rad per detector pixel
+    let c10 = -50.0, c12 = 20.0, phi12 = Double.pi / 6
+    // Krivanek order, symmetry, magnitude (Angstrom) and azimuth: coma and trefoil are odd, C30 even
+    let truth: [(order: Int, symmetry: Int, magnitude: Double, angle: Double)] = [
+      (2, 1, 400, .pi / 3), (2, 3, 300, -.pi / 9), (3, 0, 3e4, 0),
+    ]
+    // Scan Fourier row and column of each grating, and its phase; no sum or difference of two is a third
+    let gratings: [(row: Int, column: Int, theta: Double)] = [(24, 9, 0.4), (-11, 30, -1.1), (-30, -12, 2.0)]
+    let epsilon = 0.05
+    func times(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> SIMD2<Double> {
+      SIMD2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x)
+    }
+    func aperture(_ kr: Double, _ kc: Double) -> Double {      // the engines' soft edge, one pixel wide
+      min(max((semiangle - wavelength * (kr * kr + kc * kc).squareRoot()) / sampling + 0.5, 0), 1)
+    }
+    func probe(_ kr: Double, _ kc: Double) -> SIMD2<Double> {
+      let alpha = wavelength * (kr * kr + kc * kc).squareRoot()
+      let azimuth = atan2(kc, kr)
+      var chi = alpha * alpha / 2 * (c10 + c12 * cos(2 * (azimuth - phi12)))
+      for term in truth {
+        chi += term.magnitude * pow(alpha, Double(term.order + 1)) / Double(term.order + 1)
+          * cos(Double(term.symmetry) * (azimuth - term.angle))
+      }
+      chi *= 2 * .pi / wavelength
+      return aperture(kr, kc) * SIMD2(cos(chi), -sin(chi))
+    }
+    var kx: [Double] = [], ky: [Double] = []
+    let radius = Int((semiangle / sampling).rounded(.up)) + 1
+    for i in -radius...radius {
+      for j in -radius...radius where aperture(Double(i) * sampling / wavelength, Double(j) * sampling / wavelength) > 0 {
+        kx.append(Double(i) * sampling / wavelength)
+        ky.append(Double(j) * sampling / wavelength)
+      }
+    }
+    let plane = n * n
+    let dq = 1 / (Double(n) * step)
+    let twiddle = (0..<n).map { SIMD2(cos(2 * Double.pi * Double($0) / Double(n)), sin(2 * Double.pi * Double($0) / Double(n))) }
+    func shift(_ grating: Int, _ row: Int, _ column: Int) -> SIMD2<Double> {   // e^{2 pi i q.r0}
+      twiddle[(((gratings[grating].row * row + gratings[grating].column * column) % n) + n) % n]
+    }
+    var counts = [UInt16](repeating: 0, count: kx.count * plane)
+    var spectrum: [[SIMD2<Double>]] = []                              // G_k(q) = sum_r0 I e^{-2 pi i q.r0}
+    var dc = 0.0
+    for bf in 0..<kx.count {
+      let centre = probe(kx[bf], ky[bf])
+      // i eps / 2 e^{+-i theta} P(k -+ q): the grating's two orders, moved by the scan
+      let minus = gratings.map { g in
+        times(SIMD2(-sin(g.theta), cos(g.theta)) * (epsilon / 2), probe(kx[bf] - Double(g.row) * dq, ky[bf] - Double(g.column) * dq))
+      }
+      let plus = gratings.map { g in
+        times(SIMD2(sin(g.theta), cos(g.theta)) * (epsilon / 2), probe(kx[bf] + Double(g.row) * dq, ky[bf] + Double(g.column) * dq))
+      }
+      var g = [SIMD2<Double>](repeating: .zero, count: gratings.count)
+      for row in 0..<n {
+        for column in 0..<n {
+          var wave = centre
+          for index in gratings.indices {
+            let w = shift(index, row, column)
+            wave += times(minus[index], w) + times(plus[index], SIMD2(w.x, -w.y))
+          }
+          let value = ((wave * wave).sum() * 40000).rounded()
+          require(value <= 65535, "Grating counts exceed uint16")
+          counts[bf * plane + row * n + column] = UInt16(value)
+          dc += value
+          for index in gratings.indices {
+            let w = shift(index, row, column)
+            g[index] += value * SIMD2(w.x, -w.y)
+          }
+        }
+      }
+      spectrum.append(g)
+    }
+    let q = (0..<n).map { Float(Double($0 < n / 2 ? $0 : $0 - n) * dq) }
+    let k2 = zip(kx, ky).map { $0 * $0 + $1 * $1 }
+    let geometry = MetalSSBGeometry(
+      brightfieldKX: kx.map(Float.init), brightfieldKY: ky.map(Float.init),
+      brightfieldAlphaSquared: k2.map { Float(wavelength * wavelength * $0) },
+      brightfieldAperture: zip(kx, ky).map { Float(aperture($0, $1)) },
+      brightfieldCos2Phi: zip(zip(kx, ky), k2).map { $1 > 0 ? Float(($0.0 * $0.0 - $0.1 * $0.1) / $1) : 1 },
+      brightfieldSin2Phi: zip(zip(kx, ky), k2).map { $1 > 0 ? Float(2 * $0.0 * $0.1 / $1) : 0 },
+      qxByRow: q, qyByColumn: q, wavelengthAngstroms: Float(wavelength), semiangleRadians: Float(semiangle),
+      angularSamplingYRadians: Float(sampling), angularSamplingXRadians: Float(sampling),
+      dcValue: SIMD2(Float(dc / Double(kx.count)), 0), referenceRotationDegrees: 0,
+      phaseFactor: Float(Double.pi / wavelength))
+    let source = counts.withUnsafeBytes {
+      device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared)!
+    }
+    let expected = gratings.indices.map { index in
+      spectrum.map { ($0[index] * $0[index]).sum().squareRoot() }.reduce(0, +) / Double(kx.count)
+        * SIMD2(cos(Double.pi / 2 + gratings[index].theta), sin(Double.pi / 2 + gratings[index].theta))
+    }
+    func higherOrder(reversingOddBy turns: (Double, Double)) -> [MetalSSBHigherOrder] {
+      zip(truth, [turns.0, turns.1, 0]).map {
+        MetalSSBHigherOrder(order: $0.order, symmetry: $0.symmetry, magnitudeAngstroms: Float($0.magnitude),
+          angleRadians: Float($0.angle + $1))
+      }
+    }
+    let cases: [(name: String, higherOrder: [MetalSSBHigherOrder]?)] = [
+      ("truth", higherOrder(reversingOddBy: (0, 0))), ("reversed", higherOrder(reversingOddBy: (.pi, .pi / 3))),
+      ("none", nil),
+    ]
+    var report: [String] = []
+    for budget in [Int?.none, Int?(0)] {
+      let engine = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: budget)
+      try engine.prepare(brightfield: source, countType: .uint16)
+      for item in cases {
+        let result = try engine.reconstruct(aberrations: MetalSSBAberrations(
+          c10Angstroms: Float(c10), c12Angstroms: Float(c12), phi12Radians: Float(phi12), higherOrder: item.higherOrder))
+        let sum = result.fourierSum.contents().assumingMemoryBound(to: SIMD2<Float>.self)
+        let misses = gratings.indices.map { index -> Double in
+          let value = sum[((gratings[index].row + n) % n) * n + (gratings[index].column + n) % n]
+          let difference = SIMD2(Double(value.x), Double(value.y)) - expected[index]
+          return ((difference * difference).sum() / (expected[index] * expected[index]).sum()).squareRoot()
+        }
+        let label = "\(budget == nil ? "cached" : "streamed") \(item.name)"
+        if item.name == "truth" {
+          require(misses.allSatisfy { $0 < 1e-4 },
+            "\(label): the corrected Fourier sum at the gratings misses e^{i (pi/2 + theta)} mean |G| by \(misses) of its size; the first sideband's probe phase must be at k - q")
+        } else {
+          require(misses.allSatisfy { $0 > 0.1 }, "\(label): the gratings must sit where the odd orders matter, \(misses)")
+        }
+        report.append("\(label) \(misses.map { String(format: "%.2g", $0) }.joined(separator: "/"))")
+      }
+    }
+    print("PASS odd aberrations corrected at k - q, relative miss per grating: \(report.joined(separator: ", "))")
   }
 }

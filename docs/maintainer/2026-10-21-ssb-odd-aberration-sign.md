@@ -92,6 +92,17 @@ Before the fix, entering the true coma and trefoil did not improve the image.
 - `tests/hardware/cuda/test_ssb_higher_order.py` and
   `tests/hardware/test_ssb_coherent_higher_order.py`: their float64 references
   now use k − q. On the old kernels 9 of their 16 cases fail.
+- `tests/webgpu/ssb-higher-order-sign.ts` (headed browser gate,
+  `tests/webgpu/run_qem_browser.py`): an exact weak-phase simulation, 128² scan,
+  293 BF pixels, reconstructed with the true coefficients, none above C12 and the
+  odd ones reversed, both estimators, against a float64 k − q reference. Fixed
+  WGSL: within 7.5 × 10⁻⁸ rad. Old WGSL: 2.8 × 10⁻² rad from the reference and
+  7.5 × 10⁻⁸ from the q − k form.
+- `tests/metal/ssb_workflow_check.swift` (`scripts/check_metal_ssb.sh`): three
+  weak phase gratings, cached and streamed engines. With the true coefficients
+  the corrected Fourier sum at each grating's q must equal
+  e^{i(π/2 + θ)} mean_k |G_k(q)|. Fixed `ssb.metal`: within 9.4 × 10⁻⁷ of its
+  size. Old: 0.14–0.18.
 
 The fused CUDA test's tolerance rises from 5e-6 to 1e-5 rad. Against the
 independent oracle, the fused path (float32 Chebyshev χ, all 14 orders active)

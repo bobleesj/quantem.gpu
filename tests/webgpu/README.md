@@ -159,6 +159,22 @@ complete regular and tilt/depth-corrected phase arrays and losses exactly.
 The test includes a filename with a space, a required URL query token, and 2x
 corrected reconstruction.
 
+## SSB odd aberration sign
+
+`ssb-higher-order-sign.ts` runs in the same headed gate on a weak-phase folder
+that `make_qem_browser_fixture.generate_ssb_higher_order` simulates exactly: a
+periodic random phase (0.05 rad rms) under a 300 kV, 30 mrad probe with C10,
+C12, C21 (coma), C23 (trefoil) and C30, a 128 x 128 scan of 293 uint16
+bright-field columns. The fixture also reconstructs the counts in float64 from
+the physics, G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q) with chi in polar
+form. With the probe's own coefficients, none above C12, and the odd ones
+reversed, both estimators must match that reference within 1e-5 rad. The WGSL
+once evaluated the first term at q - k, which reverses coma and trefoil on that
+sideband: it missed the reference by 2.8e-2 rad and matched the q - k form to
+7.5e-8 rad. The fixed WGSL is within 7.5e-8 rad (apple / metal-3, 2026-10-21).
+The gate refuses SwiftShader even when Chrome does not mark it as a fallback
+adapter.
+
 ## Decoder pipelines per device (CPU-only)
 
 `pipeline-device-cache.ts` is a Node test with fake devices: a device created
