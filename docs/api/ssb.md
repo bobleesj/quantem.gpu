@@ -446,14 +446,14 @@ not interrupted for per-trial progress. Use `verbose=False` for quiet runs.
 
 ### Reconstructed focus/depth images
 
-To compare the actual specimen images, use the existing Show2D gallery:
+To compare the actual specimen images, use the interactive image gallery:
 
 ```python
 viewer = ssb.show("focus")
 viewer
 ```
 
-Use the existing Show3D widget to scroll through defocus while comparing model
+Use the interactive stack viewer to scroll through defocus while comparing model
 depths side by side:
 
 ```python
@@ -464,7 +464,7 @@ viewer
 Each panel has one depth spread; the shared defocus slider changes C10 in every
 panel. It starts at the requested offset nearest zero. Labels show the actual
 C10 and depth values, and the fitted depth panel is marked. The default
-`layout="grid"` keeps the Show2D gallery.
+`layout="grid"` keeps the image gallery.
 
 The default grid varies C10 by -5, 0 and +5 nm around the joint fit, and model
 depth spread by -5, 0 and +5 nm around its fitted value (bounded at zero).
@@ -489,7 +489,7 @@ bbox_inches="tight")`; a lower explicit DPI may reduce the saved image resolutio
 | Focus-image option | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `"interactive"` | An interactive widget, or `"static"` for the complete `show_2d` grid. |
-| `layout` | `"grid"` | Show2D grid or `"stack"` for Show3D with focus frames and depth panels. Static mode shows all frames. |
+| `layout` | `"grid"` | Image grid or `"stack"` with focus frames and depth panels. Static mode shows all frames. |
 | `max_cols` | `2` | Maximum columns in the static focus grid; use `1` for a vertical comparison. |
 | `focus_offsets_nm` | `(-5, 0, 5)` | Defocus offsets from fitted C10, in nm. |
 | `depth_spread_nm` | `None` | Fitted depth spread and ±5 nm; supply an absolute value or sequence to choose the compared depths. |
