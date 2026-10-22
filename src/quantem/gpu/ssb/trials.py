@@ -9,6 +9,14 @@ from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.results import SSBResult, host_array
 
 
+def resolve_trial_count(trials: int | None, num_trials: int | None, *, default: int = 200) -> int:
+    """Resolve the search budget while preserving the legacy keyword."""
+    if trials is not None and num_trials is not None:
+        raise TypeError("Use trials=200, or the legacy num_trials keyword, not both.")
+    value = trials if trials is not None else num_trials
+    return default if value is None else value
+
+
 def label_trials(result: SSBResult, *, search: int) -> None:
     """Give every trial record its index, search pass and physical rotation.
 
@@ -44,7 +52,7 @@ def choose_trials(records: list[dict], *, best=None, last=None, first=None) -> l
         raise ValueError("Use one positive count: best=5, last=5, or first=5.")
     completed = [record for record in records or () if record.get("stage", "search") == "search" and math.isfinite(record["loss"])]
     if not completed:
-        raise ValueError("No completed trials were recorded; run find_aberrations(num_trials=200).")
+        raise ValueError("No completed trials were recorded; run find_aberrations(trials=200).")
     if best is not None:
         latest = max(record["search"] for record in completed)
         group = [record for record in completed if record["search"] == latest]

@@ -147,6 +147,7 @@ def test_reconstruct_series_reuses_only_exact_results(
 
         def find_aberrations(self, **kwargs):
             assert kwargs["save_dir"].name == "ssb-fit"
+            assert kwargs["num_trials"] == 200
             return self._result(0.1 * self.index)
 
         def reconstruct(self, **kwargs):
@@ -164,6 +165,7 @@ def test_reconstruct_series_reuses_only_exact_results(
         raw,
         first_frame=151,
         last_frame=153,
+        trials=200,
         progress=False,
     )
     fixed_probe_result = SSB.reconstruct_series(
@@ -171,6 +173,7 @@ def test_reconstruct_series_reuses_only_exact_results(
         first_frame=151,
         last_frame=153,
         probe_reference_frame=151,
+        num_trials=200,
     )
     assert "Checking exact saved SSB results" in capsys.readouterr().out
 

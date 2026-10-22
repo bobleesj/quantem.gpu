@@ -745,9 +745,11 @@ Rerun the aberration search for older records; the loader does not guess their u
 - `SSB(data.data, ...)` raises `TypeError`: the encoded storage inside a loaded
   dataset has no bounded read of its own. Pass the dataset, `SSB(data, ...)`, or
   open the file with `SSB.open(path, ...)`.
-- `num_trials` must be non-negative and `refinement` is `"auto"`,
+- `trials` is the search budget per rotation branch (default 200), before refinement.
+  `num_trials` remains a compatibility alias; supply only one keyword.
+  `trials` must be non-negative and `refinement` is `"auto"`,
   `"nelder-mead"`, `"newton"` (tilt fits) or `None`. With `tilt=True` and
-  `num_trials=0` the session's previous joint fit is refined. Use
+  `trials=0` the session's previous joint fit is refined. Use
   `reconstruct()`, or assign `ssb.aberrations = {...}`, to apply known
   parameters without a search.
 - To save results from an in-memory array, provide `source_path` for provenance.
