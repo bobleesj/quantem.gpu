@@ -1,6 +1,7 @@
 """Reconstructed focus/depth comparisons around a jointly fitted SSB model."""
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
@@ -28,11 +29,15 @@ def show_focus(
     axsize: tuple[float, float] | None = None,
     columns: int | None = None,
     rows: int | None = None,
+    cmap: str = "inferno",
+    save: str | Path | None = None,
     max_cols: int | None = None,
 ) -> "Show2D | Show3D | Figure":
     """Reconstruct full-field phase for every pair, then crop the displayed region."""
     if mode not in ("interactive", "static"):
         raise ValueError(f"Use mode='interactive' or 'static' for focus images; got {mode!r}.")
+    if save is not None and mode != "static":
+        raise ValueError("save exports a static figure; use ssb.show('focus', mode='static', save='focus.png').")
     if layout not in ("grid", "stack"):
         raise ValueError(f"Use layout='grid' for Show2D or 'stack' for Show3D; got {layout!r}.")
     width_inches = panel_inches("medium" if size is None else size)
@@ -104,7 +109,7 @@ def show_focus(
                     for depth in depths
                 ],
                 labels=[f"C₁₀ {fit.aberrations['C10_nm'] + offset:+.2f} nm" for offset in offsets],
-                title=title, dim_label="Defocus", cmap="inferno",
+                title=title, dim_label="Defocus", cmap=cmap,
                 sampling=sampling, units="Å", columns=columns,
                 size=size or "medium", panel_gap_px=0,
                 vmin=lower, vmax=upper, auto_contrast=False,
@@ -116,7 +121,7 @@ def show_focus(
             [image for row in images for image in row],
             labels=[label for row in labels for label in row], title=title,
             sampling=sampling, units="Å", columns=columns,
-            size=size or "medium",
+            size=size or "medium", cmap=cmap,
             vmin=lower, vmax=upper, auto_contrast=False,
             link_contrast=True, link_zoom=True, link_pan=True, display_bin=1,
         )
@@ -140,7 +145,7 @@ def show_focus(
         figsize=(columns * width, len(grid) * (height + 0.5) + 0.4),
     )
     show_2d(
-        grid, title=titles, figax=(figure, axes), cmap="inferno",
+        grid, title=titles, figax=(figure, axes), cmap=cmap,
         norm={"interval_type": "manual", "vmin": lower, "vmax": upper},
         scalebar={"sampling": sampling[1], "units": "Å"},
     )
@@ -149,5 +154,7 @@ def show_focus(
         title = title.replace(" · phase", "\nphase")
     figure.suptitle(title)
     figure.set_layout_engine("compressed", w_pad=0.02, h_pad=0.02, wspace=0, hspace=0)
+    if save is not None:
+        figure.savefig(save, dpi="figure", bbox_inches="tight")
     plt.close(figure)
     return figure

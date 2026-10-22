@@ -210,3 +210,15 @@ with the convention `f = -C10`. Depth spread is a fitted model parameter.
 to scroll through defocus in Show3D, or `interactive=False` for static core
 views. See the [SSB view options](api/ssb.md) for focus spacing, depth values,
 region selection and panel sizes.
+
+Detector calibration plots use the same display vocabulary:
+
+```python
+detector_fit = data.calibration.fit_detector_sampling()
+detector_fit.show(size="medium", cmap="inferno", save="detector-fit.png")
+```
+
+The fit view has one panel. Detector and SSB galleries additionally accept
+`rows` or `columns`. For example,
+`ssb.show("focus", mode="static", columns=2, cmap="inferno", save="focus.png")`
+exports the focus comparison without changing its reconstructed pixels.

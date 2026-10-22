@@ -308,8 +308,8 @@ ssb.show("tilt", size="medium")         # static row-column tilt landscape
 The static calls reuse recorded diagnostics or measure them once on the GPU.
 If no fit exists, the usual joint fit runs first. `size="small"`, `"medium"`
 and `"large"` only change figure dimensions. For explicit dimensions use
-`axsize=(6, 5)` instead. Returned figures support `savefig(...)` and render
-directly as a notebook cell's final expression.
+`axsize=(6, 5)` instead. Use `cmap="viridis"` to choose colors and `save="fit.png"` to export
+the complete figure. Returned figures also support `savefig(...)` and render directly as a notebook cell's final expression.
 
 | Argument | Choices | Meaning |
 | --- | --- | --- |
@@ -322,7 +322,7 @@ To see both landscapes in one figure and read the numerical joint-fit values,
 use these expressions in separate notebook cells:
 
 ```python
-ssb.show("parameters", size="medium")
+ssb.show("parameters", size="medium", columns=2, cmap="inferno", save="fit.png")
 aberrations.report().T
 ```
 
@@ -483,14 +483,18 @@ ssb.show("focus", mode="static", size="small")
 
 Static figures keep the image aspect ratio and use enough pixels to retain the
 native reconstruction resolution. `size` changes the panel dimensions, not the
-data. Save the returned figure with `figure.savefig("focus.png", dpi="figure",
-bbox_inches="tight")`; a lower explicit DPI may reduce the saved image resolution.
+data. Use `save="focus.png"` on this call to export at that native density.
+`cmap="viridis"` sets colors in static, Show2D and Show3D focus views.
+`save` exports a static figure; it is separate from ShowPtycho `save_dir`,
+which stores scientific calibration.
 
 | Focus-image option | Default | Meaning |
 | --- | --- | --- |
 | `mode` | `"interactive"` | An interactive widget, or `"static"` for the complete `show_2d` grid. |
 | `layout` | `"grid"` | Image grid or `"stack"` with focus frames and depth panels. Static mode shows all frames. |
-| `max_cols` | `2` | Maximum columns in the static focus grid; use `1` for a vertical comparison. |
+| `columns`, `rows` | Static: two columns | Images across or down; derive the other dimension. `max_cols` remains a deprecated alias. |
+| `cmap` | `"inferno"` | Colormap in static and interactive focus views. |
+| `save` | None | Static figure path; requires `mode="static"` for focus images. |
 | `focus_offsets_nm` | `(-5, 0, 5)` | Defocus offsets from fitted C10, in nm. |
 | `depth_spread_nm` | `None` | Fitted depth spread and ±5 nm; supply an absolute value or sequence to choose the compared depths. |
 | `region` | `None` | Full field, or scan-pixel bounds to fit independently and display. |

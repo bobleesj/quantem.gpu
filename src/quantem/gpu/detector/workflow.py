@@ -290,11 +290,28 @@ class BrightFieldDiskFit:
     method: str
     mean_pattern: np.ndarray = field(repr=False)
 
-    def show(self, *, figsize: tuple[float, float] = (5.0, 4.6)):
+    def show(
+        self, *, size: Literal["small", "medium", "large", "xlarge"] | None = None,
+        cmap: str = "gray", save: str | Path | None = None,
+        figsize: tuple[float, float] | None = None,
+    ):
         """The mean pattern on a log scale with the fitted disk edge and centre drawn on it.
 
         Axes are in mrad from the disk centre when the detector sampling is known, else in detector pixels. Plotting
         only: the log scale is a display choice.
+
+        Parameters
+        ----------
+        size : {"small", "medium", "large", "xlarge"}, optional
+            Named panel size; medium by default. Does not change the pattern
+            or fitted calibration. This single-panel view has no rows/columns.
+        cmap : str, optional
+            Colormap for the mean pattern, gray by default.
+        save : str or pathlib.Path, optional
+            Export the complete static figure, including the fitted disk.
+        figsize : tuple[float, float], optional
+            Advanced figure dimensions in inches, retained for compatibility.
+            Use either size or figsize, not both.
 
         Returns
         -------
@@ -307,6 +324,13 @@ class BrightFieldDiskFit:
         """
         import matplotlib.pyplot as plt
         from matplotlib.patches import Ellipse
+        from quantem.gpu.display._layout import panel_inches
+
+        if size is not None and figsize is not None:
+            raise ValueError("Use size='medium' or figsize=(width, height), not both.")
+        if figsize is None:
+            width = panel_inches("medium" if size is None else size)
+            figsize = (width, width * 4.6 / 5)
 
         rows, cols = self.mean_pattern.shape
         center_row, center_col = self.bright_field_center_px
@@ -321,7 +345,7 @@ class BrightFieldDiskFit:
         positive = self.mean_pattern[self.mean_pattern > 0]
         floor = float(positive.min()) if positive.size else 1.0
         figure, axis = plt.subplots(figsize=figsize)
-        image = axis.imshow(np.log10(np.maximum(self.mean_pattern, floor)), cmap="gray", extent=extent,
+        image = axis.imshow(np.log10(np.maximum(self.mean_pattern, floor)), cmap=cmap, extent=extent,
                             interpolation="nearest")
         centre = ((center_col - origin_col) * step_col, (center_row - origin_row) * step_row)
         radius = self.bright_field_edge_radius_px
@@ -334,9 +358,11 @@ class BrightFieldDiskFit:
                      f"detector step {self.detector_sampling_mrad[0]:.4f} mrad per pixel")
         axis.text(0.03, 0.97, label, transform=axis.transAxes, va="top", ha="left", color="white", fontsize=9)
         axis.set(xlabel=f"detector column ({unit})", ylabel=f"detector row ({unit})",
-                 title=f"Bright-field disk, centre ({center_row:.2f}, {center_col:.2f}) px")
+                 title=f"Bright-field disk\nCentre ({center_row:.2f}, {center_col:.2f}) px")
         figure.colorbar(image, ax=axis, label="log10 mean counts", shrink=0.85)
         figure.tight_layout()
+        if save is not None:
+            figure.savefig(save, dpi="figure", bbox_inches="tight")
         plt.close(figure)
         return figure
 

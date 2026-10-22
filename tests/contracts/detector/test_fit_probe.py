@@ -87,3 +87,27 @@ def test_bright_field_disk_fit_shows_the_mean_pattern_with_its_edge_in_mrad():
     assert edge.center == pytest.approx((0.0, 0.0))
     uncalibrated = detector.fit_bright_field_disk(_blurred_disk()).show()
     assert uncalibrated.axes[0].get_xlabel() == "detector column (px)"
+
+
+def test_fit_display_options_preserve_calibration_and_export(tmp_path):
+    """Use the same presentation keywords as detector and SSB figures."""
+    from PIL import Image
+
+    fit = detector.fit_bright_field_disk(_blurred_disk(), semiangle_mrad=30)
+    original = fit.mean_pattern.copy()
+    sampling = fit.detector_sampling_mrad
+    path = tmp_path / "disk.png"
+    figure = fit.show(size="large", cmap="viridis", save=path)
+    assert figure.get_figwidth() == 6
+    assert figure.axes[0].images[0].get_cmap().name == "viridis"
+    with Image.open(path) as image:
+        image.verify()
+    np.testing.assert_array_equal(fit.mean_pattern, original)
+    assert fit.detector_sampling_mrad == sampling
+    legacy = fit.show(figsize=(7, 5))
+    assert tuple(legacy.get_size_inches()) == (7, 5)
+    assert fit.show().get_figwidth() == 4.5
+    with pytest.raises(ValueError, match="not both"):
+        fit.show(size="medium", figsize=(7, 5))
+    with pytest.raises(ValueError, match="size"):
+        fit.show(size="huge")
