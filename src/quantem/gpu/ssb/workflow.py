@@ -1505,6 +1505,8 @@ class SSB:
 
     def show(self, view: Literal["interactive", "depth", "tilt", "parameters", "focus"] = "interactive", *,
              size: Literal["small", "medium", "large", "xlarge"] | None = None,
+             rows: int | None = None, columns: int | None = None,
+             cmap: str | None = None, save: str | Path | None = None,
              region: tuple[int, int, int, int] | None = None,
              mode: Literal["interactive", "static"] | None = None, **options):
         """Open ShowPtycho on this session: the live phase and its FFT, aberration sliders, Save.
@@ -1535,6 +1537,15 @@ class SSB:
             Plot or focus-gallery panel size only; medium by default. Interactive
             focus panels use 300, 450, 600 or 900 CSS pixels. Does not change
             data or sampling.
+        rows, columns : int, optional
+            Images down or across focus and parameter galleries. Set either
+            to infer the other; if both are supplied, every panel must fit.
+        cmap : str, optional
+            Colormap for focus images and static landscapes, inferno by default.
+            ShowPtycho's live view retains its own Color control.
+        save : str or pathlib.Path, optional
+            Export a static figure. For focus images, also set mode="static".
+            This is distinct from save_dir, which stores ShowPtycho calibration.
         region : tuple of int or None, optional
             Static diagnostic region in original scan pixels, as
             ``(row_start, row_stop, col_start, col_stop)`` with exclusive stops.
@@ -1564,8 +1575,8 @@ class SSB:
         -------
         quantem.widget.ShowPtycho, Show2D, Show3D or matplotlib.figure.Figure
             A live widget, or a closed figure that renders once in a notebook.
-            Save static focus images at their native resolution with
-            ``figure.savefig("focus.png", dpi="figure", bbox_inches="tight")``.
+            ``save="focus.png"`` retains static focus images' native pixel
+            density, independent of the chosen display size.
 
         Examples
         --------
@@ -1583,6 +1594,8 @@ class SSB:
             raise ValueError(f"Choose 'interactive', 'depth', 'tilt', 'parameters' or 'focus'; got {view!r}.")
         if mode is not None and view != "focus":
             raise ValueError("Use mode with ssb.show('focus'); depth and tilt landscapes are already static.")
+        if view == "focus" and save is not None and mode != "static":
+            raise ValueError("save exports a static figure; use ssb.show('focus', mode='static', save='focus.png').")
         if view != "interactive":
             if size is not None and (size not in ("small", "medium", "large", "xlarge") or options.get("axsize") is not None):
                 raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
@@ -1607,24 +1620,31 @@ class SSB:
                         crop = (crop[0] + parent_bounds[0], crop[1] + parent_bounds[0],
                                 crop[2] + parent_bounds[2], crop[3] + parent_bounds[2])
                     source = source._dark_field_source
-                return show_focus(source, result, region=crop, mode=mode or "interactive", size=size, **options)
+                return show_focus(source, result, region=crop, mode=mode or "interactive", size=size,
+                                  rows=rows, columns=columns, cmap="inferno" if cmap is None else cmap, save=save, **options)
             if region is not None:
                 with self.select_region(region, aberrations=result.aberrations,
                                         scan_detector_rotation_deg=result.scan_detector_rotation_deg) as selected:
                     selected.find_aberrations(check_rotation=False, compare_standard=False, compute_loss=False)
-                    return selected.show(view, size=size, **options)
+                    return selected.show(view, size=size, rows=rows, columns=columns, cmap=cmap, save=save, **options)
             if not result.parameter_slices:
                 self.measure_parameters(result)
-            figure = result.show(view, size=size, **options)
+            figure = result.show(view, size=size, rows=rows, columns=columns, cmap="inferno" if cmap is None else cmap, **options)
             if self._dark_field_region is not None:
                 row_start, row_stop, col_start, col_stop = self._dark_field_region
                 figure.suptitle(
                     f"Rows {row_start}:{row_stop}, columns {col_start}:{col_stop}\n"
                     + figure.get_suptitle(), fontsize=11,
                 )
+            if save is not None:
+                figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure
-        if size is not None or region is not None:
-            raise ValueError("Use size and region with ssb.show('depth'), ssb.show('tilt') or ssb.show('parameters').")
+        if any(value is not None for value in (size, region, rows, columns, cmap, save)):
+            raise ValueError(
+                "Use size, rows, columns, cmap and save with ssb.show('focus') or a static landscape "
+                "('depth', 'tilt', 'parameters'); use mode='static' to save focus images. "
+                "ShowPtycho has its own Color control and responsive layout; save_dir stores calibration."
+            )
         try:
             from quantem.widget import ShowPtycho
         except ImportError as exc:

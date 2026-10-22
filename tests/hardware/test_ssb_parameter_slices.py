@@ -84,11 +84,14 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         assert len(restored.show(show_parameters=False).axes) == 2
         # Review one diagnostic at a time without another GPU evaluation.
         ssb.measure_parameters = lambda *args: pytest.fail("Recorded slices must be reused")
-        depth = ssb.show("depth", size="small")
-        tilt = restored.show("tilt", size="large")
+        depth = ssb.show("depth", size="small", cmap="viridis", save=tmp_path / "depth.png")
+        tilt = restored.show("tilt", size="large", cmap="viridis", save=tmp_path / "tilt.png")
+        assert (tmp_path / "depth.png").stat().st_size > 1000
+        assert (tmp_path / "tilt.png").stat().st_size > 1000
         assert np.all(depth.get_size_inches() < tilt.get_size_inches())
         assert len(depth.axes) == len(tilt.axes) == 2
         for figure, key in ((depth, "focus_depth"), (tilt, "tilt")):
+            assert figure.axes[0].collections[0].get_cmap().name == "viridis"
             np.testing.assert_array_equal(
                 figure.axes[0].collections[0].get_array(), evidence["slices"][key]["relative_agreement"])
             np.testing.assert_array_equal(
@@ -108,7 +111,12 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         )
         captured = _record_static_arrays(monkeypatch)
         focus = ssb.show("focus", mode="static", focus_offsets_nm=(0, 5),
-                         depth_spread_nm=fit.depth_spread_nm, size="small")
+                         depth_spread_nm=fit.depth_spread_nm, size="small", columns=2,
+                         cmap="gray", save=tmp_path / "focus.png")
+        assert (tmp_path / "focus.png").stat().st_size > 1000
+        pixels = focus.axes[0].images[0].get_array()
+        np.testing.assert_array_equal(pixels[..., 0], pixels[..., 1])
+        np.testing.assert_array_equal(pixels[..., 1], pixels[..., 2])
         assert focus.number not in plt.get_fignums()
         images = captured[-1][0]
         np.testing.assert_allclose(images[0], host_array(shown.phase), atol=1e-6, rtol=0)
@@ -171,8 +179,9 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
         fit = ssb.find_aberrations(num_trials=8, refinement=None, check_rotation=False,
                                    compare_standard=False, compute_loss=False, verbose=False)
         options = {"focus_offsets_nm": (-3, 0, 7), "depth_spread_nm": (5, fit.depth_spread_nm)}
-        grid = ssb.show("focus", **options)
-        stack = ssb.show("focus", layout="stack", **options)
+        grid = ssb.show("focus", cmap="viridis", **options)
+        stack = ssb.show("focus", layout="stack", cmap="viridis", **options)
+        assert grid.cmap == stack.cmap == "viridis"
         assert isinstance(grid, qw.Show2D) and isinstance(stack, qw.Show3D)
         assert (stack.n_panels, stack.n_slices, stack.slice_idx) == (2, 3, 1)
         assert stack.dim_label == "Defocus"

@@ -24,6 +24,7 @@ import math
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -306,7 +307,8 @@ class RotationBranches:
 
     def show(self, *, upsampling_factor: int | Literal["auto"] = "auto", panels: bool = True,
              size: Literal["small", "medium", "large", "xlarge"] | None = None,
-             axsize: tuple[float, float] | None = None):
+             axsize: tuple[float, float] | None = None,
+             cmap: str = "inferno", save: str | Path | None = None):
         """Both branches' phase above the evidence: the phase tails (left) and the phase at the atomic columns (right).
 
         Top: each branch's fit reconstructed at ``upsampling_factor`` (``upsampled_phases``, ``"auto"`` by default),
@@ -317,6 +319,8 @@ class RotationBranches:
         branch is solid, the other dashed; phase in mrad. ``panels=False`` draws the evidence alone (no GPU).
         ``size`` selects each panel's width, medium by default. ``axsize`` is
         an advanced alternative in inches; a phase panel is ``axsize[0]`` square.
+        ``cmap`` chooses the phase colormap; ``save`` exports the static figure.
+        The phase/evidence layout is fixed rather than a rows/columns gallery.
 
         Returns
         -------
@@ -340,7 +344,7 @@ class RotationBranches:
         figure = plt.figure(figsize=(2 * axsize[0], sum(heights) + (0.6 if panels else 0.0)))
         grid = figure.add_gridspec(len(heights), 2, height_ratios=heights)
         if panels:
-            self._show_panels(figure, [figure.add_subplot(grid[0, index]) for index in (0, 1)], upsampling_factor)
+            self._show_panels(figure, [figure.add_subplot(grid[0, index]) for index in (0, 1)], upsampling_factor, cmap)
         tail_axis, column_axis = (figure.add_subplot(grid[-1, index]) for index in (0, 1))
         order = (self.kept, 1 - self.kept)
         styles = {self.kept: {"color": KEPT_COLOR, "linestyle": "-"}, 1 - self.kept: {"color": OTHER_COLOR, "linestyle": "--"}}
@@ -383,10 +387,12 @@ class RotationBranches:
         for axis in (tail_axis, column_axis):
             axis.spines[["top", "right"]].set_visible(False)
         figure.tight_layout()
+        if save is not None:
+            figure.savefig(save, dpi="figure", bbox_inches="tight")
         plt.close(figure)
         return figure
 
-    def _show_panels(self, figure, axes, upsampling_factor) -> None:
+    def _show_panels(self, figure, axes, upsampling_factor, cmap="inferno") -> None:
         """Draw ``upsampled_phases`` on ``axes`` (branch order), the columns at scan pixels times the factor."""
         from quantem.core.visualization import show_2d
 
@@ -399,7 +405,7 @@ class RotationBranches:
         titles = [f"{branch.scan_detector_rotation_deg:.1f}°{' kept' if index == self.kept else ''} · {label} (rad)"
                   for index, branch in enumerate(self.branches)]
         sampling = self.object_sampling_A
-        show_2d(centred, figax=(figure, np.asarray(axes)), title=titles, cmap="inferno", cbar=True,
+        show_2d(centred, figax=(figure, np.asarray(axes)), title=titles, cmap=cmap, cbar=True,
                 norm={"interval_type": "manual", "vmin": -limit, "vmax": limit}, tight_layout=False, title_fontsize=12,
                 scalebar=None if sampling is None else {"sampling": sampling[1], "units": "Å", "fontsize": 11})
         if self.num_columns:

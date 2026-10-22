@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, Self
 import numpy as np
 
 from quantem.gpu.device.cuda_runtime import cp
-from quantem.gpu.display._layout import panel_inches
+from quantem.gpu.display._layout import panel_inches, resolve_columns
 from quantem.gpu.optics.physics import wrap_degrees
 from quantem.gpu.ssb.probe import model_probe, probe_grid
 
@@ -343,7 +343,9 @@ class SSBResult(Mapping[str, float]):
     def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt"] = "phase", *,
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
              show_parameters: bool = True,
-             size: Literal["small", "medium", "large", "xlarge"] | None = None):
+             size: Literal["small", "medium", "large", "xlarge"] | None = None,
+             rows: int | None = None, columns: int | None = None,
+             cmap: str = "inferno", save: str | Path | None = None):
         """Show phase, probes or fit diagnostics at a named panel size.
 
         Phase views reuse symmetric linear limits from their fitted result.
@@ -384,6 +386,14 @@ class SSBResult(Mapping[str, float]):
             at the static 100-DPI reference. Medium is the default. Plot aspect
             ratios are preserved. Changes only display size, never sampling
             or fitted values. Use either ``size`` or an explicit ``axsize``.
+        rows, columns : int, optional
+            Images down or across phase, probe or parameter galleries. Omit
+            both to retain the view's existing layout. Rotation evidence and
+            ``compare`` keep their fixed scientific comparison layout.
+        cmap : str, optional
+            Image and landscape colormap, inferno by default.
+        save : str or pathlib.Path, optional
+            Export the complete static figure. Scientific results are unchanged.
 
         Returns
         -------
@@ -411,6 +421,8 @@ class SSBResult(Mapping[str, float]):
 
         if size is not None and axsize is not None:
             raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
+        if (compare is not None or view == "rotation") and (rows is not None or columns is not None):
+            raise ValueError("Rotation and compare views have a fixed comparison layout; omit rows and columns.")
         if axsize is None:
             width = panel_inches("medium" if size is None else size)
             if compare is not None or view == "probe":
@@ -425,23 +437,30 @@ class SSBResult(Mapping[str, float]):
         if compare is not None:
             if view != "phase":
                 raise ValueError("Use result.show(compare=other) to compare phase images.")
-            return _phase_comparison(self, compare, axsize=(6, 6) if axsize is None else axsize)
+            figure = _phase_comparison(self, compare, axsize=axsize, cmap=cmap)
+            if save is not None:
+                figure.savefig(save, dpi="figure", bbox_inches="tight")
+            return figure
         if view == "rotation":
             if self.rotation_branches is None:
                 raise ValueError(
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
                     "check_rotation=False. Run ssb.compare_rotation_branches() to fit and compare both branches.")
-            return self.rotation_branches.show(**({} if axsize is None else {"axsize": axsize}))
+            return self.rotation_branches.show(axsize=axsize, cmap=cmap, save=save)
         if view == "phase" and self.object_wave.ndim == 2:
             _announce_below_auto(self)
         if view in ("parameters", "depth", "tilt") or (view == "phase" and show_parameters and self.parameter_slices):
             from quantem.gpu.ssb.parameters import plot_parameters
 
-            return plot_parameters(self, view="parameters" if view == "phase" else view,
-                                   include_phase=view == "phase", axsize=axsize)
+            figure = plot_parameters(self, view="parameters" if view == "phase" else view,
+                                     include_phase=view == "phase", axsize=axsize,
+                                     rows=rows, columns=columns, cmap=cmap)
+            if save is not None:
+                figure.savefig(save, dpi="figure", bbox_inches="tight")
+            return figure
         if view == "phase":
             column_sampling = float(self.object_sampling_A[1])
-            arrays = self.phase
+            arrays = host_array(self.phase)
             titles = f"SSB phase · {self.upsampling_factor}× (rad)"
             bars = {"sampling": column_sampling, "units": "Å", "fontsize": 13}
             panel_size = (12, 12)
@@ -455,14 +474,25 @@ class SSBResult(Mapping[str, float]):
             panel_size = (6, 6)
         else:
             raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth' or 'tilt'; got {view!r}.")
+        if rows is not None or columns is not None:
+            frames = arrays if isinstance(arrays, list) else ([arrays] if arrays.ndim == 2 else list(arrays))
+            count = len(frames)
+            columns = resolve_columns(count, rows=rows, columns=columns, default=count)
+            arrays = [frames[index:index + columns] for index in range(0, count, columns)]
+            if isinstance(titles, list):
+                titles = [titles[index:index + columns] for index in range(0, count, columns)]
+            if isinstance(bars, list):
+                bars = [bars[index:index + columns] for index in range(0, count, columns)]
         figure, _ = show_2d(
             arrays, title=titles,
             norm=({"interval_type": "manual", "vmin": self.phase_limits[0],
                    "vmax": self.phase_limits[1]} if view == "phase" else "minmax"),
-            cmap="inferno", cbar=view == "phase",
+            cmap=cmap, cbar=view == "phase",
             axsize=panel_size if axsize is None else axsize, title_fontsize=16,
             scalebar=bars,
         )
+        if save is not None:
+            figure.savefig(save, dpi="figure", bbox_inches="tight")
         plt.close(figure)
         return figure
 
@@ -648,7 +678,7 @@ def _format_aberrations(aberrations: dict) -> str:
     return "\n".join(lines)
 
 
-def _phase_comparison(first, second, *, axsize: tuple[float, float]):
+def _phase_comparison(first, second, *, axsize: tuple[float, float], cmap: str = "inferno"):
     """Show the same central region without notebook-side crop arithmetic."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
@@ -687,7 +717,7 @@ def _phase_comparison(first, second, *, axsize: tuple[float, float]):
     show_2d(
         [phases, crops], title=[titles, crop_titles], figax=(figure, axes),
         norm={"interval_type": "manual", "vmin": first.phase_limits[0], "vmax": first.phase_limits[1]},
-        cmap="inferno", cbar=True, scalebar=[bars, bars], title_fontsize=16,
+        cmap=cmap, cbar=True, scalebar=[bars, bars], title_fontsize=16,
         tight_layout=False,
     )
     image_axes = [axis for axis in figure.axes if axis.images]

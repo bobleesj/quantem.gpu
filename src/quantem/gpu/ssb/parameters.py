@@ -80,10 +80,14 @@ def plot_parameters(
     view: str = "parameters",
     include_phase: bool = False,
     axsize: tuple[float, float] | None = None,
+    rows: int | None = None,
+    columns: int | None = None,
+    cmap: str = "inferno",
 ) -> "Figure":
     """Show recorded slices with physical units and the fitted point."""
     import matplotlib.patheffects as path_effects
     import matplotlib.pyplot as plt
+    from quantem.gpu.display._layout import resolve_columns
 
     evidence = result.parameter_slices
     if not evidence:
@@ -99,8 +103,15 @@ def plot_parameters(
         descriptions = tuple(item for item in descriptions if item[0] == key)
     panels = len(descriptions) + int(include_phase)
     panel_size = (5.2, 4.5) if axsize is None else axsize
-    figure, axes = plt.subplots(1, panels, figsize=(panel_size[0] * panels, panel_size[1]), layout="constrained")
-    axes = np.atleast_1d(axes)
+    columns = resolve_columns(panels, rows=rows, columns=columns, default=panels)
+    row_count = (panels + columns - 1) // columns
+    figure, grid = plt.subplots(
+        row_count, columns, squeeze=False,
+        figsize=(panel_size[0] * columns, panel_size[1] * row_count), layout="constrained",
+    )
+    axes = grid.ravel()[:panels]
+    for unused in grid.ravel()[panels:]:
+        unused.remove()
     if include_phase:
         from quantem.gpu.ssb.results import host_array
 
@@ -108,7 +119,7 @@ def plot_parameters(
         sampling_nm = np.asarray(result.object_sampling_A) / 10.0
         phase_image = axes[0].imshow(
             phase,
-            cmap="inferno",
+            cmap=cmap,
             vmin=result.phase_limits[0],
             vmax=result.phase_limits[1],
             extent=(0, phase.shape[1] * sampling_nm[1], phase.shape[0] * sampling_nm[0], 0),
@@ -123,7 +134,7 @@ def plot_parameters(
             data["column_values"],
             data["row_values"],
             data["relative_agreement"],
-            cmap="inferno",
+            cmap=cmap,
             shading="nearest",
             vmin=0,
             vmax=maximum,
