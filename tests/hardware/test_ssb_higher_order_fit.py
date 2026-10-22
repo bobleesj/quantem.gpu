@@ -104,7 +104,13 @@ def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt, co
         assert record["agreement"] > record["start_agreement"]
         assert fit.sample_agreement == record["agreement"]
         assert (fit.loss is None) == (not compute_loss)
-        assert fit.phase_estimator == ("mean_phase" if compute_loss else "phase_of_mean")
+        assert fit.phase_estimator == "phase_of_mean"  # _finish_fit keeps the common display estimator
+        phase, _ = ssb.preview(fit.aberrations, sample_tilt_mrad=fit.sample_tilt_mrad or (0.0, 0.0),
+                              depth_spread_nm=fit.depth_spread_nm or 0.0,
+                              phase_estimator="phase_of_mean", compute_loss=False)
+        actual = fit.phase.get() if backend_name == "cuda" else np.asarray(fit.phase)
+        expected = phase.get() if backend_name == "cuda" else np.asarray(phase)
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
         # a weak-phase object: the model explains its G (noise-free float input: no Poisson floor), so the guard trusts
         assert record["trusted"] and record["guard"]["coherence"] > 0.95, record["guard"]
         assert ssb.aberrations == fit.aberrations          # reconstruct() applies the fitted terms
