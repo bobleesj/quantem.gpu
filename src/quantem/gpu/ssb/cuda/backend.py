@@ -1,6 +1,5 @@
 """Private CUDA compute implementation for the public SSB workflow."""
 
-import gc
 import math
 import time
 
@@ -218,10 +217,10 @@ class CudaSSBBackend:
         if self._accelerator is not None:
             # the geometry arrays too, so the pool flush below returns their memory
             self._accelerator._cache.clear()
+            # Break the known ownership cycle directly. A global collection
+            # would also scan unrelated notebook objects on every region close.
+            self._accelerator.thick.engine = None
             self._accelerator = None
-        # ThickSample refers back to its engine. Collect that cycle only after
-        # dropping our owner reference, before returning unused blocks to CUDA.
-        gc.collect()
         cp.get_default_memory_pool().free_all_blocks()
 
     def _get_accelerator(self) -> SSBEngine:
