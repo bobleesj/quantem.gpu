@@ -2906,7 +2906,9 @@ class SSB:
         record = {"terms": list(terms), "start_agreement": float(fit["start_agreement"]),
                   "agreement": float(fit["agreement"]), "evaluations": int(fit["evaluations"]),
                   "passes": int(fit["passes"]), "converged": bool(fit["converged"]), "seconds": refined_s,
-                  "trusted": guard["trusted"], "guard": guard}
+                  "trusted": guard["trusted"], "guard": guard,
+                  "host_numerical_search": True, "optimizer_backend": "numpy",
+                  "agreement_backend": self.backend}
         refined = replace(
             result, object_wave=self._unit_wave(phase), aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
             depth_spread_nm=depth_spread_nm, loss=None if loss is None else float(loss),
@@ -2914,7 +2916,7 @@ class SSB:
             amplitude_estimated=False,
             sample_agreement=float(fit["agreement"]),
             timings={**result.timings, "higher_order_s": time.perf_counter() - started},
-            optimizer={**result.optimizer, "higher_order": record},
+            optimizer={**result.optimizer, "higher_order": record, "host_numerical_search": True},
             elapsed_s=None if result.elapsed_s is None else result.elapsed_s + (time.perf_counter() - started),
         )
         if verbose:

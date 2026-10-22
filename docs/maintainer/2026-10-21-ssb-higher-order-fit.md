@@ -28,6 +28,13 @@ kernel evaluates it, computing the probe phase from the Krivanek polynomial
 joint fit's angle-sum kernel needs a quadratic χ. `tilt=False` holds the tilt
 and depth spread at 0.
 
+The agreement evaluations and reconstruction run on the selected GPU backend.
+The optional higher-order polish uses NumPy on the CPU for its Newton steps,
+finite differences and Hessian calculations. It is not a GPU-resident optimizer.
+The result records `host_numerical_search=True`; its `higher_order` record
+identifies `optimizer_backend="numpy"` and the `agreement_backend`.
+This optional path does not change the default fit optimizer.
+
 The result's `aberrations` carry `C21_nm`, `phi21_deg`, `C23_nm`, `phi23_deg` and
 `C30_nm`, so `reconstruct(result)` applies them. `result.optimizer["higher_order"]`
 records the agreement before and after, the evaluations, the time, and the

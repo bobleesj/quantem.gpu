@@ -101,6 +101,10 @@ def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt, co
                                    compute_loss=compute_loss)
         record = fit.optimizer["higher_order"]
         assert record["terms"] == ["C21", "C23", "C30"]
+        assert fit.optimizer["host_numerical_search"] is True
+        assert record["host_numerical_search"] is True
+        assert record["optimizer_backend"] == "numpy"
+        assert record["agreement_backend"] == backend_name
         assert record["agreement"] > record["start_agreement"]
         assert fit.sample_agreement == record["agreement"]
         assert (fit.loss is None) == (not compute_loss)
@@ -137,3 +141,5 @@ def test_saved_fit_keeps_the_higher_orders_and_their_setting(simulation, tmp_pat
     assert loaded is not None and loaded.aberrations == fit.aberrations
     assert set(loaded.aberrations) == {"C10_nm", "C12_nm", "phi12_deg", "C21_nm", "phi21_deg", "C30_nm"}
     assert loaded.optimizer["higher_order"]["terms"] == ["C21", "C30"]
+    assert loaded.optimizer["host_numerical_search"] is True
+    assert loaded.optimizer["higher_order"]["agreement_backend"] == backend_name
