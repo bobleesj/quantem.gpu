@@ -23,7 +23,9 @@ public enum SSBRotationBranches {
   public static func centerOfMass(total: [UInt64], rowMoment: [UInt64], columnMoment: [UInt64])
     -> (row: [Float], column: [Float])
   {
-    let row = total.indices.map { total[$0] == 0 ? 0 : Float(Double(rowMoment[$0]) / Double(total[$0])) }
+    let row = total.indices.map {
+      total[$0] == 0 ? 0 : Float(Double(rowMoment[$0]) / Double(total[$0]))
+    }
     let column = total.indices.map {
       total[$0] == 0 ? 0 : Float(Double(columnMoment[$0]) / Double(total[$0]))
     }
@@ -33,8 +35,11 @@ public enum SSBRotationBranches {
   /// The rotation in degrees, in [0, 180), that minimizes the mean squared curl of the centre-of-mass field
   /// (`find_optimal_rotation` with the axes as given). The mean subtraction of `dpc.center_of_mass` leaves
   /// every central difference unchanged, so the field is used as it is.
-  public static func curlRotationDegrees(row: [Float], column: [Float], rows: Int, columns: Int) -> Double {
-    precondition(rows >= 3 && columns >= 3 && row.count == rows * columns && column.count == row.count)
+  public static func curlRotationDegrees(row: [Float], column: [Float], rows: Int, columns: Int)
+    -> Double
+  {
+    precondition(
+      rows >= 3 && columns >= 3 && row.count == rows * columns && column.count == row.count)
     var curlPower = 0.0
     var divergencePower = 0.0
     var crossPower = 0.0
@@ -42,9 +47,11 @@ public enum SSBRotationBranches {
       for c in 1..<(columns - 1) {
         let i = r * columns + c
         let curl = Double(
-          Float(0.5) * (column[i + columns] - column[i - columns]) - Float(0.5) * (row[i + 1] - row[i - 1]))
+          Float(0.5) * (column[i + columns] - column[i - columns]) - Float(0.5)
+            * (row[i + 1] - row[i - 1]))
         let divergence = Double(
-          Float(0.5) * (row[i + columns] - row[i - columns]) + Float(0.5) * (column[i + 1] - column[i - 1]))
+          Float(0.5) * (row[i + columns] - row[i - columns]) + Float(0.5)
+            * (column[i + 1] - column[i - 1]))
         curlPower += curl * curl
         divergencePower += divergence * divergence
         crossPower += curl * divergence
@@ -93,7 +100,9 @@ public enum SSBRotationBranches {
   }
 
   /// `scipy.ndimage.gaussian_filter` (truncate 4.0) of a row-major image, axis 0 then axis 1.
-  static func gaussianFilter(_ image: [Double], rows: Int, columns: Int, sigma: (Double, Double)) -> [Double] {
+  static func gaussianFilter(_ image: [Double], rows: Int, columns: Int, sigma: (Double, Double))
+    -> [Double]
+  {
     func kernel(_ sd: Double) -> [Double] {
       let radius = Int(4.0 * sd + 0.5)
       let sigma2 = sd * sd
@@ -168,7 +177,9 @@ public enum SSBRotationBranches {
   }
 
   /// The high-pass sigma and the peak window in scan pixels for one scan step (`column_filter_px`).
-  static func columnFilter(scanSampling: (Double, Double)) -> (sigma: (Double, Double), window: (Int, Int)) {
+  static func columnFilter(scanSampling: (Double, Double)) -> (
+    sigma: (Double, Double), window: (Int, Int)
+  ) {
     func window(_ step: Double) -> Int {
       // Python's round: half to even.
       2 * max(1, Int((columnSeparationAngstroms / step).rounded(.toNearestOrEven))) + 1
@@ -223,14 +234,23 @@ public enum SSBRotationBranches {
     let (sigma, _) = columnFilter(scanSampling: scanSampling)
     let centred = values.map { $0 - mean }
     let background = gaussianFilter(centred, rows: rows, columns: columns, sigma: sigma)
-    let sampled = positions.map { centred[$0.row * columns + $0.column] - background[$0.row * columns + $0.column] }
-    guard sampled.count >= 3 else { return ColumnTest(z: nil, effect: nil, positiveFraction: nil, count: sampled.count) }
+    let sampled = positions.map {
+      centred[$0.row * columns + $0.column] - background[$0.row * columns + $0.column]
+    }
+    guard sampled.count >= 3 else {
+      return ColumnTest(z: nil, effect: nil, positiveFraction: nil, count: sampled.count)
+    }
     let sampleMean = sampled.reduce(0, +) / Double(sampled.count)
-    let spread = sqrt(sampled.map { ($0 - sampleMean) * ($0 - sampleMean) }.reduce(0, +) / Double(sampled.count))
+    let spread = sqrt(
+      sampled.map { ($0 - sampleMean) * ($0 - sampleMean) }.reduce(0, +) / Double(sampled.count))
     let positive = Double(sampled.filter { $0 > 0 }.count) / Double(sampled.count)
-    guard spread > 0 else { return ColumnTest(z: nil, effect: nil, positiveFraction: positive, count: sampled.count) }
+    guard spread > 0 else {
+      return ColumnTest(z: nil, effect: nil, positiveFraction: positive, count: sampled.count)
+    }
     let z = sampleMean / (spread / sqrt(Double(sampled.count)))
-    return ColumnTest(z: z, effect: z / sqrt(Double(sampled.count)), positiveFraction: positive, count: sampled.count)
+    return ColumnTest(
+      z: z, effect: z / sqrt(Double(sampled.count)), positiveFraction: positive,
+      count: sampled.count)
   }
 
   /// `mean(p^3) / mean(p^2)^1.5` with `p = phase - mean(phase)` (`results.phase_skewness`).
@@ -270,14 +290,16 @@ public enum SSBRotationBranches {
     let positions =
       darkField.map {
         $0.count == rows * columns
-          ? locateAtomicColumns(darkField: $0, rows: rows, columns: columns, scanSampling: scanSampling)
+          ? locateAtomicColumns(
+            darkField: $0, rows: rows, columns: columns, scanSampling: scanSampling)
           : []
       }
     let branches = zip(phases, rotations).map { phase, rotation in
       Branch(
         scanDetectorRotationDegrees: rotation, phaseSkewness: phaseSkewness(phase),
         column: positions.map {
-          columnPhaseTest(phase: phase, rows: rows, columns: columns, at: $0, scanSampling: scanSampling)
+          columnPhaseTest(
+            phase: phase, rows: rows, columns: columns, at: $0, scanSampling: scanSampling)
         })
     }
     let decisive = branches.contains { branch in

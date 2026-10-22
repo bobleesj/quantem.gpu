@@ -41,12 +41,15 @@ final class SSBSeparableReconstruction {
     return buffer
   }
 
-  init(device: MTLDevice, library: MTLLibrary, geometry: MetalSSBGeometry, k: [SIMD2<Float>]) throws {
+  init(device: MTLDevice, library: MTLLibrary, geometry: MetalSSBGeometry, k: [SIMD2<Float>]) throws
+  {
     self.device = device
     self.geometry = geometry
     self.k = k
     func pipeline(_ name: String) throws -> MTLComputePipelineState {
-      guard let function = library.makeFunction(name: name) else { throw MetalSSBError.missingFunction(name) }
+      guard let function = library.makeFunction(name: name) else {
+        throw MetalSSBError.missingFunction(name)
+      }
       return try device.makeComputePipelineState(function: function)
     }
     tables = try pipeline("sep_tables")
@@ -54,8 +57,10 @@ final class SSBSeparableReconstruction {
     single = try pipeline("sep_coherent")
     paired = try pipeline("sep_coherent_paired")
     scatter = try pipeline("sep_scatter")
-    depth = [1: try pipeline("sep_coherent_depth1"), 2: try pipeline("sep_coherent_depth2"),
-             3: try pipeline("sep_coherent_depth3")]
+    depth = [
+      1: try pipeline("sep_coherent_depth1"), 2: try pipeline("sep_coherent_depth2"),
+      3: try pipeline("sep_coherent_depth3"),
+    ]
   }
 
   // MARK: Double-precision parts (NumPy semantics)
@@ -126,15 +131,21 @@ final class SSBSeparableReconstruction {
       return (0..<count).filter { abs(Self.frequency($0, n)) <= limit }
     }
     let rows = support(Double(k.map { abs($0.x) }.max() ?? 0) + radius, geometry.qxByRow[1], n)
-    let cols = support(Double(k.map { abs($0.y) }.max() ?? 0) + radius, geometry.qyByColumn[1], columns)
+    let cols = support(
+      Double(k.map { abs($0.y) }.max() ?? 0) + radius, geometry.qyByColumn[1], columns)
     let nyquist = n / 2
     var upper: [Int] = []
     if rows.contains(nyquist) {
       let limit = cols.map { abs(Self.frequency($0, n)) }.max() ?? 0
       upper = (columns..<n).filter { abs(Self.frequency($0, n)) <= limit }
-      guard upper.isEmpty || (upper.last == n - 1 && zip(upper.dropFirst(), upper).allSatisfy { $0 - $1 == 1 }),
+      guard
+        upper.isEmpty
+          || (upper.last == n - 1 && zip(upper.dropFirst(), upper).allSatisfy { $0 - $1 == 1 }),
         upper.count <= cols.count
-      else { throw MetalSSBError.invalidGeometry("Unexpected Nyquist-row support for the separable SSB kernel.") }
+      else {
+        throw MetalSSBError.invalidGeometry(
+          "Unexpected Nyquist-row support for the separable SSB kernel.")
+      }
     }
     let allCols = cols + upper
     let rowF = rows.map { Self.frequency($0, n) }
@@ -157,7 +168,8 @@ final class SSBSeparableReconstruction {
       colIndices: try Self.buffer(device, allCols.map(UInt32.init)),
       rowFBuffer: try Self.buffer(device, rowF.map { Float($0) }),
       colFBuffer: try Self.buffer(device, colF.map { Float($0) }),
-      rowPosition: try Self.buffer(device, rowPosition), colPosition: try Self.buffer(device, colPosition),
+      rowPosition: try Self.buffer(device, rowPosition),
+      colPosition: try Self.buffer(device, colPosition),
       tuples: tuples, tupleCounts: counts)
     cache[factor] = result
     return result
@@ -191,32 +203,47 @@ final class SSBSeparableReconstruction {
   /// probe must hold this geometry's apertures. Throws `NotCached` when a batch is a streamed full spectrum.
   func encode(
     params: [Float], factor: Int, probe: MTLBuffer, full: MTLBuffer, commands: MTLCommandBuffer,
-    visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void, isCancelled: () -> Bool
+    visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void,
+    isCancelled: () -> Bool
   ) throws {
     try ensureKData(probe: probe)
     let geo = try geometryFor(factor: factor)
     let source = geometry.qxByRow.count
     let stored = k.count
-    let wl = Double(params[0]), c10 = Double(params[4]), c12 = Double(params[5])
-    let c2 = Double(params[6]), s2 = Double(params[7]), factorChi = Double(params[8])
+    let wl = Double(params[0])
+    let c10 = Double(params[4])
+    let c12 = Double(params[5])
+    let c2 = Double(params[6])
+    let s2 = Double(params[7])
+    let factorChi = Double(params[8])
     let depthValue = Double(params[9])
     let scale = factorChi * wl * wl
-    let m00 = scale * (c10 + c12 * c2), m01 = scale * c12 * s2, m11 = scale * (c10 - c12 * c2)
-    let stepR = Double(geometry.qxByRow[1]), stepC = Double(geometry.qyByColumn[1])
+    let m00 = scale * (c10 + c12 * c2)
+    let m01 = scale * c12 * s2
+    let m11 = scale * (c10 - c12 * c2)
+    let stepR = Double(geometry.qxByRow[1])
+    let stepC = Double(geometry.qyByColumn[1])
     let pRow = k.flatMap { Self.splitMod(2 * stepR * (m00 * Double($0.x) + m01 * Double($0.y))) }
     let pCol = k.flatMap { Self.splitMod(2 * stepC * (m01 * Double($0.x) + m11 * Double($0.y))) }
-    let psiA = m00 * stepR * stepR, psiB = 2 * m01 * stepR * stepC, psiC = m11 * stepC * stepC
+    let psiA = m00 * stepR * stepR
+    let psiB = 2 * m01 * stepR * stepC
+    let psiC = m11 * stepC * stepC
     let psiRow = geo.rowF.map { Self.phasor(psiA * $0 * $0) }
     let psiCol = geo.colF.map { Self.phasor(psiC * $0 * $0) }
     let psiCross = geo.rowF.flatMap { Self.splitMod(psiB * $0) }
-    let rows = geo.rows.count, cols = geo.cols.count, extra = geo.upper.count, colsAll = cols + extra
+    let rows = geo.rows.count
+    let cols = geo.cols.count
+    let extra = geo.upper.count
+    let colsAll = cols + extra
     var grid = Grid(
       rows: UInt32(rows), cols: UInt32(cols), colsAll: UInt32(colsAll), extra: UInt32(extra),
       nyquistRI: UInt32(geo.nyquistRI), sourceN: UInt32(source), gCols: UInt32(source / 2 + 1),
-      count: UInt32(stored), chunk: UInt32(Self.chunk), groups: 0, groupOffset: 0, tuples: 0, bfOffset: 0,
+      count: UInt32(stored), chunk: UInt32(Self.chunk), groups: 0, groupOffset: 0, tuples: 0,
+      bfOffset: 0,
       n: UInt32(geo.n), pad0: 0, pad1: 0, depthScale: 0, pad2: 0, pad3: 0, pad4: 0)
     let hasDepth = depthValue != 0
-    let pRowBuffer = try Self.buffer(device, pRow), pColBuffer = try Self.buffer(device, pCol)
+    let pRowBuffer = try Self.buffer(device, pRow)
+    let pColBuffer = try Self.buffer(device, pCol)
     let tRow = try workspace("rows", stored * rows * (hasDepth ? 16 : 8))
     let tCol = try workspace("columns", stored * colsAll * (hasDepth ? 16 : 8))
     var depthBuffers: [MTLBuffer] = []
@@ -225,7 +252,8 @@ final class SSBSeparableReconstruction {
     encoderTables.setBuffer(pColBuffer, offset: 0, index: 1)
     if hasDepth {
       let depthF = depthValue * scale
-      let thetaR = Double(params[10]), thetaC = Double(params[11])
+      let thetaR = Double(params[10])
+      let thetaC = Double(params[11])
       let dRow = k.flatMap { Self.splitMod(-depthF * stepR * Double($0.x)) }
       let dCol = k.flatMap { Self.splitMod(-depthF * stepC * Double($0.y)) }
       encoderTables.setBuffer(try Self.buffer(device, dRow), offset: 0, index: 2)
@@ -236,15 +264,21 @@ final class SSBSeparableReconstruction {
       encoderTables.setBuffer(tCol, offset: 0, index: 7)
       encoderTables.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 8)
       for (frequencies, step, theta) in [(geo.rowF, stepR, thetaR), (geo.colF, stepC, thetaC)] {
-        var minus: [SIMD2<Float>] = [], plus: [SIMD2<Float>] = [], parts: [Float] = []
+        var minus: [SIMD2<Float>] = []
+        var plus: [SIMD2<Float>] = []
+        var parts: [Float] = []
         for frequency in frequencies {
           let q = frequency * step
-          let p = 0.5 * depthF * q * q, c = -Double.pi * depthValue * theta * q
+          let p = 0.5 * depthF * q * q
+          let c = -Double.pi * depthValue * theta * q
           minus.append(Self.phasor(c - p))
           plus.append(Self.phasor(c + p))
           parts += [Float(p), Float(c)]
         }
-        depthBuffers += [try Self.buffer(device, minus), try Self.buffer(device, plus), try Self.buffer(device, parts)]
+        depthBuffers += [
+          try Self.buffer(device, minus), try Self.buffer(device, plus),
+          try Self.buffer(device, parts),
+        ]
       }
       grid.depthScale = Float(depthF)
     } else {
@@ -262,7 +296,8 @@ final class SSBSeparableReconstruction {
     guard let blit = commands.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
     blit.fill(buffer: compact, range: 0..<((rows + 1) * cols * 8), value: 0)
     blit.endEncoding()
-    let psiRowBuffer = try Self.buffer(device, psiRow), psiColBuffer = try Self.buffer(device, psiCol)
+    let psiRowBuffer = try Self.buffer(device, psiRow)
+    let psiColBuffer = try Self.buffer(device, psiCol)
     let psiCrossBuffer = try Self.buffer(device, psiCross)
     var paramsCopy = params
     let aliases = max(1, min(3, factor))
@@ -299,8 +334,10 @@ final class SSBSeparableReconstruction {
         compute.setBytes(&launch, length: MemoryLayout<Grid>.stride, index: 15)
         if hasDepth || usePaired { compute.setBuffer(geo.tuples[tupleSize]!, offset: 0, index: 16) }
         if hasDepth {
-          for (index, buffer) in [depthBuffers[0], depthBuffers[3], depthBuffers[1], depthBuffers[4],
-                                  depthBuffers[2], depthBuffers[5]].enumerated() {
+          for (index, buffer) in [
+            depthBuffers[0], depthBuffers[3], depthBuffers[1], depthBuffers[4],
+            depthBuffers[2], depthBuffers[5],
+          ].enumerated() {
             compute.setBuffer(buffer, offset: 0, index: 17 + index)
           }
         }
@@ -332,7 +369,10 @@ final class SSBSeparableReconstruction {
     func values(_ step: Float) -> [Float] {
       (0..<n).map { Float(Self.frequency($0, n) * Double(step)) }
     }
-    let buffers = (try! Self.buffer(device, values(geometry.qxByRow[1])), try! Self.buffer(device, values(geometry.qyByColumn[1])))
+    let buffers = (
+      try! Self.buffer(device, values(geometry.qxByRow[1])),
+      try! Self.buffer(device, values(geometry.qyByColumn[1]))
+    )
     qBuffers[n] = buffers
     return buffers
   }
@@ -342,20 +382,25 @@ final class SSBSeparableReconstruction {
   private func encoder(_ command: MTLCommandBuffer, _ pipeline: MTLComputePipelineState) throws
     -> MTLComputeCommandEncoder
   {
-    guard let encoder = command.makeComputeCommandEncoder() else { throw MetalSSBError.commandQueue }
+    guard let encoder = command.makeComputeCommandEncoder() else {
+      throw MetalSSBError.commandQueue
+    }
     encoder.setComputePipelineState(pipeline)
     return encoder
   }
   static func allocate(_ device: MTLDevice, _ length: Int) throws -> MTLBuffer {
-    guard let buffer = device.makeBuffer(length: max(16, length), options: .storageModePrivate) else {
-      throw MetalSSBError.allocation("separable SSB workspace (\(length) bytes). Close inactive datasets and retry")
+    guard let buffer = device.makeBuffer(length: max(16, length), options: .storageModePrivate)
+    else {
+      throw MetalSSBError.allocation(
+        "separable SSB workspace (\(length) bytes). Close inactive datasets and retry")
     }
     return buffer
   }
   static func buffer<T>(_ device: MTLDevice, _ values: [T]) throws -> MTLBuffer {
     guard
       let result = values.withUnsafeBytes({ bytes in
-        device.makeBuffer(bytes: bytes.baseAddress!, length: max(16, bytes.count), options: .storageModeShared)
+        device.makeBuffer(
+          bytes: bytes.baseAddress!, length: max(16, bytes.count), options: .storageModeShared)
       })
     else { throw MetalSSBError.allocation("separable SSB tables") }
     return result

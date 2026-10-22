@@ -60,17 +60,23 @@ final class SSBAgreementSearchTests: XCTestCase {
 
   func testCurrentPythonSearchWhenGiven() throws {
     guard let path = ProcessInfo.processInfo.environment["SSB_AGREEMENT_REFERENCE"] else {
-      throw XCTSkip("scripts/ssb_agreement_gate.py sets SSB_AGREEMENT_REFERENCE to the current Python records.")
+      throw XCTSkip(
+        "scripts/ssb_agreement_gate.py sets SSB_AGREEMENT_REFERENCE to the current Python records.")
     }
-    let reference = try JSONDecoder().decode(Reference.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+    let reference = try JSONDecoder().decode(
+      Reference.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
     for (name, expected) in [("tilt", reference.tilt), ("standard", reference.standard)] {
       let recorder = Recorder()
       let fit =
         name == "tilt"
-        ? try SSBAgreementSearch.fitTilt(recorder.evaluate) : try SSBAgreementSearch.fitStandard(recorder.evaluate)
+        ? try SSBAgreementSearch.fitTilt(recorder.evaluate)
+        : try SSBAgreementSearch.fitStandard(recorder.evaluate)
       XCTAssertEqual(recorder.rows.count, expected.rows, name)
-      XCTAssertEqual(recorder.digest, expected.sha256, "\(name): a trial row differs from the Python search")
-      for (actual, value) in zip(fit.point, expected.point) { XCTAssertEqual(actual, value, accuracy: 1e-6, name) }
+      XCTAssertEqual(
+        recorder.digest, expected.sha256, "\(name): a trial row differs from the Python search")
+      for (actual, value) in zip(fit.point, expected.point) {
+        XCTAssertEqual(actual, value, accuracy: 1e-6, name)
+      }
       XCTAssertEqual(fit.agreement, expected.agreement, name)
     }
   }
@@ -86,7 +92,9 @@ final class SSBAgreementSearchTests: XCTestCase {
       37.267501144443685, 32.30775752459612, -0.19035700659647992, 3.49993612504556,
       -1.2500771160326833, 150.91333765686667,
     ]
-    for (actual, value) in zip(fit.point, expected) { XCTAssertEqual(actual, value, accuracy: 1e-6) }
+    for (actual, value) in zip(fit.point, expected) {
+      XCTAssertEqual(actual, value, accuracy: 1e-6)
+    }
     XCTAssertEqual(fit.agreement, 1.0e6)
     XCTAssertEqual(fit.newtonStarts.map(\.evaluations), [125, 41, 41, 97, 69])
     XCTAssertEqual(fit.newtonStarts.map(\.converged), [true, false, false, true, false])
@@ -100,7 +108,9 @@ final class SSBAgreementSearchTests: XCTestCase {
       recorder.digest, "a645708f9348b0c2c60eb0609f91a2c377bba8c1af084a748cd85511e8b12ca6",
       "a trial row differs from the Python resident search")
     let expected = [37.22132425139795, 32.306412714345484, -0.19023146368751864]
-    for (actual, value) in zip(fit.point, expected) { XCTAssertEqual(actual, value, accuracy: 1e-6) }
+    for (actual, value) in zip(fit.point, expected) {
+      XCTAssertEqual(actual, value, accuracy: 1e-6)
+    }
     XCTAssertEqual(Array(fit.point[3...]), [0, 0, 0])
     XCTAssertEqual(fit.agreement, 994247)
   }
@@ -108,7 +118,8 @@ final class SSBAgreementSearchTests: XCTestCase {
   func testRandomStreamsAndRanks() {
     // The first MT19937 outputs for seed 5489 (the reference generator's default seed).
     var generator = SSBAgreementSearch.MersenneTwister(seed: 5489)
-    XCTAssertEqual((0..<3).map { _ in generator.next() }, [3_499_211_612, 581_869_302, 3_890_346_734])
+    XCTAssertEqual(
+      (0..<3).map { _ in generator.next() }, [3_499_211_612, 581_869_302, 3_890_346_734])
     // NumPy's RandomState(42).random_sample() uses the same 53-bit construction.
     var seeded = SSBAgreementSearch.MersenneTwister(seed: 42)
     XCTAssertEqual(seeded.uniform(), 0.3745401188473625, accuracy: 0)

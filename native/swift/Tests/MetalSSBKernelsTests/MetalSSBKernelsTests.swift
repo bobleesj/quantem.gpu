@@ -211,7 +211,8 @@ final class MetalSSBKernelsTests: XCTestCase {
       Set(record.keys),
       [
         "schema", "source_identity", "shape", "phase_encoding", "phase_unit", "phase_sha256",
-        "calibration", "aberrations", "scan_detector_rotation_deg", "scan_detector_rotation_flipped",
+        "calibration", "aberrations", "scan_detector_rotation_deg",
+        "scan_detector_rotation_flipped",
         "provenance", "run_metadata", "phase_file",
       ])
     XCTAssertEqual(record["schema"] as? String, "quantem.ssb-phase/2")

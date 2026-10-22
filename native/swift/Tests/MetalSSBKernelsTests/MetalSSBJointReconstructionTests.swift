@@ -49,7 +49,8 @@ final class MetalSSBJointReconstructionTests: XCTestCase {
               polls += 1
               return polls >= 3
             }))
-        let afterCancellation = try model.reconstruct(point, upsamplingFactor: 3, estimator: .meanPhase)
+        let afterCancellation = try model.reconstruct(
+          point, upsamplingFactor: 3, estimator: .meanPhase)
         assertPhase(afterCancellation, equals: expected)
         XCTAssertEqual(before, Data(bytes: actual.phase.contents(), count: before.count))
       }
