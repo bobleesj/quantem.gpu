@@ -2910,6 +2910,8 @@ class SSB:
         refined = replace(
             result, object_wave=self._unit_wave(phase), aberrations=aberrations, sample_tilt_mrad=sample_tilt_mrad,
             depth_spread_nm=depth_spread_nm, loss=None if loss is None else float(loss),
+            phase_estimator="mean_phase" if compute_loss else "phase_of_mean",
+            amplitude_estimated=False,
             sample_agreement=float(fit["agreement"]),
             timings={**result.timings, "higher_order_s": time.perf_counter() - started},
             optimizer={**result.optimizer, "higher_order": record},
