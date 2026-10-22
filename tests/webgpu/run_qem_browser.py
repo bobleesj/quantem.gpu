@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from playwright.sync_api import sync_playwright
 
-from make_qem_browser_fixture import generate, generate_h5, generate_ssb
+from make_qem_browser_fixture import generate, generate_h5, generate_ssb, generate_ssb_higher_order
 
 
 class RangeHandler(http.server.SimpleHTTPRequestHandler):
@@ -79,6 +79,7 @@ def main() -> None:
         generate(root / "fixtures")
         generate_h5(root / "fixtures")
         generate_ssb(root / "fixtures")
+        generate_ssb_higher_order(root / "fixtures" / "ssb-higher-order")
         for filename, exported in (
             ("qem-browser", "QemBrowserParity"),
             ("rans-products", "RansProductParity"),
@@ -89,6 +90,7 @@ def main() -> None:
             ("ssb-bf-subset", "SsbBfSubset"),
             ("ssb-qem", "SsbQem"),
             ("ssb-interaction", "SsbInteraction"),
+            ("ssb-higher-order-sign", "SsbHigherOrderSign"),
         ):
             subprocess.run(
                 [str(args.esbuild), str(sources / f"{filename}.ts"), "--bundle",
@@ -120,9 +122,12 @@ def main() -> None:
                     page.add_script_tag(url="/ssb-bf-subset.js")
                     page.add_script_tag(url="/ssb-qem.js")
                     page.add_script_tag(url="/ssb-interaction.js")
+                    page.add_script_tag(url="/ssb-higher-order-sign.js")
                     result = page.evaluate("""async (expected) => {
                       const adapter = await navigator.gpu.requestAdapter();
-                      if (!adapter || adapter.info.isFallbackAdapter) {
+                      // SwiftShader, Chrome's CPU renderer, need not report itself as a fallback adapter
+                      if (!adapter || adapter.info.isFallbackAdapter || adapter.info.architecture === 'swiftshader'
+                          || adapter.info.vendor === 'google') {
                         throw new Error('A physical WebGPU adapter is required');
                       }
                       const found = adapter.info.vendor + '/' + adapter.info.architecture;
@@ -156,6 +161,8 @@ def main() -> None:
                           ssb_qem: await SsbQem.runSsbQemParity(location.origin + '/fixtures/'),
                           ssb_bf_subset: await SsbBfSubset.runSsbBfSubsetParity(),
                           ssb_build_peak: await SsbBfSubset.runSsbBuildPeak(),
+                          ssb_higher_order_sign: await SsbHigherOrderSign.runSsbHigherOrderSign(
+                            location.origin + '/fixtures/ssb-higher-order/'),
                         };
                       } finally { device.destroy(); }
                     }""", args.expect_adapter)

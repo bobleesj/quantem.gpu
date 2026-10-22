@@ -183,7 +183,8 @@ restore a saved run or start a new one.
 `bash scripts/check_metal_ssb.sh` runs these checks without XCTest on an Apple
 GPU: identical reconstructions and loss for equal `uint8`, `uint16` and
 `uint32` counts, values beyond the narrower widths, full-cache versus streamed
-reconstruction within the 1e-4 relative L2 limit, a seeded 200-trial synthetic
-fit, exact reload of saved images and fit history, and rejection of another
-acquisition's identity. The fixtures are small synthetic BF sets with full scan
+reconstruction within the 1e-4 relative L2 limit, coma and trefoil corrected
+with the first sideband's probe phase at k − q on three weak phase gratings, a
+seeded 200-trial synthetic fit, exact reload of saved images and fit history, and
+rejection of another acquisition's identity. The fixtures are small synthetic BF sets with full scan
 dimensions, not real full-BF acquisition timing.

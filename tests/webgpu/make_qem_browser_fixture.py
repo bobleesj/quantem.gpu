@@ -1,6 +1,7 @@
 """Generate small disposable QEM acquisitions for the browser GPU parity gate."""
 
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -163,7 +164,140 @@ def generate_ssb(directory: Path) -> None:
     (directory / "ssb-calibration.json").write_text(json.dumps(calibration))
 
 
+# Krivanek (n, m) and the probe of the higher-order sign fixture: magnitudes in A, azimuths in degrees
+HIGHER_ORDERS = {"C10": (1, 0), "C12": (1, 2), "C21": (2, 1), "C23": (2, 3), "C30": (3, 0)}
+HIGHER_ORDER_TRUTH = {"C10": (-50.0, 0.0), "C12": (20.0, 30.0), "C21": (400.0, 60.0), "C23": (300.0, -20.0),
+                      "C30": (3.0e4, 0.0)}
+HIGHER_ORDER_TOLERANCE_RAD = 1e-5
+
+
+def generate_ssb_higher_order(directory: Path) -> None:
+    """Write a weak-phase SSB folder with coma, trefoil and C30, and its float64 reconstructions.
+
+    An exact thin-object simulation: a periodic random phase (0.05 rad rms, |q| < 2.5 1/A) on a 6 A cell of
+    64 x 64 pixels, the probe p(r - r0) at every pixel, and the far-field grid itself as the detector (3.3 mrad
+    per pixel, 293 bright-field pixels). Two periods make the 128 x 128 scan of uint16 counts.
+
+    The reference reconstructs the same counts in float64, written from the physics with chi in polar form:
+    for a thin object G(q, k) ~ P(k - q) conj P(k) - P(k) conj P(k + q). The kernels once evaluated the first
+    term at q - k, which reverses coma and trefoil on that sideband only; that form misses the reference here
+    by about 0.03 rad. ssb-higher-order-sign.ts holds the browser engine to the k - q reference.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    volts = 300e3
+    wavelength = 12.2643 / math.sqrt(volts * (1 + 0.978476e-6 * volts))
+    semiangle, grid, cell, scan = 0.030, 64, 6.0, 128
+    sampling = wavelength / cell                                    # rad per detector pixel
+
+    def probe(kr, kc, terms):
+        alpha = wavelength * np.hypot(kr, kc)
+        azimuth = np.arctan2(kc, kr)
+        chi = sum(magnitude * alpha ** (n + 1) / (n + 1) * np.cos(m * (azimuth - math.radians(degrees)))
+                  for name, (magnitude, degrees) in terms.items() for n, m in [HIGHER_ORDERS[name]])
+        # the engines' soft aperture, one detector pixel wide
+        aperture = np.clip((semiangle - alpha) / sampling + 0.5, 0.0, 1.0)
+        return aperture * np.exp(-2j * np.pi / wavelength * chi)
+
+    k = np.fft.fftfreq(grid, cell / grid)
+    kr, kc = np.meshgrid(k, k, indexing="ij")
+    rng = np.random.default_rng(3)
+    spectrum = (rng.standard_normal((grid, grid)) + 1j * rng.standard_normal((grid, grid))) * (np.hypot(kr, kc) < 2.5)
+    spectrum[0, 0] = 0
+    phase = np.fft.ifft2(spectrum).real
+    phase *= 0.05 / phase.std()
+    wave = np.fft.ifft2(probe(kr, kc, HIGHER_ORDER_TRUTH))
+    bright = np.abs(probe(kr, kc, {})) > 0
+    intensity = np.empty((grid, grid, int(bright.sum())))
+    for row in range(grid):
+        exit_waves = np.stack([np.roll(wave, (row, col), axis=(0, 1)) for col in range(grid)]) * np.exp(1j * phase)
+        intensity[row] = (np.abs(np.fft.fft2(exit_waves)) ** 2)[:, bright]
+    counts = np.tile(np.round(intensity * (60000 / intensity.max())).transpose(2, 0, 1), (1, 2, 2))
+    counts = counts.astype(np.uint16)
+    counts.tofile(directory / "bf_columns.u16")
+    object_phase = np.tile(phase, (2, 2))
+
+    bf = np.stack([kr[bright], kc[bright]], axis=1)
+    k2 = (bf ** 2).sum(1)
+    safe = np.where(k2 > 0, k2, 1.0)
+    g = np.fft.fft2(counts.astype(np.float64), axes=(1, 2))      # e^{-2 pi i q r0} over the scan
+    dc = float(g[:, 0, 0].real.mean())
+    q = np.fft.fftfreq(scan, cell / grid)
+    qr, qc = np.meshgrid(q, q, indexing="ij")
+    detector_rows, detector_cols = ((index + grid // 2) % grid for index in np.nonzero(bright))
+    calibration = {
+        "schema": "quantem.ssb-browser-calibration/3",
+        "num_bright_field_pixels": len(bf), "g_shape": [len(bf), scan, scan],
+        "wavelength_A": wavelength, "semiangle_mrad": semiangle * 1e3, "detector_sampling_mrad": [sampling * 1e3] * 2,
+        "dc_value": [dc, 0.0], "detector_shape": [grid, grid],
+        "bright_field_rows": detector_rows.tolist(), "bright_field_cols": detector_cols.tolist(),
+        "bright_field_k_row": bf[:, 0].tolist(), "bright_field_k_col": bf[:, 1].tolist(),
+        "scan_q_row": q.tolist(), "scan_q_col": q.tolist(),
+        "aperture_k": np.abs(probe(bf[:, 0], bf[:, 1], {})).tolist(),
+        "alpha_k2": (wavelength ** 2 * k2).tolist(),
+        "cos2phi_k": np.where(k2 > 0, (bf[:, 0] ** 2 - bf[:, 1] ** 2) / safe, 1.0).tolist(),
+        "sin2phi_k": (2 * bf[:, 0] * bf[:, 1] / safe).tolist(), "scan_detector_rotation_deg": 0,
+        "precision": {"real_dtype": "float32", "complex_dtype": "complex64"},
+    }
+    (directory / "cal.json").write_text(json.dumps(calibration))
+    (directory / "source.json").write_text(json.dumps({
+        "kind": "bf_columns", "url": "bf_columns.u16", "dtype": "uint16", "encoding": "uint16",
+        "num_bright_field_pixels": len(bf), "plane": scan * scan, "scan_shape": [scan, scan],
+        "bytes_per_bright_field_pixel": scan * scan * 2, "bits_per_value": 16,
+    }))
+
+    def reconstruct(terms, sign):
+        """Both estimators: phase_of_mean = angle(ifft2(mean_k C_k)), mean_phase = mean_k angle(ifft2(C_k))."""
+        total = np.zeros((scan, scan), complex)
+        phases = np.zeros((scan, scan))
+        for start in range(0, len(bf), 128):
+            br, bc = (bf[start:start + 128, axis][:, None, None] for axis in (0, 1))
+            first = probe(br - qr, bc - qc, terms) if sign == "k-q" else probe(qr - br, qc - bc, terms)
+            centre = probe(br, bc, terms)
+            gamma = first * np.conj(centre) - centre * np.conj(probe(br + qr, bc + qc, terms))
+            size = np.abs(gamma)
+            unit = np.where(size ** 2 > 1e-16, np.conj(gamma) / np.where(size > 0, size, 1), 0)
+            corrected = g[start:start + 128] * unit
+            corrected[:, 0, 0] = dc
+            total += corrected.sum(0)
+            phases += np.angle(np.fft.ifft2(corrected, axes=(1, 2))).sum(0)
+        return {"phase_of_mean": np.angle(np.fft.ifft2(total / len(bf))), "mean_phase": phases / len(bf)}
+
+    def correlation(image):
+        a, b = image - image.mean(), object_phase - object_phase.mean()
+        return float((a * b).sum() / math.sqrt((a * a).sum() * (b * b).sum()))
+
+    truth = HIGHER_ORDER_TRUTH
+    cases = {"truth": truth, "none": {name: truth[name] for name in ("C10", "C12")},
+             "reversed": {**truth, "C21": (truth["C21"][0], truth["C21"][1] + 180.0),
+                          "C23": (truth["C23"][0], truth["C23"][1] + 60.0)}}
+    images = {(name, "k-q"): reconstruct(terms, "k-q") for name, terms in cases.items()}
+    images["truth", "q-k"] = reconstruct(truth, "q-k")
+    scores = {f"{name}|{sign}": correlation(image["phase_of_mean"]) for (name, sign), image in images.items()}
+    separation = float(np.abs(images["truth", "k-q"]["phase_of_mean"] - images["truth", "q-k"]["phase_of_mean"]).max())
+    # The sign must matter on this fixture, and the probe's own coefficients must reconstruct the object best.
+    assert separation > 100 * HIGHER_ORDER_TOLERANCE_RAD, separation
+    assert scores["truth|k-q"] == max(scores.values()), scores
+    order = [[name, estimator, sign] for (name, sign) in images for estimator in ("phase_of_mean", "mean_phase")]
+    reference = np.concatenate([images[name, sign][estimator].ravel() for name, estimator, sign in order])
+    reference.astype(np.float32).tofile(directory / "reference.f32")
+
+    def options(terms):
+        higher = {}
+        for name, (magnitude, degrees) in terms.items():
+            if name not in ("C10", "C12"):
+                higher[f"{name}_A"] = magnitude
+                if HIGHER_ORDERS[name][1]:
+                    higher[f"phi{name[1:]}_deg"] = degrees
+        return {"C10_A": terms["C10"][0], "C12_A": terms["C12"][0], "phi12_deg": terms["C12"][1], "higherOrder": higher}
+
+    (directory / "reference.json").write_text(json.dumps({
+        "cases": {name: options(terms) for name, terms in cases.items()}, "order": order,
+        "tolerance_rad": HIGHER_ORDER_TOLERANCE_RAD, "sign_separation_rad": separation, "object_correlation": scores,
+    }))
+
+
 if __name__ == "__main__":
     generate(Path(sys.argv[1]))
     generate_h5(Path(sys.argv[1]))
     generate_ssb(Path(sys.argv[1]))
+    generate_ssb_higher_order(Path(sys.argv[1]) / "ssb-higher-order")
