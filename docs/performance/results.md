@@ -9,6 +9,14 @@ state, load plan, benchmark definition, and scientific agreement gate.
 operating-system storage cache was not forcibly evicted. It is not called cold.
 “Prepared” means an index, sidecar, or derived product cache already existed.
 
+## SSB research optimization, 2026-10-22
+
+The [four-case preparation reuse record](2026-10-22-rotation-comparison-reuse.md)
+qualifies the local comparison implementation. The separate
+[broad-fifth CUDA study](2026-10-22-broad-fifth-cuda-study.md) reports private-model
+prototype gains and exact reference checks; it does not change the public
+higher-order estimator or qualify a release.
+
 ## SSB joint fitting, 2026-10-21
 
 The [dated installed-wheel SSB record](../maintainer/2026-10-21-ssb-joint-benchmark.md)
