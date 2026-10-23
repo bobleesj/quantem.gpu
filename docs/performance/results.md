@@ -16,6 +16,11 @@ per-detector staging and smaller Fourier batches. The 256-square cases retain
 about 4.3 GiB less memory with exact phase and no consistent timing regression.
 Full 512-square peak memory is unchanged.
 
+The [independent TPE reuse record](2026-10-22-independent-tpe-reuse.md)
+measures exact proposal reuse in the broad-search candidate on real 256/512
+scans and separately profiles synthetic 1024 reconstruction. The solver is
+hybrid; its CPU proposal stage is faster and CUDA phase kernels are unchanged.
+
 The [four-case preparation reuse record](2026-10-22-rotation-comparison-reuse.md)
 qualifies the local comparison implementation. The separate
 [broad-fifth CUDA study](2026-10-22-broad-fifth-cuda-study.md) reports private-model

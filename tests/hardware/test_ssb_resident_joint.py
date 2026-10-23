@@ -230,7 +230,7 @@ def test_model_scores_and_public_joint_fit_remain_on_device(device, monkeypatch)
             f"quantem.gpu.ssb.{device.backend}.optimizer", fromlist=["fit_sample"]
         )
         monkeypatch.setattr(module, "fit_sample_search", forbidden)
-        result = ssb.find_aberrations(
+        result = ssb.find_aberrations(search="standard",
             tilt=True,
             num_trials=200,
             refinement="newton",

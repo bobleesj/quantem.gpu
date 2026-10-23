@@ -4,6 +4,15 @@ This ledger separates documentation revisions from the implementation revision
 that produced a benchmark. A documentation edit never makes an older timing a
 measurement of the current code.
 
+## 2026-10-22: exact independent proposal reuse
+
+The [dated broad-search record](2026-10-22-independent-tpe-reuse.md) reports
+batched inverse-CDF calculations and completed-history reuse, with exact
+proposals, objective values and phase arrays. The benchmark now explicitly
+selects standard search to retain its documented 200-trial-per-branch workload.
+No CUDA reconstruction schedule, precision, BF selection or estimator changes.
+The separate shared-FFT compiler-cache investigation remains held.
+
 ## 2026-10-21: reusable SSB measurement and agent workflow
 
 Added `quantem-gpu benchmark-ssb`, a repository-local `gpu-benchmark` skill,

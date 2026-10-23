@@ -13,21 +13,21 @@ def test_trials_and_legacy_keyword_produce_the_same_fit(tmp_path, monkeypatch, c
     source = _source(tmp_path)
     session = _session(monkeypatch, source, backend)
     options = dict(tilt=False, check_rotation=False, verbose=False)
-    current = session.find_aberrations(trials=count, **options)
-    legacy = _session(monkeypatch, source, backend).find_aberrations(num_trials=count, **options)
+    current = session.find_aberrations(search="standard", trials=count, **options)
+    legacy = _session(monkeypatch, source, backend).find_aberrations(search="standard", num_trials=count, **options)
     assert backend.fits[-1] == backend.fits[-2]
     assert current.num_trials == legacy.num_trials == count
     np.testing.assert_array_equal(current.phase, legacy.phase)
     with pytest.raises(TypeError, match="not both"):
-        session.find_aberrations(trials=count, num_trials=count, **options)
+        session.find_aberrations(search="standard", trials=count, num_trials=count, **options)
 
 
 def test_trials_reuses_the_fit_saved_with_the_legacy_keyword(tmp_path, monkeypatch):
     backend = _Recording()
     source = _source(tmp_path)
     options = dict(tilt=False, check_rotation=False, verbose=False, save_dir=tmp_path / "fit")
-    old = _session(monkeypatch, source, backend).find_aberrations(num_trials=200, **options)
-    new = _session(monkeypatch, source, backend).find_aberrations(trials=200, **options)
+    old = _session(monkeypatch, source, backend).find_aberrations(search="standard", num_trials=200, **options)
+    new = _session(monkeypatch, source, backend).find_aberrations(search="standard", trials=200, **options)
     assert new.reused
     assert backend.fit_calls == 1
     np.testing.assert_array_equal(old.phase, new.phase)

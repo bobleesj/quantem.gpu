@@ -115,3 +115,56 @@ def test_calibration_rejects_unidentified_array_and_partial_model(tmp_path):
     fit.depth_spread_nm = None
     with pytest.raises(ValueError, match="complete model"):
         fit.save_calibration(tmp_path / "partial.json")
+
+
+def test_timed_budget_overlay_uses_one_clock_and_common_objective(tmp_path):
+    fits = {}
+    for count, normalization in ((200, 2.), (400, 4.), (600, 8.)):
+        fit = _fit()
+        fit.num_trials = count
+        fit.optimizer.update(
+            coarse_scores=[.1 / normalization, .3 / normalization, .2 / normalization],
+            refinement_trace=[[1, .3 / normalization, 0.1], [100, .4 / normalization, 1.]],
+            coarse_elapsed_s=[2., 3., 4.], refinement_start_s=4.5,
+            convergence_clock="fit_start", normalization=normalization,
+        )
+        fits[count] = fit
+    fits[600].refinement = "nelder-mead"
+    before = [deepcopy(fit.optimizer) for fit in fits.values()]
+    figure = fits[200].show("convergence", compare=fits, size="large", save=tmp_path / "compare.png")
+    ax = figure.axes[0]
+    assert len(ax.lines) == 6  # the reference is already in the mapping
+    for line in ax.lines[::2]:
+        np.testing.assert_array_equal(line.get_xdata(), [2., 3., 4.])
+        np.testing.assert_allclose(line.get_ydata(), [.1, .3, .3])
+    for line in ax.lines[1::2]:
+        np.testing.assert_array_equal(line.get_xdata(), [4.6, 5.5])
+        np.testing.assert_allclose(line.get_ydata(), [.3, .4])
+    assert "Nelder–Mead" in ax.lines[-1].get_label()
+    assert ax.get_xlabel() == "Elapsed fit time (s)"
+    assert not plt.fignum_exists(figure.number)
+    assert before == [fit.optimizer for fit in fits.values()]
+    fits[400].scan_detector_rotation_deg += 180
+    with pytest.raises(ValueError, match="same data, calibration"):
+        fits[200].show("convergence", compare=fits)
+
+
+def test_timed_history_roundtrip_and_old_history_comparison(tmp_path):
+    fit = _fit()
+    fit.optimizer.update(coarse_elapsed_s=[.2, .4, .6], refinement_start_s=.7,
+                         convergence_clock="fit_start", normalization=2.)
+    paths = (tmp_path / "fit.npz", tmp_path / "fit.json")
+    save_result(fit, paths=paths, signature={"test": "time"}, input_metadata={})
+    restored = load_result(paths=paths, signature={"test": "time"}, backend="mps")
+    assert restored.optimizer == fit.optimizer
+    figure = restored.show("convergence")
+    np.testing.assert_array_equal(figure.axes[0].lines[1].get_xdata(), [.7, 1.7])
+    old = _fit()
+    old.optimizer["normalization"] = 2.
+    figure = restored.show("convergence", compare={"current": restored, "old": old})
+    assert "evaluations" in figure.axes[0].get_xlabel()
+    with pytest.raises(ValueError, match="lack elapsed times"):
+        restored.show("convergence", x="time", compare=old)
+    old.objective = "phase_variance"
+    with pytest.raises(ValueError, match="same data, calibration"):
+        restored.show("convergence", compare=old)

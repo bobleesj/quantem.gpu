@@ -102,14 +102,14 @@ def test_public_resident_fit_region_then_complete_1024_scan(tmp_path):
         with SSB(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True) as session:
             assert session._data is data and session._compute is None
             region = (173, 301, 251, 379)
-            fitted = session.find_aberrations(tilt=False, scan_region=region, num_trials=0,
+            fitted = session.find_aberrations(search="standard", tilt=False, scan_region=region, num_trials=0,
                 refinement=None, check_rotation=False, verbose=False)
             assert fitted.phase.shape == (128, 128)
             assert fitted.fit_scan_region == region
             assert fitted.bright_field_center_px == SETTINGS["bright_field_center_px"]
             with SSB(data, **SETTINGS, aberrations=ABERRATIONS, scan_detector_rotation_flipped=True,
                      scan_region=region) as explicit:
-                expected_fit = explicit.find_aberrations(tilt=False, num_trials=0, refinement=None,
+                expected_fit = explicit.find_aberrations(search="standard", tilt=False, num_trials=0, refinement=None,
                     check_rotation=False, verbose=False)
                 cp.testing.assert_array_equal(fitted.phase, expected_fit.phase)
             result = session.reconstruct(fitted, compute_loss=False)

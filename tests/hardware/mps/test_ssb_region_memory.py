@@ -27,7 +27,7 @@ def test_region_fit_preserves_overview_with_memory_budget(monkeypatch, retain):
         prepared = session._compute._prepared
         with session.select_region((16, 80, 24, 104)) as regional:
             assert (session._compute._prepared is prepared) == retain
-            fit = regional.find_aberrations(
+            fit = regional.find_aberrations(search="standard",
                 tilt=True, num_trials=8, refinement="newton", seed=11,
                 check_rotation=False, compare_standard=False, verbose=False,
             )
@@ -53,9 +53,9 @@ def test_full_field_region_shares_evidence_but_keeps_fit_state_independent():
             assert other.g_qk is prepared.g_qk
             options = dict(tilt=True, num_trials=8, refinement="newton", seed=11,
                            check_rotation=False, compare_standard=False, verbose=False)
-            shared = regional.find_aberrations(**options)
+            shared = regional.find_aberrations(search="standard", **options)
             regional._compute.release_prepared()
-            rebuilt = regional.find_aberrations(**options)
+            rebuilt = regional.find_aberrations(search="standard", **options)
             assert shared.aberrations == rebuilt.aberrations
             assert shared.sample_tilt_mrad == rebuilt.sample_tilt_mrad
             assert shared.depth_spread_nm == rebuilt.depth_spread_nm
