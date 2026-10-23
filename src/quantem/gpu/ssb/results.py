@@ -468,7 +468,6 @@ class SSBResult(Mapping[str, float]):
         >>> fits[200].show("convergence", compare=fits)
         """
         import matplotlib.pyplot as plt
-        from quantem.core.visualization import show_2d
 
         if x != "auto" and view != "convergence":
             raise ValueError("x selects the convergence axis; use show('convergence', x=...).")
@@ -547,6 +546,8 @@ class SSBResult(Mapping[str, float]):
                 titles = [titles[index:index + columns] for index in range(0, count, columns)]
             if isinstance(bars, list):
                 bars = [bars[index:index + columns] for index in range(0, count, columns)]
+        from quantem.core.visualization import show_2d
+
         figure, _ = show_2d(
             arrays, title=titles,
             norm=({"interval_type": "manual", "vmin": self.phase_limits[0],

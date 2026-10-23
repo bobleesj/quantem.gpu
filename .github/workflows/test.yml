@@ -38,7 +38,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install package
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,movie]"
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,movie,plot]" ipython
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
