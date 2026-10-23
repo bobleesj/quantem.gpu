@@ -138,6 +138,10 @@ class SSBResult(Mapping[str, float]):
     saved_path: Path | None = None
     metadata: dict[str, object] = field(default_factory=dict)
     parameter_slices: dict[str, object] | None = None
+    # Small immutable-at-fit acquisition snapshot for portable calibration export; no GPU arrays/session reference.
+    calibration_context: dict[str, object] | None = field(default=None, repr=False)
+    # Local descriptors for deferred file fingerprinting, excluded from saved result metadata.
+    _calibration_source: dict[str, object] | None = field(default=None, repr=False, compare=False)
     sample_agreement: float | None = None
     objective: Literal["agreement", "phase_variance"] | None = None
     # find_aberrations(refine_rotation=True): the estimate it started from and the search (rotation_refinement.py)
@@ -340,7 +344,41 @@ class SSBResult(Mapping[str, float]):
             raise ValueError("A trial stack has several probes. Reconstruct one trial's parameters first.")
         return model_probe(self, space=space)
 
-    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt"] = "phase", *,
+    def save_calibration(self, path: str | Path = "calibration.json") -> Path:
+        """Save this fitted model for reuse in ShowPtycho without fitting again.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path, optional
+            JSON destination. Parent directories are created. An existing file
+            is replaced atomically. The default is ``calibration.json``.
+
+        Returns
+        -------
+        pathlib.Path
+            Written calibration, including all fitted aberrations, rotation,
+            tilt/depth, sampling and portable acquisition identity. ShowPtycho
+            checks that identity before restoring it and uses Auto sampling.
+
+        Notes
+        -----
+        Exports this result's values, not subsequent widget edits. No image,
+        model probe or objective is computed. File fingerprinting and JSON IO
+        happen here, outside fitting. Requires a calibrated file-backed fit;
+        array inputs cannot establish a persistent acquisition identity.
+        Save widget edits with the widget's ``save_calibration()`` instead.
+
+        Examples
+        --------
+        >>> fit = ssb.find_aberrations(search="broad")
+        >>> fit.show("convergence")
+        >>> fit.save_calibration("ssb-results/calibration.json")
+        """
+        from quantem.gpu.ssb.calibration import save_calibration
+
+        return save_calibration(self, path)
+
+    def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence"] = "phase", *,
              axsize: tuple[float, float] | None = None, compare: Self | None = None,
              show_parameters: bool = True,
              size: Literal["small", "medium", "large", "xlarge"] | None = None,
@@ -354,7 +392,7 @@ class SSBResult(Mapping[str, float]):
 
         Parameters
         ----------
-        view : {"phase", "probe", "rotation", "parameters", "depth", "tilt"}, optional
+        view : {"phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence"}, optional
             Show the reconstructed phase alone, or two model-probe intensity
             panels side by side. Fourier intensity shows the aperture;
             aberrations are encoded in the complex Fourier probe's phase.
@@ -368,6 +406,9 @@ class SSBResult(Mapping[str, float]):
             ``tilt`` shows its row-column tilt slice. The marker is the
             fitted point. Neither is a spatial parameter map or an uncertainty
             estimate; other parameters are held at their jointly fitted values.
+            ``convergence`` plots recorded search and refinement evaluations.
+            Different objectives and rotation searches remain separate. A missing
+            refinement trace is stated explicitly; no evaluations are rerun.
         axsize : tuple[float, float] or None, optional
             Advanced explicit panel dimensions in inches, instead of size.
         compare : SSBResult or None, optional
@@ -415,6 +456,7 @@ class SSBResult(Mapping[str, float]):
         >>> aberrations.show("parameters")
         >>> aberrations.show("depth", size="large")
         >>> aberrations.show("tilt", size="small")
+        >>> aberrations.show("convergence")
         """
         import matplotlib.pyplot as plt
         from quantem.core.visualization import show_2d
@@ -429,6 +471,8 @@ class SSBResult(Mapping[str, float]):
                 panel_size = (6, 6)
             elif view == "rotation":
                 panel_size = (5, 3.4)
+            elif view == "convergence":
+                panel_size = (6, 4)
             elif view in ("parameters", "depth", "tilt") or (show_parameters and self.parameter_slices):
                 panel_size = (5.2, 4.5)
             else:
@@ -447,6 +491,13 @@ class SSBResult(Mapping[str, float]):
                     "This result has no 180-degree branch comparison: its rotation was given or recorded, or "
                     "check_rotation=False. Run ssb.compare_rotation_branches() to fit and compare both branches.")
             return self.rotation_branches.show(axsize=axsize, cmap=cmap, save=save)
+        if view == "convergence":
+            from quantem.gpu.ssb.convergence import plot_convergence
+
+            figure = plot_convergence(self, axsize=axsize, rows=rows, columns=columns)
+            if save is not None:
+                figure.savefig(save, dpi="figure", bbox_inches="tight")
+            return figure
         if view == "phase" and self.object_wave.ndim == 2:
             _announce_below_auto(self)
         if view in ("parameters", "depth", "tilt") or (view == "phase" and show_parameters and self.parameter_slices):
@@ -473,7 +524,8 @@ class SSBResult(Mapping[str, float]):
             ]
             panel_size = (6, 6)
         else:
-            raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth' or 'tilt'; got {view!r}.")
+            raise ValueError(f"Choose view='phase', 'probe', 'rotation', 'parameters', 'depth', 'tilt' or 'convergence'; "
+                             f"got {view!r}.")
         if rows is not None or columns is not None:
             frames = arrays if isinstance(arrays, list) else ([arrays] if arrays.ndim == 2 else list(arrays))
             count = len(frames)
