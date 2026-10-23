@@ -119,7 +119,7 @@ def bright_field_spectra(
 
     The scan images are real, so only the Hermitian half-plane (scan columns 0..N/2) is stored; the kernels mirror and
     conjugate the missing columns when a full Fourier coordinate is requested. The work runs in chunks of bright-field
-    pixels sized so the complex64 staging buffer stays near 2 GB: unchunked, a 512 x 512 acquisition peaked at ~57 GB
+    pixels sized so the complex64 staging buffer stays at or below 256 MiB: unchunked, a 512 x 512 acquisition peaked at ~57 GB
     (raw counts, the complex stack and G_qk, 19 GB each). Each chunk's scan images are written straight into the
     staging buffer as complex64, transformed there, and their kept columns copied into G once; gathering, transposing,
     casting, transforming and cropping as separate arrays moved every chunk through memory seven times.
@@ -134,7 +134,7 @@ def bright_field_spectra(
     pixels = bf_inds_row.astype(cp.int32) * det_col + bf_inds_col.astype(cp.int32)
     G_qk = cp.empty((num_bright_field_pixels, scan_row, stored_col), dtype=cp.complex64)
     bytes_per_bf = scan_row * scan_col * 8  # complex64
-    target_chunk_bytes = 2 * 1024 ** 3
+    target_chunk_bytes = 256 * 1024 ** 2
     chunk_bf = max(1, min(num_bright_field_pixels, target_chunk_bytes // bytes_per_bf))
     staging = cp.empty((chunk_bf, scan_row, scan_col), dtype=cp.complex64)
     for bf_start in range(0, num_bright_field_pixels, chunk_bf):
