@@ -6,6 +6,18 @@ and reuse those parameters for reconstruction. Start with the
 For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-reconstruction>`.
 This page covers parameters, calibration, ownership, and backend limits.
 
+## Choose a search
+
+`ssb.find_aberrations()` defaults to `search="broad"` on CUDA: a 200-trial
+primary fit, followed by 400 fifth-order TPE trials and bounded Newton
+refinement. `search="standard"` uses the established 200-trial joint fit on
+CUDA and MPS. Broad search currently requires CUDA; MPS callers select
+`search="standard"` explicitly.
+
+The widget fit controls, series processing and the automatic fit in
+`ssb.reconstruct()` retain the standard model. Fit broad explicitly before
+opening the viewer to inspect and edit its higher-order correction.
+
 ## Review and save a fit
 
 Keep the returned result to inspect and reuse the fitted model:
@@ -23,6 +35,43 @@ search. Plotting convergence uses saved scalar evaluations, with different
 objectives and rotation searches kept separate. It does not rerun the fit;
 if a refinement trajectory was not recorded, the plot says so. A budget stop
 is reported as a budget stop, rather than proof of convergence.
+
+### Compare search budgets
+
+For an optional CUDA broad-search study, use a sequence of trial counts:
+
+```python
+fits = ssb.find_aberrations(trials=(200, 400, 600), seed=17)
+fits[200].show("convergence", compare=fits)
+```
+
+This draws one elapsed-time chart with dashed TPE curves and solid refinement
+curves. Each budget starts independently from the same session state and uses
+all selected data. The parent session is unchanged; choose a fit explicitly:
+
+```python
+image = ssb.reconstruct(fits[400], upsampling_factor="auto")
+```
+
+A scalar `trials=400` still returns one fit. The default remains one 400-trial
+broad search. A comparison runs every requested budget sequentially, so use it
+for analysis rather than every acquisition. Loaded data are borrowed; each fit
+owns its preparation. `save_dir="budget-review"` saves each complete result in
+`trials-200/`, `trials-400/`, etc., without overwriting another budget.
+
+`fit.show("convergence")` also uses elapsed time for newly recorded broad fits.
+The clock starts before the primary fit; it includes search and refinement but
+excludes acquisition loading and plotting. Only broad-stage objective values
+are drawn, since the primary fit has a different objective. Recording adds
+scalar timestamps, not objective calls or GPU synchronization. Inspect measured
+stage durations in `fit.timings`. Plotting runs only when `show` is called.
+
+Use `x="evaluations"` to change the horizontal axis. Older histories and standard
+fits without timestamps use evaluation counts automatically; `x="time"` requires
+recorded times. Overlays use the unnormalized model agreement so differing
+normalization factors do not change the comparison. They require the same data,
+calibration, region and objective. Newton and Nelder–Mead are both supported;
+keep differently fitted rotations in separate plots.
 
 `save_calibration` exports this fit's coefficients, tilt/depth, rotation and
 acquisition identity in ShowPtycho's calibration format. It computes no phase

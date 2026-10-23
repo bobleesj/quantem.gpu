@@ -29,7 +29,7 @@ def test_saved_fit_replays_exact_detector_selection(tmp_path):
         bright_field_radius_px=radius,
         aberrations={"C10_nm": 8.0, "C12_nm": 1.0, "phi12_deg": 21.0},
     ) as session:
-        fitted = session.find_aberrations(tilt=False, 
+        fitted = session.find_aberrations(search="standard", tilt=False,
             num_trials=0, refinement=None, check_rotation=False,
             save_dir=tmp_path / "fit",
         )

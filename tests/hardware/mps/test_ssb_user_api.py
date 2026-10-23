@@ -89,7 +89,7 @@ def test_reconstruct_fits_once_when_no_aberrations_are_known(capsys):
     assert len(fits) == 1
     assert first.aberrations == second.aberrations
     assert given.aberrations["C10_nm"] == 1.0
-    assert capsys.readouterr().out.count("fitting them with find_aberrations() first") == 1
+    assert capsys.readouterr().out.count("fitting them with find_aberrations(search='standard') first") == 1
 
 
 def test_show_names_the_package_it_needs(monkeypatch):
@@ -108,7 +108,7 @@ def test_reconstruct_replays_trials_by_trial_ids():
     from quantem.gpu import SSB
 
     with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, **_options()) as ssb:
-        fitted = ssb.find_aberrations(tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
+        fitted = ssb.find_aberrations(search="standard", tilt=False, num_trials=4, refinement=None, check_rotation=False, verbose=False)
         replay = ssb.reconstruct(fitted, trial_ids=[2, 0])
         assert replay.phase.shape == (2, *fitted.phase.shape)
         assert replay.metadata["trial_ids"] == [2, 0]
@@ -137,7 +137,7 @@ def test_assigned_aberrations_are_known_and_reconstruct_does_not_refit(capsys):
         with pytest.raises(ValueError, match="C10_nm"):
             ssb.aberrations = {"C10": 1.0}
         assert ssb.aberrations == known
-    assert "fitting them with find_aberrations() first" not in capsys.readouterr().out
+    assert "fitting them with find_aberrations(search='standard') first" not in capsys.readouterr().out
     with SSB(_rotated_gradient_scan(0.0), scan_detector_rotation_deg=0.0, aberrations=known, **_options()) as ssb:
         ssb.aberrations = None  # forget them: the next reconstruct() fits
         fits = []

@@ -210,6 +210,7 @@ def compare_rotation_defocus(
                     refinement_label = "" if refinement is None else f" + {refinement} refinement"
                     progress.set_postfix_str(f"{case} | Fitting: {num_trials} trials{refinement_label}")
                     fitted = candidate.find_aberrations(
+                        search="standard",
                         tilt=tilt, num_trials=num_trials, refinement=refinement,
                         search_ranges={**ranges, "C10_nm": interval}, seed=seed,
                         check_rotation=False, compare_standard=False, verbose=False,

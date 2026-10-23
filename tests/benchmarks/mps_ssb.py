@@ -416,7 +416,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     synchronize()
     with PeakMemory() as fit_memory:
         started = time.perf_counter()
-        fit = ssb.find_aberrations(verbose=False)
+        fit = ssb.find_aberrations(search="standard", verbose=False)
         synchronize()
         metrics["find_aberrations"] = summary([1e3 * (time.perf_counter() - started)])
     memory["fit_peak"] = round(fit_memory.peak - encoded, 2)
@@ -432,7 +432,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     ssb.preview(base, compute_loss=False)
     synchronize()
     started = time.perf_counter()
-    fit = ssb.find_aberrations(tilt=False, verbose=False)
+    fit = ssb.find_aberrations(search="standard", tilt=False, verbose=False)
     synchronize()
     metrics["find_aberrations_standard"] = summary([1e3 * (time.perf_counter() - started)])
     report["values"]["fit_standard"] = fit_values(fit)
@@ -445,7 +445,7 @@ def measure(master, reps=20, load_reps=3, log=print):
     synchronize()
     with PeakMemory() as phase_variance_memory:
         started = time.perf_counter()
-        fit = ssb.find_aberrations(tilt=False, objective="phase_variance", verbose=False)
+        fit = ssb.find_aberrations(search="standard", tilt=False, objective="phase_variance", verbose=False)
         synchronize()
         metrics["find_aberrations_phase_variance"] = summary([1e3 * (time.perf_counter() - started)])
     memory["phase_variance_fit_peak"] = round(phase_variance_memory.peak - encoded, 2)

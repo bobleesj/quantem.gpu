@@ -69,7 +69,7 @@ def test_fit_tilt_recovers_known_tilt(sample_tilt_mrad):
     data, det_mrad = _simulated_crystal(sample_tilt_mrad)
     ssb = _session(data, det_mrad)
     assert ssb.supports_tilt
-    result = ssb.find_aberrations(tilt=True, verbose=False)
+    result = ssb.find_aberrations(search="standard", tilt=True, verbose=False)
     # Validated 2026-09-24: (3, -4) -> (3.0, -4.1); (0, 0) -> (-0.3, -0.1). 1 mrad is the scan/detector sampling limit here.
     assert abs(result.sample_tilt_mrad[0] - sample_tilt_mrad[0]) < 1.0
     assert abs(result.sample_tilt_mrad[1] - sample_tilt_mrad[1]) < 1.0
@@ -89,7 +89,7 @@ def test_newton_polish_lands_on_the_nelder_mead_maximum():
     ssb = _session(data, det_mrad)
     fits = {}
     for refinement in ("nelder-mead", "newton"):
-        result = ssb.find_aberrations(tilt=True, refinement=refinement, check_rotation=False, verbose=False, compare_standard=False)
+        result = ssb.find_aberrations(search="standard", tilt=True, refinement=refinement, check_rotation=False, verbose=False, compare_standard=False)
         assert result.tilt_fit_gain is None
         engine = ssb._backend()._accelerator
         fits[refinement] = (result, float(engine.thick.fit_batch(np.array([_engine_row(result)]))[0]))
@@ -105,20 +105,20 @@ def test_tilt_refit_from_the_previous_scan_needs_no_search():
     scan's fit, here moved by 0.5 mrad and 2 nm of defocus) and lands on the full search's maximum."""
     _require_cuda()
     data, det_mrad = _simulated_crystal((3.0, -4.0))
-    searched = _session(data, det_mrad).find_aberrations(tilt=True, refinement="newton", check_rotation=False, verbose=False,
+    searched = _session(data, det_mrad).find_aberrations(search="standard", tilt=True, refinement="newton", check_rotation=False, verbose=False,
                                                          compare_standard=False)
     following = _session(data, det_mrad)
     following.aberrations = {**searched.aberrations, "C10_nm": searched.aberrations["C10_nm"] + 2.0}
     following.sample_tilt_mrad = (searched.sample_tilt_mrad[0] + 0.5, searched.sample_tilt_mrad[1] - 0.5)
     following.depth_spread_nm = searched.depth_spread_nm
-    refit = following.find_aberrations(tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False,
+    refit = following.find_aberrations(search="standard", tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False,
                                        compare_standard=False)
     assert refit.num_trials == 0
     assert abs(refit.sample_tilt_mrad[0] - searched.sample_tilt_mrad[0]) < 0.1
     assert abs(refit.sample_tilt_mrad[1] - searched.sample_tilt_mrad[1]) < 0.1
     assert abs(refit.aberrations["C10_nm"] - searched.aberrations["C10_nm"]) < 0.1
     with pytest.raises(ValueError, match="num_trials=0"):
-        _session(data, det_mrad).find_aberrations(tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False)
+        _session(data, det_mrad).find_aberrations(search="standard", tilt=True, num_trials=0, refinement="newton", check_rotation=False, verbose=False)
 
 
 # ---

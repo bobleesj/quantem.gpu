@@ -298,6 +298,7 @@ def run_ssb(
                 fitted, seconds = _timed(
                     partial(
                         ssb.find_aberrations,
+                        search="standard",
                         num_trials=num_trials,
                         refinement="newton",
                         seed=seed,
@@ -375,6 +376,7 @@ def run_ssb(
                         local, fit_s = _timed(
                             partial(
                                 regional.find_aberrations,
+                                search="standard",
                                 num_trials=num_trials,
                                 refinement="newton",
                                 seed=seed,

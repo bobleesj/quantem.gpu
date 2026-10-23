@@ -379,7 +379,8 @@ class SSBResult(Mapping[str, float]):
         return save_calibration(self, path)
 
     def show(self, view: Literal["phase", "probe", "rotation", "parameters", "depth", "tilt", "convergence"] = "phase", *,
-             axsize: tuple[float, float] | None = None, compare: Self | None = None,
+             axsize: tuple[float, float] | None = None, compare: Self | Mapping[object, Self] | None = None,
+             x: Literal["auto", "time", "evaluations"] = "auto",
              show_parameters: bool = True,
              size: Literal["small", "medium", "large", "xlarge"] | None = None,
              rows: int | None = None, columns: int | None = None,
@@ -411,8 +412,15 @@ class SSBResult(Mapping[str, float]):
             refinement trace is stated explicitly; no evaluations are rerun.
         axsize : tuple[float, float] or None, optional
             Advanced explicit panel dimensions in inches, instead of size.
-        compare : SSBResult or None, optional
-            A second phase reconstruction of the same field of view. Shows
+        x : {"auto", "time", "evaluations"}, optional
+            Convergence axis. Auto uses recorded elapsed time when every fit
+            has it, otherwise evaluations. Time starts before the primary fit;
+            loading and plotting are excluded. Missing times are not estimated.
+        compare : SSBResult or mapping, optional
+            For convergence, a fit or labeled mapping of fits from the same
+            data, calibration, region and objective. The current fit is included
+            once. Different refinement methods are supported.
+            For phase, a second phase reconstruction of the same field of view. Shows
             both full images above matching central crops, with rectangles
             marking the crop locations. The crop is the central quarter of
             each dimension, selected on this result's grid. All four panels
@@ -457,29 +465,32 @@ class SSBResult(Mapping[str, float]):
         >>> aberrations.show("depth", size="large")
         >>> aberrations.show("tilt", size="small")
         >>> aberrations.show("convergence")
+        >>> fits[200].show("convergence", compare=fits)
         """
         import matplotlib.pyplot as plt
         from quantem.core.visualization import show_2d
 
+        if x != "auto" and view != "convergence":
+            raise ValueError("x selects the convergence axis; use show('convergence', x=...).")
         if size is not None and axsize is not None:
             raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
         if (compare is not None or view == "rotation") and (rows is not None or columns is not None):
             raise ValueError("Rotation and compare views have a fixed comparison layout; omit rows and columns.")
         if axsize is None:
             width = panel_inches("medium" if size is None else size)
-            if compare is not None or view == "probe":
+            if view == "convergence":
+                panel_size = (6, 4)
+            elif compare is not None or view == "probe":
                 panel_size = (6, 6)
             elif view == "rotation":
                 panel_size = (5, 3.4)
-            elif view == "convergence":
-                panel_size = (6, 4)
             elif view in ("parameters", "depth", "tilt") or (show_parameters and self.parameter_slices):
                 panel_size = (5.2, 4.5)
             else:
                 panel_size = (12, 12)
             axsize = (width, width * panel_size[1] / panel_size[0])
-        if compare is not None:
-            if view != "phase":
+        if compare is not None and view != "convergence":
+            if view != "phase" or not isinstance(compare, SSBResult):
                 raise ValueError("Use result.show(compare=other) to compare phase images.")
             figure = _phase_comparison(self, compare, axsize=axsize, cmap=cmap)
             if save is not None:
@@ -494,7 +505,8 @@ class SSBResult(Mapping[str, float]):
         if view == "convergence":
             from quantem.gpu.ssb.convergence import plot_convergence
 
-            figure = plot_convergence(self, axsize=axsize, rows=rows, columns=columns)
+            figure = plot_convergence(self, axsize=axsize, rows=rows, columns=columns,
+                                      compare=compare, x=x)
             if save is not None:
                 figure.savefig(save, dpi="figure", bbox_inches="tight")
             return figure

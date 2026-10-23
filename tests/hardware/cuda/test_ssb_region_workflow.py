@@ -31,10 +31,10 @@ def test_region_fit_matches_explicit_crop_and_preserves_full_reconstruction(tmp_
         data[64:192, 64:192], **options, scan_detector_rotation_deg=full.scan_detector_rotation_deg,
         scan_detector_rotation_flipped=full.scan_detector_rotation_flipped,
     ) as cropped:
-        regional = full.find_aberrations(
+        regional = full.find_aberrations(search="standard",
             scan_region=(64, 192, 64, 192), save_dir=tmp_path / "region", **search,
         )
-        explicit = cropped.find_aberrations(**search)
+        explicit = cropped.find_aberrations(search="standard", **search)
         np.testing.assert_array_equal(regional.phase.get(), explicit.phase.get())
         assert regional.fit_scan_region == (64, 192, 64, 192)
         assert regional.phase.shape == (128, 128)

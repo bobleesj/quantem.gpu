@@ -1620,7 +1620,7 @@ class SSB:
                 raise ValueError("Use size='small', 'medium', 'large' or 'xlarge', or axsize=(width, height), not both.")
             result = self._aberration_search
             if result is None:
-                result = self.find_aberrations(compare_standard=False,
+                result = self.find_aberrations(search="standard", compare_standard=False,
                                               check_rotation=self._dark_field_region is None)
             if view == "focus":
                 from quantem.gpu.ssb.focus import show_focus
@@ -1630,7 +1630,7 @@ class SSB:
                     with self.select_region(region, aberrations=result.aberrations,
                                             scan_detector_rotation_deg=result.scan_detector_rotation_deg) as selected:
                         result = selected.find_aberrations(
-                            check_rotation=False, compare_standard=False, compute_loss=False)
+                            search="standard", check_rotation=False, compare_standard=False, compute_loss=False)
                 while isinstance(source._dark_field_source, SSB) and source._dark_field_region is not None:
                     parent_bounds = source._dark_field_region
                     if crop is None:
@@ -1644,7 +1644,7 @@ class SSB:
             if region is not None:
                 with self.select_region(region, aberrations=result.aberrations,
                                         scan_detector_rotation_deg=result.scan_detector_rotation_deg) as selected:
-                    selected.find_aberrations(check_rotation=False, compare_standard=False, compute_loss=False)
+                    selected.find_aberrations(search="standard", check_rotation=False, compare_standard=False, compute_loss=False)
                     return selected.show(view, size=size, rows=rows, columns=columns, cmap=cmap, save=save, **options)
             if not result.parameter_slices:
                 self.measure_parameters(result)
@@ -1730,16 +1730,17 @@ class SSB:
     def find_aberrations(
         self,
         *,
+        search: Literal["standard", "broad"] = "broad",
         tilt: bool = True,
         objective: FitObjective = "agreement",
         scan_region: tuple[int, int, int, int] | None = None,
-        trials: int | None = None,
+        trials: int | Sequence[int] | None = None,
         refinement: RefineMethod | Literal["auto"] = "auto",
         search_ranges: dict[str, tuple[float, float] | float] | None = None,
         refine_lock: list[str] | None = None,
         tilt_limit_mrad: float = 25.0,
         check_rotation: bool = True,
-        seed: int = 42,
+        seed: int | None = None,
         save_dir: str | Path | None = None,
         force: bool = False,
         verbose: bool = True,
@@ -1749,8 +1750,27 @@ class SSB:
         compute_loss: bool = True,
         num_trials: int | None = None,
         higher_order: Sequence[str] | None = None,
-    ) -> SSBResult:
-        """Fit C10_nm, C12_nm and phi12_deg, by default with the sample tilt and a depth spread; return the result.
+    ) -> SSBResult | dict[int, SSBResult]:
+        """Find aberrations with a broad or standard search.
+
+        ``search="broad"`` (default) runs the CUDA broad fifth-order model:
+        200 primary trials, then 400 TPE trials by default and bounded Newton
+        refinement (at most 5000 objective evaluations, with early stopping).
+        Choose ``refinement="nelder-mead"`` for a bounded simplex polish
+        (at most 3000 evaluations) from the same broad-search winner. The
+        200-trial primary fit still uses Newton in both cases. ``trials`` changes the broad
+        stage budget. The primary seed is 42; the broad seed defaults to 17.
+        Its objective is recorded as ``broad_fifth_agreement`` and is distinct
+        from the standard model agreement. Rotation comes from the primary fit.
+        The optimizer is hybrid CPU TPE/float64 refinement with CUDA scientific
+        evaluation. Fit output stays native; use Auto when reconstructing.
+        Custom bounds and MPS broad search are not yet supported and raise an
+        actionable error rather than selecting a different estimator.
+
+        ``search="standard"`` preserves the existing joint fit described below,
+        with 200 trials and seed 42 by default. It supports CUDA and MPS.
+        Higher-order physical interpretation still requires model validation.
+
 
         SSB in quantem is model-based by default. For each trial set of aberrations, sample tilt and depth spread the
         fit predicts the bright-field data G(q, k) the detector should have recorded and keeps the parameters whose
@@ -1781,6 +1801,18 @@ class SSB:
         simplex in an agreement fit too; None skips local refinement. Saved settings record the selected optimizer,
         not ``"auto"``. ``result.objective`` records the objective; ``result.loss`` is the phase variance at the fit
         whatever the objective, unless ``compute_loss=False`` skips that diagnostic. CUDA and MPS run all three.
+
+        For broad search, pass ``trials=(200, 400, 600)`` to compare independent budgets. This
+        returns a dictionary keyed by trial count. Each fit starts from the
+        same session calibration and optics, borrows the loaded data and owns
+        its preparation; the parent session is unchanged. Fits run sequentially
+        and do not share search histories. With ``save_dir``, each budget uses
+        its own ``trials-<count>`` subdirectory. Native fit results remain
+        available for Auto reconstruction and calibration export.
+
+        >>> fits = ssb.find_aberrations(trials=(200, 400, 600), seed=17)
+        >>> fits[200].show("convergence", compare=fits)
+        >>> image = ssb.reconstruct(fits[400], upsampling_factor="auto")
 
         ``num_trials`` remains a compatibility alias for ``trials``; supply only one of them.
 
@@ -1887,11 +1919,60 @@ class SSB:
         objective only, and not with ``fixed_aberrations``.
         """
 
+        if search not in ("standard", "broad"):
+            raise ValueError("search must be 'standard' or 'broad'.")
+        if isinstance(trials, Sequence) and not isinstance(trials, (str, bytes)):
+            if search != "broad":
+                raise ValueError("Trial-budget comparisons currently require search='broad'. "
+                                 "Run standard fits individually to review their histories.")
+            if num_trials is not None:
+                raise ValueError("Supply trials or num_trials, not both.")
+            budgets = list(trials)
+            if (not budgets or any(isinstance(n, bool) or not isinstance(n, (int, np.integer))
+                                   or n < 1 for n in budgets)
+                    or len(set(budgets)) != len(budgets)):
+                raise ValueError("Use distinct trial counts, for example trials=(200, 400, 600).")
+            field_rows, field_cols = self.input_scan_shape
+            region = (0, field_rows, 0, field_cols)
+            fits = {}
+            for budget in budgets:
+                # Separate sessions prevent a preceding fit from becoming a warm start.
+                with self.select_region(region) as independent:
+                    fits[int(budget)] = independent.find_aberrations(
+                        search=search, trials=int(budget), seed=seed, refinement=refinement,
+                        tilt=tilt, objective=objective, scan_region=scan_region,
+                        search_ranges=search_ranges, refine_lock=refine_lock,
+                        tilt_limit_mrad=tilt_limit_mrad, check_rotation=check_rotation,
+                        save_dir=None if save_dir is None else Path(save_dir) / f"trials-{budget}",
+                        force=force, verbose=verbose, compare_standard=compare_standard,
+                        fixed_aberrations=fixed_aberrations, refine_rotation=refine_rotation,
+                        compute_loss=compute_loss, higher_order=higher_order,
+                    )
+            return fits
+        if search == "broad":
+            if (not tilt or objective != "agreement" or scan_region is not None
+                    or search_ranges is not None or refine_lock is not None
+                    or fixed_aberrations is not None or higher_order is not None
+                    or refinement not in ("auto", "newton", "nelder-mead") or tilt_limit_mrad != 25.0):
+                raise ValueError(
+                    "Broad fifth-order search uses its validated joint model and bounds. "
+                    "Use search='standard' for custom ranges, regional fitting, "
+                    "fixed coefficients or higher_order subsets."
+                )
+            from .broad_search import find_broad
+
+            count = 400 if trials is None and num_trials is None else resolve_trial_count(trials, num_trials)
+            return find_broad(
+                self, trials=count, seed=17 if seed is None else seed,
+                save_dir=save_dir, force=force, verbose=verbose,
+                primary_options={"check_rotation": check_rotation, "refine_rotation": refine_rotation},
+                refinement="newton" if refinement == "auto" else refinement,
+            )
         return self._find_aberrations(
             "auto" if check_rotation else "off", tilt=tilt, objective=objective, scan_region=scan_region,
             num_trials=resolve_trial_count(trials, num_trials),
             refinement=refinement, search_ranges=search_ranges, refine_lock=refine_lock,
-            tilt_limit_mrad=tilt_limit_mrad, seed=seed, save_dir=save_dir, force=force, verbose=verbose,
+            tilt_limit_mrad=tilt_limit_mrad, seed=42 if seed is None else seed, save_dir=save_dir, force=force, verbose=verbose,
             compare_standard=compare_standard, fixed_aberrations=fixed_aberrations,
             refine_rotation=refine_rotation, compute_loss=compute_loss, higher_order=higher_order)
 
@@ -2391,8 +2472,13 @@ class SSB:
         try:
             self.set_rotation(result.scan_detector_rotation_deg)
             backend = self._backend()
+            evaluate = lambda rows: backend.sample_agreement(rows, band)
+            if result.objective == "broad_fifth_agreement":
+                from .broad_search import parameter_evaluator
+
+                evaluate = parameter_evaluator(self, result, band)
             evidence = measure_slices(
-                lambda rows: backend.sample_agreement(rows, band), point,
+                evaluate, point,
                 rotation_deg=result.scan_detector_rotation_deg, band_inv_A=band,
             )
         finally:
@@ -2420,7 +2506,9 @@ class SSB:
     ) -> SSBResult:
         """Reconstruct the phase with the session's aberrations, fitting them first when none are known.
 
-        A new session with no aberrations given runs ``find_aberrations()`` once, with its defaults, and says so:
+        A new session with no aberrations given runs ``find_aberrations(search="standard")`` once,
+        on CUDA or MPS, and says so. Call ``find_aberrations(search="broad")`` first
+        to use the CUDA fifth-order model:
         the model-based, tilt-corrected fit, the default of the three methods (the phase variance is a backup):
 
         ============================================================  =====================  ==============================
@@ -2510,8 +2598,8 @@ class SSB:
                 raise ValueError("Replay trials without coefficient overrides or save_dir; save the returned result separately.")
             return self._reconstruct_trials(parameters, trial_ids, upsampling_factor=upsampling_factor, phase_estimator=phase_estimator)
         if parameters is None and aberrations is None and not self._aberrations_explicit:
-            print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations() first.")
-            parameters = self.find_aberrations(verbose=verbose)
+            print("SSB: no aberrations given or fitted yet; fitting them with find_aberrations(search='standard') first.")
+            parameters = self.find_aberrations(search="standard", verbose=verbose)
             if not verbose:
                 _announce_rotation_branches(parameters)
         correction = parameters
