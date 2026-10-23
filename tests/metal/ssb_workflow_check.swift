@@ -321,13 +321,19 @@ private func require(
       spectrum.append(g)
     }
     let q = (0..<n).map { Float(Double($0 < n / 2 ? $0 : $0 - n) * dq) }
-    let k2 = zip(kx, ky).map { $0 * $0 + $1 * $1 }
-    let geometry = MetalSSBGeometry(
+    let k2: [Double] = zip(kx, ky).map { $0 * $0 + $1 * $1 }
+    let alphaSquared: [Float] = k2.map { Float(wavelength * wavelength * $0) }
+    let apertures: [Float] = zip(kx, ky).map { Float(aperture($0, $1)) }
+    let cos2Phi: [Float] = zip(zip(kx, ky), k2).map { direction, squared in
+      squared > 0 ? Float((direction.0 * direction.0 - direction.1 * direction.1) / squared) : 1
+    }
+    let sin2Phi: [Float] = zip(zip(kx, ky), k2).map { direction, squared in
+      squared > 0 ? Float(2 * direction.0 * direction.1 / squared) : 0
+    }
+    let geometry: MetalSSBGeometry = MetalSSBGeometry(
       brightfieldKX: kx.map(Float.init), brightfieldKY: ky.map(Float.init),
-      brightfieldAlphaSquared: k2.map { Float(wavelength * wavelength * $0) },
-      brightfieldAperture: zip(kx, ky).map { Float(aperture($0, $1)) },
-      brightfieldCos2Phi: zip(zip(kx, ky), k2).map { $1 > 0 ? Float(($0.0 * $0.0 - $0.1 * $0.1) / $1) : 1 },
-      brightfieldSin2Phi: zip(zip(kx, ky), k2).map { $1 > 0 ? Float(2 * $0.0 * $0.1 / $1) : 0 },
+      brightfieldAlphaSquared: alphaSquared, brightfieldAperture: apertures,
+      brightfieldCos2Phi: cos2Phi, brightfieldSin2Phi: sin2Phi,
       qxByRow: q, qyByColumn: q, wavelengthAngstroms: Float(wavelength), semiangleRadians: Float(semiangle),
       angularSamplingYRadians: Float(sampling), angularSamplingXRadians: Float(sampling),
       dcValue: SIMD2(Float(dc / Double(kx.count)), 0), referenceRotationDegrees: 0,
@@ -352,7 +358,7 @@ private func require(
     var report: [String] = []
     for budget in [Int?.none, Int?(0)] {
       let engine = try MetalSSBEngine(device: device, geometry: geometry, cacheBudgetBytes: budget)
-      try engine.prepare(brightfield: source, countType: .uint16)
+      try engine.prepare(brightfield: source, countType: MetalSSBCountType.uint16)
       for item in cases {
         let result = try engine.reconstruct(aberrations: MetalSSBAberrations(
           c10Angstroms: Float(c10), c12Angstroms: Float(c12), phi12Radians: Float(phi12), higherOrder: item.higherOrder))
