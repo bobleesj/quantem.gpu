@@ -324,11 +324,16 @@ private func require(
     let k2: [Double] = zip(kx, ky).map { $0 * $0 + $1 * $1 }
     let alphaSquared: [Float] = k2.map { Float(wavelength * wavelength * $0) }
     let apertures: [Float] = zip(kx, ky).map { Float(aperture($0, $1)) }
-    let cos2Phi: [Float] = zip(zip(kx, ky), k2).map { direction, squared in
-      squared > 0 ? Float((direction.0 * direction.0 - direction.1 * direction.1) / squared) : 1
-    }
-    let sin2Phi: [Float] = zip(zip(kx, ky), k2).map { direction, squared in
-      squared > 0 ? Float(2 * direction.0 * direction.1 / squared) : 0
+    var cos2Phi = [Float](repeating: 1, count: k2.count)
+    var sin2Phi = [Float](repeating: 0, count: k2.count)
+    for index in k2.indices where k2[index] > 0 {
+      let x: Double = kx[index]
+      let y: Double = ky[index]
+      let squared: Double = k2[index]
+      let cosineNumerator: Double = x * x - y * y
+      let sineNumerator: Double = 2 * x * y
+      cos2Phi[index] = Float(cosineNumerator / squared)
+      sin2Phi[index] = Float(sineNumerator / squared)
     }
     let geometry: MetalSSBGeometry = MetalSSBGeometry(
       brightfieldKX: kx.map(Float.init), brightfieldKY: ky.map(Float.init),
