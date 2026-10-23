@@ -15,6 +15,8 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
   public let upsamplingFactor: Int
   public let calibration: MetalSSBCalibration
   public let parameters: SSBJointParameters
+  /// Exact reconstruction point. Absent in older files that stored only the Float UI parameters.
+  public let point: SSBModelPoint?
   public let rotationDegrees: Double
   public let optimization: SSBJointOptimizationResult?
   /// The fit that produced `parameters` (both rotation branches when they were compared).
@@ -43,6 +45,7 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
     upsamplingFactor = result.upsamplingFactor
     self.calibration = calibration
     parameters = result.parameters
+    point = result.point
     rotationDegrees = result.scanDetectorRotationDegrees
     self.optimization = optimization
     self.fit = fit
@@ -92,6 +95,13 @@ public struct MetalSSBJointSavedRun: Codable, Sendable {
     }
     try region?.validate(sourceRows: sourceRows, sourceColumns: sourceColumns)
     try parameters.validate()
+    if let point {
+      try point.validate()
+      guard point.jointParameters == parameters else {
+        throw MetalSSBError.invalidGeometry(
+          "The saved Double model point does not match its displayed SSB parameters.")
+      }
+    }
     _ = try calibration.ssbUpsamplingFactor()
   }
 }

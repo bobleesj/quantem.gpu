@@ -66,6 +66,45 @@ accounted for separately from the packed counts. An optional sum-cache experimen
 is available only in explicitly instrumented builds; it is not the default
 memory or performance contract.
 
+## Staged SSB fitting
+
+`SSBModelFit.findAberrations` defaults to 200 primary TPE trials and primary
+refinement, followed by bounded joint Newton refinement through fifth order.
+The second stage refines the earlier aberrations, specimen tilt, and depth
+spread together. Rotation is selected using the primary fits and held during
+the fifth-order stage. `SSBFitOptions(maximumOrder: 1)` retains the original
+primary-only workflow.
+
+```swift
+let fit = try SSBModelFit.findAberrations(
+  model: model, engine: engine, rotationDegrees: rotation,
+  darkField: darkField, scanSampling: scanSampling,
+  onInitialFit: { initial in
+    // Hand this Auto reconstruction to the application's display queue.
+    let preview = try model.reconstruct(initial.point, upsamplingFactor: autoFactor)
+    publishPreview(preview)
+  })
+let phase = try model.reconstruct(fit.fit.point, upsamplingFactor: autoFactor)
+```
+
+Scientific objectives and reconstruction run in Metal with all selected BF
+pixels. The Newton controller uses host Double arithmetic for its small
+28-variable Hessian and bounded trust step; it is a hybrid optimizer. Fitting
+uses the native scan grid and the strict `0.2 < |q| < 0.9 Å⁻¹` band. Auto
+sampling applies to displayed reconstruction. The 5,000-evaluation cap is a
+safety bound; a small step or exhausted trust radius can stop refinement
+earlier. A lower objective is not the target: this fit maximizes model agreement.
+
+`higherOrderRefinement` records the stopping reason, requested evaluations,
+unique evaluated points, and best-agreement trace. Divide the raw agreement
+by `higherOrderNormalization` to compare with that trace. Native saved joint
+results retain the exact Double model point, independent of rounded UI controls.
+
+This native path implements the standard fifth-order schedule. The additional
+higher-order TPE exploration and optional Nelder–Mead polish remain Python API
+options. An imported phase alone does not establish support for editing all of
+its originating model parameters.
+
 ## Build, test, and measure
 
 ```bash

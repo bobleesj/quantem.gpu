@@ -440,9 +440,9 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
     }
   }
 
-  /// `SSB.reconstruct()`'s default on the measured scan: the rotation from the centre-of-mass curl, both
-  /// 180-degree branches fitted tilt-corrected, the dark-field column test.
-  func testDefaultBranchedFitMatchesMPS() throws {
+  /// Frozen primary-fit control: curl rotation, both tilt-corrected branches and the dark-field test.
+  /// Request the primary path explicitly; the new default adds fifth-order refinement afterwards.
+  func testPrimaryBranchedFitMatchesMPS() throws {
     let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
     let fixture = try MeasuredSSBFixture.load(device: device)
     let (engine, _) = try fixture.engine(device: device)
@@ -462,7 +462,7 @@ final class MetalSSBMeasuredParityTests: XCTestCase {
       scanSampling: (
         fixture.fixture.calibration.scan_sampling_A[0],
         fixture.fixture.calibration.scan_sampling_A[1]
-      ))
+      ), options: SSBFitOptions(maximumOrder: 1))
     let seconds = Date().timeIntervalSince(started)
     let reference = fixture.expected.default
     XCTAssertEqual(result.kept, reference.kept)

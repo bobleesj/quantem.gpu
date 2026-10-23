@@ -20,27 +20,31 @@ public struct SSBModelPoint: Codable, Equatable, Sendable {
   public var phi12Radians: Double
   public var sampleTiltMrad: [Double]
   public var depthSpreadAngstroms: Double
+  public var higherOrder: [SSBModelHigherOrder]
 
   public init(
     c10Angstroms: Double, c12Angstroms: Double, phi12Radians: Double,
-    sampleTiltMrad: [Double] = [0, 0], depthSpreadAngstroms: Double = 0
+    sampleTiltMrad: [Double] = [0, 0], depthSpreadAngstroms: Double = 0,
+    higherOrder: [SSBModelHigherOrder] = []
   ) {
     self.c10Angstroms = c10Angstroms
     self.c12Angstroms = c12Angstroms
     self.phi12Radians = phi12Radians
     self.sampleTiltMrad = sampleTiltMrad
     self.depthSpreadAngstroms = depthSpreadAngstroms
+    self.higherOrder = higherOrder
   }
 
   /// From public units: C10 and C12 in nm, phi12 in degrees, the depth spread in nm.
   public init(
     c10Nanometers: Double, c12Nanometers: Double, phi12Degrees: Double,
-    sampleTiltMrad: [Double] = [0, 0], depthSpreadNanometers: Double = 0
+    sampleTiltMrad: [Double] = [0, 0], depthSpreadNanometers: Double = 0,
+    higherOrder: [SSBModelHigherOrder] = []
   ) {
     self.init(
       c10Angstroms: c10Nanometers * 10, c12Angstroms: c12Nanometers * 10,
       phi12Radians: phi12Degrees * .pi / 180, sampleTiltMrad: sampleTiltMrad,
-      depthSpreadAngstroms: depthSpreadNanometers * 10)
+      depthSpreadAngstroms: depthSpreadNanometers * 10, higherOrder: higherOrder)
   }
 
   public init(_ parameters: SSBJointParameters) {
@@ -49,8 +53,27 @@ public struct SSBModelPoint: Codable, Equatable, Sendable {
       c12Angstroms: Double(parameters.aberrations.c12Angstroms),
       phi12Radians: Double(parameters.aberrations.phi12Radians),
       sampleTiltMrad: [Double(parameters.tiltRowMrad), Double(parameters.tiltColumnMrad)],
-      depthSpreadAngstroms: Double(parameters.depthAngstroms))
+      depthSpreadAngstroms: Double(parameters.depthAngstroms),
+      higherOrder: (parameters.aberrations.higherOrder ?? []).map(SSBModelHigherOrder.init))
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case c10Angstroms, c12Angstroms, phi12Radians, sampleTiltMrad, depthSpreadAngstroms, higherOrder
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      c10Angstroms: try values.decode(Double.self, forKey: .c10Angstroms),
+      c12Angstroms: try values.decode(Double.self, forKey: .c12Angstroms),
+      phi12Radians: try values.decode(Double.self, forKey: .phi12Radians),
+      sampleTiltMrad: try values.decode([Double].self, forKey: .sampleTiltMrad),
+      depthSpreadAngstroms: try values.decode(Double.self, forKey: .depthSpreadAngstroms),
+      higherOrder: try values.decodeIfPresent([SSBModelHigherOrder].self, forKey: .higherOrder)
+        ?? [])
+  }
+
+  public var hasHigherOrder: Bool { higherOrder.contains { $0.magnitudeAngstroms != 0 } }
 
   public var c10Nanometers: Double { c10Angstroms / 10 }
   public var c12Nanometers: Double { c12Angstroms / 10 }
@@ -62,7 +85,8 @@ public struct SSBModelPoint: Codable, Equatable, Sendable {
     SSBJointParameters(
       aberrations: .init(
         c10Angstroms: Float(c10Angstroms), c12Angstroms: Float(c12Angstroms),
-        phi12Radians: Float(phi12Radians)),
+        phi12Radians: Float(phi12Radians),
+        higherOrder: higherOrder.isEmpty ? nil : higherOrder.map(\.metal)),
       depthAngstroms: Float(depthSpreadAngstroms), tiltRowMrad: Float(sampleTiltMrad[0]),
       tiltColumnMrad: Float(sampleTiltMrad[1]))
   }
@@ -78,6 +102,7 @@ public struct SSBModelPoint: Codable, Equatable, Sendable {
   }
 
   func validate() throws {
+    try SSBModelHigherOrder.validate(higherOrder)
     guard sampleTiltMrad.count == 2,
       ([c10Angstroms, c12Angstroms, phi12Radians, depthSpreadAngstroms] + sampleTiltMrad)
         .allSatisfy(
@@ -113,6 +138,7 @@ final class SSBCoherentReconstruction {
   private let probe: MTLBuffer
   private let probePipeline, coherentPipeline, mirrorPipeline, originPipeline,
     phasePipeline: MTLComputePipelineState
+  private let higherProbePipeline, higherCoherentPipeline: MTLComputePipelineState
   private var plans: [Int: Plan] = [:]
   private var fft: [Int: (MPSGraph, MPSGraphTensor, MPSGraphTensor)] = [:]
   private let separable: SSBSeparableReconstruction
@@ -141,6 +167,8 @@ final class SSBCoherentReconstruction {
       }
       return try device.makeComputePipelineState(function: function)
     }
+    higherProbePipeline = try pipeline("fifth_model_probe")
+    higherCoherentPipeline = try pipeline("fifth_model_coherent")
     probePipeline = try pipeline("model_probe")
     coherentPipeline = try pipeline("model_coherent")
     mirrorPipeline = try pipeline("model_mirror")
@@ -206,8 +234,9 @@ final class SSBCoherentReconstruction {
 
   /// Output frequencies, retained support rows and columns, and whether the half spectrum suffices
   /// (`_coherent_support`, `_coherent_columns`).
-  private func plan(factor: Int) throws -> Plan {
-    if let plan = plans[factor] { return plan }
+  private func plan(factor: Int, higher: Bool) throws -> Plan {
+    let key = higher ? -factor : factor
+    if let plan = plans[key] { return plan }
     let source = geometry.qxByRow.count
     let n = source * factor
     func frequencies(_ step: Float) -> [Float] {
@@ -228,7 +257,7 @@ final class SSBCoherentReconstruction {
     let rowSupport = Double(kHost.map { abs($0.x) }.max() ?? 0) + radius
     let colSupport = Double(kHost.map { abs($0.y) }.max() ?? 0) + radius
     let half =
-      factor > 1 && Double(n / 2) * Double(abs(rowStep)) > rowSupport
+      !higher && factor > 1 && Double(n / 2) * Double(abs(rowStep)) > rowSupport
       && Double(n / 2) * Double(abs(colStep)) > colSupport
     let columns = half ? n / 2 + 1 : n
     func support(_ value: Double, _ step: Float, _ count: Int) -> [UInt32] {
@@ -246,7 +275,7 @@ final class SSBCoherentReconstruction {
       qCol: try Self.buffer(device, frequencies(colStep)),
       rowIndices: try Self.buffer(device, rows), colIndices: try Self.buffer(device, cols),
       rows: rows.count, cols: cols.count, half: half)
-    plans[factor] = plan
+    plans[key] = plan
     return plan
   }
 
@@ -255,7 +284,12 @@ final class SSBCoherentReconstruction {
     visit: (Int, @escaping MetalSSBJointModel.SpectrumVisitor) throws -> Void,
     isCancelled: () -> Bool
   ) throws -> (phase: MTLBuffer, rows: Int) {
-    let plan = try plan(factor: factor)
+    let higher = point.hasHigherOrder
+    let useSeparable = self.useSeparable && !higher
+    let plan = try plan(factor: factor, higher: higher)
+    let coefficients = higher ? try Self.buffer(device, point.reconstructionCoefficients) : nil
+    let selectedProbe = higher ? higherProbePipeline : probePipeline
+    let selectedCoherent = higher ? higherCoherentPipeline : coherentPipeline
     let source = geometry.qxByRow.count
     let n = source * factor
     var params = Self.parameters(geometry, point)
@@ -267,11 +301,12 @@ final class SSBCoherentReconstruction {
       blit.endEncoding()
     }
     var count = UInt32(kHost.count)
-    let probeEncoder = try encoder(commands, probePipeline)
+    let probeEncoder = try encoder(commands, selectedProbe)
     probeEncoder.setBuffer(kBuffer, offset: 0, index: 0)
     probeEncoder.setBytes(&params, length: params.count * 4, index: 1)
     probeEncoder.setBuffer(probe, offset: 0, index: 2)
     probeEncoder.setBytes(&count, length: 4, index: 3)
+    if let coefficients { probeEncoder.setBuffer(coefficients, offset: 0, index: 4) }
     dispatch(probeEncoder, width: kHost.count)
     if useSeparable {
       do {
@@ -289,11 +324,12 @@ final class SSBCoherentReconstruction {
       guard let blit = first.makeBlitCommandEncoder() else { throw MetalSSBError.commandQueue }
       blit.fill(buffer: total, range: 0..<(n * n * 8), value: 0)
       blit.endEncoding()
-      let probeAgain = try encoder(first, probePipeline)
+      let probeAgain = try encoder(first, selectedProbe)
       probeAgain.setBuffer(kBuffer, offset: 0, index: 0)
       probeAgain.setBytes(&params, length: params.count * 4, index: 1)
       probeAgain.setBuffer(probe, offset: 0, index: 2)
       probeAgain.setBytes(&count, length: 4, index: 3)
+      if let coefficients { probeAgain.setBuffer(coefficients, offset: 0, index: 4) }
       dispatch(probeAgain, width: kHost.count)
     }
     try withoutActuallyEscaping(isCancelled) { cancelled in
@@ -308,7 +344,7 @@ final class SSBCoherentReconstruction {
           groups: UInt32((batch + Self.chunk - 1) / Self.chunk),
           groupOffset: UInt32(bfOffset / Self.chunk), depth: point.depthSpreadAngstroms != 0 ? 1 : 0
         )
-        let compute = try encoder(commands, coherentPipeline)
+        let compute = try encoder(commands, selectedCoherent)
         compute.setBuffer(spectra, offset: offset, index: 0)
         compute.setBuffer(plan.qRow, offset: 0, index: 1)
         compute.setBuffer(plan.qCol, offset: 0, index: 2)
@@ -320,6 +356,7 @@ final class SSBCoherentReconstruction {
         compute.setBuffer(plan.colIndices, offset: 0, index: 8)
         compute.setBuffer(total, offset: 0, index: 9)
         compute.setBytes(&grid, length: MemoryLayout<Grid>.stride, index: 10)
+        if let coefficients { compute.setBuffer(coefficients, offset: 0, index: 11) }
         compute.dispatchThreads(
           MTLSize(width: plan.cols, height: plan.rows, depth: 1),
           threadsPerThreadgroup: MTLSize(width: 32, height: 4, depth: 1))
