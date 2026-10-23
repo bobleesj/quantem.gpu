@@ -25,6 +25,33 @@ private func frozenMPSHostAllowance(
   }
 }
 
+/// Raw encoded fixture counts with the detector mask applied only on bounded reads.
+private final class MaskedFixtureCounts: MetalResidentCounts {
+  let source: MetalEncodedSource
+  let hotPixelIndices: [Int]
+  var shape: [Int] { source.shape }
+  var itemBytes: Int { source.itemBytes }
+  var device: MTLDevice { source.device }
+  var readyFrames: Int { source.readyFrames }
+  var isReleased: Bool { source.isReleased }
+  var residentBytes: Int { source.residentBytes }
+  var representation: Metal4DSTEMResidentRepresentation { source.representation }
+  var hotPixelCorrection: String { "none" }
+
+  init(source: MetalEncodedSource, hotPixelIndices: [Int]) {
+    self.source = source
+    self.hotPixelIndices = hotPixelIndices
+  }
+  func encodeRead(_ frames: Range<Int>, into result: MTLBuffer, command: MTLCommandBuffer) throws {
+    try source.encodeRead(frames, into: result, command: command)
+  }
+  func checkErrors() throws { try source.checkErrors() }
+  func countMeans() throws -> (diffraction: MTLBuffer, brightField: MTLBuffer) {
+    try source.countMeans()
+  }
+  func releaseResidentStorage() { source.releaseResidentStorage() }
+}
+
 /// Run existing frozen scientific fixtures on hosts without the XCTest runtime.
 func checkFrozenImageOperations(directory: URL) throws {
   func fixture(_ name: String) throws -> [String: Any] {
@@ -81,6 +108,35 @@ func checkFrozenImageOperations(directory: URL) throws {
         start: buffer.contents().assumingMemoryBound(to: Float.self), count: count))
     try require(values == (data[key] as! [Double]).map(Float.init), "Mean differs: \(key)")
   }
+  // The read-time correction must use the same native policy as append-time correction.
+  let uncorrected = try MetalEncodedSource(shape: data["shape"] as! [Int], device: ops.device)
+  defer { uncorrected.releaseResidentStorage() }
+  let rawBuffer = ops.device.makeBuffer(length: raw.count * 2, options: .storageModeShared)!
+  raw.withUnsafeBytes { _ = memcpy(rawBuffer.contents(), $0.baseAddress!, $0.count) }
+  try uncorrected.append(rawBuffer, frames: 17, verify: true)
+  let masked = MaskedFixtureCounts(source: uncorrected, hotPixelIndices: data["bad"] as! [Int])
+  let corrected = try masked.correctedHotPixels()
+  let readCorrected = try corrected.read(3..<15)
+  let correctedValues = Array(
+    UnsafeBufferPointer(
+      start: readCorrected.contents().assumingMemoryBound(to: UInt16.self), count: 12 * 35))
+  try require(correctedValues == actual, "Read-time median differs from append-time correction")
+  let correctedMeans = try corrected.countMeans()
+  for (buffer, key, count) in [
+    (correctedMeans.diffraction, "dp_mean", 35), (correctedMeans.brightField, "im_bf", 17),
+  ] {
+    let values = Array(
+      UnsafeBufferPointer(
+        start: buffer.contents().assumingMemoryBound(to: Float.self), count: count))
+    try require(
+      values == (data[key] as! [Double]).map(Float.init), "Corrected mean differs: \(key)")
+  }
+  corrected.releaseResidentStorage()
+  try require(!uncorrected.isReleased, "Releasing correction released caller-owned counts")
+  let rawRead = try uncorrected.read(0..<17)
+  try require(
+    raw.withUnsafeBytes { memcmp(rawRead.contents(), $0.baseAddress!, $0.count) == 0 },
+    "Read-time correction changed caller-owned raw counts")
   let image = try ops.image(
     values: (data["image"] as! [Double]).map(Float.init), rows: 17, columns: 19)
   let blurred = try ops.gaussian(image, sigma: 1.25).values()
