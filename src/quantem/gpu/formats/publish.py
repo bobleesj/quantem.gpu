@@ -24,7 +24,7 @@ def publish_file(temporary: str | Path, destination: str | Path) -> None:
         except AttributeError as missing:
             raise OSError(
                 errno.ENOTSUP,
-                "This volume cannot publish .qem files without exposing partial data; "
+                "This volume cannot publish files without exposing partial data; "
                 "save to a volume with atomic rename support.",
                 os.fspath(destination),
             ) from missing
@@ -45,7 +45,7 @@ def publish_file(temporary: str | Path, destination: str | Path) -> None:
         if code in {errno.ENOTSUP, errno.EOPNOTSUPP}:
             raise OSError(
                 code,
-                "This volume cannot publish .qem files without exposing partial data; "
+                "This volume cannot publish files without exposing partial data; "
                 "save to a volume with atomic rename support.",
                 os.fspath(destination),
             )
