@@ -6,6 +6,33 @@ and reuse those parameters for reconstruction. Start with the
 For actual images and saved outputs, run the {ref}`Gold notebook <gold-ssb-reconstruction>`.
 This page covers parameters, calibration, ownership, and backend limits.
 
+## Review and save a fit
+
+Keep the returned result to inspect and reuse the fitted model:
+
+```python
+fit = ssb.find_aberrations(search="standard")
+fit.report()                         # coefficients and sample geometry
+fit.show("convergence")              # recorded search and refinement
+fit.show("probe")                    # model probe intensities
+fit.save_calibration("calibration.json")
+```
+
+On CUDA, `search="broad"` uses the same result API for the broader fifth-order
+search. Plotting convergence uses saved scalar evaluations, with different
+objectives and rotation searches kept separate. It does not rerun the fit;
+if a refinement trajectory was not recorded, the plot says so. A budget stop
+is reported as a budget stop, rather than proof of convergence.
+
+`save_calibration` exports this fit's coefficients, tilt/depth, rotation and
+acquisition identity in ShowPtycho's calibration format. It computes no phase
+or loss; file fingerprinting and writing happen only when called. It requires
+a calibrated file-backed session and selects Auto sampling for the viewer.
+Use the widget's own `save_calibration()` to save subsequent interactive edits.
+This JSON contains the correction and calibration, not the reconstructed
+image or the convergence history; `find_aberrations(save_dir=...)` saves the
+complete fit for reuse.
+
 (ssb-fit-methods)=
 ## Fit methods: model-based by default
 

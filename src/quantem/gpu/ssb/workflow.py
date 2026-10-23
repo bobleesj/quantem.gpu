@@ -1214,6 +1214,9 @@ class SSB:
             float(result.loss) if result.loss is not None else float("inf")
         )
         self._reconstruction = result
+        from quantem.gpu.ssb.calibration import capture_calibration
+
+        capture_calibration(self, result)
         branches = result.rotation_branches
         if (branches is not None and result.fit_scan_region is None
                 and (branches._panel_source is None or branches._panel_source() is None)):

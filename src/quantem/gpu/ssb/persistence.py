@@ -54,7 +54,7 @@ RESULT_SCHEMA = f"quantem.ssb-result/{RESULT_VERSION}"
 # Not saved in "result": arrays and branches have their own entries, and the session's paths (saved_path, source_path)
 # are its own, not the result's; a reused result takes them from the session that reads it.
 _ARTIFACT_FIELDS = {"object_wave", "rotation_branches", "reused", "saved_path", "source_path", "metadata",
-                    "parameter_slices"}
+                    "parameter_slices", "calibration_context", "_calibration_source"}
 
 
 def save_result(
@@ -80,6 +80,11 @@ def save_result(
         "signature": signature,
         "result": json_value(result_metadata),
     }
+    if result.calibration_context is not None:
+        # Optional metadata remains readable by older result readers. File identity was already computed.
+        context = json_value(result.calibration_context)
+        context["session_identity"]["source"] = signature["source"]
+        metadata["calibration_context"] = context
     # Optional diagnostics leave the scientific result payload readable by
     # readers of this schema that predate parameter plots.
     if result.parameter_slices is not None:
@@ -119,6 +124,7 @@ def load_result(
             return None
         saved = dict(metadata["result"])
         saved.setdefault("parameter_slices", metadata.get("parameter_slices"))
+        saved.setdefault("calibration_context", metadata.get("calibration_context"))
         with np.load(array_path, allow_pickle=False) as arrays:
             object_wave = arrays["object_wave"]
             rotation_branches = (None if metadata.get("rotation_branches") is None
