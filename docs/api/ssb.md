@@ -183,11 +183,12 @@ given. Reported centers stay in the original detector axes. Give a calibrated
 angle to skip the estimate: `SSB(data, scan_detector_rotation_deg=12.3)`.
 
 `reconstruct()` fits the aberrations with `find_aberrations()` defaults (the
-tilt-corrected joint fit) when the session has none, then reuses them. Call `find_aberrations(...)` first to
-constrain the fit: `search_ranges`, `fixed_aberrations`, `tilt=True`, `seed`.
-The joint fit takes a `C10_nm` range or value and a `C12_nm` range from 0, or
+tilt-corrected joint fit) when the session has none, then reuses them. For custom
+primary bounds or fixed coefficients, call `find_aberrations(search="primary", ...)`
+first. This fits defocus, astigmatism, tilt and depth without the default
+fifth-order stage. The primary joint fit takes a `C10_nm` range or value and a `C12_nm` range from 0, or
 holds `C12_nm=0`:
-`ssb.find_aberrations(tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
+`ssb.find_aberrations(search="primary", tilt=True, search_ranges={"C10_nm": (-50, 50)}, fixed_aberrations={"C12_nm": 0.0})`.
 It searches `phi12_deg` over its whole period, so a `phi12_deg` range or a
 nonzero held `C12_nm` alone raises and names what to pass; holding all three
 coefficients needs `check_rotation=False`. The joint fit searches depth
