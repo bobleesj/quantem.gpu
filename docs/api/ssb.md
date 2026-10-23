@@ -8,29 +8,44 @@ This page covers parameters, calibration, ownership, and backend limits.
 
 ## Choose a search
 
-`ssb.find_aberrations()` defaults to `search="broad"` on CUDA: a 200-trial
-primary fit, followed by 400 fifth-order TPE trials and bounded Newton
-refinement. `search="standard"` uses the established 200-trial joint fit on
-CUDA and MPS. Broad search currently requires CUDA; MPS callers select
-`search="standard"` explicitly.
+`ssb.find_aberrations()` defaults to `search="standard"`: 200 TPE trials
+for initial defocus, astigmatism, tilt and depth, including its Newton polish,
+then joint Newton refinement through fifth order. No additional fifth-order
+TPE search is performed. `search="broad"` adds 400 fifth-order TPE trials
+before the same joint refinement. Both fit the same model and retain all valid BF pixels.
 
-The widget fit controls, series processing and the automatic fit in
-`ssb.reconstruct()` retain the standard model. Fit broad explicitly before
-opening the viewer to inspect and edit its higher-order correction.
+`search="primary"` retains the earlier initial-only fit and its custom bounds,
+fixed coefficients and legacy objective options. Existing constrained calls
+using `search="standard"` should select `"primary"` explicitly.
+
+The default Newton refinement may stop early and has a 5000-evaluation ceiling.
+`refinement="nelder-mead"` keeps bounded simplex refinement available with a
+3000-evaluation ceiling. An evaluation cap is not proof of convergence.
+Scientific objective/reconstruction work stays on the GPU; the optimizer's
+candidate generation and float64 control run on the CPU.
+
+See the [matched initialization study and optimization lessons](../performance/2026-10-22-ssb-initialization-and-refinement.md).
+
+In notebooks, the initial Auto-sampled phase appears while refinement continues.
+The same view updates with the final phase. Use `show=False` to suppress it.
+CLI calls create no plots. `fit.timings` separates the initial fit, refinement,
+initial handoff and final display; display work is excluded from the fit clock.
+Applications can pass `on_initial_fit=callback` to receive the initial native fit.
+The method returns only after final refinement.
 
 ## Review and save a fit
 
 Keep the returned result to inspect and reuse the fitted model:
 
 ```python
-fit = ssb.find_aberrations(search="standard")
+fit = ssb.find_aberrations()
 fit.report()                         # coefficients and sample geometry
 fit.show("convergence")              # recorded search and refinement
 fit.show("probe")                    # model probe intensities
 fit.save_calibration("calibration.json")
 ```
 
-On CUDA, `search="broad"` uses the same result API for the broader fifth-order
+`search="broad"` uses the same result API for the broader fifth-order
 search. Plotting convergence uses saved scalar evaluations, with different
 objectives and rotation searches kept separate. It does not rerun the fit;
 if a refinement trajectory was not recorded, the plot says so. A budget stop
@@ -38,10 +53,10 @@ is reported as a budget stop, rather than proof of convergence.
 
 ### Compare search budgets
 
-For an optional CUDA broad-search study, use a sequence of trial counts:
+For an optional broad-search study, use a sequence of trial counts:
 
 ```python
-fits = ssb.find_aberrations(trials=(200, 400, 600), seed=17)
+fits = ssb.find_aberrations(search="broad", trials=(200, 400, 600), seed=17)
 fits[200].show("convergence", compare=fits)
 ```
 
@@ -53,20 +68,20 @@ all selected data. The parent session is unchanged; choose a fit explicitly:
 image = ssb.reconstruct(fits[400], upsampling_factor="auto")
 ```
 
-A scalar `trials=400` still returns one fit. The default remains one 400-trial
-broad search. A comparison runs every requested budget sequentially, so use it
+A scalar `trials=400` still returns one fit. The default is one 200-trial initial fit followed by joint refinement.
+The optional broad search adds 400 trials. A comparison runs every requested budget sequentially, so use it
 for analysis rather than every acquisition. Loaded data are borrowed; each fit
 owns its preparation. `save_dir="budget-review"` saves each complete result in
 `trials-200/`, `trials-400/`, etc., without overwriting another budget.
 
-`fit.show("convergence")` also uses elapsed time for newly recorded broad fits.
+`fit.show("convergence")` also uses elapsed time for newly recorded fifth-order fits.
 The clock starts before the primary fit; it includes search and refinement but
-excludes acquisition loading and plotting. Only broad-stage objective values
+excludes acquisition loading and plotting. Only fifth-order objective values
 are drawn, since the primary fit has a different objective. Recording adds
 scalar timestamps, not objective calls or GPU synchronization. Inspect measured
-stage durations in `fit.timings`. Plotting runs only when `show` is called.
+stage durations in `fit.timings`. Convergence plotting runs only when `fit.show("convergence")` is called.
 
-Use `x="evaluations"` to change the horizontal axis. Older histories and standard
+Use `x="evaluations"` to change the horizontal axis. Older histories and primary
 fits without timestamps use evaluation counts automatically; `x="time"` requires
 recorded times. Overlays use the unnormalized model agreement so differing
 normalization factors do not change the comparison. They require the same data,
@@ -95,8 +110,8 @@ default everywhere, and it is where SSB in quantem is heading.
 | Call | Method | Use it for |
 |---|---|---|
 | `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
-| `find_aberrations(tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
-| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
+| `find_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `find_aberrations(search="primary", tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
 
 Phase variance chooses the aberrations under which the corrected phase images
 of all bright-field pixels agree best (the least phase variance across them).
@@ -112,16 +127,16 @@ variance raises. Each method searches 200 seeded trials and then refines:
 `refinement="auto"` is Newton for the agreement fits and Nelder–Mead for the
 phase variance, and for an agreement fit that locks a coefficient, bounds
 phi12 or holds a nonzero C12. `result.objective` records the objective and
-`report()` shows it; `result.loss` is the phase variance at the fit whatever
-the objective. The same names pass through `compare_rotation_branches(...)`
+`report()` shows it; `result.loss` is an optional native-grid phase-variance diagnostic.
+Fifth-order fitting skips it by default; pass `compute_loss=True` to calculate it. The same names pass through `compare_rotation_branches(...)`
 and are part of a saved fit's settings, so a saved phase-variance fit never
 answers an agreement call.
 
 | Method | MPS | CUDA | Browser |
 |---|---|---|---|
 | `find_aberrations()` | yes | yes | no fit |
-| `find_aberrations(tilt=False)` | yes | yes | no fit |
-| `find_aberrations(tilt=False, objective="phase_variance")` | yes | yes | no fit |
+| `find_aberrations(search="primary", tilt=False)` | yes | yes | no fit |
+| `find_aberrations(search="primary", tilt=False, objective="phase_variance")` | yes | yes | no fit |
 
 On CUDA, `tilt=False` was the phase-variance search until 2026-10-20; that
 search is now `objective="phase_variance"`, the same search as on MPS
@@ -964,14 +979,15 @@ implementation, not absolute phase accuracy.
 Standard SSB treats the sample as one thin plane. In a crystal a few nanometres
 thick that leans by a few milliradians, each atomic column walks sideways with
 depth (5 mrad over 10 nm is 0.5 A), which blurs the lattice along the tilt.
-`find_aberrations()` (`tilt=True`, the default) fits the aberrations together with the sample tilt and a depth
-spread, in one search with the same trial budget as the standard fit (`tilt=False`):
+To isolate the effect of tilt, compare the same primary aberration model with
+and without joint sample tilt and depth fitting. The default fifth-order fit
+adds more optical terms, so it is a separate comparison:
 
 ```python
 import pandas as pd
 
-standard = ssb.find_aberrations(tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
-tilted = ssb.find_aberrations()              # + specimen tilt and depth spread, jointly
+standard = ssb.find_aberrations(search="primary", tilt=False)  # C10_nm, C12_nm, phi12_deg; same objective, tilt held at 0
+tilted = ssb.find_aberrations(search="primary")  # + specimen tilt and depth spread, jointly
 
 tilted.sample_tilt_mrad   # (row, col) mrad, scan frame
 tilted.depth_spread_nm    # model depth spread, not a measured thickness

@@ -168,3 +168,25 @@ def test_timed_history_roundtrip_and_old_history_comparison(tmp_path):
     old.objective = "phase_variance"
     with pytest.raises(ValueError, match="same data, calibration"):
         restored.show("convergence", compare=old)
+
+
+def test_joint_refinement_without_extra_tpe_has_timed_convergence(tmp_path):
+    fit = _fit()
+    fit.optimizer.update(
+        search="standard", coarse_scores=[], coarse_elapsed_s=[],
+        refinement_start_s=2., convergence_clock="fit_start",
+        primary_trials=200, primary_seed=42, normalization=1.,
+    )
+    before = deepcopy(fit.optimizer)
+    figure = fit.show("convergence", x="time")
+    ax = figure.axes[0]
+    assert len(ax.lines) == 1
+    np.testing.assert_array_equal(ax.lines[0].get_xdata(), [2., 3.])
+    assert "joint refinement" in ax.get_title()
+    assert "Initial fit + setup" in ax.patches[0].get_label()
+    assert fit.optimizer == before
+    paths = (tmp_path / "fit.npz", tmp_path / "fit.json")
+    save_result(fit, paths=paths, signature={"search": "standard"}, input_metadata={})
+    restored = load_result(paths=paths, signature={"search": "standard"}, backend="mps")
+    assert restored.optimizer == before
+    restored.show("convergence", x="time")

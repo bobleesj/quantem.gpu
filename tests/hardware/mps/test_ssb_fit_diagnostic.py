@@ -14,8 +14,8 @@ def test_fit_without_diagnostic_retains_fit_phase_and_later_loss(tilt):
     options = dict(tilt=tilt, num_trials=8, refinement="newton", seed=11,
                    check_rotation=False, compare_standard=False, verbose=False)
     with _disk_session(n=32) as reference, _disk_session(n=32) as session:
-        expected = reference.find_aberrations(search="standard", **options)
-        actual = session.find_aberrations(search="standard", **options, compute_loss=False)
+        expected = reference.find_aberrations(search="primary", **options)
+        actual = session.find_aberrations(search="primary", **options, compute_loss=False)
         assert actual.loss is None
         assert actual.aberrations == expected.aberrations
         assert actual.sample_tilt_mrad == expected.sample_tilt_mrad

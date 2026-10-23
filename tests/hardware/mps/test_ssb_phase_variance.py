@@ -31,7 +31,7 @@ def test_phase_variance_fit_recovers_known_aberrations():
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=-80.0, C12_A=25.0, phi12_deg=20.0)
     with SSB(frames, **_settings(detector_mrad)) as session:
-        fit = session.find_aberrations(search="standard", tilt=False, objective="phase_variance", check_rotation=False, verbose=False)
+        fit = session.find_aberrations(search="primary", tilt=False, objective="phase_variance", check_rotation=False, verbose=False)
         _, loss = session.preview(fit.aberrations)
     assert fit.objective == "phase_variance" and fit.refinement == "nelder-mead"
     assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
@@ -48,7 +48,7 @@ def test_phase_variance_fit_holds_a_fixed_coefficient():
 
     frames, detector_mrad = _astigmatic_crystal(C12_A=0.0)  # truth C10 -8 nm, no astigmatism
     with SSB(frames, **_settings(detector_mrad)) as session:
-        fit = session.find_aberrations(search="standard", tilt=False, objective="phase_variance", fixed_aberrations={"C12_nm": 0.0},
+        fit = session.find_aberrations(search="primary", tilt=False, objective="phase_variance", fixed_aberrations={"C12_nm": 0.0},
                                        num_trials=60, check_rotation=False, verbose=False)
     assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.15)
     assert fit.aberrations["C12_nm"] == 0.0 and fit.aberrations["phi12_deg"] == 0.0
@@ -70,7 +70,7 @@ def test_gold_phase_variance_fit_matches_the_removed_search():
     with io.load(str(master), hot_pixel_correction=harness.HOT_PIXELS, verbose=False) as data:
         harness.calibrate(data)
         with SSB(data, scan_detector_rotation_deg=358.3108) as ssb:
-            fit = ssb.find_aberrations(search="standard", tilt=False, objective="phase_variance", verbose=False)
+            fit = ssb.find_aberrations(search="primary", tilt=False, objective="phase_variance", verbose=False)
     assert fit.aberrations["C10_nm"] == pytest.approx(-23.225593050625694, abs=1e-4)
     assert fit.aberrations["C12_nm"] == pytest.approx(3.40092432545935, abs=1e-4)
     assert fit.aberrations["phi12_deg"] == pytest.approx(-40.17076537705569, abs=1e-3)

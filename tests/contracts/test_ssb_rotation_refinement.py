@@ -140,7 +140,7 @@ def _session(monkeypatch, tmp_path, backend, *, estimated):
 def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path, monkeypatch, capsys):
     backend = _Backend()
     session = _session(monkeypatch, tmp_path, backend, estimated=True)
-    fit = session.find_aberrations(search="standard", tilt=False, num_trials=4, check_rotation=False, refine_rotation=True,
+    fit = session.find_aberrations(search="primary", tilt=False, num_trials=4, check_rotation=False, refine_rotation=True,
                                    save_dir=tmp_path / "result")
     assert backend.fits[0] == (3.0, 4) and all(trials == 0 for _, trials in backend.fits[1:])
     assert 3 <= len(backend.fits) - 1 <= 12
@@ -163,7 +163,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert applied.rotation_refined and applied.rotation_estimate_deg == 3.0
 
     calls = len(backend.fits)
-    again = _session(monkeypatch, tmp_path, backend, estimated=True).find_aberrations(search="standard",
+    again = _session(monkeypatch, tmp_path, backend, estimated=True).find_aberrations(search="primary",
         tilt=False, num_trials=4, check_rotation=False, refine_rotation=True, save_dir=tmp_path / "result",
         verbose=False)
     assert again.reused and len(backend.fits) == calls
@@ -173,7 +173,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
     assert again.rotation_refinement == record
     # without refine_rotation the saved refined fit is not this fit: one search again, no polishes
     unrefined = _Backend()
-    plain = _session(monkeypatch, tmp_path, unrefined, estimated=True).find_aberrations(search="standard",
+    plain = _session(monkeypatch, tmp_path, unrefined, estimated=True).find_aberrations(search="primary",
         tilt=False, num_trials=4, check_rotation=False, save_dir=tmp_path / "result", verbose=False)
     assert not plain.reused and unrefined.fits == [(3.0, 4)]
     assert "refine_rotation" not in plain.metadata["signature"]["settings"]
@@ -181,7 +181,7 @@ def test_an_estimated_rotation_is_refined_recorded_reported_and_reused(tmp_path,
 
 def test_a_given_rotation_is_never_refined(tmp_path, monkeypatch, capsys):
     backend = _Backend()
-    fit = _session(monkeypatch, tmp_path, backend, estimated=False).find_aberrations(search="standard",
+    fit = _session(monkeypatch, tmp_path, backend, estimated=False).find_aberrations(search="primary",
         tilt=False, num_trials=4, refine_rotation=True)
     assert backend.fits == [(3.0, 4)]
     assert fit.scan_detector_rotation_deg == 3.0
@@ -194,7 +194,7 @@ def test_the_default_fit_searches_once_and_records_no_refinement(tmp_path, monke
     results = []
     for options in ({}, {"refine_rotation": False}):
         backend = _Backend()
-        results.append(_session(monkeypatch, tmp_path, backend, estimated=True).find_aberrations(search="standard",
+        results.append(_session(monkeypatch, tmp_path, backend, estimated=True).find_aberrations(search="primary",
             tilt=False, num_trials=4, check_rotation=False, verbose=False, **options))
         assert backend.fits == [(3.0, 4)]
     for fit in results:
@@ -205,5 +205,5 @@ def test_the_default_fit_searches_once_and_records_no_refinement(tmp_path, monke
 
 def test_refine_rotation_needs_local_refinement(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="refine_rotation polishes the fit"):
-        _session(monkeypatch, tmp_path, _Backend(), estimated=True).find_aberrations(search="standard",
+        _session(monkeypatch, tmp_path, _Backend(), estimated=True).find_aberrations(search="primary",
             tilt=False, refinement=None, refine_rotation=True, verbose=False)

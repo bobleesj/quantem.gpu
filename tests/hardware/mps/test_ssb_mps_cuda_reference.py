@@ -1838,7 +1838,7 @@ def test_public_ssb_workflow_returns_only_shared_results(monkeypatch) -> None:
         bright_field_radius_px=3,
     )
 
-    optimized = workflow.find_aberrations(search="standard", tilt=False,
+    optimized = workflow.find_aberrations(search="primary", tilt=False,
         num_trials=0,
         refinement=None,
         verbose=False,

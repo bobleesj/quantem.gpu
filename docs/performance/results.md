@@ -600,3 +600,5 @@ A historical number may be quoted only with its original revision, fixture,
 cache state, scientific plan, hardware, and acceptance status. The
 [revision and change ledger](changes.md) records why a current row replaced or
 remained separate from an older campaign.
+
+- [Initial fit and fifth-order refinement](2026-10-22-ssb-initialization-and-refinement.md): matched initialization study and optimization lessons.

@@ -71,15 +71,15 @@ def test_a_saved_tilt_fit_of_resident_data_is_found_by_the_data(acquisition, tmp
     settings = dict(tilt=True, num_trials=8, refinement="newton", compare_standard=False, check_rotation=False,
                     save_dir=tmp_path / "fit", verbose=False)
     with SSB(acquisition, **SETTINGS) as first:
-        fitted = first.find_aberrations(search="standard", **settings)
+        fitted = first.find_aberrations(search="primary", **settings)
         assert first.source_kind == "resident"
     with SSB(acquisition, **SETTINGS) as second:
-        again = second.find_aberrations(search="standard", **settings)
+        again = second.find_aberrations(search="primary", **settings)
     assert not fitted.reused and again.reused
     assert again.aberrations == fitted.aberrations and again.sample_tilt_mrad == fitted.sample_tilt_mrad
     assert fitted.tilt_fit_gain is None and fitted.refinement == "newton"
     with SSB(acquisition, scan_region=(0, 64, 0, 64), **SETTINGS) as region:
-        assert not region.find_aberrations(search="standard", **settings).reused      # a region is other data
+        assert not region.find_aberrations(search="primary", **settings).reused      # a region is other data
 
 
 def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu(acquisition):
@@ -87,9 +87,9 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
     from quantem.gpu import SSB
 
     with SSB(acquisition, **SETTINGS) as ssb:
-        fitted = ssb.find_aberrations(search="standard", tilt=True, num_trials=8, refinement="newton", compare_standard=False,
+        fitted = ssb.find_aberrations(search="primary", tilt=True, num_trials=8, refinement="newton", compare_standard=False,
                                       check_rotation=False, verbose=False)
-        again = ssb.find_aberrations(search="standard", tilt=True, num_trials=0, refinement="newton", compare_standard=False,
+        again = ssb.find_aberrations(search="primary", tilt=True, num_trials=0, refinement="newton", compare_standard=False,
                                      check_rotation=False, verbose=False)
         assert again.num_trials == 0 and again.trial_records == []
         assert abs(again.aberrations["C10_nm"] - fitted.aberrations["C10_nm"]) < 0.5
@@ -101,10 +101,10 @@ def test_no_trials_polishes_the_previous_fit_and_native_previews_stay_on_the_gpu
         np.testing.assert_array_equal(cp.asnumpy(native).astype(np.float32), host)
     with SSB(acquisition, **SETTINGS) as standard:
         # the standard fit (tilt=False) polishes the agreement with the same resident Newton as on MPS
-        fit = standard.find_aberrations(search="standard", tilt=False, refinement="newton", check_rotation=False, verbose=False)
+        fit = standard.find_aberrations(search="primary", tilt=False, refinement="newton", check_rotation=False, verbose=False)
         assert fit.refinement == "newton" and fit.sample_agreement > 0 and fit.sample_tilt_mrad is None
         with pytest.raises(ValueError, match="nelder-mead"):
-            standard.find_aberrations(search="standard", tilt=False, refinement="newton", refine_lock=["C10_nm"], verbose=False)
+            standard.find_aberrations(search="primary", tilt=False, refinement="newton", refine_lock=["C10_nm"], verbose=False)
 
 
 
@@ -129,7 +129,7 @@ def test_native_previews_are_their_own_arrays_and_a_region_refit_starts_from_ass
     with SSB(acquisition, **SETTINGS) as ssb:
         ssb.aberrations = {"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}
         ssb.sample_tilt_mrad, ssb.depth_spread_nm = (1.0, -2.0), 30.0
-        ssb.find_aberrations(search="standard", tilt=True, num_trials=0, refinement="newton", compare_standard=False, check_rotation=False,
+        ssb.find_aberrations(search="primary", tilt=True, num_trials=0, refinement="newton", compare_standard=False, check_rotation=False,
                              scan_region=(0, 128, 0, 128), verbose=False)
     assert starts == [{"C10_nm": 4.0, "C12_nm": 1.5, "phi12_deg": 20.0}]
 
@@ -181,9 +181,9 @@ def test_calibration_from_a_resident_acquisition_opens_no_file(tmp_path, monkeyp
             dpc.run(data)
             detector.fit_probe(mean)
             session = SSB(data, **settings)
-            fitted = session.find_aberrations(search="standard", **fit)
+            fitted = session.find_aberrations(search="primary", **fit)
             with SSB(data, **settings) as second:      # a new session on the same data finds the saved fit by the data's identity
-                again = second.find_aberrations(search="standard", **fit)
+                again = second.find_aberrations(search="primary", **fit)
             phase, _ = session.preview(dict(fitted.aberrations), sample_tilt_mrad=fitted.sample_tilt_mrad,
                                        depth_spread_nm=fitted.depth_spread_nm, compute_loss=False)
             column_sign(phase)
