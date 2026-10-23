@@ -20,11 +20,13 @@ import h5py
 import numpy as np
 
 from quantem.gpu.formats.hdf5.frames import detector_sources
+from quantem.gpu.formats.publish import publish_file
 from quantem.gpu.ssb.series import screen_record_fit, stored_fit
+from quantem.gpu.ssb.units import HIGHER_ORDER, PRIMARY
 
 # Carried by every portable phase record under "schema"; another value is refused.
 # 2: the shared vocabulary (scan_sampling_A, detector_sampling_mrad, bright_field_center_px, aberrations in
-#    C10_nm / C12_nm / phi12_deg, scan_detector_rotation_deg with scan_detector_rotation_flipped, snake_case keys). Version 1
+#    nm / degrees through fifth order, scan_detector_rotation_deg with scan_detector_rotation_flipped, snake_case keys). Version 1
 #    was format "live.ssb" with schemaVersion 1 and camelCase keys; its rotationDegrees was the angle below 180.
 SCHEMA = "quantem.ssb-phase/2"
 
@@ -126,6 +128,18 @@ def read_result(manifest: Path, expected_identity: str | None = None) -> tuple[d
         raise ValueError("Malformed SSB result. Keep its original JSON and NumPy companion together.") from exc
 
 
+def _aberrations(values: dict[str, float]) -> dict[str, float]:
+    """Keep every supported physical coefficient without changing its units."""
+    if not (set(PRIMARY) <= set(values) <= set(PRIMARY + HIGHER_ORDER)) or not all(
+        np.isfinite(value) for value in values.values()
+    ):
+        raise ValueError(
+            "SSB aberrations need finite C10_nm, C12_nm and phi12_deg, with optional "
+            "higher-order coefficients through fifth order in nm and degrees."
+        )
+    return {key: float(value) for key, value in values.items()}
+
+
 def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, np.ndarray]:
     """Check every manifest field, the companion path and the phase checksum.
 
@@ -168,9 +182,7 @@ def _read_result(manifest: Path, expected_identity: str | None) -> tuple[dict, n
     for key in ("scan_sampling_A", "detector_sampling_mrad"):
         if len(calibration[key]) != 2 or not all(np.isfinite(value) and value > 0 for value in calibration[key]):
             raise ValueError(f"Invalid calibration: {key} is a positive [row, col] pair.")
-    aberrations = record["aberrations"]
-    if set(aberrations) != {"C10_nm", "C12_nm", "phi12_deg"} or not all(np.isfinite(value) for value in aberrations.values()):
-        raise ValueError("SSB aberrations are finite C10_nm, C12_nm and phi12_deg.")
+    _aberrations(record["aberrations"])
     if not np.isfinite(record["scan_detector_rotation_deg"]) or type(record["scan_detector_rotation_flipped"]) is not bool:
         raise ValueError("SSB geometry needs a finite scan_detector_rotation_deg and a scan_detector_rotation_flipped flag.")
     tilt, depth = record.get("sample_tilt_mrad"), record.get("depth_spread_nm")
@@ -205,12 +217,12 @@ def _publish(path: Path, data: bytes) -> None:
         os.fsync(stream.fileno())
     try:
         try:
-            os.link(temporary, path)
+            publish_file(temporary, path)
         except FileExistsError:
             if path.read_bytes() != data:
                 raise ValueError("Another result uses this filename. Choose a new name.")
     finally:
-        temporary.unlink()
+        temporary.unlink(missing_ok=True)
 
 
 def export_result(run_folder: Path, master: Path, output: Path | None = None,
@@ -272,7 +284,7 @@ def export_result(run_folder: Path, master: Path, output: Path | None = None,
         phase_encoding="float32-le-row-major", phase_unit="rad",
         phase_sha256=hashlib.sha256(phase_bytes).hexdigest(),
         calibration=calibration,
-        aberrations={key: float(fit["aberrations"][key]) for key in ("C10_nm", "C12_nm", "phi12_deg")},
+        aberrations=_aberrations(fit["aberrations"]),
         scan_detector_rotation_deg=float(fit["scan_detector_rotation_deg"]),
         scan_detector_rotation_flipped=bool(fit.get("scan_detector_rotation_flipped", False)),
         provenance={
