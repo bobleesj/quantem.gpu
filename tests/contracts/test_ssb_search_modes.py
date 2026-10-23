@@ -86,7 +86,13 @@ def test_nelder_mead_can_move_initially_zero_higher_terms():
 def test_broad_records_refinement_budget(monkeypatch, tmp_path, refinement, cap):
     """The actual solver, persisted result and cache signature share one budget."""
     from quantem.gpu.ssb import broad_search
-    from quantem.gpu.ssb.cuda import broad_batch, broad_objective
+    import sys
+
+    # Exercise orchestration without importing a CUDA runtime on CPU CI.
+    broad_batch = SimpleNamespace(Objective=None)
+    broad_objective = SimpleNamespace(vector=None, public_params=None)
+    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.cuda.broad_batch", broad_batch)
+    monkeypatch.setitem(sys.modules, "quantem.gpu.ssb.cuda.broad_objective", broad_objective)
 
     objective = SimpleNamespace(evaluate=lambda points, order: np.ones(len(np.atleast_2d(points))))
     monkeypatch.setattr(broad_batch, "Objective", lambda engine: objective)

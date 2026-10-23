@@ -211,9 +211,11 @@ final class SSBCoherentReconstruction {
     let source = geometry.qxByRow.count
     let n = source * factor
     func frequencies(_ step: Float) -> [Float] {
-      (0..<n).map { index in
-        let integer = index < (n - 1) / 2 + 1 ? index : index - n
-        return Float(Double(integer) * (1.0 / Double(n)) * Double(n) * Double(step))
+      (0..<n).map { (index: Int) -> Float in
+        let integer: Int = index < (n - 1) / 2 + 1 ? index : index - n
+        let normalized: Double = Double(integer) * (1.0 / Double(n))
+        let scaled: Double = normalized * Double(n)
+        return Float(scaled * Double(step))
       }
     }
     let rowStep = geometry.qxByRow[1]
@@ -231,9 +233,11 @@ final class SSBCoherentReconstruction {
     let columns = half ? n / 2 + 1 : n
     func support(_ value: Double, _ step: Float, _ count: Int) -> [UInt32] {
       let limit = (value / Double(abs(step))).rounded(.up) + 1
-      return (0..<count).filter { index in
-        Double(abs(index < (n - 1) / 2 + 1 ? index : index - n)) <= limit
-      }.map(UInt32.init)
+      let indices: [Int] = (0..<count).filter { (index: Int) -> Bool in
+        let integer: Int = index < (n - 1) / 2 + 1 ? index : index - n
+        return Double(abs(integer)) <= limit
+      }
+      return indices.map { UInt32($0) }
     }
     let rows = support(rowSupport, rowStep, n)
     let cols = support(colSupport, colStep, columns)
