@@ -58,14 +58,14 @@ public final class MetalEncodedSource {
     }
     self.hotPixelIndices = hotPixelIndices
     let library = try MetalKernelCache.library(device: device, key: "encoded-counts") {
-      try ["streamed_counts", "hot_pixels", "resident_utilities", "count_tables"].map {
+      try ["streamed_counts", "native_median3x3", "resident_utilities", "count_tables"].map {
         try MetalCountResources.source($0)
       }.joined(separator: "\n")
     }
     var compiled: [String: MTLComputePipelineState] = [:]
     for name in [
       "streamed_counts_encode", "streamed_counts_compact", "streamed_counts_decode_range",
-      "hot_median", "count_prefix", "count_prefix_totals", "count_prefix_add",
+      "native_median3x3", "count_prefix", "count_prefix_totals", "count_prefix_add",
       "count_summary", "count_bright", "count_normalize", "count_verify", "count_tables",
       "streamed_counts_masked_sums", "streamed_counts_group_sums",
     ] {
@@ -145,7 +145,7 @@ public final class MetalEncodedSource {
     let command = try command()
     if !hotPixelIndices.isEmpty {
       try encode(
-        command, "hot_median", [raw, valid, bad],
+        command, "native_median3x3", [raw, valid, bad],
         [
           UInt64(hotPixelIndices.count), UInt64(shape[2]), UInt64(shape[3]),
           UInt64(frames * hotPixelIndices.count), UInt64(itemBytes),

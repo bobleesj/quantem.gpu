@@ -207,9 +207,9 @@ private final class MedianCorrectedCounts: MetalResidentCounts {
     let options = MTLCompileOptions()
     options.fastMathEnabled = false
     let library = try source.device.makeLibrary(
-      source: MetalCountResources.source("hot_pixels"), options: options)
+      source: MetalCountResources.source("native_median3x3"), options: options)
     pipeline = try source.device.makeComputePipelineState(
-      function: library.makeFunction(name: "hot_median")!)
+      function: library.makeFunction(name: "native_median3x3")!)
   }
   func encodeRead(_ frames: Range<Int>, into result: MTLBuffer, command: MTLCommandBuffer) throws {
     try checkErrors()

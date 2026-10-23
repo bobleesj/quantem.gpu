@@ -6,7 +6,7 @@ public enum NativeHotPixelCorrection {
   ///
   /// Other marked pixels are excluded from the neighborhood. At detector edges,
   /// only in-bounds neighbors contribute. An even neighborhood uses the floored
-  /// mean of its two central values, matching the CUDA and Metal load policy.
+  /// mean of its two central values, matching the native Metal load policy.
   public static func median3x3(
     values: [UInt32],
     detectorRows: Int,
