@@ -146,7 +146,7 @@ def reconstruct_series(
                 )
             with cls.open(str(source), backend=backend, **open_settings(settings)) as ssb:
                 reference_result = ssb.find_aberrations(
-                    search="standard", num_trials=num_trials,
+                    search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=reference_path / "ssb-fit",
                     verbose=False,
@@ -193,7 +193,7 @@ def reconstruct_series(
                 )
             else:
                 result = ssb.find_aberrations(
-                    search="standard", num_trials=num_trials,
+                    search="primary", num_trials=num_trials,
                     refinement=refinement,
                     save_dir=screen_path / "ssb-fit",
                     verbose=False,

@@ -18,7 +18,7 @@ def plot_convergence(result, *, axsize, rows=None, columns=None, compare=None, x
     optimizer = result.optimizer
     coarse = optimizer.get("coarse_scores")
     groups = {}
-    if coarse is not None and len(coarse):
+    if (coarse is not None and len(coarse)) or optimizer.get("refinement_trace"):
         groups["broad"] = coarse
     else:
         for record in result.trial_records or ():
@@ -39,7 +39,9 @@ def plot_convergence(result, *, axsize, rows=None, columns=None, compare=None, x
         if key == "broad":
             axis = ("time" if _broad_history(result)[-1] else "evaluations") if x == "auto" else x
             _plot_broad(ax, result, x=axis)
-            ax.set(title="Broad search + refinement", ylabel="Normalized agreement (higher is better)")
+            ax.set(title=("Initial fit → joint refinement" if optimizer.get("search") == "standard"
+                          else "Broad search + refinement"),
+                   ylabel="Normalized agreement (higher is better)")
             stop = optimizer.get("stop")
             if stop:
                 ax.text(0, -0.28, f"Stop: {stop}", transform=ax.transAxes, fontsize="small", wrap=True)
@@ -81,10 +83,10 @@ def _broad_history(result):
     seconds = np.asarray(optimizer.get("coarse_elapsed_s", []), dtype=float)
     offset = optimizer.get("refinement_start_s")
     timed = (optimizer.get("convergence_clock") == "fit_start"
-             and len(seconds) == len(scores) and len(seconds) > 0
+             and len(seconds) == len(scores) and (len(seconds) > 0 or len(trace) > 0)
              and np.isfinite(seconds).all() and np.all(np.diff(seconds) >= 0)
-             and seconds[0] >= 0 and offset is not None and np.isfinite(offset)
-             and float(offset) >= seconds[-1]
+             and (not len(seconds) or seconds[0] >= 0) and offset is not None and np.isfinite(offset)
+             and float(offset) >= (seconds[-1] if len(seconds) else 0)
              and (not len(trace) or (np.isfinite(trace[:, 2]).all()
                                     and np.all(np.diff(trace[:, 2]) >= 0) and trace[0, 2] >= 0)))
     return scores, trace, seconds, offset, timed
@@ -116,8 +118,8 @@ def _comparison_fits(result, compare):
         if id(fit) in seen:
             continue
         seen.add(id(fit))
-        if not len(fit.optimizer.get("coarse_scores", [])):
-            raise ValueError("Convergence overlays currently need broad search histories. "
+        if not len(fit.optimizer.get("coarse_scores", [])) and not fit.optimizer.get("refinement_trace"):
+            raise ValueError("Convergence overlays need fifth-order search histories. "
                              "Show standard searches separately with fit.show('convergence').")
         if (any(getattr(fit, name) != getattr(result, name) for name in fields)
                 or tuple(fit.object_wave.shape) != tuple(result.object_wave.shape)
@@ -143,13 +145,17 @@ def _plot_broad(ax, result, *, x, label=None, color=None, scale=1.0):
     best = np.maximum.accumulate(np.where(np.isfinite(scores), scores, -np.inf))
     method = {"newton": "Newton", "nelder-mead": "Nelder–Mead"}.get(result.refinement, "Refinement")
     prefix = "" if label is None else f"{label} · "
-    line, = ax.plot(seconds if x == "time" else np.arange(1, len(scores) + 1),
-                    np.where(np.isfinite(best), best * scale, np.nan), linestyle="--",
-                    color=color, label=f"{prefix}TPE")
+    if len(scores):
+        line, = ax.plot(seconds if x == "time" else np.arange(1, len(scores) + 1),
+                        np.where(np.isfinite(best), best * scale, np.nan), linestyle="--",
+                        color=color, label=f"{prefix}TPE")
+        color = line.get_color()
     if len(trace):
         ax.plot(float(offset) + trace[:, 2] if x == "time" else len(scores) + trace[:, 0],
-                trace[:, 1] * scale, color=line.get_color(), label=f"{prefix}{method}")
-    ax.set_xlabel("Elapsed fit time (s)" if x == "time" else "Recorded objective evaluations (broad stage)")
+                trace[:, 1] * scale, color=color, label=f"{prefix}{method}")
+    if not len(scores) and x == "time" and float(offset) > 0:
+        ax.axvspan(0, float(offset), color="0.7", alpha=0.2, label="Initial fit + setup")
+    ax.set_xlabel("Elapsed fit time (s)" if x == "time" else "Recorded fifth-order objective evaluations")
     ax.grid(alpha=0.2)
     ax.legend(frameon=False, fontsize="small")
     ax.set_xlim(left=0)

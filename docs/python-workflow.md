@@ -138,8 +138,8 @@ search. Voltage, sampling, and convergence angle stay fixed.
 | Call | Method | Use it for |
 |---|---|---|
 | `find_aberrations()` | model-based, tilt-corrected | **the default**: every fit |
-| `find_aberrations(tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
-| `find_aberrations(tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
+| `find_aberrations(search="primary", tilt=False)` | model-based, tilt and depth spread held at 0 | thin, untilted samples, or to see what tilt correction changes |
+| `find_aberrations(search="primary", tilt=False, objective="phase_variance")` | phase variance, the earlier SSB search | a backup: reproducing older results, cross-checking a fit |
 
 The phase variance is a backup, not an equal alternative
 ({ref}`SSB fit methods <ssb-fit-methods>`).

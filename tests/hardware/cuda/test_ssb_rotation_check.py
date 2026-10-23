@@ -81,10 +81,10 @@ def _estimated():
 def test_simulated_crystal_estimated_on_the_wrong_branch_keeps_the_right_one(tmp_path, estimate):
     """Known answer (atoms positive, right rotation 0 deg): an estimate of 180 deg ends at 0 deg after two fits."""
     _require_cuda()
-    direct = _simulated(0.0).find_aberrations(search="standard", check_rotation=False, verbose=False)
+    direct = _simulated(0.0).find_aberrations(search="primary", check_rotation=False, verbose=False)
     estimate(180.0)
     session = _estimated()
-    checked = session.find_aberrations(search="standard", verbose=False)
+    checked = session.find_aberrations(search="primary", verbose=False)
     branches = checked.rotation_branches
     assert [branch.scan_detector_rotation_deg for branch in branches.branches] == [180.0, 0.0]
     assert branches.kept == branches.chosen == 1
@@ -111,8 +111,8 @@ def test_simulated_crystal_estimated_on_the_right_branch_is_left_exactly_as_fitt
     """Estimated at the right rotation, the kept branch is the first fit: same result as check_rotation=False."""
     _require_cuda()
     estimate(0.0)
-    kept = _estimated().find_aberrations(search="standard", verbose=False)
-    direct = _simulated(0.0).find_aberrations(search="standard", check_rotation=False, verbose=False)
+    kept = _estimated().find_aberrations(search="primary", verbose=False)
+    direct = _simulated(0.0).find_aberrations(search="primary", check_rotation=False, verbose=False)
     assert kept.rotation_branches.kept == 0 and kept.scan_detector_rotation_deg == 0.0
     np.testing.assert_array_equal(_host(kept.phase), _host(direct.phase))
     assert kept.aberrations == direct.aberrations
@@ -124,7 +124,7 @@ def test_a_given_rotation_is_kept():
     _require_cuda()
     from quantem.gpu.ssb.results import column_sign
 
-    result = _simulated(180.0).find_aberrations(search="standard", verbose=False)
+    result = _simulated(180.0).find_aberrations(search="primary", verbose=False)
     assert result.scan_detector_rotation_deg == pytest.approx(180.0, abs=1e-9)
     assert result.rotation_branches is None
     assert column_sign(result.phase) < -0.8
@@ -193,7 +193,7 @@ def test_joint_fit_runs_two_independent_searches(rotation, estimate, monkeypatch
 
     monkeypatch.setattr(session, "_fit_tilt", measured_fit)
     try:
-        result = session.find_aberrations(search="standard", tilt=True, save_dir=tmp_path / "joint", verbose=False)
+        result = session.find_aberrations(search="primary", tilt=True, save_dir=tmp_path / "joint", verbose=False)
         # two searches, neither started from the other's fit
         assert fit_calls == [(rotation, False), ((rotation + 180.0) % 360.0, False)]
         assert result.scan_detector_rotation_deg == 0.0

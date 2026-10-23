@@ -54,7 +54,7 @@ def test_measure_show_and_reopen_joint_parameters(tmp_path, backend, monkeypatch
         detector_sampling_mrad=(3.0, 3.0),
         source_path=str(source),
     ) as ssb:
-        fit = ssb.find_aberrations(search="standard",
+        fit = ssb.find_aberrations(search="primary",
             tilt=True,
             num_trials=8,
             refinement=None,
@@ -137,7 +137,7 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
     counts[:, :, np.hypot(rows, columns) < 10] += 200
     with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
              scan_sampling_A=0.3, detector_sampling_mrad=3.0, scan_detector_rotation_deg=17.0) as ssb:
-        fit = ssb.find_aberrations(search="standard", compare_standard=False, compute_loss=False, verbose=False)
+        fit = ssb.find_aberrations(search="primary", compare_standard=False, compute_loss=False, verbose=False)
         phase = fit.phase.copy()
         figure = ssb.show("tilt", region=(16, 80, 32, 96), size="small")
         assert "Rows 16:80, columns 32:96" in figure.get_suptitle()
@@ -149,7 +149,7 @@ def test_show_selected_region_preserves_full_field_joint_fit(monkeypatch):
         # A regional image view corrects the full parent scan before cropping.
         captured = _record_static_arrays(monkeypatch)
         with ssb.select_region((16, 80, 32, 96)) as region:
-            regional_fit = region.find_aberrations(search="standard", check_rotation=False, compare_standard=False,
+            regional_fit = region.find_aberrations(search="primary", check_rotation=False, compare_standard=False,
                                                    compute_loss=False, verbose=False)
             focus = region.show("focus", mode="static", focus_offsets_nm=(0,),
                                 depth_spread_nm=regional_fit.depth_spread_nm, size="small")
@@ -176,7 +176,7 @@ def test_focus_grid_stack_and_static_preserve_images(monkeypatch):
     counts[:, :, np.hypot(rows, columns) < 10] += 200
     with SSB(counts, backend="mps", voltage_kV=300, semiangle_mrad=30,
              scan_sampling_A=0.3, detector_sampling_mrad=3.0) as ssb:
-        fit = ssb.find_aberrations(search="standard", num_trials=8, refinement=None, check_rotation=False,
+        fit = ssb.find_aberrations(search="primary", num_trials=8, refinement=None, check_rotation=False,
                                    compare_standard=False, compute_loss=False, verbose=False)
         options = {"focus_offsets_nm": (-3, 0, 7), "depth_spread_nm": (5, fit.depth_spread_nm)}
         grid = ssb.show("focus", cmap="viridis", **options)

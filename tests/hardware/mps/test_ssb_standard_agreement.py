@@ -39,7 +39,7 @@ def test_standard_fit_recovers_known_aberrations(C10_nm, C12_nm, refinement):
 
     frames, detector_mrad = _astigmatic_crystal(C10_A=10 * C10_nm, C12_A=10 * C12_nm, phi12_deg=20.0)
     with SSB(frames, **_settings(detector_mrad)) as session:
-        fit = session.find_aberrations(search="standard", tilt=False, refinement=refinement, check_rotation=False, verbose=False)
+        fit = session.find_aberrations(search="primary", tilt=False, refinement=refinement, check_rotation=False, verbose=False)
         _, loss = session.preview(fit.aberrations)
     assert fit.refinement == ("newton" if refinement == "auto" else refinement)
     assert fit.aberrations["C10_nm"] == pytest.approx(C10_nm, abs=0.1)
@@ -58,19 +58,19 @@ def test_fixed_aberrations_hold_a_coefficient_in_the_standard_fit():
 
     frames, detector_mrad = _astigmatic_crystal(C12_A=0.0)  # truth C10 -8 nm, no astigmatism
     with SSB(frames, **_settings(detector_mrad)) as session:
-        fit = session.find_aberrations(search="standard", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
+        fit = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C12_nm": 0.0}, num_trials=60,
                                        check_rotation=False, verbose=False)
         assert fit.refinement == "nelder-mead"  # a locked coefficient: Newton cannot hold it
         assert fit.aberrations["C10_nm"] == pytest.approx(-8.0, abs=0.1)
         assert fit.aberrations["C12_nm"] == 0.0 and fit.aberrations["phi12_deg"] == 0.0
-        held = session.find_aberrations(search="standard", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
+        held = session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0}, num_trials=40,
                                         check_rotation=False, verbose=False)
         assert held.aberrations["C10_nm"] == -7.0
         with pytest.raises(ValueError, match="nothing to fit"):
-            session.find_aberrations(search="standard", tilt=False, fixed_aberrations={"C10_nm": -7.0, "C12_nm": 0.0, "phi12_deg": 0.0},
+            session.find_aberrations(search="primary", tilt=False, fixed_aberrations={"C10_nm": -7.0, "C12_nm": 0.0, "phi12_deg": 0.0},
                                      check_rotation=False, verbose=False)
         with pytest.raises(ValueError, match="nelder-mead"):
-            session.find_aberrations(search="standard", tilt=False, refinement="newton", refine_lock=["C10_nm"],
+            session.find_aberrations(search="primary", tilt=False, refinement="newton", refine_lock=["C10_nm"],
                                      check_rotation=False, verbose=False)
 
 
@@ -80,9 +80,9 @@ def test_phi12_range_bounds_the_standard_fit():
 
     frames, detector_mrad = _astigmatic_crystal()  # phi12 20 degrees
     with SSB(frames, **_settings(detector_mrad)) as session:
-        inside = session.find_aberrations(search="standard", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, num_trials=60,
+        inside = session.find_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (0.0, 45.0)}, num_trials=60,
                                           check_rotation=False, verbose=False)
-        outside = session.find_aberrations(search="standard", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
+        outside = session.find_aberrations(search="primary", tilt=False, search_ranges={"phi12_deg": (40.0, 80.0)}, num_trials=60,
                                            check_rotation=False, verbose=False)
     assert inside.refinement == "nelder-mead" and inside.aberrations["phi12_deg"] == pytest.approx(20.0, abs=0.5)
     assert 40.0 <= outside.aberrations["phi12_deg"] <= 80.0

@@ -97,7 +97,7 @@ def test_agreement_reduces_to_the_two_term_kernel_and_matches_the_physical_model
 def test_fit_recovers_coma_trefoil_and_spherical_aberration(simulation, tilt, compute_loss):
     backend_name, data, _, detector_mrad = simulation
     with session(data, detector_mrad, backend_name) as ssb:
-        fit = ssb.find_aberrations(search="standard", tilt=tilt, higher_order=("C21", "C23", "C30"), verbose=False,
+        fit = ssb.find_aberrations(search="primary", tilt=tilt, higher_order=("C21", "C23", "C30"), verbose=False,
                                    compute_loss=compute_loss)
         record = fit.optimizer["higher_order"]
         assert record["terms"] == ["C21", "C23", "C30"]
@@ -134,7 +134,7 @@ def test_saved_fit_keeps_the_higher_orders_and_their_setting(simulation, tmp_pat
     backend_name, data, _, detector_mrad = simulation
     np.save(tmp_path / "counts.npy", data)          # an array input records its source for provenance
     with session(data, detector_mrad, backend_name, source_path=tmp_path / "counts.npy") as ssb:
-        fit = ssb.find_aberrations(search="standard", tilt=False, higher_order=("C30", "C21"), save_dir=tmp_path, verbose=False)
+        fit = ssb.find_aberrations(search="primary", tilt=False, higher_order=("C30", "C21"), save_dir=tmp_path, verbose=False)
     signature = fit.metadata["signature"]
     assert signature["settings"]["higher_order"] == ["C21", "C30"]
     loaded = load_result(paths=result_paths(tmp_path, "find_aberrations"), signature=signature, backend=backend_name)

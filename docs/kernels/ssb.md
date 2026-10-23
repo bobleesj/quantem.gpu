@@ -2,7 +2,7 @@
 
 Single-sideband (SSB) ptychography uses scan-frequency interference from a
 4D-STEM acquisition to reconstruct a complex transmission function. This page
-derives the older SSB fit, `find_aberrations(tilt=False, objective="phase_variance")`:
+derives the older SSB fit, `find_aberrations(search="primary", tilt=False, objective="phase_variance")`:
 
 ```text
 4D counts → bright-field selection → scan FFT → aberration correction
