@@ -413,19 +413,9 @@ class SSBEngine:
                 )
             self._custom_fft = get_fft_kernel(ny)
             self._colvar_group = self._custom_fft._colvar_group
-        # Work buffers. _result_buffer is (num_bright_field_pixels, ny, nx) complex64 and
-        # holds the corrected planes of every exact loss and reconstruction. On small scans
-        # (e.g. a 256x256 scan, ~600 MB) it is allocated here for a faster
-        # reconstruct call path. On large scans (512x512, ~19 GB) the
-        # allocation is deferred: the chunked paths allocate a small chunk
-        # buffer instead, and the full one would hold that memory through a
-        # whole fit for nothing.
-        shape = (num_bright_field_pixels, ny, nx)
-        full_bytes = num_bright_field_pixels * ny * nx * 8
-        if full_bytes < _STAGING_LIMIT_BYTES:
-            self._result_buffer = cp.empty(shape, dtype=cp.complex64)
-        else:
-            self._result_buffer = None
+        # Coherent reconstruction does not need per-BF image staging.
+        # Other paths size it on demand; retain an existing buffer across
+        # rotations so repeated phase/loss previews do not reallocate it.
         self._corrected_buffer = None
         self._mean_phase_buffer = None
         self._pk_buffer = cp.empty((num_bright_field_pixels,), dtype=cp.complex64)

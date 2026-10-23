@@ -11,6 +11,11 @@ operating-system storage cache was not forcibly evicted. It is not called cold.
 
 ## SSB research optimization, 2026-10-22
 
+The [staging-memory record](2026-10-22-ssb-staging-memory.md) measures lazy
+per-detector staging and smaller Fourier batches. The 256-square cases retain
+about 4.3 GiB less memory with exact phase and no consistent timing regression.
+Full 512-square peak memory is unchanged.
+
 The [four-case preparation reuse record](2026-10-22-rotation-comparison-reuse.md)
 qualifies the local comparison implementation. The separate
 [broad-fifth CUDA study](2026-10-22-broad-fifth-cuda-study.md) reports private-model
