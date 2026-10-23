@@ -31,17 +31,17 @@ public struct SSBJointParameters: Codable, Equatable, Sendable {
   }
 
   func validate() throws {
-    guard packed.allSatisfy(\.isFinite), depthAngstroms >= 0,
-      !(aberrations.higherOrder ?? []).contains(where: { $0.magnitudeAngstroms != 0 })
+    try SSBModelHigherOrder.validate((aberrations.higherOrder ?? []).map(SSBModelHigherOrder.init))
+    guard packed.allSatisfy(\.isFinite), depthAngstroms >= 0
     else {
       throw MetalSSBError.invalidGeometry(
-        "Joint SSB needs finite C10/C12, nonnegative depth and tilt in mrad. Higher-order terms are not supported by this model."
+        "Joint SSB needs finite C10/C12, nonnegative depth and tilt in mrad."
       )
     }
   }
 }
 
-/// GPU phase in radians, using the mean of individual bright-field phases.
+/// GPU phase in radians, using the selected SSB phase estimator.
 /// Upsampling unfolds the measured Fourier aliases; it is not image interpolation.
 public struct MetalSSBJointPhase: @unchecked Sendable {
   public let phase: MTLBuffer
@@ -52,6 +52,8 @@ public struct MetalSSBJointPhase: @unchecked Sendable {
   public let parameters: SSBJointParameters
   public let scanDetectorRotationDegrees: Double
   public let provenance: MetalSSBProvenance
+  /// Exact Double point used for this phase, independently of the Float UI bridge.
+  public var point: SSBModelPoint? = nil
 }
 
 /// How the agreement objective evaluates its phases.
@@ -107,6 +109,14 @@ public final class MetalSSBJointModel {
   private var batchPartial: MTLBuffer?
   private var batchPower: MTLBuffer?
   private var coherent: SSBCoherentReconstruction
+  private var fifthOrder: SSBFifthOrderAgreement?
+
+  public var wavelengthAngstroms: Double {
+    geometry.modelWavelengthAngstroms ?? Double(geometry.wavelengthAngstroms)
+  }
+  public var semiangleRadians: Double {
+    geometry.modelSemiangleRadians ?? Double(geometry.semiangleRadians)
+  }
 
   init(
     device: MTLDevice, geometry: MetalSSBGeometry, activeIndices: [Int], rotation: Double,
@@ -132,7 +142,7 @@ public final class MetalSSBJointModel {
     options.fastMathEnabled = false
     let library = try device.makeLibrary(
       source: MetalSSBShaderSource.load([
-        "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable",
+        "ssb_fft", "ssb_joint", "ssb_joint_fft", "ssb_model", "ssb_separable", "ssb_fifth_order",
       ]),
       options: options)
     self.library = library
@@ -332,7 +342,7 @@ public final class MetalSSBJointModel {
     _ parameters: [SSBJointParameters], isCancelled: () -> Bool = { false }
   ) throws -> [Double] {
     for value in parameters { try value.validate() }
-    return try agreements(rows: parameters.map(\.packed), isCancelled: isCancelled).map { -$0 }
+    return try agreements(parameters.map(SSBModelPoint.init), isCancelled: isCancelled).map { -$0 }
   }
 
   /// The least-squares agreement of the transfer model with the measured double-overlap data, larger is
@@ -342,7 +352,43 @@ public final class MetalSSBJointModel {
     -> [Double]
   {
     for point in points { try point.validate() }
+    if points.contains(where: \.hasHigherOrder) {
+      return try fifthOrderAgreements(points, isCancelled: isCancelled)
+    }
     return try agreements(rows: points.map(\.trialRow), isCancelled: isCancelled)
+  }
+
+  /// Joint fifth-order agreement, including at zero higher-order coefficients. The optimizer may supply
+  /// exact Cartesian (14×2) packs to avoid a polar roundtrip; these include the 1/(n+1) prefactor.
+  /// Scientific geometry, BF sums and weighted reduction remain float32 on Metal.
+  public func fifthOrderAgreements(
+    _ points: [SSBModelPoint], packedCoefficients: [[Float]]? = nil,
+    isCancelled: () -> Bool = { false }
+  ) throws -> [Double] {
+    try validatePreparation()
+    for point in points { try point.validate() }
+    let coefficients = packedCoefficients ?? points.map(\.reconstructionCoefficients)
+    guard coefficients.count == points.count,
+      coefficients.allSatisfy({ $0.count == 28 && $0.allSatisfy(\.isFinite) })
+    else {
+      throw MetalSSBError.invalidGeometry(
+        "Supply 28 finite Cartesian coefficients per SSB candidate.")
+    }
+    if isCancelled() { throw CancellationError() }
+    if points.isEmpty { return [] }
+    if fifthOrder == nil {
+      fifthOrder = try SSBFifthOrderAgreement(device: device, queue: queue, library: library)
+    }
+    let rows = zip(points, coefficients).map { point, packed in
+      [
+        Float(point.depthSpreadAngstroms), Float(point.sampleTiltMrad[0] * 1e-3),
+        Float(point.sampleTiltMrad[1] * 1e-3),
+      ] + packed
+    }
+    return try fifthOrder!.evaluate(
+      rows: rows, geometry: geometry, k: kBuffer, q: qBuffer, band: bandG, weights: weights,
+      probeGeometry: probeGeometry, count: activeIndices.count, bandCount: bandCount,
+      isCancelled: isCancelled)
   }
 
   func agreements(rows: [[Float]], isCancelled: () -> Bool) throws -> [Double] {
@@ -473,14 +519,24 @@ public final class MetalSSBJointModel {
       return MetalSSBJointPhase(
         phase: phase, rows: n, columns: n, upsamplingFactor: upsamplingFactor,
         wallSeconds: Date().timeIntervalSince(started), parameters: parameters,
-        scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance)
+        scanDetectorRotationDegrees: scanDetectorRotationDegrees, provenance: provenance,
+        point: point)
+    }
+    guard !point.hasHigherOrder else {
+      throw MetalSSBError.invalidGeometry(
+        "Higher-order joint SSB uses phaseOfMean; choose that estimator to retain every fitted term."
+      )
     }
     if upsamplingFactor == 3 && supportsFused1536 {
-      return try reconstructFused1536(parameters, isCancelled: isCancelled)
+      var result = try reconstructFused1536(parameters, isCancelled: isCancelled)
+      result.point = point
+      return result
     }
-    return try reconstructGeneral(
+    var result = try reconstructGeneral(
       parameters, upsamplingFactor: upsamplingFactor,
       isCancelled: isCancelled)
+    result.point = point
+    return result
   }
 
   // General complex FFT path retained for other sizes and nonzero boundary

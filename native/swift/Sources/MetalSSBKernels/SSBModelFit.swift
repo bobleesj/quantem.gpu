@@ -13,7 +13,8 @@ public enum SSBObjective: String, Codable, Sendable {
 ///
 /// | Options | Method |
 /// |---|---|
-/// | `SSBFitOptions()` | model agreement, tilt-corrected (sample tilt and depth spread) |
+/// | `SSBFitOptions()` | 200 primary TPE trials, then joint fifth-order Newton with tilt/depth |
+/// | `SSBFitOptions(maximumOrder: 1)` | original low-order model agreement with tilt/depth |
 /// | `SSBFitOptions(tilt: false)` | model agreement, sample tilt and depth spread held at 0 |
 /// | `SSBFitOptions(tilt: false, objective: .phaseVariance)` | the older phase-variance SSB |
 public struct SSBFitOptions: Codable, Equatable, Sendable {
@@ -24,17 +25,43 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
   /// Also run the 200-trial search at depth spread 0 that only measures `tiltFitGain`.
   public var compareStandard: Bool
   public var tiltLimitMrad: Double
+  /// Standard fits initialize the low-order model, then jointly refine through fifth order.
+  /// Set 1 to retain the original low-order fit, including its reference trajectory.
+  public var maximumOrder: Int
+  public var maxHigherOrderEvaluations: Int
 
   public init(
     tilt: Bool = true, objective: SSBObjective = .agreement, trials: Int = 200, seed: Int = 42,
-    compareStandard: Bool = true, tiltLimitMrad: Double = 25
+    compareStandard: Bool? = nil, tiltLimitMrad: Double = 25,
+    maximumOrder: Int? = nil, maxHigherOrderEvaluations: Int = 5000
   ) {
     self.tilt = tilt
     self.objective = objective
     self.trials = trials
     self.seed = seed
-    self.compareStandard = compareStandard
+    self.maximumOrder = maximumOrder ?? (tilt && objective == .agreement ? 5 : 1)
+    self.maxHigherOrderEvaluations = maxHigherOrderEvaluations
+    self.compareStandard = compareStandard ?? (self.maximumOrder == 1)
     self.tiltLimitMrad = tiltLimitMrad
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case tilt, objective, trials, seed, compareStandard, tiltLimitMrad, maximumOrder,
+      maxHigherOrderEvaluations
+  }
+
+  /// Old saved runs describe the original primary fit, never an implicit fifth-order fit.
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    tilt = try c.decode(Bool.self, forKey: .tilt)
+    objective = try c.decode(SSBObjective.self, forKey: .objective)
+    trials = try c.decode(Int.self, forKey: .trials)
+    seed = try c.decode(Int.self, forKey: .seed)
+    compareStandard = try c.decode(Bool.self, forKey: .compareStandard)
+    tiltLimitMrad = try c.decode(Double.self, forKey: .tiltLimitMrad)
+    maximumOrder = try c.decodeIfPresent(Int.self, forKey: .maximumOrder) ?? 1
+    maxHigherOrderEvaluations =
+      try c.decodeIfPresent(Int.self, forKey: .maxHigherOrderEvaluations) ?? 5000
   }
 
   /// A short name for the method, as the results and the app state it.
@@ -55,6 +82,20 @@ public struct SSBFitOptions: Codable, Equatable, Sendable {
         "The phase-variance objective does not see the sample tilt. Use tilt: false with it, or the agreement objective."
       )
     }
+    guard [1, 5].contains(maximumOrder), maxHigherOrderEvaluations > 0 else {
+      throw MetalSSBError.invalidGeometry(
+        "Choose maximumOrder 1 or 5 and a positive higher-order evaluation cap.")
+    }
+    if maximumOrder == 5 && (!tilt || objective != .agreement) {
+      throw MetalSSBError.invalidGeometry(
+        "The standard fifth-order fit jointly refines tilt and depth. Use maximumOrder: 1 for the primary-only alternatives."
+      )
+    }
+    if maximumOrder == 5 && tiltLimitMrad != 25 {
+      throw MetalSSBError.invalidGeometry(
+        "The standard fifth-order fit uses its shared ±25 mrad tilt bounds. Use maximumOrder: 1 for a custom primary tilt range."
+      )
+    }
   }
 }
 
@@ -72,6 +113,11 @@ public struct SSBFit: Codable, Sendable {
   public let phaseVarianceLoss: Double?
   public let trialCount: Int
   public let timings: [String: Double]
+  /// The bounded fifth-order Newton trajectory; nil for a primary-only fit.
+  /// Agreements in this trace are divided by `higherOrderNormalization`.
+  public var higherOrderRefinement: SSBFifthOrderSearch.Result? = nil
+  /// Initial agreement for the shared fifth-order model, using the strict 0.2...0.9 inverse-Angstrom band.
+  public var higherOrderNormalization: Double? = nil
 }
 
 /// Both 180-degree branches fitted independently and the branch kept (Python `RotationBranches`).
@@ -83,7 +129,9 @@ public struct SSBBranchedFit: Codable, Sendable {
   public let kept: Int
   public let decidedBy: SSBRotationBranches.Decision
   public let columnCount: Int
-  public var fit: SSBFit { fits[kept] }
+  /// Branch diagnostics retain the initial native-grid fits; refinement holds the selected rotation.
+  public var refinedFit: SSBFit? = nil
+  public var fit: SSBFit { refinedFit ?? fits[kept] }
   /// Whether the 180-degree branches were compared.
   public var comparedBranches: Bool { fits.count == 2 }
 }
@@ -96,7 +144,22 @@ public enum SSBModelFit {
   /// Fit at the model's current rotation. `engine` serves the phase-variance objective.
   public static func fit(
     model: MetalSSBJointModel, engine: MetalSSBEngine, options: SSBFitOptions,
-    progress: Progress = { _, _, _ in }, isCancelled: () -> Bool = { false }
+    progress: Progress = { _, _, _ in }, onInitialFit: (SSBFit) throws -> Void = { _ in },
+    isCancelled: () -> Bool = { false }
+  ) throws -> SSBFit {
+    try options.validate()
+    let primary = try fitPrimary(
+      model: model, engine: engine, options: options,
+      progress: progress, isCancelled: isCancelled)
+    try onInitialFit(primary)
+    return try refineHigherOrder(
+      primary, model: model, options: options,
+      progress: progress, isCancelled: isCancelled)
+  }
+
+  private static func fitPrimary(
+    model: MetalSSBJointModel, engine: MetalSSBEngine, options: SSBFitOptions,
+    progress: Progress, isCancelled: () -> Bool
   ) throws -> SSBFit {
     try options.validate()
     var count = 0
@@ -185,12 +248,14 @@ public enum SSBModelFit {
     model: MetalSSBJointModel, engine: MetalSSBEngine, rotationDegrees: Double,
     darkField: [Float]?, scanSampling: (Double, Double), options: SSBFitOptions = SSBFitOptions(),
     checkRotation: Bool = true, keepFirst: Bool = false, progress: Progress = { _, _, _ in },
+    onInitialFit: (SSBFit) throws -> Void = { _ in },
     isCancelled: () -> Bool = { false }
   ) throws -> SSBBranchedFit {
     if !checkRotation {
       try model.retarget(scanDetectorRotationDegrees: rotationDegrees)
       let fitted = try fit(
-        model: model, engine: engine, options: options, progress: progress, isCancelled: isCancelled
+        model: model, engine: engine, options: options, progress: progress,
+        onInitialFit: onInitialFit, isCancelled: isCancelled
       )
       return SSBBranchedFit(
         fits: [fitted], branches: [], chosen: 0, kept: 0, decidedBy: .phaseTail, columnCount: 0)
@@ -203,7 +268,7 @@ public enum SSBModelFit {
     branchOptions.compareStandard = false
     for (index, rotation) in rotations.enumerated() {
       try model.retarget(scanDetectorRotationDegrees: rotation)
-      let fitted = try fit(
+      let fitted = try fitPrimary(
         model: model, engine: engine, options: branchOptions,
         progress: { stage, completed, total in
           progress("Branch \(index + 1)/2 · \(stage)", completed, total)
@@ -250,8 +315,58 @@ public enum SSBModelFit {
         tiltFitGain: standard.agreement > 0 ? agreement / standard.agreement : .nan,
         phaseVarianceLoss: nil, trialCount: kept.trialCount, timings: timings)
     }
-    return SSBBranchedFit(
+    var result = SSBBranchedFit(
       fits: fits, branches: decision.branches, chosen: decision.chosen, kept: decision.kept,
       decidedBy: decision.decidedBy, columnCount: decision.columns)
+    try onInitialFit(result.fit)
+    if options.maximumOrder > 1 {
+      result.refinedFit = try refineHigherOrder(
+        result.fit, model: model, options: options,
+        progress: progress, isCancelled: isCancelled)
+    }
+    return result
+  }
+
+  private static func refineHigherOrder(
+    _ primary: SSBFit, model: MetalSSBJointModel, options: SSBFitOptions,
+    progress: Progress, isCancelled: () -> Bool
+  ) throws -> SSBFit {
+    guard options.maximumOrder == 5 else { return primary }
+    guard model.bandInverseAngstroms == Float(0.2)...Float(0.9) else {
+      throw MetalSSBError.invalidGeometry(
+        "The fifth-order fit requires the 0.2...0.9 inverse-Angstrom fitting band. Prepare the joint model with its default band."
+      )
+    }
+    let started = Date()
+    let coordinates = SSBFifthOrderCoordinates(
+      wavelengthAngstroms: model.wavelengthAngstroms,
+      semiangleRadians: model.semiangleRadians)
+    let start = coordinates.initial(primary.point)
+    let normalization = try model.fifthOrderAgreements(
+      [primary.point],
+      packedCoefficients: [coordinates.pack(start)], isCancelled: isCancelled)[0]
+    guard normalization.isFinite, normalization > 0 else {
+      throw MetalSSBError.invalidGeometry(
+        "The higher-order fit needs a positive finite initial agreement. Check calibration and signal in the fitting band."
+      )
+    }
+    let result = try SSBFifthOrderSearch.refine(
+      { rows in
+        try model.fifthOrderAgreements(
+          rows.map(coordinates.point),
+          packedCoefficients: rows.map(coordinates.pack), isCancelled: isCancelled
+        ).map { $0 / normalization }
+      }, start: start, maxEvaluations: options.maxHigherOrderEvaluations,
+      progress: { progress("Fifth-order Newton", $0, $1) }, isCancelled: isCancelled)
+    var timings = primary.timings
+    timings["higher_order_refinement_s"] = Date().timeIntervalSince(started)
+    var fit = SSBFit(
+      scanDetectorRotationDegrees: primary.scanDetectorRotationDegrees,
+      point: coordinates.point(result.coordinates), options: options,
+      sampleAgreement: result.agreement * normalization, standardAgreement: nil, tiltFitGain: nil,
+      phaseVarianceLoss: nil, trialCount: primary.trialCount, timings: timings)
+    fit.higherOrderRefinement = result
+    fit.higherOrderNormalization = normalization
+    return fit
   }
 }

@@ -306,10 +306,13 @@ public enum SSBAgreementSearch {
 
   /// The scaled trust-region step that maximizes the quadratic model (`trust_step`, cyclic Jacobi).
   static func trustStep(
-    gradient g: [Double], hessian h: [[Double]], steps: [Double], radius: Double
+    gradient g: [Double], hessian h: [[Double]], steps: [Double], radius: Double,
+    floatLiterals: Bool = true
   )
     -> [Double]
   {
+    // Preserve primary resident arithmetic; the fifth-order host controller uses Double literals.
+    func literal(_ value: Double) -> Double { floatLiterals ? Double(Float(value)) : value }
     let n = g.count
     var a = (0..<n).map { i in (0..<n).map { j in h[i][j] * steps[i] * steps[j] } }
     var v = (0..<n).map { i in (0..<n).map { j in i == j ? 1.0 : 0.0 } }
@@ -320,7 +323,7 @@ public enum SSBAgreementSearch {
         for q in (p + 1)..<max(p + 1, n) {
           let off = a[p][q]
           maximum = max(maximum, abs(off))
-          if abs(off) < f(1e-25) { continue }
+          if abs(off) < literal(1e-25) { continue }
           let tau = (a[q][q] - a[p][p]) / (2 * off)
           let t = (tau < 0 ? -1.0 : 1.0) / (abs(tau) + sqrt(1 + tau * tau))
           let c = 1 / sqrt(1 + t * t)
@@ -347,9 +350,9 @@ public enum SSBAgreementSearch {
           }
         }
       }
-      if maximum < f(1e-24) { break }
+      if maximum < literal(1e-24) { break }
     }
-    var largest = f(-1e30)
+    var largest = literal(-1e30)
     var gradientNorm = 0.0
     var norm = 0.0
     var along = [Double](repeating: 0, count: n)
@@ -358,18 +361,18 @@ public enum SSBAgreementSearch {
       gradientNorm += scaled[i] * scaled[i]
       for j in 0..<n { along[i] += v[j][i] * scaled[j] }
       let denominator = -a[i][i]
-      if abs(denominator) > f(1e-30) {
+      if abs(denominator) > literal(1e-30) {
         let y = along[i] / denominator
         norm += y * y
       } else {
-        norm = f(1e30)
+        norm = literal(1e30)
       }
     }
     var mu = 0.0
     if !(largest < 0 && sqrt(norm) <= radius) {
       var low = max(0, largest)
-      var high = low + sqrt(gradientNorm) / radius + f(1e-30)
-      low += f(1e-12) * (abs(low) + 1)
+      var high = low + sqrt(gradientNorm) / radius + literal(1e-30)
+      low += literal(1e-12) * (abs(low) + 1)
       for _ in 0..<100 {
         let middle = (low + high) / 2
         norm = 0

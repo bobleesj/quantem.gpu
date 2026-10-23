@@ -57,6 +57,9 @@ public struct MetalSSBGeometry: Codable, Sendable {
   public let referenceRotationDegrees: Float
   /// pi / wavelength, rounded once from the calibration in Double precision.
   public let phaseFactor: Float?
+  /// Original calibration precision for dimensionless higher-order search coordinates.
+  public let modelWavelengthAngstroms: Double?
+  public let modelSemiangleRadians: Double?
 
   public var logicalBrightfieldCount: Int { brightfieldKX.count }
 
@@ -75,7 +78,8 @@ public struct MetalSSBGeometry: Codable, Sendable {
     angularSamplingXRadians: Float,
     dcValue: SIMD2<Float>,
     referenceRotationDegrees: Float,
-    phaseFactor: Float? = nil
+    phaseFactor: Float? = nil,
+    modelWavelengthAngstroms: Double? = nil, modelSemiangleRadians: Double? = nil
   ) {
     self.brightfieldKX = brightfieldKX
     self.brightfieldKY = brightfieldKY
@@ -92,6 +96,8 @@ public struct MetalSSBGeometry: Codable, Sendable {
     self.dcValue = dcValue
     self.referenceRotationDegrees = referenceRotationDegrees
     self.phaseFactor = phaseFactor
+    self.modelWavelengthAngstroms = modelWavelengthAngstroms
+    self.modelSemiangleRadians = modelSemiangleRadians
   }
 }
 
@@ -1838,6 +1844,12 @@ public final class MetalSSBEngine {
     guard geometry.wavelengthAngstroms.isFinite,
       geometry.wavelengthAngstroms > 0,
       geometry.phaseFactor.map({ $0.isFinite && $0 > 0 }) ?? true,
+      geometry.modelWavelengthAngstroms.map({
+        $0.isFinite && $0 > 0 && Float($0) == geometry.wavelengthAngstroms
+      }) ?? true,
+      geometry.modelSemiangleRadians.map({
+        $0.isFinite && $0 > 0 && Float($0) == geometry.semiangleRadians
+      }) ?? true,
       geometry.semiangleRadians.isFinite,
       geometry.semiangleRadians > 0,
       geometry.angularSamplingYRadians.isFinite,
