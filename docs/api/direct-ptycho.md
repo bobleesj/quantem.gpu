@@ -8,7 +8,8 @@ linear weak-object model is accurate for every specimen.
 
 Use the paired development sources (`quantem.gpu` 0.0.1rc18.dev0 and
 `quantem.widget` 0.0.1rc44.dev0). These are source candidates, not a package-index
-release; install both checkouts or the matching supplied wheels. An older
+release; use branch `oct-24-direct-iterative-api` in both repositories and
+install both checkouts, or install the matching supplied wheels. An older
 widget does not provide the method and regularization controls.
 
 ```python
