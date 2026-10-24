@@ -3,17 +3,21 @@
 import numpy as np
 import pytest
 
-from quantem.gpu.optics.physics import ssb_upsampling_factor, wavelength_A_from_kV
+from quantem.gpu.optics.physics import ssb_upsampling_factor, ssb_upsampling_requirement, wavelength_A_from_kV
 
 
-@pytest.mark.parametrize("required,expected", [(0.5, 1), (1, 1), (1.1, 2), (2.1, 3), (3.1, 4), (4.1, 8), (8, 8)])
-def test_smallest_grid_covers_both_scan_axes(required, expected):
+@pytest.mark.parametrize("required,expected", [(0.5, 1), (1, 1), (1.1, 2), (2.1, 3), (3.1, 4), (4.1, 4), (8, 4), (12, 4)])
+def test_auto_covers_both_scan_axes_until_the_four_times_limit(required, expected):
     spacing = wavelength_A_from_kV(300) / (4 * 20e-3)
     step = np.array([0.5, required]) * spacing
     factor = ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=20, scan_sampling_A=step)
     assert factor == expected
     cutoff = 2 * 20e-3 / wavelength_A_from_kV(300)
-    assert np.all(factor / (2 * step) >= cutoff - 1e-12)
+    assert ssb_upsampling_requirement(voltage_kV=300, semiangle_mrad=20, scan_sampling_A=step) == pytest.approx(required)
+    if required <= 4:
+        assert np.all(factor / (2 * step) >= cutoff - 1e-12)
+    else:
+        assert np.any(factor / (2 * step) < cutoff)
     smaller = [value for value in (1, 2, 3, 4, 8) if value < factor]
     if smaller:
         assert np.any(max(smaller) / (2 * step) < cutoff)
@@ -38,8 +42,7 @@ def test_missing_or_invalid_calibration_is_not_guessed(step):
 
 def test_numpy_values_and_limit():
     assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(np.float32(0.37),) * 2) == 2
-    with pytest.raises(ValueError, match="more than 8"):
-        ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(10, 10))
+    assert ssb_upsampling_factor(voltage_kV=300, semiangle_mrad=20, scan_sampling_A=(10, 10)) == 4
 
 
 @pytest.mark.parametrize("voltage,angle", [(0, 20), (300, 0), (float("nan"), 20), (300, float("inf"))])

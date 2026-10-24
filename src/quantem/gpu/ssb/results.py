@@ -253,6 +253,16 @@ class SSBResult(Mapping[str, float]):
                         "depth spread (nm)": self.depth_spread_nm})
         if self.objective is not None:
             row["objective"] = self.objective
+        if None not in (self.voltage_kV, self.semiangle_mrad, self.object_sampling_A):
+            from quantem.gpu.optics import ssb_upsampling_requirement
+
+            required = ssb_upsampling_requirement(
+                voltage_kV=self.voltage_kV, semiangle_mrad=self.semiangle_mrad,
+                scan_sampling_A=tuple(float(step) * self.upsampling_factor for step in self.object_sampling_A),
+            )
+            if self.upsampling_factor < required - 1e-12:
+                row["Output sampling (×)"] = self.upsampling_factor
+                row["Nominal requirement (×)"] = required
         model = "standard SSB" if self.sample_tilt_mrad is None else "tilt-aware SSB"
         return pd.DataFrame([row], index=pd.Index([model], name="model")).round(3)
 
